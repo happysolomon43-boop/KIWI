@@ -1,3 +1,4 @@
+
 // ════════════════════════════════════════════════════════════════════════════
 //  KIWI BACKEND — Living Ecosystem Edition
 //  MIGRATED: Firebase/Firestore → PostgreSQL (Supabase pg Pool)
