@@ -6338,6 +6338,12 @@
         return await apiRequest("/library");
       };
 
+      api.getSubjectCards = async (subjectId, { page = 1, limit = 50, filter = 'all', search = '' } = {}) => {
+        const params = new URLSearchParams({ page, limit, filter });
+        if (search) params.set('search', search);
+        return await apiRequest(`/library/subjects/${subjectId}/cards?${params}`);
+      };
+
       api.createSubject = async (name, color, icon, exam_date) => {
         // Backend: POST /library/subjects → accepts {name, color, icon, exam_date}
         // Backend also auto-creates a default deck for this subject
@@ -7345,6 +7351,7 @@
         "exam-config": { render: renderExamConfig, title: "CBT Exam", auth: true },
         exam: { render: renderExam, title: "Exam in Progress", auth: true },
         library: { render: renderLibrary, title: "Library", auth: true },
+        "card-browser": { render: renderCardBrowser, title: "Card Browser", auth: true },
         import: { render: renderImport, title: "Import Cards", auth: true },
         brain: { render: renderBrain, title: "The Brain", auth: true },
         chronicle: { render: renderChronicle, title: "The Chronicle", auth: true },
@@ -7359,7 +7366,9 @@
         onboarding: { render: renderOnboarding, title: "Getting Started", auth: true },
       };
 
-      function navigateTo(page) {
+      function navigateTo(page, params) {
+        // Store route params so render functions can access them
+        AppState.routeParams = params || {};
         // P9.13-02 FIX: demo mode route guards
         if (AppState.isDemo && !["landing", "study", "biome", "dashboard"].includes(page)) {
           showToast("Create an account to access the full ecosystem.", "warning");
@@ -9822,7 +9831,16 @@
           if (err.status === 403 && AppState.reckoning) {
             return; // Reckoning overlay shown by API handler
           }
-          showToast("Failed to submit exam", "error");
+          // Always log the real error to console for debugging
+          console.error('[KIWI] submitExam failed:', err.message, err);
+          // Show a meaningful toast — if the generic server error toast wasn't already shown,
+          // surface the actual message so the failure is diagnosable without a server log.
+          if (!err.alreadyReported) {
+            showToast("Failed to submit exam: " + (err.message || "Unknown error"), "error", 8000);
+          } else {
+            // Generic 500 toast was already shown; add a second line with details
+            showToast("Submission details: " + (err.message || "check console for details"), "error", 8000);
+          }
           e.submitted = false;
           renderExam();
         }
@@ -12868,7 +12886,7 @@
           <div class="subject-section">
             <div class="subject-header" data-subj="${escapeHTML(subj.id)}">
               <span class="subject-color-dot" style="background:${escapeHTML(subj.color || "#52b788")}"></span>
-              <span class="subject-name-text">${escapeHTML(subj.icon || "&#x25A0;")} ${escapeHTML(subj.name)}</span>
+              <span class="subject-name-text">${subj.icon ? escapeHTML(subj.icon) : "&#x25A0;"} ${escapeHTML(subj.name)}</span>
               <span class="subject-meta">${subj.cardCount || 0} cards ${due > 0 ? `<span style="color:var(--green-bright);font-weight:700;">&bull; ${due} due</span>` : ""}</span>
               <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:#e57373;font-size:var(--text-xs);" onclick="handleDeleteSubject('${escapeHTML(subj.id)}', '${escapeHTML(subj.name)}')">Delete</button>
             </div>
@@ -12910,7 +12928,7 @@
                 `;
                 })
                 .join("")}
-              ${(subj.cardCount || 0) > (subj.recentCards || []).length ? `<div style="text-align:center;padding:12px;font-size:var(--text-base);color:var(--text-3);">+${(subj.cardCount || 0) - (subj.recentCards || []).length} more cards</div>` : ""}
+              ${(subj.cardCount || 0) > (subj.recentCards || []).length ? `<div style="text-align:center;padding:12px;"><button class="btn btn-ghost btn-sm" style="font-size:var(--text-sm);color:var(--green-bright);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})">📋 View all ${subj.cardCount} cards &rarr;</button></div>` : ""}
             </div>
             <div style="display:flex;gap:8px;margin-top:10px;margin-left:16px;flex-wrap:wrap;">
               <button class="btn btn-primary btn-sm" onclick="startStudySession('${escapeHTML(subj.id)}')">Study</button>
@@ -12940,6 +12958,8 @@
           document.getElementById("addDeckBtn").addEventListener("click", () => {
             showCreateSubjectModal(subjects.length, () => navigateTo("library"));
           });
+          // Render math in library cards (LaTeX in card fronts/backs)
+          main.querySelectorAll(".deck-name, .deck-card-back-peek").forEach(el => renderMathContent(el));
           // Library card peek — click card body to reveal/hide the back without opening editor
           main.querySelectorAll(".deck-card").forEach((card) => {
             card.addEventListener("click", (e) => {
@@ -12980,6 +13000,146 @@
       // Helper to start a study session from library
 
       // Helper to start a study session from library
+
+      // ── Card Browser — full paginated view for a subject ──────────────────────
+      async function renderCardBrowser() {
+        const main = document.getElementById("mainContent");
+        const params = AppState.routeParams || {};
+        const subjectId = params.subjectId;
+        const subjectName = params.subjectName || "Cards";
+
+        // Browser state (persisted across re-renders within the same visit)
+        if (!AppState._cardBrowser || AppState._cardBrowser.subjectId !== subjectId) {
+          AppState._cardBrowser = { subjectId, page: 1, filter: "all", search: "", total: 0, cards: [] };
+        }
+        const bs = AppState._cardBrowser;
+
+        async function loadCards() {
+          renderLoadingState(main, "Loading cards...");
+          try {
+            const data = await api.getSubjectCards(subjectId, {
+              page: bs.page,
+              limit: 50,
+              filter: bs.filter,
+              search: bs.search,
+            });
+            bs.cards = data.cards || [];
+            bs.total = data.total || 0;
+            bs.totalPages = data.totalPages || 1;
+            renderBrowserUI();
+          } catch (err) {
+            renderErrorState(main, err.message || "Failed to load cards", loadCards);
+          }
+        }
+
+        function renderBrowserUI() {
+          const filterLabels = { all: "All", due: "Due", resting: "Resting" };
+          main.innerHTML = `
+            <div class="page-wrap page-enter">
+              <div class="section-header" style="margin-bottom:12px;">
+                <div>
+                  <button class="btn btn-ghost btn-sm" onclick="navigateTo('library')" style="margin-bottom:4px;">&#x2190; Library</button>
+                  <div class="section-title" style="margin-top:4px;">${escapeHTML(subjectName)}</div>
+                  <div class="section-sub">${bs.total} cards total</div>
+                </div>
+              </div>
+
+              <!-- Search + Filter bar -->
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+                <input id="cbSearch" type="text" placeholder="Search cards…"
+                  value="${escapeHTML(bs.search)}"
+                  style="flex:1;min-width:160px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--border-1);border-radius:8px;color:var(--text-1);font-size:var(--text-sm);" />
+                ${["all","due","resting"].map(f => `
+                  <button class="btn btn-sm ${bs.filter===f?'btn-primary':'btn-ghost'}" data-filter="${f}">${filterLabels[f]}</button>
+                `).join("")}
+              </div>
+
+              <!-- Card list -->
+              <div id="cbCardList">
+                ${bs.cards.length === 0 ? `<div style="text-align:center;padding:32px;color:var(--text-3);">No cards match this filter.</div>` :
+                  bs.cards.map((c, idx) => {
+                    const stage = c.stage || 1;
+                    const stageColors = ["","var(--s1)","var(--s2)","var(--s3)","var(--s4)","var(--s5)"];
+                    return `
+                    <div class="card" style="margin-bottom:10px;padding:14px 16px;">
+                      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                        <div style="flex:1;">
+                          <div style="font-size:var(--text-xs);font-family:var(--font-mono);color:var(--text-4);margin-bottom:4px;text-transform:uppercase;">
+                            Stage ${stage} &bull; <span style="color:${c.isDue?'var(--green-bright)':'var(--text-3)'};">${c.isDue ? "Due" : "Resting"}</span>
+                            &bull; ${c.reviewCount} review${c.reviewCount!==1?"s":""}
+                          </div>
+                          <div class="cb-front" style="font-weight:600;color:var(--text-1);margin-bottom:6px;">${escapeHTML(c.front)}</div>
+                          <div class="cb-back" style="font-size:var(--text-sm);color:var(--text-3);display:none;">${escapeHTML(c.back)}</div>
+                        </div>
+                        <div style="display:flex;gap:4px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;">
+                          <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="this.closest('.card').querySelector('.cb-back').style.display=this.closest('.card').querySelector('.cb-back').style.display==='none'?'block':'none';this.textContent=this.textContent==='Peek'?'Hide':'Peek';">Peek</button>
+                          <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" data-eid="${escapeHTML(c.id)}" data-ef="${escapeHTML(c.front||'')}" data-eb="${escapeHTML(c.back||'')}" onclick="handleEditCard(this.dataset.eid,this.dataset.ef,this.dataset.eb)">✏️</button>
+                          <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="handleResetCard('${escapeHTML(c.id)}')">Reset</button>
+                          <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;" onclick="handleDeleteCard('${escapeHTML(c.id)}','${escapeHTML((c.front||'').substring(0,30))}')">Del</button>
+                        </div>
+                      </div>
+                      <div style="height:3px;background:var(--surface-3);border-radius:2px;margin-top:10px;">
+                        <div style="width:${Math.min(100,(stage/5)*100)}%;height:100%;background:${stageColors[stage]||'var(--s1)'};border-radius:2px;"></div>
+                      </div>
+                    </div>`;
+                  }).join("")
+                }
+              </div>
+
+              <!-- Pagination -->
+              ${bs.totalPages > 1 ? `
+              <div style="display:flex;justify-content:center;align-items:center;gap:12px;padding:16px 0;flex-wrap:wrap;">
+                <button class="btn btn-ghost btn-sm" id="cbPrev" ${bs.page<=1?'disabled':''}>&#x2190; Prev</button>
+                <span style="font-size:var(--text-sm);color:var(--text-3);">Page ${bs.page} of ${bs.totalPages}</span>
+                <button class="btn btn-ghost btn-sm" id="cbNext" ${bs.page>=bs.totalPages?'disabled':''}>Next &#x2192;</button>
+              </div>` : ""}
+            </div>
+          `;
+
+          // Render math in card fronts/backs
+          main.querySelectorAll(".cb-front, .cb-back").forEach(el => renderMathContent(el));
+
+          // Search input — debounced
+          let _searchTimer;
+          const searchEl = document.getElementById("cbSearch");
+          if (searchEl) {
+            searchEl.addEventListener("input", () => {
+              clearTimeout(_searchTimer);
+              _searchTimer = setTimeout(() => {
+                bs.search = searchEl.value;
+                bs.page = 1;
+                loadCards();
+              }, 350);
+            });
+          }
+
+          // Filter buttons
+          main.querySelectorAll("[data-filter]").forEach(btn => {
+            btn.addEventListener("click", () => {
+              bs.filter = btn.dataset.filter;
+              bs.page = 1;
+              loadCards();
+            });
+          });
+
+          // Pagination
+          const prevBtn = document.getElementById("cbPrev");
+          const nextBtn = document.getElementById("cbNext");
+          if (prevBtn) prevBtn.addEventListener("click", () => { bs.page--; loadCards(); });
+          if (nextBtn) nextBtn.addEventListener("click", () => { bs.page++; loadCards(); });
+        }
+
+        // If no subjectId, go back to library
+        if (!subjectId) { navigateTo("library"); return; }
+
+        // Load on first visit or refresh
+        if (bs.cards.length === 0) {
+          await loadCards();
+        } else {
+          renderBrowserUI();
+        }
+      }
+      // ── End Card Browser ──────────────────────────────────────────────────────
 
       async function handleDeleteCard(cardId, cardPreview) {
         if (!confirm(`Delete card "${cardPreview}..."? This cannot be undone.`)) return;

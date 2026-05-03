@@ -13871,10 +13871,9 @@ const reckoningDebriefPrompt = `## ROLE
 You are KIWI's Reckoning Debrief Voice — unflinching, honest, but ultimately supportive. The student just survived (or failed) The Reckoning: a forced exam triggered because their academic pressure reached critical levels.
 RECKONING DATA
 Subject pressure had reached L4 (threshold: 20).
-// P3.8-B1 FIX: changed {var} to \${var} — template literal interpolation was broken.
-Score: {scorePct}% ({correct}/{total} correct)
-Outcome: {survived ? 'SURVIVED — pressure reset' : 'FAILED — pressure remains elevated'}
-Incorrect questions: {wrong.length}
+Score: ${scorePct}% (${correct}/${total} correct)
+Outcome: ${survived ? 'SURVIVED — pressure reset' : 'FAILED — pressure remains elevated'}
+Incorrect questions: ${wrong.length}
 RULES
 - Write exactly 3 paragraphs.
 - Paragraph 1: Honest assessment. Name the outcome directly — survived or not. Reference the pressure that caused this.
@@ -14541,9 +14540,10 @@ const stageDistribution = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
 allCards.forEach((c) => {
 stageDistribution[c.stage || 0] = (stageDistribution[c.stage || 0] || 0) + 1;
 });
-// dueCount
-const todayStr = new Date().toISOString().slice(0, 10);
-const dueCount = allCards.filter((c) => !c.due || c.due <= todayStr).length;
+// dueCount — use isCardDue (checks next_review_at correctly)
+// BUG-FIX: previous code used c.due which doesn't exist → ALL cards appeared due
+const _libNow = new Date();
+const dueCount = allCards.filter((c) => isCardDue(c, _libNow)).length;
 // recentCards (first 12)
 const recentCards = allCards.slice(0, 12).map((c) => ({
 id: c.id,
@@ -14580,6 +14580,56 @@ res.json({ subjects: enriched });
 res.status(500).json({ error: 'Failed to load library', details: e.message });
 }
 });
+// GET /api/library/subjects/:id/cards — full card list for a subject
+// Supports: ?page=1&limit=50&filter=all|due|resting&search=term
+libraryRouter.get('/subjects/:id/cards', async (req, res) => {
+  try {
+    const subject = await db.subjects.findById(req.params.id);
+    if (!subject) return res.status(404).json({ error: 'Subject not found' });
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(10, parseInt(req.query.limit) || 50));
+    const filter = req.query.filter || 'all'; // 'all' | 'due' | 'resting'
+    const search = (req.query.search || '').toLowerCase().trim();
+    const now = new Date();
+    // Collect all decks for this subject
+    let allCards = [];
+    const subjectDecks = await db.decks.findBySubject(req.user.id, req.params.id).catch(() => []);
+    for (const d of subjectDecks) {
+      const deckCards = await db.cards.findByDeck(req.user.id, d.id).catch(() => []);
+      allCards.push(...deckCards);
+    }
+    // Apply filter
+    if (filter === 'due') {
+      allCards = allCards.filter((c) => isCardDue(c, now));
+    } else if (filter === 'resting') {
+      allCards = allCards.filter((c) => !isCardDue(c, now));
+    }
+    // Apply search
+    if (search) {
+      allCards = allCards.filter((c) => {
+        const front = (c.front_content || c.front || '').toLowerCase();
+        const back = (c.back_content || c.back || '').toLowerCase();
+        return front.includes(search) || back.includes(search);
+      });
+    }
+    const total = allCards.length;
+    const totalPages = Math.ceil(total / limit);
+    const paginated = allCards.slice((page - 1) * limit, page * limit).map((c) => ({
+      id: c.id,
+      front: c.front_content || c.front || '',
+      back: c.back_content || c.back || '',
+      stage: c.stage || 0,
+      isDue: isCardDue(c, now),
+      reviewCount: c.review_count || c.reviewCount || 0,
+      next_review_at: c.next_review_at || null,
+      deck_id: c.deck_id || null,
+    }));
+    res.json({ cards: paginated, total, page, totalPages, limit });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch cards', details: e.message });
+  }
+});
+
 // POST /api/library/subjects — create subject (maps to /subjects/)
 // Accepts: {name, color, icon, exam_date}
 
