@@ -5395,7 +5395,9 @@
           // Handle other error status codes
           if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            const _apiErr = new ApiError(response.status, err.error || err.message || `HTTP ${response.status}`, endpoint); // [Fix 5.1]
+            // Prefer details (raw DB error) over the generic error label so callers
+            // (e.g. the create-subject modal) can display the real failure reason.
+            const _apiErr = new ApiError(response.status, err.details || err.error || err.message || `HTTP ${response.status}`, endpoint);
             if (response.status === 500) {
               // Show generic toast AND mark error so the caller's catch block
               // knows not to show a second toast for the same failure.

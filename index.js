@@ -319,12 +319,18 @@ async findManyWithDecks(userId) {
 },
 async create(userId, data) {
   const id = randomUUID();
-  // Note: updated_at is intentionally omitted — the subjects table may not have
-  // this column depending on the migration. created_at is sufficient for new rows.
-  const payload = { ...data, id, user_id: userId, created_at: new Date() };
-  const q = _buildInsert('subjects', payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  // Use an explicit column list so the query never references columns that
+  // may not exist in the migrated schema (e.g. updated_at).
+  const cols = ['id', 'user_id', 'name', 'color_hex', 'emoji', 'created_at'];
+  const vals = [id, userId, data.name, data.color_hex || '#4F46E5', data.emoji || '📚', new Date()];
+  if (data.exam_date != null) { cols.push('exam_date'); vals.push(data.exam_date); }
+  if (data.test_date != null) { cols.push('test_date'); vals.push(data.test_date); }
+  const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
+  const { rows: [subject] } = await query(
+    `INSERT INTO subjects (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`,
+    vals
+  );
+  return subject || { id, user_id: userId, ...data };
 },
 async update(userId, id, data) {
   // Fix #38: eliminate post-write re-fetch
@@ -369,11 +375,17 @@ async findMany(userId, filters = {}) {
 },
 async create(userId, data) {
   const id = randomUUID();
-  // Note: updated_at intentionally omitted to match the migrated schema.
-  const payload = { ...data, id, user_id: userId, created_at: new Date() };
-  const q = _buildInsert('decks', payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  // Explicit column list avoids referencing columns absent from the migrated schema.
+  const cols = ['id', 'user_id', 'name', 'created_at'];
+  const vals = [id, userId, data.name, new Date()];
+  if (data.subject_id != null) { cols.push('subject_id'); vals.push(data.subject_id); }
+  if (data.topic_id   != null) { cols.push('topic_id');   vals.push(data.topic_id);   }
+  const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
+  const { rows: [deck] } = await query(
+    `INSERT INTO decks (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`,
+    vals
+  );
+  return deck || { id, user_id: userId, ...data };
 },
 async findByIdFull(userId, id) {
   const { rows: [deck] } = await query(
@@ -14345,7 +14357,8 @@ console.error('[KIWI] Auto-deck creation failed (non-fatal):', deckErr.message);
 res.status(201).json({ ...subject, default_deck_id: deckId });
 } catch (e) {
 console.error('[KIWI] Subject creation error:', e.message);
-res.status(500).json({ error: 'Failed to create subject', details: e.message });
+// Include DB error detail in the response so it surfaces in the UI for diagnosis.
+res.status(500).json({ error: e.message || 'Failed to create subject', details: e.message });
 }
 });
 // PUT /api/library/subjects/:id — update subject
