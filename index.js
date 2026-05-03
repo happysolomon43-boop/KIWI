@@ -14984,9 +14984,123 @@ async function runSchemaMigrations() {
     `ALTER TABLE almanac_entries ADD COLUMN IF NOT EXISTS name text`,
     `ALTER TABLE almanac_entries ADD COLUMN IF NOT EXISTS unlock_condition jsonb`,
     `ALTER TABLE almanac_entries ADD COLUMN IF NOT EXISTS is_artifact boolean DEFAULT false`,
-    // subjects: exam_date and test_date passed by libraryRouter but missing from initial schema
+    `ALTER TABLE almanac_entries ADD COLUMN IF NOT EXISTS is_ai_generated boolean DEFAULT false`,
+
+    // subjects: color + icon are in the explicit INSERT column list — their absence causes a hard error
+    `ALTER TABLE subjects ADD COLUMN IF NOT EXISTS color text DEFAULT '#4F46E5'`,
+    `ALTER TABLE subjects ADD COLUMN IF NOT EXISTS icon text DEFAULT '📚'`,
     `ALTER TABLE subjects ADD COLUMN IF NOT EXISTS exam_date timestamptz`,
     `ALTER TABLE subjects ADD COLUMN IF NOT EXISTS test_date timestamptz`,
+    `ALTER TABLE subjects ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
+    `ALTER TABLE subjects ADD COLUMN IF NOT EXISTS status text DEFAULT 'active'`,
+    `ALTER TABLE subjects ADD COLUMN IF NOT EXISTS archived boolean DEFAULT false`,
+    `ALTER TABLE subjects ADD COLUMN IF NOT EXISTS archived_at timestamptz`,
+
+    // users: extended columns used by _safeUserCreate, cron jobs, and settings routes
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name text DEFAULT ''`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text DEFAULT ''`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS bio text DEFAULT ''`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS role text DEFAULT 'user'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_guest boolean DEFAULT false`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_expires_at timestamptz`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at timestamptz`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS previous_login_at timestamptz`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_link_token text`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id text`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences jsonb DEFAULT '{"email":true,"telegram":false}'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS theme text`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS exam_reminder_days integer`,
+
+    // user_stats: updated_at required by _buildIncrementUpdate (always appended to SET clause)
+    `ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
+    `ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS study_mode text DEFAULT 'normal'`,
+    `ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS streak_milestones_earned jsonb DEFAULT '[]'`,
+    `ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS streak_shield_held boolean DEFAULT false`,
+
+    // sessions: updated_at required by _buildIncrementUpdate
+    `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
+
+    // decks: extra columns referenced in create/update calls
+    `ALTER TABLE decks ADD COLUMN IF NOT EXISTS card_count integer DEFAULT 0`,
+    `ALTER TABLE decks ADD COLUMN IF NOT EXISTS is_public boolean DEFAULT false`,
+    `ALTER TABLE decks ADD COLUMN IF NOT EXISTS description text`,
+    `ALTER TABLE decks ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
+
+    // cards: archive expansion and review tracking
+    `ALTER TABLE cards ADD COLUMN IF NOT EXISTS archived boolean DEFAULT false`,
+    `ALTER TABLE cards ADD COLUMN IF NOT EXISTS review_count integer DEFAULT 0`,
+
+    // subject_stats: analytics columns written by persistKnowledgeScore, cron, and Biome
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS knowledge_score numeric DEFAULT 0`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS previous_week_ks numeric`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS previous_week_ks_recorded_at timestamptz`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS last_studied_at timestamptz`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS last_study_date timestamptz`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS zone_state text DEFAULT 'Dormant'`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS last_zone_state text`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS fruit_count integer DEFAULT 0`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS archived boolean DEFAULT false`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS archived_at timestamptz`,
+    `ALTER TABLE subject_stats ADD COLUMN IF NOT EXISTS was_neglected_then_resumed boolean DEFAULT false`,
+
+    // exam_sessions: is_reckoning (P1.7 migration note), scoring, and timing fields
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS is_reckoning boolean DEFAULT false`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS subject_id text`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS score_pct numeric`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS question_count integer DEFAULT 0`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS correct_answers integer DEFAULT 0`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS total_questions integer DEFAULT 0`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS duration_seconds integer DEFAULT 0`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS completed_at timestamptz`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS time_limit_seconds integer DEFAULT 1800`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS card_range text DEFAULT 'all'`,
+
+    // reckoning_sessions: fields referenced in brain router and lockout middleware
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS subject_name text`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS pressure_score integer DEFAULT 0`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS flagged_card_count integer DEFAULT 0`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS question_count integer DEFAULT 0`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS was_deferred boolean DEFAULT false`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS deferred_until timestamptz`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS deferral_used boolean DEFAULT false`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS debrief_text text`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS score_pct numeric`,
+
+    // mastery_goals: bubble trajectory, contract streak, rescue and stall tracking
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS contract_streak_current integer DEFAULT 0`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS contract_streak_best integer DEFAULT 0`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS daily_contract_miss_consequence text`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS rescue_eligible boolean DEFAULT false`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS rescue_active boolean DEFAULT false`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS rescue_mode_entered_at timestamptz`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS stall_active boolean DEFAULT false`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS stall_cause text`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS stall_detected_at timestamptz`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS stall_resolved_at timestamptz`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS test_date_gate_passed boolean DEFAULT false`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS test_date_gate_failed boolean DEFAULT false`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS gate_fail_message text`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS projected_completion_date timestamptz`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS projected_best_case timestamptz`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS projected_minimum_viable timestamptz`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS final_ks_at_deadline numeric`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS archived_at timestamptz`,
+
+    // community_decks: catalog and marketplace fields
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS is_featured boolean DEFAULT false`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS author_id text`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS author_name text`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS subject_hint text`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS card_count integer DEFAULT 0`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS average_rating numeric DEFAULT 0`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS clone_count integer DEFAULT 0`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS tags jsonb DEFAULT '[]'`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS sample_cards jsonb DEFAULT '[]'`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS description text`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS title text`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS is_public boolean DEFAULT true`,
   ];
   for (const sql of migrations) {
     try {
