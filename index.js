@@ -9911,7 +9911,7 @@ Return only the inscription.
 const app = express();
 
 const _corsOptions = {
-  origin: ['https://happysolomon43-boop.github.io', 'https://kiwi-741i.onrender.com', 'http://localhost:5500', 'http://localhost:8080'],
+  origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
