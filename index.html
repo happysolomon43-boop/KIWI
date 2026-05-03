@@ -124,7 +124,7 @@
         --shadow-sm: 0 2px 12px rgba(0,0,0,0.32);
         --shadow: 0 4px 24px rgba(0,0,0,0.40);
         --shadow-lg: 0 8px 48px rgba(0,0,0,0.50);
-        --shadow-green: 0 0 32px rgba(13,148,136,0.15);
+        --shadow-green: 0 0 32px rgba(13,148,136,0.075);
         /* -- Spacing tokens (4px base) -- */
         --space-1: 4px;
         --space-2: 8px;
@@ -345,10 +345,10 @@
       @keyframes glow-pulse {
         0%,
         100% {
-          box-shadow: 0 0 20px rgba(82, 183, 136, 0.08);
+          box-shadow: 0 0 20px rgba(82, 183, 136, 0.04);
         }
         50% {
-          box-shadow: 0 0 40px rgba(82, 183, 136, 0.2);
+          box-shadow: 0 0 40px rgba(82, 183, 136, 0.1);
         }
       }
       @keyframes shimmer {
@@ -3464,6 +3464,32 @@
         transform: translateY(-2px);
         box-shadow: var(--shadow-sm);
       }
+      /* Library card back-peek */
+      .deck-card-back-peek {
+        display: none;
+        margin-top: 10px;
+        padding: 10px 12px;
+        background: rgba(62,201,201,0.06);
+        border: 1px solid rgba(62,201,201,0.2);
+        border-radius: var(--r-md);
+        font-size: var(--text-sm);
+        color: var(--teal);
+        line-height: 1.55;
+        text-align: left;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .deck-card.peeked .deck-card-back-peek { display: block; }
+      .deck-card.peeked { border-color: rgba(62,201,201,0.35); }
+      .deck-card-peek-hint {
+        font-size: 10px;
+        color: var(--text-4);
+        font-family: var(--font-mono);
+        letter-spacing: 0.5px;
+        margin-top: 6px;
+        text-align: right;
+        user-select: none;
+      }
       .deck-name {
         font-weight: 600;
         font-size: 14px;
@@ -5056,25 +5082,25 @@
       }
       /* Front: horizontal green glow preserved (overrides base, keeps our glow) */
       .flashcard-face.front {
-        border-top:    2px solid rgba(82,183,136,0.85) !important;
-        border-bottom: 2px solid rgba(82,183,136,0.85) !important;
-        border-left:   1px solid rgba(82,183,136,0.12) !important;
-        border-right:  1px solid rgba(82,183,136,0.12) !important;
+        border-top:    2px solid rgba(82,183,136,0.43) !important;
+        border-bottom: 2px solid rgba(82,183,136,0.43) !important;
+        border-left:   1px solid rgba(82,183,136,0.06) !important;
+        border-right:  1px solid rgba(82,183,136,0.06) !important;
         box-shadow:
-          0 -8px 32px rgba(82,183,136,0.38),
-          0  8px 32px rgba(82,183,136,0.38),
+          0 -8px 32px rgba(82,183,136,0.19),
+          0  8px 32px rgba(82,183,136,0.19),
           0 8px 40px rgba(0,0,0,0.55),
           inset 0 1px 0 rgba(82,183,136,0.06) !important;
       }
       /* Back: vertical teal glow */
       .flashcard-face.back {
-        border-top:    1px solid rgba(62,201,201,0.12) !important;
-        border-bottom: 1px solid rgba(62,201,201,0.12) !important;
-        border-left:   2px solid rgba(62,201,201,0.85) !important;
-        border-right:  2px solid rgba(62,201,201,0.85) !important;
+        border-top:    1px solid rgba(62,201,201,0.06) !important;
+        border-bottom: 1px solid rgba(62,201,201,0.06) !important;
+        border-left:   2px solid rgba(62,201,201,0.43) !important;
+        border-right:  2px solid rgba(62,201,201,0.43) !important;
         box-shadow:
-          -8px 0 32px rgba(62,201,201,0.38),
-           8px 0 32px rgba(62,201,201,0.38),
+          -8px 0 32px rgba(62,201,201,0.19),
+           8px 0 32px rgba(62,201,201,0.19),
           0 8px 40px rgba(0,0,0,0.55),
           inset 1px 0 0 rgba(62,201,201,0.06) !important;
       }
@@ -6409,6 +6435,27 @@
         const d = document.createElement("div");
         d.textContent = str;
         return d.innerHTML;
+      }
+
+      // renderClozeText — renders {{c1::text}} cloze deletions.
+      // revealed=false (front): replaces deletions with a blank span.
+      // revealed=true  (back):  highlights the answer text in teal.
+      function renderClozeText(raw, revealed) {
+        if (!raw) return '';
+        // Detect any {{cN::...}} pattern
+        if (!raw.includes('{{')) return escapeHTML(raw);
+        return raw.replace(/\{\{c\d+::([^}]+)\}\}/g, function(_, answer) {
+          if (revealed) {
+            return '<span style="color:var(--teal);font-weight:600;border-bottom:2px solid var(--teal);padding-bottom:1px;">'
+              + escapeHTML(answer) + '</span>';
+          } else {
+            const blanks = '_'.repeat(Math.max(4, Math.min(answer.length, 12)));
+            return '<span style="display:inline-block;min-width:60px;border-bottom:2px solid var(--green-bright);'
+              + 'color:transparent;background:rgba(82,183,136,0.12);border-radius:3px;padding:0 6px;'
+              + 'font-family:var(--font-mono);letter-spacing:2px;">'
+              + escapeHTML(blanks) + '</span>';
+          }
+        });
       }
 
       /**
@@ -8560,15 +8607,16 @@
           <div class="flashcard ${t.flipped ? "flipped" : ""}" id="flashcard">
             <div class="flashcard-face front">
               <span class="flashcard-front-label">Question &middot; ${escapeHTML(card.subjectName || "")}</span>
-              <div class="flashcard-content">${escapeHTML(card.front || card.front_content || "")}</div>
+              <div class="flashcard-content">${renderClozeText(card.front || card.front_content || "", false)}</div>
               ${!t.flipped ? '<div class="flashcard-hint">Click or press Space to reveal</div>' : ""}
               <div class="flashcard-stage" style="background:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]}33;color:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]};">${stageLabel}</div>
               <button class="flashcard-ai-btn" id="aiExplainBtn" title="AI Explanation">&#x2726; Explain</button>
+              <button class="flashcard-ai-btn" id="studyEditBtn" title="Edit this card" style="right:auto;left:12px;background:rgba(62,201,201,0.08);border-color:rgba(62,201,201,0.25);color:var(--teal);">&#x270F; Edit</button>
             </div>
             <div class="flashcard-face back">
               <span class="flashcard-front-label">Answer &middot; ${escapeHTML(card.subjectName || "")}</span>
-              <div style="font-size:var(--text-sm);color:var(--teal);opacity:0.55;border-bottom:1px solid var(--teal-border);padding-bottom:10px;margin-bottom:12px;font-style:italic;line-height:1.5;">${escapeHTML(card.front || card.front_content || "")}</div>
-              <div class="flashcard-content">${escapeHTML(card.back || card.back_content || "")}</div>
+              <div style="font-size:var(--text-sm);color:var(--teal);opacity:0.55;border-bottom:1px solid var(--teal-border);padding-bottom:10px;margin-bottom:12px;font-style:italic;line-height:1.5;">${renderClozeText(card.front || card.front_content || "", true)}</div>
+              <div class="flashcard-content">${renderClozeText(card.back || card.back_content || "", true)}</div>
               <div class="flashcard-stage" style="background:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]}33;color:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]};">${stageLabel}</div>
             </div>
             <!-- Stage transition bloom effects -->
@@ -8682,7 +8730,26 @@
         if (flashcard && !t.flipped) {
           flashcard.addEventListener("click", () => {
             t.flipped = true;
-            renderActiveStudySession(document.getElementById("mainContent"));
+            // Animate first: add the class directly so the CSS transition fires.
+            // If we called renderActiveStudySession() immediately the DOM would be
+            // destroyed and rebuilt with .flipped already set — no transition plays.
+            flashcard.classList.add("flipped");
+            // After the flip transition completes, re-render to show rating buttons
+            // and the back-face content in full (hint hides, buttons appear).
+            setTimeout(() => {
+              renderActiveStudySession(document.getElementById("mainContent"));
+            }, 580); // slightly longer than the 0.55s CSS transition
+          });
+        }
+        // Study Edit button — open Anki-style editor for current card
+        const studyEditBtn = document.getElementById("studyEditBtn");
+        if (studyEditBtn) {
+          studyEditBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const _ec = t.queue[t.currentIndex];
+            if (_ec) handleEditCard(_ec.id,
+              _ec.front || _ec.front_content || '',
+              _ec.back  || _ec.back_content  || '');
           });
         }
         // AI Explain button
@@ -8745,93 +8812,92 @@
         if (!t) return;
         const card = t.queue[t.currentIndex];
         if (!card) return;
-        try {
-          // Check for stage transition
-          const oldStage = card.stage || card.level || 1;
-          const result = await api.submitReview(card.id, rating, t.sessionId);
-          // Track stage transitions for animation
-          if (result.newStage && result.newStage !== oldStage) {
-            t.stageTransitions.push({ cardId: card.id, from: oldStage, to: result.newStage });
-            // Trigger bloom animation
-            const bloom = document.getElementById("stageBloom");
-            const glow5 = document.getElementById("stage5Glow");
-            if (bloom && result.newStage > oldStage) {
-              bloom.classList.add("active");
-              setTimeout(() => bloom.classList.remove("active"), 1000);
-            }
-            if (glow5 && result.newStage === 5) {
-              glow5.classList.add("active");
-              setTimeout(() => glow5.classList.remove("active"), 1500);
-              // P9.4-06 FIX: fetch mastery moment from backend and display briefly
-              (async () => {
-                try {
-                  const mm = await apiRequest("/cards/" + card.id + "/mastery-moment");
-                  if (mm && mm.text) {
-                    const panel = document.getElementById("ai-summary-panel");
-                    if (panel) {
-                      panel.innerHTML = `<div style="padding:12px;color:var(--gold);">${escapeHTML(mm.text)}</div>`;
-                      panel.classList.add("open");
-                      setTimeout(() => panel.classList.remove("open"), 3000);
-                    }
-                  }
-                } catch (_e) {}
-              })();
-            }
-          }
-          // Update seed health based on focus and cards reviewed (rating-independent)
-          t.seedHealth = Math.min(100, t.seedHealth + 3);
-          // Stage is derived from health — no separate seedStatus needed (F4)
-          t.seedStatus = getSeedStage(t.seedHealth).stage;
-          // Record review
-          t.reviews.push({ cardId: card.id, rating, timestamp: new Date().toISOString() });
-          t.cardsReviewed++;
-          t.aiSummary = null; // Clear AI summary for next card
-          // ISSUE-010 FIX: "Again" — splice card out and push to end of queue so it
-          // reappears later in the same session. All other responses advance normally.
-          if (result.requeue) {
-            const requeuedCard = t.queue.splice(t.currentIndex, 1)[0];
-            t.queue.push(requeuedCard);
-            // currentIndex now points to the card that was after the removed one — correct
-          } else {
-            t.currentIndex++;
-          }
-          t.flipped = false;
-          t.revealedMasks = {};
-          t.cardShownAt = Date.now();
-          // Pagination: silently prefetch next batch when ≤5 cards remain
-          if (t._hasMore && !t._fetchingMore && (t.queue.length - t.currentIndex) <= 5) {
-            t._fetchingMore = true;
-            apiRequest('/study/session/' + t.sessionId + '/next-cards?offset=' + t.queue.length + '&limit=20')
-              .then(function(d) {
-                if (d && d.cards && d.cards.length > 0) {
-                  d.cards.forEach(function(c) {
-                    t.queue.push(Object.assign({}, c, { front: c.front || c.front_content || '', back: c.back || c.back_content || '' }));
-                  });
-                  t._hasMore = d.has_more || false;
-                } else { t._hasMore = false; }
-                t._fetchingMore = false;
-              })
-              .catch(function() { t._fetchingMore = false; });
-          }
-          // Small delay to show transition animation
-          setTimeout(
-            () => {
-              renderActiveStudySession(document.getElementById("mainContent"));
-            },
-            t.stageTransitions.length > 0 &&
-              t.stageTransitions[t.stageTransitions.length - 1].cardId === card.id
-              ? 400
-              : 0,
-          );
-        } catch (err) {
-          showToast("Review could not be submitted — check your connection.", "error");
-          // Advance card locally so session is not stuck, but this response is NOT saved
-          t.currentIndex++;
-          t.flipped = false;
-          t.aiSummary = null;
-          t.cardShownAt = Date.now();
-          renderActiveStudySession(document.getElementById("mainContent"));
+        // OPTIMISTIC ADVANCE: snapshot the card, update UI immediately,
+        // then fire the review API in the background so there is zero
+        // perceived delay between pressing a rating button and the next card.
+        const _reviewCardId  = card.id;
+        const _reviewCardIdx = t.currentIndex;
+        const _oldStage      = card.stage || card.level || 1;
+        // Update seed + counters immediately
+        t.seedHealth = Math.min(100, t.seedHealth + 3);
+        t.seedStatus = getSeedStage(t.seedHealth).stage;
+        t.reviews.push({ cardId: _reviewCardId, rating, timestamp: new Date().toISOString() });
+        t.cardsReviewed++;
+        t.aiSummary = null;
+        // Advance index optimistically (Again: requeue; others: move forward)
+        // We don't know requeue yet so default-advance; if API says requeue,
+        // the background handler will splice the card to the end.
+        t.currentIndex++;
+        t.flipped = false;
+        t.revealedMasks = {};
+        t.cardShownAt = Date.now();
+        // Pagination prefetch
+        if (t._hasMore && !t._fetchingMore && (t.queue.length - t.currentIndex) <= 5) {
+          t._fetchingMore = true;
+          apiRequest('/study/session/' + t.sessionId + '/next-cards?offset=' + t.queue.length + '&limit=20')
+            .then(function(d) {
+              if (d && d.cards && d.cards.length > 0) {
+                d.cards.forEach(function(c) {
+                  t.queue.push(Object.assign({}, c, { front: c.front || c.front_content || '', back: c.back || c.back_content || '' }));
+                });
+                t._hasMore = d.has_more || false;
+              } else { t._hasMore = false; }
+              t._fetchingMore = false;
+            })
+            .catch(function() { t._fetchingMore = false; });
         }
+        // Render next card immediately — no waiting for network
+        renderActiveStudySession(document.getElementById("mainContent"));
+        // Fire review API in background
+        api.submitReview(_reviewCardId, rating, t.sessionId)
+          .then(function(result) {
+            // Handle Again requeue: undo the optimistic +1 and splice card to end
+            if (result && result.requeue) {
+              // The card was at _reviewCardIdx; we already did currentIndex++
+              // so the card is now at _reviewCardIdx (after splice it's gone).
+              // We need to splice from the NEW position of that card.
+              const _requeueIdx = _reviewCardIdx; // still correct index before splice
+              if (_requeueIdx < t.queue.length) {
+                const _requeuedCard = t.queue.splice(_requeueIdx, 1)[0];
+                if (_requeuedCard) t.queue.push(_requeuedCard);
+                // currentIndex was already incremented; since we spliced the card
+                // that was at _requeueIdx, current index is now one too high.
+                t.currentIndex = Math.max(0, t.currentIndex - 1);
+                renderActiveStudySession(document.getElementById("mainContent"));
+              }
+            }
+            // Stage-up animations (non-blocking — card already advanced)
+            if (result && result.newStage && result.newStage !== _oldStage) {
+              t.stageTransitions.push({ cardId: _reviewCardId, from: _oldStage, to: result.newStage });
+              const bloom = document.getElementById("stageBloom");
+              const glow5 = document.getElementById("stage5Glow");
+              if (bloom && result.newStage > _oldStage) {
+                bloom.classList.add("active");
+                setTimeout(() => bloom.classList.remove("active"), 1000);
+              }
+              if (glow5 && result.newStage === 5) {
+                glow5.classList.add("active");
+                setTimeout(() => glow5.classList.remove("active"), 1500);
+                (async () => {
+                  try {
+                    const mm = await apiRequest("/cards/" + _reviewCardId + "/mastery-moment");
+                    if (mm && mm.text) {
+                      const panel = document.getElementById("ai-summary-panel");
+                      if (panel) {
+                        panel.innerHTML = `<div style="padding:12px;color:var(--gold);">${escapeHTML(mm.text)}</div>`;
+                        panel.classList.add("open");
+                        setTimeout(() => panel.classList.remove("open"), 3000);
+                      }
+                    }
+                  } catch (_e) {}
+                })();
+              }
+            }
+          })
+          .catch(function() {
+            // Silent failure: card already advanced. Show quiet warning.
+            showToast("Review could not be saved — check your connection.", "error");
+          });
       }
 
       // ── Create Subject Modal (replaces browser prompt()) ──────────────────────
@@ -12838,6 +12904,8 @@
                       <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" onclick="handleResetCard('${escapeHTML(c.id)}')">Reset</button>
                       <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;color:#e57373;" onclick="handleDeleteCard('${escapeHTML(c.id)}', '${escapeHTML(c.front.substring(0,30))}')">Delete</button>
                     </div>
+                    <div class="deck-card-back-peek">${escapeHTML(c.back || '')}</div>
+                    <div class="deck-card-peek-hint">CLICK CARD TO PEEK BACK ▾</div>
                   </div>
                 `;
                 })
@@ -12871,6 +12939,18 @@
     `;
           document.getElementById("addDeckBtn").addEventListener("click", () => {
             showCreateSubjectModal(subjects.length, () => navigateTo("library"));
+          });
+          // Library card peek — click card body to reveal/hide the back without opening editor
+          main.querySelectorAll(".deck-card").forEach((card) => {
+            card.addEventListener("click", (e) => {
+              // Don't toggle peek when clicking action buttons
+              if (e.target.closest("button")) return;
+              card.classList.toggle("peeked");
+              const hint = card.querySelector(".deck-card-peek-hint");
+              if (hint) hint.textContent = card.classList.contains("peeked")
+                ? "CLICK TO HIDE ▴"
+                : "CLICK CARD TO PEEK BACK ▾";
+            });
           });
           // 062 FIX: wire Publish deck buttons
           document.querySelectorAll("[data-publish-deck]").forEach((btn) => {
@@ -15069,7 +15149,15 @@
             if ((e.key === " " || e.key === "Enter") && !t.flipped) {
               e.preventDefault();
               t.flipped = true;
-              renderActiveStudySession(document.getElementById("mainContent"));
+              const _fc = document.getElementById("flashcard");
+              if (_fc) {
+                _fc.classList.add("flipped");
+                setTimeout(() => {
+                  renderActiveStudySession(document.getElementById("mainContent"));
+                }, 580);
+              } else {
+                renderActiveStudySession(document.getElementById("mainContent"));
+              }
               return;
             }
             // Number keys 1-4 for ratings (after flip)

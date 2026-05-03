@@ -36,7 +36,7 @@ const { randomUUID } = require('crypto');
 const { WebSocketServer } = require('ws');
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:5432/postgres',
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
   ssl: { rejectUnauthorized: false },
   max: 25, // Increased for concurrent users; Supabase session-mode cap is 15 so DATABASE_URL env should use transaction-mode pooler
   idleTimeoutMillis: 30000,
@@ -4054,9 +4054,28 @@ return null;
 }
 
 function parseCBTResponse(text, examSessionId, sourceCards) {
-const parts = text.split('---');
-const questionsBlock = parts[0] || text;
-const answersBlock = parts[1] || '';
+// ROBUST SPLIT: Gemini often uses --- as markdown HR between questions,
+// which breaks text.split('---')[0] (only captures Q1 or Q2).
+// Strategy: anchor on the ANSWERS AND EXPLANATIONS header first;
+// fall back to the LAST occurrence of \n--- in the text.
+let questionsBlock, answersBlock;
+const _ansHeaderRe = /\n---[\s\S]*?(?:ANSWERS?\s+(?:AND\s+)?EXPLANATIONS?|ANSWER\s+KEY)\s*\n/i;
+const _ansHeaderMatch = text.match(_ansHeaderRe);
+if (_ansHeaderMatch) {
+  const _splitIdx = text.indexOf(_ansHeaderMatch[0]);
+  questionsBlock = text.slice(0, _splitIdx);
+  answersBlock   = text.slice(_splitIdx + _ansHeaderMatch[0].length);
+} else {
+  // No ANSWERS header found — use the LAST \n--- as the separator
+  const _lastDash = text.lastIndexOf('\n---');
+  if (_lastDash !== -1) {
+    questionsBlock = text.slice(0, _lastDash);
+    answersBlock   = text.slice(_lastDash + 4);
+  } else {
+    questionsBlock = text;
+    answersBlock   = '';
+  }
+}
 const questions = [];
 const qLines = questionsBlock.split('\n');
 let current = null,
@@ -4124,7 +4143,7 @@ currentAnswer = {};
 for (const rawLine of aLines) {
 const line = rawLine.trim();
 if (!line) continue;
-const qNumMatch = line.match(/^Question\s(\d+)\s:/i);
+const qNumMatch = line.match(/^Question\s(\d+)\s*:/i);
 if (qNumMatch) {
 if (currentAnswerNum !== null && currentAnswer.correct_answer)
 answerMap.set(currentAnswerNum, currentAnswer);
@@ -4134,10 +4153,11 @@ continue;
 }
 if (currentAnswerNum === null) continue;
 if (line.match(/^Correct Answer:/i)) {
-const ans = line.replace(/^Correct Answer:\s/i, '').trim();
-currentAnswer.correct_answer = ans.match(/^[A-D]/i) ? ans.toUpperCase() : '';
+const ans = line.replace(/^Correct Answer:\s*/i, '').trim();
+const letterMatch = ans.match(/^[A-D]/i);
+currentAnswer.correct_answer = letterMatch ? letterMatch[0].toUpperCase() : '';
 } else if (line.match(/^Explanation:/i)) {
-currentAnswer.explanation = line.replace(/^Explanation:\s/i, '');
+currentAnswer.explanation = line.replace(/^Explanation:\s*/i, '');
 } else if (currentAnswer.explanation !== undefined) {
 currentAnswer.explanation += ' ' + line;
 }
@@ -11431,7 +11451,12 @@ const bubbleSubjectId  = subject_id || (deck ? deck.subject_id : null);
 const SPECIAL_OVERRIDE = new Set([
   CARD_STATES.DANGEROUS, CARD_STATES.AVOIDED,
   CARD_STATES.GHOST,     CARD_STATES.STUCK,
-  CARD_STATES.FRAGILE,   CARD_STATES.SEEDLING,
+  CARD_STATES.FRAGILE,
+  // SEEDLING intentionally excluded: isCardDue() already returns true for
+  // brand-new cards (next_review_at is null). Including SEEDLING here caused
+  // recently-reviewed cards to bypass the due-date check because card_states
+  // is updated asynchronously (queueKSRecompute fires every 60s), so a card
+  // could sit as SEEDLING in the DB long after its next_review_at was set.
 ]);
 const dueQueue = queue.filter(
   (item) => isCardDue(item.card) || SPECIAL_OVERRIDE.has(item.state?.state)
@@ -14522,10 +14547,11 @@ const dueCount = allCards.filter((c) => !c.due || c.due <= todayStr).length;
 // recentCards (first 12)
 const recentCards = allCards.slice(0, 12).map((c) => ({
 id: c.id,
-front: c.front || '',
+front: c.front_content || c.front || '',
+back: c.back_content || c.back || '',
 stage: c.stage || 0,
-isDue: !c.due || c.due <= todayStr,
-reviewCount: c.reviewCount || 0,
+isDue: !c.next_review_at || new Date(c.next_review_at) <= new Date(),
+reviewCount: c.review_count || c.reviewCount || 0,
 }));
 return {
 id: s.id,
@@ -15285,6 +15311,7 @@ async function runSchemaMigrations() {
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS completed_at timestamptz`,
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS time_limit_seconds integer DEFAULT 1800`,
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS card_range text DEFAULT 'all'`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ended_early boolean DEFAULT false`,
 
     // reckoning_sessions: fields referenced in brain router and lockout middleware
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS subject_name text`,
