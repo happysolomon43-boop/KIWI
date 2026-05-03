@@ -1488,7 +1488,6 @@
         position: absolute;
         inset: 0;
         background: var(--glass-bg);
-        border: 1px solid var(--glass-border);
         border-radius: var(--r-xl);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
@@ -1498,13 +1497,106 @@
         justify-content: center;
         padding: 36px;
         text-align: center;
-        box-shadow: var(--shadow);
         backdrop-filter: blur(12px) saturate(1.1);
         -webkit-backdrop-filter: blur(12px) saturate(1.1);
+        transition: box-shadow 0.4s ease, border-color 0.4s ease;
       }
+      /* ── Front: horizontal (top + bottom) glow — KIWI green ── */
+      .flashcard-face.front {
+        border-top: 2px solid rgba(82,183,136,0.80);
+        border-bottom: 2px solid rgba(82,183,136,0.80);
+        border-left: 1px solid rgba(82,183,136,0.12);
+        border-right: 1px solid rgba(82,183,136,0.12);
+        box-shadow:
+          0 -8px 32px rgba(82,183,136,0.38),
+          0  8px 32px rgba(82,183,136,0.38),
+          var(--shadow);
+      }
+      /* ── Back: vertical (left + right) glow — teal ── */
       .flashcard-face.back {
         transform: rotateY(180deg);
         background: var(--bg-3);
+        border-top: 1px solid rgba(62,201,201,0.12);
+        border-bottom: 1px solid rgba(62,201,201,0.12);
+        border-left: 2px solid rgba(62,201,201,0.80);
+        border-right: 2px solid rgba(62,201,201,0.80);
+        box-shadow:
+          -8px 0 32px rgba(62,201,201,0.38),
+           8px 0 32px rgba(62,201,201,0.38),
+          var(--shadow);
+      }
+      /* ── Flip burst: horizontal dims, vertical surges, then settles ── */
+      @keyframes kiwi-flip-h {
+        0%   { box-shadow: 0 -20px 60px rgba(82,183,136,0.75), 0 20px 60px rgba(82,183,136,0.75), var(--shadow); }
+        100% { box-shadow: 0 -8px 32px rgba(82,183,136,0.38), 0  8px 32px rgba(82,183,136,0.38), var(--shadow); }
+      }
+      @keyframes kiwi-flip-v {
+        0%   { box-shadow: -22px 0 70px rgba(62,201,201,0.80), 22px 0 70px rgba(62,201,201,0.80), var(--shadow); }
+        100% { box-shadow: -8px  0 32px rgba(62,201,201,0.38),  8px 0 32px rgba(62,201,201,0.38), var(--shadow); }
+      }
+      /* Auto-fire: back face burst plays whenever .flipped card enters DOM */
+      .flashcard.flipped .flashcard-face.back {
+        animation: kiwi-flip-v 0.65s cubic-bezier(0.22,1,0.36,1) both;
+      }
+
+      /* ── Image Occlusion card styles ── */
+      .occlusion-wrap {
+        position: relative;
+        display: inline-block;
+        max-width: 100%;
+        line-height: 0;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .occlusion-wrap img {
+        max-width: 100%;
+        display: block;
+        border-radius: 10px;
+      }
+      .occlusion-mask {
+        position: absolute;
+        background: rgba(62,201,201,0.72);
+        border: 2px solid rgba(62,201,201,0.95);
+        border-radius: 5px;
+        box-shadow: 0 0 14px rgba(62,201,201,0.45);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 600;
+        color: rgba(255,255,255,0.92);
+        letter-spacing: 0.5px;
+        transition: background 0.18s, box-shadow 0.18s;
+        user-select: none;
+        z-index: 2;
+      }
+      .occlusion-mask:hover {
+        background: rgba(62,201,201,0.90);
+        box-shadow: 0 0 22px rgba(62,201,201,0.65);
+      }
+      .occlusion-mask.revealed {
+        background: rgba(11,18,14,0.88);
+        border-color: rgba(82,183,136,0.75);
+        box-shadow: 0 0 14px rgba(82,183,136,0.35);
+        color: var(--green-bright);
+        cursor: default;
+        font-size: 10px;
+      }
+      .occlusion-draw-canvas {
+        position: absolute;
+        inset: 0;
+        cursor: crosshair;
+        z-index: 3;
+      }
+      .occlusion-draft-rect {
+        position: absolute;
+        border: 2px dashed rgba(82,183,136,0.9);
+        background: rgba(82,183,136,0.18);
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 4;
       }
       .flashcard-front-label {
         position: absolute;
@@ -4937,21 +5029,36 @@
         background: rgba(82,183,136,0.06) !important;
       }
 
-      /* ── Flashcard: glass morphism with teal accent ── */
+      /* ── Flashcard: glass morphism with directional edge glow ── */
       .flashcard-face {
         background: linear-gradient(145deg,
           rgba(17, 26, 20, 0.98) 0%,
           rgba(11, 18, 14, 0.99) 100%) !important;
-        border: 1px solid rgba(82,183,136,0.15) !important;
-        box-shadow: 0 8px 40px rgba(0,0,0,0.55),
-                    inset 0 1px 0 rgba(82,183,136,0.06) !important;
         backdrop-filter: blur(2px);
       }
+      /* Front: horizontal green glow preserved (overrides base, keeps our glow) */
       .flashcard-face.front {
-        border-top: 2px solid var(--teal-border) !important;
+        border-top:    2px solid rgba(82,183,136,0.85) !important;
+        border-bottom: 2px solid rgba(82,183,136,0.85) !important;
+        border-left:   1px solid rgba(82,183,136,0.12) !important;
+        border-right:  1px solid rgba(82,183,136,0.12) !important;
+        box-shadow:
+          0 -8px 32px rgba(82,183,136,0.38),
+          0  8px 32px rgba(82,183,136,0.38),
+          0 8px 40px rgba(0,0,0,0.55),
+          inset 0 1px 0 rgba(82,183,136,0.06) !important;
       }
+      /* Back: vertical teal glow */
       .flashcard-face.back {
-        border-top: 2px solid rgba(82,183,136,0.25) !important;
+        border-top:    1px solid rgba(62,201,201,0.12) !important;
+        border-bottom: 1px solid rgba(62,201,201,0.12) !important;
+        border-left:   2px solid rgba(62,201,201,0.85) !important;
+        border-right:  2px solid rgba(62,201,201,0.85) !important;
+        box-shadow:
+          -8px 0 32px rgba(62,201,201,0.38),
+           8px 0 32px rgba(62,201,201,0.38),
+          0 8px 40px rgba(0,0,0,0.55),
+          inset 1px 0 0 rgba(62,201,201,0.06) !important;
       }
       .flashcard-front-label {
         color: var(--teal) !important;
@@ -5246,7 +5353,8 @@
       // ── CONFIGURATION ──
       // Relative URL works in all environments: Replit proxy routes /api to the backend,
       // and local single-origin dev serves both from the same port.
-      const API_BASE_URL = window.location.hostname === "localhost" ? "http://localhost:8080/api" : "https://kiwi-741i.onrender.com/api";
+      const _isLocalDev = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+      const API_BASE_URL = _isLocalDev ? "http://localhost:8080/api" : "/api";
 
       // ── AUTHENTICATION STATE ──
       let authToken = localStorage.getItem("kiwi_auth_token") || null;
@@ -6024,9 +6132,30 @@
         return await apiRequest("/subjects/" + subjectId + "/health");
       };
 
-      // ── Tier 2: review heatmap (GET /api/study/review-heatmap) ──
-      api.getReviewHeatmap = async function() {
-        return await apiRequest("/study/review-heatmap");
+      // ── Tier 2: review heatmap (GET /api/study/review-heatmap?days=N) ──
+      api.getReviewHeatmap = async function(days) {
+        const qs = days ? '?days=' + days : '';
+        return await apiRequest("/study/review-heatmap" + qs);
+      };
+
+      // ── Retry deck from wrong exam answers ──
+      api.createRetryDeck = async function(examId) {
+        return await apiRequest(`/exams/${examId}/create-retry-deck`, { method: 'POST' });
+      };
+
+      // ── Deck merge ──
+      api.mergeDecks = async function(sourceDeckIds, targetName, subjectId) {
+        return await apiRequest('/decks/merge', { method: 'POST', body: { source_deck_ids: sourceDeckIds, target_name: targetName, subject_id: subjectId } });
+      };
+
+      // ── Move cards between decks ──
+      api.moveCardsToDeck = async function(sourceDeckId, cardIds, targetDeckId) {
+        return await apiRequest(`/decks/${sourceDeckId}/move-cards`, { method: 'POST', body: { card_ids: cardIds, target_deck_id: targetDeckId } });
+      };
+
+      // ── Forgetting curve projection ──
+      api.getForgettingCurve = async function(subjectId) {
+        return await apiRequest(`/study/forgetting-curve/${subjectId}`);
       };
 
       // ── Tier 2: exam history list (GET /api/exams/) ──
@@ -7949,6 +8078,11 @@
                 }
               </div>
             </div>
+            <!-- Mini 12-week activity heatmap on dashboard -->
+            <div class="card" id="dashHeatmapCard" style="margin-top:12px;">
+              <div style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">12-Week Activity</div>
+              <div id="dashHeatmap" style="font-size:var(--text-xs);color:var(--text-4);">Loading...</div>
+            </div>
             <!-- Brain Preview -->
             ${
               brainPreview
@@ -8015,6 +8149,34 @@
               interactive: true,
             });
           }
+          // ── Load mini 12-week heatmap on dashboard ────────────────────────
+          (function() {
+            var el = document.getElementById('dashHeatmap');
+            if (!el) return;
+            api.getReviewHeatmap(84).then(function(hm) {
+              var today = new Date();
+              var cells = [];
+              var maxC = 1;
+              for (var d = 83; d >= 0; d--) {
+                var dt = new Date(today); dt.setDate(dt.getDate() - d);
+                var k = dt.toISOString().split('T')[0];
+                var c = hm[k] || 0;
+                if (c > maxC) maxC = c;
+                cells.push({ count: c, key: k });
+              }
+              var weeks = [];
+              for (var i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+              var html = '<div style="display:inline-flex;gap:2px;">' + weeks.map(function(wk) {
+                return '<div style="display:flex;flex-direction:column;gap:2px;">' + wk.map(function(day) {
+                  var intensity = day.count === 0 ? 0 : Math.min(4, Math.ceil((day.count / maxC) * 4));
+                  var bgs = ['var(--border)','rgba(82,183,136,0.25)','rgba(82,183,136,0.5)','rgba(82,183,136,0.75)','var(--green-bright)'];
+                  return '<div title="' + escapeHTML(day.key) + ': ' + day.count + '" style="width:9px;height:9px;border-radius:1px;background:' + bgs[intensity] + ';"></div>';
+                }).join('') + '</div>';
+              }).join('') + '</div>';
+              el.innerHTML = html;
+            }).catch(function() { el.textContent = 'No data yet'; });
+          })();
+
           // Wire up invitation dismiss buttons
           document.querySelectorAll("[data-dismiss]").forEach((btn) => {
             btn.addEventListener("click", async (e) => {
@@ -8077,6 +8239,7 @@
                     currentIndex: 0,
                     flipped: false,
                     startTime: Date.now(),
+                    cardShownAt: Date.now(),
                     reviews: [],
                     cardsReviewed: 0,
                     seedStatus: "alive",
@@ -8235,6 +8398,7 @@
                 currentIndex: 0,
                 flipped: false,
                 startTime: Date.now(),
+                cardShownAt: Date.now(),
                 reviews: [],
                 cardsReviewed: 0,
                 seedStatus: "alive",
@@ -8295,11 +8459,38 @@
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
           <div style="font-family:var(--font-mono);font-size:var(--text-sm);color:var(--text-3);">${t.focusData?.tabAwayCount || 0} away</div>
+          <div id="cardElapsedTimer" style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-4);padding:2px 7px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;min-width:32px;text-align:center;">0s</div>
           ${t.currentIndex < t.queue.length - 1 ? `<button class="btn btn-ghost btn-sm" onclick="skipCard()" title="Skip card to end of queue" style="font-size:var(--text-xs);padding:3px 8px;opacity:0.65;">Skip &#x21E3;</button>` : ""}
         </div>
       </div>
       <div class="study-arena" id="studyArena">
-        <div class="flashcard-scene">
+        ${(() => {
+          // ── Occlusion card detection ──
+          let occData = null;
+          try { const _p = JSON.parse(card.front || card.front_content || ""); if (_p && _p._type === "occlusion") occData = _p; } catch(_e) {}
+          if (occData) {
+            const _masks = occData.masks || [];
+            const _rev = t.revealedMasks || {};
+            const _revCount = _masks.filter(_m => _rev[_m.id]).length;
+            const _all = _revCount === _masks.length && _masks.length > 0;
+            const _sc = ["var(--s1)","var(--s2)","var(--s3)","var(--s4)","var(--s5)"][stage-1];
+            return `<div class="flashcard-scene" style="max-width:720px;width:100%;">
+              <div style="background:var(--glass-bg);border-radius:var(--r-xl);border-top:1px solid rgba(62,201,201,0.12);border-bottom:1px solid rgba(62,201,201,0.12);border-left:2px solid rgba(62,201,201,0.82);border-right:2px solid rgba(62,201,201,0.82);box-shadow:-8px 0 32px rgba(62,201,201,0.35),8px 0 32px rgba(62,201,201,0.35),var(--shadow);padding:24px 20px 20px;backdrop-filter:blur(12px);">
+                <div style="font-size:9px;font-family:var(--font-mono);color:var(--teal);letter-spacing:1.5px;margin-bottom:10px;text-transform:uppercase;">Image Occlusion &middot; ${escapeHTML(card.subjectName||"")} &middot; ${_revCount}/${_masks.length} revealed</div>
+                <div style="font-size:14px;color:var(--text-2);margin-bottom:14px;font-style:italic;">${escapeHTML(occData.question||"Click the teal regions to reveal labels")}</div>
+                <div style="display:flex;justify-content:center;">
+                  <div class="occlusion-wrap" id="occlusionWrap">
+                    <img src="${occData.imageData}" id="occlusionImg" style="max-width:100%;max-height:400px;display:block;" />
+                    ${_masks.map(_m => `<div class="occlusion-mask${_rev[_m.id]?" revealed":""}" data-mask-id="${escapeHTML(_m.id)}" style="left:${_m.xPct}%;top:${_m.yPct}%;width:${_m.wPct}%;height:${_m.hPct}%;">${_rev[_m.id]?escapeHTML(_m.label):"?"}</div>`).join("")}
+                  </div>
+                </div>
+                <div style="font-size:10px;font-family:var(--font-mono);color:var(--text-4);margin-top:10px;text-align:center;">${_all?"✓ All revealed — rate your recall below":"Click each teal region to reveal its label"}</div>
+                <div class="flashcard-stage" style="position:static;display:inline-block;margin-top:8px;background:${_sc}33;color:${_sc};">${stageLabel}</div>
+              </div>
+            </div>`;
+          }
+          // ── Standard 3-D flip card ──
+          return `<div class="flashcard-scene">
           <div class="flashcard ${t.flipped ? "flipped" : ""}" id="flashcard">
             <div class="flashcard-face front">
               <span class="flashcard-front-label">Question &middot; ${escapeHTML(card.subjectName || "")}</span>
@@ -8318,7 +8509,8 @@
             <div class="stage-transition-bloom" id="stageBloom"></div>
             <div class="stage-5-glow" id="stage5Glow"></div>
           </div>
-        </div>
+        </div>`;
+        })()}
         ${
           t.aiSummary
             ? `
@@ -8344,12 +8536,15 @@
           </div>
         </div>
         ${
-          t._viewingPrev
-            ? `<div style="display:flex;justify-content:center;margin-top:12px;">
-                 <div style="padding:6px 18px;background:rgba(62,201,201,0.08);border:1px solid rgba(62,201,201,0.25);border-radius:20px;font-size:var(--text-xs);font-family:var(--font-mono);color:var(--teal);letter-spacing:1px;">✓ ALREADY REVIEWED — read only</div>
-               </div>`
-            : t.flipped
-            ? `
+          (() => {
+            // determine whether to show rating buttons
+            let _showRating = false;
+            if (t._viewingPrev) return `<div style="display:flex;justify-content:center;margin-top:12px;"><div style="padding:6px 18px;background:rgba(62,201,201,0.08);border:1px solid rgba(62,201,201,0.25);border-radius:20px;font-size:var(--text-xs);font-family:var(--font-mono);color:var(--teal);letter-spacing:1px;">✓ ALREADY REVIEWED — read only</div></div>`;
+            if (t.flipped) { _showRating = true; }
+            // occlusion: show when all masks revealed
+            try { const _op = JSON.parse(card.front || card.front_content || ""); if (_op && _op._type === "occlusion") { const _ms = _op.masks||[]; const _rv = t.revealedMasks||{}; _showRating = _ms.length>0 && _ms.every(_m=>_rv[_m.id]); } } catch(_e) {}
+            if (!_showRating) return "";
+            return `
         <div class="response-row">
           <button class="resp-btn resp-again" data-rating="1" title="Press 1">
             <span class="resp-btn-label">Again</span>
@@ -8367,10 +8562,8 @@
             <span class="resp-btn-label">Easy</span>
             <span class="resp-btn-interval">${escapeHTML(card.intervalHintEasy || "~4d")}</span>
           </button>
-        </div>
-        `
-            : ""
-        }
+        </div>`;
+          })()
       </div>
     </div>
     <!-- F15: Card priority indicator -->
@@ -8408,6 +8601,15 @@
         if (studyContainer) {
           studyContainer.querySelectorAll(".flashcard-content").forEach(el => renderMathContent(el));
         }
+        // Wire up occlusion mask clicks
+        document.querySelectorAll(".occlusion-mask:not(.revealed)").forEach(maskEl => {
+          maskEl.addEventListener("click", () => {
+            const mid = maskEl.dataset.maskId;
+            if (!t.revealedMasks) t.revealedMasks = {};
+            t.revealedMasks[mid] = true;
+            renderActiveStudySession(document.getElementById("mainContent"));
+          });
+        });
         // Wire up flashcard click to flip
         const flashcard = document.getElementById("flashcard");
         if (flashcard && !t.flipped) {
@@ -8442,6 +8644,18 @@
             await handleStudyResponse(rating);
           });
         });
+        // Per-card elapsed timer — resets on card change, continues through flip
+        if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
+        if (t._cardTimerIndex !== t.currentIndex) {
+          t.cardShownAt = Date.now();
+          t._cardTimerIndex = t.currentIndex;
+        }
+        t._cardTimerInterval = setInterval(() => {
+          const el = document.getElementById('cardElapsedTimer');
+          if (!el) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; return; }
+          const s = Math.floor((Date.now() - (t.cardShownAt || Date.now())) / 1000);
+          el.textContent = s < 60 ? s + 's' : Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+        }, 1000);
       }
 
       function prevCard() {
@@ -8450,6 +8664,7 @@
         t.currentIndex--;
         t.flipped = false;
         t.aiSummary = null;
+        t.cardShownAt = Date.now();
         // Show card in read-only reviewed mode by temporarily marking it
         t._viewingPrev = true;
         renderActiveStudySession(document.getElementById("mainContent"));
@@ -8514,6 +8729,8 @@
             t.currentIndex++;
           }
           t.flipped = false;
+          t.revealedMasks = {};
+          t.cardShownAt = Date.now();
           // Small delay to show transition animation
           setTimeout(
             () => {
@@ -8530,11 +8747,62 @@
           t.currentIndex++;
           t.flipped = false;
           t.aiSummary = null;
+          t.cardShownAt = Date.now();
           renderActiveStudySession(document.getElementById("mainContent"));
         }
       }
 
       // ── Create Subject Modal (replaces browser prompt()) ──────────────────────
+      function showMergeDecksModal(subjectId, subjectName, decksJson) {
+        var decks = [];
+        try { decks = typeof decksJson === 'string' ? JSON.parse(decksJson.replace(/&quot;/g, '"')) : decksJson; } catch(e) { decks = []; }
+        if (decks.length < 2) { showToast('Need at least 2 decks to merge', 'error'); return; }
+        var modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.id = 'mergeDecksModal';
+        modal.innerHTML = `
+          <div class="card" style="max-width:440px;width:100%;margin:auto;animation:scaleIn var(--t-mid) var(--ease-spring);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+              <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;">&#x26A1; Merge Decks</div>
+              <button id="md-close" style="background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer;line-height:1;">&#x2715;</button>
+            </div>
+            <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:14px;">Select 2 or more decks from <strong>${escapeHTML(subjectName)}</strong> to merge into a single new deck. Source decks are deleted after merging.</div>
+            <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-height:220px;overflow-y:auto;">
+              ${decks.map(function(d) { return '<label style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg-3);border-radius:var(--r);cursor:pointer;">' +
+                '<input type="checkbox" class="md-deck-check" value="' + escapeHTML(d.id) + '" />' +
+                '<span style="font-size:var(--text-base);color:var(--text);">' + escapeHTML(d.name) + '</span>' +
+                '</label>'; }).join('')}
+            </div>
+            <div class="input-group" style="margin-bottom:16px;">
+              <label class="input-label" style="margin-bottom:6px;display:block;">New Merged Deck Name</label>
+              <input class="input" id="md-name" type="text" placeholder="e.g. Combined ${escapeHTML(subjectName)}" style="width:100%;" />
+            </div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button class="btn btn-ghost" id="md-cancel">Cancel</button>
+              <button class="btn btn-primary" id="md-confirm">Merge Selected</button>
+            </div>
+          </div>`;
+        document.body.appendChild(modal);
+        modal.querySelector('#md-close').addEventListener('click', function() { modal.remove(); });
+        modal.querySelector('#md-cancel').addEventListener('click', function() { modal.remove(); });
+        modal.addEventListener('click', function(ev) { if (ev.target === modal) modal.remove(); });
+        modal.querySelector('#md-confirm').addEventListener('click', async function() {
+          var checked = Array.from(modal.querySelectorAll('.md-deck-check:checked')).map(function(el) { return el.value; });
+          if (checked.length < 2) { showToast('Select at least 2 decks', 'error'); return; }
+          var name = modal.querySelector('#md-name').value.trim() || ('Merged ' + subjectName);
+          this.disabled = true; this.textContent = 'Merging...';
+          try {
+            var result = await api.mergeDecks(checked, name, subjectId);
+            showToast('✅ Decks merged into "' + (result.deck && result.deck.name || name) + '" (' + result.card_count + ' cards)', 'success', 5000);
+            modal.remove();
+            navigateTo('library');
+          } catch (err) {
+            showToast('⚠ ' + ((err && err.error) || 'Merge failed'), 'error', 5000);
+            this.disabled = false; this.textContent = 'Merge Selected';
+          }
+        });
+      }
+
       function showCreateSubjectModal(currentSubjectCount, onCreated) {
         const modal = document.createElement("div");
         modal.className = "modal-overlay";
@@ -8656,6 +8924,7 @@
         }
         t.flipped = false;
         t.aiSummary = null;
+        t.cardShownAt = Date.now();
         renderActiveStudySession(document.getElementById("mainContent"));
       }
 
@@ -8666,6 +8935,7 @@
       async function endStudySession() {
         const t = AppState.tempStudy;
         if (!t) return;
+        if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
         stopFocusTracking();
         try {
           const focusData = t.focusData || { tabAwayCount: 0, idleSeconds: 0 };
@@ -8968,6 +9238,8 @@
               // P3-FIX: Transition exam from 'ready' → 'active' before entering the exam view.
               // Without this call the submit route rejects the submission.
               await apiRequest(`/exams/${examId}/start`, { method: "POST" }).catch(() => {});
+              const qCount = (exam.questions || examData.questions || []).length;
+              const SECS_PER_Q = 66; // 1.1 minutes × 60s per question
               AppState.tempExam = {
                 examId: examId,
                 questions: normalizeExamQuestions(exam.questions || examData.questions || []),
@@ -8975,7 +9247,9 @@
                 answers: {},
                 flagged: new Set(),
                 startTime: Date.now(),
-                timeLimit: exam.isReckoning ? Infinity : (exam.questions || []).length * 90, // 90s per question; no auto-submit for Reckoning
+                timeLimit: exam.isReckoning ? Infinity : qCount * SECS_PER_Q,
+                totalTime: exam.isReckoning ? Infinity : qCount * SECS_PER_Q,
+                _warnedAt20: false,
                 submitted: false,
               };
               navigateTo("exam");
@@ -9020,10 +9294,11 @@
           const isFlagged = e.flagged.has(q.id);
           const timeElapsed = Math.floor((Date.now() - e.startTime) / 1000);
           const timeRemaining = Math.max(0, e.timeLimit - timeElapsed);
-          // Update timer styling based on remaining time
+          // Update timer styling based on remaining time (proportional to total)
+          const _tt = e.totalTime || e.timeLimit || 1;
           let timerClass = "";
-          if (timeRemaining <= 60) timerClass = "danger";
-          else if (timeRemaining <= 180) timerClass = "warning";
+          if (timeRemaining <= Math.max(60, _tt * 0.10)) timerClass = "danger";
+          else if (timeRemaining <= Math.max(120, _tt * 0.20)) timerClass = "warning";
           main.innerHTML = `
     <div class="exam-layout">
       <div class="exam-header">
@@ -9148,6 +9423,9 @@
       function startExamTimer() {
         const e = AppState.tempExam;
         if (!e || e._timerInterval) return;
+        const totalT = e.totalTime || e.timeLimit || 1;
+        const dangerThreshold = Math.max(60, totalT * 0.10);
+        const warnThreshold   = Math.max(120, totalT * 0.20);
         e._timerInterval = setInterval(() => {
           if (e.submitted) {
             clearInterval(e._timerInterval);
@@ -9159,16 +9437,30 @@
           const timerEl = document.getElementById("examTimer");
           if (timerEl) {
             timerEl.textContent = formatDuration(remaining);
-            if (remaining <= 60) {
+            if (remaining <= dangerThreshold) {
               timerEl.classList.add("danger");
               timerEl.classList.remove("warning");
-            } else if (remaining <= 180) {
+            } else if (remaining <= warnThreshold) {
               timerEl.classList.add("warning");
               timerEl.classList.remove("danger");
             }
           }
+          // One-time toast warning when 20% of total time remains
+          if (!e._warnedAt20 && remaining <= warnThreshold && remaining > dangerThreshold) {
+            e._warnedAt20 = true;
+            const mins = Math.ceil(remaining / 60);
+            showToast(`⚠ Time check — about ${mins} minute${mins !== 1 ? 's' : ''} remaining! Pace yourself.`, 'warning', 6000);
+          }
+          // One-time danger toast at 10%
+          if (!e._warnedAt10 && remaining <= dangerThreshold && remaining > 0) {
+            e._warnedAt10 = true;
+            const secs = Math.ceil(remaining);
+            showToast(`🔴 Almost out of time — ${formatDuration(secs)} left! The exam will auto-submit when time expires.`, 'error', 8000);
+          }
           if (remaining <= 0) {
             clearInterval(e._timerInterval);
+            e._timerInterval = null;
+            showToast('⏱ Time is up! Submitting your exam...', 'error', 4000);
             submitExam();
           }
         }, 1000);
@@ -9183,6 +9475,22 @@
           AppState.tempExam = null;
           navigateTo("dashboard");
         });
+      }
+
+      async function createRetryDeckFromExam() {
+        const e = AppState.tempExam;
+        if (!e || !e.examId) { showToast('No exam data to create retry deck', 'error'); return; }
+        const btn = document.getElementById('retryDeckBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
+        try {
+          const result = await api.createRetryDeck(e.examId);
+          showToast('✅ ' + (result.message || 'Retry deck created!'), 'success', 5000);
+          if (btn) { btn.textContent = '✓ Retry Deck Created'; }
+        } catch (err) {
+          const msg = (err && err.error) || 'Failed to create retry deck';
+          showToast('⚠ ' + msg, 'error', 5000);
+          if (btn) { btn.disabled = false; btn.textContent = '🔁 Create Retry Deck'; }
+        }
       }
 
       async function submitExam() {
@@ -9403,9 +9711,10 @@
         `
             : ""
         }
-        <div style="display:flex;gap:12px;justify-content:center;">
+        <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
           <button class="btn btn-secondary" onclick="navigateTo('exam-config')">New Exam</button>
+          ${e.examId && !isReckoning ? `<button class="btn btn-secondary" id="retryDeckBtn" onclick="createRetryDeckFromExam()">&#x1F504; Create Retry Deck</button>` : ''}
         </div>
       </div>
     `;
@@ -11564,7 +11873,7 @@
               api.getProgress(),
               api.getTroubleCards().catch(function() { return null; }),
               api.getAccuracyTrend().catch(function() { return null; }),
-              api.getReviewHeatmap().catch(function() { return {}; }),
+              api.getReviewHeatmap(365).catch(function() { return {}; }),
               api.getExams(1, 10).catch(function() { return []; })
             ]);
           AppState.progress = data;
@@ -11588,22 +11897,58 @@
 
           const band = getKSBand(Math.round(overallKS || 0));
 
-          // ── Build 30-day heatmap grid ──────────────────────────────────────────
+          // ── Build 52-week GitHub-style heatmap ─────────────────────────────────
           var heatmapHTML = "";
-          var today = new Date();
-          var heatmapDays = [];
-          for (var d = 29; d >= 0; d--) {
-            var dt = new Date(today); dt.setDate(dt.getDate() - d);
-            var key = dt.toISOString().split("T")[0];
-            heatmapDays.push({ key: key, count: heatmap[key] || 0, label: key });
+          var _today = new Date();
+          var _startDay = new Date(_today);
+          // Go back 364 days (52 full weeks) then align to Sunday
+          _startDay.setDate(_today.getDate() - 363);
+          var _dow = _startDay.getDay(); // 0=Sun
+          _startDay.setDate(_startDay.getDate() - _dow); // align to Sunday
+          var _cells = [];
+          var _cursor = new Date(_startDay);
+          var _maxCount = 1;
+          while (_cursor <= _today) {
+            var _k = _cursor.toISOString().split("T")[0];
+            var _cnt = heatmap[_k] || 0;
+            if (_cnt > _maxCount) _maxCount = _cnt;
+            _cells.push({ key: _k, count: _cnt, future: _cursor > _today });
+            _cursor.setDate(_cursor.getDate() + 1);
           }
-          var maxCount = heatmapDays.reduce(function(m, x) { return Math.max(m, x.count); }, 1);
-          heatmapHTML = heatmapDays.map(function(day) {
-            var intensity = day.count === 0 ? 0 : Math.ceil((day.count / maxCount) * 4);
-            var colors = ["var(--border)", "rgba(82,183,136,0.25)", "rgba(82,183,136,0.5)", "rgba(82,183,136,0.75)", "var(--green-bright)"];
-            var bg = colors[intensity] || colors[0];
-            return '<div title="' + escapeHTML(day.label) + ': ' + day.count + ' reviews" style="width:20px;height:20px;border-radius:3px;background:' + bg + ';flex-shrink:0;"></div>';
-          }).join("");
+          // Build column-major (week columns × 7 day rows) SVG-style grid
+          var _weeks = [];
+          for (var _i = 0; _i < _cells.length; _i += 7) _weeks.push(_cells.slice(_i, _i + 7));
+          var _monthLabels = [];
+          _weeks.forEach(function(wk, wi) {
+            if (wk[0]) {
+              var _m = wk[0].key.substring(0, 7);
+              var _prev = wi > 0 && _weeks[wi-1][0] ? _weeks[wi-1][0].key.substring(0, 7) : null;
+              if (_m !== _prev) {
+                var _mn = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                _monthLabels.push({ wi: wi, label: _mn[parseInt(_m.split("-")[1], 10) - 1] });
+              }
+            }
+          });
+          heatmapHTML = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">' +
+            '<div style="display:inline-flex;flex-direction:column;gap:0;">' +
+            // Month label row
+            '<div style="display:flex;gap:3px;padding-bottom:2px;height:16px;">' +
+            _weeks.map(function(_, wi) {
+              var _lbl = _monthLabels.find(function(l) { return l.wi === wi; });
+              return '<div style="width:11px;font-size:9px;color:var(--text-4);white-space:nowrap;overflow:visible;font-family:var(--font-mono);">' + (_lbl ? _lbl.label : '') + '</div>';
+            }).join("") + '</div>' +
+            // Day rows (each row = one day-of-week across all weeks)
+            [0,1,2,3,4,5,6].map(function(row) {
+              return '<div style="display:flex;gap:3px;margin-bottom:3px;">' +
+                _weeks.map(function(wk) {
+                  var _day = wk[row];
+                  if (!_day) return '<div style="width:11px;height:11px;"></div>';
+                  var _int = _day.count === 0 ? 0 : Math.min(4, Math.ceil((_day.count / _maxCount) * 4));
+                  var _bgs = ["var(--border)", "rgba(82,183,136,0.25)", "rgba(82,183,136,0.5)", "rgba(82,183,136,0.75)", "var(--green-bright)"];
+                  return '<div title="' + escapeHTML(_day.key) + ': ' + _day.count + ' reviews" style="width:11px;height:11px;border-radius:2px;background:' + _bgs[_int] + ';flex-shrink:0;cursor:default;"></div>';
+                }).join("") + '</div>';
+            }).join("") +
+            '</div></div>';
 
           // ── Exam history rows ──────────────────────────────────────────────────
           var examHistoryHTML = "";
@@ -11695,15 +12040,38 @@
             <canvas id="accuracyChart"></canvas>
           </div>
         </div>
-        <!-- Review Heatmap (Tier 2) -->
+        <!-- Forgetting Curve Predictor -->
+        ${(subjectBreakdown && subjectBreakdown.length > 0) ? `
         <div class="card" style="margin-bottom:20px;">
           <div class="section-header">
             <div>
-              <div class="section-title">Review Activity — Last 30 Days</div>
-              <div class="section-sub">Darker = more reviews</div>
+              <div class="section-title">Forgetting Curve Predictor</div>
+              <div class="section-sub">Projected average retention over 30 days (Ebbinghaus model)</div>
+            </div>
+            <select id="forgettingCurveSubject" style="background:var(--bg-3);border:1px solid var(--border);border-radius:var(--r);padding:4px 8px;color:var(--text);font-size:var(--text-sm);cursor:pointer;">
+              ${subjectBreakdown.map(function(s) { return '<option value="' + escapeHTML(s.id) + '">' + escapeHTML(s.name) + '</option>'; }).join("")}
+            </select>
+          </div>
+          <div class="chart-container" style="height:180px;position:relative;">
+            <canvas id="forgettingCurveChart"></canvas>
+          </div>
+          <div style="font-size:var(--text-xs);color:var(--text-4);margin-top:6px;">Day 0 = today. Curve falls faster for cards reviewed less often — review before it drops below 50%.</div>
+        </div>
+        ` : ''}
+        <!-- Review Heatmap — 52-week GitHub-style -->
+        <div class="card" style="margin-bottom:20px;">
+          <div class="section-header">
+            <div>
+              <div class="section-title">Review Activity — Past Year</div>
+              <div class="section-sub">52-week heatmap &middot; darker = more reviews on that day</div>
             </div>
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px;padding:4px 0;">${heatmapHTML}</div>
+          ${heatmapHTML}
+          <div style="display:flex;align-items:center;gap:6px;margin-top:8px;">
+            <span style="font-size:var(--text-xs);color:var(--text-4);">Less</span>
+            ${["var(--border)","rgba(82,183,136,0.25)","rgba(82,183,136,0.5)","rgba(82,183,136,0.75)","var(--green-bright)"].map(function(bg){ return '<div style="width:11px;height:11px;border-radius:2px;background:'+bg+';"></div>'; }).join("")}
+            <span style="font-size:var(--text-xs);color:var(--text-4);">More</span>
+          </div>
         </div>
         <!-- Trouble Cards -->
         <div class="card" style="margin-bottom:20px;">
@@ -11848,6 +12216,50 @@
             });
           });
 
+          // ── Wire forgetting curve chart ───────────────────────────────────
+          (function() {
+            var subjectDropdown = document.getElementById('forgettingCurveSubject');
+            var forgettingChart = null;
+            function loadForgettingCurve(subjectId) {
+              api.getForgettingCurve(subjectId).then(function(data) {
+                var canvasEl = document.getElementById('forgettingCurveChart');
+                if (!canvasEl || !window.Chart) return;
+                if (forgettingChart) forgettingChart.destroy();
+                var labels = data.projections.map(function(p) { return 'Day ' + p.day; });
+                var values = data.projections.map(function(p) { return p.retention; });
+                forgettingChart = new Chart(canvasEl, {
+                  type: 'line',
+                  data: {
+                    labels: labels,
+                    datasets: [{
+                      label: 'Avg Retention %',
+                      data: values,
+                      borderColor: 'var(--green-bright)',
+                      backgroundColor: 'rgba(82,183,136,0.1)',
+                      fill: true,
+                      tension: 0.4,
+                      pointRadius: 4,
+                      pointBackgroundColor: 'var(--green-bright)',
+                    }]
+                  },
+                  options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                      y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'var(--text-3)', callback: function(v) { return v + '%'; } } },
+                      x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'var(--text-3)' } }
+                    }
+                  }
+                });
+              }).catch(function() {});
+            }
+            if (subjectDropdown) {
+              loadForgettingCurve(subjectDropdown.value);
+              subjectDropdown.addEventListener('change', function() { loadForgettingCurve(this.value); });
+            }
+          })();
+
           // Wire trouble card clicks -> mini session
           document.querySelectorAll(".trouble-card").forEach(function(card) {
             card.addEventListener("click", async function() {
@@ -11865,7 +12277,7 @@
                   queue: (session.cards || []).map(function(c) {
                     return Object.assign({}, c, { front: c.front || c.front_content || "", back: c.back || c.back_content || "" });
                   }),
-                  currentIndex: 0, flipped: false, startTime: Date.now(),
+                  currentIndex: 0, flipped: false, startTime: Date.now(), cardShownAt: Date.now(),
                   reviews: [], cardsReviewed: 0, seedStatus: "alive", seedHealth: 0, // FIX P9.4-01
                   aiSummary: null, stageTransitions: [], focusData: { tabAwayCount: 0, idleSeconds: 0 },
                   isReturnSession: session.is_first_return_session || false,
@@ -12188,7 +12600,7 @@
                         .join("")}
                     </div>
                     <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
-                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" onclick="handleEditCard('${escapeHTML(c.id)}', ${JSON.stringify(c.front || '')}, ${JSON.stringify(c.back || '')})">✏️ Edit</button>
+                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" data-eid="${escapeHTML(c.id)}" data-ef="${escapeHTML(c.front||'')}" data-eb="${escapeHTML(c.back||'')}" onclick="handleEditCard(this.dataset.eid, this.dataset.ef, this.dataset.eb)">✏️ Edit</button>
                       <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" onclick="handleResetCard('${escapeHTML(c.id)}')">Reset</button>
                       <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;color:#e57373;" onclick="handleDeleteCard('${escapeHTML(c.id)}', '${escapeHTML(c.front.substring(0,30))}')">Delete</button>
                     </div>
@@ -12203,6 +12615,7 @@
               <button class="btn btn-secondary btn-sm" onclick="startExam('${escapeHTML(subj.id)}')">Exam</button>
               <button class="btn btn-ghost btn-sm" onclick="navigateTo('import')">Add Cards</button>
               ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" data-publish-deck="${escapeHTML(subj.decks[0].id)}" data-publish-name="${escapeHTML(subj.name)}" style="font-size:var(--text-xs);">↑ Publish</button>` : ''}
+              ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMergeDecksModal('${escapeHTML(subj.id)}', '${escapeHTML(subj.name)}', ${JSON.stringify((subj.decks||[]).map(function(d){ return {id:d.id,name:d.name}; })).replace(/"/g,'&quot;')})">&#x26A1; Merge Decks</button>` : ''}
             </div>
           </div>
         `;
@@ -12472,6 +12885,7 @@
             currentIndex: 0,
             flipped: false,
             startTime: Date.now(),
+            cardShownAt: Date.now(),
             reviews: [],
             cardsReviewed: 0,
             seedStatus: "alive",
@@ -12543,6 +12957,7 @@
           ${[
             {label:"Manual",    tab:"manual"},
             {label:"AI Notes",  tab:"ai-notes"},
+            {label:"Occlusion", tab:"occlusion"},
             {label:"Text",      tab:"text"},
             {label:"TXT File",  tab:"txt"},
             {label:"Markdown",  tab:"md"},
@@ -12636,6 +13051,34 @@
             </div>
             <button class="btn btn-primary" id="imageImportBtn">Extract Cards from Image</button>
             <div id="imageResult" style="margin-top:10px;font-size:var(--text-base);"></div>
+          </div>
+        </div>
+
+        <!-- OCCLUSION tab -->
+        <div class="import-tab-panel" id="tab-occlusion" style="display:none;">
+          <div class="card">
+            <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:14px;">Upload a diagram or image, draw rectangles over the labels you want to hide, name each region, then save it as a flashcard. During review, click each teal box to reveal the label.</div>
+            <div class="input-group" style="margin-bottom:14px;">
+              <label class="input-label">Question / Caption (optional)</label>
+              <input class="input" id="occQuestion" placeholder="e.g. Label the parts of the nephron" />
+            </div>
+            <div class="input-group" style="margin-bottom:14px;">
+              <label class="input-label">Upload Diagram Image</label>
+              <input type="file" class="input" id="occImageInput" accept="image/*" style="padding:8px;" />
+            </div>
+            <div id="occEditorWrap" style="display:none;margin-bottom:14px;">
+              <div style="font-size:11px;font-family:var(--font-mono);color:var(--teal);margin-bottom:8px;letter-spacing:0.5px;">DRAW MASKS — click + drag on the image to mark regions. Click a region to name it.</div>
+              <div style="position:relative;display:inline-block;max-width:100%;line-height:0;cursor:crosshair;border-radius:8px;overflow:hidden;border:1px solid var(--border);" id="occCanvasContainer">
+                <img id="occPreviewImg" style="max-width:100%;max-height:500px;display:block;" />
+                <canvas id="occDrawCanvas" style="position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;"></canvas>
+              </div>
+              <div id="occMaskList" style="margin-top:12px;display:flex;flex-direction:column;gap:6px;"></div>
+              <button class="btn btn-ghost btn-sm" onclick="window._occClearAll && window._occClearAll()" style="margin-top:8px;font-size:var(--text-xs);">✕ Clear all masks</button>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:4px;">
+              <button class="btn btn-primary" id="occSaveBtn" style="display:none;">Save as Occlusion Card</button>
+            </div>
+            <div id="occResult" style="margin-top:10px;font-size:var(--text-base);"></div>
           </div>
         </div>
 
@@ -12892,6 +13335,126 @@
               btn.disabled = false; btn.textContent = "Import Text";
             }
           });
+
+          // ── Occlusion tab ──
+          (function() {
+            var _oMasks = [];
+            var _oImgDataUrl = null;
+            var _oDrawing = false;
+            var _oStart = null;
+            var _oDraftEl = null;
+
+            function _oSetResult(msg, isErr) {
+              var el = document.getElementById("occResult");
+              if (el) { el.textContent = msg; el.style.color = isErr ? "var(--red)" : "var(--green-bright)"; }
+            }
+            function _oRenderList() {
+              var list = document.getElementById("occMaskList");
+              if (!list) return;
+              list.innerHTML = _oMasks.map(function(m, i) {
+                return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-3);border-radius:var(--r-sm);">' +
+                  '<span style="font-size:10px;font-family:var(--font-mono);color:var(--teal);min-width:18px;">' + (i+1) + '</span>' +
+                  '<input class="input" style="flex:1;padding:4px 8px;font-size:var(--text-sm);" value="' + escapeHTML(m.label) + '" placeholder="Label for this region" data-mask-idx="' + i + '" />' +
+                  '<button style="background:none;border:none;color:var(--text-4);cursor:pointer;font-size:14px;" data-del-idx="' + i + '">&#x2715;</button>' +
+                  '</div>';
+              }).join('');
+              list.querySelectorAll('input[data-mask-idx]').forEach(function(inp) {
+                inp.addEventListener('input', function() { _oMasks[parseInt(this.dataset.maskIdx)].label = this.value; });
+              });
+              list.querySelectorAll('[data-del-idx]').forEach(function(btn) {
+                btn.addEventListener('click', function() { _oMasks.splice(parseInt(this.dataset.delIdx), 1); _oRenderList(); });
+              });
+              var saveBtn = document.getElementById("occSaveBtn");
+              if (saveBtn) saveBtn.style.display = _oMasks.length > 0 ? "" : "none";
+            }
+            window._occClearAll = function() { _oMasks = []; _oRenderList(); };
+
+            var imgInput = document.getElementById("occImageInput");
+            if (imgInput) {
+              imgInput.addEventListener("change", function() {
+                var file = this.files && this.files[0];
+                if (!file) return;
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                  _oImgDataUrl = e.target.result;
+                  _oMasks = [];
+                  var previewImg = document.getElementById("occPreviewImg");
+                  if (previewImg) previewImg.src = _oImgDataUrl;
+                  var wrap = document.getElementById("occEditorWrap");
+                  if (wrap) wrap.style.display = "";
+                  _oRenderList();
+                  // Set up canvas drawing
+                  var canvas = document.getElementById("occDrawCanvas");
+                  var container = document.getElementById("occCanvasContainer");
+                  if (!canvas || !container) return;
+                  function _getPct(e) {
+                    var rect = container.getBoundingClientRect();
+                    var cx = (e.clientX - rect.left) / rect.width * 100;
+                    var cy = (e.clientY - rect.top) / rect.height * 100;
+                    return { x: Math.max(0, Math.min(100, cx)), y: Math.max(0, Math.min(100, cy)) };
+                  }
+                  container.onmousedown = function(e) {
+                    _oDrawing = true;
+                    _oStart = _getPct(e);
+                    _oDraftEl = document.createElement("div");
+                    _oDraftEl.className = "occlusion-draft-rect";
+                    _oDraftEl.style.left = _oStart.x + "%";
+                    _oDraftEl.style.top = _oStart.y + "%";
+                    _oDraftEl.style.width = "0%";
+                    _oDraftEl.style.height = "0%";
+                    container.appendChild(_oDraftEl);
+                  };
+                  container.onmousemove = function(e) {
+                    if (!_oDrawing || !_oDraftEl || !_oStart) return;
+                    var cur = _getPct(e);
+                    var x = Math.min(_oStart.x, cur.x), y = Math.min(_oStart.y, cur.y);
+                    var w = Math.abs(cur.x - _oStart.x), h = Math.abs(cur.y - _oStart.y);
+                    _oDraftEl.style.left = x + "%"; _oDraftEl.style.top = y + "%";
+                    _oDraftEl.style.width = w + "%"; _oDraftEl.style.height = h + "%";
+                  };
+                  container.onmouseup = function(e) {
+                    if (!_oDrawing || !_oStart) return;
+                    _oDrawing = false;
+                    var cur = _getPct(e);
+                    var xPct = Math.min(_oStart.x, cur.x), yPct = Math.min(_oStart.y, cur.y);
+                    var wPct = Math.abs(cur.x - _oStart.x), hPct = Math.abs(cur.y - _oStart.y);
+                    if (_oDraftEl) { _oDraftEl.remove(); _oDraftEl = null; }
+                    if (wPct < 1 || hPct < 0.5) return; // ignore tiny clicks
+                    _oMasks.push({ id: String(Date.now()), xPct: xPct, yPct: yPct, wPct: wPct, hPct: hPct, label: "" });
+                    _oRenderList();
+                  };
+                };
+                reader.readAsDataURL(file);
+              });
+            }
+
+            var saveBtn = document.getElementById("occSaveBtn");
+            if (saveBtn) {
+              saveBtn.addEventListener("click", async function() {
+                var deckId = getSelectedDeckId();
+                if (!deckId) { showToast("No deck found for this subject", "error"); return; }
+                if (!_oImgDataUrl) { showToast("Upload an image first", "error"); return; }
+                var unnamedCount = _oMasks.filter(function(m) { return !m.label.trim(); }).length;
+                if (unnamedCount > 0) { showToast("Please name all " + unnamedCount + " mask(s) before saving", "error"); return; }
+                var question = (document.getElementById("occQuestion") && document.getElementById("occQuestion").value.trim()) || "Label the regions";
+                var cardData = JSON.stringify({ _type: "occlusion", imageData: _oImgDataUrl, question: question, masks: _oMasks });
+                saveBtn.disabled = true; saveBtn.textContent = "Saving...";
+                try {
+                  await api.createCard(deckId, { front_content: cardData, back_content: question, card_type: "occlusion" });
+                  _oSetResult("✓ Occlusion card saved!", false);
+                  _oMasks = []; _oImgDataUrl = null;
+                  document.getElementById("occImageInput").value = "";
+                  if (document.getElementById("occEditorWrap")) document.getElementById("occEditorWrap").style.display = "none";
+                  _oRenderList();
+                  showToast("Image occlusion card saved", "success");
+                } catch(err) {
+                  _oSetResult(err.message || "Save failed", true);
+                } finally {
+                  saveBtn.disabled = false; saveBtn.textContent = "Save as Occlusion Card";
+                }
+              });
+            }
+          })();
 
           // ── Image tab ──
           document.getElementById("imageImportBtn").addEventListener("click", async function() {
@@ -14289,6 +14852,7 @@
                 e.preventDefault();
                 t.currentIndex--;
                 t.aiSummary = null;
+                t.cardShownAt = Date.now();
                 renderActiveStudySession(document.getElementById("mainContent"));
                 return;
               }
@@ -14296,6 +14860,7 @@
                 e.preventDefault();
                 t.currentIndex++;
                 t.aiSummary = null;
+                t.cardShownAt = Date.now();
                 renderActiveStudySession(document.getElementById("mainContent"));
                 return;
               }

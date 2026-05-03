@@ -19,7 +19,9 @@
 // ════════════════════════════════════════════════════════════════════════════
 'use strict';
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
@@ -33,9 +35,9 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 
 const pool = new Pool({
-  connectionString: 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:5432/postgres',
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:5432/postgres',
   ssl: { rejectUnauthorized: false },
-  max: 10, // Supabase session-mode pool_size cap is 15; stay safely under it
+  max: 25, // Increased for concurrent users; Supabase session-mode cap is 15 so DATABASE_URL env should use transaction-mode pooler
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 8000,
 });
@@ -70,8 +72,10 @@ function _buildInsert(table, obj) {
   const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
   const vals = keys.map(k => {
     const v = obj[k];
-    return (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date))
-      ? JSON.stringify(v) : v;
+    if (v !== null && typeof v === 'object' && !(v instanceof Date)) {
+      return JSON.stringify(v);
+    }
+    return v;
   });
   return { text: `INSERT INTO ${table} (${cols}) VALUES (${placeholders})`, values: vals };
 }
@@ -86,7 +90,7 @@ function _buildUpdate(table, whereCol, whereVal, obj) {
       setClauses.push(`"${k}" = "${k}" + $${vals.length + 1}`);
       vals.push(v.increment);
     } else {
-      const val = (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date))
+      const val = (v !== null && typeof v === 'object' && !(v instanceof Date))
         ? JSON.stringify(v) : v;
       setClauses.push(`"${k}" = $${vals.length + 1}`);
       vals.push(val);
@@ -108,8 +112,10 @@ function _buildUpsert(table, conflictCols, obj) {
   const setClauses = updateCols.map(k => `"${k}" = EXCLUDED."${k}"`).join(', ');
   const vals = keys.map(k => {
     const v = obj[k];
-    return (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date))
-      ? JSON.stringify(v) : v;
+    if (v !== null && typeof v === 'object' && !(v instanceof Date)) {
+      return JSON.stringify(v);
+    }
+    return v;
   });
   return {
     text: `INSERT INTO ${table} (${cols}) VALUES (${placeholders}) ON CONFLICT (${conflict}) DO UPDATE SET ${setClauses}`,
@@ -3533,6 +3539,18 @@ You MUST generate EXACTLY [COUNT] questions. This is a hard requirement. Not a g
 
 ---
 
+## COVERAGE REQUIREMENT — MANDATORY
+
+You MUST draw at least one question from EVERY distinct concept, term, process, formula, or fact mentioned in the provided study notes.
+
+- If the notes contain 15 topics, all 15 must appear in at least one question.
+- Do NOT cluster all questions around 2–3 concepts while ignoring the rest of the notes.
+- Do NOT skip any section of the provided notes, no matter how brief.
+- Spread questions proportionally across ALL sections and topics of the notes.
+- Coverage of the full notes is as binding as the exact question count.
+
+---
+
 ## PRE-OUTPUT CHECKLIST
 
 Before generating, confirm:
@@ -3865,6 +3883,18 @@ VALIDATION RULES
 
 ---
 
+COVERAGE REQUIREMENT — MANDATORY
+
+You MUST generate at least one card for EVERY distinct concept, term, rule, process, formula, example, and fact mentioned in the notes — no matter how small or brief.
+
+- If the notes contain 20 distinct concepts, all 20 must appear in at least one card.
+- Do NOT cluster cards around 3–4 prominent concepts while skipping the rest.
+- Do NOT skip any sentence, bullet point, or section of the notes.
+- After completing your Mandatory Reasoning Pass, scan the notes one final time and confirm every distinct piece of knowledge has a card assigned to it before generating output.
+- Coverage of the full notes is non-negotiable. Incomplete coverage is a failure of this task.
+
+---
+
 NOTES TO PROCESS:
 [NOTES]
 `;
@@ -4090,13 +4120,15 @@ if (currentAnswerNum !== null && currentAnswer.correct_answer)
 answerMap.set(currentAnswerNum, currentAnswer);
 return questions.map((q, idx) => {
 const ans = answerMap.get(q.question_number) || {};
+// Strip internal parsing flags (_stemDone) so they don't get inserted into the DB
+const { _stemDone, ...cleanQ } = q;
 return {
-...q,
+...cleanQ,
 question_number: idx + 1,
-option_a: q.option_a || 'Option A',
-option_b: q.option_b || 'Option B',
-option_c: q.option_c || 'Option C',
-option_d: q.option_d || 'Option D',
+option_a: cleanQ.option_a || 'Option A',
+option_b: cleanQ.option_b || 'Option B',
+option_c: cleanQ.option_c || 'Option C',
+option_d: cleanQ.option_d || 'Option D',
 correct_answer: ans.correct_answer || 'A',
 explanation: ans.explanation || 'No explanation provided.',
 };
@@ -9835,16 +9867,17 @@ const _corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
+app.use(compression()); // Gzip all responses — typically cuts JSON payload 60-70%
 app.use(cors(_corsOptions));
 // Handle preflight OPTIONS requests for all routes
-app.options('*', cors(_corsOptions));
+app.options(/(.*)/, cors(_corsOptions));
 
 app.use(express.json({ limit: '10mb' }));
 
 app.use(cookieParser());
 // Serve frontend static files for single-domain deployment
 
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 // ── Additional requires for file parsing ────────────────────────────────────
 let pdfParse, mammoth, officeparser;
 try {
@@ -9878,9 +9911,9 @@ entry.count += 1;
 return false;
 }
 // ── authMiddleware ──────────────────────────────────────────────────────────
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET;
 if (!JWT_SECRET) {
-  console.error('[KIWI] FATAL: JWT_SECRET environment variable is not set. Server cannot start safely.');
+  console.error('[KIWI] FATAL: JWT_SECRET (or SESSION_SECRET) environment variable is not set. Server cannot start safely.');
   process.exit(1);
 }
 const ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY || '15m';
@@ -10577,6 +10610,70 @@ await db.decks.delete(req.user.id, req.params.id);
 res.json({ message: 'Deck deleted' });
 } catch (e) {
 res.status(500).json({ error: 'Failed to delete deck' });
+}
+});
+
+// ── POST /api/decks/merge — combine multiple decks into one new deck ──────────
+deckRouter.post('/merge', async (req, res) => {
+try {
+const { source_deck_ids, target_name, subject_id } = req.body;
+if (!Array.isArray(source_deck_ids) || source_deck_ids.length < 2)
+  return res.status(400).json({ error: 'Provide at least 2 source_deck_ids' });
+
+const firstDeck = await db.decks.findById(req.user.id, source_deck_ids[0]);
+if (!firstDeck) return res.status(404).json({ error: 'Source deck not found' });
+
+const mergedDeck = await db.decks.create(req.user.id, {
+  subject_id: subject_id || firstDeck.subject_id,
+  name: target_name || `Merged Deck (${new Date().toLocaleDateString()})`,
+  description: `Merged from ${source_deck_ids.length} decks`,
+  card_count: 0,
+  is_public: false,
+});
+
+let total = 0;
+for (const deckId of source_deck_ids) {
+  await query('UPDATE cards SET deck_id = $1 WHERE deck_id = $2 AND user_id = $3', [mergedDeck.id, deckId, req.user.id]);
+  const { rows } = await query('SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = $1', [mergedDeck.id]);
+  total = parseInt(rows[0]?.cnt || '0', 10);
+  await db.decks.delete(req.user.id, deckId);
+}
+
+await db.decks.update(req.user.id, mergedDeck.id, { card_count: total });
+res.status(201).json({ deck: mergedDeck, card_count: total });
+} catch (e) {
+res.status(500).json({ error: 'Failed to merge decks', details: e.message });
+}
+});
+
+// ── POST /api/decks/:id/move-cards — drag cards from one deck to another ─────
+deckRouter.post('/:id/move-cards', async (req, res) => {
+try {
+const { card_ids, target_deck_id } = req.body;
+if (!Array.isArray(card_ids) || !card_ids.length || !target_deck_id)
+  return res.status(400).json({ error: 'card_ids array and target_deck_id required' });
+
+const sourceDeckId = req.params.id;
+const targetDeck = await db.decks.findById(req.user.id, target_deck_id);
+if (!targetDeck) return res.status(404).json({ error: 'Target deck not found' });
+
+for (const cardId of card_ids) {
+  await query('UPDATE cards SET deck_id = $1 WHERE id = $2 AND user_id = $3 AND deck_id = $4',
+    [target_deck_id, cardId, req.user.id, sourceDeckId]);
+}
+
+const [{ rows: srcRows }, { rows: tgtRows }] = await Promise.all([
+  query('SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = $1 AND user_id = $2', [sourceDeckId, req.user.id]),
+  query('SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = $1 AND user_id = $2', [target_deck_id, req.user.id]),
+]);
+const srcCount = parseInt(srcRows[0]?.cnt || '0', 10);
+const tgtCount = parseInt(tgtRows[0]?.cnt || '0', 10);
+await db.decks.update(req.user.id, sourceDeckId, { card_count: srcCount });
+await db.decks.update(req.user.id, target_deck_id, { card_count: tgtCount });
+
+res.json({ moved: card_ids.length, source_count: srcCount, target_count: tgtCount });
+} catch (e) {
+res.status(500).json({ error: 'Failed to move cards', details: e.message });
 }
 });
 
@@ -11348,28 +11445,63 @@ if (limitedQueue.length === 0) {
 let sessionCards = limitedQueue.map((q) => q.card || q);
 const sessionDeckId = deck_id || (deckIds.length > 0 ? deckIds[0] : null);
 const session = await db.sessions.create(req.user.id, sessionDeckId, new Date());
+// Fetch user study mode once — used for interval hints and first-return detection
+const _modeStats = await db.userStats.get(req.user.id).catch(() => null);
+const _studyMode = _modeStats?.study_mode || 'normal';
+const _fmtMsHint = (ms) => {
+  if (!ms || ms <= 0) return '<1m';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.round(ms / 3600000);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.round(ms / 86400000);
+  return days < 7 ? `${days}d` : days < 30 ? `${Math.round(days / 7)}w` : `${Math.round(days / 30)}mo`;
+};
 // Normalize cards for frontend: map front_content→front, back_content→back
 // MISS-1+MISS-2 FIX: reads from limitedQueue (bubble-modified), propagates _warmup flag [DESIGN: §2.5]
-const normalizedCards = limitedQueue.map((q) => ({
-  ...q.card,
-  front:    q.card.front_content || q.card.front || '',
-  back:     q.card.back_content  || q.card.back  || '',
-  priority: q.state?.state       || null,
-  _warmup:  q._warmup            || false,
-}));
+// FIX: pre-compute mode-aware interval hints so buttons show correct times from card 1
+const _hintNow = Date.now();
+const normalizedCards = limitedQueue.map((q) => {
+  const card = q.card;
+  let hintAgain = '<1m', hintHard = '~', hintGood = '~', hintEasy = '~';
+  try {
+    const hA = calculateNextReview(card, 'again', _studyMode);
+    const hH = calculateNextReview(card, 'hard',  _studyMode);
+    const hG = calculateNextReview(card, 'good',  _studyMode);
+    const hE = calculateNextReview(card, 'easy',  _studyMode);
+    hintAgain = _fmtMsHint(new Date(hA.next_review_at).getTime() - _hintNow);
+    hintHard  = _fmtMsHint(new Date(hH.next_review_at).getTime() - _hintNow);
+    hintGood  = _fmtMsHint(new Date(hG.next_review_at).getTime() - _hintNow);
+    hintEasy  = _fmtMsHint(new Date(hE.next_review_at).getTime() - _hintNow);
+  } catch (_) {}
+  return {
+    ...card,
+    front:    card.front_content || card.front || '',
+    back:     card.back_content  || card.back  || '',
+    priority: q.state?.state     || null,
+    _warmup:  q._warmup          || false,
+    intervalHintAgain: hintAgain,
+    intervalHintHard:  hintHard,
+    intervalHintGood:  hintGood,
+    intervalHintEasy:  hintEasy,
+  };
+});
 // P9 FIX: Detect first-return session so frontend can trigger zone restoration animation.
 // is_first_return_session = true when user last studied 3+ days ago (return threshold).
-// After this session ends, last_study_date updates to today, preventing false positives.
 let is_first_return_session = false;
+if (_modeStats?.last_study_date) {
+  const daysSinceLastStudy = Math.floor((Date.now() - new Date(_modeStats.last_study_date).getTime()) / 86400000);
+  is_first_return_session = daysSinceLastStudy >= 3;
+}
 try {
-const returnStats = await db.userStats.get(req.user.id);
+const returnStats = _modeStats;
 if (returnStats && returnStats.last_study_date) {
 const daysSinceLastStudy = Math.floor(
 (Date.now() - new Date(returnStats.last_study_date).getTime()) / 86400000
 );
 is_first_return_session = daysSinceLastStudy >= 3;
 }
-} catch (e) { / non-fatal / }
+} catch (e) { /* non-fatal */ }
 res.status(201).json({
 session,
 sessionId: session.id, // alias for frontend compatibility
@@ -11446,18 +11578,15 @@ previous_review_at: card.last_reviewed_at || null,
 // BUG-2 FIX: reviewed_at was missing — findByUser queries filter on this field
 reviewed_at: new Date(),
 });
-// Phase 2: Recompute card state
-await recomputeAndStoreCardState(req.user.id, cardId);
-// PB.9: Propagate KS update to any bubble containing this card as cross_bubble
-await propagateCrossBubbleKSUpdate(req.user.id, cardId).catch(() => {});
-// PB.9: Update cluster KS for any cluster containing this card
-await updateClusterKSForCard(req.user.id, cardId).catch(() => {});
-// Phase 3: Seedling hook for stage change
+// Phase 2 & 3: Fire-and-forget — do not block card response latency
+recomputeAndStoreCardState(req.user.id, cardId).catch(() => {});
+propagateCrossBubbleKSUpdate(req.user.id, cardId).catch(() => {});
+updateClusterKSForCard(req.user.id, cardId).catch(() => {});
 if (nextReview.stage !== prevStage) {
-await hookSeedlingEarnings(req.user.id, 'stage_change', {
+hookSeedlingEarnings(req.user.id, 'stage_change', {
 old_stage: prevStage,
 new_stage: nextReview.stage,
-});
+}).catch(() => {});
 }
 // P5 FIX: AI Mastery Moment (B1) — first time card reaches Stage 5
 // Fire-and-forget: does not delay response; sentence stored in Firestore for frontend to read
@@ -11515,7 +11644,6 @@ res.status(500).json({ error: 'Failed to record response', details: e.message })
 
 studyRouter.post('/end', async (req, res) => {
 try {
-// P3b FIX: Accept focused_seconds (idle excluded) and seed_killed from frontend
 const { session_id, break_count = 0, focused_seconds = 0, seed_killed = false, reason = 'user_ended' } = req.body;
 if (!session_id) return res.status(400).json({ error: 'session_id required' });
 const session = await db.sessions.findById(req.user.id, session_id);
@@ -11523,145 +11651,95 @@ if (!session) return res.status(404).json({ error: 'Session not found' });
 const now = new Date();
 const durationSec = Math.floor((now - new Date(session.started_at)) / 1000);
 const completed = (session.cards_reviewed || 0) >= 1;
-// Compute focus-only duration: if frontend provided focused_seconds, use it;
-// otherwise fallback to durationSec minus any break time (rough estimate)
 const focusDurationSec = focused_seconds > 0 ? focused_seconds : 0;
 const focusStage = computeFocusStage(session.started_at, break_count, focusDurationSec, seed_killed);
 const seedSurvived = focusStage !== FOCUS_STAGES.DORMANT;
-const updates = {
-ended_at: now,
-duration_seconds: durationSec,
-session_completed: completed,
-focus_breaks: break_count,
-focus_seed_stage: focusStage,
-seed_survived: seedSurvived,
-};
-await db.sessions.update(req.user.id, session_id, updates);
-// P4 FIX: Fruiting consequence is gated on seed state only, not on cards_reviewed.
-// A student can study unbroken for 90 min with only 8 cards — Fruiting must still fire.
-if (focusStage === FOCUS_STAGES.FRUITING) {
-await processFruiting(req.user.id, { ...session, focus_seed_stage: focusStage });
-}
-if (completed) {
-const streakUpdates = computeStreakAfterSession(await db.userStats.get(req.user.id), now);
-// BUG-3 FIX: streak update never included these two counters
-await db.userStats.update(req.user.id, {
-...streakUpdates,
-total_sessions_completed: { increment: 1 },
-total_study_minutes: { increment: Math.round(durationSec / 60) },
+await db.sessions.update(req.user.id, session_id, {
+  ended_at: now,
+  duration_seconds: durationSec,
+  session_completed: completed,
+  focus_breaks: break_count,
+  focus_seed_stage: focusStage,
+  seed_survived: seedSurvived,
 });
-// Phase 3: Streak milestones
-await detectStreakMilestones(req.user.id);
-// ISSUE-066 FIX: evaluate and persist shield count immediately after streak update.
-// Previously only updated lazily on dashboard load — user could earn a shield milestone
-// and not see it credited until their next page visit.
-await evaluateStreakShield(req.user.id).catch(() => {});
-} else {
-await db.userStats.update(req.user.id, {
-tree_health: { increment: -10 },
+// Respond immediately — heavy analytics run in the background
+res.json({
+  session_id,
+  session_completed: completed,
+  duration_seconds: durationSec,
+  cards_reviewed: session.cards_reviewed || 0,
+  xp_earned: session.xp_earned || 0,
+  focus_seed_stage: focusStage,
+  seed_survived: seedSurvived,
+  new_achievements: [],
+  streak: 0,
+  tree_health: 0,
+  tree_stage: 0,
+  new_almanac_unlocks: [],
+  ks_delta: 0,
+  ksDelta: 0,
+  stage_transitions: [],
 });
-}
-// 068-A FIX: hookSeedlingEarnings moved OUTSIDE if(completed) so Fruiting/Glowing/Thriving
-// awards fire based on focus-seed state alone, regardless of card count.
-// hookSeedlingEarnings internally guards the base 1-seedling award with
-// `if (context.session_completed && context.cards_reviewed >= 10)` — safe to always call.
-// 068-B FIX: added .catch() so any Firestore blip cannot kill the session-end response.
-await hookSeedlingEarnings(req.user.id, 'session_end', {
-session_completed: completed,
-cards_reviewed: session.cards_reviewed || 0,
-fruiting_achieved: focusStage === FOCUS_STAGES.FRUITING,
-focus_seed_stage: focusStage,
-}).catch((e) => console.error('[KIWI] hookSeedlingEarnings failed at session end:', e.message));
-const stats = await db.userStats.get(req.user.id);
-await updateTreeStage(req.user.id);
-// Phase 2: Recalculate KS for subject
-const deck = await db.decks.findById(req.user.id, session.deck_id);
-let ksDelta = 0;
-// P4-02 FIX: build stage_transitions from this session's review logs
-let stageTransitions = [];
-try {
-const sessionLogs = await db.reviewLogs.findByUser(req.user.id, new Date(session.started_at)).catch(() => []);
-for (const log of sessionLogs) {
-if (
-log.session_id === session_id &&
-log.new_stage !== undefined &&
-log.previous_stage !== undefined &&
-log.new_stage > log.previous_stage
-) {
-stageTransitions.push({
-card_id: log.card_id,
-from: log.previous_stage,
-to: log.new_stage,
-});
-}
-}
-} catch (e) { / non-fatal / }
-if (deck?.subject_id) {
-// P4-01 FIX: compute ksDelta pre/post recalculation
-const preKsDoc = await db.subjectStats.get(req.user.id, deck.subject_id).catch(() => null);
-const preKsScore = preKsDoc?.knowledge_score || 0;
-await persistKnowledgeScore(req.user.id, deck.subject_id);
-// P4-FIX-LAST-STUDIED: Write last_studied_at so Biome drought calculation has a real date.
-// persistKnowledgeScore only writes knowledge_score; this was the root cause of the
-// "999-day drought" — last_studied_at was never being set at session end (ISSUE-026).
-await db.subjectStats.upsert(req.user.id, deck.subject_id, { last_studied_at: new Date() }).catch(() => {});
-const postKs = await computeKnowledgeScore(req.user.id, deck.subject_id).catch(() => ({ score: preKsScore }));
-ksDelta = parseFloat(((postKs.score || 0) - preKsScore).toFixed(2));
-const pressureAfterSession = await calculateSubjectPressure(req.user.id, deck.subject_id);
-if (pressureAfterSession?.intervention_level === 'L4') {
-triggerReckoning(req.user.id, deck.subject_id).catch(() => {});
-}
-// PB.9: Update all active bubble trajectories + stall checks for this user [DESIGN: §15.2]
-await updateAllBubblesForUser(req.user.id).catch(() => {});
-}
-// Check achievements
-const sessionFull = await db.sessions.findByIdFull(req.user.id, session_id);
-const newAchievements = await checkAchievements(req.user.id, {
-deckId: session.deck_id,
-session: sessionFull,
-sessionStart: session.started_at,
-sessionCompleted: completed,
-seedGrowth: 100, // approximate
-});
-await updateTaskProgress(req.user.id, sessionFull);
-// BUG-6 FIX: detect subject resurrection from Neglected zone and record flag
-if (deck?.subject_id) {
-try {
-const prevSubStat = await db.subjectStats.get(req.user.id, deck.subject_id);
-const daysSinceLastStudied = prevSubStat?.last_study_date
-? Math.floor((Date.now() - new Date(prevSubStat.last_study_date).getTime()) / 86400000)
-: 0;
-if (prevSubStat?.last_zone_state === 'Neglected' && daysSinceLastStudied >= 14) {
-await db.subjectStats.update(req.user.id, deck.subject_id, { was_neglected_then_resumed: true });
-}
-} catch (_e) { /* non-fatal */ }
-}
-// Phase 6: Check almanac unlocks — P6.4 FIX: capture return value to send in response
-const newAlmanacUnlocks = await checkAlmanacUnlocks(req.user.id).catch(() => []);
-
-    res.json({
-      session_id,
+// Background analytics — non-blocking fire-and-forget
+(async () => {
+  try {
+    if (focusStage === FOCUS_STAGES.FRUITING) {
+      await processFruiting(req.user.id, { ...session, focus_seed_stage: focusStage }).catch(() => {});
+    }
+    if (completed) {
+      const streakUpdates = computeStreakAfterSession(await db.userStats.get(req.user.id), now);
+      await db.userStats.update(req.user.id, {
+        ...streakUpdates,
+        total_sessions_completed: { increment: 1 },
+        total_study_minutes: { increment: Math.round(durationSec / 60) },
+      });
+      await detectStreakMilestones(req.user.id).catch(() => {});
+      await evaluateStreakShield(req.user.id).catch(() => {});
+    } else {
+      await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch(() => {});
+    }
+    await hookSeedlingEarnings(req.user.id, 'session_end', {
       session_completed: completed,
-      duration_seconds: durationSec,
       cards_reviewed: session.cards_reviewed || 0,
-      xp_earned: session.xp_earned || 0,
+      fruiting_achieved: focusStage === FOCUS_STAGES.FRUITING,
       focus_seed_stage: focusStage,
-      // M4 FIX: stageLabel removed — was duplicate of focus_seed_stage and
-      // misleadingly named (implies KiwiTree stage, not seed stage)
-      seed_survived: seedSurvived,
-      new_achievements: newAchievements,
-      streak: stats.current_streak,
-      tree_health: stats.tree_health,
-      tree_stage: stats.tree_stage,
-      // P6.4 FIX: Include almanac unlocks so frontend can show notification
-      new_almanac_unlocks: newAlmanacUnlocks,
-      // P4-01 FIX: include ksDelta (snake_case + camelCase for compat)
-      ks_delta: ksDelta,
-      ksDelta: ksDelta,
-      // P4-02 FIX: build stage_transitions from this session's review logs
-      stage_transitions: stageTransitions,
-    });
-
+    }).catch(() => {});
+    await updateTreeStage(req.user.id).catch(() => {});
+    const deck = await db.decks.findById(req.user.id, session.deck_id).catch(() => null);
+    if (deck?.subject_id) {
+      await persistKnowledgeScore(req.user.id, deck.subject_id).catch(() => {});
+      await db.subjectStats.upsert(req.user.id, deck.subject_id, { last_studied_at: new Date() }).catch(() => {});
+      const pressureAfterSession = await calculateSubjectPressure(req.user.id, deck.subject_id).catch(() => null);
+      if (pressureAfterSession?.intervention_level === 'L4') {
+        triggerReckoning(req.user.id, deck.subject_id).catch(() => {});
+      }
+      await updateAllBubblesForUser(req.user.id).catch(() => {});
+    }
+    const sessionFull = await db.sessions.findByIdFull(req.user.id, session_id).catch(() => session);
+    await checkAchievements(req.user.id, {
+      deckId: session.deck_id,
+      session: sessionFull,
+      sessionStart: session.started_at,
+      sessionCompleted: completed,
+      seedGrowth: 100,
+    }).catch(() => {});
+    await updateTaskProgress(req.user.id, sessionFull).catch(() => {});
+    if (deck?.subject_id) {
+      try {
+        const prevSubStat = await db.subjectStats.get(req.user.id, deck.subject_id);
+        const daysSinceLastStudied = prevSubStat?.last_study_date
+          ? Math.floor((Date.now() - new Date(prevSubStat.last_study_date).getTime()) / 86400000)
+          : 0;
+        if (prevSubStat?.last_zone_state === 'Neglected' && daysSinceLastStudied >= 14) {
+          await db.subjectStats.update(req.user.id, deck.subject_id, { was_neglected_then_resumed: true });
+        }
+      } catch (_e) { /* non-fatal */ }
+    }
+    await checkAlmanacUnlocks(req.user.id).catch(() => {});
+  } catch (bgErr) {
+    console.error('[KIWI] session end background error:', bgErr.message);
+  }
+})();
 } catch (e) {
 res.status(500).json({ error: 'Failed to end session', details: e.message });
 }
@@ -11715,9 +11793,11 @@ res.status(500).json({ error: 'Failed to fetch stats' });
 
 studyRouter.get('/review-heatmap', async (req, res) => {
 try {
-const thirtyDaysAgo = new Date();
-thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-const logs = await db.reviewLogs.findByUser(req.user.id, thirtyDaysAgo);
+// Support ?days=N param; default 365 for full GitHub-style yearly view
+const days = Math.min(parseInt(req.query.days || '365', 10), 365);
+const sinceDate = new Date();
+sinceDate.setDate(sinceDate.getDate() - days);
+const logs = await db.reviewLogs.findByUser(req.user.id, sinceDate);
 const heatmap = {};
 logs.forEach((l) => {
 const d = new Date(l.reviewed_at).toISOString().split('T')[0];
@@ -11726,6 +11806,42 @@ heatmap[d] = (heatmap[d] || 0) + 1;
 res.json(heatmap);
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate heatmap' });
+}
+});
+
+// ── GET /study/forgetting-curve/:subjectId — projected retention per subject ─
+studyRouter.get('/forgetting-curve/:subjectId', async (req, res) => {
+try {
+const decks = await db.decks.findBySubject(req.user.id, req.params.subjectId);
+let allCards = [];
+for (const d of decks) {
+  const cards = await db.cards.findByDeck(req.user.id, d.id);
+  allCards.push(...cards);
+}
+// Ebbinghaus forgetting curve: R(t) = e^(-t/S) × 100
+// SRS stage → stability in days (approximate SM-2 style)
+const stageStability = { 0: 1, 1: 2, 2: 4, 3: 8, 4: 16, 5: 32 };
+const today = new Date();
+const snapshots = [0, 1, 3, 7, 14, 30].map(days => {
+  const futDate = new Date(today);
+  futDate.setDate(today.getDate() + days);
+  let sum = 0;
+  allCards.forEach(card => {
+    const S = stageStability[card.stage || 0] || 1;
+    const lastRev = card.last_reviewed_at ? new Date(card.last_reviewed_at) : today;
+    const t = Math.max(0, (futDate - lastRev) / 86400000); // days
+    sum += Math.min(100, Math.max(0, Math.exp(-t / S) * 100));
+  });
+  const avg = allCards.length > 0 ? sum / allCards.length : 0;
+  return { day: days, retention: Math.round(avg * 10) / 10 };
+});
+const stageDist = [0,1,2,3,4,5].map(s => ({
+  stage: s,
+  count: allCards.filter(c => (c.stage || 0) === s).length,
+}));
+res.json({ subject_id: req.params.subjectId, card_count: allCards.length, projections: snapshots, stage_distribution: stageDist });
+} catch (e) {
+res.status(500).json({ error: 'Failed to compute forgetting curve', details: e.message });
 }
 });
 
@@ -12519,6 +12635,59 @@ examRouter.get('/:id/review', async (req, res) => {
   }
 });
 
+
+// ── POST /exams/:id/create-retry-deck — build a deck from wrong answers ──────
+examRouter.post('/:id/create-retry-deck', async (req, res) => {
+  try {
+    const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+    if (!exam) return res.status(404).json({ error: 'Exam not found' });
+    if (exam.status !== 'completed') return res.status(400).json({ error: 'Exam not completed yet' });
+
+    const wrongQs = exam.questions.filter(q => !(q.is_correct ?? (q.selected_option === q.correct_answer)));
+    if (wrongQs.length === 0) return res.status(400).json({ error: 'No wrong answers — perfect score! Nothing to retry.' });
+
+    const subjectId = exam.subject_id;
+    const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const retryDeck = await db.decks.create(req.user.id, {
+      subject_id: subjectId,
+      name: `Retry — ${exam.subject_name || 'Exam'} (${dateStr})`,
+      description: `Weakness deck: ${wrongQs.length} questions answered incorrectly on ${dateStr}`,
+      card_count: 0,
+      is_public: false,
+    });
+
+    const createdCards = [];
+    for (const q of wrongQs) {
+      const front = q.stem || '';
+      const optMap = { A: q.option_a || '', B: q.option_b || '', C: q.option_c || '', D: q.option_d || '' };
+      const correctText = optMap[q.correct_answer] || '';
+      const back = `Correct: ${q.correct_answer}) ${correctText}${q.explanation ? '\n\nExplanation: ' + q.explanation : ''}`;
+      if (front.length > 4 && back.length > 4) {
+        const card = await db.cards.create(req.user.id, {
+          deck_id: retryDeck.id,
+          front_content: front,
+          back_content: back,
+          tags: ['retry', 'exam-weakness'],
+          ai_summary: '',
+        });
+        createdCards.push(card);
+      }
+    }
+
+    await db.decks.update(req.user.id, retryDeck.id, { card_count: createdCards.length });
+    if (createdCards.length > 0) {
+      await batchInitializeSeedlingStates(req.user.id, createdCards.map(c => c.id));
+    }
+
+    res.status(201).json({
+      deck: retryDeck,
+      card_count: createdCards.length,
+      message: `Retry deck created with ${createdCards.length} card${createdCards.length !== 1 ? 's' : ''}`,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create retry deck', details: e.message });
+  }
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 const taskRouter = express.Router();
@@ -15249,10 +15418,11 @@ async function sendEmailNotification(userId, templateName, params = {}) {
 async function startServer() {
 try {
 await runSchemaMigrations();
-await seedAchievements();
-await db.marketplaceItems.seed();
-await seedCommunityDecks();
-console.log(`[KIWI] ✅ Achievements, marketplace, and community decks seeded`);
+// Seed functions are best-effort — missing tables should never crash the server
+try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }
+try { await db.marketplaceItems.seed(); } catch(e) { console.warn('[KIWI] Marketplace seeding skipped:', e.message); }
+try { await seedCommunityDecks(); } catch(e) { console.warn('[KIWI] Community deck seeding skipped:', e.message); }
+console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear above if DB tables are missing)`);
 
 
     // ════════════════════════════════════════════════════════════════════════════
