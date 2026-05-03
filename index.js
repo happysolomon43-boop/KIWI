@@ -11817,6 +11817,72 @@ res.status(500).json({ error: 'Failed to end session', details: e.message });
 }
 });
 
+
+// ── POST /study/queue (BUG 2 FIX) ────────────────────────────────────────────
+// Lightweight queue endpoint. Returns due cards for a subject without creating
+// a full session. Clients that expect /queue (vs /start) will now resolve.
+studyRouter.post('/queue', async (req, res) => {
+  try {
+    const { subject_id, include_all_decks_in_subject, deck_id } = req.body;
+    if (!deck_id && !(include_all_decks_in_subject && subject_id)) {
+      return res.status(400).json({
+        error: 'Provide deck_id, or subject_id with include_all_decks_in_subject=true',
+      });
+    }
+    let deckIds = [];
+    if (deck_id) {
+      deckIds = [deck_id];
+    } else {
+      const decks = await db.decks.findBySubject(req.user.id, subject_id);
+      deckIds = decks.map((d) => d.id);
+    }
+    const allCards = [];
+    for (const dId of deckIds) {
+      const cards = await db.cards.findByDeck(req.user.id, dId);
+      allCards.push(...cards);
+    }
+    const now = new Date();
+    const sessionId = randomUUID();
+    const subject =
+      subject_id ? await db.subjects.findById(subject_id).catch(() => null) : null;
+    const cards = allCards.map((c) => ({
+      ...c,
+      isDue: !c.next_review_at || new Date(c.next_review_at) <= now,
+      is_due: !c.next_review_at || new Date(c.next_review_at) <= now,
+    }));
+    res.json({ session_id: sessionId, cards, total: cards.length, name: subject?.name || '' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to get study queue', details: e.message });
+  }
+});
+
+// ── POST /study/review (BUG 2 FIX) ───────────────────────────────────────────
+// Alias for /study/card/:cardId/response — accepts {card_id, rating, session_id}
+// and returns next_review_at so callers don't need to know the :cardId URL form.
+studyRouter.post('/review', async (req, res) => {
+  try {
+    const { card_id, rating, session_id } = req.body;
+    if (!card_id || !rating) {
+      return res.status(400).json({ error: 'card_id and rating are required' });
+    }
+    const card = await db.cards.findById(req.user.id, card_id);
+    if (!card) return res.status(404).json({ error: 'Card not found' });
+    const ratingMap = { again: 1, hard: 2, good: 3, easy: 4 };
+    const numericRating = typeof rating === 'number' ? rating : (ratingMap[rating] || 3);
+    const { next_review_at, stage } = calculateNextReview(card, numericRating);
+    await db.cards.update(req.user.id, card_id, {
+      next_review_at,
+      stage,
+      review_count: { increment: 1 },
+      last_reviewed_at: new Date(),
+    });
+    queueKSRecompute(req.user.id, card_id);
+    res.json({ success: true, card_id, next_review_at, stage });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to record review', details: e.message });
+  }
+});
+
 studyRouter.get('/due-today', async (req, res) => {
 try {
 const cards = await db.cards.findAllForUser(req.user.id);
@@ -11921,6 +11987,64 @@ res.status(500).json({ error: 'Failed to compute forgetting curve', details: e.m
 //  EXAM ROUTES
 
 // ════════════════════════════════════════════════════════════════════════════
+
+// ── MODULE-LEVEL TELEGRAM HELPERS (BUG 1 FIX) ───────────────────────────────
+// These were incorrectly scoped inside startServer(). Route handlers run at
+// request time with module scope — not inside startServer(). Moving them here
+// so examRouter and brainRouter handlers can access them.
+const _TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+async function sendTelegramMessage(chatId, text) {
+  if (!_TELEGRAM_BOT_TOKEN || !chatId) return false;
+  try {
+    const url = `https://api.telegram.org/bot${_TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const _r = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
+    });
+    return _r.ok;
+  } catch (e) {
+    console.error('[KIWI] Telegram send failed:', e.message);
+    return false;
+  }
+}
+
+async function sendTelegramExamResult(userId, subjectId, scorePct, passed) {
+  try {
+    const user = await db.users.findById(userId);
+    if (!user) return;
+    const prefs = user.notification_preferences || {};
+    if (prefs.telegram === false) return;
+    if (!user.telegram_chat_id) return;
+    const subject = await db.subjects.findById(subjectId).catch(() => null);
+    const subjName = subject?.name || 'Study Session';
+    const status = passed ? '✅ PASSED' : '❌ Did not pass';
+    await sendTelegramMessage(
+      user.telegram_chat_id,
+      `*Exam Result: ${subjName}*\nScore: *${scorePct}%*\nStatus: ${status}`
+    );
+  } catch (e) {
+    console.error('[KIWI] Telegram exam notify failed:', e.message);
+  }
+}
+
+async function sendTelegramDailyReminder(userId) {
+  try {
+    const user = await db.users.findById(userId);
+    if (!user) return;
+    const prefs = user.notification_preferences || {};
+    if (prefs.telegram === false) return;
+    if (!user.telegram_chat_id) return;
+    await sendTelegramMessage(
+      user.telegram_chat_id,
+      `🥝 *KIWI Daily Reminder*\nYour cards are waiting. Keep the streak alive!`
+    );
+  } catch (e) {
+    console.error('[KIWI] Telegram reminder failed:', e.message);
+  }
+}
+
 const examRouter = express.Router();
 
 examRouter.use(authenticate);
@@ -13931,6 +14055,48 @@ res.json(active || { status: 'none' });
 res.status(500).json({ error: 'Failed to fetch active reckoning' });
 }
 });
+
+// ── POST /reckoning/submit (BUG 3 FIX) ───────────────────────────────────────
+// Previously only reachable at /brain/reckoning/submit. Now also available at
+// /reckoning/submit so both paths resolve correctly.
+reckoningRouter.post('/submit', async (req, res) => {
+  try {
+    const { examId, answers } = req.body;
+    if (!examId || !Array.isArray(answers))
+      return res.status(400).json({ error: 'examId and answers[] are required' });
+    const exam = await db.examSessions.findByIdWithQuestions(req.user.id, examId);
+    if (!exam) return res.status(404).json({ error: 'Exam not found' });
+    let correct = 0;
+    const total = exam.questions.length;
+    const questionResults = [];
+    for (const q of exam.questions) {
+      const answer = answers.find((a) => a.question_number === q.question_number);
+      const isCorrect = answer && answer.selected_option === q.correct_answer;
+      if (isCorrect) correct++;
+      questionResults.push({
+        question_number: q.question_number,
+        selected: answer?.selected_option || null,
+        correct: isCorrect,
+        correct_answer: q.correct_answer,
+      });
+    }
+    const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
+    const now = new Date();
+    const durationSec = exam.started_at
+      ? Math.floor((now - new Date(exam.started_at)) / 1000) : 0;
+    await db.examSessions.update(req.user.id, examId, {
+      status: 'completed', score_pct: scorePct, correct_answers: correct,
+      total_questions: total, completed_at: now, duration_seconds: durationSec,
+    });
+    await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, scorePct >= 70)
+      .catch(() => {});
+    res.json({ score_pct: scorePct, correct_answers: correct, total_questions: total,
+      duration_seconds: durationSec, question_results: questionResults });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to submit reckoning', details: e.message });
+  }
+});
+
 // ── Brain / Pressure Routes (Phase 3) ─────────────────────────────────────
 // POST /brain/reckoning/use-buffer — spend seedling buffer to skip reckoning
 
