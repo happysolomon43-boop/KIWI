@@ -33,6 +33,7 @@ const cron = require('node-cron');
 // Connection via DATABASE_URL env var; ssl required for Supabase
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
+const { WebSocketServer } = require('ws');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:5432/postgres',
@@ -155,6 +156,31 @@ function _buildIncrementUpdate(table, whereCol, whereVal, data) {
 //  INLINE DB LAYER (replaces firestore-db)
 
 // ════════════════════════════════════════════════════════════════════════════
+
+// ── KS Batch Queue ────────────────────────────────────────────────────────────
+// Replaces per-review recomputeAndStoreCardState fire-and-forget.
+// Cards accumulate here; a 60s cron drains them in a single pass.
+const _ksQueue = new Map(); // key: `${userId}:${cardId}`
+function queueKSRecompute(userId, cardId) {
+  _ksQueue.set(`${userId}:${cardId}`, { userId, cardId });
+}
+
+// ── Session Pagination Store ──────────────────────────────────────────────────
+// Holds the full normalised card queue per active session.
+// Cleared after 4 h (well beyond any realistic session length).
+const _sessionQueues = new Map(); // sessionId → normalizedCards[]
+const PAGE_SIZE = 20;
+
+// ── WebSocket client registry ─────────────────────────────────────────────────
+const _wsClients = new Map(); // userId (string) → Set<WebSocket>
+function wsSend(userId, event, data) {
+  const clients = _wsClients.get(String(userId));
+  if (!clients) return;
+  const msg = JSON.stringify({ event, data, ts: Date.now() });
+  for (const ws of clients) {
+    try { if (ws.readyState === 1) ws.send(msg); } catch (_) {}
+  }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  INLINE DB LAYER (replaces firestore-db — migrated to PostgreSQL/pg)
@@ -10207,7 +10233,7 @@ c.last_reviewed_at &&
 new Date(c.last_reviewed_at) <= sixtyDaysAgo
 );
 for (const card of stage5Dormant) {
-await recomputeAndStoreCardState(user.id, card.id).catch(() => {});
+queueKSRecompute(user.id, card.id); // queued
 }
 if (stage5Dormant.length > 0) {
 console.log(`[KIWI] GHOST decay pass: recomputed ${stage5Dormant.length} card(s) for user ${user.id}`);
@@ -11502,17 +11528,36 @@ const daysSinceLastStudy = Math.floor(
 is_first_return_session = daysSinceLastStudy >= 3;
 }
 } catch (e) { /* non-fatal */ }
+_sessionQueues.set(session.id, normalizedCards);
+setTimeout(() => _sessionQueues.delete(session.id), 4 * 3600 * 1000);
+const _firstPage = normalizedCards.slice(0, PAGE_SIZE);
 res.status(201).json({
 session,
-sessionId: session.id, // alias for frontend compatibility
-cards: normalizedCards,
+sessionId: session.id,
+cards: _firstPage,
+total_cards: normalizedCards.length,
 total_due: normalizedCards.length,
+has_more: normalizedCards.length > PAGE_SIZE,
 subject_id: subject_id || (deck ? deck.subject_id : null),
 is_first_return_session,
 });
 } catch (e) {
 res.status(500).json({ error: 'Failed to start session', details: e.message });
 }
+});
+
+// ── GET /study/session/:id/next-cards — paginated card fetch ─────────────────
+studyRouter.get('/session/:sessionId/next-cards', async (req, res) => {
+  try {
+    const offset = parseInt(req.query.offset || '0', 10);
+    const limit  = parseInt(req.query.limit  || String(PAGE_SIZE), 10);
+    const queue  = _sessionQueues.get(req.params.sessionId);
+    if (!queue) return res.status(404).json({ error: 'Session queue not found — expired or already ended' });
+    const cards  = queue.slice(offset, offset + limit);
+    res.json({ cards, offset, total: queue.length, has_more: offset + limit < queue.length });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch next cards', details: e.message });
+  }
 });
 
 studyRouter.post('/card/:cardId/response', async (req, res) => {
@@ -11579,7 +11624,7 @@ previous_review_at: card.last_reviewed_at || null,
 reviewed_at: new Date(),
 });
 // Phase 2 & 3: Fire-and-forget — do not block card response latency
-recomputeAndStoreCardState(req.user.id, cardId).catch(() => {});
+queueKSRecompute(req.user.id, cardId); // queued — drained every 60s
 propagateCrossBubbleKSUpdate(req.user.id, cardId).catch(() => {});
 updateClusterKSForCard(req.user.id, cardId).catch(() => {});
 if (nextReview.stage !== prevStage) {
@@ -11637,6 +11682,7 @@ intervalHintHard:  _fmtMs(new Date(_hH.next_review_at).getTime() - _hintNow),
 intervalHintGood:  _fmtMs(new Date(_hG.next_review_at).getTime() - _hintNow),
 intervalHintEasy:  _fmtMs(new Date(_hE.next_review_at).getTime() - _hintNow),
 });
+wsSend(req.user.id, 'card_reviewed', { xp_earned: xpEarned, new_stage: nextReview.stage, card_id: cardId });
 } catch (e) {
 res.status(500).json({ error: 'Failed to record response', details: e.message });
 }
@@ -11680,6 +11726,7 @@ res.json({
   ksDelta: 0,
   stage_transitions: [],
 });
+wsSend(req.user.id, 'session_complete', { xp_earned: session.xp_earned || 0, cards_reviewed: session.cards_reviewed || 0, seed_survived: seedSurvived });
 // Background analytics — non-blocking fire-and-forget
 (async () => {
   try {
@@ -14724,6 +14771,19 @@ app.use('/api', progressRouter);
 // ════════════════════════════════════════════════════════════════════════════
 // ── CRON JOBS ────────────────────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'test') {
+// ── KS recompute batch — 60s drain ───────────────────────────────────────────
+cron.schedule('* * * * *', async () => {
+  if (_ksQueue.size === 0) return;
+  const batch = [..._ksQueue.values()];
+  _ksQueue.clear();
+  let n = 0;
+  for (const { userId, cardId } of batch) {
+    await recomputeAndStoreCardState(userId, cardId).catch(() => {});
+    n++;
+  }
+  if (n > 0) console.log(`[KIWI KS] Batch: ${n} card state${n !== 1 ? 's' : ''} recomputed`);
+});
+
 // ── Daily at 3:00 AM: Maintenance, penalties, pressure, morning brief cache ──
 
 cron.schedule('0 3 * * *', async () => {
@@ -15701,10 +15761,35 @@ console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear ab
       }
     });
 
-    app.listen(PORT, () => {
+    const _httpServer = app.listen(PORT, () => {
       console.log(`[KIWI] 🥝 Living Ecosystem backend running on port ${PORT}`);
       console.log(`[KIWI] Environment: ${process.env.NODE_ENV || 'development'}`);
     });
+    // ── WebSocket server ──────────────────────────────────────────────────────
+    const _wss = new WebSocketServer({ server: _httpServer });
+    _wss.on('connection', (ws, req) => {
+      let _wsUserId = null;
+      try {
+        const _url = new URL(req.url, 'http://localhost');
+        const _tok = _url.searchParams.get('token');
+        if (!_tok) { ws.close(4001, 'Unauthorized'); return; }
+        const _dec = jwt.verify(_tok, process.env.JWT_SECRET || 'kiwi-secret');
+        _wsUserId = String(_dec.id || _dec.userId || _dec.sub || '');
+        if (!_wsUserId) { ws.close(4001, 'Unauthorized'); return; }
+        if (!_wsClients.has(_wsUserId)) _wsClients.set(_wsUserId, new Set());
+        _wsClients.get(_wsUserId).add(ws);
+        ws.send(JSON.stringify({ event: 'connected', data: { userId: _wsUserId }, ts: Date.now() }));
+        console.log(`[KIWI WS] User ${_wsUserId} connected`);
+      } catch (_e) { ws.close(4001, 'Unauthorized'); return; }
+      ws.on('close', () => {
+        if (_wsUserId) {
+          const _set = _wsClients.get(_wsUserId);
+          if (_set) { _set.delete(ws); if (_set.size === 0) _wsClients.delete(_wsUserId); }
+        }
+      });
+      ws.on('error', () => { try { ws.close(); } catch (_) {} });
+    });
+    console.log('[KIWI WS] WebSocket server ready');
 
 } catch (e) {
 console.error('[KIWI] Failed to start server:', e);
