@@ -35,8 +35,12 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { WebSocketServer } = require('ws');
 
+if (!process.env.DATABASE_URL) {
+  console.error('[KIWI] FATAL: DATABASE_URL environment variable is not set. Exiting.');
+  process.exit(1);
+}
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
+  connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
   max: 25, // Increased for concurrent users; Supabase session-mode cap is 15 so DATABASE_URL env should use transaction-mode pooler
   idleTimeoutMillis: 30000,
@@ -11372,7 +11376,7 @@ studyRouter.use(reckoningLockout);
 
 studyRouter.post('/start', async (req, res) => {
 try {
-const { deck_id, card_limit, include_all_decks_in_subject, subject_id, card_ids } = req.body;
+const { deck_id, card_limit, include_all_decks_in_subject, subject_id, card_ids, card_state_filter } = req.body;
 // Fixed: Allow subject_id + include_all_decks_in_subject without explicit deck_id
 if (!deck_id && !(include_all_decks_in_subject && subject_id)) {
 return res
@@ -11476,9 +11480,21 @@ const effectiveDueQueue = dueQueue.length > 0
         return aDate - bDate; // earliest next_review_at → most overdue → review first
       })
     : [];
+const VALID_FILTER_STATES = new Set(['DANGEROUS','GHOST','STUCK','FRAGILE','AVOIDED']);
+let filteredEffectiveQueue = effectiveDueQueue;
+if (card_state_filter && card_state_filter.length > 0) {
+  const filterSet = new Set(
+    (Array.isArray(card_state_filter) ? card_state_filter : [card_state_filter])
+      .map(s => String(s).toUpperCase()).filter(s => VALID_FILTER_STATES.has(s))
+  );
+  if (filterSet.size > 0) {
+    const stateFiltered = effectiveDueQueue.filter(item => filterSet.has(item.state?.state || ''));
+    if (stateFiltered.length > 0) filteredEffectiveQueue = stateFiltered;
+  }
+}
 const modifiedQueue    = await modifySessionQueueForBubbles(
-  req.user.id, effectiveDueQueue, bubbleSubjectId
-).catch(() => effectiveDueQueue);
+  req.user.id, filteredEffectiveQueue, bubbleSubjectId
+).catch(() => filteredEffectiveQueue);
 const limitedQueue = card_limit && card_limit > 0
   ? modifiedQueue.slice(0, parseInt(card_limit))
   : modifiedQueue;
@@ -14747,15 +14763,17 @@ res.status(500).json({ error: 'Failed to load library', details: e.message });
 }
 });
 // GET /api/library/subjects/:id/cards — full card list for a subject
-// Supports: ?page=1&limit=50&filter=all|due|resting&search=term
+// Supports: ?page=1&limit=50&filter=all|due|resting|DANGEROUS|GHOST|STUCK|FRAGILE|AVOIDED&search=term
 libraryRouter.get('/subjects/:id/cards', async (req, res) => {
   try {
     const subject = await db.subjects.findById(req.params.id);
     if (!subject) return res.status(404).json({ error: 'Subject not found' });
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(200, Math.max(10, parseInt(req.query.limit) || 50));
-    const filter = req.query.filter || 'all'; // 'all' | 'due' | 'resting'
+    const filter = req.query.filter || 'all'; // 'all' | 'due' | 'resting' | card state
     const search = (req.query.search || '').toLowerCase().trim();
+    const CARD_STATE_NAMES = new Set(['DANGEROUS','GHOST','STUCK','FRAGILE','AVOIDED','SEEDLING','GROWING','STABLE','VERIFIED']);
+    const isStateFilter = CARD_STATE_NAMES.has(filter.toUpperCase());
     const now = new Date();
     // Collect all decks for this subject
     let allCards = [];
@@ -14778,6 +14796,16 @@ libraryRouter.get('/subjects/:id/cards', async (req, res) => {
         return front.includes(search) || back.includes(search);
       });
     }
+    // [FIX-2c] State filter: batch-fetch card_states then filter + expose in response
+    let cardStateMap = new Map();
+    try {
+      const allStates = await db.cardStates.findByUser(req.user.id);
+      allStates.forEach(s => cardStateMap.set(s.card_id, s.state || 'SEEDLING'));
+    } catch (_) { /* non-fatal */ }
+    if (isStateFilter) {
+      const targetState = filter.toUpperCase();
+      allCards = allCards.filter(c => (cardStateMap.get(c.id) || 'SEEDLING') === targetState);
+    }
     const total = allCards.length;
     const totalPages = Math.ceil(total / limit);
     const paginated = allCards.slice((page - 1) * limit, page * limit).map((c) => ({
@@ -14789,6 +14817,7 @@ libraryRouter.get('/subjects/:id/cards', async (req, res) => {
       reviewCount: c.review_count || c.reviewCount || 0,
       next_review_at: c.next_review_at || null,
       deck_id: c.deck_id || null,
+      state: cardStateMap.get(c.id) || 'SEEDLING',
     }));
     res.json({ cards: paginated, total, page, totalPages, limit });
   } catch (e) {
