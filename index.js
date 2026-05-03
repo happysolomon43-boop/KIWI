@@ -321,8 +321,11 @@ async create(userId, data) {
   const id = randomUUID();
   // Use an explicit column list so the query never references columns that
   // may not exist in the migrated schema (e.g. updated_at).
-  const cols = ['id', 'user_id', 'name', 'color_hex', 'emoji', 'created_at'];
-  const vals = [id, userId, data.name, data.color_hex || '#4F46E5', data.emoji || '📚', new Date()];
+  // DB columns are "color" and "icon" (not color_hex / emoji — confirmed from live logs)
+  const cols = ['id', 'user_id', 'name', 'color', 'icon', 'created_at'];
+  const colorVal = data.color || data.color_hex || '#4F46E5';
+  const iconVal  = data.icon  || data.emoji      || '📚';
+  const vals = [id, userId, data.name, colorVal, iconVal, new Date()];
   if (data.exam_date != null) { cols.push('exam_date'); vals.push(data.exam_date); }
   if (data.test_date != null) { cols.push('test_date'); vals.push(data.test_date); }
   const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
@@ -10425,12 +10428,13 @@ res.status(500).json({ error: 'Failed to fetch subjects', details: e.message });
 
 subjectRouter.post('/', async (req, res) => {
 try {
-const { name, color_hex, emoji } = req.body;
+// DB columns are "color" and "icon" (confirmed from Render.com logs — not color_hex/emoji)
+const { name, color_hex, color, emoji, icon } = req.body;
 if (!name) return res.status(400).json({ error: 'Name required' });
 const subject = await db.subjects.create(req.user.id, {
 name,
-color_hex: color_hex || '#4F46E5',
-emoji: emoji || '📚',
+color: color || color_hex || '#4F46E5',
+icon: icon || emoji || '📚',
 });
 res.status(201).json(subject);
 } catch (e) {
@@ -14341,8 +14345,8 @@ libraryRouter.post('/subjects', async (req, res) => {
 try {
 const { name, color, icon, exam_date } = req.body;
 if (!name) return res.status(400).json({ error: 'Name required' });
-// Only include exam_date if a value was provided — null can fail on NOT NULL columns
-const subjectData = { name, color_hex: color || '#4F46E5', emoji: icon || '📚' };
+// DB columns are "color" and "icon" (confirmed from Render.com logs)
+const subjectData = { name, color: color || '#4F46E5', icon: icon || '📚' };
 if (exam_date) subjectData.exam_date = exam_date;
 const subject = await db.subjects.create(req.user.id, subjectData);
 // Best-effort deck creation — only pass columns guaranteed in the schema.
