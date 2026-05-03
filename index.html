@@ -5364,7 +5364,10 @@
               // showToast is gated by _appBooting at the source, so this fires
               // only when the session drops while the user is actively in the app.
               // Guard BEFORE logout so parallel API calls don't each call logout.
-              if (!_sessionExpiredNotified) {
+              // Also skip logout during boot/post-login window (_appBooting) so that
+              // background API calls (persona, footer) don't kick the user back to
+              // landing immediately after a fresh login.
+              if (!_sessionExpiredNotified && !_appBooting) {
                 _sessionExpiredNotified = true;
                 logout();
                 showToast("Session expired. Please log in again.", "error", 6000);
@@ -7604,6 +7607,10 @@
           localStorage.setItem('kiwi_refresh_token', refreshToken || '');
           if (data.user) AppState.user = data.user;
           _sessionExpiredNotified = false;
+          // Prevent background API calls (persona, footer) from triggering logout
+          // during the first seconds after login — same protection as page refresh.
+          _appBooting = true;
+          setTimeout(() => { _appBooting = false; }, 8000);
           closeAuth(); // dismiss authOverlay modal (openAuth adds .active; login never removed it)
           const _loginAuthPage = document.getElementById('authPage');
           if (_loginAuthPage) {

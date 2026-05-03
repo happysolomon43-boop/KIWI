@@ -319,7 +319,9 @@ async findManyWithDecks(userId) {
 },
 async create(userId, data) {
   const id = randomUUID();
-  const payload = { ...data, id, user_id: userId, created_at: new Date(), updated_at: new Date() };
+  // Note: updated_at is intentionally omitted — the subjects table may not have
+  // this column depending on the migration. created_at is sufficient for new rows.
+  const payload = { ...data, id, user_id: userId, created_at: new Date() };
   const q = _buildInsert('subjects', payload);
   await query(q.text, q.values);
   return { id, ...payload };
@@ -367,7 +369,8 @@ async findMany(userId, filters = {}) {
 },
 async create(userId, data) {
   const id = randomUUID();
-  const payload = { ...data, id, user_id: userId, created_at: new Date(), updated_at: new Date() };
+  // Note: updated_at intentionally omitted to match the migrated schema.
+  const payload = { ...data, id, user_id: userId, created_at: new Date() };
   const q = _buildInsert('decks', payload);
   await query(q.text, q.values);
   return { id, ...payload };
