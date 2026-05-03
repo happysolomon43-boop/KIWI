@@ -5369,10 +5369,10 @@
       // ═══════════════════════════════════════════════════════════════════════════
 
       // ── CONFIGURATION ──
-      // Relative URL works in all environments: Replit proxy routes /api to the backend,
+      // Absolute Render URL required for cross-origin deployment (GitHub Pages → Render).
       // and local single-origin dev serves both from the same port.
       const _isLocalDev = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-      const API_BASE_URL = _isLocalDev ? "http://localhost:8080/api" : "/api";
+      const API_BASE_URL = _isLocalDev ? "http://localhost:8080/api" : "https://kiwi-741i.onrender.com/api";
 
       // ── AUTHENTICATION STATE ──
       let authToken = localStorage.getItem("kiwi_auth_token") || null;
