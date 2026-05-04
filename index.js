@@ -360,8 +360,19 @@ async findManyWithDecks(userId) {
   );
   return subjects.map((s) => {
     const sDecks = decks.filter((d) => d.subject_id === s.id);
+    // BUGFIX-2: Some older subjects were stored with JSON-encoded name fields
+    // e.g. name = '{"name":"Physics","color":"#2d6a4f","icon":"📚"}'
+    // Normalize here so every caller gets a plain string name.
+    let normalizedName = s.name || '';
+    if (normalizedName.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(normalizedName);
+        if (parsed && parsed.name) normalizedName = parsed.name;
+      } catch (_) {}
+    }
     return {
       ...s,
+      name: normalizedName,
       deck_count: sDecks.length,
       total_cards: sDecks.reduce((sum, d) => sum + (d.card_count || 0), 0),
       decks: sDecks,
@@ -1842,8 +1853,12 @@ continue;
 if (!res.ok) { lastError = `HTTP ${res.status}`; continue; }
 const data = await res.json();
 const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+const finishReason = data?.candidates?.[0]?.finishReason || 'UNKNOWN';
+if (finishReason === 'MAX_TOKENS') {
+  console.warn(`[KIWI] Gemini response truncated (MAX_TOKENS) — increase maxOutputTokens or reduce input size. Text length: ${text.length}`);
+}
 // Return SDK-compatible object — all existing callers work without changes
-return { response: { text: () => text } };
+return { response: { text: () => text, finishReason } };
 } catch (e) {
 lastError = e.message;
 console.error(`[KIWI] Gemini fetch error (attempt ${attempt + 1}):`, e.message);
@@ -3356,17 +3371,23 @@ return newUnlocks;
 
 // ════════════════════════════════════════════════════════════════════════════
 const CBT_PROMPT = `
-## ROLE
+## ⚠ PRIMARY DIRECTIVE — READ THIS FIRST
 
-You are an expert external examiner with deep subject knowledge. You have studied the provided notes thoroughly — but you do NOT write questions from the notes. You write questions the way a university examiner does: you take the *knowledge* in the notes and construct entirely independent questions that test whether a student truly understands it.
+You must generate EXACTLY [COUNT] questions. This is the single non-negotiable requirement of this entire task. Every other rule in this prompt is a quality guideline that is SECONDARY to the count. If following any quality rule would prevent you from reaching [COUNT], ignore that rule and write the question anyway. Reaching [COUNT] is mandatory. Stopping early is a failure regardless of the reason.
 
-Your questions should feel like they came from an exam paper, not from a study guide.
+If you feel you have "covered all the concepts", keep going: apply twisting techniques, change the angle, flip the question, use scenario injection, test consequences, or ask about exceptions. There is always another valid question to write from any body of material.
 
 ---
 
-## EXAMINER MINDSET — CRITICAL
+## ROLE
 
-This is the most important section. Read it before generating a single question.
+You are an expert external examiner. Your goal is to write [COUNT] high-quality exam questions from the study notes below.
+
+---
+
+## EXAMINER MINDSET
+
+Read this before generating questions.
 
 **You are NOT a summarizer. You are an examiner.**
 
@@ -3448,7 +3469,7 @@ Assembled from real terminology in the correct domain. Sounds entirely credible 
 - Never use "All of the above" or "None of the above"
 - Match the grammatical form and approximate length of all options — no option should visually stand out as different
 - Randomize correct answer position — distribute evenly across A, B, C, D across the exam
-- **CRITICAL — NO OPTION RECYCLING**: Every option across the entire exam must be unique. Never use the correct answer of one question as a distractor in another. Build each question's distractors from misconceptions, partial truths, and adjacent concepts SPECIFIC TO THAT QUESTION ONLY.
+- **Avoid option recycling where possible**: Try not to reuse the exact same option text across different questions. This is a preference, not a hard rule — reaching [COUNT] questions is more important than unique option text.
 
 ---
 
@@ -3545,11 +3566,11 @@ Explanation: [1–2 sentences MAX. Why the correct answer is right + the key mis
 
 ## CONCEPT DECOMPOSITION RULES
 
-For every major concept, generate questions across these dimensions — but only where the material genuinely supports it:
+For every major concept, generate questions across these dimensions. Use as many of these angles as needed to reach [COUNT]:
 
 | Dimension | Question Focus |
 |---|---|
-| Definition | What it IS (use sparingly — only for genuinely complex terms) |
+| Definition | What it IS |
 | Function | What it DOES |
 | Application | Using it in a standard context |
 | Novel Application | Using it in a context the notes never mentioned |
@@ -3577,9 +3598,6 @@ One concept per question. No compound questions.
 **The Fairness Rule**
 A student who genuinely understands the material must be able to answer correctly. No trick wording. No ambiguous stems.
 
-**The No-Padding Rule**
-Never generate a question just to increase count. Every question must test something not already covered by another question.
-
 ---
 
 ## COGNITIVE DISTRIBUTION TARGET
@@ -3596,12 +3614,12 @@ Never generate a question just to increase count. Every question must test somet
 
 ## VOLUME INSTRUCTION — ABSOLUTE RULE
 
-You MUST generate EXACTLY [COUNT] questions. This is a hard requirement. Not a guideline. Not a target.
+You MUST generate EXACTLY [COUNT] questions. No fewer. No more.
 
-- If the notes are short, use twisting techniques, scenario injection, and consequence testing to reach [COUNT].
-- Never generate fewer questions than [COUNT] because you ran out of obvious topics.
-- Never generate more questions than [COUNT].
-- Do not pad with trivial recall questions — use the Question Twisting Techniques to create meaningful questions from limited material.
+- Use twisting techniques, scenario injection, consequence testing, and definition questions to reach [COUNT].
+- Never stop before [COUNT] for any reason — not because concepts feel exhausted, not because quality feels hard to maintain, not for any other reason.
+- If you reach what feels like the end of the material before reaching [COUNT], keep going: change the angle, reverse the question, test the same concept from a different scenario, or write a simpler direct question. All of these count.
+- [COUNT] questions is mandatory. This rule overrides every other rule in this prompt.
 
 ---
 
@@ -3609,29 +3627,18 @@ You MUST generate EXACTLY [COUNT] questions. This is a hard requirement. Not a g
 
 You MUST draw at least one question from EVERY distinct concept, term, process, formula, or fact mentioned in the provided study notes.
 
-- If the notes contain 15 topics, all 15 must appear in at least one question.
-- Do NOT cluster all questions around 2–3 concepts while ignoring the rest of the notes.
-- Do NOT skip any section of the provided notes, no matter how brief.
 - Spread questions proportionally across ALL sections and topics of the notes.
-- Coverage of the full notes is as binding as the exact question count.
-
----
-
-## PRE-OUTPUT CHECKLIST
-
-Before generating, confirm:
-- [ ] Subject type detected and theory/calculation ratio set
-- [ ] No question copies a note example directly
-- [ ] All distractors use the four distractor types
-- [ ] At least 60% of questions use a twisting technique
-- [ ] Calculation questions use fresh numbers and scenarios
-- [ ] All questions come before all answers
+- Do NOT cluster all questions around 2–3 concepts while ignoring the rest of the notes.
+- If you have covered all topics but have not yet reached [COUNT], revisit topics from different angles rather than stopping.
 
 ---
 
 Study Notes:
 [NOTES]
-Generate exactly [COUNT] questions following all rules above.
+
+---
+
+⚠ FINAL REMINDER BEFORE YOU BEGIN: You must write exactly [COUNT] questions. Count them as you go. If you finish the answers section and have written fewer than [COUNT] questions, you have failed this task. Do not stop generating questions until you have written [COUNT] of them.
 `;
 const FLASHCARD_PROMPT = `
 ROLE: You are an expert educational content creator specializing in building comprehensive, pedagogically-sound Anki flashcard sets. Your task is to analyze the provided notes and generate a complete set of Anki cards that ensures no detail is overlooked.
@@ -4012,7 +4019,14 @@ function deduplicateCBTOptions(questions) {
 
 async function generateCBTQuestions(notes, count) {
 const prompt = CBT_PROMPT.replace('[NOTES]', notes).replace('[COUNT]', count);
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000 }, { timeoutMs: 120000 });
+// Scale output tokens with question count: ~450 tokens per question (stem + 4 options + explanation)
+// minimum 15000, maximum 65536. This prevents MAX_TOKENS truncation on large exams.
+const scaledTokens = Math.min(65536, Math.max(15000, count * 450));
+console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, maxOutputTokens=${scaledTokens}`);
+const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens }, { timeoutMs: 120000 });
+if (result.response.finishReason === 'MAX_TOKENS') {
+  console.warn(`[KIWI CBT] Output truncated at ${count} questions — response cut short. Consider lowering count or notes size.`);
+}
 return result.response.text();
 }
 
@@ -4202,9 +4216,10 @@ const qLines = questionsBlock.split('\n');
 let current = null,
 qNum = 0;
 for (const rawLine of qLines) {
-const line = rawLine.trim();
+// Strip markdown bold/heading wrappers Gemini sometimes adds, e.g. **Question 1** or ### Question 1
+const line = rawLine.trim().replace(/^\*\*(.+)\*\*$/, '$1').replace(/^#{1,3}\s*/, '');
 if (!line) continue;
-const qMatch = line.match(/^Question\s(\d+)/i);
+const qMatch = line.match(/^Question\s*(\d+)/i);
 if (qMatch) {
 if (current && current.stem) questions.push(current);
 qNum = parseInt(qMatch[1], 10);
@@ -4262,9 +4277,9 @@ const aLines = answersBlock.split('\n');
 let currentAnswerNum = null,
 currentAnswer = {};
 for (const rawLine of aLines) {
-const line = rawLine.trim();
+const line = rawLine.trim().replace(/^\*\*(.+)\*\*$/, '$1').replace(/^#{1,3}\s*/, '');
 if (!line) continue;
-const qNumMatch = line.match(/^Question\s(\d+)\s*:/i);
+const qNumMatch = line.match(/^Question\s*(\d+)\s*:/i);
 if (qNumMatch) {
 if (currentAnswerNum !== null && currentAnswer.correct_answer)
 answerMap.set(currentAnswerNum, currentAnswer);
@@ -4289,13 +4304,19 @@ answerMap.set(currentAnswerNum, currentAnswer);
 // Helper: strip markdown bold/italic that Gemini sometimes leaves in stems/options
 const _stripMd = (s) => (s || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/__([^_]+)__/g, '$1').replace(/_([^_]+)_/g, '$1').trim();
 
-return questions.map((q, idx) => {
+// ── PARSE DIAGNOSTICS LOG ────────────────────────────────────────────────────
+console.log(`[KIWI CBT PARSE] Raw AI response: ${text.length} chars`);
+console.log(`[KIWI CBT PARSE] Questions block: ${questionsBlock.length} chars | Answers block: ${answersBlock.length} chars`);
+console.log(`[KIWI CBT PARSE] Questions found in block: ${questions.length} | Answers mapped: ${answerMap.size}`);
+const _missingAnswers = questions.filter(q => !answerMap.has(q.question_number)).map(q => q.question_number);
+if (_missingAnswers.length > 0) console.warn(`[KIWI CBT PARSE] Questions with no answer mapping: ${_missingAnswers.join(', ')}`);
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _PLACEHOLDERS = new Set(['Option A', 'Option B', 'Option C', 'Option D', '(none of the above applies here)', '[option removed — duplicate]']);
+const mapped = questions.map((q, idx) => {
 const ans = answerMap.get(q.question_number) || {};
 // Strip internal parsing flags (_stemDone) so they don't get inserted into the DB
 const { _stemDone, ...cleanQ } = q;
-// FIX: Use empty string sentinel check — 'Option A/B/C/D' means the AI failed to
-// generate that slot. Filter these questions out instead of storing garbage options.
-const _PLACEHOLDERS = new Set(['Option A', 'Option B', 'Option C', 'Option D', '(none of the above applies here)', '[option removed — duplicate]']);
 const oA = _stripMd(cleanQ.option_a) || '';
 const oB = _stripMd(cleanQ.option_b) || '';
 const oC = _stripMd(cleanQ.option_c) || '';
@@ -4303,7 +4324,14 @@ const oD = _stripMd(cleanQ.option_d) || '';
 const correctLetter = ans.correct_answer || 'A';
 // If the declared correct option slot is empty or a placeholder, mark for removal
 const correctOptionText = { A: oA, B: oB, C: oC, D: oD }[correctLetter] || '';
-if (!correctOptionText || _PLACEHOLDERS.has(correctOptionText)) return null;
+if (!correctOptionText || _PLACEHOLDERS.has(correctOptionText)) {
+  console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — correct option ${correctLetter} is empty or placeholder ("${correctOptionText}")`);
+  return null;
+}
+if (!cleanQ.stem) {
+  console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — no stem`);
+  return null;
+}
 return {
 ...cleanQ,
 stem: _stripMd(cleanQ.stem),
@@ -4315,7 +4343,10 @@ option_d: oD || 'Not applicable',
 correct_answer: correctLetter,
 explanation: ans.explanation || 'No explanation provided.',
 };
-}).filter(Boolean);
+});
+const passed = mapped.filter(Boolean);
+console.log(`[KIWI CBT PARSE] After filter: ${passed.length} questions passed (${questions.length - passed.length} dropped)`);
+return passed;
 }
 
 function parseFlashcards(rawText) {
@@ -12501,37 +12532,6 @@ card_range,
 time_limit_seconds,
 status: 'ready',
 });
-// ── POST /api/exams/:id/forfeit — forfeit an in-progress exam, apply penalties ──
-examRouter.post('/:id/forfeit', async (req, res) => {
-try {
-  const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
-  if (!exam) return res.status(404).json({ error: 'Exam not found' });
-  if (exam.is_reckoning) return res.status(403).json({ error: 'Reckoning exams cannot be forfeited' });
-  if (exam.status === 'forfeited' || exam.status === 'completed') {
-    return res.status(400).json({ error: 'Exam already ended' });
-  }
-  // Mark exam as forfeited
-  await db.examSessions.update(req.user.id, req.params.id, {
-    status: 'forfeited',
-    completed_at: new Date(),
-  });
-  // Penalty: -10 tree_health, +1 pressure on each subject the exam covered
-  await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-  if (exam.subject_id) {
-    const bp = await db.brainPressure.get(req.user.id, exam.subject_id);
-    const cur = bp ? bp.pressure_score || 0 : 0;
-    await db.brainPressure.set(req.user.id, exam.subject_id, {
-      pressure_score: Math.min(100, cur + 15),
-      intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
-    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    // Recompute KS with forfeiture penalty
-    await persistKnowledgeScore(req.user.id, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-  }
-  res.json({ success: true, message: 'Exam forfeited. Penalties applied.' });
-} catch (e) {
-  res.status(500).json({ error: 'Failed to forfeit exam', details: e.message });
-}
-});
 
 // FIX: strip {{c1::answer}} cloze syntax before sending to AI — raw cloze
 // markup confuses Gemini and produces garbled distractors/stems.
@@ -12581,7 +12581,7 @@ setImmediate(async () => {
       } catch (completionErr) {
         console.warn('[KIWI CBT] Completion prompt failed:', completionErr.message);
       }
-      // After completion prompt, if still short — hard fail. Partial exams are not acceptable.
+      // After both AI passes, if still short — hard fail with a clear error message.
       if (questions.length < _cbtCount) {
         await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
         _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.' });
@@ -12594,6 +12594,7 @@ setImmediate(async () => {
       }
     }
     questions = deduplicateCBTOptions(questions);
+    console.log(`[KIWI CBT] ✅ Generation complete: ${questions.length}/${_cbtCount} questions ready for session ${_cbtSessionId}`);
     await Promise.all(questions.map(q => db.examQuestions.create(_cbtUserId, _cbtSessionId, q)));
     const readyExam = await db.examSessions.findByIdWithQuestions(_cbtUserId, _cbtSessionId);
     // Link reckoning session if applicable
@@ -12613,6 +12614,37 @@ setImmediate(async () => {
 });
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate exam', details: e.message });
+}
+});
+
+// ── POST /api/exams/:id/forfeit — forfeit an in-progress exam, apply penalties ──
+// BUGFIX: moved out of the /generate handler — was incorrectly registered as a
+// nested route inside the generate try-block, causing duplicate handler registrations.
+examRouter.post('/:id/forfeit', async (req, res) => {
+try {
+  const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+  if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (exam.is_reckoning) return res.status(403).json({ error: 'Reckoning exams cannot be forfeited' });
+  if (exam.status === 'forfeited' || exam.status === 'completed') {
+    return res.status(400).json({ error: 'Exam already ended' });
+  }
+  await db.examSessions.update(req.user.id, req.params.id, {
+    status: 'forfeited',
+    completed_at: new Date(),
+  });
+  await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  if (exam.subject_id) {
+    const bp = await db.brainPressure.get(req.user.id, exam.subject_id);
+    const cur = bp ? bp.pressure_score || 0 : 0;
+    await db.brainPressure.set(req.user.id, exam.subject_id, {
+      pressure_score: Math.min(100, cur + 15),
+      intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
+    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    await persistKnowledgeScore(req.user.id, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  }
+  res.json({ success: true, message: 'Exam forfeited. Penalties applied.' });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to forfeit exam', details: e.message });
 }
 });
 
@@ -15358,6 +15390,48 @@ _jobsRouter.get('/:id', (req, res) => {
   });
 });
 app.use('/api/jobs', _jobsRouter);
+
+// ── POST /api/debug/exam-parse-test ─────────────────────────────────────────
+// Test endpoint: runs the full AI generation + parse pipeline and returns
+// detailed diagnostics without creating a real exam session in the DB.
+// Usage: POST /api/debug/exam-parse-test  { notes: "...", count: 10 }
+// Protected by authenticate — only signed-in users can call it.
+const _debugRouter = express.Router();
+_debugRouter.use(authenticate);
+_debugRouter.post('/exam-parse-test', async (req, res) => {
+  const { notes, count = 10 } = req.body || {};
+  if (!notes) return res.status(400).json({ error: 'notes is required' });
+  const _n = Math.max(1, Math.min(100, parseInt(count) || 10));
+  const startMs = Date.now();
+  try {
+    console.log(`[KIWI DEBUG] exam-parse-test: count=${_n}, notes_len=${notes.length}`);
+    const aiText = await generateCBTQuestions(notes, _n);
+    const parseStart = Date.now();
+    const questions = parseCBTResponse(aiText, 'debug-session', []);
+    const parseMs = Date.now() - parseStart;
+    const totalMs = Date.now() - startMs;
+    // Build per-question summary (stem preview + options check)
+    const qSummary = questions.map((q, i) => ({
+      n: i + 1,
+      stem: (q.stem || '').slice(0, 80) + ((q.stem || '').length > 80 ? '…' : ''),
+      hasAllOptions: !!(q.option_a && q.option_b && q.option_c && q.option_d),
+      correctAnswer: q.correct_answer,
+      hasExplanation: !!q.explanation && q.explanation !== 'No explanation provided.',
+    }));
+    res.json({
+      requested: _n,
+      generated: questions.length,
+      match: questions.length === _n,
+      shortfall: Math.max(0, _n - questions.length),
+      timings: { totalMs, parseMs, aiMs: totalMs - parseMs },
+      rawResponseChars: aiText.length,
+      questions: qSummary,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, timings: { totalMs: Date.now() - startMs } });
+  }
+});
+app.use('/api/debug', _debugRouter);
 
 app.use('/api', progressRouter);
 

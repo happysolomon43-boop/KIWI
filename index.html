@@ -5727,25 +5727,77 @@
         var _bannerLabels = { cbt_generation: '🥝 Exam generation in progress…', note_generation: '🥝 Note generation in progress…' };
         if (_bannerLabels[type]) _showGenBanner(_bannerLabels[type]);
         if (_pendingJobs.has(jobId)) return;
+        var _pollStart = Date.now();
+        var _MAX_POLL_MS = 3 * 60 * 1000; // 3 minutes max
+        var _simulateWsMsg = function(event, data) {
+          if (_kiwiWS && _kiwiWS.readyState === 1) {
+            _kiwiWS.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ event: event, data: data }) }));
+          } else {
+            // Manually fire the WS handler logic inline since WS is not available
+            if (event === 'job_done') {
+              var _jd = data || {};
+              var _jType = _jd.type;
+              _hideGenBanner();
+              if (_jType === 'cbt_generation') {
+                var _examData = (_jd.exam && (_jd.exam.exam || _jd.exam)) || (_jd.result && (_jd.result.exam || _jd.result));
+                if (!_examData || !_examData.id) { showToast('⚠ Exam ready but data missing — please refresh.', 'error'); return; }
+                showToast('✅ Exam ready! Taking you there now…', 'success', 4000);
+                var qCount = (_examData.questions || []).length;
+                var SECS_PER_Q = 66;
+                var _isReck = !!(_examData.is_reckoning || _examData.isReckoning);
+                AppState.tempExam = { examId: _examData.id, questions: typeof normalizeExamQuestions === 'function' ? normalizeExamQuestions(_examData.questions || []) : (_examData.questions || []), currentIndex: 0, answers: {}, flagged: new Set(), startTime: Date.now(), timeLimit: _isReck ? Infinity : qCount * SECS_PER_Q, totalTime: _isReck ? Infinity : qCount * SECS_PER_Q, _warnedAt20: false, _warnedAt10: false, submitted: false, isReckoning: _isReck };
+                if (typeof apiRequest === 'function') apiRequest('/exams/' + _examData.id + '/start', { method: 'POST' }).catch(function(){});
+                _lockExamPage(_isReck);
+                if (typeof navigateTo === 'function') { _origNavigateTo ? _origNavigateTo('exam') : navigateTo('exam'); }
+              }
+            } else if (event === 'job_failed') {
+              var _jf2 = data || {};
+              _hideGenBanner();
+              showToast('⚠ ' + (_jf2.error || 'Task failed'), 'error', 8000);
+              if (_jf2.type === 'cbt_generation') {
+                var _gb = document.getElementById('generateExamBtn');
+                if (_gb) { _gb.disabled = false; _gb.textContent = 'Generate Exam'; }
+                else { var _gs = document.getElementById('examGeneratingScreen'); if (_gs) _gs.innerHTML = '<div style="text-align:center;padding:40px 20px;"><div style="font-size:var(--text-xl);font-weight:600;color:var(--red-bright);margin-bottom:16px;">&#x26A0; Exam generation failed</div><div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:24px;">' + (_jf2.error||'Unknown error').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div><button class="btn btn-primary" onclick="navigateTo(\'exam-config\')">Try Again</button></div>'; else if (typeof navigateTo === 'function') navigateTo('exam-config'); }
+              }
+            }
+          }
+        };
         const iv = setInterval(async () => {
           try {
+            // Give up after max poll time
+            if (Date.now() - _pollStart > _MAX_POLL_MS) {
+              clearInterval(iv);
+              _pendingJobs.delete(jobId);
+              _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: 'Exam generation timed out. The AI took too long. Please try again.' });
+              return;
+            }
             const job = await apiRequest(`/jobs/${jobId}`);
             if (job.status === 'done') {
               clearInterval(iv);
               _pendingJobs.delete(jobId);
               if (_kiwiWS && _kiwiWS.readyState === 1) return; // WS already handled it
-              // Simulate WS message
-              if (_kiwiWS) _kiwiWS.dispatchEvent(new MessageEvent('message', {
-                data: JSON.stringify({ event: 'job_done', data: { job_id: jobId, type, result: job.result, exam: job.result && job.result.exam } })
-              }));
+              _simulateWsMsg('job_done', { job_id: jobId, type: type, result: job.result, exam: job.result });
             } else if (job.status === 'failed') {
               clearInterval(iv);
               _pendingJobs.delete(jobId);
-              showToast('⚠ Background task failed: ' + (job.error || 'unknown error'), 'error', 7000);
+              _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: job.error || 'unknown error' });
             }
           } catch (_) {}
         }, 4000);
         _pendingJobs.set(jobId, { type, pollInterval: iv });
+      }
+
+      // safeDisplayName: parse JSON-encoded names (e.g. {"name":"Physics","color":"..."})
+      function safeDisplayName(rawName) {
+        if (!rawName || typeof rawName !== 'string') return rawName || '';
+        var trimmed = rawName.trim();
+        if (trimmed.charAt(0) === '{') {
+          try {
+            var parsed = JSON.parse(trimmed);
+            return parsed.name || rawName;
+          } catch (e) {}
+        }
+        return rawName;
       }
 
       const AppState = {
@@ -9608,6 +9660,8 @@
           // M2 FIX: capture tempStudy BEFORE clearing — renderSessionEnd needs seed state
           const savedTempStudy = AppState.tempStudy;
           AppState.tempStudy = null;
+          // BUGFIX-4: Force library to re-fetch fresh data so due counts + timers reflect the session
+          AppState.subjects = null;
           // M3 FIX: flag biome for zone restoration if this was a return-from-absence session
           if (savedTempStudy?.isReturnSession && savedTempStudy?.subjectId) {
             AppState.returnZoneSubjectId = savedTempStudy.subjectId;
@@ -13330,9 +13384,9 @@
             <div class="subject-header" data-subj="${escapeHTML(subj.id)}" style="cursor:pointer;" onclick="(function(el){var g=el.closest('.subject-section').querySelector('.deck-grid');var t=el.querySelector('.subj-toggle');if(g){var collapsed=g.style.display==='none';g.style.display=collapsed?'':'none';if(t)t.textContent=collapsed?'▼':'▶';}})(this)">
               <span class="subject-color-dot" style="background:${escapeHTML(subj.color || "#52b788")}"></span>
               <span class="subj-toggle" style="font-size:var(--text-xs);color:var(--text-3);margin-right:6px;user-select:none;">▶</span>
-              <span class="subject-name-text">${subj.icon ? escapeHTML(subj.icon) : "&#x25A0;"} ${escapeHTML(subj.name)}</span>
+              <span class="subject-name-text">${subj.icon ? escapeHTML(subj.icon) : "&#x25A0;"} ${escapeHTML(safeDisplayName(subj.name))}</span>
               <span class="subject-meta">${subj.cardCount || 0} cards ${due > 0 ? `<span style="color:var(--green-bright);font-weight:700;">&bull; ${due} due</span>` : ""}</span>
-              <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:#e57373;font-size:var(--text-xs);" onclick="event.stopPropagation();handleDeleteSubject('${escapeHTML(subj.id)}', '${escapeHTML(subj.name)}')">Delete</button>
+              <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:#e57373;font-size:var(--text-xs);" onclick="event.stopPropagation();handleDeleteSubject('${escapeHTML(subj.id)}', '${escapeHTML(safeDisplayName(subj.name))}')">Delete</button>
             </div>
             <div class="deck-grid" style="display:none;">
               ${(subj.recentCards || [])
@@ -13341,7 +13395,7 @@
                   const stateInfo = c.stateInfo || { label: "SEEDLING", color: "#556b58" };
                   return `
                   <div class="deck-card" data-card-id="${escapeHTML(c.id)}">
-                    <div style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">${escapeHTML(subj.name)}</div>
+                    <div style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">${escapeHTML(safeDisplayName(subj.name))}</div>
                     <div class="deck-name">${escapeHTML(c.front)}</div>
                     <div class="deck-stats">
                       <span>Stage ${stage}</span>
