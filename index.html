@@ -5236,7 +5236,6 @@
 
       /* ── Persistent AI Generation Banner (Fix 6) ─────────────────────────── */
       #kiwiGenBanner {
-        display: none;
         position: fixed;
         bottom: 72px;
         left: 50%;
@@ -5264,6 +5263,134 @@
         animation: spin 0.8s linear infinite;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* ── Library Redesign Styles ─────────────────────────────────────────── */
+      .lib-subj-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-lg, 14px);
+        padding: var(--space-4, 16px);
+        margin-bottom: var(--space-3, 12px);
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      .lib-subj-card:hover {
+        border-color: var(--border-2, #2a3a2a);
+        box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+      }
+      .lib-subj-header {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3, 12px);
+      }
+      .lib-state-seg {
+        transition: flex 0.3s ease;
+      }
+      .lib-state-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 11px;
+        font-family: var(--font-mono, monospace);
+        font-weight: 600;
+        padding: 2px 7px;
+        border-radius: 20px;
+        white-space: nowrap;
+        cursor: default;
+      }
+
+      /* ── Sidebar section labels ── */
+      .nav-section-label {
+        font-size: 9px;
+        color: var(--text-4);
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        padding: 14px 14px 4px;
+        user-select: none;
+        pointer-events: none;
+      }
+      .nav-section-label:first-child { padding-top: 4px; }
+
+      /* ── Mobile bar upgrade ── */
+      .mob-back-btn {
+        display: none;
+        background: none;
+        border: none;
+        color: var(--text-2);
+        cursor: pointer;
+        font-size: 22px;
+        padding: 2px 8px;
+        line-height: 1;
+        border-radius: var(--r-sm);
+        transition: color var(--t-fast);
+        flex-shrink: 0;
+      }
+      .mob-back-btn:hover, .mob-back-btn:active { color: var(--green-bright); }
+      .mob-page-title {
+        flex: 1;
+        text-align: center;
+        font-family: var(--font-display);
+        font-size: var(--text-base);
+        font-weight: 700;
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding: 0 6px;
+      }
+
+      /* ── Bottom navigation bar (mobile only) ── */
+      .bottom-nav {
+        display: none;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 290;
+        background: var(--glass-bg);
+        border-top: 1px solid var(--border);
+        backdrop-filter: var(--glass-blur);
+        -webkit-backdrop-filter: var(--glass-blur);
+        height: 60px;
+        padding: 0 2px env(safe-area-inset-bottom, 0);
+        align-items: stretch;
+      }
+      @media (max-width: 768px) {
+        .bottom-nav { display: flex; }
+        .main-content { padding-bottom: 60px; }
+        .page-wrap { padding-bottom: 76px !important; }
+        .toast-container { bottom: auto; top: 68px; }
+      }
+      .bnav-item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        background: none;
+        border: none;
+        color: var(--text-4);
+        cursor: pointer;
+        padding: 6px 2px 4px;
+        transition: color var(--t-fast);
+        position: relative;
+        -webkit-tap-highlight-color: transparent;
+        font-family: var(--font-body);
+        min-width: 0;
+      }
+      .bnav-item:active { transform: scale(0.94); }
+      .bnav-item.active { color: var(--green-bright); }
+      .bnav-item.active::after {
+        content: '';
+        position: absolute;
+        top: 0; left: 20%; right: 20%;
+        height: 2px;
+        background: var(--green-bright);
+        border-radius: 0 0 3px 3px;
+      }
+      .bnav-icon { font-size: 19px; line-height: 1; }
+      .bnav-label { font-size: 10px; font-weight: 500; letter-spacing: 0.2px; white-space: nowrap; }
       </style>
   </head>
   <body>
@@ -5276,27 +5403,12 @@
     <div class="ambient-particles"></div>
     <div id="app">
       <div class="mobile-bar">
-        <button
-          class="hamburger"
-          id="hamburgerBtn"
-          aria-label="Toggle menu"
-          aria-expanded="false"
-          aria-controls="sidebar"
-        >
+        <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu" aria-expanded="false" aria-controls="sidebar">
           <span></span><span></span><span></span>
         </button>
-        <div
-          style="
-            font-family: var(--font-display);
-            font-size:var(--text-xl);
-            font-weight: 800;
-            color: var(--green-bright);
-            letter-spacing: 2px;
-          "
-        >
-          KIWI
-        </div>
-        <div style="width: 28px"></div>
+        <button class="mob-back-btn" id="mobBackBtn" onclick="goBack()" aria-label="Go back">&#x2190;</button>
+        <div class="mob-page-title" id="mobPageTitle">KIWI</div>
+        <div id="mobKsBadge" onclick="navigateTo('dashboard')" style="cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--green-bright);background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.15);padding:2px 8px;border-radius:20px;font-weight:600;white-space:nowrap;flex-shrink:0;min-width:20px;text-align:center;transition:all var(--t-fast);"></div>
       </div>
       <div class="sidebar-overlay" id="sidebarOverlay"></div>
       <div class="app-container" id="appContainer" style="display: none">
@@ -5311,11 +5423,12 @@
             <div class="sidebar-logo-sub">The Living Ecosystem</div>
           </div>
           <nav class="sidebar-nav" id="sidebarNav" role="navigation" aria-label="Main navigation">
+            <div class="nav-section-label">Learn</div>
             <div class="nav-item" data-route="dashboard">
               <span class="nav-icon">🏡</span><span class="nav-label">Dashboard</span>
             </div>
-            <div class="nav-item" data-route="biome">
-              <span class="nav-icon">🌿</span><span class="nav-label">The Biome</span>
+            <div class="nav-item" data-route="library">
+              <span class="nav-icon">📚</span><span class="nav-label">Library</span>
             </div>
             <div class="nav-item" data-route="study">
               <span class="nav-icon">🃏</span><span class="nav-label">Study Session</span>
@@ -5323,8 +5436,9 @@
             <div class="nav-item" data-route="exam-config">
               <span class="nav-icon">✍️</span><span class="nav-label">CBT Exam</span>
             </div>
-            <div class="nav-item" data-route="library">
-              <span class="nav-icon">📚</span><span class="nav-label">Library</span>
+            <div class="nav-section-label">Ecosystem</div>
+            <div class="nav-item" data-route="biome">
+              <span class="nav-icon">🌿</span><span class="nav-label">The Biome</span>
             </div>
             <div class="nav-item" data-route="brain">
               <span class="nav-icon">🧠</span><span class="nav-label">The Brain</span>
@@ -5335,17 +5449,19 @@
             <div class="nav-item" data-route="almanac">
               <span class="nav-icon">🗓️</span><span class="nav-label">The Almanac</span>
             </div>
+            <div class="nav-section-label">Track</div>
             <div class="nav-item" data-route="progress">
               <span class="nav-icon">📊</span><span class="nav-label">Progress</span>
             </div>
             <div class="nav-item" data-route="achievements">
               <span class="nav-icon">🏆</span><span class="nav-label">Achievements</span>
             </div>
+            <div class="nav-section-label">Tools</div>
+            <div class="nav-item" data-route="import">
+              <span class="nav-icon">📥</span><span class="nav-label">Import Cards</span>
+            </div>
             <div class="nav-item" data-route="community">
               <span class="nav-icon">👥</span><span class="nav-label">Community</span>
-            </div>
-            <div class="nav-item" data-route="import">
-              <span class="nav-icon">📥</span><span class="nav-label">Import</span>
             </div>
             <div class="nav-item" data-route="persona">
               <span class="nav-icon">🎭</span><span class="nav-label">My Persona</span>
@@ -5364,6 +5480,24 @@
             </button>
           </div>
         </aside>
+        <!-- Bottom navigation bar — mobile only, hidden until authenticated -->
+        <nav class="bottom-nav" id="bottomNav" style="display:none;" aria-label="Bottom navigation">
+          <button class="bnav-item" data-route="dashboard" onclick="navigateTo('dashboard')">
+            <span class="bnav-icon">🏡</span><span class="bnav-label">Home</span>
+          </button>
+          <button class="bnav-item" data-route="library" onclick="navigateTo('library')">
+            <span class="bnav-icon">📚</span><span class="bnav-label">Library</span>
+          </button>
+          <button class="bnav-item" data-route="study" onclick="navigateTo('study')">
+            <span class="bnav-icon">🃏</span><span class="bnav-label">Study</span>
+          </button>
+          <button class="bnav-item" data-route="exam-config" onclick="navigateTo('exam-config')">
+            <span class="bnav-icon">✍️</span><span class="bnav-label">Exam</span>
+          </button>
+          <button class="bnav-item" id="bnavMore" onclick="toggleSidebarFromBottomNav()">
+            <span class="bnav-icon">☰</span><span class="bnav-label">More</span>
+          </button>
+        </nav>
         <main class="main-content" id="mainContent"></main>
       </div>
     </div>
@@ -5824,6 +5958,8 @@
         treeInstance: null,
         sidebarOpen: false,
         toastCount: 0,
+        navHistory: [],
+        _skipHistory: false,
         // Focus tracking
         focusTracking: {
           tabVisible: true,
@@ -6132,12 +6268,17 @@
         // Backend: POST /study/start
         // Requires: {deck_id OR (subject_id + include_all_decks_in_subject)}
         // Returns: {session, sessionId, cards, total_due, subject_id}
+        // filters can be an array of state strings (e.g. ['DANGEROUS','GHOST']) from the
+        // study-page chip filters, or an object with cardLimit / cardIds for specific flows.
+        const isStateFilterArray = Array.isArray(filters);
         const body = {
           subject_id: subjectId,
           include_all_decks_in_subject: true,
-          card_limit: filters?.cardLimit || null,
+          card_limit: !isStateFilterArray ? (filters?.cardLimit || null) : null,
           // FIX-B: Pass card_ids when launching review_specific_cards invitation
-          card_ids: filters?.cardIds || null,
+          card_ids: !isStateFilterArray ? (filters?.cardIds || null) : null,
+          // State filter chips on the Study page — pass as card_state_filter
+          card_state_filter: isStateFilterArray ? filters : null,
         };
         const data = await apiRequest("/study/start", { method: "POST", body });
         // Normalize response for frontend: ensure sessionId and cards are at top level
@@ -7768,6 +7909,22 @@
           clearInterval(AppState.tempExam._timerInterval);
           AppState.tempExam = null;
         }
+        // ── Nav history management ──
+        // Root pages reset history. Sub-pages (card-browser, exam) push previous page.
+        if (!AppState._skipHistory) {
+          const _rootPages = new Set([
+            'dashboard','biome','study','exam-config','library','brain',
+            'chronicle','almanac','progress','achievements','community',
+            'import','persona','marketplace','settings','landing','onboarding'
+          ]);
+          if (_rootPages.has(page)) {
+            AppState.navHistory = [];
+          } else if (AppState.currentPage && AppState.currentPage !== page) {
+            AppState.navHistory = AppState.navHistory || [];
+            AppState.navHistory.push(AppState.currentPage);
+          }
+        }
+        AppState._skipHistory = false;
         AppState.currentPage = page;
         // Persist page so refresh restores the same view
         try { sessionStorage.setItem("kiwi_page", page); } catch (_) {}
@@ -7791,6 +7948,69 @@
         // Close sidebar on mobile
         document.getElementById("sidebar").classList.remove("open");
         document.getElementById("sidebarOverlay").classList.remove("show");
+        // Update bottom nav and mobile bar
+        updateBottomNav(page);
+        updateMobileBar(page);
+      }
+
+      // ── Navigation helpers ──
+
+      function goBack() {
+        if (!AppState.navHistory || AppState.navHistory.length === 0) {
+          navigateTo('dashboard');
+          return;
+        }
+        const prev = AppState.navHistory.pop();
+        AppState._skipHistory = true;
+        navigateTo(prev);
+      }
+
+      function toggleSidebarFromBottomNav() {
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebarOverlay');
+        const hamburger = document.getElementById('hamburgerBtn');
+        if (!sidebar) return;
+        const isOpen = sidebar.classList.toggle('open');
+        if (overlay) overlay.classList.toggle('show', isOpen);
+        if (hamburger) hamburger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      }
+
+      function updateBottomNav(page) {
+        const nav = document.getElementById('bottomNav');
+        if (!nav) return;
+        // Show only when authenticated and not on landing
+        const hide = page === 'landing' || (!authToken && !AppState.isDemo);
+        nav.style.display = hide ? 'none' : '';
+        // Active tab: exam screen maps to exam-config tab
+        const effectivePage = page === 'exam' ? 'exam-config' : page;
+        nav.querySelectorAll('.bnav-item[data-route]').forEach(function(btn) {
+          btn.classList.toggle('active', btn.dataset.route === effectivePage);
+        });
+        // "More" highlights when current page is not in bottom nav
+        const bottomNavRoutes = new Set(['dashboard','library','study','exam-config','exam']);
+        const moreBtn = document.getElementById('bnavMore');
+        if (moreBtn) {
+          moreBtn.classList.toggle('active', !bottomNavRoutes.has(page));
+        }
+      }
+
+      function updateMobileBar(page) {
+        const titleEl   = document.getElementById('mobPageTitle');
+        const hamburger = document.getElementById('hamburgerBtn');
+        const backBtn   = document.getElementById('mobBackBtn');
+        const ksBadge   = document.getElementById('mobKsBadge');
+        if (titleEl) {
+          const title = (ROUTES[page] && ROUTES[page].title) || 'KIWI';
+          titleEl.textContent = title;
+        }
+        const hasHistory = AppState.navHistory && AppState.navHistory.length > 0;
+        if (hamburger) hamburger.style.display = hasHistory ? 'none' : '';
+        if (backBtn)   backBtn.style.display   = hasHistory ? '' : 'none';
+        if (ksBadge) {
+          const ks = AppState.dashboard && AppState.dashboard.overallKS != null
+            ? Math.round(AppState.dashboard.overallKS) : null;
+          ksBadge.textContent = ks !== null ? 'KS\u00a0' + ks : '';
+        }
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -8406,6 +8626,7 @@
           const data = await api.getDashboard();
           AppState.dashboard = data;
           AppState.user = data.user || AppState.user;
+          updateMobileBar(AppState.currentPage);
           const {
             overallKS,
             subjectBreakdown,
@@ -9902,7 +10123,7 @@
             <div class="filter-label">Card State Filters — target problem cards (optional)</div>
             <div class="filter-options" id="examFilters">
               <span class="filter-chip" data-filter="DANGEROUS" title="Exam within 14 days, Stage 1-2">&#x26A0; DANGEROUS</span>
-              <span class="filter-chip" data-filter="GHOST" title="Stage 5, not reviewed in 60+ days">&#x1F47B; GHOST</span>
+              <span class="filter-chip" data-filter="GHOST" title="Stage 5, not reviewed in 20+ days">&#x1F47B; GHOST</span>
               <span class="filter-chip" data-filter="STUCK" title="5+ reviews, no stage change in 14 days">&#x1F512; STUCK</span>
               <span class="filter-chip" data-filter="FRAGILE" title="Stage 5, never correctly answered in CBT">&#x1F4A7; FRAGILE</span>
               <span class="filter-chip" data-filter="AVOIDED" title="Due 3+ days, repeated avoidance">&#x1F648; AVOIDED</span>
@@ -13355,7 +13576,6 @@
 
       async function renderLibrary() {
         const main = document.getElementById("mainContent");
-        // Perf fix: use cached subjects immediately; refresh in background on repeat visits
         const _hasCache = AppState.subjects && AppState.subjects.length > 0;
         if (!_hasCache) renderLoadingState(main, "Loading library...");
         try {
@@ -13363,126 +13583,188 @@
             const data = await api.getLibrary();
             AppState.subjects = data.subjects || [];
           } else {
-            // Background refresh — updates cache silently without blocking render
-            api.getLibrary().then(function(d) { AppState.subjects = d.subjects || []; }).catch(function() {});
+            api.getLibrary().then(function(d) {
+              AppState.subjects = d.subjects || [];
+              if (AppState.currentPage === 'library') renderLibrary();
+            }).catch(function() {});
           }
           const subjects = AppState.subjects;
-          main.innerHTML = `
-      <div class="page-wrap page-enter">
-        <div class="section-header">
-          <div>
-            <div class="section-title">Library</div>
-            <div class="section-sub">${subjects.reduce((s, sub) => s + (sub.cardCount || 0), 0)} cards across ${subjects.length} subjects</div>
-          </div>
-          <button class="btn btn-primary btn-sm" id="addDeckBtn">+ Add Subject</button>
-        </div>
-        ${subjects
-          .map((subj) => {
-            const due = subj.dueCount || 0;
+
+          // ── State display maps ───────────────────────────────────────────────
+          const LIB_STATE_COLORS = {
+            SEEDLING:'#4a7a64', GROWING:'#74c69d', STABLE:'#2dd4bf', SLIPPING:'#f59e0b',
+            STUCK:'#e05252', AVOIDED:'#a78bfa', GHOST:'#4a9eda', FRAGILE:'#f97316',
+            DANGEROUS:'#ef4444', VERIFIED:'#52b788'
+          };
+          const LIB_STATE_EMOJI = {
+            SEEDLING:'🌱', GROWING:'🌿', STABLE:'🌳', SLIPPING:'⚠️',
+            STUCK:'🔒', AVOIDED:'🙈', GHOST:'👻', FRAGILE:'💧', DANGEROUS:'⚡', VERIFIED:'👑'
+          };
+          const LIB_STATE_ORDER = ['VERIFIED','STABLE','GROWING','SEEDLING','SLIPPING','FRAGILE','AVOIDED','GHOST','STUCK','DANGEROUS'];
+
+          function buildStateBar(stateDist) {
+            const total = LIB_STATE_ORDER.reduce((s, k) => s + (stateDist[k] || 0), 0);
+            if (total === 0) return '<div style="height:8px;background:var(--surface-2);border-radius:6px;opacity:0.5;"></div><div style="font-size:var(--text-xs);color:var(--text-4);margin-top:4px;">No cards reviewed yet</div>';
+            let segs = '', legend = '';
+            for (const st of LIB_STATE_ORDER) {
+              const cnt = stateDist[st] || 0;
+              if (!cnt) continue;
+              const pct = (cnt / total * 100).toFixed(1);
+              const color = LIB_STATE_COLORS[st];
+              segs += `<div title="${LIB_STATE_EMOJI[st]} ${st}: ${cnt} (${pct}%)" style="flex:${cnt};background:${color};min-width:3px;" class="lib-state-seg"></div>`;
+              legend += `<span class="lib-state-pill" style="background:${color}18;border:1px solid ${color}44;color:${color};" title="${st}">${LIB_STATE_EMOJI[st]} ${cnt}</span>`;
+            }
             return `
-          <div class="subject-section">
-            <div class="subject-header" data-subj="${escapeHTML(subj.id)}" style="cursor:pointer;" onclick="(function(el){var g=el.closest('.subject-section').querySelector('.deck-grid');var t=el.querySelector('.subj-toggle');if(g){var collapsed=g.style.display==='none';g.style.display=collapsed?'':'none';if(t)t.textContent=collapsed?'▼':'▶';}})(this)">
-              <span class="subject-color-dot" style="background:${escapeHTML(subj.color || "#52b788")}"></span>
-              <span class="subj-toggle" style="font-size:var(--text-xs);color:var(--text-3);margin-right:6px;user-select:none;">▶</span>
-              <span class="subject-name-text">${subj.icon ? escapeHTML(subj.icon) : "&#x25A0;"} ${escapeHTML(safeDisplayName(subj.name))}</span>
-              <span class="subject-meta">${subj.cardCount || 0} cards ${due > 0 ? `<span style="color:var(--green-bright);font-weight:700;">&bull; ${due} due</span>` : ""}</span>
-              <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:#e57373;font-size:var(--text-xs);" onclick="event.stopPropagation();handleDeleteSubject('${escapeHTML(subj.id)}', '${escapeHTML(safeDisplayName(subj.name))}')">Delete</button>
-            </div>
-            <div class="deck-grid" style="display:none;">
-              ${(subj.recentCards || [])
-                .map((c) => {
-                  const stage = c.stage || c.level || 1;
-                  const stateInfo = c.stateInfo || { label: "SEEDLING", color: "#556b58" };
-                  return `
-                  <div class="deck-card" data-card-id="${escapeHTML(c.id)}">
-                    <div style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">${escapeHTML(safeDisplayName(subj.name))}</div>
-                    <div class="deck-name">${escapeHTML(c.front)}</div>
-                    <div class="deck-stats">
-                      <span>Stage ${stage}</span>
-                      <span class="deck-due" style="color:${c.isDue ? 'var(--green-bright)' : 'var(--text-3)'};">${(() => {
-                        if (c.isDue) return '● Due';
-                        if (!c.next_review_at) return 'Resting';
-                        const ms = new Date(c.next_review_at).getTime() - Date.now();
-                        if (ms <= 0) return '● Due';
-                        const mins = Math.round(ms/60000), hrs = Math.round(ms/3600000), days = Math.round(ms/86400000);
-                        return '⏳ ' + (mins < 60 ? mins + 'm' : hrs < 24 ? hrs + 'h' : days < 7 ? days + 'd' : Math.round(days/7) + 'w');
-                      })()}</span>
-                      <span>${c.reviewCount || 0} reviews</span>
+              <div style="display:flex;gap:2px;height:8px;border-radius:6px;overflow:hidden;">${segs}</div>
+              <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">${legend}</div>
+            `;
+          }
+
+          const totalCards = subjects.reduce((s, sub) => s + (sub.cardCount || sub.total_cards || 0), 0);
+          const totalDue   = subjects.reduce((s, sub) => s + (sub.dueCount || 0), 0);
+
+          main.innerHTML = `
+            <div class="page-wrap page-enter">
+              <div class="section-header" style="margin-bottom:var(--space-5);">
+                <div>
+                  <div class="section-title">Library</div>
+                  <div class="section-sub">${totalCards} cards · ${subjects.length} subject${subjects.length !== 1 ? 's' : ''}${totalDue > 0 ? ` · <span style="color:var(--green-bright);font-weight:600;">${totalDue} due</span>` : ''}</div>
+                </div>
+                <button class="btn btn-primary btn-sm" id="addDeckBtn">+ Add Subject</button>
+              </div>
+
+              ${subjects.length === 0 ? `
+                <div class="empty-state">
+                  <div class="empty-icon">📚</div>
+                  <div class="empty-title">No Subjects Yet</div>
+                  <div class="empty-sub">Create your first subject to start building your knowledge forest.</div>
+                </div>
+              ` : ''}
+
+              ${subjects.map(function(subj) {
+                const due = subj.dueCount || 0;
+                const ks = subj.ks || 0;
+                const color = subj.color || subj.color_hex || '#52b788';
+                const icon = subj.icon || subj.emoji || '📚';
+                const cardCount = subj.cardCount || subj.total_cards || 0;
+                const stateDist = subj.stateDistribution || {};
+                const ksColor = ks >= 70 ? 'var(--green-bright)' : ks >= 40 ? '#f59e0b' : 'var(--text-3)';
+                const examDateStr = subj.exam_date
+                  ? (() => { try { return new Date(subj.exam_date).toLocaleDateString('en-GB',{day:'numeric',month:'short'}); } catch(e) { return ''; } })()
+                  : '';
+                return `
+                  <div class="lib-subj-card" data-subj-id="${escapeHTML(subj.id)}">
+                    <div class="lib-subj-header">
+                      <div style="width:40px;height:40px;border-radius:12px;background:${escapeHTML(color)}20;border:1.5px solid ${escapeHTML(color)}50;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">${escapeHTML(icon)}</div>
+                      <div style="flex:1;min-width:0;">
+                        <div style="font-size:var(--text-base);font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHTML(safeDisplayName(subj.name))}</div>
+                        <div style="font-size:var(--text-xs);color:var(--text-3);margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                          <span>${cardCount} card${cardCount !== 1 ? 's' : ''}</span>
+                          ${due > 0 ? `<span style="color:var(--green-bright);font-weight:700;">● ${due} due</span>` : ''}
+                          ${examDateStr ? `<span style="color:#f59e0b;">📅 ${escapeHTML(examDateStr)}</span>` : ''}
+                        </div>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                        <div style="font-family:var(--font-mono);font-size:var(--text-xs);color:${ksColor};background:var(--surface-2);padding:3px 10px;border-radius:20px;white-space:nowrap;font-weight:600;">KS ${ks.toFixed(0)}</div>
+                        <button class="btn btn-ghost btn-sm lib-expand-btn" data-target="lib-expand-${escapeHTML(subj.id)}" style="min-width:28px;font-size:var(--text-xs);color:var(--text-3);padding:4px 8px;">▶</button>
+                      </div>
                     </div>
-                    <div class="card-state-indicators">
-                      <!-- F6: Card state hidden from user. Stage only. -->
-                      <span style="font-size:var(--text-xs);color:var(--text-3);font-family:var(--font-mono);">Stage ${stage}</span>
+
+                    <div style="margin:10px 0 4px;">
+                      ${buildStateBar(stateDist)}
                     </div>
-                    <div class="deck-stage-bar">
-                      ${[1, 2, 3, 4, 5]
-                        .map((i) => {
-                          const count = (subj.stageDistribution || {})[i] || 0;
-                          if (count === 0) return "";
-                          return `<div class="deck-stage-segment" style="background:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][i - 1]};flex-grow:${count};"></div>`;
-                        })
-                        .join("")}
+
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);margin-top:10px;">
+                      <button class="btn btn-primary btn-sm" onclick="startStudySession('${escapeHTML(subj.id)}')">▶ Study</button>
+                      <button class="btn btn-secondary btn-sm" onclick="startExam('${escapeHTML(subj.id)}')">✍ Exam</button>
+                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="navigateTo('import')">＋ Cards</button>
+                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})">📋 Browse</button>
+                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;margin-left:auto;" onclick="handleDeleteSubject('${escapeHTML(subj.id)}','${escapeHTML(safeDisplayName(subj.name))}')">Delete</button>
                     </div>
-                    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
-                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" data-eid="${escapeHTML(c.id)}" data-ef="${escapeHTML(c.front||'')}" data-eb="${escapeHTML(c.back||'')}" onclick="handleEditCard(this.dataset.eid, this.dataset.ef, this.dataset.eb)">✏️ Edit</button>
-                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" onclick="handleResetCard('${escapeHTML(c.id)}')">Reset</button>
-                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;color:#e57373;" onclick="handleDeleteCard('${escapeHTML(c.id)}', '${escapeHTML(c.front.substring(0,30))}')">Delete</button>
+
+                    <div id="lib-expand-${escapeHTML(subj.id)}" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+                      ${(subj.recentCards || []).length === 0
+                        ? '<div style="text-align:center;padding:16px;color:var(--text-3);font-size:var(--text-sm);">No cards yet — add some to get started.</div>'
+                        : `<div class="deck-grid">${(subj.recentCards || []).map(function(c) {
+                            const stage = c.stage || 1;
+                            const _lcState = (c.cardState || 'SEEDLING').toUpperCase();
+                            const _lcColor = LIB_STATE_COLORS[_lcState] || '#4a7a64';
+                            const _lcEmoji = LIB_STATE_EMOJI[_lcState] || '🌱';
+                            const dueLabel = (() => {
+                              if (c.isDue) return '<span style="color:var(--green-bright);">● Due now</span>';
+                              if (!c.next_review_at) return '<span style="color:var(--text-4);">Resting</span>';
+                              const ms = new Date(c.next_review_at).getTime() - Date.now();
+                              if (ms <= 0) return '<span style="color:var(--green-bright);">● Due now</span>';
+                              const mins = Math.round(ms/60000), hrs = Math.round(ms/3600000), days = Math.round(ms/86400000);
+                              const label = mins < 60 ? mins+'m' : hrs < 24 ? hrs+'h' : days < 7 ? days+'d' : Math.round(days/7)+'w';
+                              return '<span style="color:var(--text-3);">⏳ '+label+'</span>';
+                            })();
+                            return `
+                              <div class="deck-card" data-card-id="${escapeHTML(c.id)}" style="border-left:3px solid ${_lcColor}55;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+                                  <span style="font-size:10px;padding:2px 7px;border-radius:20px;font-family:var(--font-mono);font-weight:600;background:${_lcColor}22;color:${_lcColor};">${_lcEmoji} ${_lcState}${c.verified?' ✓':''}</span>
+                                  <span style="font-size:var(--text-xs);color:var(--text-3);font-family:var(--font-mono);">St.${stage} · ${c.reviewCount||0}×</span>
+                                </div>
+                                <div class="deck-name">${escapeHTML(c.front)}</div>
+                                <div class="deck-stats" style="margin-top:6px;">${dueLabel}</div>
+                                <div style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap;">
+                                  <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" data-eid="${escapeHTML(c.id)}" data-ef="${escapeHTML(c.front||'')}" data-eb="${escapeHTML(c.back||'')}" onclick="handleEditCard(this.dataset.eid,this.dataset.ef,this.dataset.eb)">✏️ Edit</button>
+                                  <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" onclick="handleResetCard('${escapeHTML(c.id)}')">Reset</button>
+                                  <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;color:#e57373;" onclick="handleDeleteCard('${escapeHTML(c.id)}','${escapeHTML(c.front.substring(0,30))}')">Delete</button>
+                                </div>
+                                <div class="deck-card-back-peek">${escapeHTML(c.back||'')}</div>
+                                <div class="deck-card-peek-hint">CLICK CARD TO PEEK BACK ▾</div>
+                              </div>
+                            `;
+                          }).join('')}</div>`
+                      }
+                      ${cardCount > (subj.recentCards||[]).length ? `
+                        <div style="text-align:center;padding:10px 0 4px;">
+                          <button class="btn btn-ghost btn-sm" style="font-size:var(--text-sm);color:var(--green-bright);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})">📋 View all ${cardCount} cards →</button>
+                        </div>
+                      ` : ''}
+                      <div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);margin-top:8px;">
+                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" data-publish-deck="${escapeHTML(subj.decks[0].id)}" data-publish-name="${escapeHTML(subj.name)}" style="font-size:var(--text-xs);">↑ Publish Deck</button>` : ''}
+                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMergeDecksModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name};})). replace(/"/g,'&quot;')})">⚡ Merge Decks</button>` : ''}
+                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMoveCardsModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})">📦 Move Cards</button>` : ''}
+                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);" onclick="showReassignDeckModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})">🔀 Move Deck</button>` : ''}
+                      </div>
                     </div>
-                    <div class="deck-card-back-peek">${escapeHTML(c.back || '')}</div>
-                    <div class="deck-card-peek-hint">CLICK CARD TO PEEK BACK ▾</div>
                   </div>
                 `;
-                })
-                .join("")}
-              ${(subj.cardCount || 0) > (subj.recentCards || []).length ? `<div style="text-align:center;padding:12px;"><button class="btn btn-ghost btn-sm" style="font-size:var(--text-sm);color:var(--green-bright);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})">📋 View all ${subj.cardCount} cards &rarr;</button></div>` : ""}
+              }).join('')}
             </div>
-            <div style="display:flex;gap:8px;margin-top:10px;margin-left:16px;flex-wrap:wrap;">
-              <button class="btn btn-primary btn-sm" onclick="startStudySession('${escapeHTML(subj.id)}')">Study</button>
-              <button class="btn btn-secondary btn-sm" onclick="startExam('${escapeHTML(subj.id)}')">Exam</button>
-              <button class="btn btn-ghost btn-sm" onclick="navigateTo('import')">Add Cards</button>
-              ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" data-publish-deck="${escapeHTML(subj.decks[0].id)}" data-publish-name="${escapeHTML(subj.name)}" style="font-size:var(--text-xs);">↑ Publish</button>` : ''}
-              ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMergeDecksModal('${escapeHTML(subj.id)}', '${escapeHTML(subj.name)}', ${JSON.stringify((subj.decks||[]).map(function(d){ return {id:d.id,name:d.name}; })).replace(/"/g,'&quot;')})">&#x26A1; Merge Decks</button>` : ''}
-              ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMoveCardsModal('${escapeHTML(subj.id)}', '${escapeHTML(subj.name)}', ${JSON.stringify((subj.decks||[]).map(function(d){ return {id:d.id,name:d.name,card_count:d.card_count||0}; })).replace(/"/g,'&quot;')})">&#x1F4E6; Move Cards</button>` : ''}
-              ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);" onclick="showReassignDeckModal('${escapeHTML(subj.id)}', '${escapeHTML(subj.name)}', ${JSON.stringify((subj.decks||[]).map(function(d){ return {id:d.id,name:d.name,card_count:d.card_count||0}; })).replace(/"/g,'&quot;')})">&#x1F500; Move Deck</button>` : ''}
-            </div>
-          </div>
-        `;
-          })
-          .join("")}
-        ${
-          subjects.length === 0
-            ? `
-        <div class="empty-state">
-          <div class="empty-icon">&#x25A0;</div>
-          <div class="empty-title">No Subjects Yet</div>
-          <div class="empty-sub">Create your first subject to start building your knowledge forest.</div>
-        </div>
-        `
-            : ""
-        }
-      </div>
-    `;
-          document.getElementById("addDeckBtn").addEventListener("click", () => {
-            showCreateSubjectModal(subjects.length, () => navigateTo("library"));
+          `;
+
+          document.getElementById("addDeckBtn").addEventListener("click", function() {
+            showCreateSubjectModal(subjects.length, function() { navigateTo("library"); });
           });
-          // Render math in library cards (LaTeX in card fronts/backs)
-          main.querySelectorAll(".deck-name, .deck-card-back-peek").forEach(el => renderMathContent(el));
-          // Library card peek — click card body to reveal/hide the back without opening editor
-          main.querySelectorAll(".deck-card").forEach((card) => {
-            card.addEventListener("click", (e) => {
-              // Don't toggle peek when clicking action buttons
-              if (e.target.closest("button")) return;
-              card.classList.toggle("peeked");
-              const hint = card.querySelector(".deck-card-peek-hint");
-              if (hint) hint.textContent = card.classList.contains("peeked")
-                ? "CLICK TO HIDE ▴"
-                : "CLICK CARD TO PEEK BACK ▾";
+
+          main.querySelectorAll(".lib-expand-btn").forEach(function(btn) {
+            btn.addEventListener("click", function() {
+              var panel = document.getElementById(btn.dataset.target);
+              if (!panel) return;
+              var open = panel.style.display !== 'none';
+              panel.style.display = open ? 'none' : 'block';
+              btn.textContent = open ? '▶' : '▼';
             });
           });
-          // 062 FIX: wire Publish deck buttons
-          document.querySelectorAll("[data-publish-deck]").forEach((btn) => {
-            btn.addEventListener("click", async () => {
-              const deckId = btn.dataset.publishDeck;
-              const deckName = btn.dataset.publishName || "this deck";
+
+          main.querySelectorAll(".deck-name, .deck-card-back-peek").forEach(function(el) { renderMathContent(el); });
+
+          main.querySelectorAll(".deck-card").forEach(function(card) {
+            card.addEventListener("click", function(e) {
+              if (e.target.closest("button")) return;
+              card.classList.toggle("peeked");
+              var hint = card.querySelector(".deck-card-peek-hint");
+              if (hint) hint.textContent = card.classList.contains("peeked") ? "CLICK TO HIDE ▴" : "CLICK CARD TO PEEK BACK ▾";
+            });
+          });
+
+          document.querySelectorAll("[data-publish-deck]").forEach(function(btn) {
+            btn.addEventListener("click", async function() {
+              var deckId = btn.dataset.publishDeck;
+              var deckName = btn.dataset.publishName || "this deck";
               if (!confirm(`Publish "${deckName}" to the community library? It will be visible to all users.`)) return;
               try {
                 btn.textContent = "Publishing...";
@@ -13492,15 +13774,14 @@
                 btn.textContent = "✓ Published";
               } catch (err) {
                 showToast(err.message || "Publish failed", "error");
-                btn.textContent = "↑ Publish";
+                btn.textContent = "↑ Publish Deck";
                 btn.disabled = false;
               }
             });
           });
+
         } catch (err) {
-          renderErrorState(main, err.message || "Failed to load library", () =>
-            navigateTo("library"),
-          );
+          renderErrorState(main, err.message || "Failed to load library", function() { navigateTo("library"); });
         }
       }
       // Helper to start a study session from library
@@ -13539,7 +13820,14 @@
         }
 
         function renderBrowserUI() {
-          const filterLabels = { all: "All", due: "Due", resting: "Resting" };
+          const _stateColor = { SEEDLING:'#4a7a64', GROWING:'#74c69d', STABLE:'#2dd4bf', SLIPPING:'#f59e0b', STUCK:'#e05252', AVOIDED:'#a78bfa', GHOST:'#4a9eda', FRAGILE:'#f59e0b', DANGEROUS:'#ef4444', VERIFIED:'#52b788' };
+          const _stateEmoji = { SEEDLING:'🌱', GROWING:'🌿', STABLE:'🌳', SLIPPING:'⚠️', STUCK:'🔒', AVOIDED:'🙈', GHOST:'👻', FRAGILE:'💧', DANGEROUS:'⚡', VERIFIED:'👑' };
+          const filterLabels = {
+            all:"All", due:"Due", not_due:"Not Due",
+            stuck:"🔒 Stuck", ghost:"👻 Ghost", slipping:"⚠️ Slipping",
+            avoided:"🙈 Avoided", dangerous:"⚡ Dangerous", fragile:"💧 Fragile",
+            verified:"👑 Verified", stable:"🌳 Stable", growing:"🌿 Growing", seedling:"🌱 Seedling"
+          };
           main.innerHTML = `
             <div class="page-wrap page-enter">
               <div class="section-header" style="margin-bottom:12px;">
@@ -13550,13 +13838,26 @@
                 </div>
               </div>
 
-              <!-- Search + Filter bar -->
-              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+              <!-- Search bar -->
+              <div style="margin-bottom:10px;">
                 <input id="cbSearch" type="text" placeholder="Search cards…"
                   value="${escapeHTML(bs.search)}"
-                  style="flex:1;min-width:160px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--border-1);border-radius:8px;color:var(--text-1);font-size:var(--text-sm);" />
-                ${["all","due","resting"].map(f => `
-                  <button class="btn btn-sm ${bs.filter===f?'btn-primary':'btn-ghost'}" data-filter="${f}">${filterLabels[f]}</button>
+                  style="width:100%;box-sizing:border-box;padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text-1);font-size:var(--text-sm);" />
+              </div>
+
+              <!-- Due / schedule filters -->
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+                ${["all","due","not_due"].map(f => `
+                  <button class="btn btn-sm ${bs.filter===f?'btn-primary':'btn-ghost'}" data-filter="${f}" style="font-size:var(--text-xs);">${filterLabels[f]}</button>
+                `).join("")}
+              </div>
+
+              <!-- Card state filters -->
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">
+                ${["stuck","ghost","slipping","avoided","dangerous","fragile","verified","stable","growing","seedling"].map(f => `
+                  <button class="btn btn-sm ${bs.filter===f?'btn-primary':'btn-ghost'}" data-filter="${f}"
+                    style="font-size:var(--text-xs);${bs.filter===f?'':'border-color:'+(_stateColor[f.toUpperCase()]||'var(--border)')+';color:'+(_stateColor[f.toUpperCase()]||'var(--text-3)')+';'}"
+                  >${filterLabels[f]}</button>
                 `).join("")}
               </div>
 
@@ -13566,12 +13867,21 @@
                   bs.cards.map((c, idx) => {
                     const stage = c.stage || 1;
                     const stageColors = ["","var(--s1)","var(--s2)","var(--s3)","var(--s4)","var(--s5)"];
+                    const cState = (c.cardState || 'SEEDLING').toUpperCase();
+                    const cStateColor = _stateColor[cState] || '#4a7a64';
+                    const cStateEmoji = _stateEmoji[cState] || '🌱';
                     return `
-                    <div class="card" style="margin-bottom:10px;padding:14px 16px;">
+                    <div class="card" style="margin-bottom:10px;padding:14px 16px;border-left:3px solid ${cStateColor}22;">
                       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
                         <div style="flex:1;">
-                          <div style="font-size:var(--text-xs);font-family:var(--font-mono);color:var(--text-4);margin-bottom:4px;text-transform:uppercase;">
-                            Stage ${stage} &bull; <span style="color:${c.isDue?'var(--green-bright)':'var(--text-3)'};">${(() => {
+                          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
+                            <span style="font-size:var(--text-xs);font-family:var(--font-mono);color:var(--text-4);text-transform:uppercase;">
+                              Stage ${stage}
+                            </span>
+                            <span style="font-size:var(--text-xs);padding:1px 7px;border-radius:20px;font-family:var(--font-mono);font-weight:600;background:${cStateColor}22;color:${cStateColor};letter-spacing:0.5px;">
+                              ${cStateEmoji} ${cState}${c.verified?' ✓':''}
+                            </span>
+                            <span style="font-size:var(--text-xs);color:${c.isDue?'var(--green-bright)':'var(--text-3)'};">${(() => {
                               if (c.isDue) return '● Due';
                               if (!c.next_review_at) return 'Resting';
                               const _ms = new Date(c.next_review_at).getTime() - Date.now();
@@ -13579,7 +13889,7 @@
                               const _m = Math.round(_ms/60000), _h = Math.round(_ms/3600000), _d = Math.round(_ms/86400000);
                               return '⏳ ' + (_m < 60 ? _m+'m' : _h < 24 ? _h+'h' : _d < 7 ? _d+'d' : Math.round(_d/7)+'w');
                             })()}</span>
-                            &bull; ${c.reviewCount} review${c.reviewCount!==1?"s":""}
+                            <span style="font-size:var(--text-xs);color:var(--text-4);">${c.reviewCount} rev</span>
                           </div>
                           <div class="cb-front" style="font-weight:600;color:var(--text-1);margin-bottom:6px;">${escapeHTML(c.front)}</div>
                           <div class="cb-back" style="font-size:var(--text-sm);color:var(--text-3);display:none;">${escapeHTML(c.back)}</div>
@@ -14410,6 +14720,7 @@
                 showBubbleOnboardingPrompt(result.subject_id, result.deck_id);
               }
             } catch(err) {
+              _hideGenBanner();
               setImportResult("aiNotesResult", err.message || "Generation failed", true);
             } finally {
               btn.disabled = false; btn.textContent = "Generate Cards with AI";

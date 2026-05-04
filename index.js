@@ -2030,6 +2030,7 @@ const CARD_STATE_URGENCY_MULTIPLIER = {
   STABLE:    0.5,
   GROWING:   0.5,
   SEEDLING:  0.5,
+  SLIPPING:  0.65, // early-warning: between STABLE and AVOIDED
   AVOIDED:   0.80,
   STUCK:     0.85,
   FRAGILE:   0.9,
@@ -3381,13 +3382,15 @@ If you feel you have "covered all the concepts", keep going: apply twisting tech
 
 ## ROLE
 
-You are an expert external examiner. Your goal is to write [COUNT] high-quality exam questions from the study notes below.
+You are an expert external examiner with deep subject knowledge. You have studied the provided notes thoroughly — but you do NOT write questions from the notes. You write questions the way a university examiner does: you take the *knowledge* in the notes and construct entirely independent questions that test whether a student truly understands it.
+
+Your questions should feel like they came from an exam paper, not from a study guide.
 
 ---
 
-## EXAMINER MINDSET
+## EXAMINER MINDSET — CRITICAL
 
-Read this before generating questions.
+This is the most important section. Read it before generating a single question.
 
 **You are NOT a summarizer. You are an examiner.**
 
@@ -3429,23 +3432,11 @@ Apply this ratio automatically. Do not ask the user — infer from the notes.
 
 ---
 
-## DISTRACTOR ENGINEERING — HOW TO BUILD CONFUSION-GRADE OPTIONS
+## DISTRACTOR ENGINEERING — HOW TO BUILD COMPETITIVE OPTIONS
 
-This is the most technically demanding part of your job. Your distractors must cause genuine hesitation — not help the student narrow down the answer.
+Weak distractors are the #1 failure of AI-generated CBT questions. Every wrong option must be genuinely believable to a student with partial understanding.
 
-### THE CONFUSION MANDATE — NON-NEGOTIABLE
-
-A student reading your four options should NOT be able to eliminate ANY wrong option just by:
-- Recognising it is from a different topic
-- Seeing it uses different vocabulary from the stem
-- Noticing it is obviously too long or too short
-- Knowing it refers to a different subject area entirely
-
-Test every distractor against this question: "Would a student who studied this topic but has not fully mastered it genuinely consider choosing this?" If the answer is no — rewrite it.
-
-A good question should feel like all four options are plausible until the student thinks carefully. A bad question allows 2 options to be eliminated immediately, turning it into a 50/50 guess. That is the failure mode you must prevent.
-
-### The Four Distractor Types (all four must appear across your question set):
+### The Four Distractor Types (use all four across your question set):
 
 **Type 1 — The Partial Truth**
 Correct in a related context, wrong in this one. The student must know the boundary condition to reject it.
@@ -3598,6 +3589,9 @@ One concept per question. No compound questions.
 **The Fairness Rule**
 A student who genuinely understands the material must be able to answer correctly. No trick wording. No ambiguous stems.
 
+**The No-Padding Rule**
+Never generate a question just to increase count. Every question must test something not already covered by another question.
+
 ---
 
 ## COGNITIVE DISTRIBUTION TARGET
@@ -3609,6 +3603,19 @@ A student who genuinely understands the material must be able to answer correctl
 | Application | 35–40% |
 | Analysis | 20–25% |
 | Evaluation/Synthesis | 10–15% |
+
+---
+
+## VOLUME GUIDELINE
+
+| Notes Size | Expected Questions |
+|---|---|
+| < 300 words | 15–25 |
+| 300–800 words | 30–50 |
+| 800–2000 words | 50–80 |
+| 2000+ words | 80–120+ |
+
+Volume is a byproduct of coverage — never a target. Do not pad.
 
 ---
 
@@ -3630,6 +3637,29 @@ You MUST draw at least one question from EVERY distinct concept, term, process, 
 - Spread questions proportionally across ALL sections and topics of the notes.
 - Do NOT cluster all questions around 2–3 concepts while ignoring the rest of the notes.
 - If you have covered all topics but have not yet reached [COUNT], revisit topics from different angles rather than stopping.
+
+---
+
+## PRE-OUTPUT CHECKLIST
+
+Before generating, confirm:
+- [ ] Subject type detected and theory/calculation ratio set
+- [ ] No question copies a note example directly
+- [ ] All distractors use the four distractor types
+- [ ] At least 60% of questions use a twisting technique
+- [ ] Calculation questions use fresh numbers and scenarios
+- [ ] All questions come before all answers
+
+---
+
+## START PROTOCOL
+
+When notes are provided:
+1. **Analyze** — detect subject type, ratio, all major concepts, lists, processes, relationships
+2. **Plan** — mentally map which twisting technique and distractor type suits each concept
+3. **Generate ALL questions** — theory first, then calculations, in order of topic
+4. **Separator** — output "---"
+5. **Generate ALL answers and explanations** — brief, focused
 
 ---
 
@@ -4189,26 +4219,48 @@ return null;
 }
 
 function parseCBTResponse(text, examSessionId, sourceCards) {
-// ROBUST SPLIT: Gemini often uses --- as markdown HR between questions,
-// which breaks text.split('---')[0] (only captures Q1 or Q2).
-// Strategy: anchor on the ANSWERS AND EXPLANATIONS header first;
-// fall back to the LAST occurrence of \n--- in the text.
+// ── SPLIT FIX ────────────────────────────────────────────────────────────────
+// ROOT CAUSE (confirmed via Render logs): the old regex
+//   /\n---[\s\S]*?(?:ANSWERS...)/i
+// used [\s\S]*? which, while lazy, still spans every --- separator between
+// questions.  _splitIdx landed on the FIRST \n--- in the output (between Q3
+// and Q4, or Q17 and Q18, etc.) — not the actual answers divider — so
+// questionsBlock was truncated to only the first few questions even though
+// the AI generated all of them correctly (confirmed: answers block always
+// had the full count mapped).
+//
+// Strategy A: --- immediately followed by ANSWERS header (only whitespace/##
+//             between).  This is the canonical separator the prompt requests.
+// Strategy B: ANSWERS header anywhere in the text without requiring ---.
+//             Handles cases where the AI omits the preceding divider.
+// Strategy C: last \n--- in the text (original fallback — unchanged).
+// ─────────────────────────────────────────────────────────────────────────────
 let questionsBlock, answersBlock;
-const _ansHeaderRe = /\n---[\s\S]*?(?:ANSWERS?\s+(?:AND\s+)?EXPLANATIONS?|ANSWER\s+KEY)\s*\n/i;
-const _ansHeaderMatch = text.match(_ansHeaderRe);
-if (_ansHeaderMatch) {
-  const _splitIdx = text.indexOf(_ansHeaderMatch[0]);
+const _ansLabel = '(?:ANSWERS?\\s+(?:AND\\s+)?EXPLANATIONS?|ANSWER\\s+KEY)';
+// Strategy A: --- immediately before ANSWERS header (zero or more blank lines)
+const _reA = new RegExp('\\n---\\s*\\n\\s*(?:#{1,3}\\s*)?' + _ansLabel, 'i');
+// Strategy B: ANSWERS header without preceding ---
+const _reB = new RegExp('\\n\\s*(?:#{1,3}\\s*)?' + _ansLabel + '\\s*\\n', 'i');
+const _matchA = text.match(_reA);
+const _matchB = text.match(_reB);
+// Prefer A; fall back to B; then C
+const _bestMatch = _matchA || _matchB;
+if (_bestMatch) {
+  const _splitIdx = text.indexOf(_bestMatch[0]);
   questionsBlock = text.slice(0, _splitIdx);
-  answersBlock   = text.slice(_splitIdx + _ansHeaderMatch[0].length);
+  answersBlock   = text.slice(_splitIdx + _bestMatch[0].length);
+  console.log(`[KIWI CBT PARSE] Split strategy: ${_matchA ? 'A (---+header)' : 'B (header-only)'} at char ${_splitIdx}`);
 } else {
-  // No ANSWERS header found — use the LAST \n--- as the separator
+  // Strategy C: last \n--- in the text
   const _lastDash = text.lastIndexOf('\n---');
   if (_lastDash !== -1) {
     questionsBlock = text.slice(0, _lastDash);
     answersBlock   = text.slice(_lastDash + 4);
+    console.log(`[KIWI CBT PARSE] Split strategy: C (last ---) at char ${_lastDash}`);
   } else {
     questionsBlock = text;
     answersBlock   = '';
+    console.warn('[KIWI CBT PARSE] Split strategy: NONE — no separator found, treating whole text as questions');
   }
 }
 const questions = [];
@@ -4751,11 +4803,17 @@ const now = new Date();
 if (!reviewLogs || reviewLogs.length === 0) {
 return { state: CARD_STATES.SEEDLING, stage: stage || 1, verified: false };
 }
-// GHOST: Stage 5, not reviewed in >=20 days (semester early-decay threshold)
+// GHOST: Stage 5, overdue by >=20 days past the card's due date.
+// "Better implemented": computes from next_review_at rather than last_reviewed_at,
+// so a card on a 30-day or 90-day interval won't ghost mid-interval — only genuine
+// neglect (ignored for 20+ days after the card came due) is flagged.
 // FIX #2: Preserve verified status — GHOST must not wipe VERIFIED.
 if (stage === 5) {
 const daysSinceReview = daysSince(last_reviewed_at);
-if (daysSinceReview >= 20) {
+const daysOverdue = next_review_at
+  ? Math.floor((Date.now() - new Date(next_review_at).getTime()) / 86400000)
+  : daysSinceReview;
+if (daysOverdue >= 20) {
 return {
 state: CARD_STATES.GHOST,
 stage: 5,
@@ -8773,7 +8831,7 @@ ROLE
 You are KIWI\'s invitation generator. Create ${needed} specific, motivating daily study invitations.
 STUDENT CONTEXT
 - Dangerous cards (exam approaching, stage 1-2): ${dangerousFronts.join(', ') || 'none'}
-- Ghost cards (stage 5, dormant 60+ days): ${ghostFronts.join(', ') || 'none'}
+- Ghost cards (stage 5, overdue 20+ days past their due date): ${ghostFronts.join(', ') || 'none'}
 - Stuck cards (no progress in 14 days): ${stuckFronts.join(', ') || 'none'}
 - Highest-pressure subject: ${highPressureSubject?.name || 'none'}
 - Total due cards: ${allCardStatesForInv.filter((s) => s.state !== 'SEEDLING').length}
@@ -8856,7 +8914,7 @@ RULES
     if (ghostFronts.length > 0 && invitations.length < 3) {
       invitations.push({
         title: 'A Ghost Stirs',
-        context: `${ghostFronts[0]} has been dormant for 60+ days. Bring it back before it fades.`,
+        context: `${ghostFronts[0]} has been ignored for 20+ days past its due date. Bring it back before it fades.`,
         action_type: 'review_specific_cards',
         subject_id: ghostCardStates[0]?.subject_id || null,
         card_ids: ghostCardStates.slice(0, 3).map((s) => s.card_id),
@@ -9393,7 +9451,7 @@ if (cached?.data) return { explanation: cached.data, sources: cached.sources || 
 // The prompt forbids state labels (GHOST, STUCK etc.) but JSON.stringify leaks them as keys.
 // F5-1-P: added 7 bubble source keys [DESIGN: §15.1] so AI prompt describes them correctly
 const sourceLabelMap = {
-  ghost_cards:                   'cards that have gone dormant (not reviewed in 60+ days)',
+  ghost_cards:                   'cards that have gone dormant (neglected 20+ days past their due date)',
   stuck_cards:                   "cards that haven't advanced in two weeks",
   avoided_cards:                 'cards that are consistently skipped when overdue',
   fragile_cards:                 'cards never correctly answered in a practice exam',
@@ -10499,17 +10557,18 @@ try {
   ]);
 } catch (_) {}
 // P8 FIX: If 14+ day absence, proactively trigger GHOST decay recompute for all
-// Stage-5 cards that are 60+ days dormant. Without this, GHOST state is only
-// detected lazily when a card is loaded — returnees would see a falsely healthy dashboard.
+// Stage-5 cards that are >=20 days overdue past their due date. Without this, GHOST
+// state is only detected lazily when a card is loaded — returnees would see a falsely
+// healthy dashboard. Uses next_review_at to match the GHOST definition in determineCardState.
 if (returnStatus.status === 'abandoned') {
 (async () => {
 try {
 const allCards = await db.cards.findAllForUser(user.id);
-const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000);
+const twentyDaysAgo = new Date(Date.now() - 20 * 86400000);
 const stage5Dormant = allCards.filter(c =>
 c.stage === 5 &&
-c.last_reviewed_at &&
-new Date(c.last_reviewed_at) <= sixtyDaysAgo
+c.next_review_at &&
+new Date(c.next_review_at) <= twentyDaysAgo
 );
 for (const card of stage5Dormant) {
 queueKSRecompute(user.id, card.id); // queued
@@ -11698,7 +11757,7 @@ studyRouter.use(reckoningLockout);
 
 studyRouter.post('/start', async (req, res) => {
 try {
-const { deck_id, card_limit, include_all_decks_in_subject, subject_id, card_ids } = req.body;
+const { deck_id, card_limit, include_all_decks_in_subject, subject_id, card_ids, card_state_filter } = req.body;
 // Fixed: Allow subject_id + include_all_decks_in_subject without explicit deck_id
 if (!deck_id && !(include_all_decks_in_subject && subject_id)) {
 return res
@@ -11777,7 +11836,10 @@ const bubbleSubjectId  = subject_id || (deck ? deck.subject_id : null);
 const SPECIAL_OVERRIDE = new Set([
   CARD_STATES.DANGEROUS, CARD_STATES.AVOIDED,
   CARD_STATES.GHOST,     CARD_STATES.STUCK,
-  CARD_STATES.FRAGILE,
+  CARD_STATES.FRAGILE,   CARD_STATES.SLIPPING,
+  // SLIPPING = early-warning state (2 consecutive Again/Hard). These cards
+  // must appear in sessions even when next_review_at is still in the future —
+  // they are heading toward STUCK and need intervention now.
   // SEEDLING intentionally excluded: isCardDue() already returns true for
   // brand-new cards (next_review_at is null). Including SEEDLING here caused
   // recently-reviewed cards to bypass the due-date check because card_states
@@ -11802,9 +11864,26 @@ const effectiveDueQueue = dueQueue.length > 0
         return aDate - bDate; // earliest next_review_at → most overdue → review first
       })
     : [];
+// STATE FILTER: If card_state_filter provided, narrow queue to only those states.
+// Returns an honest 422 instead of silently starting an empty or wrong session.
+const csf = Array.isArray(card_state_filter)
+  ? card_state_filter.map(s => s.toUpperCase()).filter(Boolean)
+  : card_state_filter
+    ? [String(card_state_filter).toUpperCase()]
+    : null;
+let stateFilteredQueue = effectiveDueQueue;
+if (csf && csf.length > 0) {
+  stateFilteredQueue = effectiveDueQueue.filter(item => csf.includes(item.state?.state));
+  if (stateFilteredQueue.length === 0) {
+    const filterLabel = csf.join(' / ');
+    return res.status(422).json({
+      error: `No ${filterLabel} cards found to study in this subject. Try removing the filter or reviewing all due cards.`,
+    });
+  }
+}
 const modifiedQueue    = await modifySessionQueueForBubbles(
-  req.user.id, effectiveDueQueue, bubbleSubjectId
-).catch(() => effectiveDueQueue);
+  req.user.id, stateFilteredQueue, bubbleSubjectId
+).catch(() => stateFilteredQueue);
 const limitedQueue = card_limit && card_limit > 0
   ? modifiedQueue.slice(0, parseInt(card_limit))
   : modifiedQueue;
@@ -12486,12 +12565,27 @@ CARD_STATES.FRAGILE, CARD_STATES.AVOIDED];
 const allExamCardIds = allCards.map(c => c.id);
 const examStatesList = await batchInitializeSeedlingStates(req.user.id, allExamCardIds);
 const examStatesById = new Map(examStatesList.map(s => [s.card_id, s]));
+// P-HONEST: Pre-fetch subject exam date once for real-time DANGEROUS condition
+const _rtExamDate = (card_state_filter === 'dangerous' || card_state_filter === 'mixed_priority')
+  ? await getSubjectExamDate(req.user.id, subject_id).catch(() => null)
+  : null;
+const _rtDaysToExam = _rtExamDate
+  ? Math.floor((new Date(_rtExamDate) - Date.now()) / 86400000)
+  : null;
 for (const card of allCards) {
 const stateDoc = examStatesById.get(card.id) || { state: CARD_STATES.SEEDLING };
 const st = stateDoc.state;
 let include = false;
 switch (card_state_filter) {
-case 'dangerous': include = (st === CARD_STATES.DANGEROUS); break;
+case 'dangerous':
+  // Real-time DANGEROUS: stage 1–2 within 14 days of subject exam date.
+  // Falls back to stored state when no exam date is configured.
+  if (card.stage <= 2 && _rtExamDate !== null && _rtDaysToExam !== null) {
+    include = (_rtDaysToExam >= 0 && _rtDaysToExam <= 14);
+  } else {
+    include = (st === CARD_STATES.DANGEROUS);
+  }
+  break;
 case 'ghost':     include = (st === CARD_STATES.GHOST); break;
 case 'stuck':     include = (st === CARD_STATES.STUCK); break;
 case 'fragile':   include = (st === CARD_STATES.FRAGILE); break;
@@ -15056,21 +15150,40 @@ stageDistribution[c.stage || 0] = (stageDistribution[c.stage || 0] || 0) + 1;
 // BUG-FIX: previous code used c.due which doesn't exist → ALL cards appeared due
 const _libNow = new Date();
 const dueCount = allCards.filter((c) => isCardDue(c, _libNow)).length;
-// recentCards (first 12)
-const recentCards = allCards.slice(0, 12).map((c) => ({
-id: c.id,
-front: c.front_content || c.front || '',
-back: c.back_content || c.back || '',
-stage: c.stage || 0,
-isDue: !c.next_review_at || new Date(c.next_review_at) <= new Date(),
-next_review_at: c.next_review_at || null,
-reviewCount: c.review_count || c.reviewCount || 0,
-}));
+// Fetch card states for ALL cards — used for stateDistribution bar + recentCards badges
+const _libAllCardIds = allCards.map(c => c.id);
+const _libAllStatesList = _libAllCardIds.length > 0
+  ? await batchInitializeSeedlingStates(req.user.id, _libAllCardIds).catch(() => [])
+  : [];
+const _libStatesMap = new Map(_libAllStatesList.map(s => [s.card_id, s]));
+// Compute per-state card counts for the stacked pill distribution chart
+const stateDistribution = {};
+for (const _ls of _libAllStatesList) {
+  const _lsSt = _ls.state || 'SEEDLING';
+  stateDistribution[_lsSt] = (stateDistribution[_lsSt] || 0) + 1;
+}
+// recentCards (first 12) — include cardState and verified so frontend shows real state badges
+const recentCards = allCards.slice(0, 12).map((c) => {
+  const _st = _libStatesMap.get(c.id);
+  return {
+    id: c.id,
+    front: c.front_content || c.front || '',
+    back: c.back_content || c.back || '',
+    stage: c.stage || 0,
+    isDue: !c.next_review_at || new Date(c.next_review_at) <= new Date(),
+    next_review_at: c.next_review_at || null,
+    reviewCount: c.review_count || c.reviewCount || 0,
+    cardState: _st?.state || 'SEEDLING',
+    verified: _st?.verified || false,
+  };
+});
 return {
 id: s.id,
 name: s.name,
 color_hex: s.color_hex,
+color: s.color || s.color_hex,
 emoji: s.emoji,
+icon: s.icon || s.emoji,
 exam_date: s.exam_date || null,
 deck_count: s.deck_count || 0,
 cardCount: s.total_cards || 0,
@@ -15078,6 +15191,7 @@ total_cards: s.total_cards || 0,
 ks: ks.score,
 recentCards,
 stageDistribution,
+stateDistribution,
 dueCount,
 decks: (s.decks || []).map((d) => ({
 id: d.id,
@@ -15094,28 +15208,45 @@ res.status(500).json({ error: 'Failed to load library', details: e.message });
 }
 });
 // GET /api/library/subjects/:id/cards — full card list for a subject
-// Supports: ?page=1&limit=50&filter=all|due|resting&search=term
+// Supports: ?page=1&limit=50&filter=all|due|not_due|stuck|ghost|slipping|avoided|dangerous|fragile|verified|stable|growing|seedling&search=term
+const _CARD_STATE_FILTERS = new Set(['stuck','ghost','slipping','avoided','dangerous','fragile','verified','stable','growing','seedling']);
 libraryRouter.get('/subjects/:id/cards', async (req, res) => {
   try {
     const subject = await db.subjects.findById(req.params.id);
     if (!subject) return res.status(404).json({ error: 'Subject not found' });
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(200, Math.max(10, parseInt(req.query.limit) || 50));
-    const filter = req.query.filter || 'all'; // 'all' | 'due' | 'resting'
+    const filter = req.query.filter || 'all';
     const search = (req.query.search || '').toLowerCase().trim();
     const now = new Date();
-    // Collect all decks for this subject
+    // Collect all cards across all decks for this subject
     let allCards = [];
     const subjectDecks = await db.decks.findBySubject(req.user.id, req.params.id).catch(() => []);
     for (const d of subjectDecks) {
       const deckCards = await db.cards.findByDeck(req.user.id, d.id).catch(() => []);
       allCards.push(...deckCards);
     }
+    // Fetch card states for ALL cards in one batch query — needed for state filter + badge display
+    const allCardIds = allCards.map(c => c.id);
+    const statesList = allCardIds.length > 0
+      ? await batchInitializeSeedlingStates(req.user.id, allCardIds).catch(() => [])
+      : [];
+    const statesMap = new Map(statesList.map(s => [s.card_id, s]));
     // Apply filter
     if (filter === 'due') {
       allCards = allCards.filter((c) => isCardDue(c, now));
-    } else if (filter === 'resting') {
+    } else if (filter === 'resting' || filter === 'not_due') {
       allCards = allCards.filter((c) => !isCardDue(c, now));
+    } else if (_CARD_STATE_FILTERS.has(filter)) {
+      // State-based filter — only keep cards whose stored state matches
+      const targetState = filter.toUpperCase();
+      allCards = allCards.filter(c => (statesMap.get(c.id)?.state || 'SEEDLING') === targetState);
+      // Return an honest error if no cards match (Fix #4)
+      if (allCards.length === 0) {
+        return res.status(400).json({
+          error: `No ${filter.toUpperCase()} cards found in this subject. Cards reach this state through review history — try a different filter or study more cards first.`,
+        });
+      }
     }
     // Apply search
     if (search) {
@@ -15127,16 +15258,21 @@ libraryRouter.get('/subjects/:id/cards', async (req, res) => {
     }
     const total = allCards.length;
     const totalPages = Math.ceil(total / limit);
-    const paginated = allCards.slice((page - 1) * limit, page * limit).map((c) => ({
-      id: c.id,
-      front: c.front_content || c.front || '',
-      back: c.back_content || c.back || '',
-      stage: c.stage || 0,
-      isDue: isCardDue(c, now),
-      reviewCount: c.review_count || c.reviewCount || 0,
-      next_review_at: c.next_review_at || null,
-      deck_id: c.deck_id || null,
-    }));
+    const paginated = allCards.slice((page - 1) * limit, page * limit).map((c) => {
+      const stateDoc = statesMap.get(c.id);
+      return {
+        id: c.id,
+        front: c.front_content || c.front || '',
+        back: c.back_content || c.back || '',
+        stage: c.stage || 0,
+        isDue: isCardDue(c, now),
+        reviewCount: c.review_count || c.reviewCount || 0,
+        next_review_at: c.next_review_at || null,
+        deck_id: c.deck_id || null,
+        cardState: stateDoc?.state || 'SEEDLING',
+        verified: stateDoc?.verified || false,
+      };
+    });
     res.json({ cards: paginated, total, page, totalPages, limit });
   } catch (e) {
     res.status(500).json({ error: 'Failed to fetch cards', details: e.message });
