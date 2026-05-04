@@ -5271,6 +5271,7 @@
   <div id="kiwiGenBanner">
     <div class="gen-spinner"></div>
     <span id="kiwiGenBannerMsg">Generating...</span>
+    <button onclick="_hideGenBanner()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:14px;margin-left:8px;padding:0 4px;line-height:1;" title="Dismiss">✕</button>
   </div>
     <div class="ambient-particles"></div>
     <div id="app">
@@ -5698,10 +5699,17 @@
         if (m) m.textContent = msg || 'Generating...';
         b.classList.add('active');
         try { localStorage.setItem('kiwi_gen_banner', msg || 'Generating...'); } catch(_) {}
+        // Auto-dismiss after 3 minutes in case WS never fires job_done/job_failed
+        clearTimeout(window._genBannerTimeout);
+        window._genBannerTimeout = setTimeout(function() {
+          _hideGenBanner();
+          showToast('⚠ Generation is taking longer than expected. Check back later.', 'error', 7000);
+        }, 3 * 60 * 1000);
       }
       function _hideGenBanner() {
         var b = document.getElementById('kiwiGenBanner');
         if (b) b.classList.remove('active');
+        clearTimeout(window._genBannerTimeout);
         try { localStorage.removeItem('kiwi_gen_banner'); } catch(_) {}
       }
       // Restore banner on page load if a generation was in progress
@@ -13788,6 +13796,7 @@
           async () => {
             try {
               await api.deleteSubject(subjectId);
+              AppState.subjects = (AppState.subjects || []).filter(s => s.id !== subjectId);
               showToast("Subject deleted", "success");
               navigateTo("library");
             } catch (err) {

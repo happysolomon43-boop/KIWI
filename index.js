@@ -394,6 +394,13 @@ async update(userId, id, data) {
   return { id, ...payload };
 },
 async delete(userId, id) {
+  // Cascade: wipe dependent rows before removing the subject itself
+  await query('DELETE FROM card_states WHERE user_id = $1 AND card_id IN (SELECT id FROM cards WHERE user_id = $1 AND deck_id IN (SELECT id FROM decks WHERE user_id = $1 AND subject_id = $2))', [userId, id]);
+  await query('DELETE FROM knowledge_scores WHERE user_id = $1 AND subject_id = $2', [userId, id]);
+  await query('DELETE FROM exam_questions WHERE user_id = $1 AND exam_session_id IN (SELECT id FROM exam_sessions WHERE user_id = $1 AND subject_id = $2)', [userId, id]);
+  await query('DELETE FROM exam_sessions WHERE user_id = $1 AND subject_id = $2', [userId, id]);
+  await query('DELETE FROM cards WHERE user_id = $1 AND deck_id IN (SELECT id FROM decks WHERE user_id = $1 AND subject_id = $2)', [userId, id]);
+  await query('DELETE FROM decks WHERE user_id = $1 AND subject_id = $2', [userId, id]);
   await query('DELETE FROM subjects WHERE id = $1 AND user_id = $2', [id, userId]);
   return true;
 },
