@@ -5492,7 +5492,7 @@
                     '<div style="margin-top:10px;"><button class="btn btn-primary btn-sm" onclick="navigateTo(\'library\')">Review &amp; Edit Cards →</button></div>';
                 }
                 var _impBtn = document.getElementById('aiNotesImportBtn');
-                if (_impBtn) { _impBtn.disabled = false; _impBtn.textContent = 'Generate Flashcards'; }
+                if (_impBtn) { _impBtn.disabled = false; _impBtn.textContent = 'Generate Cards with AI'; }
                 if (result && result.suggest_bubble && result.subject_id && typeof showBubbleOnboardingPrompt === 'function') {
                   showBubbleOnboardingPrompt(result.subject_id, result.deck_id);
                 }
@@ -5554,7 +5554,7 @@
                   } else if (typeof navigateTo === 'function') { navigateTo('exam-config'); }
                 }
               }
-              if (_jf.type === 'note_generation') { var _ib = document.getElementById('aiNotesImportBtn'); if (_ib) { _ib.disabled = false; _ib.textContent = 'Generate Flashcards'; } }
+              if (_jf.type === 'note_generation') { var _ib = document.getElementById('aiNotesImportBtn'); if (_ib) { _ib.disabled = false; _ib.textContent = 'Generate Cards with AI'; } }
             }
           } catch(_e) {}
         };
@@ -14307,6 +14307,7 @@
             document.getElementById("aiNotesConfirm").style.display = "none";
             var btn = document.getElementById("aiNotesImportBtn");
             btn.disabled = true; btn.textContent = "Generating...";
+            _showGenBanner('🥝 Note generation in progress…');
             var resultEl = document.getElementById("aiNotesResult");
             if (resultEl) {
               resultEl.style.display = "block";
@@ -14321,8 +14322,7 @@
               var job = await api.importFromNotes(deckId, notes, hint);
               if (job && job.job_id) {
                 _pollJobFallback(job.job_id, authToken, 'note_generation');
-                showToast("⏳ Generating flashcards in the background…", "info", 5000);
-                return; // WS / poll will update the UI when done
+                return; // banner already showing — WS / poll will hide it when done
               }
               // Legacy sync response fallback
               var result   = job;

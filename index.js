@@ -928,7 +928,7 @@ async markShown(userId, achievementId) {
   await query(
     'UPDATE user_achievements SET shown_to_user = true WHERE id = $1',
     [docId]
-  ).catch(() => {});
+  ).catch((e) => console.error("[KIWI] silent catch:", e.message));
   return true;
 },
 },
@@ -1794,7 +1794,7 @@ return JSON.parse(cleaned);
 // CEE-style raw fetch — returns SDK-compatible shape so all callers work unchanged
 // Model: gemini-3-flash-preview (free, high usage) — no paid Pro model used
 const geminiModel = {
-async generateContent(content, generationConfig) {
+async generateContent(content, generationConfig, { timeoutMs = 30000 } = {}) {
 if (!_geminiKeyObjs.length) throw new Error('No Gemini API keys configured');
 let lastError = null;
 for (let attempt = 0; attempt < Math.max(_geminiKeyObjs.length, 1); attempt++) {
@@ -1812,10 +1812,9 @@ reqBody = { contents: [{ parts: [{ text: String(content) }] }] };
 if (generationConfig) reqBody.generationConfig = generationConfig;
 try {
 // Issue-7/8 FIX: AbortController timeout prevents Gemini hangs from blocking
-// the dashboard. 30 s is generous for any real AI call; hard hangs are rare
-// but have caused cascading infinite-loading failures on cache miss.
+// the dashboard. Timeout is now per-call — CBT uses 120s, simpler calls use 30s.
 const _abortCtrl  = new AbortController();
-const _abortTimer = setTimeout(() => _abortCtrl.abort(), 30000);
+const _abortTimer = setTimeout(() => _abortCtrl.abort(), timeoutMs);
 let res;
 try {
   res = await fetch(url, {
@@ -2368,7 +2367,7 @@ async function modifySessionQueueForBubbles(userId, queue, subjectId = null) {
       const inBubble = allBubbleCardIds.has(cardId);
       if (inBubble && isParkable(stateDoc, now)) {
         const parkExpiry = new Date(now.getTime() + parkDays * 86400000);
-        await db.cardStates.update(userId, cardId, { parking_expires_at: parkExpiry }).catch(() => {});
+        await db.cardStates.update(userId, cardId, { parking_expires_at: parkExpiry }).catch((e) => console.error("[KIWI] silent catch:", e.message));
         continue;
       }
       modified.push(item);
@@ -4006,7 +4005,7 @@ function deduplicateCBTOptions(questions) {
 
 async function generateCBTQuestions(notes, count) {
 const prompt = CBT_PROMPT.replace('[NOTES]', notes).replace('[COUNT]', count);
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000 });
+const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000 }, { timeoutMs: 120000 });
 return result.response.text();
 }
 
@@ -4044,7 +4043,7 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed) 
     'Generate exactly ' + needed + ' question(s) following all rules above.',
   ].join('\n');
 
-  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: 8000 });
+  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: 8000 }, { timeoutMs: 90000 });
   return result.response.text();
 }
 
@@ -5326,7 +5325,7 @@ async function generateDailyContract(userId, goalId) {
     await db.masteryGoals.update(userId, goalId, {
       contract_streak_current: newStreak,
       contract_streak_best:    newBest,
-    }).catch(() => {});
+    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
   }
 
   const currentKS = goal.current_ks || 0;
@@ -5511,7 +5510,7 @@ async function updateBubbleTrajectory(userId, goalId) {
         event_type:  'rescue_eligible_flagged',
         ks_at_event: ksResult.score,
         notes:       `Entered HARDENING at KS ${ksResult.score.toFixed(1)} — below 70. Rescue eligibility flag set.`,
-      }).catch(() => {});
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
     // Append to phase_history array [DESIGN: §12.1]
     const phaseHistoryEntry = {
@@ -5681,12 +5680,12 @@ async function updateBubbleTrajectory(userId, goalId) {
           : 0;
         if (earlyVelocity < 0.3) {
           const cause = await diagnoseStallCause(userId, { ...goal, ...updates }).catch(() => 'STUCK_CLUSTER');
-          await activateStallResponse(userId, goalId, cause).catch(() => {});
+          await activateStallResponse(userId, goalId, cause).catch((e) => console.error("[KIWI] silent catch:", e.message));
           await db.masteryGoals.addHistoryEntry(goalId, {
             event_type:  'early_stall_detected',
             ks_at_event: ksResult.score,
             notes:       `Early stall: KS ${ksResult.score.toFixed(1)} at SEEDING midpoint (day ${daysPassed}/${totalDays}). Velocity: ${earlyVelocity.toFixed(2)}/day.`,
-          }).catch(() => {});
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
         }
       }
     }
@@ -5697,9 +5696,9 @@ async function updateBubbleTrajectory(userId, goalId) {
   // ── PB.5: Stall check — called every trajectory update [DESIGN: §6] ─────
   // ⚠ CORRECTED from v1.0: stall check was defined but never called from here
   await checkAndUpdateStallState(userId, { ...goal, ...updates, current_ks: ksResult.score })
-    .catch(() => {});
+    .catch((e) => console.error("[KIWI] silent catch:", e.message));
 
-  await generateDailyContract(userId, goalId).catch(() => {});
+  await generateDailyContract(userId, goalId).catch((e) => console.error("[KIWI] silent catch:", e.message));
   return { ...goal, ...updates, current_ks: ksResult.score };
 }
 
@@ -5726,7 +5725,7 @@ async function createMasteryGoal(userId, data) {
       cardIds.push(...cards.map((c) => c.id));
     }
   }
-  await batchInitializeSeedlingStates(userId, cardIds).catch(() => {});
+  await batchInitializeSeedlingStates(userId, cardIds).catch((e) => console.error("[KIWI] silent catch:", e.message));
   // Default bubble name if not provided [DESIGN: §12.1]
   if (!data.name && data.exam_date) {
     const subject = await db.subjects.findById(data.subject_id).catch(() => null);
@@ -5741,7 +5740,7 @@ async function createMasteryGoal(userId, data) {
     current_ks:          ksResult.score,
     required_ks_per_day: required,
   });
-  await generateDailyContract(userId, goal.id).catch(() => {});
+  await generateDailyContract(userId, goal.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
   await db.masteryGoals.addHistoryEntry(goal.id, {
     event_type:  'created',
     ks_at_event:  ksResult.score,
@@ -5771,7 +5770,7 @@ async function closeMasteryGoal(userId, goalId, reason = 'completed') {
     for (const cardId of (goal.card_ids || [])) {
       const stateDoc = statesByCardId.get(cardId);
       if (stateDoc && stateDoc.state !== CARD_STATES.VERIFIED) {
-        await db.cardStates.update(userId, cardId, { learning_debt: true }).catch(() => {});
+        await db.cardStates.update(userId, cardId, { learning_debt: true }).catch((e) => console.error("[KIWI] silent catch:", e.message));
         debtCount++;
       }
     }
@@ -5807,7 +5806,7 @@ await db.cards.update(userId, card.id, { verified: true, verified_at: new Date()
 results.verified.push(card.id);
 // P8.1c: +1 Seedling for first-time VERIFIED card (spec P8.1)
 await awardSeedlings(userId, 1, 'card_verified_first_time',
-`Card ${card.id} verified for the first time in exam`).catch(() => {});
+`Card ${card.id} verified for the first time in exam`).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 } else {
 // B7: Apply full SRS "Again" treatment — recalculate EF and repetitions
@@ -5849,13 +5848,13 @@ async function detectAndMarkCrossBubbleCards(userId, newGoalCardIds, existingGoa
   const smallerSetSize = Math.min(newGoalCardIds.length, existingCardSet.size);
   const overlapPct     = smallerSetSize > 0 ? overlappingCards.length / smallerSetSize : 0;
   for (const cardId of overlappingCards) {
-    await db.cardStates.update(userId, cardId, { cross_bubble: true }).catch(() => {});
+    await db.cardStates.update(userId, cardId, { cross_bubble: true }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     // Update bubble_ids on the card state doc
     const st = await db.cardStates.get(userId, cardId).catch(() => null);
     if (st) {
       const existingGoalIds = existingGoals.map((g) => g.id);
       const merged = [...new Set([...(st.bubble_ids || []), ...existingGoalIds])];
-      await db.cardStates.update(userId, cardId, { bubble_ids: merged }).catch(() => {});
+      await db.cardStates.update(userId, cardId, { bubble_ids: merged }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
   }
   // Return overlap data for the user prompt [DESIGN: §8.2]
@@ -5887,7 +5886,7 @@ async function propagateCrossBubbleKSUpdate(userId, cardId) {
         const ksResult = await computeBubbleKS(userId, goal);
         await db.masteryGoals.update(userId, goal.id, {
           current_ks: ksResult.score,
-        }).catch(() => {});
+        }).catch((e) => console.error("[KIWI] silent catch:", e.message));
       }
     }
   } catch (_e) { /* intentionally non-fatal */ }
@@ -5908,7 +5907,7 @@ async function updateClusterKSForCard(userId, cardId) {
           await db.masteryGoals.updateCluster(goal.id, cluster.id, {
             cluster_ks:     ks,
             cluster_status: clusterStatus,
-          }).catch(() => {});
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
         }
       }
     }
@@ -6060,10 +6059,10 @@ async function resolveStallIfRecovered(userId, goalId) {
 
 async function checkAndUpdateStallState(userId, goal) {
   if (goal.stall_active) {
-    await resolveStallIfRecovered(userId, goal.id).catch(() => {});
+    await resolveStallIfRecovered(userId, goal.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
   } else {
     const { isStall, cause } = await detectStall(userId, goal).catch(() => ({ isStall: false }));
-    if (isStall) await activateStallResponse(userId, goal.id, cause).catch(() => {});
+    if (isStall) await activateStallResponse(userId, goal.id, cause).catch((e) => console.error("[KIWI] silent catch:", e.message));
   }
 }
 
@@ -6966,7 +6965,7 @@ return cardDoc.ai_summary;
 } catch (e) { /* non-fatal — proceed to generate */ }
 const summary = await summarizeCard(front, back, context);
 SUMMARY_CACHE.set(cacheKey, { summary, expires: Date.now() + 3600000 });
-db.cards.update(userId, cardId, { ai_summary: summary }).catch(() => {});
+db.cards.update(userId, cardId, { ai_summary: summary }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 return summary;
 }
 
@@ -6983,7 +6982,7 @@ Card back: ${back}
 Write exactly 1 sentence (maximum 20 words) of warm, specific acknowledgement that this concept is now part of their long-term memory. Reference the card content directly. No preamble. Just the sentence.`;
 const result = await geminiModel.generateContent(prompt);
 const mastery_moment = result.response.text().trim();
-await db.cards.update(userId, cardId, { mastery_moment }).catch(() => {});
+await db.cards.update(userId, cardId, { mastery_moment }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 return mastery_moment;
 }
 
@@ -8455,9 +8454,9 @@ Return only the 3 sentences.
     generated_at: new Date().toISOString(),
     focus_subject: biggestGapSubject?.name || highPressureSubject || null,
   };
-  await db.dailyRitualCache.set(userId, 'weekly_anchor', weekStr, anchorPayload).catch(() => {});
+  await db.dailyRitualCache.set(userId, 'weekly_anchor', weekStr, anchorPayload).catch((e) => console.error("[KIWI] silent catch:", e.message));
   // Also store under 'prev' for next week's continuity
-  await db.dailyRitualCache.set(userId, 'weekly_anchor', 'prev', anchorPayload).catch(() => {});
+  await db.dailyRitualCache.set(userId, 'weekly_anchor', 'prev', anchorPayload).catch((e) => console.error("[KIWI] silent catch:", e.message));
   return anchorPayload;
 }
 
@@ -8476,7 +8475,7 @@ const subjects = await db.subjects.findManyWithDecks(userId);
 // New user with no subjects yet — return a welcome prompt instead of AI-generated brief
 if (!subjects || subjects.length === 0) {
   const welcomeBrief = "Welcome to KIWI! Start by creating your first subject and adding flashcards — your personalised daily briefing will appear here once you begin studying.";
-  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, { data: welcomeBrief }).catch(() => {});
+  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, { data: welcomeBrief }).catch((e) => console.error("[KIWI] silent catch:", e.message));
   return welcomeBrief;
 }
 const now = new Date();
@@ -9018,7 +9017,7 @@ Return only the greeting paragraph.
   const greetingPayload = { greeting, status: status.status, days_since: status.days_since };
   await db.dailyRitualCache
     .set(userId, 'return_greeting', greetingTodayStr, greetingPayload)
-    .catch(() => {});
+    .catch((e) => console.error("[KIWI] silent catch:", e.message));
   return greetingPayload;
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -9331,10 +9330,10 @@ async function checkLearningDebtCleared(userId, subjectId) {
           event_type:  'learning_debt_cleared',
           ks_at_event:  b.current_ks || 0,
           notes:       `All learning debt cleared for subject ${subjectId}.`,
-        }).catch(() => {});
+        }).catch((e) => console.error("[KIWI] silent catch:", e.message));
       }
       // Fire Almanac check for 'Debt Settled' [DESIGN: §15.5]
-      await checkAlmanacUnlocks(userId, 'debt_settled', { subjectId }).catch(() => {});
+      await checkAlmanacUnlocks(userId, 'debt_settled', { subjectId }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
   } catch (_e) { /* non-fatal */ }
 }
@@ -9411,7 +9410,7 @@ Return only the explanation text.
   await db.dailyRitualCache.set(userId, cacheKey, todayStr, {
     data: explanation,
     sources: pressure.sources || {},
-  }).catch(() => {});
+  }).catch((e) => console.error("[KIWI] silent catch:", e.message));
   return { explanation, sources: pressure.sources || {} };
 }
 
@@ -9902,13 +9901,13 @@ userId,
 item.gate2_seedling_cost,
 'deep_audit_refund',
 'Deep Audit AI failed — Seedlings refunded'
-).catch(() => {});
+).catch((e) => console.error("[KIWI] silent catch:", e.message));
 // Roll back inventory quantity
 await db.userInventory.setItem(userId, itemCode, {
 quantity: existing?.quantity || 0,
 unlocked: (existing?.quantity || 0) > 0,
 acquired_at: existing?.acquired_at || null,
-}).catch(() => {});
+}).catch((e) => console.error("[KIWI] silent catch:", e.message));
 return { error: 'Audit unavailable; please retry.' };
 }
 }
@@ -10028,7 +10027,7 @@ archived_at: new Date(),
 await db.subjectStats.upsert(userId, subjectId, {
 archived: true,
 archived_at: new Date(),
-}).catch(() => {});
+}).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 return { archived_count: archivedCount, subject_id: subjectId };
 }
@@ -10508,7 +10507,7 @@ const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
 if (!latestChronicle || new Date(latestChronicle.week_start) < sevenDaysAgo) {
 // GAP-3 FIX: award seedlings on catch-up path so Wednesday users get their 2 seedlings
 generateWeeklyChronicle(user.id)
-.then(() => hookSeedlingEarnings(user.id, 'weekly_chronicle', {}).catch(() => {}))
+.then(() => hookSeedlingEarnings(user.id, 'weekly_chronicle', {}).catch((e) => console.error("[KIWI] silent catch:", e.message)))
 .catch((e) => console.error('[KIWI] Chronicle catch-up failed:', e.message));
 }
 // B13: Almanac unlock check on login
@@ -10986,8 +10985,8 @@ if (cardIds.length > 0) {
   );
 }
 // Invalidate cached pressure for both subjects
-calculateSubjectPressure(req.user.id, deck.subject_id).catch(() => {});
-calculateSubjectPressure(req.user.id, target_subject_id).catch(() => {});
+calculateSubjectPressure(req.user.id, deck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+calculateSubjectPressure(req.user.id, target_subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 res.json({ success: true, deck_id: deck.id, moved_cards: cardIds.length, new_subject_id: target_subject_id, subject_name: targetSubject.name });
 } catch (e) {
 res.status(500).json({ error: 'Failed to reassign deck', details: e.message });
@@ -11420,7 +11419,7 @@ created.map((c) => c.id)
 // FIX #4a: Recalculate KS after DOCX import
 const docxDeck = await db.decks.findById(req.user.id, deck_id).catch(() => null);
 if (docxDeck?.subject_id) {
-await persistKnowledgeScore(req.user.id, docxDeck.subject_id).catch(() => {});
+await persistKnowledgeScore(req.user.id, docxDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 res.status(201).json({ cards: created, count: created.length, source: 'docx' });
 } catch (e) {
@@ -11635,7 +11634,7 @@ created.map((c) => c.id)
 // FIX #4b: Recalculate KS after Quizlet import
 const quizletDeck = await db.decks.findById(req.user.id, deck_id).catch(() => null);
 if (quizletDeck?.subject_id) {
-await persistKnowledgeScore(req.user.id, quizletDeck.subject_id).catch(() => {});
+await persistKnowledgeScore(req.user.id, quizletDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 res
 .status(201)
@@ -11940,13 +11939,13 @@ reviewed_at: new Date(),
 });
 // Phase 2 & 3: Fire-and-forget — do not block card response latency
 queueKSRecompute(req.user.id, cardId); // queued — drained every 60s
-propagateCrossBubbleKSUpdate(req.user.id, cardId).catch(() => {});
-updateClusterKSForCard(req.user.id, cardId).catch(() => {});
+propagateCrossBubbleKSUpdate(req.user.id, cardId).catch((e) => console.error("[KIWI] silent catch:", e.message));
+updateClusterKSForCard(req.user.id, cardId).catch((e) => console.error("[KIWI] silent catch:", e.message));
 if (nextReview.stage !== prevStage) {
 hookSeedlingEarnings(req.user.id, 'stage_change', {
 old_stage: prevStage,
 new_stage: nextReview.stage,
-}).catch(() => {});
+}).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 // P5 FIX: AI Mastery Moment (B1) — first time card reaches Stage 5
 // Fire-and-forget: does not delay response; sentence stored in Firestore for frontend to read
@@ -11956,7 +11955,7 @@ req.user.id,
 cardId,
 card.front_content || card.front || '',
 card.back_content || card.back || ''
-).catch(() => {});
+).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 // Phase 4: Focus seed tracking
 const updatedSession = await db.sessions.findById(req.user.id, session_id);
@@ -12046,7 +12045,7 @@ wsSend(req.user.id, 'session_complete', { xp_earned: session.xp_earned || 0, car
 (async () => {
   try {
     if (focusStage === FOCUS_STAGES.FRUITING) {
-      await processFruiting(req.user.id, { ...session, focus_seed_stage: focusStage }).catch(() => {});
+      await processFruiting(req.user.id, { ...session, focus_seed_stage: focusStage }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
     if (completed) {
       const streakUpdates = computeStreakAfterSession(await db.userStats.get(req.user.id), now);
@@ -12055,27 +12054,27 @@ wsSend(req.user.id, 'session_complete', { xp_earned: session.xp_earned || 0, car
         total_sessions_completed: { increment: 1 },
         total_study_minutes: { increment: Math.round(durationSec / 60) },
       });
-      await detectStreakMilestones(req.user.id).catch(() => {});
-      await evaluateStreakShield(req.user.id).catch(() => {});
+      await detectStreakMilestones(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      await evaluateStreakShield(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
     } else {
-      await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch(() => {});
+      await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
     await hookSeedlingEarnings(req.user.id, 'session_end', {
       session_completed: completed,
       cards_reviewed: session.cards_reviewed || 0,
       fruiting_achieved: focusStage === FOCUS_STAGES.FRUITING,
       focus_seed_stage: focusStage,
-    }).catch(() => {});
-    await updateTreeStage(req.user.id).catch(() => {});
+    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    await updateTreeStage(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
     const deck = await db.decks.findById(req.user.id, session.deck_id).catch(() => null);
     if (deck?.subject_id) {
-      await persistKnowledgeScore(req.user.id, deck.subject_id).catch(() => {});
-      await db.subjectStats.upsert(req.user.id, deck.subject_id, { last_studied_at: new Date() }).catch(() => {});
+      await persistKnowledgeScore(req.user.id, deck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      await db.subjectStats.upsert(req.user.id, deck.subject_id, { last_studied_at: new Date() }).catch((e) => console.error("[KIWI] silent catch:", e.message));
       const pressureAfterSession = await calculateSubjectPressure(req.user.id, deck.subject_id).catch(() => null);
       if (pressureAfterSession?.intervention_level === 'L4') {
-        triggerReckoning(req.user.id, deck.subject_id).catch(() => {});
+        triggerReckoning(req.user.id, deck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
       }
-      await updateAllBubblesForUser(req.user.id).catch(() => {});
+      await updateAllBubblesForUser(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
     const sessionFull = await db.sessions.findByIdFull(req.user.id, session_id).catch(() => session);
     await checkAchievements(req.user.id, {
@@ -12084,8 +12083,8 @@ wsSend(req.user.id, 'session_complete', { xp_earned: session.xp_earned || 0, car
       sessionStart: session.started_at,
       sessionCompleted: completed,
       seedGrowth: 100,
-    }).catch(() => {});
-    await updateTaskProgress(req.user.id, sessionFull).catch(() => {});
+    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    await updateTaskProgress(req.user.id, sessionFull).catch((e) => console.error("[KIWI] silent catch:", e.message));
     if (deck?.subject_id) {
       try {
         const prevSubStat = await db.subjectStats.get(req.user.id, deck.subject_id);
@@ -12097,7 +12096,7 @@ wsSend(req.user.id, 'session_complete', { xp_earned: session.xp_earned || 0, car
         }
       } catch (_e) { /* non-fatal */ }
     }
-    await checkAlmanacUnlocks(req.user.id).catch(() => {});
+    await checkAlmanacUnlocks(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
   } catch (bgErr) {
     console.error('[KIWI] session end background error:', bgErr.message);
   }
@@ -12510,16 +12509,16 @@ try {
     completed_at: new Date(),
   });
   // Penalty: -10 tree_health, +1 pressure on each subject the exam covered
-  await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch(() => {});
+  await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
   if (exam.subject_id) {
     const bp = await db.brainPressure.get(req.user.id, exam.subject_id);
     const cur = bp ? bp.pressure_score || 0 : 0;
     await db.brainPressure.set(req.user.id, exam.subject_id, {
       pressure_score: Math.min(100, cur + 15),
       intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
-    }).catch(() => {});
+    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     // Recompute KS with forfeiture penalty
-    await persistKnowledgeScore(req.user.id, exam.subject_id).catch(() => {});
+    await persistKnowledgeScore(req.user.id, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
   }
   res.json({ success: true, message: 'Exam forfeited. Penalties applied.' });
 } catch (e) {
@@ -12553,7 +12552,7 @@ setImmediate(async () => {
     if (!aiText) throw new Error('AI exam generation returned empty response');
     let questions = parseCBTResponse(aiText, _cbtSessionId, _cbtCards);
     if (questions.length === 0) {
-      await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => {});
+      await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
       _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'AI generated questions could not be parsed. Ensure your cards have full content.' });
       wsSend(_cbtUserId, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: 'AI generated questions could not be parsed. Ensure your cards have full content.' });
       return;
@@ -12577,7 +12576,7 @@ setImmediate(async () => {
       }
       // After completion prompt, if still short — hard fail. Partial exams are not acceptable.
       if (questions.length < _cbtCount) {
-        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => {});
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
         _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.' });
         wsSend(_cbtUserId, 'job_failed', {
           job_id: cbtJobId,
@@ -12773,7 +12772,7 @@ if (highStageCardsForAlert.length >= 15) {
 const reclassifiedHighStage = reclassified.filter(r => r.old_stage >= 4);
 await triggerReclassificationAlert(
 req.user.id, exam.subject_id, scorePct, reclassifiedHighStage
-).catch(() => {});
+).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 }
 // Phase 3: Credential evaluation — individually error-isolated (Issue-1 FIX)
@@ -12794,11 +12793,11 @@ req.user.id,
 tiersGained * 3,
 'credential_tier_advance',
 `Credential advanced to tier ${credential.tier} in subject ${exam.subject_id}`
-).catch(() => {});
+).catch((e) => console.error("[KIWI] silent catch:", e.message));
 // Persist the new tier so future exams measure delta correctly
 await db.subjectStats.upsert(req.user.id, exam.subject_id, {
 credential_tier: credential.tier,
-}).catch(() => {});
+}).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 }
 // Update user stats
@@ -12826,15 +12825,15 @@ last_exam_at: now,
 await (async () => {
   const examCardIds = (exam.questions || []).map(q => q.card_id).filter(Boolean);
   await Promise.all(
-    examCardIds.map(cid => recomputeAndStoreCardState(req.user.id, cid).catch(() => {}))
+    examCardIds.map(cid => recomputeAndStoreCardState(req.user.id, cid).catch((e) => console.error("[KIWI] silent catch:", e.message)))
   );
-})().catch(() => {});
+})().catch((e) => console.error("[KIWI] silent catch:", e.message));
 await recalculateSubjectHealth(req.user.id, exam.subject_id)
   .catch((e) => console.error('[KIWI] recalculateSubjectHealth failed:', e.message));
 const pressureAfterExam = await calculateSubjectPressure(req.user.id, exam.subject_id)
   .catch((e) => { console.error('[KIWI] calculateSubjectPressure failed:', e.message); return null; });
 if (pressureAfterExam?.intervention_level === 'L4') {
-triggerReckoning(req.user.id, exam.subject_id).catch(() => {});
+triggerReckoning(req.user.id, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 await persistKnowledgeScore(req.user.id, exam.subject_id)  // Issue-1 FIX: non-fatal
   .catch((e) => console.error('[KIWI] persistKnowledgeScore failed:', e.message));
@@ -12861,7 +12860,7 @@ return [];
 });
 
     // Notify via Telegram if configured
-    await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, passed).catch(() => {});
+    await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, passed).catch((e) => console.error("[KIWI] silent catch:", e.message));
     // Wire exam_result email notification
     {
       const _examSubject = await db.subjects.findById(exam.subject_id).catch(() => null);
@@ -12869,7 +12868,7 @@ return [];
         subjectName: _examSubject?.name || 'Study Session',
         scorePct,
         passed,
-      }).catch(() => {});
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
     // Build enriched question_review for the post-exam Review tab.
     // Includes stem, all four options, correct answer, explanation, and what the user picked.
@@ -13284,7 +13283,7 @@ created.map((c) => c.id)
 }
 // FIX #4c: Recalculate KS after community clone
 if (newDeck.subject_id) {
-await persistKnowledgeScore(req.user.id, newDeck.subject_id).catch(() => {});
+await persistKnowledgeScore(req.user.id, newDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 await db.communityDecks.update(req.params.id, { clone_count: { increment: 1 } });
 const clonedDeck = await db.decks.findByIdFull(req.user.id, newDeck.id);
@@ -13326,7 +13325,7 @@ created.map((c) => c.id)
 await db.communityDecks.update(deckId, { clone_count: { increment: 1 } });
 // FIX #4d: Recalculate KS after community import
 if (newDeck.subject_id) {
-await persistKnowledgeScore(req.user.id, newDeck.subject_id).catch(() => {});
+await persistKnowledgeScore(req.user.id, newDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 const clonedDeck = await db.decks.findByIdFull(req.user.id, newDeck.id);
 res.status(201).json({ message: 'Deck imported successfully', deck: clonedDeck });
@@ -13392,7 +13391,7 @@ average_rating: 0,
 // Mark the original deck as public
 await db.decks.update(req.user.id, deck_id, { is_public: true });
 // Check almanac — publishing a deck may unlock Community Spirit entries
-await checkAlmanacUnlocks(req.user.id).catch(() => {});
+await checkAlmanacUnlocks(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 res.status(201).json({ message: 'Deck published to community', community_deck: communityEntry });
 } catch (e) {
 res.status(500).json({ error: 'Failed to publish deck', details: e.message });
@@ -13524,7 +13523,7 @@ bubbleRouter.post('/', async (req, res) => {
         if (!ids.includes(goal.id)) {
           await db.cardStates
             .update(req.user.id, cardId, { bubble_ids: [...ids, goal.id] })
-            .catch(() => {});
+            .catch((e) => console.error("[KIWI] silent catch:", e.message));
         }
       }
     }
@@ -13619,7 +13618,7 @@ bubbleRouter.patch('/:id', async (req, res) => {
       if (existingGoal?.status === 'dormant') updates.status = 'active';
     }
     const goal = await db.masteryGoals.update(req.user.id, req.params.id, updates);
-    await updateBubbleTrajectory(req.user.id, req.params.id).catch(() => {});
+    await updateBubbleTrajectory(req.user.id, req.params.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
     res.json(goal);
   } catch (e) {
     res.status(500).json({ error: 'Failed to update bubble', details: e.message });
@@ -13765,7 +13764,7 @@ bubbleRouter.get('/:id/autopsy', async (req, res) => {
       await db.masteryGoals.update(req.user.id, req.params.id, {
         autopsy_generated:    true,
         autopsy_generated_at: new Date(),
-      }).catch(() => {});
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
     res.json({ autopsy });
   } catch (e) {
@@ -13786,7 +13785,7 @@ bubbleRouter.post('/:id/advisory', async (req, res) => {
     const subject  = await db.subjects.findById(goal.subject_id).catch(() => null);
     const advisory = await generateBubbleAdvisory(req.user.id, goal, subject?.name || 'this subject');
     await db.dailyRitualCache
-      .set(req.user.id, cacheKey, todayStr, { data: advisory }).catch(() => {});
+      .set(req.user.id, cacheKey, todayStr, { data: advisory }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     res.json({ advisory, cached: false });
   } catch (e) {
     res.status(500).json({ error: 'Failed to generate advisory', details: e.message });
@@ -14082,7 +14081,7 @@ await seedAlmanacForUser(req.user.id);
 // 070-A FIX: checkAlmanacUnlocks was never called here — entries were seeded as locked
 // and never evaluated on page load. Unlocks only fired from session/exam end events.
 // Now we check on every almanac load so already-met conditions surface immediately.
-await checkAlmanacUnlocks(req.user.id).catch(() => {});
+await checkAlmanacUnlocks(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 const entries = await db.almanacEntries.findByUser(req.user.id);
 // [Fix 3.6] Frontend accesses rawAlmanacData.chapters — wrap array in object.
 res.json({ chapters: entries });
@@ -14327,8 +14326,8 @@ Return only the debrief text.`;
         req.user.id, examId
       ).catch(() => null);
       if (completedReckoningExam) {
-        await processExamVerification(req.user.id, completedReckoningExam).catch(() => {});
-        await applyExamSRSFeedback(req.user.id, completedReckoningExam).catch(() => {});
+        await processExamVerification(req.user.id, completedReckoningExam).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        await applyExamSRSFeedback(req.user.id, completedReckoningExam).catch((e) => console.error("[KIWI] silent catch:", e.message));
       }
       reckoningResult = await completeReckoning(active.id, scorePct, reckoningDebriefText);
       // Bug 6 fix: Send Telegram notification for reckoning outcome
@@ -14392,7 +14391,7 @@ reckoningRouter.post('/submit', async (req, res) => {
       total_questions: total, completed_at: now, duration_seconds: durationSec,
     });
     await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, scorePct >= 70)
-      .catch(() => {});
+      .catch((e) => console.error("[KIWI] silent catch:", e.message));
     res.json({ score_pct: scorePct, correct_answers: correct, total_questions: total,
       duration_seconds: durationSec, question_results: questionResults });
   } catch (e) {
@@ -14426,7 +14425,7 @@ try {
 // the meter showed nothing. Now we recalculate all subjects fresh on every Brain page
 // load, so pressure sources (GHOST, STUCK, AVOIDED, no_exam, etc.) are always current.
 // calculateSubjectPressure writes to brain_pressure, then findByUser reads the fresh docs.
-await calculateAllSubjectPressures(req.user.id).catch(() => {}); // non-fatal — fall through to stale data if it fails
+await calculateAllSubjectPressures(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message)); // non-fatal — fall through to stale data if it fails
 const rawPressures = await db.brainPressure.findByUser(req.user.id);
 // Enrich with subject names
 const enriched = await Promise.all(
@@ -15247,7 +15246,7 @@ created.map((c) => c.id)
 // FIX #4e: Recalculate KS after library bulk import
 const libDeck = await db.decks.findById(req.user.id, targetDeckId).catch(() => null);
 if (libDeck?.subject_id) {
-await persistKnowledgeScore(req.user.id, libDeck.subject_id).catch(() => {});
+await persistKnowledgeScore(req.user.id, libDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 res.status(201).json({ cards: created, count: created.length, deck_id: targetDeckId });
 } catch (e) {
@@ -15305,7 +15304,7 @@ app.post('/api/contact', async (req, res) => {
     _contactMessages.push(entry);
     // Optional: forward via Brevo if configured
     if (process.env.CONTACT_EMAIL) {
-      sendBrevoEmail(process.env.CONTACT_EMAIL, 'contact_form', entry).catch(() => {});
+      sendBrevoEmail(process.env.CONTACT_EMAIL, 'contact_form', entry).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
     console.log('[CONTACT]', entry.received_at, email);
     res.json({ ok: true });
@@ -15368,7 +15367,7 @@ cron.schedule('* * * * *', async () => {
   _ksQueue.clear();
   let n = 0;
   for (const { userId, cardId } of batch) {
-    await recomputeAndStoreCardState(userId, cardId).catch(() => {});
+    await recomputeAndStoreCardState(userId, cardId).catch((e) => console.error("[KIWI] silent catch:", e.message));
     n++;
   }
   if (n > 0) console.log(`[KIWI KS] Batch: ${n} card state${n !== 1 ? 's' : ''} recomputed`);
@@ -15465,7 +15464,7 @@ const _streakBeforeMiss = stats.current_streak || 0;
 const _missResult = await consumeShieldOnMiss(user.id);
 // Wire streak_broken email
 if (_missResult.streak_broken && _streakBeforeMiss > 0) {
-  await sendEmailNotification(user.id, 'streak_broken', { streak: _streakBeforeMiss }).catch(() => {});
+  await sendEmailNotification(user.id, 'streak_broken', { streak: _streakBeforeMiss }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 }
 } catch (e) {
@@ -15499,7 +15498,7 @@ try {
       if (hasStreak) {
         // User has an active streak at risk — send streak danger only
         if (prefs.email !== false && user.email) {
-          await sendEmailNotification(user.id, 'streak_danger', { streak: stats.current_streak }).catch(() => {});
+          await sendEmailNotification(user.id, 'streak_danger', { streak: stats.current_streak }).catch((e) => console.error("[KIWI] silent catch:", e.message));
           danger++;
         }
       } else {
@@ -15513,7 +15512,7 @@ try {
             name: user.username || 'Learner',
             streak: 0,
             slot: 'morning',
-          }).catch(() => {});
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
         }
       }
     } catch (e) {
@@ -15548,7 +15547,7 @@ cron.schedule('0 11 * * *', async () => {
             name: user.username || 'Learner',
             streak: stats?.current_streak || 0,
             slot: 'morning',
-          }).catch(() => {});
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
           sentEmail++;
         }
         // Telegram reminder
@@ -15556,7 +15555,7 @@ cron.schedule('0 11 * * *', async () => {
           await sendTelegramMessage(
             user.telegram_chat_id,
             `☀️ *Good morning, ${user.username || 'Learner'}!*\nYour KIWI tree is waiting. ${stats?.current_streak > 0 ? `Keep your *${stats.current_streak}-day streak* alive!` : 'Start your streak today!'} 🌱`
-          ).catch(() => {});
+          ).catch((e) => console.error("[KIWI] silent catch:", e.message));
           sentTg++;
         }
       } catch (e) {
@@ -15592,7 +15591,7 @@ cron.schedule('0 14 * * *', async () => {
             name: user.username || 'Learner',
             streak: stats?.current_streak || 0,
             slot: 'afternoon',
-          }).catch(() => {});
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
           sentEmail++;
         }
         // Telegram reminder
@@ -15603,7 +15602,7 @@ cron.schedule('0 14 * * *', async () => {
           await sendTelegramMessage(
             user.telegram_chat_id,
             `🕑 *2PM KIWI Reminder*\n${streakMsg}`
-          ).catch(() => {});
+          ).catch((e) => console.error("[KIWI] silent catch:", e.message));
           sentTg++;
         }
       } catch (e) {
@@ -15636,7 +15635,7 @@ const ks = await computeKnowledgeScore(user.id, sub.id).catch(() => ({ score: 0 
 await db.subjectStats.update(user.id, sub.id, {
 previous_week_ks: ks.score,
 previous_week_ks_recorded_at: new Date().toISOString(),
-}).catch(() => {});
+}).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 await hookSeedlingEarnings(user.id, 'weekly_chronicle', {});
 // Send weekly digest email — pull stats for the past 7 days
