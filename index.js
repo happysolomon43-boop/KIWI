@@ -321,7 +321,7 @@ async findAll() {
 refreshTokens: {
 async create(userId, tokenHash, expiresAt) {
   await query(
-    'INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES ($1, $2, $3, NOW())',
+    'INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (token_hash) DO UPDATE SET expires_at = EXCLUDED.expires_at, user_id = EXCLUDED.user_id',
     [tokenHash, userId, expiresAt]
   );
   return true;
