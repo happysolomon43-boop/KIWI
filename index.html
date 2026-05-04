@@ -4540,19 +4540,28 @@
         border: none;
         color: var(--text-2);
         cursor: pointer;
-        padding: 4px;
+        padding: 6px;
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 5px;
+        border-radius: var(--r-sm);
+        transition: background 0.2s ease, color 0.2s ease;
+        -webkit-tap-highlight-color: transparent;
+        flex-shrink: 0;
       }
+      .hamburger:active { background: rgba(82,183,136,0.08); color: var(--green-bright); }
       .hamburger span {
         display: block;
-        width: 20px;
+        width: 22px;
         height: 2px;
         background: currentColor;
         border-radius: 99px;
-        transition: all var(--t-mid);
+        transition: transform 0.28s cubic-bezier(0.4,0,0.2,1), opacity 0.2s ease, width 0.28s ease;
+        transform-origin: center;
       }
+      .hamburger.open span:nth-child(1) { transform: rotate(45deg) translate(5px, 5px); }
+      .hamburger.open span:nth-child(2) { opacity: 0; width: 0; }
+      .hamburger.open span:nth-child(3) { transform: rotate(-45deg) translate(5px, -5px); }
       .sidebar-overlay {
         display: none;
         position: fixed;
@@ -4888,7 +4897,7 @@
       }
 
       /* ── COMPLETED [DESIGN: §17.1] ───────────────────────────────────────
-         Full gold liquid. One-time burst. 🥝 floats above. Permanent gold pod. */
+         Full gold liquid. One-time burst.  floats above. Permanent gold pod. */
       .bubble-widget.state-completed {
         border-color: var(--purple);
         animation: bubbleBurst 0.6s var(--ease-spring) forwards;
@@ -5237,30 +5246,44 @@
       /* ── Persistent AI Generation Banner (Fix 6) ─────────────────────────── */
       #kiwiGenBanner {
         position: fixed;
-        bottom: 72px;
+        bottom: 76px;
         left: 50%;
-        transform: translateX(-50%);
+        transform: translateX(-50%) translateY(8px);
         z-index: 9999;
-        background: var(--card-bg, #1a2e1a);
-        border: 1px solid var(--green-bright, #52b788);
-        border-radius: 12px;
-        padding: 10px 18px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        background: rgba(8, 18, 12, 0.96);
+        border: 1px solid rgba(82, 183, 136, 0.35);
+        border-radius: 14px;
+        padding: 10px 16px 10px 14px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(82,183,136,0.08), inset 0 1px 0 rgba(82,183,136,0.08);
         display: none;
         align-items: center;
-        gap: 12px;
-        font-size: var(--text-sm, 13px);
-        color: var(--text-1, #e0f0e0);
+        gap: 10px;
+        font-size: 12.5px;
+        color: rgba(200, 235, 215, 0.9);
         white-space: nowrap;
-        max-width: 90vw;
+        max-width: calc(100vw - 32px);
+        opacity: 0;
+        transition: opacity 0.25s ease, transform 0.25s ease;
       }
-      #kiwiGenBanner.active { display: flex !important; }
+      #kiwiGenBanner.active {
+        display: flex !important;
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
       #kiwiGenBanner .gen-spinner {
-        width: 14px; height: 14px;
-        border: 2px solid var(--green-bright, #52b788);
-        border-top-color: transparent;
+        width: 13px; height: 13px;
+        border: 1.5px solid rgba(82, 183, 136, 0.3);
+        border-top-color: var(--green-bright, #52b788);
         border-radius: 50%;
-        animation: spin 0.8s linear infinite;
+        animation: spin 0.75s linear infinite;
+        flex-shrink: 0;
+      }
+      #kiwiGenBannerStage {
+        font-size: 10px;
+        color: rgba(82,183,136,0.7);
+        font-family: var(--font-mono, monospace);
+        letter-spacing: 0.05em;
+        margin-left: 2px;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -5347,18 +5370,18 @@
         left: 0;
         right: 0;
         z-index: 290;
-        background: var(--glass-bg);
-        border-top: 1px solid var(--border);
-        backdrop-filter: var(--glass-blur);
-        -webkit-backdrop-filter: var(--glass-blur);
-        height: 60px;
-        padding: 0 2px env(safe-area-inset-bottom, 0);
+        background: rgba(6, 12, 9, 0.95);
+        border-top: 1px solid rgba(82, 183, 136, 0.12);
+        backdrop-filter: blur(20px) saturate(160%);
+        -webkit-backdrop-filter: blur(20px) saturate(160%);
+        height: 62px;
+        padding: 0 4px env(safe-area-inset-bottom, 0);
         align-items: stretch;
       }
       @media (max-width: 768px) {
         .bottom-nav { display: flex; }
-        .main-content { padding-bottom: 60px; }
-        .page-wrap { padding-bottom: 76px !important; }
+        .main-content { padding-bottom: 62px; }
+        .page-wrap { padding-bottom: 78px !important; }
         .toast-container { bottom: auto; top: 68px; }
       }
       .bnav-item {
@@ -5367,38 +5390,69 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 2px;
+        gap: 3px;
         background: none;
         border: none;
-        color: var(--text-4);
+        color: rgba(160, 200, 175, 0.4);
         cursor: pointer;
-        padding: 6px 2px 4px;
-        transition: color var(--t-fast);
+        padding: 8px 2px 6px;
+        transition: color 0.2s ease, transform 0.15s ease;
         position: relative;
         -webkit-tap-highlight-color: transparent;
         font-family: var(--font-body);
         min-width: 0;
+        border-radius: 0;
       }
-      .bnav-item:active { transform: scale(0.94); }
+      .bnav-item:active { transform: scale(0.88); }
       .bnav-item.active { color: var(--green-bright); }
-      .bnav-item.active::after {
+      .bnav-item.active .bnav-icon-wrap {
+        background: rgba(82, 183, 136, 0.12);
+        border-radius: 10px;
+      }
+      .bnav-item.active::before {
         content: '';
         position: absolute;
-        top: 0; left: 20%; right: 20%;
-        height: 2px;
+        top: 0; left: 50%;
+        transform: translateX(-50%);
+        width: 28px; height: 2px;
         background: var(--green-bright);
         border-radius: 0 0 3px 3px;
+        box-shadow: 0 0 8px rgba(82,183,136,0.6);
       }
-      .bnav-icon { font-size: 19px; line-height: 1; }
-      .bnav-label { font-size: 10px; font-weight: 500; letter-spacing: 0.2px; white-space: nowrap; }
-      </style>
+      .bnav-icon-wrap {
+        width: 36px; height: 26px;
+        display: flex; align-items: center; justify-content: center;
+        transition: background 0.2s ease;
+        border-radius: 10px;
+      }
+      .bnav-icon { width: 20px; height: 20px; display: block; flex-shrink: 0; }
+      .bnav-label { font-size: 10px; font-weight: 500; letter-spacing: 0.3px; white-space: nowrap; line-height: 1; }
+      
+      .nav-icon svg { width: 18px; height: 18px; display: block; flex-shrink: 0; }
+      .nav-item.active .nav-icon svg { stroke: var(--green-bright); }
+      .contact-link-icon svg { width: 20px; height: 20px; display: block; }
+
+      /* CBT Generation Progress Bar */
+      .gen-progress-wrap { width:100%;max-width:320px;display:flex;flex-direction:column;gap:12px;margin-top:4px; }
+      .gen-progress-track { width:100%;height:3px;background:rgba(82,183,136,0.12);border-radius:3px;overflow:hidden; }
+      .gen-progress-fill { height:100%;border-radius:3px;background:var(--green-bright);transition:width 1.8s cubic-bezier(.4,0,.2,1);width:0%; }
+      .gen-progress-steps { display:flex;align-items:flex-start;width:100%; }
+      .gen-progress-step { flex:1;display:flex;flex-direction:column;align-items:center;gap:5px; }
+      .gen-progress-step-dot { width:7px;height:7px;border-radius:50%;background:rgba(82,183,136,0.15);border:1.5px solid rgba(82,183,136,0.25);transition:all 0.5s ease; }
+      .gen-progress-step.active .gen-progress-step-dot { background:var(--green-bright);border-color:var(--green-bright);box-shadow:0 0 8px rgba(82,183,136,0.45); }
+      .gen-progress-step.done .gen-progress-step-dot { background:rgba(82,183,136,0.45);border-color:rgba(82,183,136,0.4); }
+      .gen-progress-step-lbl { font-size:9px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.05em;text-transform:uppercase;transition:color 0.4s; }
+      .gen-progress-step.active .gen-progress-step-lbl { color:var(--green-bright); }
+      .gen-progress-step.done .gen-progress-step-lbl { color:var(--text-2); }
+</style>
   </head>
   <body>
   <!-- Persistent AI generation indicator (Fix 6) — lives outside mainContent so it survives navigation -->
   <div id="kiwiGenBanner">
     <div class="gen-spinner"></div>
     <span id="kiwiGenBannerMsg">Generating...</span>
-    <button onclick="_hideGenBanner()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:14px;margin-left:8px;padding:0 4px;line-height:1;" title="Dismiss">✕</button>
+    <span id="kiwiGenBannerStage"></span>
+    <button onclick="_hideGenBanner()" style="background:none;border:none;color:rgba(160,200,175,0.4);cursor:pointer;font-size:13px;margin-left:4px;padding:0 2px;line-height:1;flex-shrink:0;" title="Dismiss">✕</button>
   </div>
     <div class="ambient-particles"></div>
     <div id="app">
@@ -5408,7 +5462,7 @@
         </button>
         <button class="mob-back-btn" id="mobBackBtn" onclick="goBack()" aria-label="Go back">&#x2190;</button>
         <div class="mob-page-title" id="mobPageTitle">KIWI</div>
-        <div id="mobKsBadge" onclick="navigateTo('dashboard')" style="cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--green-bright);background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.15);padding:2px 8px;border-radius:20px;font-weight:600;white-space:nowrap;flex-shrink:0;min-width:20px;text-align:center;transition:all var(--t-fast);"></div>
+        <div id="mobKsBadge" onclick="navigateTo('dashboard')" style="cursor:pointer;font-family:var(--font-mono);font-size:10px;color:rgba(82,183,136,0.8);font-weight:600;white-space:nowrap;flex-shrink:0;min-width:20px;text-align:right;transition:color var(--t-fast);letter-spacing:0.04em;"></div>
       </div>
       <div class="sidebar-overlay" id="sidebarOverlay"></div>
       <div class="app-container" id="appContainer" style="display: none">
@@ -5425,52 +5479,52 @@
           <nav class="sidebar-nav" id="sidebarNav" role="navigation" aria-label="Main navigation">
             <div class="nav-section-label">Learn</div>
             <div class="nav-item" data-route="dashboard">
-              <span class="nav-icon">🏡</span><span class="nav-label">Dashboard</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/></svg></span><span class="nav-label">Dashboard</span>
             </div>
             <div class="nav-item" data-route="library">
-              <span class="nav-icon">📚</span><span class="nav-label">Library</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span class="nav-label">Library</span>
             </div>
             <div class="nav-item" data-route="study">
-              <span class="nav-icon">🃏</span><span class="nav-label">Study Session</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M8 4v16M2 9h6M2 14h6"/></svg></span><span class="nav-label">Study Session</span>
             </div>
             <div class="nav-item" data-route="exam-config">
-              <span class="nav-icon">✍️</span><span class="nav-label">CBT Exam</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><span class="nav-label">CBT Exam</span>
             </div>
             <div class="nav-section-label">Ecosystem</div>
             <div class="nav-item" data-route="biome">
-              <span class="nav-icon">🌿</span><span class="nav-label">The Biome</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M12 22V12"/><path d="M5 17c0-4.4 3.1-7 7-7s7 2.6 7 7"/><path d="M12 12C12 7 15 4 15 4S9 5 9 10"/><path d="M12 12C12 7 9 4 9 4S15 5 15 10"/></svg></span><span class="nav-label">The Biome</span>
             </div>
             <div class="nav-item" data-route="brain">
-              <span class="nav-icon">🧠</span><span class="nav-label">The Brain</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-1.07-4.56A3 3 0 0 1 3.5 11a3 3 0 0 1 2.38-2.93 2.5 2.5 0 0 1 3.62-3.07"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 1.07-4.56A3 3 0 0 0 20.5 11a3 3 0 0 0-2.38-2.93 2.5 2.5 0 0 0-3.62-3.07"/></svg></span><span class="nav-label">The Brain</span>
             </div>
             <div class="nav-item" data-route="chronicle">
-              <span class="nav-icon">📜</span><span class="nav-label">The Chronicle</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span><span class="nav-label">The Chronicle</span>
             </div>
             <div class="nav-item" data-route="almanac">
-              <span class="nav-icon">🗓️</span><span class="nav-label">The Almanac</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span class="nav-label">The Almanac</span>
             </div>
             <div class="nav-section-label">Track</div>
             <div class="nav-item" data-route="progress">
-              <span class="nav-icon">📊</span><span class="nav-label">Progress</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span class="nav-label">Progress</span>
             </div>
             <div class="nav-item" data-route="achievements">
-              <span class="nav-icon">🏆</span><span class="nav-label">Achievements</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg></span><span class="nav-label">Achievements</span>
             </div>
             <div class="nav-section-label">Tools</div>
             <div class="nav-item" data-route="import">
-              <span class="nav-icon">📥</span><span class="nav-label">Import Cards</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span><span class="nav-label">Import Cards</span>
             </div>
             <div class="nav-item" data-route="community">
-              <span class="nav-icon">👥</span><span class="nav-label">Community</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="nav-label">Community</span>
             </div>
             <div class="nav-item" data-route="persona">
-              <span class="nav-icon">🎭</span><span class="nav-label">My Persona</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><span class="nav-label">My Persona</span>
             </div>
             <div class="nav-item" data-route="marketplace">
-              <span class="nav-icon">🛒</span><span class="nav-label">Marketplace</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg></span><span class="nav-label">Marketplace</span>
             </div>
             <div class="nav-item" data-route="settings">
-              <span class="nav-icon">⚙️</span><span class="nav-label">Settings</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span class="nav-label">Settings</span>
             </div>
           </nav>
           <div class="sidebar-footer" id="sidebarFooter"></div>
@@ -5483,19 +5537,44 @@
         <!-- Bottom navigation bar — mobile only, hidden until authenticated -->
         <nav class="bottom-nav" id="bottomNav" style="display:none;" aria-label="Bottom navigation">
           <button class="bnav-item" data-route="dashboard" onclick="navigateTo('dashboard')">
-            <span class="bnav-icon">🏡</span><span class="bnav-label">Home</span>
+            <span class="bnav-icon-wrap">
+              <svg class="bnav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+              </svg>
+            </span>
+            <span class="bnav-label">Home</span>
           </button>
           <button class="bnav-item" data-route="library" onclick="navigateTo('library')">
-            <span class="bnav-icon">📚</span><span class="bnav-label">Library</span>
+            <span class="bnav-icon-wrap">
+              <svg class="bnav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
+              </svg>
+            </span>
+            <span class="bnav-label">Library</span>
           </button>
           <button class="bnav-item" data-route="study" onclick="navigateTo('study')">
-            <span class="bnav-icon">🃏</span><span class="bnav-label">Study</span>
+            <span class="bnav-icon-wrap">
+              <svg class="bnav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+              </svg>
+            </span>
+            <span class="bnav-label">Study</span>
           </button>
           <button class="bnav-item" data-route="exam-config" onclick="navigateTo('exam-config')">
-            <span class="bnav-icon">✍️</span><span class="bnav-label">Exam</span>
+            <span class="bnav-icon-wrap">
+              <svg class="bnav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+              </svg>
+            </span>
+            <span class="bnav-label">Exam</span>
           </button>
           <button class="bnav-item" id="bnavMore" onclick="toggleSidebarFromBottomNav()">
-            <span class="bnav-icon">☰</span><span class="bnav-label">More</span>
+            <span class="bnav-icon-wrap">
+              <svg class="bnav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="5" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="12" cy="19" r="1.2" fill="currentColor"/>
+              </svg>
+            </span>
+            <span class="bnav-label">More</span>
           </button>
         </nav>
         <main class="main-content" id="mainContent"></main>
@@ -5533,7 +5612,7 @@
           </div>
           <div class="auth-error" id="regError"></div>
           <div class="auth-retry" id="regRetry">
-            <strong>⚡ Server is waking up</strong><br>
+            <strong>Server is waking up</strong><br>
             Our server sleeps between sessions. Please wait 15–30 seconds and try again.
             <br><button class="auth-retry-btn" onclick="retryAuth()">Try Again</button>
           </div>
@@ -5551,7 +5630,7 @@
           </div>
           <div class="auth-error" id="loginError"></div>
           <div class="auth-retry" id="loginRetry">
-            <strong>⚡ Server is waking up</strong><br>
+            <strong>Server is waking up</strong><br>
             Our server sleeps between sessions. Wait 15–30 seconds and try again.
             <br><button class="auth-retry-btn" onclick="retryAuth()">Try Again</button>
           </div>
@@ -5616,7 +5695,7 @@
               if (type === 'note_generation') {
                 _hideGenBanner();
                 var count = (result && result.count) || 0;
-                if (typeof showToast === 'function') showToast('✅ ' + count + ' card' + (count !== 1 ? 's' : '') + ' generated and added to your deck.', 'success', 7000);
+                if (typeof showToast === 'function') showToast('' + count + ' card' + (count !== 1 ? 's' : '') + ' generated and added to your deck.', 'success', 7000);
                 var resultEl = document.getElementById('aiNotesResult');
                 if (resultEl) {
                   resultEl.style.display = 'block';
@@ -5635,8 +5714,8 @@
               if (type === 'cbt_generation') {
                 _hideGenBanner();
                 var examData = (exam && (exam.exam || exam)) || (result && (result.exam || result));
-                if (!examData || !examData.id) { if (typeof showToast === 'function') showToast('⚠ Exam ready but data missing — please refresh.', 'error'); return; }
-                if (typeof showToast === 'function') showToast('✅ Exam ready! Taking you there now…', 'success', 4000);
+                if (!examData || !examData.id) { if (typeof showToast === 'function') showToast('Exam data missing — please refresh.', 'error'); return; }
+                if (typeof showToast === 'function') showToast('Exam ready! Taking you there now…', 'success', 4000);
                 var qCount = (examData.questions || []).length;
                 var SECS_PER_Q = 66;
                 if (typeof AppState !== 'undefined') {
@@ -5660,7 +5739,7 @@
               }
               if (type === 'exam_submit') {
                 var r = result || {};
-                if (typeof showToast === 'function') showToast('📋 Exam debrief ready!', 'success', 4000);
+                if (typeof showToast === 'function') showToast('Exam debrief ready!', 'success', 4000);
                 if (typeof AppState !== 'undefined' && AppState.tempExam) {
                   AppState.tempExam.result = Object.assign({}, AppState.tempExam.result, { debrief: r.debrief || '' });
                   if (typeof renderExamResults === 'function') renderExamResults();
@@ -5672,7 +5751,7 @@
               if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(_jf.job_id);
               _hideGenBanner();
               var _labels = { note_generation: 'Note generation', cbt_generation: 'Exam generation', exam_submit: 'Exam submission' };
-              if (typeof showToast === 'function') showToast('⚠ ' + (_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
+              if (typeof showToast === 'function') showToast('(' + (_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
               if (_jf.type === 'cbt_generation') {
                 var _gb = document.getElementById('generateExamBtn');
                 if (_gb) { _gb.disabled = false; _gb.textContent = 'Generate Exam'; }
@@ -5754,7 +5833,7 @@
         m.innerHTML =
           '<div style="background:var(--card-bg,#1a2e1a);border:1px solid var(--green-bright,#52b788);border-radius:16px;padding:32px;max-width:420px;width:92%;text-align:center;">' +
           '<div style="font-size:20px;font-weight:700;color:var(--red-bright,#e57373);margin-bottom:12px;">' + title + '</div>' +
-          '<div style="font-size:14px;color:var(--text-2,#aaa);margin-bottom:24px;">' + body + (isReckoning ? '<br><br><strong style="color:var(--gold,#c9a227);">⚔ Reckoning exams cannot be forfeited.</strong>' : '') + '</div>' +
+          '<div style="font-size:14px;color:var(--text-2,#aaa);margin-bottom:24px;">' + body + (isReckoning ? '<br><br><strong style="color:var(--gold,#c9a227);">Reckoning exams cannot be forfeited.</strong>' : '') + '</div>' +
           '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">' +
           '<button id="_ewContinue" style="background:var(--green-bright,#52b788);color:#0a1a0a;border:none;border-radius:8px;padding:12px 22px;cursor:pointer;font-size:14px;font-weight:600;">Continue ' + (isStudy ? 'Session' : 'Exam') + '</button>' +
           forfeitBtn +
@@ -5826,19 +5905,45 @@
       const _pendingJobs = new Map(); // jobId → { type, pollInterval }
 
       // ── Fix 6: Persistent generation status banner ──────────────────────────
-      function _showGenBanner(msg) {
+
+      function _updateExamGenProgress(passNum) {
+        var wrap = document.getElementById('examGenProgress');
+        var fill = document.getElementById('examGenProgressFill');
+        var steps = ['examGenStep1','examGenStep2','examGenStep3'].map(function(id){ return document.getElementById(id); });
+        if (!fill) return;
+        if (wrap) wrap.style.display = '';
+        var pct = passNum === 1 ? 18 : passNum === 2 ? 55 : 90;
+        fill.style.width = pct + '%';
+        steps.forEach(function(s, i) {
+          if (!s) return;
+          s.classList.remove('active','done');
+          if (i + 1 < passNum) s.classList.add('done');
+          else if (i + 1 === passNum) s.classList.add('active');
+        });
+      }
+
+      function _showGenBanner(msg, stage) {
         var b = document.getElementById('kiwiGenBanner');
         var m = document.getElementById('kiwiGenBannerMsg');
+        var s = document.getElementById('kiwiGenBannerStage');
         if (!b) return;
         if (m) m.textContent = msg || 'Generating...';
+        if (s) s.textContent = stage || '';
         b.classList.add('active');
         try { localStorage.setItem('kiwi_gen_banner', msg || 'Generating...'); } catch(_) {}
-        // Auto-dismiss after 3 minutes in case WS never fires job_done/job_failed
+        // Auto-dismiss after 6 minutes (3 passes × 3 min each) if WS never fires
         clearTimeout(window._genBannerTimeout);
         window._genBannerTimeout = setTimeout(function() {
           _hideGenBanner();
-          showToast('⚠ Generation is taking longer than expected. Check back later.', 'error', 7000);
-        }, 3 * 60 * 1000);
+          showToast('Generation is taking longer than expected. Check back later.', 'error', 7000);
+        }, 6 * 60 * 1000);
+      }
+      function _updateGenBannerStage(stage) {
+        var s = document.getElementById('kiwiGenBannerStage');
+        if (s) s.textContent = stage || '';
+        if (stage === 'Pass 1 of 3') _updateExamGenProgress(1);
+        else if (stage === 'Pass 2 of 3') _updateExamGenProgress(2);
+        else if (stage === 'Pass 3 of 3') _updateExamGenProgress(3);
       }
       function _hideGenBanner() {
         var b = document.getElementById('kiwiGenBanner');
@@ -5858,11 +5963,11 @@
       })();
       // FIX 6: Show generation banner when a background job starts polling
       function _pollJobFallback(jobId, token, type) {
-        var _bannerLabels = { cbt_generation: '🥝 Exam generation in progress…', note_generation: '🥝 Note generation in progress…' };
-        if (_bannerLabels[type]) _showGenBanner(_bannerLabels[type]);
+        var _bannerLabels = { cbt_generation: 'Building your exam…', note_generation: 'Generating cards…' };
+        if (_bannerLabels[type]) _showGenBanner(_bannerLabels[type], type === 'cbt_generation' ? 'Pass 1 of 3' : '');
         if (_pendingJobs.has(jobId)) return;
         var _pollStart = Date.now();
-        var _MAX_POLL_MS = 3 * 60 * 1000; // 3 minutes max
+        var _MAX_POLL_MS = (type === 'cbt_generation' ? 10 : 4) * 60 * 1000; // CBT: 10 min (3 passes), others: 4 min
         var _simulateWsMsg = function(event, data) {
           if (_kiwiWS && _kiwiWS.readyState === 1) {
             _kiwiWS.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ event: event, data: data }) }));
@@ -5874,8 +5979,8 @@
               _hideGenBanner();
               if (_jType === 'cbt_generation') {
                 var _examData = (_jd.exam && (_jd.exam.exam || _jd.exam)) || (_jd.result && (_jd.result.exam || _jd.result));
-                if (!_examData || !_examData.id) { showToast('⚠ Exam ready but data missing — please refresh.', 'error'); return; }
-                showToast('✅ Exam ready! Taking you there now…', 'success', 4000);
+                if (!_examData || !_examData.id) { showToast('Exam data missing — please refresh.', 'error'); return; }
+                showToast('Exam ready! Taking you there now…', 'success', 4000);
                 var qCount = (_examData.questions || []).length;
                 var SECS_PER_Q = 66;
                 var _isReck = !!(_examData.is_reckoning || _examData.isReckoning);
@@ -5887,7 +5992,7 @@
             } else if (event === 'job_failed') {
               var _jf2 = data || {};
               _hideGenBanner();
-              showToast('⚠ ' + (_jf2.error || 'Task failed'), 'error', 8000);
+              showToast('Exam generation failed: ' + (_jf2.error || 'Task failed'), 'error', 8000);
               if (_jf2.type === 'cbt_generation') {
                 var _gb = document.getElementById('generateExamBtn');
                 if (_gb) { _gb.disabled = false; _gb.textContent = 'Generate Exam'; }
@@ -5898,12 +6003,19 @@
         };
         const iv = setInterval(async () => {
           try {
-            // Give up after max poll time
-            if (Date.now() - _pollStart > _MAX_POLL_MS) {
+            // Give up after max poll time (6 min for CBT which has 3 passes × 3 min)
+            var _elapsed = Date.now() - _pollStart;
+            if (_elapsed > _MAX_POLL_MS) {
               clearInterval(iv);
               _pendingJobs.delete(jobId);
               _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: 'Exam generation timed out. The AI took too long. Please try again.' });
               return;
+            }
+            // Update stage label for CBT generation based on time elapsed
+            if (type === 'cbt_generation') {
+              if (_elapsed < 100000) _updateGenBannerStage('Pass 1 of 3');
+              else if (_elapsed < 220000) _updateGenBannerStage('Pass 2 of 3');
+              else _updateGenBannerStage('Pass 3 of 3');
             }
             const job = await apiRequest(`/jobs/${jobId}`);
             if (job.status === 'done') {
@@ -6216,7 +6328,7 @@
               stageLabel: "SPROUT",
               milestones: [],
             },
-            persona: { name: "The Consistent Scholar", icon: "📚" },
+            persona: { name: "The Consistent Scholar", icon: "book" },
             level: { level: 3, xp: 240, nextLevelXp: 350 },
             achievements: [],
           };
@@ -6752,7 +6864,7 @@
       // Frontend wired to actual backend paths to match live routes.
       // FIX 6: Show persistent banner when note generation starts
       api._startNoteGeneration = function(deckId, notes, subjectHint) {
-        _showGenBanner('🥝 Note generation in progress…');
+        _showGenBanner('Generating cards…', '');
       };
       api.importFromNotes = async function(deckId, notes, subjectHint) {
         return await apiRequest("/cards/import/ai", {
@@ -6945,6 +7057,24 @@
         return d.innerHTML;
       }
 
+      // _safeRenderIcon — renders subject icons safely.
+      // ROOT CAUSE FIX: icons were stored as HTML entity strings like "&#x2665;" in the DB.
+      // Calling escapeHTML("&#x2665;") converts "&" → "&amp;" so it renders as literal text.
+      // This helper decodes entity strings back to Unicode before rendering.
+      function _safeRenderIcon(raw) {
+        if (!raw) return '▦';
+        // If it looks like an HTML entity (&#x...; or &#...;), decode it first
+        if (/^&#/.test(raw)) {
+          try {
+            const ta = document.createElement('textarea');
+            ta.innerHTML = raw;
+            return ta.value || raw;
+          } catch (e) { return raw; }
+        }
+        // Otherwise it's already a plain Unicode char/emoji — safe to use directly
+        return raw;
+      }
+
       // renderClozeText — renders {{c1::text}} cloze deletions.
       // revealed=false (front): replaces deletions with a blank span.
       // revealed=true  (back):  highlights the answer text in teal.
@@ -7112,7 +7242,7 @@
       // ── Stage label ──
 
       function getStageLabel(stage) {
-        const labels = { 1: "🌱 Seedling", 2: "🌿 Sprout", 3: "🍃 Sapling", 4: "🌾 Thriving", 5: "🥝 Mastered" };
+        const labels = { 1: "Seedling", 2: "Sprout", 3: "Sapling", 4: "Thriving", 5: "Mastered" };
         return labels[stage] || "SEEDLING";
       }
 
@@ -7948,6 +8078,8 @@
         // Close sidebar on mobile
         document.getElementById("sidebar").classList.remove("open");
         document.getElementById("sidebarOverlay").classList.remove("show");
+        var _hbtn = document.getElementById("hamburgerBtn");
+        if (_hbtn) { _hbtn.classList.remove("open"); _hbtn.setAttribute("aria-expanded","false"); }
         // Update bottom nav and mobile bar
         updateBottomNav(page);
         updateMobileBar(page);
@@ -7972,7 +8104,10 @@
         if (!sidebar) return;
         const isOpen = sidebar.classList.toggle('open');
         if (overlay) overlay.classList.toggle('show', isOpen);
-        if (hamburger) hamburger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        if (hamburger) {
+          hamburger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+          hamburger.classList.toggle('open', isOpen);
+        }
       }
 
       function updateBottomNav(page) {
@@ -8245,21 +8380,21 @@
           <div class="contact-col-sub">Have questions about KIWI? Want to partner with us, report an issue, or just say hello? We'd love to hear from you.</div>
           <div class="contact-links-list">
             <div class="contact-link-item">
-              <div class="contact-link-icon">📧</div>
+              <div class="contact-link-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
               <div>
                 <div class="contact-link-label">Email</div>
                 <div class="contact-link-value">support@kiwi-ecosystem.app</div>
               </div>
             </div>
             <div class="contact-link-item">
-              <div class="contact-link-icon">🌿</div>
+              <div class="contact-link-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M2 22c1.25-.987 2.27-1.975 3.9-2.06A4 4 0 0 0 8 18c4-3 6-8 5-10 0 0-1 2-3.5 3.5A4.5 4.5 0 0 1 8 3S5 9 6 12c-3-2-4-6-4-6s-1 4.5 1.5 7.5c.5.6.5 1.3 0 2"/></svg></div>
               <div>
                 <div class="contact-link-label">Community</div>
                 <div class="contact-link-value">Built for medical students worldwide</div>
               </div>
             </div>
             <div class="contact-link-item">
-              <div class="contact-link-icon">🔒</div>
+              <div class="contact-link-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
               <div>
                 <div class="contact-link-label">Privacy</div>
                 <div class="contact-link-value">Your study data stays yours. Always.</div>
@@ -8289,7 +8424,7 @@
                 document.getElementById('contactName').value = '';
                 document.getElementById('contactEmail').value = '';
                 document.getElementById('contactMsg').value = '';
-                showToast('Message received! We\'ll get back to you soon 🥝', 'success');
+                showToast('Message received! We\'ll get back to you soon.', 'success');
               })
               .catch(() => {
                 btn.disabled = false; btn.textContent = 'Send Message';
@@ -8419,10 +8554,10 @@
           document.getElementById('appContainer').style.display = 'flex';
           updateUserFooter();
           if (data.welcome) {
-            showToast(`🌱 Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
+            showToast(`Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('onboarding');
           } else {
-            showToast(`🌱 Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
+            showToast(`Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('dashboard');
           }
         } catch (err) {
@@ -8469,7 +8604,7 @@
           if (_loginAppDiv) _loginAppDiv.style.display = '';
           document.getElementById('appContainer').style.display = 'flex';
           updateUserFooter();
-          showToast(`Welcome back, ${data.user?.full_name || data.user?.name || 'Student'}! 🌿`, 'success', 4000);
+          showToast(`Welcome back, ${data.user?.full_name || data.user?.name || 'Student'}!`, 'success', 4000);
           navigateTo('dashboard');
         } catch (err) {
           setAuthLoading('login', false);
@@ -8985,12 +9120,12 @@
       // ── Focus Seed Stage Helper (F4) ──
 
       function getSeedStage(health) {
-        if (health <= 0) return { stage: "dormant", label: "Dormant", emoji: "🪨", pct: 0 };
-        if (health <= 20) return { stage: "waking", label: "Waking", emoji: "🌰", pct: health };
-        if (health <= 40) return { stage: "growing", label: "Growing", emoji: "🌱", pct: health };
-        if (health <= 60) return { stage: "thriving", label: "Thriving", emoji: "🌿", pct: health };
-        if (health <= 85) return { stage: "glowing", label: "Glowing", emoji: "🌾", pct: health };
-        return { stage: "fruiting", label: "Fruiting", emoji: "🥝", pct: health };
+        if (health <= 0) return { stage: "dormant", label: "Dormant", emoji: "", pct: 0 };
+        if (health <= 20) return { stage: "waking", label: "Waking", emoji: "", pct: health };
+        if (health <= 40) return { stage: "growing", label: "Growing", emoji: "", pct: health };
+        if (health <= 60) return { stage: "thriving", label: "Thriving", emoji: "", pct: health };
+        if (health <= 85) return { stage: "glowing", label: "Glowing", emoji: "", pct: health };
+        return { stage: "fruiting", label: "Fruiting", emoji: "", pct: health };
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -9143,7 +9278,7 @@
         if (!t || !t.queue || t.queue.length === 0 || t.currentIndex >= t.queue.length) {
           container.innerHTML = `
       <div class="page-wrap page-enter" style="text-align:center;padding:80px 20px;">
-        <div style="font-size:56px;margin-bottom:16px;">🥝</div>
+        <div style="font-size:56px;margin-bottom:16px;"></div>
         <div style="font-family:var(--font-display);font-size:var(--text-3xl);font-weight:700;color:var(--text);margin-bottom:8px;">Queue Complete</div>
         <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:20px;">All cards reviewed for this session.</div>
         <button class="btn btn-primary" onclick="endStudySession()">End Session</button>
@@ -9245,15 +9380,15 @@
         }
         <div class="session-stats-bar">
           <div class="session-stat-item" style="gap:4px;">
-            <div class="session-stat-value" style="color:var(--green-bright);">🥝 ${t.currentIndex}</div>
+            <div class="session-stat-value" style="color:var(--green-bright);"> ${t.currentIndex}</div>
             <div style="font-size:var(--text-xs);color:var(--text-3);letter-spacing:0.5px;">DONE</div>
           </div>
           <div class="session-stat-item" style="gap:4px;">
-            <div class="session-stat-value" style="color:var(--teal);">🍃 ${t.queue.length - t.currentIndex}</div>
+            <div class="session-stat-value" style="color:var(--teal);">${t.queue.length - t.currentIndex}</div>
             <div style="font-size:var(--text-xs);color:var(--text-3);letter-spacing:0.5px;">LEFT</div>
           </div>
           <div class="session-stat-item" style="gap:4px;">
-            <div class="session-stat-value" style="color:var(--text-2);">⏱ ${Math.round((Date.now() - t.startTime) / 60000)}m</div>
+            <div class="session-stat-value" style="color:var(--text-2);">${Math.round((Date.now() - t.startTime) / 60000)}m</div>
             <div style="font-size:var(--text-xs);color:var(--text-3);letter-spacing:0.5px;">ELAPSED</div>
           </div>
         </div>
@@ -9610,7 +9745,7 @@
           try {
             var res = await api.moveCardsToDeck(src, ids, tgt);
             var targetName = decks.find(function(d){ return d.id === tgt; });
-            showToast('✅ Moved ' + res.moved + ' card' + (res.moved!==1?'s':'') + ' to "' + escapeHTML((targetName && targetName.name) || 'target deck') + '"', 'success', 5000);
+            showToast('Moved ' + res.moved + ' card' + (res.moved!==1?'s':'') + ' to "' + escapeHTML((targetName && targetName.name) || 'target deck') + '"', 'success', 5000);
             modal.remove();
             navigateTo('library');
           } catch(err) {
@@ -9660,7 +9795,7 @@
           this.disabled = true; this.textContent = 'Merging...';
           try {
             var result = await api.mergeDecks(checked, name, subjectId);
-            showToast('✅ Decks merged into "' + (result.deck && result.deck.name || name) + '" (' + result.card_count + ' cards)', 'success', 5000);
+            showToast('Decks merged into "' + (result.deck && result.deck.name || name) + '" (' + result.card_count + ' cards)', 'success', 5000);
             modal.remove();
             navigateTo('library');
           } catch (err) {
@@ -9730,7 +9865,7 @@
           this.disabled = true; this.textContent = 'Moving...';
           try {
             const result = await apiRequest('/decks/' + deckId + '/reassign', { method: 'POST', body: { target_subject_id: targetSubjectId } });
-            showToast('✅ Deck moved to "' + targetName + '" (' + result.moved_cards + ' cards)', 'success', 5000);
+            showToast(' Deck moved to "' + targetName + '" (' + result.moved_cards + ' cards)', 'success', 5000);
             AppState.subjects = null; // force refresh
             modal.remove();
             navigateTo('library');
@@ -9812,7 +9947,7 @@
           createBtn.textContent = "Creating...";
 
           const colors = ["#d03030","#3080d0","#80d030","#d08030","#c0a030","#c030d0","#30c0d0"];
-          const icons  = ["&#x2665;","&#x2616;","&#x2702;","&#x2600;","&#x25A0;","&#x25C9;","&#x2605;"];
+          const icons  = ["♥","☖","✂","☀","■","◉","★"];
           const color  = colors[currentSubjectCount % colors.length];
           const icon   = icons[currentSubjectCount % icons.length];
           const exam_date = examInput.value || null;
@@ -9966,7 +10101,7 @@
         reachedFruiting
           ? `
       <div class="card" style="max-width:500px;margin:0 auto 24px;border-color:var(--gold);background:rgba(13,148,136,0.06);">
-        <div style="font-size:28px;margin-bottom:8px;">🥝</div>
+        <div style="font-size:28px;margin-bottom:8px;"></div>
         <div style="font-family:var(--font-display);font-size:var(--text-lg);font-weight:700;color:var(--gold);margin-bottom:4px;">Fruiting Achieved!</div>
         <div style="font-size:var(--text-base);color:var(--text-2);">A permanent fruit has been added to this subject's Biome zone — a physical record of your deep focus today. It cannot be removed.</div>
       </div>
@@ -10179,14 +10314,33 @@
                 _pollJobFallback(job.job_id, authToken, 'cbt_generation');
                 main.innerHTML = `
                   <div id="examGeneratingScreen" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:var(--space-5);text-align:center;padding:var(--space-8);">
-                    <div style="font-size:32px;">🥝</div>
+                    <svg style="width:40px;height:40px" viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="17" stroke="var(--green-bright)" stroke-width="2"/><circle cx="20" cy="20" r="5" fill="var(--green-bright)" opacity="0.7"/><line x1="20" y1="3" x2="20" y2="10" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/><line x1="20" y1="30" x2="20" y2="37" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="20" x2="10" y2="20" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/><line x1="30" y1="20" x2="37" y2="20" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/></svg>
                     <div style="font-size:var(--text-xl);font-weight:600;color:var(--green-bright);">Generating your exam…</div>
                     <div style="font-size:var(--text-base);color:var(--text-2);max-width:320px;">
                       This takes 15–30 seconds. You can leave this page — we'll redirect you automatically when it's ready.
                     </div>
                     <div class="loading-dots" style="margin-top:var(--space-3);"><span></span><span></span><span></span></div>
+                    <div class="gen-progress-wrap" id="examGenProgress" style="display:none">
+                      <div class="gen-progress-track">
+                        <div class="gen-progress-fill" id="examGenProgressFill"></div>
+                      </div>
+                      <div class="gen-progress-steps">
+                        <div class="gen-progress-step active" id="examGenStep1">
+                          <div class="gen-progress-step-dot"></div>
+                          <div class="gen-progress-step-lbl">Pass 1</div>
+                        </div>
+                        <div class="gen-progress-step" id="examGenStep2">
+                          <div class="gen-progress-step-dot"></div>
+                          <div class="gen-progress-step-lbl">Pass 2</div>
+                        </div>
+                        <div class="gen-progress-step" id="examGenStep3">
+                          <div class="gen-progress-step-dot"></div>
+                          <div class="gen-progress-step-lbl">Pass 3</div>
+                        </div>
+                      </div>
+                    </div>
                   </div>`;
-                showToast("⏳ Exam generation started — you can navigate away.", "info", 6000);
+                showToast("Exam generation started — you can navigate away.", "info", 6000);
                 return;
               }
               // Legacy sync path (fallback if server returns full exam directly)
@@ -10404,12 +10558,12 @@
           if (!e._warnedAt10 && remaining <= dangerThreshold && remaining > 0) {
             e._warnedAt10 = true;
             const secs = Math.ceil(remaining);
-            showToast(`🔴 Almost out of time — ${formatDuration(secs)} left! The exam will auto-submit when time expires.`, 'error', 8000);
+            showToast(`Almost out of time — ${formatDuration(secs)} left! The exam will auto-submit when time expires.`, 'error', 8000);
           }
           if (remaining <= 0) {
             clearInterval(e._timerInterval);
             e._timerInterval = null;
-            showToast('⏱ Time is up! Submitting your exam...', 'error', 4000);
+            showToast('Time is up! Submitting your exam...', 'error', 4000);
             submitExam();
           }
         }, 1000);
@@ -10433,12 +10587,12 @@
         if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
         try {
           const result = await api.createRetryDeck(e.examId);
-          showToast('✅ ' + (result.message || 'Retry deck created!'), 'success', 5000);
+          showToast(' ' + (result.message || 'Retry deck created!'), 'success', 5000);
           if (btn) { btn.textContent = '✓ Retry Deck Created'; }
         } catch (err) {
           const msg = (err && err.error) || 'Failed to create retry deck';
           showToast('⚠ ' + msg, 'error', 5000);
-          if (btn) { btn.disabled = false; btn.textContent = '🔁 Create Retry Deck'; }
+          if (btn) { btn.disabled = false; btn.innerHTML = '<svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Create Retry Deck'; }
         }
       }
 
@@ -10603,7 +10757,7 @@
           <div style="font-size:var(--text-sm);color:${reckoningSurvived
             ? 'var(--green-bright)'
             : 'var(--red-bright)'};font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
-            ${reckoningSurvived ? "⚔ Pressure Reset" : "☠ Lockout Remains"}
+            ${reckoningSurvived ? "Pressure Reset" : "Lockout Remains"}
           </div>
           <div style="font-size:var(--text-base);color:var(--text-2);line-height:1.6;">
             ${(reckoningOutcome?.pressure_reset ?? reckoningSurvived)
@@ -10695,7 +10849,7 @@
         if (questionReview.length === 0) {
           reviewHTML = `
         <div style="text-align:center;padding:48px 20px;color:var(--text-2);">
-          <div style="font-size:36px;margin-bottom:12px;">📭</div>
+          <div style="margin-bottom:12px;"><svg style="width:36px;height:36px;opacity:0.35" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></div>
           <div>Question review not available for this exam.</div>
         </div>`;
         } else {
@@ -10990,14 +11144,14 @@
               AppState.reckoning = null;
               container.innerHTML = `
                 <div id="examGeneratingScreen" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:var(--space-5);text-align:center;padding:var(--space-8);">
-                  <div style="font-size:32px;">&#x2694;</div>
+                  <svg style="width:36px;height:36px" viewBox="0 0 24 24" fill="none" stroke="var(--red-bright)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
                   <div style="font-size:var(--text-xl);font-weight:600;color:var(--red-bright);">Preparing The Reckoning…</div>
                   <div style="font-size:var(--text-base);color:var(--text-2);max-width:320px;">
                     Assembling your flagged cards into an exam. You’ll be taken there automatically.
                   </div>
                   <div class="loading-dots" style="margin-top:var(--space-3);"><span></span><span></span><span></span></div>
                 </div>`;
-              showToast("⏳ Reckoning exam generating — you’ll be taken there automatically.", "info", 6000);
+              showToast("Reckoning exam generating — you’ll be taken there automatically.", "info", 6000);
               return;
             }
             // Legacy sync path (fallback if server returns full exam directly)
@@ -11708,7 +11862,7 @@
         // Completed kiwi emoji [DESIGN: §17.1]
         if (stateClass === 'state-completed') {
           el.innerHTML = '<div class="bubble-fill" style="height:100%;"></div>' +
-            '<div class="bubble-label" style="font-size:18px;">🥝</div>';
+            '<div class="bubble-label" style="font-size:18px;"></div>';
         }
         // Partial completion
         if (stateClass === 'state-partial') {
@@ -13376,7 +13530,7 @@
             <div class="section-sub">Spend seedlings to unlock enhancements</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-family:var(--font-mono);font-size:var(--text-lg);color:var(--gold);font-weight:700;">${seedlings || 0} &#x1F331;</span>
+            <span style="font-family:var(--font-mono);font-size:var(--text-lg);color:var(--gold);font-weight:700;">${seedlings || 0} SP</span>
           </div>
         </div>
         <!-- Inventory Display -->
@@ -13584,8 +13738,12 @@
             AppState.subjects = data.subjects || [];
           } else {
             api.getLibrary().then(function(d) {
-              AppState.subjects = d.subjects || [];
-              if (AppState.currentPage === 'library') renderLibrary();
+              const freshSubjects = d.subjects || [];
+              // Only re-render if data actually changed — avoids visible flash/blink
+              const _oldJson = JSON.stringify(AppState.subjects || []);
+              const _newJson = JSON.stringify(freshSubjects);
+              AppState.subjects = freshSubjects;
+              if (AppState.currentPage === 'library' && _oldJson !== _newJson) renderLibrary();
             }).catch(function() {});
           }
           const subjects = AppState.subjects;
@@ -13597,8 +13755,8 @@
             DANGEROUS:'#ef4444', VERIFIED:'#52b788'
           };
           const LIB_STATE_EMOJI = {
-            SEEDLING:'🌱', GROWING:'🌿', STABLE:'🌳', SLIPPING:'⚠️',
-            STUCK:'🔒', AVOIDED:'🙈', GHOST:'👻', FRAGILE:'💧', DANGEROUS:'⚡', VERIFIED:'👑'
+            SEEDLING:'◌', GROWING:'◎', STABLE:'●', SLIPPING:'△',
+            STUCK:'⊞', AVOIDED:'◇', GHOST:'○', FRAGILE:'◈', DANGEROUS:'◆', VERIFIED:'★'
           };
           const LIB_STATE_ORDER = ['VERIFIED','STABLE','GROWING','SEEDLING','SLIPPING','FRAGILE','AVOIDED','GHOST','STUCK','DANGEROUS'];
 
@@ -13635,7 +13793,7 @@
 
               ${subjects.length === 0 ? `
                 <div class="empty-state">
-                  <div class="empty-icon">📚</div>
+                  <div class="empty-icon">▦</div>
                   <div class="empty-title">No Subjects Yet</div>
                   <div class="empty-sub">Create your first subject to start building your knowledge forest.</div>
                 </div>
@@ -13645,7 +13803,7 @@
                 const due = subj.dueCount || 0;
                 const ks = subj.ks || 0;
                 const color = subj.color || subj.color_hex || '#52b788';
-                const icon = subj.icon || subj.emoji || '📚';
+                const icon = subj.icon || subj.emoji || '▦';
                 const cardCount = subj.cardCount || subj.total_cards || 0;
                 const stateDist = subj.stateDistribution || {};
                 const ksColor = ks >= 70 ? 'var(--green-bright)' : ks >= 40 ? '#f59e0b' : 'var(--text-3)';
@@ -13655,18 +13813,18 @@
                 return `
                   <div class="lib-subj-card" data-subj-id="${escapeHTML(subj.id)}">
                     <div class="lib-subj-header">
-                      <div style="width:40px;height:40px;border-radius:12px;background:${escapeHTML(color)}20;border:1.5px solid ${escapeHTML(color)}50;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">${escapeHTML(icon)}</div>
+                      <div style="width:40px;height:40px;border-radius:12px;background:${escapeHTML(color)}20;border:1.5px solid ${escapeHTML(color)}50;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">${_safeRenderIcon(icon)}</div>
                       <div style="flex:1;min-width:0;">
                         <div style="font-size:var(--text-base);font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHTML(safeDisplayName(subj.name))}</div>
                         <div style="font-size:var(--text-xs);color:var(--text-3);margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                           <span>${cardCount} card${cardCount !== 1 ? 's' : ''}</span>
                           ${due > 0 ? `<span style="color:var(--green-bright);font-weight:700;">● ${due} due</span>` : ''}
-                          ${examDateStr ? `<span style="color:#f59e0b;">📅 ${escapeHTML(examDateStr)}</span>` : ''}
+                          ${examDateStr ? `<span style="color:#f59e0b;">${escapeHTML(examDateStr)}</span>` : ''}
                         </div>
                       </div>
                       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
                         <div style="font-family:var(--font-mono);font-size:var(--text-xs);color:${ksColor};background:var(--surface-2);padding:3px 10px;border-radius:20px;white-space:nowrap;font-weight:600;">KS ${ks.toFixed(0)}</div>
-                        <button class="btn btn-ghost btn-sm lib-expand-btn" data-target="lib-expand-${escapeHTML(subj.id)}" style="min-width:28px;font-size:var(--text-xs);color:var(--text-3);padding:4px 8px;">▶</button>
+                        <button class="btn btn-ghost btn-sm lib-expand-btn" data-target="lib-expand-${escapeHTML(subj.id)}" style="min-width:28px;font-size:var(--text-xs);color:var(--text-3);padding:4px 8px;">&#9654;</button>
                       </div>
                     </div>
 
@@ -13676,9 +13834,9 @@
 
                     <div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);margin-top:10px;">
                       <button class="btn btn-primary btn-sm" onclick="startStudySession('${escapeHTML(subj.id)}')">▶ Study</button>
-                      <button class="btn btn-secondary btn-sm" onclick="startExam('${escapeHTML(subj.id)}')">✍ Exam</button>
+                      <button class="btn btn-secondary btn-sm" onclick="startExam('${escapeHTML(subj.id)}')"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Exam</button>
                       <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="navigateTo('import')">＋ Cards</button>
-                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})">📋 Browse</button>
+                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Browse</button>
                       <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;margin-left:auto;" onclick="handleDeleteSubject('${escapeHTML(subj.id)}','${escapeHTML(safeDisplayName(subj.name))}')">Delete</button>
                     </div>
 
@@ -13689,7 +13847,7 @@
                             const stage = c.stage || 1;
                             const _lcState = (c.cardState || 'SEEDLING').toUpperCase();
                             const _lcColor = LIB_STATE_COLORS[_lcState] || '#4a7a64';
-                            const _lcEmoji = LIB_STATE_EMOJI[_lcState] || '🌱';
+                            const _lcEmoji = LIB_STATE_EMOJI[_lcState] || '◌';
                             const dueLabel = (() => {
                               if (c.isDue) return '<span style="color:var(--green-bright);">● Due now</span>';
                               if (!c.next_review_at) return '<span style="color:var(--text-4);">Resting</span>';
@@ -13708,7 +13866,7 @@
                                 <div class="deck-name">${escapeHTML(c.front)}</div>
                                 <div class="deck-stats" style="margin-top:6px;">${dueLabel}</div>
                                 <div style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap;">
-                                  <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" data-eid="${escapeHTML(c.id)}" data-ef="${escapeHTML(c.front||'')}" data-eb="${escapeHTML(c.back||'')}" onclick="handleEditCard(this.dataset.eid,this.dataset.ef,this.dataset.eb)">✏️ Edit</button>
+                                  <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" data-eid="${escapeHTML(c.id)}" data-ef="${escapeHTML(c.front||'')}" data-eb="${escapeHTML(c.back||'')}" onclick="handleEditCard(this.dataset.eid,this.dataset.ef,this.dataset.eb)"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg> Edit</button>
                                   <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;" onclick="handleResetCard('${escapeHTML(c.id)}')">Reset</button>
                                   <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);padding:2px 8px;color:#e57373;" onclick="handleDeleteCard('${escapeHTML(c.id)}','${escapeHTML(c.front.substring(0,30))}')">Delete</button>
                                 </div>
@@ -13720,14 +13878,14 @@
                       }
                       ${cardCount > (subj.recentCards||[]).length ? `
                         <div style="text-align:center;padding:10px 0 4px;">
-                          <button class="btn btn-ghost btn-sm" style="font-size:var(--text-sm);color:var(--green-bright);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})">📋 View all ${cardCount} cards →</button>
+                          <button class="btn btn-ghost btn-sm" style="font-size:var(--text-sm);color:var(--green-bright);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> View all ${cardCount} cards →</button>
                         </div>
                       ` : ''}
                       <div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);margin-top:8px;">
                         ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" data-publish-deck="${escapeHTML(subj.decks[0].id)}" data-publish-name="${escapeHTML(subj.name)}" style="font-size:var(--text-xs);">↑ Publish Deck</button>` : ''}
-                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMergeDecksModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name};})). replace(/"/g,'&quot;')})">⚡ Merge Decks</button>` : ''}
-                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMoveCardsModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})">📦 Move Cards</button>` : ''}
-                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);" onclick="showReassignDeckModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})">🔀 Move Deck</button>` : ''}
+                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMergeDecksModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name};})). replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg> Merge Decks</button>` : ''}
+                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMoveCardsModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg> Move Cards</button>` : ''}
+                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);" onclick="showReassignDeckModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg> Move Deck</button>` : ''}
                       </div>
                     </div>
                   </div>
@@ -13821,12 +13979,12 @@
 
         function renderBrowserUI() {
           const _stateColor = { SEEDLING:'#4a7a64', GROWING:'#74c69d', STABLE:'#2dd4bf', SLIPPING:'#f59e0b', STUCK:'#e05252', AVOIDED:'#a78bfa', GHOST:'#4a9eda', FRAGILE:'#f59e0b', DANGEROUS:'#ef4444', VERIFIED:'#52b788' };
-          const _stateEmoji = { SEEDLING:'🌱', GROWING:'🌿', STABLE:'🌳', SLIPPING:'⚠️', STUCK:'🔒', AVOIDED:'🙈', GHOST:'👻', FRAGILE:'💧', DANGEROUS:'⚡', VERIFIED:'👑' };
+          const _stateEmoji = { SEEDLING:'◌', GROWING:'◎', STABLE:'●', SLIPPING:'△', STUCK:'⊞', AVOIDED:'◇', GHOST:'○', FRAGILE:'◈', DANGEROUS:'◆', VERIFIED:'★' };
           const filterLabels = {
             all:"All", due:"Due", not_due:"Not Due",
-            stuck:"🔒 Stuck", ghost:"👻 Ghost", slipping:"⚠️ Slipping",
-            avoided:"🙈 Avoided", dangerous:"⚡ Dangerous", fragile:"💧 Fragile",
-            verified:"👑 Verified", stable:"🌳 Stable", growing:"🌿 Growing", seedling:"🌱 Seedling"
+            stuck:"Stuck", ghost:"Ghost", slipping:"Slipping",
+            avoided:"Avoided", dangerous:"Dangerous", fragile:"Fragile",
+            verified:"Verified", stable:"Stable", growing:"Growing", seedling:"Seedling"
           };
           main.innerHTML = `
             <div class="page-wrap page-enter">
@@ -13869,7 +14027,7 @@
                     const stageColors = ["","var(--s1)","var(--s2)","var(--s3)","var(--s4)","var(--s5)"];
                     const cState = (c.cardState || 'SEEDLING').toUpperCase();
                     const cStateColor = _stateColor[cState] || '#4a7a64';
-                    const cStateEmoji = _stateEmoji[cState] || '🌱';
+                    const cStateEmoji = _stateEmoji[cState] || '◌';
                     return `
                     <div class="card" style="margin-bottom:10px;padding:14px 16px;border-left:3px solid ${cStateColor}22;">
                       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -13896,7 +14054,7 @@
                         </div>
                         <div style="display:flex;gap:4px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;">
                           <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="this.closest('.card').querySelector('.cb-back').style.display=this.closest('.card').querySelector('.cb-back').style.display==='none'?'block':'none';this.textContent=this.textContent==='Peek'?'Hide':'Peek';">Peek</button>
-                          <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" data-eid="${escapeHTML(c.id)}" data-ef="${escapeHTML(c.front||'')}" data-eb="${escapeHTML(c.back||'')}" onclick="handleEditCard(this.dataset.eid,this.dataset.ef,this.dataset.eb)">✏️</button>
+                          <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" data-eid="${escapeHTML(c.id)}" data-ef="${escapeHTML(c.front||'')}" data-eb="${escapeHTML(c.back||'')}" onclick="handleEditCard(this.dataset.eid,this.dataset.ef,this.dataset.eb)"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button>
                           <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="handleResetCard('${escapeHTML(c.id)}')">Reset</button>
                           <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;" onclick="handleDeleteCard('${escapeHTML(c.id)}','${escapeHTML((c.front||'').substring(0,30))}')">Del</button>
                         </div>
@@ -13993,7 +14151,7 @@
         modal.innerHTML = `
           <div class="card" style="max-width:520px;width:100%;margin:auto;animation:scaleIn var(--t-mid) var(--ease-spring);">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-              <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;color:var(--green-bright);">✏️ Edit Card</div>
+              <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;color:var(--green-bright);"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg> Edit Card</div>
               <button id="ecm-close" style="background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer;line-height:1;">&#x2715;</button>
             </div>
 
@@ -14277,7 +14435,7 @@
               <button class="btn btn-secondary btn-sm" id="createSubjectDeckBtn" style="white-space:nowrap;flex-shrink:0;">＋ Create &amp; Use</button>
             </div>
             <div id="autoCreateConfirmBanner" style="display:none;margin-top:10px;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
-              <div style="color:var(--green-bright);font-weight:600;font-size:var(--text-sm);margin-bottom:3px;">📚 Ready to import</div>
+              <div style="color:var(--green-bright);font-weight:600;font-size:var(--text-sm);margin-bottom:3px;">▦ Ready to import</div>
               <div style="color:var(--text-2);font-size:var(--text-sm);" id="autoCreateConfirmMsg"></div>
             </div>
           </div>
@@ -14343,7 +14501,7 @@
             </div>
             <button class="btn btn-primary" id="aiNotesImportBtn">Generate Cards with AI</button>
             <div id="aiNotesConfirm" style="display:none;margin-top:12px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
-              <div style="font-weight:600;color:var(--green-bright);font-size:var(--text-sm);margin-bottom:5px;">📋 Confirm generation</div>
+              <div style="font-weight:600;color:var(--green-bright);font-size:var(--text-sm);margin-bottom:5px;"> Confirm generation</div>
               <div style="font-size:var(--text-sm);color:var(--text-2);margin-bottom:10px;" id="aiNotesConfirmMsg"></div>
               <div style="display:flex;gap:8px;">
                 <button class="btn btn-primary btn-sm" id="aiNotesConfirmBtn">✓ Yes, generate cards</button>
@@ -14605,7 +14763,7 @@
             btn.disabled = true; btn.textContent = "Creating...";
             try {
               // Create subject
-              var newSubject = await api.createSubject({ name: nameVal, color: "#2d6a4f", icon: "📚" });
+              var newSubject = await api.createSubject({ name: nameVal, color: "#2d6a4f", icon: "book" });
               var subjectId  = newSubject.id || (newSubject.subject && newSubject.subject.id);
               if (!subjectId) throw new Error("Subject creation did not return an id");
               // Create default deck inside the new subject
@@ -14680,7 +14838,7 @@
             document.getElementById("aiNotesConfirm").style.display = "none";
             var btn = document.getElementById("aiNotesImportBtn");
             btn.disabled = true; btn.textContent = "Generating...";
-            _showGenBanner('🥝 Note generation in progress…');
+            _showGenBanner('Generating cards…', '');
             var resultEl = document.getElementById("aiNotesResult");
             if (resultEl) {
               resultEl.style.display = "block";
@@ -15328,7 +15486,7 @@
             <div class="page-wrap page-enter" style="max-width:560px;margin:0 auto;">
               <div class="section-header" style="margin-bottom:8px;">
                 <div>
-                  <div class="section-title">Welcome to KIWI 🥝</div>
+                  <div class="section-title">Welcome to KIWI</div>
                   <div class="section-sub">Let's set up your first subject in 4 quick steps.</div>
                 </div>
               </div>
@@ -15339,7 +15497,7 @@
                   A subject is a major topic area — like "Biology", "Mathematics", or "Spanish".
                 </div>
                 <input class="input" id="ob-subject-name" placeholder="e.g. Biology 101" style="width:100%;margin-bottom:16px;" autofocus />
-                <input class="input" id="ob-subject-emoji" placeholder="Emoji (optional, e.g. 🧬)" style="width:100%;margin-bottom:24px;" maxlength="4" />
+                <input class="input" id="ob-subject-emoji" placeholder="Icon (optional, e.g. ⚗)" style="width:100%;margin-bottom:24px;" maxlength="4" />
                 <button class="btn btn-primary" id="ob-subject-btn" style="width:100%;padding:14px;">Continue →</button>
                 <div style="margin-top:16px;text-align:center;">
                   <button class="btn btn-ghost btn-sm" onclick="navigateTo('dashboard')">Skip for now</button>
@@ -15353,7 +15511,7 @@
             const btn = document.getElementById("ob-subject-btn");
             btn.disabled = true; btn.textContent = "Creating...";
             try {
-              const subj = await api.createSubject({ name, emoji: emoji || "📚" });
+              const subj = await api.createSubject({ name, emoji: emoji || "" });
               OB.subjectId = subj.id || subj.subject?.id;
               OB.subjectName = name;
               OB.step = 2;
@@ -15373,7 +15531,7 @@
             <div class="page-wrap page-enter" style="max-width:560px;margin:0 auto;">
               <div class="section-header" style="margin-bottom:8px;">
                 <div>
-                  <div class="section-title">Welcome to KIWI 🥝</div>
+                  <div class="section-title">Welcome to KIWI</div>
                   <div class="section-sub">Step 2 of 4</div>
                 </div>
               </div>
@@ -15413,7 +15571,7 @@
             <div class="page-wrap page-enter" style="max-width:560px;margin:0 auto;">
               <div class="section-header" style="margin-bottom:8px;">
                 <div>
-                  <div class="section-title">Welcome to KIWI 🥝</div>
+                  <div class="section-title">Welcome to KIWI</div>
                   <div class="section-sub">Step 3 of 4 — Add at least 3 cards</div>
                 </div>
               </div>
@@ -15488,13 +15646,13 @@
             <div class="page-wrap page-enter" style="max-width:560px;margin:0 auto;">
               <div class="section-header" style="margin-bottom:8px;">
                 <div>
-                  <div class="section-title">You're all set! 🎉</div>
+                  <div class="section-title">You're all set!</div>
                   <div class="section-sub">Your ecosystem is ready to grow</div>
                 </div>
               </div>
               ${stepIndicator()}
               <div class="card" style="padding:28px;text-align:center;">
-                <div style="font-size:48px;margin-bottom:16px;">🌱</div>
+                <div style="margin-bottom:16px;"><svg style="width:40px;height:40px" viewBox="0 0 24 24" fill="none" stroke="var(--green-bright)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 1 1.5 7.3"/><path d="M14.1 6c-3 1.5-4.3 3.8-4.1 5.4"/></svg></div>
                 <div style="font-size:var(--text-xl);font-weight:600;margin-bottom:12px;">Ready to study!</div>
                 <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:28px;line-height:1.6;">
                   You've created <strong>${escapeHTML(OB.subjectName)}</strong> with deck <strong>${escapeHTML(OB.deckName)}</strong>
@@ -15517,7 +15675,7 @@
                   <button class="btn btn-ghost btn-sm" onclick="navigateTo('dashboard')">Go to Dashboard</button>
                 </div>
                 <div style="margin-top:24px;padding:16px;background:var(--surface-2,var(--bg-2));border-radius:10px;text-align:left;">
-                  <div style="font-size:var(--text-sm);color:var(--text-3);font-weight:600;margin-bottom:10px;">🔒 Features that unlock as you study:</div>
+                  <div style="font-size:var(--text-sm);color:var(--text-3);font-weight:600;margin-bottom:10px;"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Features that unlock as you study:</div>
                   <div style="font-size:var(--text-xs,11px);color:var(--text-4);line-height:1.8;">
                     <div>Exams → after 20 cards reviewed</div>
                     <div>Marketplace → after 3 sessions completed</div>
@@ -15665,9 +15823,9 @@
           </div>
           <!-- Test buttons -->
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
-            <button class="btn btn-secondary btn-sm" id="testEmailBtn">📧 Test Email</button>
-            <button class="btn btn-secondary btn-sm" id="testTelegramBtn">📨 Test Telegram</button>
-            <button class="btn btn-secondary btn-sm" id="setWebhookBtn" style="display:none;">⚙️ Auto-set Webhook</button>
+            <button class="btn btn-secondary btn-sm" id="testEmailBtn"><svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Test Email</button>
+            <button class="btn btn-secondary btn-sm" id="testTelegramBtn"><svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Test Telegram</button>
+            <button class="btn btn-secondary btn-sm" id="setWebhookBtn" style="display:none;"><svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Auto-set Webhook</button>
           </div>
           <div id="notifTestResult" style="font-size:var(--text-xs,11px);color:var(--text-3);margin-top:8px;min-height:16px;"></div>
         </div>
@@ -15924,7 +16082,7 @@
                   showToast(msg, "error");
                 }
                 testEmailBtn.disabled = false;
-                testEmailBtn.textContent = "📧 Test Email";
+                testEmailBtn.innerHTML = "<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Test Email";
               });
             }
 
@@ -15945,7 +16103,7 @@
                   showToast(msg, "error");
                 }
                 testTgBtn.disabled = false;
-                testTgBtn.textContent = "📨 Test Telegram";
+                testTgBtn.innerHTML = "<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Test Telegram";
               });
             }
 
@@ -15966,7 +16124,7 @@
                   showToast(msg, "error");
                 }
                 webhookBtn.disabled = false;
-                webhookBtn.textContent = "⚙️ Auto-set Webhook";
+                webhookBtn.innerHTML = "<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Auto-set Webhook";
               });
             }
           })();
@@ -15991,13 +16149,17 @@
             const isOpen = sidebar.classList.toggle("open");
             overlay.classList.toggle("show");
             hamburger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            hamburger.classList.toggle("open", isOpen);
           });
         }
         if (overlay) {
           overlay.addEventListener("click", () => {
             sidebar.classList.remove("open");
             overlay.classList.remove("show");
-            if (hamburger) hamburger.setAttribute("aria-expanded", "false");
+            if (hamburger) {
+              hamburger.setAttribute("aria-expanded", "false");
+              hamburger.classList.remove("open");
+            }
           });
         }
         // F18: Escape closes sidebar
