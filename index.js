@@ -4043,6 +4043,8 @@ function deduplicateCBTOptions(questions) {
     for (const key of OPT_KEYS) {
       const raw = (questions[qi][key] || '').trim();
       if (!raw || raw.length < 4) continue;
+      // Skip dedup for math/LaTeX options — stripping symbols makes distinct expressions look identical
+      if (raw.includes('$') || /[×÷≤≥≠≈∑∫√∞²³αβγδεζηθλμπρσφψω]/.test(raw)) continue;
       const norm = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
       if (!textMap.has(norm)) textMap.set(norm, []);
       textMap.get(norm).push({ qi, key });
@@ -4453,7 +4455,9 @@ const _missingAnswers = questions.filter(q => !answerMap.has(q.question_number))
 if (_missingAnswers.length > 0) console.warn(`[KIWI CBT PARSE] Questions with no answer mapping: ${_missingAnswers.join(', ')}`);
 // ─────────────────────────────────────────────────────────────────────────────
 
-const _PLACEHOLDERS = new Set(['Option A', 'Option B', 'Option C', 'Option D', '(none of the above applies here)', '[option removed — duplicate]']);
+const _PLACEHOLDER_RE = /^\[.*(?:removed|omitted|deleted|placeholder|n\/a|none|empty|option\s+[abcd])\.*\]$/i;
+const _PLACEHOLDERS = new Set(['Option A', 'Option B', 'Option C', 'Option D', '(none of the above applies here)', '[option removed — duplicate]', '[options removed]', 'N/A', '...', 'Not applicable', 'none']);
+const _isPlaceholder = (s) => !s || _PLACEHOLDERS.has(s) || _PLACEHOLDER_RE.test(s.trim());
 const mapped = questions.map((q, idx) => {
 const ans = answerMap.get(q.question_number) || {};
 // Strip internal parsing flags (_stemDone) so they don't get inserted into the DB
@@ -4465,7 +4469,7 @@ const oD = _stripMd(cleanQ.option_d) || '';
 const correctLetter = ans.correct_answer || 'A';
 // If the declared correct option slot is empty or a placeholder, mark for removal
 const correctOptionText = { A: oA, B: oB, C: oC, D: oD }[correctLetter] || '';
-if (!correctOptionText || _PLACEHOLDERS.has(correctOptionText)) {
+if (!correctOptionText || _isPlaceholder(correctOptionText)) {
   console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — correct option ${correctLetter} is empty or placeholder ("${correctOptionText}")`);
   return null;
 }
@@ -4473,14 +4477,16 @@ if (!cleanQ.stem) {
   console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — no stem`);
   return null;
 }
+// Replace placeholder distractors with empty string so frontend can filter them
+const _clean = (s) => (_isPlaceholder(s) ? '' : s);
 return {
 ...cleanQ,
 stem: _stripMd(cleanQ.stem),
 question_number: idx + 1,
-option_a: oA || 'Not applicable',
-option_b: oB || 'Not applicable',
-option_c: oC || 'Not applicable',
-option_d: oD || 'Not applicable',
+option_a: _clean(oA),
+option_b: _clean(oB),
+option_c: _clean(oC),
+option_d: _clean(oD),
 correct_answer: correctLetter,
 explanation: ans.explanation || 'No explanation provided.',
 };
@@ -10407,6 +10413,7 @@ if (cached && cached.expiresAt > now) {
 }
 const user = await db.users.findById(decoded.userId);
 if (!user) return res.status(401).json({ error: 'User not found' });
+if (user.role === 'blocked') return res.status(403).json({ error: 'Account suspended. Contact support.' });
 // Store in cache
 _authCache.set(token, { user, expiresAt: now + _AUTH_CACHE_TTL_MS });
 // Prune stale entries lazily (keep Map bounded)
@@ -10438,6 +10445,7 @@ const RECKONING_EXEMPT_PATHS = [
 '/reckoning/defer',
 '/reckoning/use-buffer',
 '/pressure/',  // acknowledge-alert sub-path
+'/achievements',  // read-only — never block
 ];
 if (RECKONING_EXEMPT_PATHS.some(p => req.path === p || req.path.endsWith(p))) return next();
 // P3-C1 FIX: /exams/generate must be reachable to START a reckoning exam.
@@ -10901,6 +10909,70 @@ res.json({ ...safeUser, stats });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch user' });
 }
+});
+
+// ── In-memory OTP store: email → { otp, expiresAt } ──────────────────────
+const _otpStore = new Map();
+
+// POST /api/auth/forgot-password — generate & send OTP
+authRouter.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const userRow = await query('SELECT id, email FROM users WHERE email = $1 LIMIT 1', [email.toLowerCase().trim()]);
+    // Always respond success to prevent email enumeration
+    if (userRow.rows.length === 0) return res.json({ message: 'If that email exists, a reset code was sent.' });
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    _otpStore.set(email.toLowerCase().trim(), { otp, expiresAt: Date.now() + 15 * 60 * 1000 });
+    // Send email via Brevo if configured, else log to console
+    try {
+      await sendBrevoEmail(email.toLowerCase().trim(), 'password_reset', { otp, appName: 'KIWI' });
+    } catch (_emailErr) {
+      console.log(`[KIWI AUTH] Password reset OTP for ${email}: ${otp} (email send failed — configure BREVO_API_KEY)`);
+    }
+    res.json({ message: 'If that email exists, a reset code was sent.' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to process request' });
+  }
+});
+
+// POST /api/auth/reset-password — verify OTP and set new password
+authRouter.post('/reset-password', async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+    if (!email || !otp || !newPassword) return res.status(400).json({ error: 'Email, OTP, and new password are required' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const emailKey = email.toLowerCase().trim();
+    const stored = _otpStore.get(emailKey);
+    if (!stored || stored.otp !== String(otp) || Date.now() > stored.expiresAt) {
+      return res.status(400).json({ error: 'Invalid or expired reset code' });
+    }
+    _otpStore.delete(emailKey);
+    const hash = await bcrypt.hash(newPassword, 10);
+    const updated = await query('UPDATE users SET password_hash = $1 WHERE email = $2 RETURNING id', [hash, emailKey]);
+    if (updated.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    res.json({ message: 'Password reset successfully. Please log in.' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// POST /api/auth/change-password — authenticated password change
+authRouter.post('/change-password', authenticate, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new password are required' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    const userRow = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (userRow.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const valid = await bcrypt.compare(currentPassword, userRow.rows[0].password_hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+    const hash = await bcrypt.hash(newPassword, 10);
+    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+    res.json({ message: 'Password changed successfully' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to change password' });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -13667,11 +13739,32 @@ adminRouter.delete('/users/:id', async (req, res) => {
 try {
 const targetUser = await db.users.findById(req.params.id);
 if (!targetUser) return res.status(404).json({ error: 'User not found' });
+if (targetUser.role === 'admin') return res.status(403).json({ error: 'Cannot delete an admin account' });
 await db.users.delete(req.params.id);
 await db.refreshTokens.deleteByUserId(req.params.id);
 res.json({ message: 'User deleted' });
 } catch (e) {
 res.status(500).json({ error: 'Failed to delete user' });
+}
+});
+
+adminRouter.patch('/users/:id/block', async (req, res) => {
+try {
+const r = await query('UPDATE users SET role = $1 WHERE id = $2 AND role != $3 RETURNING id, email, role', ['blocked', req.params.id, 'admin']);
+if (r.rows.length === 0) return res.status(404).json({ error: 'User not found or is an admin' });
+res.json({ message: 'User blocked', user: r.rows[0] });
+} catch (e) {
+res.status(500).json({ error: 'Failed to block user' });
+}
+});
+
+adminRouter.patch('/users/:id/unblock', async (req, res) => {
+try {
+const r = await query('UPDATE users SET role = $1 WHERE id = $2 RETURNING id, email, role', ['user', req.params.id]);
+if (r.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+res.json({ message: 'User unblocked', user: r.rows[0] });
+} catch (e) {
+res.status(500).json({ error: 'Failed to unblock user' });
 }
 });
 
@@ -15219,7 +15312,6 @@ description: persona.persona_description,
 }
 : null,
 level,
-achievements: [],
 });
 } catch (e) {
 res.status(500).json({ error: 'Failed to load dashboard', details: e.message });

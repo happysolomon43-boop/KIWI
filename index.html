@@ -20,15 +20,9 @@
     />
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <!-- KaTeX — math rendering for flashcard and exam content -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css"
-          integrity="sha384-wcIxkf4k558AjM3Yz3BBFQUbk/zgIYC2R0QpeeYb+TwlBVMrlgLqwRjRtGZiK7ww"
-          crossorigin="anonymous"/>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"
-            integrity="sha384-hIoBPJpTUs74ddyc4bFZSM1TVlQDA60VBbJS0oA934VSz82sBx1X7kSx2ATBzIvx"
-            crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css"/>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/contrib/auto-render.min.js"
-            integrity="sha384-43gviWU0YVjaDtb/GhHAXKTlbcedLFub9bna1CCm5UGSBFAqMm0Sj3bH7My3QL0"
-            crossorigin="anonymous"
             onload="if(window._onKatexReady) window._onKatexReady(); else window._katexReady = true;"></script>
     <style>
       /* ═══════════════════════════════════════════════════════════════════════════
@@ -5635,6 +5629,38 @@
             <br><button class="auth-retry-btn" onclick="retryAuth()">Try Again</button>
           </div>
           <button class="btn-auth" id="btnLogin" onclick="doLogin()">Log In</button>
+          <div style="text-align:center;margin-top:10px;">
+            <button onclick="showForgotPassword()" style="background:none;border:none;color:var(--text-3);font-size:var(--text-sm);cursor:pointer;text-decoration:underline;">Forgot password?</button>
+          </div>
+        </div>
+        <!-- Forgot Password flow (hidden by default) -->
+        <div id="formForgotPassword" style="display:none;">
+          <div id="forgotStep1">
+            <div class="auth-form-group">
+              <label class="auth-form-label">Email address</label>
+              <input class="auth-form-input" type="email" id="forgotEmail" placeholder="you@email.com" autocomplete="email"/>
+            </div>
+            <div class="auth-error" id="forgotError"></div>
+            <button class="btn-auth" onclick="doSendOtp()">Send Reset Code</button>
+            <div style="text-align:center;margin-top:10px;">
+              <button onclick="showForgotPassword(false)" style="background:none;border:none;color:var(--text-3);font-size:var(--text-sm);cursor:pointer;text-decoration:underline;">Back to login</button>
+            </div>
+          </div>
+          <div id="forgotStep2" style="display:none;">
+            <div class="auth-form-group">
+              <label class="auth-form-label">6-digit reset code</label>
+              <input class="auth-form-input" type="text" id="forgotOtp" placeholder="123456" maxlength="6" inputmode="numeric"/>
+            </div>
+            <div class="auth-form-group">
+              <label class="auth-form-label">New password</label>
+              <input class="auth-form-input" type="password" id="forgotNewPass" placeholder="Min. 8 characters" autocomplete="new-password"/>
+            </div>
+            <div class="auth-error" id="forgotError2"></div>
+            <button class="btn-auth" onclick="doResetPassword()">Reset Password</button>
+            <div style="text-align:center;margin-top:10px;">
+              <button onclick="showForgotPassword()" style="background:none;border:none;color:var(--text-3);font-size:var(--text-sm);cursor:pointer;text-decoration:underline;">Re-send code</button>
+            </div>
+          </div>
         </div>
         <div class="auth-switch" id="authSwitch">
           Already have an account? <button onclick="switchAuthTab('login')">Log In</button>
@@ -5696,6 +5722,19 @@
                 _hideGenBanner();
                 var count = (result && result.count) || 0;
                 if (typeof showToast === 'function') showToast('' + count + ' card' + (count !== 1 ? 's' : '') + ' generated and added to your deck.', 'success', 7000);
+                // Update dedicated generating-cards page if shown
+                var _gcScreen = document.getElementById('cardGenScreen');
+                if (_gcScreen) {
+                  _gcScreen.innerHTML = '<div style="text-align:center;padding:40px 20px;">' +
+                    '<div style="font-size:64px;margin-bottom:16px;">&#x2705;</div>' +
+                    '<div style="font-family:var(--font-display);font-size:26px;font-weight:700;color:var(--green-bright);margin-bottom:8px;">' + count + ' Card' + (count !== 1 ? 's' : '') + ' Generated</div>' +
+                    '<div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:28px;">Cards have been added to your library. You can review and edit them now.</div>' +
+                    '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">' +
+                    '<button class="btn btn-primary" onclick="navigateTo(\'library\')">Review &amp; Edit Cards</button>' +
+                    '<button class="btn btn-secondary" onclick="navigateTo(\'import\')">Import More</button>' +
+                    '</div></div>';
+                }
+                // Update the import page result area if still there
                 var resultEl = document.getElementById('aiNotesResult');
                 if (resultEl) {
                   resultEl.style.display = 'block';
@@ -5739,10 +5778,21 @@
               }
               if (type === 'exam_submit') {
                 var r = result || {};
-                if (typeof showToast === 'function') showToast('Exam debrief ready!', 'success', 4000);
-                if (typeof AppState !== 'undefined' && AppState.tempExam) {
-                  AppState.tempExam.result = Object.assign({}, AppState.tempExam.result, { debrief: r.debrief || '' });
-                  if (typeof renderExamResults === 'function') renderExamResults();
+                var debriefStr = r.debrief || '';
+                if (debriefStr) {
+                  if (typeof showToast === 'function') showToast('Exam debrief ready!', 'success', 4000);
+                  var debriefEl = document.getElementById('debriefText');
+                  if (debriefEl) {
+                    // Page is already showing — patch just the debrief element in place
+                    debriefEl.innerHTML = escapeHTML(debriefStr);
+                    if (typeof renderMathContent === 'function') renderMathContent(debriefEl);
+                    var debriefWrap = debriefEl.closest('.exam-debrief');
+                    if (debriefWrap) debriefWrap.style.display = '';
+                  } else if (typeof AppState !== 'undefined' && AppState.tempExam) {
+                    // User is on a different page — store and they'll see it if they go back
+                    if (AppState.tempExam.result)
+                      AppState.tempExam.result.debrief = debriefStr;
+                  }
                 }
               }
             }
@@ -5989,6 +6039,44 @@
                 _lockExamPage(_isReck);
                 if (typeof navigateTo === 'function') { _origNavigateTo ? _origNavigateTo('exam') : navigateTo('exam'); }
               }
+              if (_jType === 'note_generation') {
+                var _nr = _jd.result || {};
+                var _cnt = _nr.count || 0;
+                if (typeof showToast === 'function') showToast(_cnt + ' card' + (_cnt !== 1 ? 's' : '') + ' generated!', 'success', 7000);
+                var _gcScreen = document.getElementById('cardGenScreen');
+                if (_gcScreen) {
+                  _gcScreen.innerHTML = '<div style="text-align:center;padding:40px 20px;">' +
+                    '<div style="font-size:64px;margin-bottom:16px;">&#x2705;</div>' +
+                    '<div style="font-family:var(--font-display);font-size:26px;font-weight:700;color:var(--green-bright);margin-bottom:8px;">' + _cnt + ' Card' + (_cnt !== 1 ? 's' : '') + ' Generated</div>' +
+                    '<div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:28px;">Cards have been added to your library. You can review and edit them now.</div>' +
+                    '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">' +
+                    '<button class="btn btn-primary" onclick="navigateTo(\'library\')">Review &amp; Edit Cards</button>' +
+                    '<button class="btn btn-secondary" onclick="navigateTo(\'import\')">Import More</button>' +
+                    '</div></div>';
+                }
+                var _ib = document.getElementById('aiNotesImportBtn');
+                if (_ib) { _ib.disabled = false; _ib.textContent = 'Generate Cards with AI'; }
+                var _resultEl = document.getElementById('aiNotesResult');
+                if (_resultEl) {
+                  _resultEl.style.display = 'block'; _resultEl.style.color = 'var(--green-bright)';
+                  _resultEl.innerHTML = '<strong>&#x2713; ' + _cnt + ' card' + (_cnt !== 1 ? 's' : '') + ' generated.</strong><div style="margin-top:10px;"><button class="btn btn-primary btn-sm" onclick="navigateTo(\'library\')">Review &amp; Edit Cards &#x2192;</button></div>';
+                }
+              }
+              if (_jType === 'exam_submit') {
+                var _debriefStr = (_jd.result && _jd.result.debrief) || '';
+                if (_debriefStr) {
+                  if (typeof showToast === 'function') showToast('Exam debrief ready!', 'success', 4000);
+                  var _debriefEl = document.getElementById('debriefText');
+                  if (_debriefEl) {
+                    _debriefEl.innerHTML = typeof escapeHTML === 'function' ? escapeHTML(_debriefStr) : _debriefStr;
+                    if (typeof renderMathContent === 'function') renderMathContent(_debriefEl);
+                    var _dw = _debriefEl.closest('.exam-debrief');
+                    if (_dw) _dw.style.display = '';
+                  } else if (typeof AppState !== 'undefined' && AppState.tempExam && AppState.tempExam.result) {
+                    AppState.tempExam.result.debrief = _debriefStr;
+                  }
+                }
+              }
             } else if (event === 'job_failed') {
               var _jf2 = data || {};
               _hideGenBanner();
@@ -6066,6 +6154,7 @@
         // Session state
         tempStudy: null,
         tempExam: null,
+        cardGenJob: null,
         // UI state
         treeInstance: null,
         sidebarOpen: false,
@@ -7029,18 +7118,33 @@
       // ═══════════════════════════════════════════════════════════════════════════
       // Normalize exam questions from backend option_a/b/c/d shape to frontend options[] shape
 
+      function _isPlaceholderOption(text) {
+        if (!text) return true;
+        var t = text.trim();
+        return /^\[.*(?:removed|omitted|deleted|placeholder|n\/a|none|empty)\.*\]$/i.test(t) ||
+          /^options\s+removed$/i.test(t) ||
+          /^\[options\]$/i.test(t) ||
+          t === '' || t === '...' || t === 'N/A';
+      }
+
       function normalizeExamQuestions(questions) {
         if (!Array.isArray(questions)) return [];
         return questions.map((q) => {
-          // If already normalized (has a non-empty options array), return as-is
-          if (q.options && Array.isArray(q.options) && q.options.length > 0) return q;
-          // Build options array from option_a/b/c/d fields
-          const opts = [
-            { id: "A", text: q.option_a || q.optionA || "" },
-            { id: "B", text: q.option_b || q.optionB || "" },
-            { id: "C", text: q.option_c || q.optionC || "" },
-            { id: "D", text: q.option_d || q.optionD || "" },
-          ].filter((opt) => opt.text);
+          // Build options from either array or flat option_a/b/c/d fields
+          let opts;
+          if (q.options && Array.isArray(q.options) && q.options.length > 0) {
+            opts = q.options.filter(function(opt) {
+              return opt && opt.text && !_isPlaceholderOption(opt.text);
+            });
+            if (opts.length >= 2) return { ...q, options: opts };
+          }
+          // Rebuild from flat fields (or fall back if filtered array was too short)
+          opts = [
+            { id: "A", text: q.option_a || q.optionA || (q.options && q.options[0] && q.options[0].text) || "" },
+            { id: "B", text: q.option_b || q.optionB || (q.options && q.options[1] && q.options[1].text) || "" },
+            { id: "C", text: q.option_c || q.optionC || (q.options && q.options[2] && q.options[2].text) || "" },
+            { id: "D", text: q.option_d || q.optionD || (q.options && q.options[3] && q.options[3].text) || "" },
+          ].filter(function(opt) { return opt.text && !_isPlaceholderOption(opt.text); });
           return {
             ...q,
             id: q.id || q.question_number || Math.random().toString(36).slice(2),
@@ -8004,6 +8108,8 @@
         community: { render: renderCommunity, title: "Community Decks", auth: true },
         landing: { render: showLanding, title: "KIWI", auth: false },
         onboarding: { render: renderOnboarding, title: "Getting Started", auth: true },
+        admin: { render: renderAdminPanel, title: "Admin Panel", auth: true },
+        "generating-cards": { render: renderGeneratingCards, title: "Generating Cards", auth: true },
       };
 
       function navigateTo(page, params) {
@@ -8485,12 +8591,69 @@
         const isReg = tab === 'register';
         document.getElementById('formRegister').style.display = isReg ? '' : 'none';
         document.getElementById('formLogin').style.display    = isReg ? 'none' : '';
+        const fpForm = document.getElementById('formForgotPassword');
+        if (fpForm) fpForm.style.display = 'none';
         document.getElementById('tabRegister').classList.toggle('active', isReg);
         document.getElementById('tabLogin').classList.toggle('active', !isReg);
         document.getElementById('authSwitch').innerHTML = isReg
           ? 'Already have an account? <button onclick="switchAuthTab(\'login\')">Log In</button>'
           : 'New here? <button onclick="switchAuthTab(\'register\')">Create Account</button>';
         clearAuthErrors();
+      }
+
+      // ── Forgot Password flow ──────────────────────────────────────────────────
+      function showForgotPassword(show = true) {
+        const loginForm = document.getElementById('formLogin');
+        const fpForm = document.getElementById('formForgotPassword');
+        const step1 = document.getElementById('forgotStep1');
+        const step2 = document.getElementById('forgotStep2');
+        if (!fpForm || !loginForm) return;
+        if (show) {
+          loginForm.style.display = 'none';
+          fpForm.style.display = '';
+          if (step1) step1.style.display = '';
+          if (step2) step2.style.display = 'none';
+          const authSwitch = document.getElementById('authSwitch');
+          if (authSwitch) authSwitch.innerHTML = 'New here? <button onclick="switchAuthTab(\'register\')">Create Account</button>';
+        } else {
+          fpForm.style.display = 'none';
+          loginForm.style.display = '';
+        }
+      }
+
+      async function doSendOtp() {
+        const email = (document.getElementById('forgotEmail')?.value || '').trim();
+        const errEl = document.getElementById('forgotError');
+        if (!email) { if (errEl) { errEl.textContent = 'Please enter your email.'; errEl.classList.add('visible'); } return; }
+        if (errEl) { errEl.textContent = ''; errEl.classList.remove('visible'); }
+        try {
+          await apiRequest('/auth/forgot-password', { method: 'POST', body: { email } });
+          const step1 = document.getElementById('forgotStep1');
+          const step2 = document.getElementById('forgotStep2');
+          if (step1) step1.style.display = 'none';
+          if (step2) step2.style.display = '';
+          showToast('Reset code sent — check your email (and spam folder).', 'success', 6000);
+        } catch (err) {
+          if (errEl) { errEl.textContent = err.message || 'Failed to send reset code.'; errEl.classList.add('visible'); }
+        }
+      }
+
+      async function doResetPassword() {
+        const email = (document.getElementById('forgotEmail')?.value || '').trim();
+        const otp = (document.getElementById('forgotOtp')?.value || '').trim();
+        const newPass = document.getElementById('forgotNewPass')?.value || '';
+        const errEl = document.getElementById('forgotError2');
+        if (!otp) { if (errEl) { errEl.textContent = 'Please enter the reset code.'; errEl.classList.add('visible'); } return; }
+        if (!newPass || newPass.length < 8) { if (errEl) { errEl.textContent = 'Password must be at least 8 characters.'; errEl.classList.add('visible'); } return; }
+        if (errEl) { errEl.textContent = ''; errEl.classList.remove('visible'); }
+        try {
+          await apiRequest('/auth/reset-password', { method: 'POST', body: { email, otp, newPassword: newPass } });
+          showToast('Password reset! Please log in with your new password.', 'success', 6000);
+          showForgotPassword(false);
+          switchAuthTab('login');
+        } catch (err) {
+          if (errEl) { errEl.textContent = err.message || 'Failed to reset password.'; errEl.classList.add('visible'); }
+        }
       }
 
       function clearAuthErrors() {
@@ -9371,9 +9534,9 @@
         ${
           t.aiSummary
             ? `
-        <div class="ai-summary-panel">
+        <div class="ai-summary-panel" id="aiSummaryPanel">
           <div class="ai-summary-label">&#x2726; AI Explanation</div>
-          <div>${escapeHTML(t.aiSummary)}</div>
+          <div id="aiSummaryText" style="white-space:pre-wrap;line-height:1.7;">${escapeHTML(t.aiSummary)}</div>
         </div>
         `
             : ""
@@ -9459,6 +9622,9 @@
         if (studyContainer) {
           studyContainer.querySelectorAll(".flashcard-content").forEach(el => renderMathContent(el));
         }
+        // Also render math in AI summary panel if visible
+        const aiSummaryEl = document.getElementById("aiSummaryText");
+        if (aiSummaryEl) renderMathContent(aiSummaryEl);
         // Wire up occlusion mask clicks
         document.querySelectorAll(".occlusion-mask:not(.revealed)").forEach(maskEl => {
           maskEl.addEventListener("click", () => {
@@ -10696,6 +10862,7 @@
       }
 
       function renderExamResults() {
+        _unlockExamPage();
         const main = document.getElementById("mainContent");
         const e = AppState.tempExam;
         if (!e || !e.result) {
@@ -10821,7 +10988,7 @@
             ? `
         <div class="exam-debrief" style="max-width:600px;margin:0 auto 24px;text-align:left;">
           <div class="exam-debrief-label">AI Debrief</div>
-          <div>${escapeHTML(debrief)}</div>
+          <div id="debriefText" style="line-height:1.8;white-space:pre-wrap;">${debrief}</div>
         </div>
         `
             : ""
@@ -14380,6 +14547,30 @@
       }
       // Helper to start exam from library
 
+      function renderGeneratingCards() {
+        const main = document.getElementById("mainContent");
+        const job = AppState.cardGenJob || {};
+        main.innerHTML = `
+<div class="page-wrap page-enter" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;text-align:center;padding:40px 20px;" id="cardGenScreen">
+  <div style="font-size:72px;margin-bottom:24px;animation:pulse 2s infinite;">&#x1F4DA;</div>
+  <div style="font-family:var(--font-display);font-size:28px;font-weight:800;color:var(--text);margin-bottom:8px;">Generating Cards</div>
+  ${job.subjectName ? `<div style="font-size:var(--text-base);color:var(--teal);margin-bottom:4px;font-family:var(--font-mono);">${escapeHTML(job.subjectName)}</div>` : ''}
+  <div style="font-size:var(--text-base);color:var(--text-2);max-width:480px;margin:0 auto 32px;line-height:1.7;">
+    KIWI is reading your notes and building flashcards. This usually takes 30–90 seconds.<br>
+    You can navigate away — the banner at the top will notify you when cards are ready.
+  </div>
+  <!-- Animated progress dots -->
+  <div style="display:flex;gap:10px;justify-content:center;margin-bottom:40px;">
+    ${[0,1,2,3,4].map(i => `<div style="width:10px;height:10px;border-radius:50%;background:var(--green-bright);animation:pulse ${1+i*0.2}s ease-in-out infinite alternate;opacity:${0.3+i*0.14};"></div>`).join('')}
+  </div>
+  <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+    <button class="btn btn-secondary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
+    <button class="btn btn-ghost" onclick="navigateTo('library')">Go to Library</button>
+  </div>
+</div>
+`;
+      }
+
       function startExam(subjectId) {
         // Pre-select subject in exam config
         navigateTo("exam-config");
@@ -14839,20 +15030,16 @@
             var btn = document.getElementById("aiNotesImportBtn");
             btn.disabled = true; btn.textContent = "Generating...";
             _showGenBanner('Generating cards…', '');
-            var resultEl = document.getElementById("aiNotesResult");
-            if (resultEl) {
-              resultEl.style.display = "block";
-              resultEl.style.color   = "var(--text-2)";
-              resultEl.innerHTML =
-                '<div style="display:flex;align-items:center;gap:10px;">' +
-                '<span>⏳</span>' +
-                '<span>Generation started — you can leave this page and come back later. We\'ll notify you when cards are ready.</span>' +
-                '</div>';
-            }
+            // Gather subject name for the progress page
+            var sel = document.getElementById("importSubject");
+            var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+            AppState.cardGenJob = { subjectName: _subjectName };
             try {
               var job = await api.importFromNotes(deckId, notes, hint);
               if (job && job.job_id) {
                 _pollJobFallback(job.job_id, authToken, 'note_generation');
+                // Navigate to dedicated generating page
+                navigateTo('generating-cards');
                 return; // banner already showing — WS / poll will hide it when done
               }
               // Legacy sync response fallback
@@ -15362,14 +15549,8 @@
       async function renderAchievements() {
         const main = document.getElementById("mainContent");
         renderLoadingState(main, "Loading achievements...");
-        let achievements;
-        try {
-          const data = await api.getAchievements();
-          achievements = data.achievements || data || [];
-        } catch (err) {
-          // Fall back to dashboard cache if endpoint not yet available
-          achievements = AppState.dashboard?.achievements || [];
-        }
+        const data = await api.getAchievements();
+        const achievements = Array.isArray(data) ? data : (data.achievements || []);
         main.innerHTML = `
     <div class="page-wrap page-enter">
       <div class="section-header">
@@ -15696,6 +15877,124 @@
 
       // ═══════════════════════════════════════════════════════════════════════════
 
+      // ── Admin Panel ───────────────────────────────────────────────────────────
+      var _adminTapCount = 0;
+      var _adminTapTimer = null;
+      var _adminUnlocked = false;
+      var _adminPassPrompted = false;
+
+      function _handleVersionTap() {
+        _adminTapCount++;
+        if (_adminTapTimer) clearTimeout(_adminTapTimer);
+        _adminTapTimer = setTimeout(() => { _adminTapCount = 0; }, 1500);
+        if (_adminTapCount >= 4 && !_adminUnlocked && !_adminPassPrompted) {
+          _adminPassPrompted = true;
+          _adminTapCount = 0;
+          const pass = prompt('Enter admin access code:');
+          if (pass === '1969') {
+            _adminUnlocked = true;
+            showToast('Admin access granted', 'success', 3000);
+            navigateTo('admin');
+          } else if (pass !== null) {
+            showToast('Incorrect code', 'error');
+          }
+          _adminPassPrompted = false;
+        }
+      }
+
+      async function renderAdminPanel() {
+        const main = document.getElementById('mainContent');
+        if (!AppState.user || AppState.user.role !== 'admin') {
+          if (!_adminUnlocked) {
+            main.innerHTML = '<div class="page-wrap page-enter" style="text-align:center;padding:80px 20px;"><div style="font-size:48px;margin-bottom:16px;">🔒</div><div style="font-size:var(--text-2xl);font-weight:700;margin-bottom:12px;">Access Restricted</div><p style="color:var(--text-3);">Admin access required.</p><button class="btn btn-primary" onclick="navigateTo(\'settings\')">Back to Settings</button></div>';
+            return;
+          }
+        }
+        renderLoadingState(main, 'Loading admin panel…');
+        try {
+          const [users, stats] = await Promise.all([
+            apiRequest('/admin/users'),
+            apiRequest('/admin/stats'),
+          ]);
+          main.innerHTML = `
+<div class="page-wrap page-enter">
+  <div class="section-header">
+    <div><div class="section-title">Admin Panel</div><div class="section-sub">User Management</div></div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px;">
+    <div class="stat-card"><div class="stat-label">Total Users</div><div class="stat-value">${stats.total_users || 0}</div></div>
+    <div class="stat-card"><div class="stat-label">Total Cards</div><div class="stat-value">${stats.total_cards || 0}</div></div>
+    <div class="stat-card"><div class="stat-label">Sessions</div><div class="stat-value">${stats.total_sessions || 0}</div></div>
+  </div>
+  <div class="card">
+    <div class="settings-section-title">Users</div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:var(--text-sm);">
+        <thead><tr style="border-bottom:1px solid var(--border);">
+          <th style="text-align:left;padding:8px 10px;color:var(--text-3);font-weight:600;">Name</th>
+          <th style="text-align:left;padding:8px 10px;color:var(--text-3);font-weight:600;">Email</th>
+          <th style="text-align:left;padding:8px 10px;color:var(--text-3);font-weight:600;">Role</th>
+          <th style="text-align:right;padding:8px 10px;color:var(--text-3);font-weight:600;">Actions</th>
+        </tr></thead>
+        <tbody id="adminUserList">
+          ${Array.isArray(users) ? users.map(u => `
+          <tr data-uid="${escapeHTML(String(u.id))}" data-role="${escapeHTML(u.role||'user')}" style="border-bottom:1px solid rgba(255,255,255,0.04);">
+            <td style="padding:10px;">${escapeHTML(u.full_name || u.name || '—')}</td>
+            <td style="padding:10px;font-family:var(--font-mono);font-size:var(--text-xs);">${escapeHTML(u.email||'')}</td>
+            <td style="padding:10px;"><span class="badge ${u.role==='admin'?'badge-green':u.role==='blocked'?'badge-red':''}">${escapeHTML(u.role||'user')}</span></td>
+            <td style="padding:10px;text-align:right;">
+              ${u.role !== 'admin' ? `
+              <button class="btn btn-secondary btn-sm admin-block-btn" style="margin-right:4px;" data-uid="${escapeHTML(String(u.id))}" data-blocked="${u.role==='blocked'?'1':'0'}">${u.role==='blocked'?'Unblock':'Block'}</button>
+              <button class="btn btn-secondary btn-sm admin-delete-btn" style="color:var(--red-bright);" data-uid="${escapeHTML(String(u.id))}" data-name="${escapeHTML(u.full_name||u.email||'user')}">Delete</button>
+              ` : '<span style="color:var(--text-4);font-size:var(--text-xs);">Protected</span>'}
+            </td>
+          </tr>`).join('') : '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-4);">No users found</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>`;
+          // Wire up block/unblock buttons
+          main.querySelectorAll('.admin-block-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const uid = btn.dataset.uid;
+              const isBlocked = btn.dataset.blocked === '1';
+              btn.disabled = true;
+              try {
+                await apiRequest(`/admin/users/${uid}/${isBlocked ? 'unblock' : 'block'}`, { method: 'PATCH' });
+                showToast(isBlocked ? 'User unblocked' : 'User blocked', 'success');
+                renderAdminPanel();
+              } catch(e) {
+                showToast(e.message || 'Action failed', 'error');
+                btn.disabled = false;
+              }
+            });
+          });
+          // Wire up delete buttons
+          main.querySelectorAll('.admin-delete-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const uid = btn.dataset.uid;
+              const name = btn.dataset.name;
+              showCustomConfirm(`Delete "${name}"?`, 'This will permanently remove their account and all data.', async () => {
+                btn.disabled = true;
+                try {
+                  await apiRequest(`/admin/users/${uid}`, { method: 'DELETE' });
+                  showToast('User deleted', 'success');
+                  renderAdminPanel();
+                } catch(e) {
+                  showToast(e.message || 'Delete failed', 'error');
+                  btn.disabled = false;
+                }
+              });
+            });
+          });
+        } catch(err) {
+          renderErrorState(main, err.message || 'Failed to load admin panel', () => renderAdminPanel());
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════
+
       async function renderSettings() {
         const main = document.getElementById("mainContent");
         renderLoadingState(main, "Loading settings...");
@@ -15829,13 +16128,24 @@
           </div>
           <div id="notifTestResult" style="font-size:var(--text-xs,11px);color:var(--text-3);margin-top:8px;min-height:16px;"></div>
         </div>
+        <!-- Change Password -->
+        <div class="card" style="margin-bottom:20px;">
+          <div class="settings-section-title">Change Password</div>
+          <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:10px;">
+            <input class="input" id="settingCurrentPass" type="password" placeholder="Current password" style="width:100%;max-width:320px;" autocomplete="current-password"/>
+            <input class="input" id="settingNewPass" type="password" placeholder="New password (min. 8 chars)" style="width:100%;max-width:320px;" autocomplete="new-password"/>
+            <input class="input" id="settingConfirmPass" type="password" placeholder="Confirm new password" style="width:100%;max-width:320px;" autocomplete="new-password"/>
+            <button class="btn btn-primary btn-sm" id="changePassBtn">Update Password</button>
+            <div id="changePassMsg" style="font-size:var(--text-sm);color:var(--text-3);min-height:16px;"></div>
+          </div>
+        </div>
         <!-- About -->
         <div class="card">
           <div class="settings-section-title">Ecosystem Info</div>
           <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
             <div class="stat-card">
               <div class="stat-label">Version</div>
-              <div class="stat-value" style="font-size:var(--text-2xl);">2.0</div>
+              <div class="stat-value" id="kiwiVersionTap" style="font-size:var(--text-2xl);cursor:default;" title="KIWI v2.0">2.0</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">API Status</div>
@@ -15984,6 +16294,39 @@
               });
             } catch(_e) {}
           })();
+
+          // ── Change Password wiring ──────────────────────────────────────────
+          const changePassBtn = document.getElementById('changePassBtn');
+          if (changePassBtn) {
+            changePassBtn.addEventListener('click', async () => {
+              const currentPass = document.getElementById('settingCurrentPass')?.value || '';
+              const newPass = document.getElementById('settingNewPass')?.value || '';
+              const confirmPass = document.getElementById('settingConfirmPass')?.value || '';
+              const msgEl = document.getElementById('changePassMsg');
+              const setMsg = (msg, color) => { if (msgEl) { msgEl.textContent = msg; msgEl.style.color = color || 'var(--text-3)'; } };
+              if (!currentPass) { setMsg('Enter your current password.', 'var(--red-bright)'); return; }
+              if (!newPass || newPass.length < 8) { setMsg('New password must be at least 8 characters.', 'var(--red-bright)'); return; }
+              if (newPass !== confirmPass) { setMsg('Passwords do not match.', 'var(--red-bright)'); return; }
+              changePassBtn.disabled = true; changePassBtn.textContent = 'Updating…';
+              try {
+                await apiRequest('/auth/change-password', { method: 'POST', body: { currentPassword: currentPass, newPassword: newPass } });
+                setMsg('Password changed successfully.', 'var(--green-bright)');
+                document.getElementById('settingCurrentPass').value = '';
+                document.getElementById('settingNewPass').value = '';
+                document.getElementById('settingConfirmPass').value = '';
+              } catch(err) {
+                setMsg(err.message || 'Failed to change password.', 'var(--red-bright)');
+              } finally {
+                changePassBtn.disabled = false; changePassBtn.textContent = 'Update Password';
+              }
+            });
+          }
+
+          // ── Hidden admin tap on Version stat ────────────────────────────────
+          const versionTapEl = document.getElementById('kiwiVersionTap');
+          if (versionTapEl) {
+            versionTapEl.addEventListener('click', _handleVersionTap);
+          }
 
           document.getElementById("resetBtn").addEventListener("click", () => {
             if (
