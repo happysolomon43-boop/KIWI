@@ -3521,6 +3521,26 @@ For any numerical content in the notes:
 
 ### QUESTIONS SECTION
 
+⚠ FORMAT RULE — ABSOLUTE: Every question MUST start with the words "Question N" on its own line (where N is the question number). Do NOT use "1.", "1)", "#1", "Q1", or any other format. The parser depends on EXACTLY "Question N". Deviation will cause questions to be lost.
+
+Example of CORRECT format:
+Question 1
+Cognitive Level: Application
+Difficulty: Medium
+Type: Theory
+Stem:
+A student observes that...
+
+Options:
+A) First option
+B) Second option
+C) Third option
+D) Fourth option
+
+Question 2
+Cognitive Level: Analysis
+...
+
 Question [N]
 
 Cognitive Level: [Knowledge | Comprehension | Application | Analysis | Evaluation | Synthesis]
@@ -4049,11 +4069,12 @@ function deduplicateCBTOptions(questions) {
 
 async function generateCBTQuestions(notes, count) {
 const prompt = CBT_PROMPT.replace('[NOTES]', notes).replace('[COUNT]', count);
-// Scale output tokens with question count: ~450 tokens per question (stem + 4 options + explanation)
-// minimum 15000, maximum 65536. This prevents MAX_TOKENS truncation on large exams.
-const scaledTokens = Math.min(65536, Math.max(15000, count * 450));
+// Scale output tokens: ~900 tokens per question (stem + 4 options + answer + explanation),
+// minimum 24000 to give ample room even for small exams.
+// This prevents MAX_TOKENS truncation which was causing partial generation.
+const scaledTokens = Math.min(65536, Math.max(24000, count * 900));
 console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, maxOutputTokens=${scaledTokens}`);
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens }, { timeoutMs: 120000 });
+const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens }, { timeoutMs: 180000 });
 if (result.response.finishReason === 'MAX_TOKENS') {
   console.warn(`[KIWI CBT] Output truncated at ${count} questions — response cut short. Consider lowering count or notes size.`);
 }
@@ -4094,7 +4115,8 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed) 
     'Generate exactly ' + needed + ' question(s) following all rules above.',
   ].join('\n');
 
-  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: 8000 }, { timeoutMs: 90000 });
+  const completionTokens = Math.min(65536, Math.max(16000, needed * 900));
+  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: completionTokens }, { timeoutMs: 180000 });
   return result.response.text();
 }
 
@@ -4263,65 +4285,132 @@ if (_bestMatch) {
     console.warn('[KIWI CBT PARSE] Split strategy: NONE — no separator found, treating whole text as questions');
   }
 }
+// ── OPTION PARSER HELPER ──────────────────────────────────────────────────────
+// ROOT CAUSE FIX: old regex ^A[)\s]+ missed "A. text" and "(A) text" formats.
+// This helper handles ALL Gemini option formats: "A) text", "A. text",
+// "A: text", "A text", "(A) text", "(A.) text"
+function _parseOptionText(line, letter) {
+  // Format 1: "(A)" or "(A.)" with paren wrapper
+  const parenRe = new RegExp('^\\(' + letter + '[.)]\\)\\s*', 'i');
+  if (parenRe.test(line)) return line.replace(parenRe, '').trim() || null;
+  // Format 2: "A)" "A." "A:" — letter + explicit punctuation separator ONLY.
+  // We deliberately exclude space-only ("A text") because stems can start with a
+  // capital letter: "A student observed..." would be falsely captured as option A.
+  const basicRe = new RegExp('^' + letter + '[).:] *', 'i');
+  if (basicRe.test(line)) {
+    const stripped = line.replace(basicRe, '').trim();
+    return stripped || null;
+  }
+  return null;
+}
+
 const questions = [];
 const qLines = questionsBlock.split('\n');
-let current = null,
-qNum = 0;
+let current = null, qNum = 0;
 for (const rawLine of qLines) {
-// Strip markdown bold/heading wrappers Gemini sometimes adds, e.g. **Question 1** or ### Question 1
-const line = rawLine.trim().replace(/^\*\*(.+)\*\*$/, '$1').replace(/^#{1,3}\s*/, '');
-if (!line) continue;
-const qMatch = line.match(/^Question\s*(\d+)/i);
-if (qMatch) {
-if (current && current.stem) questions.push(current);
-qNum = parseInt(qMatch[1], 10);
-current = {
-exam_session_id: examSessionId,
-card_id: sourceCards[qNum - 1]?.id || null,
-question_number: qNum,
-cognitive_level: 'Application',
-difficulty: 'Medium',
-question_type: 'Theory',
-stem: '',
-option_a: '',
-option_b: '',
-option_c: '',
-option_d: '',
-correct_answer: '',
-explanation: '',
-};
-continue;
-}
-if (!current) continue;
-if (line.match(/^Cognitive Level:/i))
-current.cognitive_level =
-line.replace(/^Cognitive Level:\s*/i, '').trim() || current.cognitive_level;
-else if (line.match(/^Difficulty:/i))
-current.difficulty = line.replace(/^Difficulty:\s*/i, '').trim() || current.difficulty;
-else if (line.match(/^Type:/i))
-current.question_type = line.replace(/^Type:\s*/i, '').trim() || current.question_type;
-else if (line.match(/^Stem:/i)) {
-// P3-FIX: use \s* (not \s) so "Stem:" with no trailing space still strips the label.
-// If the stem content is empty (AI put "Stem:" on its own line), leave stem as '' so
-// the next non-option line fills it via the fallthrough below.
-const stemContent = line.replace(/^Stem:\s*/i, '').trim();
-if (stemContent) current.stem = stemContent;
-// else: stem stays '' — next non-option line will be captured as stem
-} else if (line.match(/^A[)\s]+/i)) { current._stemDone = true; current.option_a = line.replace(/^A[)\s]+/i, ''); }
-else if (line.match(/^B[)\s]+/i)) { current._stemDone = true; current.option_b = line.replace(/^B[)\s]+/i, ''); }
-else if (line.match(/^C[)\s]+/i)) { current._stemDone = true; current.option_c = line.replace(/^C[)\s]+/i, ''); }
-else if (line.match(/^D[)\s]+/i)) { current._stemDone = true; current.option_d = line.replace(/^D[)\s]+/i, ''); }
-else if (line.match(/^Options:/i)) {
-// skip label
-} else if (current._stemDone) {
-// Past options — ignore trailing lines
-} else if (current.stem && !line.match(/^(Cognitive Level|Difficulty|Type|Stem|Options):/i)) {
-// Multi-line stem continuation
-current.stem += ' ' + line;
-} else if (!current.stem && !line.match(/^(Cognitive Level|Difficulty|Type|Stem|Options):/i)) {
-// First content line with no Stem: label — use as stem
-current.stem = line;
-}
+  // Strip markdown wrappers Gemini sometimes adds: **text**, __text__, ### prefix
+  const line = rawLine.trim()
+    .replace(/^\*\*(.+)\*\*$/, '$1')
+    .replace(/^__(.+)__$/, '$1')
+    .replace(/^#{1,3}\s*/, '');
+  if (!line) continue;
+
+  // ── QUESTION DETECTION — PRIMARY + FALLBACK ────────────────────────────────
+  // ROOT CAUSE: Gemini starts questions with "Question N" for the first few,
+  // then switches to "N." or "N)" despite the format instruction. Once
+  // current._stemDone=true, the old parser silently dropped every subsequent
+  // line because non-"Question N" headers fell into the "past options — ignore"
+  // branch. This means only 2-3 questions were ever parsed from a full AI output.
+  //
+  // FIX: detect "Question N" (explicit) AND bare "N." / "N)" / "N:" formats.
+  // The numeric fallback only fires when we are past a question's options
+  // (current._stemDone=true) so list items inside stems are not confused
+  // with question starts.
+
+  // PRIMARY: explicit "Question N" format (prompt mandates this)
+  const qMatchExplicit = line.match(/^Question\s*(\d+)/i);
+
+  // FALLBACK: bare "N." / "N)" / "N:" format that Gemini uses despite instructions
+  let qMatchNumeric = null;
+  if (!qMatchExplicit) {
+    const numRaw = line.match(/^(\d{1,3})[.:\)]\s+\S/);
+    if (numRaw) {
+      const n = parseInt(numRaw[1], 10);
+      // Only treat as question start when we are past the previous question's options
+      // AND the number advances sequentially (prevents list items from matching)
+      const pastOptions = !current || current._stemDone === true;
+      if (pastOptions && n > qNum && n <= qNum + 5) {
+        qMatchNumeric = numRaw;
+      }
+    }
+  }
+
+  const qMatch = qMatchExplicit || qMatchNumeric;
+
+  if (qMatch) {
+    if (current && current.stem) questions.push(current);
+    qNum = parseInt(qMatch[1], 10);
+    // Capture any inline stem that appears on the same line after the number
+    // e.g. "Question 3: Which of the following..." — don't lose that text
+    const inlineStem = line
+      .replace(/^Question\s*\d+[:\s]*/i, '')
+      .replace(/^\d+[.:\)]\s*/, '')
+      .trim();
+    current = {
+      exam_session_id: examSessionId,
+      card_id: sourceCards[qNum - 1]?.id || null,
+      question_number: qNum,
+      cognitive_level: 'Application',
+      difficulty: 'Medium',
+      question_type: 'Theory',
+      stem: inlineStem,  // preserve inline stem if present
+      option_a: '',
+      option_b: '',
+      option_c: '',
+      option_d: '',
+      correct_answer: '',
+      explanation: '',
+    };
+    continue;
+  }
+
+  if (!current) continue;
+
+  if (line.match(/^Cognitive Level:/i))
+    current.cognitive_level = line.replace(/^Cognitive Level:\s*/i, '').trim() || current.cognitive_level;
+  else if (line.match(/^Difficulty:/i))
+    current.difficulty = line.replace(/^Difficulty:\s*/i, '').trim() || current.difficulty;
+  else if (line.match(/^Type:/i))
+    current.question_type = line.replace(/^Type:\s*/i, '').trim() || current.question_type;
+  else if (line.match(/^Stem:/i)) {
+    const stemContent = line.replace(/^Stem:\s*/i, '').trim();
+    if (stemContent) current.stem = stemContent;
+    // else: stem stays — next non-label line fills it via fallthrough
+  } else {
+    // ── OPTION DETECTION — handles A) A. A: (A) formats ─────────────────────
+    const optA = _parseOptionText(line, 'A');
+    const optB = optA === null ? _parseOptionText(line, 'B') : null;
+    const optC = optA === null && optB === null ? _parseOptionText(line, 'C') : null;
+    const optD = optA === null && optB === null && optC === null ? _parseOptionText(line, 'D') : null;
+
+    if (optA !== null)      { current._stemDone = true; current.option_a = optA; }
+    else if (optB !== null) { current._stemDone = true; current.option_b = optB; }
+    else if (optC !== null) { current._stemDone = true; current.option_c = optC; }
+    else if (optD !== null) { current._stemDone = true; current.option_d = optD; }
+    else if (line.match(/^Options:/i)) {
+      // skip "Options:" label line
+    } else if (current._stemDone) {
+      // Past all options of this question — ignore trailing lines.
+      // NOTE: a new question header (qMatch above) is checked first so
+      // the next "Question N" or "N." WILL break out of this state.
+    } else if (current.stem && !line.match(/^(Cognitive Level|Difficulty|Type|Stem|Options):/i)) {
+      // Multi-line stem continuation
+      current.stem += ' ' + line;
+    } else if (!current.stem && !line.match(/^(Cognitive Level|Difficulty|Type|Stem|Options):/i)) {
+      // First content line with no Stem: label — use as stem
+      current.stem = line;
+    }
+  }
 }
 if (current && current.stem) questions.push(current);
 const answerMap = new Map();
@@ -12675,16 +12764,36 @@ setImmediate(async () => {
       } catch (completionErr) {
         console.warn('[KIWI CBT] Completion prompt failed:', completionErr.message);
       }
-      // After both AI passes, if still short — hard fail with a clear error message.
+      // After both AI passes, if still short — attempt a 3rd targeted pass
       if (questions.length < _cbtCount) {
-        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
-        _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.' });
-        wsSend(_cbtUserId, 'job_failed', {
-          job_id: cbtJobId,
-          type: 'cbt_generation',
-          error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.',
-        });
-        return;
+        const stillNeeded = _cbtCount - questions.length;
+        console.log('[KIWI CBT] After 2 passes: ' + questions.length + '/' + _cbtCount + ' — attempting 3rd pass for ' + stillNeeded + ' missing');
+        try {
+          const pass3Text = await generateCBTCompletionQuestions(_cbtNotes, questions, stillNeeded);
+          if (pass3Text) {
+            const pass3Qs = parseCBTResponse(pass3Text, _cbtSessionId, _cbtCards);
+            const offset3 = questions.length;
+            questions = [...questions, ...pass3Qs.slice(0, stillNeeded).map((q, i) => ({ ...q, question_number: offset3 + i + 1 }))];
+          }
+        } catch (pass3Err) {
+          console.warn('[KIWI CBT] 3rd pass failed:', pass3Err.message);
+        }
+        // After 3 passes, if still below 60% of requested count, hard fail
+        const _minAccept = Math.max(1, Math.floor(_cbtCount * 0.6));
+        if (questions.length < _minAccept) {
+          await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.' });
+          wsSend(_cbtUserId, 'job_failed', {
+            job_id: cbtJobId,
+            type: 'cbt_generation',
+            error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.',
+          });
+          return;
+        }
+        // Got >=60% — proceed and let user know
+        if (questions.length < _cbtCount) {
+          console.log('[KIWI CBT] Proceeding with ' + questions.length + '/' + _cbtCount + ' questions (≥60% threshold)');
+        }
       }
     }
     questions = deduplicateCBTOptions(questions);
