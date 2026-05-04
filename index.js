@@ -173,30 +173,6 @@ const PAGE_SIZE = 20;
 
 // ── WebSocket client registry ─────────────────────────────────────────────────
 const _wsClients = new Map(); // userId (string) → Set<WebSocket>
-
-// ── Background Job Queue ─────────────────────────────────────────────────────
-// Heavy AI tasks return a job_id immediately. Results arrive via WebSocket
-// (job_done / job_failed) and can also be polled at GET /api/jobs/:id.
-const _jobs = new Map(); // jobId → { id, userId, type, status, result, error, createdAt }
-
-function createJob(userId, type) {
-  const id = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  _jobs.set(id, {
-    id, userId: String(userId), type,
-    status: 'pending', result: null, error: null, createdAt: Date.now(),
-  });
-  setTimeout(() => _jobs.delete(id), 15 * 60 * 1000); // expire after 15 min
-  return id;
-}
-function resolveJob(jobId, result) {
-  const job = _jobs.get(jobId);
-  if (job) { job.status = 'done'; job.result = result; }
-}
-function failJob(jobId, errorMsg) {
-  const job = _jobs.get(jobId);
-  if (job) { job.status = 'failed'; job.error = errorMsg; }
-}
-
 function wsSend(userId, event, data) {
   const clients = _wsClients.get(String(userId));
   if (!clients) return;
@@ -9978,7 +9954,7 @@ Return only the inscription.
 const app = express();
 
 const _corsOptions = {
-  origin: ['https://happysolomon43-boop.github.io', 'https://kiwi-741i.onrender.com', 'http://localhost:5500', 'http://localhost:8080'],
+  origin: true, // open to all origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -11056,45 +11032,31 @@ cardRouter.post('/import/ai', async (req, res) => {
 try {
 const { deck_id, notes, card_count = 10, subject_hint = '' } = req.body;
 if (!deck_id || !notes) return res.status(400).json({ error: 'deck_id and notes required' });
-
-// ── BACKGROUND JOB: respond immediately, generate cards async ──────────────
-const jobId    = createJob(req.user.id, 'note_generation');
-const _bgUid   = req.user.id;
-res.status(202).json({
-  job_id:  jobId,
-  status:  'pending',
-  message: 'Generation started — you can leave this page and come back later.',
+const aiText = await generateFlashcards(notes, subject_hint);
+const parsed = parseFlashcards(aiText);
+if (parsed.length === 0)
+return res.status(422).json({ error: 'Could not parse flashcards from AI response' });
+const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, {
+card_count: { increment: created.length },
+import_source: 'ai',
 });
-
-(async () => {
-  try {
-    const aiText = await generateFlashcards(notes, subject_hint);
-    const parsed = parseFlashcards(aiText);
-    if (parsed.length === 0) {
-      failJob(jobId, 'Could not parse flashcards from AI response');
-      wsSend(_bgUid, 'job_failed', { job_id: jobId, type: 'note_generation', error: 'Could not parse flashcards' });
-      return;
-    }
-    const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
-    const created   = await db.cards.createMany(_bgUid, deck_id, cardsData);
-    await db.decks.update(_bgUid, deck_id, { card_count: { increment: created.length }, import_source: 'ai' });
-    await batchInitializeSeedlingStates(_bgUid, created.map((c) => c.id));
-    // PB.13
-    const aiImportDeck      = await db.decks.findById(_bgUid, deck_id).catch(() => null);
-    const aiImportSubjectId = aiImportDeck?.subject_id || null;
-    const result = {
-      cards: created, count: created.length, source: 'ai', deck_id,
-      subject_id: aiImportSubjectId,
-      suggest_bubble: aiImportSubjectId !== null && created.length >= 5,
-    };
-    resolveJob(jobId, result);
-    wsSend(_bgUid, 'job_done', { job_id: jobId, type: 'note_generation', result });
-  } catch (e) {
-    failJob(jobId, e.message);
-    wsSend(_bgUid, 'job_failed', { job_id: jobId, type: 'note_generation', error: e.message });
-  }
-})();
-
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+// PB.13: Resolve subject_id for Bubble onboarding prompt in frontend [DESIGN: §18 PB.13]
+const aiImportDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+const aiImportSubjectId = aiImportDeck?.subject_id || null;
+res.status(201).json({
+  cards:          created,
+  count:          created.length,
+  source:         'ai',
+  deck_id,
+  subject_id:     aiImportSubjectId,
+  suggest_bubble: aiImportSubjectId !== null && created.length >= 5,
+});
 } catch (e) {
 res.status(500).json({ error: 'AI import failed', details: e.message });
 }
@@ -12354,52 +12316,42 @@ const notes = selectedCards
 if (checkAIRateLimit(req.user.id, 'cbt_generation', 10)) {
 return res.status(429).json({ error: 'Exam generation rate limit reached. Please wait before generating another exam.' });
 }
-
-// ── BACKGROUND JOB: respond immediately with job_id ────────────────────────
-const cbtJobId = createJob(req.user.id, 'cbt_generation');
-const _bgUid   = req.user.id;
-const _isReck  = !!(body.is_reckoning || body.reckoning_id);
-res.status(202).json({
-  job_id:     cbtJobId,
-  exam_id:    examSession.id,
-  status:     'pending',
-  message:    'Exam generation started — you can leave this page and come back when it is ready.',
-});
-
-(async () => {
-  try {
-    const aiText = await generateCBTQuestions(notes, count);
-    if (!aiText) { failJob(cbtJobId, 'AI exam generation failed'); wsSend(_bgUid, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: 'AI generation failed' }); return; }
-    let questions = parseCBTResponse(aiText, examSession.id, selectedCards);
-    if (questions.length === 0) {
-      await db.examSessions.delete(_bgUid, examSession.id).catch(() => {});
-      failJob(cbtJobId, 'Could not parse AI questions');
-      wsSend(_bgUid, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: 'Could not parse AI questions. Ensure cards have full content.' });
-      return;
-    }
-    if (questions.length < count) {
-      const usedCardIds    = new Set(questions.map(q => q.card_id).filter(Boolean));
-      const remainingCards = selectedCards.filter(c => !usedCardIds.has(c.id));
-      const needed         = count - questions.length;
-      const fallbacks      = generateFallbackExamQuestions(remainingCards.slice(0, needed), examSession.id, needed);
-      questions = [...questions, ...fallbacks];
-    }
-    await Promise.all(questions.map((q) => db.examQuestions.create(_bgUid, examSession.id, q)));
-    const readyExam = await db.examSessions.findByIdWithQuestions(_bgUid, examSession.id);
-    if (_isReck) {
-      try {
-        const activeReckoning = await db.reckoningSessions.findActiveByUser(_bgUid);
-        if (activeReckoning) await startReckoningExam(activeReckoning.id, examSession.id);
-      } catch (_) {}
-    }
-    resolveJob(cbtJobId, { exam: readyExam });
-    wsSend(_bgUid, 'job_done', { job_id: cbtJobId, type: 'cbt_generation', exam: readyExam });
-  } catch (e) {
-    failJob(cbtJobId, e.message);
-    wsSend(_bgUid, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: e.message });
-  }
-})();
-
+const aiText = await generateCBTQuestions(notes, count);
+if (!aiText) return res.status(502).json({ error: 'AI exam generation failed. Please try again.' });
+let questions = parseCBTResponse(aiText, examSession.id, selectedCards);
+if (questions.length === 0) {
+// Clean up the empty session
+await db.examSessions.delete(req.user.id, examSession.id).catch(() => {});
+return res.status(422).json({ error: 'AI generated questions could not be parsed. This usually means your cards have very short or incomplete content. Please ensure your cards have full question and answer text before generating an exam.' });
+}
+// Bug 4 FIX: if AI returned fewer questions than requested, pad with rule-based fallbacks
+if (questions.length < count) {
+const usedCardIds = new Set(questions.map(q => q.card_id).filter(Boolean));
+const remainingCards = selectedCards.filter(c => !usedCardIds.has(c.id));
+const needed = count - questions.length;
+const fallbacks = generateFallbackExamQuestions(
+  remainingCards.slice(0, needed),
+  examSession.id,
+  needed
+);
+questions = [...questions, ...fallbacks];
+}
+await Promise.all(
+questions.map((q) => db.examQuestions.create(req.user.id, examSession.id, q))
+);
+const readyExam = await db.examSessions.findByIdWithQuestions(req.user.id, examSession.id);
+// Bug 1+2 fix: Link reckoning session to exam if this is a reckoning exam
+if (body.is_reckoning || body.reckoning_id) {
+try {
+const activeReckoning = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (activeReckoning) {
+await startReckoningExam(activeReckoning.id, examSession.id);
+}
+} catch (e) {
+/ non-fatal — reckoning link failure must not break exam delivery /
+}
+}
+res.status(201).json(readyExam);
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate exam', details: e.message });
 }
@@ -12748,45 +12700,46 @@ console.error('[KIWI] Almanac check failed:', e.message);
 return [];
 });
 
-    // ── BACKGROUND: debrief + notifications run after score is returned ────────
-    const submitJobId = createJob(req.user.id, 'exam_submit');
-    const _bgUid      = req.user.id;
-    const _bgExam     = exam;
-    const _bgResults  = { scorePct, correct, total, passed, questionResults, ksDelta,
-                          credentialEarned, credential, regression, newAchievements,
-                          examAlmanacUnlocks, completedExam };
-
-    (async () => {
-      let debriefText = '';
-      try {
-        const wrong = questionResults.filter((qr) => !qr.correct);
-        if (wrong.length === 0) {
-          debriefText = 'Perfect score! Every card in this exam was correctly answered. Your mastery is verified.';
-        } else {
-          const weakCardFronts = [];
-          const weakSubjects   = new Map();
-          for (const qr of wrong) {
-            const q = _bgExam.questions.find((eq) => eq.question_number === qr.question_number);
-            if (q && q.card_id) {
-              const card = await db.cards.findById(_bgUid, q.card_id).catch(() => null);
-              if (card) {
-                weakCardFronts.push(`"${(card.front_content || card.front || '').slice(0, 70)}"`);
-                if (card.deck_id) {
-                  const deck = await db.decks.findById(_bgUid, card.deck_id).catch(() => null);
-                  if (deck?.subject_id) weakSubjects.set(deck.subject_id, (weakSubjects.get(deck.subject_id) || 0) + 1);
-                }
+    // Auto-generate debrief
+    let debriefText = '';
+    try {
+      const wrong = questionResults.filter((qr) => !qr.correct);
+      if (wrong.length === 0) {
+        debriefText =
+          'Perfect score! Every card in this exam was correctly answered. Your mastery is verified.';
+      } else {
+        const weakCardFronts = [];
+        const weakSubjects = new Map();
+        for (const qr of wrong) {
+          const q = exam.questions.find((eq) => eq.question_number === qr.question_number);
+          if (q && q.card_id) {
+            const card = await db.cards.findById(req.user.id, q.card_id).catch(() => null);
+            if (card) {
+              weakCardFronts.push(`"${(card.front_content || card.front || '').slice(0, 70)}"`);
+              if (card.deck_id) {
+                const deck = await db.decks.findById(req.user.id, card.deck_id).catch(() => null);
+                if (deck?.subject_id)
+                  weakSubjects.set(deck.subject_id, (weakSubjects.get(deck.subject_id) || 0) + 1);
               }
             }
           }
-          const weakAreas = [];
-          for (const [subjectId, cnt] of weakSubjects) {
-            const subject = await db.subjects.findById(subjectId).catch(() => null);
-            if (subject) weakAreas.push({ subject_id: subjectId, subject_name: subject.name, incorrect_count: cnt });
-          }
-          try {
-            const aiDebriefPrompt = `## ROLE
+        }
+        let weakAreas = [];
+        for (const [subjectId, count] of weakSubjects) {
+          const subject = await db.subjects.findById(subjectId).catch(() => null);
+          if (subject)
+            weakAreas.push({
+              subject_id: subjectId,
+              subject_name: subject.name,
+              incorrect_count: count,
+            });
+        }
+        try {
+          const aiDebriefPrompt = `## ROLE
+
 You are KIWI's Exam Debrief Analyst — a concise, analytical voice who helps students understand their exam performance.
 EXAM DATA
+// P3.8-B1 FIX: changed {var} to \${var} — template literal interpolation was broken.
 Score: ${scorePct}% (${correct}/${total} correct)
 Incorrect questions (${wrong.length}): The student failed these specific concepts:
 ${weakCardFronts.slice(0, 8).join('\n')}
@@ -12794,38 +12747,39 @@ Weak subject areas: ${weakAreas.map((a) => a.subject_name + ' (' + a.incorrect_c
 RULES
 - Write exactly 3 paragraphs.
 - Paragraph 1: Honest overall assessment of the score. Reference specific concepts that were missed.
-- Paragraph 2: Identify the pattern — why are these cards difficult?
-- Paragraph 3: Two precise, actionable next steps.
+- Paragraph 2: Identify the pattern — why are these cards difficult? (conceptual gaps, memory fragility, exam pressure?)
+- Paragraph 3: Two precise, actionable next steps — which cards to review first and why.
 - Tone: Direct, analytical, but supportive. No empty praise.
 - Total length: 150-250 words.
 OUTPUT
 Return only the debrief text.`;
-            const aiResult = await geminiModel.generateContent(aiDebriefPrompt);
-            debriefText    = aiResult.response.text().trim();
-          } catch (_) {
-            debriefText = `You scored ${scorePct}%, getting ${correct} of ${total} correct. ` +
-              (wrong.length > 0 ? `${wrong.length} card${wrong.length > 1 ? 's' : ''} were answered incorrectly.` : '') +
-              (weakAreas.length > 0 ? ` The weakest area was ${weakAreas[0].subject_name}.` : '') +
-              `\n\nFocus on failing cards using spaced repetition.\n\nRecommended: review the ${Math.min(wrong.length, 5)} failed cards now, then re-test in 3 days.`;
-          }
+          const aiResult = await geminiModel.generateContent(aiDebriefPrompt);
+          debriefText = aiResult.response.text().trim();
+        } catch (_) {
+          debriefText =
+            `You scored ${scorePct}%, getting ${correct} of ${total} correct. ` +
+            (wrong.length > 0
+              ? `${wrong.length} card${wrong.length > 1 ? 's' : ''} were answered incorrectly.`
+              : '') +
+            (weakAreas.length > 0 ? ` The weakest area was ${weakAreas[0].subject_name}.` : '') +
+            `\n\nThe missed concepts suggest gaps that require active review — not passive re-reading. Focus on the failing cards using spaced repetition.` +
+            `\n\nRecommended next step: Review the ${Math.min(wrong.length, 5)} failed cards immediately, then schedule an exam in 3 days to re-test retention.`;
         }
-      } catch (_) {
-        debriefText = `Exam complete. Score: ${scorePct}%. Review missed cards to strengthen retention.`;
       }
-      // Notifications
-      await sendTelegramExamResult(_bgUid, _bgExam.subject_id, scorePct, passed).catch(() => {});
-      const _examSubject = await db.subjects.findById(_bgExam.subject_id).catch(() => null);
-      await sendEmailNotification(_bgUid, 'exam_result', {
-        subjectName: _examSubject?.name || 'Study Session', scorePct, passed,
+    } catch (debriefErr) {
+      debriefText = `Exam complete. Score: ${scorePct}%. Review missed cards to strengthen retention.`;
+    }
+    // Notify via Telegram if configured
+    await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, passed).catch(() => {});
+    // Wire exam_result email notification
+    {
+      const _examSubject = await db.subjects.findById(exam.subject_id).catch(() => null);
+      await sendEmailNotification(req.user.id, 'exam_result', {
+        subjectName: _examSubject?.name || 'Study Session',
+        scorePct,
+        passed,
       }).catch(() => {});
-
-      // Push debrief to client via WebSocket
-      const debriefPayload = { ..._bgResults, debrief: debriefText, exam_id: _bgExam.id };
-      resolveJob(submitJobId, debriefPayload);
-      wsSend(_bgUid, 'job_done', { job_id: submitJobId, type: 'exam_submit', result: debriefPayload });
-    })();
-
-    const debriefText = ''; // will arrive via WebSocket / polling
+    }
     // Build enriched question_review for the post-exam Review tab.
     // Includes stem, all four options, correct answer, explanation, and what the user picked.
     const question_review = exam.questions.map((q) => {
@@ -12850,7 +12804,6 @@ Return only the debrief text.`;
     });
 
     res.json({
-      job_id: submitJobId,   // poll fallback: frontend detects debrief is async
       exam: completedExam,
       score_pct: scorePct,
       correct_answers: correct,
@@ -15163,14 +15116,6 @@ app.use('/api/bubbles', bubbleRouter);
 app.use('/api/ks', ksRouter);
 // Health check must be registered BEFORE progressRouter (which applies authenticate
 // to all /api/* routes, which would block this public endpoint)
-// ── Background job polling ────────────────────────────────────────────────────
-app.get('/api/jobs/:id', authenticate, (req, res) => {
-  const job = _jobs.get(req.params.id);
-  if (!job || job.userId !== String(req.user.id))
-    return res.status(404).json({ error: 'Job not found' });
-  res.json({ id: job.id, type: job.type, status: job.status, result: job.result, error: job.error });
-});
-
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
