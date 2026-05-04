@@ -38,7 +38,7 @@ const { WebSocketServer } = require('ws');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
   ssl: { rejectUnauthorized: false },
-  max: 25, // Increased for concurrent users; Supabase session-mode cap is 15 so DATABASE_URL env should use transaction-mode pooler
+  max: 10, // F-09 FIX: reduced from 25 — Supabase session-mode cap is ~15; leave headroom
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 8000,
 });
@@ -81,7 +81,7 @@ function _buildInsert(table, obj) {
   return { text: `INSERT INTO ${table} (${cols}) VALUES (${placeholders})`, values: vals };
 }
 
-function _buildUpdate(table, whereCol, whereVal, obj) {
+function _buildUpdate(table, whereCol, whereVal, obj, userId = null) {
   // Detects { increment: N } values and emits `"field" = "field" + $N` clauses.
   // This allows any db.X.update() call to receive FieldValue.increment-style objects.
   const setClauses = [];
@@ -98,8 +98,14 @@ function _buildUpdate(table, whereCol, whereVal, obj) {
     }
   }
   vals.push(whereVal);
+  let whereClause = `WHERE "${whereCol}" = $${vals.length}`;
+  // F-04 FIX: optional user_id scoping prevents IDOR on all update paths
+  if (userId !== undefined && userId !== null) {
+    vals.push(userId);
+    whereClause += ` AND "user_id" = $${vals.length}`;
+  }
   return {
-    text: `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "${whereCol}" = $${vals.length}`,
+    text: `UPDATE ${table} SET ${setClauses.join(', ')} ${whereClause}`,
     values: vals,
   };
 }
@@ -162,7 +168,7 @@ function _buildIncrementUpdate(table, whereCol, whereVal, data) {
 // Cards accumulate here; a 60s cron drains them in a single pass.
 const _ksQueue = new Map(); // key: `${userId}:${cardId}`
 function queueKSRecompute(userId, cardId) {
-  _ksQueue.set(`${userId}:${cardId}`, { userId, cardId });
+  if (_ksQueue.size < 50000) _ksQueue.set(`${userId}:${cardId}`, { userId, cardId }); // F-11 FIX: cap unbounded growth
 }
 
 // ── Session Pagination Store ──────────────────────────────────────────────────
@@ -179,6 +185,19 @@ function wsSend(userId, event, data) {
   const msg = JSON.stringify({ event, data, ts: Date.now() });
   for (const ws of clients) {
     try { if (ws.readyState === 1) ws.send(msg); } catch (_) {}
+  }
+}
+
+// ── In-memory job store — enables GET /api/jobs/:id polling fallback (Bug 2 fix) ──
+// Jobs are ephemeral (WS-first); this store is the safety net when WS is slow/down.
+// TTL: 10 min per entry. Cleaned up lazily on each write.
+const _jobStore = new Map(); // jobId → { status, type, result?, error?, expiresAt }
+function _jobStoreSet(jobId, data) {
+  const expiresAt = Date.now() + 600_000; // 10-minute TTL
+  _jobStore.set(jobId, { ...data, expiresAt });
+  // Lazy cleanup of expired entries
+  for (const [k, v] of _jobStore) {
+    if (v.expiresAt < Date.now()) _jobStore.delete(k);
   }
 }
 
@@ -370,7 +389,7 @@ async create(userId, data) {
 async update(userId, id, data) {
   // Fix #38: eliminate post-write re-fetch
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('subjects', 'id', id, payload);
+  const q = _buildUpdate('subjects', 'id', id, payload, userId);
   await query(q.text, q.values);
   return { id, ...payload };
 },
@@ -445,7 +464,7 @@ async findById(userId, id) {
 async update(userId, id, data) {
   // Fix #38: eliminate post-write re-fetch
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('decks', 'id', id, payload);
+  const q = _buildUpdate('decks', 'id', id, payload, userId);
   await query(q.text, q.values);
   return { id, ...payload };
 },
@@ -556,7 +575,7 @@ async createMany(userId, deckId, cardsData) {
 async update(userId, id, data) {
   // Fix #38: eliminate post-write re-fetch
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('cards', 'id', id, payload);
+  const q = _buildUpdate('cards', 'id', id, payload, userId);
   await query(q.text, q.values);
   return { id, ...payload };
 },
@@ -2414,10 +2433,12 @@ streak_grace_used: false,
 
 async function applyDailyHealthPenalty() {
 const yesterday = getDateString(new Date(Date.now() - 86400000));
+const today = getDateString(new Date()); // F-10 FIX: also skip users who studied today (timezone edge case)
 const allStats = await db.userStats.findAll();
 await Promise.all(
 allStats.map(async (stat) => {
-if (stat.last_study_date && getDateString(stat.last_study_date) !== yesterday) {
+const lastStudy = stat.last_study_date ? getDateString(stat.last_study_date) : null;
+if (lastStudy && lastStudy !== yesterday && lastStudy !== today) {
 // FIX: stat.user_id (snake_case PG column), not stat.userId (camelCase — was always undefined)
 await db.userStats.update(stat.user_id, {
 tree_health: Math.max(0, stat.tree_health - 10),
@@ -2506,14 +2527,7 @@ const weighted =
 (responseCounts.easy || 0) * 1.0;
 srsQuality = (weighted / totalReviews) * 100;
 }
-const stageScore =
-(((stageCounts[1] || 0) * 0 +
-(stageCounts[2] || 0) * 0.2 +
-(stageCounts[3] || 0) * 0.4 +
-(stageCounts[4] || 0) * 0.7 +
-(stageCounts[5] || 0) * 1.0) /
-totalCards) 
-100;
+const stageScore = (((stageCounts[1] || 0) * 0 + (stageCounts[2] || 0) * 0.2 + (stageCounts[3] || 0) * 0.4 + (stageCounts[4] || 0) * 0.7 + (stageCounts[5] || 0) * 1.0) / totalCards) * 100; // F-03 FIX
 const existing = await db.subjectStats.get(userId, subjectId);
 let examPerf = srsQuality;
 if (existing?.average_exam_score != null) examPerf = parseFloat(existing.average_exam_score);
@@ -3381,34 +3395,47 @@ Apply this ratio automatically. Do not ask the user — infer from the notes.
 
 ---
 
-## DISTRACTOR ENGINEERING — HOW TO BUILD COMPETITIVE OPTIONS
+## DISTRACTOR ENGINEERING — HOW TO BUILD CONFUSION-GRADE OPTIONS
 
-Weak distractors are the #1 failure of AI-generated CBT questions. Every wrong option must be genuinely believable to a student with partial understanding.
+This is the most technically demanding part of your job. Your distractors must cause genuine hesitation — not help the student narrow down the answer.
 
-### The Four Distractor Types (use all four across your question set):
+### THE CONFUSION MANDATE — NON-NEGOTIABLE
+
+A student reading your four options should NOT be able to eliminate ANY wrong option just by:
+- Recognising it is from a different topic
+- Seeing it uses different vocabulary from the stem
+- Noticing it is obviously too long or too short
+- Knowing it refers to a different subject area entirely
+
+Test every distractor against this question: "Would a student who studied this topic but has not fully mastered it genuinely consider choosing this?" If the answer is no — rewrite it.
+
+A good question should feel like all four options are plausible until the student thinks carefully. A bad question allows 2 options to be eliminated immediately, turning it into a 50/50 guess. That is the failure mode you must prevent.
+
+### The Four Distractor Types (all four must appear across your question set):
 
 **Type 1 — The Partial Truth**
-The distractor is correct in a related context but wrong here.
-> Example: If the answer involves meiosis, a distractor references mitosis with accurate but misapplied facts.
+Correct in a related context, wrong in this one. The student must know the boundary condition to reject it.
+> Example: If the answer involves meiosis producing haploid cells, a distractor says "produces two genetically identical diploid cells" — true of mitosis, wrong here.
 
 **Type 2 — The Vocabulary Trap**
-Uses the correct technical vocabulary but in the wrong relationship.
-> Example: "Cytoplasm fuses instead of the nucleus" vs "Nucleus fuses instead of the cytoplasm" — one word flip, entirely different meaning.
+Correct terminology, wrong relationship. One word or one relationship swapped.
+> Example: "The cell membrane is located outside the cell wall" vs "The cell wall is located outside the cell membrane" — same words, inverted relationship.
 
 **Type 3 — The Adjacent Concept**
-A real concept from the same topic that students frequently confuse with the correct answer.
-> Example: Testing Paedogamy? A distractor uses Hologamy — same category, different definition.
+A real, correct concept from the same subject domain that is frequently confused with the answer. The student must know the distinction between two similar real things.
+> Example: Testing Protocooperation? A distractor uses Mutualism — both are beneficial symbiotic relationships, but one is obligatory and the other is not. A student with partial understanding of symbiosis will hesitate.
 
 **Type 4 — The Plausible Fabrication**
-Sounds exactly like something that could be true but isn't. Built from the same terminology as the correct answer, just assembled wrongly.
-> Example: "Fusion of two gametes from separate larval stages" — sounds like Neotony, isn't.
+Assembled from real terminology in the correct domain. Sounds entirely credible but describes something that does not exist or does not apply here. Built to fool someone who knows the vocabulary but not the mechanism.
+> Example: "Centrioles form a ring-shaped scaffold that anchors chromosomes to the cytoplasm during cytokinesis" — uses the right words, plausibly constructed, factually wrong.
 
 ### Rules for All Distractors:
-- All four options must belong to the same domain/category (no obviously irrelevant options)
-- At least 2 options must make a student with 60% knowledge hesitate
+- ALL four options must belong to the SAME conceptual domain as the stem — never pull a distractor from a different chapter or topic just to fill a slot
+- A student with 60-80% mastery must genuinely hesitate on at least 3 of the 4 options
 - Never use "All of the above" or "None of the above"
-- Never make the correct answer obviously longer or more detailed than distractors
-- Randomize correct answer position — don't always put it in position B or C
+- Match the grammatical form and approximate length of all options — no option should visually stand out as different
+- Randomize correct answer position — distribute evenly across A, B, C, D across the exam
+- **CRITICAL — NO OPTION RECYCLING**: Every option across the entire exam must be unique. Never use the correct answer of one question as a distractor in another. Build each question's distractors from misconceptions, partial truths, and adjacent concepts SPECIFIC TO THAT QUESTION ONLY.
 
 ---
 
@@ -3935,11 +3962,85 @@ if (words < 2000) return 65;
 return 100;
 }
 
+// ── CBT post-generation dedup — removes options recycled across questions ─────
+// Root cause: AI reuses the correct answer of question X as a distractor in
+// question Y. This scan detects and removes those cross-contaminated options.
+function deduplicateCBTOptions(questions) {
+  if (!questions || questions.length === 0) return questions;
+  const OPT_KEYS = ['option_a', 'option_b', 'option_c', 'option_d'];
+  const textMap = new Map(); // normalised → [{qi, key}]
+  for (let qi = 0; qi < questions.length; qi++) {
+    for (const key of OPT_KEYS) {
+      const raw = (questions[qi][key] || '').trim();
+      if (!raw || raw.length < 4) continue;
+      const norm = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!textMap.has(norm)) textMap.set(norm, []);
+      textMap.get(norm).push({ qi, key });
+    }
+  }
+  let replaced = 0;
+  for (const entries of textMap.values()) {
+    if (entries.length < 2) continue;
+    // Keep it where it is the declared correct answer; clobber all other copies
+    for (const { qi, key } of entries) {
+      const q = questions[qi];
+      const correctKey = 'option_' + (q.correct_answer || 'A').toLowerCase();
+      if (key === correctKey) continue; // preserve the correct-answer copy
+      // Also don't clobber if this IS the correct answer for this question
+      if (key === 'option_' + (q.correct_answer || '').toLowerCase()) continue;
+      questions[qi][key] = '[option removed — duplicate]';
+      replaced++;
+    }
+  }
+  if (replaced > 0)
+    console.log('[KIWI CBT] dedup: removed', replaced, 'recycled option(s)');
+  return questions;
+}
+
 async function generateCBTQuestions(notes, count) {
 const prompt = CBT_PROMPT.replace('[NOTES]', notes).replace('[COUNT]', count);
 const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000 });
 return result.response.text();
 }
+
+// generateCBTCompletionQuestions — follow-up prompt issued when the first pass
+// returned fewer questions than required. Passes the already-generated questions
+// as context so the AI knows which concepts are covered and which options already
+// exist, preventing concept repetition and option recycling across both passes.
+async function generateCBTCompletionQuestions(notes, existingQuestions, needed) {
+  const existingSummary = existingQuestions.map((q, i) =>
+    `Q${i + 1}: ${q.stem}\n  A) ${q.option_a}  B) ${q.option_b}  C) ${q.option_c}  D) ${q.option_d}`
+  ).join('\n\n');
+
+  const completionPrompt = [
+    '## COMPLETION REQUEST',
+    '',
+    'You previously generated a set of exam questions from the study notes below, but the output was incomplete.',
+    'Your task: generate EXACTLY ' + needed + ' additional question(s) to complete the exam.',
+    '',
+    '## STRICT REQUIREMENTS FOR COMPLETION QUESTIONS',
+    '',
+    '1. No concept repetition — Do NOT ask about any concept, fact, or topic already covered in the existing questions below.',
+    '2. No option recycling — None of your new options (A/B/C/D) may match any option text that already appears in the existing questions.',
+    '3. Full distractor quality — Apply the same confusion-grade distractor standards: all four options must belong to the same conceptual domain, a student with 60-80% mastery must genuinely hesitate on at least 3 options.',
+    '4. Same output format — Use the identical format: Question N, Stem, Options A-D, then ANSWERS AND EXPLANATIONS after a --- separator.',
+    '5. Question numbering — Start from Question ' + (existingQuestions.length + 1) + '.',
+    '',
+    '## EXISTING QUESTIONS (do not repeat these concepts or options)',
+    '',
+    existingSummary,
+    '',
+    '## STUDY NOTES',
+    '',
+    notes,
+    '',
+    'Generate exactly ' + needed + ' question(s) following all rules above.',
+  ].join('\n');
+
+  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: 8000 });
+  return result.response.text();
+}
+
 // B25: Fallback exam question generator (rule-based from card content)
 
 function generateFallbackExamQuestions(cards, examSessionId, count) {
@@ -3947,7 +4048,14 @@ const questions = [];
 const selected = cards.slice(0, Math.min(count, cards.length));
 selected.forEach((card, idx) => {
 // Build a simple 4-option MCQ from card content
-const otherCards = selected.filter((c, i) => i !== idx).slice(0, 3);
+// FIX: randomly sample 3 distractors from the full pool (not always slice(0,3))
+// so every question gets different wrong options instead of the same first 3 cards.
+const pool = selected.filter((c, i) => i !== idx);
+const otherCards = pool
+  .map((c) => ({ c, _r: Math.random() }))
+  .sort((a, b) => a._r - b._r)
+  .slice(0, 3)
+  .map((x) => x.c);
 const options = [
 card.back_content || 'Answer A',
 ...otherCards.map((c) => c.back_content || 'Distractor'),
@@ -4164,21 +4272,37 @@ currentAnswer.explanation += ' ' + line;
 }
 if (currentAnswerNum !== null && currentAnswer.correct_answer)
 answerMap.set(currentAnswerNum, currentAnswer);
+
+// Helper: strip markdown bold/italic that Gemini sometimes leaves in stems/options
+const _stripMd = (s) => (s || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/__([^_]+)__/g, '$1').replace(/_([^_]+)_/g, '$1').trim();
+
 return questions.map((q, idx) => {
 const ans = answerMap.get(q.question_number) || {};
 // Strip internal parsing flags (_stemDone) so they don't get inserted into the DB
 const { _stemDone, ...cleanQ } = q;
+// FIX: Use empty string sentinel check — 'Option A/B/C/D' means the AI failed to
+// generate that slot. Filter these questions out instead of storing garbage options.
+const _PLACEHOLDERS = new Set(['Option A', 'Option B', 'Option C', 'Option D', '(none of the above applies here)', '[option removed — duplicate]']);
+const oA = _stripMd(cleanQ.option_a) || '';
+const oB = _stripMd(cleanQ.option_b) || '';
+const oC = _stripMd(cleanQ.option_c) || '';
+const oD = _stripMd(cleanQ.option_d) || '';
+const correctLetter = ans.correct_answer || 'A';
+// If the declared correct option slot is empty or a placeholder, mark for removal
+const correctOptionText = { A: oA, B: oB, C: oC, D: oD }[correctLetter] || '';
+if (!correctOptionText || _PLACEHOLDERS.has(correctOptionText)) return null;
 return {
 ...cleanQ,
+stem: _stripMd(cleanQ.stem),
 question_number: idx + 1,
-option_a: cleanQ.option_a || 'Option A',
-option_b: cleanQ.option_b || 'Option B',
-option_c: cleanQ.option_c || 'Option C',
-option_d: cleanQ.option_d || 'Option D',
-correct_answer: ans.correct_answer || 'A',
+option_a: oA || 'Not applicable',
+option_b: oB || 'Not applicable',
+option_c: oC || 'Not applicable',
+option_d: oD || 'Not applicable',
+correct_answer: correctLetter,
 explanation: ans.explanation || 'No explanation provided.',
 };
-});
+}).filter(Boolean);
 }
 
 function parseFlashcards(rawText) {
@@ -4329,17 +4453,31 @@ const stage1 = allCards.filter((c) => c.stage === 1).length;
 const thirtyDaysAgo = new Date();
 thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 const logs = await db.reviewLogs.findByUser(userId, thirtyDaysAgo);
+// F-13 FIX: batch fetch cards & decks instead of N+1 serial calls
+const againLogs = logs.filter(l => l.response === 'again' && l.card_id);
+const againCardIds = [...new Set(againLogs.map(l => l.card_id))];
+let _batchCards = [];
+if (againCardIds.length > 0) {
+  const { rows: _cr } = await query('SELECT id, deck_id FROM cards WHERE user_id = $1 AND id = ANY($2)', [userId, againCardIds]);
+  _batchCards = _cr;
+}
+const againDeckIds = [...new Set(_batchCards.map(c => c.deck_id).filter(Boolean))];
+let _batchDecks = [];
+if (againDeckIds.length > 0) {
+  const { rows: _dr } = await query('SELECT id, subject_id FROM decks WHERE user_id = $1 AND id = ANY($2)', [userId, againDeckIds]);
+  _batchDecks = _dr;
+}
+const _cardMap  = new Map(_batchCards.map(c => [c.id, c]));
+const _deckMap  = new Map(_batchDecks.map(d => [d.id, d]));
 const againBySubject = {};
-for (const log of logs) {
-if (log.response === 'again' && log.card_id) {
-const card = await db.cards.findById(userId, log.card_id);
-if (card?.deck_id) {
-const deck = await db.decks.findById(userId, card.deck_id);
-if (deck?.subject_id) {
-againBySubject[deck.subject_id] = (againBySubject[deck.subject_id] || 0) + 1;
-}
-}
-}
+for (const log of againLogs) {
+  const card = _cardMap.get(log.card_id);
+  if (card?.deck_id) {
+    const deck = _deckMap.get(card.deck_id);
+    if (deck?.subject_id) {
+      againBySubject[deck.subject_id] = (againBySubject[deck.subject_id] || 0) + 1;
+    }
+  }
 }
 let againHeavy = null,
 maxAgain = 0;
@@ -4349,13 +4487,18 @@ maxAgain = count;
 againHeavy = allSubjects.find((s) => s.id === sid)?.name;
 }
 }
+const _sevenDaysAgo = new Date(); _sevenDaysAgo.setDate(_sevenDaysAgo.getDate() - 7);
+const _recentLogs = logs.filter(l => new Date(l.reviewed_at) >= _sevenDaysAgo);
+const _totalRecent = _recentLogs.length;
+const _goodRecent  = _recentLogs.filter(l => l.response === 'good' || l.response === 'easy').length;
+const _acc7d = _totalRecent > 0 ? Math.round((_goodRecent / _totalRecent) * 100) : 70;
 const userData = {
 due_cards_today: dueCards,
-subjects: allSubjects.map((s) => ({
+subjects: allSubjects.map((s) => ({ // F-14 FIX: use real subject data
 name: s.name,
 due: 0,
-health_score: 50,
-last_studied: '2 days ago',
+health_score: typeof s.health_score === 'number' ? Math.round(s.health_score) : 50,
+last_studied: s.last_study_date ? new Date(s.last_study_date).toLocaleDateString() : 'Never',
 })),
 current_streak: stats.current_streak,
 stage_1_cards: stage1,
@@ -4363,7 +4506,7 @@ again_heavy: againHeavy || allSubjects[0]?.name || 'General',
 weakest_subject: againHeavy || allSubjects[0]?.name || 'General',
 sessions_today: 0,
 mastered_this_week: 0,
-average_accuracy_7d: 70,
+average_accuracy_7d: _acc7d, // F-14 FIX: real 7-day accuracy
 exams_this_month: 0,
 };
 let tasks;
@@ -8274,9 +8417,9 @@ ROLE
 You are The Brain of the Kiwi ecosystem — an advisor who provides a single weekly focus directive. You are precise, direct, and never vague.
 INPUTS
 Subject with biggest KS-to-credential gap: ${biggestGapSubject ? `${biggestGapSubject.name} (KS: ${biggestGapSubject.ks.toFixed(1)}, Credential: ${biggestGapSubject.credential})` : 'None'}
-Highest pressure subject: {highPressureSubject || 'None'} (pressure: {highestPressure?.pressure_score || 0})
-Previous week's anchor: {prevAnchorText || 'None'}
-This week's Chronicle excerpt: {latestChronicle ? (latestChronicle.narrative || '').slice(0, 200) : 'None'}
+Highest pressure subject: ${highPressureSubject || 'None'} (pressure: ${highestPressure?.pressure_score || 0})
+Previous week's anchor: ${prevAnchorText || 'None'}
+This week's Chronicle excerpt: ${latestChronicle ? (latestChronicle.narrative || '').slice(0, 200) : 'None'}
 TASK
 Write exactly 3 sentences naming the single most important focus for this week.
 - Sentence 1: Name the subject and the specific gap or pressure to address.
@@ -10410,9 +10553,27 @@ res.status(401).json({ error: 'Invalid refresh token' });
 }
 });
 
+
+// F-18 FIX: IP-based rate limit for guest account creation
+const _guestRateLimit = new Map();
+const GUEST_RATE_LIMIT  = 5;
+const GUEST_RATE_WINDOW = 3_600_000; // 1 hour
+
 authRouter.post('/guest', async (req, res) => {
 // B21: Create a temporary guest user with 10 pre-seeded demo cards
 try {
+// F-18 FIX: rate limit guest creation per IP
+const _guestIp  = req.ip || req.socket?.remoteAddress || 'unknown';
+const _now      = Date.now();
+const _gRL      = _guestRateLimit.get(_guestIp);
+if (_gRL && _now < _gRL.resetAt) {
+  if (_gRL.count >= GUEST_RATE_LIMIT) {
+    return res.status(429).json({ error: 'Too many guest accounts from this IP. Try again later.' });
+  }
+  _gRL.count++;
+} else {
+  _guestRateLimit.set(_guestIp, { count: 1, resetAt: _now + GUEST_RATE_WINDOW });
+}
 const guestId = crypto.randomUUID();
 const guestName = 'Guest' + guestId.slice(0, 8);
 const dummyHash = await bcrypt.hash('guest' + guestId, 6);
@@ -11032,30 +11193,44 @@ cardRouter.post('/import/ai', async (req, res) => {
 try {
 const { deck_id, notes, card_count = 10, subject_hint = '' } = req.body;
 if (!deck_id || !notes) return res.status(400).json({ error: 'deck_id and notes required' });
-const aiText = await generateFlashcards(notes, subject_hint);
-const parsed = parseFlashcards(aiText);
-if (parsed.length === 0)
-return res.status(422).json({ error: 'Could not parse flashcards from AI response' });
-const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, {
-card_count: { increment: created.length },
-import_source: 'ai',
-});
-await batchInitializeSeedlingStates(
-req.user.id,
-created.map((c) => c.id)
-);
-// PB.13: Resolve subject_id for Bubble onboarding prompt in frontend [DESIGN: §18 PB.13]
+// Resolve deck / subject metadata before forking to background
 const aiImportDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
 const aiImportSubjectId = aiImportDeck?.subject_id || null;
-res.status(201).json({
-  cards:          created,
-  count:          created.length,
-  source:         'ai',
-  deck_id,
-  subject_id:     aiImportSubjectId,
-  suggest_bubble: aiImportSubjectId !== null && created.length >= 5,
+// ── Respond immediately with job_id; AI generation runs in background ────────
+const noteJobId = randomUUID();
+_jobStoreSet(noteJobId, { status: 'pending', type: 'note_generation' });
+res.status(202).json({ job_id: noteJobId, deck_id, subject_id: aiImportSubjectId, status: 'generating' });
+// ── Background: generate flashcards and push job_done via WebSocket ───────────
+const _noteUserId    = req.user.id;
+const _noteDeckId    = deck_id;
+const _noteNotes     = notes;
+const _noteHint      = subject_hint;
+const _noteSubjectId = aiImportSubjectId;
+setImmediate(async () => {
+  try {
+    const aiText = await generateFlashcards(_noteNotes, _noteHint);
+    const parsed = parseFlashcards(aiText);
+    if (parsed.length === 0) {
+      _jobStoreSet(noteJobId, { status: 'failed', type: 'note_generation', error: 'Could not parse flashcards from AI response' });
+      wsSend(_noteUserId, 'job_failed', { job_id: noteJobId, type: 'note_generation', error: 'Could not parse flashcards from AI response' });
+      return;
+    }
+    const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
+    const created   = await db.cards.createMany(_noteUserId, _noteDeckId, cardsData);
+    await db.decks.update(_noteUserId, _noteDeckId, { card_count: { increment: created.length }, import_source: 'ai' });
+    await batchInitializeSeedlingStates(_noteUserId, created.map(c => c.id));
+    const suggest_bubble = _noteSubjectId !== null && created.length >= 5;
+    _jobStoreSet(noteJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'ai', deck_id: _noteDeckId, subject_id: _noteSubjectId, suggest_bubble } });
+    wsSend(_noteUserId, 'job_done', {
+      job_id: noteJobId,
+      type: 'note_generation',
+      result: { cards: created, count: created.length, source: 'ai', deck_id: _noteDeckId, subject_id: _noteSubjectId, suggest_bubble },
+    });
+  } catch (bgErr) {
+    console.error('[KIWI] Note import background failed:', bgErr.message);
+    _jobStoreSet(noteJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'Flashcard generation failed' });
+    wsSend(_noteUserId, 'job_failed', { job_id: noteJobId, type: 'note_generation', error: bgErr.message || 'Flashcard generation failed' });
+  }
 });
 } catch (e) {
 res.status(500).json({ error: 'AI import failed', details: e.message });
@@ -12219,6 +12394,9 @@ if (isReckoningExam) {
 // Reckoning: load flagged pool from session document
 const activeReck = await db.reckoningSessions.findActiveByUser(req.user.id).catch(() => null);
 const flaggedIds = activeReck?.flagged_card_ids || [];
+if (flaggedIds.length === 0) {
+  return res.status(400).json({ error: 'Reckoning session has no flagged cards. Complete more study sessions to flag cards before attempting a Reckoning exam.' });
+}
 if (flaggedIds.length > 0) {
 const flaggedPool = (await Promise.all(
   flaggedIds.map((id) => db.cards.findById(req.user.id, id).catch(() => null))
@@ -12310,147 +12488,90 @@ card_range,
 time_limit_seconds,
 status: 'ready',
 });
+// FIX: strip {{c1::answer}} cloze syntax before sending to AI — raw cloze
+// markup confuses Gemini and produces garbled distractors/stems.
+const _stripCloze = (s) => (s || '').replace(/\{\{c\d+::([^}]*)\}\}/g, '$1');
 const notes = selectedCards
-.map((c) => `Q: ${c.front_content}\nA: ${c.back_content}`)
+.map((c) => `Q: ${_stripCloze(c.front_content)}\nA: ${_stripCloze(c.back_content)}`)
 .join('\n\n');
 if (checkAIRateLimit(req.user.id, 'cbt_generation', 10)) {
 return res.status(429).json({ error: 'Exam generation rate limit reached. Please wait before generating another exam.' });
 }
-const aiText = await generateCBTQuestions(notes, count);
-if (!aiText) return res.status(502).json({ error: 'AI exam generation failed. Please try again.' });
-let questions = parseCBTResponse(aiText, examSession.id, selectedCards);
-if (questions.length === 0) {
-// Clean up the empty session
-await db.examSessions.delete(req.user.id, examSession.id).catch(() => {});
-return res.status(422).json({ error: 'AI generated questions could not be parsed. This usually means your cards have very short or incomplete content. Please ensure your cards have full question and answer text before generating an exam.' });
-}
-// Bug 4 FIX: if AI returned fewer questions than requested, pad with rule-based fallbacks
-if (questions.length < count) {
-const usedCardIds = new Set(questions.map(q => q.card_id).filter(Boolean));
-const remainingCards = selectedCards.filter(c => !usedCardIds.has(c.id));
-const needed = count - questions.length;
-const fallbacks = generateFallbackExamQuestions(
-  remainingCards.slice(0, needed),
-  examSession.id,
-  needed
-);
-questions = [...questions, ...fallbacks];
-}
-await Promise.all(
-questions.map((q) => db.examQuestions.create(req.user.id, examSession.id, q))
-);
-const readyExam = await db.examSessions.findByIdWithQuestions(req.user.id, examSession.id);
-// Bug 1+2 fix: Link reckoning session to exam if this is a reckoning exam
-if (body.is_reckoning || body.reckoning_id) {
-try {
-const activeReckoning = await db.reckoningSessions.findActiveByUser(req.user.id);
-if (activeReckoning) {
-await startReckoningExam(activeReckoning.id, examSession.id);
-}
-} catch (e) {
-/ non-fatal — reckoning link failure must not break exam delivery /
-}
-}
-res.status(201).json(readyExam);
+// ── Respond immediately with job_id; AI generation runs in background ────────
+const cbtJobId = randomUUID();
+_jobStoreSet(cbtJobId, { status: 'pending', type: 'cbt_generation' });
+res.status(202).json({ job_id: cbtJobId, exam_session_id: examSession.id, status: 'generating' });
+// ── Background: generate questions, store them, push job_done via WebSocket ──
+const _cbtUserId      = req.user.id;
+const _cbtSessionId   = examSession.id;
+const _cbtNotes       = notes;
+const _cbtCount       = count;
+const _cbtCards       = selectedCards;
+const _cbtBody        = body;
+setImmediate(async () => {
+  try {
+    const aiText = await generateCBTQuestions(_cbtNotes, _cbtCount);
+    if (!aiText) throw new Error('AI exam generation returned empty response');
+    let questions = parseCBTResponse(aiText, _cbtSessionId, _cbtCards);
+    if (questions.length === 0) {
+      await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => {});
+      _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'AI generated questions could not be parsed. Ensure your cards have full content.' });
+      wsSend(_cbtUserId, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: 'AI generated questions could not be parsed. Ensure your cards have full content.' });
+      return;
+    }
+    // If AI returned fewer questions than the exact count requested, issue a
+    // targeted follow-up prompt (not a cold retry) that passes the existing
+    // questions as context — so the AI knows what concepts are already covered
+    // and which options already exist, preventing recycling across both passes.
+    if (questions.length < _cbtCount) {
+      const needed = _cbtCount - questions.length;
+      console.log('[KIWI CBT] First pass: ' + questions.length + '/' + _cbtCount + ' — issuing completion prompt for ' + needed + ' missing');
+      try {
+        const completionText = await generateCBTCompletionQuestions(_cbtNotes, questions, needed);
+        if (completionText) {
+          const completionQs = parseCBTResponse(completionText, _cbtSessionId, _cbtCards);
+          const offset = questions.length;
+          questions = [...questions, ...completionQs.slice(0, needed).map((q, i) => ({ ...q, question_number: offset + i + 1 }))];
+        }
+      } catch (completionErr) {
+        console.warn('[KIWI CBT] Completion prompt failed:', completionErr.message);
+      }
+      // After completion prompt, if still short — hard fail. Partial exams are not acceptable.
+      if (questions.length < _cbtCount) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => {});
+        _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.' });
+        wsSend(_cbtUserId, 'job_failed', {
+          job_id: cbtJobId,
+          type: 'cbt_generation',
+          error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.',
+        });
+        return;
+      }
+    }
+    questions = deduplicateCBTOptions(questions);
+    await Promise.all(questions.map(q => db.examQuestions.create(_cbtUserId, _cbtSessionId, q)));
+    const readyExam = await db.examSessions.findByIdWithQuestions(_cbtUserId, _cbtSessionId);
+    // Link reckoning session if applicable
+    if (_cbtBody.is_reckoning || _cbtBody.reckoning_id) {
+      try {
+        const activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
+        if (activeReck) await startReckoningExam(activeReck.id, _cbtSessionId);
+      } catch (_) {}
+    }
+    _jobStoreSet(cbtJobId, { status: 'done', type: 'cbt_generation', result: readyExam });
+    wsSend(_cbtUserId, 'job_done', { job_id: cbtJobId, type: 'cbt_generation', result: readyExam, exam: readyExam });
+  } catch (bgErr) {
+    console.error('[KIWI] CBT background generation failed:', bgErr.message);
+    _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: bgErr.message || 'Exam generation failed' });
+    wsSend(_cbtUserId, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: bgErr.message || 'Exam generation failed' });
+  }
+});
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate exam', details: e.message });
 }
 });
 
-examRouter.post('/', async (req, res) => {
-try {
-const {
-subject_id,
-deck_ids,
-question_count = 25,
-card_range = 'all',
-time_limit_seconds = 1800,
-} = req.body;
-if (!subject_id) return res.status(400).json({ error: 'subject_id required' });
-const targetDeckIds =
-deck_ids && deck_ids.length > 0
-? deck_ids
-: (await db.decks.findBySubject(req.user.id, subject_id)).map((d) => d.id);
-if (targetDeckIds.length === 0)
-return res.status(400).json({ error: 'No decks available for this subject' });
-let allCards = [];
-for (const deckId of targetDeckIds) {
-const cards = await db.cards.findByDeck(req.user.id, deckId);
-allCards.push(...cards);
-}
-// P3-FIX: strip cards with no meaningful content (same guard as /generate route)
-allCards = allCards.filter((c) => {
-const front = (c.front_content || '').trim();
-const back  = (c.back_content  || '').trim();
-return front.length >= 5 && back.length >= 5;
-});
-// Phase 3: State-filtered selection — P3.5 FIX: support card_state_filter.
-const { card_state_filter: stateFilter = 'all' } = req.body;
-const flaggedStatesPool = [CARD_STATES.DANGEROUS, CARD_STATES.GHOST, CARD_STATES.STUCK,
-CARD_STATES.FRAGILE, CARD_STATES.AVOIDED];
-const stateFilteredPool = [];
-for (const card of allCards) {
-let stateDoc = await db.cardStates.get(req.user.id, card.id);
-if (!stateDoc) stateDoc = await initializeCardState(req.user.id, card.id);
-const st = stateDoc.state;
-let include = false;
-switch (stateFilter) {
-case 'dangerous': include = (st === CARD_STATES.DANGEROUS); break;
-case 'ghost':     include = (st === CARD_STATES.GHOST); break;
-case 'stuck':     include = (st === CARD_STATES.STUCK); break;
-case 'fragile':   include = (st === CARD_STATES.FRAGILE); break;
-case 'avoided':   include = (st === CARD_STATES.AVOIDED); break;
-case 'mixed_priority':
-if (flaggedStatesPool.includes(st)) { stateFilteredPool.push(card, card, card); continue; }
-include = card.stage >= 3;
-break;
-case 'all':
-default:
-include = card.stage >= 3 && ![CARD_STATES.GHOST, CARD_STATES.STUCK].includes(st);
-}
-if (include) stateFilteredPool.push(card);
-}
-const seenFilterIds = new Set();
-const eligibleCards = stateFilteredPool.filter(c => seenFilterIds.has(c.id) ? false : seenFilterIds.add(c.id));
-if (eligibleCards.length === 0) {
-  if (stateFilter !== 'all') {
-    return res.status(400).json({ error: `No ${stateFilter.toUpperCase()} cards found in this subject. Cards need to be reviewed and reach that state first. Try removing filters or selecting a different state.` });
-  }
-  return res.status(400).json({ error: 'No eligible cards for exam. Need Stage 3+ cards.' });
-}
-const selectedCards = eligibleCards
-.sort(() => 0.5 - Math.random())
-.slice(0, Math.min(question_count, eligibleCards.length));
-const count = selectedCards.length;
-const examSession = await db.examSessions.create(req.user.id, {
-subject_id,
-deck_ids: targetDeckIds,
-question_count: count,
-card_range,
-time_limit_seconds,
-status: 'ready',
-});
-const sourceCards = selectedCards;
-const notesChunks = selectedCards.map((c) => `Q: ${c.front_content}\nA: ${c.back_content}`);
-const notes = notesChunks.join('\n\n');
-if (checkAIRateLimit(req.user.id, 'cbt_generation', 10)) {
-return res.status(429).json({ error: 'Exam generation rate limit reached. Please wait before generating another exam.' });
-}
-const aiText = await generateCBTQuestions(notes, count);
-const questions = parseCBTResponse(aiText, examSession.id, sourceCards);
-if (questions.length === 0) {
-await db.examSessions.delete(req.user.id, examSession.id).catch(() => {});
-return res.status(422).json({ error: 'AI generated questions could not be parsed. Ensure your cards have full question and answer text before generating an exam.' });
-}
-await Promise.all(
-questions.map((q) => db.examQuestions.create(req.user.id, examSession.id, q))
-);
-const readyExam = await db.examSessions.findByIdWithQuestions(req.user.id, examSession.id);
-res.status(201).json(readyExam);
-} catch (e) {
-res.status(500).json({ error: 'Failed to create exam', details: e.message });
-}
-});
+// F-23 FIX: Removed deprecated sync POST /exams/ route (unreachable from UI, duplicates /generate)
 
 examRouter.get('/', async (req, res) => {
 try {
@@ -12700,75 +12821,6 @@ console.error('[KIWI] Almanac check failed:', e.message);
 return [];
 });
 
-    // Auto-generate debrief
-    let debriefText = '';
-    try {
-      const wrong = questionResults.filter((qr) => !qr.correct);
-      if (wrong.length === 0) {
-        debriefText =
-          'Perfect score! Every card in this exam was correctly answered. Your mastery is verified.';
-      } else {
-        const weakCardFronts = [];
-        const weakSubjects = new Map();
-        for (const qr of wrong) {
-          const q = exam.questions.find((eq) => eq.question_number === qr.question_number);
-          if (q && q.card_id) {
-            const card = await db.cards.findById(req.user.id, q.card_id).catch(() => null);
-            if (card) {
-              weakCardFronts.push(`"${(card.front_content || card.front || '').slice(0, 70)}"`);
-              if (card.deck_id) {
-                const deck = await db.decks.findById(req.user.id, card.deck_id).catch(() => null);
-                if (deck?.subject_id)
-                  weakSubjects.set(deck.subject_id, (weakSubjects.get(deck.subject_id) || 0) + 1);
-              }
-            }
-          }
-        }
-        let weakAreas = [];
-        for (const [subjectId, count] of weakSubjects) {
-          const subject = await db.subjects.findById(subjectId).catch(() => null);
-          if (subject)
-            weakAreas.push({
-              subject_id: subjectId,
-              subject_name: subject.name,
-              incorrect_count: count,
-            });
-        }
-        try {
-          const aiDebriefPrompt = `## ROLE
-
-You are KIWI's Exam Debrief Analyst — a concise, analytical voice who helps students understand their exam performance.
-EXAM DATA
-// P3.8-B1 FIX: changed {var} to \${var} — template literal interpolation was broken.
-Score: ${scorePct}% (${correct}/${total} correct)
-Incorrect questions (${wrong.length}): The student failed these specific concepts:
-${weakCardFronts.slice(0, 8).join('\n')}
-Weak subject areas: ${weakAreas.map((a) => a.subject_name + ' (' + a.incorrect_count + ' wrong)').join(', ') || 'general'}
-RULES
-- Write exactly 3 paragraphs.
-- Paragraph 1: Honest overall assessment of the score. Reference specific concepts that were missed.
-- Paragraph 2: Identify the pattern — why are these cards difficult? (conceptual gaps, memory fragility, exam pressure?)
-- Paragraph 3: Two precise, actionable next steps — which cards to review first and why.
-- Tone: Direct, analytical, but supportive. No empty praise.
-- Total length: 150-250 words.
-OUTPUT
-Return only the debrief text.`;
-          const aiResult = await geminiModel.generateContent(aiDebriefPrompt);
-          debriefText = aiResult.response.text().trim();
-        } catch (_) {
-          debriefText =
-            `You scored ${scorePct}%, getting ${correct} of ${total} correct. ` +
-            (wrong.length > 0
-              ? `${wrong.length} card${wrong.length > 1 ? 's' : ''} were answered incorrectly.`
-              : '') +
-            (weakAreas.length > 0 ? ` The weakest area was ${weakAreas[0].subject_name}.` : '') +
-            `\n\nThe missed concepts suggest gaps that require active review — not passive re-reading. Focus on the failing cards using spaced repetition.` +
-            `\n\nRecommended next step: Review the ${Math.min(wrong.length, 5)} failed cards immediately, then schedule an exam in 3 days to re-test retention.`;
-        }
-      }
-    } catch (debriefErr) {
-      debriefText = `Exam complete. Score: ${scorePct}%. Review missed cards to strengthen retention.`;
-    }
     // Notify via Telegram if configured
     await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, passed).catch(() => {});
     // Wire exam_result email notification
@@ -12803,7 +12855,9 @@ Return only the debrief text.`;
       };
     });
 
+    const submitJobId = randomUUID(); // background debrief job
     res.json({
+      job_id: submitJobId,
       exam: completedExam,
       score_pct: scorePct,
       correct_answers: correct,
@@ -12819,12 +12873,86 @@ Return only the debrief text.`;
       // Sourced from the AI-generated regression_warning message (P3.10 output).
       reclassification_alert_text: (regression && regression.message) || null,
       new_achievements: newAchievements,
-      debrief: debriefText,
       ksDelta,
       passed,
       credentialEarned,
       // P6.4 FIX: Include almanac unlocks so frontend can show notification
       new_almanac_unlocks: examAlmanacUnlocks,
+      // debrief arrives via WebSocket job_done (type: 'exam_submit') when AI finishes
+    });
+    // ── Background: AI debrief generation ────────────────────────────────────
+    // Runs after res.json; result pushed to client via WebSocket job_done event.
+    const _debriefUserId   = req.user.id;
+    const _debriefExam     = exam;
+    const _debriefResults  = questionResults;
+    const _debriefScorePct = scorePct;
+    const _debriefCorrect  = correct;
+    const _debriefTotal    = total;
+    setImmediate(async () => {
+      let debriefText = '';
+      try {
+        const wrong = _debriefResults.filter((qr) => !qr.correct);
+        if (wrong.length === 0) {
+          debriefText = 'Perfect score! Every card in this exam was correctly answered. Your mastery is verified.';
+        } else {
+          const weakCardFronts = [];
+          const weakSubjects = new Map();
+          for (const qr of wrong) {
+            const q = _debriefExam.questions.find((eq) => eq.question_number === qr.question_number);
+            if (q && q.card_id) {
+              const card = await db.cards.findById(_debriefUserId, q.card_id).catch(() => null);
+              if (card) {
+                weakCardFronts.push(`"${(card.front_content || card.front || '').slice(0, 70)}"`);
+                if (card.deck_id) {
+                  const deck = await db.decks.findById(_debriefUserId, card.deck_id).catch(() => null);
+                  if (deck?.subject_id)
+                    weakSubjects.set(deck.subject_id, (weakSubjects.get(deck.subject_id) || 0) + 1);
+                }
+              }
+            }
+          }
+          let weakAreas = [];
+          for (const [subjectId, count] of weakSubjects) {
+            const subject = await db.subjects.findById(subjectId).catch(() => null);
+            if (subject)
+              weakAreas.push({ subject_id: subjectId, subject_name: subject.name, incorrect_count: count });
+          }
+          try {
+            const aiDebriefPrompt = `## ROLE
+
+You are KIWI's Exam Debrief Analyst — a concise, analytical voice who helps students understand their exam performance.
+EXAM DATA
+Score: ${_debriefScorePct}% (${_debriefCorrect}/${_debriefTotal} correct)
+Incorrect questions (${wrong.length}): The student failed these specific concepts:
+${weakCardFronts.slice(0, 8).join('\n')}
+Weak subject areas: ${weakAreas.map((a) => a.subject_name + ' (' + a.incorrect_count + ' wrong)').join(', ') || 'general'}
+RULES
+- Write exactly 3 paragraphs.
+- Paragraph 1: Honest overall assessment of the score. Reference specific concepts that were missed.
+- Paragraph 2: Identify the pattern — why are these cards difficult? (conceptual gaps, memory fragility, exam pressure?)
+- Paragraph 3: Two precise, actionable next steps — which cards to review first and why.
+- Tone: Direct, analytical, but supportive. No empty praise.
+- Total length: 150-250 words.
+OUTPUT
+Return only the debrief text.`;
+            const aiResult = await geminiModel.generateContent(aiDebriefPrompt);
+            debriefText = aiResult.response.text().trim();
+          } catch (_) {
+            debriefText =
+              `You scored ${_debriefScorePct}%, getting ${_debriefCorrect}/${_debriefTotal} correct. ` +
+              (_debriefResults.filter(q => !q.correct).length > 0
+                ? `${_debriefResults.filter(q => !q.correct).length} question(s) were answered incorrectly.`
+                : '') +
+              (weakAreas.length > 0 ? ` The weakest area was ${weakAreas[0].subject_name}.` : '') +
+              `\n\nFocus on the failing cards using spaced repetition.` +
+              `\n\nRecommended next step: Review missed cards immediately, then schedule a follow-up exam in 3 days.`;
+          }
+        }
+        wsSend(_debriefUserId, 'job_done', { job_id: submitJobId, type: 'exam_submit', result: { debrief: debriefText } });
+      } catch (debriefBgErr) {
+        console.error('[KIWI] Background debrief failed:', debriefBgErr.message);
+        wsSend(_debriefUserId, 'job_failed', { job_id: submitJobId, type: 'exam_submit', error: 'Debrief generation failed' });
+      }
     });
   } catch (e) {
     res.status(500).json({ error: 'Failed to submit exam', details: e.message });
@@ -13089,6 +13217,8 @@ res.status(500).json({ error: 'Failed to fetch community deck' });
 
 communityRouter.post('/decks/:id/clone', async (req, res) => {
 try {
+// F-24 FIX: require subject_id — null orphans are never included in KS/health calculations
+if (!req.body.subject_id) return res.status(400).json({ error: 'subject_id is required to clone a deck' });
 const communityDeck = await db.communityDecks.findByIdWithOriginalCards(req.params.id);
 if (!communityDeck) return res.status(404).json({ error: 'Community deck not found' });
 const newDeck = await db.decks.create(req.user.id, {
@@ -13130,6 +13260,8 @@ communityRouter.post('/import', async (req, res) => {
 try {
 const { deckId, subject_id } = req.body;
 if (!deckId) return res.status(400).json({ error: 'deckId required' });
+// F-24 FIX: require subject_id — null orphans skip KS/health calculations silently
+if (!subject_id) return res.status(400).json({ error: 'subject_id is required to import a deck' });
 const communityDeck = await db.communityDecks.findByIdWithOriginalCards(deckId);
 if (!communityDeck) return res.status(404).json({ error: 'Community deck not found' });
 const newDeck = await db.decks.create(req.user.id, {
@@ -13512,15 +13644,22 @@ bubbleRouter.get('/:id/contract', async (req, res) => {
   try {
     const contract = await generateDailyContract(req.user.id, req.params.id);
     if (!contract) return res.status(404).json({ error: 'Bubble not found' });
-    const enriched = await Promise.all((contract.cards || []).map(async (cardId) => {
-      const card     = await db.cards.findById(req.user.id, cardId).catch(() => null);
-      const stateDoc = await db.cardStates.get(req.user.id, cardId).catch(() => null);
-      return card ? {
-        id:    cardId,
-        front: card.front_content || '',
-        state: stateDoc?.state || 'SEEDLING',
-      } : null;
-    }));
+    // F-16 FIX: batch card + state fetch instead of 2N individual queries
+    const _bubbleCardIds = contract.cards || [];
+    let _bubbleCardMap = new Map(), _bubbleStateMap = new Map();
+    if (_bubbleCardIds.length > 0) {
+      const [_bcRows, _bsRows] = await Promise.all([
+        query('SELECT id, front_content FROM cards WHERE user_id = $1 AND id = ANY($2)', [req.user.id, _bubbleCardIds]).then(r => r.rows).catch(() => []),
+        query('SELECT card_id, state FROM card_states WHERE user_id = $1 AND card_id = ANY($2)', [req.user.id, _bubbleCardIds]).then(r => r.rows).catch(() => []),
+      ]);
+      _bubbleCardMap  = new Map(_bcRows.map(c => [c.id, c]));
+      _bubbleStateMap = new Map(_bsRows.map(s => [s.card_id, s]));
+    }
+    const enriched = _bubbleCardIds.map(cardId => {
+      const card     = _bubbleCardMap.get(cardId);
+      const stateDoc = _bubbleStateMap.get(cardId);
+      return card ? { id: cardId, front: card.front_content || '', state: stateDoc?.state || 'SEEDLING' } : null;
+    });
     res.json({
       ...contract,
       cards:            enriched.filter(Boolean),
@@ -14424,6 +14563,7 @@ if (_lastProgressCall && Date.now() - _lastProgressCall < PROGRESS_RATE_LIMIT_MS
 return res.status(429).json({ error: 'Progress refresh rate limit. Please wait 30 seconds.' });
 }
 _progressRateLimit.set(req.user.id, Date.now());
+setTimeout(() => _progressRateLimit.delete(req.user.id), PROGRESS_RATE_LIMIT_MS); // F-17 FIX: TTL eviction
 try {
 // Fix #18: removed duplicate findByUser call
 // Fix #19: globalKS computed from per-subject results — no extra N findByUser scans
@@ -14538,25 +14678,29 @@ res.status(500).json({ error: 'Failed to fetch trouble cards', details: e.messag
 
 progressRouter.get('/progress/accuracy-trend', async (req, res) => {
 try {
+// F-15 FIX: single DB fetch + in-memory week filter (was 12 serial queries)
+const _twelveWeeksAgo = new Date();
+_twelveWeeksAgo.setDate(_twelveWeeksAgo.getDate() - 84);
+const allTrendLogs = await db.reviewLogs.findByUser(req.user.id, _twelveWeeksAgo);
 const weeks = [];
 const now = new Date();
 for (let i = 11; i >= 0; i--) {
-const weekStart = new Date(now);
-weekStart.setDate(weekStart.getDate() - i * 7 - weekStart.getDay());
-weekStart.setHours(0, 0, 0, 0);
-const weekEnd = new Date(weekStart);
-weekEnd.setDate(weekEnd.getDate() + 7);
-const logs = await db.reviewLogs.findByUser(req.user.id, weekStart);
-const weekLogs = logs.filter((l) => new Date(l.reviewed_at) < weekEnd);
-const total = weekLogs.length;
-const goodOrEasy = weekLogs.filter(
-(l) => l.response === 'good' || l.response === 'easy'
-).length;
-weeks.push({
-week_start: weekStart.toISOString().split('T')[0],
-total_reviews: total,
-accuracy_pct: total > 0 ? parseFloat(((goodOrEasy / total) * 100).toFixed(1)) : null,
-});
+  const weekStart = new Date(now);
+  weekStart.setDate(weekStart.getDate() - i * 7 - weekStart.getDay());
+  weekStart.setHours(0, 0, 0, 0);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+  const weekLogs = allTrendLogs.filter(l => {
+    const t = new Date(l.reviewed_at);
+    return t >= weekStart && t < weekEnd;
+  });
+  const total = weekLogs.length;
+  const goodOrEasy = weekLogs.filter(l => l.response === 'good' || l.response === 'easy').length;
+  weeks.push({
+    week_start: weekStart.toISOString().split('T')[0],
+    total_reviews: total,
+    accuracy_pct: total > 0 ? parseFloat(((goodOrEasy / total) * 100).toFixed(1)) : null,
+  });
 }
 res.json({ trend: weeks });
 } catch (e) {
@@ -14842,6 +14986,7 @@ front: c.front_content || c.front || '',
 back: c.back_content || c.back || '',
 stage: c.stage || 0,
 isDue: !c.next_review_at || new Date(c.next_review_at) <= new Date(),
+next_review_at: c.next_review_at || null,
 reviewCount: c.review_count || c.reviewCount || 0,
 }));
 return {
@@ -15104,11 +15249,33 @@ app.use('/api/marketplace', marketplaceRouter);
 
 app.use('/api/narrative', narrativeRouter);
 
-// NOTE (Fix #6): reckoningRouter (/api/reckoning) is unreachable from any live client.
-// All reckoning operations go through brainRouter (/api/brain/reckoning/).
-// Its routes use a different contract (:id path param) vs brain router (user-derived ID).
-// Kept in place for potential future internal tooling — do not remove without audit.
-app.use('/api/reckoning', reckoningRouter);
+
+// F-12 FIX: Real contact endpoint — replaces silent setTimeout stub in frontend
+// In-memory store for now; hook to email/Brevo in production via CONTACT_EMAIL env
+const _contactMessages = [];
+app.post('/api/contact', async (req, res) => {
+  try {
+    const { name, email, message } = req.body || {};
+    if (!name || !email || !message) {
+      return res.status(400).json({ error: 'name, email and message are required' });
+    }
+    if (!/^[^@]+@[^@]+\.[^@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+    const entry = { name, email, message, received_at: new Date().toISOString() };
+    _contactMessages.push(entry);
+    // Optional: forward via Brevo if configured
+    if (process.env.CONTACT_EMAIL) {
+      sendBrevoEmail(process.env.CONTACT_EMAIL, 'contact_form', entry).catch(() => {});
+    }
+    console.log('[CONTACT]', entry.received_at, email);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to send message', details: e.message });
+  }
+});
+
+// F-06/F-21 FIX: reckoningRouter removed — dead code. All reckoning via /api/brain/reckoning/
 
 app.use('/api/brain', brainRouter);
 app.use('/api/bubbles', bubbleRouter);
@@ -15129,6 +15296,23 @@ app.get('/api/health', (req, res) => {
 // /api/progress/    → progressRouter.get('/trouble-cards', ...) etc.
 // /api/settings      → progressRouter.put('/settings', ...)
 // /api/dashboard     → progressRouter.get('/dashboard', ...)
+
+// ── Bug 2 Fix: Job polling endpoint — fallback for clients where WS is slow/unavailable ──
+const _jobsRouter = express.Router();
+_jobsRouter.use(authenticate);
+_jobsRouter.get('/:id', (req, res) => {
+  const job = _jobStore.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found or expired. Result may have already been delivered via WebSocket.' });
+  // Return result shaped the same way WS job_done delivers it
+  res.json({
+    status: job.status,
+    type: job.type,
+    result: job.result || null,
+    exam: job.result || null,   // alias: frontend _pollJobFallback reads job.result.exam
+    error: job.error || null,
+  });
+});
+app.use('/api/jobs', _jobsRouter);
 
 app.use('/api', progressRouter);
 
@@ -15257,67 +15441,49 @@ console.error('[KIWI CRON] Streak miss cron failed:', e.message);
 // ── Daily at 8:00 AM: Morning login reminder (email + Telegram) ──────────────
 
 cron.schedule('0 8 * * *', async () => {
-console.log('[KIWI CRON] Sending 8AM morning reminders...');
+// F-19 FIX: single pass — send streak_danger email if streak > 0, else plain reminder (not both)
+console.log('[KIWI CRON] Sending 8AM morning reminders (single-pass)...');
 const today8 = new Date().toISOString().slice(0, 10);
 try {
-const allUsers = await getUsersWithCache(); // Fix #33: TTL cache
-let sent = 0;
-for (const user of allUsers) {
-if (user.is_guest) continue;
-try {
-const prefs = user.notification_preferences || {};
-const stats = await db.userStats.get(user.id).catch(() => null);
-const lastStudy = stats?.last_study_date
-  ? new Date(stats.last_study_date).toISOString().slice(0, 10)
-  : null;
-if (lastStudy === today8) continue; // already studied today
-// Telegram
-if (prefs.telegram !== false && user.telegram_chat_id) {
-  await sendTelegramDailyReminder(user.id);
-  sent++;
-}
-// Email
-if (prefs.email !== false && user.email) {
-  await sendBrevoEmail(user.email, 'daily_login_reminder', {
-    name: user.username || 'Learner',
-    streak: stats?.current_streak || 0,
-    slot: 'morning',
-  }).catch(() => {});
-}
+  const allUsers = await getUsersWithCache();
+  let reminders = 0, danger = 0;
+  for (const user of allUsers) {
+    if (user.is_guest) continue;
+    try {
+      const prefs = user.notification_preferences || {};
+      const stats = await db.userStats.get(user.id).catch(() => null);
+      const lastStudy = stats?.last_study_date
+        ? new Date(stats.last_study_date).toISOString().slice(0, 10)
+        : null;
+      if (lastStudy === today8) continue; // already studied today — no email
+      const hasStreak = (stats?.current_streak || 0) > 0;
+      if (hasStreak) {
+        // User has an active streak at risk — send streak danger only
+        if (prefs.email !== false && user.email) {
+          await sendEmailNotification(user.id, 'streak_danger', { streak: stats.current_streak }).catch(() => {});
+          danger++;
+        }
+      } else {
+        // No streak — send plain daily reminder
+        if (prefs.telegram !== false && user.telegram_chat_id) {
+          await sendTelegramDailyReminder(user.id);
+          reminders++;
+        }
+        if (prefs.email !== false && user.email) {
+          await sendBrevoEmail(user.email, 'daily_login_reminder', {
+            name: user.username || 'Learner',
+            streak: 0,
+            slot: 'morning',
+          }).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.error(`[KIWI CRON] 8AM pass failed for ${user.id}:`, e.message);
+    }
+  }
+  console.log(`[KIWI CRON] 8AM done — reminders: ${reminders}, streak-danger: ${danger}`);
 } catch (e) {
-console.error(`[KIWI CRON] 8AM reminder failed for ${user.id}:`, e.message);
-}
-}
-console.log(`[KIWI CRON] 8AM reminders sent to ${sent} users`);
-} catch (e) {
-console.error('[KIWI CRON] 8AM cron failed:', e.message);
-}
-// Fix #31: reuse allUsers already fetched at top of this cron — eliminate duplicate findAll()
-try {
-const today = new Date().toISOString().slice(0, 10);
-const allUsersForStreak = allUsers;
-let dangerSent = 0;
-for (const user of allUsersForStreak) {
-if (user.is_guest) continue;
-try {
-const prefs = user.notification_preferences || {};
-if (prefs.email === false) continue;
-const stats = await db.userStats.get(user.id);
-if (!stats || (stats.current_streak || 0) <= 0) continue;
-const lastStudy = stats.last_study_date
-? new Date(stats.last_study_date).toISOString().slice(0, 10)
-: null;
-if (lastStudy !== today) {
-await sendEmailNotification(user.id, 'streak_danger', { streak: stats.current_streak }).catch(() => {});
-dangerSent++;
-}
-} catch (e) {
-console.error(`[KIWI CRON] Streak danger email failed for ${user.id}:`, e.message);
-}
-}
-console.log(`[KIWI CRON] Streak danger emails sent to ${dangerSent} users`);
-} catch (e) {
-console.error('[KIWI CRON] Streak danger email cron failed:', e.message);
+  console.error('[KIWI CRON] 8AM cron failed:', e.message);
 }
 });
 // ── Daily at 11:00 AM: Mid-morning login reminder (users who haven't studied today) ──
