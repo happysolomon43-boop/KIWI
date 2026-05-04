@@ -5234,9 +5234,44 @@
         outline-offset: 2px;
       }
 
+      /* ── Persistent AI Generation Banner (Fix 6) ─────────────────────────── */
+      #kiwiGenBanner {
+        display: none;
+        position: fixed;
+        bottom: 72px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 9999;
+        background: var(--card-bg, #1a2e1a);
+        border: 1px solid var(--green-bright, #52b788);
+        border-radius: 12px;
+        padding: 10px 18px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        display: none;
+        align-items: center;
+        gap: 12px;
+        font-size: var(--text-sm, 13px);
+        color: var(--text-1, #e0f0e0);
+        white-space: nowrap;
+        max-width: 90vw;
+      }
+      #kiwiGenBanner.active { display: flex !important; }
+      #kiwiGenBanner .gen-spinner {
+        width: 14px; height: 14px;
+        border: 2px solid var(--green-bright, #52b788);
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
       </style>
   </head>
   <body>
+  <!-- Persistent AI generation indicator (Fix 6) — lives outside mainContent so it survives navigation -->
+  <div id="kiwiGenBanner">
+    <div class="gen-spinner"></div>
+    <span id="kiwiGenBannerMsg">Generating...</span>
+  </div>
     <div class="ambient-particles"></div>
     <div id="app">
       <div class="mobile-bar">
@@ -5444,6 +5479,7 @@
               var job_id = _jd.job_id, type = _jd.type, result = _jd.result, exam = _jd.exam;
               if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(job_id);
               if (type === 'note_generation') {
+                _hideGenBanner();
                 var count = (result && result.count) || 0;
                 if (typeof showToast === 'function') showToast('✅ ' + count + ' card' + (count !== 1 ? 's' : '') + ' generated and added to your deck.', 'success', 7000);
                 var resultEl = document.getElementById('aiNotesResult');
@@ -5462,6 +5498,7 @@
                 }
               }
               if (type === 'cbt_generation') {
+                _hideGenBanner();
                 var examData = (exam && (exam.exam || exam)) || (result && (result.exam || result));
                 if (!examData || !examData.id) { if (typeof showToast === 'function') showToast('⚠ Exam ready but data missing — please refresh.', 'error'); return; }
                 if (typeof showToast === 'function') showToast('✅ Exam ready! Taking you there now…', 'success', 4000);
@@ -5480,7 +5517,10 @@
                     isReckoning: _isReck,
                   };
                   if (typeof apiRequest === 'function') apiRequest('/exams/' + examData.id + '/start', { method: 'POST' }).catch(function(){});
-                  if (typeof navigateTo === 'function') navigateTo('exam');
+                  // Fix 7: lock page while exam is active
+                  var _examIsReck = !!(examData.is_reckoning || examData.isReckoning);
+                  _lockExamPage(_examIsReck);
+                  if (typeof navigateTo === 'function') { _origNavigateTo ? _origNavigateTo('exam') : navigateTo('exam'); }
                 }
               }
               if (type === 'exam_submit') {
@@ -5495,6 +5535,7 @@
             if (msg.event === 'job_failed') {
               var _jf = msg.data || {};
               if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(_jf.job_id);
+              _hideGenBanner();
               var _labels = { note_generation: 'Note generation', cbt_generation: 'Exam generation', exam_submit: 'Exam submission' };
               if (typeof showToast === 'function') showToast('⚠ ' + (_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
               if (_jf.type === 'cbt_generation') {
@@ -5535,18 +5576,148 @@
       let _appBooting = !!authToken; // only relevant when we have a stored token to validate
       let _sessionExpiredNotified = false; // prevents duplicate "Session expired" toasts
 
+      // ── Fix 7: Exam / Study Session page-lock ─────────────────────────────────
+      var _examPageLocked = false;      // true while a CBT exam is in progress
+      var _examIsReckoning = false;     // true if current exam is a Reckoning (no forfeit)
+      var _studyPageLocked = false;     // true while a smart study session is active
+
+      function _lockExamPage(isReckoning) {
+        _examPageLocked = true;
+        _examIsReckoning = !!isReckoning;
+      }
+      function _unlockExamPage() {
+        _examPageLocked = false;
+        _examIsReckoning = false;
+      }
+      function _lockStudyPage() { _studyPageLocked = true; }
+      function _unlockStudyPage() { _studyPageLocked = false; }
+
+      // beforeunload — warn on tab close / hard refresh during exam
+      window.addEventListener('beforeunload', function(e) {
+        if (_examPageLocked || _studyPageLocked) {
+          var msg = 'You have an active ' + (_examPageLocked ? 'exam' : 'study session') + '. Leaving will forfeit it.';
+          e.preventDefault();
+          e.returnValue = msg;
+          return msg;
+        }
+      });
+
+      // Modal shown when navigateTo is intercepted during an active exam/session
+      function _showExitWarningModal(onSubmit, onForfeit, isReckoning, isStudy) {
+        var existing = document.getElementById('_exitWarnModal');
+        if (existing) existing.remove();
+        var m = document.createElement('div');
+        m.id = '_exitWarnModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;';
+        var title = isStudy ? 'Leave Study Session?' : 'Leave Exam?';
+        var body  = isStudy
+          ? 'You are in an active study session. Leaving will forfeit your progress and affect your card states.'
+          : 'You are in an active exam. Leaving will forfeit it and negatively affect your Knowledge Score and card states.';
+        var forfeitBtn = isReckoning
+          ? '' // Reckoning exams cannot be forfeited
+          : '<button id="_ewForfeit" style="background:#c0392b;color:#fff;border:none;border-radius:8px;padding:12px 22px;cursor:pointer;font-size:14px;font-weight:600;">Forfeit ' + (isStudy ? 'Session' : 'Exam') + '</button>';
+        m.innerHTML =
+          '<div style="background:var(--card-bg,#1a2e1a);border:1px solid var(--green-bright,#52b788);border-radius:16px;padding:32px;max-width:420px;width:92%;text-align:center;">' +
+          '<div style="font-size:20px;font-weight:700;color:var(--red-bright,#e57373);margin-bottom:12px;">' + title + '</div>' +
+          '<div style="font-size:14px;color:var(--text-2,#aaa);margin-bottom:24px;">' + body + (isReckoning ? '<br><br><strong style="color:var(--gold,#c9a227);">⚔ Reckoning exams cannot be forfeited.</strong>' : '') + '</div>' +
+          '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">' +
+          '<button id="_ewContinue" style="background:var(--green-bright,#52b788);color:#0a1a0a;border:none;border-radius:8px;padding:12px 22px;cursor:pointer;font-size:14px;font-weight:600;">Continue ' + (isStudy ? 'Session' : 'Exam') + '</button>' +
+          forfeitBtn +
+          '</div></div>';
+        document.body.appendChild(m);
+        document.getElementById('_ewContinue').onclick = function() { m.remove(); };
+        if (!isReckoning) {
+          var fb = document.getElementById('_ewForfeit');
+          if (fb) fb.onclick = function() {
+            m.remove();
+            if (isStudy) { _unlockStudyPage(); } else { _unlockExamPage(); }
+            if (typeof onForfeit === 'function') onForfeit();
+          };
+        }
+      }
+
+      // Wrap navigateTo to intercept during locked states
+      var _origNavigateTo = null; // set after navigateTo is defined
+      function _installExamNavGuard() {
+        if (_origNavigateTo) return; // already installed
+        if (typeof navigateTo !== 'function') return;
+        _origNavigateTo = navigateTo;
+        navigateTo = function(page, params) {
+          if (_examPageLocked) {
+            _showExitWarningModal(
+              null, // onSubmit (not used — exam auto-submits on forfeit)
+              function() {
+                // Forfeit: mark exam as forfeited via API then navigate
+                if (typeof AppState !== 'undefined' && AppState.tempExam && AppState.tempExam.examId) {
+                  apiRequest('/exams/' + AppState.tempExam.examId + '/forfeit', { method: 'POST' })
+                    .catch(function(){});
+                }
+                _unlockExamPage();
+                _origNavigateTo(page, params);
+              },
+              _examIsReckoning,
+              false
+            );
+            return;
+          }
+          if (_studyPageLocked) {
+            _showExitWarningModal(
+              null,
+              function() {
+                _unlockStudyPage();
+                _origNavigateTo(page, params);
+              },
+              false,
+              true
+            );
+            return;
+          }
+          _origNavigateTo(page, params);
+        };
+      }
+
       // ── APPLICATION STATE ──
 
       // ── Background Job WebSocket listener ────────────────────────────────────
       // job_done / job_failed events are now handled inside initKiwiWS onmessage.
       // setupKiwiWS is kept as a thin alias so existing call-sites still work.
+      // Fix 7: install exam nav guard once navigateTo is available
+      setTimeout(_installExamNavGuard, 100);
       function setupKiwiWS(token) {
         initKiwiWS(); // delegates to the existing WS connection
       }
 
       // Track pending jobs for optional polling fallback
       const _pendingJobs = new Map(); // jobId → { type, pollInterval }
+
+      // ── Fix 6: Persistent generation status banner ──────────────────────────
+      function _showGenBanner(msg) {
+        var b = document.getElementById('kiwiGenBanner');
+        var m = document.getElementById('kiwiGenBannerMsg');
+        if (!b) return;
+        if (m) m.textContent = msg || 'Generating...';
+        b.classList.add('active');
+        try { localStorage.setItem('kiwi_gen_banner', msg || 'Generating...'); } catch(_) {}
+      }
+      function _hideGenBanner() {
+        var b = document.getElementById('kiwiGenBanner');
+        if (b) b.classList.remove('active');
+        try { localStorage.removeItem('kiwi_gen_banner'); } catch(_) {}
+      }
+      // Restore banner on page load if a generation was in progress
+      (function() {
+        try {
+          var saved = localStorage.getItem('kiwi_gen_banner');
+          if (saved) {
+            // Delay slightly so DOM is ready
+            setTimeout(function() { _showGenBanner(saved); }, 300);
+          }
+        } catch(_) {}
+      })();
+      // FIX 6: Show generation banner when a background job starts polling
       function _pollJobFallback(jobId, token, type) {
+        var _bannerLabels = { cbt_generation: '🥝 Exam generation in progress…', note_generation: '🥝 Note generation in progress…' };
+        if (_bannerLabels[type]) _showGenBanner(_bannerLabels[type]);
         if (_pendingJobs.has(jobId)) return;
         const iv = setInterval(async () => {
           try {
@@ -6305,7 +6476,15 @@
       api.deleteCard = async (cardId) => apiRequest('/cards/' + cardId, { method: 'DELETE' });
       api.updateCard = async (cardId, front, back) => apiRequest('/cards/' + cardId, { method: 'PATCH', body: { front, back } });
       // Issue-055: Delete deck/subject (subject delete cascades on backend)
-      api.deleteDeck = async (subjectId) => apiRequest('/subjects/' + subjectId, { method: 'DELETE' });
+      // FIX: deleteDeck now correctly targets /decks/:id (was wrongly hitting /subjects/)
+      api.deleteDeck = async (deckId) => apiRequest('/decks/' + deckId, { method: 'DELETE' });
+      // FIX: deleteSubject was never defined — added
+      api.deleteSubject = async (subjectId) => apiRequest('/subjects/' + subjectId, { method: 'DELETE' });
+      // FIX: createDeck was never defined — used by Quick Subject button and onboarding
+      api.createDeck = async (subjectId, name) => apiRequest('/decks', {
+        method: 'POST',
+        body: { subject_id: subjectId, name: (name && typeof name === 'object') ? name.name : name }
+      });
       // Issue-056: Reset card to SEEDLING
       api.resetCard = async (cardId) => apiRequest('/cards/' + cardId + '/reset', { method: 'POST' });
       // Issue-058/059/060: TXT, MD, PPTX import
@@ -6370,6 +6549,10 @@
       // ── Tier 1 Fix #1+2: import pipeline (POST /api/cards/import/*) ──
       // Path note: backend uses /api/cards/import/* (not plan's /api/import/file alias).
       // Frontend wired to actual backend paths to match live routes.
+      // FIX 6: Show persistent banner when note generation starts
+      api._startNoteGeneration = function(deckId, notes, subjectHint) {
+        _showGenBanner('🥝 Note generation in progress…');
+      };
       api.importFromNotes = async function(deckId, notes, subjectHint) {
         return await apiRequest("/cards/import/ai", {
           method: "POST",
@@ -6460,10 +6643,13 @@
       };
 
       api.createSubject = async (name, color, icon, exam_date) => {
-        // Backend: POST /library/subjects → accepts {name, color, icon, exam_date}
-        // Backend also auto-creates a default deck for this subject
-        const body = { name, color, icon };
-        if (exam_date) body.exam_date = exam_date;
+        // Accept either positional args OR a single config object {name,color,icon,emoji,exam_date}
+        let _n = name, _c = color, _i = icon, _e = exam_date;
+        if (name && typeof name === 'object' && !Array.isArray(name)) {
+          _n = name.name; _c = name.color || color; _i = name.icon || name.emoji || icon; _e = name.exam_date || exam_date;
+        }
+        const body = { name: _n, color: _c, icon: _i };
+        if (_e) body.exam_date = _e;
         return await apiRequest("/library/subjects", {
           method: "POST",
           body,
@@ -8288,9 +8474,9 @@
               <div class="tree-health-bar">
                 <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">Health</span>
                 <div class="tree-health-track">
-                  <div class="tree-health-fill" style="width:${treeState.health}%;background:${treeState.health > 60 ? "var(--green-bright)" : treeState.health > 30 ? "var(--gold)" : "var(--red-bright)"}"></div>
+                  <div class="tree-health-fill" style="width:${Math.max(0,Math.min(100,treeState.health||0))}%;background:${(treeState.health||0) > 60 ? "var(--green-bright)" : (treeState.health||0) > 30 ? "var(--gold)" : "var(--red-bright)"}"></div>
                 </div>
-                <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">${treeState.health}%</span>
+                <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">${Math.max(0,Math.min(100,treeState.health||0))}%</span>
               </div>
               `
                   : ""
@@ -13133,13 +13319,14 @@
             const due = subj.dueCount || 0;
             return `
           <div class="subject-section">
-            <div class="subject-header" data-subj="${escapeHTML(subj.id)}">
+            <div class="subject-header" data-subj="${escapeHTML(subj.id)}" style="cursor:pointer;" onclick="(function(el){var g=el.closest('.subject-section').querySelector('.deck-grid');var t=el.querySelector('.subj-toggle');if(g){var collapsed=g.style.display==='none';g.style.display=collapsed?'':'none';if(t)t.textContent=collapsed?'▼':'▶';}})(this)">
               <span class="subject-color-dot" style="background:${escapeHTML(subj.color || "#52b788")}"></span>
+              <span class="subj-toggle" style="font-size:var(--text-xs);color:var(--text-3);margin-right:6px;user-select:none;">▶</span>
               <span class="subject-name-text">${subj.icon ? escapeHTML(subj.icon) : "&#x25A0;"} ${escapeHTML(subj.name)}</span>
               <span class="subject-meta">${subj.cardCount || 0} cards ${due > 0 ? `<span style="color:var(--green-bright);font-weight:700;">&bull; ${due} due</span>` : ""}</span>
-              <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:#e57373;font-size:var(--text-xs);" onclick="handleDeleteSubject('${escapeHTML(subj.id)}', '${escapeHTML(subj.name)}')">Delete</button>
+              <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:#e57373;font-size:var(--text-xs);" onclick="event.stopPropagation();handleDeleteSubject('${escapeHTML(subj.id)}', '${escapeHTML(subj.name)}')">Delete</button>
             </div>
-            <div class="deck-grid">
+            <div class="deck-grid" style="display:none;">
               ${(subj.recentCards || [])
                 .map((c) => {
                   const stage = c.stage || c.level || 1;
@@ -14604,10 +14791,10 @@
             const t = templates[idx];
             if (!t) return;
             try {
-              showToast(`Importing ${t.subject} deck...`, "info");
+              showToast(`Importing ${t.subject || t.title || 'community'} deck...`, "info");
               // Find or create subject
               let subj = AppState.subjects.find((s) =>
-                s.name.toLowerCase().includes(t.subject.toLowerCase()),
+                s.name.toLowerCase().includes((t.subject || t.title || '').toLowerCase()),
               );
               if (!subj) {
                 const colors = [
@@ -14620,7 +14807,7 @@
                   "#30c0d0",
                 ];
                 const result = await api.createSubject(
-                  t.subject,
+                  t.subject || t.title || 'Community',
                   colors[AppState.subjects.length % colors.length],
                   "&#x25A0;",
                 );
@@ -14629,7 +14816,7 @@
               }
               // Import deck via API (F12 / F22 — no hardcoded mock data)
               const deckId = t.id || t.title;
-              await api.importCommunityDeck(deckId);
+              await api.importCommunityDeck(deckId, subj ? subj.id : null);
               showToast(`Imported ${escapeHTML(t.title)} to library`, "success");
               navigateTo("library");
             } catch (err) {

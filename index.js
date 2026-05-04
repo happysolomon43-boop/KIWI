@@ -790,10 +790,17 @@ async findMany(userId, filters = {}, { limit = 20, offset = 0 } = {}) {
   let sql = 'SELECT * FROM exam_sessions WHERE user_id = $1';
   const vals = [userId];
   if (filters.status) { sql += ` AND status = $${vals.length + 1}`; vals.push(filters.status); }
+  if (filters.started_at_gte) { sql += ` AND started_at >= $${vals.length + 1}`; vals.push(filters.started_at_gte); }
   vals.push(limit, offset);
   sql += ` ORDER BY created_at DESC LIMIT $${vals.length - 1} OFFSET $${vals.length}`;
   const { rows } = await query(sql, vals);
   return rows;
+},
+// FIX: Add missing delete method — called by background exam generation on parse failure
+async delete(userId, id) {
+  await query('DELETE FROM exam_questions WHERE exam_session_id = $1 AND user_id = $2', [id, userId]);
+  await query('DELETE FROM exam_sessions WHERE id = $1 AND user_id = $2', [id, userId]);
+  return true;
 },
 },
 // ── exam_questions ──────────────────────────────────────────────────────────
@@ -7121,7 +7128,7 @@ const zoneHealthValues = subjectsData.map(s => zoneHealthMap[s.zone] || 50);
 const derivedTreeHealth = zoneHealthValues.length > 0
 ? Math.round(zoneHealthValues.reduce((a, b) => a + b, 0) / zoneHealthValues.length)
 : 100;
-const blendedTreeHealth = Math.round((derivedTreeHealth + (stats?.tree_health || 100)) / 2);
+const blendedTreeHealth = Math.max(0, Math.min(100, Math.round((derivedTreeHealth + (stats?.tree_health || 100)) / 2)));
 return {
 user_id: userId,
 username: user?.username,
@@ -12488,6 +12495,38 @@ card_range,
 time_limit_seconds,
 status: 'ready',
 });
+// ── POST /api/exams/:id/forfeit — forfeit an in-progress exam, apply penalties ──
+examRouter.post('/:id/forfeit', async (req, res) => {
+try {
+  const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+  if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (exam.is_reckoning) return res.status(403).json({ error: 'Reckoning exams cannot be forfeited' });
+  if (exam.status === 'forfeited' || exam.status === 'completed') {
+    return res.status(400).json({ error: 'Exam already ended' });
+  }
+  // Mark exam as forfeited
+  await db.examSessions.update(req.user.id, req.params.id, {
+    status: 'forfeited',
+    completed_at: new Date(),
+  });
+  // Penalty: -10 tree_health, +1 pressure on each subject the exam covered
+  await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch(() => {});
+  if (exam.subject_id) {
+    const bp = await db.brainPressure.get(req.user.id, exam.subject_id);
+    const cur = bp ? bp.pressure_score || 0 : 0;
+    await db.brainPressure.set(req.user.id, exam.subject_id, {
+      pressure_score: Math.min(100, cur + 15),
+      intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
+    }).catch(() => {});
+    // Recompute KS with forfeiture penalty
+    await persistKnowledgeScore(req.user.id, exam.subject_id).catch(() => {});
+  }
+  res.json({ success: true, message: 'Exam forfeited. Penalties applied.' });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to forfeit exam', details: e.message });
+}
+});
+
 // FIX: strip {{c1::answer}} cloze syntax before sending to AI — raw cloze
 // markup confuses Gemini and produces garbled distractors/stems.
 const _stripCloze = (s) => (s || '').replace(/\{\{c\d+::([^}]*)\}\}/g, '$1');
@@ -15600,6 +15639,29 @@ previous_week_ks_recorded_at: new Date().toISOString(),
 }).catch(() => {});
 }
 await hookSeedlingEarnings(user.id, 'weekly_chronicle', {});
+// Send weekly digest email — pull stats for the past 7 days
+try {
+  const weekStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const [weekSessions, weekExams, userStats] = await Promise.all([
+    db.sessions.findMany(user.id, { session_completed: true, started_at_gte: weekStart }, { limit: 200 }).catch(() => []),
+    db.examSessions.findMany(user.id, { status: 'completed', started_at_gte: weekStart }, { limit: 200 }).catch(() => []),
+    db.userStats.get(user.id).catch(() => null),
+  ]);
+  const reviews = weekSessions.reduce((sum, s) => sum + (s.cards_studied || 0), 0);
+  const exams = weekExams.length;
+  const ksDelta = userStats
+    ? Math.round((userStats.ks_score || 0) - (userStats.previous_week_ks || 0))
+    : 0;
+  await sendEmailNotification(user.id, 'weekly_digest', {
+    name: user.username || 'Learner',
+    reviews,
+    exams,
+    ksDelta,
+    streak: userStats?.current_streak || 0,
+  });
+} catch (e) {
+  console.error(`[KIWI CRON] Weekly digest email failed for ${user.id}:`, e.message);
+}
 } catch (e) {
 console.error(`[KIWI CRON] Weekly gen failed for ${user.id}:`, e.message);
 }
@@ -15611,20 +15673,10 @@ console.error('[KIWI CRON] Weekly cron failed:', e.message);
 });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  ERROR HANDLING & HEALTH
-
-// ════════════════════════════════════════════════════════════════════════════
-
-
-app.use((req, res) => {
-res.status(404).json({ error: 'Not found', path: req.path });
-});
-
-app.use((err, req, res, next) => {
-console.error('[KIWI ERROR]', err);
-res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
-});
+// NOTE: 404 and error handlers moved inside startServer() so they are
+// registered AFTER the notification routes (which also live in startServer).
+// Express matches middleware in registration order — placing these here would
+// swallow every request to /api/notifications/* before the real handlers fire.
 
 // ════════════════════════════════════════════════════════════════════════════
 //  SERVER STARTUP
@@ -15940,6 +15992,11 @@ async function sendBrevoEmail(toEmail, templateName, params = {}) {
     console.warn(`[KIWI] No Brevo API keys configured. Would have sent "${templateName}" to ${toEmail}. Set BREVO_API_KEY env var to enable emails.`);
     return false;
   }
+  // Resolve app URL once — works on Render (APP_URL), Replit (REPLIT_DOMAINS), or local dev
+  const appUrl = process.env.APP_URL
+    || (process.env.REPLIT_DOMAINS ? 'https://' + process.env.REPLIT_DOMAINS.split(',')[0].trim() : '')
+    || 'https://kiwi.app';
+  params = { ...params, appUrl };
   const templates = {
     welcome: {
       subject: 'Welcome to KIWI 🥝',
@@ -15958,8 +16015,31 @@ async function sendBrevoEmail(toEmail, templateName, params = {}) {
       htmlContent: `<html><body><h1>Streak Reset</h1><p>Your ${params.streak || 0}-day streak has ended. Every ending is a new beginning — start again today.</p></body></html>`,
     },
     weekly_digest: {
-      subject: 'Your Weekly KIWI Chronicle',
-      htmlContent: `<html><body><h1>Weekly Digest</h1><p>Reviews: ${params.reviews || 0}</p><p>Exams: ${params.exams || 0}</p><p>KS change: ${params.ksDelta || 0}</p></body></html>`,
+      subject: 'Your Weekly KIWI Chronicle 🥝',
+      htmlContent: `<html><body style="background:#030d0b;color:#dff2eb;font-family:sans-serif;padding:24px;">
+<h1 style="color:#52b788;">🥝 Your Week in KIWI</h1>
+<p>Hi ${params.name || 'Learner'},</p>
+<p>Here's what you accomplished this week:</p>
+<table style="border-collapse:collapse;width:100%;max-width:400px;margin:16px 0;">
+  <tr><td style="padding:8px 0;border-bottom:1px solid #1b4332;">📚 Reviews completed</td><td style="padding:8px 0;border-bottom:1px solid #1b4332;text-align:right;"><strong>${params.reviews || 0}</strong></td></tr>
+  <tr><td style="padding:8px 0;border-bottom:1px solid #1b4332;">📝 Exams taken</td><td style="padding:8px 0;border-bottom:1px solid #1b4332;text-align:right;"><strong>${params.exams || 0}</strong></td></tr>
+  <tr><td style="padding:8px 0;">📈 Knowledge score change</td><td style="padding:8px 0;text-align:right;"><strong>${params.ksDelta >= 0 ? '+' : ''}${params.ksDelta || 0}%</strong></td></tr>
+</table>
+${params.streak > 0 ? `<p>🔥 Current streak: <strong>${params.streak} days</strong> — keep it going!</p>` : ''}
+<p><a href="${params.appUrl}" style="background:#2d6a4f;color:#dff2eb;padding:10px 20px;border-radius:8px;text-decoration:none;display:inline-block;margin-top:8px;">Open KIWI →</a></p>
+<p style="color:#4a7a65;font-size:12px;margin-top:24px;">You are receiving this weekly digest because you have email notifications enabled. Turn off in Settings → Notifications.</p>
+</body></html>`,
+    },
+    contact_form: {
+      subject: `[KIWI Contact] Message from ${params.name || 'Unknown'} <${params.email || ''}>`,
+      htmlContent: `<html><body style="font-family:sans-serif;padding:24px;">
+<h2>New Contact Form Submission</h2>
+<p><strong>From:</strong> ${params.name || 'Unknown'} &lt;${params.email || 'no email'}&gt;</p>
+<p><strong>Received:</strong> ${params.received_at || new Date().toISOString()}</p>
+<hr style="border:1px solid #ccc;margin:16px 0;"/>
+<p><strong>Message:</strong></p>
+<p style="white-space:pre-wrap;">${params.message || '(no message)'}</p>
+</body></html>`,
     },
     daily_login_reminder: {
       subject: params.slot === 'afternoon'
@@ -15972,7 +16052,7 @@ ${params.slot === 'afternoon'
   ? `<p>The afternoon is still yours. ${params.streak > 0 ? `Your <strong>${params.streak}-day streak</strong> is on the line — a quick review is all it takes.` : 'Start a new streak today with even 5 minutes of review.'}</p>`
   : `<p>Good morning! Your spaced-repetition cards are due today. ${params.streak > 0 ? `You're on a <strong>${params.streak}-day streak</strong> — keep it alive!` : 'Start your first streak today!'}</p>`
 }
-<p><a href="${process.env.APP_URL || (process.env.REPLIT_DOMAINS ? 'https://' + process.env.REPLIT_DOMAINS.split(',')[0].trim() : '')}" style="background:#2d6a4f;color:#dff2eb;padding:10px 20px;border-radius:8px;text-decoration:none;display:inline-block;margin-top:8px;">Open KIWI →</a></p>
+<p><a href="${params.appUrl}" style="background:#2d6a4f;color:#dff2eb;padding:10px 20px;border-radius:8px;text-decoration:none;display:inline-block;margin-top:8px;">Open KIWI →</a></p>
 <p style="color:#4a7a65;font-size:12px;margin-top:24px;">You are receiving this because you have login reminders enabled. Turn off in Settings → Notifications.</p>
 </body></html>`,
     },
@@ -16293,6 +16373,15 @@ console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear ab
       } catch (e) {
         res.status(500).json({ error: 'Set webhook failed', details: e.message });
       }
+    });
+
+    // ── Error handling — registered last so all routes above are matched first ──
+    app.use((req, res) => {
+      res.status(404).json({ error: 'Not found', path: req.path });
+    });
+    app.use((err, req, res, next) => {
+      console.error('[KIWI ERROR]', err);
+      res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
     });
 
     const _httpServer = app.listen(PORT, () => {
