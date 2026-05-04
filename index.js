@@ -35,12 +35,8 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { WebSocketServer } = require('ws');
 
-if (!process.env.DATABASE_URL) {
-  console.error('[KIWI] FATAL: DATABASE_URL environment variable is not set. Exiting.');
-  process.exit(1);
-}
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
   ssl: { rejectUnauthorized: false },
   max: 25, // Increased for concurrent users; Supabase session-mode cap is 15 so DATABASE_URL env should use transaction-mode pooler
   idleTimeoutMillis: 30000,
@@ -177,6 +173,30 @@ const PAGE_SIZE = 20;
 
 // ── WebSocket client registry ─────────────────────────────────────────────────
 const _wsClients = new Map(); // userId (string) → Set<WebSocket>
+
+// ── Background Job Queue ─────────────────────────────────────────────────────
+// Heavy AI tasks return a job_id immediately. Results arrive via WebSocket
+// (job_done / job_failed) and can also be polled at GET /api/jobs/:id.
+const _jobs = new Map(); // jobId → { id, userId, type, status, result, error, createdAt }
+
+function createJob(userId, type) {
+  const id = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  _jobs.set(id, {
+    id, userId: String(userId), type,
+    status: 'pending', result: null, error: null, createdAt: Date.now(),
+  });
+  setTimeout(() => _jobs.delete(id), 15 * 60 * 1000); // expire after 15 min
+  return id;
+}
+function resolveJob(jobId, result) {
+  const job = _jobs.get(jobId);
+  if (job) { job.status = 'done'; job.result = result; }
+}
+function failJob(jobId, errorMsg) {
+  const job = _jobs.get(jobId);
+  if (job) { job.status = 'failed'; job.error = errorMsg; }
+}
+
 function wsSend(userId, event, data) {
   const clients = _wsClients.get(String(userId));
   if (!clients) return;
@@ -4512,6 +4532,7 @@ STUCK: 'STUCK',
 AVOIDED: 'AVOIDED',
 DANGEROUS: 'DANGEROUS',
 GHOST: 'GHOST',
+SLIPPING: 'SLIPPING',
 };
 
 function daysBetween(dateA, dateB) {
@@ -4567,11 +4588,11 @@ const now = new Date();
 if (!reviewLogs || reviewLogs.length === 0) {
 return { state: CARD_STATES.SEEDLING, stage: stage || 1, verified: false };
 }
-// GHOST: Stage 5, not reviewed in >=60 days
+// GHOST: Stage 5, not reviewed in >=20 days (semester early-decay threshold)
 // FIX #2: Preserve verified status — GHOST must not wipe VERIFIED.
 if (stage === 5) {
 const daysSinceReview = daysSince(last_reviewed_at);
-if (daysSinceReview >= 60) {
+if (daysSinceReview >= 20) {
 return {
 state: CARD_STATES.GHOST,
 stage: 5,
@@ -4606,27 +4627,52 @@ const stagesInLast14 = validStageLogs.length > 0
   ? [...new Set(validStageLogs.map((l) => l.new_stage))]
   : [stage]; // no stage data → assume stage unchanged, allow response-quality check
 if (stagesInLast14.length === 1 && stagesInLast14[0] === stage) {
-const last3 = recentLogs.slice(0, 3);
-const badResponses = last3.filter(
+// VELOCITY-BASED STUCK: quality trend tracked over last 5 responses.
+// Catches "Good → Hard → Again" decay earlier than a fixed last-3 count.
+const responseScore = (r) => ({ easy: 3, good: 2, hard: 1, again: 0 })[r] ?? 2;
+const last5 = recentLogs.slice(0, 5);
+const scores = last5.map(l => responseScore(l.response));
+// Compare recent 3 vs prior 2 — negative delta means decaying trend
+const recentAvg = (scores[0] + scores[1] + scores[2]) / 3;
+const olderAvg  = scores.length >= 5 ? (scores[3] + scores[4]) / 2 : recentAvg;
+const trendDecaying = recentAvg < olderAvg;
+const badInLast3 = last5.slice(0, 3).filter(
 (l) => l.response === 'again' || l.response === 'hard'
 ).length;
-if (badResponses >= 2) {
+// Fire STUCK if: (a) 2+ bad in last 3, OR (b) trend clearly decaying AND 1+ bad in last 3
+if (badInLast3 >= 2 || (trendDecaying && badInLast3 >= 1)) {
 return { state: CARD_STATES.STUCK, stage, verified: false };
 }
 }
 }
-// AVOIDED: due >=3 days, pattern of >=3 overdue occurrences in last 14 days
+// AVOIDED: 7+ days overdue once is sufficient (severe single event).
+// Moderate path: 3+ days overdue with 2+ prior overdue occurrences in 14 days (was 3).
 if (next_review_at) {
 const daysOverdue = daysBetween(new Date(next_review_at), now);
+// Severe: one 7+ day overdue event = immediate AVOIDED
+if (daysOverdue >= 7) {
+return { state: CARD_STATES.AVOIDED, stage, verified: false };
+}
+// Moderate: repeated avoidance pattern
 if (daysOverdue >= 3) {
 const overdueOccurrences = recentLogs.filter((l) => {
 if (!l.next_review_at) return false;
 const overdue = daysBetween(new Date(l.next_review_at), new Date(l.reviewed_at)) >= 3;
 return overdue && daysSince(l.reviewed_at) <= 14;
 }).length;
-if (overdueOccurrences >= 3) {
+if (overdueOccurrences >= 2) {
 return { state: CARD_STATES.AVOIDED, stage, verified: false };
 }
+}
+}
+// SLIPPING: early-warning state — last 2 responses both Again/Hard.
+// Fires with as few as 2 reviews. Lower severity than STUCK (+1 pressure).
+// AVOIDED takes priority: this check only reaches here if not overdue enough for AVOIDED.
+if (recentLogs.length >= 2) {
+const last2 = recentLogs.slice(0, 2);
+const slippingBad = last2.filter((l) => l.response === 'again' || l.response === 'hard').length;
+if (slippingBad >= 2) {
+return { state: CARD_STATES.SLIPPING, stage, verified: false };
 }
 }
 // Stage 5: FRAGILE vs VERIFIED
@@ -6046,6 +6092,12 @@ if (stuckCards.length >= 10) {
 pressureSources.stuck_bulk = 2;
 pressureScore += 2;
 }
+// 3b. SLIPPING cards — early-warning pressure (+1 each, capped at +5)
+const slippingCards = cardStates.filter((cs) => cs.state.state === CARD_STATES.SLIPPING);
+if (slippingCards.length > 0) {
+pressureSources.slipping = Math.min(5, slippingCards.length);
+pressureScore += pressureSources.slipping;
+}
 // 4. KS >70 but credential below Competent (+3)
 const ksData = await computeKnowledgeScore(userId, subjectId);
 const credential = await getCurrentCredential(userId, subjectId);
@@ -6109,6 +6161,17 @@ const existingPressure = await db.brainPressure.get(userId, subjectId);
 if (existingPressure?.alert_ignored_at && daysSince(existingPressure.alert_ignored_at) >= 3) {
 pressureSources.ignored_alert = 2;
 pressureScore += 2;
+}
+// 10. AI explanation over-reliance (ai_crutch) — pressure for leaning too heavily
+// on AI summaries instead of genuine retention. Threshold: >4 AI explain calls
+// for this subject in the past 24 h. +1 per 3 excess calls, capped at +5.
+// Intent: if you always hit "Explain" instead of recalling, the system knows.
+const aiExplainCount = (typeof getAIExplainCount === 'function')
+  ? getAIExplainCount(userId, subjectId) : 0;
+if (aiExplainCount > 4) {
+const aiCrutchPressure = Math.min(5, Math.floor((aiExplainCount - 4) / 3) + 1);
+pressureSources.ai_crutch = aiCrutchPressure;
+pressureScore += aiCrutchPressure;
 }
 // ── PB.11: 7 Bubble pressure sources [DESIGN: §15.1] ────────────────────────
 // ⚠ CORRECTED from v1.0: correct pressure values, DRIFTING added (+1),
@@ -6607,12 +6670,16 @@ interval_days: 1,
 repetition_count: 0,
 next_review_at: new Date(Date.now() + 86400000),
 });
-await db.cardStates.update(userId, card.id, {
-state: newStage === 1 ? CARD_STATES.GROWING : CARD_STATES.STABLE,
-stage: newStage,
-verified: false,
-});
+// ⚠ FIX: Do NOT force state to GROWING/STABLE here — that overwrites the real
+// classifier (determineCardState) and zeros out all pressure. Instead, queue
+// a proper recompute so determineCardState assigns the correct state (STUCK,
+// GHOST, FRAGILE, etc.) based on full review history + exam logs.
+queueKSRecompute(userId, card.id);
 reclassified.push({ card_id: card.id, old_stage: card.stage, new_stage: newStage });
+}
+// Queue recompute for correct answers too — they may unlock VERIFIED state
+if (q.is_correct === true && q.card_id) {
+queueKSRecompute(userId, q.card_id);
 }
 }
 return reclassified;
@@ -9911,7 +9978,7 @@ Return only the inscription.
 const app = express();
 
 const _corsOptions = {
-  origin: '*',
+  origin: ['https://happysolomon43-boop.github.io', 'https://kiwi-741i.onrender.com', 'http://localhost:5500', 'http://localhost:8080'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -9947,6 +10014,31 @@ officeparser = null;
 }
 // ── AI Rate Limiter (B5) ──────────────────────────────────────────────────────
 const aiCallTracker = new Map(); // key: `${userId}:${endpoint}` → {count, resetAt}
+
+// ── AI Explanation Subject Tracker ────────────────────────────────────────────
+// Tracks daily AI summary (explain) calls per user per subject.
+// Used by calculateSubjectPressure to detect AI over-reliance (ai_crutch source).
+// Resets per 24-hour window. Server restart resets all counts (acceptable — in-memory).
+const _aiExplainBySubject = new Map(); // key: `${userId}:${subjectId}` → {count, resetAt}
+
+function recordAIExplainForSubject(userId, subjectId) {
+  if (!subjectId) return;
+  const key = `${userId}:${subjectId}`;
+  const now = Date.now();
+  const entry = _aiExplainBySubject.get(key);
+  if (!entry || now > entry.resetAt) {
+    _aiExplainBySubject.set(key, { count: 1, resetAt: now + 86_400_000 }); // 24 h window
+  } else {
+    entry.count += 1;
+  }
+}
+
+function getAIExplainCount(userId, subjectId) {
+  if (!subjectId) return 0;
+  const key = `${userId}:${subjectId}`;
+  const entry = _aiExplainBySubject.get(key);
+  return (entry && Date.now() <= entry.resetAt) ? entry.count : 0;
+}
 
 function checkAIRateLimit(userId, endpoint, maxPerHour) {
 const key = `${userId}:${endpoint}`;
@@ -10727,6 +10819,37 @@ res.status(500).json({ error: 'Failed to move cards', details: e.message });
 }
 });
 
+// ── POST /api/decks/:id/reassign — move a deck (and all its cards) to a different subject ──
+deckRouter.post('/:id/reassign', async (req, res) => {
+try {
+const { target_subject_id } = req.body;
+if (!target_subject_id) return res.status(400).json({ error: 'target_subject_id is required' });
+const deck = await db.decks.findById(req.user.id, req.params.id);
+if (!deck) return res.status(404).json({ error: 'Deck not found' });
+const targetSubject = await db.subjects.findById(target_subject_id);
+if (!targetSubject) return res.status(404).json({ error: 'Target subject not found' });
+if (deck.subject_id === target_subject_id) return res.status(400).json({ error: 'Deck is already in that subject' });
+// Move the deck
+await db.decks.update(req.user.id, deck.id, { subject_id: target_subject_id });
+// Cascade: update subject_id on all card_states for cards in this deck
+const cards = await db.cards.findByDeck(req.user.id, deck.id);
+const cardIds = cards.map(c => c.id);
+if (cardIds.length > 0) {
+  const docIds = cardIds.map(cid => `${req.user.id}_${cid}`);
+  await query(
+    `UPDATE card_states SET subject_id = $1 WHERE id = ANY($2::text[])`,
+    [target_subject_id, docIds]
+  );
+}
+// Invalidate cached pressure for both subjects
+calculateSubjectPressure(req.user.id, deck.subject_id).catch(() => {});
+calculateSubjectPressure(req.user.id, target_subject_id).catch(() => {});
+res.json({ success: true, deck_id: deck.id, moved_cards: cardIds.length, new_subject_id: target_subject_id, subject_name: targetSubject.name });
+} catch (e) {
+res.status(500).json({ error: 'Failed to reassign deck', details: e.message });
+}
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 //  CARD ROUTES
 
@@ -10874,10 +10997,12 @@ return res.status(429).json({ error: 'AI explanation rate limit reached. Please 
 // Build context: fetch subject name, card state
 let subjectName = '';
 let cardState = '';
+let _explainSubjectId = null;
 try {
 if (card.deck_id) {
 const deck = await db.decks.findById(req.user.id, card.deck_id);
 if (deck?.subject_id) {
+_explainSubjectId = deck.subject_id;
 const subject = await db.subjects.findById(deck.subject_id);
 subjectName = subject?.name || '';
 }
@@ -10885,6 +11010,8 @@ subjectName = subject?.name || '';
 const stateDoc = await db.cardStates.get(req.user.id, card.id);
 cardState = stateDoc?.state || '';
 } catch (_) { /* context is non-fatal — summarize without it */ }
+// Record AI explanation for pressure tracking (non-fatal; fires even if context failed)
+recordAIExplainForSubject(req.user.id, _explainSubjectId);
 const context = { subjectName, stage: card.stage || null, cardState };
 const summary = await getCardSummary(
 req.user.id,
@@ -10929,31 +11056,45 @@ cardRouter.post('/import/ai', async (req, res) => {
 try {
 const { deck_id, notes, card_count = 10, subject_hint = '' } = req.body;
 if (!deck_id || !notes) return res.status(400).json({ error: 'deck_id and notes required' });
-const aiText = await generateFlashcards(notes, subject_hint);
-const parsed = parseFlashcards(aiText);
-if (parsed.length === 0)
-return res.status(422).json({ error: 'Could not parse flashcards from AI response' });
-const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, {
-card_count: { increment: created.length },
-import_source: 'ai',
+
+// ── BACKGROUND JOB: respond immediately, generate cards async ──────────────
+const jobId    = createJob(req.user.id, 'note_generation');
+const _bgUid   = req.user.id;
+res.status(202).json({
+  job_id:  jobId,
+  status:  'pending',
+  message: 'Generation started — you can leave this page and come back later.',
 });
-await batchInitializeSeedlingStates(
-req.user.id,
-created.map((c) => c.id)
-);
-// PB.13: Resolve subject_id for Bubble onboarding prompt in frontend [DESIGN: §18 PB.13]
-const aiImportDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-const aiImportSubjectId = aiImportDeck?.subject_id || null;
-res.status(201).json({
-  cards:          created,
-  count:          created.length,
-  source:         'ai',
-  deck_id,
-  subject_id:     aiImportSubjectId,
-  suggest_bubble: aiImportSubjectId !== null && created.length >= 5,
-});
+
+(async () => {
+  try {
+    const aiText = await generateFlashcards(notes, subject_hint);
+    const parsed = parseFlashcards(aiText);
+    if (parsed.length === 0) {
+      failJob(jobId, 'Could not parse flashcards from AI response');
+      wsSend(_bgUid, 'job_failed', { job_id: jobId, type: 'note_generation', error: 'Could not parse flashcards' });
+      return;
+    }
+    const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
+    const created   = await db.cards.createMany(_bgUid, deck_id, cardsData);
+    await db.decks.update(_bgUid, deck_id, { card_count: { increment: created.length }, import_source: 'ai' });
+    await batchInitializeSeedlingStates(_bgUid, created.map((c) => c.id));
+    // PB.13
+    const aiImportDeck      = await db.decks.findById(_bgUid, deck_id).catch(() => null);
+    const aiImportSubjectId = aiImportDeck?.subject_id || null;
+    const result = {
+      cards: created, count: created.length, source: 'ai', deck_id,
+      subject_id: aiImportSubjectId,
+      suggest_bubble: aiImportSubjectId !== null && created.length >= 5,
+    };
+    resolveJob(jobId, result);
+    wsSend(_bgUid, 'job_done', { job_id: jobId, type: 'note_generation', result });
+  } catch (e) {
+    failJob(jobId, e.message);
+    wsSend(_bgUid, 'job_failed', { job_id: jobId, type: 'note_generation', error: e.message });
+  }
+})();
+
 } catch (e) {
 res.status(500).json({ error: 'AI import failed', details: e.message });
 }
@@ -11376,7 +11517,7 @@ studyRouter.use(reckoningLockout);
 
 studyRouter.post('/start', async (req, res) => {
 try {
-const { deck_id, card_limit, include_all_decks_in_subject, subject_id, card_ids, card_state_filter } = req.body;
+const { deck_id, card_limit, include_all_decks_in_subject, subject_id, card_ids } = req.body;
 // Fixed: Allow subject_id + include_all_decks_in_subject without explicit deck_id
 if (!deck_id && !(include_all_decks_in_subject && subject_id)) {
 return res
@@ -11480,21 +11621,9 @@ const effectiveDueQueue = dueQueue.length > 0
         return aDate - bDate; // earliest next_review_at → most overdue → review first
       })
     : [];
-const VALID_FILTER_STATES = new Set(['DANGEROUS','GHOST','STUCK','FRAGILE','AVOIDED']);
-let filteredEffectiveQueue = effectiveDueQueue;
-if (card_state_filter && card_state_filter.length > 0) {
-  const filterSet = new Set(
-    (Array.isArray(card_state_filter) ? card_state_filter : [card_state_filter])
-      .map(s => String(s).toUpperCase()).filter(s => VALID_FILTER_STATES.has(s))
-  );
-  if (filterSet.size > 0) {
-    const stateFiltered = effectiveDueQueue.filter(item => filterSet.has(item.state?.state || ''));
-    if (stateFiltered.length > 0) filteredEffectiveQueue = stateFiltered;
-  }
-}
 const modifiedQueue    = await modifySessionQueueForBubbles(
-  req.user.id, filteredEffectiveQueue, bubbleSubjectId
-).catch(() => filteredEffectiveQueue);
+  req.user.id, effectiveDueQueue, bubbleSubjectId
+).catch(() => effectiveDueQueue);
 const limitedQueue = card_limit && card_limit > 0
   ? modifiedQueue.slice(0, parseInt(card_limit))
   : modifiedQueue;
@@ -11547,6 +11676,7 @@ const normalizedCards = limitedQueue.map((q) => {
     back:     card.back_content  || card.back  || '',
     priority: q.state?.state     || null,
     _warmup:  q._warmup          || false,
+    next_review_at: card.next_review_at || null,
     intervalHintAgain: hintAgain,
     intervalHintHard:  hintHard,
     intervalHintGood:  hintGood,
@@ -12199,6 +12329,10 @@ if (include) stateFilteredCards.push(card);
 const seenIds = new Set();
 const dedupedCards = stateFilteredCards.filter(c => seenIds.has(c.id) ? false : seenIds.add(c.id));
 sourceCards = dedupedCards.length > 0 ? dedupedCards : allCards;
+if (dedupedCards.length === 0 && card_state_filter !== 'all') {
+  const filterLabel = Array.isArray(raw_csf) ? raw_csf.join(' / ') : raw_csf;
+  return res.status(400).json({ error: `No ${filterLabel} cards found in this subject. You need to review more cards before any reach that state. Try selecting a different filter or removing filters entirely.` });
+}
 if (sourceCards.length === 0)
 return res.status(400).json({ error: 'No cards available for exam.' });
 selectedCards = sourceCards
@@ -12220,42 +12354,52 @@ const notes = selectedCards
 if (checkAIRateLimit(req.user.id, 'cbt_generation', 10)) {
 return res.status(429).json({ error: 'Exam generation rate limit reached. Please wait before generating another exam.' });
 }
-const aiText = await generateCBTQuestions(notes, count);
-if (!aiText) return res.status(502).json({ error: 'AI exam generation failed. Please try again.' });
-let questions = parseCBTResponse(aiText, examSession.id, selectedCards);
-if (questions.length === 0) {
-// Clean up the empty session
-await db.examSessions.delete(req.user.id, examSession.id).catch(() => {});
-return res.status(422).json({ error: 'AI generated questions could not be parsed. This usually means your cards have very short or incomplete content. Please ensure your cards have full question and answer text before generating an exam.' });
-}
-// Bug 4 FIX: if AI returned fewer questions than requested, pad with rule-based fallbacks
-if (questions.length < count) {
-const usedCardIds = new Set(questions.map(q => q.card_id).filter(Boolean));
-const remainingCards = selectedCards.filter(c => !usedCardIds.has(c.id));
-const needed = count - questions.length;
-const fallbacks = generateFallbackExamQuestions(
-  remainingCards.slice(0, needed),
-  examSession.id,
-  needed
-);
-questions = [...questions, ...fallbacks];
-}
-await Promise.all(
-questions.map((q) => db.examQuestions.create(req.user.id, examSession.id, q))
-);
-const readyExam = await db.examSessions.findByIdWithQuestions(req.user.id, examSession.id);
-// Bug 1+2 fix: Link reckoning session to exam if this is a reckoning exam
-if (body.is_reckoning || body.reckoning_id) {
-try {
-const activeReckoning = await db.reckoningSessions.findActiveByUser(req.user.id);
-if (activeReckoning) {
-await startReckoningExam(activeReckoning.id, examSession.id);
-}
-} catch (e) {
-/ non-fatal — reckoning link failure must not break exam delivery /
-}
-}
-res.status(201).json(readyExam);
+
+// ── BACKGROUND JOB: respond immediately with job_id ────────────────────────
+const cbtJobId = createJob(req.user.id, 'cbt_generation');
+const _bgUid   = req.user.id;
+const _isReck  = !!(body.is_reckoning || body.reckoning_id);
+res.status(202).json({
+  job_id:     cbtJobId,
+  exam_id:    examSession.id,
+  status:     'pending',
+  message:    'Exam generation started — you can leave this page and come back when it is ready.',
+});
+
+(async () => {
+  try {
+    const aiText = await generateCBTQuestions(notes, count);
+    if (!aiText) { failJob(cbtJobId, 'AI exam generation failed'); wsSend(_bgUid, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: 'AI generation failed' }); return; }
+    let questions = parseCBTResponse(aiText, examSession.id, selectedCards);
+    if (questions.length === 0) {
+      await db.examSessions.delete(_bgUid, examSession.id).catch(() => {});
+      failJob(cbtJobId, 'Could not parse AI questions');
+      wsSend(_bgUid, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: 'Could not parse AI questions. Ensure cards have full content.' });
+      return;
+    }
+    if (questions.length < count) {
+      const usedCardIds    = new Set(questions.map(q => q.card_id).filter(Boolean));
+      const remainingCards = selectedCards.filter(c => !usedCardIds.has(c.id));
+      const needed         = count - questions.length;
+      const fallbacks      = generateFallbackExamQuestions(remainingCards.slice(0, needed), examSession.id, needed);
+      questions = [...questions, ...fallbacks];
+    }
+    await Promise.all(questions.map((q) => db.examQuestions.create(_bgUid, examSession.id, q)));
+    const readyExam = await db.examSessions.findByIdWithQuestions(_bgUid, examSession.id);
+    if (_isReck) {
+      try {
+        const activeReckoning = await db.reckoningSessions.findActiveByUser(_bgUid);
+        if (activeReckoning) await startReckoningExam(activeReckoning.id, examSession.id);
+      } catch (_) {}
+    }
+    resolveJob(cbtJobId, { exam: readyExam });
+    wsSend(_bgUid, 'job_done', { job_id: cbtJobId, type: 'cbt_generation', exam: readyExam });
+  } catch (e) {
+    failJob(cbtJobId, e.message);
+    wsSend(_bgUid, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: e.message });
+  }
+})();
+
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate exam', details: e.message });
 }
@@ -12316,8 +12460,12 @@ if (include) stateFilteredPool.push(card);
 }
 const seenFilterIds = new Set();
 const eligibleCards = stateFilteredPool.filter(c => seenFilterIds.has(c.id) ? false : seenFilterIds.add(c.id));
-if (eligibleCards.length === 0)
-return res.status(400).json({ error: 'No eligible cards for exam. Need Stage 3+ cards.' });
+if (eligibleCards.length === 0) {
+  if (stateFilter !== 'all') {
+    return res.status(400).json({ error: `No ${stateFilter.toUpperCase()} cards found in this subject. Cards need to be reviewed and reach that state first. Try removing filters or selecting a different state.` });
+  }
+  return res.status(400).json({ error: 'No eligible cards for exam. Need Stage 3+ cards.' });
+}
 const selectedCards = eligibleCards
 .sort(() => 0.5 - Math.random())
 .slice(0, Math.min(question_count, eligibleCards.length));
@@ -12560,6 +12708,15 @@ total_exams: totalExams,
 last_exam_at: now,
 });
 // Recalculate health and pressure — Issue-1 FIX: isolated, non-fatal
+// ⚠ FIX: Drain the KS recompute queue immediately so card states (STUCK, GHOST,
+// FRAGILE etc.) are fresh before calculateSubjectPressure reads them.
+// Without this, the 60s cron hasn't fired yet and pressure reads stale SEEDLING states.
+await (async () => {
+  const examCardIds = (exam.questions || []).map(q => q.card_id).filter(Boolean);
+  await Promise.all(
+    examCardIds.map(cid => recomputeAndStoreCardState(req.user.id, cid).catch(() => {}))
+  );
+})().catch(() => {});
 await recalculateSubjectHealth(req.user.id, exam.subject_id)
   .catch((e) => console.error('[KIWI] recalculateSubjectHealth failed:', e.message));
 const pressureAfterExam = await calculateSubjectPressure(req.user.id, exam.subject_id)
@@ -12591,46 +12748,45 @@ console.error('[KIWI] Almanac check failed:', e.message);
 return [];
 });
 
-    // Auto-generate debrief
-    let debriefText = '';
-    try {
-      const wrong = questionResults.filter((qr) => !qr.correct);
-      if (wrong.length === 0) {
-        debriefText =
-          'Perfect score! Every card in this exam was correctly answered. Your mastery is verified.';
-      } else {
-        const weakCardFronts = [];
-        const weakSubjects = new Map();
-        for (const qr of wrong) {
-          const q = exam.questions.find((eq) => eq.question_number === qr.question_number);
-          if (q && q.card_id) {
-            const card = await db.cards.findById(req.user.id, q.card_id).catch(() => null);
-            if (card) {
-              weakCardFronts.push(`"${(card.front_content || card.front || '').slice(0, 70)}"`);
-              if (card.deck_id) {
-                const deck = await db.decks.findById(req.user.id, card.deck_id).catch(() => null);
-                if (deck?.subject_id)
-                  weakSubjects.set(deck.subject_id, (weakSubjects.get(deck.subject_id) || 0) + 1);
+    // ── BACKGROUND: debrief + notifications run after score is returned ────────
+    const submitJobId = createJob(req.user.id, 'exam_submit');
+    const _bgUid      = req.user.id;
+    const _bgExam     = exam;
+    const _bgResults  = { scorePct, correct, total, passed, questionResults, ksDelta,
+                          credentialEarned, credential, regression, newAchievements,
+                          examAlmanacUnlocks, completedExam };
+
+    (async () => {
+      let debriefText = '';
+      try {
+        const wrong = questionResults.filter((qr) => !qr.correct);
+        if (wrong.length === 0) {
+          debriefText = 'Perfect score! Every card in this exam was correctly answered. Your mastery is verified.';
+        } else {
+          const weakCardFronts = [];
+          const weakSubjects   = new Map();
+          for (const qr of wrong) {
+            const q = _bgExam.questions.find((eq) => eq.question_number === qr.question_number);
+            if (q && q.card_id) {
+              const card = await db.cards.findById(_bgUid, q.card_id).catch(() => null);
+              if (card) {
+                weakCardFronts.push(`"${(card.front_content || card.front || '').slice(0, 70)}"`);
+                if (card.deck_id) {
+                  const deck = await db.decks.findById(_bgUid, card.deck_id).catch(() => null);
+                  if (deck?.subject_id) weakSubjects.set(deck.subject_id, (weakSubjects.get(deck.subject_id) || 0) + 1);
+                }
               }
             }
           }
-        }
-        let weakAreas = [];
-        for (const [subjectId, count] of weakSubjects) {
-          const subject = await db.subjects.findById(subjectId).catch(() => null);
-          if (subject)
-            weakAreas.push({
-              subject_id: subjectId,
-              subject_name: subject.name,
-              incorrect_count: count,
-            });
-        }
-        try {
-          const aiDebriefPrompt = `## ROLE
-
+          const weakAreas = [];
+          for (const [subjectId, cnt] of weakSubjects) {
+            const subject = await db.subjects.findById(subjectId).catch(() => null);
+            if (subject) weakAreas.push({ subject_id: subjectId, subject_name: subject.name, incorrect_count: cnt });
+          }
+          try {
+            const aiDebriefPrompt = `## ROLE
 You are KIWI's Exam Debrief Analyst — a concise, analytical voice who helps students understand their exam performance.
 EXAM DATA
-// P3.8-B1 FIX: changed {var} to \${var} — template literal interpolation was broken.
 Score: ${scorePct}% (${correct}/${total} correct)
 Incorrect questions (${wrong.length}): The student failed these specific concepts:
 ${weakCardFronts.slice(0, 8).join('\n')}
@@ -12638,39 +12794,38 @@ Weak subject areas: ${weakAreas.map((a) => a.subject_name + ' (' + a.incorrect_c
 RULES
 - Write exactly 3 paragraphs.
 - Paragraph 1: Honest overall assessment of the score. Reference specific concepts that were missed.
-- Paragraph 2: Identify the pattern — why are these cards difficult? (conceptual gaps, memory fragility, exam pressure?)
-- Paragraph 3: Two precise, actionable next steps — which cards to review first and why.
+- Paragraph 2: Identify the pattern — why are these cards difficult?
+- Paragraph 3: Two precise, actionable next steps.
 - Tone: Direct, analytical, but supportive. No empty praise.
 - Total length: 150-250 words.
 OUTPUT
 Return only the debrief text.`;
-          const aiResult = await geminiModel.generateContent(aiDebriefPrompt);
-          debriefText = aiResult.response.text().trim();
-        } catch (_) {
-          debriefText =
-            `You scored ${scorePct}%, getting ${correct} of ${total} correct. ` +
-            (wrong.length > 0
-              ? `${wrong.length} card${wrong.length > 1 ? 's' : ''} were answered incorrectly.`
-              : '') +
-            (weakAreas.length > 0 ? ` The weakest area was ${weakAreas[0].subject_name}.` : '') +
-            `\n\nThe missed concepts suggest gaps that require active review — not passive re-reading. Focus on the failing cards using spaced repetition.` +
-            `\n\nRecommended next step: Review the ${Math.min(wrong.length, 5)} failed cards immediately, then schedule an exam in 3 days to re-test retention.`;
+            const aiResult = await geminiModel.generateContent(aiDebriefPrompt);
+            debriefText    = aiResult.response.text().trim();
+          } catch (_) {
+            debriefText = `You scored ${scorePct}%, getting ${correct} of ${total} correct. ` +
+              (wrong.length > 0 ? `${wrong.length} card${wrong.length > 1 ? 's' : ''} were answered incorrectly.` : '') +
+              (weakAreas.length > 0 ? ` The weakest area was ${weakAreas[0].subject_name}.` : '') +
+              `\n\nFocus on failing cards using spaced repetition.\n\nRecommended: review the ${Math.min(wrong.length, 5)} failed cards now, then re-test in 3 days.`;
+          }
         }
+      } catch (_) {
+        debriefText = `Exam complete. Score: ${scorePct}%. Review missed cards to strengthen retention.`;
       }
-    } catch (debriefErr) {
-      debriefText = `Exam complete. Score: ${scorePct}%. Review missed cards to strengthen retention.`;
-    }
-    // Notify via Telegram if configured
-    await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, passed).catch(() => {});
-    // Wire exam_result email notification
-    {
-      const _examSubject = await db.subjects.findById(exam.subject_id).catch(() => null);
-      await sendEmailNotification(req.user.id, 'exam_result', {
-        subjectName: _examSubject?.name || 'Study Session',
-        scorePct,
-        passed,
+      // Notifications
+      await sendTelegramExamResult(_bgUid, _bgExam.subject_id, scorePct, passed).catch(() => {});
+      const _examSubject = await db.subjects.findById(_bgExam.subject_id).catch(() => null);
+      await sendEmailNotification(_bgUid, 'exam_result', {
+        subjectName: _examSubject?.name || 'Study Session', scorePct, passed,
       }).catch(() => {});
-    }
+
+      // Push debrief to client via WebSocket
+      const debriefPayload = { ..._bgResults, debrief: debriefText, exam_id: _bgExam.id };
+      resolveJob(submitJobId, debriefPayload);
+      wsSend(_bgUid, 'job_done', { job_id: submitJobId, type: 'exam_submit', result: debriefPayload });
+    })();
+
+    const debriefText = ''; // will arrive via WebSocket / polling
     // Build enriched question_review for the post-exam Review tab.
     // Includes stem, all four options, correct answer, explanation, and what the user picked.
     const question_review = exam.questions.map((q) => {
@@ -12695,6 +12850,7 @@ Return only the debrief text.`;
     });
 
     res.json({
+      job_id: submitJobId,   // poll fallback: frontend detects debrief is async
       exam: completedExam,
       score_pct: scorePct,
       correct_answers: correct,
@@ -14147,7 +14303,7 @@ rawPressures.map(async (p) => {
 const subject = await db.subjects.findById(p.subject_id).catch(() => null);
 return {
 ...p,
-subjectName: subject?.name || p.subject_id || 'Unknown',
+subjectName: subject?.name || 'Unknown Subject',
 pressure: p.pressure_score || 0,
 level: p.intervention_level ? parseInt(p.intervention_level.replace('L', '')) : 0, // P3-M1 FIX: L0 is the calm baseline, not L1
 description: // P3.2-B1 FIX: L0 is the correct calm default.
@@ -14763,17 +14919,15 @@ res.status(500).json({ error: 'Failed to load library', details: e.message });
 }
 });
 // GET /api/library/subjects/:id/cards — full card list for a subject
-// Supports: ?page=1&limit=50&filter=all|due|resting|DANGEROUS|GHOST|STUCK|FRAGILE|AVOIDED&search=term
+// Supports: ?page=1&limit=50&filter=all|due|resting&search=term
 libraryRouter.get('/subjects/:id/cards', async (req, res) => {
   try {
     const subject = await db.subjects.findById(req.params.id);
     if (!subject) return res.status(404).json({ error: 'Subject not found' });
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(200, Math.max(10, parseInt(req.query.limit) || 50));
-    const filter = req.query.filter || 'all'; // 'all' | 'due' | 'resting' | card state
+    const filter = req.query.filter || 'all'; // 'all' | 'due' | 'resting'
     const search = (req.query.search || '').toLowerCase().trim();
-    const CARD_STATE_NAMES = new Set(['DANGEROUS','GHOST','STUCK','FRAGILE','AVOIDED','SEEDLING','GROWING','STABLE','VERIFIED']);
-    const isStateFilter = CARD_STATE_NAMES.has(filter.toUpperCase());
     const now = new Date();
     // Collect all decks for this subject
     let allCards = [];
@@ -14796,16 +14950,6 @@ libraryRouter.get('/subjects/:id/cards', async (req, res) => {
         return front.includes(search) || back.includes(search);
       });
     }
-    // [FIX-2c] State filter: batch-fetch card_states then filter + expose in response
-    let cardStateMap = new Map();
-    try {
-      const allStates = await db.cardStates.findByUser(req.user.id);
-      allStates.forEach(s => cardStateMap.set(s.card_id, s.state || 'SEEDLING'));
-    } catch (_) { /* non-fatal */ }
-    if (isStateFilter) {
-      const targetState = filter.toUpperCase();
-      allCards = allCards.filter(c => (cardStateMap.get(c.id) || 'SEEDLING') === targetState);
-    }
     const total = allCards.length;
     const totalPages = Math.ceil(total / limit);
     const paginated = allCards.slice((page - 1) * limit, page * limit).map((c) => ({
@@ -14817,7 +14961,6 @@ libraryRouter.get('/subjects/:id/cards', async (req, res) => {
       reviewCount: c.review_count || c.reviewCount || 0,
       next_review_at: c.next_review_at || null,
       deck_id: c.deck_id || null,
-      state: cardStateMap.get(c.id) || 'SEEDLING',
     }));
     res.json({ cards: paginated, total, page, totalPages, limit });
   } catch (e) {
@@ -15020,6 +15163,14 @@ app.use('/api/bubbles', bubbleRouter);
 app.use('/api/ks', ksRouter);
 // Health check must be registered BEFORE progressRouter (which applies authenticate
 // to all /api/* routes, which would block this public endpoint)
+// ── Background job polling ────────────────────────────────────────────────────
+app.get('/api/jobs/:id', authenticate, (req, res) => {
+  const job = _jobs.get(req.params.id);
+  if (!job || job.userId !== String(req.user.id))
+    return res.status(404).json({ error: 'Job not found' });
+  res.json({ id: job.id, type: job.type, status: job.status, result: job.result, error: job.error });
+});
+
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
