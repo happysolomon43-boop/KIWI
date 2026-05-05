@@ -15324,12 +15324,9 @@ const morningBrief = morningCache
 const weeklyAnchor = anchorCache
 ? anchorCache.anchor_text || anchorCache.message || null
 : null;
-// Invitations — invitationsCache already fetched in Round 2
-const invitationsCache_resolved = invitationsCache
-.catch(() => null);
-// C-3 FIX: Generate inline on cache miss
-const invitations = invitationsCache_resolved
-? invitationsCache_resolved.data
+// C-3 FIX: Generate inline on cache miss — invitationsCache already resolved from Round 2 Promise.all
+const invitations = invitationsCache
+? invitationsCache.data
 : await getDailyInvitations(req.user.id).catch(() => []);
 res.json({
 // Original fields
