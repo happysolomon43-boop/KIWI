@@ -11272,7 +11272,7 @@ try {
   // Reset all card scheduling fields in one SQL pass
   await query(
     `UPDATE cards SET stage = 1, review_count = 0,
-     interval = 0, next_review_at = NULL, last_reviewed_at = NULL,
+     next_review_at = NULL, last_reviewed_at = NULL,
      updated_at = NOW()
      WHERE deck_id = $1 AND user_id = $2`,
     [deckId, userId]
@@ -11312,7 +11312,7 @@ try {
   // Reset all cards in one pass
   await query(
     `UPDATE cards SET stage = 1, review_count = 0,
-     interval = 0, next_review_at = NULL, last_reviewed_at = NULL,
+     next_review_at = NULL, last_reviewed_at = NULL,
      updated_at = NOW()
      WHERE deck_id = ANY($1) AND user_id = $2`,
     [deckIds, userId]

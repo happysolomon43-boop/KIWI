@@ -10420,17 +10420,23 @@
         if (!t) return;
         if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
         stopFocusTracking();
-        // Capture state before clearing
         const savedTempStudy = AppState.tempStudy;
         const focusData = t.focusData || { tabAwayCount: 0, idleSeconds: 0 };
         const sessionId = t.sessionId;
-        // Clear session state immediately and navigate away — save runs in background
+        // Clear session state immediately — no blocking loading screen
         AppState.tempStudy = null;
         AppState.subjects = null;
         _bustDashboardCache();
-        navigateTo("dashboard");
-        showToast("Saving session...", "info", 2500);
-        // Fire-and-forget background save
+        // Show session end screen right away with placeholder data while saving
+        const placeholderResult = {
+          cardsReviewed: savedTempStudy?.cardsReviewed || savedTempStudy?.reviews?.length || 0,
+          xpGained: null,
+          ksDelta: null,
+          seedOutcome: savedTempStudy?.seedStatus || 'dormant',
+          durationSeconds: savedTempStudy?.startTime ? Math.round((Date.now() - savedTempStudy.startTime) / 1000) : 0,
+        };
+        renderSessionEnd(placeholderResult, savedTempStudy);
+        // Save in background — update screen if result adds new data
         try {
           const result = await api.endStudySession(sessionId, focusData);
           if (savedTempStudy?.isReturnSession && savedTempStudy?.subjectId) {
@@ -10439,7 +10445,10 @@
           if (result.new_almanac_unlocks && result.new_almanac_unlocks.length > 0) {
             showToast('A new entry has appeared in your Almanac.', 'success', 6000);
           }
-          showToast("Session saved ✓", "success", 3000);
+          // Re-render session end with real XP/KS data from server
+          if (AppState.currentPage === 'study') {
+            renderSessionEnd(result, savedTempStudy);
+          }
         } catch (err) {
           showToast("Session could not be saved. Check your connection.", "error");
         }
@@ -14255,7 +14264,10 @@
                   <div class="section-title">Library</div>
                   <div class="section-sub">${totalCards} cards · ${subjects.length} subject${subjects.length !== 1 ? 's' : ''}${totalDue > 0 ? ` · <span style="color:var(--green-bright);font-weight:600;">${totalDue} due</span>` : ''}</div>
                 </div>
-                <button class="btn btn-primary btn-sm" id="addDeckBtn">+ Add Subject</button>
+                <div style="display:flex;gap:6px;">
+                  ${subjects.length > 0 ? `<button class="btn btn-ghost btn-sm" id="libSelectBtn" style="font-size:var(--text-xs);color:var(--text-2);">Select</button>` : ''}
+                  <button class="btn btn-primary btn-sm" id="addDeckBtn">+ Add Subject</button>
+                </div>
               </div>
 
               ${subjects.length === 0 ? `
@@ -14266,6 +14278,7 @@
                 </div>
               ` : ''}
 
+              <div id="lib-subjects-list">
               ${subjects.map(function(subj) {
                 const due = subj.dueCount || 0;
                 const ks = subj.ks || 0;
@@ -14278,7 +14291,13 @@
                   ? (() => { try { return new Date(subj.exam_date).toLocaleDateString('en-GB',{day:'numeric',month:'short'}); } catch(e) { return ''; } })()
                   : '';
                 return `
-                  <div class="lib-subj-card" data-subj-id="${escapeHTML(subj.id)}">
+                  <div class="lib-subj-card" data-subj-id="${escapeHTML(subj.id)}" data-subj-name="${escapeHTML(safeDisplayName(subj.name))}" data-card-count="${cardCount}">
+                    <!-- Select checkbox (hidden until select mode) -->
+                    <div class="lib-select-check" style="display:none;position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:2;">
+                      <div class="lib-check-box" style="width:22px;height:22px;border-radius:6px;border:2px solid var(--border-2);background:var(--surface-2);display:flex;align-items:center;justify-content:center;transition:all 0.15s ease;">
+                        <svg style="width:13px;height:13px;display:none;" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                      </div>
+                    </div>
                     <div class="lib-subj-header">
                       <div style="width:40px;height:40px;border-radius:12px;background:${escapeHTML(color)}20;border:1.5px solid ${escapeHTML(color)}50;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">${_safeRenderIcon(icon)}</div>
                       <div style="flex:1;min-width:0;">
@@ -14371,16 +14390,204 @@
                         }).join('')}
                       </div>` : ''}
                     </div>
-                    </div>
                   </div>
                 `;
               }).join('')}
+              </div><!-- end lib-subjects-list -->
+
+              <!-- Bulk select action bar (hidden by default) -->
+              <div id="lib-bulk-bar" style="display:none;position:fixed;bottom:64px;left:0;right:0;z-index:200;padding:10px 16px;background:var(--surface);border-top:1px solid var(--border-2);box-shadow:0 -4px 20px rgba(0,0,0,0.3);">
+                <div style="display:flex;align-items:center;gap:8px;max-width:600px;margin:0 auto;">
+                  <span id="lib-bulk-count" style="font-size:var(--text-sm);color:var(--text-2);font-family:var(--font-mono);flex:1;">0 selected</span>
+                  <button id="lib-bulk-select-all" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);">Select All</button>
+                  <button id="lib-bulk-reset" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#f59e0b;" disabled>&#x21BA; Reset</button>
+                  <button id="lib-bulk-delete" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;" disabled>Delete</button>
+                  <button id="lib-bulk-cancel" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--text-3);">Cancel</button>
+                </div>
+              </div>
             </div>
           `;
 
           document.getElementById("addDeckBtn").addEventListener("click", function() {
             showCreateSubjectModal(subjects.length, function() { navigateTo("library"); });
           });
+
+          // ── Selection mode ────────────────────────────────────────────────────
+          var _selectMode = false;
+          var _selected   = new Set(); // set of subj IDs
+
+          function _updateBulkBar() {
+            var bar      = document.getElementById('lib-bulk-bar');
+            var countEl  = document.getElementById('lib-bulk-count');
+            var resetBtn = document.getElementById('lib-bulk-reset');
+            var delBtn   = document.getElementById('lib-bulk-delete');
+            var selAllBtn= document.getElementById('lib-bulk-select-all');
+            if (!bar) return;
+            var n = _selected.size;
+            countEl.textContent = n + ' subject' + (n !== 1 ? 's' : '') + ' selected';
+            resetBtn.disabled   = n === 0;
+            delBtn.disabled     = n === 0;
+            resetBtn.style.opacity = n === 0 ? '0.4' : '1';
+            delBtn.style.opacity   = n === 0 ? '0.4' : '1';
+            var allSelected = _selected.size === subjects.length;
+            selAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
+          }
+
+          function _setCardSelected(card, selected) {
+            var checkBox = card.querySelector('.lib-check-box');
+            var checkMark= checkBox ? checkBox.querySelector('svg') : null;
+            if (selected) {
+              card.style.outline = '2px solid var(--teal)';
+              if (checkBox) { checkBox.style.background = 'var(--teal)'; checkBox.style.borderColor = 'var(--teal)'; }
+              if (checkMark) checkMark.style.display = 'block';
+            } else {
+              card.style.outline = '';
+              if (checkBox) { checkBox.style.background = 'var(--surface-2)'; checkBox.style.borderColor = 'var(--border-2)'; }
+              if (checkMark) checkMark.style.display = 'none';
+            }
+          }
+
+          function _enterSelectMode() {
+            _selectMode = true;
+            _selected.clear();
+            var bar = document.getElementById('lib-bulk-bar');
+            if (bar) bar.style.display = 'block';
+            var selBtn = document.getElementById('libSelectBtn');
+            if (selBtn) { selBtn.textContent = 'Done'; selBtn.style.color = 'var(--teal)'; }
+            // Show checkboxes + indent cards
+            main.querySelectorAll('.lib-subj-card').forEach(function(card) {
+              var chk = card.querySelector('.lib-select-check');
+              if (chk) chk.style.display = 'flex';
+              card.style.position = 'relative';
+              card.style.paddingLeft = '44px';
+              card.style.cursor = 'pointer';
+            });
+            _updateBulkBar();
+          }
+
+          function _exitSelectMode() {
+            _selectMode = false;
+            _selected.clear();
+            var bar = document.getElementById('lib-bulk-bar');
+            if (bar) bar.style.display = 'none';
+            var selBtn = document.getElementById('libSelectBtn');
+            if (selBtn) { selBtn.textContent = 'Select'; selBtn.style.color = ''; }
+            main.querySelectorAll('.lib-subj-card').forEach(function(card) {
+              var chk = card.querySelector('.lib-select-check');
+              if (chk) chk.style.display = 'none';
+              card.style.paddingLeft = '';
+              card.style.cursor = '';
+              card.style.outline = '';
+              var checkBox = card.querySelector('.lib-check-box');
+              var checkMark = checkBox ? checkBox.querySelector('svg') : null;
+              if (checkBox) { checkBox.style.background = ''; checkBox.style.borderColor = ''; }
+              if (checkMark) checkMark.style.display = 'none';
+            });
+          }
+
+          var selBtn = document.getElementById('libSelectBtn');
+          if (selBtn) {
+            selBtn.addEventListener('click', function() {
+              if (_selectMode) _exitSelectMode(); else _enterSelectMode();
+            });
+          }
+
+          // Tap card to toggle selection in select mode
+          main.querySelectorAll('.lib-subj-card').forEach(function(card) {
+            card.addEventListener('click', function(e) {
+              if (!_selectMode) return;
+              // Don't toggle if user tapped a button inside the card
+              if (e.target.closest('button')) return;
+              var id = card.dataset.subjId;
+              if (!id) return;
+              if (_selected.has(id)) {
+                _selected.delete(id);
+                _setCardSelected(card, false);
+              } else {
+                _selected.add(id);
+                _setCardSelected(card, true);
+              }
+              _updateBulkBar();
+            });
+          });
+
+          // Select All / Deselect All
+          var selAllBtn = document.getElementById('lib-bulk-select-all');
+          if (selAllBtn) {
+            selAllBtn.addEventListener('click', function() {
+              var allSelected = _selected.size === subjects.length;
+              main.querySelectorAll('.lib-subj-card').forEach(function(card) {
+                var id = card.dataset.subjId;
+                if (!id) return;
+                if (allSelected) {
+                  _selected.delete(id);
+                  _setCardSelected(card, false);
+                } else {
+                  _selected.add(id);
+                  _setCardSelected(card, true);
+                }
+              });
+              _updateBulkBar();
+            });
+          }
+
+          // Cancel
+          var cancelBtn = document.getElementById('lib-bulk-cancel');
+          if (cancelBtn) cancelBtn.addEventListener('click', _exitSelectMode);
+
+          // Bulk Reset
+          var bulkResetBtn = document.getElementById('lib-bulk-reset');
+          if (bulkResetBtn) {
+            bulkResetBtn.addEventListener('click', function() {
+              if (_selected.size === 0) return;
+              var ids = Array.from(_selected);
+              var names = ids.map(function(id) {
+                var card = main.querySelector('.lib-subj-card[data-subj-id="' + id + '"]');
+                return card ? card.dataset.subjName || id : id;
+              });
+              showCustomConfirm(
+                'Reset ' + ids.length + ' Subject' + (ids.length > 1 ? 's' : ''),
+                'Reset ALL cards in ' + (ids.length > 1 ? 'these ' + ids.length + ' subjects' : '"' + names[0] + '"') + ' to SEEDLING? This cannot be undone.',
+                async function() {
+                  _exitSelectMode();
+                  var failed = 0;
+                  for (var i = 0; i < ids.length; i++) {
+                    try { await api.resetSubject(ids[i]); } catch(e) { failed++; }
+                  }
+                  showToast(failed === 0 ? 'Reset complete' : (ids.length - failed) + ' reset, ' + failed + ' failed', failed ? 'error' : 'success');
+                  AppState.subjects = null;
+                  navigateTo('library');
+                }
+              );
+            });
+          }
+
+          // Bulk Delete
+          var bulkDeleteBtn = document.getElementById('lib-bulk-delete');
+          if (bulkDeleteBtn) {
+            bulkDeleteBtn.addEventListener('click', function() {
+              if (_selected.size === 0) return;
+              var ids = Array.from(_selected);
+              var names = ids.map(function(id) {
+                var card = main.querySelector('.lib-subj-card[data-subj-id="' + id + '"]');
+                return card ? card.dataset.subjName || id : id;
+              });
+              showCustomConfirm(
+                'Delete ' + ids.length + ' Subject' + (ids.length > 1 ? 's' : ''),
+                'Permanently delete ' + (ids.length > 1 ? 'these ' + ids.length + ' subjects and all their cards' : '"' + names[0] + '" and all its cards') + '? This cannot be undone.',
+                async function() {
+                  _exitSelectMode();
+                  var failed = 0;
+                  for (var i = 0; i < ids.length; i++) {
+                    try { await api.deleteSubject(ids[i]); } catch(e) { failed++; }
+                  }
+                  showToast(failed === 0 ? 'Deleted' : (ids.length - failed) + ' deleted, ' + failed + ' failed', failed ? 'error' : 'success');
+                  AppState.subjects = null;
+                  navigateTo('library');
+                }
+              );
+            });
+          }
 
           main.querySelectorAll(".lib-expand-btn").forEach(function(btn) {
             btn.addEventListener("click", function() {
@@ -14923,40 +15130,62 @@
       // onDeleteFn(id, el) is called after the swipe animation completes.
       function _attachSwipeToDelete(container, itemSelector, getIdFn, onDeleteFn, threshold, opts) {
         if (!container) return;
-        threshold = threshold || 80;
+        threshold = threshold || 90;
         opts = opts || {};
-        var _activeEl = null, _startX = 0, _dx = 0, _dragging = false;
+        var _activeEl = null, _startX = 0, _startY = 0, _dx = 0, _dragging = false, _locked = null;
+        // _locked: null = undecided, 'h' = horizontal swipe, 'v' = vertical scroll
+
         container.addEventListener('touchstart', function(e) {
           var item = e.target.closest(itemSelector);
           if (!item) return;
           _activeEl = item;
           _startX   = e.touches[0].clientX;
+          _startY   = e.touches[0].clientY;
           _dx       = 0;
           _dragging = false;
+          _locked   = null;
           _activeEl.style.transition = '';
           _activeEl.style.willChange = 'transform';
         }, { passive: true });
+
         container.addEventListener('touchmove', function(e) {
           if (!_activeEl) return;
-          _dx = e.touches[0].clientX - _startX;
-          if (_dx < -8) {
-            _dragging = true;
-            var clampedDx = Math.max(_dx, -200);
-            _activeEl.style.transform = 'translateX(' + clampedDx + 'px)';
-            _activeEl.style.opacity   = String(Math.max(0.25, 1 + clampedDx / 200));
-            // Show a red delete hint overlay
-            var hint = _activeEl.querySelector('._swipe-hint');
-            if (!hint) {
-              hint = document.createElement('div');
-              hint.className = '_swipe-hint';
-              hint.innerHTML = '&#x1F5D1; Delete';
-              hint.style.cssText = 'position:absolute;right:16px;top:50%;transform:translateY(-50%);color:#ef4444;font-size:var(--text-sm);font-weight:700;pointer-events:none;opacity:0;transition:opacity 0.1s;font-family:var(--font-body);';
-              _activeEl.style.position = 'relative';
-              _activeEl.style.overflow = 'hidden';
-              _activeEl.appendChild(hint);
-            }
-            hint.style.opacity = String(Math.min(1, Math.abs(_dx) / threshold));
+          var dx = e.touches[0].clientX - _startX;
+          var dy = e.touches[0].clientY - _startY;
+
+          // Lock direction on first significant movement
+          if (_locked === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+            _locked = Math.abs(dx) > Math.abs(dy) && dx < 0 ? 'h' : 'v';
           }
+
+          // If determined to be vertical scroll — cancel swipe entirely
+          if (_locked === 'v') {
+            _activeEl = null;
+            return;
+          }
+
+          if (_locked !== 'h') return;
+
+          // Only left swipes
+          if (dx >= 0) return;
+
+          _dx = dx;
+          _dragging = true;
+          var clampedDx = Math.max(dx, -220);
+          _activeEl.style.transform = 'translateX(' + clampedDx + 'px)';
+          _activeEl.style.opacity   = String(Math.max(0.25, 1 + clampedDx / 220));
+
+          var hint = _activeEl.querySelector('._swipe-hint');
+          if (!hint) {
+            hint = document.createElement('div');
+            hint.className = '_swipe-hint';
+            hint.innerHTML = '&#x1F5D1; Delete';
+            hint.style.cssText = 'position:absolute;right:16px;top:50%;transform:translateY(-50%);color:#ef4444;font-size:var(--text-sm);font-weight:700;pointer-events:none;opacity:0;transition:opacity 0.1s;font-family:var(--font-body);';
+            _activeEl.style.position = 'relative';
+            _activeEl.style.overflow = 'hidden';
+            _activeEl.appendChild(hint);
+          }
+          hint.style.opacity = String(Math.min(1, Math.abs(_dx) / threshold));
         }, { passive: true });
         container.addEventListener('touchend', function() {
           if (!_activeEl) return;
