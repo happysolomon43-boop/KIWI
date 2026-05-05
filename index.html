@@ -15458,7 +15458,7 @@
             var hint = document.getElementById("pdfSubjectHint").value.trim();
             var btn = document.getElementById("pdfImportBtn");
             btn.disabled = true; btn.textContent = "Generating...";
-            setImportResult("pdfResult", "Parsing PDF and generating cards — may take 30–60 s for long documents...", false);
+            setImportResult("pdfResult", "Parsing PDF and queuing for generation...", false);
             try {
               var base64 = await new Promise(function(res, rej) {
                 var r = new FileReader();
@@ -15466,10 +15466,23 @@
                 r.onerror = rej;
                 r.readAsDataURL(fileInput.files[0]);
               });
-              var result = await api.importFromPdf(deckId, base64, hint);
-              setImportResult("pdfResult", "✓ " + (result.count || 0) + " cards generated.", false);
+              var job = await api.importFromPdf(deckId, base64, hint);
+              if (job && job.job_id) {
+                fileInput.value = "";
+                btn.disabled = false; btn.textContent = "Generate Cards from PDF";
+                setImportResult("pdfResult", "", false);
+                var sel = document.getElementById("importSubject");
+                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+                AppState.cardGenJob = { subjectName: _subjectName };
+                _showGenBanner('Generating cards…', '');
+                _pollJobFallback(job.job_id, authToken, 'note_generation');
+                navigateTo('generating-cards');
+                return;
+              }
+              // Legacy sync fallback
+              setImportResult("pdfResult", "✓ " + (job.count || 0) + " cards generated.", false);
               fileInput.value = "";
-              showToast((result.count || 0) + " cards generated from PDF", "success");
+              showToast((job.count || 0) + " cards generated from PDF", "success");
             } catch(err) {
               setImportResult("pdfResult", err.message || "PDF import failed", true);
             } finally {
@@ -15486,7 +15499,7 @@
             var hint = document.getElementById("docxSubjectHint").value.trim();
             var btn = document.getElementById("docxImportBtn");
             btn.disabled = true; btn.textContent = "Generating...";
-            setImportResult("docxResult", "Parsing document...", false);
+            setImportResult("docxResult", "Parsing document and queuing for generation...", false);
             try {
               var base64 = await new Promise(function(res, rej) {
                 var r = new FileReader();
@@ -15494,10 +15507,23 @@
                 r.onerror = rej;
                 r.readAsDataURL(fileInput.files[0]);
               });
-              var result = await api.importFromDocx(deckId, base64, hint);
-              setImportResult("docxResult", "✓ " + (result.count || 0) + " cards generated.", false);
+              var job = await api.importFromDocx(deckId, base64, hint);
+              if (job && job.job_id) {
+                fileInput.value = "";
+                btn.disabled = false; btn.textContent = "Generate Cards from DOCX";
+                setImportResult("docxResult", "", false);
+                var sel = document.getElementById("importSubject");
+                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+                AppState.cardGenJob = { subjectName: _subjectName };
+                _showGenBanner('Generating cards…', '');
+                _pollJobFallback(job.job_id, authToken, 'note_generation');
+                navigateTo('generating-cards');
+                return;
+              }
+              // Legacy sync fallback
+              setImportResult("docxResult", "✓ " + (job.count || 0) + " cards generated.", false);
               fileInput.value = "";
-              showToast((result.count || 0) + " cards generated from DOCX", "success");
+              showToast((job.count || 0) + " cards generated from DOCX", "success");
             } catch(err) {
               setImportResult("docxResult", err.message || "DOCX import failed", true);
             } finally {
@@ -15538,7 +15564,7 @@
             });
           }
 
-          // TXT import handler (Issue-058)
+          // TXT import handler (Issue-058) — async background-job path
           document.getElementById("txtImportBtn").addEventListener("click", async function() {
             var deckId = getSelectedDeckId();
             if (!deckId) { showToast("No deck found for this subject", "error"); return; }
@@ -15550,10 +15576,25 @@
             setImportResult("txtResult", "Reading file and generating cards...", false);
             try {
               var b64 = await readFileAsBase64(fileInput.files[0]);
-              var result = await api.importFromTxt(deckId, b64, hint);
-              setImportResult("txtResult", "✓ " + (result.count || 0) + " cards imported.", false);
+              var job = await api.importFromTxt(deckId, b64, hint);
+              // Background-job path: server returns job_id immediately
+              if (job && job.job_id) {
+                fileInput.value = "";
+                btn.disabled = false; btn.textContent = "Generate Cards from TXT";
+                setImportResult("txtResult", "", false);
+                // Gather subject name for generating-cards page
+                var sel = document.getElementById("importSubject");
+                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+                AppState.cardGenJob = { subjectName: _subjectName };
+                _showGenBanner('Generating cards…', '');
+                _pollJobFallback(job.job_id, authToken, 'note_generation');
+                navigateTo('generating-cards');
+                return;
+              }
+              // Legacy sync fallback (should not be reached in normal operation)
+              setImportResult("txtResult", "✓ " + (job.count || 0) + " cards imported.", false);
               fileInput.value = "";
-              showToast((result.count || 0) + " cards imported from TXT", "success");
+              showToast((job.count || 0) + " cards imported from TXT", "success");
             } catch(err) {
               setImportResult("txtResult", err.message || "TXT import failed", true);
             } finally {
@@ -15561,7 +15602,7 @@
             }
           });
 
-          // MD import handler (Issue-059)
+          // MD import handler (Issue-059) — async background-job path
           document.getElementById("mdImportBtn").addEventListener("click", async function() {
             var deckId = getSelectedDeckId();
             if (!deckId) { showToast("No deck found for this subject", "error"); return; }
@@ -15570,13 +15611,26 @@
             if (!fileInput.files || !fileInput.files[0]) { showToast("Please select a Markdown file", "error"); return; }
             var btn = document.getElementById("mdImportBtn");
             btn.disabled = true; btn.textContent = "Generating...";
-            setImportResult("mdResult", "Reading markdown and generating cards...", false);
+            setImportResult("mdResult", "Reading markdown and queuing for generation...", false);
             try {
               var b64 = await readFileAsBase64(fileInput.files[0]);
-              var result = await api.importFromMd(deckId, b64, hint);
-              setImportResult("mdResult", "✓ " + (result.count || 0) + " cards imported.", false);
+              var job = await api.importFromMd(deckId, b64, hint);
+              if (job && job.job_id) {
+                fileInput.value = "";
+                btn.disabled = false; btn.textContent = "Generate Cards from Markdown";
+                setImportResult("mdResult", "", false);
+                var sel = document.getElementById("importSubject");
+                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+                AppState.cardGenJob = { subjectName: _subjectName };
+                _showGenBanner('Generating cards…', '');
+                _pollJobFallback(job.job_id, authToken, 'note_generation');
+                navigateTo('generating-cards');
+                return;
+              }
+              // Legacy sync fallback
+              setImportResult("mdResult", "✓ " + (job.count || 0) + " cards imported.", false);
               fileInput.value = "";
-              showToast((result.count || 0) + " cards imported from Markdown", "success");
+              showToast((job.count || 0) + " cards imported from Markdown", "success");
             } catch(err) {
               setImportResult("mdResult", err.message || "Markdown import failed", true);
             } finally {
@@ -15584,7 +15638,7 @@
             }
           });
 
-          // PPTX import handler (Issue-060)
+          // PPTX import handler (Issue-060) — async background-job path
           document.getElementById("pptxImportBtn").addEventListener("click", async function() {
             var deckId = getSelectedDeckId();
             if (!deckId) { showToast("No deck found for this subject", "error"); return; }
@@ -15593,13 +15647,26 @@
             if (!fileInput.files || !fileInput.files[0]) { showToast("Please select a PPTX file", "error"); return; }
             var btn = document.getElementById("pptxImportBtn");
             btn.disabled = true; btn.textContent = "Generating...";
-            setImportResult("pptxResult", "Reading slides and generating cards...", false);
+            setImportResult("pptxResult", "Reading slides and queuing for generation...", false);
             try {
               var b64 = await readFileAsBase64(fileInput.files[0]);
-              var result = await api.importFromPptx(deckId, b64, hint);
-              setImportResult("pptxResult", "✓ " + (result.count || 0) + " cards imported.", false);
+              var job = await api.importFromPptx(deckId, b64, hint);
+              if (job && job.job_id) {
+                fileInput.value = "";
+                btn.disabled = false; btn.textContent = "Generate Cards from PPTX";
+                setImportResult("pptxResult", "", false);
+                var sel = document.getElementById("importSubject");
+                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+                AppState.cardGenJob = { subjectName: _subjectName };
+                _showGenBanner('Generating cards…', '');
+                _pollJobFallback(job.job_id, authToken, 'note_generation');
+                navigateTo('generating-cards');
+                return;
+              }
+              // Legacy sync fallback
+              setImportResult("pptxResult", "✓ " + (job.count || 0) + " cards imported.", false);
               fileInput.value = "";
-              showToast((result.count || 0) + " cards imported from PPTX", "success");
+              showToast((job.count || 0) + " cards imported from PPTX", "success");
             } catch(err) {
               setImportResult("pptxResult", err.message || "PPTX import failed. Make sure the officeparser package is installed on the server.", true);
             } finally {

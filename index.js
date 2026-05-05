@@ -11616,11 +11616,11 @@ if (!pdf_base64) return res.status(400).json({ error: 'pdf_base64 is required' }
 if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
 if (!pdfParse) return res.status(503).json({ error: 'PDF parsing is not available. The pdf-parse package is not installed on this server. Add "pdf-parse" to package.json dependencies and redeploy.' });
 const buffer = Buffer.from(pdf_base64, 'base64');
-const parsed = await pdfParse(buffer);
-let text = (parsed.text || '').trim();
-// Enforce 80,000-character limit
+const parsedPdf = await pdfParse(buffer);
+let text = (parsedPdf.text || '').trim();
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text extracted from PDF' });
+// CBT mode stays synchronous
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11628,34 +11628,50 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'pdf' });
 }
-// Chunk into <=12000-char segments and send each to Gemini
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-try {
-const aiText = await generateFlashcards(chunk, pdf_subject_hint);
-const parsed2 = parseFlashcards(aiText);
-cardsData.push(...parsed2);
-} catch (e) {
-// Fallback: pair consecutive lines as front/back
-const lines = chunk.split('\n').filter((l) => l.trim().length > 10);
-for (let i = 0; i < lines.length - 1; i += 2) {
-cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
-}
-}
-}
-if (cardsData.length === 0)
-return res.status(422).json({ error: 'No usable text extracted from PDF' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, {
-card_count: { increment: created.length },
+// ── Resolve deck metadata before forking ──────────────────────────────────
+const _pdfDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+const _pdfSubjectId = _pdfDeck?.subject_id || null;
+// ── Return job_id immediately ─────────────────────────────────────────────
+const pdfJobId = randomUUID();
+_jobStoreSet(pdfJobId, { status: 'pending', type: 'note_generation' });
+res.status(202).json({ job_id: pdfJobId, deck_id, subject_id: _pdfSubjectId, status: 'generating' });
+// ── Background ────────────────────────────────────────────────────────────
+const _pdfUserId = req.user.id;
+const _pdfDeckId = deck_id;
+const _pdfText   = text;
+const _pdfHint   = pdf_subject_hint;
+setImmediate(async () => {
+  try {
+    const chunks = [];
+    for (let i = 0; i < _pdfText.length; i += 12000) chunks.push(_pdfText.slice(i, i + 12000));
+    let cardsData = [];
+    for (const chunk of chunks) {
+      try {
+        const aiText = await generateFlashcards(chunk, _pdfHint);
+        cardsData.push(...parseFlashcards(aiText));
+      } catch (_ce) {
+        const lines = chunk.split('\n').filter(l => l.trim().length > 10);
+        for (let i = 0; i < lines.length - 1; i += 2)
+          cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
+      }
+    }
+    if (cardsData.length === 0) {
+      _jobStoreSet(pdfJobId, { status: 'failed', type: 'note_generation', error: 'No usable cards extracted from PDF' });
+      wsSend(_pdfUserId, 'job_failed', { job_id: pdfJobId, type: 'note_generation', error: 'No usable cards extracted from PDF' });
+      return;
+    }
+    const created = await db.cards.createMany(_pdfUserId, _pdfDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
+    await db.decks.update(_pdfUserId, _pdfDeckId, { card_count: { increment: created.length }, import_source: 'pdf' });
+    await batchInitializeSeedlingStates(_pdfUserId, created.map(c => c.id));
+    const suggest_bubble = _pdfSubjectId !== null && created.length >= 5;
+    _jobStoreSet(pdfJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'pdf', deck_id: _pdfDeckId, subject_id: _pdfSubjectId, suggest_bubble } });
+    wsSend(_pdfUserId, 'job_done', { job_id: pdfJobId, type: 'note_generation', result: { cards: created, count: created.length, source: 'pdf', deck_id: _pdfDeckId, subject_id: _pdfSubjectId, suggest_bubble } });
+  } catch (bgErr) {
+    console.error('[KIWI] PDF import background failed:', bgErr.message);
+    _jobStoreSet(pdfJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'PDF import failed' });
+    wsSend(_pdfUserId, 'job_failed', { job_id: pdfJobId, type: 'note_generation', error: bgErr.message || 'PDF import failed' });
+  }
 });
-await batchInitializeSeedlingStates(
-req.user.id,
-created.map((c) => c.id)
-);
-res.status(201).json({ cards: created, count: created.length, source: 'pdf' });
 } catch (e) {
 res.status(500).json({ error: 'PDF import failed', details: e.message });
 }
@@ -11668,11 +11684,11 @@ if (!docx_base64) return res.status(400).json({ error: 'docx_base64 is required'
 if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
 if (!mammoth) return res.status(503).json({ error: 'DOCX parsing not available' });
 const buffer = Buffer.from(docx_base64, 'base64');
-const result = await mammoth.extractRawText({ buffer });
-let text = (result.value || '').trim();
-// Enforce 80,000-character limit
+const docxResult = await mammoth.extractRawText({ buffer });
+let text = (docxResult.value || '').trim();
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text extracted from DOCX' });
+// CBT mode stays synchronous
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11680,43 +11696,59 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'docx' });
 }
-// Chunk into <=12000-char segments and send each to Gemini
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-try {
-const aiText = await generateFlashcards(chunk, docx_subject_hint);
-const parsed2 = parseFlashcards(aiText);
-cardsData.push(...parsed2);
-} catch (e) {
-const lines = chunk.split('\n').filter((l) => l.trim().length > 10);
-for (let i = 0; i < lines.length - 1; i += 2) {
-cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
-}
-}
-}
-if (cardsData.length === 0)
-return res.status(422).json({ error: 'No usable text extracted from DOCX' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, {
-card_count: { increment: created.length },
+// ── Resolve deck metadata before forking ──────────────────────────────────
+const _docxDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+const _docxSubjectId = _docxDeck?.subject_id || null;
+// ── Return job_id immediately ─────────────────────────────────────────────
+const docxJobId = randomUUID();
+_jobStoreSet(docxJobId, { status: 'pending', type: 'note_generation' });
+res.status(202).json({ job_id: docxJobId, deck_id, subject_id: _docxSubjectId, status: 'generating' });
+// ── Background ────────────────────────────────────────────────────────────
+const _docxUserId = req.user.id;
+const _docxDeckId = deck_id;
+const _docxText   = text;
+const _docxHint   = docx_subject_hint;
+setImmediate(async () => {
+  try {
+    const chunks = [];
+    for (let i = 0; i < _docxText.length; i += 12000) chunks.push(_docxText.slice(i, i + 12000));
+    let cardsData = [];
+    for (const chunk of chunks) {
+      try {
+        const aiText = await generateFlashcards(chunk, _docxHint);
+        cardsData.push(...parseFlashcards(aiText));
+      } catch (_ce) {
+        const lines = chunk.split('\n').filter(l => l.trim().length > 10);
+        for (let i = 0; i < lines.length - 1; i += 2)
+          cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
+      }
+    }
+    if (cardsData.length === 0) {
+      _jobStoreSet(docxJobId, { status: 'failed', type: 'note_generation', error: 'No usable cards extracted from DOCX' });
+      wsSend(_docxUserId, 'job_failed', { job_id: docxJobId, type: 'note_generation', error: 'No usable cards extracted from DOCX' });
+      return;
+    }
+    const created = await db.cards.createMany(_docxUserId, _docxDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
+    await db.decks.update(_docxUserId, _docxDeckId, { card_count: { increment: created.length }, import_source: 'docx' });
+    await batchInitializeSeedlingStates(_docxUserId, created.map(c => c.id));
+    // FIX #4a: Recalculate KS after DOCX import (preserved from original)
+    if (_docxSubjectId) await persistKnowledgeScore(_docxUserId, _docxSubjectId).catch(e => console.error('[KIWI] silent catch:', e.message));
+    const suggest_bubble = _docxSubjectId !== null && created.length >= 5;
+    _jobStoreSet(docxJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'docx', deck_id: _docxDeckId, subject_id: _docxSubjectId, suggest_bubble } });
+    wsSend(_docxUserId, 'job_done', { job_id: docxJobId, type: 'note_generation', result: { cards: created, count: created.length, source: 'docx', deck_id: _docxDeckId, subject_id: _docxSubjectId, suggest_bubble } });
+  } catch (bgErr) {
+    console.error('[KIWI] DOCX import background failed:', bgErr.message);
+    _jobStoreSet(docxJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'DOCX import failed' });
+    wsSend(_docxUserId, 'job_failed', { job_id: docxJobId, type: 'note_generation', error: bgErr.message || 'DOCX import failed' });
+  }
 });
-await batchInitializeSeedlingStates(
-req.user.id,
-created.map((c) => c.id)
-);
-// FIX #4a: Recalculate KS after DOCX import
-const docxDeck = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-if (docxDeck?.subject_id) {
-await persistKnowledgeScore(req.user.id, docxDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-}
-res.status(201).json({ cards: created, count: created.length, source: 'docx' });
 } catch (e) {
 res.status(500).json({ error: 'DOCX import failed', details: e.message });
 }
 });
 // POST /api/cards/import/txt — plain text file import (Issue-058)
+// Background-job pattern: returns job_id immediately; AI runs in setImmediate.
+// This prevents Railway request timeouts on large files.
 cardRouter.post('/import/txt', async (req, res) => {
 try {
 const { deck_id, txt_base64, subject_hint = '', mode = 'flashcard' } = req.body;
@@ -11725,6 +11757,7 @@ if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is
 let text = Buffer.from(txt_base64, 'base64').toString('utf-8').trim();
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text in file' });
+// CBT mode remains synchronous (short generation, different consumer)
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11732,18 +11765,48 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'txt' });
 }
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-const aiText = await generateFlashcards(chunk, subject_hint);
-cardsData.push(...parseFlashcards(aiText));
-}
-if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this text' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
-await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
-res.status(201).json({ cards: created, count: created.length, source: 'txt' });
+// ── Resolve deck metadata before forking ──────────────────────────────────
+const _txtDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+const _txtSubjectId = _txtDeck?.subject_id || null;
+// ── Return job_id immediately so the client doesn't time out ──────────────
+const txtJobId = randomUUID();
+_jobStoreSet(txtJobId, { status: 'pending', type: 'note_generation' });
+res.status(202).json({ job_id: txtJobId, deck_id, subject_id: _txtSubjectId, status: 'generating' });
+// ── Background: chunked generation + WebSocket notification ──────────────
+const _txtUserId    = req.user.id;
+const _txtDeckId    = deck_id;
+const _txtText      = text;
+const _txtHint      = subject_hint;
+setImmediate(async () => {
+  try {
+    const chunks = [];
+    for (let i = 0; i < _txtText.length; i += 12000) chunks.push(_txtText.slice(i, i + 12000));
+    let cardsData = [];
+    for (const chunk of chunks) {
+      const aiText = await generateFlashcards(chunk, _txtHint);
+      cardsData.push(...parseFlashcards(aiText));
+    }
+    if (cardsData.length === 0) {
+      _jobStoreSet(txtJobId, { status: 'failed', type: 'note_generation', error: 'AI could not generate cards from this text' });
+      wsSend(_txtUserId, 'job_failed', { job_id: txtJobId, type: 'note_generation', error: 'AI could not generate cards from this text' });
+      return;
+    }
+    const created = await db.cards.createMany(_txtUserId, _txtDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
+    await db.decks.update(_txtUserId, _txtDeckId, { card_count: { increment: created.length }, import_source: 'txt' });
+    await batchInitializeSeedlingStates(_txtUserId, created.map(c => c.id));
+    const suggest_bubble = _txtSubjectId !== null && created.length >= 5;
+    _jobStoreSet(txtJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'txt', deck_id: _txtDeckId, subject_id: _txtSubjectId, suggest_bubble } });
+    wsSend(_txtUserId, 'job_done', {
+      job_id: txtJobId,
+      type: 'note_generation',
+      result: { cards: created, count: created.length, source: 'txt', deck_id: _txtDeckId, subject_id: _txtSubjectId, suggest_bubble },
+    });
+  } catch (bgErr) {
+    console.error('[KIWI] TXT import background failed:', bgErr.message);
+    _jobStoreSet(txtJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'TXT import failed' });
+    wsSend(_txtUserId, 'job_failed', { job_id: txtJobId, type: 'note_generation', error: bgErr.message || 'TXT import failed' });
+  }
+});
 } catch (e) {
 res.status(500).json({ error: 'TXT import failed', details: e.message });
 }
@@ -11770,6 +11833,7 @@ text = text
   .replace(/^\s*\d+\.\s+/gm, '');
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text in markdown file' });
+// CBT mode stays synchronous
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11777,18 +11841,44 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'md' });
 }
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-const aiText = await generateFlashcards(chunk, subject_hint);
-cardsData.push(...parseFlashcards(aiText));
-}
-if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this markdown' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
-await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
-res.status(201).json({ cards: created, count: created.length, source: 'md' });
+// ── Resolve deck metadata before forking ──────────────────────────────────
+const _mdDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+const _mdSubjectId = _mdDeck?.subject_id || null;
+// ── Return job_id immediately ─────────────────────────────────────────────
+const mdJobId = randomUUID();
+_jobStoreSet(mdJobId, { status: 'pending', type: 'note_generation' });
+res.status(202).json({ job_id: mdJobId, deck_id, subject_id: _mdSubjectId, status: 'generating' });
+// ── Background ────────────────────────────────────────────────────────────
+const _mdUserId = req.user.id;
+const _mdDeckId = deck_id;
+const _mdText   = text;
+const _mdHint   = subject_hint;
+setImmediate(async () => {
+  try {
+    const chunks = [];
+    for (let i = 0; i < _mdText.length; i += 12000) chunks.push(_mdText.slice(i, i + 12000));
+    let cardsData = [];
+    for (const chunk of chunks) {
+      const aiText = await generateFlashcards(chunk, _mdHint);
+      cardsData.push(...parseFlashcards(aiText));
+    }
+    if (cardsData.length === 0) {
+      _jobStoreSet(mdJobId, { status: 'failed', type: 'note_generation', error: 'AI could not generate cards from this markdown' });
+      wsSend(_mdUserId, 'job_failed', { job_id: mdJobId, type: 'note_generation', error: 'AI could not generate cards from this markdown' });
+      return;
+    }
+    const created = await db.cards.createMany(_mdUserId, _mdDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
+    await db.decks.update(_mdUserId, _mdDeckId, { card_count: { increment: created.length }, import_source: 'md' });
+    await batchInitializeSeedlingStates(_mdUserId, created.map(c => c.id));
+    const suggest_bubble = _mdSubjectId !== null && created.length >= 5;
+    _jobStoreSet(mdJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'md', deck_id: _mdDeckId, subject_id: _mdSubjectId, suggest_bubble } });
+    wsSend(_mdUserId, 'job_done', { job_id: mdJobId, type: 'note_generation', result: { cards: created, count: created.length, source: 'md', deck_id: _mdDeckId, subject_id: _mdSubjectId, suggest_bubble } });
+  } catch (bgErr) {
+    console.error('[KIWI] MD import background failed:', bgErr.message);
+    _jobStoreSet(mdJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'Markdown import failed' });
+    wsSend(_mdUserId, 'job_failed', { job_id: mdJobId, type: 'note_generation', error: bgErr.message || 'Markdown import failed' });
+  }
+});
 } catch (e) {
 res.status(500).json({ error: 'Markdown import failed', details: e.message });
 }
@@ -11807,6 +11897,7 @@ let text = await officeparser.parseOfficeAsync(buffer, { outputErrorToConsole: f
 text = (text || '').trim();
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text extracted from PPTX' });
+// CBT mode stays synchronous
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11814,18 +11905,44 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'pptx' });
 }
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-const aiText = await generateFlashcards(chunk, subject_hint);
-cardsData.push(...parseFlashcards(aiText));
-}
-if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this presentation' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
-await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
-res.status(201).json({ cards: created, count: created.length, source: 'pptx' });
+// ── Resolve deck metadata before forking ──────────────────────────────────
+const _pptxDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+const _pptxSubjectId = _pptxDeck?.subject_id || null;
+// ── Return job_id immediately ─────────────────────────────────────────────
+const pptxJobId = randomUUID();
+_jobStoreSet(pptxJobId, { status: 'pending', type: 'note_generation' });
+res.status(202).json({ job_id: pptxJobId, deck_id, subject_id: _pptxSubjectId, status: 'generating' });
+// ── Background ────────────────────────────────────────────────────────────
+const _pptxUserId = req.user.id;
+const _pptxDeckId = deck_id;
+const _pptxText   = text;
+const _pptxHint   = subject_hint;
+setImmediate(async () => {
+  try {
+    const chunks = [];
+    for (let i = 0; i < _pptxText.length; i += 12000) chunks.push(_pptxText.slice(i, i + 12000));
+    let cardsData = [];
+    for (const chunk of chunks) {
+      const aiText = await generateFlashcards(chunk, _pptxHint);
+      cardsData.push(...parseFlashcards(aiText));
+    }
+    if (cardsData.length === 0) {
+      _jobStoreSet(pptxJobId, { status: 'failed', type: 'note_generation', error: 'AI could not generate cards from this presentation' });
+      wsSend(_pptxUserId, 'job_failed', { job_id: pptxJobId, type: 'note_generation', error: 'AI could not generate cards from this presentation' });
+      return;
+    }
+    const created = await db.cards.createMany(_pptxUserId, _pptxDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
+    await db.decks.update(_pptxUserId, _pptxDeckId, { card_count: { increment: created.length }, import_source: 'pptx' });
+    await batchInitializeSeedlingStates(_pptxUserId, created.map(c => c.id));
+    const suggest_bubble = _pptxSubjectId !== null && created.length >= 5;
+    _jobStoreSet(pptxJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'pptx', deck_id: _pptxDeckId, subject_id: _pptxSubjectId, suggest_bubble } });
+    wsSend(_pptxUserId, 'job_done', { job_id: pptxJobId, type: 'note_generation', result: { cards: created, count: created.length, source: 'pptx', deck_id: _pptxDeckId, subject_id: _pptxSubjectId, suggest_bubble } });
+  } catch (bgErr) {
+    console.error('[KIWI] PPTX import background failed:', bgErr.message);
+    _jobStoreSet(pptxJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'PPTX import failed' });
+    wsSend(_pptxUserId, 'job_failed', { job_id: pptxJobId, type: 'note_generation', error: bgErr.message || 'PPTX import failed' });
+  }
+});
 } catch (e) {
 res.status(500).json({ error: 'PPTX import failed', details: e.message });
 }
