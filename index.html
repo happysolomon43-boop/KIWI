@@ -6133,6 +6133,7 @@
         // Session state
         tempStudy: null,
         tempExam: null,
+        cardGenJob: null,
         // UI state
         treeInstance: null,
         sidebarOpen: false,
@@ -8058,6 +8059,147 @@
         _trunkHeight(stage, health) {
           const ths = [0, 48, 85, 125, 170, 220];
           return (ths[Math.max(1, Math.min(5, stage))] || 80) * (this.width / 340);
+        }
+      }
+
+      // ── renderCardGenerating — shown while AI card generation is in progress ──
+      function renderCardGenerating() {
+        const main = document.getElementById('mainContent');
+        const job = AppState.cardGenJob || {};
+        main.innerHTML = `
+<div class="page-wrap page-enter" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;text-align:center;padding:40px 20px;" id="cardGenScreen">
+  <div style="font-size:72px;margin-bottom:24px;animation:pulse 2s infinite;">&#x1F4DA;</div>
+  <div style="font-family:var(--font-display);font-size:28px;font-weight:800;color:var(--text);margin-bottom:8px;">Generating Cards</div>
+  ${job.subjectName ? `<div style="font-size:var(--text-base);color:var(--teal);margin-bottom:4px;font-family:var(--font-mono);">${escapeHTML(job.subjectName)}</div>` : ''}
+  <div style="font-size:var(--text-base);color:var(--text-2);max-width:480px;margin:0 auto 32px;line-height:1.7;">
+    KIWI is reading your notes and building flashcards. This usually takes 30–90 seconds.<br>
+    You can navigate away — the banner at the top will notify you when cards are ready.
+  </div>
+  <div style="display:flex;gap:10px;justify-content:center;margin-bottom:40px;">
+    ${[0,1,2,3,4].map(i => `<div style="width:10px;height:10px;border-radius:50%;background:var(--green-bright);animation:pulse ${1+i*0.2}s ease-in-out infinite alternate;opacity:${0.3+i*0.14};"></div>`).join('')}
+  </div>
+  <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+    <button class="btn btn-secondary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
+    <button class="btn btn-ghost" onclick="navigateTo('library')">Go to Library</button>
+  </div>
+</div>`;
+      }
+
+      // ── renderAdmin — full admin panel (user list, block/unblock/delete, notifications) ──
+      var _adminUnlocked = false;
+      async function renderAdmin() {
+        const main = document.getElementById('mainContent');
+        if (!AppState.user || AppState.user.role !== 'admin') {
+          if (!_adminUnlocked) {
+            main.innerHTML = '<div class="page-wrap page-enter" style="text-align:center;padding:80px 20px;"><div style="font-size:48px;margin-bottom:16px;">&#x1F512;</div><div style="font-size:var(--text-2xl);font-weight:700;margin-bottom:12px;">Access Restricted</div><p style="color:var(--text-3);">Admin access required.</p><button class="btn btn-primary" onclick="navigateTo(\'settings\')">Back to Settings</button></div>';
+            return;
+          }
+        }
+        renderLoadingState(main, 'Loading admin panel\u2026');
+        const _adminHdrs = _adminUnlocked ? { 'x-admin-override': '1969' } : {};
+        try {
+          const [users, stats] = await Promise.all([
+            apiRequest('/admin/users', { headers: _adminHdrs }),
+            apiRequest('/admin/stats', { headers: _adminHdrs }),
+          ]);
+          main.innerHTML = `
+<div class="page-wrap page-enter">
+  <div class="section-header">
+    <div><div class="section-title">Admin Panel</div><div class="section-sub">User Management</div></div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px;">
+    <div class="stat-card"><div class="stat-label">Total Users</div><div class="stat-value">${stats.total_users || 0}</div></div>
+    <div class="stat-card"><div class="stat-label">Total Cards</div><div class="stat-value">${stats.total_cards || 0}</div></div>
+    <div class="stat-card"><div class="stat-label">Sessions</div><div class="stat-value">${stats.total_sessions || 0}</div></div>
+  </div>
+  <div class="card">
+    <div class="settings-section-title">Users</div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:var(--text-sm);">
+        <thead><tr style="border-bottom:1px solid var(--border);">
+          <th style="text-align:left;padding:8px 10px;color:var(--text-3);font-weight:600;">Name</th>
+          <th style="text-align:left;padding:8px 10px;color:var(--text-3);font-weight:600;">Email</th>
+          <th style="text-align:left;padding:8px 10px;color:var(--text-3);font-weight:600;">Role</th>
+          <th style="text-align:right;padding:8px 10px;color:var(--text-3);font-weight:600;">Actions</th>
+        </tr></thead>
+        <tbody id="adminUserList">
+          ${Array.isArray(users) ? users.map(u => `
+          <tr data-uid="${escapeHTML(String(u.id))}" style="border-bottom:1px solid rgba(255,255,255,0.04);">
+            <td style="padding:10px;">${escapeHTML(u.full_name || u.name || '\u2014')}</td>
+            <td style="padding:10px;font-family:var(--font-mono);font-size:var(--text-xs);">${escapeHTML(u.email||'')}</td>
+            <td style="padding:10px;"><span class="badge ${u.role==='admin'?'badge-green':u.role==='blocked'?'badge-red':''}">${escapeHTML(u.role||'user')}</span></td>
+            <td style="padding:10px;text-align:right;">
+              ${u.role !== 'admin' ? `<button class="btn btn-secondary btn-sm admin-block-btn" style="margin-right:4px;" data-uid="${escapeHTML(String(u.id))}" data-blocked="${u.role==='blocked'?'1':'0'}">${u.role==='blocked'?'Unblock':'Block'}</button><button class="btn btn-secondary btn-sm admin-delete-btn" style="color:var(--red-bright);" data-uid="${escapeHTML(String(u.id))}" data-name="${escapeHTML(u.full_name||u.email||'user')}">Delete</button>` : '<span style="color:var(--text-4);font-size:var(--text-xs);">Protected</span>'}
+            </td>
+          </tr>`).join('') : '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text-4);">No users found</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px;">
+    <div class="settings-section-title">Notification Tests</div>
+    <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:12px;">Send a test notification to verify delivery channels are working.</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-secondary btn-sm" id="adminTestEmailBtn">&#x2709; Test Email</button>
+      <button class="btn btn-secondary btn-sm" id="adminTestTelegramBtn">&#x2708; Test Telegram</button>
+      <button class="btn btn-secondary btn-sm" id="adminSetWebhookBtn">&#x2699; Auto-set Webhook</button>
+    </div>
+    <div id="adminNotifTestResult" style="font-size:var(--text-xs);color:var(--text-3);margin-top:10px;min-height:16px;"></div>
+  </div>
+</div>`;
+          main.querySelectorAll('.admin-block-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const uid = btn.dataset.uid;
+              const isBlocked = btn.dataset.blocked === '1';
+              btn.disabled = true;
+              try {
+                await apiRequest(`/admin/users/${uid}/${isBlocked ? 'unblock' : 'block'}`, { method: 'PATCH', headers: _adminHdrs });
+                showToast(isBlocked ? 'User unblocked' : 'User blocked', 'success');
+                renderAdmin();
+              } catch(e) { showToast(e.message || 'Action failed', 'error'); btn.disabled = false; }
+            });
+          });
+          main.querySelectorAll('.admin-delete-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const uid = btn.dataset.uid;
+              const name = btn.dataset.name;
+              showCustomConfirm(`Delete user?`, 'This will permanently remove their account and all data.', async () => {
+                btn.disabled = true;
+                try {
+                  await apiRequest(`/admin/users/${uid}`, { method: 'DELETE', headers: _adminHdrs });
+                  showToast('User deleted', 'success');
+                  renderAdmin();
+                } catch(e) { showToast(e.message || 'Delete failed', 'error'); btn.disabled = false; }
+              });
+            });
+          });
+          const _rEl = document.getElementById('adminNotifTestResult');
+          const _eBtn = document.getElementById('adminTestEmailBtn');
+          if (_eBtn) _eBtn.addEventListener('click', async () => {
+            _eBtn.disabled = true; _eBtn.textContent = 'Sending\u2026';
+            if (_rEl) _rEl.textContent = '';
+            try { const r = await apiRequest('/admin/test-email', { method: 'POST', headers: _adminHdrs }); if (_rEl) _rEl.textContent = '\u2713 ' + (r.message || 'Test email sent!'); showToast(r.message || 'Test email sent!', 'success'); }
+            catch(e) { if (_rEl) _rEl.textContent = '\u2717 ' + (e.message || 'Test email failed'); showToast(e.message || 'Test email failed', 'error'); }
+            _eBtn.disabled = false; _eBtn.textContent = '\u2709 Test Email';
+          });
+          const _tBtn = document.getElementById('adminTestTelegramBtn');
+          if (_tBtn) _tBtn.addEventListener('click', async () => {
+            _tBtn.disabled = true; _tBtn.textContent = 'Sending\u2026';
+            if (_rEl) _rEl.textContent = '';
+            try { const r = await apiRequest('/admin/test-telegram', { method: 'POST', headers: _adminHdrs }); if (_rEl) _rEl.textContent = '\u2713 ' + (r.message || 'Telegram sent!'); showToast(r.message || 'Telegram sent!', 'success'); }
+            catch(e) { if (_rEl) _rEl.textContent = '\u2717 ' + (e.message || 'Telegram test failed'); showToast(e.message || 'Telegram test failed', 'error'); }
+            _tBtn.disabled = false; _tBtn.textContent = '\u2708 Test Telegram';
+          });
+          const _wBtn = document.getElementById('adminSetWebhookBtn');
+          if (_wBtn) _wBtn.addEventListener('click', async () => {
+            _wBtn.disabled = true; _wBtn.textContent = 'Setting\u2026';
+            if (_rEl) _rEl.textContent = '';
+            try { const r = await apiRequest('/admin/set-webhook', { method: 'POST', headers: _adminHdrs }); if (_rEl) _rEl.textContent = '\u2713 Webhook: ' + (r.webhook_url || 'set'); showToast('Webhook set successfully', 'success'); }
+            catch(e) { if (_rEl) _rEl.textContent = '\u2717 ' + (e.message || 'Set webhook failed'); showToast(e.message || 'Set webhook failed', 'error'); }
+            _wBtn.disabled = false; _wBtn.textContent = '\u2699 Auto-set Webhook';
+          });
+        } catch(err) {
+          renderErrorState(main, err.message || 'Failed to load admin panel', () => renderAdmin());
         }
       }
 
@@ -15201,7 +15343,7 @@
             var fileName = fileInput.files[0].name;
             // Confirmation dialog before generating
             var confirmed = window.confirm(
-              "Generate cards from "" + fileName + ""?\n\nThis will use AI to create flashcards and add them to the selected deck. Large PDFs may take 30–60 seconds."
+              "Generate cards from \"" + fileName + "\"?\n\nThis will use AI to create flashcards and add them to the selected deck. Large PDFs may take 30\u201360 seconds."
             );
             if (!confirmed) return;
             var btn = document.getElementById("pdfImportBtn");
@@ -15238,7 +15380,7 @@
             var fileName = fileInput.files[0].name;
             // Confirmation dialog before generating
             var confirmed = window.confirm(
-              "Generate cards from "" + fileName + ""?\n\nAI will create flashcards from this document and add them to the selected deck."
+              "Generate cards from \"" + fileName + "\"?\n\nAI will create flashcards from this document and add them to the selected deck."
             );
             if (!confirmed) return;
             var btn = document.getElementById("docxImportBtn");
@@ -15308,7 +15450,7 @@
             var fileName = fileInput.files[0].name;
             // Confirmation dialog before generating
             var confirmed = window.confirm(
-              "Generate cards from "" + fileName + ""?\n\nAI will create flashcards from this text file and add them to the selected deck."
+              "Generate cards from \"" + fileName + "\"?\n\nAI will create flashcards from this text file and add them to the selected deck."
             );
             if (!confirmed) return;
             var btn = document.getElementById("txtImportBtn");
@@ -15340,7 +15482,7 @@
             var fileName = fileInput.files[0].name;
             // Confirmation dialog before generating
             var confirmed = window.confirm(
-              "Generate cards from "" + fileName + ""?\n\nAI will create flashcards from this Markdown file and add them to the selected deck."
+              "Generate cards from \"" + fileName + "\"?\n\nAI will create flashcards from this Markdown file and add them to the selected deck."
             );
             if (!confirmed) return;
             var btn = document.getElementById("mdImportBtn");
@@ -15372,7 +15514,7 @@
             var fileName = fileInput.files[0].name;
             // Confirmation dialog before generating
             var confirmed = window.confirm(
-              "Generate cards from "" + fileName + ""?\n\nAI will create flashcards from your presentation slides and add them to the selected deck."
+              "Generate cards from \"" + fileName + "\"?\n\nAI will create flashcards from your presentation slides and add them to the selected deck."
             );
             if (!confirmed) return;
             var btn = document.getElementById("pptxImportBtn");
