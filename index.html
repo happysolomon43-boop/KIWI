@@ -1557,12 +1557,15 @@
         position: relative;
         display: inline-block;
         max-width: 100%;
+        width: 100%;
         line-height: 0;
         border-radius: 10px;
         overflow: hidden;
       }
       .occlusion-wrap img {
         max-width: 100%;
+        height: auto;
+        object-fit: contain;
         display: block;
         border-radius: 10px;
       }
@@ -3442,9 +3445,9 @@
       }
       .deck-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
         gap: 12px;
-        margin-left: 16px;
+        margin-left: 0;
       }
       .deck-card {
         background: var(--bg-3);
@@ -4102,7 +4105,7 @@
         }
         .deck-grid {
           margin-left: 0;
-          grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
         }
         .community-grid {
           grid-template-columns: 1fr;
@@ -5244,7 +5247,7 @@
         bottom: 76px;
         left: 50%;
         transform: translateX(-50%) translateY(8px);
-        z-index: 9999;
+        z-index: 10001;
         background: rgba(8, 18, 12, 0.96);
         border: 1px solid rgba(82, 183, 136, 0.35);
         border-radius: 14px;
@@ -5895,7 +5898,12 @@
           var fb = document.getElementById('_ewForfeit');
           if (fb) fb.onclick = function() {
             m.remove();
-            if (isStudy) { _unlockStudyPage(); } else { _unlockExamPage(); }
+            if (isStudy) {
+              if (typeof AppState !== 'undefined' && AppState.tempStudy && AppState.tempStudy.sessionId) {
+                endStudySession();
+              }
+              _unlockStudyPage();
+            } else { _unlockExamPage(); }
             if (typeof onForfeit === 'function') onForfeit();
           };
         }
@@ -5908,7 +5916,9 @@
         if (typeof navigateTo !== 'function') return;
         _origNavigateTo = navigateTo;
         navigateTo = function(page, params) {
-          if (_examPageLocked) {
+          // FIX: Allow navigation to generating-cards page even during active exam/session
+          var _isGenPage = (page === 'generating-cards');
+          if (_examPageLocked && !_isGenPage) {
             _showExitWarningModal(
               null, // onSubmit (not used — exam auto-submits on forfeit)
               function() {
@@ -5925,10 +5935,13 @@
             );
             return;
           }
-          if (_studyPageLocked) {
+          if (_studyPageLocked && !_isGenPage) {
             _showExitWarningModal(
               null,
               function() {
+                if (typeof AppState !== 'undefined' && AppState.tempStudy && AppState.tempStudy.sessionId) {
+                  endStudySession();
+                }
                 _unlockStudyPage();
                 _origNavigateTo(page, params);
               },
@@ -5980,6 +5993,7 @@
         if (!b) return;
         if (m) m.textContent = msg || 'Generating...';
         if (s) s.textContent = stage || '';
+        b.style.display = 'flex';
         b.classList.add('active');
         try { localStorage.setItem('kiwi_gen_banner', msg || 'Generating...'); } catch(_) {}
         // Auto-dismiss after 6 minutes (3 passes × 3 min each) if WS never fires
@@ -9708,7 +9722,7 @@
                 <div style="font-size:14px;color:var(--text-2);margin-bottom:14px;font-style:italic;">${escapeHTML(occData.question||"Click the teal regions to reveal labels")}</div>
                 <div style="display:flex;justify-content:center;">
                   <div class="occlusion-wrap" id="occlusionWrap">
-                    <img src="${occData.imageData}" id="occlusionImg" style="max-width:100%;max-height:400px;display:block;" />
+                    <img src="${occData.imageData}" id="occlusionImg" style="max-width:100%;max-height:400px;height:auto;object-fit:contain;display:block;" />
                     ${_masks.map(_m => `<div class="occlusion-mask${_rev[_m.id]?" revealed":""}" data-mask-id="${escapeHTML(_m.id)}" style="left:${_m.xPct}%;top:${_m.yPct}%;width:${_m.wPct}%;height:${_m.hPct}%;">${_rev[_m.id]?escapeHTML(_m.label):"?"}</div>`).join("")}
                   </div>
                 </div>
@@ -10406,6 +10420,11 @@
         if (!t) return;
         if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
         stopFocusTracking();
+        // FIX: Immediately render a smooth transition screen so user knows session is ending
+        const main = document.getElementById("mainContent");
+        if (main) {
+          main.innerHTML = '<div class="page-wrap page-enter" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;"><div style="font-size:48px;margin-bottom:16px;animation:pulse 1.5s infinite;">&#x2728;</div><div style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--text);margin-bottom:8px;">Saving Session…</div><div style="font-size:var(--text-base);color:var(--text-2);">Please wait while we record your progress.</div></div>';
+        }
         try {
           const focusData = t.focusData || { tabAwayCount: 0, idleSeconds: 0 };
           const result = await api.endStudySession(t.sessionId, focusData);
@@ -10816,6 +10835,11 @@
 
       function renderExam() {
         const main = document.getElementById("mainContent");
+        // FIX: Always clear any existing exam timer before re-rendering to prevent duplicate / leaked timers
+        if (AppState.tempExam && AppState.tempExam._timerInterval) {
+          clearInterval(AppState.tempExam._timerInterval);
+          AppState.tempExam._timerInterval = null;
+        }
         try {
           const e = AppState.tempExam;
           if (!e || !e.questions || e.questions.length === 0) {
@@ -10967,11 +10991,15 @@
 
       function startExamTimer() {
         const e = AppState.tempExam;
-        if (!e || e._timerInterval) return;
+        if (!e) return;
+        // FIX: Clear any globally tracked old exam timer to prevent leaks when tempExam is reassigned
+        if (window.__kiwiLastExamTimer) { clearInterval(window.__kiwiLastExamTimer); window.__kiwiLastExamTimer = null; }
+        if (e._timerInterval) return;
         const totalT = e.totalTime || e.timeLimit || 1;
         const dangerThreshold = Math.max(60, totalT * 0.10);
         const warnThreshold   = Math.max(120, totalT * 0.20);
         e._timerInterval = setInterval(() => {
+          window.__kiwiLastExamTimer = e._timerInterval;
           if (e.submitted) {
             clearInterval(e._timerInterval);
             e._timerInterval = null;
@@ -11041,11 +11069,10 @@
       async function submitExam() {
         const e = AppState.tempExam;
         if (!e || e.submitted) return;
+        // FIX: Unconditionally clear timer immediately before any async work to guarantee it stops
+        if (e._timerInterval) { clearInterval(e._timerInterval); e._timerInterval = null; }
+        window.__kiwiLastExamTimer = null;
         e.submitted = true;
-        if (e._timerInterval) {
-          clearInterval(e._timerInterval);
-          e._timerInterval = null;
-        }
         // Build answers array — send both field sets for maximum backend compatibility
         const answers = e.questions.map((q) => ({
           question_number: q.question_number || q.id,
@@ -14250,7 +14277,7 @@
                 const due = subj.dueCount || 0;
                 const ks = subj.ks || 0;
                 const color = subj.color || subj.color_hex || '#52b788';
-                const icon = subj.icon || subj.emoji || '▦';
+                const icon = subj.icon || subj.emoji || '📚';
                 const cardCount = subj.cardCount || subj.total_cards || 0;
                 const stateDist = subj.stateDistribution || {};
                 const ksColor = ks >= 70 ? 'var(--green-bright)' : ks >= 40 ? '#f59e0b' : 'var(--text-3)';
@@ -14376,22 +14403,21 @@
 
           // ── Swipe-to-delete for library subjects ──────────────────────────────
           // Swipe any subject card left > 90px to trigger subject deletion.
+          // FIX: attach directly to main (which holds page-wrap) so event delegation covers all cards
           if (typeof _attachSwipeToDelete === 'function') {
-            var _libWrap = main.querySelector('.page-wrap');
-            if (_libWrap) {
-              _attachSwipeToDelete(
-                _libWrap,
-                '.lib-subj-card',
-                function(el) { return el.dataset.subjId || ''; },
-                function(subjId, el) {
-                  if (!subjId) return;
-                  var nameEl = el.querySelector('[style*="font-weight:700"]');
-                  var sName  = nameEl ? nameEl.textContent.trim() : subjId;
-                  handleDeleteSubject(subjId, sName);
-                },
-                90
-              );
-            }
+            _attachSwipeToDelete(
+              main,
+              '.lib-subj-card',
+              function(el) { return el.dataset.subjId || ''; },
+              function(subjId, el) {
+                if (!subjId) return;
+                var nameEl = el.querySelector('[style*="font-weight:700"]');
+                var sName  = nameEl ? nameEl.textContent.trim() : subjId;
+                handleDeleteSubject(subjId, sName);
+              },
+              90,
+              { confirmFirst: true }
+            );
           }
 
           main.querySelectorAll(".deck-card").forEach(function(card) {
@@ -14633,7 +14659,9 @@
                 if (!cardId) return;
                 var _front = (el.querySelector('.cb-front') || {}).textContent || '';
                 handleDeleteCard(cardId, _front.substring(0, 30));
-              }
+              },
+              80,
+              { confirmFirst: true }
             );
             // Stamp card IDs onto elements so swipe handler can read them
             _cbList.querySelectorAll('.card').forEach(function(cardEl, idx) {
@@ -14900,9 +14928,10 @@
       // Attach to any scrollable list container. Items matching itemSelector can
       // be swiped left to trigger deletion. getIdFn(el) returns the item's ID.
       // onDeleteFn(id, el) is called after the swipe animation completes.
-      function _attachSwipeToDelete(container, itemSelector, getIdFn, onDeleteFn, threshold) {
+      function _attachSwipeToDelete(container, itemSelector, getIdFn, onDeleteFn, threshold, opts) {
         if (!container) return;
         threshold = threshold || 80;
+        opts = opts || {};
         var _activeEl = null, _startX = 0, _dx = 0, _dragging = false;
         container.addEventListener('touchstart', function(e) {
           var item = e.target.closest(itemSelector);
@@ -14939,16 +14968,26 @@
         container.addEventListener('touchend', function() {
           if (!_activeEl) return;
           if (_dragging && _dx < -threshold) {
+            var capturedEl = _activeEl;
+            var capturedId = getIdFn(_activeEl);
+            _activeEl = null; _dx = 0; _dragging = false;
+            if (opts.confirmFirst) {
+              // FIX: Snap back first, let onDeleteFn handle confirmation & actual removal
+              capturedEl.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+              capturedEl.style.transform  = '';
+              capturedEl.style.opacity    = '';
+              var hint2 = capturedEl.querySelector('._swipe-hint');
+              if (hint2) hint2.style.opacity = '0';
+              onDeleteFn(capturedId, capturedEl);
+              return;
+            }
             // Animate out
             _activeEl.style.transition = 'transform 0.22s ease, opacity 0.22s ease';
             _activeEl.style.transform  = 'translateX(-110%)';
             _activeEl.style.opacity    = '0';
-            var capturedEl = _activeEl;
-            var capturedId = getIdFn(_activeEl);
-            _activeEl = null; _dx = 0; _dragging = false;
             setTimeout(function() {
               // Collapse height so it doesn't leave a visual gap after slide-out
-              capturedEl.style.transition = 'height 0.18s ease, margin 0.18s ease, padding 0.18s ease, opacity 0.1s';
+              capturedEl.style.transition = 'height 0.18s ease, margin 0.18s ease, padding 0.18s ease, border-width 0.18s ease, opacity 0.1s';
               capturedEl.style.height = capturedEl.offsetHeight + 'px';
               requestAnimationFrame(function() {
                 capturedEl.style.height = '0';
@@ -14956,6 +14995,7 @@
                 capturedEl.style.marginBottom = '0';
                 capturedEl.style.paddingTop = '0';
                 capturedEl.style.paddingBottom = '0';
+                capturedEl.style.borderWidth = '0';
                 capturedEl.style.overflow = 'hidden';
               });
               setTimeout(function() { onDeleteFn(capturedId, capturedEl); }, 200);
@@ -17042,27 +17082,34 @@
             versionTapEl.addEventListener('click', _handleVersionTap);
           }
 
-          document.getElementById("resetBtn").addEventListener("click", () => {
-            if (
-              !confirm(
-                "Reset ALL local progress? This will clear cached data. Your server data is safe.",
-              )
-            )
-              return;
-            AppState.cache = {};
-            AppState.dashboard = null;
-            AppState.biome = null;
-            AppState.brain = null;
-            AppState.chronicle = null;
-            AppState.almanac = null;
-            AppState.persona = null;
-            AppState.marketplace = null;
-            AppState.inventory = null;
-            AppState.progress = null;
-            AppState.subjects = [];
-            showToast("Local cache cleared", "info");
-            navigateTo("dashboard");
-          });
+          const _resetBtnEl = document.getElementById("resetBtn");
+          if (_resetBtnEl) {
+            _resetBtnEl.addEventListener("click", () => {
+              showCustomConfirm(
+                "Reset ALL local progress?",
+                "This will clear cached data. Your server data is safe.",
+                () => {
+                  AppState.cache = {};
+                  AppState.dashboard = null;
+                  AppState.biome = null;
+                  AppState.brain = null;
+                  AppState.chronicle = null;
+                  AppState.almanac = null;
+                  AppState.persona = null;
+                  AppState.marketplace = null;
+                  AppState.inventory = null;
+                  AppState.progress = null;
+                  AppState.subjects = [];
+                  AppState.tempStudy = null;
+                  AppState.tempExam = null;
+                  AppState.treeInstance = null;
+                  AppState.reckoning = null;
+                  showToast("Local cache cleared", "info");
+                  navigateTo("dashboard");
+                }
+              );
+            });
+          }
 
           // ── Notification settings wiring ────────────────────────────────────
           (async function() {
