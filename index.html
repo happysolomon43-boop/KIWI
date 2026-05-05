@@ -5706,7 +5706,7 @@
       // and local single-origin dev serves both from the same port.
       const _isLocalDev = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
       // Always use relative URL so the app works on any host (Replit, Render, Vercel, localhost)
-      const API_BASE_URL = "/api";
+      const API_BASE_URL = "https://kiwi-741i.onrender.com/api";
 
       // ── AUTHENTICATION STATE ──
       let authToken = localStorage.getItem("kiwi_auth_token") || null;
