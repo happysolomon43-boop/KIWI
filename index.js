@@ -1836,13 +1836,14 @@ return JSON.parse(cleaned);
 // CEE-style raw fetch — returns SDK-compatible shape so all callers work unchanged
 // Model: gemini-3.1-flash-lite-preview (free, high usage) — no paid Pro model used
 const geminiModel = {
-async generateContent(content, generationConfig, { timeoutMs = 30000 } = {}) {
+async generateContent(content, generationConfig, { timeoutMs = 30000, modelOverride } = {}) {
+  const _modelName = modelOverride || 'gemini-3.1-flash-lite-preview';
 if (!_geminiKeyObjs.length) throw new Error('No Gemini API keys configured');
 let lastError = null;
 for (let attempt = 0; attempt < Math.max(_geminiKeyObjs.length, 1); attempt++) {
 const k = _pickGeminiKey();
 if (!k) break;
-const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${k.key}`;
+const url = `https://generativelanguage.googleapis.com/v1beta/models/${_modelName}:generateContent?key=${k.key}`;
 let reqBody;
 if (typeof content === 'string') {
 reqBody = { contents: [{ parts: [{ text: content }] }] };
@@ -4205,7 +4206,9 @@ async function generateFlashcards(notes, subjectHint = '') {
 const prompt =
 FLASHCARD_PROMPT.replace('[NOTES]', notes) +
 (subjectHint ? `\nSubject hint: ${subjectHint}` : '');
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000 }, { timeoutMs: 120000 });
+// Use gemini-3-flash-preview for note-to-flashcard generation — it produces more
+// thorough multi-card output within the same rate limits as the base model.
+const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000 }, { timeoutMs: 120000, modelOverride: 'gemini-3-flash-preview' });
 return result.response.text();
 }
 
@@ -7472,9 +7475,9 @@ generated_by: 'fallback',
 };
 }
 
-async function generateWeeklyChronicle(userId) {
+async function generateWeeklyChronicle(userId, force = false) {
 // P5.3-F FIX: checkAIRateLimit is sync — removed await; guard on return value
-if (checkAIRateLimit(userId, 'chronicle', 5)) {
+if (!force && checkAIRateLimit(userId, 'chronicle', 5)) {
 const cached = await db.chronicleEntries.findLatest(userId).catch(() => null);
 if (cached) return cached;
 return null;
@@ -7486,7 +7489,11 @@ weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
 weekStart.setHours(0, 0, 0, 0);
 const weekStr = weekStart.toISOString().split('T')[0];
 const existing = await db.chronicleEntries.findLatest(userId);
-if (existing && existing.week_start === weekStr) return existing;
+// If force=true, delete the cached entry so a fresh one gets written.
+// This lets the user manually regenerate a new Chronicle entry for the same week.
+if (force && existing && existing.week_start === weekStr) {
+  await query('DELETE FROM chronicle_entries WHERE user_id = $1 AND week_start = $2', [userId, weekStr]).catch(() => {});
+} else if (!force && existing && existing.week_start === weekStr) { return existing; }
 const stats = await db.userStats.get(userId);
 const subjects = await db.subjects.findManyWithDecks(userId);
 const logs = await db.reviewLogs.findByUser(userId, weekStart);
@@ -11291,6 +11298,48 @@ try {
 }
 });
 
+// ── POST /api/subjects/:id/reset — wipe SRS progress for ALL cards in a subject ─
+// Resets every card across every deck in the subject back to SEEDLING.
+subjectRouter.post('/:id/reset', async (req, res) => {
+try {
+  const subjectId = req.params.id;
+  const userId = req.user.id;
+  const subject = await db.subjects.findById(subjectId);
+  if (!subject) return res.status(404).json({ error: 'Subject not found' });
+  const decks = await db.decks.findBySubject(userId, subjectId);
+  if (!decks.length) return res.json({ message: 'No decks to reset', count: 0 });
+  const deckIds = decks.map(d => d.id);
+  // Reset all cards in one pass
+  await query(
+    `UPDATE cards SET stage = 1, review_count = 0, ease_factor = 2.5,
+     interval = 0, next_review_at = NULL, last_reviewed_at = NULL,
+     updated_at = NOW()
+     WHERE deck_id = ANY($1) AND user_id = $2`,
+    [deckIds, userId]
+  );
+  // Reset card_states
+  await query(
+    `UPDATE card_states SET state = 'SEEDLING', stage = 1, verified = false,
+     verified_at = NULL, failure_count = 0, learning_debt = false,
+     last_evaluated_at = NOW(), updated_at = NOW()
+     WHERE card_id IN (
+       SELECT id FROM cards WHERE deck_id = ANY($1) AND user_id = $2
+     ) AND user_id = $2`,
+    [deckIds, userId]
+  );
+  const { rows } = await query(
+    'SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = ANY($1) AND user_id = $2',
+    [deckIds, userId]
+  );
+  const count = parseInt(rows[0]?.cnt || '0', 10);
+  // Recompute KS after mass reset
+  await persistKnowledgeScore(userId, subjectId).catch(() => {});
+  res.json({ message: `Subject reset: ${count} card${count !== 1 ? 's' : ''} returned to SEEDLING`, count });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to reset subject', details: e.message });
+}
+});
+
 // ── POST /api/decks/merge — combine multiple decks into one new deck ──────────
 deckRouter.post('/merge', async (req, res) => {
 try {
@@ -12435,6 +12484,25 @@ await db.sessions.update(req.user.id, session_id, {
   focus_seed_stage: focusStage,
   seed_survived: seedSurvived,
 });
+// Compute real KS delta synchronously so the session complete screen shows accurate data.
+// Pattern mirrors the exam submit route (lines 13274-13293).
+let _sessionKsDelta = 0;
+try {
+  const _sDeck = await db.decks.findById(req.user.id, session.deck_id).catch(() => null);
+  if (_sDeck?.subject_id) {
+    const _preStats = await db.subjectStats.get(req.user.id, _sDeck.subject_id).catch(() => null);
+    const _preKS = _preStats?.knowledge_score || 0;
+    // Flush all queued card state recomputes for this user immediately —
+    // avoids waiting 60s for the cron to run (same fix as exam submit does).
+    const _userKeys = [..._ksQueue.keys()].filter(k => k.startsWith(req.user.id + ':'));
+    const _userBatch = _userKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+    await Promise.all(_userBatch.map(({ userId, cardId }) =>
+      recomputeAndStoreCardState(userId, cardId).catch(() => null)
+    ));
+    const _newKS = await persistKnowledgeScore(req.user.id, _sDeck.subject_id).catch(() => null);
+    _sessionKsDelta = parseFloat(((_newKS?.score || 0) - _preKS).toFixed(2));
+  }
+} catch (_ksErr) { /* non-fatal — delta stays 0 */ }
 // Respond immediately — heavy analytics run in the background
 res.json({
   session_id,
@@ -12449,8 +12517,8 @@ res.json({
   tree_health: 0,
   tree_stage: 0,
   new_almanac_unlocks: [],
-  ks_delta: 0,
-  ksDelta: 0,
+  ks_delta: _sessionKsDelta,
+  ksDelta: _sessionKsDelta,
   stage_transitions: [],
 });
 wsSend(req.user.id, 'session_complete', { xp_earned: session.xp_earned || 0, cards_reviewed: session.cards_reviewed || 0, seed_survived: seedSurvived });
@@ -13343,6 +13411,11 @@ return [];
     });
 
     const submitJobId = randomUUID(); // background debrief job
+    // CRITICAL FIX: Register job as 'pending' BEFORE responding so that
+    // GET /api/jobs/:id never returns 404 while the frontend polls for debrief.
+    // Without this, the 4-minute poll timeout fires immediately showing
+    // "Exam submission timed out" even though the exam was submitted fine.
+    _jobStoreSet(submitJobId, { status: 'pending', type: 'exam_submit' });
     res.json({
       job_id: submitJobId,
       exam: completedExam,
@@ -13435,9 +13508,11 @@ Return only the debrief text.`;
               `\n\nRecommended next step: Review missed cards immediately, then schedule a follow-up exam in 3 days.`;
           }
         }
+        _jobStoreSet(submitJobId, { status: 'done', type: 'exam_submit', result: { debrief: debriefText } });
         wsSend(_debriefUserId, 'job_done', { job_id: submitJobId, type: 'exam_submit', result: { debrief: debriefText } });
       } catch (debriefBgErr) {
         console.error('[KIWI] Background debrief failed:', debriefBgErr.message);
+        _jobStoreSet(submitJobId, { status: 'failed', type: 'exam_submit', error: 'Debrief generation failed' });
         wsSend(_debriefUserId, 'job_failed', { job_id: submitJobId, type: 'exam_submit', error: 'Debrief generation failed' });
       }
     });
@@ -14549,7 +14624,9 @@ narrativeRouter.post('/chronicle/generate', async (req, res) => {
 try {
 // BUG-8 FIX: only award seedlings when a NEW entry is actually created
 const existingBefore = await db.chronicleEntries.findLatest(req.user.id).catch(() => null);
-const entry = await generateWeeklyChronicle(req.user.id);
+// force=true: bypass cache, delete existing entry, generate fresh narrative for this week
+const force = req.body?.force === true || req.query?.force === 'true';
+const entry = await generateWeeklyChronicle(req.user.id, force);
 const isNew = !existingBefore || existingBefore.id !== entry?.id;
 if (isNew) await hookSeedlingEarnings(req.user.id, 'weekly_chronicle', {});
 res.json(entry);
