@@ -5291,7 +5291,7 @@
         border: 1px solid var(--border);
         border-radius: var(--r-lg, 14px);
         padding: var(--space-4, 16px);
-        margin-bottom: var(--space-3, 12px);
+        margin-bottom: var(--space-2, 8px);
         transition: border-color 0.2s ease, box-shadow 0.2s ease;
       }
       .lib-subj-card:hover {
@@ -9533,7 +9533,7 @@
         renderLoadingState(container, "Loading your study deck...");
         try {
           // Fetch subjects for selection
-          if (AppState.subjects.length === 0) {
+          if (!AppState.subjects || AppState.subjects.length === 0) {
             const data = await api.getLibrary();
             AppState.subjects = data.subjects || [];
           }
@@ -10420,35 +10420,28 @@
         if (!t) return;
         if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
         stopFocusTracking();
-        // FIX: Immediately render a smooth transition screen so user knows session is ending
-        const main = document.getElementById("mainContent");
-        if (main) {
-          main.innerHTML = '<div class="page-wrap page-enter" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;"><div style="font-size:48px;margin-bottom:16px;animation:pulse 1.5s infinite;">&#x2728;</div><div style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--text);margin-bottom:8px;">Saving Session…</div><div style="font-size:var(--text-base);color:var(--text-2);">Please wait while we record your progress.</div></div>';
-        }
+        // Capture state before clearing
+        const savedTempStudy = AppState.tempStudy;
+        const focusData = t.focusData || { tabAwayCount: 0, idleSeconds: 0 };
+        const sessionId = t.sessionId;
+        // Clear session state immediately and navigate away — save runs in background
+        AppState.tempStudy = null;
+        AppState.subjects = null;
+        _bustDashboardCache();
+        navigateTo("dashboard");
+        showToast("Saving session...", "info", 2500);
+        // Fire-and-forget background save
         try {
-          const focusData = t.focusData || { tabAwayCount: 0, idleSeconds: 0 };
-          const result = await api.endStudySession(t.sessionId, focusData);
-          // M2 FIX: capture tempStudy BEFORE clearing — renderSessionEnd needs seed state
-          const savedTempStudy = AppState.tempStudy;
-          AppState.tempStudy = null;
-          // BUGFIX-4: Force library to re-fetch fresh data so due counts + timers reflect the session
-          AppState.subjects = null;
-          _bustDashboardCache(); // scores/streak changed — force fresh fetch on next dashboard visit
-          // M3 FIX: flag biome for zone restoration if this was a return-from-absence session
+          const result = await api.endStudySession(sessionId, focusData);
           if (savedTempStudy?.isReturnSession && savedTempStudy?.subjectId) {
             AppState.returnZoneSubjectId = savedTempStudy.subjectId;
           }
-          // P6.4 FIX: Show dignified notification when almanac entries unlock
           if (result.new_almanac_unlocks && result.new_almanac_unlocks.length > 0) {
             showToast('A new entry has appeared in your Almanac.', 'success', 6000);
           }
-          // Render session end screen
-          renderSessionEnd(result, savedTempStudy);
+          showToast("Session saved ✓", "success", 3000);
         } catch (err) {
-          // Even if end fails, clean up and go back
-          AppState.tempStudy = null;
-          showToast("Session could not be saved. Please check your connection.", "error");
-          navigateTo("dashboard");
+          showToast("Session could not be saved. Check your connection.", "error");
         }
       }
 

@@ -11271,7 +11271,7 @@ try {
   if (!deck) return res.status(404).json({ error: 'Deck not found' });
   // Reset all card scheduling fields in one SQL pass
   await query(
-    `UPDATE cards SET stage = 1, review_count = 0, ease_factor = 2.5,
+    `UPDATE cards SET stage = 1, review_count = 0,
      interval = 0, next_review_at = NULL, last_reviewed_at = NULL,
      updated_at = NOW()
      WHERE deck_id = $1 AND user_id = $2`,
@@ -11311,7 +11311,7 @@ try {
   const deckIds = decks.map(d => d.id);
   // Reset all cards in one pass
   await query(
-    `UPDATE cards SET stage = 1, review_count = 0, ease_factor = 2.5,
+    `UPDATE cards SET stage = 1, review_count = 0,
      interval = 0, next_review_at = NULL, last_reviewed_at = NULL,
      updated_at = NOW()
      WHERE deck_id = ANY($1) AND user_id = $2`,
@@ -11665,7 +11665,7 @@ setImmediate(async () => {
     }
     const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
     const created   = await db.cards.createMany(_noteUserId, _noteDeckId, cardsData);
-    await db.decks.update(_noteUserId, _noteDeckId, { card_count: { increment: created.length }, import_source: 'ai' });
+    await db.decks.update(_noteUserId, _noteDeckId, { card_count: { increment: created.length } });
     await batchInitializeSeedlingStates(_noteUserId, created.map(c => c.id));
     const suggest_bubble = _noteSubjectId !== null && created.length >= 5;
     _jobStoreSet(noteJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'ai', deck_id: _noteDeckId, subject_id: _noteSubjectId, suggest_bubble } });
@@ -15566,14 +15566,12 @@ try {
 const subjects = await db.subjects.findManyWithDecks(req.user.id);
 const enriched = await Promise.all(
 subjects.map(async (s) => {
-const ks = await computeKnowledgeScore(req.user.id, s.id).catch(() => ({ score: 0 }));
-// Fetch cards for this subject across all decks
-// FIX #9: Use db.cards.findByDeck() instead of raw Firestore query
-let allCards = [];
-for (const d of s.decks || []) {
-const deckCards = await db.cards.findByDeck(req.user.id, d.id);
-allCards.push(...deckCards);
-}
+// Run KS computation and all deck card fetches in parallel
+const [ks, ...deckCardArrays] = await Promise.all([
+computeKnowledgeScore(req.user.id, s.id).catch(() => ({ score: 0 })),
+...(s.decks || []).map(d => db.cards.findByDeck(req.user.id, d.id).catch(() => [])),
+]);
+let allCards = deckCardArrays.flat();
 // stageDistribution
 const stageDistribution = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
 allCards.forEach((c) => {
