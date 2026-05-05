@@ -805,14 +805,24 @@ async findByIdWithQuestions(userId, id) {
   return exam;
 },
 async findMany(userId, filters = {}, { limit = 20, offset = 0 } = {}) {
-  let sql = 'SELECT * FROM exam_sessions WHERE user_id = $1';
+  // JOIN with subjects so every row carries subject_name — fixes UUID display in exam history
+  let sql = `SELECT es.*, s.name AS subject_name FROM exam_sessions es
+             LEFT JOIN subjects s ON es.subject_id = s.id
+             WHERE es.user_id = $1`;
   const vals = [userId];
-  if (filters.status) { sql += ` AND status = $${vals.length + 1}`; vals.push(filters.status); }
-  if (filters.started_at_gte) { sql += ` AND started_at >= $${vals.length + 1}`; vals.push(filters.started_at_gte); }
+  if (filters.status) { sql += ` AND es.status = $${vals.length + 1}`; vals.push(filters.status); }
+  if (filters.started_at_gte) { sql += ` AND es.started_at >= $${vals.length + 1}`; vals.push(filters.started_at_gte); }
   vals.push(limit, offset);
-  sql += ` ORDER BY created_at DESC LIMIT $${vals.length - 1} OFFSET $${vals.length}`;
+  sql += ` ORDER BY es.created_at DESC LIMIT $${vals.length - 1} OFFSET $${vals.length}`;
   const { rows } = await query(sql, vals);
-  return rows;
+  // Normalise JSON-encoded subject names (legacy migration artefact)
+  return rows.map(r => {
+    let name = r.subject_name || '';
+    if (name.trim().startsWith('{')) {
+      try { const p = JSON.parse(name); if (p?.name) name = p.name; } catch (_) {}
+    }
+    return { ...r, subject_name: name || null };
+  });
 },
 // FIX: Add missing delete method — called by background exam generation on parse failure
 async delete(userId, id) {
@@ -10317,7 +10327,10 @@ const _corsOptions = {
   origin: true, // open to all origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  // x-admin-token required for the hidden admin-override path (was missing — caused
+  // CORS preflight to fail with "Failed to fetch" when admin panel was accessed
+  // via the tap-unlock passcode flow, because the browser blocked the custom header).
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
 };
 
 app.use(compression()); // Gzip all responses — typically cuts JSON payload 60-70%
@@ -11222,6 +11235,45 @@ await db.decks.delete(req.user.id, req.params.id);
 res.json({ message: 'Deck deleted' });
 } catch (e) {
 res.status(500).json({ error: 'Failed to delete deck' });
+}
+});
+
+// ── POST /api/decks/:id/reset — wipe SRS progress for every card in a deck ───
+// Resets all cards back to SEEDLING (stage 1, ease 2.5, no schedule). Useful
+// when a user wants to restudy a whole deck from scratch without deleting cards.
+deckRouter.post('/:id/reset', async (req, res) => {
+try {
+  const deckId = req.params.id;
+  const userId = req.user.id;
+  // Verify deck belongs to this user
+  const deck = await db.decks.findById(userId, deckId);
+  if (!deck) return res.status(404).json({ error: 'Deck not found' });
+  // Reset all card scheduling fields in one SQL pass
+  await query(
+    `UPDATE cards SET stage = 1, review_count = 0, ease_factor = 2.5,
+     interval = 0, next_review_at = NULL, last_reviewed_at = NULL,
+     updated_at = NOW()
+     WHERE deck_id = $1 AND user_id = $2`,
+    [deckId, userId]
+  );
+  // Reset card_states to SEEDLING for every card in the deck
+  await query(
+    `UPDATE card_states SET state = 'SEEDLING', stage = 1, verified = false,
+     verified_at = NULL, failure_count = 0, learning_debt = false,
+     last_evaluated_at = NOW(), updated_at = NOW()
+     WHERE card_id IN (
+       SELECT id FROM cards WHERE deck_id = $1 AND user_id = $2
+     ) AND user_id = $2`,
+    [deckId, userId]
+  );
+  const { rows } = await query(
+    'SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = $1 AND user_id = $2',
+    [deckId, userId]
+  );
+  const count = parseInt(rows[0]?.cnt || '0', 10);
+  res.json({ message: `Deck reset: ${count} card${count !== 1 ? 's' : ''} returned to SEEDLING`, count });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to reset deck', details: e.message });
 }
 });
 
@@ -14843,21 +14895,31 @@ try {
 // load, so pressure sources (GHOST, STUCK, AVOIDED, no_exam, etc.) are always current.
 // calculateSubjectPressure writes to brain_pressure, then findByUser reads the fresh docs.
 await calculateAllSubjectPressures(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message)); // non-fatal — fall through to stale data if it fails
-const rawPressures = await db.brainPressure.findByUser(req.user.id);
-// Enrich with subject names
-const enriched = await Promise.all(
-rawPressures.map(async (p) => {
-const subject = await db.subjects.findById(p.subject_id).catch(() => null);
-return {
-...p,
-subjectName: subject?.name || 'Unknown Subject',
-pressure: p.pressure_score || 0,
-level: p.intervention_level ? parseInt(p.intervention_level.replace('L', '')) : 0, // P3-M1 FIX: L0 is the calm baseline, not L1
-description: // P3.2-B1 FIX: L0 is the correct calm default.
-`${p.intervention_level || 'L0'} — ${p.pressure_score || 0} pressure points`,
-};
-})
+// Single JOIN instead of N+1 findById calls — also eliminates "Unknown Subject" for
+// orphaned brain_pressure rows (entries whose subject was deleted are filtered out).
+const { rows: rawPressures } = await query(
+  `SELECT bp.*, s.name AS subject_name
+   FROM brain_pressure bp
+   INNER JOIN subjects s ON bp.subject_id = s.id
+   WHERE bp.user_id = $1
+   ORDER BY bp.pressure_score DESC`,
+  [req.user.id]
 );
+const enriched = rawPressures.map((p) => {
+  // Normalise JSON-encoded names (legacy migration artefact from Firestore)
+  let name = p.subject_name || '';
+  if (name.trim().startsWith('{')) {
+    try { const parsed = JSON.parse(name); if (parsed?.name) name = parsed.name; } catch (_) {}
+  }
+  return {
+    ...p,
+    subjectName: name || 'Subject',
+    subjectId: p.subject_id,
+    pressure: p.pressure_score || 0,
+    level: p.intervention_level ? parseInt(p.intervention_level.replace('L', '')) : 0,
+    description: `${p.intervention_level || 'L0'} — ${p.pressure_score || 0} pressure points`,
+  };
+});
 const highestPressure =
 enriched.length > 0 ? Math.max(...enriched.map((p) => p.pressure_score || 0)) : 0;
 // P3.2-B1 FIX: filter for anything above L0, not L1 (L1 is never emitted).
@@ -15207,22 +15269,35 @@ try {
 // Previously it was awaited later in the route, blocking the response by up to
 // 2 s on every dashboard load. Running it alongside other fetches means its
 // latency is hidden behind the other queries (which already take ~300-500ms).
+// Perf: fire biome in background immediately
 const _biomePromise = buildBiomeData(req.user.id).catch(() => ({}));
-const [stats, subjects, globalKS, allStates] = await Promise.all([
+const now = new Date();
+const todayStr = now.toISOString().split('T')[0];
+const weekStartStr = (() => {
+const d = new Date(now);
+// H-7 FIX: Monday-based key
+d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+d.setHours(0, 0, 0, 0);
+return d.toISOString().split('T')[0];
+})();
+
+// Round 1 — all independent queries in one parallel batch
+const [stats, subjects, globalKS, allStates, allCards, pressures, activeReckoning] = await Promise.all([
 db.userStats.get(req.user.id),
 db.subjects.findManyWithDecks(req.user.id),
 computeGlobalKnowledgeScore(req.user.id),
 db.cardStates.findByUser(req.user.id),
+db.cards.findAllForUser(req.user.id),              // Perf: was sequential
+db.brainPressure.findByUser(req.user.id),          // Perf: was sequential
+db.reckoningSessions.findActiveByUser(req.user.id), // Perf: was sequential
 ]);
-const now = new Date();
-const allCards = await db.cards.findAllForUser(req.user.id);
 const dueCount = allCards.filter((c) => isCardDue(c, now)).length;
-const pressures = await db.brainPressure.findByUser(req.user.id);
-const activeReckoning = await db.reckoningSessions.findActiveByUser(req.user.id);
 const stateDist = {};
 for (const s of allStates) stateDist[s.state] = (stateDist[s.state] || 0) + 1;
-// Build subject breakdown with per-subject KS for frontend dashboard
-const subjectBreakdown = await Promise.all(subjects.map(async (s) => {
+
+// Round 2 — all things that depend on Round 1, run in parallel
+const [subjectBreakdown, persona, returnStatus, morningCache, anchorCache, invitationsCache] = await Promise.all([
+Promise.all(subjects.map(async (s) => {
 const storedSubjectStat = await db.subjectStats.get(req.user.id, s.id).catch(() => null);
 const [ks, subjectDecks] = await Promise.all([
 (storedSubjectStat?.knowledge_score !== undefined ? Promise.resolve({ score: storedSubjectStat.knowledge_score }) : computeKnowledgeScore(req.user.id, s.id)).catch(() => ({ score: 0 })),
@@ -15231,10 +15306,15 @@ db.decks.findBySubject(req.user.id, s.id),
 const subjectDeckIds = subjectDecks.map((d) => d.id);
 const subjectCards = allCards.filter((c) => subjectDeckIds.includes(c.deck_id));
 const subjectDueCount = subjectCards.filter((c) => isCardDue(c)).length;
-return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount };
-}));
-// Persona
-const persona = await db.userPersona.get(req.user.id).catch(() => null);
+// Carry _subjectStat to avoid second DB fetch for dashTotalFruits
+return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount, _subjectStat: storedSubjectStat };
+})),
+db.userPersona.get(req.user.id).catch(() => null),                                   // Perf: was sequential
+computeReturnStatus(req.user.id).catch(() => null),                                  // Perf: was sequential
+db.dailyRitualCache.get(req.user.id, 'morning_brief', todayStr).catch(() => null),   // Perf: was sequential
+db.dailyRitualCache.get(req.user.id, 'weekly_anchor', weekStartStr).catch(() => null), // Perf: was sequential
+db.dailyRitualCache.get(req.user.id, 'daily_invitations', todayStr).catch(() => null), // Perf: was sequential
+]);
 // Tree state
 const treeStageLabels = [
 '',
@@ -15254,11 +15334,8 @@ const dashActiveMilestones = [...new Set([
 ...dashEarnedMilestones,
 ...[7, 30, 100, 365].filter(m => dashStreak >= m),
 ])].sort((a, b) => a - b);
-// M1 FIX: fruits = sum of per-subject fruit_counts (fruiting sessions, not mastered cards)
-const dashSubjectStats = await Promise.all(
-subjects.map(s => db.subjectStats.get(req.user.id, s.id).catch(() => null))
-);
-const dashTotalFruits = dashSubjectStats.reduce((sum, ss) => sum + (ss?.fruit_count || 0), 0);
+// M1 FIX: fruits = sum of per-subject fruit_counts — reuse _subjectStat from Round 2 (no extra DB call)
+const dashTotalFruits = subjectBreakdown.reduce((sum, s) => sum + (s._subjectStat?.fruit_count || 0), 0);
 // M1 FIX: leaves from globalKS * 0.5 — matches biome formula
 const dashGlobalKS = subjectBreakdown.length > 0
 ? subjectBreakdown.reduce((sum, s) => sum + s.ks, 0) / subjectBreakdown.length
@@ -15297,13 +15374,11 @@ pressures.filter((p) => p.intervention_level !== 'L0').length,
 highestPressure:
 pressures.length > 0 ? Math.max(...pressures.map((p) => p.pressure_score || 0)) : 0,
 };
-// Return greeting — C-1 FIX: wire into dashboard flow with daily cache
-const returnStatus = await computeReturnStatus(req.user.id).catch(() => null);
+// Return greeting — returnStatus already resolved in Round 2
 let returnGreeting = null;
 if (returnStatus && returnStatus.status !== 'active') {
-const todayStrRG = new Date().toISOString().split('T')[0];
 const cachedRG = await db.dailyRitualCache
-.get(req.user.id, 'return_greeting', todayStrRG)
+.get(req.user.id, 'return_greeting', todayStr)
 .catch(() => null);
 if (cachedRG?.data?.greeting) {
 returnGreeting = cachedRG.data.greeting;
@@ -15312,33 +15387,16 @@ const rg = await getReturnGreeting(req.user.id).catch(() => null);
 returnGreeting = rg?.greeting || null;
 }
 }
-// Morning brief — try cache first, skip AI call in dashboard for speed
-const todayStr = new Date().toISOString().split('T')[0];
-const morningCache = await db.dailyRitualCache
-.get(req.user.id, 'morning_brief', todayStr)
-.catch(() => null);
+// Morning brief — morningCache already resolved in Round 2
 // C-3 FIX: Generate inline on cache miss — spec: "Triggered on first dashboard load per calendar day"
 const morningBrief = morningCache
 ? morningCache.data
 : await getMorningBrief(req.user.id).catch(() => null);
-// Weekly anchor — read from cache using current week's Monday key
-const weekStartStr = (() => {
-const d = new Date();
-// H-7 FIX: Monday-based key to match getWeeklyAnchor after Monday correction
-d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-d.setHours(0, 0, 0, 0);
-return d.toISOString().split('T')[0];
-})();
-const anchorCache = await db.dailyRitualCache
-.get(req.user.id, 'weekly_anchor', weekStartStr)
-.catch(() => null);
+// Weekly anchor — anchorCache already resolved in Round 2
 const weeklyAnchor = anchorCache
 ? anchorCache.anchor_text || anchorCache.message || null
 : null;
-// Invitations — try cache
-const invitationsCache = await db.dailyRitualCache
-.get(req.user.id, 'daily_invitations', todayStr)
-.catch(() => null);
+// Invitations — invitationsCache already resolved in Round 2 (plain value, not a Promise)
 // C-3 FIX: Generate inline on cache miss
 const invitations = invitationsCache
 ? invitationsCache.data

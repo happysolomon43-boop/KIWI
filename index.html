@@ -6081,11 +6081,19 @@
             } else if (event === 'job_failed') {
               var _jf2 = data || {};
               _hideGenBanner();
-              showToast('Exam generation failed: ' + (_jf2.error || 'Task failed'), 'error', 8000);
+              var _failPrefixes = { cbt_generation: 'Exam generation failed', note_generation: 'Note generation failed', exam_submit: 'Exam submission failed' };
+              var _failPrefix = _failPrefixes[_jf2.type] || 'Task failed';
+              showToast(_failPrefix + ': ' + (_jf2.error || 'Task failed'), 'error', 8000);
               if (_jf2.type === 'cbt_generation') {
                 var _gb = document.getElementById('generateExamBtn');
                 if (_gb) { _gb.disabled = false; _gb.textContent = 'Generate Exam'; }
                 else { var _gs = document.getElementById('examGeneratingScreen'); if (_gs) _gs.innerHTML = '<div style="text-align:center;padding:40px 20px;"><div style="font-size:var(--text-xl);font-weight:600;color:var(--red-bright);margin-bottom:16px;">&#x26A0; Exam generation failed</div><div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:24px;">' + (_jf2.error||'Unknown error').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div><button class="btn btn-primary" onclick="navigateTo(\'exam-config\')">Try Again</button></div>'; else if (typeof navigateTo === 'function') navigateTo('exam-config'); }
+              }
+              if (_jf2.type === 'note_generation') {
+                var _ib = document.getElementById('aiNotesImportBtn');
+                if (_ib) { _ib.disabled = false; _ib.textContent = 'Generate Cards with AI'; }
+                var _resultEl = document.getElementById('aiNotesResult');
+                if (_resultEl) { _resultEl.style.display = 'block'; _resultEl.style.color = 'var(--red-bright)'; _resultEl.textContent = _jf2.error || 'Card generation failed. Please try again.'; }
               }
             }
           }
@@ -6097,7 +6105,12 @@
             if (_elapsed > _MAX_POLL_MS) {
               clearInterval(iv);
               _pendingJobs.delete(jobId);
-              _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: 'Exam generation timed out. The AI took too long. Please try again.' });
+              var _timeoutMsgs = {
+                cbt_generation: 'Exam generation timed out. The AI took too long. Please try again.',
+                note_generation: 'Card generation timed out. Please try with fewer notes or try again.',
+                exam_submit: 'Exam submission timed out. Please try again.'
+              };
+              _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: _timeoutMsgs[type] || 'Request timed out. Please try again.' });
               return;
             }
             // Update stage label for CBT generation based on time elapsed
@@ -6892,6 +6905,8 @@
       });
       // Issue-056: Reset card to SEEDLING
       api.resetCard = async (cardId) => apiRequest('/cards/' + cardId + '/reset', { method: 'POST' });
+      // Reset every card in a deck to SEEDLING (new)
+      api.resetDeck = async (deckId) => apiRequest('/decks/' + deckId + '/reset', { method: 'POST' });
       // Issue-058/059/060: TXT, MD, PPTX import
       api.importFromTxt = async function(deckId, fileBase64, subjectHint) {
         return await apiRequest('/cards/import/txt', { method: 'POST', body: { deck_id: deckId, txt_base64: fileBase64, subject_hint: subjectHint || '' } });
@@ -14254,6 +14269,7 @@
                         ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMergeDecksModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name};})). replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg> Merge Decks</button>` : ''}
                         ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMoveCardsModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg> Move Cards</button>` : ''}
                         ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);" onclick="showReassignDeckModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg> Move Deck</button>` : ''}
+                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm lib-reset-deck-btn" data-deck-id="${escapeHTML(subj.decks[0].id)}" data-subj-name="${escapeHTML(safeDisplayName(subj.name))}" style="font-size:var(--text-xs);color:var(--amber);" title="Reset all cards in this deck back to SEEDLING"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Reset Deck</button>` : ''}
                       </div>
                     </div>
                   </div>
@@ -14303,6 +14319,34 @@
                 btn.textContent = "↑ Publish Deck";
                 btn.disabled = false;
               }
+            });
+          });
+
+          // ── Reset Deck handler ────────────────────────────────────────────────
+          main.querySelectorAll(".lib-reset-deck-btn").forEach(function(btn) {
+            btn.addEventListener("click", async function() {
+              var deckId = btn.dataset.deckId;
+              var subjName = btn.dataset.subjName || "this deck";
+              showCustomConfirm(
+                `Reset "${subjName}"?`,
+                "All cards will return to SEEDLING — stage 1, no schedule. Study history is wiped. This cannot be undone.",
+                async function() {
+                  btn.disabled = true;
+                  var _orig = btn.innerHTML;
+                  btn.textContent = "Resetting…";
+                  try {
+                    var r = await api.resetDeck(deckId);
+                    showToast(r.message || "Deck reset to SEEDLING", "success");
+                    // Clear cached subjects so library re-renders fresh
+                    AppState.subjects = null;
+                    renderLibrary();
+                  } catch (e) {
+                    showToast(e.message || "Reset failed", "error");
+                    btn.innerHTML = _orig;
+                    btn.disabled = false;
+                  }
+                }
+              );
             });
           });
 
@@ -16155,23 +16199,88 @@
       })();
       var _adminPassPrompted = false;
 
+      // ── 4-digit PIN modal (shown when version box is tapped 4× fast) ─────────
+      function _showAdminPinModal() {
+        if (_adminPassPrompted) return;
+        _adminPassPrompted = true;
+        _adminTapCount = 0;
+
+        // Build modal
+        const overlay = document.createElement('div');
+        overlay.id = '_adminPinOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:rgba(3,13,11,0.85);backdrop-filter:blur(8px);';
+        overlay.innerHTML = `
+          <div style="background:var(--surface);border:1px solid var(--border-2);border-radius:var(--r-lg);padding:32px 28px;width:300px;max-width:90vw;text-align:center;box-shadow:var(--shadow-lg);">
+            <div style="font-size:32px;margin-bottom:12px;">🔐</div>
+            <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;color:var(--text);margin-bottom:6px;">Admin Access</div>
+            <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:24px;">Enter the 4-digit PIN</div>
+            <div style="display:flex;gap:10px;justify-content:center;margin-bottom:20px;">
+              ${[0,1,2,3].map(i => `<input id="_adminPin${i}" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]"
+                style="width:52px;height:60px;text-align:center;font-size:var(--text-3xl);font-family:var(--font-mono);font-weight:700;
+                       background:var(--surface-2);border:2px solid var(--border-2);border-radius:var(--r);color:var(--text);
+                       outline:none;transition:border-color var(--t-mid) var(--ease);"
+                autocomplete="off" />`).join('')}
+            </div>
+            <div id="_adminPinErr" style="min-height:18px;font-size:var(--text-sm);color:var(--red-bright);margin-bottom:16px;"></div>
+            <div style="display:flex;gap:10px;justify-content:center;">
+              <button id="_adminPinCancel" class="btn btn-ghost btn-sm">Cancel</button>
+              <button id="_adminPinSubmit" class="btn btn-primary btn-sm">Unlock</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+
+        const inputs = [0,1,2,3].map(i => document.getElementById('_adminPin' + i));
+        const errEl = document.getElementById('_adminPinErr');
+
+        // Auto-advance and backspace
+        inputs.forEach((inp, idx) => {
+          inp.addEventListener('focus', () => { inp.style.borderColor = 'var(--green-bright)'; });
+          inp.addEventListener('blur',  () => { inp.style.borderColor = 'var(--border-2)'; });
+          inp.addEventListener('input', () => {
+            inp.value = inp.value.replace(/[^0-9]/g,'').slice(-1);
+            if (inp.value && idx < 3) inputs[idx + 1].focus();
+            errEl.textContent = '';
+          });
+          inp.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && !inp.value && idx > 0) { inputs[idx - 1].focus(); inputs[idx - 1].value = ''; }
+            if (e.key === 'Enter') doCheck();
+          });
+        });
+
+        function doClose() {
+          document.body.removeChild(overlay);
+          _adminPassPrompted = false;
+        }
+
+        function doCheck() {
+          const pin = inputs.map(i => i.value).join('');
+          if (pin.length < 4) { errEl.textContent = 'Enter all 4 digits.'; inputs.find(i => !i.value)?.focus(); return; }
+          if (pin === '1969') {
+            _adminUnlocked = true;
+            try { sessionStorage.setItem('kiwi_admin_unlocked', '1'); } catch(_) {}
+            doClose();
+            showToast('Admin access granted', 'success', 3000);
+            navigateTo('admin');
+          } else {
+            errEl.textContent = 'Incorrect PIN. Try again.';
+            inputs.forEach(i => { i.value = ''; i.style.borderColor = 'var(--red-bright)'; });
+            setTimeout(() => inputs.forEach(i => { i.style.borderColor = 'var(--border-2)'; }), 600);
+            inputs[0].focus();
+          }
+        }
+
+        document.getElementById('_adminPinCancel').addEventListener('click', doClose);
+        document.getElementById('_adminPinSubmit').addEventListener('click', doCheck);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) doClose(); });
+        setTimeout(() => inputs[0].focus(), 80);
+      }
+
       function _handleVersionTap() {
         _adminTapCount++;
         if (_adminTapTimer) clearTimeout(_adminTapTimer);
         _adminTapTimer = setTimeout(() => { _adminTapCount = 0; }, 1500);
         if (_adminTapCount >= 4 && !_adminUnlocked && !_adminPassPrompted) {
-          _adminPassPrompted = true;
-          _adminTapCount = 0;
-          const pass = prompt('Enter admin access code:');
-          if (pass === '1969') {
-            _adminUnlocked = true;
-            try { sessionStorage.setItem('kiwi_admin_unlocked', '1'); } catch(_) {}
-            showToast('Admin access granted', 'success', 3000);
-            navigateTo('admin');
-          } else if (pass !== null) {
-            showToast('Incorrect code', 'error');
-          }
-          _adminPassPrompted = false;
+          _showAdminPinModal();
         }
       }
 
@@ -16184,8 +16293,10 @@
           }
         }
         renderLoadingState(main, 'Loading admin panel…');
-        // When unlocked via passcode, send the override header so backend allows access
-        const _adminHdrs = _adminUnlocked ? { 'x-admin-override': '1969' } : {};
+        // When unlocked via passcode, send the correct override header so backend allows access.
+        // CORS fix: x-admin-token is now whitelisted in allowedHeaders on the server.
+        // Header-name fix: backend's requireAdminAccess checks x-admin-token, not x-admin-override.
+        const _adminHdrs = _adminUnlocked ? { 'x-admin-token': 'kiwi-admin-1969' } : {};
         try {
           const [users, stats] = await Promise.all([
             apiRequest('/admin/users', { headers: _adminHdrs }),
@@ -16482,7 +16593,7 @@
           <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
             <div class="stat-card">
               <div class="stat-label">Version</div>
-              <div class="stat-value" id="kiwiVersionTap" style="font-size:var(--text-2xl);cursor:default;" title="KIWI v2.0">2.0</div>
+              <div class="stat-value" id="kiwiVersionTap" style="font-size:var(--text-2xl);cursor:pointer;user-select:none;" title="KIWI v2.0">2.0</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">API Status</div>
@@ -16493,14 +16604,6 @@
         <!-- Session / Logout -->
         <div class="card" style="margin-top:20px;">
           <div class="settings-section-title">Session</div>
-          ${_adminUnlocked ? `
-          <div class="settings-row" style="margin-bottom:12px;">
-            <div>
-              <div class="settings-row-label">Admin Panel</div>
-              <div class="settings-row-sub">Admin access is active this session</div>
-            </div>
-            <button class="btn btn-secondary btn-sm" onclick="navigateTo('admin')">Open Panel</button>
-          </div>` : ''}
           <div class="settings-row">
             <div>
               <div class="settings-row-label">Log Out</div>
