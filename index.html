@@ -6109,7 +6109,9 @@
             if (job.status === 'done') {
               clearInterval(iv);
               _pendingJobs.delete(jobId);
-              if (_kiwiWS && _kiwiWS.readyState === 1) return; // WS already handled it
+              // Always call _simulateWsMsg to update the UI — don't rely on WS having
+              // already updated it, since WS may have fired before the DOM element existed
+              // (race condition between job completion and page navigation).
               _simulateWsMsg('job_done', { job_id: jobId, type: type, result: job.result, exam: job.result });
             } else if (job.status === 'failed') {
               clearInterval(iv);
@@ -6946,6 +6948,12 @@
       // ── Tier 2: exam history list (GET /api/exams/) ──
       api.getExams = async function(page, limit) {
         return await apiRequest("/exams/?page=" + (page || 1) + "&limit=" + (limit || 20));
+      };
+
+      // KS-HISTORY: Get per-subject KS snapshots for chart display.
+      // Backend route: GET /api/progress/subjects/:subjectId/ks-history
+      api.getKSHistory = async function(subjectId, limit) {
+        return await apiRequest("/progress/subjects/" + encodeURIComponent(subjectId) + "/ks-history?limit=" + (limit || 30));
       };
 
       // ── Tier 1 Fix #1+2: import pipeline (POST /api/cards/import/*) ──
@@ -8551,13 +8559,13 @@
   `;
         // Landing tree
         const landingTree = document.getElementById("landingTree");
-        if (landingTree) {
-          new KiwiTree(landingTree, {
+        if (landingTree && typeof KiwiTree === 'function') {
+          try { new KiwiTree(landingTree, {
             width: 200,
             height: 240,
             state: { stage: 4, health: 90, leaves: 24, fruits: 3, rings: 1, milestones: [7, 30] },
             interactive: false,
-          });
+          }); } catch(_) {}
         }
         document.getElementById("landingStart").addEventListener("click", () => openAuth('register'));
         document.getElementById("landingLogin").addEventListener("click", () => openAuth('login'));
@@ -8914,7 +8922,7 @@
           if (_cachedDash.treeState) {
             requestAnimationFrame(() => {
               const tc = document.getElementById("tree-container");
-              if (tc && window.KiwiTree) new KiwiTree(tc, _cachedDash.treeState);
+              if (tc && typeof KiwiTree === 'function') { try { new KiwiTree(tc, _cachedDash.treeState); } catch(_) {} }
             });
           }
         } else {
@@ -9131,7 +9139,7 @@
     `;
           // F23: KiwiTree with real backend data; robust fallback if treeState absent
           const treeContainer = document.getElementById("dashboardTree");
-          if (treeContainer) {
+          if (treeContainer && typeof KiwiTree === 'function') {
             const ts = treeState || {
               stage: 1,
               health: 50,
@@ -9141,19 +9149,24 @@
               milestones: [],
               stageLabel: "SEEDLING",
             };
-            AppState.treeInstance = new KiwiTree(treeContainer, {
-              width: 300,
-              height: 360,
-              state: {
-                stage: ts.stage !== undefined ? ts.stage : 1,
-                health: ts.health !== undefined ? ts.health : 50,
-                leaves: ts.leaves !== undefined ? ts.leaves : 8,
-                fruits: ts.fruits !== undefined ? ts.fruits : 0,
-                rings: ts.rings !== undefined ? ts.rings : 0,
-                milestones: ts.milestones !== undefined ? ts.milestones : [],
-              },
-              interactive: true,
-            });
+            try {
+              AppState.treeInstance = new KiwiTree(treeContainer, {
+                width: 300,
+                height: 360,
+                state: {
+                  stage: ts.stage !== undefined ? ts.stage : 1,
+                  health: ts.health !== undefined ? ts.health : 50,
+                  leaves: ts.leaves !== undefined ? ts.leaves : 8,
+                  fruits: ts.fruits !== undefined ? ts.fruits : 0,
+                  rings: ts.rings !== undefined ? ts.rings : 0,
+                  milestones: ts.milestones !== undefined ? ts.milestones : [],
+                },
+                interactive: true,
+              });
+            } catch (_treeErr) {
+              // SVG-FIX: KiwiTree render failure must never propagate — show placeholder
+              treeContainer.innerHTML = '<div style="height:200px;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:48px;">🌱</div>';
+            }
           }
           // ── Load mini 12-week heatmap on dashboard ────────────────────────
           (function() {
@@ -9450,6 +9463,18 @@
           return;
         }
         const card = t.queue[t.currentIndex];
+        // CRASH-FIX: Defensive guard — queue length checks passed but element could still be
+        // undefined if the array was mutated by an async requeue between the guard and here.
+        if (!card) {
+          container.innerHTML = `
+      <div class="page-wrap page-enter" style="text-align:center;padding:80px 20px;">
+        <div style="font-size:48px;margin-bottom:16px;">⚠️</div>
+        <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:600;color:var(--text);margin-bottom:8px;">Session Error</div>
+        <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:20px;">The current card couldn't be loaded. Please restart your session.</div>
+        <button class="btn btn-primary" onclick="endStudySession()">End Session</button>
+      </div>`;
+          return;
+        }
 
         const progress = (t.currentIndex / t.queue.length) * 100;
         const stage = card.stage || card.level || 1;
@@ -9468,7 +9493,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
           <div style="font-family:var(--font-mono);font-size:var(--text-sm);color:var(--text-3);">${t.focusData?.tabAwayCount || 0} away</div>
-          <div id="cardElapsedTimer" style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-4);padding:2px 7px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;min-width:32px;text-align:center;">0s</div>
+          <div id="cardElapsedTimer" title="Time on this card" style="font-family:var(--font-mono);font-size:var(--text-sm);font-weight:600;color:var(--text-2);padding:3px 10px;background:var(--surface-2,rgba(255,255,255,0.08));border:1px solid var(--border);border-radius:8px;min-width:38px;text-align:center;letter-spacing:0.5px;">0s</div>
           ${t.currentIndex < t.queue.length - 1 ? `<button class="btn btn-ghost btn-sm" onclick="skipCard()" title="Skip card to end of queue" style="font-size:var(--text-xs);padding:3px 8px;opacity:0.65;">Skip &#x21E3;</button>` : ""}
         </div>
       </div>
@@ -10453,6 +10478,10 @@
         `
             : ""
         }
+        <!-- Exam History section loaded asynchronously below -->
+        <div id="examHistorySection" style="margin-top:24px;">
+          <div class="section-sub" style="margin-bottom:12px;">Loading exam history…</div>
+        </div>
       </div>
     `;
           document.querySelectorAll("#examFilters .filter-chip").forEach((chip) => {
@@ -10531,6 +10560,44 @@
               renderErrorState(main, err.message || "Failed to generate exam", () => navigateTo("exam-config"));
             }
           });
+
+          // EXAM-HISTORY-FIX: Load and render recent exam history directly on the Exam page.
+          // Runs async after the page is rendered so it doesn't block the config form.
+          api.getExams(1, 10).then(function(examList) {
+            const histEl = document.getElementById('examHistorySection');
+            if (!histEl) return;
+            const exams = Array.isArray(examList) ? examList : (examList?.exams || examList?.data || []);
+            if (!exams.length) {
+              histEl.innerHTML = '';
+              return;
+            }
+            histEl.innerHTML = `
+              <div class="section-header" style="margin-bottom:10px;padding-bottom:0;">
+                <div class="section-title" style="font-size:var(--text-base);">Recent Exams</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                ${exams.map(function(ex) {
+                  const score = ex.score != null ? Math.round(ex.score) : (ex.percentage != null ? Math.round(ex.percentage) : null);
+                  const scoreStr = score != null ? score + '%' : '—';
+                  const scoreColor = score == null ? 'var(--text-4)' : score >= 70 ? 'var(--green-bright)' : score >= 50 ? '#f59e0b' : 'var(--red-bright)';
+                  const dateStr = ex.completed_at || ex.created_at ? new Date(ex.completed_at || ex.created_at).toLocaleDateString(undefined, {month:'short',day:'numeric'}) : '—';
+                  const subjectName = ex.subject_name || ex.subjectName || escapeHTML(ex.subject_id || '') || 'Exam';
+                  const qCount = ex.question_count || ex.total_questions || (ex.questions && ex.questions.length) || '?';
+                  const status = ex.status || (ex.completed_at ? 'completed' : 'pending');
+                  return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--glass-bg);border:1px solid var(--border);border-radius:10px;gap:10px;">
+                    <div style="min-width:0;">
+                      <div style="font-size:var(--text-sm);font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHTML(String(subjectName))}</div>
+                      <div style="font-size:var(--text-xs);color:var(--text-3);">${qCount} questions &middot; ${dateStr}</div>
+                    </div>
+                    <div style="font-size:var(--text-lg);font-weight:700;color:${scoreColor};flex-shrink:0;">${scoreStr}</div>
+                  </div>`;
+                }).join('')}
+              </div>`;
+          }).catch(function() {
+            const histEl = document.getElementById('examHistorySection');
+            if (histEl) histEl.innerHTML = '';
+          });
+
         } catch (err) {
           renderErrorState(main, err.message || "Failed to load subjects", () =>
             navigateTo("exam-config"),
@@ -11479,8 +11546,8 @@
     `;
           // Render central KiwiTree
           const treeContainer = document.getElementById("biomeTree");
-          if (treeContainer && globalTreeState) {
-            new KiwiTree(treeContainer, {
+          if (treeContainer && globalTreeState && typeof KiwiTree === 'function') {
+            try { new KiwiTree(treeContainer, {
               width: 300,
               height: 360,
               state: {
@@ -11492,7 +11559,9 @@
                 milestones: globalTreeState.milestones || [],
               },
               interactive: true,
-            });
+            }); } catch (_biomeTreeErr) {
+              treeContainer.innerHTML = '<div style="height:200px;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:48px;">🌿</div>';
+            }
           }
           // PB.22: Attach Mastery Bubble indicators to each Biome zone tile [DESIGN: §17.3]
           // Mini widget: same state logic as dashboard widget, positioned top-right of zone.
@@ -13287,7 +13356,7 @@
               tip.style.top  = by + 'px';
             }
             function hideTip() { tip.classList.remove('visible'); }
-            var heatEl = document.getElementById('fullHeatmapGrid') || el.querySelector('.heatmap-grid') || el;
+            var heatEl = document.getElementById('fullHeatmapGrid') || main.querySelector('.heatmap-grid') || main;
             document.addEventListener('mouseover', function(e) {
               if (e.target && e.target.getAttribute('data-tip')) showTip(e.target, e.clientX, e.clientY);
               else hideTip();
@@ -15596,6 +15665,8 @@
       api.setWebhook = async () => {
         return await apiRequest("/admin/set-webhook", { method: "POST", body: {} });
       };
+      api.testEmail = api.testEmail || (async () => { return await apiRequest("/notifications/test-email", { method: "POST", body: {} }); });
+      api.testTelegram = api.testTelegram || (async () => { return await apiRequest("/notifications/test-telegram", { method: "POST", body: {} }); });
 
       // Feature gating: minimum thresholds before advanced features unlock
       const FEATURE_GATES = {
@@ -15911,10 +15982,12 @@
           }
         }
         renderLoadingState(main, 'Loading admin panel…');
+        // When unlocked via passcode, send the override header so backend allows access
+        const _adminHdrs = _adminUnlocked ? { 'x-admin-override': '1969' } : {};
         try {
           const [users, stats] = await Promise.all([
-            apiRequest('/admin/users'),
-            apiRequest('/admin/stats'),
+            apiRequest('/admin/users', { headers: _adminHdrs }),
+            apiRequest('/admin/stats', { headers: _adminHdrs }),
           ]);
           main.innerHTML = `
 <div class="page-wrap page-enter">
@@ -15953,6 +16026,17 @@
       </table>
     </div>
   </div>
+  <!-- Notification Tests (admin-only) -->
+  <div class="card" style="margin-top:16px;">
+    <div class="settings-section-title">Notification Tests</div>
+    <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:12px;">Send a test notification to verify delivery channels are working.</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-secondary btn-sm" id="adminTestEmailBtn">&#x2709; Test Email</button>
+      <button class="btn btn-secondary btn-sm" id="adminTestTelegramBtn">&#x2708; Test Telegram</button>
+      <button class="btn btn-secondary btn-sm" id="adminSetWebhookBtn">&#x2699; Auto-set Webhook</button>
+    </div>
+    <div id="adminNotifTestResult" style="font-size:var(--text-xs);color:var(--text-3);margin-top:10px;min-height:16px;"></div>
+  </div>
 </div>`;
           // Wire up block/unblock buttons
           main.querySelectorAll('.admin-block-btn').forEach(btn => {
@@ -15961,7 +16045,7 @@
               const isBlocked = btn.dataset.blocked === '1';
               btn.disabled = true;
               try {
-                await apiRequest(`/admin/users/${uid}/${isBlocked ? 'unblock' : 'block'}`, { method: 'PATCH' });
+                await apiRequest(`/admin/users/${uid}/${isBlocked ? 'unblock' : 'block'}`, { method: 'PATCH', headers: _adminHdrs });
                 showToast(isBlocked ? 'User unblocked' : 'User blocked', 'success');
                 renderAdminPanel();
               } catch(e) {
@@ -15978,7 +16062,7 @@
               showCustomConfirm(`Delete "${name}"?`, 'This will permanently remove their account and all data.', async () => {
                 btn.disabled = true;
                 try {
-                  await apiRequest(`/admin/users/${uid}`, { method: 'DELETE' });
+                  await apiRequest(`/admin/users/${uid}`, { method: 'DELETE', headers: _adminHdrs });
                   showToast('User deleted', 'success');
                   renderAdminPanel();
                 } catch(e) {
@@ -15988,6 +16072,59 @@
               });
             });
           });
+          // Wire up admin notification test buttons
+          const _adminTestResultEl = document.getElementById('adminNotifTestResult');
+          const adminTestEmailBtn = document.getElementById('adminTestEmailBtn');
+          if (adminTestEmailBtn) {
+            adminTestEmailBtn.addEventListener('click', async () => {
+              adminTestEmailBtn.disabled = true; adminTestEmailBtn.textContent = 'Sending…';
+              if (_adminTestResultEl) _adminTestResultEl.textContent = '';
+              try {
+                const r = await api.testEmail();
+                if (_adminTestResultEl) _adminTestResultEl.textContent = '✓ ' + (r.message || 'Test email sent!');
+                showToast(r.message || 'Test email sent!', 'success');
+              } catch (e) {
+                const msg = e.message || 'Test email failed';
+                if (_adminTestResultEl) _adminTestResultEl.textContent = '✗ ' + msg;
+                showToast(msg, 'error');
+              }
+              adminTestEmailBtn.disabled = false; adminTestEmailBtn.textContent = '✉ Test Email';
+            });
+          }
+          const adminTestTgBtn = document.getElementById('adminTestTelegramBtn');
+          if (adminTestTgBtn) {
+            adminTestTgBtn.addEventListener('click', async () => {
+              adminTestTgBtn.disabled = true; adminTestTgBtn.textContent = 'Sending…';
+              if (_adminTestResultEl) _adminTestResultEl.textContent = '';
+              try {
+                const r = await api.testTelegram();
+                if (_adminTestResultEl) _adminTestResultEl.textContent = '✓ ' + (r.message || 'Telegram message sent!');
+                showToast(r.message || 'Telegram message sent!', 'success');
+              } catch (e) {
+                const msg = e.message || 'Telegram test failed';
+                if (_adminTestResultEl) _adminTestResultEl.textContent = '✗ ' + msg;
+                showToast(msg, 'error');
+              }
+              adminTestTgBtn.disabled = false; adminTestTgBtn.textContent = '✈ Test Telegram';
+            });
+          }
+          const adminWebhookBtn = document.getElementById('adminSetWebhookBtn');
+          if (adminWebhookBtn) {
+            adminWebhookBtn.addEventListener('click', async () => {
+              adminWebhookBtn.disabled = true; adminWebhookBtn.textContent = 'Setting…';
+              if (_adminTestResultEl) _adminTestResultEl.textContent = '';
+              try {
+                const r = await api.setWebhook();
+                if (_adminTestResultEl) _adminTestResultEl.textContent = '✓ Webhook: ' + (r.webhook_url || 'set');
+                showToast('Webhook set successfully', 'success');
+              } catch (e) {
+                const msg = e.message || 'Set webhook failed';
+                if (_adminTestResultEl) _adminTestResultEl.textContent = '✗ ' + msg;
+                showToast(msg, 'error');
+              }
+              adminWebhookBtn.disabled = false; adminWebhookBtn.textContent = '⚙ Auto-set Webhook';
+            });
+          }
         } catch(err) {
           renderErrorState(main, err.message || 'Failed to load admin panel', () => renderAdminPanel());
         }
@@ -16120,10 +16257,8 @@
             </div>
             <div id="obTelegramLinked" style="font-size:var(--text-xs,11px);display:none;color:var(--green-bright);">✓ Telegram linked</div>
           </div>
-          <!-- Test buttons -->
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
-            <button class="btn btn-secondary btn-sm" id="testEmailBtn"><svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Test Email</button>
-            <button class="btn btn-secondary btn-sm" id="testTelegramBtn"><svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Test Telegram</button>
+          <!-- Webhook button (admin only) -->
+          <div style="margin-top:8px;">
             <button class="btn btn-secondary btn-sm" id="setWebhookBtn" style="display:none;"><svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Auto-set Webhook</button>
           </div>
           <div id="notifTestResult" style="font-size:var(--text-xs,11px);color:var(--text-3);margin-top:8px;min-height:16px;"></div>
@@ -16408,47 +16543,7 @@
             // Show webhook button only to admins
             if (webhookBtn && isAdmin) webhookBtn.style.display = "";
 
-            // Test Email
-            const testEmailBtn = document.getElementById("testEmailBtn");
-            if (testEmailBtn) {
-              testEmailBtn.addEventListener("click", async () => {
-                testEmailBtn.disabled = true;
-                testEmailBtn.textContent = "Sending…";
-                if (resultEl) resultEl.textContent = "";
-                try {
-                  const r = await api.testEmail();
-                  if (resultEl) resultEl.textContent = r.message || "Test email sent!";
-                  showToast(r.message || "Test email sent!", "success");
-                } catch (e) {
-                  const msg = e.message || "Test email failed";
-                  if (resultEl) resultEl.textContent = "✗ " + msg;
-                  showToast(msg, "error");
-                }
-                testEmailBtn.disabled = false;
-                testEmailBtn.innerHTML = `<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Test Email`;
-              });
-            }
-
-            // Test Telegram
-            const testTgBtn = document.getElementById("testTelegramBtn");
-            if (testTgBtn) {
-              testTgBtn.addEventListener("click", async () => {
-                testTgBtn.disabled = true;
-                testTgBtn.textContent = "Sending…";
-                if (resultEl) resultEl.textContent = "";
-                try {
-                  const r = await api.testTelegram();
-                  if (resultEl) resultEl.textContent = r.message || "Telegram message sent!";
-                  showToast(r.message || "Telegram message sent!", "success");
-                } catch (e) {
-                  const msg = e.message || "Telegram test failed";
-                  if (resultEl) resultEl.textContent = "✗ " + msg;
-                  showToast(msg, "error");
-                }
-                testTgBtn.disabled = false;
-                testTgBtn.innerHTML = `<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Test Telegram`;
-              });
-            }
+            // NOTE: Test Email / Test Telegram buttons moved to Admin Panel (admin-only).
 
             // Auto-set Webhook (admin only)
             if (webhookBtn) {

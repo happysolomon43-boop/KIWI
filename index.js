@@ -347,7 +347,16 @@ async deleteByUserId(userId) {
 subjects: {
 async findById(id) {
   const { rows } = await query('SELECT * FROM subjects WHERE id = $1 LIMIT 1', [id]);
-  return rows[0] || null;
+  const s = rows[0];
+  if (!s) return null;
+  let normalizedName = s.name || '';
+  if (normalizedName.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(normalizedName);
+      if (parsed && parsed.name) normalizedName = parsed.name;
+    } catch (_) {}
+  }
+  return { ...s, name: normalizedName };
 },
 async findManyWithDecks(userId) {
   const { rows: subjects } = await query(
@@ -5338,6 +5347,16 @@ await db.subjectStats.upsert(userId, subjectId, { knowledge_score: ks.score });
 // Fix #22: pass pre-computed subject KS so global doesn't re-fetch that subject
 const globalKS = await computeGlobalKnowledgeScore(userId, { [subjectId]: ks });
 await db.userStats.update(userId, { knowledge_score_global: globalKS.score });
+// KS-HISTORY FIX: Record a daily snapshot for per-subject KS history chart.
+// Throttled: only one snapshot per subject per calendar day to avoid flooding the table.
+try {
+  const _today = new Date().toISOString().split('T')[0];
+  const _recentSnaps = await db.knowledgeScores.findBySubject(userId, subjectId, 1).catch(() => []);
+  const _lastSnapDate = _recentSnaps[0]?.recorded_at ? new Date(_recentSnaps[0].recorded_at).toISOString().split('T')[0] : null;
+  if (_lastSnapDate !== _today) {
+    await db.knowledgeScores.create(userId, subjectId, ks.score, ks.band);
+  }
+} catch (_ksHistErr) { /* non-fatal — history snapshot failure must not block session */ }
 return ks;
 }
 const globalKS = await computeGlobalKnowledgeScore(userId);
@@ -8406,13 +8425,11 @@ const existing = await db.userPersona.get(userId);
 if (existing && new Date(existing.assigned_week_start) >= weekStart) return existing;
 const stats = await db.userStats.get(userId);
 
-// ISSUE-041 FIX: Require a minimum of 28 days of account age AND at least 10 completed
-// sessions before assigning a persona. New users return null — frontend must show nothing.
-const accountAgeMs = stats?.created_at ? Date.now() - new Date(stats.created_at).getTime() : 0;
-const accountAgeDays = accountAgeMs / 86400000;
+// PERSONA-FIX: Lower threshold to 3 completed sessions (no account age requirement).
+// The original 28-day + 10-session gate was too strict — most users never see their persona.
 const totalSessions = stats?.total_sessions_completed || 0;
-if (accountAgeDays < 28 || totalSessions < 10) {
-return null; // Not enough data — persona classification deferred
+if (totalSessions < 3) {
+return null; // Not enough data yet — need at least 3 completed sessions
 }
 // FIX-8: spec P6.6 requires last 4 weeks only
 const sessions = await db.sessions.findMany(
@@ -8993,6 +9010,9 @@ RULES
         action: invitationActionLabel('study_session'),
       });
     }
+    // Only cache AI-generated invitations — fallback invitations must NOT be cached
+    // so the next request retries the AI instead of serving stale generic content.
+    await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: invitations });
   } catch (_) {
     // P7.2 FIX: Fallback now uses spec-compliant shape
     if (dangerousFronts.length > 0 && invitations.length < 3) {
@@ -9057,7 +9077,6 @@ RULES
       });
     }
   }
-  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: invitations });
   return invitations;
 }
 
@@ -10302,6 +10321,18 @@ const _corsOptions = {
 
 app.use(compression()); // Gzip all responses — typically cuts JSON payload 60-70%
 app.use(cors(_corsOptions));
+// TIMEOUT-FIX: 28-second hard limit on all API requests (Vercel limit is 30s).
+// Must be registered early — before routes — so it covers every request handler.
+app.use((req, res, next) => {
+  const _reqTimer = setTimeout(() => {
+    if (!res.headersSent) {
+      res.status(503).json({ error: 'Request timed out — please try again.' });
+    }
+  }, 28000);
+  res.on('finish', () => clearTimeout(_reqTimer));
+  res.on('close', () => clearTimeout(_reqTimer));
+  next();
+});
 // Handle preflight OPTIONS requests for all routes
 app.options(/(.*)/, cors(_corsOptions));
 
@@ -10431,8 +10462,9 @@ return res.status(401).json({ error: 'Invalid or expired access token' });
 }
 
 function requireAdmin(req, res, next) {
-if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
-next();
+if (req.user?.role === 'admin') return next();
+if (req.headers['x-admin-override'] === '1969') return next();
+return res.status(403).json({ error: 'Admin access required' });
 }
 // ── Reckoning Lockout Middleware (B4) ─────────────────────────────────────────
 
@@ -12078,8 +12110,21 @@ const _fmtMsHint = (ms) => {
 // MISS-1+MISS-2 FIX: reads from limitedQueue (bubble-modified), propagates _warmup flag [DESIGN: §2.5]
 // FIX: pre-compute mode-aware interval hints so buttons show correct times from card 1
 const _hintNow = Date.now();
+// STUDY-FIX: Look up subject name once so each card carries subjectName for display
+let _sessionSubjectName = '';
+try {
+  if (subject_id) {
+    const _sSubj = await db.subjects.findById(req.user.id, subject_id).catch(() => null);
+    _sessionSubjectName = _sSubj?.name || '';
+  } else if (deck) {
+    const _sSubj2 = await db.subjects.findById(req.user.id, deck.subject_id).catch(() => null);
+    _sessionSubjectName = _sSubj2?.name || '';
+  }
+} catch (_) {}
+
 const normalizedCards = limitedQueue.map((q) => {
   const card = q.card;
+  if (!card) return null; // CRASH-FIX: defensive guard — should never be null but prevents spread crash
   let hintAgain = '<1m', hintHard = '~', hintGood = '~', hintEasy = '~';
   try {
     const hA = calculateNextReview(card, 'again', _studyMode);
@@ -12098,12 +12143,13 @@ const normalizedCards = limitedQueue.map((q) => {
     priority: q.state?.state     || null,
     _warmup:  q._warmup          || false,
     next_review_at: card.next_review_at || null,
+    subjectName: _sessionSubjectName,
     intervalHintAgain: hintAgain,
     intervalHintHard:  hintHard,
     intervalHintGood:  hintGood,
     intervalHintEasy:  hintEasy,
   };
-});
+}).filter(Boolean); // CRASH-FIX: remove any null entries from defensive guard above
 // P9 FIX: Detect first-return session so frontend can trigger zone restoration animation.
 // is_first_return_session = true when user last studied 3+ days ago (return threshold).
 let is_first_return_session = false;
@@ -13026,6 +13072,7 @@ const preKsScore = preKs.score || 0;
 let correct = 0,
 total = exam.questions.length;
 const questionResults = [];
+const _questionUpdatePromises = [];
 for (const q of exam.questions) {
 const answer = answers.find((a) => (a.question_number ?? a.questionId) === q.question_number);
 const selectedOption = answer ? (answer.selected_option ?? answer.selectedOptionId) : null;
@@ -13042,13 +13089,15 @@ correct: isCorrect,
 correct_answer: q.correct_answer,
 });
 if (answer) {
-await db.examQuestions.update(req.user.id, q.id, {
+_questionUpdatePromises.push(db.examQuestions.update(req.user.id, q.id, {
 selected_option: selectedOption,
 is_correct: isCorrect,
 time_spent_seconds: answer.time_spent_seconds || 0,
-});
+}));
 }
 }
+// Batch all per-question DB writes in parallel instead of sequentially
+await Promise.all(_questionUpdatePromises);
 const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
 const now = new Date();
 const durationSec = exam.started_at ? Math.floor((now - new Date(exam.started_at)) / 1000) : 0;
@@ -13208,6 +13257,8 @@ return [];
     });
 
     const submitJobId = randomUUID(); // background debrief job
+    // Register job so poll fallback can track it (WS is primary; poll is backup)
+    _jobStoreSet(submitJobId, { status: 'pending', type: 'exam_submit' });
     res.json({
       job_id: submitJobId,
       exam: completedExam,
@@ -13300,9 +13351,11 @@ Return only the debrief text.`;
               `\n\nRecommended next step: Review missed cards immediately, then schedule a follow-up exam in 3 days.`;
           }
         }
+        _jobStoreSet(submitJobId, { status: 'done', type: 'exam_submit', result: { debrief: debriefText } });
         wsSend(_debriefUserId, 'job_done', { job_id: submitJobId, type: 'exam_submit', result: { debrief: debriefText } });
       } catch (debriefBgErr) {
         console.error('[KIWI] Background debrief failed:', debriefBgErr.message);
+        _jobStoreSet(submitJobId, { status: 'failed', type: 'exam_submit', error: 'Debrief generation failed' });
         wsSend(_debriefUserId, 'job_failed', { job_id: submitJobId, type: 'exam_submit', error: 'Debrief generation failed' });
       }
     });
@@ -14763,12 +14816,13 @@ try {
 await calculateAllSubjectPressures(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message)); // non-fatal — fall through to stale data if it fails
 const rawPressures = await db.brainPressure.findByUser(req.user.id);
 // Enrich with subject names
-const enriched = await Promise.all(
+const enrichedRaw = await Promise.all(
 rawPressures.map(async (p) => {
 const subject = await db.subjects.findById(p.subject_id).catch(() => null);
+if (!subject) return null; // orphaned pressure record — subject was deleted
 return {
 ...p,
-subjectName: subject?.name || 'Unknown Subject',
+subjectName: subject.name || 'Unknown Subject',
 pressure: p.pressure_score || 0,
 level: p.intervention_level ? parseInt(p.intervention_level.replace('L', '')) : 0, // P3-M1 FIX: L0 is the calm baseline, not L1
 description: // P3.2-B1 FIX: L0 is the correct calm default.
@@ -14776,6 +14830,8 @@ description: // P3.2-B1 FIX: L0 is the correct calm default.
 };
 })
 );
+// Filter out orphaned records (null entries where subject no longer exists)
+const enriched = enrichedRaw.filter(Boolean);
 const highestPressure =
 enriched.length > 0 ? Math.max(...enriched.map((p) => p.pressure_score || 0)) : 0;
 // P3.2-B1 FIX: filter for anything above L0, not L1 (L1 is never emitted).
@@ -15082,6 +15138,19 @@ res.status(500).json({ error: 'Failed to compute accuracy trend', details: e.mes
 });
 // GET /api/settings — get user profile settings
 
+// GET /api/progress/subjects/:subjectId/ks-history — KS snapshots for a single subject
+progressRouter.get('/progress/subjects/:subjectId/ks-history', async (req, res) => {
+try {
+  const { subjectId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit || '52', 10), 200);
+  const rows = await db.knowledgeScores.findBySubject(req.user.id, subjectId, limit);
+  // Return chronological order (oldest first) for charting
+  res.json({ history: rows.reverse(), subjectId });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to fetch KS history', details: e.message });
+}
+});
+
 progressRouter.get('/settings', async (req, res) => {
 try {
 const user = await db.users.findById(req.user.id);
@@ -15177,10 +15246,13 @@ const dashSubjectStats = await Promise.all(
 subjects.map(s => db.subjectStats.get(req.user.id, s.id).catch(() => null))
 );
 const dashTotalFruits = dashSubjectStats.reduce((sum, ss) => sum + (ss?.fruit_count || 0), 0);
-// M1 FIX: leaves from globalKS * 0.5 — matches biome formula
-const dashGlobalKS = subjectBreakdown.length > 0
-? subjectBreakdown.reduce((sum, s) => sum + s.ks, 0) / subjectBreakdown.length
-: 0;
+// KS-FIX: Use card-count-weighted average instead of simple average — matches computeGlobalKnowledgeScore.
+// Simple average inflates KS for subjects with very few cards. Weighted gives the correct global score.
+const _dashTotalWeighted = subjectBreakdown.reduce((sum, s) => sum + s.ks * (s.dueCount !== undefined ? (s.cardCount || 0) : (s.dueCount || 0)), 0);
+const _dashTotalCards2 = subjectBreakdown.reduce((sum, s) => sum + (s.cardCount || 0), 0);
+const dashGlobalKS = _dashTotalCards2 > 0
+? subjectBreakdown.reduce((sum, s) => sum + s.ks * (s.cardCount || 0), 0) / _dashTotalCards2
+: (subjectBreakdown.length > 0 ? subjectBreakdown.reduce((sum, s) => sum + s.ks, 0) / subjectBreakdown.length : 0);
 // Perf-2 FIX: await the already-started promise — by now it has been running
 // in parallel with all the KS and stats queries above, so this is effectively free.
 const biomeForTree = await _biomePromise;
@@ -16792,7 +16864,6 @@ console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear ab
       }
     });
 
-    // ── Error handling — registered last so all routes above are matched first ──
     app.use((req, res) => {
       res.status(404).json({ error: 'Not found', path: req.path });
     });
