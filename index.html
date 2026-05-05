@@ -562,6 +562,7 @@
       }
       .sidebar-nav {
         flex: 1;
+        min-height: 0;
         padding: 16px 12px;
         display: flex;
         flex-direction: column;
@@ -5690,7 +5691,7 @@
         var tok = authToken || localStorage.getItem('kiwi_auth_token');
         if (!tok) return;
         var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        var url   = proto + '//' + location.host + '/ws?token=' + encodeURIComponent(tok);
+        var url   = proto + '//' + 'kiwi-741i.onrender.com' + '/ws?token=' + encodeURIComponent(tok);
         try {
           _kiwiWS = new WebSocket(url);
         } catch(e) { return; }
@@ -7175,6 +7176,18 @@
       // This helper decodes entity strings back to Unicode before rendering.
       function _safeRenderIcon(raw) {
         if (!raw) return '▦';
+        // Name→emoji fallback for icons stored as descriptor words (legacy data format)
+        const ICON_NAMES = {
+          book:'📚', books:'📚', notebook:'📓', bell:'🔔', atom:'⚛️', flask:'⚗️',
+          science:'🔬', microscope:'🔬', math:'📐', maths:'📐', bio:'🧬', biology:'🧬',
+          chemistry:'🧪', physics:'⚡', history:'📜', english:'📝', language:'💬',
+          computer:'💻', code:'💻', coding:'💻', music:'🎵', art:'🎨', pen:'🖊️',
+          geo:'🌍', geography:'🌍', economics:'📊', economy:'📊', psychology:'🧠',
+          brain:'🧠', law:'⚖️', legal:'⚖️', medical:'🏥', medicine:'💊', star:'⭐',
+          heart:'❤️', fire:'🔥', leaf:'🍃', world:'🌍', globe:'🌍', calc:'🔢',
+          calculator:'🔢', chart:'📊', graph:'📈', rocket:'🚀', flag:'🚩',
+        };
+        if (ICON_NAMES[raw.toLowerCase()]) return ICON_NAMES[raw.toLowerCase()];
         // If it looks like an HTML entity (&#x...; or &#...;), decode it first
         if (/^&#/.test(raw)) {
           try {
@@ -7457,16 +7470,22 @@
       }
 
       function renderErrorState(container, message, onRetry) {
+        const _hasHistory = AppState && AppState.navHistory && AppState.navHistory.length > 0;
         container.innerHTML = `
     <div class="error-state">
       <div class="error-icon">&#x26A0;</div>
       <div class="error-title">Something went wrong</div>
       <div class="error-message">${escapeHTML(message)}</div>
-      ${onRetry ? `<div class="error-retry"><button class="btn btn-secondary btn-sm" id="retryBtn">Try Again</button></div>` : ""}
+      <div class="error-retry" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+        ${_hasHistory ? `<button class="btn btn-ghost btn-sm" id="errorBackBtn">&#x2190; Go Back</button>` : ''}
+        ${onRetry ? `<button class="btn btn-secondary btn-sm" id="retryBtn">Try Again</button>` : ''}
+      </div>
     </div>
   `;
         const retryBtn = document.getElementById("retryBtn");
         if (retryBtn && onRetry) retryBtn.addEventListener("click", onRetry);
+        const errorBackBtn = document.getElementById("errorBackBtn");
+        if (errorBackBtn) errorBackBtn.addEventListener("click", () => goBack());
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -8254,7 +8273,7 @@
         }
         const hasHistory = AppState.navHistory && AppState.navHistory.length > 0;
         if (hamburger) hamburger.style.display = hasHistory ? 'none' : '';
-        if (backBtn)   backBtn.style.display   = hasHistory ? '' : 'none';
+        if (backBtn)   backBtn.style.display   = hasHistory ? 'flex' : 'none'; // FIX Bug-8: '' reverts to CSS display:none default
         if (ksBadge) {
           const ks = AppState.dashboard && AppState.dashboard.overallKS != null
             ? Math.round(AppState.dashboard.overallKS) : null;
@@ -8822,8 +8841,12 @@
         refreshToken = null;
         localStorage.removeItem("kiwi_auth_token");
         localStorage.removeItem("kiwi_refresh_token");
+        _bustDashboardCache(); // clear dashboard cache on logout
         // FIX: clear sessionStorage so next user doesn't inherit previous user's page
         try { sessionStorage.removeItem("kiwi_page"); } catch (_) {}
+        // Clear admin session flag
+        try { sessionStorage.removeItem("kiwi_admin_unlocked"); } catch (_) {}
+        _adminUnlocked = false;
         AppState.user = null;
         AppState.subjects = [];
         AppState.dashboard = null;
@@ -8912,27 +8935,106 @@
 
       // ═══════════════════════════════════════════════════════════════════════════
 
-      async function renderDashboard() {
-        const main = document.getElementById("mainContent");
-        // Issue-3 FIX: progressive rendering from cached dashboard
-        const _cachedDash = AppState.dashboard;
-        if (_cachedDash) {
-          const _band = getKSBand(Math.round(_cachedDash.overallKS || 0));
-          main.innerHTML = `<div class="page-wrap page-enter"><div class="ks-hero"><div class="ks-hero-number">${Math.round(_cachedDash.overallKS || 0)}<span>/100</span></div><div class="ks-hero-details"><div class="ks-hero-label">Overall Knowledge Score</div><div class="ks-hero-band">${escapeHTML(_band.name)} &middot; ${escapeHTML(_band.label)}</div></div></div><div class="streak-widget" style="margin-top:16px;">Streak: ${_cachedDash.streak?.current || 0} days</div><div id="tree-container" style="margin-top:16px;"></div></div>`;
-          if (_cachedDash.treeState) {
-            requestAnimationFrame(() => {
-              const tc = document.getElementById("tree-container");
-              if (tc && typeof KiwiTree === 'function') { try { new KiwiTree(tc, _cachedDash.treeState); } catch(_) {} }
-            });
-          }
-        } else {
-          renderLoadingState(main, "Loading ecosystem...");
-        }
+      function renderDashboardSkeleton(container) {
+        container.innerHTML = `
+  <div class="page-wrap" style="animation:none;">
+    <!-- KS Hero Skeleton -->
+    <div class="ks-hero" style="gap:32px;">
+      <div class="skeleton skeleton-circle" style="width:80px;height:80px;flex-shrink:0;"></div>
+      <div style="flex:1;min-width:180px;">
+        <div class="skeleton skeleton-text" style="width:40%;height:12px;margin-bottom:10px;"></div>
+        <div class="skeleton" style="width:55%;height:22px;border-radius:var(--r-sm);margin-bottom:10px;"></div>
+        <div class="skeleton skeleton-text" style="width:80%;"></div>
+        <div class="skeleton skeleton-text" style="width:65%;"></div>
+      </div>
+    </div>
+    <!-- Brief strip skeleton -->
+    <div class="skeleton" style="width:100%;height:52px;border-radius:var(--r);margin:12px 0 16px;"></div>
+    <!-- Grid -->
+    <div class="dashboard-grid">
+      <!-- Left column -->
+      <div class="dashboard-left">
+        <div class="card">
+          <div class="skeleton" style="width:45%;height:18px;border-radius:var(--r-sm);margin-bottom:8px;"></div>
+          <div class="skeleton skeleton-text" style="width:30%;margin-bottom:20px;"></div>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div style="border:1px solid var(--border);border-radius:var(--r);padding:14px;">
+              <div class="skeleton" style="width:55%;height:16px;border-radius:var(--r-sm);margin-bottom:8px;"></div>
+              <div class="skeleton skeleton-text" style="width:80%;"></div>
+              <div class="skeleton skeleton-text" style="width:40%;"></div>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:var(--r);padding:14px;">
+              <div class="skeleton" style="width:60%;height:16px;border-radius:var(--r-sm);margin-bottom:8px;"></div>
+              <div class="skeleton skeleton-text" style="width:75%;"></div>
+              <div class="skeleton skeleton-text" style="width:50%;"></div>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:var(--r);padding:14px;">
+              <div class="skeleton" style="width:45%;height:16px;border-radius:var(--r-sm);margin-bottom:8px;"></div>
+              <div class="skeleton skeleton-text" style="width:70%;"></div>
+              <div class="skeleton skeleton-text" style="width:35%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Right column -->
+      <div class="dashboard-right">
+        <!-- Tree card skeleton -->
+        <div class="card">
+          <div class="skeleton" style="width:55%;height:16px;border-radius:var(--r-sm);margin-bottom:6px;"></div>
+          <div class="skeleton skeleton-text" style="width:30%;margin-bottom:16px;"></div>
+          <div class="skeleton" style="width:100%;height:220px;border-radius:var(--r);margin-bottom:12px;"></div>
+          <div class="skeleton skeleton-text" style="width:70%;height:8px;border-radius:4px;margin-bottom:8px;"></div>
+          <div class="skeleton skeleton-text" style="width:35%;"></div>
+        </div>
+        <!-- Streak widget skeleton -->
+        <div class="streak-widget" style="pointer-events:none;">
+          <div class="skeleton skeleton-circle" style="width:48px;height:48px;flex-shrink:0;"></div>
+          <div style="flex:1;">
+            <div class="skeleton" style="width:40%;height:28px;border-radius:var(--r-sm);margin-bottom:8px;"></div>
+            <div class="skeleton skeleton-text" style="width:55%;"></div>
+          </div>
+        </div>
+        <!-- Heatmap skeleton -->
+        <div class="card" style="margin-top:12px;">
+          <div class="skeleton skeleton-text" style="width:45%;margin-bottom:10px;"></div>
+          <div class="skeleton" style="width:100%;height:48px;border-radius:var(--r-sm);"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+`;
+      }
+
+      // ── Dashboard cache helpers (stale-while-revalidate) ──────────────────
+      const _DASH_CACHE_KEY = "kiwi_dashboard_cache";
+      const _DASH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+      function _saveDashboardCache(data) {
         try {
-          const data = await api.getDashboard();
-          AppState.dashboard = data;
-          AppState.user = data.user || AppState.user;
-          updateMobileBar(AppState.currentPage);
+          localStorage.setItem(_DASH_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+        } catch (_) {}
+      }
+
+      function _loadDashboardCache() {
+        try {
+          const raw = localStorage.getItem(_DASH_CACHE_KEY);
+          if (!raw) return null;
+          const { ts, data } = JSON.parse(raw);
+          if (Date.now() - ts > _DASH_CACHE_TTL) return null; // expired
+          return data;
+        } catch (_) { return null; }
+      }
+
+      function _bustDashboardCache() {
+        try { localStorage.removeItem(_DASH_CACHE_KEY); } catch (_) {}
+      }
+
+      // ── Paint dashboard: renders data into main (called from cache or network path) ──
+      function _paintDashboard(main, data, _dashStartPage) {
+        if (AppState.currentPage !== _dashStartPage) return;
+        AppState.dashboard = data;
+        AppState.user = data.user || AppState.user;
+        updateMobileBar(AppState.currentPage);
           const {
             overallKS,
             subjectBreakdown,
@@ -9286,6 +9388,34 @@
           });
           // Update sidebar footer with latest data
           updateUserFooter();
+      }
+
+      async function renderDashboard() {
+        const main = document.getElementById("mainContent");
+        const _dashStartPage = AppState.currentPage; // Bug-6 guard
+
+        const _cached = _loadDashboardCache();
+
+        if (_cached) {
+          // Instant render from cache — no loading screen
+          _paintDashboard(main, _cached, _dashStartPage);
+
+          // Background revalidation: silently fetch fresh data and repaint if changed
+          api.getDashboard().then(freshData => {
+            if (AppState.currentPage !== _dashStartPage) return;
+            _saveDashboardCache(freshData);
+            _paintDashboard(main, freshData, _dashStartPage);
+          }).catch(() => {}); // silent fail — stale data is acceptable
+
+          return;
+        }
+
+        // No cache — first load path: show loading screen, await network
+        renderLoadingState(main, "Loading ecosystem...");
+        try {
+          const data = await api.getDashboard();
+          _saveDashboardCache(data);
+          _paintDashboard(main, data, _dashStartPage);
         } catch (err) {
           renderErrorState(main, err.message || "Failed to load dashboard", () =>
             navigateTo("dashboard"),
@@ -10209,6 +10339,7 @@
           AppState.tempStudy = null;
           // BUGFIX-4: Force library to re-fetch fresh data so due counts + timers reflect the session
           AppState.subjects = null;
+          _bustDashboardCache(); // scores/streak changed — force fresh fetch on next dashboard visit
           // M3 FIX: flag biome for zone restoration if this was a return-from-absence session
           if (savedTempStudy?.isReturnSession && savedTempStudy?.subjectId) {
             AppState.returnZoneSubjectId = savedTempStudy.subjectId;
@@ -10577,7 +10708,7 @@
               </div>
               <div style="display:flex;flex-direction:column;gap:8px;">
                 ${exams.map(function(ex) {
-                  const score = ex.score != null ? Math.round(ex.score) : (ex.percentage != null ? Math.round(ex.percentage) : null);
+                  const score = ex.score_pct != null ? Math.round(ex.score_pct) : ex.score != null ? Math.round(ex.score) : (ex.percentage != null ? Math.round(ex.percentage) : null);
                   const scoreStr = score != null ? score + '%' : '—';
                   const scoreColor = score == null ? 'var(--text-4)' : score >= 70 ? 'var(--green-bright)' : score >= 50 ? '#f59e0b' : 'var(--red-bright)';
                   const dateStr = ex.completed_at || ex.created_at ? new Date(ex.completed_at || ex.created_at).toLocaleDateString(undefined, {month:'short',day:'numeric'}) : '—';
@@ -10854,6 +10985,7 @@
           } else {
             result = await api.submitExam(examIdToSubmit, answers);
           }
+          _bustDashboardCache(); // KS may have changed after exam
           // If server returned a job_id, score was committed but debrief is pending.
           // Show results immediately; debrief text will arrive via WS and re-render.
           if (result && result.job_id) {
@@ -13382,7 +13514,7 @@
             examHistoryHTML = '<div style="font-size:var(--text-base);color:var(--text-4);padding:16px 0;">No exams taken yet.</div>';
           } else {
             examHistoryHTML = '<div style="display:flex;flex-direction:column;gap:8px;">' + examHistory.slice(0,10).map(function(e) {
-              var score   = Math.round((e.score || e.percentage || 0));
+              var score   = Math.round((e.score_pct ?? e.score ?? e.percentage ?? 0));
               var subject = escapeHTML(e.subject_name || e.subjectName || "General");
               var status  = escapeHTML(e.status || "completed");
               var date    = formatDateShort(e.completed_at || e.created_at || e.date);
@@ -15951,7 +16083,9 @@
       // ── Admin Panel ───────────────────────────────────────────────────────────
       var _adminTapCount = 0;
       var _adminTapTimer = null;
-      var _adminUnlocked = false;
+      var _adminUnlocked = (function() {
+        try { return sessionStorage.getItem('kiwi_admin_unlocked') === '1'; } catch(_) { return false; }
+      })();
       var _adminPassPrompted = false;
 
       function _handleVersionTap() {
@@ -15964,6 +16098,7 @@
           const pass = prompt('Enter admin access code:');
           if (pass === '1969') {
             _adminUnlocked = true;
+            try { sessionStorage.setItem('kiwi_admin_unlocked', '1'); } catch(_) {}
             showToast('Admin access granted', 'success', 3000);
             navigateTo('admin');
           } else if (pass !== null) {
@@ -16286,6 +16421,25 @@
               <div class="stat-label">API Status</div>
               <div class="stat-value" style="font-size:var(--text-2xl);color:var(--green-bright);">Connected</div>
             </div>
+          </div>
+        </div>
+        <!-- Session / Logout -->
+        <div class="card" style="margin-top:20px;">
+          <div class="settings-section-title">Session</div>
+          ${_adminUnlocked ? `
+          <div class="settings-row" style="margin-bottom:12px;">
+            <div>
+              <div class="settings-row-label">Admin Panel</div>
+              <div class="settings-row-sub">Admin access is active this session</div>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="navigateTo('admin')">Open Panel</button>
+          </div>` : ''}
+          <div class="settings-row">
+            <div>
+              <div class="settings-row-label">Log Out</div>
+              <div class="settings-row-sub">Ends your current session</div>
+            </div>
+            <button class="btn btn-danger btn-sm" onclick="showCustomConfirm('Log out?','Your progress is saved.',logout)">Log Out</button>
           </div>
         </div>
       </div>
@@ -16662,6 +16816,7 @@
           if (app) app.style.display = "flex";
           // Load initial data
           updateUserFooter();
+          initKiwiWS(); // FIX Bug-5a: returning users (stored-token path) never got a WS connection
           // Restore previous page on refresh; fall back to dashboard for volatile session pages
           const _savedPage = (() => {
             try { return sessionStorage.getItem("kiwi_page"); } catch (_) { return null; }

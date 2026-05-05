@@ -814,10 +814,10 @@ async findByIdWithQuestions(userId, id) {
   return exam;
 },
 async findMany(userId, filters = {}, { limit = 20, offset = 0 } = {}) {
-  let sql = 'SELECT * FROM exam_sessions WHERE user_id = $1';
+  let sql = 'SELECT es.*, s.name AS subject_name FROM exam_sessions es LEFT JOIN subjects s ON s.id = es.subject_id WHERE es.user_id = $1';
   const vals = [userId];
-  if (filters.status) { sql += ` AND status = $${vals.length + 1}`; vals.push(filters.status); }
-  if (filters.started_at_gte) { sql += ` AND started_at >= $${vals.length + 1}`; vals.push(filters.started_at_gte); }
+  if (filters.status) { sql += ` AND es.status = $${vals.length + 1}`; vals.push(filters.status); }
+  if (filters.started_at_gte) { sql += ` AND es.started_at >= $${vals.length + 1}`; vals.push(filters.started_at_gte); }
   vals.push(limit, offset);
   sql += ` ORDER BY created_at DESC LIMIT $${vals.length - 1} OFFSET $${vals.length}`;
   const { rows } = await query(sql, vals);
@@ -10316,7 +10316,7 @@ const _corsOptions = {
   origin: true, // open to all origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-override'],
 };
 
 app.use(compression()); // Gzip all responses — typically cuts JSON payload 60-70%
@@ -12806,14 +12806,14 @@ include = card.stage >= 3;
 break;
 case 'all':
 default:
-include = card.stage >= 3 && ![CARD_STATES.GHOST, CARD_STATES.STUCK].includes(st);
+include = true; // FIX: stage is an SR concept, not an exam gate — all content-filtered cards eligible
 }
 if (include) stateFilteredCards.push(card);
 }
 // Deduplicate mixed_priority weighted copies
 const seenIds = new Set();
 const dedupedCards = stateFilteredCards.filter(c => seenIds.has(c.id) ? false : seenIds.add(c.id));
-sourceCards = dedupedCards.length > 0 ? dedupedCards : allCards;
+sourceCards = dedupedCards.length >= 5 ? dedupedCards : allCards; // FIX: < 5 surviving cards means the filter collapsed — fall back to full pool
 if (dedupedCards.length === 0 && card_state_filter !== 'all') {
   const filterLabel = Array.isArray(raw_csf) ? raw_csf.join(' / ') : raw_csf;
   return res.status(400).json({ error: `No ${filterLabel} cards found in this subject. You need to review more cards before any reach that state. Try selecting a different filter or removing filters entirely.` });
@@ -15194,22 +15194,35 @@ try {
 // Previously it was awaited later in the route, blocking the response by up to
 // 2 s on every dashboard load. Running it alongside other fetches means its
 // latency is hidden behind the other queries (which already take ~300-500ms).
+// Perf: fire biome in background immediately
 const _biomePromise = buildBiomeData(req.user.id).catch(() => ({}));
-const [stats, subjects, globalKS, allStates] = await Promise.all([
+
+// Round 1 — all independent queries in one parallel batch
+const now = new Date();
+const todayStr = now.toISOString().split('T')[0];
+const weekStartStr = (() => {
+const d = new Date(now);
+d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+d.setHours(0, 0, 0, 0);
+return d.toISOString().split('T')[0];
+})();
+const [stats, subjects, globalKS, allStates, allCards, pressures, activeReckoning] = await Promise.all([
 db.userStats.get(req.user.id),
 db.subjects.findManyWithDecks(req.user.id),
 computeGlobalKnowledgeScore(req.user.id),
 db.cardStates.findByUser(req.user.id),
+db.cards.findAllForUser(req.user.id),           // Perf: was sequential after Round 1
+db.brainPressure.findByUser(req.user.id),       // Perf: was sequential after Round 1
+db.reckoningSessions.findActiveByUser(req.user.id), // Perf: was sequential after Round 1
 ]);
-const now = new Date();
-const allCards = await db.cards.findAllForUser(req.user.id);
 const dueCount = allCards.filter((c) => isCardDue(c, now)).length;
-const pressures = await db.brainPressure.findByUser(req.user.id);
-const activeReckoning = await db.reckoningSessions.findActiveByUser(req.user.id);
 const stateDist = {};
 for (const s of allStates) stateDist[s.state] = (stateDist[s.state] || 0) + 1;
-// Build subject breakdown with per-subject KS for frontend dashboard
-const subjectBreakdown = await Promise.all(subjects.map(async (s) => {
+
+// Round 2 — all things that depend on Round 1, run in parallel
+// subjectBreakdown now stores _subjectStat to avoid duplicate DB fetch later
+const [subjectBreakdown, persona, returnStatus, morningCache, anchorCache, invitationsCache] = await Promise.all([
+Promise.all(subjects.map(async (s) => {
 const storedSubjectStat = await db.subjectStats.get(req.user.id, s.id).catch(() => null);
 const [ks, subjectDecks] = await Promise.all([
 (storedSubjectStat?.knowledge_score !== undefined ? Promise.resolve({ score: storedSubjectStat.knowledge_score }) : computeKnowledgeScore(req.user.id, s.id)).catch(() => ({ score: 0 })),
@@ -15218,10 +15231,15 @@ db.decks.findBySubject(req.user.id, s.id),
 const subjectDeckIds = subjectDecks.map((d) => d.id);
 const subjectCards = allCards.filter((c) => subjectDeckIds.includes(c.deck_id));
 const subjectDueCount = subjectCards.filter((c) => isCardDue(c)).length;
-return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount };
-}));
-// Persona
-const persona = await db.userPersona.get(req.user.id).catch(() => null);
+// Carry _subjectStat so dashTotalFruits can use it without a second DB round-trip
+return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount, _subjectStat: storedSubjectStat };
+})),
+db.userPersona.get(req.user.id).catch(() => null),               // Perf: was sequential
+computeReturnStatus(req.user.id).catch(() => null),              // Perf: was sequential
+db.dailyRitualCache.get(req.user.id, 'morning_brief', todayStr).catch(() => null),    // Perf: was sequential
+db.dailyRitualCache.get(req.user.id, 'weekly_anchor', weekStartStr).catch(() => null), // Perf: was sequential
+db.dailyRitualCache.get(req.user.id, 'daily_invitations', todayStr).catch(() => null), // Perf: was sequential
+]);
 // Tree state
 const treeStageLabels = [
 '',
@@ -15241,11 +15259,8 @@ const dashActiveMilestones = [...new Set([
 ...dashEarnedMilestones,
 ...[7, 30, 100, 365].filter(m => dashStreak >= m),
 ])].sort((a, b) => a - b);
-// M1 FIX: fruits = sum of per-subject fruit_counts (fruiting sessions, not mastered cards)
-const dashSubjectStats = await Promise.all(
-subjects.map(s => db.subjectStats.get(req.user.id, s.id).catch(() => null))
-);
-const dashTotalFruits = dashSubjectStats.reduce((sum, ss) => sum + (ss?.fruit_count || 0), 0);
+// M1 FIX: fruits = sum of per-subject fruit_counts — reuse _subjectStat cached in subjectBreakdown (no extra DB call)
+const dashTotalFruits = subjectBreakdown.reduce((sum, s) => sum + (s._subjectStat?.fruit_count || 0), 0);
 // KS-FIX: Use card-count-weighted average instead of simple average — matches computeGlobalKnowledgeScore.
 // Simple average inflates KS for subjects with very few cards. Weighted gives the correct global score.
 const _dashTotalWeighted = subjectBreakdown.reduce((sum, s) => sum + s.ks * (s.dueCount !== undefined ? (s.cardCount || 0) : (s.dueCount || 0)), 0);
@@ -15287,13 +15302,11 @@ pressures.filter((p) => p.intervention_level !== 'L0').length,
 highestPressure:
 pressures.length > 0 ? Math.max(...pressures.map((p) => p.pressure_score || 0)) : 0,
 };
-// Return greeting — C-1 FIX: wire into dashboard flow with daily cache
-const returnStatus = await computeReturnStatus(req.user.id).catch(() => null);
+// Return greeting — now uses returnStatus from Round 2 parallel batch
 let returnGreeting = null;
 if (returnStatus && returnStatus.status !== 'active') {
-const todayStrRG = new Date().toISOString().split('T')[0];
 const cachedRG = await db.dailyRitualCache
-.get(req.user.id, 'return_greeting', todayStrRG)
+.get(req.user.id, 'return_greeting', todayStr)
 .catch(() => null);
 if (cachedRG?.data?.greeting) {
 returnGreeting = cachedRG.data.greeting;
@@ -15302,36 +15315,21 @@ const rg = await getReturnGreeting(req.user.id).catch(() => null);
 returnGreeting = rg?.greeting || null;
 }
 }
-// Morning brief — try cache first, skip AI call in dashboard for speed
-const todayStr = new Date().toISOString().split('T')[0];
-const morningCache = await db.dailyRitualCache
-.get(req.user.id, 'morning_brief', todayStr)
-.catch(() => null);
+// Morning brief — morningCache already fetched in Round 2
 // C-3 FIX: Generate inline on cache miss — spec: "Triggered on first dashboard load per calendar day"
 const morningBrief = morningCache
 ? morningCache.data
 : await getMorningBrief(req.user.id).catch(() => null);
-// Weekly anchor — read from cache using current week's Monday key
-const weekStartStr = (() => {
-const d = new Date();
-// H-7 FIX: Monday-based key to match getWeeklyAnchor after Monday correction
-d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-d.setHours(0, 0, 0, 0);
-return d.toISOString().split('T')[0];
-})();
-const anchorCache = await db.dailyRitualCache
-.get(req.user.id, 'weekly_anchor', weekStartStr)
-.catch(() => null);
+// Weekly anchor — anchorCache already fetched in Round 2
 const weeklyAnchor = anchorCache
 ? anchorCache.anchor_text || anchorCache.message || null
 : null;
-// Invitations — try cache
-const invitationsCache = await db.dailyRitualCache
-.get(req.user.id, 'daily_invitations', todayStr)
+// Invitations — invitationsCache already fetched in Round 2
+const invitationsCache_resolved = invitationsCache
 .catch(() => null);
 // C-3 FIX: Generate inline on cache miss
-const invitations = invitationsCache
-? invitationsCache.data
+const invitations = invitationsCache_resolved
+? invitationsCache_resolved.data
 : await getDailyInvitations(req.user.id).catch(() => []);
 res.json({
 // Original fields
