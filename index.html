@@ -14271,6 +14271,21 @@
                         ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);" onclick="showReassignDeckModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg> Move Deck</button>` : ''}
                         ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm lib-reset-deck-btn" data-deck-id="${escapeHTML(subj.decks[0].id)}" data-subj-name="${escapeHTML(safeDisplayName(subj.name))}" style="font-size:var(--text-xs);color:var(--amber);" title="Reset all cards in this deck back to SEEDLING"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Reset Deck</button>` : ''}
                       </div>
+                      ${(subj.decks && subj.decks.length > 0) ? `
+                      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+                        <div style="font-size:var(--text-xs);color:var(--text-4);margin-bottom:6px;letter-spacing:0.05em;text-transform:uppercase;">Decks</div>
+                        ${(subj.decks || []).map(function(dk) {
+                          return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);margin-bottom:5px;">' +
+                            '<span style="font-size:var(--text-sm);color:var(--text-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHTML(dk.name || 'Deck') + '">' +
+                            '<svg style="width:10px;height:10px;vertical-align:-1px;margin-right:5px;opacity:0.5;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><path d="M12 12v3"/></svg>' +
+                            escapeHTML(dk.name || 'Default Deck') + ' <span style="color:var(--text-4);font-size:var(--text-xs);">(' + (dk.card_count || 0) + ' cards)</span></span>' +
+                            '<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;margin-left:8px;flex-shrink:0;" ' +
+                            'onclick="handleDeleteDeck(\'' + escapeHTML(dk.id) + '\',\'' + escapeHTML(dk.name || 'Deck') + '\',\'' + escapeHTML(safeDisplayName(subj.name)) + '\')">' +
+                            '<svg style="width:10px;height:10px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Delete</button>' +
+                            '</div>';
+                        }).join('')}
+                      </div>` : ''}
+                    </div>
                     </div>
                   </div>
                 `;
@@ -14293,6 +14308,26 @@
           });
 
           main.querySelectorAll(".deck-name, .deck-card-back-peek").forEach(function(el) { renderMathContent(el); });
+
+          // ── Swipe-to-delete for library subjects ──────────────────────────────
+          // Swipe any subject card left > 90px to trigger subject deletion.
+          if (typeof _attachSwipeToDelete === 'function') {
+            var _libWrap = main.querySelector('.page-wrap');
+            if (_libWrap) {
+              _attachSwipeToDelete(
+                _libWrap,
+                '.lib-subj-card',
+                function(el) { return el.dataset.subjId || ''; },
+                function(subjId, el) {
+                  if (!subjId) return;
+                  var nameEl = el.querySelector('[style*="font-weight:700"]');
+                  var sName  = nameEl ? nameEl.textContent.trim() : subjId;
+                  handleDeleteSubject(subjId, sName);
+                },
+                90
+              );
+            }
+          }
 
           main.querySelectorAll(".deck-card").forEach(function(card) {
             card.addEventListener("click", function(e) {
@@ -14520,6 +14555,30 @@
           const nextBtn = document.getElementById("cbNext");
           if (prevBtn) prevBtn.addEventListener("click", () => { bs.page--; loadCards(); });
           if (nextBtn) nextBtn.addEventListener("click", () => { bs.page++; loadCards(); });
+
+          // ── Swipe-to-delete for card browser ─────────────────────────────────
+          // Swipe any card left > 80px to delete it. A red "Delete" hint appears.
+          var _cbList = document.getElementById('cbCardList');
+          if (_cbList && typeof _attachSwipeToDelete === 'function') {
+            _attachSwipeToDelete(
+              _cbList,
+              '.card',
+              function(el) { return el.dataset.swipeCardId || ''; },
+              function(cardId, el) {
+                if (!cardId) return;
+                var _front = (el.querySelector('.cb-front') || {}).textContent || '';
+                handleDeleteCard(cardId, _front.substring(0, 30));
+              }
+            );
+            // Stamp card IDs onto elements so swipe handler can read them
+            _cbList.querySelectorAll('.card').forEach(function(cardEl, idx) {
+              var delBtn = cardEl.querySelector('button[onclick*="handleDeleteCard"]');
+              if (delBtn) {
+                var match = delBtn.getAttribute('onclick').match(/handleDeleteCard\('([^']+)'/);
+                if (match) cardEl.dataset.swipeCardId = match[1];
+              }
+            });
+          }
         }
 
         // If no subjectId, go back to library
@@ -14542,8 +14601,18 @@
           async () => {
             try {
               await api.deleteCard(cardId);
+              // Remove from in-memory browser state to avoid stale data
+              if (AppState._cardBrowser) {
+                AppState._cardBrowser.cards = (AppState._cardBrowser.cards || []).filter(function(c) { return c.id !== cardId; });
+                AppState._cardBrowser.total = Math.max(0, (AppState._cardBrowser.total || 1) - 1);
+              }
               showToast("Card deleted", "success");
-              navigateTo("library");
+              // Stay in card-browser if that's where we came from; otherwise go to library
+              if (AppState.currentPage === 'card-browser') {
+                navigateTo('card-browser', AppState.routeParams || {});
+              } else {
+                navigateTo("library");
+              }
             } catch (err) {
               showToast(err.message || "Failed to delete card", "error");
             }
@@ -14738,6 +14807,91 @@
             }
           }
         );
+      }
+
+      async function handleDeleteDeck(deckId, deckName, subjectName) {
+        showCustomConfirm(
+          'Delete Deck',
+          'Delete deck "' + (deckName || 'this deck') + '" from "' + (subjectName || 'subject') + '"? All cards in this deck will be removed. This cannot be undone.',
+          async () => {
+            try {
+              await api.deleteDeck(deckId);
+              // Remove deck from AppState and refresh library
+              if (AppState.subjects) {
+                AppState.subjects = AppState.subjects.map(function(s) {
+                  return Object.assign({}, s, { decks: (s.decks || []).filter(function(d) { return d.id !== deckId; }) });
+                });
+              }
+              showToast("Deck deleted", "success");
+              navigateTo("library");
+            } catch (err) {
+              showToast(err.message || "Failed to delete deck", "error");
+            }
+          }
+        );
+      }
+
+      // ── Swipe-to-delete helper ────────────────────────────────────────────────
+      // Attach to any scrollable list container. Items matching itemSelector can
+      // be swiped left to trigger deletion. getIdFn(el) returns the item's ID.
+      // onDeleteFn(id, el) is called after the swipe animation completes.
+      function _attachSwipeToDelete(container, itemSelector, getIdFn, onDeleteFn, threshold) {
+        if (!container) return;
+        threshold = threshold || 80;
+        var _activeEl = null, _startX = 0, _dx = 0, _dragging = false;
+        container.addEventListener('touchstart', function(e) {
+          var item = e.target.closest(itemSelector);
+          if (!item) return;
+          _activeEl = item;
+          _startX   = e.touches[0].clientX;
+          _dx       = 0;
+          _dragging = false;
+          _activeEl.style.transition = '';
+          _activeEl.style.willChange = 'transform';
+        }, { passive: true });
+        container.addEventListener('touchmove', function(e) {
+          if (!_activeEl) return;
+          _dx = e.touches[0].clientX - _startX;
+          if (_dx < -8) {
+            _dragging = true;
+            var clampedDx = Math.max(_dx, -200);
+            _activeEl.style.transform = 'translateX(' + clampedDx + 'px)';
+            _activeEl.style.opacity   = String(Math.max(0.25, 1 + clampedDx / 200));
+            // Show a red delete hint overlay
+            var hint = _activeEl.querySelector('._swipe-hint');
+            if (!hint) {
+              hint = document.createElement('div');
+              hint.className = '_swipe-hint';
+              hint.innerHTML = '&#x1F5D1; Delete';
+              hint.style.cssText = 'position:absolute;right:16px;top:50%;transform:translateY(-50%);color:#ef4444;font-size:var(--text-sm);font-weight:700;pointer-events:none;opacity:0;transition:opacity 0.1s;font-family:var(--font-body);';
+              _activeEl.style.position = 'relative';
+              _activeEl.style.overflow = 'hidden';
+              _activeEl.appendChild(hint);
+            }
+            hint.style.opacity = String(Math.min(1, Math.abs(_dx) / threshold));
+          }
+        }, { passive: true });
+        container.addEventListener('touchend', function() {
+          if (!_activeEl) return;
+          if (_dragging && _dx < -threshold) {
+            // Animate out
+            _activeEl.style.transition = 'transform 0.22s ease, opacity 0.22s ease';
+            _activeEl.style.transform  = 'translateX(-110%)';
+            _activeEl.style.opacity    = '0';
+            var capturedEl = _activeEl;
+            var capturedId = getIdFn(_activeEl);
+            _activeEl = null; _dx = 0; _dragging = false;
+            setTimeout(function() { onDeleteFn(capturedId, capturedEl); }, 230);
+          } else {
+            // Snap back
+            _activeEl.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+            _activeEl.style.transform  = '';
+            _activeEl.style.opacity    = '';
+            var hint2 = _activeEl.querySelector('._swipe-hint');
+            if (hint2) hint2.style.opacity = '0';
+            _activeEl = null; _dx = 0; _dragging = false;
+          }
+        }, { passive: true });
       }
 
       async function handleResetCard(cardId) {
@@ -15274,44 +15428,51 @@
             document.getElementById("aiNotesConfirm").style.display = "none";
             var btn = document.getElementById("aiNotesImportBtn");
             btn.disabled = true; btn.textContent = "Generating...";
-            _showGenBanner('Generating cards…', '');
             // Gather subject name for the progress page
             var sel = document.getElementById("importSubject");
             var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
             AppState.cardGenJob = { subjectName: _subjectName };
+            // FIX: Show banner AND navigate to the generating-cards page BEFORE the API call.
+            // This guarantees the animation and page are always visible regardless of API speed.
+            _showGenBanner('Generating cards\u2026', '');
+            navigateTo('generating-cards');
             try {
               var job = await api.importFromNotes(deckId, notes, hint);
               if (job && job.job_id) {
                 _pollJobFallback(job.job_id, authToken, 'note_generation');
-                // Navigate to dedicated generating page
-                navigateTo('generating-cards');
                 return; // banner already showing — WS / poll will hide it when done
               }
               // Legacy sync response fallback
-              var result   = job;
-              var cardCount = result.count || 0;
-              if (resultEl) {
-                resultEl.style.display = "block";
-                resultEl.style.color   = "var(--green-bright)";
-                resultEl.innerHTML = [
-                  '<strong>✓ ' + cardCount + ' card' + (cardCount !== 1 ? 's' : '') + ' generated and added to your deck.</strong>',
-                  '<div style="margin-top:8px;font-size:var(--text-sm);color:var(--text-2);">Cards have been committed to your library.</div>',
-                  '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">',
-                  '  <button class="btn btn-primary btn-sm" onclick="navigateTo(\'library\')">Review &amp; Edit Cards →</button>',
-                  '  <button class="btn btn-secondary btn-sm" id="aiImportAgainBtn">Import More</button>',
-                  '</div>',
-                ].join('');
-                var againBtn = document.getElementById("aiImportAgainBtn");
-                if (againBtn) againBtn.addEventListener("click", function() { document.getElementById("aiNotesText").value = ""; resultEl.style.display = "none"; });
+              var _cnt = (job && job.count) ? job.count : 0;
+              _hideGenBanner();
+              showToast(_cnt + ' card' + (_cnt !== 1 ? 's' : '') + ' generated!', 'success', 7000);
+              var _gcScreen = document.getElementById('cardGenScreen');
+              if (_gcScreen) {
+                _gcScreen.innerHTML = '<div style="text-align:center;padding:40px 20px;">' +
+                  '<div style="font-size:64px;margin-bottom:16px;">&#x2705;</div>' +
+                  '<div style="font-family:var(--font-display);font-size:26px;font-weight:700;color:var(--green-bright);margin-bottom:8px;">' + _cnt + ' Card' + (_cnt !== 1 ? 's' : '') + ' Generated</div>' +
+                  '<div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:28px;">Cards have been added to your library.</div>' +
+                  '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">' +
+                  '<button class="btn btn-primary" onclick="navigateTo(\'library\')">Review &amp; Edit Cards</button>' +
+                  '<button class="btn btn-secondary" onclick="navigateTo(\'import\')">Import More</button>' +
+                  '</div></div>';
               }
-              document.getElementById("aiNotesText").value = "";
-              showToast(cardCount + " cards created — open Library to edit", "success");
-              if (result.suggest_bubble && result.subject_id) {
-                showBubbleOnboardingPrompt(result.subject_id, result.deck_id);
+              if (job && job.suggest_bubble && job.subject_id) {
+                showBubbleOnboardingPrompt(job.subject_id, job.deck_id);
               }
             } catch(err) {
               _hideGenBanner();
-              setImportResult("aiNotesResult", err.message || "Generation failed", true);
+              var _gcScreen = document.getElementById('cardGenScreen');
+              if (_gcScreen) {
+                _gcScreen.innerHTML = '<div style="text-align:center;padding:40px 20px;">' +
+                  '<div style="font-size:64px;margin-bottom:16px;">&#x26A0;&#xFE0F;</div>' +
+                  '<div style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--red-bright);margin-bottom:12px;">Generation Failed</div>' +
+                  '<div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:24px;">' + escapeHTML(err.message || 'Card generation failed. Please try again.') + '</div>' +
+                  '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">' +
+                  '<button class="btn btn-primary" onclick="navigateTo(\'import\')">Try Again</button>' +
+                  '<button class="btn btn-ghost" onclick="navigateTo(\'dashboard\')">Back to Dashboard</button>' +
+                  '</div></div>';
+              }
             } finally {
               btn.disabled = false; btn.textContent = "Generate Cards with AI";
             }

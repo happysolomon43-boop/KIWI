@@ -199,6 +199,20 @@ function _jobStoreSet(jobId, data) {
   for (const [k, v] of _jobStore) {
     if (v.expiresAt < Date.now()) _jobStore.delete(k);
   }
+  // ROOT FIX: Persist to PostgreSQL so polls survive server restarts / multi-instance deployments.
+  // In-memory _jobStore is the fast path; DB is the durable fallback.
+  query(
+    `INSERT INTO background_jobs (id, status, type, result, error, expires_at)
+     VALUES ($1, $2, $3, $4::jsonb, $5, NOW() + INTERVAL '10 minutes')
+     ON CONFLICT (id) DO UPDATE SET
+       status     = EXCLUDED.status,
+       result     = EXCLUDED.result,
+       error      = EXCLUDED.error,
+       expires_at = EXCLUDED.expires_at`,
+    [jobId, data.status, data.type,
+     data.result ? JSON.stringify(data.result) : null,
+     data.error || null]
+  ).catch(() => {}); // fire-and-forget — never block the caller
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -15853,19 +15867,43 @@ app.get('/api/health', (req, res) => {
 // /api/dashboard     → progressRouter.get('/dashboard', ...)
 
 // ── Bug 2 Fix: Job polling endpoint — fallback for clients where WS is slow/unavailable ──
+// ROOT FIX: Falls back to PostgreSQL when in-memory job is missing (server restart / multi-instance).
 const _jobsRouter = express.Router();
 _jobsRouter.use(authenticate);
-_jobsRouter.get('/:id', (req, res) => {
-  const job = _jobStore.get(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Job not found or expired. Result may have already been delivered via WebSocket.' });
-  // Return result shaped the same way WS job_done delivers it
-  res.json({
-    status: job.status,
-    type: job.type,
-    result: job.result || null,
-    exam: job.result || null,   // alias: frontend _pollJobFallback reads job.result.exam
-    error: job.error || null,
-  });
+_jobsRouter.get('/:id', async (req, res) => {
+  // 1. Fast path — check in-memory store
+  const memJob = _jobStore.get(req.params.id);
+  if (memJob && memJob.expiresAt > Date.now()) {
+    return res.json({
+      status: memJob.status,
+      type:   memJob.type,
+      result: memJob.result || null,
+      exam:   memJob.result || null,
+      error:  memJob.error  || null,
+    });
+  }
+  // 2. DB fallback — survives server restarts and multi-instance deployments
+  try {
+    const { rows } = await query(
+      'SELECT * FROM background_jobs WHERE id = $1 AND expires_at > NOW() LIMIT 1',
+      [req.params.id]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: 'Job not found or expired. Result may have already been delivered via WebSocket.' });
+    }
+    const row    = rows[0];
+    const result = row.result
+      ? (typeof row.result === 'object' ? row.result : JSON.parse(row.result))
+      : null;
+    // Repopulate in-memory cache so subsequent polls are fast
+    _jobStore.set(req.params.id, {
+      status: row.status, type: row.type, result, error: row.error,
+      expiresAt: new Date(row.expires_at).getTime(),
+    });
+    res.json({ status: row.status, type: row.type, result, exam: result, error: row.error || null });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to retrieve job status' });
+  }
 });
 app.use('/api/jobs', _jobsRouter);
 
@@ -17301,6 +17339,22 @@ console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear ab
       console.error('[KIWI ERROR]', err);
       res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
     });
+
+    // ── Ensure background_jobs table exists (idempotent — runs on every startup) ──
+    // This table backs the DB-fallback job polling and survives server restarts.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS background_jobs (
+        id          TEXT        PRIMARY KEY,
+        status      TEXT        NOT NULL DEFAULT 'pending',
+        type        TEXT        NOT NULL,
+        result      JSONB,
+        error       TEXT,
+        expires_at  TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '10 minutes'),
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(e => console.warn('[KIWI] background_jobs table creation skipped:', e.message));
+    // Clean up expired jobs older than 1 hour (fire-and-forget, best-effort)
+    pool.query(`DELETE FROM background_jobs WHERE expires_at < NOW() - INTERVAL '1 hour'`).catch(() => {});
 
     const _httpServer = app.listen(PORT, () => {
       console.log(`[KIWI] 🥝 Living Ecosystem backend running on port ${PORT}`);
