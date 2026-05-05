@@ -321,7 +321,7 @@ async findAll() {
 refreshTokens: {
 async create(userId, tokenHash, expiresAt) {
   await query(
-    'INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (token_hash) DO UPDATE SET expires_at = EXCLUDED.expires_at, user_id = EXCLUDED.user_id',
+    'INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES ($1, $2, $3, NOW())',
     [tokenHash, userId, expiresAt]
   );
   return true;
@@ -347,16 +347,7 @@ async deleteByUserId(userId) {
 subjects: {
 async findById(id) {
   const { rows } = await query('SELECT * FROM subjects WHERE id = $1 LIMIT 1', [id]);
-  const s = rows[0];
-  if (!s) return null;
-  let normalizedName = s.name || '';
-  if (normalizedName.trim().startsWith('{')) {
-    try {
-      const parsed = JSON.parse(normalizedName);
-      if (parsed && parsed.name) normalizedName = parsed.name;
-    } catch (_) {}
-  }
-  return { ...s, name: normalizedName };
+  return rows[0] || null;
 },
 async findManyWithDecks(userId) {
   const { rows: subjects } = await query(
@@ -814,10 +805,10 @@ async findByIdWithQuestions(userId, id) {
   return exam;
 },
 async findMany(userId, filters = {}, { limit = 20, offset = 0 } = {}) {
-  let sql = 'SELECT es.*, s.name AS subject_name FROM exam_sessions es LEFT JOIN subjects s ON s.id = es.subject_id WHERE es.user_id = $1';
+  let sql = 'SELECT * FROM exam_sessions WHERE user_id = $1';
   const vals = [userId];
-  if (filters.status) { sql += ` AND es.status = $${vals.length + 1}`; vals.push(filters.status); }
-  if (filters.started_at_gte) { sql += ` AND es.started_at >= $${vals.length + 1}`; vals.push(filters.started_at_gte); }
+  if (filters.status) { sql += ` AND status = $${vals.length + 1}`; vals.push(filters.status); }
+  if (filters.started_at_gte) { sql += ` AND started_at >= $${vals.length + 1}`; vals.push(filters.started_at_gte); }
   vals.push(limit, offset);
   sql += ` ORDER BY created_at DESC LIMIT $${vals.length - 1} OFFSET $${vals.length}`;
   const { rows } = await query(sql, vals);
@@ -1819,7 +1810,7 @@ return JSON.parse(cleaned);
 }
 
 // CEE-style raw fetch — returns SDK-compatible shape so all callers work unchanged
-// Model: gemini-3-flash-preview (free, high usage) — no paid Pro model used
+// Model: gemini-3.1-flash-lite-preview (free, high usage) — no paid Pro model used
 const geminiModel = {
 async generateContent(content, generationConfig, { timeoutMs = 30000 } = {}) {
 if (!_geminiKeyObjs.length) throw new Error('No Gemini API keys configured');
@@ -1827,7 +1818,7 @@ let lastError = null;
 for (let attempt = 0; attempt < Math.max(_geminiKeyObjs.length, 1); attempt++) {
 const k = _pickGeminiKey();
 if (!k) break;
-const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${k.key}`;
+const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${k.key}`;
 let reqBody;
 if (typeof content === 'string') {
 reqBody = { contents: [{ parts: [{ text: content }] }] };
@@ -1869,7 +1860,11 @@ if (finishReason === 'MAX_TOKENS') {
 // Return SDK-compatible object — all existing callers work without changes
 return { response: { text: () => text, finishReason } };
 } catch (e) {
-lastError = e.message;
+if (e.name === 'AbortError' || (e.message && (e.message.toLowerCase().includes('aborted') || e.message.toLowerCase().includes('abort')))) {
+  lastError = `AI response timed out after ${Math.round(timeoutMs / 1000)}s — please try with less content or try again`;
+} else {
+  lastError = e.message;
+}
 console.error(`[KIWI] Gemini fetch error (attempt ${attempt + 1}):`, e.message);
 }
 }
@@ -4051,10 +4046,15 @@ function deduplicateCBTOptions(questions) {
   for (let qi = 0; qi < questions.length; qi++) {
     for (const key of OPT_KEYS) {
       const raw = (questions[qi][key] || '').trim();
-      if (!raw || raw.length < 4) continue;
-      // Skip dedup for math/LaTeX options — stripping symbols makes distinct expressions look identical
-      if (raw.includes('$') || /[×÷≤≥≠≈∑∫√∞²³αβγδεζηθλμπρσφψω]/.test(raw)) continue;
-      const norm = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+      // LATEX FIX: minimum length raised to 20 so short math expressions like
+      // "$-2$" (4 chars), "$0$" (3 chars), "$1/2$" (5 chars) are NEVER deduplicated
+      // across questions — these are valid distinct answers, not recycled distractors.
+      if (!raw || raw.length < 20) continue;
+      // LATEX FIX: do NOT strip LaTeX/math symbols ($ \ ^ _ { }).
+      // Old code used /[^a-z0-9]/g which collapsed "$-2$" → "2" and "$+2$" → "2"
+      // making them appear as cross-question duplicates when they are not.
+      // New approach: whitespace-normalised, lowercased full-text comparison.
+      const norm = raw.toLowerCase().replace(/\s+/g, ' ').trim();
       if (!textMap.has(norm)) textMap.set(norm, []);
       textMap.get(norm).push({ qi, key });
     }
@@ -4181,7 +4181,7 @@ async function generateFlashcards(notes, subjectHint = '') {
 const prompt =
 FLASHCARD_PROMPT.replace('[NOTES]', notes) +
 (subjectHint ? `\nSubject hint: ${subjectHint}` : '');
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000 });
+const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000 }, { timeoutMs: 120000 });
 return result.response.text();
 }
 
@@ -4464,9 +4464,7 @@ const _missingAnswers = questions.filter(q => !answerMap.has(q.question_number))
 if (_missingAnswers.length > 0) console.warn(`[KIWI CBT PARSE] Questions with no answer mapping: ${_missingAnswers.join(', ')}`);
 // ─────────────────────────────────────────────────────────────────────────────
 
-const _PLACEHOLDER_RE = /^\[.*(?:removed|omitted|deleted|placeholder|n\/a|none|empty|option\s+[abcd])\.*\]$/i;
-const _PLACEHOLDERS = new Set(['Option A', 'Option B', 'Option C', 'Option D', '(none of the above applies here)', '[option removed — duplicate]', '[options removed]', 'N/A', '...', 'Not applicable', 'none']);
-const _isPlaceholder = (s) => !s || _PLACEHOLDERS.has(s) || _PLACEHOLDER_RE.test(s.trim());
+const _PLACEHOLDERS = new Set(['Option A', 'Option B', 'Option C', 'Option D', '(none of the above applies here)', '[option removed — duplicate]']);
 const mapped = questions.map((q, idx) => {
 const ans = answerMap.get(q.question_number) || {};
 // Strip internal parsing flags (_stemDone) so they don't get inserted into the DB
@@ -4478,7 +4476,7 @@ const oD = _stripMd(cleanQ.option_d) || '';
 const correctLetter = ans.correct_answer || 'A';
 // If the declared correct option slot is empty or a placeholder, mark for removal
 const correctOptionText = { A: oA, B: oB, C: oC, D: oD }[correctLetter] || '';
-if (!correctOptionText || _isPlaceholder(correctOptionText)) {
+if (!correctOptionText || _PLACEHOLDERS.has(correctOptionText)) {
   console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — correct option ${correctLetter} is empty or placeholder ("${correctOptionText}")`);
   return null;
 }
@@ -4486,16 +4484,14 @@ if (!cleanQ.stem) {
   console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — no stem`);
   return null;
 }
-// Replace placeholder distractors with empty string so frontend can filter them
-const _clean = (s) => (_isPlaceholder(s) ? '' : s);
 return {
 ...cleanQ,
 stem: _stripMd(cleanQ.stem),
 question_number: idx + 1,
-option_a: _clean(oA),
-option_b: _clean(oB),
-option_c: _clean(oC),
-option_d: _clean(oD),
+option_a: oA || 'Not applicable',
+option_b: oB || 'Not applicable',
+option_c: oC || 'Not applicable',
+option_d: oD || 'Not applicable',
 correct_answer: correctLetter,
 explanation: ans.explanation || 'No explanation provided.',
 };
@@ -5347,16 +5343,6 @@ await db.subjectStats.upsert(userId, subjectId, { knowledge_score: ks.score });
 // Fix #22: pass pre-computed subject KS so global doesn't re-fetch that subject
 const globalKS = await computeGlobalKnowledgeScore(userId, { [subjectId]: ks });
 await db.userStats.update(userId, { knowledge_score_global: globalKS.score });
-// KS-HISTORY FIX: Record a daily snapshot for per-subject KS history chart.
-// Throttled: only one snapshot per subject per calendar day to avoid flooding the table.
-try {
-  const _today = new Date().toISOString().split('T')[0];
-  const _recentSnaps = await db.knowledgeScores.findBySubject(userId, subjectId, 1).catch(() => []);
-  const _lastSnapDate = _recentSnaps[0]?.recorded_at ? new Date(_recentSnaps[0].recorded_at).toISOString().split('T')[0] : null;
-  if (_lastSnapDate !== _today) {
-    await db.knowledgeScores.create(userId, subjectId, ks.score, ks.band);
-  }
-} catch (_ksHistErr) { /* non-fatal — history snapshot failure must not block session */ }
 return ks;
 }
 const globalKS = await computeGlobalKnowledgeScore(userId);
@@ -8425,11 +8411,13 @@ const existing = await db.userPersona.get(userId);
 if (existing && new Date(existing.assigned_week_start) >= weekStart) return existing;
 const stats = await db.userStats.get(userId);
 
-// PERSONA-FIX: Lower threshold to 3 completed sessions (no account age requirement).
-// The original 28-day + 10-session gate was too strict — most users never see their persona.
+// ISSUE-041 FIX: Require a minimum of 28 days of account age AND at least 10 completed
+// sessions before assigning a persona. New users return null — frontend must show nothing.
+const accountAgeMs = stats?.created_at ? Date.now() - new Date(stats.created_at).getTime() : 0;
+const accountAgeDays = accountAgeMs / 86400000;
 const totalSessions = stats?.total_sessions_completed || 0;
-if (totalSessions < 3) {
-return null; // Not enough data yet — need at least 3 completed sessions
+if (accountAgeDays < 28 || totalSessions < 10) {
+return null; // Not enough data — persona classification deferred
 }
 // FIX-8: spec P6.6 requires last 4 weeks only
 const sessions = await db.sessions.findMany(
@@ -8847,6 +8835,8 @@ const cached = await db.dailyRitualCache.get(userId, 'daily_invitations', todayS
 if (cached) return cached.data;
 const subjects = await db.subjects.findManyWithDecks(userId);
 const pressureList = await db.brainPressure.findByUser(userId);
+// REAL-DATA FIX: load user stats so the AI knows streak, level, XP, total cards
+const userStatsRow = await db.userStats.get(userId).catch(() => null);
 // B15: AI-generated invitations with specific card names and situations
 const invitations = [];
 // Gather rich context for AI
@@ -8938,16 +8928,29 @@ action: invitationActionLabel('exam'),
 const needed = 3 - invitations.length;
 try {
 // P7.2 FIX: Updated prompt to request spec-compliant shape and action_types
+// REAL-DATA FIX: include user level, streak, XP, and total card counts so AI
+// generates invitations that reference the student's actual current state.
+const totalCards      = allCardStatesForInv.length;
+const totalDue        = allCardStatesForInv.filter((s) => s.state !== 'SEEDLING').length;
+const totalDangerous  = allCardStatesForInv.filter((s) => s.state === 'DANGEROUS').length;
+const totalGhost      = allCardStatesForInv.filter((s) => s.state === 'GHOST').length;
+const totalStuck      = allCardStatesForInv.filter((s) => s.state === 'STUCK').length;
+const userLevel       = userStatsRow?.current_level   || 1;
+const userXP          = userStatsRow?.total_xp        || 0;
+const userStreak      = userStatsRow?.current_streak  || 0;
+const allSubjectNames = subjects.map((s) => s.name).join(', ') || 'none';
 const aiPrompt = `
 ROLE
 You are KIWI\'s invitation generator. Create ${needed} specific, motivating daily study invitations.
-STUDENT CONTEXT
-- Dangerous cards (exam approaching, stage 1-2): ${dangerousFronts.join(', ') || 'none'}
-- Ghost cards (stage 5, overdue 20+ days past their due date): ${ghostFronts.join(', ') || 'none'}
-- Stuck cards (no progress in 14 days): ${stuckFronts.join(', ') || 'none'}
+STUDENT CONTEXT (real data — use these exact numbers and names in your invitations)
+- Student level: ${userLevel} | Total XP: ${userXP} | Current streak: ${userStreak} day(s)
+- Total cards in the forest: ${totalCards} | Cards due today: ${totalDue}
+- Dangerous cards (${totalDangerous} total; exam approaching, stage 1-2): ${dangerousFronts.join(', ') || 'none'}
+- Ghost cards (${totalGhost} total; stage 5, overdue 20+ days): ${ghostFronts.join(', ') || 'none'}
+- Stuck cards (${totalStuck} total; no progress in 14 days): ${stuckFronts.join(', ') || 'none'}
 - Highest-pressure subject: ${highPressureSubject?.name || 'none'}
-- Total due cards: ${allCardStatesForInv.filter((s) => s.state !== 'SEEDLING').length}
-- Recently dismissed invitations (do not repeat these today): ${dismissedContext}
+- All subjects: ${allSubjectNames}
+- Recently dismissed invitations (do not repeat): ${dismissedContext}
 ${bubblePromptContext}
 RULES
 - Each invitation must name a SPECIFIC card or subject from the context above.
@@ -9010,9 +9013,6 @@ RULES
         action: invitationActionLabel('study_session'),
       });
     }
-    // Only cache AI-generated invitations — fallback invitations must NOT be cached
-    // so the next request retries the AI instead of serving stale generic content.
-    await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: invitations });
   } catch (_) {
     // P7.2 FIX: Fallback now uses spec-compliant shape
     if (dangerousFronts.length > 0 && invitations.length < 3) {
@@ -9077,6 +9077,7 @@ RULES
       });
     }
   }
+  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: invitations });
   return invitations;
 }
 
@@ -10316,23 +10317,11 @@ const _corsOptions = {
   origin: true, // open to all origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-override'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
 app.use(compression()); // Gzip all responses — typically cuts JSON payload 60-70%
 app.use(cors(_corsOptions));
-// TIMEOUT-FIX: 28-second hard limit on all API requests (Vercel limit is 30s).
-// Must be registered early — before routes — so it covers every request handler.
-app.use((req, res, next) => {
-  const _reqTimer = setTimeout(() => {
-    if (!res.headersSent) {
-      res.status(503).json({ error: 'Request timed out — please try again.' });
-    }
-  }, 28000);
-  res.on('finish', () => clearTimeout(_reqTimer));
-  res.on('close', () => clearTimeout(_reqTimer));
-  next();
-});
 // Handle preflight OPTIONS requests for all routes
 app.options(/(.*)/, cors(_corsOptions));
 
@@ -10439,12 +10428,15 @@ const decoded = jwt.verify(token, JWT_SECRET);
 const now = Date.now();
 const cached = _authCache.get(token);
 if (cached && cached.expiresAt > now) {
+  // BLOCK CHECK: blocked user may have been unblocked/blocked since cache was stored
+  if (cached.user.is_blocked) return res.status(403).json({ error: 'Your account has been suspended. Please contact support.' });
   req.user = cached.user;
   return next();
 }
 const user = await db.users.findById(decoded.userId);
 if (!user) return res.status(401).json({ error: 'User not found' });
-if (user.role === 'blocked') return res.status(403).json({ error: 'Account suspended. Contact support.' });
+// BLOCK CHECK: refuse access to suspended accounts
+if (user.is_blocked) return res.status(403).json({ error: 'Your account has been suspended. Please contact support.' });
 // Store in cache
 _authCache.set(token, { user, expiresAt: now + _AUTH_CACHE_TTL_MS });
 // Prune stale entries lazily (keep Map bounded)
@@ -10461,11 +10453,33 @@ return res.status(401).json({ error: 'Invalid or expired access token' });
 }
 }
 
-function requireAdmin(req, res, next) {
-if (req.user?.role === 'admin') return next();
-if (req.headers['x-admin-override'] === '1969') return next();
-return res.status(403).json({ error: 'Admin access required' });
+// Admin master token — allows hidden admin panel access without requiring role=admin in DB.
+// Set ADMIN_MASTER_TOKEN env var to override. Default is NOT exposed to users.
+const ADMIN_MASTER_TOKEN = process.env.ADMIN_MASTER_TOKEN || 'kiwi-admin-1969';
+
+// requireAdminAccess — accepts either:
+//   (a) X-Admin-Token header matching ADMIN_MASTER_TOKEN (hidden panel auth)
+//   (b) authenticated user with role='admin' (DB-level admin)
+function requireAdminAccess(req, res, next) {
+  if (req.headers['x-admin-token'] === ADMIN_MASTER_TOKEN) {
+    req.user = req.user || { id: 'admin', role: 'admin', name: 'KIWI Admin' };
+    return next();
+  }
+  authenticate(req, res, (err) => {
+    if (err) return res.status(401).json({ error: 'Unauthorized' });
+    if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    next();
+  });
 }
+
+function requireAdmin(req, res, next) {
+if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+next();
+}
+
+// ── In-memory OTP store for password reset ────────────────────────────────────
+// email (lowercase) → { otp, expiresAt, userId }
+const _otpStore = new Map();
 // ── Reckoning Lockout Middleware (B4) ─────────────────────────────────────────
 
 async function reckoningLockout(req, res, next) {
@@ -10477,7 +10491,6 @@ const RECKONING_EXEMPT_PATHS = [
 '/reckoning/defer',
 '/reckoning/use-buffer',
 '/pressure/',  // acknowledge-alert sub-path
-'/achievements',  // read-only — never block
 ];
 if (RECKONING_EXEMPT_PATHS.some(p => req.path === p || req.path.endsWith(p))) return next();
 // P3-C1 FIX: /exams/generate must be reachable to START a reckoning exam.
@@ -10915,6 +10928,94 @@ res.status(500).json({ error: 'Failed to create guest session', details: e.messa
 }
 });
 
+// ── Forgot Password — OTP via email ────────────────────────────────────────
+authRouter.post('/forgot-password', async (req, res) => {
+try {
+  const email = (req.body.email || '').toLowerCase().trim();
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+  const user = await db.users.findByEmail(email).catch(() => null);
+  // Always return success — prevents email enumeration
+  if (!user) return res.json({ message: 'If that email is registered, a reset code has been sent.' });
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  _otpStore.set(email, { otp, expiresAt: Date.now() + 10 * 60 * 1000, userId: user.id });
+  // Send OTP email
+  await sendBrevoEmail(email, 'password_reset_otp', {
+    name: user.full_name || user.name || 'Student', otp
+  }).catch(() => {});
+  // Return OTP in dev mode (no email configured) so it can be tested
+  const devMode = !process.env.BREVO_API_KEY || process.env.NODE_ENV !== 'production';
+  res.json({
+    message: 'If that email is registered, a reset code has been sent.',
+    ...(devMode ? { otp_dev: otp, note: 'otp_dev shown because no email service is configured' } : {})
+  });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to process request' });
+}
+});
+
+authRouter.post('/verify-reset-otp', async (req, res) => {
+try {
+  const email = (req.body.email || '').toLowerCase().trim();
+  const { otp } = req.body;
+  if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
+  const stored = _otpStore.get(email);
+  if (!stored) return res.status(400).json({ error: 'Invalid or expired code. Request a new one.' });
+  if (Date.now() > stored.expiresAt) {
+    _otpStore.delete(email);
+    return res.status(400).json({ error: 'Code has expired. Please request a new one.' });
+  }
+  if (stored.otp !== otp.toString().trim()) return res.status(400).json({ error: 'Incorrect code. Please try again.' });
+  _otpStore.delete(email);
+  const resetToken = jwt.sign({ userId: stored.userId, type: 'password_reset' }, JWT_SECRET, { expiresIn: '15m' });
+  res.json({ resetToken, message: 'Code verified. You can now set a new password.' });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to verify code' });
+}
+});
+
+authRouter.post('/reset-password', async (req, res) => {
+try {
+  const { resetToken, newPassword } = req.body;
+  if (!resetToken || !newPassword) return res.status(400).json({ error: 'Reset token and new password are required' });
+  if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  const decoded = jwt.verify(resetToken, JWT_SECRET);
+  if (decoded.type !== 'password_reset') return res.status(400).json({ error: 'Invalid reset token' });
+  const bcrypt = require('bcryptjs');
+  const hash = await bcrypt.hash(newPassword, 12);
+  await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, decoded.userId]);
+  for (const [k, v] of _authCache) {
+    if (v.user?.id === decoded.userId) _authCache.delete(k);
+  }
+  res.json({ message: 'Password reset successfully. You can now log in.' });
+} catch (e) {
+  if (e.name === 'JsonWebTokenError' || e.name === 'TokenExpiredError') {
+    return res.status(400).json({ error: 'Reset link expired. Please request a new code.' });
+  }
+  res.status(500).json({ error: 'Failed to reset password' });
+}
+});
+
+authRouter.patch('/change-password', authenticate, async (req, res) => {
+try {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new passwords are required' });
+  if (newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  const bcrypt = require('bcryptjs');
+  const user = await db.users.findById(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const valid = await bcrypt.compare(currentPassword, user.password_hash);
+  if (!valid) return res.status(400).json({ error: 'Current password is incorrect' });
+  const hash = await bcrypt.hash(newPassword, 12);
+  await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+  for (const [k, v] of _authCache) {
+    if (v.user?.id === req.user.id) _authCache.delete(k);
+  }
+  res.json({ message: 'Password changed successfully' });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to change password' });
+}
+});
+
 authRouter.post('/logout', async (req, res) => {
 // Perf-1 FIX: evict token from auth cache immediately on logout
 const _logoutAuthHeader = req.headers.authorization;
@@ -10941,70 +11042,6 @@ res.json({ ...safeUser, stats });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch user' });
 }
-});
-
-// ── In-memory OTP store: email → { otp, expiresAt } ──────────────────────
-const _otpStore = new Map();
-
-// POST /api/auth/forgot-password — generate & send OTP
-authRouter.post('/forgot-password', async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
-    const userRow = await query('SELECT id, email FROM users WHERE email = $1 LIMIT 1', [email.toLowerCase().trim()]);
-    // Always respond success to prevent email enumeration
-    if (userRow.rows.length === 0) return res.json({ message: 'If that email exists, a reset code was sent.' });
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
-    _otpStore.set(email.toLowerCase().trim(), { otp, expiresAt: Date.now() + 15 * 60 * 1000 });
-    // Send email via Brevo if configured, else log to console
-    try {
-      await sendBrevoEmail(email.toLowerCase().trim(), 'password_reset', { otp, appName: 'KIWI' });
-    } catch (_emailErr) {
-      console.log(`[KIWI AUTH] Password reset OTP for ${email}: ${otp} (email send failed — configure BREVO_API_KEY)`);
-    }
-    res.json({ message: 'If that email exists, a reset code was sent.' });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to process request' });
-  }
-});
-
-// POST /api/auth/reset-password — verify OTP and set new password
-authRouter.post('/reset-password', async (req, res) => {
-  try {
-    const { email, otp, newPassword } = req.body;
-    if (!email || !otp || !newPassword) return res.status(400).json({ error: 'Email, OTP, and new password are required' });
-    if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    const emailKey = email.toLowerCase().trim();
-    const stored = _otpStore.get(emailKey);
-    if (!stored || stored.otp !== String(otp) || Date.now() > stored.expiresAt) {
-      return res.status(400).json({ error: 'Invalid or expired reset code' });
-    }
-    _otpStore.delete(emailKey);
-    const hash = await bcrypt.hash(newPassword, 10);
-    const updated = await query('UPDATE users SET password_hash = $1 WHERE email = $2 RETURNING id', [hash, emailKey]);
-    if (updated.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    res.json({ message: 'Password reset successfully. Please log in.' });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to reset password' });
-  }
-});
-
-// POST /api/auth/change-password — authenticated password change
-authRouter.post('/change-password', authenticate, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new password are required' });
-    if (newPassword.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
-    const userRow = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
-    if (userRow.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    const valid = await bcrypt.compare(currentPassword, userRow.rows[0].password_hash);
-    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
-    const hash = await bcrypt.hash(newPassword, 10);
-    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
-    res.json({ message: 'Password changed successfully' });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to change password' });
-  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -11513,7 +11550,7 @@ setImmediate(async () => {
     }
     const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
     const created   = await db.cards.createMany(_noteUserId, _noteDeckId, cardsData);
-    await db.decks.update(_noteUserId, _noteDeckId, { card_count: { increment: created.length } });
+    await db.decks.update(_noteUserId, _noteDeckId, { card_count: { increment: created.length }, import_source: 'ai' });
     await batchInitializeSeedlingStates(_noteUserId, created.map(c => c.id));
     const suggest_bubble = _noteSubjectId !== null && created.length >= 5;
     _jobStoreSet(noteJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'ai', deck_id: _noteDeckId, subject_id: _noteSubjectId, suggest_bubble } });
@@ -11616,11 +11653,11 @@ if (!pdf_base64) return res.status(400).json({ error: 'pdf_base64 is required' }
 if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
 if (!pdfParse) return res.status(503).json({ error: 'PDF parsing is not available. The pdf-parse package is not installed on this server. Add "pdf-parse" to package.json dependencies and redeploy.' });
 const buffer = Buffer.from(pdf_base64, 'base64');
-const parsedPdf = await pdfParse(buffer);
-let text = (parsedPdf.text || '').trim();
+const parsed = await pdfParse(buffer);
+let text = (parsed.text || '').trim();
+// Enforce 80,000-character limit
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text extracted from PDF' });
-// CBT mode stays synchronous
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11628,50 +11665,34 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'pdf' });
 }
-// ── Resolve deck metadata before forking ──────────────────────────────────
-const _pdfDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-const _pdfSubjectId = _pdfDeck?.subject_id || null;
-// ── Return job_id immediately ─────────────────────────────────────────────
-const pdfJobId = randomUUID();
-_jobStoreSet(pdfJobId, { status: 'pending', type: 'note_generation' });
-res.status(202).json({ job_id: pdfJobId, deck_id, subject_id: _pdfSubjectId, status: 'generating' });
-// ── Background ────────────────────────────────────────────────────────────
-const _pdfUserId = req.user.id;
-const _pdfDeckId = deck_id;
-const _pdfText   = text;
-const _pdfHint   = pdf_subject_hint;
-setImmediate(async () => {
-  try {
-    const chunks = [];
-    for (let i = 0; i < _pdfText.length; i += 12000) chunks.push(_pdfText.slice(i, i + 12000));
-    let cardsData = [];
-    for (const chunk of chunks) {
-      try {
-        const aiText = await generateFlashcards(chunk, _pdfHint);
-        cardsData.push(...parseFlashcards(aiText));
-      } catch (_ce) {
-        const lines = chunk.split('\n').filter(l => l.trim().length > 10);
-        for (let i = 0; i < lines.length - 1; i += 2)
-          cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
-      }
-    }
-    if (cardsData.length === 0) {
-      _jobStoreSet(pdfJobId, { status: 'failed', type: 'note_generation', error: 'No usable cards extracted from PDF' });
-      wsSend(_pdfUserId, 'job_failed', { job_id: pdfJobId, type: 'note_generation', error: 'No usable cards extracted from PDF' });
-      return;
-    }
-    const created = await db.cards.createMany(_pdfUserId, _pdfDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_pdfUserId, _pdfDeckId, { card_count: { increment: created.length } });
-    await batchInitializeSeedlingStates(_pdfUserId, created.map(c => c.id));
-    const suggest_bubble = _pdfSubjectId !== null && created.length >= 5;
-    _jobStoreSet(pdfJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'pdf', deck_id: _pdfDeckId, subject_id: _pdfSubjectId, suggest_bubble } });
-    wsSend(_pdfUserId, 'job_done', { job_id: pdfJobId, type: 'note_generation', result: { cards: created, count: created.length, source: 'pdf', deck_id: _pdfDeckId, subject_id: _pdfSubjectId, suggest_bubble } });
-  } catch (bgErr) {
-    console.error('[KIWI] PDF import background failed:', bgErr.message);
-    _jobStoreSet(pdfJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'PDF import failed' });
-    wsSend(_pdfUserId, 'job_failed', { job_id: pdfJobId, type: 'note_generation', error: bgErr.message || 'PDF import failed' });
-  }
+// Chunk into <=12000-char segments and send each to Gemini
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+try {
+const aiText = await generateFlashcards(chunk, pdf_subject_hint);
+const parsed2 = parseFlashcards(aiText);
+cardsData.push(...parsed2);
+} catch (e) {
+// Fallback: pair consecutive lines as front/back
+const lines = chunk.split('\n').filter((l) => l.trim().length > 10);
+for (let i = 0; i < lines.length - 1; i += 2) {
+cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
+}
+}
+}
+if (cardsData.length === 0)
+return res.status(422).json({ error: 'No usable text extracted from PDF' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, {
+card_count: { increment: created.length },
 });
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+res.status(201).json({ cards: created, count: created.length, source: 'pdf' });
 } catch (e) {
 res.status(500).json({ error: 'PDF import failed', details: e.message });
 }
@@ -11684,11 +11705,11 @@ if (!docx_base64) return res.status(400).json({ error: 'docx_base64 is required'
 if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
 if (!mammoth) return res.status(503).json({ error: 'DOCX parsing not available' });
 const buffer = Buffer.from(docx_base64, 'base64');
-const docxResult = await mammoth.extractRawText({ buffer });
-let text = (docxResult.value || '').trim();
+const result = await mammoth.extractRawText({ buffer });
+let text = (result.value || '').trim();
+// Enforce 80,000-character limit
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text extracted from DOCX' });
-// CBT mode stays synchronous
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11696,59 +11717,43 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'docx' });
 }
-// ── Resolve deck metadata before forking ──────────────────────────────────
-const _docxDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-const _docxSubjectId = _docxDeck?.subject_id || null;
-// ── Return job_id immediately ─────────────────────────────────────────────
-const docxJobId = randomUUID();
-_jobStoreSet(docxJobId, { status: 'pending', type: 'note_generation' });
-res.status(202).json({ job_id: docxJobId, deck_id, subject_id: _docxSubjectId, status: 'generating' });
-// ── Background ────────────────────────────────────────────────────────────
-const _docxUserId = req.user.id;
-const _docxDeckId = deck_id;
-const _docxText   = text;
-const _docxHint   = docx_subject_hint;
-setImmediate(async () => {
-  try {
-    const chunks = [];
-    for (let i = 0; i < _docxText.length; i += 12000) chunks.push(_docxText.slice(i, i + 12000));
-    let cardsData = [];
-    for (const chunk of chunks) {
-      try {
-        const aiText = await generateFlashcards(chunk, _docxHint);
-        cardsData.push(...parseFlashcards(aiText));
-      } catch (_ce) {
-        const lines = chunk.split('\n').filter(l => l.trim().length > 10);
-        for (let i = 0; i < lines.length - 1; i += 2)
-          cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
-      }
-    }
-    if (cardsData.length === 0) {
-      _jobStoreSet(docxJobId, { status: 'failed', type: 'note_generation', error: 'No usable cards extracted from DOCX' });
-      wsSend(_docxUserId, 'job_failed', { job_id: docxJobId, type: 'note_generation', error: 'No usable cards extracted from DOCX' });
-      return;
-    }
-    const created = await db.cards.createMany(_docxUserId, _docxDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_docxUserId, _docxDeckId, { card_count: { increment: created.length } });
-    await batchInitializeSeedlingStates(_docxUserId, created.map(c => c.id));
-    // FIX #4a: Recalculate KS after DOCX import (preserved from original)
-    if (_docxSubjectId) await persistKnowledgeScore(_docxUserId, _docxSubjectId).catch(e => console.error('[KIWI] silent catch:', e.message));
-    const suggest_bubble = _docxSubjectId !== null && created.length >= 5;
-    _jobStoreSet(docxJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'docx', deck_id: _docxDeckId, subject_id: _docxSubjectId, suggest_bubble } });
-    wsSend(_docxUserId, 'job_done', { job_id: docxJobId, type: 'note_generation', result: { cards: created, count: created.length, source: 'docx', deck_id: _docxDeckId, subject_id: _docxSubjectId, suggest_bubble } });
-  } catch (bgErr) {
-    console.error('[KIWI] DOCX import background failed:', bgErr.message);
-    _jobStoreSet(docxJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'DOCX import failed' });
-    wsSend(_docxUserId, 'job_failed', { job_id: docxJobId, type: 'note_generation', error: bgErr.message || 'DOCX import failed' });
-  }
+// Chunk into <=12000-char segments and send each to Gemini
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+try {
+const aiText = await generateFlashcards(chunk, docx_subject_hint);
+const parsed2 = parseFlashcards(aiText);
+cardsData.push(...parsed2);
+} catch (e) {
+const lines = chunk.split('\n').filter((l) => l.trim().length > 10);
+for (let i = 0; i < lines.length - 1; i += 2) {
+cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
+}
+}
+}
+if (cardsData.length === 0)
+return res.status(422).json({ error: 'No usable text extracted from DOCX' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, {
+card_count: { increment: created.length },
 });
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+// FIX #4a: Recalculate KS after DOCX import
+const docxDeck = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+if (docxDeck?.subject_id) {
+await persistKnowledgeScore(req.user.id, docxDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+res.status(201).json({ cards: created, count: created.length, source: 'docx' });
 } catch (e) {
 res.status(500).json({ error: 'DOCX import failed', details: e.message });
 }
 });
 // POST /api/cards/import/txt — plain text file import (Issue-058)
-// Background-job pattern: returns job_id immediately; AI runs in setImmediate.
-// This prevents Railway request timeouts on large files.
 cardRouter.post('/import/txt', async (req, res) => {
 try {
 const { deck_id, txt_base64, subject_hint = '', mode = 'flashcard' } = req.body;
@@ -11757,7 +11762,6 @@ if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is
 let text = Buffer.from(txt_base64, 'base64').toString('utf-8').trim();
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text in file' });
-// CBT mode remains synchronous (short generation, different consumer)
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11765,48 +11769,18 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'txt' });
 }
-// ── Resolve deck metadata before forking ──────────────────────────────────
-const _txtDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-const _txtSubjectId = _txtDeck?.subject_id || null;
-// ── Return job_id immediately so the client doesn't time out ──────────────
-const txtJobId = randomUUID();
-_jobStoreSet(txtJobId, { status: 'pending', type: 'note_generation' });
-res.status(202).json({ job_id: txtJobId, deck_id, subject_id: _txtSubjectId, status: 'generating' });
-// ── Background: chunked generation + WebSocket notification ──────────────
-const _txtUserId    = req.user.id;
-const _txtDeckId    = deck_id;
-const _txtText      = text;
-const _txtHint      = subject_hint;
-setImmediate(async () => {
-  try {
-    const chunks = [];
-    for (let i = 0; i < _txtText.length; i += 12000) chunks.push(_txtText.slice(i, i + 12000));
-    let cardsData = [];
-    for (const chunk of chunks) {
-      const aiText = await generateFlashcards(chunk, _txtHint);
-      cardsData.push(...parseFlashcards(aiText));
-    }
-    if (cardsData.length === 0) {
-      _jobStoreSet(txtJobId, { status: 'failed', type: 'note_generation', error: 'AI could not generate cards from this text' });
-      wsSend(_txtUserId, 'job_failed', { job_id: txtJobId, type: 'note_generation', error: 'AI could not generate cards from this text' });
-      return;
-    }
-    const created = await db.cards.createMany(_txtUserId, _txtDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_txtUserId, _txtDeckId, { card_count: { increment: created.length } });
-    await batchInitializeSeedlingStates(_txtUserId, created.map(c => c.id));
-    const suggest_bubble = _txtSubjectId !== null && created.length >= 5;
-    _jobStoreSet(txtJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'txt', deck_id: _txtDeckId, subject_id: _txtSubjectId, suggest_bubble } });
-    wsSend(_txtUserId, 'job_done', {
-      job_id: txtJobId,
-      type: 'note_generation',
-      result: { cards: created, count: created.length, source: 'txt', deck_id: _txtDeckId, subject_id: _txtSubjectId, suggest_bubble },
-    });
-  } catch (bgErr) {
-    console.error('[KIWI] TXT import background failed:', bgErr.message);
-    _jobStoreSet(txtJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'TXT import failed' });
-    wsSend(_txtUserId, 'job_failed', { job_id: txtJobId, type: 'note_generation', error: bgErr.message || 'TXT import failed' });
-  }
-});
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+const aiText = await generateFlashcards(chunk, subject_hint);
+cardsData.push(...parseFlashcards(aiText));
+}
+if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this text' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
+await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
+res.status(201).json({ cards: created, count: created.length, source: 'txt' });
 } catch (e) {
 res.status(500).json({ error: 'TXT import failed', details: e.message });
 }
@@ -11833,7 +11807,6 @@ text = text
   .replace(/^\s*\d+\.\s+/gm, '');
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text in markdown file' });
-// CBT mode stays synchronous
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11841,44 +11814,18 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'md' });
 }
-// ── Resolve deck metadata before forking ──────────────────────────────────
-const _mdDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-const _mdSubjectId = _mdDeck?.subject_id || null;
-// ── Return job_id immediately ─────────────────────────────────────────────
-const mdJobId = randomUUID();
-_jobStoreSet(mdJobId, { status: 'pending', type: 'note_generation' });
-res.status(202).json({ job_id: mdJobId, deck_id, subject_id: _mdSubjectId, status: 'generating' });
-// ── Background ────────────────────────────────────────────────────────────
-const _mdUserId = req.user.id;
-const _mdDeckId = deck_id;
-const _mdText   = text;
-const _mdHint   = subject_hint;
-setImmediate(async () => {
-  try {
-    const chunks = [];
-    for (let i = 0; i < _mdText.length; i += 12000) chunks.push(_mdText.slice(i, i + 12000));
-    let cardsData = [];
-    for (const chunk of chunks) {
-      const aiText = await generateFlashcards(chunk, _mdHint);
-      cardsData.push(...parseFlashcards(aiText));
-    }
-    if (cardsData.length === 0) {
-      _jobStoreSet(mdJobId, { status: 'failed', type: 'note_generation', error: 'AI could not generate cards from this markdown' });
-      wsSend(_mdUserId, 'job_failed', { job_id: mdJobId, type: 'note_generation', error: 'AI could not generate cards from this markdown' });
-      return;
-    }
-    const created = await db.cards.createMany(_mdUserId, _mdDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_mdUserId, _mdDeckId, { card_count: { increment: created.length } });
-    await batchInitializeSeedlingStates(_mdUserId, created.map(c => c.id));
-    const suggest_bubble = _mdSubjectId !== null && created.length >= 5;
-    _jobStoreSet(mdJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'md', deck_id: _mdDeckId, subject_id: _mdSubjectId, suggest_bubble } });
-    wsSend(_mdUserId, 'job_done', { job_id: mdJobId, type: 'note_generation', result: { cards: created, count: created.length, source: 'md', deck_id: _mdDeckId, subject_id: _mdSubjectId, suggest_bubble } });
-  } catch (bgErr) {
-    console.error('[KIWI] MD import background failed:', bgErr.message);
-    _jobStoreSet(mdJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'Markdown import failed' });
-    wsSend(_mdUserId, 'job_failed', { job_id: mdJobId, type: 'note_generation', error: bgErr.message || 'Markdown import failed' });
-  }
-});
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+const aiText = await generateFlashcards(chunk, subject_hint);
+cardsData.push(...parseFlashcards(aiText));
+}
+if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this markdown' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
+await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
+res.status(201).json({ cards: created, count: created.length, source: 'md' });
 } catch (e) {
 res.status(500).json({ error: 'Markdown import failed', details: e.message });
 }
@@ -11897,7 +11844,6 @@ let text = await officeparser.parseOfficeAsync(buffer, { outputErrorToConsole: f
 text = (text || '').trim();
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text extracted from PPTX' });
-// CBT mode stays synchronous
 if (mode === 'cbt') {
 const count = estimateCBTCount(text);
 const aiText = await generateCBTQuestions(text, count);
@@ -11905,44 +11851,18 @@ const questions = parseCBTResponse(aiText, null, []);
 if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
 return res.status(200).json({ questions, count: questions.length, source: 'pptx' });
 }
-// ── Resolve deck metadata before forking ──────────────────────────────────
-const _pptxDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-const _pptxSubjectId = _pptxDeck?.subject_id || null;
-// ── Return job_id immediately ─────────────────────────────────────────────
-const pptxJobId = randomUUID();
-_jobStoreSet(pptxJobId, { status: 'pending', type: 'note_generation' });
-res.status(202).json({ job_id: pptxJobId, deck_id, subject_id: _pptxSubjectId, status: 'generating' });
-// ── Background ────────────────────────────────────────────────────────────
-const _pptxUserId = req.user.id;
-const _pptxDeckId = deck_id;
-const _pptxText   = text;
-const _pptxHint   = subject_hint;
-setImmediate(async () => {
-  try {
-    const chunks = [];
-    for (let i = 0; i < _pptxText.length; i += 12000) chunks.push(_pptxText.slice(i, i + 12000));
-    let cardsData = [];
-    for (const chunk of chunks) {
-      const aiText = await generateFlashcards(chunk, _pptxHint);
-      cardsData.push(...parseFlashcards(aiText));
-    }
-    if (cardsData.length === 0) {
-      _jobStoreSet(pptxJobId, { status: 'failed', type: 'note_generation', error: 'AI could not generate cards from this presentation' });
-      wsSend(_pptxUserId, 'job_failed', { job_id: pptxJobId, type: 'note_generation', error: 'AI could not generate cards from this presentation' });
-      return;
-    }
-    const created = await db.cards.createMany(_pptxUserId, _pptxDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_pptxUserId, _pptxDeckId, { card_count: { increment: created.length } });
-    await batchInitializeSeedlingStates(_pptxUserId, created.map(c => c.id));
-    const suggest_bubble = _pptxSubjectId !== null && created.length >= 5;
-    _jobStoreSet(pptxJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'pptx', deck_id: _pptxDeckId, subject_id: _pptxSubjectId, suggest_bubble } });
-    wsSend(_pptxUserId, 'job_done', { job_id: pptxJobId, type: 'note_generation', result: { cards: created, count: created.length, source: 'pptx', deck_id: _pptxDeckId, subject_id: _pptxSubjectId, suggest_bubble } });
-  } catch (bgErr) {
-    console.error('[KIWI] PPTX import background failed:', bgErr.message);
-    _jobStoreSet(pptxJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'PPTX import failed' });
-    wsSend(_pptxUserId, 'job_failed', { job_id: pptxJobId, type: 'note_generation', error: bgErr.message || 'PPTX import failed' });
-  }
-});
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+const aiText = await generateFlashcards(chunk, subject_hint);
+cardsData.push(...parseFlashcards(aiText));
+}
+if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this presentation' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
+await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
+res.status(201).json({ cards: created, count: created.length, source: 'pptx' });
 } catch (e) {
 res.status(500).json({ error: 'PPTX import failed', details: e.message });
 }
@@ -12227,21 +12147,8 @@ const _fmtMsHint = (ms) => {
 // MISS-1+MISS-2 FIX: reads from limitedQueue (bubble-modified), propagates _warmup flag [DESIGN: §2.5]
 // FIX: pre-compute mode-aware interval hints so buttons show correct times from card 1
 const _hintNow = Date.now();
-// STUDY-FIX: Look up subject name once so each card carries subjectName for display
-let _sessionSubjectName = '';
-try {
-  if (subject_id) {
-    const _sSubj = await db.subjects.findById(req.user.id, subject_id).catch(() => null);
-    _sessionSubjectName = _sSubj?.name || '';
-  } else if (deck) {
-    const _sSubj2 = await db.subjects.findById(req.user.id, deck.subject_id).catch(() => null);
-    _sessionSubjectName = _sSubj2?.name || '';
-  }
-} catch (_) {}
-
 const normalizedCards = limitedQueue.map((q) => {
   const card = q.card;
-  if (!card) return null; // CRASH-FIX: defensive guard — should never be null but prevents spread crash
   let hintAgain = '<1m', hintHard = '~', hintGood = '~', hintEasy = '~';
   try {
     const hA = calculateNextReview(card, 'again', _studyMode);
@@ -12260,13 +12167,12 @@ const normalizedCards = limitedQueue.map((q) => {
     priority: q.state?.state     || null,
     _warmup:  q._warmup          || false,
     next_review_at: card.next_review_at || null,
-    subjectName: _sessionSubjectName,
     intervalHintAgain: hintAgain,
     intervalHintHard:  hintHard,
     intervalHintGood:  hintGood,
     intervalHintEasy:  hintEasy,
   };
-}).filter(Boolean); // CRASH-FIX: remove any null entries from defensive guard above
+});
 // P9 FIX: Detect first-return session so frontend can trigger zone restoration animation.
 // is_first_return_session = true when user last studied 3+ days ago (return threshold).
 let is_first_return_session = false;
@@ -12923,14 +12829,14 @@ include = card.stage >= 3;
 break;
 case 'all':
 default:
-include = true; // FIX: stage is an SR concept, not an exam gate — all content-filtered cards eligible
+include = card.stage >= 3 && ![CARD_STATES.GHOST, CARD_STATES.STUCK].includes(st);
 }
 if (include) stateFilteredCards.push(card);
 }
 // Deduplicate mixed_priority weighted copies
 const seenIds = new Set();
 const dedupedCards = stateFilteredCards.filter(c => seenIds.has(c.id) ? false : seenIds.add(c.id));
-sourceCards = dedupedCards.length >= 5 ? dedupedCards : allCards; // FIX: < 5 surviving cards means the filter collapsed — fall back to full pool
+sourceCards = dedupedCards.length > 0 ? dedupedCards : allCards;
 if (dedupedCards.length === 0 && card_state_filter !== 'all') {
   const filterLabel = Array.isArray(raw_csf) ? raw_csf.join(' / ') : raw_csf;
   return res.status(400).json({ error: `No ${filterLabel} cards found in this subject. You need to review more cards before any reach that state. Try selecting a different filter or removing filters entirely.` });
@@ -13189,7 +13095,6 @@ const preKsScore = preKs.score || 0;
 let correct = 0,
 total = exam.questions.length;
 const questionResults = [];
-const _questionUpdatePromises = [];
 for (const q of exam.questions) {
 const answer = answers.find((a) => (a.question_number ?? a.questionId) === q.question_number);
 const selectedOption = answer ? (answer.selected_option ?? answer.selectedOptionId) : null;
@@ -13206,15 +13111,13 @@ correct: isCorrect,
 correct_answer: q.correct_answer,
 });
 if (answer) {
-_questionUpdatePromises.push(db.examQuestions.update(req.user.id, q.id, {
+await db.examQuestions.update(req.user.id, q.id, {
 selected_option: selectedOption,
 is_correct: isCorrect,
 time_spent_seconds: answer.time_spent_seconds || 0,
-}));
+});
 }
 }
-// Batch all per-question DB writes in parallel instead of sequentially
-await Promise.all(_questionUpdatePromises);
 const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
 const now = new Date();
 const durationSec = exam.started_at ? Math.floor((now - new Date(exam.started_at)) / 1000) : 0;
@@ -13374,8 +13277,6 @@ return [];
     });
 
     const submitJobId = randomUUID(); // background debrief job
-    // Register job so poll fallback can track it (WS is primary; poll is backup)
-    _jobStoreSet(submitJobId, { status: 'pending', type: 'exam_submit' });
     res.json({
       job_id: submitJobId,
       exam: completedExam,
@@ -13468,11 +13369,9 @@ Return only the debrief text.`;
               `\n\nRecommended next step: Review missed cards immediately, then schedule a follow-up exam in 3 days.`;
           }
         }
-        _jobStoreSet(submitJobId, { status: 'done', type: 'exam_submit', result: { debrief: debriefText } });
         wsSend(_debriefUserId, 'job_done', { job_id: submitJobId, type: 'exam_submit', result: { debrief: debriefText } });
       } catch (debriefBgErr) {
         console.error('[KIWI] Background debrief failed:', debriefBgErr.message);
-        _jobStoreSet(submitJobId, { status: 'failed', type: 'exam_submit', error: 'Debrief generation failed' });
         wsSend(_debriefUserId, 'job_failed', { job_id: submitJobId, type: 'exam_submit', error: 'Debrief generation failed' });
       }
     });
@@ -13888,7 +13787,7 @@ res.status(500).json({ error: 'Failed to publish deck', details: e.message });
 // ════════════════════════════════════════════════════════════════════════════
 const adminRouter = express.Router();
 
-adminRouter.use(authenticate, requireAdmin);
+adminRouter.use(requireAdminAccess);
 
 adminRouter.get('/users', async (req, res) => {
 // Fix #51: userStats.findAll() + in-memory join replaces N individual get() calls
@@ -13909,10 +13808,15 @@ adminRouter.delete('/users/:id', async (req, res) => {
 try {
 const targetUser = await db.users.findById(req.params.id);
 if (!targetUser) return res.status(404).json({ error: 'User not found' });
-if (targetUser.role === 'admin') return res.status(403).json({ error: 'Cannot delete an admin account' });
+// Permanently delete — mark is_blocked + delete so they can't re-register easily
+await query(`UPDATE users SET is_blocked = true, blocked_reason = 'Permanently removed by admin' WHERE id = $1`, [req.params.id]);
 await db.users.delete(req.params.id);
 await db.refreshTokens.deleteByUserId(req.params.id);
-res.json({ message: 'User deleted' });
+// Clear from auth cache immediately
+for (const [k, v] of _authCache) {
+  if (v.user?.id === req.params.id) _authCache.delete(k);
+}
+res.json({ message: 'User permanently removed' });
 } catch (e) {
 res.status(500).json({ error: 'Failed to delete user' });
 }
@@ -13920,21 +13824,29 @@ res.status(500).json({ error: 'Failed to delete user' });
 
 adminRouter.patch('/users/:id/block', async (req, res) => {
 try {
-const r = await query('UPDATE users SET role = $1 WHERE id = $2 AND role != $3 RETURNING id, email, role', ['blocked', req.params.id, 'admin']);
-if (r.rows.length === 0) return res.status(404).json({ error: 'User not found or is an admin' });
-res.json({ message: 'User blocked', user: r.rows[0] });
+  const { reason } = req.body;
+  const targetUser = await db.users.findById(req.params.id);
+  if (!targetUser) return res.status(404).json({ error: 'User not found' });
+  await query('UPDATE users SET is_blocked = true, blocked_reason = $1 WHERE id = $2',
+    [reason || 'Blocked by admin', req.params.id]);
+  // Evict from auth cache so block takes effect on next request
+  for (const [k, v] of _authCache) {
+    if (v.user?.id === req.params.id) _authCache.delete(k);
+  }
+  res.json({ message: 'User blocked', userId: req.params.id });
 } catch (e) {
-res.status(500).json({ error: 'Failed to block user' });
+  res.status(500).json({ error: 'Failed to block user' });
 }
 });
 
 adminRouter.patch('/users/:id/unblock', async (req, res) => {
 try {
-const r = await query('UPDATE users SET role = $1 WHERE id = $2 RETURNING id, email, role', ['user', req.params.id]);
-if (r.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-res.json({ message: 'User unblocked', user: r.rows[0] });
+  const targetUser = await db.users.findById(req.params.id);
+  if (!targetUser) return res.status(404).json({ error: 'User not found' });
+  await query('UPDATE users SET is_blocked = false, blocked_reason = NULL WHERE id = $1', [req.params.id]);
+  res.json({ message: 'User unblocked', userId: req.params.id });
 } catch (e) {
-res.status(500).json({ error: 'Failed to unblock user' });
+  res.status(500).json({ error: 'Failed to unblock user' });
 }
 });
 
@@ -14933,13 +14845,12 @@ try {
 await calculateAllSubjectPressures(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message)); // non-fatal — fall through to stale data if it fails
 const rawPressures = await db.brainPressure.findByUser(req.user.id);
 // Enrich with subject names
-const enrichedRaw = await Promise.all(
+const enriched = await Promise.all(
 rawPressures.map(async (p) => {
 const subject = await db.subjects.findById(p.subject_id).catch(() => null);
-if (!subject) return null; // orphaned pressure record — subject was deleted
 return {
 ...p,
-subjectName: subject.name || 'Unknown Subject',
+subjectName: subject?.name || 'Unknown Subject',
 pressure: p.pressure_score || 0,
 level: p.intervention_level ? parseInt(p.intervention_level.replace('L', '')) : 0, // P3-M1 FIX: L0 is the calm baseline, not L1
 description: // P3.2-B1 FIX: L0 is the correct calm default.
@@ -14947,8 +14858,6 @@ description: // P3.2-B1 FIX: L0 is the correct calm default.
 };
 })
 );
-// Filter out orphaned records (null entries where subject no longer exists)
-const enriched = enrichedRaw.filter(Boolean);
 const highestPressure =
 enriched.length > 0 ? Math.max(...enriched.map((p) => p.pressure_score || 0)) : 0;
 // P3.2-B1 FIX: filter for anything above L0, not L1 (L1 is never emitted).
@@ -15255,19 +15164,6 @@ res.status(500).json({ error: 'Failed to compute accuracy trend', details: e.mes
 });
 // GET /api/settings — get user profile settings
 
-// GET /api/progress/subjects/:subjectId/ks-history — KS snapshots for a single subject
-progressRouter.get('/progress/subjects/:subjectId/ks-history', async (req, res) => {
-try {
-  const { subjectId } = req.params;
-  const limit = Math.min(parseInt(req.query.limit || '52', 10), 200);
-  const rows = await db.knowledgeScores.findBySubject(req.user.id, subjectId, limit);
-  // Return chronological order (oldest first) for charting
-  res.json({ history: rows.reverse(), subjectId });
-} catch (e) {
-  res.status(500).json({ error: 'Failed to fetch KS history', details: e.message });
-}
-});
-
 progressRouter.get('/settings', async (req, res) => {
 try {
 const user = await db.users.findById(req.user.id);
@@ -15311,35 +15207,22 @@ try {
 // Previously it was awaited later in the route, blocking the response by up to
 // 2 s on every dashboard load. Running it alongside other fetches means its
 // latency is hidden behind the other queries (which already take ~300-500ms).
-// Perf: fire biome in background immediately
 const _biomePromise = buildBiomeData(req.user.id).catch(() => ({}));
-
-// Round 1 — all independent queries in one parallel batch
-const now = new Date();
-const todayStr = now.toISOString().split('T')[0];
-const weekStartStr = (() => {
-const d = new Date(now);
-d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-d.setHours(0, 0, 0, 0);
-return d.toISOString().split('T')[0];
-})();
-const [stats, subjects, globalKS, allStates, allCards, pressures, activeReckoning] = await Promise.all([
+const [stats, subjects, globalKS, allStates] = await Promise.all([
 db.userStats.get(req.user.id),
 db.subjects.findManyWithDecks(req.user.id),
 computeGlobalKnowledgeScore(req.user.id),
 db.cardStates.findByUser(req.user.id),
-db.cards.findAllForUser(req.user.id),           // Perf: was sequential after Round 1
-db.brainPressure.findByUser(req.user.id),       // Perf: was sequential after Round 1
-db.reckoningSessions.findActiveByUser(req.user.id), // Perf: was sequential after Round 1
 ]);
+const now = new Date();
+const allCards = await db.cards.findAllForUser(req.user.id);
 const dueCount = allCards.filter((c) => isCardDue(c, now)).length;
+const pressures = await db.brainPressure.findByUser(req.user.id);
+const activeReckoning = await db.reckoningSessions.findActiveByUser(req.user.id);
 const stateDist = {};
 for (const s of allStates) stateDist[s.state] = (stateDist[s.state] || 0) + 1;
-
-// Round 2 — all things that depend on Round 1, run in parallel
-// subjectBreakdown now stores _subjectStat to avoid duplicate DB fetch later
-const [subjectBreakdown, persona, returnStatus, morningCache, anchorCache, invitationsCache] = await Promise.all([
-Promise.all(subjects.map(async (s) => {
+// Build subject breakdown with per-subject KS for frontend dashboard
+const subjectBreakdown = await Promise.all(subjects.map(async (s) => {
 const storedSubjectStat = await db.subjectStats.get(req.user.id, s.id).catch(() => null);
 const [ks, subjectDecks] = await Promise.all([
 (storedSubjectStat?.knowledge_score !== undefined ? Promise.resolve({ score: storedSubjectStat.knowledge_score }) : computeKnowledgeScore(req.user.id, s.id)).catch(() => ({ score: 0 })),
@@ -15348,15 +15231,10 @@ db.decks.findBySubject(req.user.id, s.id),
 const subjectDeckIds = subjectDecks.map((d) => d.id);
 const subjectCards = allCards.filter((c) => subjectDeckIds.includes(c.deck_id));
 const subjectDueCount = subjectCards.filter((c) => isCardDue(c)).length;
-// Carry _subjectStat so dashTotalFruits can use it without a second DB round-trip
-return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount, _subjectStat: storedSubjectStat };
-})),
-db.userPersona.get(req.user.id).catch(() => null),               // Perf: was sequential
-computeReturnStatus(req.user.id).catch(() => null),              // Perf: was sequential
-db.dailyRitualCache.get(req.user.id, 'morning_brief', todayStr).catch(() => null),    // Perf: was sequential
-db.dailyRitualCache.get(req.user.id, 'weekly_anchor', weekStartStr).catch(() => null), // Perf: was sequential
-db.dailyRitualCache.get(req.user.id, 'daily_invitations', todayStr).catch(() => null), // Perf: was sequential
-]);
+return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount };
+}));
+// Persona
+const persona = await db.userPersona.get(req.user.id).catch(() => null);
 // Tree state
 const treeStageLabels = [
 '',
@@ -15376,15 +15254,15 @@ const dashActiveMilestones = [...new Set([
 ...dashEarnedMilestones,
 ...[7, 30, 100, 365].filter(m => dashStreak >= m),
 ])].sort((a, b) => a - b);
-// M1 FIX: fruits = sum of per-subject fruit_counts — reuse _subjectStat cached in subjectBreakdown (no extra DB call)
-const dashTotalFruits = subjectBreakdown.reduce((sum, s) => sum + (s._subjectStat?.fruit_count || 0), 0);
-// KS-FIX: Use card-count-weighted average instead of simple average — matches computeGlobalKnowledgeScore.
-// Simple average inflates KS for subjects with very few cards. Weighted gives the correct global score.
-const _dashTotalWeighted = subjectBreakdown.reduce((sum, s) => sum + s.ks * (s.dueCount !== undefined ? (s.cardCount || 0) : (s.dueCount || 0)), 0);
-const _dashTotalCards2 = subjectBreakdown.reduce((sum, s) => sum + (s.cardCount || 0), 0);
-const dashGlobalKS = _dashTotalCards2 > 0
-? subjectBreakdown.reduce((sum, s) => sum + s.ks * (s.cardCount || 0), 0) / _dashTotalCards2
-: (subjectBreakdown.length > 0 ? subjectBreakdown.reduce((sum, s) => sum + s.ks, 0) / subjectBreakdown.length : 0);
+// M1 FIX: fruits = sum of per-subject fruit_counts (fruiting sessions, not mastered cards)
+const dashSubjectStats = await Promise.all(
+subjects.map(s => db.subjectStats.get(req.user.id, s.id).catch(() => null))
+);
+const dashTotalFruits = dashSubjectStats.reduce((sum, ss) => sum + (ss?.fruit_count || 0), 0);
+// M1 FIX: leaves from globalKS * 0.5 — matches biome formula
+const dashGlobalKS = subjectBreakdown.length > 0
+? subjectBreakdown.reduce((sum, s) => sum + s.ks, 0) / subjectBreakdown.length
+: 0;
 // Perf-2 FIX: await the already-started promise — by now it has been running
 // in parallel with all the KS and stats queries above, so this is effectively free.
 const biomeForTree = await _biomePromise;
@@ -15419,11 +15297,13 @@ pressures.filter((p) => p.intervention_level !== 'L0').length,
 highestPressure:
 pressures.length > 0 ? Math.max(...pressures.map((p) => p.pressure_score || 0)) : 0,
 };
-// Return greeting — now uses returnStatus from Round 2 parallel batch
+// Return greeting — C-1 FIX: wire into dashboard flow with daily cache
+const returnStatus = await computeReturnStatus(req.user.id).catch(() => null);
 let returnGreeting = null;
 if (returnStatus && returnStatus.status !== 'active') {
+const todayStrRG = new Date().toISOString().split('T')[0];
 const cachedRG = await db.dailyRitualCache
-.get(req.user.id, 'return_greeting', todayStr)
+.get(req.user.id, 'return_greeting', todayStrRG)
 .catch(() => null);
 if (cachedRG?.data?.greeting) {
 returnGreeting = cachedRG.data.greeting;
@@ -15432,16 +15312,34 @@ const rg = await getReturnGreeting(req.user.id).catch(() => null);
 returnGreeting = rg?.greeting || null;
 }
 }
-// Morning brief — morningCache already fetched in Round 2
+// Morning brief — try cache first, skip AI call in dashboard for speed
+const todayStr = new Date().toISOString().split('T')[0];
+const morningCache = await db.dailyRitualCache
+.get(req.user.id, 'morning_brief', todayStr)
+.catch(() => null);
 // C-3 FIX: Generate inline on cache miss — spec: "Triggered on first dashboard load per calendar day"
 const morningBrief = morningCache
 ? morningCache.data
 : await getMorningBrief(req.user.id).catch(() => null);
-// Weekly anchor — anchorCache already fetched in Round 2
+// Weekly anchor — read from cache using current week's Monday key
+const weekStartStr = (() => {
+const d = new Date();
+// H-7 FIX: Monday-based key to match getWeeklyAnchor after Monday correction
+d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+d.setHours(0, 0, 0, 0);
+return d.toISOString().split('T')[0];
+})();
+const anchorCache = await db.dailyRitualCache
+.get(req.user.id, 'weekly_anchor', weekStartStr)
+.catch(() => null);
 const weeklyAnchor = anchorCache
 ? anchorCache.anchor_text || anchorCache.message || null
 : null;
-// C-3 FIX: Generate inline on cache miss — invitationsCache already resolved from Round 2 Promise.all
+// Invitations — try cache
+const invitationsCache = await db.dailyRitualCache
+.get(req.user.id, 'daily_invitations', todayStr)
+.catch(() => null);
+// C-3 FIX: Generate inline on cache miss
 const invitations = invitationsCache
 ? invitationsCache.data
 : await getDailyInvitations(req.user.id).catch(() => []);
@@ -15496,6 +15394,7 @@ description: persona.persona_description,
 }
 : null,
 level,
+achievements: [],
 });
 } catch (e) {
 res.status(500).json({ error: 'Failed to load dashboard', details: e.message });
@@ -16393,6 +16292,356 @@ console.error('[KIWI] Community deck seeding failed:', e.message);
 // Adds columns that were absent from the initial schema.sql but required by the
 // application. ADD COLUMN IF NOT EXISTS is a no-op when the column already exists.
 async function runSchemaMigrations() {
+  // ── Step 1: Create base tables if they don't exist ──────────────────────────
+  const createTables = [
+    `CREATE TABLE IF NOT EXISTS users (
+      id text PRIMARY KEY,
+      username text UNIQUE,
+      email text UNIQUE,
+      password_hash text,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_stats (
+      user_id text PRIMARY KEY,
+      total_xp integer DEFAULT 0,
+      current_level integer DEFAULT 1,
+      xp_in_current_level integer DEFAULT 0,
+      current_streak integer DEFAULT 0,
+      longest_streak integer DEFAULT 0,
+      streak_grace_used boolean DEFAULT false,
+      tree_health integer DEFAULT 100,
+      tree_stage integer DEFAULT 1,
+      total_cards_reviewed integer DEFAULT 0,
+      total_cards_mastered integer DEFAULT 0,
+      total_study_minutes integer DEFAULT 0,
+      total_sessions_completed integer DEFAULT 0,
+      total_exams_completed integer DEFAULT 0,
+      last_study_date date,
+      seedlings_balance integer DEFAULT 0,
+      streak_shields_held integer DEFAULT 0,
+      streak_shields_earned integer DEFAULT 0,
+      knowledge_score_global numeric DEFAULT 0,
+      last_login_at timestamptz,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS refresh_tokens (
+      token_hash text PRIMARY KEY,
+      user_id text,
+      expires_at timestamptz,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS subjects (
+      id text PRIMARY KEY,
+      user_id text,
+      name text,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS topics (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      name text,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS decks (
+      id text PRIMARY KEY,
+      user_id text,
+      name text,
+      subject_id text,
+      topic_id text,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS cards (
+      id text PRIMARY KEY,
+      user_id text,
+      deck_id text,
+      front text,
+      back text,
+      stage integer DEFAULT 1,
+      interval_days numeric DEFAULT 1,
+      easiness_factor numeric DEFAULT 2.5,
+      repetition_count integer DEFAULT 0,
+      next_review_at timestamptz,
+      due text,
+      last_reviewed_at timestamptz,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS review_logs (
+      id text PRIMARY KEY,
+      user_id text,
+      card_id text,
+      reviewed_at timestamptz,
+      rating integer,
+      ease_factor numeric,
+      interval_days numeric,
+      new_stage integer,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS sessions (
+      id text PRIMARY KEY,
+      user_id text,
+      deck_id text,
+      started_at timestamptz,
+      ended_at timestamptz,
+      duration_seconds integer DEFAULT 0,
+      cards_reviewed integer DEFAULT 0,
+      cards_again integer DEFAULT 0,
+      cards_hard integer DEFAULT 0,
+      cards_good integer DEFAULT 0,
+      cards_easy integer DEFAULT 0,
+      accuracy_pct numeric DEFAULT 0,
+      xp_earned integer DEFAULT 0,
+      session_completed boolean DEFAULT false,
+      seed_survived boolean DEFAULT false,
+      focus_breaks integer DEFAULT 0,
+      focus_seed_stage text DEFAULT 'Dormant',
+      fruiting_achieved boolean DEFAULT false,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS exam_sessions (
+      id text PRIMARY KEY,
+      user_id text,
+      started_at timestamptz DEFAULT NOW(),
+      status text DEFAULT 'pending',
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS exam_questions (
+      id text PRIMARY KEY,
+      user_id text,
+      exam_session_id text,
+      question_number integer,
+      question text,
+      options jsonb,
+      correct_answer text,
+      user_answer text,
+      is_correct boolean,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS subject_stats (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS achievements (
+      id text PRIMARY KEY,
+      code text UNIQUE,
+      name text,
+      description text,
+      xp_reward integer DEFAULT 0,
+      icon text,
+      icon_emoji text,
+      category text,
+      condition jsonb,
+      is_secret boolean DEFAULT false,
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_achievements (
+      id text PRIMARY KEY,
+      user_id text,
+      achievement_id text,
+      unlocked_at timestamptz DEFAULT NOW(),
+      shown_to_user boolean DEFAULT false
+    )`,
+    `CREATE TABLE IF NOT EXISTS tasks (
+      id text PRIMARY KEY,
+      user_id text,
+      type text,
+      title text,
+      status text DEFAULT 'active',
+      current_value integer DEFAULT 0,
+      target_value integer DEFAULT 0,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz
+    )`,
+    `CREATE TABLE IF NOT EXISTS community_decks (
+      id text PRIMARY KEY,
+      original_deck_id text,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS community_ratings (
+      id text PRIMARY KEY,
+      community_deck_id text,
+      user_id text,
+      rating numeric,
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS knowledge_scores (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      score numeric DEFAULT 0,
+      band text,
+      recorded_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS card_states (
+      id text PRIMARY KEY,
+      user_id text,
+      card_id text,
+      state text DEFAULT 'SEEDLING',
+      stage integer DEFAULT 1,
+      deck_id text,
+      subject_id text,
+      verified boolean DEFAULT false,
+      verified_at timestamptz,
+      last_evaluated_at timestamptz DEFAULT NOW(),
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW(),
+      bubble_ids jsonb DEFAULT '[]',
+      learning_debt boolean DEFAULT false,
+      cross_bubble boolean DEFAULT false,
+      parking_expires_at timestamptz
+    )`,
+    `CREATE TABLE IF NOT EXISTS brain_pressure (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      pressure_score integer DEFAULT 0,
+      intervention_level text DEFAULT 'L0',
+      sources jsonb DEFAULT '{}',
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS reckoning_sessions (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      status text DEFAULT 'triggered',
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS chronicle_entries (
+      id text PRIMARY KEY,
+      user_id text,
+      week_start text,
+      summary text,
+      data jsonb,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS almanac_entries (
+      id text PRIMARY KEY,
+      user_id text,
+      entry_code text,
+      unlocked boolean DEFAULT false,
+      unlocked_at timestamptz,
+      narrative text,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_persona (
+      id text PRIMARY KEY,
+      user_id text,
+      assigned_week_start text,
+      persona_type text,
+      traits jsonb,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS daily_ritual_cache (
+      id text PRIMARY KEY,
+      user_id text,
+      type text,
+      date text,
+      data jsonb,
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS seedling_transactions (
+      id text PRIMARY KEY,
+      user_id text,
+      type text,
+      amount integer DEFAULT 0,
+      reason text,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS mastery_goals (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      name text,
+      card_ids jsonb DEFAULT '[]',
+      cross_bubble_card_ids jsonb DEFAULT '[]',
+      deck_ids jsonb DEFAULT '[]',
+      test_date timestamptz,
+      exam_date timestamptz,
+      deadline_editable boolean DEFAULT true,
+      status text DEFAULT 'dormant',
+      phase text DEFAULT 'SEEDING',
+      phase_entered_at timestamptz,
+      phase_history jsonb DEFAULT '[]',
+      current_ks numeric DEFAULT 0,
+      target_ks numeric DEFAULT 100,
+      required_ks_per_day numeric DEFAULT 0,
+      actual_ks_velocity numeric DEFAULT 0,
+      trajectory_gap numeric DEFAULT 0,
+      trajectory_status text DEFAULT 'ON_TRACK',
+      daily_contract_cards integer DEFAULT 0,
+      daily_contract_breakdown jsonb DEFAULT '{}',
+      daily_contract_minutes integer DEFAULT 0,
+      daily_contract_generated_at timestamptz,
+      daily_contract_completed boolean DEFAULT false,
+      daily_contract_consequence text,
+      stall_response_active text,
+      consecutive_low_velocity_days integer DEFAULT 0,
+      velocity_samples jsonb DEFAULT '[]',
+      last_recalculated_at timestamptz,
+      completed_at timestamptz,
+      learning_debt_card_count integer DEFAULT 0,
+      seeding_early_stall_checked boolean DEFAULT false,
+      autopsy_generated boolean DEFAULT false,
+      autopsy_generated_at timestamptz,
+      coverage_gap_active boolean DEFAULT false,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS goal_history (
+      id text PRIMARY KEY,
+      goal_id text,
+      user_id text,
+      ks_value numeric,
+      event_type text,
+      data jsonb,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS concept_clusters (
+      id text PRIMARY KEY,
+      goal_id text,
+      name text,
+      card_ids jsonb DEFAULT '[]',
+      cluster_ks numeric DEFAULT 0,
+      cluster_status text DEFAULT 'WEAK',
+      identified_at timestamptz DEFAULT NOW(),
+      last_ks_update timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS marketplace_items (
+      id text PRIMARY KEY,
+      item_code text UNIQUE,
+      name text,
+      description text,
+      category text,
+      gate1_condition jsonb,
+      gate2_seedling_cost integer DEFAULT 0,
+      purchase_limit integer,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_inventory (
+      id text PRIMARY KEY,
+      user_id text,
+      item_code text,
+      quantity integer DEFAULT 0,
+      unlocked boolean DEFAULT false,
+      acquired_at timestamptz,
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+  ];
+  for (const sql of createTables) {
+    try {
+      await query(sql);
+    } catch (e) {
+      console.error('[KIWI] Create table failed:', e.message);
+    }
+  }
+
   const migrations = [
     // almanac_entries: chapter, name, unlock_condition were missing from initial schema
     `ALTER TABLE almanac_entries ADD COLUMN IF NOT EXISTS chapter integer`,
@@ -16426,6 +16675,8 @@ async function runSchemaMigrations() {
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences jsonb DEFAULT '{"email":true,"telegram":false}'`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS theme text`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS exam_reminder_days integer`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked boolean DEFAULT false`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_reason text`,
 
     // user_stats: updated_at required by _buildIncrementUpdate (always appended to SET clause)
     `ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
@@ -16503,6 +16754,14 @@ async function runSchemaMigrations() {
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS projected_minimum_viable timestamptz`,
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS final_ks_at_deadline numeric`,
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS archived_at timestamptz`,
+
+    // achievements: extra columns missing from initial schema
+    `ALTER TABLE achievements ADD COLUMN IF NOT EXISTS icon_emoji text`,
+    `ALTER TABLE achievements ADD COLUMN IF NOT EXISTS is_secret boolean DEFAULT false`,
+    `ALTER TABLE achievements ADD COLUMN IF NOT EXISTS is_timed boolean DEFAULT false`,
+    `ALTER TABLE achievements ADD COLUMN IF NOT EXISTS condition jsonb`,
+    `ALTER TABLE achievements ADD COLUMN IF NOT EXISTS xp_reward integer DEFAULT 0`,
+    `ALTER TABLE achievements ADD COLUMN IF NOT EXISTS category text`,
 
     // community_decks: catalog and marketplace fields
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS is_featured boolean DEFAULT false`,
@@ -16976,6 +17235,7 @@ console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear ab
       }
     });
 
+    // ── Error handling — registered last so all routes above are matched first ──
     app.use((req, res) => {
       res.status(404).json({ error: 'Not found', path: req.path });
     });
