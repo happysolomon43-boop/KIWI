@@ -11513,7 +11513,7 @@ setImmediate(async () => {
     }
     const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
     const created   = await db.cards.createMany(_noteUserId, _noteDeckId, cardsData);
-    await db.decks.update(_noteUserId, _noteDeckId, { card_count: { increment: created.length }, import_source: 'ai' });
+    await db.decks.update(_noteUserId, _noteDeckId, { card_count: { increment: created.length } });
     await batchInitializeSeedlingStates(_noteUserId, created.map(c => c.id));
     const suggest_bubble = _noteSubjectId !== null && created.length >= 5;
     _jobStoreSet(noteJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'ai', deck_id: _noteDeckId, subject_id: _noteSubjectId, suggest_bubble } });
@@ -11661,7 +11661,7 @@ setImmediate(async () => {
       return;
     }
     const created = await db.cards.createMany(_pdfUserId, _pdfDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_pdfUserId, _pdfDeckId, { card_count: { increment: created.length }, import_source: 'pdf' });
+    await db.decks.update(_pdfUserId, _pdfDeckId, { card_count: { increment: created.length } });
     await batchInitializeSeedlingStates(_pdfUserId, created.map(c => c.id));
     const suggest_bubble = _pdfSubjectId !== null && created.length >= 5;
     _jobStoreSet(pdfJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'pdf', deck_id: _pdfDeckId, subject_id: _pdfSubjectId, suggest_bubble } });
@@ -11729,7 +11729,7 @@ setImmediate(async () => {
       return;
     }
     const created = await db.cards.createMany(_docxUserId, _docxDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_docxUserId, _docxDeckId, { card_count: { increment: created.length }, import_source: 'docx' });
+    await db.decks.update(_docxUserId, _docxDeckId, { card_count: { increment: created.length } });
     await batchInitializeSeedlingStates(_docxUserId, created.map(c => c.id));
     // FIX #4a: Recalculate KS after DOCX import (preserved from original)
     if (_docxSubjectId) await persistKnowledgeScore(_docxUserId, _docxSubjectId).catch(e => console.error('[KIWI] silent catch:', e.message));
@@ -11792,7 +11792,7 @@ setImmediate(async () => {
       return;
     }
     const created = await db.cards.createMany(_txtUserId, _txtDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_txtUserId, _txtDeckId, { card_count: { increment: created.length }, import_source: 'txt' });
+    await db.decks.update(_txtUserId, _txtDeckId, { card_count: { increment: created.length } });
     await batchInitializeSeedlingStates(_txtUserId, created.map(c => c.id));
     const suggest_bubble = _txtSubjectId !== null && created.length >= 5;
     _jobStoreSet(txtJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'txt', deck_id: _txtDeckId, subject_id: _txtSubjectId, suggest_bubble } });
@@ -11868,7 +11868,7 @@ setImmediate(async () => {
       return;
     }
     const created = await db.cards.createMany(_mdUserId, _mdDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_mdUserId, _mdDeckId, { card_count: { increment: created.length }, import_source: 'md' });
+    await db.decks.update(_mdUserId, _mdDeckId, { card_count: { increment: created.length } });
     await batchInitializeSeedlingStates(_mdUserId, created.map(c => c.id));
     const suggest_bubble = _mdSubjectId !== null && created.length >= 5;
     _jobStoreSet(mdJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'md', deck_id: _mdDeckId, subject_id: _mdSubjectId, suggest_bubble } });
@@ -11932,7 +11932,7 @@ setImmediate(async () => {
       return;
     }
     const created = await db.cards.createMany(_pptxUserId, _pptxDeckId, cardsData.map(c => ({ ...c, ai_summary: '' })));
-    await db.decks.update(_pptxUserId, _pptxDeckId, { card_count: { increment: created.length }, import_source: 'pptx' });
+    await db.decks.update(_pptxUserId, _pptxDeckId, { card_count: { increment: created.length } });
     await batchInitializeSeedlingStates(_pptxUserId, created.map(c => c.id));
     const suggest_bubble = _pptxSubjectId !== null && created.length >= 5;
     _jobStoreSet(pptxJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'pptx', deck_id: _pptxDeckId, subject_id: _pptxSubjectId, suggest_bubble } });
