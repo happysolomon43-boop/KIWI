@@ -4103,24 +4103,70 @@ function deduplicateCBTOptions(questions) {
   return questions;
 }
 
-async function generateCBTQuestions(notes, count) {
-const prompt = CBT_PROMPT.replace('[NOTES]', notes).replace('[COUNT]', count);
+async function generateCBTQuestions(notes, count, options) {
+// ── Dynamic directives — injected between COVERAGE REQUIREMENT and PRE-OUTPUT CHECKLIST ──
+// theory_percent:  0-100 (theory share). 50 = balanced. Always sent — even 50/50 is
+//                  explicit so the AI doesn't drift toward pure theory on STEM subjects.
+// broad_coverage:  if true, forces maximum topic breadth over depth.
+const _opts         = options || {};
+const theoryPct     = (typeof _opts.theory_percent === 'number') ? Math.max(0, Math.min(100, _opts.theory_percent)) : 50;
+const calcPct       = 100 - theoryPct;
+const broadCoverage = !!_opts.broad_coverage;
+
+let dynamicDirectives = '';
+
+// Theory/Calc directive — always injected (even at balanced 50/50)
+if (theoryPct === 50) {
+  dynamicDirectives =
+    '\n## QUESTION TYPE BALANCE \u2014 MANDATORY\n\n' +
+    'Generate a balanced mix: approximately 50% theory questions and 50% calculation questions.\n' +
+    '- Theory questions: conceptual understanding, recall, definitions, processes, relationships.\n' +
+    '- Calculation questions: numerical problems, formula application, derivations, unit conversion.\n' +
+    '- If the subject has no calculations (e.g. pure humanities or memorisation-only), generate only theory questions.\n' +
+    '\n---\n';
+} else {
+  const bias    = theoryPct > 50 ? 'theory-heavy' : 'calculation-heavy';
+  const theoryN = Math.round(theoryPct * count / 100);
+  const calcN   = count - theoryN;
+  dynamicDirectives =
+    '\n## QUESTION TYPE BALANCE \u2014 MANDATORY\n\n' +
+    'The student has requested a ' + bias + ' exam. You MUST reflect this exact split:\n' +
+    '- Theory questions (conceptual, recall, definitions, processes): ' + theoryPct + '% \u2192 ~' + theoryN + ' of ' + count + ' questions\n' +
+    '- Calculation questions (numerical, formula application, derivations): ' + calcPct + '% \u2192 ~' + calcN + ' of ' + count + ' questions\n' +
+    '\nThis overrides your default subject-type detection. Use the closest whole-number split that reaches [COUNT] total.\n' +
+    'If the subject genuinely has no calculations, generate only theory questions.\n' +
+    '\n---\n';
+}
+
+// Broad Coverage directive — only injected when explicitly enabled
+if (broadCoverage) {
+  dynamicDirectives +=
+    '\n## BROAD COVERAGE MODE \u2014 MANDATORY\n\n' +
+    'The student has activated Broad Coverage mode. Topic breadth is your primary obligation:\n' +
+    '- Every distinct topic, sub-topic, concept, or fact in the notes must receive its own question before any topic receives a second question.\n' +
+    '- Before writing each question, ask: "Which topic from the notes has NOT been tested yet?" \u2014 answer that topic.\n' +
+    '- Only after all distinct topics have at least one question may you revisit topics from different angles.\n' +
+    '- Do NOT write 2 or more consecutive questions on the same concept.\n' +
+    '\n---\n';
+}
+
+// Inject dynamic directives immediately before ## PRE-OUTPUT CHECKLIST
+const prompt = CBT_PROMPT
+  .replace('## PRE-OUTPUT CHECKLIST', dynamicDirectives + '## PRE-OUTPUT CHECKLIST')
+  .replace('[NOTES]', notes)
+  .replace('[COUNT]', count);
+
 // Scale output tokens: ~900 tokens per question (stem + 4 options + answer + explanation),
 // minimum 24000 to give ample room even for small exams.
 // This prevents MAX_TOKENS truncation which was causing partial generation.
 const scaledTokens = Math.min(65536, Math.max(24000, count * 900));
-console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, maxOutputTokens=${scaledTokens}`);
+console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, theory=${theoryPct}%, broad=${broadCoverage}, maxOutputTokens=${scaledTokens}`);
 const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens }, { timeoutMs: 180000 });
 if (result.response.finishReason === 'MAX_TOKENS') {
-  console.warn(`[KIWI CBT] Output truncated at ${count} questions — response cut short. Consider lowering count or notes size.`);
+  console.warn(`[KIWI CBT] Output truncated at ${count} questions \u2014 response cut short. Consider lowering count or notes size.`);
 }
 return result.response.text();
 }
-
-// generateCBTCompletionQuestions — follow-up prompt issued when the first pass
-// returned fewer questions than required. Passes the already-generated questions
-// as context so the AI knows which concepts are covered and which options already
-// exist, preventing concept repetition and option recycling across both passes.
 async function generateCBTCompletionQuestions(notes, existingQuestions, needed) {
   const existingSummary = existingQuestions.map((q, i) =>
     `Q${i + 1}: ${q.stem}\n  A) ${q.option_a}  B) ${q.option_b}  C) ${q.option_c}  D) ${q.option_d}`
@@ -4256,16 +4302,28 @@ return 'Extraction failed.';
 }
 
 async function generateTasksWithGemini(userData) {
-const prompt = `You are a study coach. Generate personalized study tasks for a student.
-Student data: ${JSON.stringify(userData)}
-Return ONLY valid JSON with this structure:
+const prompt = `You are a study coach for a spaced-repetition learning app. Generate personalized study tasks for a student based on their current progress.
+STUDENT PROFILE
+- Level: ${userData.current_level || 1} | Total XP: ${userData.total_xp || 0}
+- Current streak: ${userData.current_streak || 0} days
+- Total cards reviewed (lifetime): ${userData.total_cards_reviewed || 0}
+- Total cards mastered: ${userData.total_cards_mastered || 0}
+- Total sessions completed: ${userData.total_sessions_completed || 0}
+- Cards with "again" rating (struggling): ${userData.total_again_count || 0}
+- Average session accuracy: ${userData.average_accuracy != null ? (userData.average_accuracy * 100).toFixed(0) + '%' : 'unknown'}
+TASK OUTPUT RULES
+- Return ONLY valid JSON. No markdown, no preamble.
+- Generate tasks that are achievable based on the student's current level — not too easy, not impossible.
+- Use concrete numbers tied to the student's data above (e.g. "Review 20 cards" not "Review some cards").
+- task_category must be one of: review_cards, accuracy_target, study_time, quiz_score, master_cards, reduce_again, streak, complete_deck
+- xp_reward must be proportional to difficulty (daily: 30–100, weekly: 150–400, monthly: 500–1000).
+JSON STRUCTURE
 {
   "daily": [{"title":"...","description":"...","task_category":"review_cards","target_value":20,"xp_reward":50}],
-  "weekly": [...],
-  "monthly": [...]
+  "weekly": [{"title":"...","description":"...","task_category":"streak","target_value":5,"xp_reward":200}],
+  "monthly": [{"title":"...","description":"...","task_category":"master_cards","target_value":30,"xp_reward":750}]
 }
-Categories: review_cards, accuracy_target, study_time, quiz_score, master_cards, reduce_again, streak, complete_deck
-Generate 3 daily, 2 weekly, 1 monthly tasks.`;
+Generate exactly: 3 daily tasks, 2 weekly tasks, 1 monthly task.`;
 try {
 const result = await geminiModel.generateContent(prompt);
 const text = result.response
@@ -6976,9 +7034,9 @@ const cardNames = reclassifiedCards.slice(0, 6).map(r =>
 const d3Prompt = `## ROLE
 You are KIWIs Brain — the authoritative academic intelligence layer.
 EVIDENCE
-Subject exam score: {scorePct}% (below the 60% threshold)
-Cards reclassified downward ({reclassifiedCards.length} total):
-{cardNames}
+Subject exam score: ${scorePct}% (below the 60% threshold)
+Cards reclassified downward (${reclassifiedCards.length} total):
+${cardNames}
 RULES
 - Write exactly 2 sentences.
 - Sentence 1: Name the contradiction directly — high stage, low score.
@@ -9624,9 +9682,9 @@ const prompt = `
 ROLE
 You are the KIWI Pressure Interpreter. Explain why a subject has pressure in simple, warm terms.
 DATA
-Pressure score: {pressure.pressure_score}
-Intervention level: {pressure.intervention_level}
-Sources: {translatedSources}
+Pressure score: ${pressure.pressure_score}
+Intervention level: ${pressure.intervention_level}
+Sources: ${translatedSources}
 RULES
 - 3-4 sentences. (P7.5 FIX: was 2-3, spec requires 3-4)
 - Sentence 1: State the pressure level and overall situation plainly.
@@ -10209,12 +10267,10 @@ State Distribution: ${JSON.stringify(stateCounts)}
 Weakest Cards (front text sample):
 ${weakSample.map((w) => `  [${w.state}] ${w.front}`).join('\n') || '  (none identified)'}
 RULES
-- Write exactly 4 short paragraphs. // BUG 12 FIX: spec P8.5 says 3-4 paragraphs
+- Write exactly 4 short paragraphs.
 - Paragraph 1: Overall assessment with KS context.
 - Paragraph 2: Strengths — cite specific card counts for VERIFIED and STABLE states.
 - Paragraph 3: Weaknesses — reference the specific card front texts above by name/concept.
-// NEW-M3 FIX: removed Paragraph 5 from the numbered list — merged into
-// Paragraph 4 so the rule ("Write exactly 4") and the list both say 4.
 - Paragraph 4: One specific pattern observed AND one precise, actionable recommendation (e.g., "The student avoids calculation cards. Review the first 3 GHOST cards listed above.").
 - Tone: analytical but warm. No jargon. No bullet points.
 - Total length: 250-400 words.
@@ -10314,7 +10370,7 @@ const prompt = `
 ROLE
 You are a mystical chronicler who writes a short artifact inscription based on a weekly study summary.
 INPUT
-{chronicle.narrative}
+${chronicle.narrative}
 RULES
 - Write exactly 2 sentences.
 - Style: ancient inscription, poetic, slightly mysterious.
@@ -11280,7 +11336,7 @@ try {
   // Reset card_states to SEEDLING for every card in the deck
   await query(
     `UPDATE card_states SET state = 'SEEDLING', stage = 1, verified = false,
-     verified_at = NULL, failure_count = 0, learning_debt = false,
+     verified_at = NULL, learning_debt = false,
      last_evaluated_at = NOW(), updated_at = NOW()
      WHERE card_id IN (
        SELECT id FROM cards WHERE deck_id = $1 AND user_id = $2
@@ -11320,7 +11376,7 @@ try {
   // Reset card_states
   await query(
     `UPDATE card_states SET state = 'SEEDLING', stage = 1, verified = false,
-     verified_at = NULL, failure_count = 0, learning_debt = false,
+     verified_at = NULL, learning_debt = false,
      last_evaluated_at = NOW(), updated_at = NOW()
      WHERE card_id IN (
        SELECT id FROM cards WHERE deck_id = ANY($1) AND user_id = $2
@@ -11562,7 +11618,6 @@ state: 'SEEDLING',
 stage: 1,
 verified: false,
 verified_at: null,
-failure_count: 0,
 learning_debt: false,
 last_evaluated_at: new Date(),
 });
@@ -12871,6 +12926,8 @@ deck_ids,
 question_count = 25,
 card_range = 'all',
 time_limit_seconds = 1800,
+theory_percent = 50,
+broad_coverage = false,
 } = body;
 if (!subject_id) return res.status(400).json({ error: 'subject_id required' });
 const targetDeckIds =
@@ -13016,7 +13073,9 @@ selectedCards = sourceCards
 .sort(() => 0.5 - Math.random())
 .slice(0, Math.min(question_count, sourceCards.length));
 }
-const count = selectedCards.length;
+// FIX: Use user-requested question_count, not selectedCards.length.
+// selectedCards are source material; AI generates multiple Qs per card.
+const count = question_count;
 const examSession = await db.examSessions.create(req.user.id, {
 subject_id,
 deck_ids: targetDeckIds,
@@ -13046,9 +13105,10 @@ const _cbtNotes       = notes;
 const _cbtCount       = count;
 const _cbtCards       = selectedCards;
 const _cbtBody        = body;
+const _cbtOptions     = { theory_percent: Number(theory_percent) || 50, broad_coverage: !!broad_coverage };
 setImmediate(async () => {
   try {
-    const aiText = await generateCBTQuestions(_cbtNotes, _cbtCount);
+    const aiText = await generateCBTQuestions(_cbtNotes, _cbtCount, _cbtOptions);
     if (!aiText) throw new Error('AI exam generation returned empty response');
     let questions = parseCBTResponse(aiText, _cbtSessionId, _cbtCards);
     if (questions.length === 0) {
