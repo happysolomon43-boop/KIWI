@@ -1346,21 +1346,23 @@
       }
       /* Session seed widget */
       .session-seed {
-        position: fixed;
-        bottom: 80px;
-        left: 12px;
-        z-index: 100;
+        position: relative;
+        bottom: auto;
+        left: auto;
+        z-index: 10;
         background: var(--glass-bg);
         border: 1px solid var(--glass-border);
         border-radius: var(--r-lg);
-        padding: 12px 16px;
+        padding: 10px 14px;
         display: flex;
         align-items: center;
         gap: 10px;
         box-shadow: var(--shadow);
-        transition: all var(--t-mid) var(--ease);
+        transition: border-color var(--t-mid) var(--ease), box-shadow var(--t-mid) var(--ease);
         backdrop-filter: var(--glass-blur);
         -webkit-backdrop-filter: var(--glass-blur);
+        align-self: flex-start;
+        margin-bottom: 8px;
       }
       .session-seed.alive {
         border-color: rgba(82, 183, 136, 0.3);
@@ -1492,11 +1494,9 @@
         -webkit-backface-visibility: hidden;
         transform: translateZ(0);
       }
-      /* Pre-reserve space for rating buttons DURING the flip so the card
-         moves up smoothly via CSS transition instead of snapping after re-render */
+      /* Reserve space for rating buttons after card flip (no transition — avoids double-lag) */
       .study-layout.is-flipped {
         padding-bottom: 116px;
-        transition: padding-bottom 0.3s ease;
       }
       .flashcard.flipped {
         transform: rotateY(180deg);
@@ -1685,6 +1685,9 @@
         cursor: pointer;
         font-family: var(--font-mono);
         transition: all var(--t-fast);
+        pointer-events: auto !important;
+        z-index: 20;
+        -webkit-tap-highlight-color: transparent;
       }
       .flashcard-ai-btn:hover {
         color: var(--green-bright);
@@ -2195,7 +2198,7 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        padding: 32px 24px;
+        padding: 32px 24px 96px;
       }
       .exam-question-card {
         background: var(--glass-bg);
@@ -4055,7 +4058,7 @@
           padding: 20px 24px;
         }
         .exam-body {
-          padding: 24px 16px;
+          padding: 24px 16px 96px;
         }
         .feature-grid {
           padding: 0 32px 60px;
@@ -4282,10 +4285,7 @@
           font-size: 10px;
         }
         .session-seed {
-          bottom: 16px;
-          right: 16px;
-          left: 16px;
-          padding: 10px 14px;
+          padding: 9px 12px;
         }
         .tree-container {
           max-width: 280px;
@@ -5499,7 +5499,7 @@
         </button>
         <button class="mob-back-btn" id="mobBackBtn" onclick="goBack()" aria-label="Go back">&#x2190;</button>
         <div class="mob-page-title" id="mobPageTitle">KIWI</div>
-        <div id="mobKsBadge" onclick="navigateTo('dashboard')" style="cursor:pointer;font-family:var(--font-mono);font-size:10px;color:rgba(82,183,136,0.8);font-weight:600;white-space:nowrap;flex-shrink:0;min-width:20px;text-align:right;transition:color var(--t-fast);letter-spacing:0.04em;"></div>
+        <div id="mobKsBadge" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)" style="cursor:pointer;font-family:var(--font-mono);font-size:10px;color:rgba(82,183,136,0.8);font-weight:600;white-space:nowrap;flex-shrink:0;min-width:20px;text-align:right;transition:color var(--t-fast);letter-spacing:0.04em;"></div>
       </div>
       <div class="sidebar-overlay" id="sidebarOverlay"></div>
       <div class="app-container" id="appContainer" style="display: none">
@@ -5573,7 +5573,7 @@
         </aside>
         <!-- Bottom navigation bar — mobile only, hidden until authenticated -->
         <nav class="bottom-nav" id="bottomNav" style="display:none;" aria-label="Bottom navigation">
-          <button class="bnav-item" data-route="dashboard" onclick="navigateTo('dashboard')">
+          <button class="bnav-item" data-route="dashboard" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">
             <span class="bnav-icon-wrap">
               <svg class="bnav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
@@ -5813,10 +5813,10 @@
                     isReckoning: _isReck,
                   };
                   if (typeof apiRequest === 'function') apiRequest('/exams/' + examData.id + '/start', { method: 'POST' }).catch(function(){});
-                  // Fix 7: lock page while exam is active
+                  // Fix 7: navigate first, THEN lock — avoids guard blocking self-navigation
                   var _examIsReck = !!(examData.is_reckoning || examData.isReckoning);
-                  _lockExamPage(_examIsReck);
                   if (typeof navigateTo === 'function') { _origNavigateTo ? _origNavigateTo('exam') : navigateTo('exam'); }
+                  _lockExamPage(_examIsReck);
                 }
               }
               if (type === 'exam_submit') {
@@ -6080,7 +6080,7 @@
       }
       function _hideGenBanner() {
         var b = document.getElementById('kiwiGenBanner');
-        if (b) b.classList.remove('active');
+        if (b) { b.classList.remove('active'); b.style.display = 'none'; }
         clearTimeout(window._genBannerTimeout);
         try { localStorage.removeItem('kiwi_gen_banner'); } catch(_) {}
       }
@@ -6119,8 +6119,8 @@
                 var _isReck = !!(_examData.is_reckoning || _examData.isReckoning);
                 AppState.tempExam = { examId: _examData.id, questions: typeof normalizeExamQuestions === 'function' ? normalizeExamQuestions(_examData.questions || []) : (_examData.questions || []), currentIndex: 0, answers: {}, flagged: new Set(), startTime: Date.now(), timeLimit: _isReck ? Infinity : qCount * SECS_PER_Q, totalTime: _isReck ? Infinity : qCount * SECS_PER_Q, _warnedAt20: false, _warnedAt10: false, submitted: false, isReckoning: _isReck };
                 if (typeof apiRequest === 'function') apiRequest('/exams/' + _examData.id + '/start', { method: 'POST' }).catch(function(){});
-                _lockExamPage(_isReck);
                 if (typeof navigateTo === 'function') { _origNavigateTo ? _origNavigateTo('exam') : navigateTo('exam'); }
+                _lockExamPage(_isReck);
               }
               if (_jType === 'note_generation') {
                 var _nr = _jd.result || {};
@@ -9800,7 +9800,7 @@
         const stage = card.stage || card.level || 1;
         const stageLabel = getStageLabel(stage);
         container.innerHTML = `
-    <div class="study-layout" id="studyLayout">
+    <div class="study-layout${t.flipped ? ' is-flipped' : ''}" id="studyLayout">
       <div class="study-header">
         <button class="btn btn-ghost btn-icon" onclick="confirmEndStudy()" title="End session (Esc)">&#x2715;</button>
         ${t.currentIndex > 0 ? `<button class="btn btn-ghost btn-sm kiwi-prev-btn" onclick="prevCard()" title="Go back to previous card" style="font-size:var(--text-xs);padding:3px 10px;opacity:0.75;border:1px solid var(--border);border-radius:var(--r-sm);display:flex;align-items:center;gap:4px;"><span style='font-size:14px;'>←</span> Prev</button>` : ""}
@@ -9823,6 +9823,14 @@
             <div id="cardElapsedTimer" style="font-family:var(--font-mono);font-size:var(--text-sm);font-weight:600;color:var(--text-2);min-width:28px;text-align:center;">0s</div>
           </div>
           ${t.currentIndex < t.queue.length - 1 ? `<button class="btn btn-ghost btn-sm" onclick="skipCard()" title="Skip card to end of queue" style="font-size:var(--text-xs);padding:3px 8px;opacity:0.65;">Skip &#x21E3;</button>` : ""}
+        </div>
+      </div>
+      <div class="session-seed ${getSeedStage(t.seedHealth).stage}" id="focusSeed">
+        <div class="seed-visual">${getSeedStage(t.seedHealth).emoji}</div>
+        <div class="seed-info">
+          <div class="seed-label">Focus Seed</div>
+          <div class="seed-status">${getSeedStage(t.seedHealth).label}</div>
+          <div class="seed-bar"><div class="seed-bar-fill" style="width:${t.seedHealth}%"></div></div>
         </div>
       </div>
       <div class="study-arena" id="studyArena">
@@ -9869,7 +9877,7 @@
                 const label = mins < 60 ? `${mins}m` : hrs < 24 ? `${hrs}h` : days < 7 ? `${days}d` : `${Math.round(days/7)}w`;
                 return `<div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);font-size:9px;font-family:var(--font-mono);color:var(--text-4);background:var(--bg-3);border:1px solid var(--border);border-radius:20px;padding:2px 8px;letter-spacing:0.5px;">&#x23F3; due in ${label}</div>`;
               })()}
-              <button class="flashcard-ai-btn" id="aiExplainBtn" title="AI Explanation">&#x2726; Explain</button>
+              <button class="flashcard-ai-btn" id="aiExplainBtn" title="AI Explanation" onclick="_kiwiAiExplain(event)">&#x2726; Explain</button>
               <button id="studyEditBtn" title="Edit this card" style="position:absolute;top:10px;right:10px;font-size:10px;background:rgba(62,201,201,0.08);border:1px solid rgba(62,201,201,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--teal);z-index:2;">&#x270F;</button>
             </div>
             <div class="flashcard-face back">
@@ -9960,15 +9968,6 @@
     `
         : ""
     }
-    <!-- Focus Seed Widget (F4: 6-stage) -->
-    <div class="session-seed ${getSeedStage(t.seedHealth).stage}" id="focusSeed">
-      <div class="seed-visual">${getSeedStage(t.seedHealth).emoji}</div>
-      <div class="seed-info">
-        <div class="seed-label">Focus Seed</div>
-        <div class="seed-status">${getSeedStage(t.seedHealth).label}</div>
-        <div class="seed-bar"><div class="seed-bar-fill" style="width:${t.seedHealth}%"></div></div>
-      </div>
-    </div>
   `;
         // Render LaTeX/math in flashcard content areas after innerHTML is set (Issue 02)
         const studyContainer = document.getElementById("studyLayout");
@@ -9996,11 +9995,6 @@
             // If we called renderActiveStudySession() immediately the DOM would be
             // destroyed and rebuilt with .flipped already set — no transition plays.
             flashcard.classList.add("flipped");
-            // Pre-reserve space for rating buttons so card slides up during flip
-            // (not after it). This eliminates the visible lag between card moving
-            // up and buttons appearing.
-            const _sl = document.getElementById("studyLayout");
-            if (_sl) _sl.classList.add("is-flipped");
             // After the flip transition completes, re-render to show rating buttons
             // and the back-face content in full (hint hides, buttons appear).
             setTimeout(() => {
@@ -10019,25 +10013,27 @@
               _ec.back  || _ec.back_content  || '');
           });
         }
-        // AI Explain button
-        const aiBtn = document.getElementById("aiExplainBtn");
-        if (aiBtn) {
-          aiBtn.addEventListener("click", async (e) => {
-            e.stopPropagation();
-            const currentCard = t.queue[t.currentIndex];
-            if (!currentCard) return;
-            aiBtn.textContent = "Loading...";
-            try {
-              const data = await api.getAISummary(currentCard.id);
-              t.aiSummary = data.summary || "No explanation available.";
-              renderActiveStudySession(document.getElementById("mainContent"));
-            } catch (err) {
-              t.aiSummary = "AI explanation unavailable. Try again later.";
-              renderActiveStudySession(document.getElementById("mainContent"));
-              showToast("AI service unavailable", "error");
-            }
-          });
-        }
+        // AI Explain button — global function so inline onclick works reliably
+        // inside 3D-transformed card faces (pointer events can be unreliable with
+        // addEventListener on preserve-3d elements on some mobile browsers)
+        window._kiwiAiExplain = async function(e) {
+          if (e) { e.stopPropagation(); e.preventDefault(); }
+          var _t = AppState.tempStudy;
+          if (!_t) return;
+          var currentCard = _t.queue[_t.currentIndex];
+          if (!currentCard) return;
+          var btn = document.getElementById('aiExplainBtn');
+          if (btn) btn.textContent = 'Loading...';
+          try {
+            var data = await api.getAISummary(currentCard.id);
+            _t.aiSummary = data.summary || "No explanation available.";
+            renderActiveStudySession(document.getElementById("mainContent"));
+          } catch (err) {
+            _t.aiSummary = "AI explanation unavailable. Try again later.";
+            renderActiveStudySession(document.getElementById("mainContent"));
+            showToast("AI service unavailable", "error");
+          }
+        };
         // Response buttons
         document.querySelectorAll(".resp-btn").forEach((btn) => {
           btn.addEventListener("click", async () => {
@@ -10710,7 +10706,7 @@
           : ""
       }
       <div style="display:flex;gap:12px;justify-content:center;">
-        <button class="btn btn-primary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
+        <button class="btn btn-primary" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">Back to Dashboard</button>
         <button class="btn btn-secondary" onclick="navigateTo('study')">Study More</button>
       </div>
     </div>
@@ -11249,6 +11245,20 @@
               // Update only the current question's dot instead of a full renderExam() call
               var _curDot = document.querySelector('.q-dot[data-qidx="' + e.currentIndex + '"]');
               if (_curDot) _curDot.classList.add('answered');
+              // If on the last question, update the submit button label immediately
+              // so it reflects the correct answered count without a full re-render
+              var _isLastQ = (e.currentIndex === e.questions.length - 1);
+              if (_isLastQ) {
+                var _totalQ2 = e.questions.length;
+                var _answeredQ2 = Object.keys(e.answers).length;
+                var _unanswered2 = _totalQ2 - _answeredQ2;
+                var _submitBtn2 = document.getElementById('submitExamBtn');
+                if (_submitBtn2) {
+                  _submitBtn2.textContent = _unanswered2 > 0
+                    ? 'Submit Exam (' + _unanswered2 + ' unanswered)'
+                    : 'Submit Exam';
+                }
+              }
               // BUG-09 progressive pre-marking: fire-and-forget background SRS processing
               // so that the final submit response is near-instant.
               if (e.examId && q.question_number != null) {
@@ -11362,6 +11372,7 @@
             clearInterval(e._timerInterval);
           }
           AppState.tempExam = null;
+          _unlockExamPage();
           navigateTo("dashboard");
         });
       }
@@ -11632,7 +11643,7 @@
             : ""
         }
         <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
+          <button class="btn btn-primary" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">Back to Dashboard</button>
           <button class="btn btn-secondary" onclick="navigateTo('exam-config')">New Exam</button>
           ${e.examId && !isReckoning ? `<button class="btn btn-secondary" id="retryDeckBtn" onclick="createRetryDeckFromExam()">&#x1F504; Create Retry Deck</button>` : ''}
           ${e.examId ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--text-3);" onclick="switchExamTab('review')">&#x1F4CB; Review Answers</button>` : ''}
@@ -11760,7 +11771,7 @@
             }).join('')}
           </div>
           <div style="display:flex;gap:12px;justify-content:center;margin-top:8px;padding-bottom:24px;">
-            <button class="btn btn-primary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
+            <button class="btn btn-primary" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">Back to Dashboard</button>
             <button class="btn btn-secondary" onclick="navigateTo('exam-config')">New Exam</button>
           </div>
         </div>`;
@@ -15774,7 +15785,7 @@
     ${[0,1,2,3,4].map(i => `<div style="width:10px;height:10px;border-radius:50%;background:var(--green-bright);animation:pulse ${1+i*0.2}s ease-in-out infinite alternate;opacity:${0.3+i*0.14};"></div>`).join('')}
   </div>
   <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
-    <button class="btn btn-secondary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
+    <button class="btn btn-secondary" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">Back to Dashboard</button>
     <button class="btn btn-ghost" onclick="navigateTo('library')">Go to Library</button>
   </div>
 </div>
@@ -17112,7 +17123,7 @@
                 <input class="input" id="ob-subject-emoji" placeholder="Icon (optional, e.g. ⚗)" style="width:100%;margin-bottom:24px;" maxlength="4" />
                 <button class="btn btn-primary" id="ob-subject-btn" style="width:100%;padding:14px;">Continue →</button>
                 <div style="margin-top:16px;text-align:center;">
-                  <button class="btn btn-ghost btn-sm" onclick="navigateTo('dashboard')">Skip for now</button>
+                  <button class="btn btn-ghost btn-sm" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">Skip for now</button>
                 </div>
               </div>
             </div>`;
@@ -17284,7 +17295,7 @@
                 <button class="btn btn-primary" style="width:100%;padding:16px;font-size:var(--text-base);"
                   onclick="navigateTo('study')">Start First Session →</button>
                 <div style="margin-top:12px;">
-                  <button class="btn btn-ghost btn-sm" onclick="navigateTo('dashboard')">Go to Dashboard</button>
+                  <button class="btn btn-ghost btn-sm" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">Go to Dashboard</button>
                 </div>
                 <div style="margin-top:24px;padding:16px;background:var(--surface-2,var(--bg-2));border-radius:10px;text-align:left;">
                   <div style="font-size:var(--text-sm);color:var(--text-3);font-weight:600;margin-bottom:10px;"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Features that unlock as you study:</div>

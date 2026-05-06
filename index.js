@@ -7560,11 +7560,20 @@ weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
 weekStart.setHours(0, 0, 0, 0);
 const weekStr = weekStart.toISOString().split('T')[0];
 const existing = await db.chronicleEntries.findLatest(userId);
+// Normalize existing.week_start to YYYY-MM-DD string for reliable comparison
+// (PostgreSQL date columns may come back as Date objects or ISO strings with time)
+const existingWeekStr = existing
+  ? (typeof existing.week_start === 'string'
+      ? existing.week_start.slice(0, 10)
+      : existing.week_start
+        ? new Date(existing.week_start).toISOString().slice(0, 10)
+        : '')
+  : '';
 // If force=true, delete the cached entry so a fresh one gets written.
 // This lets the user manually regenerate a new Chronicle entry for the same week.
-if (force && existing && existing.week_start === weekStr) {
+if (force && existing && existingWeekStr === weekStr) {
   await query('DELETE FROM chronicle_entries WHERE user_id = $1 AND week_start = $2', [userId, weekStr]).catch(() => {});
-} else if (!force && existing && existing.week_start === weekStr) { return existing; }
+} else if (!force && existing && existingWeekStr === weekStr) { return existing; }
 const stats = await db.userStats.get(userId);
 const subjects = await db.subjects.findManyWithDecks(userId);
 const logs = await db.reviewLogs.findByUser(userId, weekStart);
