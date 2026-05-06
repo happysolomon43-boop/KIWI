@@ -3472,6 +3472,8 @@ Before generating questions, analyze the notes and classify the subject:
 
 Apply this ratio automatically. Do not ask the user — infer from the notes.
 
+⚠ OVERRIDE RULE: If a ## QUESTION TYPE BALANCE section appears later in this prompt, it COMPLETELY REPLACES Step 2. The table above becomes void. Do NOT apply the auto-detected ratio — use only the exact percentages specified in the ## QUESTION TYPE BALANCE section. The student has made an explicit choice and it must be honoured precisely.
+
 ---
 
 ## DISTRACTOR ENGINEERING — HOW TO BUILD COMPETITIVE OPTIONS
@@ -3705,12 +3707,17 @@ You MUST draw at least one question from EVERY distinct concept, term, process, 
 ## PRE-OUTPUT CHECKLIST
 
 Before generating, confirm:
-- [ ] Subject type detected and theory/calculation ratio set
+- [ ] If a ## QUESTION TYPE BALANCE section exists: it has been noted and the Subject Intelligence System auto-ratio has been discarded
+- [ ] If a ## BROAD COVERAGE MODE section exists: topic-first ordering is locked in
+- [ ] If a ## FOCUSED COVERAGE MODE section exists: depth-over-breadth is the priority
+- [ ] Theory/calculation split target is known and will be enforced throughout generation (not just in aggregate)
 - [ ] No question copies a note example directly
 - [ ] All distractors use the four distractor types
 - [ ] At least 60% of questions use a twisting technique
 - [ ] Calculation questions use fresh numbers and scenarios
 - [ ] All questions come before all answers
+
+FINAL COUNT CHECK — before outputting answers: count your Theory questions and Calculation questions separately. If the split does not match the ## QUESTION TYPE BALANCE target (±1 question), rewrite questions before proceeding.
 
 ---
 
@@ -3719,7 +3726,7 @@ Before generating, confirm:
 When notes are provided:
 1. **Analyze** — detect subject type, ratio, all major concepts, lists, processes, relationships
 2. **Plan** — mentally map which twisting technique and distractor type suits each concept
-3. **Generate ALL questions** — theory first, then calculations, in order of topic
+3. **Generate ALL questions** — interleave theory and calculation questions throughout. Do NOT front-load one type. If your balance target is 50/50, alternate roughly every 1–2 questions. If it is 70/30, write 2–3 theory then 1 calculation throughout. Follow the ## QUESTION TYPE BALANCE ratio from start to finish, not just in aggregate.
 4. **Separator** — output "---"
 5. **Generate ALL answers and explanations** — brief, focused
 
@@ -4132,10 +4139,11 @@ let dynamicDirectives = '';
 if (theoryPct === 50) {
   dynamicDirectives =
     '\n## QUESTION TYPE BALANCE \u2014 MANDATORY\n\n' +
-    'Generate a balanced mix: approximately 50% theory questions and 50% calculation questions.\n' +
-    '- Theory questions: conceptual understanding, recall, definitions, processes, relationships.\n' +
-    '- Calculation questions: numerical problems, formula application, derivations, unit conversion.\n' +
-    '- If the subject has no calculations (e.g. pure humanities or memorisation-only), generate only theory questions.\n' +
+    'The student has requested a balanced exam. You MUST reflect this exact split:\n' +
+    '- Theory questions (conceptual, recall, definitions, processes): 50% \u2192 ~' + Math.round(count / 2) + ' of ' + count + ' questions\n' +
+    '- Calculation questions (numerical, formula application, derivations): 50% \u2192 ~' + (count - Math.round(count / 2)) + ' of ' + count + ' questions\n' +
+    '\nThis OVERRIDES the Subject Intelligence System auto-detection table. Do NOT apply the table ratios. Use this 50/50 split regardless of what subject type you detect from the notes.\n' +
+    'If the subject genuinely has no calculations (e.g. pure humanities), generate only theory questions — this is the only allowed exception.\n' +
     '\n---\n';
 } else {
   const bias    = theoryPct > 50 ? 'theory-heavy' : 'calculation-heavy';
@@ -4151,15 +4159,25 @@ if (theoryPct === 50) {
     '\n---\n';
 }
 
-// Broad Coverage directive — only injected when explicitly enabled
+// Coverage directive — always injected (broad mode or focused mode)
 if (broadCoverage) {
   dynamicDirectives +=
     '\n## BROAD COVERAGE MODE \u2014 MANDATORY\n\n' +
-    'The student has activated Broad Coverage mode. Topic breadth is your primary obligation:\n' +
-    '- Every distinct topic, sub-topic, concept, or fact in the notes must receive its own question before any topic receives a second question.\n' +
-    '- Before writing each question, ask: "Which topic from the notes has NOT been tested yet?" \u2014 answer that topic.\n' +
-    '- Only after all distinct topics have at least one question may you revisit topics from different angles.\n' +
-    '- Do NOT write 2 or more consecutive questions on the same concept.\n' +
+    'The student has activated Broad Coverage mode. Topic breadth is your ONLY priority for question selection:\n' +
+    '- Before writing each question, you MUST ask: "Which topic from the notes has NOT been tested yet?" — write that topic next, every single time.\n' +
+    '- Every distinct topic, sub-topic, concept, or fact in the notes MUST receive its own question before any topic receives a second question.\n' +
+    '- Do NOT write 2 or more consecutive questions on the same concept under any circumstances.\n' +
+    '- Only after ALL distinct topics have at least one question may you revisit topics from different angles.\n' +
+    '- Depth is sacrificed for breadth. One solid question per topic is better than three deep questions on one topic.\n' +
+    '\n---\n';
+} else {
+  dynamicDirectives +=
+    '\n## FOCUSED COVERAGE MODE \u2014 MANDATORY\n\n' +
+    'Broad Coverage mode is OFF. Your priority is DEPTH, not breadth:\n' +
+    '- Concentrate on the most important and heavily tested concepts in the notes. Cover them from multiple angles.\n' +
+    '- For each key concept, apply multiple twisting techniques: reversal, scenario injection, consequence testing, exception framing.\n' +
+    '- Do NOT race to cover every minor detail. A student who truly understands the core concepts is the target.\n' +
+    '- Spread questions proportionally by topic weight — spend more questions on concepts that have more depth, more formulas, or more relationships.\n' +
     '\n---\n';
 }
 
@@ -7599,6 +7617,56 @@ total_cards: sub.total_cards || 0,
 }
 const fruitings = weekSessions.filter((s) => s.fruiting_achieved).length;
 const totalXPEarned = weekSessions.reduce((s, sess) => s + (sess.xp_earned || 0), 0);
+
+// CHRONICLE-ENRICH: Gather richer per-subject and aggregate signals for the teacher-voice prompt.
+// (a) Total "Again" responses this week — high count = the student struggled a lot.
+const totalAgain = weekSessions.reduce((sum, s) => sum + (s.cards_again || 0), 0);
+
+// (b) Per-subject session count this week
+const subjectSessionCountsEnriched = {};
+for (const s of weekSessions) {
+  if (s.subject_id) subjectSessionCountsEnriched[s.subject_id] = (subjectSessionCountsEnriched[s.subject_id] || 0) + 1;
+}
+
+// (c) All card states for this user — one DB call, then group by subject_id
+const allCardStatesDocs = await db.cardStates.findByUser(userId).catch(() => []);
+const cardStatesBySubject = {};
+for (const cs of allCardStatesDocs) {
+  if (!cs.subject_id) continue;
+  if (!cardStatesBySubject[cs.subject_id]) cardStatesBySubject[cs.subject_id] = { GHOST: 0, FRAGILE: 0, STUCK: 0, AVOIDED: 0, DANGEROUS: 0 };
+  const bucket = cardStatesBySubject[cs.subject_id];
+  if (bucket[cs.state] !== undefined) bucket[cs.state]++;
+}
+
+// (d) Enrich each subjectSnapshot with days_since_last_session and card state counts
+for (const snap of subjectSnapshots) {
+  const subObj = subjects.find(s => s.name === snap.name);
+  if (!subObj) continue;
+  const sStat2 = await db.subjectStats.get(userId, subObj.id).catch(() => null);
+  const lastStudied2 = sStat2?.last_studied_at || sStat2?.last_session_date;
+  snap.days_since_last_session = lastStudied2
+    ? Math.floor((Date.now() - new Date(lastStudied2).getTime()) / 86400000)
+    : null; // null = never studied
+  snap.sessions_this_week = subjectSessionCountsEnriched[subObj.id] || 0;
+  const stCounts = cardStatesBySubject[subObj.id] || {};
+  snap.ghost_count    = stCounts.GHOST     || 0;
+  snap.fragile_count  = stCounts.FRAGILE   || 0;
+  snap.stuck_count    = stCounts.STUCK     || 0;
+  snap.avoided_count  = stCounts.AVOIDED   || 0;
+  snap.dangerous_count = stCounts.DANGEROUS || 0;
+}
+
+// (e) Neglected subjects — no session in 7+ days, or never studied but has cards
+const neglectedSubjectLines = subjectSnapshots
+  .filter(s => s.total_cards > 0 && (s.days_since_last_session === null || s.days_since_last_session >= 7))
+  .map(s => `${s.name} (${s.days_since_last_session === null ? 'never studied' : s.days_since_last_session + 'd ago'}, pressure: ${s.pressure})`)
+  .join(', ') || 'None — all subjects were touched this week.';
+
+// (f) Best and worst exam this week
+const sortedExams = [...weekExams].sort((a, b) => (a.score_percentage || 0) - (b.score_percentage || 0));
+const worstExam  = sortedExams[0]  ? `${subjects.find(s => s.id === sortedExams[0].subject_id)?.name || 'Unknown'}: ${Math.round(sortedExams[0].score_percentage)}%` : null;
+const bestExam   = sortedExams[sortedExams.length - 1] ? `${subjects.find(s => s.id === sortedExams[sortedExams.length - 1].subject_id)?.name || 'Unknown'}: ${Math.round(sortedExams[sortedExams.length - 1].score_percentage)}%` : null;
+
 // P6.1 FIX: gather previous 2 chronicles for continuity context
 const allChronicles = await db.chronicleEntries.findByUser(userId).catch(() => []);
 // GAP-1 FIX: fetch exam sessions for the week so Chronicle narrator knows about CBT results
@@ -7674,38 +7742,65 @@ const bubbleChronicleContext = bubbleEvents.length > 0
 
 const prompt = `
 ROLE
-You are the Keeper of the Kiwi Forest — a wise, atmospheric narrator who writes a weekly Chronicle for a student\'s knowledge ecosystem. You write in second person, with a tone that is warm, honest, and slightly mystical. You never flatter — you observe.
-PREVIOUS ENTRIES (for continuity — do not repeat them, but let their themes evolve)
+You are this student's academic advisor. You have just reviewed their full week of study data. You speak directly, honestly, and personally — like a teacher who has read the student's file and is now sitting across from them. Your tone adapts to what the data shows: firm and direct when the student has been avoiding work, genuinely warm when they have earned it. You are not a narrator. You are not poetic. You observe, you name what you see, and you give direction.
+
+No metaphors. No atmospheric language. Every sentence must be grounded in a specific number, subject name, card state, or score from the data below. If you cannot back a claim with data, do not make it.
+
+STUDENT PROFILE
+Persona: ${personaLine}
+Level ${stats?.current_level || 1} — ${stats?.total_xp || 0} XP total
+Streak: ${stats?.current_streak || 0} days active
+
+THIS WEEK
+Week of: ${weekStr}
+Sessions: ${weekSessions.length} | Cards reviewed: ${logs.length} | Stage advances: ${stageAdvances}
+"Again" responses (struggle count): ${totalAgain}
+Fruitings this week: ${fruitings} | XP earned: ${totalXPEarned}
+Reckoning: ${reckoningLine}
+Exams: ${examLines}${worstExam ? `\nWorst exam: ${worstExam}` : ''}${bestExam && bestExam !== worstExam ? `\nBest exam: ${bestExam}` : ''}
+${bubbleChronicleContext}
+SUBJECT BREAKDOWN
+${subjectSnapshots.map((s) => [
+  `${s.name}:`,
+  `  KS ${s.ks.toFixed(1)} | Credential: ${s.credential} | Pressure: ${s.pressure}`,
+  `  Sessions this week: ${s.sessions_this_week} | Days since last session: ${s.days_since_last_session === null ? 'never studied' : s.days_since_last_session + 'd'}`,
+  `  Problem cards — GHOST: ${s.ghost_count}, FRAGILE: ${s.fragile_count}, STUCK: ${s.stuck_count}, AVOIDED: ${s.avoided_count}, DANGEROUS: ${s.dangerous_count}`,
+  `  Total cards: ${s.total_cards} | Fruits: ${s.fruit_count}`,
+].join('\n')).join('\n\n')}
+
+NEGLECTED SUBJECTS (7+ days without a session)
+${neglectedSubjectLines}
+
+PREVIOUS WEEK CONTEXT (do not repeat, use only for continuity)
 ${prevChronicleText}
-THIS WEEK\'S DATA
-Student: ${stats ? stats.total_xp + ' XP, Level ' + stats.current_level : 'New Student'}
-Streak: ${stats?.current_streak || 0} days (shields held: ${stats?.streak_shields_held || 0})
-Sessions this week: ${weekSessions.length}
-Cards reviewed: ${logs.length}
-Fruitings achieved: ${fruitings}
-Week XP earned: ${totalXPEarned}
-Most-attended subject: ${mostAttendedSubject}
-Stage advances this week: ${stageAdvances}
-Reckoning events: ${reckoningLine}
-Exams taken this week: ${examLines}
-Current persona: ${personaLine}
-${bubbleChronicleContext}Subject state:
-${subjectSnapshots.map((s) => `  - ${s.name}: KS=${s.ks.toFixed(1)}, Credential=${s.credential}, Pressure=${s.pressure}, Fruits=${s.fruit_count}`).join('\n')}
-FIVE REQUIRED PILLARS — address each one in the narrative:
-1. Most-attended subject this week — name it specifically.
-2. Most significant stage advance or mastery moment — name a concept or card if possible.
-3. Honest weakness observation — name the subject or pattern that needs attention. Do not soften this.
-4. Genuine growth acknowledgment — something real that improved.
-5. Next-week focus — one clear, specific action or intention.
-RULES
-- Write exactly 5 short paragraphs, one per pillar.
-- Each paragraph is 2–4 sentences.
-- Use the student\'s actual subject names. Never say "a subject" when you have the name.
-- Tone: warm but truthful. If the week was poor, say so with care.
-- Never use bullet points or headers inside the narrative.
-- Total length: 200–350 words.
+
+WHAT TO WRITE — EXACTLY 5 PARAGRAPHS
+
+Paragraph 1 — WHERE YOU PUT YOUR TIME
+Name the most-attended subject. State the exact session count and cards reviewed in it. Be honest about whether the effort was focused or scattered across too many things. If one subject dominated while others were untouched, say so plainly.
+
+Paragraph 2 — THE REAL PROGRESS
+Name the single most significant thing that improved this week. Use the actual number: a KS score that moved, a stage advance count, an exam score, a credential milestone, a Reckoning survived. If progress was thin, say that too. Do not invent praise.
+
+Paragraph 3 — WHAT WAS AVOIDED (most important paragraph)
+This paragraph must be direct and specific. If there are neglected subjects, name them, state how many days since the last session, name the pressure score, and name the count of GHOST, FRAGILE, or STUCK cards sitting there. If the student's Again count was high, name it. If an exam score was poor, name it. Do not soften this. The student needs to feel the weight of what they did not do. If nothing was avoided and the week was genuinely solid, acknowledge that honestly — but verify it first.
+
+Paragraph 4 — ONE THING THAT IS GENUINELY EARNED
+Find something specific and real to recognise. A streak maintained, a pressure score that dropped, cards that moved out of FRAGILE state, consistent daily sessions, a passed exam. One specific thing. If the week was poor across the board, make this paragraph brief — one sentence. Never manufacture warmth.
+
+Paragraph 5 — NEXT WEEK: ONE DIRECTIVE
+Give the student one specific instruction. Not "study Chemistry more." Give: the exact subject, the exact card state to target, or the exact pressure score to bring down below a threshold. Make it feel like a task they have been assigned, not a suggestion. Close with a single sentence of honest encouragement — tied to something real they showed this week.
+
+TONE RULES
+- If sessions this week < 5 OR neglected subjects exist: be firm. Name what was skipped. Do not cushion.
+- If sessions >= 10 AND stage advances >= 20 AND no neglected subjects: be warm. They earned it.
+- In all cases: be specific. Vague encouragement is worthless. Vague criticism is cowardly.
+- Never say "a subject" when you have the name. Never say "some cards" when you have the counts.
+- Never use bullet points or headers inside the output.
+- Total length: 280–420 words.
+
 OUTPUT
-Return only the narrative text. No labels, no headers.
+Return only the 5 paragraphs. No labels. No headers. No preamble.
 `;
   const result = await geminiModel.generateContent(prompt);
   const narrative = result.response.text().trim();
@@ -15559,10 +15654,14 @@ return d.toISOString().split('T')[0];
 })();
 
 // Round 1 — all independent queries in one parallel batch
-const [stats, subjects, globalKS, allStates, allCards, pressures, activeReckoning] = await Promise.all([
+// PERF FIX: globalKS removed from this batch. computeGlobalKnowledgeScore()
+// was calling db.subjects, db.cards.findAllForUser, and db.cardStates.findByUser
+// again for EVERY subject — all data that Round 1 already fetches. We now derive
+// globalKS from stats.knowledge_score_global (persisted after every review) and
+// from the inline per-subject computation in Round 2 using already-loaded data.
+const [stats, subjects, allStates, allCards, pressures, activeReckoning] = await Promise.all([
 db.userStats.get(req.user.id),
 db.subjects.findManyWithDecks(req.user.id),
-computeGlobalKnowledgeScore(req.user.id),
 db.cardStates.findByUser(req.user.id),
 db.cards.findAllForUser(req.user.id),              // Perf: was sequential
 db.brainPressure.findByUser(req.user.id),          // Perf: was sequential
@@ -15571,19 +15670,32 @@ db.reckoningSessions.findActiveByUser(req.user.id), // Perf: was sequential
 const dueCount = allCards.filter((c) => isCardDue(c, now)).length;
 const stateDist = {};
 for (const s of allStates) stateDist[s.state] = (stateDist[s.state] || 0) + 1;
+// Build state map once — reused by inline per-subject KS below (no extra DB reads)
+const _dashStateMap = new Map(allStates.map(st => [st.card_id, st]));
 
 // Round 2 — all things that depend on Round 1, run in parallel
 const [subjectBreakdown, persona, returnStatus, morningCache, anchorCache, invitationsCache] = await Promise.all([
 Promise.all(subjects.map(async (s) => {
 const storedSubjectStat = await db.subjectStats.get(req.user.id, s.id).catch(() => null);
-const [ks, subjectDecks] = await Promise.all([
-(storedSubjectStat?.knowledge_score !== undefined ? Promise.resolve({ score: storedSubjectStat.knowledge_score }) : computeKnowledgeScore(req.user.id, s.id)).catch(() => ({ score: 0 })),
-db.decks.findBySubject(req.user.id, s.id),
-]);
-const subjectDeckIds = subjectDecks.map((d) => d.id);
-const subjectCards = allCards.filter((c) => subjectDeckIds.includes(c.deck_id));
-const subjectDueCount = subjectCards.filter((c) => isCardDue(c)).length;
-// Carry _subjectStat to avoid second DB fetch for dashTotalFruits
+// PERF FIX: Compute per-subject KS inline using already-loaded allCards + _dashStateMap.
+// Previously called computeKnowledgeScore() which re-fetched db.cards.findAllForUser
+// and db.cardStates.findByUser for EVERY subject — N duplicate round-trips to Supabase.
+// Now: use stored value if fresh, else derive from in-memory data (zero extra DB calls).
+const ksScore = (() => {
+if (storedSubjectStat?.knowledge_score !== undefined) {
+return storedSubjectStat.knowledge_score; // fast path: use persisted value
+}
+const subjectDeckIds = new Set((s.decks || []).map(d => d.id));
+const subjectCards = allCards.filter(c => subjectDeckIds.has(c.deck_id));
+if (!subjectCards.length) return 0;
+let sumW = 0;
+for (const c of subjectCards) sumW += computeEffectiveWeight(_dashStateMap.get(c.id), c);
+return Math.min(100, parseFloat(((sumW / (subjectCards.length * 5)) * 100).toFixed(2)));
+})();
+const ks = { score: ksScore };
+const subjectDeckIds = (s.decks || []).map(d => d.id);
+const subjectCards = allCards.filter(c => subjectDeckIds.includes(c.deck_id));
+const subjectDueCount = subjectCards.filter(c => isCardDue(c)).length;
 return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount, _subjectStat: storedSubjectStat };
 })),
 db.userPersona.get(req.user.id).catch(() => null),                                   // Perf: was sequential
@@ -15613,10 +15725,23 @@ const dashActiveMilestones = [...new Set([
 ])].sort((a, b) => a - b);
 // M1 FIX: fruits = sum of per-subject fruit_counts — reuse _subjectStat from Round 2 (no extra DB call)
 const dashTotalFruits = subjectBreakdown.reduce((sum, s) => sum + (s._subjectStat?.fruit_count || 0), 0);
-// M1 FIX: leaves from globalKS * 0.5 — matches biome formula
-const dashGlobalKS = subjectBreakdown.length > 0
-? subjectBreakdown.reduce((sum, s) => sum + s.ks, 0) / subjectBreakdown.length
-: 0;
+// PERF FIX: Derive globalKS from already-computed subject breakdown — no extra DB round-trip.
+// Weighted average by subject card count; falls back to stats.knowledge_score_global.
+const dashGlobalKS = (() => {
+if (!subjectBreakdown.length) return stats?.knowledge_score_global || 0;
+let totalW = 0, totalCards = 0;
+for (const s of subjectBreakdown) {
+const cardCount = allCards.filter(c => (s._subjectStat?.deck_ids || []).includes(c.deck_id)).length;
+totalW += s.ks * cardCount;
+totalCards += cardCount;
+}
+return totalCards > 0 ? totalW / totalCards : (subjectBreakdown.reduce((a, s) => a + s.ks, 0) / subjectBreakdown.length);
+})();
+const globalKS = {
+score: parseFloat(dashGlobalKS.toFixed(2)),
+band: getBandName(dashGlobalKS),
+totalCards: allCards.length,
+};
 // Perf-2 FIX: await the already-started promise — by now it has been running
 // in parallel with all the KS and stats queries above, so this is effectively free.
 const biomeForTree = await _biomePromise;
@@ -15652,6 +15777,7 @@ highestPressure:
 pressures.length > 0 ? Math.max(...pressures.map((p) => p.pressure_score || 0)) : 0,
 };
 // Return greeting — returnStatus already resolved in Round 2
+// PERF FIX: fire-and-forget on cache miss, same as morningBrief
 let returnGreeting = null;
 if (returnStatus && returnStatus.status !== 'active') {
 const cachedRG = await db.dailyRitualCache
@@ -15660,24 +15786,22 @@ const cachedRG = await db.dailyRitualCache
 if (cachedRG?.data?.greeting) {
 returnGreeting = cachedRG.data.greeting;
 } else {
-const rg = await getReturnGreeting(req.user.id).catch(() => null);
-returnGreeting = rg?.greeting || null;
+getReturnGreeting(req.user.id).catch(() => {}); // generate in background
 }
 }
-// Morning brief — morningCache already resolved in Round 2
-// C-3 FIX: Generate inline on cache miss — spec: "Triggered on first dashboard load per calendar day"
-const morningBrief = morningCache
-? morningCache.data
-: await getMorningBrief(req.user.id).catch(() => null);
+// PERF FIX: Never block dashboard on Gemini calls.
+// morning brief, invitations, and return greeting can each take 5-10s.
+// Return null if not cached — the client fetches them lazily via /ritual endpoints.
+// Generate in background so next load hits cache.
+const morningBrief = morningCache ? morningCache.data : null;
+if (!morningCache) getMorningBrief(req.user.id).catch(() => {});
 // Weekly anchor — anchorCache already resolved in Round 2
 const weeklyAnchor = anchorCache
 ? anchorCache.anchor_text || anchorCache.message || null
 : null;
-// Invitations — invitationsCache already resolved in Round 2 (plain value, not a Promise)
-// C-3 FIX: Generate inline on cache miss
-const invitations = invitationsCache
-? invitationsCache.data
-: await getDailyInvitations(req.user.id).catch(() => []);
+// Invitations — return empty on miss, generate in background
+const invitations = invitationsCache ? invitationsCache.data : null;
+if (!invitationsCache) getDailyInvitations(req.user.id).catch(() => {});
 res.json({
 // Original fields
 user_stats: stats,

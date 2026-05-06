@@ -1441,6 +1441,10 @@
         display: flex;
         flex-direction: column;
         background: var(--bg);
+        /* PERF FIX: Always reserve button space so card never jumps on flip.
+           Previously padding-bottom:116px was added only on .is-flipped,
+           which shifted the flex-center axis upward on every re-render. */
+        padding-bottom: 140px;
       }
       .study-header {
         display: flex;
@@ -1494,10 +1498,7 @@
         -webkit-backface-visibility: hidden;
         transform: translateZ(0);
       }
-      /* Reserve space for rating buttons after card flip (no transition — avoids double-lag) */
-      .study-layout.is-flipped {
-        padding-bottom: 116px;
-      }
+      /* .study-layout.is-flipped padding-bottom removed — space now always reserved above */
       .flashcard.flipped {
         transform: rotateY(180deg);
       }
@@ -1764,12 +1765,18 @@
         margin-bottom: 8px;
       }
       /* Response buttons */
+      /* Rating buttons glide up when they appear — timed to match the flip settling */
+      @keyframes kiwi-resp-rise {
+        from { opacity: 0; transform: translateY(20px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
       .response-row {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         gap: 10px;
         width: 100%;
         max-width: 600px;
+        animation: kiwi-resp-rise 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
       }
       .resp-btn {
         display: flex;
@@ -6698,6 +6705,12 @@
         return await apiRequest("/cards/" + cardId + "/summary");
       };
 
+      // PERF FIX: Fire-and-forget cache warmer — call when a card first appears.
+      // Backend warms the ai_summary so GET /summary returns instantly on flip.
+      api.prefetchSummary = (cardId) => {
+        return apiRequest("/cards/" + cardId + "/prefetch-summary", { method: "POST" }).catch(() => {});
+      };
+
       // ── CBT Exam endpoints ──
 
       api.generateExam = async (subjectId, config) => {
@@ -9162,12 +9175,10 @@
 
       // ── Dashboard cache helpers (stale-while-revalidate) ──────────────────
       const _DASH_CACHE_KEY = "kiwi_dashboard_cache";
-      const _DASH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+      const _DASH_CACHE_TTL = 15 * 60 * 1000; // 15 min (was 5 — too aggressive for slow connections)
 
       function _saveDashboardCache(data) {
-        try {
-          localStorage.setItem(_DASH_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
-        } catch (_) {}
+        try { localStorage.setItem(_DASH_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch (_) {}
       }
 
       function _loadDashboardCache() {
@@ -9177,6 +9188,17 @@
           const { ts, data } = JSON.parse(raw);
           if (Date.now() - ts > _DASH_CACHE_TTL) return null; // expired
           return data;
+        } catch (_) { return null; }
+      }
+
+      // PERF FIX: Reads cache regardless of expiry — used to show stale content
+      // instantly while a fresh fetch runs in background. Better than a blank skeleton.
+      function _loadDashboardCacheStale() {
+        try {
+          const raw = localStorage.getItem(_DASH_CACHE_KEY);
+          if (!raw) return null;
+          const { data } = JSON.parse(raw);
+          return data || null;
         } catch (_) { return null; }
       }
 
@@ -9566,8 +9588,16 @@
           return;
         }
 
-        // No cache — first load path: show loading screen, await network
-        renderLoadingState(main, "Loading ecosystem...");
+        // PERF FIX: Show skeleton immediately instead of generic spinner.
+        // Skeleton gives meaningful visual structure while network loads.
+        // Also check for stale-but-expired cache — better to show old data
+        // than a blank screen while we fetch fresh data.
+        const _stale = _loadDashboardCacheStale();
+        if (_stale) {
+          _paintDashboard(main, _stale, _dashStartPage);
+        } else {
+          renderDashboardSkeleton(main);
+        }
         try {
           const data = await api.getDashboard();
           _saveDashboardCache(data);
@@ -9743,6 +9773,9 @@
               // Start focus tracking
               startFocusTracking();
               navigateTo("study");
+              // PERF FIX: Warm Gemini cache for Card 1 immediately on session start
+              const _firstCard = AppState.tempStudy?.queue[0];
+              if (_firstCard) api.prefetchSummary(_firstCard.id);
             } catch (err) {
               renderErrorState(container, err.message || "Failed to start session", () =>
                 navigateTo("study"),
@@ -10022,14 +10055,23 @@
           if (!_t) return;
           var currentCard = _t.queue[_t.currentIndex];
           if (!currentCard) return;
+          // RACE FIX: snapshot the card ID before the async call.
+          // If the user rates and advances before the response arrives,
+          // we discard the stale result instead of painting it on the next card.
+          var _targetCardId = currentCard.id;
           var btn = document.getElementById('aiExplainBtn');
           if (btn) btn.textContent = 'Loading...';
           try {
-            var data = await api.getAISummary(currentCard.id);
-            _t.aiSummary = data.summary || "No explanation available.";
+            var data = await api.getAISummary(_targetCardId);
+            // Guard: only apply if we're still on the same card
+            var _tNow = AppState.tempStudy;
+            if (!_tNow || _tNow.queue[_tNow.currentIndex]?.id !== _targetCardId) return;
+            _tNow.aiSummary = data.summary || "No explanation available.";
             renderActiveStudySession(document.getElementById("mainContent"));
           } catch (err) {
-            _t.aiSummary = "AI explanation unavailable. Try again later.";
+            var _tNow2 = AppState.tempStudy;
+            if (!_tNow2 || _tNow2.queue[_tNow2.currentIndex]?.id !== _targetCardId) return;
+            _tNow2.aiSummary = "AI explanation unavailable. Try again later.";
             renderActiveStudySession(document.getElementById("mainContent"));
             showToast("AI service unavailable", "error");
           }
@@ -10109,6 +10151,13 @@
         t.flipped = false;
         t.revealedMasks = {};
         t.cardShownAt = Date.now();
+        // PERF FIX: Prefetch AI summary for the NEXT card immediately.
+        // Gemini has the entire inter-card window (user reading + rating next card)
+        // to warm the cache. By the time they flip, summary is instant.
+        const _prefetchCard = t.queue[t.currentIndex];
+        if (_prefetchCard && !t.aiSummary) {
+          api.prefetchSummary(_prefetchCard.id);
+        }
         // Pagination prefetch
         if (t._hasMore && !t._fetchingMore && (t.queue.length - t.currentIndex) <= 5) {
           t._fetchingMore = true;
@@ -11078,7 +11127,13 @@
           api.getExams(1, 10).then(function(examList) {
             const histEl = document.getElementById('examHistorySection');
             if (!histEl) return;
-            const exams = Array.isArray(examList) ? examList : (examList?.exams || examList?.data || []);
+            const _rawExams = Array.isArray(examList) ? examList : (examList?.exams || examList?.data || []);
+            // BUG-6 FIX: hide unstarted/orphaned exams (no score, not completed/forfeited).
+            // These are sessions created by rate-limited or abandoned generation requests.
+            const exams = _rawExams.filter(function(e) {
+              return e.score_pct != null || e.score != null || e.percentage != null ||
+                     e.status === 'completed' || e.status === 'forfeited';
+            });
             if (!exams.length) {
               histEl.innerHTML = '';
               return;
