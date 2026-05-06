@@ -930,6 +930,19 @@
       }
       select.input {
         cursor: pointer;
+        -webkit-appearance: none !important;
+        -moz-appearance: none !important;
+        appearance: none !important;
+        background-color: var(--bg-3) !important;
+        color: var(--text) !important;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2352b788'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important;
+        background-position: right 12px center !important;
+        padding-right: 36px !important;
+      }
+      select.input option {
+        background: var(--bg-3);
+        color: var(--text);
       }
       textarea.input {
         resize: vertical;
@@ -1334,8 +1347,8 @@
       /* Session seed widget */
       .session-seed {
         position: fixed;
-        bottom: 24px;
-        right: 24px;
+        bottom: 80px;
+        left: 12px;
         z-index: 100;
         background: var(--glass-bg);
         border: 1px solid var(--glass-border);
@@ -1475,6 +1488,15 @@
         transform-style: preserve-3d;
         transition: transform 0.55s cubic-bezier(0.4, 0.2, 0.2, 1);
         cursor: pointer;
+        will-change: transform;
+        -webkit-backface-visibility: hidden;
+        transform: translateZ(0);
+      }
+      /* Pre-reserve space for rating buttons DURING the flip so the card
+         moves up smoothly via CSS transition instead of snapping after re-render */
+      .study-layout.is-flipped {
+        padding-bottom: 116px;
+        transition: padding-bottom 0.3s ease;
       }
       .flashcard.flipped {
         transform: rotateY(180deg);
@@ -9739,6 +9761,13 @@
         if (!t || !t.queue || t.queue.length === 0 || t.currentIndex >= t.queue.length) {
           var _sessStats = AppState.tempStudy || {};
           var _sessCardsReviewed = _sessStats.cardsReviewed || _sessStats.currentIndex || 0;
+          // PRE-MARK PATTERN: Fire session-end API in background as soon as queue
+          // completes so results are ready instantly when user clicks Finish Session.
+          if (t && !t._sessionEndStarted) {
+            t._sessionEndStarted = true;
+            t._sessionEndPromise = api.endStudySession(t.sessionId, t.focusData || { tabAwayCount: 0, idleSeconds: 0 })
+              .catch(function(e) { return null; }); // store null on failure; fallback handled in endStudySession
+          }
           container.innerHTML = `
       <div class="page-wrap page-enter" style="text-align:center;padding:60px 20px;">
         <div style="font-size:56px;margin-bottom:16px;">🌿</div>
@@ -9967,11 +9996,16 @@
             // If we called renderActiveStudySession() immediately the DOM would be
             // destroyed and rebuilt with .flipped already set — no transition plays.
             flashcard.classList.add("flipped");
+            // Pre-reserve space for rating buttons so card slides up during flip
+            // (not after it). This eliminates the visible lag between card moving
+            // up and buttons appearing.
+            const _sl = document.getElementById("studyLayout");
+            if (_sl) _sl.classList.add("is-flipped");
             // After the flip transition completes, re-render to show rating buttons
             // and the back-face content in full (hint hides, buttons appear).
             setTimeout(() => {
               renderActiveStudySession(document.getElementById("mainContent"));
-            }, 580); // slightly longer than the 0.55s CSS transition
+            }, 520); // slightly longer than the 0.55s CSS transition
           });
         }
         // Study Edit button — open Anki-style editor for current card
@@ -10522,6 +10556,8 @@
         const savedTempStudy = AppState.tempStudy;
         const focusData = t.focusData || { tabAwayCount: 0, idleSeconds: 0 };
         const sessionId = t.sessionId;
+        // Save subjects snapshot BEFORE clearing so local KS delta can compute
+        const _savedSubjects = AppState.subjects ? [...AppState.subjects] : [];
         // Clear session state immediately — no blocking loading screen
         AppState.tempStudy = null;
         AppState.subjects = null;
@@ -10530,7 +10566,7 @@
         // Uses the exact same stage weights as the server so the estimate is
         // accurate. Overwritten with the real server value when API responds.
         function _computeLocalKsDelta(stageTransitions, subjectId) {
-          const subj = (AppState.subjects || []).find(function(s) { return s.id === subjectId; });
+          const subj = (_savedSubjects || AppState.subjects || []).find(function(s) { return s.id === subjectId; });
           if (!subj) return null;
           const totalCards = subj.total_cards ||
             (subj.decks || []).reduce(function(n, d) { return n + (d.card_count || d.total_cards || 0); }, 0);
@@ -10556,9 +10592,12 @@
           durationSeconds: savedTempStudy?.startTime ? Math.round((Date.now() - savedTempStudy.startTime) / 1000) : 0,
         };
         renderSessionEnd(placeholderResult, savedTempStudy);
-        // Save in background — update screen if result adds new data
+        // Save in background — use pre-fired promise (pre-mark pattern) if available,
+        // otherwise fire now. Either way result updates the screen when ready.
         try {
-          const result = await api.endStudySession(sessionId, focusData);
+          // Use pre-fired result if available; if it was null (network failure), retry once
+          let result = savedTempStudy?._sessionEndPromise ? await savedTempStudy._sessionEndPromise : null;
+          if (!result) result = await api.endStudySession(sessionId, focusData);
           if (savedTempStudy?.isReturnSession && savedTempStudy?.subjectId) {
             AppState.returnZoneSubjectId = savedTempStudy.subjectId;
           }
@@ -11182,7 +11221,7 @@
                 var _totalQ=e.questions.length, _answeredQ=Object.keys(e.answers).length, _unanswered=_totalQ-_answeredQ;
                 var _label=_unanswered>0?'Submit Exam ('+_unanswered+' unanswered)':'Submit Exam';
                 var _warn=_unanswered>0?' style="background:linear-gradient(135deg,var(--green-bright),#22a06b);box-shadow:0 0 0 2px #f59e0b55;"':'';
-                return '<button class="btn btn-primary btn-lg" id="submitExamBtn"'+_warn+'>'+_label+'</button>';
+                return '<button class="btn btn-primary" id="submitExamBtn" style="padding:10px 20px;font-size:var(--text-base);font-weight:600;"'+_warn+'>'+_label+'</button>';
               })()
               : '<button class="btn btn-secondary btn-sm" id="nextQBtn">Next &rarr;</button>'
           }
@@ -11218,13 +11257,15 @@
             });
           });
           // Flag button
-          document.getElementById("flagBtn").addEventListener("click", () => {
+          const flagBtn = document.getElementById("flagBtn");
+          if (flagBtn) flagBtn.addEventListener("click", () => {
             if (e.flagged.has(q.id)) e.flagged.delete(q.id);
             else e.flagged.add(q.id);
             renderExam();
           });
           // Navigation
-          document.getElementById("prevQBtn").addEventListener("click", () => {
+          const _prevBtn = document.getElementById("prevQBtn");
+          if (_prevBtn) _prevBtn.addEventListener("click", () => {
             if (e.currentIndex > 0) {
               e.currentIndex--;
               renderExam();
@@ -11594,7 +11635,7 @@
           <button class="btn btn-primary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
           <button class="btn btn-secondary" onclick="navigateTo('exam-config')">New Exam</button>
           ${e.examId && !isReckoning ? `<button class="btn btn-secondary" id="retryDeckBtn" onclick="createRetryDeckFromExam()">&#x1F504; Create Retry Deck</button>` : ''}
-          ${e.examId ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--text-3);" onclick="(function(){ var _rt=document.querySelector('[data-tab=review]'); if(_rt) _rt.click(); else{ var _tabs=document.querySelectorAll('.kiwi-tab'); _tabs.forEach(function(t){ if(t.textContent.trim().toLowerCase().includes('review')) t.click(); }); } })()">&#x1F4CB; Review Answers</button>` : ''}
+          ${e.examId ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--text-3);" onclick="switchExamTab('review')">&#x1F4CB; Review Answers</button>` : ''}
         </div>
       </div>
     `;
@@ -13494,11 +13535,11 @@
 
       async function renderChronicle() {
         const main = document.getElementById("mainContent");
-        // 16-C FIX: skip network call if cached
-        const _cachedChronicle = AppState.chronicle;
+        // Always bust cache so Chronicle shows latest session data, not stale entries
+        AppState.chronicle = null;
         renderLoadingState(main, "Loading the Chronicle...");
         try {
-          const rawChronicleData = _cachedChronicle ? _cachedChronicle.entries : await api.getChronicle();
+          const rawChronicleData = await api.getChronicle();
           // P6.6 FIX: Backend returns array directly, not { entries: [...] }.
           // Handle both shapes defensively.
           const chronicleEntries = Array.isArray(rawChronicleData)
@@ -14618,6 +14659,15 @@
                     </div>
 
                     <div id="lib-expand-${escapeHTML(subj.id)}" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+                      <!-- Action buttons FIRST, before cards -->
+                      <div style="display:flex;gap:6px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:10px;">
+                        <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--green-bright);" onclick="handleRenameSubject('${escapeHTML(subj.id)}','${escapeHTML(safeDisplayName(subj.name))}')" title="Rename subject"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg> Rename</button>
+                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" data-publish-deck="${escapeHTML(subj.decks[0].id)}" data-publish-name="${escapeHTML(subj.name)}" style="font-size:var(--text-xs);">↑ Publish Deck</button>` : ''}
+                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMergeDecksModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg> Merge Decks</button>` : ''}
+                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMoveCardsModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg> Move Cards</button>` : ''}
+                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);" onclick="showReassignDeckModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg> Move Deck</button>` : ''}
+                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm lib-reset-deck-btn" data-deck-id="${escapeHTML(subj.decks[0].id)}" data-subj-name="${escapeHTML(safeDisplayName(subj.name))}" style="font-size:var(--text-xs);color:var(--amber);" title="Reset all cards in this deck back to SEEDLING"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Reset Deck</button>` : ''}
+                      </div>
                       ${(subj.recentCards || []).length === 0
                         ? '<div style="text-align:center;padding:16px;color:var(--text-3);font-size:var(--text-sm);">No cards yet — add some to get started.</div>'
                         : `<div class="deck-grid">${(subj.recentCards || []).map(function(c) {
@@ -14658,14 +14708,6 @@
                           <button class="btn btn-ghost btn-sm" style="font-size:var(--text-sm);color:var(--green-bright);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> View all ${cardCount} cards →</button>
                         </div>
                       ` : ''}
-                      <div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);margin-top:8px;">
-                        <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--green-bright);" onclick="handleRenameSubject('${escapeHTML(subj.id)}','${escapeHTML(safeDisplayName(subj.name))}')" title="Rename subject"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg> Rename</button>
-                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" data-publish-deck="${escapeHTML(subj.decks[0].id)}" data-publish-name="${escapeHTML(subj.name)}" style="font-size:var(--text-xs);">↑ Publish Deck</button>` : ''}
-                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMergeDecksModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name};})). replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg> Merge Decks</button>` : ''}
-                        ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMoveCardsModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg> Move Cards</button>` : ''}
-                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);" onclick="showReassignDeckModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg> Move Deck</button>` : ''}
-                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm lib-reset-deck-btn" data-deck-id="${escapeHTML(subj.decks[0].id)}" data-subj-name="${escapeHTML(safeDisplayName(subj.name))}" style="font-size:var(--text-xs);color:var(--amber);" title="Reset all cards in this deck back to SEEDLING"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Reset Deck</button>` : ''}
-                      </div>
                       ${(subj.decks && subj.decks.length > 0) ? `
                       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
                         <div style="font-size:var(--text-xs);color:var(--text-4);margin-bottom:6px;letter-spacing:0.05em;text-transform:uppercase;">Decks</div>
@@ -15790,7 +15832,7 @@
               — or type a name to auto-create a new subject &amp; deck —
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
-              <input class="input" id="newSubjectNameInput" placeholder="e.g. Anatomy, Biochemistry, GST101..." style="flex:1;" autocomplete="off" />
+              <input class="input" id="newSubjectNameInput" type="search" placeholder="e.g. Anatomy, Biochemistry, GST101..." style="flex:1;" autocomplete="new-password" name="kiwi-new-subject" />
               <button class="btn btn-secondary btn-sm" id="createSubjectDeckBtn" style="white-space:nowrap;flex-shrink:0;">＋ Create &amp; Use</button>
             </div>
             <div id="autoCreateConfirmBanner" style="display:none;margin-top:10px;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
@@ -18193,5 +18235,24 @@
         });
       });
     </script>
+  <script>
+    (function removeVercelToolbar() {
+      var selectors = [
+        'vercel-live-feedback',
+        '[id^="vercel-"]',
+        '[class*="vercel-toolbar"]',
+        'nextjs-portal',
+        '#__vercel-toolbar',
+      ];
+      function sweep() {
+        selectors.forEach(function(sel) {
+          try { document.querySelectorAll(sel).forEach(function(el) { el.remove(); }); } catch(_) {}
+        });
+      }
+      sweep();
+      document.addEventListener('DOMContentLoaded', sweep);
+      new MutationObserver(sweep).observe(document.documentElement, { childList: true, subtree: true });
+    })();
+  </script>
   </body>
 </html>
