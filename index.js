@@ -1193,6 +1193,16 @@ async findByUser(userId) {
   const { rows } = await query('SELECT * FROM card_states WHERE user_id = $1', [userId]);
   return rows;
 },
+// BUG-08 FIX: findByCards was called by batchInitializeSeedlingStates but never defined
+// Queries only the relevant card states instead of loading all states for the user
+async findByCards(userId, cardIds) {
+  if (!cardIds || cardIds.length === 0) return [];
+  const { rows } = await query(
+    'SELECT * FROM card_states WHERE user_id = $1 AND card_id = ANY($2::text[])',
+    [userId, cardIds]
+  );
+  return rows;
+},
 async findBySubject(userId, subjectId) {
   const decks = await db.decks.findBySubject(userId, subjectId);
   const deckIds = decks.map((d) => d.id);
