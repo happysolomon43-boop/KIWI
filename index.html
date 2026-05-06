@@ -6841,10 +6841,10 @@
 
       api.generateChronicle = async (force = false) => {
         // Backend: POST /narrative/chronicle/generate
+        // NOTE: apiRequest already JSON.stringifies options.body — do NOT pre-stringify here
         return await apiRequest("/narrative/chronicle/generate", {
           method: "POST",
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ force }),
+          body: { force },
         });
       };
       api.resetSubject = async (subjectId) => apiRequest('/subjects/' + subjectId + '/reset', { method: 'POST' });
@@ -6903,6 +6903,12 @@
           }));
         }
         return data;
+      };
+
+      api.getSessionHistory = async (limit = 20) => {
+        // Backend: GET /study/history — recent completed sessions
+        const data = await apiRequest(`/study/history?limit=${limit}`);
+        return data.sessions || data || [];
       };
 
       api.getTroubleCards = async () => {
@@ -9550,7 +9556,11 @@
             <label class="input-label">Select Subject</label>
             <select class="input" id="studySubject">
               <option value="">Choose a subject...</option>
-              ${(AppState.subjects || []).map((s) => `<option value="${s.id}">${escapeHTML(s.name)} (${s.cardCount || s.total_cards || s.card_count || 0} cards)</option>`).join("")}
+              ${(AppState.subjects || []).map((s) => {
+                const due = s.dueCount || 0;
+                const total = s.cardCount || s.total_cards || s.card_count || 0;
+                return `<option value="${s.id}">${escapeHTML(s.name)} (${due} due · ${total} total)</option>`;
+              }).join("")}
             </select>
           </div>
           <div class="input-group" style="margin-bottom:16px;">
@@ -10445,7 +10455,7 @@
           if (result.new_almanac_unlocks && result.new_almanac_unlocks.length > 0) {
             showToast('A new entry has appeared in your Almanac.', 'success', 6000);
           }
-          // Re-render session end with real XP/KS data from server
+          // Re-render with real data — renderSessionEnd updates stats in-place if screen already shown
           if (AppState.currentPage === 'study') {
             renderSessionEnd(result, savedTempStudy);
           }
@@ -10465,35 +10475,56 @@
           seedOutcome === "fruiting" ||
           (ts && getSeedStage(ts.seedHealth || 0).stage === "fruiting");
         if (reachedFruiting && result) result.seedOutcome = "fruiting";
+
+        // If session-end screen is already rendered, update stat values in-place
+        // to avoid a jarring full page re-render (fixes the double-flash bug)
+        if (main.querySelector('[data-session-end]')) {
+          const _set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+          const _setHTML = (id, val) => { const el = document.getElementById(id); if (el) el.innerHTML = val; };
+          _set('se-cards', cardsReviewed || 0);
+          _set('se-xp', xpGained || 0);
+          const ksDeltaEl = document.getElementById('se-ks');
+          if (ksDeltaEl) {
+            ksDeltaEl.textContent = (ksDelta > 0 ? '+' : '') + Math.round(ksDelta || 0);
+            ksDeltaEl.style.color = (ksDelta || 0) >= 0 ? 'var(--green-bright)' : 'var(--red-bright)';
+          }
+          _set('se-seed', seedOutcome || 'survived');
+          const durEl = document.getElementById('se-duration');
+          if (durEl) durEl.textContent = durationSeconds ? (Math.floor(durationSeconds / 60) + 'm ' + (durationSeconds % 60) + 's') : '—';
+          const subEl = document.getElementById('se-subtitle');
+          if (subEl) subEl.textContent = (cardsReviewed || 0) + ' cards reviewed · ' + (xpGained || 0) + ' XP earned';
+          return;
+        }
+
         main.innerHTML = `
-    <div class="page-wrap page-enter" style="text-align:center;padding:60px 20px;">
+    <div class="page-wrap page-enter" style="text-align:center;padding:60px 20px;" data-session-end="1">
       <!-- P6 FIX: Emoji selector updated to current 6-stage FOCUS_STAGES names -->
       <div style="font-size:var(--text-3xl);margin-bottom:var(--space-4);">${seedOutcome === "fruiting" ? "\uD83E\uDD5D" : seedOutcome === "glowing" ? "\u2728" : seedOutcome === "thriving" ? "\uD83C\uDF3F" : seedOutcome === "growing" ? "\uD83C\uDF31" : seedOutcome === "waking" ? "\uD83C\uDF30" : "\uD83D\uDCA4"}</div>
       <div style="font-family:var(--font-display);font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;">Session Complete</div>
-      <div style="font-size:var(--text-lg);color:var(--text-2);margin-bottom:32px;">
+      <div id="se-subtitle" style="font-size:var(--text-lg);color:var(--text-2);margin-bottom:32px;">
         ${cardsReviewed || 0} cards reviewed &middot; ${xpGained || 0} XP earned
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;max-width:600px;margin:0 auto 32px;">
         <div class="stat-card">
           <div class="stat-label">Cards Reviewed</div>
-          <div class="stat-value">${cardsReviewed || 0}</div>
+          <div class="stat-value" id="se-cards">${cardsReviewed || 0}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">KS Change</div>
-          <div class="stat-value" style="color:${(ksDelta || 0) >= 0 ? "var(--green-bright)" : "var(--red-bright)"}">${ksDelta > 0 ? "+" : ""}${Math.round(ksDelta || 0)}</div>
+          <div class="stat-value" id="se-ks" style="color:${(ksDelta || 0) >= 0 ? "var(--green-bright)" : "var(--red-bright)"}">${ksDelta > 0 ? "+" : ""}${Math.round(ksDelta || 0)}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">XP Earned</div>
-          <div class="stat-value" style="color:var(--gold)">${xpGained || 0}</div>
+          <div class="stat-value" style="color:var(--gold)" id="se-xp">${xpGained || 0}</div>
         </div>
         <!-- P6b FIX: Session Time stat card — required by spec P4.6 -->
         <div class="stat-card">
           <div class="stat-label">Session Time</div>
-          <div class="stat-value">${durationSeconds ? (Math.floor(durationSeconds / 60) + 'm ' + (durationSeconds % 60) + 's') : '—'}</div>
+          <div class="stat-value" id="se-duration">${durationSeconds ? (Math.floor(durationSeconds / 60) + 'm ' + (durationSeconds % 60) + 's') : '—'}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Seed Outcome</div>
-          <div class="stat-value" style="font-size:var(--text-2xl);text-transform:capitalize;color:var(--green-bright)">${seedOutcome || "survived"}</div>
+          <div class="stat-value" id="se-seed" style="font-size:var(--text-2xl);text-transform:capitalize;color:var(--green-bright)">${seedOutcome || "survived"}</div>
         </div>
       </div>
       ${
@@ -13492,16 +13523,19 @@
         renderLoadingState(main, "Loading progress...");
         try {
           // Fetch aggregate + dedicated endpoints in parallel
-          const [data, dedicatedTroubleCards, dedicatedAccuracyTrend, heatmapData, examsData] =
+          const [data, dedicatedTroubleCards, dedicatedAccuracyTrend, heatmapData, examsData, sessionHistoryData] =
             await Promise.all([
               api.getProgress(),
               api.getTroubleCards().catch(function() { return null; }),
               api.getAccuracyTrend().catch(function() { return null; }),
               api.getReviewHeatmap(365).catch(function() { return {}; }),
-              api.getExams(1, 10).catch(function() { return []; })
+              api.getExams(1, 10).catch(function() { return []; }),
+              api.getSessionHistory(20).catch(function() { return []; })
             ]);
           AppState.progress = data;
-          const { overallKS, subjectBreakdown, sessionHistory } = data;
+          const { overallKS, subjectBreakdown } = data;
+          // Use dedicated session history endpoint — backend /progress always returns []
+          const sessionHistory = sessionHistoryData.length > 0 ? sessionHistoryData : (data.sessionHistory || []);
           // Prefer dedicated endpoint results; fall back to aggregate
           const troubleCards    = (dedicatedTroubleCards && (Array.isArray(dedicatedTroubleCards)
             ? dedicatedTroubleCards

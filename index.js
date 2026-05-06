@@ -11272,7 +11272,7 @@ try {
   // Reset all card scheduling fields in one SQL pass
   await query(
     `UPDATE cards SET stage = 1, review_count = 0,
-     next_review_at = NULL, last_reviewed_at = NULL,
+     next_review_at = NOW(), last_reviewed_at = NULL,
      updated_at = NOW()
      WHERE deck_id = $1 AND user_id = $2`,
     [deckId, userId]
@@ -11312,7 +11312,7 @@ try {
   // Reset all cards in one pass
   await query(
     `UPDATE cards SET stage = 1, review_count = 0,
-     next_review_at = NULL, last_reviewed_at = NULL,
+     next_review_at = NOW(), last_reviewed_at = NULL,
      updated_at = NOW()
      WHERE deck_id = ANY($1) AND user_id = $2`,
     [deckIds, userId]
@@ -12129,9 +12129,9 @@ const subjectDecks = await db.decks.findBySubject(req.user.id, subject_id);
 deckIds = subjectDecks.map((d) => d.id);
 }
 let allCards = [];
-for (const id of deckIds) {
-const cards = await db.cards.findByDeck(req.user.id, id);
-allCards.push(...cards);
+// PERF: single bulk query for all decks instead of N parallel queries
+if (deckIds.length > 0) {
+  allCards = await db.cards.findByDeckIds(req.user.id, deckIds).catch(() => []);
 }
 // FIX-A: If card_ids provided, scope session to those specific cards only.
 // Used by review_specific_cards invitation action_type.
@@ -12699,6 +12699,41 @@ res.status(500).json({ error: 'Failed to fetch stats' });
 }
 });
 
+// ── GET /study/history — recent completed sessions for Progress view ──────────
+studyRouter.get('/history', async (req, res) => {
+try {
+const limit = Math.min(parseInt(req.query.limit || '20', 10), 50);
+const result = await db.sessions.findMany(
+  req.user.id,
+  { session_completed: true },
+  { limit }
+);
+const sessions = result.sessions || [];
+// Build deck→subject map in one query
+const subjects = await db.subjects.findManyWithDecks(req.user.id).catch(() => []);
+const deckSubjectMap = new Map();
+subjects.forEach(s => (s.decks || []).forEach(d => deckSubjectMap.set(d.id, { subjectId: s.id, subjectName: s.name })));
+const history = sessions.map(s => {
+  const deckInfo = deckSubjectMap.get(s.deck_id) || {};
+  return {
+    id: s.id,
+    type: 'Study',
+    subjectName: deckInfo.subjectName || 'General',
+    subjectId: deckInfo.subjectId || null,
+    date: s.started_at || s.created_at,
+    cardsReviewed: s.cards_reviewed || 0,
+    ksDelta: 0, // Not stored per-session; omit for now
+    duration: s.duration_seconds || 0,
+    xpEarned: s.xp_earned || 0,
+    seedOutcome: s.focus_seed_stage || 'Dormant',
+  };
+});
+res.json({ sessions: history });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch session history', details: e.message });
+}
+});
+
 studyRouter.get('/review-heatmap', async (req, res) => {
 try {
 // Support ?days=N param; default 365 for full GitHub-style yearly view
@@ -13229,6 +13264,8 @@ const preKsScore = preKs.score || 0;
 let correct = 0,
 total = exam.questions.length;
 const questionResults = [];
+// PERF: score all questions synchronously first (no DB), then batch-write in parallel
+const _dbUpdatePromises = [];
 for (const q of exam.questions) {
 const answer = answers.find((a) => (a.question_number ?? a.questionId) === q.question_number);
 const selectedOption = answer ? (answer.selected_option ?? answer.selectedOptionId) : null;
@@ -13245,13 +13282,16 @@ correct: isCorrect,
 correct_answer: q.correct_answer,
 });
 if (answer) {
-await db.examQuestions.update(req.user.id, q.id, {
+// Queue DB write — don't await inside loop
+_dbUpdatePromises.push(db.examQuestions.update(req.user.id, q.id, {
 selected_option: selectedOption,
 is_correct: isCorrect,
 time_spent_seconds: answer.time_spent_seconds || 0,
-});
+}).catch(e => console.error('[KIWI] examQuestion update failed:', e.message)));
 }
 }
+// Write all question results in parallel
+await Promise.all(_dbUpdatePromises);
 const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
 const now = new Date();
 const durationSec = exam.started_at ? Math.floor((now - new Date(exam.started_at)) / 1000) : 0;
@@ -15250,7 +15290,7 @@ overallKS: globalKS.score,
 subjectBreakdown,
 troubleCards,
 accuracyTrend,
-sessionHistory: [], // Available via /study/stats
+sessionHistory: [], // Fetched separately — see /study/history below
 });
 } catch (e) {
 res.status(500).json({ error: 'Failed to load progress', details: e.message });
@@ -15564,75 +15604,89 @@ libraryRouter.use(reckoningLockout);
 libraryRouter.get('/', async (req, res) => {
 try {
 const subjects = await db.subjects.findManyWithDecks(req.user.id);
-const enriched = await Promise.all(
-subjects.map(async (s) => {
-// Run KS computation and all deck card fetches in parallel
-const [ks, ...deckCardArrays] = await Promise.all([
-computeKnowledgeScore(req.user.id, s.id).catch(() => ({ score: 0 })),
-...(s.decks || []).map(d => db.cards.findByDeck(req.user.id, d.id).catch(() => [])),
+// PERF: fetch ALL card states AND all cards for this user ONCE
+// Eliminates N full-table scans (one per subject via batchInitializeSeedlingStates + computeKnowledgeScore)
+const [_allUserStates, _allUserCards] = await Promise.all([
+  db.cardStates.findByUser(req.user.id).catch(() => []),
+  db.cards.findAllForUser(req.user.id).catch(() => []),
 ]);
-let allCards = deckCardArrays.flat();
-// stageDistribution
-const stageDistribution = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-allCards.forEach((c) => {
-stageDistribution[c.stage || 0] = (stageDistribution[c.stage || 0] || 0) + 1;
+const _allStatesMap = new Map(_allUserStates.map(s => [s.card_id, s]));
+const _allCardsMap = new Map(_allUserCards.map(c => [c.id, c]));
+// Build deck→cards map for quick per-subject lookup
+const _deckCardsMap = new Map();
+_allUserCards.forEach(c => {
+  if (!_deckCardsMap.has(c.deck_id)) _deckCardsMap.set(c.deck_id, []);
+  _deckCardsMap.get(c.deck_id).push(c);
 });
-// dueCount — use isCardDue (checks next_review_at correctly)
-// BUG-FIX: previous code used c.due which doesn't exist → ALL cards appeared due
-const _libNow = new Date();
-const dueCount = allCards.filter((c) => isCardDue(c, _libNow)).length;
-// Fetch card states for ALL cards — used for stateDistribution bar + recentCards badges
-const _libAllCardIds = allCards.map(c => c.id);
-const _libAllStatesList = _libAllCardIds.length > 0
-  ? await batchInitializeSeedlingStates(req.user.id, _libAllCardIds).catch(() => [])
-  : [];
-const _libStatesMap = new Map(_libAllStatesList.map(s => [s.card_id, s]));
-// Compute per-state card counts for the stacked pill distribution chart
-const stateDistribution = {};
-for (const _ls of _libAllStatesList) {
-  const _lsSt = _ls.state || 'SEEDLING';
-  stateDistribution[_lsSt] = (stateDistribution[_lsSt] || 0) + 1;
+
+// Inline KS computation using pre-loaded data — avoids per-subject DB calls
+function _computeSubjectKS(subjectDecks) {
+  const allCards = subjectDecks.flatMap(d => _deckCardsMap.get(d.id) || []);
+  if (allCards.length === 0) return 0;
+  let sumW = 0;
+  for (const card of allCards) {
+    const st = _allStatesMap.get(card.id) || { state: 'SEEDLING', stage: 1, verified: false };
+    sumW += computeEffectiveWeight(st, card);
+  }
+  return parseFloat(Math.min(100, Math.max(0, (sumW / (allCards.length * 5)) * 100)).toFixed(2));
 }
-// recentCards (first 12) — include cardState and verified so frontend shows real state badges
-const recentCards = allCards.slice(0, 12).map((c) => {
-  const _st = _libStatesMap.get(c.id);
+
+const enriched = subjects.map((s) => {
+  const allCards = (s.decks || []).flatMap(d => _deckCardsMap.get(d.id) || []);
+  const ks = _computeSubjectKS(s.decks || []);
+  // stageDistribution
+  const stageDistribution = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  allCards.forEach((c) => {
+    stageDistribution[c.stage || 0] = (stageDistribution[c.stage || 0] || 0) + 1;
+  });
+  // dueCount
+  const _libNow = new Date();
+  const dueCount = allCards.filter((c) => isCardDue(c, _libNow)).length;
+  // stateDistribution
+  const stateDistribution = {};
+  for (const c of allCards) {
+    const _lsSt = (_allStatesMap.get(c.id)?.state) || 'SEEDLING';
+    stateDistribution[_lsSt] = (stateDistribution[_lsSt] || 0) + 1;
+  }
+  // recentCards (first 12)
+  const recentCards = allCards.slice(0, 12).map((c) => {
+    const _st = _allStatesMap.get(c.id);
+    return {
+      id: c.id,
+      front: c.front_content || c.front || '',
+      back: c.back_content || c.back || '',
+      stage: c.stage || 0,
+      isDue: !c.next_review_at || new Date(c.next_review_at) <= new Date(),
+      next_review_at: c.next_review_at || null,
+      reviewCount: c.review_count || c.reviewCount || 0,
+      cardState: _st?.state || 'SEEDLING',
+      verified: _st?.verified || false,
+    };
+  });
   return {
-    id: c.id,
-    front: c.front_content || c.front || '',
-    back: c.back_content || c.back || '',
-    stage: c.stage || 0,
-    isDue: !c.next_review_at || new Date(c.next_review_at) <= new Date(),
-    next_review_at: c.next_review_at || null,
-    reviewCount: c.review_count || c.reviewCount || 0,
-    cardState: _st?.state || 'SEEDLING',
-    verified: _st?.verified || false,
+    id: s.id,
+    name: s.name,
+    color_hex: s.color_hex,
+    color: s.color || s.color_hex,
+    emoji: s.emoji,
+    icon: s.icon || s.emoji,
+    exam_date: s.exam_date || null,
+    deck_count: s.deck_count || 0,
+    cardCount: s.total_cards || 0,
+    total_cards: s.total_cards || 0,
+    ks,
+    recentCards,
+    stageDistribution,
+    stateDistribution,
+    dueCount,
+    decks: (s.decks || []).map((d) => ({
+      id: d.id,
+      name: d.name,
+      card_count: d.card_count || 0,
+      subject_id: d.subject_id,
+    })),
   };
 });
-return {
-id: s.id,
-name: s.name,
-color_hex: s.color_hex,
-color: s.color || s.color_hex,
-emoji: s.emoji,
-icon: s.icon || s.emoji,
-exam_date: s.exam_date || null,
-deck_count: s.deck_count || 0,
-cardCount: s.total_cards || 0,
-total_cards: s.total_cards || 0,
-ks: ks.score,
-recentCards,
-stageDistribution,
-stateDistribution,
-dueCount,
-decks: (s.decks || []).map((d) => ({
-id: d.id,
-name: d.name,
-card_count: d.card_count || 0,
-subject_id: d.subject_id,
-})),
-};
-})
-);
 res.json({ subjects: enriched });
 } catch (e) {
 res.status(500).json({ error: 'Failed to load library', details: e.message });
