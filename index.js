@@ -38,9 +38,11 @@ const { WebSocketServer } = require('ws');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
   ssl: { rejectUnauthorized: false },
-  max: 10, // F-09 FIX: reduced from 25 — Supabase session-mode cap is ~15; leave headroom
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 8000,
+  max: 15, // Balanced for Supabase session-mode — headroom for concurrent requests
+  min: 2,  // Keep warm connections ready
+  idleTimeoutMillis: 20000,
+  connectionTimeoutMillis: 5000, // Fail fast rather than stall user
+  statement_timeout: 25000,      // Kill runaway queries
 });
 
 // Thin query wrapper — pool.query returns { rows, rowCount }
@@ -10431,7 +10433,18 @@ app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 // Serve frontend static files for single-domain deployment
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve frontend with aggressive caching for assets, no-cache for HTML
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  lastModified: true,
+  setHeaders: function(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  }
+}));
 // ── Additional requires for file parsing ────────────────────────────────────
 let pdfParse, mammoth, officeparser;
 try {
@@ -12804,7 +12817,7 @@ const history = sessions.map(s => {
     subjectId: deckInfo.subjectId || null,
     date: s.started_at || s.created_at,
     cardsReviewed: s.cards_reviewed || 0,
-    ksDelta: 0, // Not stored per-session; omit for now
+    ksDelta: s.ks_delta || 0,
     duration: s.duration_seconds || 0,
     xpEarned: s.xp_earned || 0,
     seedOutcome: s.focus_seed_stage || 'Dormant',
@@ -14770,6 +14783,15 @@ narrativeRouter.get('/chronicle', async (req, res) => {
 try {
 const entries = await db.chronicleEntries.findByUser(req.user.id);
 res.json(entries);
+// Auto-regenerate in background if latest entry is >24h old (stale data fix)
+// so next page load gets fresh Chronicle without user needing to click Generate.
+const latest = Array.isArray(entries) ? entries[0] : null;
+if (latest) {
+  const ageMs = Date.now() - new Date(latest.created_at || latest.updated_at || 0).getTime();
+  if (ageMs > 24 * 60 * 60 * 1000) {
+    generateWeeklyChronicle(req.user.id, false).catch(() => {}); // fire-and-forget
+  }
+}
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch chronicle' });
 }
