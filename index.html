@@ -5442,6 +5442,23 @@
       .gen-progress-step-lbl { font-size:9px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.05em;text-transform:uppercase;transition:color 0.4s; }
       .gen-progress-step.active .gen-progress-step-lbl { color:var(--green-bright); }
       .gen-progress-step.done .gen-progress-step-lbl { color:var(--text-2); }
+
+      /* ── Polish additions ── */
+      .lib-subj-card { transition: box-shadow 0.15s ease, transform 0.12s ease; }
+      .lib-subj-card:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,0,0,0.25); }
+      #libSearchInput:focus { border-color: var(--green-bright); box-shadow: 0 0 0 2px var(--green-bright)22; }
+      .exam-timer.danger { animation: pulse 1.2s ease-in-out infinite; }
+      .import-tab-btn { transition: all 0.12s ease; }
+      .lib-state-seg { transition: flex 0.3s ease; }
+      /* Cancel-gen button polish */
+      #cancelExamGenBtn { transition: color 0.15s ease, border-color 0.15s ease; }
+      #cancelExamGenBtn:hover { color: var(--red-bright) !important; border-color: var(--red-bright) !important; }
+      /* Submit button unanswered warning ring animation */
+      @keyframes warn-ring {
+        0%, 100% { box-shadow: 0 0 0 2px #f59e0b55; }
+        50%       { box-shadow: 0 0 0 4px #f59e0b88; }
+      }
+      #submitExamBtn[style*="warn"] { animation: warn-ring 1.5s ease-in-out infinite; }
 </style>
   </head>
   <body>
@@ -5798,6 +5815,35 @@
                       AppState.tempExam.result.debrief = debriefStr;
                   }
                 }
+              }
+            }
+            // BUG-09 FIX: receive enriched SRS/credential/KS data from background processing
+            if (msg.event === 'exam_result_ready') {
+              var _erd = msg.data || {};
+              if (AppState && AppState.tempExam && AppState.tempExam.result) {
+                var _r = AppState.tempExam.result;
+                if (_erd.verification != null) _r.verification = _erd.verification;
+                if (_erd.reclassified && _erd.reclassified.length > 0) _r.reclassified = _erd.reclassified;
+                if (_erd.credential != null) { _r.credential = _erd.credential; _r.credentialEarned = _erd.credentialEarned || false; _r.credentialName = (_erd.credential && (_erd.credential.name || _erd.credential.tier_name)) || _r.credentialName || ''; }
+                if (_erd.ksDelta != null) _r.ksDelta = _erd.ksDelta;
+                if (_erd.new_achievements && _erd.new_achievements.length > 0) _r.new_achievements = _erd.new_achievements;
+                if (_erd.new_almanac_unlocks && _erd.new_almanac_unlocks.length > 0) {
+                  _r.new_almanac_unlocks = _erd.new_almanac_unlocks;
+                  showToast('A new entry has appeared in your Almanac.', 'success', 6000);
+                }
+                if (_erd.regression_warning) _r.regression_warning = _erd.regression_warning;
+                AppState.tempExam.result = _r;
+                // Re-render results page if currently visible
+                if (AppState.currentPage === 'exam-results' || document.getElementById('examResultsPage')) {
+                  if (typeof renderExamResults === 'function') renderExamResults();
+                }
+                // Update KS delta display if element is visible
+                var _ksEl = document.getElementById('exam-ks-delta');
+                if (_ksEl && _erd.ksDelta != null) {
+                  _ksEl.textContent = (_erd.ksDelta > 0 ? '+' : '') + _erd.ksDelta.toFixed(1);
+                  _ksEl.style.color = _erd.ksDelta >= 0 ? 'var(--green-bright)' : 'var(--red-bright)';
+                }
+                if (_erd.credentialEarned) showToast('🎓 Credential earned!', 'success', 5000);
               }
             }
             if (msg.event === 'job_failed') {
@@ -6960,6 +7006,14 @@
       // Issue-055: Delete deck/subject (subject delete cascades on backend)
       // FIX: deleteDeck now correctly targets /decks/:id (was wrongly hitting /subjects/)
       api.deleteDeck = async (deckId) => apiRequest('/decks/' + deckId, { method: 'DELETE' });
+      // BUG-04B FIX: api.updateDeck — backend PUT /api/decks/:id already exists
+      api.updateDeck = async (deckId, updates) => apiRequest('/decks/' + deckId, { method: 'PUT', body: updates });
+      // BUG-09 progressive pre-marking: fire-and-forget per-question background processing
+      api.preMarkQuestion = async (examId, questionNumber, selectedOption) =>
+        apiRequest('/exams/' + examId + '/pre-mark', { method: 'POST', body: { question_number: questionNumber, selected_option: selectedOption } }).catch(() => null);
+      // Progressive KS flush: drain _ksQueue for the user every N cards
+      api.partialFlushKS = async () =>
+        apiRequest('/study/partial-flush', { method: 'POST' }).catch(() => null);
       // FIX: deleteSubject was never defined — added
       api.deleteSubject = async (subjectId) => apiRequest('/subjects/' + subjectId, { method: 'DELETE' });
       // FIX: createDeck was never defined — used by Quick Subject button and onboarding
@@ -9106,6 +9160,7 @@
 
       function _bustDashboardCache() {
         try { localStorage.removeItem(_DASH_CACHE_KEY); } catch (_) {}
+        AppState.dashboard = null;
       }
 
       // ── Paint dashboard: renders data into main (called from cache or network path) ──
@@ -9583,9 +9638,14 @@
         ${
           AppState.subjects.length === 0
             ? `
-        <div style="text-align:center;padding:40px 20px;">
-          <div style="font-size:48px;margin-bottom:12px;opacity:0.3;">&#x25A0;</div>
-          <div style="font-size:var(--text-lg);color:var(--text-3);">No subjects yet. <a onclick="navigateTo('library')" style="color:var(--green-bright);cursor:pointer;">Create your first deck</a>.</div>
+        <div class="empty-state" style="padding:40px 20px;">
+          <div class="empty-icon" style="font-size:40px;">📚</div>
+          <div class="empty-title">No Subjects Yet</div>
+          <div class="empty-sub">Create a subject and import cards to start studying.</div>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px;">
+            <button class="btn btn-primary btn-sm" onclick="navigateTo('library')">Open Library</button>
+            <button class="btn btn-secondary btn-sm" onclick="navigateTo('import')">Import Cards</button>
+          </div>
         </div>
         `
             : ""
@@ -9596,6 +9656,18 @@
           document.querySelectorAll("#stateFilters .filter-chip").forEach((chip) => {
             chip.addEventListener("click", () => chip.classList.toggle("active"));
           });
+          // Restore last-used study subject
+          try {
+            var _lastStudySubj = localStorage.getItem('kiwi_last_study_subject');
+            var _studySel = document.getElementById('studySubject');
+            if (_lastStudySubj && _studySel) {
+              var _sOpt = _studySel.querySelector('option[value="' + _lastStudySubj + '"]');
+              if (_sOpt) _studySel.value = _lastStudySubj;
+            }
+            if (_studySel) _studySel.addEventListener('change', function() {
+              try { localStorage.setItem('kiwi_last_study_subject', this.value); } catch(_) {}
+            });
+          } catch(_) {}
           document.getElementById("startStudyBtn").addEventListener("click", async () => {
             const subjectId = document.getElementById("studySubject").value;
             if (!subjectId) {
@@ -9614,7 +9686,7 @@
               // Guard: backend returned no due cards
               if (!session.cards || session.cards.length === 0) {
                 await renderStudySetup(container);
-                showToast("No cards are scheduled yet — try selecting a different subject or create more cards.", "info", 5000);
+                showToast("No cards are due yet. Your next cards will appear when it's time to review them.", "info", 5000);
                 return;
               }
               // Normalize session response: sessionId may be in session.sessionId or session.session.id
@@ -9665,12 +9737,18 @@
       function renderActiveStudySession(container) {
         const t = AppState.tempStudy;
         if (!t || !t.queue || t.queue.length === 0 || t.currentIndex >= t.queue.length) {
+          var _sessStats = AppState.tempStudy || {};
+          var _sessCardsReviewed = _sessStats.cardsReviewed || _sessStats.currentIndex || 0;
           container.innerHTML = `
-      <div class="page-wrap page-enter" style="text-align:center;padding:80px 20px;">
-        <div style="font-size:56px;margin-bottom:16px;"></div>
-        <div style="font-family:var(--font-display);font-size:var(--text-3xl);font-weight:700;color:var(--text);margin-bottom:8px;">Queue Complete</div>
-        <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:20px;">All cards reviewed for this session.</div>
-        <button class="btn btn-primary" onclick="endStudySession()">End Session</button>
+      <div class="page-wrap page-enter" style="text-align:center;padding:60px 20px;">
+        <div style="font-size:56px;margin-bottom:16px;">🌿</div>
+        <div style="font-family:var(--font-display);font-size:var(--text-3xl);font-weight:700;color:var(--green-bright);margin-bottom:8px;">Queue Complete</div>
+        <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:24px;">You reviewed ${_sessCardsReviewed > 0 ? _sessCardsReviewed + ' card' + (_sessCardsReviewed !== 1 ? 's' : '') : 'all cards'} this session.</div>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:16px;">
+          <button class="btn btn-primary" onclick="endStudySession()">Finish Session</button>
+          <button class="btn btn-secondary" onclick="navigateTo('library')">View Library</button>
+        </div>
+        <div style="font-size:var(--text-sm);color:var(--text-4);">Cards will resurface when they're due again based on your SRS schedule.</div>
       </div>
     `;
           return;
@@ -9990,6 +10068,10 @@
         t.reviews.push({ cardId: _reviewCardId, rating, timestamp: new Date().toISOString() });
         t.cardsReviewed++;
         t.aiSummary = null;
+        // Progressive KS flush: drain _ksQueue every 5 cards so session-end is fast
+        if (t.cardsReviewed % 5 === 0) {
+          api.partialFlushKS();
+        }
         // Advance index optimistically (Again: requeue; others: move forward)
         // We don't know requeue yet so default-advance; if API says requeue,
         // the background handler will splice the card to the end.
@@ -10399,12 +10481,16 @@
       }
 
             function showCustomConfirm(title, message, onConfirm) {
+        // BUG-04A FIX: deduplicate — remove any existing confirm modal first
+        document.querySelectorAll('.kiwi-custom-confirm').forEach(el => el.remove());
         const modal = document.createElement("div");
-        modal.className = "modal-overlay";
+        modal.className = "modal-overlay kiwi-custom-confirm";
         modal.innerHTML = `<div class="card" style="max-width:360px;margin:auto;text-align:center;"><div style="font-family:var(--font-display);font-size:var(--text-xl);margin-bottom:8px;">${escapeHTML(title)}</div><div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:16px;">${escapeHTML(message)}</div><div style="display:flex;gap:8px;justify-content:center;"><button class="btn btn-danger btn-sm" id="cc-cancel">Cancel</button><button class="btn btn-primary btn-sm" id="cc-confirm">Confirm</button></div></div>`;
         document.body.appendChild(modal);
         modal.querySelector("#cc-cancel").addEventListener("click", () => modal.remove());
         modal.querySelector("#cc-confirm").addEventListener("click", () => { modal.remove(); onConfirm(); });
+        // BUG-04A FIX: clicking backdrop dismisses the modal
+        modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
       }
       // P9.4-07 FIX: Move current card to end of queue (simple reorder mechanic).
       // If the card being skipped has state AVOIDED, record a suppression event.
@@ -10708,7 +10794,7 @@
         const main = document.getElementById("mainContent");
         renderLoadingState(main, "Loading exam configuration...");
         try {
-          if (AppState.subjects.length === 0) {
+          if (!AppState.subjects || AppState.subjects.length === 0) {
             const data = await api.getLibrary();
             AppState.subjects = data.subjects || [];
           }
@@ -10785,11 +10871,15 @@
           </button>
         </div>
         ${
-          AppState.subjects.length === 0
+          (!AppState.subjects || AppState.subjects.length === 0)
             ? `
         <div style="text-align:center;padding:40px 20px;">
           <div style="font-size:48px;margin-bottom:12px;opacity:0.3;">&#x270D;</div>
-          <div style="font-size:var(--text-lg);color:var(--text-3);">No subjects yet. <a onclick="navigateTo('library')" style="color:var(--green-bright);cursor:pointer;">Create your first deck</a>.</div>
+          <div style="font-size:var(--text-lg);color:var(--text-3);margin-bottom:14px;">No subjects yet — import some cards first.</div>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" onclick="navigateTo('library')">Open Library</button>
+            <button class="btn btn-secondary btn-sm" onclick="navigateTo('import')">Import Cards</button>
+          </div>
         </div>
         `
             : ""
@@ -10800,6 +10890,19 @@
         </div>
       </div>
     `;
+          // Restore last-selected exam subject
+          try {
+            var _lastExamSubj = localStorage.getItem('kiwi_last_exam_subject');
+            var _subjSel = document.getElementById('examSubject');
+            if (_lastExamSubj && _subjSel) {
+              var _opt = _subjSel.querySelector('option[value="' + _lastExamSubj + '"]');
+              if (_opt) _subjSel.value = _lastExamSubj;
+            }
+            // Save selection when changed
+            if (_subjSel) _subjSel.addEventListener('change', function() {
+              try { localStorage.setItem('kiwi_last_exam_subject', this.value); } catch(_) {}
+            });
+          } catch(_) {}
           document.querySelectorAll("#examFilters .filter-chip").forEach((chip) => {
             chip.addEventListener("click", () => chip.classList.toggle("active"));
           });
@@ -10888,6 +10991,7 @@
                       This takes 15–30 seconds. You can leave this page — we'll redirect you automatically when it's ready.
                     </div>
                     <div class="loading-dots" style="margin-top:var(--space-3);"><span></span><span></span><span></span></div>
+                    <button class="btn btn-ghost btn-sm" id="cancelExamGenBtn" style="margin-top:var(--space-4);font-size:var(--text-sm);color:var(--text-3);border-color:var(--border);" onclick="(function(){ if(typeof _hideGenBanner==='function') _hideGenBanner(); if(typeof navigateTo==='function') navigateTo('exam-config'); showToast('Generation cancelled.','info',3000); })()">✕ Cancel Generation</button>
                     <div class="gen-progress-wrap" id="examGenProgress" style="display:none">
                       <div class="gen-progress-track">
                         <div class="gen-progress-fill" id="examGenProgressFill"></div>
@@ -11020,7 +11124,7 @@
       <div class="exam-header">
         <div style="display:flex;align-items:center;gap:12px;">
           <button class="btn btn-ghost btn-icon" onclick="confirmEndExam()" title="Exit exam">&#x2715;</button>
-          <span style="font-size:var(--text-base);color:var(--text-3);font-family:var(--font-mono);">Q${e.currentIndex + 1}/${e.questions.length}</span>
+          <span style="font-size:var(--text-base);color:var(--text-3);font-family:var(--font-mono);">Q${e.currentIndex + 1}/${e.questions.length} <span style="font-size:var(--text-xs);opacity:0.6;">(${Object.keys(e.answers).length} done)</span></span>
         </div>
         <div class="exam-timer ${timerClass}" id="examTimer">${formatDuration(timeRemaining)}</div>
         <button class="btn btn-ghost btn-icon ${isFlagged ? "" : ""}" id="flagBtn" title="Flag for review">
@@ -11049,7 +11153,14 @@
           </div>
         </div>
         <!-- Navigation Dots -->
-        <div class="q-dots" style="margin-top:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;max-width:720px;width:100%;margin-top:16px;margin-bottom:4px;">
+          <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">${Object.keys(e.answers).length}/${e.questions.length} answered</span>
+          <span style="font-size:var(--text-xs);color:var(--text-4);">Keys: 1-4 select · ← → navigate · F flag · Esc exit</span>
+        </div>
+        <div style="width:100%;max-width:720px;height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden;margin-bottom:8px;">
+          <div style="height:100%;background:var(--green-bright);border-radius:2px;width:${Math.round(Object.keys(e.answers).length/e.questions.length*100)}%;transition:width 0.3s ease;"></div>
+        </div>
+        <div class="q-dots" style="margin-top:12px;">
           ${e.questions
             .map(
               (qq, i) => `
@@ -11067,7 +11178,12 @@
           <button class="btn btn-secondary btn-sm" id="prevQBtn" ${e.currentIndex === 0 ? "disabled" : ""}>&larr; Previous</button>
           ${
             e.currentIndex === e.questions.length - 1
-              ? '<button class="btn btn-primary btn-lg" id="submitExamBtn">Submit Exam</button>'
+              ? (function(){
+                var _totalQ=e.questions.length, _answeredQ=Object.keys(e.answers).length, _unanswered=_totalQ-_answeredQ;
+                var _label=_unanswered>0?'Submit Exam ('+_unanswered+' unanswered)':'Submit Exam';
+                var _warn=_unanswered>0?' style="background:linear-gradient(135deg,var(--green-bright),#22a06b);box-shadow:0 0 0 2px #f59e0b55;"':'';
+                return '<button class="btn btn-primary btn-lg" id="submitExamBtn"'+_warn+'>'+_label+'</button>';
+              })()
               : '<button class="btn btn-secondary btn-sm" id="nextQBtn">Next &rarr;</button>'
           }
         </div>
@@ -11094,6 +11210,11 @@
               // Update only the current question's dot instead of a full renderExam() call
               var _curDot = document.querySelector('.q-dot[data-qidx="' + e.currentIndex + '"]');
               if (_curDot) _curDot.classList.add('answered');
+              // BUG-09 progressive pre-marking: fire-and-forget background SRS processing
+              // so that the final submit response is near-instant.
+              if (e.examId && q.question_number != null) {
+                api.preMarkQuestion(e.examId, q.question_number, optionId);
+              }
             });
           });
           // Flag button
@@ -11177,6 +11298,12 @@
             e._warnedAt10 = true;
             const secs = Math.ceil(remaining);
             showToast(`Almost out of time — ${formatDuration(secs)} left! The exam will auto-submit when time expires.`, 'error', 8000);
+          }
+          // Polish: pulse animation in last 60 seconds
+          if (timerEl && remaining <= 60 && remaining > 0) {
+            timerEl.style.animation = 'pulse 0.8s ease-in-out infinite';
+          } else if (timerEl) {
+            timerEl.style.animation = '';
           }
           if (remaining <= 0) {
             clearInterval(e._timerInterval);
@@ -11396,7 +11523,7 @@
           </div>
           <div class="stat-card">
             <div class="stat-label">KS Change</div>
-            <div class="stat-value" style="color:${(ksDelta || 0) >= 0 ? "var(--green-bright)" : "var(--red-bright)"}">${ksDelta > 0 ? "+" : ""}${Math.round(ksDelta || 0)}</div>
+            <div class="stat-value" id="exam-ks-delta" style="color:${(ksDelta || 0) >= 0 ? "var(--green-bright)" : "var(--red-bright)"}">${ksDelta > 0 ? "+" : ""}${Math.round(ksDelta || 0)}</div>
           </div>
         </div>
         ${
@@ -11455,10 +11582,19 @@
         `
             : ""
         }
+        ${
+          e.result?.regression_warning
+            ? `<div class="card" style="max-width:600px;margin:0 auto 24px;text-align:left;border-color:#f59e0b44;background:rgba(245,158,11,0.05);">
+               <div style="font-size:var(--text-sm);color:#f59e0b;font-family:var(--font-mono);margin-bottom:8px;">⚠ Regression Warning</div>
+               <div style="font-size:var(--text-base);color:var(--text-2);line-height:1.6;">${escapeHTML(e.result.regression_warning)}</div>
+               </div>`
+            : ""
+        }
         <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
           <button class="btn btn-secondary" onclick="navigateTo('exam-config')">New Exam</button>
           ${e.examId && !isReckoning ? `<button class="btn btn-secondary" id="retryDeckBtn" onclick="createRetryDeckFromExam()">&#x1F504; Create Retry Deck</button>` : ''}
+          ${e.examId ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--text-3);" onclick="(function(){ var _rt=document.querySelector('[data-tab=review]'); if(_rt) _rt.click(); else{ var _tabs=document.querySelectorAll('.kiwi-tab'); _tabs.forEach(function(t){ if(t.textContent.trim().toLowerCase().includes('review')) t.click(); }); } })()">&#x1F4CB; Review Answers</button>` : ''}
         </div>
       </div>
     `;
@@ -14425,6 +14561,10 @@
                   <div class="empty-icon">▦</div>
                   <div class="empty-title">No Subjects Yet</div>
                   <div class="empty-sub">Create your first subject to start building your knowledge forest.</div>
+                  <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:20px;">
+                    <button class="btn btn-primary btn-sm" id="emptyAddSubjectBtn">+ Create Subject</button>
+                    <button class="btn btn-secondary btn-sm" onclick="navigateTo('import')">⬆ Import Cards</button>
+                  </div>
                 </div>
               ` : ''}
 
@@ -14533,6 +14673,9 @@
                             '<span style="font-size:var(--text-sm);color:var(--text-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHTML(dk.name || 'Deck') + '">' +
                             '<svg style="width:10px;height:10px;vertical-align:-1px;margin-right:5px;opacity:0.5;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><path d="M12 12v3"/></svg>' +
                             escapeHTML(dk.name || 'Default Deck') + ' <span style="color:var(--text-4);font-size:var(--text-xs);">(' + (dk.card_count || 0) + ' cards)</span></span>' +
+                            '<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);margin-left:8px;flex-shrink:0;" ' +
+                            'onclick="handleRenameDeck(\'' + escapeHTML(dk.id) + '\',\'' + escapeHTML(dk.name || 'Deck') + '\')" title="Rename deck">' +
+                            '<svg style="width:10px;height:10px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg> Rename</button>' +
                             '<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;margin-left:8px;flex-shrink:0;" ' +
                             'onclick="handleDeleteDeck(\'' + escapeHTML(dk.id) + '\',\'' + escapeHTML(dk.name || 'Deck') + '\',\'' + escapeHTML(safeDisplayName(subj.name)) + '\')">' +
                             '<svg style="width:10px;height:10px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Delete</button>' +
@@ -14559,6 +14702,10 @@
           `;
 
           document.getElementById("addDeckBtn").addEventListener("click", function() {
+            showCreateSubjectModal(subjects.length, function() { navigateTo("library"); });
+          });
+          var _emptyAddBtn = document.getElementById("emptyAddSubjectBtn");
+          if (_emptyAddBtn) _emptyAddBtn.addEventListener("click", function() {
             showCreateSubjectModal(subjects.length, function() { navigateTo("library"); });
           });
 
@@ -14901,8 +15048,8 @@
             <div class="page-wrap page-enter">
               <div class="section-header" style="margin-bottom:12px;">
                 <div>
-                  <button class="btn btn-ghost btn-sm" onclick="navigateTo('library')" style="margin-bottom:4px;">&#x2190; Library</button>
-                  <div class="section-title" style="margin-top:4px;">${escapeHTML(subjectName)}</div>
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;"><button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--text-3);padding:2px 7px;height:auto;" onclick="navigateTo('library')">&#x2190; Library</button><span style="color:var(--text-4);">/</span><span style="font-size:var(--text-xs);color:var(--text-3);">${escapeHTML(subjectName)}</span></div>
+                  <div class="section-title" style="margin-top:2px;">${escapeHTML(subjectName)}</div>
                   <div class="section-sub">${bs.total} cards total</div>
                 </div>
               </div>
@@ -15297,6 +15444,86 @@
         );
       }
 
+      // BUG-04B FIX: Rename subject via modal
+      function handleRenameSubject(subjectId, currentName) {
+        document.querySelectorAll('.kiwi-rename-modal').forEach(el => el.remove());
+        var modal = document.createElement('div');
+        modal.className = 'modal-overlay kiwi-rename-modal';
+        modal.innerHTML = '<div class="card" style="max-width:400px;width:100%;margin:auto;">' +
+          '<div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;margin-bottom:16px;">Rename Subject</div>' +
+          '<input class="input" id="renameSubjectInput" value="' + escapeHTML(currentName) + '" style="width:100%;margin-bottom:16px;" autocomplete="off" />' +
+          '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
+          '<button class="btn btn-ghost" id="renameSubjectCancel">Cancel</button>' +
+          '<button class="btn btn-primary" id="renameSubjectConfirm">Rename</button>' +
+          '</div></div>';
+        document.body.appendChild(modal);
+        var input = modal.querySelector('#renameSubjectInput');
+        input.focus(); input.select();
+        modal.querySelector('#renameSubjectCancel').addEventListener('click', function() { modal.remove(); });
+        modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+        modal.querySelector('#renameSubjectConfirm').addEventListener('click', async function() {
+          var newName = input.value.trim();
+          if (!newName) { showToast('Name cannot be empty', 'error'); return; }
+          if (newName === currentName) { modal.remove(); return; }
+          try {
+            await api.updateSubject(subjectId, { name: newName });
+            if (AppState.subjects) {
+              AppState.subjects = AppState.subjects.map(function(s) {
+                return s.id === subjectId ? Object.assign({}, s, { name: newName }) : s;
+              });
+            }
+            showToast('Subject renamed to "' + newName + '"', 'success');
+            modal.remove();
+            navigateTo('library');
+          } catch (err) { showToast(err.message || 'Rename failed', 'error'); }
+        });
+        input.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') modal.querySelector('#renameSubjectConfirm').click();
+          if (e.key === 'Escape') modal.remove();
+        });
+      }
+
+      // BUG-04B FIX: Rename deck via modal
+      function handleRenameDeck(deckId, currentName) {
+        document.querySelectorAll('.kiwi-rename-modal').forEach(el => el.remove());
+        var modal = document.createElement('div');
+        modal.className = 'modal-overlay kiwi-rename-modal';
+        modal.innerHTML = '<div class="card" style="max-width:400px;width:100%;margin:auto;">' +
+          '<div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;margin-bottom:16px;">Rename Deck</div>' +
+          '<input class="input" id="renameDeckInput" value="' + escapeHTML(currentName) + '" style="width:100%;margin-bottom:16px;" autocomplete="off" />' +
+          '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
+          '<button class="btn btn-ghost" id="renameDeckCancel">Cancel</button>' +
+          '<button class="btn btn-primary" id="renameDeckConfirm">Rename</button>' +
+          '</div></div>';
+        document.body.appendChild(modal);
+        var input = modal.querySelector('#renameDeckInput');
+        input.focus(); input.select();
+        modal.querySelector('#renameDeckCancel').addEventListener('click', function() { modal.remove(); });
+        modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+        modal.querySelector('#renameDeckConfirm').addEventListener('click', async function() {
+          var newName = input.value.trim();
+          if (!newName) { showToast('Name cannot be empty', 'error'); return; }
+          if (newName === currentName) { modal.remove(); return; }
+          try {
+            await api.updateDeck(deckId, { name: newName });
+            if (AppState.subjects) {
+              AppState.subjects = AppState.subjects.map(function(s) {
+                return Object.assign({}, s, { decks: (s.decks || []).map(function(d) {
+                  return d.id === deckId ? Object.assign({}, d, { name: newName }) : d;
+                })});
+              });
+            }
+            showToast('Deck renamed to "' + newName + '"', 'success');
+            modal.remove();
+            navigateTo('library');
+          } catch (err) { showToast(err.message || 'Rename failed', 'error'); }
+        });
+        input.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') modal.querySelector('#renameDeckConfirm').click();
+          if (e.key === 'Escape') modal.remove();
+        });
+      }
+
       // ── Swipe-to-delete helper ────────────────────────────────────────────────
       // Attach to any scrollable list container. Items matching itemSelector can
       // be swiped left to trigger deletion. getIdFn(el) returns the item's ID.
@@ -15478,9 +15705,12 @@
       function renderGeneratingCards() {
         const main = document.getElementById("mainContent");
         if (!main) return; // safety: DOM not ready
-        // GUARD: if we're already showing the generating screen (e.g. duplicate render call),
-        // do not overwrite it — just ensure the banner is visible.
-        if (main.querySelector('#cardGenScreen')) {
+        // BUG-01 FIX: Guard by subjectName comparison, not DOM existence.
+        // The old guard silently aborted on re-navigation (e.g. different subject),
+        // leaving the screen frozen on the previous job's subject name.
+        const _existing = main.querySelector('#cardGenScreen');
+        const _newSubject = (AppState.cardGenJob || {}).subjectName || '';
+        if (_existing && _existing.dataset.subjectName === _newSubject) {
           _showGenBanner('Generating cards…', '');
           return;
         }
@@ -15488,7 +15718,7 @@
         // Clear any stale localStorage banner so it doesn't fight with the page
         try { localStorage.removeItem('kiwi_gen_banner'); } catch(_) {}
         main.innerHTML = `
-<div class="page-wrap page-enter" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;text-align:center;padding:40px 20px;" id="cardGenScreen">
+<div class="page-wrap page-enter" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;text-align:center;padding:40px 20px;" id="cardGenScreen" data-subject-name="${escapeHTML(job.subjectName || '')}">
   <div style="font-size:72px;margin-bottom:24px;animation:pulse 2s infinite;">&#x1F4DA;</div>
   <div style="font-family:var(--font-display);font-size:28px;font-weight:800;color:var(--text);margin-bottom:8px;">Generating Cards</div>
   ${job.subjectName ? `<div style="font-size:var(--text-base);color:var(--teal);margin-bottom:4px;font-family:var(--font-mono);">${escapeHTML(job.subjectName)}</div>` : ''}
@@ -15526,7 +15756,7 @@
       async function renderImport() {
         const main = document.getElementById("mainContent");
         try {
-          if (AppState.subjects.length === 0) {
+          if (!AppState.subjects || AppState.subjects.length === 0) {
             const data = await api.getLibrary();
             AppState.subjects = data.subjects || [];
           }
@@ -15559,7 +15789,7 @@
               — or type a name to auto-create a new subject &amp; deck —
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
-              <input class="input" id="newSubjectNameInput" placeholder="e.g. Anatomy, Biochemistry, GST101..." style="flex:1;" />
+              <input class="input" id="newSubjectNameInput" placeholder="e.g. Anatomy, Biochemistry, GST101..." style="flex:1;" autocomplete="off" />
               <button class="btn btn-secondary btn-sm" id="createSubjectDeckBtn" style="white-space:nowrap;flex-shrink:0;">＋ Create &amp; Use</button>
             </div>
             <div id="autoCreateConfirmBanner" style="display:none;margin-top:10px;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
@@ -15674,6 +15904,14 @@
               <input type="file" class="input" id="imageFileInput" accept="image/*" style="padding:8px;" />
             </div>
             <button class="btn btn-primary" id="imageImportBtn">Extract Cards from Image</button>
+            <div id="imageConfirm" style="display:none;margin-top:12px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
+              <div style="font-weight:600;color:var(--green-bright);font-size:var(--text-sm);margin-bottom:5px;">&#x2714; Confirm generation</div>
+              <div style="font-size:var(--text-sm);color:var(--text-2);margin-bottom:10px;" id="imageConfirmMsg"></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary btn-sm" id="imageConfirmBtn">&#x2713; Yes, extract cards</button>
+                <button class="btn btn-ghost btn-sm" id="imageCancelBtn">&#x2717; Cancel</button>
+              </div>
+            </div>
             <div id="imageResult" style="margin-top:10px;font-size:var(--text-base);"></div>
           </div>
         </div>
@@ -15719,6 +15957,14 @@
               <input class="input" id="pdfSubjectHint" placeholder="e.g. Organic Chemistry" />
             </div>
             <button class="btn btn-primary" id="pdfImportBtn">Generate Cards from PDF</button>
+            <div id="pdfConfirm" style="display:none;margin-top:12px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
+              <div style="font-weight:600;color:var(--green-bright);font-size:var(--text-sm);margin-bottom:5px;">&#x2714; Confirm generation</div>
+              <div style="font-size:var(--text-sm);color:var(--text-2);margin-bottom:10px;" id="pdfConfirmMsg"></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary btn-sm" id="pdfConfirmBtn">&#x2713; Yes, generate cards</button>
+                <button class="btn btn-ghost btn-sm" id="pdfCancelBtn">&#x2717; Cancel</button>
+              </div>
+            </div>
             <div id="pdfResult" style="margin-top:10px;font-size:var(--text-base);"></div>
           </div>
         </div>
@@ -15736,6 +15982,14 @@
               <input class="input" id="docxSubjectHint" placeholder="e.g. Biochemistry" />
             </div>
             <button class="btn btn-primary" id="docxImportBtn">Generate Cards from DOCX</button>
+            <div id="docxConfirm" style="display:none;margin-top:12px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
+              <div style="font-weight:600;color:var(--green-bright);font-size:var(--text-sm);margin-bottom:5px;">&#x2714; Confirm generation</div>
+              <div style="font-size:var(--text-sm);color:var(--text-2);margin-bottom:10px;" id="docxConfirmMsg"></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary btn-sm" id="docxConfirmBtn">&#x2713; Yes, generate cards</button>
+                <button class="btn btn-ghost btn-sm" id="docxCancelBtn">&#x2717; Cancel</button>
+              </div>
+            </div>
             <div id="docxResult" style="margin-top:10px;font-size:var(--text-base);"></div>
           </div>
         </div>
@@ -15753,6 +16007,14 @@
               <input class="input" id="txtSubjectHint" placeholder="e.g. Physiology" />
             </div>
             <button class="btn btn-primary" id="txtImportBtn">Generate Cards from TXT</button>
+            <div id="txtConfirm" style="display:none;margin-top:12px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
+              <div style="font-weight:600;color:var(--green-bright);font-size:var(--text-sm);margin-bottom:5px;">&#x2714; Confirm generation</div>
+              <div style="font-size:var(--text-sm);color:var(--text-2);margin-bottom:10px;" id="txtConfirmMsg"></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary btn-sm" id="txtConfirmBtn">&#x2713; Yes, generate cards</button>
+                <button class="btn btn-ghost btn-sm" id="txtCancelBtn">&#x2717; Cancel</button>
+              </div>
+            </div>
             <div id="txtResult" style="margin-top:10px;font-size:var(--text-base);"></div>
           </div>
         </div>
@@ -15770,6 +16032,14 @@
               <input class="input" id="mdSubjectHint" placeholder="e.g. Biochemistry" />
             </div>
             <button class="btn btn-primary" id="mdImportBtn">Generate Cards from Markdown</button>
+            <div id="mdConfirm" style="display:none;margin-top:12px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
+              <div style="font-weight:600;color:var(--green-bright);font-size:var(--text-sm);margin-bottom:5px;">&#x2714; Confirm generation</div>
+              <div style="font-size:var(--text-sm);color:var(--text-2);margin-bottom:10px;" id="mdConfirmMsg"></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary btn-sm" id="mdConfirmBtn">&#x2713; Yes, generate cards</button>
+                <button class="btn btn-ghost btn-sm" id="mdCancelBtn">&#x2717; Cancel</button>
+              </div>
+            </div>
             <div id="mdResult" style="margin-top:10px;font-size:var(--text-base);"></div>
           </div>
         </div>
@@ -15787,6 +16057,14 @@
               <input class="input" id="pptxSubjectHint" placeholder="e.g. Organic Chemistry" />
             </div>
             <button class="btn btn-primary" id="pptxImportBtn">Generate Cards from PPTX</button>
+            <div id="pptxConfirm" style="display:none;margin-top:12px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r);">
+              <div style="font-weight:600;color:var(--green-bright);font-size:var(--text-sm);margin-bottom:5px;">&#x2714; Confirm generation</div>
+              <div style="font-size:var(--text-sm);color:var(--text-2);margin-bottom:10px;" id="pptxConfirmMsg"></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary btn-sm" id="pptxConfirmBtn">&#x2713; Yes, generate cards</button>
+                <button class="btn btn-ghost btn-sm" id="pptxCancelBtn">&#x2717; Cancel</button>
+              </div>
+            </div>
             <div id="pptxResult" style="margin-top:10px;font-size:var(--text-base);"></div>
           </div>
         </div>
@@ -15828,7 +16106,7 @@
             }
           }
 
-          // Tab switching
+          // Tab switching — with localStorage memory
           document.querySelectorAll(".import-tab-btn").forEach(function(btn) {
             btn.addEventListener("click", function() {
               document.querySelectorAll(".import-tab-btn").forEach(function(b) {
@@ -15842,8 +16120,19 @@
               });
               var panel = document.getElementById("tab-" + btn.dataset.tab);
               if (panel) panel.style.display = "block";
+              try { localStorage.setItem('kiwi_last_import_tab', btn.dataset.tab); } catch(_) {}
             });
           });
+          // Restore last-used import subject
+          try { var _impSubjEl = document.getElementById('importSubject'); if (_impSubjEl) { var _sImSubj = localStorage.getItem('kiwi_last_import_subject'); if (_sImSubj) { var _io = _impSubjEl.querySelector('option[value="' + _sImSubj + '"]'); if (_io) _impSubjEl.value = _sImSubj; } _impSubjEl.addEventListener('change', function() { try { localStorage.setItem('kiwi_last_import_subject', this.value); } catch(_) {} }); } } catch(_) {}
+          // Restore last used import tab
+          try {
+            var _lastImportTab = localStorage.getItem('kiwi_last_import_tab');
+            if (_lastImportTab) {
+              var _lastTabBtn = document.querySelector('.import-tab-btn[data-tab="' + _lastImportTab + '"]');
+              if (_lastTabBtn) _lastTabBtn.click();
+            }
+          } catch(_) {}
 
           // ── Manual tab ──
           document.getElementById("addCardBtn").addEventListener("click", async function() {
@@ -16168,117 +16457,166 @@
             }
           })();
 
-          // ── Image tab ──
-          document.getElementById("imageImportBtn").addEventListener("click", async function() {
-            var deckId = getSelectedDeckId();
-            if (!deckId) { showToast("No deck found for this subject", "error"); return; }
-            var fileInput = document.getElementById("imageFileInput");
-            if (!fileInput.files || !fileInput.files[0]) { showToast("Select an image file first", "error"); return; }
-            var file = fileInput.files[0];
-            var btn = document.getElementById("imageImportBtn");
-            btn.disabled = true; btn.textContent = "Extracting...";
-            setImportResult("imageResult", "Reading image...", false);
-            try {
-              var base64 = await new Promise(function(res, rej) {
-                var r = new FileReader();
-                r.onload  = function() { res(r.result.split(",")[1]); };
-                r.onerror = rej;
-                r.readAsDataURL(file);
-              });
-              var result = await api.importFromImage(deckId, base64, file.type);
-              setImportResult("imageResult", "✓ " + (result.count || 0) + " cards extracted.", false);
-              fileInput.value = "";
-              showToast((result.count || 0) + " cards extracted", "success");
-            } catch(err) {
-              setImportResult("imageResult", err.message || "Extraction failed", true);
-            } finally {
-              btn.disabled = false; btn.textContent = "Extract Cards from Image";
-            }
-          });
-
-          // ── PDF tab ──
-          document.getElementById("pdfImportBtn").addEventListener("click", async function() {
-            var deckId = getSelectedDeckId();
-            if (!deckId) { showToast("No deck found for this subject", "error"); return; }
-            var fileInput = document.getElementById("pdfFileInput");
-            if (!fileInput.files || !fileInput.files[0]) { showToast("Select a PDF file first", "error"); return; }
-            var hint = document.getElementById("pdfSubjectHint").value.trim();
-            var btn = document.getElementById("pdfImportBtn");
-            btn.disabled = true; btn.textContent = "Generating...";
-            setImportResult("pdfResult", "Parsing PDF and queuing for generation...", false);
-            try {
-              var base64 = await new Promise(function(res, rej) {
-                var r = new FileReader();
-                r.onload  = function() { res(r.result.split(",")[1]); };
-                r.onerror = rej;
-                r.readAsDataURL(fileInput.files[0]);
-              });
-              var job = await api.importFromPdf(deckId, base64, hint);
-              if (job && job.job_id) {
-                fileInput.value = "";
-                btn.disabled = false; btn.textContent = "Generate Cards from PDF";
-                setImportResult("pdfResult", "", false);
-                var sel = document.getElementById("importSubject");
-                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
-                AppState.cardGenJob = { subjectName: _subjectName };
-                _showGenBanner('Generating cards…', '');
-                _pollJobFallback(job.job_id, authToken, 'note_generation');
-                navigateTo('generating-cards');
-                if (!document.getElementById('cardGenScreen')) renderGeneratingCards();
-                return;
+          // ── Image tab ── BUG-01A FIX: 2-step confirm + navigate-first
+          (function() {
+            var _imageFile = null, _imageB64 = null, _imageMime = null;
+            document.getElementById("imageImportBtn").addEventListener("click", function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) { showToast("No deck found for this subject", "error"); return; }
+              var fileInput = document.getElementById("imageFileInput");
+              if (!fileInput.files || !fileInput.files[0]) { showToast("Select an image file first", "error"); return; }
+              _imageFile = fileInput.files[0];
+              _imageMime = _imageFile.type;
+              // Show confirm div — Step 1
+              var confirmDiv = document.getElementById("imageConfirm");
+              var msgEl = document.getElementById("imageConfirmMsg");
+              if (msgEl) msgEl.textContent = 'Extract flashcards from "' + _imageFile.name + '"?';
+              if (confirmDiv) confirmDiv.style.display = "block";
+            });
+            document.getElementById("imageConfirmBtn").addEventListener("click", async function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId || !_imageFile) return;
+              var sel = document.getElementById("importSubject");
+              var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+              // Step 2: navigate-first
+              document.getElementById("imageConfirm").style.display = "none";
+              AppState.cardGenJob = { subjectName: _subjectName };
+              _showGenBanner('Generating cards…', '');
+              navigateTo('generating-cards');
+              if (!document.getElementById('cardGenScreen')) renderGeneratingCards();
+              // THEN call API
+              try {
+                var base64 = await new Promise(function(res, rej) {
+                  var r = new FileReader();
+                  r.onload  = function() { res(r.result.split(",")[1]); };
+                  r.onerror = rej;
+                  r.readAsDataURL(_imageFile);
+                });
+                var result = await api.importFromImage(deckId, base64, _imageMime);
+                var count = result.count || 0;
+                // Update generating-cards screen with result
+                var statusEl = document.getElementById('cardGenStatus');
+                if (statusEl) statusEl.textContent = count + ' card' + (count === 1 ? '' : 's') + ' extracted from image.';
+                showToast(count + ' cards extracted from image', 'success');
+                AppState.subjects = null;
+                setTimeout(function() { navigateTo('library'); }, 2500);
+              } catch(err) {
+                var statusEl = document.getElementById('cardGenStatus');
+                if (statusEl) { statusEl.textContent = 'Extraction failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                showToast(err.message || 'Image extraction failed', 'error');
               }
-              // Legacy sync fallback
-              setImportResult("pdfResult", "✓ " + (job.count || 0) + " cards generated.", false);
-              fileInput.value = "";
-              showToast((job.count || 0) + " cards generated from PDF", "success");
-            } catch(err) {
-              setImportResult("pdfResult", err.message || "PDF import failed", true);
-            } finally {
-              btn.disabled = false; btn.textContent = "Generate Cards from PDF";
-            }
-          });
+              _imageFile = null; _imageB64 = null; _imageMime = null;
+              var fi = document.getElementById("imageFileInput"); if (fi) fi.value = "";
+            });
+            document.getElementById("imageCancelBtn").addEventListener("click", function() {
+              document.getElementById("imageConfirm").style.display = "none";
+            });
+          })();
 
-          // ── DOCX tab ──
-          document.getElementById("docxImportBtn").addEventListener("click", async function() {
-            var deckId = getSelectedDeckId();
-            if (!deckId) { showToast("No deck found for this subject", "error"); return; }
-            var fileInput = document.getElementById("docxFileInput");
-            if (!fileInput.files || !fileInput.files[0]) { showToast("Select a DOCX file first", "error"); return; }
-            var hint = document.getElementById("docxSubjectHint").value.trim();
-            var btn = document.getElementById("docxImportBtn");
-            btn.disabled = true; btn.textContent = "Generating...";
-            setImportResult("docxResult", "Parsing document and queuing for generation...", false);
-            try {
-              var base64 = await new Promise(function(res, rej) {
-                var r = new FileReader();
-                r.onload  = function() { res(r.result.split(",")[1]); };
-                r.onerror = rej;
-                r.readAsDataURL(fileInput.files[0]);
-              });
-              var job = await api.importFromDocx(deckId, base64, hint);
-              if (job && job.job_id) {
+          // ── PDF tab ── BUG-01B FIX: 2-step confirm + navigate-first
+          (function() {
+            document.getElementById("pdfImportBtn").addEventListener("click", function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) { showToast("No deck found for this subject", "error"); return; }
+              var fileInput = document.getElementById("pdfFileInput");
+              if (!fileInput.files || !fileInput.files[0]) { showToast("Select a PDF file first", "error"); return; }
+              var confirmDiv = document.getElementById("pdfConfirm");
+              var msgEl = document.getElementById("pdfConfirmMsg");
+              if (msgEl) msgEl.textContent = 'Generate flashcards from "' + fileInput.files[0].name + '"?';
+              if (confirmDiv) confirmDiv.style.display = "block";
+            });
+            document.getElementById("pdfCancelBtn").addEventListener("click", function() {
+              document.getElementById("pdfConfirm").style.display = "none";
+            });
+            document.getElementById("pdfConfirmBtn").addEventListener("click", async function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) return;
+              var fileInput = document.getElementById("pdfFileInput");
+              if (!fileInput.files || !fileInput.files[0]) return;
+              var hint = document.getElementById("pdfSubjectHint").value.trim();
+              var sel = document.getElementById("importSubject");
+              var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+              document.getElementById("pdfConfirm").style.display = "none";
+              // Step 2: navigate-first, then call API
+              AppState.cardGenJob = { subjectName: _subjectName };
+              _showGenBanner('Generating cards…', '');
+              navigateTo('generating-cards');
+              if (!document.getElementById('cardGenScreen')) renderGeneratingCards();
+              try {
+                var base64 = await new Promise(function(res, rej) {
+                  var r = new FileReader();
+                  r.onload  = function() { res(r.result.split(",")[1]); };
+                  r.onerror = rej;
+                  r.readAsDataURL(fileInput.files[0]);
+                });
+                var job = await api.importFromPdf(deckId, base64, hint);
                 fileInput.value = "";
-                btn.disabled = false; btn.textContent = "Generate Cards from DOCX";
-                setImportResult("docxResult", "", false);
-                var sel = document.getElementById("importSubject");
-                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
-                AppState.cardGenJob = { subjectName: _subjectName };
-                _showGenBanner('Generating cards…', '');
-                _pollJobFallback(job.job_id, authToken, 'note_generation');
-                navigateTo('generating-cards');
-                if (!document.getElementById('cardGenScreen')) renderGeneratingCards();
-                return;
+                if (job && job.job_id) {
+                  _pollJobFallback(job.job_id, authToken, 'note_generation');
+                } else {
+                  showToast((job && job.count || 0) + " cards generated from PDF", "success");
+                  AppState.subjects = null;
+                  setTimeout(function() { navigateTo('library'); }, 2500);
+                }
+              } catch(err) {
+                var statusEl = document.getElementById('cardGenStatus');
+                if (statusEl) { statusEl.textContent = 'PDF import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                showToast(err.message || "PDF import failed", "error");
               }
-              // Legacy sync fallback
-              setImportResult("docxResult", "✓ " + (job.count || 0) + " cards generated.", false);
-              fileInput.value = "";
-              showToast((job.count || 0) + " cards generated from DOCX", "success");
-            } catch(err) {
-              setImportResult("docxResult", err.message || "DOCX import failed", true);
-            } finally {
-              btn.disabled = false; btn.textContent = "Generate Cards from DOCX";
-            }
-          });
+            });
+          })();
+
+          // ── DOCX tab ── BUG-01B FIX: 2-step confirm + navigate-first
+          (function() {
+            document.getElementById("docxImportBtn").addEventListener("click", function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) { showToast("No deck found for this subject", "error"); return; }
+              var fileInput = document.getElementById("docxFileInput");
+              if (!fileInput.files || !fileInput.files[0]) { showToast("Select a DOCX file first", "error"); return; }
+              var confirmDiv = document.getElementById("docxConfirm");
+              var msgEl = document.getElementById("docxConfirmMsg");
+              if (msgEl) msgEl.textContent = 'Generate flashcards from "' + fileInput.files[0].name + '"?';
+              if (confirmDiv) confirmDiv.style.display = "block";
+            });
+            document.getElementById("docxCancelBtn").addEventListener("click", function() {
+              document.getElementById("docxConfirm").style.display = "none";
+            });
+            document.getElementById("docxConfirmBtn").addEventListener("click", async function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) return;
+              var fileInput = document.getElementById("docxFileInput");
+              if (!fileInput.files || !fileInput.files[0]) return;
+              var hint = document.getElementById("docxSubjectHint").value.trim();
+              var sel = document.getElementById("importSubject");
+              var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+              document.getElementById("docxConfirm").style.display = "none";
+              AppState.cardGenJob = { subjectName: _subjectName };
+              _showGenBanner('Generating cards…', '');
+              navigateTo('generating-cards');
+              if (!document.getElementById('cardGenScreen')) renderGeneratingCards();
+              try {
+                var base64 = await new Promise(function(res, rej) {
+                  var r = new FileReader();
+                  r.onload  = function() { res(r.result.split(",")[1]); };
+                  r.onerror = rej;
+                  r.readAsDataURL(fileInput.files[0]);
+                });
+                var job = await api.importFromDocx(deckId, base64, hint);
+                fileInput.value = "";
+                if (job && job.job_id) {
+                  _pollJobFallback(job.job_id, authToken, 'note_generation');
+                } else {
+                  showToast((job && job.count || 0) + " cards generated from DOCX", "success");
+                  AppState.subjects = null;
+                  setTimeout(function() { navigateTo('library'); }, 2500);
+                }
+              } catch(err) {
+                var statusEl = document.getElementById('cardGenStatus');
+                if (statusEl) { statusEl.textContent = 'DOCX import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                showToast(err.message || "DOCX import failed", "error");
+              }
+            });
+          })();
 
           // ── Quizlet tab ──
           document.getElementById("quizletImportBtn").addEventListener("click", async function() {
@@ -16313,117 +16651,146 @@
             });
           }
 
-          // TXT import handler (Issue-058) — async background-job path
-          document.getElementById("txtImportBtn").addEventListener("click", async function() {
-            var deckId = getSelectedDeckId();
-            if (!deckId) { showToast("No deck found for this subject", "error"); return; }
-            var fileInput = document.getElementById("txtFileInput");
-            var hint = document.getElementById("txtSubjectHint").value.trim();
-            if (!fileInput.files || !fileInput.files[0]) { showToast("Please select a TXT file", "error"); return; }
-            var btn = document.getElementById("txtImportBtn");
-            btn.disabled = true; btn.textContent = "Generating...";
-            setImportResult("txtResult", "Reading file and generating cards...", false);
-            try {
-              var b64 = await readFileAsBase64(fileInput.files[0]);
-              var job = await api.importFromTxt(deckId, b64, hint);
-              // Background-job path: server returns job_id immediately
-              if (job && job.job_id) {
+          // TXT import handler BUG-01B FIX: 2-step confirm + navigate-first
+          (function() {
+            document.getElementById("txtImportBtn").addEventListener("click", function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) { showToast("No deck found for this subject", "error"); return; }
+              var fileInput = document.getElementById("txtFileInput");
+              if (!fileInput.files || !fileInput.files[0]) { showToast("Please select a TXT file", "error"); return; }
+              var confirmDiv = document.getElementById("txtConfirm");
+              var msgEl = document.getElementById("txtConfirmMsg");
+              if (msgEl) msgEl.textContent = 'Generate flashcards from "' + fileInput.files[0].name + '"?';
+              if (confirmDiv) confirmDiv.style.display = "block";
+            });
+            document.getElementById("txtCancelBtn").addEventListener("click", function() {
+              document.getElementById("txtConfirm").style.display = "none";
+            });
+            document.getElementById("txtConfirmBtn").addEventListener("click", async function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) return;
+              var fileInput = document.getElementById("txtFileInput");
+              if (!fileInput.files || !fileInput.files[0]) return;
+              var hint = document.getElementById("txtSubjectHint").value.trim();
+              var sel = document.getElementById("importSubject");
+              var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+              document.getElementById("txtConfirm").style.display = "none";
+              AppState.cardGenJob = { subjectName: _subjectName };
+              _showGenBanner('Generating cards…', '');
+              navigateTo('generating-cards');
+              if (!document.getElementById('cardGenScreen')) renderGeneratingCards();
+              try {
+                var b64 = await readFileAsBase64(fileInput.files[0]);
+                var job = await api.importFromTxt(deckId, b64, hint);
                 fileInput.value = "";
-                btn.disabled = false; btn.textContent = "Generate Cards from TXT";
-                setImportResult("txtResult", "", false);
-                // Gather subject name for generating-cards page
-                var sel = document.getElementById("importSubject");
-                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
-                AppState.cardGenJob = { subjectName: _subjectName };
-                _showGenBanner('Generating cards…', '');
-                _pollJobFallback(job.job_id, authToken, 'note_generation');
-                navigateTo('generating-cards');
-                if (!document.getElementById('cardGenScreen')) renderGeneratingCards();
-                return;
+                if (job && job.job_id) {
+                  _pollJobFallback(job.job_id, authToken, 'note_generation');
+                } else {
+                  showToast((job && job.count || 0) + " cards imported from TXT", "success");
+                  AppState.subjects = null;
+                  setTimeout(function() { navigateTo('library'); }, 2500);
+                }
+              } catch(err) {
+                var statusEl = document.getElementById('cardGenStatus');
+                if (statusEl) { statusEl.textContent = 'TXT import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                showToast(err.message || "TXT import failed", "error");
               }
-              // Legacy sync fallback (should not be reached in normal operation)
-              setImportResult("txtResult", "✓ " + (job.count || 0) + " cards imported.", false);
-              fileInput.value = "";
-              showToast((job.count || 0) + " cards imported from TXT", "success");
-            } catch(err) {
-              setImportResult("txtResult", err.message || "TXT import failed", true);
-            } finally {
-              btn.disabled = false; btn.textContent = "Generate Cards from TXT";
-            }
-          });
+            });
+          })();
 
-          // MD import handler (Issue-059) — async background-job path
-          document.getElementById("mdImportBtn").addEventListener("click", async function() {
-            var deckId = getSelectedDeckId();
-            if (!deckId) { showToast("No deck found for this subject", "error"); return; }
-            var fileInput = document.getElementById("mdFileInput");
-            var hint = document.getElementById("mdSubjectHint").value.trim();
-            if (!fileInput.files || !fileInput.files[0]) { showToast("Please select a Markdown file", "error"); return; }
-            var btn = document.getElementById("mdImportBtn");
-            btn.disabled = true; btn.textContent = "Generating...";
-            setImportResult("mdResult", "Reading markdown and queuing for generation...", false);
-            try {
-              var b64 = await readFileAsBase64(fileInput.files[0]);
-              var job = await api.importFromMd(deckId, b64, hint);
-              if (job && job.job_id) {
+          // MD import handler BUG-01B FIX: 2-step confirm + navigate-first
+          (function() {
+            document.getElementById("mdImportBtn").addEventListener("click", function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) { showToast("No deck found for this subject", "error"); return; }
+              var fileInput = document.getElementById("mdFileInput");
+              if (!fileInput.files || !fileInput.files[0]) { showToast("Please select a Markdown file", "error"); return; }
+              var confirmDiv = document.getElementById("mdConfirm");
+              var msgEl = document.getElementById("mdConfirmMsg");
+              if (msgEl) msgEl.textContent = 'Generate flashcards from "' + fileInput.files[0].name + '"?';
+              if (confirmDiv) confirmDiv.style.display = "block";
+            });
+            document.getElementById("mdCancelBtn").addEventListener("click", function() {
+              document.getElementById("mdConfirm").style.display = "none";
+            });
+            document.getElementById("mdConfirmBtn").addEventListener("click", async function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) return;
+              var fileInput = document.getElementById("mdFileInput");
+              if (!fileInput.files || !fileInput.files[0]) return;
+              var hint = document.getElementById("mdSubjectHint").value.trim();
+              var sel = document.getElementById("importSubject");
+              var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+              document.getElementById("mdConfirm").style.display = "none";
+              AppState.cardGenJob = { subjectName: _subjectName };
+              _showGenBanner('Generating cards…', '');
+              navigateTo('generating-cards');
+              if (!document.getElementById('cardGenScreen')) renderGeneratingCards();
+              try {
+                var b64 = await readFileAsBase64(fileInput.files[0]);
+                var job = await api.importFromMd(deckId, b64, hint);
                 fileInput.value = "";
-                btn.disabled = false; btn.textContent = "Generate Cards from Markdown";
-                setImportResult("mdResult", "", false);
-                var sel = document.getElementById("importSubject");
-                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
-                AppState.cardGenJob = { subjectName: _subjectName };
-                _showGenBanner('Generating cards…', '');
-                _pollJobFallback(job.job_id, authToken, 'note_generation');
-                navigateTo('generating-cards');
-                if (!document.getElementById('cardGenScreen')) renderGeneratingCards();
-                return;
+                if (job && job.job_id) {
+                  _pollJobFallback(job.job_id, authToken, 'note_generation');
+                } else {
+                  showToast((job && job.count || 0) + " cards imported from Markdown", "success");
+                  AppState.subjects = null;
+                  setTimeout(function() { navigateTo('library'); }, 2500);
+                }
+              } catch(err) {
+                var statusEl = document.getElementById('cardGenStatus');
+                if (statusEl) { statusEl.textContent = 'Markdown import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                showToast(err.message || "Markdown import failed", "error");
               }
-              // Legacy sync fallback
-              setImportResult("mdResult", "✓ " + (job.count || 0) + " cards imported.", false);
-              fileInput.value = "";
-              showToast((job.count || 0) + " cards imported from Markdown", "success");
-            } catch(err) {
-              setImportResult("mdResult", err.message || "Markdown import failed", true);
-            } finally {
-              btn.disabled = false; btn.textContent = "Generate Cards from Markdown";
-            }
-          });
+            });
+          })();
 
-          // PPTX import handler (Issue-060) — async background-job path
-          document.getElementById("pptxImportBtn").addEventListener("click", async function() {
-            var deckId = getSelectedDeckId();
-            if (!deckId) { showToast("No deck found for this subject", "error"); return; }
-            var fileInput = document.getElementById("pptxFileInput");
-            var hint = document.getElementById("pptxSubjectHint").value.trim();
-            if (!fileInput.files || !fileInput.files[0]) { showToast("Please select a PPTX file", "error"); return; }
-            var btn = document.getElementById("pptxImportBtn");
-            btn.disabled = true; btn.textContent = "Generating...";
-            setImportResult("pptxResult", "Reading slides and queuing for generation...", false);
-            try {
-              var b64 = await readFileAsBase64(fileInput.files[0]);
-              var job = await api.importFromPptx(deckId, b64, hint);
-              if (job && job.job_id) {
+          // PPTX import handler BUG-01B/01C FIX: 2-step confirm + navigate-first + renderGeneratingCards fallback
+          (function() {
+            document.getElementById("pptxImportBtn").addEventListener("click", function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) { showToast("No deck found for this subject", "error"); return; }
+              var fileInput = document.getElementById("pptxFileInput");
+              if (!fileInput.files || !fileInput.files[0]) { showToast("Please select a PPTX file", "error"); return; }
+              var confirmDiv = document.getElementById("pptxConfirm");
+              var msgEl = document.getElementById("pptxConfirmMsg");
+              if (msgEl) msgEl.textContent = 'Generate flashcards from "' + fileInput.files[0].name + '"?';
+              if (confirmDiv) confirmDiv.style.display = "block";
+            });
+            document.getElementById("pptxCancelBtn").addEventListener("click", function() {
+              document.getElementById("pptxConfirm").style.display = "none";
+            });
+            document.getElementById("pptxConfirmBtn").addEventListener("click", async function() {
+              var deckId = getSelectedDeckId();
+              if (!deckId) return;
+              var fileInput = document.getElementById("pptxFileInput");
+              if (!fileInput.files || !fileInput.files[0]) return;
+              var hint = document.getElementById("pptxSubjectHint").value.trim();
+              var sel = document.getElementById("importSubject");
+              var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
+              document.getElementById("pptxConfirm").style.display = "none";
+              AppState.cardGenJob = { subjectName: _subjectName };
+              _showGenBanner('Generating cards…', '');
+              navigateTo('generating-cards');
+              if (!document.getElementById('cardGenScreen')) renderGeneratingCards(); // BUG-01C FIX
+              try {
+                var b64 = await readFileAsBase64(fileInput.files[0]);
+                var job = await api.importFromPptx(deckId, b64, hint);
                 fileInput.value = "";
-                btn.disabled = false; btn.textContent = "Generate Cards from PPTX";
-                setImportResult("pptxResult", "", false);
-                var sel = document.getElementById("importSubject");
-                var _subjectName = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : "selected subject";
-                AppState.cardGenJob = { subjectName: _subjectName };
-                _showGenBanner('Generating cards…', '');
-                _pollJobFallback(job.job_id, authToken, 'note_generation');
-                navigateTo('generating-cards');
-                return;
+                if (job && job.job_id) {
+                  _pollJobFallback(job.job_id, authToken, 'note_generation');
+                } else {
+                  showToast((job && job.count || 0) + " cards imported from PPTX", "success");
+                  AppState.subjects = null;
+                  setTimeout(function() { navigateTo('library'); }, 2500);
+                }
+              } catch(err) {
+                var statusEl = document.getElementById('cardGenStatus');
+                if (statusEl) { statusEl.textContent = 'PPTX import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                showToast(err.message || "PPTX import failed", "error");
               }
-              // Legacy sync fallback
-              setImportResult("pptxResult", "✓ " + (job.count || 0) + " cards imported.", false);
-              fileInput.value = "";
-              showToast((job.count || 0) + " cards imported from PPTX", "success");
-            } catch(err) {
-              setImportResult("pptxResult", err.message || "PPTX import failed. Make sure the officeparser package is installed on the server.", true);
-            } finally {
-              btn.disabled = false; btn.textContent = "Generate Cards from PPTX";
-            }
-          });
+            });
+          })();
 
 
 
@@ -16743,7 +17110,7 @@
                 <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:20px;">
                   Decks are chapters or topics within <strong>${escapeHTML(OB.subjectName)}</strong>. Start with one specific area.
                 </div>
-                <input class="input" id="ob-deck-name" placeholder="e.g. Chapter 1 — Cell Biology" style="width:100%;margin-bottom:24px;" autofocus />
+                <input class="input" id="ob-deck-name" placeholder="e.g. Chapter 1 — Cell Biology" style="width:100%;margin-bottom:24px;" autofocus autocomplete="off" />
                 <button class="btn btn-primary" id="ob-deck-btn" style="width:100%;padding:14px;">Continue →</button>
               </div>
             </div>`;

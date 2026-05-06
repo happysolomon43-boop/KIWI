@@ -167,6 +167,7 @@ function _buildIncrementUpdate(table, whereCol, whereVal, data) {
 // Replaces per-review recomputeAndStoreCardState fire-and-forget.
 // Cards accumulate here; a 60s cron drains them in a single pass.
 const _ksQueue = new Map(); // key: `${userId}:${cardId}`
+const _preMarkCache = new Map(); // key: examId → Map(questionNumber → {answer,processed})
 function queueKSRecompute(userId, cardId) {
   if (_ksQueue.size < 50000) _ksQueue.set(`${userId}:${cardId}`, { userId, cardId }); // F-11 FIX: cap unbounded growth
 }
@@ -5257,7 +5258,7 @@ return stateResult;
 async function batchInitializeSeedlingStates(userId, cardIds) {
 // Fix #29: check existing states in one query; batch-write only missing ones
 if (!cardIds || cardIds.length === 0) return [];
-const existingStates = await db.cardStates.findByUser(userId);
+const existingStates = await db.cardStates.findByCards(userId, cardIds);
 const existingMap = new Map(existingStates.map(s => [s.card_id, s]));
 // Migrated: Firestore batch → withTransaction INSERT loop (Fix #29)
 const newCardIds = cardIds.filter(cid => !existingMap.has(cid));
@@ -12519,6 +12520,22 @@ res.status(500).json({ error: 'Failed to record response', details: e.message })
 }
 });
 
+studyRouter.post('/partial-flush', async (req, res) => {
+// Progressive KS flush: drain _ksQueue entries for this user immediately.
+// Frontend calls this every N cards so session-end KS computation is near-instant.
+try {
+  const userPrefix = req.user.id + ':';
+  const userKeys = [..._ksQueue.keys()].filter(k => k.startsWith(userPrefix));
+  const batch = userKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+  await Promise.all(batch.map(({ userId, cardId }) =>
+    recomputeAndStoreCardState(userId, cardId).catch(() => null)
+  ));
+  res.json({ flushed: batch.length });
+} catch (e) {
+  res.status(500).json({ error: 'Flush failed', details: e.message });
+}
+});
+
 studyRouter.post('/end', async (req, res) => {
 try {
 const { session_id, break_count = 0, focused_seconds = 0, seed_killed = false, reason = 'user_ended' } = req.body;
@@ -13288,6 +13305,42 @@ res.status(500).json({ error: 'Failed to fetch question' });
 }
 });
 
+examRouter.post('/:id/pre-mark', async (req, res) => {
+// BUG-09 progressive pre-marking: process a single question answer in the background
+// while the user is still taking the exam. On final submit, already-processed
+// questions are skipped, making the submit response near-instant.
+res.json({ ok: true }); // always respond immediately
+setImmediate(async () => {
+  try {
+    const { question_number, selected_option } = req.body || {};
+    if (question_number == null || !selected_option) return;
+    const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id).catch(() => null);
+    if (!exam || !['active', 'ready'].includes(exam.status)) return;
+    const q = exam.questions.find(qq => String(qq.question_number) === String(question_number));
+    if (!q) return;
+    // Stamp is_correct so processExamVerification can read it
+    q.is_correct = selected_option === q.correct_answer;
+    q.selected_option = selected_option;
+    const miniExam = { ...exam, questions: [q] };
+    await processExamVerification(req.user.id, miniExam).catch(() => null);
+    await applyExamSRSFeedback(req.user.id, miniExam).catch(() => null);
+    // Record in cache so submit can skip this question
+    if (!_preMarkCache.has(req.params.id)) _preMarkCache.set(req.params.id, new Map());
+    _preMarkCache.get(req.params.id).set(String(question_number), {
+      answer: selected_option,
+      processed: true,
+    });
+    // Auto-expire cache entry after 30 minutes to prevent memory leak
+    setTimeout(() => {
+      const m = _preMarkCache.get(req.params.id);
+      if (m) { m.delete(String(question_number)); if (m.size === 0) _preMarkCache.delete(req.params.id); }
+    }, 30 * 60 * 1000);
+  } catch (e) {
+    console.error('[KIWI] pre-mark background failed:', e.message);
+  }
+});
+});
+
 examRouter.post('/:id/submit', async (req, res) => {
 try {
 const { answers, ended_early = false } = req.body;
@@ -13364,131 +13417,10 @@ ended_early,
 completed_at: now,
 duration_seconds: durationSec,
 });
-// P3-FIX: pass `exam` (which has questions + is_correct stamps) not `completedExam`
-// (which is a bare session doc with no questions attached from Firestore).
-// Issue-1 FIX: Every post-scoring operation is individually .catch()-wrapped so
-// that a failure in any one of them (AI debrief hang, DB error, classification
-// race) NEVER returns a 500 to the client. The exam is already persisted as
-// `completed` at this point — the response must always succeed.
-// Phase 2: Stage 5 verification
-const verification = await processExamVerification(req.user.id, exam)
-  .catch((e) => { console.error('[KIWI] processExamVerification failed:', e.message); return null; });
-// Phase 3: SRS feedback loop
-const reclassified = await applyExamSRSFeedback(req.user.id, exam)
-  .catch((e) => { console.error('[KIWI] applyExamSRSFeedback failed:', e.message); return []; });
-// P3.10 FIX: L3 Reclassification Alert — fire D3 when exam score < 60%
-// and subject has 15+ Stage 4-5 cards. Function and alert were entirely missing.
-if (scorePct < 60 && reclassified.length > 0) {
-const allSubjectCardsForAlert = [];
-for (const deckId of exam.deck_ids || []) {
-const deckCards = await db.cards.findByDeck(req.user.id, deckId).catch(() => []);
-allSubjectCardsForAlert.push(...deckCards);
-}
-const highStageCardsForAlert = allSubjectCardsForAlert.filter(c => c.stage >= 4);
-if (highStageCardsForAlert.length >= 15) {
-const reclassifiedHighStage = reclassified.filter(r => r.old_stage >= 4);
-await triggerReclassificationAlert(
-req.user.id, exam.subject_id, scorePct, reclassifiedHighStage
-).catch((e) => console.error("[KIWI] silent catch:", e.message));
-}
-}
-// Phase 3: Credential evaluation — individually error-isolated (Issue-1 FIX)
-const credential = await evaluateCredential(req.user.id, exam.subject_id)
-  .catch((e) => { console.error('[KIWI] evaluateCredential failed:', e.message); return null; });
-const regression = await checkCredentialRegression(req.user.id, exam.subject_id)
-  .catch((e) => { console.error('[KIWI] checkCredentialRegression failed:', e.message); return null; });
-// P3-03 FIX: fetch existing BEFORE the block that reads it
-const existing = await db.subjectStats.get(req.user.id, exam.subject_id)
-  .catch(() => null);
-// P8.1d: Award +3 Seedlings per credential tier gained (spec P8.1)
-{
-const prevCredTier = existing?.credential_tier || 0;
-if (credential && credential.tier > prevCredTier) {
-const tiersGained = credential.tier - prevCredTier;
-await awardSeedlings(
-req.user.id,
-tiersGained * 3,
-'credential_tier_advance',
-`Credential advanced to tier ${credential.tier} in subject ${exam.subject_id}`
-).catch((e) => console.error("[KIWI] silent catch:", e.message));
-// Persist the new tier so future exams measure delta correctly
-await db.subjectStats.upsert(req.user.id, exam.subject_id, {
-credential_tier: credential.tier,
-}).catch((e) => console.error("[KIWI] silent catch:", e.message));
-}
-}
-// Update user stats
-await db.userStats.update(req.user.id, {
-total_exams_completed: { increment: 1 },
-});
-// Phase 8: Seedling earnings
-if (scorePct >= 80)
-await hookSeedlingEarnings(req.user.id, 'exam_pass', { score_pct: scorePct });
-if (scorePct === 100)
-await hookSeedlingEarnings(req.user.id, 'exam_perfect', { score_pct: scorePct });
-// Subject stats (re-uses existing fetched above)
-const currentAvg = existing?.average_exam_score || 0;
-const totalExams = (existing?.total_exams || 0) + 1;
-const newAvg = parseFloat(((currentAvg * (totalExams - 1) + scorePct) / totalExams).toFixed(2));
-await db.subjectStats.upsert(req.user.id, exam.subject_id, {
-average_exam_score: newAvg,
-total_exams: totalExams,
-last_exam_at: now,
-});
-// Recalculate health and pressure — Issue-1 FIX: isolated, non-fatal
-// ⚠ FIX: Drain the KS recompute queue immediately so card states (STUCK, GHOST,
-// FRAGILE etc.) are fresh before calculateSubjectPressure reads them.
-// Without this, the 60s cron hasn't fired yet and pressure reads stale SEEDLING states.
-await (async () => {
-  const examCardIds = (exam.questions || []).map(q => q.card_id).filter(Boolean);
-  await Promise.all(
-    examCardIds.map(cid => recomputeAndStoreCardState(req.user.id, cid).catch((e) => console.error("[KIWI] silent catch:", e.message)))
-  );
-})().catch((e) => console.error("[KIWI] silent catch:", e.message));
-await recalculateSubjectHealth(req.user.id, exam.subject_id)
-  .catch((e) => console.error('[KIWI] recalculateSubjectHealth failed:', e.message));
-const pressureAfterExam = await calculateSubjectPressure(req.user.id, exam.subject_id)
-  .catch((e) => { console.error('[KIWI] calculateSubjectPressure failed:', e.message); return null; });
-if (pressureAfterExam?.intervention_level === 'L4') {
-triggerReckoning(req.user.id, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-}
-await persistKnowledgeScore(req.user.id, exam.subject_id)  // Issue-1 FIX: non-fatal
-  .catch((e) => console.error('[KIWI] persistKnowledgeScore failed:', e.message));
-// Compute KS delta
-const postKs = await computeKnowledgeScore(req.user.id, exam.subject_id).catch(() => ({
-score: preKsScore,
-}));
-const ksDelta = parseFloat(((postKs.score || 0) - preKsScore).toFixed(2));
-// Determine pass/fail (70% threshold)
-const passed = scorePct >= 70;
-// Credential earned check
-const credentialEarned = !!(credential && credential.tier && credential.newlyEarned);
-// Check achievements — Issue-1 FIX: non-fatal, returns empty array on failure
-const newAchievements = await checkAchievements(req.user.id, {
-exam: completedExam,
-subjectId: exam.subject_id,
-}).catch((e) => { console.error('[KIWI] checkAchievements failed:', e.message); return []; });
-await updateTaskProgress(req.user.id, null, completedExam)
-  .catch((e) => console.error('[KIWI] updateTaskProgress failed:', e.message));
-// B13: Almanac unlock check after exam submission — P6.4 FIX: capture return value
-const examAlmanacUnlocks = await checkAlmanacUnlocks(req.user.id).catch((e) => {
-console.error('[KIWI] Almanac check failed:', e.message);
-return [];
-});
-
-    // Notify via Telegram if configured
-    await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, passed).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    // Wire exam_result email notification
-    {
-      const _examSubject = await db.subjects.findById(exam.subject_id).catch(() => null);
-      await sendEmailNotification(req.user.id, 'exam_result', {
-        subjectName: _examSubject?.name || 'Study Session',
-        scorePct,
-        passed,
-      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    }
-    // Build enriched question_review for the post-exam Review tab.
-    // Includes stem, all four options, correct answer, explanation, and what the user picked.
+// BUG-09 FIX: Build synchronous-only fields and respond immediately.
+    // All SRS / credential / KS work runs in background; results pushed via WS.
+    const passed = scorePct >= 70;
+    // Build question_review synchronously (only needs exam.questions + answers)
     const question_review = exam.questions.map((q) => {
       const userAnswer = answers.find(
         (a) => (a.question_number ?? a.questionId) === q.question_number
@@ -13509,13 +13441,10 @@ return [];
         is_correct: selected === q.correct_answer,
       };
     });
-
-    const submitJobId = randomUUID(); // background debrief job
-    // CRITICAL FIX: Register job as 'pending' BEFORE responding so that
-    // GET /api/jobs/:id never returns 404 while the frontend polls for debrief.
-    // Without this, the 4-minute poll timeout fires immediately showing
-    // "Exam submission timed out" even though the exam was submitted fine.
+    const submitJobId = randomUUID();
     _jobStoreSet(submitJobId, { status: 'pending', type: 'exam_submit' });
+    // Respond immediately — SRS/credential/KS fields are null here;
+    // enriched values arrive via WS 'exam_result_ready' after background completes.
     res.json({
       job_id: submitJobId,
       exam: completedExam,
@@ -13525,23 +13454,18 @@ return [];
       duration_seconds: durationSec,
       question_results: questionResults,
       question_review,
-      verification,
-      reclassified,
-      credential,
-      regression_warning: regression,
-      // [Fix 3.3] Frontend reads reclassification_alert_text for the Brain alert panel.
-      // Sourced from the AI-generated regression_warning message (P3.10 output).
-      reclassification_alert_text: (regression && regression.message) || null,
-      new_achievements: newAchievements,
-      ksDelta,
+      verification: null,
+      reclassified: [],
+      credential: null,
+      regression_warning: null,
+      reclassification_alert_text: null,
+      new_achievements: [],
+      ksDelta: 0,
       passed,
-      credentialEarned,
-      // P6.4 FIX: Include almanac unlocks so frontend can show notification
-      new_almanac_unlocks: examAlmanacUnlocks,
-      // debrief arrives via WebSocket job_done (type: 'exam_submit') when AI finishes
+      credentialEarned: false,
+      new_almanac_unlocks: [],
     });
-    // ── Background: AI debrief generation ────────────────────────────────────
-    // Runs after res.json; result pushed to client via WebSocket job_done event.
+    // ── Background: SRS processing + AI debrief ──────────────────────────────
     const _debriefUserId   = req.user.id;
     const _debriefExam     = exam;
     const _debriefResults  = questionResults;
@@ -13549,6 +13473,127 @@ return [];
     const _debriefCorrect  = correct;
     const _debriefTotal    = total;
     setImmediate(async () => {
+      // BUG-09 / Progressive Pre-marking: skip questions already processed by /pre-mark
+      const _preMarks = _preMarkCache.get(req.params.id) || new Map();
+      const _questionsToProcess = _debriefExam.questions.filter(q => {
+        const _sub = answers.find(a => (a.question_number ?? a.questionId) === q.question_number);
+        const _ans = _sub ? (_sub.selected_option ?? _sub.selectedOptionId) : null;
+        const pm = _preMarks.get(String(q.question_number));
+        return !(pm && pm.processed && pm.answer === _ans);
+      });
+      _preMarkCache.delete(req.params.id);
+      let _bgVerification = null, _bgReclassified = [], _bgCredential = null, _bgRegression = null;
+      let _bgKsDelta = 0, _bgCredentialEarned = false, _bgNewAchievements = [], _bgAlmanacUnlocks = [];
+      try {
+        const _examForSrs = _questionsToProcess.length > 0
+          ? { ..._debriefExam, questions: _questionsToProcess }
+          : _debriefExam;
+        // Phase 2: Stage 5 verification
+        _bgVerification = await processExamVerification(_debriefUserId, _examForSrs)
+          .catch((e) => { console.error('[KIWI] processExamVerification failed:', e.message); return null; });
+        // Phase 3: SRS feedback loop
+        _bgReclassified = await applyExamSRSFeedback(_debriefUserId, _examForSrs)
+          .catch((e) => { console.error('[KIWI] applyExamSRSFeedback failed:', e.message); return []; });
+        if (_debriefScorePct < 60 && _bgReclassified.length > 0) {
+          const allSubjectCardsForAlert = [];
+          for (const deckId of _debriefExam.deck_ids || []) {
+            const deckCards = await db.cards.findByDeck(_debriefUserId, deckId).catch(() => []);
+            allSubjectCardsForAlert.push(...deckCards);
+          }
+          const highStageCardsForAlert = allSubjectCardsForAlert.filter(c => c.stage >= 4);
+          if (highStageCardsForAlert.length >= 15) {
+            const reclassifiedHighStage = _bgReclassified.filter(r => r.old_stage >= 4);
+            await triggerReclassificationAlert(
+              _debriefUserId, _debriefExam.subject_id, _debriefScorePct, reclassifiedHighStage
+            ).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          }
+        }
+        _bgCredential = await evaluateCredential(_debriefUserId, _debriefExam.subject_id)
+          .catch((e) => { console.error('[KIWI] evaluateCredential failed:', e.message); return null; });
+        _bgRegression = await checkCredentialRegression(_debriefUserId, _debriefExam.subject_id)
+          .catch((e) => { console.error('[KIWI] checkCredentialRegression failed:', e.message); return null; });
+        const _bgExisting = await db.subjectStats.get(_debriefUserId, _debriefExam.subject_id).catch(() => null);
+        {
+          const prevCredTier = _bgExisting?.credential_tier || 0;
+          if (_bgCredential && _bgCredential.tier > prevCredTier) {
+            const tiersGained = _bgCredential.tier - prevCredTier;
+            await awardSeedlings(
+              _debriefUserId, tiersGained * 3, 'credential_tier_advance',
+              `Credential advanced to tier ${_bgCredential.tier} in subject ${_debriefExam.subject_id}`
+            ).catch((e) => console.error("[KIWI] silent catch:", e.message));
+            await db.subjectStats.upsert(_debriefUserId, _debriefExam.subject_id, {
+              credential_tier: _bgCredential.tier,
+            }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          }
+        }
+        await db.userStats.update(_debriefUserId, { total_exams_completed: { increment: 1 } });
+        if (_debriefScorePct >= 80)
+          await hookSeedlingEarnings(_debriefUserId, 'exam_pass', { score_pct: _debriefScorePct });
+        if (_debriefScorePct === 100)
+          await hookSeedlingEarnings(_debriefUserId, 'exam_perfect', { score_pct: _debriefScorePct });
+        const _bgCurrentAvg = _bgExisting?.average_exam_score || 0;
+        const _bgTotalExams = (_bgExisting?.total_exams || 0) + 1;
+        const _bgNewAvg = parseFloat(((_bgCurrentAvg * (_bgTotalExams - 1) + _debriefScorePct) / _bgTotalExams).toFixed(2));
+        await db.subjectStats.upsert(_debriefUserId, _debriefExam.subject_id, {
+          average_exam_score: _bgNewAvg,
+          total_exams: _bgTotalExams,
+          last_exam_at: new Date(),
+        });
+        await (async () => {
+          const examCardIds = (_debriefExam.questions || []).map(q => q.card_id).filter(Boolean);
+          await Promise.all(
+            examCardIds.map(cid => recomputeAndStoreCardState(_debriefUserId, cid).catch((e) => console.error("[KIWI] silent catch:", e.message)))
+          );
+        })().catch((e) => console.error("[KIWI] silent catch:", e.message));
+        await recalculateSubjectHealth(_debriefUserId, _debriefExam.subject_id)
+          .catch((e) => console.error('[KIWI] recalculateSubjectHealth failed:', e.message));
+        const pressureAfterExam = await calculateSubjectPressure(_debriefUserId, _debriefExam.subject_id)
+          .catch((e) => { console.error('[KIWI] calculateSubjectPressure failed:', e.message); return null; });
+        if (pressureAfterExam?.intervention_level === 'L4') {
+          triggerReckoning(_debriefUserId, _debriefExam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        }
+        await persistKnowledgeScore(_debriefUserId, _debriefExam.subject_id)
+          .catch((e) => console.error('[KIWI] persistKnowledgeScore failed:', e.message));
+        const _bgPostKs = await computeKnowledgeScore(_debriefUserId, _debriefExam.subject_id).catch(() => ({ score: preKsScore }));
+        _bgKsDelta = parseFloat(((_bgPostKs.score || 0) - preKsScore).toFixed(2));
+        _bgCredentialEarned = !!(_bgCredential && _bgCredential.tier && _bgCredential.newlyEarned);
+        _bgNewAchievements = await checkAchievements(_debriefUserId, {
+          exam: completedExam,
+          subjectId: _debriefExam.subject_id,
+        }).catch((e) => { console.error('[KIWI] checkAchievements failed:', e.message); return []; });
+        await updateTaskProgress(_debriefUserId, null, completedExam)
+          .catch((e) => console.error('[KIWI] updateTaskProgress failed:', e.message));
+        _bgAlmanacUnlocks = await checkAlmanacUnlocks(_debriefUserId).catch((e) => {
+          console.error('[KIWI] Almanac check failed:', e.message);
+          return [];
+        });
+        await sendTelegramExamResult(_debriefUserId, _debriefExam.subject_id, _debriefScorePct, _debriefScorePct >= 70)
+          .catch((e) => console.error("[KIWI] silent catch:", e.message));
+        {
+          const _examSubject = await db.subjects.findById(_debriefExam.subject_id).catch(() => null);
+          await sendEmailNotification(_debriefUserId, 'exam_result', {
+            subjectName: _examSubject?.name || 'Study Session',
+            scorePct: _debriefScorePct,
+            passed: _debriefScorePct >= 70,
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        }
+        // Push enriched SRS/credential/KS results to client via WebSocket
+        wsSend(_debriefUserId, 'exam_result_ready', {
+          job_id: submitJobId,
+          verification: _bgVerification,
+          reclassified: _bgReclassified,
+          credential: _bgCredential,
+          regression_warning: _bgRegression,
+          reclassification_alert_text: (_bgRegression && _bgRegression.message) || null,
+          new_achievements: _bgNewAchievements,
+          ksDelta: _bgKsDelta,
+          credentialEarned: _bgCredentialEarned,
+          new_almanac_unlocks: _bgAlmanacUnlocks,
+          passed: _debriefScorePct >= 70,
+        });
+      } catch (_srsErr) {
+        console.error('[KIWI] Background SRS processing failed:', _srsErr.message);
+      }
       let debriefText = '';
       try {
         const wrong = _debriefResults.filter((qr) => !qr.correct);
