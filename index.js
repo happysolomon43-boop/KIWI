@@ -4183,7 +4183,8 @@ if (customizeBalance && typeof _opts.theory_percent === 'number') {
     '- Theory questions (conceptual, recall, definitions, processes): ' + theoryPct + '% → EXACTLY ' + theoryN + ' questions out of ' + count + '\n' +
     '- Calculation questions (numerical, formula application, derivations): ' + calcPct + '% → EXACTLY ' + calcN + ' questions out of ' + count + '\n' +
     escapeHatch +
-    'ENFORCEMENT: Before outputting your answers section, count your Theory and Calculation questions separately. If the count does not match (±1 question), rewrite questions until it does. Do not proceed to the answers section until the split is correct.\n' +
+    'MANDATORY COMPLIANCE CHECK: After generating ALL questions but BEFORE writing answers, count Theory and Calculation questions separately. If Theory count is not within ±1 of ' + theoryTarget + ' or Calculation count not within ±1 of ' + calcTarget + ', go back and regenerate until counts match. This is HARD REQUIREMENT. User requested ' + theoryTarget + ' theory and ' + calcTarget + ' calculation questions. NO EXCEPTIONS.\n' + 
+      'ABSOLUTE AUTHORITY: Requested ratio overrides ALL other considerations. 100% calculation = ZERO theory. 100% theory = ZERO calculation.\n' +
     '\n---\n';
 }
 // When customizeBalance is false: no ## QUESTION TYPE BALANCE section is injected.
@@ -7469,7 +7470,22 @@ return { zoneName: 'Thriving', stateClass: 'zone-thriving' };
 return { zoneName: 'Growing', stateClass: 'zone-growing' };
 }
 
+
+// BIOME-CACHE: Cache biome data for 30 seconds
+const _biomeCache = new Map();
+const BIOME_CACHE_TTL = 30_000;
+function getCachedBiome(userId) {
+  const entry = _biomeCache.get(userId);
+  if (entry && entry.expires > Date.now()) return entry.data;
+  return null;
+}
+function setCachedBiome(userId, data) {
+  _biomeCache.set(userId, { data, expires: Date.now() + BIOME_CACHE_TTL });
+}
+
 async function buildBiomeData(userId) {
+const cached = getCachedBiome(userId);
+if (cached) { return cached; }
 const user = await db.users.findById(userId);
 const stats = await db.userStats.get(userId);
 const rawSubjects = await db.subjects.findManyWithDecks(userId);
@@ -7577,7 +7593,7 @@ const derivedTreeHealth = zoneHealthValues.length > 0
 ? Math.round(zoneHealthValues.reduce((a, b) => a + b, 0) / zoneHealthValues.length)
 : 100;
 const blendedTreeHealth = Math.max(0, Math.min(100, Math.round((derivedTreeHealth + (stats?.tree_health || 100)) / 2)));
-return {
+const _biomeResult = {
 user_id: userId,
 username: user?.username,
 global_knowledge_score: globalKS.score,
@@ -7588,6 +7604,8 @@ current_streak: currentStreak,
 streak_milestones: activeMilestones,
 subjects: subjectsData,
 };
+setCachedBiome(userId, _biomeResult);
+return _biomeResult;
 }
 // ── Zone Description AI (D1) ─────────────────────────────────────────────────
 
@@ -13491,6 +13509,16 @@ setImmediate(async () => {
       }
     }
     questions = deduplicateCBTOptions(questions);
+    // ABSOLUTE AUTHORITY: verify requested ratio was actually produced
+    if (customize_balance && _theoryPct != null) {
+      const _actualTheory = questions.filter(q => q.question_type === 'theory').length;
+      const _actualCalc = questions.filter(q => q.question_type === 'calculation').length;
+      const _expectedTheory = Math.round(_cbtCount * (_theoryPct / 100));
+      const _expectedCalc = _cbtCount - _expectedTheory;
+      if (Math.abs(_actualTheory - _expectedTheory) > 1 || Math.abs(_actualCalc - _expectedCalc) > 1) {
+        console.warn(`[KIWI CBT] ⚠️ Ratio mismatch: expected ${_expectedTheory}T/${_expectedCalc}C, got ${_actualTheory}T/${_actualCalc}C`);
+      }
+    }
     console.log(`[KIWI CBT] ✅ Generation complete: ${questions.length}/${_cbtCount} questions ready for session ${_cbtSessionId}`);
     await Promise.all(questions.map(q => db.examQuestions.create(_cbtUserId, _cbtSessionId, q)));
     const readyExam = await db.examSessions.findByIdWithQuestions(_cbtUserId, _cbtSessionId);
@@ -13584,6 +13612,93 @@ try {
 }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+//  AUTO-FORFEIT ENDPOINT — for navigator.sendBeacon (no custom headers)
+// ════════════════════════════════════════════════════════════════════════════
+examRouter.post('/:id/auto-forfeit', async (req, res) => {
+  try {
+    const { forfeiture_token } = req.body || {};
+    if (!forfeiture_token) {
+      return res.status(400).json({ error: 'forfeiture_token required' });
+    }
+    // Find exam by ID directly (no auth — sendBeacon can't send headers)
+    // Security: forfeiture_token proves intent, verified below
+    const { rows: examRows } = await query('SELECT * FROM exam_sessions WHERE id = $1 LIMIT 1', [req.params.id]);
+    if (!examRows[0]) return res.status(404).json({ error: 'Exam not found' });
+    // Load questions too — needed for SRS feedback
+    const { rows: qRows } = await query('SELECT * FROM exam_questions WHERE exam_session_id = $1', [req.params.id]);
+    const exam = { ...examRows[0], questions: qRows || [] };
+    
+    // Allow auto-forfeit without full auth — token proves intent
+    // Token is a one-time secret generated at exam start
+    const expectedToken = exam.forfeiture_token;
+    if (!expectedToken || expectedToken !== forfeiture_token) {
+      return res.status(403).json({ error: 'Invalid forfeiture token' });
+    }
+    
+    const userId = exam.user_id;
+    if (exam.is_reckoning) return res.status(403).json({ error: 'Reckoning exams cannot be forfeited' });
+    if (exam.status === 'forfeited' || exam.status === 'completed') {
+      return res.status(400).json({ error: 'Exam already ended' });
+    }
+
+    // Capture pre-forfeit KS
+    const _forfeitPreKs = await computeKnowledgeScore(userId, exam.subject_id).catch(() => ({ score: 0 }));
+    const _forfeitPreKsScore = _forfeitPreKs.score || 0;
+
+    await db.examSessions.update(userId, req.params.id, {
+      status: 'forfeited',
+      completed_at: new Date(),
+      forfeited_by: 'auto_leave_detection',
+    });
+    await db.userStats.update(userId, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    if (exam.subject_id) {
+      const bp = await db.brainPressure.get(userId, exam.subject_id);
+      const cur = bp ? bp.pressure_score || 0 : 0;
+      await db.brainPressure.set(userId, exam.subject_id, {
+        pressure_score: Math.min(100, cur + 15),
+        intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+
+      // KS-FORFEIT-FIX: treat all exam questions as wrong answers so cards get downgraded
+      const _forfeitExamForSRS = {
+        ...exam,
+        questions: (exam.questions || []).map(q => ({ ...q, is_correct: false })),
+      };
+      await applyExamSRSFeedback(userId, _forfeitExamForSRS)
+        .catch((e) => console.error('[KIWI] Forfeit SRS downgrade failed:', e.message));
+
+      await persistKnowledgeScore(userId, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+
+      // Compute delta, persist to exam session
+      const _forfeitPostKs = await computeKnowledgeScore(userId, exam.subject_id).catch(() => ({ score: _forfeitPreKsScore }));
+      const _forfeitKsDelta = parseFloat(((_forfeitPostKs.score || 0) - _forfeitPreKsScore).toFixed(2));
+      await db.examSessions.update(userId, req.params.id, { ks_delta: _forfeitKsDelta })
+        .catch((e) => console.error('[KIWI] Failed to persist forfeit ks_delta:', e.message));
+
+      // Notify via WebSocket
+      const _forfeitBp = await db.brainPressure.get(userId, exam.subject_id).catch(() => null);
+      const _forfeitCurPressure = _forfeitBp ? _forfeitBp.pressure_score || 0 : 0;
+      wsSend(userId, 'pressure_change', {
+        subject_id: exam.subject_id,
+        pressure_score: _forfeitCurPressure,
+        delta: 15,
+      });
+      wsSend(userId, 'ks_change', {
+        subject_id: exam.subject_id,
+        ks_delta: _forfeitKsDelta,
+        new_ks: (_forfeitPostKs.score || 0),
+      });
+
+      res.json({ success: true, message: 'Exam auto-forfeited. Penalties applied.', ksDelta: _forfeitKsDelta });
+    } else {
+      res.json({ success: true, message: 'Exam auto-forfeited. Penalties applied.', ksDelta: 0 });
+    }
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to auto-forfeit exam', details: e.message });
+  }
+});
+
 // F-23 FIX: Removed deprecated sync POST /exams/ route (unreachable from UI, duplicates /generate)
 
 examRouter.get('/', async (req, res) => {
@@ -13635,6 +13750,19 @@ res.json(exam);
 res.status(500).json({ error: 'Failed to start exam' });
 }
 });
+
+// POST /exams/:id/start-token — store forfeiture token for auto-forfeit detection
+examRouter.post('/:id/start-token', async (req, res) => {
+  try {
+    const { forfeiture_token } = req.body || {};
+    if (!forfeiture_token) return res.status(400).json({ error: 'forfeiture_token required' });
+    await db.examSessions.update(req.user.id, req.params.id, { forfeiture_token });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to store token', details: e.message });
+  }
+});
+
 
 examRouter.get('/:id/question/:number', async (req, res) => {
 try {
@@ -14138,6 +14266,7 @@ examRouter.get('/:id/review', async (req, res) => {
       score_pct: exam.score_pct,
       correct_answers: exam.correct_answers,
       total_questions: exam.total_questions,
+      ks_delta: exam.ks_delta || 0,
       question_review,
     });
   } catch (e) {
@@ -16091,7 +16220,38 @@ res.status(500).json({ error: 'Failed to load dashboard', details: e.message });
 //  LIBRARY CONVENIENCE ROUTES (wrappers for frontend /library/ calls)
 
 // ════════════════════════════════════════════════════════════════════════════
+
+// RESET-KS-FIX: When resetting progress, also clear KS scores for the subject
+async function resetKnowledgeScores(userId, subjectId) {
+  try {
+    await db.subjectStats.upsert(userId, subjectId, {
+      knowledge_score: 0,
+      credential_tier: 0,
+      average_exam_score: 0,
+      total_exams: 0,
+    });
+    const globalKS = await computeGlobalKnowledgeScore(userId);
+    await db.userStats.update(userId, { knowledge_score_global: globalKS.score });
+    console.log(`[KIWI] KS scores reset for user ${userId}, subject ${subjectId}`);
+  } catch (e) {
+    console.error('[KIWI] Failed to reset KS scores:', e.message);
+  }
+}
+
 const libraryRouter = express.Router();
+
+// POST /library/reset-ks — reset KS scores for a subject
+libraryRouter.post('/reset-ks', async (req, res) => {
+  try {
+    const { subject_id } = req.body || {};
+    if (!subject_id) return res.status(400).json({ error: 'subject_id required' });
+    await resetKnowledgeScores(req.user.id, subject_id);
+    res.json({ success: true, message: 'KS scores reset' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to reset KS', details: e.message });
+  }
+});
+
 
 libraryRouter.use(authenticate);
 
@@ -16972,6 +17132,59 @@ console.error('[KIWI CRON] Weekly cron failed:', e.message);
 // swallow every request to /api/notifications/* before the real handlers fire.
 
 // ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  STARTUP RECOVERY — Complete any interrupted background KS calculations
+// ════════════════════════════════════════════════════════════════════════════
+async function recoverInterruptedExams() {
+  console.log('[KIWI] Checking for interrupted exam processing...');
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const { rows: recentExams } = await query(
+      `SELECT * FROM exam_sessions WHERE status = 'completed' AND completed_at >= $1 AND (ks_delta IS NULL OR ks_delta = 0) AND total_questions > 0`,
+      [since]
+    );
+    for (const exam of recentExams) {
+      try {
+        console.log(`[KIWI] Recovering KS for exam ${exam.id}...`);
+        await persistKnowledgeScore(exam.user_id, exam.subject_id);
+        const ks = await computeKnowledgeScore(exam.user_id, exam.subject_id).catch(() => ({ score: 0 }));
+        await db.examSessions.update(exam.user_id, exam.id, { ks_delta: ks.score });
+        console.log(`[KIWI] Recovered KS for exam ${exam.id}: ${ks.score}`);
+      } catch (e) {
+        console.error(`[KIWI] Failed to recover exam ${exam.id}:`, e.message);
+      }
+    }
+    const { rows: forfeitedExams } = await query(
+      `SELECT * FROM exam_sessions WHERE status = 'forfeited' AND completed_at >= $1 AND (ks_delta IS NULL) AND total_questions > 0`,
+      [since]
+    );
+    for (const exam of forfeitedExams) {
+      try {
+        console.log(`[KIWI] Recovering KS for forfeited exam ${exam.id}...`);
+        await persistKnowledgeScore(exam.user_id, exam.subject_id);
+        const ks = await computeKnowledgeScore(exam.user_id, exam.subject_id).catch(() => ({ score: 0 }));
+        await db.examSessions.update(exam.user_id, exam.id, { ks_delta: ks.score });
+      } catch (e) {
+        console.error(`[KIWI] Failed to recover forfeited exam ${exam.id}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[KIWI] Exam recovery failed:', e.message);
+  }
+}
+
+// Ensure ks_delta column exists (idempotent migration)
+async function ensureKSDeltaColumn() {
+  try {
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_delta NUMERIC DEFAULT 0`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS forfeited_by VARCHAR(50) DEFAULT NULL`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS forfeiture_token VARCHAR(100) DEFAULT NULL`);
+    console.log('[KIWI] ks_delta columns verified');
+  } catch (e) {
+    console.error('[KIWI] Column migration failed:', e.message);
+  }
+}
+
 //  SERVER STARTUP
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -18069,6 +18282,10 @@ console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear ab
     `).catch(e => console.warn('[KIWI] background_jobs table creation skipped:', e.message));
     // Clean up expired jobs older than 1 hour (fire-and-forget, best-effort)
     pool.query(`DELETE FROM background_jobs WHERE expires_at < NOW() - INTERVAL '1 hour'`).catch(() => {});
+
+    // Run startup recovery before accepting requests
+    ensureKSDeltaColumn().catch(e => console.error('[KIWI] Column migration failed:', e.message));
+    recoverInterruptedExams().catch(e => console.error('[KIWI] Startup recovery failed:', e.message));
 
     const _httpServer = app.listen(PORT, () => {
       console.log(`[KIWI] 🥝 Living Ecosystem backend running on port ${PORT}`);

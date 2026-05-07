@@ -5507,6 +5507,53 @@
         50%       { box-shadow: 0 0 0 4px #f59e0b88; }
       }
       #submitExamBtn[style*="warn"] { animation: warn-ring 1.5s ease-in-out infinite; }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       NOTIFICATION BANNERS — Issue #5 Fix
+       ═══════════════════════════════════════════════════════════════════════ */
+    .notification-banner {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 10000;
+      padding: 14px 20px;
+      border-radius: var(--r);
+      font-family: var(--font-body);
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      animation: bannerSlideIn 0.4s var(--ease-spring) both;
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      max-width: 320px;
+      box-shadow: var(--shadow-lg);
+    }
+    .notification-banner.ks-positive { background: rgba(45,106,79,0.9); border: 1px solid rgba(82,183,136,0.4); color: #d4f5e0; }
+    .notification-banner.ks-negative { background: rgba(42,16,16,0.9); border: 1px solid rgba(239,68,68,0.4); color: #f87171; }
+    .notification-banner.pressure-positive { background: rgba(124,45,20,0.9); border: 1px solid rgba(249,115,22,0.4); color: #fdba74; }
+    .notification-banner.pressure-negative { background: rgba(45,106,79,0.9); border: 1px solid rgba(82,183,136,0.4); color: #d4f5e0; }
+    @keyframes bannerSlideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes bannerFadeOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(120%); opacity: 0; } }
+    .notification-banner.hiding { animation: bannerFadeOut 0.3s var(--ease) forwards; }
+    .notification-banner-icon { font-size: 18px; flex-shrink: 0; }
+    .notification-banner-sub { font-size: 11px; opacity: 0.7; font-weight: 400; }
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       CARD FLIP ANIMATION — Issue #6 Fix
+       ═══════════════════════════════════════════════════════════════════════ */
+    .flip-card { perspective: 1000px; transform-style: preserve-3d; }
+    .flip-card-inner {
+      position: relative; width: 100%; height: 100%;
+      transition: transform 0.7s cubic-bezier(0.45,0.05,0.55,0.95), margin-top 0.7s cubic-bezier(0.45,0.05,0.55,0.95) 0.35s;
+      transform-style: preserve-3d; margin-top: 0;
+    }
+    .flip-card.flipped .flip-card-inner { transform: rotateY(180deg); margin-top: -20px; }
+    .flip-card-front, .flip-card-back { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border-radius: var(--r); }
+    .flip-card-back { transform: rotateY(180deg); }
+
 </style>
   </head>
   <body>
@@ -5737,6 +5784,50 @@
       </div>
     </div>
     <script>
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  AUTO-FORFEIT DETECTION — Issue #1 Fix
+  // ═══════════════════════════════════════════════════════════════════════════
+  var _forfeitToken = null;
+  var _activeExamId = null;
+  var _examSubmitted = false;
+  var _forfeitSent = false;
+
+  function setActiveExam(examId, token) {
+    _activeExamId = examId;
+    _forfeitToken = token;
+    _examSubmitted = false;
+    _forfeitSent = false;
+  }
+  function markExamSubmitted() {
+    _examSubmitted = true;
+  }
+  function sendAutoForfeit() {
+    if (!_activeExamId || _examSubmitted || _forfeitSent) return;
+    _forfeitSent = true;
+    try {
+      var data = JSON.stringify({ forfeiture_token: _forfeitToken });
+      var url = '/api/exams/' + _activeExamId + '/auto-forfeit';
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([data], { type: 'application/json' }));
+      } else {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url, false);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.send(data);
+      }
+    } catch(e) {}
+  }
+  window.addEventListener('beforeunload', function() {
+    if (_activeExamId && !_examSubmitted && !_forfeitSent) sendAutoForfeit();
+  });
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden' && _activeExamId && !_examSubmitted && !_forfeitSent) sendAutoForfeit();
+  });
+  window.addEventListener('popstate', function() {
+    if (_activeExamId && !_examSubmitted && !_forfeitSent) sendAutoForfeit();
+  });
+
       // ═══════════════════════════════════════════════════════════════════════════
       // KIWI FRONTEND — Complete Living Ecosystem UI
       // Phase 9 Implementation: Wired to Real Backend API
@@ -18392,5 +18483,80 @@
       new MutationObserver(sweep).observe(document.documentElement, { childList: true, subtree: true });
     })();
   </script>
-  </body>
+  <script>
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  NOTIFICATION BANNERS — Issue #5 Fix
+  // ═══════════════════════════════════════════════════════════════════════════
+  function showNotification(type, title, subtitle, duration) {
+    duration = duration || 4000;
+    var container = document.getElementById('notification-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'notification-container';
+      container.style.cssText = 'position:fixed;top:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:8px;';
+      document.body.appendChild(container);
+    }
+    var banner = document.createElement('div');
+    banner.className = 'notification-banner ' + type;
+    var icon = '📊';
+    if (type.indexOf('ks-positive') >= 0) icon = '📈';
+    if (type.indexOf('ks-negative') >= 0) icon = '📉';
+    if (type.indexOf('pressure-positive') >= 0) icon = '🔥';
+    if (type.indexOf('pressure-negative') >= 0) icon = '❄️';
+    banner.innerHTML = '<span class="notification-banner-icon">' + icon + '</span>' +
+      '<div>' + title + (subtitle ? '<div class="notification-banner-sub">' + subtitle + '</div>' : '') + '</div>';
+    container.appendChild(banner);
+    setTimeout(function() {
+      banner.classList.add('hiding');
+      setTimeout(function() { if (banner.parentNode) banner.parentNode.removeChild(banner); }, 300);
+    }, duration);
+  }
+  // WebSocket listener for KS/Pressure changes
+  if (window.addEventListener && window.wsConnection) {
+    window.wsConnection.addEventListener('message', function(event) {
+      try {
+        var msg = JSON.parse(event.data);
+        if (msg.event === 'ks_change') {
+          var delta = msg.data.ks_delta || 0;
+          showNotification(delta >= 0 ? 'ks-positive' : 'ks-negative', 'Knowledge Score ' + (delta >= 0 ? '+' : '') + delta, 'Subject KS updated');
+        }
+        if (msg.event === 'pressure_change') {
+          var pDelta = msg.data.delta || 0;
+          showNotification(pDelta > 0 ? 'pressure-positive' : 'pressure-negative', 'Brain Pressure ' + (pDelta > 0 ? '+' : '') + pDelta, 'Current: ' + (msg.data.pressure_score || 0));
+        }
+      } catch(e) {}
+    });
+  }
+</script>
+<script>
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  AI EXPLANATION BUTTON — Issue #7 Fix
+  // ═══════════════════════════════════════════════════════════════════════════
+  function handleAIExplain(button, cardId) {
+    if (button.dataset.aiLoading === 'true') return;
+    button.dataset.aiLoading = 'true';
+    var originalText = button.innerHTML;
+    button.innerHTML = '<span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(82,183,136,0.3);border-top-color:#52b788;border-radius:50%;animation:spin 0.6s linear infinite;vertical-align:middle;margin-right:6px;"></span> Generating...';
+    button.style.opacity = '0.7';
+    fetch('/api/cards/' + cardId + '/ai-explain', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token')||'') }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      button.innerHTML = originalText; button.style.opacity = '1'; button.dataset.aiLoading = 'false';
+      var el = document.getElementById('ai-explain-' + cardId);
+      if (el) { el.textContent = data.explanation || data.summary || 'No explanation available.'; el.style.display = 'block'; }
+      if (typeof showNotification === 'function') showNotification('ks-positive', 'AI Explanation Ready', '', 2000);
+    })
+    .catch(function(err) {
+      button.innerHTML = originalText; button.style.opacity = '1'; button.dataset.aiLoading = 'false';
+      console.error('[KIWI] AI explanation failed:', err);
+      if (typeof showNotification === 'function') showNotification('ks-negative', 'AI Explanation Failed', 'Please try again', 3000);
+    });
+  }
+</script>
+</body>
 </html>
