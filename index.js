@@ -14459,13 +14459,27 @@ setImmediate(async () => {
 
       // Run both AI calls in parallel — if either throws, Promise.all rejects and
       // job_failed is emitted by the outer catch.
-      const [theoryText, calcText] = await Promise.all([
-        generateCBTQuestions(_cbtNotes, theoryN, { ..._cbtOptions, force_type: 'theory' }),
-        generateCBTQuestions(_cbtNotes, calcN,   { ..._cbtOptions, force_type: 'calculation' }),
-      ]);
+      // Skip a side entirely if its count is 0 (e.g. 100% calculation → theoryN=0).
+      let theoryQs = [];
+      let calcQs   = [];
 
-      let theoryQs = parseCBTResponse(theoryText, _cbtSessionId, _cbtCards);
-      let calcQs   = parseCBTResponse(calcText,   _cbtSessionId, _cbtCards);
+      if (theoryN > 0 && calcN > 0) {
+        // Normal split — both sides needed
+        const [theoryText, calcText] = await Promise.all([
+          generateCBTQuestions(_cbtNotes, theoryN, { ..._cbtOptions, force_type: 'theory' }),
+          generateCBTQuestions(_cbtNotes, calcN,   { ..._cbtOptions, force_type: 'calculation' }),
+        ]);
+        theoryQs = parseCBTResponse(theoryText, _cbtSessionId, _cbtCards);
+        calcQs   = parseCBTResponse(calcText,   _cbtSessionId, _cbtCards);
+      } else if (theoryN === 0) {
+        // 100% calculation — skip theory call entirely
+        const calcText = await generateCBTQuestions(_cbtNotes, calcN, { ..._cbtOptions, force_type: 'calculation' });
+        calcQs = parseCBTResponse(calcText, _cbtSessionId, _cbtCards);
+      } else {
+        // 100% theory — skip calc call entirely
+        const theoryText = await generateCBTQuestions(_cbtNotes, theoryN, { ..._cbtOptions, force_type: 'theory' });
+        theoryQs = parseCBTResponse(theoryText, _cbtSessionId, _cbtCards);
+      }
 
       // Safety-net: override question_type regardless of what the AI wrote —
       // the type is guaranteed by the prompt, but we enforce it here too.
