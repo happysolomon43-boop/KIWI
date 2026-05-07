@@ -10232,7 +10232,11 @@
             if (!_tNow2 || _tNow2.queue[_tNow2.currentIndex]?.id !== _targetCardId) return;
             _tNow2.aiSummary = "AI explanation unavailable. Try again later.";
             renderActiveStudySession(document.getElementById("mainContent"));
-            showToast("AI service unavailable", "error");
+            // Only show this toast when apiRequest hasn't already shown one
+            // (e.g. the generic 500 "Server error" toast sets alreadyReported=true)
+            if (!err.alreadyReported) {
+              showToast("AI service unavailable", "error");
+            }
           }
         };
         // Response buttons

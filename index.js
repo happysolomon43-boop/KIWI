@@ -4183,7 +4183,7 @@ if (customizeBalance && typeof _opts.theory_percent === 'number') {
     '- Theory questions (conceptual, recall, definitions, processes): ' + theoryPct + '% → EXACTLY ' + theoryN + ' questions out of ' + count + '\n' +
     '- Calculation questions (numerical, formula application, derivations): ' + calcPct + '% → EXACTLY ' + calcN + ' questions out of ' + count + '\n' +
     escapeHatch +
-    'MANDATORY COMPLIANCE CHECK: After generating ALL questions but BEFORE writing answers, count Theory and Calculation questions separately. If Theory count is not within ±1 of ' + theoryTarget + ' or Calculation count not within ±1 of ' + calcTarget + ', go back and regenerate until counts match. This is HARD REQUIREMENT. User requested ' + theoryTarget + ' theory and ' + calcTarget + ' calculation questions. NO EXCEPTIONS.\n' + 
+    'MANDATORY COMPLIANCE CHECK: After generating ALL questions but BEFORE writing answers, count Theory and Calculation questions separately. If Theory count is not within ±1 of ' + theoryN + ' or Calculation count not within ±1 of ' + calcN + ', go back and regenerate until counts match. This is HARD REQUIREMENT. User requested ' + theoryN + ' theory and ' + calcN + ' calculation questions. NO EXCEPTIONS.\n' + 
       'ABSOLUTE AUTHORITY: Requested ratio overrides ALL other considerations. 100% calculation = ZERO theory. 100% theory = ZERO calculation.\n' +
     '\n---\n';
 }
@@ -4340,14 +4340,16 @@ Rules:
 - If the answer is a process, name the key step or consequence that makes it memorable.
 - Never say "this card says" or "the answer is". Just explain the concept.
 - Maximum 2 sentences.`;
-// AI-TIMEOUT-FIX: Wrap Gemini call in 7-second timeout to prevent UI hanging
-const generatePromise = geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
-const timeoutPromise = new Promise((_, reject) =>
-// TIMEOUT-FIX: raised from 7s → 15s. With thinkingLevel:'minimal' response is fast,
-// but 7s was too tight and raced before the answer arrived.
-setTimeout(() => reject(new Error('AI explanation timeout')), 15000)
+// TIMEOUT-FIX: Pass timeoutMs directly to generateContent so the internal
+// AbortController actually cancels the in-flight HTTP request when it fires.
+// The old Promise.race approach left the fetch running for 30s after the 15s
+// race rejected — wasting a connection and causing cascading failures.
+// 25s gives gemini-3.1-flash-lite-preview plenty of headroom with thinkingLevel:'minimal'.
+const result = await geminiModel.generateContent(
+  prompt,
+  { thinkingConfig: { thinkingLevel: 'minimal' } },
+  { timeoutMs: 25000 }
 );
-const result = await Promise.race([generatePromise, timeoutPromise]);
 return result.response.text().trim();
 }
 
@@ -7520,12 +7522,22 @@ decks.map(deck => db.cards.findByDeck(userId, deck.id))
 );
 let allCards = [];
 for (const dc of deckCardArrays) allCards.push(...dc);
-// Parallelise card-state reads
-const cardStatesDocs = await Promise.all(allCards.map(async card => {
-let stateDoc = await db.cardStates.get(userId, card.id);
-if (!stateDoc) stateDoc = await initializeCardState(userId, card.id);
-return stateDoc;
-}));
+// BIOME-TIMEOUT-FIX: bulk-fetch all card states in ONE query instead of N+1
+// individual fetches that exhaust the connection pool (max:15) for large libraries.
+const cardIds = allCards.map(c => c.id);
+const existingStates = cardIds.length > 0
+  ? await db.cardStates.findByCards(userId, cardIds).catch(() => [])
+  : [];
+const stateMap = new Map(existingStates.map(s => [s.card_id, s]));
+// Only initialize states that are genuinely missing (rare for active users)
+const missingIds = cardIds.filter(id => !stateMap.has(id));
+if (missingIds.length > 0) {
+  const initialized = await Promise.all(
+    missingIds.map(id => initializeCardState(userId, id).catch(() => null))
+  );
+  for (const s of initialized) { if (s) stateMap.set(s.card_id, s); }
+}
+const cardStatesDocs = allCards.map(card => stateMap.get(card.id)).filter(Boolean);
 const stateCounts = {};
 for (const s of Object.values(CARD_STATES)) stateCounts[s] = 0;
 for (const cs of cardStatesDocs) stateCounts[cs.state] = (stateCounts[cs.state] || 0) + 1;
@@ -11634,8 +11646,8 @@ try {
   if (!deck) return res.status(404).json({ error: 'Deck not found' });
   // Reset all card scheduling fields in one SQL pass
   await query(
-    `UPDATE cards SET stage = 1, review_count = 0,
-     next_review_at = NOW(), last_reviewed_at = NULL,
+    `UPDATE cards SET stage = 1, review_count = 0, repetition_count = 0,
+     easiness_factor = 2.5, next_review_at = NOW(), last_reviewed_at = NULL,
      updated_at = NOW()
      WHERE deck_id = $1 AND user_id = $2`,
     [deckId, userId]
@@ -11650,6 +11662,8 @@ try {
      ) AND user_id = $2`,
     [deckId, userId]
   );
+  // Explicitly zero subject KS before recomputing so stale score is never visible
+  await db.subjectStats.upsert(userId, deck.subject_id, { knowledge_score: 0 }).catch(() => {});
   // Recompute KS after deck reset so score reflects new SEEDLING state
   await persistKnowledgeScore(userId, deck.subject_id).catch(() => {});
   wsSend(userId, 'ks_change', { subject_id: deck.subject_id, source: 'deck_reset' });
@@ -11677,8 +11691,8 @@ try {
   const deckIds = decks.map(d => d.id);
   // Reset all cards in one pass
   await query(
-    `UPDATE cards SET stage = 1, review_count = 0,
-     next_review_at = NOW(), last_reviewed_at = NULL,
+    `UPDATE cards SET stage = 1, review_count = 0, repetition_count = 0,
+     easiness_factor = 2.5, next_review_at = NOW(), last_reviewed_at = NULL,
      updated_at = NOW()
      WHERE deck_id = ANY($1) AND user_id = $2`,
     [deckIds, userId]
@@ -11698,6 +11712,8 @@ try {
     [deckIds, userId]
   );
   const count = parseInt(rows[0]?.cnt || '0', 10);
+  // Explicitly zero subject_stats KS before recomputing — prevents stale score showing
+  await db.subjectStats.upsert(userId, subjectId, { knowledge_score: 0 }).catch(() => {});
   // Recompute KS after mass reset
   await persistKnowledgeScore(userId, subjectId).catch(() => {});
   // KS-BUG-4 FIX: sync goal.current_ks in Biome — otherwise old KS shows until cron runs
@@ -11986,7 +12002,9 @@ card
 );
 res.json({ summary });
 } catch (e) {
-res.status(500).json({ error: 'AI explanation failed. Please try again.', details: e.message });
+// Return 503 (not 500) so the frontend's generic "Server error" toast
+// does NOT fire — only the AI-specific "AI service unavailable" toast shows.
+res.status(503).json({ error: 'AI explanation failed. Please try again.', details: e.message });
 }
 });
 // GET /api/cards/:id/mastery-moment — return cached or freshly generated mastery moment
