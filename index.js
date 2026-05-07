@@ -172,6 +172,8 @@ const _ksQueue = new Map(); // key: `${userId}:${cardId}`
 const _preMarkCache = new Map(); // key: examId → Map(questionNumber → {answer,processed})
 function queueKSRecompute(userId, cardId) {
   if (_ksQueue.size < 50000) _ksQueue.set(`${userId}:${cardId}`, { userId, cardId }); // F-11 FIX: cap unbounded growth
+  // KS-CACHE: Best-effort invalidation — the 30s TTL means stale data is short-lived anyway
+  invalidateKSCache(userId, null);
 }
 
 // ── Session Pagination Store ──────────────────────────────────────────────────
@@ -2542,8 +2544,11 @@ return stage;
 async function updateTreeStage(userId) {
 const stats = await db.userStats.get(userId);
 if (!stats) return null;
-const newStage = computeTreeStage(stats.current_streak, stats.total_cards_mastered);
-if (newStage !== stats.tree_stage) {
+let newStage = computeTreeStage(stats.current_streak, stats.total_cards_mastered);
+// TREE-FIX: Clamp to valid range [1, 9] and ensure integer
+newStage = Math.max(1, Math.min(9, parseInt(newStage) || 1));
+const currentStage = parseInt(stats.tree_stage) || 1;
+if (newStage !== currentStage) {
 await db.userStats.update(userId, { tree_stage: newStage });
 }
 return newStage;
@@ -4307,7 +4312,12 @@ Rules:
 - If the answer is a process, name the key step or consequence that makes it memorable.
 - Never say "this card says" or "the answer is". Just explain the concept.
 - Maximum 2 sentences.`;
-const result = await geminiModel.generateContent(prompt);
+// AI-TIMEOUT-FIX: Wrap Gemini call in 7-second timeout to prevent UI hanging
+const generatePromise = geminiModel.generateContent(prompt);
+const timeoutPromise = new Promise((_, reject) =>
+setTimeout(() => reject(new Error('AI explanation timeout')), 7000)
+);
+const result = await Promise.race([generatePromise, timeoutPromise]);
 return result.response.text().trim();
 }
 
@@ -4483,9 +4493,32 @@ for (const rawLine of qLines) {
       .replace(/^Question\s*\d+[:\s]*/i, '')
       .replace(/^\d+[.:\)]\s*/, '')
       .trim();
+    // CBT-BUG-FIX: Try multiple strategies to link question to source card:
+    // 1. Index-based (question N → card N-1) for backwards compatibility
+    // 2. Content-based fuzzy matching using stem text against card front_content
+    let _linkedCardId = sourceCards[qNum - 1]?.id || null;
+    // 3. If index-based failed, try fuzzy content match
+    if (!_linkedCardId && inlineStem && sourceCards.length > 0) {
+      const stemLower = inlineStem.toLowerCase();
+      let bestScore = 0;
+      for (const sc of sourceCards) {
+        const front = (sc.front_content || '').toLowerCase();
+        // Simple word overlap scoring
+        const stemWords = stemLower.split(/\s+/).filter(w => w.length > 3);
+        let overlap = 0;
+        for (const sw of stemWords) {
+          if (front.includes(sw)) overlap++;
+        }
+        if (overlap > bestScore) {
+          bestScore = overlap;
+          _linkedCardId = sc.id;
+        }
+      }
+      if (bestScore < 2) _linkedCardId = null; // require at least 2 word matches
+    }
     current = {
       exam_session_id: examSessionId,
-      card_id: sourceCards[qNum - 1]?.id || null,
+      card_id: _linkedCardId,
       question_number: qNum,
       cognitive_level: 'Application',
       difficulty: 'Medium',
@@ -5387,6 +5420,11 @@ return baseWeight;
 // Fix #20: accepts cachedStates to eliminate redundant findByUser calls across callers
 // Fix #21: uses findAllForUser + filter instead of per-deck findByDeck loop
 async function computeKnowledgeScore(userId, subjectId = null, cachedStates = null) {
+// KS-CACHE: Skip cache only when caller provides fresh cachedStates
+if (!cachedStates) {
+  const cached = getCachedKS(userId, subjectId);
+  if (cached) return cached;
+}
 let allCards = [];
 if (subjectId) {
 const decks = await db.decks.findBySubject(userId, subjectId);
@@ -5422,18 +5460,27 @@ sumWeights += weight;
 }
 const score = (sumWeights / (allCards.length * 5)) * 100;
 const clamped = Math.min(100, Math.max(0, score));
-return {
+const result = {
 score: parseFloat(clamped.toFixed(2)),
 band: getBandName(clamped),
 totalCards: allCards.length,
 sumWeights: parseFloat(sumWeights.toFixed(2)),
 };
+setCachedKS(userId, subjectId, result);
+return result;
 }
 
 // Fix #22: precomputedSubjectScores param avoids re-computing already-known subject KS
 async function computeGlobalKnowledgeScore(userId, precomputedSubjectScores = null) {
+// KS-CACHE: Check global cache first
+const cached = getCachedKS(userId, null);
+if (cached) return cached;
 const subjects = await db.subjects.findManyWithDecks(userId);
-if (subjects.length === 0) return { score: 0, band: '🌱 Seed', totalCards: 0 };
+if (subjects.length === 0) {
+  const empty = { score: 0, band: '🌱 Seed', totalCards: 0 };
+  setCachedKS(userId, null, empty);
+  return empty;
+}
 let totalWeightedSum = 0;
 let totalCardCount = 0;
 for (const subject of subjects) {
@@ -5445,14 +5492,18 @@ totalCardCount += (ks.totalCards || 0);
 }
 if (totalCardCount === 0) return { score: 0, band: '🌱 Seed', totalCards: 0 };
 const globalScore = totalWeightedSum / totalCardCount;
-return {
+const result = {
 score: parseFloat(globalScore.toFixed(2)),
 band: getBandName(globalScore),
 totalCards: totalCardCount,
 };
+setCachedKS(userId, null, result);
+return result;
 }
 
 async function persistKnowledgeScore(userId, subjectId = null) {
+// KS-CACHE: Always invalidate before persisting — we want fresh data after SRS changes
+invalidateKSCache(userId, subjectId);
 if (subjectId) {
 const ks = await computeKnowledgeScore(userId, subjectId);
 await db.subjectStats.upsert(userId, subjectId, { knowledge_score: ks.score });
@@ -6101,9 +6152,33 @@ async function closeMasteryGoal(userId, goalId, reason = 'completed') {
 async function processExamVerification(userId, examSession) {
 const results = { verified: [], reclassified: [] };
 const questions = examSession.questions || [];
+// VERIFICATION-BUG-FIX: Pre-load subject cards for content matching when card_id is missing
+let _subjectCards = [];
+const _deckIds = examSession.deck_ids || [];
+if (_deckIds.length > 0) {
+  const _allDeckCards = await Promise.all(_deckIds.map(did => db.cards.findByDeck(userId, did).catch(() => [])));
+  _subjectCards = _allDeckCards.flat();
+} else if (examSession.subject_id) {
+  _subjectCards = await db.cards.findBySubject(userId, examSession.subject_id).catch(() => []);
+}
+function _resolveCardId(q) {
+  if (q.card_id) return q.card_id;
+  if (_subjectCards.length === 0 || !q.stem) return null;
+  const stem = q.stem.toLowerCase();
+  const stemWords = stem.split(/\s+/).filter(w => w.length > 3);
+  let bestCard = null, bestScore = 0;
+  for (const sc of _subjectCards) {
+    const front = (sc.front_content || '').toLowerCase();
+    let overlap = 0;
+    for (const sw of stemWords) { if (front.includes(sw)) overlap++; }
+    if (overlap > bestScore) { bestScore = overlap; bestCard = sc; }
+  }
+  return (bestCard && bestScore >= 2) ? bestCard.id : null;
+}
 for (const q of questions) {
-if (!q.card_id || q.is_correct === undefined) continue;
-const card = await db.cards.findById(userId, q.card_id);
+const resolvedCardId = _resolveCardId(q);
+if (!resolvedCardId || q.is_correct === undefined) continue;
+const card = await db.cards.findById(userId, resolvedCardId);
 if (!card) continue;
 const stateDoc = await db.cardStates.get(userId, card.id);
 if (!stateDoc) continue;
@@ -7096,28 +7171,58 @@ Return only the 2-sentence alert text.`;
 async function applyExamSRSFeedback(userId, examSession) {
 const questions = examSession.questions || [];
 const reclassified = [];
+// SRS-BUG-FIX: Pre-load ALL subject cards for content-based matching when card_id is missing.
+// This ensures every exam question affects SRS — no question is silently skipped.
+let _subjectCards = [];
+const _deckIds = examSession.deck_ids || [];
+if (_deckIds.length > 0) {
+  const _allDeckCards = await Promise.all(_deckIds.map(did => db.cards.findByDeck(userId, did).catch(() => [])));
+  _subjectCards = _allDeckCards.flat();
+} else if (examSession.subject_id) {
+  _subjectCards = await db.cards.findBySubject(userId, examSession.subject_id).catch(() => []);
+}
+// Build a content lookup map for fuzzy matching
+const _contentCardMap = new Map();
+for (const sc of _subjectCards) {
+  const front = (sc.front_content || '').toLowerCase();
+  if (front.length > 5) _contentCardMap.set(front.slice(0, 50), sc);
+}
+function _resolveCardId(q) {
+  if (q.card_id) return q.card_id;
+  if (_subjectCards.length === 0) return null;
+  // Fuzzy match: find card whose front_content overlaps most with question stem
+  const stem = (q.stem || '').toLowerCase();
+  if (!stem) return null;
+  const stemWords = stem.split(/\s+/).filter(w => w.length > 3);
+  let bestCard = null, bestScore = 0;
+  for (const sc of _subjectCards) {
+    const front = (sc.front_content || '').toLowerCase();
+    let overlap = 0;
+    for (const sw of stemWords) { if (front.includes(sw)) overlap++; }
+    if (overlap > bestScore) { bestScore = overlap; bestCard = sc; }
+  }
+  return (bestCard && bestScore >= 2) ? bestCard.id : null;
+}
 for (const q of questions) {
-if (q.is_correct === false && q.card_id) {
-const card = await db.cards.findById(userId, q.card_id);
-if (!card) continue;
-const newStage = Math.max(1, card.stage - 1);
-await db.cards.update(userId, card.id, {
-stage: newStage,
-interval_days: 1,
-repetition_count: 0,
-next_review_at: new Date(Date.now() + 86400000),
-});
-// ⚠ FIX: Do NOT force state to GROWING/STABLE here — that overwrites the real
-// classifier (determineCardState) and zeros out all pressure. Instead, queue
-// a proper recompute so determineCardState assigns the correct state (STUCK,
-// GHOST, FRAGILE, etc.) based on full review history + exam logs.
-queueKSRecompute(userId, card.id);
-reclassified.push({ card_id: card.id, old_stage: card.stage, new_stage: newStage });
-}
-// Queue recompute for correct answers too — they may unlock VERIFIED state
-if (q.is_correct === true && q.card_id) {
-queueKSRecompute(userId, q.card_id);
-}
+  const resolvedCardId = _resolveCardId(q);
+  if (!resolvedCardId) continue; // Still no match — skip this question
+  if (q.is_correct === false) {
+    const card = await db.cards.findById(userId, resolvedCardId);
+    if (!card) continue;
+    const newStage = Math.max(1, card.stage - 1);
+    await db.cards.update(userId, card.id, {
+      stage: newStage,
+      interval_days: 1,
+      repetition_count: 0,
+      next_review_at: new Date(Date.now() + 86400000),
+    });
+    queueKSRecompute(userId, card.id);
+    reclassified.push({ card_id: card.id, old_stage: card.stage, new_stage: newStage });
+  }
+  // Queue recompute for correct answers too — they may unlock VERIFIED state
+  if (q.is_correct === true) {
+    queueKSRecompute(userId, resolvedCardId);
+  }
 }
 return reclassified;
 }
@@ -10633,6 +10738,31 @@ expiresIn: REFRESH_EXPIRY,
 // are rejected within half a minute at worst.
 const _authCache = new Map(); // Map<token, { user, expiresAt }>
 const _AUTH_CACHE_TTL_MS = 30_000;
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  KNOWLEDGE SCORE CACHE — Eliminates N+1 recomputation on dashboard/biome/brain
+// ═════════════════════════════════════════════════════════════════════════════
+const _ksCache = new Map();      // key: `${userId}:${subjectId||'global'}` → { score, band, totalCards, expiresAt }
+const _KS_CACHE_TTL_MS = 30_000; // 30s — short enough that exam SRS shows quickly, long enough for UI
+
+function getCachedKS(userId, subjectId) {
+  const key = `${userId}:${subjectId || 'global'}`;
+  const entry = _ksCache.get(key);
+  if (entry && Date.now() < entry.expiresAt) return entry.data;
+  return null;
+}
+function setCachedKS(userId, subjectId, data) {
+  const key = `${userId}:${subjectId || 'global'}`;
+  _ksCache.set(key, { data, expiresAt: Date.now() + _KS_CACHE_TTL_MS });
+}
+function invalidateKSCache(userId, subjectId) {
+  if (subjectId) {
+    _ksCache.delete(`${userId}:${subjectId}`);
+    _ksCache.delete(`${userId}:global`);
+  } else {
+    for (const k of _ksCache.keys()) { if (k.startsWith(`${userId}:`)) _ksCache.delete(k); }
+  }
+}
 
 async function authenticate(req, res, next) {
 const authHeader = req.headers.authorization;
@@ -17278,6 +17408,19 @@ async function runSchemaMigrations() {
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS description text`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS title text`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS is_public boolean DEFAULT true`,
+    // DB-FIX: exam_questions needs card_id for SRS feedback linkage (Issue #1 fix)
+    `ALTER TABLE exam_questions ADD COLUMN IF NOT EXISTS card_id text`,
+    // DB-FIX: background_jobs table for job polling fallback
+    `CREATE TABLE IF NOT EXISTS background_jobs (
+      id          TEXT        PRIMARY KEY,
+      status      TEXT        NOT NULL DEFAULT 'pending',
+      type        TEXT        NOT NULL,
+      result      JSONB,
+      error       TEXT,
+      expires_at  TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '10 minutes'),
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_background_jobs_expires ON background_jobs(expires_at)`,
   ];
   for (const sql of migrations) {
     try {

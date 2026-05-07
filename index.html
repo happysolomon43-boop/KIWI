@@ -10052,9 +10052,13 @@
             // The re-rendered card gets class="flashcard flipped" whose static
             // transform: rotateY(180deg) translateY(-20px) matches the animation's
             // end state exactly — so the DOM swap is invisible.
+            // FLIP-BUG-FIX: Use 600ms to ensure the 550ms animation fully completes
+            // before DOM swap. The 520ms was too short, causing a visible jerk.
             setTimeout(() => {
+              flashcard.classList.remove("is-flipping");
+              flashcard.classList.add("flipped");
               renderActiveStudySession(document.getElementById("mainContent"));
-            }, 520); // slightly longer than the 0.55s animation
+            }, 600);
           });
         }
         // Study Edit button — open Anki-style editor for current card
