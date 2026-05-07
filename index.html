@@ -1499,8 +1499,27 @@
         transform: translateZ(0);
       }
       /* .study-layout.is-flipped padding-bottom removed — space now always reserved above */
+
+      /* Flip + rise animation:
+         - 0–42%: pure rotateY (card rotates to edge-on, no vertical movement)
+         - 42–100%: rotateY continues to 180° AND translateY glides upward simultaneously
+         The slide begins exactly when the card is edge-on (invisible mid-flip),
+         so it feels like the reveal triggers the rise — one seamless motion. */
+      @keyframes kiwi-card-flip-rise {
+        0%   { transform: rotateY(0deg)    translateY(0px);   }
+        42%  { transform: rotateY(90deg)   translateY(0px);   }
+        100% { transform: rotateY(180deg)  translateY(-20px); }
+      }
+      /* Applied by JS to the live card element during the flip */
+      .flashcard.is-flipping {
+        animation: kiwi-card-flip-rise 0.55s cubic-bezier(0.4, 0.2, 0.2, 1) forwards;
+      }
+      /* Final resting state — MUST match animation end transform exactly.
+         When renderActiveStudySession() re-renders at 520ms the new card
+         gets this class from the start (no animation), landing at the same
+         pixel position the animation left off → zero visible snap. */
       .flashcard.flipped {
-        transform: rotateY(180deg);
+        transform: rotateY(180deg) translateY(-20px);
       }
       .flashcard-face {
         position: absolute;
@@ -10024,15 +10043,18 @@
         if (flashcard && !t.flipped) {
           flashcard.addEventListener("click", () => {
             t.flipped = true;
-            // Animate first: add the class directly so the CSS transition fires.
-            // If we called renderActiveStudySession() immediately the DOM would be
-            // destroyed and rebuilt with .flipped already set — no transition plays.
-            flashcard.classList.add("flipped");
-            // After the flip transition completes, re-render to show rating buttons
-            // and the back-face content in full (hint hides, buttons appear).
+            // Trigger the combined flip+rise animation directly on the live element.
+            // 'is-flipping' plays @keyframes kiwi-card-flip-rise: rotateY starts
+            // immediately, translateY kicks in at the 42% mark (card edge-on) so
+            // the upward slide feels triggered by the reveal, not a separate event.
+            flashcard.classList.add("is-flipping");
+            // After the animation completes, re-render to show rating buttons.
+            // The re-rendered card gets class="flashcard flipped" whose static
+            // transform: rotateY(180deg) translateY(-20px) matches the animation's
+            // end state exactly — so the DOM swap is invisible.
             setTimeout(() => {
               renderActiveStudySession(document.getElementById("mainContent"));
-            }, 520); // slightly longer than the 0.55s CSS transition
+            }, 520); // slightly longer than the 0.55s animation
           });
         }
         // Study Edit button — open Anki-style editor for current card
@@ -18205,7 +18227,7 @@
               t.flipped = true;
               const _fc = document.getElementById("flashcard");
               if (_fc) {
-                _fc.classList.add("flipped");
+                _fc.classList.add("is-flipping");
                 setTimeout(() => {
                   renderActiveStudySession(document.getElementById("mainContent"));
                 }, 580);

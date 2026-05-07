@@ -7662,11 +7662,6 @@ const neglectedSubjectLines = subjectSnapshots
   .map(s => `${s.name} (${s.days_since_last_session === null ? 'never studied' : s.days_since_last_session + 'd ago'}, pressure: ${s.pressure})`)
   .join(', ') || 'None — all subjects were touched this week.';
 
-// (f) Best and worst exam this week
-const sortedExams = [...weekExams].sort((a, b) => (a.score_percentage || 0) - (b.score_percentage || 0));
-const worstExam  = sortedExams[0]  ? `${subjects.find(s => s.id === sortedExams[0].subject_id)?.name || 'Unknown'}: ${Math.round(sortedExams[0].score_percentage)}%` : null;
-const bestExam   = sortedExams[sortedExams.length - 1] ? `${subjects.find(s => s.id === sortedExams[sortedExams.length - 1].subject_id)?.name || 'Unknown'}: ${Math.round(sortedExams[sortedExams.length - 1].score_percentage)}%` : null;
-
 // P6.1 FIX: gather previous 2 chronicles for continuity context
 const allChronicles = await db.chronicleEntries.findByUser(userId).catch(() => []);
 // GAP-1 FIX: fetch exam sessions for the week so Chronicle narrator knows about CBT results
@@ -7680,6 +7675,10 @@ return `${subName}: ${Math.round(e.score_percentage)}% (${
     e.is_reckoning ? 'Reckoning' : 'CBT'
   })`;
 }).join(', ') || 'None';
+// (f) Best and worst exam this week — placed here so weekExams is already declared
+const sortedExams = [...weekExams].sort((a, b) => (a.score_percentage || 0) - (b.score_percentage || 0));
+const worstExam  = sortedExams[0]  ? `${subjects.find(s => s.id === sortedExams[0].subject_id)?.name || 'Unknown'}: ${Math.round(sortedExams[0].score_percentage)}%` : null;
+const bestExam   = sortedExams[sortedExams.length - 1] ? `${subjects.find(s => s.id === sortedExams[sortedExams.length - 1].subject_id)?.name || 'Unknown'}: ${Math.round(sortedExams[sortedExams.length - 1].score_percentage)}%` : null;
 const prevChronicles = allChronicles
 .sort((a, b) => new Date(b.week_start) - new Date(a.week_start))
 .slice(0, 2);
@@ -11518,6 +11517,8 @@ try {
   const count = parseInt(rows[0]?.cnt || '0', 10);
   // Recompute KS after mass reset
   await persistKnowledgeScore(userId, subjectId).catch(() => {});
+  // KS-BUG-4 FIX: sync goal.current_ks in Biome — otherwise old KS shows until cron runs
+  await updateAllBubblesForUser(userId).catch(() => {});
   res.json({ message: `Subject reset: ${count} card${count !== 1 ? 's' : ''} returned to SEEDLING`, count });
 } catch (e) {
   res.status(500).json({ error: 'Failed to reset subject', details: e.message });
@@ -12675,16 +12676,8 @@ const completed = (session.cards_reviewed || 0) >= 1;
 const focusDurationSec = focused_seconds > 0 ? focused_seconds : 0;
 const focusStage = computeFocusStage(session.started_at, break_count, focusDurationSec, seed_killed);
 const seedSurvived = focusStage !== FOCUS_STAGES.DORMANT;
-await db.sessions.update(req.user.id, session_id, {
-  ended_at: now,
-  duration_seconds: durationSec,
-  session_completed: completed,
-  focus_breaks: break_count,
-  focus_seed_stage: focusStage,
-  seed_survived: seedSurvived,
-});
-// Compute real KS delta synchronously so the session complete screen shows accurate data.
-// Pattern mirrors the exam submit route (lines 13274-13293).
+// KS-BUG-1 FIX: Compute ks_delta BEFORE sessions.update so it can be persisted
+// in the same write. Previous order computed it after, then never saved it.
 let _sessionKsDelta = 0;
 try {
   const _sDeck = await db.decks.findById(req.user.id, session.deck_id).catch(() => null);
@@ -12692,7 +12685,7 @@ try {
     const _preStats = await db.subjectStats.get(req.user.id, _sDeck.subject_id).catch(() => null);
     const _preKS = _preStats?.knowledge_score || 0;
     // Flush all queued card state recomputes for this user immediately —
-    // avoids waiting 60s for the cron to run (same fix as exam submit does).
+    // avoids waiting 60s for the cron to run.
     const _userKeys = [..._ksQueue.keys()].filter(k => k.startsWith(req.user.id + ':'));
     const _userBatch = _userKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
     await Promise.all(_userBatch.map(({ userId, cardId }) =>
@@ -12702,6 +12695,15 @@ try {
     _sessionKsDelta = parseFloat(((_newKS?.score || 0) - _preKS).toFixed(2));
   }
 } catch (_ksErr) { /* non-fatal — delta stays 0 */ }
+await db.sessions.update(req.user.id, session_id, {
+  ended_at: now,
+  duration_seconds: durationSec,
+  session_completed: completed,
+  focus_breaks: break_count,
+  focus_seed_stage: focusStage,
+  seed_survived: seedSurvived,
+  ks_delta: _sessionKsDelta,  // KS-BUG-1 FIX: persist so progress history shows real delta
+});
 // Respond immediately — heavy analytics run in the background
 res.json({
   session_id,
@@ -13681,6 +13683,9 @@ duration_seconds: durationSec,
         }
         await persistKnowledgeScore(_debriefUserId, _debriefExam.subject_id)
           .catch((e) => console.error('[KIWI] persistKnowledgeScore failed:', e.message));
+        // KS-BUG-3 FIX: sync goal.current_ks in Biome after exam changes card states
+        await updateAllBubblesForUser(_debriefUserId)
+          .catch((e) => console.error('[KIWI] updateAllBubblesForUser (exam) failed:', e.message));
         const _bgPostKs = await computeKnowledgeScore(_debriefUserId, _debriefExam.subject_id).catch(() => ({ score: preKsScore }));
         _bgKsDelta = parseFloat(((_bgPostKs.score || 0) - preKsScore).toFixed(2));
         _bgCredentialEarned = !!(_bgCredential && _bgCredential.tier && _bgCredential.newlyEarned);
@@ -17181,6 +17186,8 @@ async function runSchemaMigrations() {
 
     // sessions: updated_at required by _buildIncrementUpdate
     `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
+    // sessions: ks_delta written by /study/end so progress history shows real KS change
+    `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ks_delta numeric DEFAULT 0`,
 
     // decks: extra columns referenced in create/update calls
     `ALTER TABLE decks ADD COLUMN IF NOT EXISTS card_count integer DEFAULT 0`,
