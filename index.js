@@ -13528,10 +13528,10 @@ setImmediate(async () => {
     }
     questions = deduplicateCBTOptions(questions);
     // ABSOLUTE AUTHORITY: verify requested ratio was actually produced
-    if (customize_balance && _theoryPct != null) {
+    if (customize_balance && _cbtOptions.theory_percent != null) {
       const _actualTheory = questions.filter(q => q.question_type === 'theory').length;
       const _actualCalc = questions.filter(q => q.question_type === 'calculation').length;
-      const _expectedTheory = Math.round(_cbtCount * (_theoryPct / 100));
+      const _expectedTheory = Math.round(_cbtCount * (_cbtOptions.theory_percent / 100));
       const _expectedCalc = _cbtCount - _expectedTheory;
       if (Math.abs(_actualTheory - _expectedTheory) > 1 || Math.abs(_actualCalc - _expectedCalc) > 1) {
         console.warn(`[KIWI CBT] ⚠️ Ratio mismatch: expected ${_expectedTheory}T/${_expectedCalc}C, got ${_actualTheory}T/${_actualCalc}C`);
