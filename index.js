@@ -4544,6 +4544,22 @@ Use these to avoid direct, predictable questions:
 
 ---
 
+## THEORY QUESTION PROTOCOL
+
+For any conceptual, definitional, relational, or process-based content in the notes:
+
+1. **Never reproduce a note example directly.** Change the species, organism, scenario, or context entirely.
+2. **Never ask "what is X?" for any term a student could find in a glossary.** Ask what X does, when X applies, what breaks without X, or what X is NOT.
+3. **Generate across three cognitive tiers per concept:**
+   - *Recognition* — identify a concept from its description in a novel context (Easy)
+   - *Mechanism* — explain why a concept works or what it produces (Medium)
+   - *Edge case / Exception* — apply the concept where it fails, is absent, or is misapplied (Hard)
+4. **For process/sequence content:** Test each step's function AND the consequence of disruption — not just the name of the step.
+5. **For list content:** One question per item minimum. The question must test application or consequence — not just the name.
+6. **For comparison content:** Never ask "what is the difference between X and Y?" Embed both in a scenario and ask the student to discriminate.
+
+---
+
 ## CALCULATION QUESTION PROTOCOL
 
 For any numerical content in the notes:
@@ -5109,35 +5125,13 @@ const _model    = _useFlash ? 'gemini-3-flash-preview' : undefined; // undefined
 
 let dynamicDirectives = '';
 
-// QUESTION TYPE BALANCE directive — only for the combined (non-split) path when
-// the user set a custom ratio. On the split path (forceType set), each prompt
-// is already locked to one type, so this directive is neither needed nor injected.
-if (!forceType && customizeBalance && typeof _opts.theory_percent === 'number') {
-  const theoryPct = Math.max(0, Math.min(100, _opts.theory_percent));
-  const calcPct   = 100 - theoryPct;
-  const theoryN   = Math.round(theoryPct * count / 100);
-  const calcN     = count - theoryN;
-  const bias      = theoryPct === 50 ? 'balanced' : theoryPct > 50 ? 'theory-heavy' : 'calculation-heavy';
-
-  // ESCAPE HATCH POLICY:
-  // When the user explicitly requests a custom ratio, we trust their choice.
-  // The "no calculations in this subject" exception is ONLY permitted if they requested ≤20% calc.
-  // At 21%+ calc, the user has made a deliberate choice — the model must follow it, no exceptions.
-  const escapeHatch = calcPct <= 20
-    ? '\nIMPORTANT EXCEPTION: If the subject genuinely has zero numerical content (e.g. pure humanities with no formulas or data), you may generate only theory questions. This is the ONLY allowed exception and must not be used for subjects with any numerical, statistical, or quantitative content.\n'
-    : '\n⚠ NO EXCEPTION: The student has explicitly requested ' + calcPct + '% calculation questions. You MUST honour this ratio regardless of the subject. Do NOT fall back to theory questions on the grounds that "this subject has no calculations" — the student knows their own subject and its exam requirements.\n';
-
-  dynamicDirectives =
-    '\n## QUESTION TYPE BALANCE — MANDATORY — STUDENT OVERRIDE ACTIVE\n\n' +
-    'The student has explicitly set a ' + bias + ' balance. This COMPLETELY OVERRIDES the Subject Intelligence System auto-detection table. The table ratios are VOID. You MUST use EXACTLY this split:\n' +
-    '- Theory questions (conceptual, recall, definitions, processes): ' + theoryPct + '% → EXACTLY ' + theoryN + ' questions out of ' + count + '\n' +
-    '- Calculation questions (numerical, formula application, derivations): ' + calcPct + '% → EXACTLY ' + calcN + ' questions out of ' + count + '\n' +
-    escapeHatch +
-    'MANDATORY COMPLIANCE CHECK: After generating ALL questions but BEFORE writing answers, count Theory and Calculation questions separately. If Theory count is not within ±1 of ' + theoryN + ' or Calculation count not within ±1 of ' + calcN + ', go back and regenerate until counts match. This is HARD REQUIREMENT. User requested ' + theoryN + ' theory and ' + calcN + ' calculation questions. NO EXCEPTIONS.\n' +
-      'ABSOLUTE AUTHORITY: Requested ratio overrides ALL other considerations. 100% calculation = ZERO theory. 100% theory = ZERO calculation.\n' +
-    '\n---\n';
-}
-// When customizeBalance is false: no ## QUESTION TYPE BALANCE section is injected.
+// NOTE: Custom balance (customize_balance=true) is always handled via the SPLIT PATH in the
+// route handler — the handler computes theoryN/calcN and calls generateCBTQuestions twice with
+// force_type='theory' and force_type='calculation'. The BALANCE directive injection that used to
+// live here was dead code: the split path always sets forceType, making !forceType false, so
+// this block could never execute. Ratio enforcement is entirely handled by the route handler.
+//
+// When customizeBalance is false: no ratio directive is injected.
 // The Subject Intelligence System in CBT_PROMPT will auto-detect the correct ratio
 // (e.g. 90-95% theory for Biology/Library Science, 60-70% calc for Physics/Maths).
 
@@ -14446,7 +14440,7 @@ const _cbtNotes       = notes;
 const _cbtCount       = count;
 const _cbtCards       = selectedCards;
 const _cbtBody        = body;
-const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? (Number(theory_percent) || 50) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage };
+const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? Math.max(0, Math.min(100, Number(theory_percent))) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage };
 setImmediate(async () => {
   try {
     let questions;
