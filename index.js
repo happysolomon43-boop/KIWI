@@ -1867,7 +1867,18 @@ reqBody = { contents: content.contents };
 } else {
 reqBody = { contents: [{ parts: [{ text: String(content) }] }] };
 }
-if (generationConfig) reqBody.generationConfig = generationConfig;
+// THINKING-DEFAULT FIX: Gemini 3 defaults to HIGH thinking which adds 10-30s latency.
+// Set 'low' as the app-wide default. Callers that need heavy reasoning (exam gen,
+// chronicles, deep audit, daily invitations) must explicitly pass thinkingLevel:'high'.
+const _baseThinkingConfig = { thinkingConfig: { thinkingLevel: 'low' } };
+if (generationConfig) {
+  // Merge: caller can override thinkingLevel by including their own thinkingConfig
+  reqBody.generationConfig = generationConfig.thinkingConfig
+    ? generationConfig
+    : { ..._baseThinkingConfig, ...generationConfig };
+} else {
+  reqBody.generationConfig = _baseThinkingConfig;
+}
 try {
 // Issue-7/8 FIX: AbortController timeout prevents Gemini hangs from blocking
 // the dashboard. Timeout is now per-call — CBT uses 120s, simpler calls use 30s.
@@ -1892,7 +1903,11 @@ continue;
 }
 if (!res.ok) { lastError = `HTTP ${res.status}`; continue; }
 const data = await res.json();
-const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+// PARTS-PARSE FIX: Gemini 3 thinking mode puts thought blocks in parts[0].
+// Blindly reading parts[0] returns the thought content, not the answer.
+// Filter to the first non-thought part to get the real response text.
+const _parts = data?.candidates?.[0]?.content?.parts || [];
+const text = (_parts.find(p => !p.thought) || _parts[0])?.text || '';
 const finishReason = data?.candidates?.[0]?.finishReason || 'UNKNOWN';
 if (finishReason === 'MAX_TOKENS') {
   console.warn(`[KIWI] Gemini response truncated (MAX_TOKENS) — increase maxOutputTokens or reduce input size. Text length: ${text.length}`);
@@ -4130,39 +4145,50 @@ function deduplicateCBTOptions(questions) {
 
 async function generateCBTQuestions(notes, count, options) {
 // ── Dynamic directives — injected between COVERAGE REQUIREMENT and PRE-OUTPUT CHECKLIST ──
-// theory_percent:  0-100 (theory share). 50 = balanced. Always sent — even 50/50 is
-//                  explicit so the AI doesn't drift toward pure theory on STEM subjects.
-// broad_coverage:  if true, forces maximum topic breadth over depth.
-const _opts         = options || {};
-const theoryPct     = (typeof _opts.theory_percent === 'number') ? Math.max(0, Math.min(100, _opts.theory_percent)) : 50;
-const calcPct       = 100 - theoryPct;
-const broadCoverage = !!_opts.broad_coverage;
+// theory_percent:    0-100 (theory share). null = not set (use Subject Intelligence auto-detect).
+// customize_balance: if true, the user explicitly set a theory/calc ratio — inject BALANCE directive.
+// broad_coverage:    if true, forces maximum topic breadth over depth.
+const _opts            = options || {};
+const customizeBalance = !!_opts.customize_balance;
+const broadCoverage    = !!_opts.broad_coverage;
+
+// Model upgrade: use 3-flash (not lite) when either advanced feature is active.
+// These features require strict instruction-following that the lite model cannot reliably deliver.
+const _useFlash = customizeBalance || broadCoverage;
+const _model    = _useFlash ? 'gemini-3-flash-preview' : undefined; // undefined = use default lite
 
 let dynamicDirectives = '';
 
-// Theory/Calc directive — always injected (even at balanced 50/50)
-if (theoryPct === 50) {
+// Theory/Calc directive — ONLY injected when the user explicitly checked "Customize Balance".
+// When not checked, the Subject Intelligence System in CBT_PROMPT auto-detects the correct
+// ratio for the subject — this is the correct behaviour for pure theory subjects.
+if (customizeBalance && typeof _opts.theory_percent === 'number') {
+  const theoryPct = Math.max(0, Math.min(100, _opts.theory_percent));
+  const calcPct   = 100 - theoryPct;
+  const theoryN   = Math.round(theoryPct * count / 100);
+  const calcN     = count - theoryN;
+  const bias      = theoryPct === 50 ? 'balanced' : theoryPct > 50 ? 'theory-heavy' : 'calculation-heavy';
+
+  // ESCAPE HATCH POLICY:
+  // When the user explicitly requests a custom ratio, we trust their choice.
+  // The "no calculations in this subject" exception is ONLY permitted if they requested ≤20% calc.
+  // At 21%+ calc, the user has made a deliberate choice — the model must follow it, no exceptions.
+  const escapeHatch = calcPct <= 20
+    ? '\nIMPORTANT EXCEPTION: If the subject genuinely has zero numerical content (e.g. pure humanities with no formulas or data), you may generate only theory questions. This is the ONLY allowed exception and must not be used for subjects with any numerical, statistical, or quantitative content.\n'
+    : '\n⚠ NO EXCEPTION: The student has explicitly requested ' + calcPct + '% calculation questions. You MUST honour this ratio regardless of the subject. Do NOT fall back to theory questions on the grounds that "this subject has no calculations" — the student knows their own subject and its exam requirements.\n';
+
   dynamicDirectives =
-    '\n## QUESTION TYPE BALANCE \u2014 MANDATORY\n\n' +
-    'The student has requested a balanced exam. You MUST reflect this exact split:\n' +
-    '- Theory questions (conceptual, recall, definitions, processes): 50% \u2192 ~' + Math.round(count / 2) + ' of ' + count + ' questions\n' +
-    '- Calculation questions (numerical, formula application, derivations): 50% \u2192 ~' + (count - Math.round(count / 2)) + ' of ' + count + ' questions\n' +
-    '\nThis OVERRIDES the Subject Intelligence System auto-detection table. Do NOT apply the table ratios. Use this 50/50 split regardless of what subject type you detect from the notes.\n' +
-    'If the subject genuinely has no calculations (e.g. pure humanities), generate only theory questions — this is the only allowed exception.\n' +
-    '\n---\n';
-} else {
-  const bias    = theoryPct > 50 ? 'theory-heavy' : 'calculation-heavy';
-  const theoryN = Math.round(theoryPct * count / 100);
-  const calcN   = count - theoryN;
-  dynamicDirectives =
-    '\n## QUESTION TYPE BALANCE \u2014 MANDATORY\n\n' +
-    'The student has requested a ' + bias + ' exam. You MUST reflect this exact split:\n' +
-    '- Theory questions (conceptual, recall, definitions, processes): ' + theoryPct + '% \u2192 ~' + theoryN + ' of ' + count + ' questions\n' +
-    '- Calculation questions (numerical, formula application, derivations): ' + calcPct + '% \u2192 ~' + calcN + ' of ' + count + ' questions\n' +
-    '\nThis overrides your default subject-type detection. Use the closest whole-number split that reaches [COUNT] total.\n' +
-    'If the subject genuinely has no calculations, generate only theory questions.\n' +
+    '\n## QUESTION TYPE BALANCE — MANDATORY — STUDENT OVERRIDE ACTIVE\n\n' +
+    'The student has explicitly set a ' + bias + ' balance. This COMPLETELY OVERRIDES the Subject Intelligence System auto-detection table. The table ratios are VOID. You MUST use EXACTLY this split:\n' +
+    '- Theory questions (conceptual, recall, definitions, processes): ' + theoryPct + '% → EXACTLY ' + theoryN + ' questions out of ' + count + '\n' +
+    '- Calculation questions (numerical, formula application, derivations): ' + calcPct + '% → EXACTLY ' + calcN + ' questions out of ' + count + '\n' +
+    escapeHatch +
+    'ENFORCEMENT: Before outputting your answers section, count your Theory and Calculation questions separately. If the count does not match (±1 question), rewrite questions until it does. Do not proceed to the answers section until the split is correct.\n' +
     '\n---\n';
 }
+// When customizeBalance is false: no ## QUESTION TYPE BALANCE section is injected.
+// The Subject Intelligence System in CBT_PROMPT will auto-detect the correct ratio
+// (e.g. 90-95% theory for Biology/Library Science, 60-70% calc for Physics/Maths).
 
 // Coverage directive — always injected (broad mode or focused mode)
 if (broadCoverage) {
@@ -4196,8 +4222,9 @@ const prompt = CBT_PROMPT
 // minimum 24000 to give ample room even for small exams.
 // This prevents MAX_TOKENS truncation which was causing partial generation.
 const scaledTokens = Math.min(65536, Math.max(24000, count * 900));
-console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, theory=${theoryPct}%, broad=${broadCoverage}, maxOutputTokens=${scaledTokens}`);
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens }, { timeoutMs: 180000 });
+const _theoryPct = customizeBalance && typeof _opts.theory_percent === 'number' ? _opts.theory_percent : 'auto';
+console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, theory=${_theoryPct}%, broad=${broadCoverage}, customBalance=${customizeBalance}, model=${_model || 'lite-default'}, maxOutputTokens=${scaledTokens}`);
+const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 180000, modelOverride: _model });
 if (result.response.finishReason === 'MAX_TOKENS') {
   console.warn(`[KIWI CBT] Output truncated at ${count} questions \u2014 response cut short. Consider lowering count or notes size.`);
 }
@@ -4234,7 +4261,7 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed) 
   ].join('\n');
 
   const completionTokens = Math.min(65536, Math.max(16000, needed * 900));
-  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: completionTokens }, { timeoutMs: 180000 });
+  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: completionTokens, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 180000 });
   return result.response.text();
 }
 
@@ -4290,7 +4317,7 @@ FLASHCARD_PROMPT.replace('[NOTES]', notes) +
 (subjectHint ? `\nSubject hint: ${subjectHint}` : '');
 // Use gemini-3-flash-preview for note-to-flashcard generation — it produces more
 // thorough multi-card output within the same rate limits as the base model.
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000 }, { timeoutMs: 120000, modelOverride: 'gemini-3-flash-preview' });
+const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 120000, modelOverride: 'gemini-3-flash-preview' });
 return result.response.text();
 }
 
@@ -4313,9 +4340,11 @@ Rules:
 - Never say "this card says" or "the answer is". Just explain the concept.
 - Maximum 2 sentences.`;
 // AI-TIMEOUT-FIX: Wrap Gemini call in 7-second timeout to prevent UI hanging
-const generatePromise = geminiModel.generateContent(prompt);
+const generatePromise = geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
 const timeoutPromise = new Promise((_, reject) =>
-setTimeout(() => reject(new Error('AI explanation timeout')), 7000)
+// TIMEOUT-FIX: raised from 7s → 15s. With thinkingLevel:'minimal' response is fast,
+// but 7s was too tight and raced before the answer arrived.
+setTimeout(() => reject(new Error('AI explanation timeout')), 15000)
 );
 const result = await Promise.race([generatePromise, timeoutPromise]);
 return result.response.text().trim();
@@ -7150,7 +7179,7 @@ RULES
 - Tone: Authoritative but not punitive.
 OUTPUT
 Return only the 2-sentence alert text.`;
-    const aiResult = await geminiModel.generateContent(d3Prompt);
+    const aiResult = await geminiModel.generateContent(d3Prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
     alertText = aiResult.response.text().trim();
   } catch (_) {
     alertText = `Your exam score of ${scorePct}% contradicts the advanced stage of ` +
@@ -7366,15 +7395,18 @@ return { status: 'active', days_since: days };
 // ── Card Summarizer ───────────────────────────────────────────────────────────
 const SUMMARY_CACHE = new Map(); // in-memory with TTL
 
-async function getCardSummary(userId, cardId, front, back, context = {}) {
+// DOUBLE-LOOKUP FIX: accept an optional pre-fetched card object to avoid re-querying the DB.
+// Callers that already have the card (e.g. the /summary route) pass it in directly.
+async function getCardSummary(userId, cardId, front, back, context = {}, cachedCard = null) {
 const cacheKey = `${userId}:${cardId}`;
 const cached = SUMMARY_CACHE.get(cacheKey);
 if (cached && cached.expires > Date.now()) {
 return cached.summary;
 }
-// Check Firestore permanent cache before calling Gemini
+// Use the caller's card object if provided; otherwise fetch from DB.
+// This eliminates the redundant round-trip when the route already has the card.
 try {
-const cardDoc = await db.cards.findById(userId, cardId);
+const cardDoc = cachedCard || await db.cards.findById(userId, cardId);
 if (cardDoc && cardDoc.ai_summary) {
 SUMMARY_CACHE.set(cacheKey, { summary: cardDoc.ai_summary, expires: Date.now() + 3600000 });
 return cardDoc.ai_summary;
@@ -7397,7 +7429,7 @@ Card front: ${front}
 Card back: ${back}
 
 Write exactly 1 sentence (maximum 20 words) of warm, specific acknowledgement that this concept is now part of their long-term memory. Reference the card content directly. No preamble. Just the sentence.`;
-const result = await geminiModel.generateContent(prompt);
+const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
 const mastery_moment = result.response.text().trim();
 await db.cards.update(userId, cardId, { mastery_moment }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 return mastery_moment;
@@ -7906,7 +7938,7 @@ TONE RULES
 OUTPUT
 Return only the 5 paragraphs. No labels. No headers. No preamble.
 `;
-  const result = await geminiModel.generateContent(prompt);
+  const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
   const narrative = result.response.text().trim();
   const entry = await db.chronicleEntries.create(userId, {
     week_start: weekStr,
@@ -8855,7 +8887,7 @@ INSTRUCTIONS
 Analyse the behavioral data holistically. Select the ONE persona code that best describes this student\'s dominant pattern.
 Return ONLY the persona code — no explanation, no punctuation.
 `;
-    const result = await geminiModel.generateContent(prompt);
+    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
     const code = result.response.text().trim().toLowerCase();
     const found = personas.find((p) => p.code === code);
     if (found) selected = found;
@@ -9272,7 +9304,7 @@ RULES
 - Total of ${needed} invitations.
 - Return ONLY valid JSON array: [{"title":"...","context":"...","action_type":"study_session|exam|review_specific_cards","target_subject_name":"..."}]
 `;
-    const aiResult = await geminiModel.generateContent(aiPrompt);
+    const aiResult = await geminiModel.generateContent(aiPrompt, { thinkingConfig: { thinkingLevel: 'high' } });
     // H-4 FIX: Robust JSON extraction — slice from first [ to last ] to survive preambles/fences
     const rawAiText = aiResult.response.text();
     const jsonStartIdx = rawAiText.indexOf('[');
@@ -9533,7 +9565,7 @@ RULES
 OUTPUT
 Return only the greeting paragraph.
 `;
-  const result = await geminiModel.generateContent(prompt);
+  const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
   const greeting = result.response.text().trim();
   const greetingPayload = { greeting, status: status.status, days_since: status.days_since };
   await db.dailyRitualCache
@@ -10500,7 +10532,7 @@ Return only the audit text.
 `;
   let audit;
   try {
-    const result = await geminiModel.generateContent(prompt);
+    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
     audit = result.response.text().trim();
   } catch (e) {
     audit = `Your ${subject?.name || 'subject'} audit shows a knowledge score of ${ks.score.toFixed(1)}. Strengths lie in stable cards. Weaknesses gather where cards are stuck or ghosted. Review the flagged cards first. Schedule a reckoning if pressure persists.`;
@@ -10601,7 +10633,7 @@ Return only the inscription.
 `;
   let artifact;
   try {
-    const result = await geminiModel.generateContent(prompt);
+    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
     artifact = result.response.text().trim();
   } catch (e) {
     artifact = 'The forest remembers this week. Your path is recorded in the roots of time.';
@@ -11600,6 +11632,9 @@ try {
      ) AND user_id = $2`,
     [deckId, userId]
   );
+  // Recompute KS after deck reset so score reflects new SEEDLING state
+  await persistKnowledgeScore(userId, deck.subject_id).catch(() => {});
+  wsSend(userId, 'ks_change', { subject_id: deck.subject_id, source: 'deck_reset' });
   const { rows } = await query(
     'SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = $1 AND user_id = $2',
     [deckId, userId]
@@ -11880,6 +11915,15 @@ verified_at: null,
 learning_debt: false,
 last_evaluated_at: new Date(),
 });
+// Recompute KS after individual card reset so score stays accurate
+const _resetCardForKs = await db.cards.findById(req.user.id, req.params.id).catch(() => null);
+if (_resetCardForKs?.deck_id) {
+  const _deckForKs = await db.decks.findById(req.user.id, _resetCardForKs.deck_id).catch(() => null);
+  if (_deckForKs?.subject_id) {
+    await persistKnowledgeScore(req.user.id, _deckForKs.subject_id).catch(() => {});
+    wsSend(req.user.id, 'ks_change', { subject_id: _deckForKs.subject_id, source: 'card_reset' });
+  }
+}
 res.json({ message: 'Card reset to SEEDLING' });
 } catch (e) {
 res.status(500).json({ error: 'Failed to reset card', details: e.message });
@@ -11893,31 +11937,34 @@ if (!card) return res.status(404).json({ error: 'Card not found' });
 if (checkAIRateLimit(req.user.id, 'summarizer', 20)) {
 return res.status(429).json({ error: 'AI explanation rate limit reached. Please wait before requesting more explanations.' });
 }
-// Build context: fetch subject name, card state
+// DB-PARALLEL FIX: deck + cardState fetched simultaneously — no dependency on each other.
+// Subject lookup still needs deck.subject_id but that's one hop, not three serial ones.
 let subjectName = '';
 let cardState = '';
 let _explainSubjectId = null;
 try {
-if (card.deck_id) {
-const deck = await db.decks.findById(req.user.id, card.deck_id);
-if (deck?.subject_id) {
-_explainSubjectId = deck.subject_id;
-const subject = await db.subjects.findById(deck.subject_id);
-subjectName = subject?.name || '';
-}
-}
-const stateDoc = await db.cardStates.get(req.user.id, card.id);
+const [deck, stateDoc] = await Promise.all([
+  card.deck_id ? db.decks.findById(req.user.id, card.deck_id) : Promise.resolve(null),
+  db.cardStates.get(req.user.id, card.id),
+]);
 cardState = stateDoc?.state || '';
+if (deck?.subject_id) {
+  _explainSubjectId = deck.subject_id;
+  const subject = await db.subjects.findById(deck.subject_id);
+  subjectName = subject?.name || '';
+}
 } catch (_) { /* context is non-fatal — summarize without it */ }
 // Record AI explanation for pressure tracking (non-fatal; fires even if context failed)
 recordAIExplainForSubject(req.user.id, _explainSubjectId);
 const context = { subjectName, stage: card.stage || null, cardState };
+// DOUBLE-LOOKUP FIX: pass the already-fetched card so getCardSummary skips its re-query.
 const summary = await getCardSummary(
 req.user.id,
 card.id,
 card.front_content,
 card.back_content,
-context
+context,
+card
 );
 res.json({ summary });
 } catch (e) {
@@ -13202,7 +13249,8 @@ deck_ids,
 question_count = 25,
 card_range = 'all',
 time_limit_seconds = 1800,
-theory_percent = 50,
+theory_percent = null,
+customize_balance = false,
 broad_coverage = false,
 } = body;
 if (!subject_id) return res.status(400).json({ error: 'subject_id required' });
@@ -13381,7 +13429,7 @@ const _cbtNotes       = notes;
 const _cbtCount       = count;
 const _cbtCards       = selectedCards;
 const _cbtBody        = body;
-const _cbtOptions     = { theory_percent: Number(theory_percent) || 50, broad_coverage: !!broad_coverage };
+const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? (Number(theory_percent) || 50) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage };
 setImmediate(async () => {
   try {
     const aiText = await generateCBTQuestions(_cbtNotes, _cbtCount, _cbtOptions);
@@ -13477,6 +13525,11 @@ try {
   if (exam.status === 'forfeited' || exam.status === 'completed') {
     return res.status(400).json({ error: 'Exam already ended' });
   }
+
+  // KS-FORFEIT-FIX: capture pre-forfeit KS so we can compute a real delta.
+  const _forfeitPreKs = await computeKnowledgeScore(req.user.id, exam.subject_id).catch(() => ({ score: 0 }));
+  const _forfeitPreKsScore = _forfeitPreKs.score || 0;
+
   await db.examSessions.update(req.user.id, req.params.id, {
     status: 'forfeited',
     completed_at: new Date(),
@@ -13489,9 +13542,43 @@ try {
       pressure_score: Math.min(100, cur + 15),
       intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
     }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+
+    // KS-FORFEIT-FIX: treat all exam questions as wrong answers so cards get downgraded.
+    // This causes a real KS drop — not a cosmetic one. Forfeit has consequences.
+    // Mark every question is_correct=false so applyExamSRSFeedback downgrades the cards.
+    const _forfeitExamForSRS = {
+      ...exam,
+      questions: (exam.questions || []).map(q => ({ ...q, is_correct: false })),
+    };
+    await applyExamSRSFeedback(req.user.id, _forfeitExamForSRS)
+      .catch((e) => console.error('[KIWI] Forfeit SRS downgrade failed:', e.message));
+
     await persistKnowledgeScore(req.user.id, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+
+    // Compute delta, persist to exam session, include in response.
+    const _forfeitPostKs = await computeKnowledgeScore(req.user.id, exam.subject_id).catch(() => ({ score: _forfeitPreKsScore }));
+    const _forfeitKsDelta = parseFloat(((_forfeitPostKs.score || 0) - _forfeitPreKsScore).toFixed(2));
+    await db.examSessions.update(req.user.id, req.params.id, { ks_delta: _forfeitKsDelta })
+      .catch((e) => console.error('[KIWI] Failed to persist forfeit ks_delta:', e.message));
+
+    // Notify frontend in real-time so pressure/KS widgets update without a reload
+    const _forfeitBp = await db.brainPressure.get(req.user.id, exam.subject_id).catch(() => null);
+    const _forfeitCurPressure = _forfeitBp ? _forfeitBp.pressure_score || 0 : 0;
+    wsSend(req.user.id, 'pressure_change', {
+      subject_id: exam.subject_id,
+      pressure_score: _forfeitCurPressure,
+      delta: 15,
+    });
+    wsSend(req.user.id, 'ks_change', {
+      subject_id: exam.subject_id,
+      ks_delta: _forfeitKsDelta,
+      new_ks: (_forfeitPostKs.score || 0),
+    });
+
+    res.json({ success: true, message: 'Exam forfeited. Penalties applied.', ksDelta: _forfeitKsDelta });
+  } else {
+    res.json({ success: true, message: 'Exam forfeited. Penalties applied.', ksDelta: 0 });
   }
-  res.json({ success: true, message: 'Exam forfeited. Penalties applied.' });
 } catch (e) {
   res.status(500).json({ error: 'Failed to forfeit exam', details: e.message });
 }
@@ -13818,6 +13905,10 @@ duration_seconds: durationSec,
           .catch((e) => console.error('[KIWI] updateAllBubblesForUser (exam) failed:', e.message));
         const _bgPostKs = await computeKnowledgeScore(_debriefUserId, _debriefExam.subject_id).catch(() => ({ score: preKsScore }));
         _bgKsDelta = parseFloat(((_bgPostKs.score || 0) - preKsScore).toFixed(2));
+        // KS-EXAM-FIX: persist delta to exam session so history review always shows the real value.
+        // This runs server-side regardless of whether the student is still on the summary page.
+        await db.examSessions.update(_debriefUserId, _debriefExam.id, { ks_delta: _bgKsDelta })
+          .catch((e) => console.error('[KIWI] Failed to persist exam ks_delta:', e.message));
         _bgCredentialEarned = !!(_bgCredential && _bgCredential.tier && _bgCredential.newlyEarned);
         _bgNewAchievements = await checkAchievements(_debriefUserId, {
           exam: completedExam,
@@ -14010,6 +14101,7 @@ Return only the debrief text.
       debrief: debriefText,
       weak_areas: weakAreas,
       recommended_cards: wrong.filter((q) => q.card_id).map((q) => q.card_id),
+      ksDelta: exam.ks_delta || 0,
     });
   } catch (e) {
     res.status(500).json({ error: 'Failed to generate debrief', details: e.message });
@@ -16504,7 +16596,78 @@ cron.schedule('* * * * *', async () => {
   if (n > 0) console.log(`[KIWI KS] Batch: ${n} card state${n !== 1 ? 's' : ''} recomputed`);
 });
 
-// ── Daily at 3:00 AM: Maintenance, penalties, pressure, morning brief cache ──
+// ── Every 10 minutes: auto-forfeit abandoned active exams ────────────────────
+// Catches any exam that went active but was never submitted (browser crash,
+// refresh without pagehide firing, mobile kill, etc).
+// Threshold: 30 minutes of inactivity after exam started.
+cron.schedule('*/10 * * * *', async () => {
+  try {
+    const { rows: abandoned } = await query(
+      `SELECT es.id, es.user_id, es.subject_id,
+              COALESCE(es.time_limit_seconds, 1800) AS time_limit_seconds
+       FROM exam_sessions es
+       WHERE es.status = 'active'
+         AND es.is_reckoning = false
+         AND es.started_at + (COALESCE(es.time_limit_seconds, 1800) + 300)
+             * INTERVAL '1 second' < NOW()`
+    );
+    if (abandoned.length === 0) return;
+    console.log(`[KIWI CRON] Auto-forfeiting ${abandoned.length} abandoned exam(s)`);
+    for (const es of abandoned) {
+      try {
+        // Capture pre-forfeit KS
+        const _preKs = await computeKnowledgeScore(es.user_id, es.subject_id).catch(() => ({ score: 0 }));
+        const _preKsScore = _preKs.score || 0;
+        // Mark forfeited
+        await query(
+          `UPDATE exam_sessions SET status = 'forfeited', completed_at = NOW() WHERE id = $1`,
+          [es.id]
+        );
+        // Downgrade all cards in this exam (treat as all wrong)
+        const { rows: questions } = await query(
+          `SELECT * FROM exam_questions WHERE exam_session_id = $1 AND user_id = $2`,
+          [es.id, es.user_id]
+        );
+        if (es.subject_id && questions.length > 0) {
+          const _examForSRS = { id: es.id, user_id: es.user_id, subject_id: es.subject_id,
+            deck_ids: [], questions: questions.map(q => ({ ...q, is_correct: false })) };
+          await applyExamSRSFeedback(es.user_id, _examForSRS).catch((e) => console.error('[KIWI CRON] SRS downgrade failed:', e.message));
+          await persistKnowledgeScore(es.user_id, es.subject_id).catch(() => {});
+          const _postKs = await computeKnowledgeScore(es.user_id, es.subject_id).catch(() => ({ score: _preKsScore }));
+          const _ksDelta = parseFloat(((_postKs.score || 0) - _preKsScore).toFixed(2));
+          await query(`UPDATE exam_sessions SET ks_delta = $1 WHERE id = $2`, [_ksDelta, es.id]);
+        }
+        // Brain pressure penalty
+        const bp = await db.brainPressure.get(es.user_id, es.subject_id).catch(() => null);
+        const cur = bp ? bp.pressure_score || 0 : 0;
+        await db.brainPressure.set(es.user_id, es.subject_id, {
+          pressure_score: Math.min(100, cur + 15),
+          intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
+        }).catch(() => {});
+        wsSend(es.user_id, 'pressure_change', {
+          subject_id: es.subject_id,
+          pressure_score: Math.min(100, cur + 15),
+          delta: 15,
+          source: 'auto_forfeit',
+        });
+        if (es.subject_id) {
+          wsSend(es.user_id, 'ks_change', {
+            subject_id: es.subject_id,
+            ks_delta: _ksDelta,
+            source: 'auto_forfeit',
+          });
+        }
+        console.log(`[KIWI CRON] Auto-forfeited abandoned exam ${es.id} for user ${es.user_id}`);
+      } catch (_examErr) {
+        console.error(`[KIWI CRON] Failed to auto-forfeit exam ${es.id}:`, _examErr.message);
+      }
+    }
+  } catch (e) {
+    console.error('[KIWI CRON] Abandoned exam cleanup failed:', e.message);
+  }
+});
+
+
 
 cron.schedule('0 3 * * *', async () => {
 console.log('[KIWI CRON] Running daily maintenance...');
@@ -17355,6 +17518,8 @@ async function runSchemaMigrations() {
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS time_limit_seconds integer DEFAULT 1800`,
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS card_range text DEFAULT 'all'`,
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ended_early boolean DEFAULT false`,
+    // KS-EXAM-FIX: persist ks_delta on exam sessions so history review always shows real delta
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_delta numeric DEFAULT 0`,
 
     // reckoning_sessions: fields referenced in brain router and lockout middleware
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS subject_name text`,

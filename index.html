@@ -5918,6 +5918,26 @@
               }
               if (_jf.type === 'note_generation') { var _ib = document.getElementById('aiNotesImportBtn'); if (_ib) { _ib.disabled = false; _ib.textContent = 'Generate Cards with AI'; } }
             }
+            if (msg.event === 'pressure_change') {
+              var _pd = msg.data || {};
+              var _pDelta = _pd.delta || 0;
+              var _pScore = _pd.pressure_score;
+              if (_pDelta > 0) {
+                if (typeof showToast === 'function') showToast('⚡ Brain pressure +' + _pDelta + (_pScore !== undefined ? ' (now ' + _pScore + ')' : ''), 'warning', 5000);
+              } else if (_pDelta < 0) {
+                if (typeof showToast === 'function') showToast('✅ Brain pressure ' + _pDelta + (_pScore !== undefined ? ' (now ' + _pScore + ')' : ''), 'success', 5000);
+              }
+            }
+            if (msg.event === 'ks_change') {
+              var _kd = msg.data || {};
+              var _ksDelta = _kd.ks_delta || 0;
+              var _newKs = _kd.new_ks;
+              if (_ksDelta < 0) {
+                if (typeof showToast === 'function') showToast('📉 Knowledge Score ' + _ksDelta.toFixed(2) + (_newKs !== undefined ? ' → ' + _newKs.toFixed(1) + '%' : ''), 'warning', 6000);
+              } else if (_ksDelta > 0) {
+                if (typeof showToast === 'function') showToast('📈 Knowledge Score +' + _ksDelta.toFixed(2) + (_newKs !== undefined ? ' → ' + _newKs.toFixed(1) + '%' : ''), 'success', 6000);
+              }
+            }
           } catch(_e) {}
         };
         _kiwiWS.onclose = function(ev) {
@@ -5961,6 +5981,25 @@
           e.preventDefault();
           e.returnValue = msg;
           return msg;
+        }
+      });
+
+      // pagehide — fires after the user confirms leaving (refresh, tab close, address bar nav).
+      // Uses fetch keepalive=true so the request completes even as the page tears down.
+      // This is what actually calls forfeit on unload — beforeunload only shows the warning.
+      window.addEventListener('pagehide', function() {
+        if (_examPageLocked && !_examIsReckoning) {
+          var examId = AppState && AppState.tempExam && AppState.tempExam.examId;
+          var tok    = authToken || localStorage.getItem('kiwi_auth_token');
+          if (examId && tok) {
+            try {
+              fetch('/api/exams/' + examId + '/forfeit', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json' },
+                keepalive: true,
+              });
+            } catch (_) {}
+          }
         }
       });
 
@@ -6746,7 +6785,10 @@
           // P3-C2 FIX: forward card_state_filter so backend P3.5 logic activates
           card_state_filter: config?.card_state_filter || undefined,
           // Theory/Calc balance and Broad Coverage — passed through to generateCBTQuestions
-          theory_percent: (typeof config?.theory_percent === 'number') ? config.theory_percent : 50,
+          // theory_percent is null when the user hasn't explicitly set a custom balance.
+          // customize_balance=true is the signal that the user made a deliberate choice.
+          theory_percent: (config?.customize_balance && typeof config?.theory_percent === 'number') ? config.theory_percent : null,
+          customize_balance: config?.customize_balance || false,
           broad_coverage: config?.broad_coverage || false,
         };
         return await apiRequest("/exams/generate", { method: "POST", body });
@@ -11070,12 +11112,15 @@
             const count = parseInt(document.getElementById("examCount").value) || 25;
 
             // Theory/Calc balance — slider value is "calc percent" (right = more calc)
-            // theory_percent = 100 - sliderValue. Default 50 (balanced) always sent.
+            // Only send theory_percent when the checkbox is explicitly checked.
+            // When unchecked, customize_balance=false tells the backend to let the
+            // Subject Intelligence System auto-detect the correct ratio for the subject.
             const _tcEnabled = document.getElementById("enableTheoryCalcSlider");
             const _tcSlider  = document.getElementById("theoryCalcSlider");
-            const theoryPercent = (_tcEnabled && _tcEnabled.checked && _tcSlider)
+            const customizeBalance = !!(_tcEnabled && _tcEnabled.checked);
+            const theoryPercent = (customizeBalance && _tcSlider)
               ? (100 - parseInt(_tcSlider.value))
-              : 50;
+              : null; // null = "not set" — backend will auto-detect via Subject Intelligence
 
             // Broad Coverage flag
             const _bcChk     = document.getElementById("enableBroadCoverage");
@@ -11088,6 +11133,7 @@
                 count,
                 card_state_filter: activeFilters.length > 0 ? activeFilters : undefined,
                 theory_percent: theoryPercent,
+                customize_balance: customizeBalance,
                 broad_coverage: broadCoverage,
               });
               // Server now returns a job_id immediately (background generation)
