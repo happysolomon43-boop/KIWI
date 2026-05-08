@@ -15848,6 +15848,119 @@ res.status(500).json({ error: 'Failed to fetch stats' });
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+//  ADMIN — PRESSURE DIAGNOSTICS
+// ════════════════════════════════════════════════════════════════════════════
+
+// GET /api/admin/diag/subjects/:userId — fetch subjects for a user (for dropdown)
+adminRouter.get('/diag/subjects/:userId', async (req, res) => {
+  try {
+    const subjects = await db.subjects.findManyWithDecks(req.params.userId);
+    res.json(subjects.map(s => ({ id: s.id, name: s.name, deck_count: s.deck_count || 0, total_cards: s.total_cards || 0 })));
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch subjects: ' + e.message });
+  }
+});
+
+// POST /api/admin/diag/pressure — run full pressure pipeline and return step-by-step diagnostics
+adminRouter.post('/diag/pressure', async (req, res) => {
+  const { userId, subjectId } = req.body || {};
+  if (!userId || !subjectId) return res.status(400).json({ error: 'userId and subjectId required' });
+  const steps = [];
+  const ts = () => new Date().toISOString();
+  try {
+    // Step 1: subject info
+    const subject = await db.subjects.findById(subjectId).catch(() => null);
+    steps.push({ step: 1, label: 'Subject lookup', ok: !!subject, detail: subject ? `"${subject.name}"` : 'NOT FOUND — subjectId invalid or belongs to different user' });
+    if (!subject) return res.json({ ok: false, steps });
+
+    // Step 2: deck + card count
+    const decks = await db.decks.findBySubject(userId, subjectId).catch(() => []);
+    const deckIdSet = new Set(decks.map(d => d.id));
+    const allUserCards = await db.cards.findAllForUser(userId).catch(() => []);
+    const subjectCards = allUserCards.filter(c => deckIdSet.has(c.deck_id));
+    steps.push({ step: 2, label: 'Cards found', ok: subjectCards.length > 0, detail: `${decks.length} deck(s), ${subjectCards.length} card(s)` });
+
+    // Step 3: card state breakdown
+    const allStates = await db.cardStates.findByUser(userId).catch(() => []);
+    const subjectCardIds = new Set(subjectCards.map(c => c.id));
+    const subjectStates = allStates.filter(s => subjectCardIds.has(s.card_id));
+    const stateCounts = {};
+    for (const s of subjectStates) stateCounts[s.state] = (stateCounts[s.state] || 0) + 1;
+    const missingStates = subjectCards.length - subjectStates.length;
+    steps.push({
+      step: 3, label: 'Card state breakdown', ok: true,
+      detail: Object.keys(stateCounts).length > 0
+        ? Object.entries(stateCounts).map(([k, v]) => `${k}: ${v}`).join(', ') + (missingStates > 0 ? ` | ${missingStates} card(s) have NO state row (will be initialised)` : '')
+        : `No state rows found for any of the ${subjectCards.length} card(s) — all will be initialised as SEEDLING`
+    });
+
+    // Step 4: KS queue snapshot
+    const queueKeys = [..._ksQueue.keys()].filter(k => k.startsWith(userId + ':'));
+    steps.push({ step: 4, label: 'KS queue before flush', ok: true, detail: `${queueKeys.length} pending recompute(s) for this user` });
+
+    // Step 5: flush KS queue
+    const flushBatch = queueKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+    if (flushBatch.length > 0) {
+      await Promise.all(flushBatch.map(({ userId: uid, cardId }) =>
+        recomputeAndStoreCardState(uid, cardId).catch(() => null)
+      ));
+    }
+    steps.push({ step: 5, label: 'KS queue flushed', ok: true, detail: flushBatch.length > 0 ? `Flushed ${flushBatch.length} item(s) — card states are now current` : 'Queue was empty — no flush needed' });
+
+    // Step 6: brain_pressure from DB before calculate
+    const bpBefore = await db.brainPressure.get(userId, subjectId).catch(() => null);
+    steps.push({ step: 6, label: 'DB pressure BEFORE calculate', ok: true, detail: bpBefore ? `pressure_score=${bpBefore.pressure_score}, level=${bpBefore.intervention_level}` : 'No row in brain_pressure table yet (first run)' });
+
+    // Step 7: run calculateSubjectPressure
+    let calcResult = null;
+    let calcError = null;
+    try {
+      calcResult = await calculateSubjectPressure(userId, subjectId);
+    } catch (e) {
+      calcError = e.message;
+    }
+    if (calcError) {
+      steps.push({ step: 7, label: 'calculateSubjectPressure', ok: false, detail: `THREW: ${calcError}` });
+      return res.json({ ok: false, steps });
+    }
+
+    // Step 7 detail: break down every source
+    const sourcesDetail = Object.keys(calcResult.sources).length > 0
+      ? Object.entries(calcResult.sources).map(([k, v]) => `${k}=+${v}`).join(', ')
+      : 'NO sources fired — all pressure conditions returned 0';
+    steps.push({
+      step: 7, label: 'calculateSubjectPressure result', ok: calcResult.pressure_score > 0,
+      score: calcResult.pressure_score,
+      level: calcResult.intervention_level,
+      detail: `score=${calcResult.pressure_score}, level=${calcResult.intervention_level} | Sources: ${sourcesDetail}`
+    });
+
+    // Step 8: brain_pressure from DB after calculate (should match step 7)
+    const bpAfter = await db.brainPressure.get(userId, subjectId).catch(() => null);
+    const writeOk = bpAfter && parseFloat(bpAfter.pressure_score) === calcResult.pressure_score;
+    steps.push({
+      step: 8, label: 'DB pressure AFTER calculate', ok: writeOk,
+      detail: bpAfter
+        ? `pressure_score=${bpAfter.pressure_score}${writeOk ? ' ✓ matches computed value' : ` ✗ MISMATCH — computed ${calcResult.pressure_score}`}`
+        : 'No row written — db.brainPressure.set may have failed'
+    });
+
+    // Step 9: diagnosis summary
+    let diagnosis = '';
+    if (subjectCards.length === 0) diagnosis = 'NO CARDS — subject has no cards, pressure will always be 0';
+    else if (Object.keys(stateCounts).length === 0) diagnosis = 'NO CARD STATES — cards exist but no state rows; all initialise as SEEDLING which contributes 0 pressure';
+    else if (calcResult.pressure_score === 0) diagnosis = 'Score is 0 — card states present but none meet pressure thresholds (e.g. all SEEDLING/GROWING/STABLE). Pressure only fires for GHOST/FRAGILE/SLIPPING/DANGEROUS/AVOIDED/STUCK≥10 and behavioral sources.';
+    else diagnosis = `Pressure is working correctly — score ${calcResult.pressure_score} written to DB.`;
+    steps.push({ step: 9, label: 'Diagnosis', ok: calcResult.pressure_score > 0, detail: diagnosis });
+
+    res.json({ ok: calcResult.pressure_score > 0, pressure_score: calcResult.pressure_score, steps });
+  } catch (e) {
+    steps.push({ step: 99, label: 'Unexpected error', ok: false, detail: e.message });
+    res.status(500).json({ ok: false, steps, error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 //  NEW PHASE ROUTES
 
 // ════════════════════════════════════════════════════════════════════════════
