@@ -7588,7 +7588,8 @@ if (missingCards_sp.length > 0) {
   });
 }
 for (const card of allCards) {
-const stateDoc = stateMap.get(card.id); // guaranteed present after pre-init
+const stateDoc = stateMap.get(card.id);
+if (!stateDoc) continue; // guard: initializeCardState can fail; skip rather than crash
 cardStates.push({ card, state: stateDoc });
 }
 const pressureSources = {};
@@ -7768,6 +7769,16 @@ return 'L0';
 }
 
 async function calculateAllSubjectPressures(userId) {
+// Flush any queued card state recomputes for this user NOW — ensures pressure
+// is computed from current card states, not states from 60s ago.
+const _flushPrefix = userId + ':';
+const _flushKeys = [..._ksQueue.keys()].filter(k => k.startsWith(_flushPrefix));
+const _flushBatch = _flushKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+if (_flushBatch.length > 0) {
+  await Promise.all(_flushBatch.map(({ userId: uid, cardId }) =>
+    recomputeAndStoreCardState(uid, cardId).catch(() => null)
+  ));
+}
 const subjects = await db.subjects.findManyWithDecks(userId);
 const results = {};
 // Fix #25: fetch all cards + states ONCE, pass to each calculateSubjectPressure call
@@ -8480,6 +8491,15 @@ for (const s of rawSubjects) {
 const subjects = Array.from(subjectsByName.values());
 const now = new Date();
 const todayStr = now.toISOString().split('T')[0];
+// Flush queued card state recomputes so pressure reads from current states
+const _biomeFlushPrefix = userId + ':';
+const _biomeFlushKeys = [..._ksQueue.keys()].filter(k => k.startsWith(_biomeFlushPrefix));
+const _biomeFlushBatch = _biomeFlushKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+if (_biomeFlushBatch.length > 0) {
+  await Promise.all(_biomeFlushBatch.map(({ userId: uid, cardId }) =>
+    recomputeAndStoreCardState(uid, cardId).catch(() => null)
+  ));
+}
 // P5.2-F7 FIX: parallelise at subject level to meet <300ms requirement
 const subjectsData = await Promise.all(subjects.map(async (subject) => {
 const [ks, credential, pressure, decks] = await Promise.all([
@@ -10912,17 +10932,21 @@ if (cached?.data) return { explanation: cached.data, sources: cached.sources || 
 // H-8 FIX: Pre-translate raw source keys into plain language before injecting into prompt.
 // The prompt forbids state labels (GHOST, STUCK etc.) but JSON.stringify leaks them as keys.
 // F5-1-P: added 7 bubble source keys [DESIGN: §15.1] so AI prompt describes them correctly
+// KEY-SYNC FIX: keys now match what calculateSubjectPressure() actually writes to pressureSources.
+// Old keys (ghost_cards, stuck_cards, etc.) were pre-migration artefacts and never matched.
 const sourceLabelMap = {
-  ghost_cards:                   'cards that have gone dormant (neglected 20+ days past their due date)',
-  stuck_cards:                   "cards that haven't advanced in two weeks",
-  avoided_cards:                 'cards that are consistently skipped when overdue',
-  fragile_cards:                 'cards never correctly answered in a practice exam',
-  dangerous_cards:               'beginner-level cards with an upcoming exam',
-  overdue_count:                 'overdue cards waiting for review',
-  repeated_invitation_dismissal: 'repeatedly ignoring suggested study sessions',
-  exam_failure:                  'a recent exam that did not go well',
-  ks_decay:                      'knowledge score decay from long inactivity',
-  ignored_alert:                 'a reclassification alert ignored for 3+ days',
+  ghost:          'cards that have gone dormant (not reviewed in 60+ days past their due date)',
+  fragile:        'cards never correctly answered in a practice exam',
+  stuck_bulk:     '10 or more cards with no stage progress in the last 14 days',
+  slipping:       'cards drifting below the stability threshold (early-warning state)',
+  ks_divergence:  'knowledge score above 70 but credential not yet at Competent tier',
+  no_exam:        'no exam taken in this subject for 21 or more days',
+  avoided:        'cards consistently skipped when overdue for 7 or more days',
+  exam_urgency:   'an exam is due within 7 days with inadequate preparation',
+  dangerous:      'beginner-level cards with an upcoming exam',
+  ignored_alert:                 'a reclassification alert ignored for 3 or more days',
+  ai_crutch:                     'over-reliance on AI explanations without independent recall',
+  repeated_invitation_dismissal: 'repeatedly dismissing study invitations for the same subject',
   // PB.11 bubble sources [DESIGN: §15.1]
   bubble_drifting:  'a mastery goal slightly behind its learning trajectory',
   bubble_behind:    'a mastery goal falling behind its required pace',
@@ -14693,6 +14717,23 @@ try {
     await applyExamSRSFeedback(req.user.id, _forfeitExamForSRS)
       .catch((e) => console.error('[KIWI] Forfeit SRS downgrade failed:', e.message));
 
+    // FORFEIT-FLUSH-FIX: drain KS queue immediately so card states are current
+    // before calculateSubjectPressure runs. Without this, the +15 write above gets
+    // overwritten by a stale-state recalculation triggered by the WS pressure_change event.
+    const _forfeitFlushKeys = [..._ksQueue.keys()].filter(k => k.startsWith(req.user.id + ':'));
+    const _forfeitFlushBatch = _forfeitFlushKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+    if (_forfeitFlushBatch.length > 0) {
+      await Promise.all(_forfeitFlushBatch.map(({ userId: uid, cardId }) =>
+        recomputeAndStoreCardState(uid, cardId).catch(() => null)
+      ));
+    }
+    // Recompute pressure from the now-current card states and persist
+    const _forfeitBp = await db.brainPressure.get(req.user.id, exam.subject_id).catch(() => null);
+    const _forfeitCurPressure = parseFloat(_forfeitBp?.pressure_score) || 0; // PRESSURE-FIX: parseFloat for pg NUMERIC string
+    const _forfeitFreshPressure = await calculateSubjectPressure(req.user.id, exam.subject_id)
+      .catch(() => null);
+    const _forfeitFinalScore = _forfeitFreshPressure?.pressure_score ?? Math.min(100, _forfeitCurPressure + 15);
+
     await persistKnowledgeScore(req.user.id, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 
     // Compute delta, persist to exam session, include in response.
@@ -14702,12 +14743,11 @@ try {
       .catch((e) => console.error('[KIWI] Failed to persist forfeit ks_delta:', e.message));
 
     // Notify frontend in real-time so pressure/KS widgets update without a reload
-    const _forfeitBp = await db.brainPressure.get(req.user.id, exam.subject_id).catch(() => null);
-    const _forfeitCurPressure = parseFloat(_forfeitBp?.pressure_score) || 0; // PRESSURE-FIX: parseFloat for pg NUMERIC string
+    // Use the freshly computed pressure for the WS event (not the raw +15 value)
     wsSend(req.user.id, 'pressure_change', {
       subject_id: exam.subject_id,
-      pressure_score: _forfeitCurPressure,
-      delta: 15,
+      pressure_score: _forfeitFinalScore,
+      delta: _forfeitFinalScore - _forfeitCurPressure,
     });
     wsSend(req.user.id, 'ks_change', {
       subject_id: exam.subject_id,
@@ -16776,6 +16816,20 @@ res.status(500).json({ error: 'Failed to use buffer', details: e.message });
 }
 });
 
+// GET /api/brain/reckoning/active — P9.7-03 FIX-WIRE:
+// Frontend renderBrain() has a proactive fallback that calls this endpoint when
+// pendingReckoning is absent from the /brain/pressure response.
+// Previously this lived only on reckoningRouter which was never mounted.
+// Wired here so /api/brain/reckoning/active resolves correctly.
+brainRouter.get('/reckoning/active', async (req, res) => {
+try {
+const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+res.json(active || { status: 'none' });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch active reckoning', details: e.message });
+}
+});
+
 brainRouter.get('/pressure', async (req, res) => {
 try {
 // P4-FIX-PRESSURE: Always recalculate before returning. The old code just read whatever
@@ -17791,7 +17845,8 @@ app.post('/api/contact', async (req, res) => {
   }
 });
 
-// F-06/F-21 FIX: reckoningRouter removed — dead code. All reckoning via /api/brain/reckoning/
+// All reckoning routes are served via /api/brain/reckoning/* (brainRouter).
+// reckoningRouter was previously unmounted. GET /reckoning/active is wired below.
 
 app.use('/api/brain', brainRouter);
 app.use('/api/bubbles', bubbleRouter);
