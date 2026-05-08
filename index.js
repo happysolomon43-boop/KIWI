@@ -16042,6 +16042,145 @@ adminRouter.post('/diag/pressure', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+//  ADMIN — SYSTEM HEALTH CHECK
+// ════════════════════════════════════════════════════════════════════════════
+
+adminRouter.get('/health', async (req, res) => {
+  const checks = [];
+  const t0 = Date.now();
+
+  // 1 — Database connectivity
+  try {
+    await query('SELECT 1');
+    checks.push({ id: 'db_connection', label: 'Database connection', status: 'pass', value: 'Connected' });
+  } catch (e) {
+    checks.push({ id: 'db_connection', label: 'Database connection', status: 'fail', value: e.message });
+  }
+
+  // 2 — Table existence (expected 31 tables)
+  const EXPECTED_TABLES = [
+    'users','sessions','subjects','decks','cards','card_states',
+    'exam_sessions','exam_questions','brain_pressure','reckoning_sessions',
+    'chronicle_entries','almanac_entries','user_persona','daily_ritual_cache',
+    'seedling_transactions','user_inventory','marketplace_items','knowledge_scores',
+    'user_stats','refresh_tokens','tasks','community_decks','community_ratings',
+    'mastery_goals','background_jobs','mastery_clusters','bubble_sessions',
+    'biome_zones','biome_zone_descriptions','onboarding_state','notifications',
+  ];
+  try {
+    const { rows } = await query(`SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`);
+    const existing = new Set(rows.map(r => r.tablename));
+    const missing = EXPECTED_TABLES.filter(t => !existing.has(t));
+    const found   = EXPECTED_TABLES.filter(t => existing.has(t));
+    checks.push({
+      id: 'tables', label: 'DB tables',
+      status: missing.length === 0 ? 'pass' : 'warn',
+      value: `${found.length}/${EXPECTED_TABLES.length} present${missing.length > 0 ? ` | missing: ${missing.join(', ')}` : ''}`,
+    });
+  } catch (e) {
+    checks.push({ id: 'tables', label: 'DB tables', status: 'fail', value: e.message });
+  }
+
+  // 3 — Environment variables
+  const ENV_REQUIRED = ['DATABASE_URL', 'JWT_SECRET'];
+  const ENV_OPTIONAL = ['GEMINI_API_KEY', 'BREVO_API_KEY', 'TELEGRAM_BOT_TOKEN', 'ADMIN_MASTER_TOKEN', 'APP_URL', 'PORT', 'NODE_ENV'];
+  const ENV_ALL = [...ENV_REQUIRED, ...ENV_OPTIONAL];
+  const envMissReq = ENV_REQUIRED.filter(k => !process.env[k]);
+  const envMissOpt = ENV_OPTIONAL.filter(k => !process.env[k]);
+  const envPresent = ENV_ALL.filter(k => !!process.env[k]);
+  checks.push({
+    id: 'env_vars', label: 'Environment variables',
+    status: envMissReq.length > 0 ? 'fail' : envMissOpt.length > 0 ? 'warn' : 'pass',
+    value: `${envPresent.length}/${ENV_ALL.length} set`
+      + (envMissReq.length > 0 ? ` | MISSING (required): ${envMissReq.join(', ')}` : '')
+      + (envMissOpt.length > 0 ? ` | optional unset: ${envMissOpt.join(', ')}` : ''),
+  });
+
+  // 4 — WebSocket server
+  try {
+    const wsUserCount = _wsClients.size;
+    const wsConnCount = [..._wsClients.values()].reduce((n, s) => n + s.size, 0);
+    checks.push({ id: 'websocket', label: 'WebSocket server', status: 'pass', value: `${wsUserCount} user(s), ${wsConnCount} connection(s)` });
+  } catch (e) {
+    checks.push({ id: 'websocket', label: 'WebSocket server', status: 'warn', value: e.message });
+  }
+
+  // 5 — In-memory stores
+  checks.push({ id: 'ks_queue',       label: 'KS recompute queue',    status: 'pass', value: `${_ksQueue.size} pending item(s)` });
+  checks.push({ id: 'session_queues', label: 'Active session queues', status: 'pass', value: `${_sessionQueues.size} active session(s)` });
+  checks.push({ id: 'job_store',      label: 'In-memory job store',   status: 'pass', value: `${_jobStore.size} job(s)` });
+  try {
+    checks.push({ id: 'premark_cache', label: 'Pre-mark exam cache', status: 'pass', value: `${_preMarkCache.size} exam(s)` });
+  } catch(_) {}
+
+  // 6 — Gemini AI key pool
+  try {
+    const geminiTotal    = _geminiKeyObjs.length;
+    const geminiExhausted = _geminiKeyObjs.filter(k => k.exhausted).length;
+    const geminiAvail    = geminiTotal - geminiExhausted;
+    checks.push({
+      id: 'gemini_pool', label: 'Gemini AI key pool',
+      status: geminiTotal === 0 ? 'fail' : geminiAvail === 0 ? 'warn' : 'pass',
+      value: `${geminiAvail}/${geminiTotal} key(s) available`
+        + (geminiExhausted > 0 ? ` (${geminiExhausted} rate-limited)` : ''),
+    });
+  } catch (e) {
+    checks.push({ id: 'gemini_pool', label: 'Gemini AI key pool', status: 'warn', value: e.message });
+  }
+
+  // 7 — Cron jobs (static manifest — registered at startup if NODE_ENV !== 'test')
+  const CRON_MANIFEST = [
+    { schedule: '* * * * *',     label: 'KS recompute batch drain (every 1 min)' },
+    { schedule: '*/10 * * * *',  label: 'Abandoned exam auto-forfeit (every 10 min)' },
+    { schedule: '0 3 * * *',     label: 'Nightly card-state audit (03:00 UTC)' },
+    { schedule: '0 8 * * *',     label: 'Morning brief pre-generation (08:00 UTC)' },
+    { schedule: '0 11 * * *',    label: 'Daily pressure pipeline flush (11:00 UTC)' },
+    { schedule: '0 14 * * *',    label: 'Daily ritual reminder dispatch (14:00 UTC)' },
+    { schedule: '0 0 * * 1',     label: 'Weekly Chronicle + Anchor generation (Mon 00:00 UTC)' },
+  ];
+  const cronActive = process.env.NODE_ENV !== 'test';
+  checks.push({
+    id: 'cron_jobs', label: 'Scheduled cron jobs',
+    status: cronActive ? 'pass' : 'warn',
+    value: `${CRON_MANIFEST.length} registered${cronActive ? '' : ' (disabled — NODE_ENV=test)'}`,
+  });
+
+  // 8 — background_jobs table live count
+  try {
+    const { rows: bjRows } = await query(`SELECT COUNT(*) AS c FROM background_jobs WHERE status IN ('pending','running')`);
+    const pending = parseInt(bjRows[0]?.c || '0', 10);
+    checks.push({ id: 'bg_jobs_db', label: 'background_jobs (pending/running)', status: 'pass', value: `${pending} job(s)` });
+  } catch (e) {
+    checks.push({ id: 'bg_jobs_db', label: 'background_jobs table', status: 'warn', value: 'Query failed: ' + e.message });
+  }
+
+  // 9 — DB connection pool state
+  try {
+    const poolTotal   = pool.totalCount;
+    const poolIdle    = pool.idleCount;
+    const poolWaiting = pool.waitingCount;
+    checks.push({
+      id: 'db_pool', label: 'DB connection pool',
+      status: poolWaiting > 5 ? 'warn' : 'pass',
+      value: `${poolTotal} total · ${poolIdle} idle · ${poolWaiting} waiting`,
+    });
+  } catch (e) {
+    checks.push({ id: 'db_pool', label: 'DB connection pool', status: 'warn', value: e.message });
+  }
+
+  const elapsed = Date.now() - t0;
+  const overallOk = checks.every(c => c.status !== 'fail');
+  res.json({
+    ok: overallOk,
+    elapsed_ms: elapsed,
+    timestamp: new Date().toISOString(),
+    node_env: process.env.NODE_ENV || 'undefined',
+    checks,
+    cron_manifest: CRON_MANIFEST,
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 //  NEW PHASE ROUTES
 
 // ════════════════════════════════════════════════════════════════════════════

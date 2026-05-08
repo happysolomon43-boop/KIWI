@@ -1544,6 +1544,9 @@
         -webkit-backdrop-filter: blur(12px) saturate(1.1);
         /* box-shadow transitions are safe — they don't touch transform */
         transition: box-shadow 0.4s ease, border-color 0.4s ease;
+        /* FIX: allow long content to scroll instead of overflowing outside the card */
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
       }
 
       /* Front face — horizontal (top + bottom) glow, KIWI green */
@@ -5561,6 +5564,155 @@
     .flip-card.flipped .flip-card-inner { transform: rotateY(180deg); margin-top: -20px; }
     .flip-card-front, .flip-card-back { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border-radius: var(--r); }
     .flip-card-back { transform: rotateY(180deg); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AWAKENING TOUR OVERLAY — Guide System Component 1
+   ═══════════════════════════════════════════════════════════════════════════ */
+.kiwi-tour-overlay {
+  position: fixed; inset: 0; z-index: 8500;
+  background: rgba(6, 12, 9, 0.95);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  animation: fadeIn var(--t-mid) var(--ease);
+}
+.kiwi-tour-card {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  width: 100%; max-width: 520px;
+  max-height: 90vh;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg), 0 0 60px rgba(82,183,136,0.08);
+  display: flex; flex-direction: column;
+  position: relative;
+}
+.kiwi-tour-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 0;
+  min-height: 44px;
+}
+.kiwi-tour-back {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-3); font-size: 12px; padding: 4px 8px;
+  border-radius: var(--r-sm); transition: color var(--t-fast);
+  display: flex; align-items: center; gap: 4px;
+  font-family: var(--font-mono);
+}
+.kiwi-tour-back:hover { color: var(--text); }
+.kiwi-tour-skip {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-4); font-size: 12px; padding: 4px 10px;
+  border-radius: 99px; transition: color var(--t-fast);
+  font-family: var(--font-mono);
+}
+.kiwi-tour-skip:hover { color: var(--text-3); }
+.kiwi-tour-illus {
+  height: 200px; display: flex; align-items: center; justify-content: center;
+  padding: 16px; flex-shrink: 0;
+}
+.kiwi-tour-body { padding: 0 28px 8px; flex: 1; }
+.kiwi-tour-headline {
+  font-family: var(--font-display); font-size: 22px; font-weight: 700;
+  color: var(--text); margin-bottom: 12px; line-height: 1.25;
+}
+.kiwi-tour-text { font-size: 14px; color: var(--text-3); line-height: 1.7; }
+.kiwi-tour-bottom { padding: 16px 28px 24px; display: flex; flex-direction: column; gap: 12px; }
+.kiwi-tour-dots { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.kiwi-tour-dot {
+  height: 8px; border-radius: 99px;
+  background: var(--border); transition: width 300ms ease, background 300ms ease;
+  width: 8px;
+}
+.kiwi-tour-dot.active { width: 20px; background: var(--green-bright); }
+@keyframes tourSlideIn   { from { opacity:0; transform:translateX(30px);  } to { opacity:1; transform:translateX(0);   } }
+@keyframes tourSlideOut  { from { opacity:1; transform:translateX(0);     } to { opacity:0; transform:translateX(-30px);} }
+@keyframes tourSlideInR  { from { opacity:0; transform:translateX(-30px); } to { opacity:1; transform:translateX(0);   } }
+@keyframes tourSlideOutR { from { opacity:1; transform:translateX(0);     } to { opacity:0; transform:translateX(30px); } }
+.kiwi-tour-screen { animation: tourSlideIn 300ms ease forwards; }
+.kiwi-tour-screen.exiting { animation: tourSlideOut 300ms ease forwards; }
+.kiwi-tour-screen.entering-back { animation: tourSlideInR 300ms ease forwards; }
+@keyframes seedPulse   { 0%,100%{box-shadow:0 0 0 0 rgba(82,183,136,0.5);} 50%{box-shadow:0 0 0 12px rgba(82,183,136,0);} }
+@keyframes stemGrow    { from{transform:scaleY(0);transform-origin:bottom;} to{transform:scaleY(1);transform-origin:bottom;} }
+@keyframes leafUnfurl  { from{opacity:0;transform:rotate(-90deg) scale(0);} to{opacity:1;transform:rotate(0) scale(1);} }
+@keyframes dotLight    { from{opacity:0.2;transform:scale(0.6);} to{opacity:1;transform:scale(1);} }
+@keyframes particleRise{ 0%{opacity:1;transform:translateY(0) scale(1);} 100%{opacity:0;transform:translateY(-60px) scale(0.3);} }
+@keyframes twinkle     { 0%,100%{opacity:0.3;} 50%{opacity:1;} }
+@keyframes canopyPulse { 0%,100%{box-shadow:0 0 20px rgba(82,183,136,0.3);} 50%{box-shadow:0 0 40px rgba(82,183,136,0.5);} }
+.tour-card-wrap {
+  perspective: 800px; width: 260px; height: 120px; cursor: pointer; margin: 0 auto;
+}
+.tour-card-inner {
+  position: relative; width: 100%; height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.55s cubic-bezier(0.22,1,0.36,1);
+}
+.tour-card-wrap.flipped .tour-card-inner { transform: rotateY(180deg); }
+.tour-card-face {
+  position: absolute; inset: 0;
+  background: var(--glass-bg); border-radius: 14px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 14px; text-align: center; backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.tour-card-front {
+  border: 2px solid rgba(82,183,136,0.7);
+  box-shadow: 0 0 16px rgba(82,183,136,0.3);
+  animation: tipPulseRing 2s ease infinite;
+}
+.tour-card-back { transform: rotateY(180deg); border: 2px solid rgba(62,201,201,0.7); box-shadow: 0 0 16px rgba(62,201,201,0.3); }
+.tour-rating-row { display: flex; gap: 6px; justify-content: center; margin-top: 6px; flex-wrap: wrap; }
+.tour-rating-btn {
+  padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg-3); color: var(--text-2); font-size: 11px;
+  cursor: pointer; transition: all var(--t-fast);
+}
+.tour-rating-btn:hover { border-color: var(--green); color: var(--green-bright); }
+.tour-tl-dot {
+  width: 10px; height: 10px; border-radius: 50%; background: var(--bg-3);
+  border: 2px solid var(--border); transition: all 0.4s; margin-bottom: 6px;
+}
+.tour-tl-dot.lit { background: var(--green-bright); border-color: var(--green-bright); box-shadow: 0 0 8px rgba(82,183,136,0.6); }
+.tour-tl-label { font-family: var(--font-mono); font-size: 9px; color: var(--text-4); margin-top: 4px; }
+/* ═══════════════════════════════════════════════════════════════════════════
+   HELP & GUIDE — Settings Rows
+   ═══════════════════════════════════════════════════════════════════════════ */
+.guide-row {
+  display: flex; align-items: center; padding: 13px 0;
+  border-bottom: 1px solid var(--border); cursor: pointer;
+  transition: background var(--t-fast); gap: 12px;
+}
+.guide-row:last-child { border-bottom: none; }
+.guide-row:hover { background: rgba(82,183,136,0.03); margin: 0 -4px; padding-left: 4px; padding-right: 4px; border-radius: 6px; }
+.guide-row-icon { font-size: 18px; flex-shrink: 0; }
+.guide-row-text { flex: 1; }
+.guide-row-label { font-size: 14px; color: var(--text); font-weight: 500; }
+.guide-row-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.guide-row-chevron { color: var(--text-4); font-size: 14px; flex-shrink: 0; }
+/* ═══════════════════════════════════════════════════════════════════════════
+   SYSTEM HEALTH CHECK — Admin Panel
+   ═══════════════════════════════════════════════════════════════════════════ */
+.health-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 12px; border-radius: 8px; margin-bottom: 4px;
+  font-size: 12px; font-family: var(--font-mono);
+}
+.health-row.pass { background: rgba(82,183,136,0.07); border: 1px solid rgba(82,183,136,0.15); }
+.health-row.fail { background: rgba(193,68,14,0.08);  border: 1px solid rgba(193,68,14,0.2); }
+.health-row.warn { background: rgba(210,160,60,0.07); border: 1px solid rgba(210,160,60,0.2); }
+.health-row-icon { flex-shrink: 0; width: 14px; margin-top: 1px; }
+.health-row.pass .health-row-icon { color: var(--green-bright); }
+.health-row.fail .health-row-icon { color: var(--red-bright); }
+.health-row.warn .health-row-icon { color: #d4a017; }
+.health-row-label { color: var(--text-2); font-weight: 600; min-width: 180px; flex-shrink: 0; }
+.health-row-value { color: var(--text-3); font-size: 11px; flex: 1; word-break: break-word; }
+/* tipPulseRing used by tour card front */
+@keyframes tipPulseRing {
+  0%   { box-shadow: 0 0 0 0 rgba(82,183,136,0.4), 0 0 16px rgba(82,183,136,0.3); }
+  70%  { box-shadow: 0 0 0 8px rgba(82,183,136,0), 0 0 16px rgba(82,183,136,0.3); }
+  100% { box-shadow: 0 0 0 0 rgba(82,183,136,0), 0 0 16px rgba(82,183,136,0.3); }
+}
 
 </style>
   </head>
@@ -10075,6 +10227,31 @@
         };
       }
 
+      // FIX: Auto-size flashcard — scales font and min-height based on content length
+      // so long questions/answers never overflow outside the card boundary.
+      function _autoSizeStudyCard() {
+        const fc = document.getElementById('flashcard');
+        if (!fc) return;
+        const faces = [
+          { el: fc.querySelector('.flashcard-face.front .flashcard-content'), isFront: true },
+          { el: fc.querySelector('.flashcard-face.back .flashcard-content'), isFront: false }
+        ];
+        let maxNeededHeight = 240;
+        faces.forEach(({ el, isFront }) => {
+          if (!el) return;
+          const len = (el.textContent || '').length;
+          let fs, extraHeight;
+          if (len > 500)      { fs = '12px'; extraHeight = 180; }
+          else if (len > 350) { fs = '13px'; extraHeight = 150; }
+          else if (len > 220) { fs = '15px'; extraHeight = 120; }
+          else if (len > 130) { fs = '17px'; extraHeight = 80; }
+          else                { fs = isFront ? '20px' : '16px'; extraHeight = 40; }
+          el.style.fontSize = fs;
+          maxNeededHeight = Math.max(maxNeededHeight, 200 + extraHeight);
+        });
+        fc.style.minHeight = maxNeededHeight + 'px';
+      }
+
       function renderActiveStudySession(container) {
         const t = AppState.tempStudy;
         if (!t || !t.queue || t.queue.length === 0 || t.currentIndex >= t.queue.length) {
@@ -10293,6 +10470,11 @@
         if (studyContainer) {
           studyContainer.querySelectorAll(".flashcard-content").forEach(el => renderMathContent(el));
         }
+
+        // FIX: Auto-size the flashcard so long text never bleeds outside the card boundary.
+        // Both faces are position:absolute so the container doesn't grow with content.
+        // We measure text length and scale font + min-height accordingly.
+        _autoSizeStudyCard();
         // Also render math in AI summary panel if visible
         const aiSummaryEl = document.getElementById("aiSummaryText");
         if (aiSummaryEl) renderMathContent(aiSummaryEl);
@@ -11501,7 +11683,8 @@
                           'const r=await apiRequest(\'/study/start\',{method:\'POST\',body:{deck_id:deckId}});' +
                           'const sid=r.sessionId||(r.session&&r.session.id)||null;' +
                           'if(!sid){showToast(\'Could not start session\',\'error\');btn.disabled=false;btn.textContent=\'▶ Study\';return;}' +
-                          'AppState.tempStudy={sessionId:sid,cards:(r.cards||[]).map(function(c){return Object.assign({},c,{front:c.front_content||c.front||\'\',back:c.back_content||c.back||\'\'});}),currentIndex:0,answers:{},subjectId:r.subject_id||null,deckId:deckId};' +
+                          'AppState.tempStudy={sessionId:sid,queue:(r.cards||[]).map(function(c){return Object.assign({},c,{front:c.front_content||c.front||\'\',back:c.back_content||c.back||\'\'});}),currentIndex:0,flipped:false,startTime:Date.now(),cardShownAt:Date.now(),reviews:[],cardsReviewed:0,seedHealth:0,aiSummary:null,stageTransitions:[],focusData:{tabAwayCount:0,idleSeconds:0},subjectId:r.subject_id||null,deckId:deckId};' +
+                          'if(typeof startFocusTracking==="function")startFocusTracking();' +
                           'navigateTo(\'study\');' +
                         '}catch(err){showToast((err&&err.error)||\'Failed to start session\',\'error\');btn.disabled=false;btn.textContent=\'▶ Study\';}' +
                       '})(this,\'' + escapeHTML(deck.id) + '\')">' +
@@ -17631,72 +17814,186 @@
         }
 
         function renderCardsStep() {
+          // Example placeholders that feel familiar based on their subject name
+          const subj = OB.subjectName || "your subject";
+          const exFront = "e.g. What is photosynthesis?";
+          const exBack  = "e.g. The process by which plants convert sunlight into food using CO₂ and water.";
+
           main.innerHTML = `
             <div class="page-wrap page-enter" style="max-width:560px;margin:0 auto;">
               <div class="section-header" style="margin-bottom:8px;">
                 <div>
                   <div class="section-title">Welcome to KIWI</div>
-                  <div class="section-sub">Step 3 of 4 — Add at least 3 cards</div>
+                  <div class="section-sub">Step 3 of 4 — Build your first cards</div>
                 </div>
               </div>
               ${stepIndicator()}
-              <div class="card" style="padding:28px;">
-                <div style="font-size:var(--text-lg);font-weight:600;margin-bottom:4px;">Add your first cards</div>
-                <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:20px;">
-                  Cards have a <strong>front</strong> (question/term) and a <strong>back</strong> (answer/definition).
-                  Add at least 3 to start a session.
+
+              <!-- What is a flashcard? Quick explainer -->
+              <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:20px;display:flex;gap:14px;align-items:flex-start;">
+                <div style="font-size:28px;flex-shrink:0;margin-top:2px;">🃏</div>
+                <div>
+                  <div style="font-size:var(--text-base);font-weight:600;color:var(--text);margin-bottom:4px;">How flashcards work</div>
+                  <div style="font-size:var(--text-sm);color:var(--text-3);line-height:1.6;">
+                    Each card has a <strong style="color:var(--green-bright);">Question</strong> on the front and an
+                    <strong style="color:var(--teal-bright);">Answer</strong> on the back.
+                    During a session, KIWI shows you the question — you recall the answer in your head, then flip to check.
+                    Rate how well you knew it and KIWI schedules when to show it again. That's it!
+                  </div>
                 </div>
-                <div id="ob-card-form">
-                  <input class="input" id="ob-front" placeholder="Front (question or term)" style="width:100%;margin-bottom:10px;" />
-                  <textarea class="input" id="ob-back" placeholder="Back (answer or definition)" style="width:100%;min-height:80px;resize:vertical;margin-bottom:16px;"></textarea>
-                  <button class="btn btn-secondary" id="ob-add-card-btn" style="width:100%;margin-bottom:16px;">Add Card</button>
+              </div>
+
+              <div class="card" style="padding:24px;">
+                <div style="font-size:var(--text-lg);font-weight:600;margin-bottom:4px;">Create a card for <em style="color:var(--green-bright);font-style:normal;">${escapeHTML(subj)}</em></div>
+                <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:18px;">Add at least 3 to start your first session. You can add more anytime from the Library.</div>
+
+                <!-- Live card preview -->
+                <div id="ob-card-preview" style="display:none;margin-bottom:18px;">
+                  <div style="font-size:var(--text-xs);font-family:var(--font-mono);color:var(--text-4);letter-spacing:1px;margin-bottom:6px;text-transform:uppercase;">Preview</div>
+                  <div style="border-radius:var(--r);overflow:hidden;border:1px solid var(--border);">
+                    <div style="background:var(--glass-bg);border-bottom:2px solid rgba(82,183,136,0.5);padding:14px 16px;">
+                      <div style="font-size:var(--text-xs);font-family:var(--font-mono);color:var(--text-4);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Question</div>
+                      <div id="ob-preview-front" style="font-size:var(--text-base);color:var(--text);font-weight:500;line-height:1.5;"></div>
+                    </div>
+                    <div style="background:var(--bg-3);padding:14px 16px;">
+                      <div style="font-size:var(--text-xs);font-family:var(--font-mono);color:var(--teal);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Answer</div>
+                      <div id="ob-preview-back" style="font-size:var(--text-sm);color:var(--text-2);line-height:1.5;"></div>
+                    </div>
+                  </div>
                 </div>
-                <div id="ob-cards-list" style="margin-bottom:16px;"></div>
-                <div id="ob-cards-count" style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:16px;">
-                  Cards added: <strong id="ob-count-num">0</strong> — need at least 3
+
+                <!-- Input fields -->
+                <div style="margin-bottom:10px;">
+                  <label style="font-size:var(--text-xs);font-family:var(--font-mono);color:var(--green-bright);letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:6px;">Question (front)</label>
+                  <input class="input" id="ob-front" placeholder="${escapeHTML(exFront)}" style="width:100%;" autocomplete="off" />
                 </div>
-                <button class="btn btn-primary" id="ob-done-cards-btn" style="width:100%;padding:14px;" disabled>I'm ready — go to dashboard →</button>
+                <div style="margin-bottom:18px;">
+                  <label style="font-size:var(--text-xs);font-family:var(--font-mono);color:var(--teal-bright);letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:6px;">Answer (back)</label>
+                  <textarea class="input" id="ob-back" placeholder="${escapeHTML(exBack)}" style="width:100%;min-height:80px;resize:vertical;"></textarea>
+                </div>
+                <button class="btn btn-primary" id="ob-add-card-btn" style="width:100%;margin-bottom:20px;" disabled>
+                  ＋ Add This Card
+                </button>
+
+                <!-- Added cards list -->
+                <div id="ob-cards-list" style="margin-bottom:14px;"></div>
+
+                <!-- Progress indicator -->
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+                  <div style="display:flex;gap:5px;">
+                    ${[1,2,3].map(n => `<div id="ob-dot-${n}" style="width:10px;height:10px;border-radius:50%;border:2px solid var(--border);background:transparent;transition:all 0.3s;"></div>`).join("")}
+                  </div>
+                  <div style="font-size:var(--text-sm);color:var(--text-3);" id="ob-progress-label">Add 3 cards to continue</div>
+                </div>
+
+                <button class="btn btn-primary" id="ob-done-cards-btn" style="width:100%;padding:14px;font-size:var(--text-base);" disabled>
+                  Continue to Dashboard →
+                </button>
               </div>
             </div>`;
 
           const addedCards = [];
+
+          // Live preview update
+          function updatePreview() {
+            const f = (document.getElementById("ob-front") || {}).value || "";
+            const b = (document.getElementById("ob-back") || {}).value || "";
+            const preview = document.getElementById("ob-card-preview");
+            const addBtn = document.getElementById("ob-add-card-btn");
+            if (f.trim() || b.trim()) {
+              if (preview) preview.style.display = "block";
+              const pf = document.getElementById("ob-preview-front");
+              const pb = document.getElementById("ob-preview-back");
+              if (pf) pf.textContent = f || "…";
+              if (pb) pb.textContent = b || "…";
+            } else {
+              if (preview) preview.style.display = "none";
+            }
+            if (addBtn) addBtn.disabled = !(f.trim() && b.trim());
+          }
+
           function refreshCardsList() {
             const listEl = document.getElementById("ob-cards-list");
-            const countEl = document.getElementById("ob-count-num");
             const doneBtn = document.getElementById("ob-done-cards-btn");
-            countEl.textContent = addedCards.length;
-            doneBtn.disabled = addedCards.length < 3;
-            if (addedCards.length === 0) { listEl.innerHTML = ""; return; }
-            listEl.innerHTML = addedCards.map((c, i) => `
+            const label = document.getElementById("ob-progress-label");
+            // Colour the dots
+            [1,2,3].forEach(n => {
+              const dot = document.getElementById("ob-dot-" + n);
+              if (!dot) return;
+              if (addedCards.length >= n) {
+                dot.style.background = "var(--green-bright)";
+                dot.style.borderColor = "var(--green-bright)";
+                dot.style.boxShadow = "0 0 6px rgba(82,183,136,0.5)";
+              } else {
+                dot.style.background = "transparent";
+                dot.style.borderColor = "var(--border)";
+                dot.style.boxShadow = "none";
+              }
+            });
+            if (label) {
+              const rem = Math.max(0, 3 - addedCards.length);
+              label.textContent = addedCards.length === 0
+                ? "Add 3 cards to continue"
+                : rem > 0
+                  ? `${rem} more card${rem > 1 ? "s" : ""} to go`
+                  : "🎉 You're ready!";
+              label.style.color = addedCards.length >= 3 ? "var(--green-bright)" : "var(--text-3)";
+            }
+            if (doneBtn) doneBtn.disabled = addedCards.length < 3;
+            if (addedCards.length === 0) { if (listEl) listEl.innerHTML = ""; return; }
+            if (listEl) listEl.innerHTML = addedCards.map((c) => `
               <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 12px;
-                background:var(--surface-2,var(--bg-2));border-radius:8px;margin-bottom:8px;gap:12px;">
+                background:var(--surface-2,var(--bg-2));border-radius:8px;margin-bottom:6px;gap:12px;border:1px solid var(--border);">
                 <div style="flex:1;min-width:0;">
                   <div style="font-size:var(--text-sm);color:var(--text);font-weight:500;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(c.front)}</div>
-                  <div style="font-size:var(--text-xs,11px);color:var(--text-4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(c.back)}</div>
+                  <div style="font-size:var(--text-xs);color:var(--text-4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(c.back)}</div>
                 </div>
-                <span style="font-size:var(--text-xs,11px);color:var(--green-bright);flex-shrink:0;">✓</span>
+                <span style="font-size:16px;flex-shrink:0;">✓</span>
               </div>`).join("");
           }
 
+          // Wire up inputs
+          const frontEl = document.getElementById("ob-front");
+          const backEl = document.getElementById("ob-back");
+          if (frontEl) {
+            frontEl.addEventListener("input", updatePreview);
+            frontEl.addEventListener("keydown", (e) => {
+              if (e.key === "Enter") { e.preventDefault(); if (backEl) backEl.focus(); }
+            });
+            frontEl.focus();
+          }
+          if (backEl) {
+            backEl.addEventListener("input", updatePreview);
+            backEl.addEventListener("keydown", (e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                const f = (document.getElementById("ob-front") || {}).value || "";
+                const b = backEl.value || "";
+                if (f.trim() && b.trim()) { e.preventDefault(); document.getElementById("ob-add-card-btn").click(); }
+              }
+            });
+          }
+
           document.getElementById("ob-add-card-btn").onclick = async () => {
-            const front = document.getElementById("ob-front").value.trim();
-            const back = document.getElementById("ob-back").value.trim();
-            if (!front || !back) { showToast("Both front and back are required", "warning"); return; }
+            const front = (document.getElementById("ob-front") || {}).value.trim();
+            const back = (document.getElementById("ob-back") || {}).value.trim();
+            if (!front || !back) { showToast("Write both a question and an answer", "warning"); return; }
             const btn = document.getElementById("ob-add-card-btn");
-            btn.disabled = true; btn.textContent = "Adding...";
+            btn.disabled = true; btn.textContent = "Saving…";
             try {
-              await api.createCard(OB.deckId, { front_content: front, back_content: back, card_type: "basic" });
+              // FIX: api.createCard never existed — use api.addCard which posts to /library/cards
+              await api.addCard(OB.subjectId, front, back);
               addedCards.push({ front, back });
               OB.cardsAdded = addedCards.length;
-              document.getElementById("ob-front").value = "";
-              document.getElementById("ob-back").value = "";
-              document.getElementById("ob-front").focus();
+              if (frontEl) frontEl.value = "";
+              if (backEl) backEl.value = "";
+              updatePreview();
               refreshCardsList();
-              showToast("Card added!", "success", 1500);
+              showToast("Card saved! ✓", "success", 1500);
             } catch (e) {
-              showToast(e.message || "Failed to add card", "error");
+              showToast(e.message || "Failed to save card — please try again", "error");
             }
-            btn.disabled = false; btn.textContent = "Add Card";
+            btn.disabled = !(((document.getElementById("ob-front")||{}).value||"").trim() && (((document.getElementById("ob-back")||{}).value||"").trim()));
+            btn.textContent = "＋ Add This Card";
           };
 
           document.getElementById("ob-done-cards-btn").onclick = () => {
@@ -17734,9 +18031,9 @@
                   </div>
                 </div>
                 <button class="btn btn-primary" style="width:100%;padding:16px;font-size:var(--text-base);"
-                  onclick="navigateTo('study')">Start First Session →</button>
+                  onclick="showKiwiTour('study')">Start First Session →</button>
                 <div style="margin-top:12px;">
-                  <button class="btn btn-ghost btn-sm" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">Go to Dashboard</button>
+                  <button class="btn btn-ghost btn-sm" onclick="(function(b){b.disabled=true;b.textContent='Loading...';showKiwiTour('dashboard');})(this)">Go to Dashboard</button>
                 </div>
                 <div style="margin-top:24px;padding:16px;background:var(--surface-2,var(--bg-2));border-radius:10px;text-align:left;">
                   <div style="font-size:var(--text-sm);color:var(--text-3);font-weight:600;margin-bottom:10px;"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Features that unlock as you study:</div>
@@ -17844,6 +18141,283 @@
         setTimeout(() => inputs[0].focus(), 80);
       }
 
+      // ═══════════════════════════════════════════════════════════════════════
+      // THE AWAKENING TOUR — Guide System Component 1
+      // Triggered after onboarding Ready step; replayable from Settings.
+      // localStorage key: kiwi_tour_seen ('done' | 'skipped' | null)
+      // ═══════════════════════════════════════════════════════════════════════
+      function showKiwiTour(destination) {
+        if (localStorage.getItem('kiwi_tour_seen')) { navigateTo(destination); return; }
+        var _ts = 0; // current screen index
+        var _tourCardFlipped = false;
+        var TOTAL = 5;
+
+        var overlay = document.createElement('div');
+        overlay.className = 'kiwi-tour-overlay';
+        overlay.id = 'kiwiTourOverlay';
+        document.body.appendChild(overlay);
+
+        function _dots(idx) {
+          return Array.from({length: TOTAL}, function(_, i) {
+            return '<div class="kiwi-tour-dot' + (i === idx ? ' active' : '') + '"></div>';
+          }).join('');
+        }
+
+        function _illus0() {
+          return '<div style="position:relative;width:80px;text-align:center;">' +
+            '<div style="font-size:36px;animation:seedPulse 2s infinite;">🌱</div>' +
+            '<div style="width:4px;height:56px;background:linear-gradient(to top,var(--green-dim),var(--green-bright));border-radius:2px;margin:4px auto 0;animation:stemGrow 1s ease-out forwards;"></div>' +
+            '<div style="display:flex;justify-content:center;gap:8px;margin-top:2px;">' +
+              '<div style="width:20px;height:12px;background:var(--green);border-radius:50% 0 50% 0;animation:leafUnfurl 0.8s 0.6s ease-out both;"></div>' +
+              '<div style="width:20px;height:12px;background:var(--green);border-radius:0 50% 0 50%;animation:leafUnfurl 0.8s 0.9s ease-out both;"></div>' +
+            '</div></div>';
+        }
+
+        function _illus1() {
+          return '<div style="width:100%;max-width:280px;margin:0 auto;">' +
+            '<div class="tour-card-wrap" id="tourMiniCard">' +
+              '<div class="tour-card-inner">' +
+                '<div class="tour-card-face tour-card-front">' +
+                  '<div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:8px;">What is the powerhouse of the cell?</div>' +
+                  '<div style="font-size:10px;color:var(--text-4);font-family:var(--font-mono);">Tap the card to flip it</div>' +
+                '</div>' +
+                '<div class="tour-card-face tour-card-back">' +
+                  '<div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;">The mitochondria.</div>' +
+                  '<div id="tourRatingRow" style="display:none;">' +
+                    '<div style="font-size:9px;color:var(--text-4);font-family:var(--font-mono);margin-bottom:6px;">Rate how well you knew it</div>' +
+                    '<div class="tour-rating-row">' +
+                      '<button class="tour-rating-btn" onclick="window._tourRate(this)">Again</button>' +
+                      '<button class="tour-rating-btn" onclick="window._tourRate(this)">Hard</button>' +
+                      '<button class="tour-rating-btn" onclick="window._tourRate(this)">Good</button>' +
+                      '<button class="tour-rating-btn" onclick="window._tourRate(this)">Easy</button>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
+            '</div></div>';
+        }
+
+        function _illus2() {
+          function tl(items, lbl, pfx) {
+            return '<div style="margin-bottom:8px;">' +
+              '<div style="font-size:9px;font-family:var(--font-mono);color:var(--text-4);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">' + lbl + '</div>' +
+              '<div style="display:flex;align-items:flex-end;gap:4px;height:80px;">' +
+              items.map(function(d, i) {
+                return '<div style="display:flex;flex-direction:column;align-items:center;flex:1;">' +
+                  '<div class="tour-tl-dot" style="animation:dotLight 0.4s ' + (0.3 + i * 0.35) + 's ease-out both;"></div>' +
+                  '<div style="width:3px;border-radius:2px;background:var(--green-bright);flex:1;max-height:' + d[1] + '%;animation:stemGrow 0.4s ' + (0.5 + i * 0.35) + 's ease-out both;"></div>' +
+                  '<div class="tour-tl-label">' + d[0] + '</div></div>';
+              }).join('') + '</div></div>';
+          }
+          return '<div style="width:100%;max-width:300px;margin:0 auto;">' +
+            tl([['D1',18],['D3',30],['D9',50],['D25',72],['D70',100]], 'Easy card schedule', 'e') +
+            tl([['D1',12],['D2',22],['D4',36],['D8',54],['D16',76]], 'Hard card schedule', 'h') +
+            '</div>';
+        }
+
+        function _illus3() {
+          return '<div style="width:100%;max-width:380px;margin:0 auto;">' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">' +
+              '<div style="background:var(--bg-3);border-radius:10px;padding:12px;text-align:center;">' +
+                '<div id="tourSeedCycle" style="font-size:28px;margin-bottom:4px;">🌱</div>' +
+                '<div style="font-size:9px;font-family:var(--font-mono);color:var(--text-4);text-transform:uppercase;letter-spacing:1px;">Focus Seed</div>' +
+                '<div style="font-size:10px;color:var(--text-3);margin-top:4px;line-height:1.4;">Grows when you stay focused</div>' +
+              '</div>' +
+              '<div style="background:var(--bg-3);border-radius:10px;padding:12px;text-align:center;">' +
+                '<div id="tourKsCount" style="font-size:28px;font-family:var(--font-mono);font-weight:700;color:var(--green-bright);">0.0</div>' +
+                '<div style="font-size:9px;font-family:var(--font-mono);color:var(--text-4);text-transform:uppercase;letter-spacing:1px;">Knowledge Score</div>' +
+                '<div style="font-size:10px;color:var(--text-3);margin-top:4px;line-height:1.4;">Rises as you master cards</div>' +
+              '</div>' +
+            '</div>' +
+            '<div style="background:var(--bg-3);border-radius:10px;padding:12px;">' +
+              '<div style="font-size:9px;font-family:var(--font-mono);color:var(--text-4);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Feature Unlocks</div>' +
+              '<div style="font-size:11px;color:var(--green-bright);margin-bottom:4px;">🟢 Library &amp; Study — Now</div>' +
+              '<div style="font-size:10px;color:var(--text-4);">📝 Exams — 20 cards reviewed</div>' +
+              '<div style="font-size:10px;color:var(--text-4);">🛒 Marketplace — 3 sessions</div>' +
+              '<div style="font-size:10px;color:var(--text-4);">⚡ Reckoning — 50 cards reviewed</div>' +
+            '</div></div>';
+        }
+
+        function _illus4() {
+          var stars = '';
+          for (var si = 0; si < 8; si++) {
+            stars += '<div style="position:absolute;width:3px;height:3px;border-radius:50%;background:var(--text-4);top:' + (5 + Math.floor(si * 3.7)) + '%;left:' + (8 + si * 11) + '%;animation:twinkle ' + (1.5 + si * 0.25) + 's ease-in-out infinite ' + (si * 0.18) + 's;"></div>';
+          }
+          var particles = '';
+          for (var pi = 0; pi < 4; pi++) {
+            particles += '<div style="position:absolute;bottom:' + (108 + pi * 10) + 'px;left:' + (78 + pi * 13) + 'px;width:5px;height:5px;border-radius:50%;background:var(--green-bright);animation:particleRise ' + (1.6 + pi * 0.4) + 's ' + (pi * 0.5) + 's ease-out infinite;"></div>';
+          }
+          return '<div style="position:relative;width:200px;height:180px;margin:0 auto;overflow:hidden;">' +
+            stars +
+            '<div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:20px;height:80px;background:linear-gradient(to top,#3d2b1f,#5c3d2e);border-radius:4px 4px 0 0;"></div>' +
+            '<div style="position:absolute;bottom:58px;left:50%;transform:translateX(-50%);width:120px;height:100px;border-radius:50%;background:radial-gradient(circle,var(--green-bright) 0%,var(--green) 45%,var(--green-dim) 100%);animation:canopyPulse 3s ease-in-out infinite;"></div>' +
+            particles +
+            '</div>';
+        }
+
+        var SCREENS = [
+          {
+            illus: _illus0,
+            headline: 'Welcome to your living ecosystem.',
+            text: 'KIWI isn\'t a note-taking app. It\'s a memory engine.<br>Every card you study here is a seed. Every session is sunlight.<br>Over time, you build knowledge that actually sticks.',
+            cta: 'Show me how it works →',
+            ctaDisabled: false,
+          },
+          {
+            illus: _illus1,
+            headline: 'Tap. Flip. Rate. Repeat.',
+            text: 'You recall the answer in your head, then flip to check.<br>Rate yourself honestly — that single tap schedules your next review.<br>This is the loop that builds real memory.',
+            cta: 'Next →',
+            ctaDisabled: true,
+          },
+          {
+            illus: _illus2,
+            headline: 'The right card at the right moment.',
+            text: 'KIWI tracks every card individually. Rate something Easy?<br>You won\'t see it for weeks — your time goes to what needs it.<br>Rate it Again? It comes back today. This is how memory works.',
+            cta: 'Next →',
+            ctaDisabled: false,
+          },
+          {
+            illus: _illus3,
+            headline: 'The more you study, the more unlocks.',
+            text: 'Your Focus Seed grows when you stay in the app during sessions.<br>Your Knowledge Score is a live measure of real mastery — not effort, not time.<br>New features unlock automatically as your ecosystem grows.',
+            cta: 'One more thing →',
+            ctaDisabled: false,
+          },
+          {
+            illus: _illus4,
+            headline: 'Your ecosystem is waiting.',
+            text: 'Every session plants something that can\'t be unlearned.<br>Every honest rating schedules a memory that will still be there in a year.<br>The knowledge you build here is yours, permanently.',
+            cta: null,
+            ctaDisabled: false,
+          },
+        ];
+
+        function _tourDone(dest) {
+          localStorage.setItem('kiwi_tour_seen', 'done');
+          overlay.remove();
+          document.removeEventListener('keydown', _tourKey);
+          navigateTo(dest || destination);
+        }
+
+        function _render(idx) {
+          _ts = idx;
+          var s = SCREENS[idx];
+          var isLast = idx === TOTAL - 1;
+          var isFirst = idx === 0;
+          overlay.innerHTML =
+            '<div class="kiwi-tour-card">' +
+              '<div class="kiwi-tour-topbar">' +
+                '<button class="kiwi-tour-back" id="_tBack" style="' + (isFirst ? 'visibility:hidden' : '') + '">← Back</button>' +
+                '<button class="kiwi-tour-skip" id="_tSkip">I\'ll figure it out</button>' +
+              '</div>' +
+              '<div class="kiwi-tour-illus" id="_tIllus">' + s.illus() + '</div>' +
+              '<div class="kiwi-tour-body kiwi-tour-screen">' +
+                '<div class="kiwi-tour-headline">' + s.headline + '</div>' +
+                '<div class="kiwi-tour-text">' + s.text + '</div>' +
+              '</div>' +
+              '<div class="kiwi-tour-bottom">' +
+                '<div class="kiwi-tour-dots">' + _dots(idx) + '</div>' +
+                (isLast
+                  ? '<button class="btn btn-primary" id="_tCta" style="width:100%;padding:14px;font-size:15px;">Start My First Session 🌱</button>' +
+                    '<button class="btn btn-ghost btn-sm" id="_tDash" style="text-align:center;">Go to Dashboard →</button>'
+                  : '<button class="btn btn-primary" id="_tCta" style="width:100%;padding:14px;' + (s.ctaDisabled ? 'opacity:0.4;cursor:not-allowed;' : '') + '"' + (s.ctaDisabled ? ' disabled' : '') + '>' + s.cta + '</button>'
+                ) +
+              '</div>' +
+            '</div>';
+
+          var backBtn = document.getElementById('_tBack');
+          var skipBtn = document.getElementById('_tSkip');
+          var ctaBtn  = document.getElementById('_tCta');
+          var dashBtn = document.getElementById('_tDash');
+
+          if (backBtn) backBtn.addEventListener('click', function() { if (idx > 0) _render(idx - 1); });
+          if (skipBtn) skipBtn.addEventListener('click', function() {
+            if (confirm('Skip the tour? You can replay it from Settings anytime.')) {
+              localStorage.setItem('kiwi_tour_seen', 'skipped');
+              overlay.remove();
+              document.removeEventListener('keydown', _tourKey);
+              navigateTo(destination);
+            }
+          });
+          if (ctaBtn) ctaBtn.addEventListener('click', function() {
+            if (isLast) _tourDone(destination);
+            else if (!ctaBtn.disabled) _render(idx + 1);
+          });
+          if (dashBtn) dashBtn.addEventListener('click', function() { _tourDone('dashboard'); });
+
+          // Screen 1: mini flashcard interaction
+          if (idx === 1) {
+            var mc = document.getElementById('tourMiniCard');
+            if (mc) mc.addEventListener('click', function() {
+              if (!_tourCardFlipped) {
+                _tourCardFlipped = true;
+                mc.classList.add('flipped');
+                setTimeout(function() {
+                  var rr = document.getElementById('tourRatingRow');
+                  if (rr) rr.style.display = 'block';
+                }, 320);
+              }
+            });
+          }
+          // Screen 3: seed cycle + KS count
+          if (idx === 3) {
+            var seeds = ['🌑','🌱','🌿','🌳','🍃','✨']; var si2 = 1;
+            var seedEl = document.getElementById('tourSeedCycle');
+            if (seedEl) {
+              var _si = setInterval(function() {
+                if (!seedEl.isConnected) { clearInterval(_si); return; }
+                seedEl.textContent = seeds[si2 % seeds.length]; si2++;
+              }, 700);
+            }
+            var ksEl = document.getElementById('tourKsCount');
+            if (ksEl) {
+              var ksV = 0; var ksTarget = 47.3;
+              var _ksStep = function() {
+                ksV = Math.min(ksV + 1.6, ksTarget);
+                if (ksEl.isConnected) { ksEl.textContent = ksV.toFixed(1); if (ksV < ksTarget) requestAnimationFrame(_ksStep); }
+              };
+              requestAnimationFrame(_ksStep);
+            }
+          }
+        }
+
+        // Rating button handler — enables Next after rating
+        window._tourRate = function(btn) {
+          btn.style.borderColor = 'var(--green-bright)'; btn.style.color = 'var(--green-bright)';
+          var ctaBtn = document.getElementById('_tCta');
+          if (ctaBtn) { ctaBtn.disabled = false; ctaBtn.style.opacity = '1'; ctaBtn.style.cursor = 'pointer'; }
+        };
+
+        // Swipe support
+        var _tx = null;
+        overlay.addEventListener('touchstart', function(e) { _tx = e.touches[0].clientX; }, {passive:true});
+        overlay.addEventListener('touchend', function(e) {
+          if (_tx === null) return;
+          var dx = e.changedTouches[0].clientX - _tx; _tx = null;
+          if (Math.abs(dx) < 50) return;
+          if (dx < 0 && _ts < TOTAL - 1) _render(_ts + 1);
+          if (dx > 0 && _ts > 0) _render(_ts - 1);
+        }, {passive:true});
+
+        // Keyboard support
+        function _tourKey(e) {
+          if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); if (_ts < TOTAL - 1) _render(_ts + 1); }
+          else if (e.key === 'ArrowLeft') { e.preventDefault(); if (_ts > 0) _render(_ts - 1); }
+          else if (e.key === 'Escape') {
+            if (confirm('Skip the tour? You can replay it from Settings anytime.')) {
+              localStorage.setItem('kiwi_tour_seen', 'skipped');
+              overlay.remove();
+              document.removeEventListener('keydown', _tourKey);
+              navigateTo(destination);
+            }
+          }
+        }
+        document.addEventListener('keydown', _tourKey);
+
+        _render(0);
+      }
+
       function _handleVersionTap() {
         _adminTapCount++;
         if (_adminTapTimer) clearTimeout(_adminTapTimer);
@@ -17941,6 +18515,18 @@
     <button class="btn btn-primary btn-sm" id="diagRunBtn" disabled style="margin-bottom:14px;">Run Pressure Diagnostic</button>
     <div id="diagResults" style="display:none;">
       <div id="diagStepsWrap" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+  </div>
+  <!-- System Health Check (admin-only) -->
+  <div class="card" style="margin-top:16px;">
+    <div class="settings-section-title">🩺 System Health Check</div>
+    <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:14px;">
+      Run a comprehensive diagnostic of every backend system: database, env vars, WebSocket, in-memory stores, Gemini key pool, cron jobs, and connection pool.
+    </div>
+    <button class="btn btn-primary btn-sm" id="healthCheckBtn" style="margin-bottom:14px;">Run Health Check</button>
+    <div id="healthCheckResults" style="display:none;">
+      <div id="healthCheckRows" style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;"></div>
+      <div id="healthCheckSummary" style="padding:12px;border-radius:8px;text-align:center;font-weight:700;font-size:var(--text-base);"></div>
     </div>
   </div>
 </div>`;
@@ -18100,6 +18686,53 @@
               }
               diagRunBtn.disabled = false;
               diagRunBtn.textContent = 'Run Pressure Diagnostic';
+            });
+          }
+          // ── System Health Check ─────────────────────────────────────────
+          const healthCheckBtn = document.getElementById('healthCheckBtn');
+          const healthCheckResults = document.getElementById('healthCheckResults');
+          const healthCheckRows = document.getElementById('healthCheckRows');
+          const healthCheckSummary = document.getElementById('healthCheckSummary');
+
+          if (healthCheckBtn) {
+            healthCheckBtn.addEventListener('click', async () => {
+              healthCheckBtn.disabled = true;
+              healthCheckBtn.textContent = 'Running diagnostics…';
+              if (healthCheckResults) healthCheckResults.style.display = 'none';
+              if (healthCheckRows) healthCheckRows.innerHTML = '';
+              if (healthCheckSummary) healthCheckSummary.textContent = '';
+              try {
+                const result = await apiRequest('/admin/health', { headers: _adminHdrs });
+                if (healthCheckResults) healthCheckResults.style.display = 'block';
+                const ICONS = { pass: '✅', fail: '❌', warn: '⚠️' };
+                (result.checks || []).forEach(c => {
+                  const row = document.createElement('div');
+                  row.className = 'health-row ' + (c.status || 'pass');
+                  row.innerHTML =
+                    '<span class="health-row-icon">' + (ICONS[c.status] || '•') + '</span>' +
+                    '<span class="health-row-label">' + escapeHTML(c.label) + '</span>' +
+                    '<span class="health-row-value">' + escapeHTML(c.value || '') + '</span>';
+                  healthCheckRows.appendChild(row);
+                });
+                if (healthCheckSummary) {
+                  const failCount = (result.checks || []).filter(c => c.status === 'fail').length;
+                  const warnCount = (result.checks || []).filter(c => c.status === 'warn').length;
+                  if (result.ok) {
+                    healthCheckSummary.style.background = 'rgba(82,183,136,0.08)';
+                    healthCheckSummary.style.color = 'var(--green-bright)';
+                    healthCheckSummary.textContent = '✅ All systems healthy — ' + result.elapsed_ms + 'ms' + (warnCount ? ' · ' + warnCount + ' warning(s)' : '');
+                  } else {
+                    healthCheckSummary.style.background = 'rgba(193,68,14,0.08)';
+                    healthCheckSummary.style.color = 'var(--red-bright)';
+                    healthCheckSummary.textContent = '❌ ' + failCount + ' failure(s) detected — ' + result.elapsed_ms + 'ms';
+                  }
+                }
+              } catch(e) {
+                if (healthCheckResults) healthCheckResults.style.display = 'block';
+                if (healthCheckRows) healthCheckRows.innerHTML = '<div style="color:var(--red-bright);font-size:var(--text-sm);">Request failed: ' + escapeHTML(e.message) + '</div>';
+              }
+              healthCheckBtn.disabled = false;
+              healthCheckBtn.textContent = 'Run Health Check';
             });
           }
         } catch(err) {
@@ -18263,6 +18896,42 @@
               <div class="stat-label">API Status</div>
               <div class="stat-value" style="font-size:var(--text-2xl);color:var(--green-bright);">Connected</div>
             </div>
+          </div>
+        </div>
+        <!-- Help & Guide -->
+        <div class="card" style="margin-bottom:20px;">
+          <div class="settings-section-title">Help &amp; Guide</div>
+          <div class="guide-row" id="guideReplayTour">
+            <span class="guide-row-icon">🌱</span>
+            <div class="guide-row-text">
+              <div class="guide-row-label">Replay the Awakening Tour</div>
+              <div class="guide-row-sub">Walk through the 5-screen intro to KIWI's ecosystem</div>
+            </div>
+            <span class="guide-row-chevron">›</span>
+          </div>
+          <div class="guide-row" id="guideResetTips">
+            <span class="guide-row-icon">💡</span>
+            <div class="guide-row-text">
+              <div class="guide-row-label">Reset All Tips</div>
+              <div class="guide-row-sub">Show in-context feature tips again as if you're a new user</div>
+            </div>
+            <span class="guide-row-chevron">›</span>
+          </div>
+          <div class="guide-row" id="guideKeyboard">
+            <span class="guide-row-icon">⌨️</span>
+            <div class="guide-row-text">
+              <div class="guide-row-label">Keyboard Shortcuts</div>
+              <div class="guide-row-sub">Space/Enter to flip · 1–4 to rate · ← → to navigate</div>
+            </div>
+            <span class="guide-row-chevron">›</span>
+          </div>
+          <div class="guide-row" id="guideAbout">
+            <span class="guide-row-icon">📖</span>
+            <div class="guide-row-text">
+              <div class="guide-row-label">About KIWI</div>
+              <div class="guide-row-sub">How spaced repetition works, and what every metric means</div>
+            </div>
+            <span class="guide-row-chevron">›</span>
           </div>
         </div>
         <!-- Session / Logout -->
@@ -18449,6 +19118,83 @@
           const versionTapEl = document.getElementById('kiwiVersionTap');
           if (versionTapEl) {
             versionTapEl.addEventListener('click', _handleVersionTap);
+          }
+
+          // ── Help & Guide wiring ──────────────────────────────────────────
+          const _guideReplayTour = document.getElementById('guideReplayTour');
+          if (_guideReplayTour) {
+            _guideReplayTour.addEventListener('click', () => {
+              localStorage.removeItem('kiwi_tour_seen');
+              showToast('Tour reset — launching now…', 'success');
+              setTimeout(() => showKiwiTour('settings'), 400);
+            });
+          }
+
+          const _guideResetTips = document.getElementById('guideResetTips');
+          if (_guideResetTips) {
+            _guideResetTips.addEventListener('click', () => {
+              const TIP_KEYS = ['kiwi_tip_focus_seed','kiwi_tip_rating_buttons','kiwi_tip_ks_score','kiwi_tip_exam_flag','kiwi_tip_retry_decks','kiwi_tip_skip_card'];
+              const UNLOCK_KEYS = ['kiwi_unlock_exams','kiwi_unlock_marketplace','kiwi_unlock_mastery_bubble','kiwi_unlock_reckoning'];
+              [...TIP_KEYS, ...UNLOCK_KEYS].forEach(k => localStorage.removeItem(k));
+              showToast('All tips reset — they\'ll appear again as you use each feature', 'success');
+            });
+          }
+
+          const _guideKeyboard = document.getElementById('guideKeyboard');
+          if (_guideKeyboard) {
+            _guideKeyboard.addEventListener('click', () => {
+              const overlay = document.createElement('div');
+              overlay.style.cssText = 'position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:rgba(3,13,11,0.85);backdrop-filter:blur(8px);padding:20px;';
+              overlay.innerHTML = `
+                <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-xl);padding:28px;max-width:400px;width:100%;box-shadow:var(--shadow-lg);">
+                  <div style="font-family:var(--font-display);font-size:18px;font-weight:700;margin-bottom:20px;">⌨️ Keyboard Shortcuts</div>
+                  <div style="font-size:12px;color:var(--text-3);margin-bottom:14px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;">Study Session</div>
+                  ${[['Space / Enter','Flip card'],['1','Rate: Again'],['2','Rate: Hard'],['3','Rate: Good'],['4','Rate: Easy'],['← →','Navigate cards'],['Escape','End session']].map(([k,v]) =>
+                    `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+                      <span style="font-size:13px;color:var(--text-2);">${escapeHTML(v)}</span>
+                      <kbd style="font-family:var(--font-mono);font-size:11px;background:var(--bg-3);border:1px solid var(--border);border-radius:5px;padding:3px 8px;color:var(--text-3);">${escapeHTML(k)}</kbd>
+                    </div>`
+                  ).join('')}
+                  <div style="font-size:12px;color:var(--text-3);margin:14px 0 10px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;">Exam</div>
+                  ${[['1–4','Select answer option'],['← →','Navigate questions'],['F','Flag question'],['Escape','Exit exam']].map(([k,v]) =>
+                    `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+                      <span style="font-size:13px;color:var(--text-2);">${escapeHTML(v)}</span>
+                      <kbd style="font-family:var(--font-mono);font-size:11px;background:var(--bg-3);border:1px solid var(--border);border-radius:5px;padding:3px 8px;color:var(--text-3);">${escapeHTML(k)}</kbd>
+                    </div>`
+                  ).join('')}
+                  <button class="btn btn-primary" style="width:100%;margin-top:20px;" onclick="this.closest('[style*=fixed]').remove()">Got it</button>
+                </div>`;
+              overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+              document.body.appendChild(overlay);
+            });
+          }
+
+          const _guideAbout = document.getElementById('guideAbout');
+          if (_guideAbout) {
+            _guideAbout.addEventListener('click', () => {
+              const overlay = document.createElement('div');
+              overlay.style.cssText = 'position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:rgba(3,13,11,0.85);backdrop-filter:blur(8px);padding:20px;overflow-y:auto;';
+              const SECTIONS = [
+                ['🧠 Spaced Repetition', 'KIWI uses a scheduling algorithm that shows each card exactly when you\'re about to forget it. Rate a card "Easy" and it comes back in weeks. Rate it "Again" and it comes back today. Over time, every card settles into the interval where your brain retains it with the minimum effort.'],
+                ['📊 Knowledge Score (KS)', 'KS is a weighted average across all your cards, from 0–100. Stage 1 (Seedling) cards contribute less weight; Stage 5 (Verified) cards contribute the most. KS rises when cards advance stages and drops when they go past due or fall back. It measures real mastery — not sessions started or time spent.'],
+                ['⚡ Brain Pressure', 'Pressure rises when cards become GHOST, FRAGILE, STUCK, or AVOIDED. High pressure triggers Invitations and eventually The Reckoning. Pressure drops when you review overdue cards and they advance. A pressure score of 0 is the goal.'],
+                ['🌱 Focus Seed', 'Your Focus Seed grows during a session when you stay in the app. Leave and return repeatedly and it wilts. A "Fruiting" session (highest quality) earns 3 Seedlings. The Seed resets each session and has no effect on KS.'],
+                ['⚡ The Reckoning', 'When pressure across any subject reaches 20, The Reckoning triggers. It is a mandatory high-stakes exam — your KS is directly affected by the result. It cannot be skipped, only deferred by 4 hours (or 24 hours with a Reckoning Buffer item).'],
+                ['🏆 Credentials', 'Each subject has 5 credential tiers: Novice → Apprentice → Proficient → Expert → Master. Credentials require a minimum KS and passing a 70%+ exam. They are permanent badges of verified mastery.'],
+              ];
+              overlay.innerHTML = `
+                <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-xl);padding:28px;max-width:480px;width:100%;box-shadow:var(--shadow-lg);max-height:85vh;overflow-y:auto;">
+                  <div style="font-family:var(--font-display);font-size:18px;font-weight:700;margin-bottom:20px;">📖 How KIWI Works</div>
+                  ${SECTIONS.map(([title, body]) => `
+                    <div style="margin-bottom:18px;">
+                      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px;">${escapeHTML(title)}</div>
+                      <div style="font-size:13px;color:var(--text-3);line-height:1.65;">${escapeHTML(body)}</div>
+                    </div>`).join('')}
+                  <button class="btn btn-primary" style="width:100%;margin-top:8px;" onclick="this.closest('[style*=fixed]').remove()">Got it</button>
+                </div>`;
+              overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+              document.body.appendChild(overlay);
+            });
           }
 
           const _resetBtnEl = document.getElementById("resetBtn");
