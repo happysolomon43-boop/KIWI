@@ -8105,7 +8105,7 @@ async function detectStreakMilestones(userId) {
 const stats = await db.userStats.get(userId);
 if (!stats) return [];
 const streak = stats.current_streak;
-const milestones = [7, 30, 100, 365];
+const milestones = [14, 30, 100, 365];
 // Use streak_milestone_rings as the permanent record (streak_milestones_earned
 // also covers this via computeStreakAfterSession — both are kept in sync).
 const existingRings = new Set(
@@ -8118,12 +8118,8 @@ for (const m of milestones) {
 if (streak >= m && !existingRings.has(m)) {
 existingRings.add(m);
 triggered.push(m);
-if (m === 7) {
-const earnedMilestones = stats.streak_milestones_earned || [];
-if (!earnedMilestones.includes(7)) {
-await awardSeedlings(userId, 2, 'streak_7', '7-day streak');
-}
-}
+if (m === 14)
+await awardSeedlings(userId, 2, 'streak_14', '14-day streak');
 if (m === 30)
 await awardSeedlings(userId, 5, 'streak_milestone_30', '30-day streak milestone');
 if (m === 100)
@@ -8132,9 +8128,11 @@ await awardSeedlings(userId, 10, 'streak_milestone_100', '100-day streak milesto
 }
 if (triggered.length > 0) {
 // Persist the updated ring set so it survives streak resets
+// Fix 3: streak milestone hit → full health reset to 100
 await db.userStats.update(userId, {
 streak_milestone_rings: Array.from(existingRings),
 streak_milestones_earned: Array.from(existingRings), // keep both fields in sync
+tree_health: 100,
 });
 }
 return triggered;
@@ -13884,7 +13882,10 @@ const session = await db.sessions.findById(req.user.id, session_id);
 if (!session) return res.status(404).json({ error: 'Session not found' });
 const now = new Date();
 const durationSec = Math.floor((now - new Date(session.started_at)) / 1000);
-const completed = (session.cards_reviewed || 0) >= 1;
+const _cardsReviewed = session.cards_reviewed || 0;
+const completed = _cardsReviewed >= 25; // minimum qualifying session
+// Tiered health recovery: 25→+2, 50→+5, 100→+10
+const _sessionHealthGain = _cardsReviewed >= 100 ? 10 : _cardsReviewed >= 50 ? 5 : _cardsReviewed >= 25 ? 2 : 0;
 const focusDurationSec = focused_seconds > 0 ? focused_seconds : 0;
 const focusStage = computeFocusStage(session.started_at, break_count, focusDurationSec, seed_killed);
 const seedSurvived = focusStage !== FOCUS_STAGES.DORMANT;
@@ -13916,6 +13917,14 @@ await db.sessions.update(req.user.id, session_id, {
   seed_survived: seedSurvived,
   ks_delta: _sessionKsDelta,  // KS-BUG-1 FIX: persist so progress history shows real delta
 });
+// Fix 4: Read real tree values before responding — backend was hardcoding 0/0
+const _statsForResponse = await db.userStats.get(req.user.id).catch(() => null);
+const _currentHealth = _statsForResponse?.tree_health ?? 100;
+const _projectedHealth = completed
+  ? Math.min(100, _currentHealth + _sessionHealthGain)
+  : Math.max(0, _currentHealth - 10);
+const _responseStage = _statsForResponse?.tree_stage ?? 1;
+const _responseStreak = _statsForResponse?.current_streak ?? 0;
 // Respond immediately — heavy analytics run in the background
 res.json({
   session_id,
@@ -13926,9 +13935,9 @@ res.json({
   focus_seed_stage: focusStage,
   seed_survived: seedSurvived,
   new_achievements: [],
-  streak: 0,
-  tree_health: 0,
-  tree_stage: 0,
+  streak: _responseStreak,
+  tree_health: _projectedHealth,
+  tree_stage: _responseStage,
   new_almanac_unlocks: [],
   ks_delta: _sessionKsDelta,
   ksDelta: _sessionKsDelta,
@@ -13942,11 +13951,15 @@ wsSend(req.user.id, 'session_complete', { xp_earned: session.xp_earned || 0, car
       await processFruiting(req.user.id, { ...session, focus_seed_stage: focusStage }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
     if (completed) {
-      const streakUpdates = computeStreakAfterSession(await db.userStats.get(req.user.id), now);
+      // Fix 1: tiered health on session completion (capped at 100); reuse pre-fetched stats
+      const _bgStats = await db.userStats.get(req.user.id);
+      const _bgNewHealth = Math.min(100, (_bgStats?.tree_health ?? 100) + _sessionHealthGain);
+      const streakUpdates = computeStreakAfterSession(_bgStats, now);
       await db.userStats.update(req.user.id, {
         ...streakUpdates,
         total_sessions_completed: { increment: 1 },
         total_study_minutes: { increment: Math.round(durationSec / 60) },
+        tree_health: _bgNewHealth,
       });
       await detectStreakMilestones(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
       await evaluateStreakShield(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
@@ -14126,23 +14139,28 @@ res.status(500).json({ error: 'Failed to fetch stats' });
 });
 
 // ── GET /study/history — recent completed sessions for Progress view ──────────
+// Returns a unified, date-sorted list of ALL activity types:
+//   study sessions, CBT exams (completed + forfeited), and Reckoning exams.
 studyRouter.get('/history', async (req, res) => {
 try {
 const limit = Math.min(parseInt(req.query.limit || '20', 10), 50);
+
+// ── 1. Study sessions ─────────────────────────────────────────────────────
 const result = await db.sessions.findMany(
   req.user.id,
   { session_completed: true },
   { limit }
 );
 const sessions = result.sessions || [];
-// Build deck→subject map in one query
 const subjects = await db.subjects.findManyWithDecks(req.user.id).catch(() => []);
 const deckSubjectMap = new Map();
 subjects.forEach(s => (s.decks || []).forEach(d => deckSubjectMap.set(d.id, { subjectId: s.id, subjectName: s.name })));
-const history = sessions.map(s => {
+
+const studyHistory = sessions.map(s => {
   const deckInfo = deckSubjectMap.get(s.deck_id) || {};
   return {
     id: s.id,
+    source: 'Study Session',
     type: 'Study',
     subjectName: deckInfo.subjectName || 'General',
     subjectId: deckInfo.subjectId || null,
@@ -14152,9 +14170,46 @@ const history = sessions.map(s => {
     duration: s.duration_seconds || 0,
     xpEarned: s.xp_earned || 0,
     seedOutcome: s.focus_seed_stage || 'Dormant',
+    status: 'completed',
   };
 });
-res.json({ sessions: history });
+
+// ── 2. Exam sessions (completed + forfeited) ──────────────────────────────
+const [completedExams, forfeitedExams] = await Promise.all([
+  db.examSessions.findMany(req.user.id, { status: 'completed' }, { limit }).catch(() => []),
+  db.examSessions.findMany(req.user.id, { status: 'forfeited' }, { limit }).catch(() => []),
+]);
+
+function normaliseExam(e, status) {
+  const isReckoning = !!e.is_reckoning;
+  return {
+    id: e.id,
+    source: isReckoning ? 'Reckoning Exam' : 'CBT Exam',
+    type: isReckoning ? 'Reckoning' : 'CBT Exam',
+    subjectName: e.subject_name || 'General',
+    subjectId: e.subject_id || null,
+    date: e.started_at || e.created_at,
+    cardsReviewed: e.total_questions || 0,
+    correctAnswers: e.correct_answers || 0,
+    totalQuestions: e.total_questions || 0,
+    scorePct: e.score_pct != null ? Math.round(e.score_pct) : null,
+    ksDelta: e.ks_delta || 0,
+    duration: e.duration_seconds || 0,
+    status,
+  };
+}
+
+const examHistory = [
+  ...completedExams.map(e => normaliseExam(e, 'completed')),
+  ...forfeitedExams.map(e => normaliseExam(e, 'forfeited')),
+];
+
+// ── 3. Merge, sort by date desc, cap at limit ─────────────────────────────
+const allHistory = [...studyHistory, ...examHistory]
+  .sort((a, b) => new Date(b.date) - new Date(a.date))
+  .slice(0, limit);
+
+res.json({ sessions: allHistory });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch session history', details: e.message });
 }
@@ -14867,6 +14922,26 @@ res.status(500).json({ error: 'Failed to fetch exams' });
 }
 });
 
+// ── GET /exams/retry-decks — last 5 retry decks created from exam wrong answers ──
+// Must appear BEFORE /:id or Express will treat 'retry-decks' as an id param.
+examRouter.get('/retry-decks', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT d.*, COUNT(c.id) AS card_count_live
+         FROM decks d
+         LEFT JOIN cards c ON c.deck_id = d.id AND c.user_id = d.user_id
+        WHERE d.user_id = $1 AND d.name LIKE 'Retry — %'
+        GROUP BY d.id
+        ORDER BY d.created_at DESC
+        LIMIT 5`,
+      [req.user.id]
+    );
+    res.json({ decks: rows });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch retry decks', details: e.message });
+  }
+});
+
 examRouter.get('/:id', async (req, res) => {
 try {
 const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
@@ -15161,6 +15236,12 @@ duration_seconds: durationSec,
           }
         }
         await db.userStats.update(_debriefUserId, { total_exams_completed: { increment: 1 } });
+        // Fix 2: CBT exam pass ≥ 80% → +5 health (capped at 100)
+        if (_debriefScorePct >= 80) {
+          const _examStats = await db.userStats.get(_debriefUserId).catch(() => null);
+          const _examNewHealth = Math.min(100, (_examStats?.tree_health ?? 100) + 5);
+          await db.userStats.update(_debriefUserId, { tree_health: _examNewHealth }).catch((e) => console.error('[KIWI] silent catch:', e.message));
+        }
         if (_debriefScorePct >= 80)
           await hookSeedlingEarnings(_debriefUserId, 'exam_pass', { score_pct: _debriefScorePct });
         if (_debriefScorePct === 100)

@@ -1483,44 +1483,50 @@
         padding: 32px 24px;
         gap: 28px;
       }
+      /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+         KIWI CARD FLIP — Full Rebuild
+         Architecture: Web Animations API only. No CSS transition
+         on the transform property. Mixing CSS transition + WAAPI
+         on the same property is the root cause of the jerk:
+           1. CSS transition fires on every class change
+           2. animation 'forwards' fill and transition conflict
+              over who owns the computed transform
+           3. setTimeout DOM-swap races the fill-mode hold
+         Solution: CSS owns only the resting states (no transition).
+         WAAPI owns the motion. On finish, the final transform is
+         committed as inline style before the animation is cancelled,
+         so the DOM swap lands on a stable value with nothing to
+         animate to.
+         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
       .flashcard-scene {
         perspective: 1200px;
         width: 100%;
         max-width: 600px;
       }
+
       .flashcard {
         position: relative;
         min-height: 280px;
         transform-style: preserve-3d;
-        transition: transform 0.55s cubic-bezier(0.4, 0.2, 0.2, 1);
         cursor: pointer;
         will-change: transform;
-        -webkit-backface-visibility: hidden;
-        transform: translateZ(0);
+        /* No transition — WAAPI drives all motion.
+           A CSS transition here would fire on every class change
+           and create a conflicting animation on the same property. */
+        transform: rotateY(0deg) translateY(0px);
       }
-      /* .study-layout.is-flipped padding-bottom removed — space now always reserved above */
 
-      /* Flip + rise animation:
-         - 0–42%: pure rotateY (card rotates to edge-on, no vertical movement)
-         - 42–100%: rotateY continues to 180° AND translateY glides upward simultaneously
-         The slide begins exactly when the card is edge-on (invisible mid-flip),
-         so it feels like the reveal triggers the rise — one seamless motion. */
-      @keyframes kiwi-card-flip-rise {
-        0%   { transform: rotateY(0deg)    translateY(0px);   }
-        42%  { transform: rotateY(90deg)   translateY(0px);   }
-        100% { transform: rotateY(180deg)  translateY(-20px); }
-      }
-      /* Applied by JS to the live card element during the flip */
-      .flashcard.is-flipping {
-        animation: kiwi-card-flip-rise 0.55s cubic-bezier(0.4, 0.2, 0.2, 1) forwards;
-      }
-      /* Final resting state — MUST match animation end transform exactly.
-         When renderActiveStudySession() re-renders at 520ms the new card
-         gets this class from the start (no animation), landing at the same
-         pixel position the animation left off → zero visible snap. */
+      /* Resting state after flip.
+         transform values MUST exactly match the WAAPI end keyframe
+         in _kiwiFlipCard() — if they diverge, the DOM swap snaps.
+         transition:none blocks any spurious transition that a
+         freshly-inserted DOM node would otherwise inherit. */
       .flashcard.flipped {
-        transform: rotateY(180deg) translateY(-20px);
+        transform: rotateY(180deg) translateY(-24px);
+        transition: none;
       }
+
       .flashcard-face {
         position: absolute;
         inset: 0;
@@ -1536,42 +1542,44 @@
         text-align: center;
         backdrop-filter: blur(12px) saturate(1.1);
         -webkit-backdrop-filter: blur(12px) saturate(1.1);
+        /* box-shadow transitions are safe — they don't touch transform */
         transition: box-shadow 0.4s ease, border-color 0.4s ease;
       }
-      /* ── Front: horizontal (top + bottom) glow — KIWI green ── */
+
+      /* Front face — horizontal (top + bottom) glow, KIWI green */
       .flashcard-face.front {
-        border-top: 2px solid rgba(82,183,136,0.85);
+        border-top:    2px solid rgba(82,183,136,0.85);
         border-bottom: 2px solid rgba(82,183,136,0.85);
-        border-left: 1px solid rgba(82,183,136,0.12);
-        border-right: 1px solid rgba(82,183,136,0.12);
+        border-left:   1px solid rgba(82,183,136,0.12);
+        border-right:  1px solid rgba(82,183,136,0.12);
         box-shadow:
           0 -8px 32px rgba(82,183,136,0.38),
           0  8px 32px rgba(82,183,136,0.38),
           var(--shadow);
       }
-      /* ── Back: vertical (left + right) glow — teal ── */
+
+      /* Back face — vertical (left + right) glow, teal.
+         rotateY(180deg) is a static face-orientation, not motion. */
       .flashcard-face.back {
         transform: rotateY(180deg);
         background: var(--bg-3);
-        border-top: 1px solid rgba(62,201,201,0.12);
+        border-top:    1px solid rgba(62,201,201,0.12);
         border-bottom: 1px solid rgba(62,201,201,0.12);
-        border-left: 2px solid rgba(62,201,201,0.85);
-        border-right: 2px solid rgba(62,201,201,0.85);
+        border-left:   2px solid rgba(62,201,201,0.85);
+        border-right:  2px solid rgba(62,201,201,0.85);
         box-shadow:
           -8px 0 32px rgba(62,201,201,0.38),
            8px 0 32px rgba(62,201,201,0.38),
           var(--shadow);
       }
-      /* ── Flip burst: horizontal dims, vertical surges, then settles ── */
-      @keyframes kiwi-flip-h {
-        0%   { box-shadow: 0 -20px 60px rgba(82,183,136,0.75), 0 20px 60px rgba(82,183,136,0.75), var(--shadow); }
-        100% { box-shadow: 0 -8px 32px rgba(82,183,136,0.38), 0  8px 32px rgba(82,183,136,0.38), var(--shadow); }
-      }
+
+      /* Glow burst on the back face — fires on DOM insert of .flipped card.
+         This is a box-shadow animation only — no transform involved,
+         so it cannot conflict with the WAAPI flip motion. */
       @keyframes kiwi-flip-v {
         0%   { box-shadow: -22px 0 70px rgba(62,201,201,0.80), 22px 0 70px rgba(62,201,201,0.80), var(--shadow); }
-        100% { box-shadow: -8px  0 32px rgba(62,201,201,0.38),  8px 0 32px rgba(62,201,201,0.38), var(--shadow); }
+        100% { box-shadow:  -8px 0 32px rgba(62,201,201,0.38),  8px 0 32px rgba(62,201,201,0.38), var(--shadow); }
       }
-      /* Auto-fire: back face burst plays whenever .flipped card enters DOM */
       .flashcard.flipped .flashcard-face.back {
         animation: kiwi-flip-v 0.65s cubic-bezier(0.22,1,0.36,1) both;
       }
@@ -6924,6 +6932,10 @@
         return await apiRequest(`/exams/${examId}/debrief`);
       };
 
+      api.getRetryDecks = async () => {
+        return await apiRequest('/exams/retry-decks');
+      };
+
       api.getExamReview = async (examId) => {
         return await apiRequest(`/exams/${examId}/review`);
       };
@@ -6936,8 +6948,10 @@
         if (main) main.innerHTML = '<div class="page-wrap page-enter" style="text-align:center;padding:80px 20px;"><div style="font-size:32px;opacity:0.5;">&#x231B;</div><div style="color:var(--text-3);margin-top:12px;">Loading exam...</div></div>';
         try {
           const reviewData = await api.getExamReview(examId);
-          // Populate tempExam so renderExamResults() can render the review
+          // FIX: ksDelta was hardcoded 0 — now reads stored ks_delta from the session record
+          const storedKsDelta = reviewData.ks_delta != null ? reviewData.ks_delta : (reviewData.ksDelta || 0);
           AppState.tempExam = {
+            examId,
             submitted: true,
             isReckoning: false,
             questions: (reviewData.question_review || []).map(function(q, i) {
@@ -6949,8 +6963,9 @@
             result: {
               totalQuestions: reviewData.total_questions,
               correctAnswers: reviewData.correct_answers,
-              ksDelta: 0,
-              debrief: '',
+              ksDelta: storedKsDelta,
+              // FIX: show placeholder while debrief loads async below
+              debrief: '⏳ Loading debrief…',
               question_review: reviewData.question_review || [],
               passed: (reviewData.score_pct || 0) >= 70,
               credentialEarned: false,
@@ -6958,6 +6973,40 @@
           };
           AppState.currentPage = 'exam';
           renderExamResults();
+          // FIX: Fetch debrief separately and patch into the already-rendered page
+          api.getExamDebrief(examId).then(function(debriefRes) {
+            var text = (debriefRes && debriefRes.debrief) || '';
+            if (!text) return;
+            // Patch AppState so back-navigation also has the debrief
+            if (AppState.tempExam && AppState.tempExam.result) {
+              AppState.tempExam.result.debrief = text;
+            }
+            // Also patch the KS delta from debrief endpoint if the review didn't have it
+            if (debriefRes.ksDelta != null && (!storedKsDelta || storedKsDelta === 0)) {
+              if (AppState.tempExam && AppState.tempExam.result) {
+                AppState.tempExam.result.ksDelta = debriefRes.ksDelta;
+                var ksEl = document.getElementById('exam-ks-delta');
+                if (ksEl) {
+                  var kd = Math.round(debriefRes.ksDelta || 0);
+                  ksEl.textContent = (kd >= 0 ? '+' : '') + kd;
+                  ksEl.style.color = kd >= 0 ? 'var(--green-bright)' : 'var(--red-bright)';
+                }
+              }
+            }
+            var debriefEl = document.getElementById('debriefText');
+            if (debriefEl) {
+              debriefEl.innerHTML = typeof escapeHTML === 'function' ? escapeHTML(text) : text;
+              if (typeof renderMathContent === 'function') renderMathContent(debriefEl);
+              var wrap = debriefEl.closest('.exam-debrief');
+              if (wrap) wrap.style.display = '';
+            } else {
+              // debriefEl not present means debrief block was hidden (empty string) — re-render
+              renderExamResults();
+            }
+          }).catch(function() {
+            var debriefEl = document.getElementById('debriefText');
+            if (debriefEl) debriefEl.textContent = 'Debrief unavailable for this session.';
+          });
         } catch (err) {
           showToast(err.message || "Could not load exam review", "error");
           navigateTo('progress');
@@ -9969,6 +10018,63 @@
         }
       }
 
+      /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+         _kiwiFlipCard(cardEl)
+         Executes the card flip using the Web Animations API.
+         Why WAAPI instead of CSS keyframes + setTimeout:
+           · WAAPI's onfinish callback fires at the exact animation
+             end — no setTimeout drift, no race with fill-mode.
+           · We commit the end transform as inline style then
+             cancel() the animation, releasing the fill before
+             the DOM swap. The new .flipped node lands on a
+             pre-committed stable transform with nothing to
+             animate toward — zero jerk, zero snap.
+           · No CSS transition on the transform property means
+             there is no second animation competing for ownership
+             of the computed transform during the class change.
+         Motion design:
+           · 0 → 45%: pure rotateY to edge-on (card invisible)
+           · 45% → 100%: rotation completes AND translateY rises
+             — both happen simultaneously during the reveal half,
+             making the lift feel driven by the flip, not separate.
+         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+      function _kiwiFlipCard(cardEl) {
+        // Guard — prevent double-firing if already in progress
+        if (cardEl._kiwiFlipping) return;
+        cardEl._kiwiFlipping = true;
+        cardEl.style.pointerEvents = 'none';
+
+        // End transform — must exactly match .flashcard.flipped in CSS
+        const END_TRANSFORM = 'rotateY(180deg) translateY(-24px)';
+
+        const anim = cardEl.animate(
+          [
+            { transform: 'rotateY(0deg) translateY(0px)',  offset: 0    },
+            { transform: 'rotateY(90deg) translateY(0px)', offset: 0.45 },
+            { transform: END_TRANSFORM,                    offset: 1    }
+          ],
+          {
+            duration: 600,
+            easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+            fill: 'forwards',
+          }
+        );
+
+        anim.onfinish = () => {
+          // Bake the final transform into inline style BEFORE cancelling.
+          // cancel() would otherwise release the fill and snap back to
+          // the base CSS transform — this is the historical jerk trigger.
+          cardEl.style.transform = END_TRANSFORM;
+          anim.cancel();
+          // DOM swap — the incoming .flashcard.flipped node has:
+          //   transition:none  (no CSS transition fires)
+          //   transform: rotateY(180deg) translateY(-24px)  (matches above)
+          // The old node (with committed inline style) is discarded.
+          // The new node appears at the correct position instantly.
+          renderActiveStudySession(document.getElementById('mainContent'));
+        };
+      }
+
       function renderActiveStudySession(container) {
         const t = AppState.tempStudy;
         if (!t || !t.queue || t.queue.length === 0 || t.currentIndex >= t.queue.length) {
@@ -10204,22 +10310,7 @@
         if (flashcard && !t.flipped) {
           flashcard.addEventListener("click", () => {
             t.flipped = true;
-            // Trigger the combined flip+rise animation directly on the live element.
-            // 'is-flipping' plays @keyframes kiwi-card-flip-rise: rotateY starts
-            // immediately, translateY kicks in at the 42% mark (card edge-on) so
-            // the upward slide feels triggered by the reveal, not a separate event.
-            flashcard.classList.add("is-flipping");
-            // After the animation completes, re-render to show rating buttons.
-            // The re-rendered card gets class="flashcard flipped" whose static
-            // transform: rotateY(180deg) translateY(-20px) matches the animation's
-            // end state exactly — so the DOM swap is invisible.
-            // FLIP-BUG-FIX: Use 600ms to ensure the 550ms animation fully completes
-            // before DOM swap. The 520ms was too short, causing a visible jerk.
-            setTimeout(() => {
-              flashcard.classList.remove("is-flipping");
-              flashcard.classList.add("flipped");
-              renderActiveStudySession(document.getElementById("mainContent"));
-            }, 600);
+            _kiwiFlipCard(flashcard);
           });
         }
         // Study Edit button — open Anki-style editor for current card
@@ -10840,6 +10931,18 @@
           if (result.new_almanac_unlocks && result.new_almanac_unlocks.length > 0) {
             showToast('A new entry has appeared in your Almanac.', 'success', 6000);
           }
+          // Frontend fix: patch cached biome state with real tree values from session end
+          // so the home page reflects the correct health immediately on navigate-back
+          if (AppState.biome && result.tree_health != null && result.tree_health !== 0) {
+            if (!AppState.biome.globalTreeState) AppState.biome.globalTreeState = {};
+            AppState.biome.globalTreeState.health = result.tree_health;
+            if (result.tree_stage && result.tree_stage !== 0) {
+              AppState.biome.globalTreeState.stage = result.tree_stage;
+            }
+            if (result.streak != null) AppState.biome.current_streak = result.streak;
+            // Invalidate so next home render re-fetches fresh biome data
+            AppState.biome = null;
+          }
           // Re-render with real data — renderSessionEnd updates stats in-place if screen already shown
           if (AppState.currentPage === 'study') {
             renderSessionEnd(result, savedTempStudy);
@@ -11163,6 +11266,7 @@
         <div id="examHistorySection" style="margin-top:24px;">
           <div class="section-sub" style="margin-bottom:12px;">Loading exam history…</div>
         </div>
+        <div id="retryDecksSection" style="margin-top:16px;"></div>
       </div>
     `;
           // Restore last-selected exam subject
@@ -11362,6 +11466,52 @@
             const histEl = document.getElementById('examHistorySection');
             if (histEl) histEl.innerHTML = '';
           });
+
+          // ── Retry Decks Section ───────────────────────────────────────────────
+          // Shows the last 5 retry decks created from wrong answers.
+          // Each entry has a "Study" button to start a session directly.
+          (function() {
+            var retryEl = document.getElementById('retryDecksSection');
+            if (!retryEl) return;
+            api.getRetryDecks().then(function(data) {
+              var decks = (data && data.decks) || [];
+              if (!decks.length) { retryEl.innerHTML = ''; return; }
+              retryEl.innerHTML =
+                '<div class="section-header" style="margin-bottom:10px;padding-bottom:0;">' +
+                  '<div>' +
+                    '<div class="section-title" style="font-size:var(--text-base);">🔄 Retry Decks</div>' +
+                    '<div class="section-sub" style="font-size:var(--text-xs);">Study your weak spots from past exams · max 5 saved</div>' +
+                  '</div>' +
+                '</div>' +
+                '<div style="display:flex;flex-direction:column;gap:8px;">' +
+                decks.map(function(deck) {
+                  var cardCount = parseInt(deck.card_count_live || deck.card_count || 0, 10);
+                  var dateStr = deck.created_at ? new Date(deck.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
+                  // Strip the "Retry — " prefix for a cleaner display title
+                  var title = (deck.name || '').replace(/^Retry — /, '');
+                  return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--glass-bg);border:1px solid var(--border);border-radius:10px;gap:10px;">' +
+                    '<div style="min-width:0;flex:1;">' +
+                      '<div style="font-size:var(--text-sm);font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHTML(title) + '</div>' +
+                      '<div style="font-size:var(--text-xs);color:var(--text-3);">' + cardCount + ' cards &middot; ' + dateStr + '</div>' +
+                    '</div>' +
+                    '<button class="btn btn-primary btn-sm" style="flex-shrink:0;font-size:var(--text-xs);padding:6px 14px;" ' +
+                      'onclick="(async function(btn,deckId){' +
+                        'btn.disabled=true;btn.textContent=\'Starting…\';' +
+                        'try{' +
+                          'const r=await apiRequest(\'/study/start\',{method:\'POST\',body:{deck_id:deckId}});' +
+                          'const sid=r.sessionId||(r.session&&r.session.id)||null;' +
+                          'if(!sid){showToast(\'Could not start session\',\'error\');btn.disabled=false;btn.textContent=\'▶ Study\';return;}' +
+                          'AppState.tempStudy={sessionId:sid,cards:(r.cards||[]).map(function(c){return Object.assign({},c,{front:c.front_content||c.front||\'\',back:c.back_content||c.back||\'\'});}),currentIndex:0,answers:{},subjectId:r.subject_id||null,deckId:deckId};' +
+                          'navigateTo(\'study\');' +
+                        '}catch(err){showToast((err&&err.error)||\'Failed to start session\',\'error\');btn.disabled=false;btn.textContent=\'▶ Study\';}' +
+                      '})(this,\'' + escapeHTML(deck.id) + '\')">' +
+                      '▶ Study' +
+                    '</button>' +
+                  '</div>';
+                }).join('') +
+                '</div>';
+            }).catch(function() { retryEl.innerHTML = ''; });
+          })();
 
         } catch (err) {
           renderErrorState(main, err.message || "Failed to load subjects", () =>
@@ -14376,11 +14526,52 @@
           ${!sessionHistory || sessionHistory.length === 0
             ? '<div style="font-size:var(--text-base);color:var(--text-4);padding:16px 0;">No sessions yet. Start studying!</div>'
             : '<div style="display:flex;flex-direction:column;gap:8px;">' + sessionHistory.map(function(s) {
-                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);transition:all var(--t-mid);" class="session-history-item" data-stage-advances="' + encodeURIComponent(JSON.stringify(s.stage_advances || s.stageTransitions || [])) + '">' +
-                  '<div><div style="font-size:var(--text-base);color:var(--text);">' + escapeHTML(s.type || "Study") + ' &middot; ' + escapeHTML(s.subjectName || "General") + '</div>' +
-                  '<div style="font-size:var(--text-sm);color:var(--text-3);">' + formatDateShort(s.date) + ' &middot; ' + (s.cardsReviewed || 0) + ' cards</div></div>' +
-                  '<div style="text-align:right;"><div style="font-family:var(--font-mono);font-size:var(--text-lg);font-weight:700;color:var(--text);">' + (Math.round(s.ksDelta || 0) >= 0 ? "+" : "") + Math.round(s.ksDelta || 0) + ' KS</div>' +
-                  '<div style="font-size:var(--text-xs);color:var(--text-4);">' + Math.round((s.duration || 0) / 60) + 'm</div></div></div>';
+                // ── type metadata ──────────────────────────────────────────
+                var typeMap = {
+                  'Study':     { icon: '📖', color: 'var(--green, #52b788)',  label: 'Study Session' },
+                  'CBT Exam':  { icon: '📝', color: 'var(--accent, #4f9cf9)', label: 'CBT Exam'      },
+                  'Reckoning': { icon: '⚡', color: '#e07b39',                label: 'Reckoning'     },
+                };
+                var tm = typeMap[s.type] || { icon: '📖', color: 'var(--text)', label: s.type || 'Study' };
+                var isForfeited = s.status === 'forfeited';
+                var rowOpacity = isForfeited ? '0.55' : '1';
+
+                // ── source badge ───────────────────────────────────────────
+                var sourceBadge = '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:' + tm.color + '22;color:' + tm.color + ';font-family:var(--font-mono);margin-left:6px;">'
+                  + escapeHTML(s.source || tm.label) + '</span>'
+                  + (isForfeited ? '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#ff000022;color:#ff6b6b;font-family:var(--font-mono);margin-left:4px;">forfeited</span>' : '');
+
+                // ── subtitle line ──────────────────────────────────────────
+                var subtitle;
+                if (s.type === 'CBT Exam' || s.type === 'Reckoning') {
+                  if (s.totalQuestions > 0) {
+                    subtitle = formatDateShort(s.date) + ' &middot; '
+                      + (s.correctAnswers || 0) + '/' + s.totalQuestions + ' correct'
+                      + (s.scorePct != null ? ' &middot; ' + s.scorePct + '%' : '');
+                  } else {
+                    subtitle = formatDateShort(s.date) + ' &middot; ' + (s.cardsReviewed || 0) + ' questions';
+                  }
+                } else {
+                  subtitle = formatDateShort(s.date) + ' &middot; ' + (s.cardsReviewed || 0) + ' cards';
+                }
+
+                // ── KS delta colour ────────────────────────────────────────
+                var ksDelta = Math.round(s.ksDelta || 0);
+                var ksColor = ksDelta > 0 ? 'var(--green, #52b788)' : ksDelta < 0 ? '#ff6b6b' : 'var(--text-3)';
+
+                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);transition:all var(--t-mid);opacity:' + rowOpacity + ';" class="session-history-item" data-stage-advances="' + encodeURIComponent(JSON.stringify(s.stage_advances || s.stageTransitions || [])) + '">'
+                  + '<div style="min-width:0;flex:1;">'
+                  +   '<div style="font-size:var(--text-base);color:var(--text);display:flex;align-items:center;flex-wrap:wrap;gap:2px;">'
+                  +     tm.icon + ' ' + escapeHTML(s.subjectName || 'General')
+                  +     sourceBadge
+                  +   '</div>'
+                  +   '<div style="font-size:var(--text-sm);color:var(--text-3);margin-top:2px;">' + subtitle + '</div>'
+                  + '</div>'
+                  + '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'
+                  +   '<div style="font-family:var(--font-mono);font-size:var(--text-lg);font-weight:700;color:' + ksColor + ';">' + (ksDelta >= 0 ? '+' : '') + ksDelta + ' KS</div>'
+                  +   '<div style="font-size:var(--text-xs);color:var(--text-4);">' + Math.round((s.duration || 0) / 60) + 'm</div>'
+                  + '</div>'
+                  + '</div>';
               }).join("") + '</div>'
           }
         </div>
@@ -18495,10 +18686,7 @@
               t.flipped = true;
               const _fc = document.getElementById("flashcard");
               if (_fc) {
-                _fc.classList.add("is-flipping");
-                setTimeout(() => {
-                  renderActiveStudySession(document.getElementById("mainContent"));
-                }, 580);
+                _kiwiFlipCard(_fc);
               } else {
                 renderActiveStudySession(document.getElementById("mainContent"));
               }
