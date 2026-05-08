@@ -13940,9 +13940,22 @@ wsSend(req.user.id, 'session_complete', { xp_earned: session.xp_earned || 0, car
     if (deck?.subject_id) {
       await persistKnowledgeScore(req.user.id, deck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
       await db.subjectStats.upsert(req.user.id, deck.subject_id, { last_studied_at: new Date() }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      const _preSessionPressure = await db.brainPressure.get(req.user.id, deck.subject_id).catch(() => null);
+      const _preSessionScore = parseFloat(_preSessionPressure?.pressure_score) || 0;
       const pressureAfterSession = await calculateSubjectPressure(req.user.id, deck.subject_id).catch(() => null);
-      if (pressureAfterSession?.intervention_level === 'L4') {
-        triggerReckoning(req.user.id, deck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      if (pressureAfterSession) {
+        const _sessionPDelta = (pressureAfterSession.pressure_score || 0) - _preSessionScore;
+        if (_sessionPDelta !== 0) {
+          wsSend(req.user.id, 'pressure_change', {
+            subject_id: deck.subject_id,
+            pressure_score: pressureAfterSession.pressure_score || 0,
+            delta: parseFloat(_sessionPDelta.toFixed(1)),
+            source: 'study_session',
+          });
+        }
+        if (pressureAfterSession.intervention_level === 'L4') {
+          triggerReckoning(req.user.id, deck.subject_id).catch((e) => console.error('[KIWI] silent catch:', e.message));
+        }
       }
       await updateAllBubblesForUser(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
@@ -14664,7 +14677,7 @@ try {
   await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
   if (exam.subject_id) {
     const bp = await db.brainPressure.get(req.user.id, exam.subject_id);
-    const cur = bp ? bp.pressure_score || 0 : 0;
+    const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
     await db.brainPressure.set(req.user.id, exam.subject_id, {
       pressure_score: Math.min(100, cur + 15),
       intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
@@ -14690,7 +14703,7 @@ try {
 
     // Notify frontend in real-time so pressure/KS widgets update without a reload
     const _forfeitBp = await db.brainPressure.get(req.user.id, exam.subject_id).catch(() => null);
-    const _forfeitCurPressure = _forfeitBp ? _forfeitBp.pressure_score || 0 : 0;
+    const _forfeitCurPressure = parseFloat(_forfeitBp?.pressure_score) || 0; // PRESSURE-FIX: parseFloat for pg NUMERIC string
     wsSend(req.user.id, 'pressure_change', {
       subject_id: exam.subject_id,
       pressure_score: _forfeitCurPressure,
@@ -14753,7 +14766,7 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
     await db.userStats.update(userId, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     if (exam.subject_id) {
       const bp = await db.brainPressure.get(userId, exam.subject_id);
-      const cur = bp ? bp.pressure_score || 0 : 0;
+      const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
       await db.brainPressure.set(userId, exam.subject_id, {
         pressure_score: Math.min(100, cur + 15),
         intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
@@ -15128,10 +15141,23 @@ duration_seconds: durationSec,
         })().catch((e) => console.error("[KIWI] silent catch:", e.message));
         await recalculateSubjectHealth(_debriefUserId, _debriefExam.subject_id)
           .catch((e) => console.error('[KIWI] recalculateSubjectHealth failed:', e.message));
+        const _preExamPressureDoc = await db.brainPressure.get(_debriefUserId, _debriefExam.subject_id).catch(() => null);
+        const _preExamPressureScore = parseFloat(_preExamPressureDoc?.pressure_score) || 0;
         const pressureAfterExam = await calculateSubjectPressure(_debriefUserId, _debriefExam.subject_id)
           .catch((e) => { console.error('[KIWI] calculateSubjectPressure failed:', e.message); return null; });
-        if (pressureAfterExam?.intervention_level === 'L4') {
-          triggerReckoning(_debriefUserId, _debriefExam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        if (pressureAfterExam) {
+          const _examPDelta = (pressureAfterExam.pressure_score || 0) - _preExamPressureScore;
+          if (_examPDelta !== 0) {
+            wsSend(_debriefUserId, 'pressure_change', {
+              subject_id: _debriefExam.subject_id,
+              pressure_score: pressureAfterExam.pressure_score || 0,
+              delta: parseFloat(_examPDelta.toFixed(1)),
+              source: 'exam_submission',
+            });
+          }
+          if (pressureAfterExam.intervention_level === 'L4') {
+            triggerReckoning(_debriefUserId, _debriefExam.subject_id).catch((e) => console.error('[KIWI] silent catch:', e.message));
+          }
         }
         await persistKnowledgeScore(_debriefUserId, _debriefExam.subject_id)
           .catch((e) => console.error('[KIWI] persistKnowledgeScore failed:', e.message));
@@ -17934,7 +17960,7 @@ cron.schedule('*/10 * * * *', async () => {
         }
         // Brain pressure penalty
         const bp = await db.brainPressure.get(es.user_id, es.subject_id).catch(() => null);
-        const cur = bp ? bp.pressure_score || 0 : 0;
+        const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
         await db.brainPressure.set(es.user_id, es.subject_id, {
           pressure_score: Math.min(100, cur + 15),
           intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',

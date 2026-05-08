@@ -11616,15 +11616,10 @@
       }
 
       function confirmEndExam() {
-        showCustomConfirm("Exit the exam?", "Your progress will be lost.", () => {
-          const e = AppState.tempExam;
-          if (e && e._timerInterval) {
-            clearInterval(e._timerInterval);
-          }
-          AppState.tempExam = null;
-          _unlockExamPage();
-          navigateTo("dashboard");
-        });
+        // UX-FIX: Skip the generic 'Exit the exam?' confirm and go straight to
+        // the forfeit modal (Leave Exam? / Continue Exam / Forfeit Exam).
+        // That modal is the only confirmation needed — it also applies the penalty.
+        navigateTo('dashboard');
       }
 
       async function createRetryDeckFromExam() {
