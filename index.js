@@ -14942,11 +14942,11 @@ if (!['active', 'ready'].includes(exam.status))
 if (exam.status === 'ready') {
   await db.examSessions.update(req.user.id, req.params.id, { status: 'active' });
 }
-// Store pre-exam KS for delta calculation
-const preKs = await computeKnowledgeScore(req.user.id, exam.subject_id).catch(() => ({
-score: 0,
-}));
-const preKsScore = preKs.score || 0;
+// PERF-FIX: preKsScore is only needed for the background ks_delta calculation.
+// Computing it here (3+ DB queries: decks + all cards + all card_states) was
+// the primary cause of "Exam submission timed out" — it sat on the critical
+// HTTP-response path and added 500ms–3s+ for users with large libraries.
+// Moved into setImmediate; preKsScore captured there before SRS runs.
 let correct = 0,
 total = exam.questions.length;
 const questionResults = [];
@@ -14976,8 +14976,9 @@ time_spent_seconds: answer.time_spent_seconds || 0,
 }).catch(e => console.error('[KIWI] examQuestion update failed:', e.message)));
 }
 }
-// Write all question results in parallel
-await Promise.all(_dbUpdatePromises);
+// PERF-FIX: question-answer DB writes are now deferred to setImmediate below.
+// They do not affect the synchronous response payload (questionResults is already
+// built in-memory above), so there is no reason to block res.json() on them.
 const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
 const now = new Date();
 const durationSec = exam.started_at ? Math.floor((now - new Date(exam.started_at)) / 1000) : 0;
@@ -15046,6 +15047,13 @@ duration_seconds: durationSec,
     const _debriefCorrect  = correct;
     const _debriefTotal    = total;
     setImmediate(async () => {
+      // PERF-FIX: Flush question-answer writes that were deferred from the critical path.
+      // Run in parallel with preKsScore fetch so neither blocks the other.
+      const [_preKs] = await Promise.all([
+        computeKnowledgeScore(_debriefUserId, _debriefExam.subject_id).catch(() => ({ score: 0 })),
+        Promise.all(_dbUpdatePromises), // persist selected_option / is_correct per question
+      ]);
+      const preKsScore = (_preKs && _preKs.score) || 0;
       // BUG-09 / Progressive Pre-marking: skip questions already processed by /pre-mark
       const _preMarks = _preMarkCache.get(req.params.id) || new Map();
       const _questionsToProcess = _debriefExam.questions.filter(q => {
@@ -15180,16 +15188,38 @@ duration_seconds: durationSec,
         if (wrong.length === 0) {
           debriefText = 'Perfect score! Every card in this exam was correctly answered. Your mastery is verified.';
         } else {
+          // PERF-FIX: batch-fetch all wrong-question cards in one query (replaces
+          // serial await-per-card + await-per-deck N+1 pattern that could make
+          // 2×wrong.length sequential DB round-trips before AI debrief could fire).
+          const _wrongCardIds = wrong
+            .map(qr => (_debriefExam.questions.find(eq => eq.question_number === qr.question_number) || {}).card_id)
+            .filter(Boolean);
+          const _batchCards = _wrongCardIds.length > 0
+            ? await query(
+                'SELECT * FROM cards WHERE user_id = $1 AND id = ANY($2::text[])',
+                [_debriefUserId, _wrongCardIds]
+              ).then(r => r.rows).catch(() => [])
+            : [];
+          const _cardById = new Map(_batchCards.map(c => [c.id, c]));
+          const _deckIdSet = new Set(_batchCards.map(c => c.deck_id).filter(Boolean));
+          const _batchDecks = _deckIdSet.size > 0
+            ? await query(
+                'SELECT * FROM decks WHERE user_id = $1 AND id = ANY($2::text[])',
+                [_debriefUserId, [..._deckIdSet]]
+              ).then(r => r.rows).catch(() => [])
+            : [];
+          const _deckById = new Map(_batchDecks.map(d => [d.id, d]));
+
           const weakCardFronts = [];
           const weakSubjects = new Map();
           for (const qr of wrong) {
             const q = _debriefExam.questions.find((eq) => eq.question_number === qr.question_number);
             if (q && q.card_id) {
-              const card = await db.cards.findById(_debriefUserId, q.card_id).catch(() => null);
+              const card = _cardById.get(q.card_id);
               if (card) {
                 weakCardFronts.push(`"${(card.front_content || card.front || '').slice(0, 70)}"`);
                 if (card.deck_id) {
-                  const deck = await db.decks.findById(_debriefUserId, card.deck_id).catch(() => null);
+                  const deck = _deckById.get(card.deck_id);
                   if (deck?.subject_id)
                     weakSubjects.set(deck.subject_id, (weakSubjects.get(deck.subject_id) || 0) + 1);
                 }
@@ -15220,7 +15250,13 @@ RULES
 - Total length: 150-250 words.
 OUTPUT
 Return only the debrief text.`;
-            const aiResult = await geminiModel.generateContent(aiDebriefPrompt);
+            // TIMEOUT-FIX: debrief prompt is large; give it 60s and thinkingLevel low
+            // (high-thinking mode was adding 20–30s of extra latency here).
+            const aiResult = await geminiModel.generateContent(
+              aiDebriefPrompt,
+              { maxOutputTokens: 512, thinkingConfig: { thinkingLevel: 'low' } },
+              { timeoutMs: 60000 }
+            );
             debriefText = aiResult.response.text().trim();
           } catch (_) {
             debriefText =

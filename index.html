@@ -5646,7 +5646,7 @@
         </aside>
         <!-- Bottom navigation bar — mobile only, hidden until authenticated -->
         <nav class="bottom-nav" id="bottomNav" style="display:none;" aria-label="Bottom navigation">
-          <button class="bnav-item" data-route="dashboard" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">
+          <button class="bnav-item" data-route="dashboard" onclick="navigateTo('dashboard')">
             <span class="bnav-icon-wrap">
               <svg class="bnav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
@@ -6013,10 +6013,30 @@
               var _pd = msg.data || {};
               var _pDelta = _pd.delta || 0;
               var _pScore = _pd.pressure_score;
+              var _pSubjectId = _pd.subject_id;
               if (_pDelta > 0) {
                 if (typeof showToast === 'function') showToast('⚡ Brain pressure +' + _pDelta + (_pScore !== undefined ? ' (now ' + _pScore + ')' : ''), 'warning', 5000);
               } else if (_pDelta < 0) {
                 if (typeof showToast === 'function') showToast('✅ Brain pressure ' + _pDelta + (_pScore !== undefined ? ' (now ' + _pScore + ')' : ''), 'success', 5000);
+              }
+              // BRAIN-LIVE-FIX: patch AppState.brain so the Brain page shows the
+              // real value immediately — without this the cache is stale and the
+              // user sees the old number even though the toast showed +N.
+              if (AppState.brain && AppState.brain.pressures && _pSubjectId && _pScore !== undefined) {
+                var _brainEntry = AppState.brain.pressures.find(function(p) { return p.subjectId === _pSubjectId || p.subject_id === _pSubjectId; });
+                if (_brainEntry) {
+                  _brainEntry.pressure = _pScore;
+                  _brainEntry.pressure_score = _pScore;
+                }
+                // Recalculate highestPressure so the alert banner also stays accurate
+                AppState.brain.highestPressure = AppState.brain.pressures.reduce(function(m, p) { return Math.max(m, p.pressure || 0); }, 0);
+              } else {
+                // No cached brain state to patch — invalidate so next visit fetches fresh
+                AppState.brain = null;
+              }
+              // If the user is currently on the Brain page, re-render it live
+              if (AppState.currentPage === 'brain' && typeof renderBrain === 'function') {
+                renderBrain();
               }
             }
             if (msg.event === 'ks_change') {
@@ -6215,6 +6235,14 @@
         var m = document.getElementById('kiwiGenBannerMsg');
         var s = document.getElementById('kiwiGenBannerStage');
         if (!b) return;
+        // Don't show the bottom toast banner when the full-page generating screen
+        // is already visible — it's redundant and clutters the UI (circled bug).
+        var _fullScreen = document.getElementById('examGeneratingScreen');
+        if (_fullScreen && _fullScreen.offsetParent !== null) {
+          // Still forward the stage so the progress dots on the full-page screen update
+          if (stage) _updateGenBannerStage(stage);
+          return;
+        }
         if (m) m.textContent = msg || 'Generating...';
         if (s) s.textContent = stage || '';
         b.style.display = 'flex';
