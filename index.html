@@ -17879,7 +17879,7 @@
               try {
                 const result = await apiRequest('/admin/diag/pressure', {
                   method: 'POST', headers: _adminHdrs,
-                  body: JSON.stringify({ userId, subjectId }),
+                  body: { userId, subjectId },
                 });
                 diagResults.style.display = 'block';
                 (result.steps || []).forEach(s => {
