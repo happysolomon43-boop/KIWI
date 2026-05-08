@@ -17149,8 +17149,11 @@ db.cardStates.findByUser(req.user.id),
 const subjectBreakdown = [];
 let _globalWeightedSum = 0, _globalCardCount = 0;
 for (const s of subjects) {
-const ks = await computeKnowledgeScore(req.user.id, s.id, allStates).catch(() => ({ score: 0, totalCards: 0 }));
-subjectBreakdown.push({ id: s.id, name: s.name, ks: ks.score, cardCount: s.total_cards || 0 });
+const [ks, healthScore] = await Promise.all([
+  computeKnowledgeScore(req.user.id, s.id, allStates).catch(() => ({ score: 0, totalCards: 0 })),
+  recalculateSubjectHealth(req.user.id, s.id).catch(() => null),
+]);
+subjectBreakdown.push({ id: s.id, name: s.name, ks: ks.score, cardCount: s.total_cards || 0, health_score: healthScore != null ? parseFloat(healthScore.toFixed(1)) : 0 });
 _globalWeightedSum += ks.score * (ks.totalCards || 0);
 _globalCardCount += (ks.totalCards || 0);
 }
