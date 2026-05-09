@@ -5341,9 +5341,9 @@
         line-height: 1.2;
       }
       .kiwi-prev-nav--disabled {
-        opacity: 0.28;
-        pointer-events: none;
-        cursor: default;
+        opacity: 0.35;
+        /* pointer-events kept ON so the button remains draggable on the first card.
+           Navigation is prevented by onclick="" (empty handler) in the HTML. */
       }
       @keyframes prevBtnSlideIn {
         from { opacity: 0; transform: translateX(-18px) translateY(4px); }
@@ -10340,7 +10340,30 @@
         let _showRating = false;
         if (t.flipped) { _showRating = true; }
         try { const _op = JSON.parse(card.front || card.front_content || ""); if (_op && _op._type === "occlusion") { const _ms = _op.masks||[]; const _rv = t.revealedMasks||{}; _showRating = _ms.length>0 && _ms.every(_m=>_rv[_m.id]); } } catch(_e) {}
-        if (!_showRating) return "";
+        if (!_showRating) {
+          // Pre-render the rating buttons invisibly so the container already has
+          // its full height before the flip. This prevents the layout reflow that
+          // causes the blink of both the rate row AND the prev button.
+          // visibility:hidden reserves space; animation:none stops the rise anim.
+          return `<div class="response-row" id="_ratingRowInner" style="visibility:hidden;animation:none;pointer-events:none;">
+            <button class="resp-btn resp-again" data-rating="1" title="Press 1">
+              <span class="resp-btn-label">Again</span>
+              <span class="resp-btn-interval">${escapeHTML(card.intervalHintAgain || "&lt;1m")}</span>
+            </button>
+            <button class="resp-btn resp-hard" data-rating="2" title="Press 2">
+              <span class="resp-btn-label">Hard</span>
+              <span class="resp-btn-interval">${escapeHTML(card.intervalHintHard || "~1d")}</span>
+            </button>
+            <button class="resp-btn resp-good" data-rating="3" title="Press 3">
+              <span class="resp-btn-label">Good</span>
+              <span class="resp-btn-interval">${escapeHTML(card.intervalHintGood || "~2d")}</span>
+            </button>
+            <button class="resp-btn resp-easy" data-rating="4" title="Press 4">
+              <span class="resp-btn-label">Easy</span>
+              <span class="resp-btn-interval">${escapeHTML(card.intervalHintEasy || "~4d")}</span>
+            </button>
+          </div>`;
+        }
         if (AppState.quickQ && !AppState.quickQ.submitted) {
           var _qqTotal = (AppState.quickQ.questions || []).length;
           var _qqDone  = Object.keys(AppState.quickQ.answers).length;
@@ -10440,13 +10463,36 @@
           const _card = _t && _t.queue[_t.currentIndex];
           if (_layout && _ratingRow && _t && _card) {
             _layout.classList.add('is-flipped');
-            _ratingRow.innerHTML = _buildRatingRowHTML(_t, _card);
-            // Re-wire rating button handlers on the freshly injected buttons
-            _ratingRow.querySelectorAll('.resp-btn').forEach(function(btn) {
-              btn.addEventListener('click', async function() {
-                await handleStudyResponse(parseInt(btn.dataset.rating));
+            // Surgical reveal: rating buttons are already in the DOM, pre-rendered
+            // with visibility:hidden. Just toggle them visible — no innerHTML swap,
+            // no layout reflow, no blink of the rate row OR the prev button.
+            var _preRR = _ratingRow.querySelector('.response-row');
+            if (_preRR && _preRR.style.visibility === 'hidden') {
+              // Step 1: make visible and restore pointer events
+              _preRR.style.visibility = 'visible';
+              _preRR.style.pointerEvents = '';
+              // Step 2: re-trigger the kiwi-resp-rise CSS animation.
+              //   a) Stamp animation:none inline (overrides the CSS rule)
+              _preRR.style.animation = 'none';
+              //   b) Force the browser to commit that state (reflow read)
+              void _preRR.offsetWidth;
+              //   c) Remove the inline override — CSS animation restarts from frame 0
+              _preRR.style.animation = '';
+              // Step 3: wire click handlers now that buttons are interactive
+              _preRR.querySelectorAll('.resp-btn').forEach(function(btn) {
+                btn.addEventListener('click', async function() {
+                  await handleStudyResponse(parseInt(btn.dataset.rating));
+                });
               });
-            });
+            } else {
+              // Fallback: pre-render not found (e.g. browsing prev, quick Q)
+              _ratingRow.innerHTML = _buildRatingRowHTML(_t, _card);
+              _ratingRow.querySelectorAll('.resp-btn').forEach(function(btn) {
+                btn.addEventListener('click', async function() {
+                  await handleStudyResponse(parseInt(btn.dataset.rating));
+                });
+              });
+            }
             _autoSizeStudyCard();
           } else {
             // Fallback: full re-render if surgical targets are missing
@@ -17642,7 +17688,8 @@
             const data = await api.getLibrary();
             AppState.subjects = data.subjects || [];
           }
-          const subjects = AppState.subjects;
+          // Guard: filter out any undefined/null entries that may have been pushed by failed community imports
+          const subjects = (AppState.subjects || []).filter(function(s) { return s && s.id; });
           // Build subject → first deckId map
           var subjectDeckMap = {};
           subjects.forEach(function(s) {
@@ -18798,12 +18845,17 @@
                   colors[AppState.subjects.length % colors.length],
                   "&#x25A0;",
                 );
-                subj = result.subject;
-                AppState.subjects.push(subj);
+                // Backend returns the subject object directly (not wrapped in {subject:...})
+                subj = result && result.id ? result : (result.subject || null);
+                if (subj) AppState.subjects.push(subj);
               }
               // Import deck via API (F12 / F22 — no hardcoded mock data)
               const deckId = t.id || t.title;
-              await api.importCommunityDeck(deckId, subj ? subj.id : null);
+              if (!subj || !subj.id) {
+                showToast("Could not resolve a subject — please create one first", "error");
+                return;
+              }
+              await api.importCommunityDeck(deckId, subj.id);
               showToast(`Imported ${escapeHTML(t.title)} to library`, "success");
               navigateTo("library");
             } catch (err) {

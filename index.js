@@ -1029,7 +1029,7 @@ async findById(userId, taskId) {
 communityDecks: {
 async findMany({ search, tags } = {}, { page = 1, limit = 20 } = {}) {
   // Fix #52: filter to is_public=true — prevents exposing draft/unlisted decks
-  let sql = 'SELECT * FROM community_decks WHERE is_public = true';
+  let sql = 'SELECT *, COALESCE(author_name, author_id::text, \'Anonymous\') AS author FROM community_decks WHERE is_public = true';
   const vals = [];
   if (search) {
     sql += ` AND title ILIKE $${vals.length + 1}`;
@@ -16146,7 +16146,7 @@ if (subjectDoc) subjectName = subjectDoc.name || '';
 }
 const communityEntry = await db.communityDecks.upsertByOriginalDeck(deck_id, {
 title: deck.name,
-author: user?.username || 'Anonymous',
+author_name: user?.username || 'Anonymous',
 author_id: req.user.id,
 description: description || deck.description || '',
 subject: subjectName,
@@ -19072,6 +19072,19 @@ async function ensureKSDeltaColumn() {
   }
 }
 
+// Ensures community_decks has an author_name column (the old schema only had author_id).
+// Safe to run on every startup — ADD COLUMN IF NOT EXISTS is idempotent.
+async function ensureCommunityDeckAuthorColumn() {
+  try {
+    await query(`ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS author_name TEXT`);
+    // Back-fill rows that have no author_name yet (never overwrites existing display names).
+    await query(`UPDATE community_decks SET author_name = 'KIWI Team' WHERE author_name IS NULL`);
+    console.log('[KIWI] community_decks.author_name column verified');
+  } catch (e) {
+    console.error('[KIWI] community_decks author_name migration failed:', e.message);
+  }
+}
+
 //  SERVER STARTUP
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -20180,6 +20193,7 @@ console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear ab
 
     // Run startup recovery before accepting requests
     ensureKSDeltaColumn().catch(e => console.error('[KIWI] Column migration failed:', e.message));
+    ensureCommunityDeckAuthorColumn().catch(e => console.error('[KIWI] community_decks author_name migration failed:', e.message));
     recoverInterruptedExams().catch(e => console.error('[KIWI] Startup recovery failed:', e.message));
 
     const _httpServer = app.listen(PORT, () => {
