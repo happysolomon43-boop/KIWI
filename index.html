@@ -10522,7 +10522,7 @@
               })()}
               <button class="flashcard-ai-btn" id="aiExplainBtn" title="AI Explanation" onclick="_kiwiAiExplain(event)">&#x2726; Explain</button>
               <button id="quickQBtn" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:13px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 7px;cursor:pointer;color:var(--green-bright);z-index:2;line-height:1;">&#x26A1;</button>
-              <button id="studyEditBtn" title="Edit this card" style="position:absolute;top:10px;right:10px;font-size:10px;background:rgba(62,201,201,0.08);border:1px solid rgba(62,201,201,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--teal);z-index:2;">&#x270F;</button>
+
             </div>
             <div class="flashcard-face back">
               <span class="flashcard-front-label">Answer &middot; ${escapeHTML(card.subjectName || "")}</span>
@@ -10530,7 +10530,8 @@
               <div class="flashcard-content">${renderClozeText(card.back || card.back_content || "", true)}</div>
               <div class="flashcard-stage" style="background:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]}33;color:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]};">${stageLabel}</div>
               <button class="flashcard-ai-btn" id="aiExplainBtnBack" title="AI Explanation" onclick="_kiwiAiExplain(event)">&#x2726; Explain</button>
-              <button id="quickQBtnBack" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:10px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--green-bright);z-index:2;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;letter-spacing:0.2px;">&#x26A1; <span style="font-size:9px;opacity:0.85;">Quick Q</span></button>
+              <button id="quickQBtnBack" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:10px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--green-bright);z-index:2;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;letter-spacing:0.2px;">&#x26A1; <span style="font-size:9px;opacity:0.85;">Quick Question</span></button>
+              <button id="studyEditBtn" title="Edit this card" style="position:absolute;top:10px;right:10px;font-size:10px;background:rgba(62,201,201,0.08);border:1px solid rgba(62,201,201,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--teal);z-index:2;">&#x270F;</button>
             </div>
             <!-- Stage transition bloom effects -->
             <div class="stage-transition-bloom" id="stageBloom"></div>
@@ -10846,7 +10847,12 @@
               fab.style.transition = 'transform 0.18s ease,opacity 0.18s ease';
               fab.style.transform = 'scale(0.5)';
               fab.style.opacity = '0';
-              setTimeout(function() { _qqClearState(); }, 200);
+              setTimeout(function() {
+                _qqClearState();
+                if (typeof showToast === 'function') showToast('Quick Questions forfeited — no penalties applied', 'info', 3000);
+                var _mc = document.getElementById('mainContent');
+                if (_mc && typeof renderActiveStudySession === 'function') renderActiveStudySession(_mc);
+              }, 200);
               return;
             }
             // Snap to nearest side
