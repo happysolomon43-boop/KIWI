@@ -5281,7 +5281,7 @@
         background: var(--surface-2);
         border: 1px solid var(--border-2);
         border-radius: 50px;
-        cursor: pointer;
+        cursor: grab;
         color: var(--teal-bright);
         font-family: var(--font-mono);
         font-size: var(--text-sm);
@@ -5293,6 +5293,23 @@
         -webkit-tap-highlight-color: transparent;
         user-select: none;
         white-space: nowrap;
+        touch-action: none;
+      }
+      .kiwi-prev-nav:active { cursor: grabbing; }
+      .kiwi-prev-nav .kiwi-prev-drag-handle {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        opacity: 0.4;
+        flex-shrink: 0;
+        padding-right: 2px;
+      }
+      .kiwi-prev-drag-handle span {
+        display: block;
+        width: 14px;
+        height: 2px;
+        background: var(--teal-bright);
+        border-radius: 2px;
       }
       .kiwi-prev-nav:hover,
       .kiwi-prev-nav:active {
@@ -10352,6 +10369,10 @@
           // the base CSS transform — this is the historical jerk trigger.
           cardEl.style.transform = END_TRANSFORM;
           anim.cancel();
+          // Signal that this render is the direct result of a flip —
+          // the rating row animation should play exactly once here,
+          // then be suppressed on every subsequent re-render.
+          if (AppState.tempStudy) AppState.tempStudy._justFlipped = true;
           // DOM swap — the incoming .flashcard.flipped node has:
           //   transition:none  (no CSS transition fires)
           //   transform: rotateY(180deg) translateY(-24px)  (matches above)
@@ -10384,6 +10405,101 @@
           maxNeededHeight = Math.max(maxNeededHeight, 200 + extraHeight);
         });
         fc.style.minHeight = maxNeededHeight + 'px';
+      }
+
+      // ── Draggable Previous-card button ──────────────────────────────────────
+      // The button is recreated on every renderActiveStudySession() call (innerHTML
+      // swap). This function re-attaches drag logic each time and restores the last
+      // saved screen position so the button stays wherever the user left it.
+      function _initPrevBtnDrag() {
+        var btn = document.querySelector('.kiwi-prev-nav');
+        if (!btn) return;
+
+        // Restore persisted position (survives re-renders within a session)
+        var _pos = AppState._prevBtnPos;
+        if (_pos) {
+          btn.style.left   = _pos.left;
+          btn.style.bottom = _pos.bottom;
+          btn.style.right  = 'auto';
+          btn.style.top    = 'auto';
+          // Suppress slide-in animation when restoring a saved position
+          btn.style.animation = 'none';
+        }
+
+        var _dragStartX, _dragStartY, _btnStartLeft, _btnStartTop;
+        var _dragging = false;
+
+        function _start(cx, cy) {
+          var rect = btn.getBoundingClientRect();
+          _dragStartX  = cx;  _dragStartY  = cy;
+          _btnStartLeft = rect.left; _btnStartTop = rect.top;
+          _dragging = false;
+          btn.style.transition = 'none';
+          btn.style.animation  = 'none';
+          // Switch from bottom-relative to top-relative so dragging maths works
+          btn.style.top    = rect.top + 'px';
+          btn.style.bottom = 'auto';
+          btn.style.right  = 'auto';
+          btn.style.left   = rect.left + 'px';
+        }
+
+        function _move(cx, cy) {
+          var dx = cx - _dragStartX, dy = cy - _dragStartY;
+          if (!_dragging && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+            _dragging = true;
+            btn.style.cursor = 'grabbing';
+          }
+          if (!_dragging) return;
+          btn.style.left = (_btnStartLeft + dx) + 'px';
+          btn.style.top  = (_btnStartTop  + dy) + 'px';
+        }
+
+        function _end() {
+          if (!_dragging) { btn.style.cursor = 'grab'; return; }
+          _dragging = false;
+          btn.style.cursor = 'grab';
+          btn._kiwiDragEnded = true; // suppress the onclick that fires after touchend/mouseup
+          setTimeout(function() { btn._kiwiDragEnded = false; }, 0);
+          // Snap to nearest horizontal edge with a 16px margin
+          var rect = btn.getBoundingClientRect();
+          var w = window.innerWidth, h = window.innerHeight;
+          var snapRight = (rect.left + rect.width / 2) > w / 2;
+          var newLeft   = snapRight ? (w - rect.width - 16) + 'px' : '16px';
+          var newBottom = Math.max(16, h - rect.bottom) + 'px';
+          btn.style.transition = 'left 0.2s var(--ease), bottom 0.2s var(--ease), top 0.2s var(--ease)';
+          btn.style.left   = newLeft;
+          btn.style.top    = 'auto';
+          btn.style.bottom = newBottom;
+          // Persist so the next render restores this position
+          AppState._prevBtnPos = { left: newLeft, bottom: newBottom };
+        }
+
+        // Mouse support
+        btn.addEventListener('mousedown', function(e) {
+          if (e.button !== 0) return;
+          _start(e.clientX, e.clientY);
+          function onMove(e2) { _move(e2.clientX, e2.clientY); }
+          function onUp()     { _end(); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+
+        // Touch support
+        btn.addEventListener('touchstart', function(e) {
+          if (e.touches.length !== 1) return;
+          e.preventDefault(); // prevent scroll hijack while dragging
+          var t0 = e.touches[0];
+          _start(t0.clientX, t0.clientY);
+          function onMove(e2) { e2.preventDefault(); var t1 = e2.touches[0]; _move(t1.clientX, t1.clientY); }
+          function onEnd(e2)  { _end(); btn.removeEventListener('touchmove', onMove); btn.removeEventListener('touchend', onEnd); }
+          btn.addEventListener('touchmove', onMove, { passive: false });
+          btn.addEventListener('touchend', onEnd);
+        }, { passive: false });
+
+        // Prevent the onclick from firing after a drag gesture
+        btn.addEventListener('click', function(e) {
+          if (btn._kiwiDragEnded) { btn._kiwiDragEnded = false; e.stopImmediatePropagation(); e.preventDefault(); }
+        }, true); // capture phase — runs before the inline onclick
       }
 
       function renderActiveStudySession(container) {
@@ -10468,7 +10584,8 @@
           ${t.currentIndex < t.queue.length - 1 ? `<button class="btn btn-ghost btn-sm" onclick="skipCard()" title="Skip card to end of queue" style="font-size:var(--text-xs);padding:3px 8px;opacity:0.65;">Skip &#x21E3;</button>` : ""}
         </div>
       </div>
-      <button class="kiwi-prev-nav${_canGoPrev ? '' : ' kiwi-prev-nav--disabled'}" onclick="${_canGoPrev ? 'prevCard()' : ''}" title="Go to previous card (Arrow Left)" ${_canGoPrev ? '' : 'aria-disabled="true"'}>
+      <button class="kiwi-prev-nav${_canGoPrev ? '' : ' kiwi-prev-nav--disabled'}" onclick="${_canGoPrev ? 'prevCard()' : ''}" title="Drag to move · Go to previous card (Arrow Left)" ${_canGoPrev ? '' : 'aria-disabled="true"'}>
+        <span class="kiwi-prev-drag-handle" aria-hidden="true"><span></span><span></span><span></span></span>
         <span class="kiwi-prev-nav-arrow">&#x2190;</span>
         <span>
           <span class="kiwi-prev-nav-top">Previous</span>
@@ -10609,8 +10726,13 @@
                 <button onclick="_qqOpenOverlay()" style="padding:10px 28px;border:none;border-radius:var(--r);background:linear-gradient(135deg,rgba(245,158,11,0.15),rgba(245,158,11,0.08));border:1px solid rgba(245,158,11,0.35);color:#f59e0b;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font-mono);">Resume Questions ⚡</button>
               </div>`;
             }
+            // Only play the rise animation on the genuine flip, not on every
+            // subsequent re-render (timer updates, AI explain, QQ events, etc.)
+            // _justFlipped is set by _kiwiFlipCard and consumed exactly once here.
+            const _doRespAnim = !!t._justFlipped;
+            if (t._justFlipped) t._justFlipped = false;
             return `
-        <div class="response-row">
+        <div class="response-row"${_doRespAnim ? '' : ' style="animation:none"'}>
           <button class="resp-btn resp-again" data-rating="1" title="Press 1">
             <span class="resp-btn-label">Again</span>
             <span class="resp-btn-interval">${escapeHTML(card.intervalHintAgain || "&lt;1m")}</span>
@@ -10658,6 +10780,8 @@
         if (studyContainer) {
           studyContainer.querySelectorAll(".flashcard-content, .flashcard-back-question").forEach(el => renderMathContent(el));
         }
+        // Initialise draggable prev button every render (element is recreated with innerHTML)
+        _initPrevBtnDrag();
 
         // FIX: Auto-size the flashcard so long text never bleeds outside the card boundary.
         // Both faces are position:absolute so the container doesn't grow with content.
