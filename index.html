@@ -5323,6 +5323,11 @@
         display: block;
         line-height: 1.2;
       }
+      .kiwi-prev-nav--disabled {
+        opacity: 0.28;
+        pointer-events: none;
+        cursor: default;
+      }
       @keyframes prevBtnSlideIn {
         from { opacity: 0; transform: translateX(-18px) translateY(4px); }
         to   { opacity: 1; transform: translateX(0)     translateY(0);   }
@@ -10448,14 +10453,13 @@
           ${t.currentIndex < t.queue.length - 1 ? `<button class="btn btn-ghost btn-sm" onclick="skipCard()" title="Skip card to end of queue" style="font-size:var(--text-xs);padding:3px 8px;opacity:0.65;">Skip &#x21E3;</button>` : ""}
         </div>
       </div>
-      ${t.currentIndex > 0 ? `
-      <button class="kiwi-prev-nav" onclick="prevCard()" title="Go to previous card (Arrow Left)">
+      <button class="kiwi-prev-nav${t.currentIndex === 0 ? ' kiwi-prev-nav--disabled' : ''}" onclick="if(${t.currentIndex}>0)prevCard()" title="Go to previous card (Arrow Left)" ${t.currentIndex === 0 ? 'aria-disabled="true"' : ''}>
         <span class="kiwi-prev-nav-arrow">&#x2190;</span>
         <span>
           <span class="kiwi-prev-nav-top">Previous</span>
-          <span class="kiwi-prev-nav-sub">Card ${t.currentIndex} of ${t.queue.length}</span>
+          <span class="kiwi-prev-nav-sub">${t.currentIndex === 0 ? 'First card' : `Card ${t.currentIndex} of ${t.queue.length}`}</span>
         </span>
-      </button>` : ""}
+      </button>
       ${t._viewingPrev && t._browseOriginIndex !== undefined ? `
       <button class="kiwi-resume-nav" onclick="nextCard()" title="Resume session (Arrow Right)">
         <span>
@@ -10517,7 +10521,7 @@
                 return `<div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);font-size:9px;font-family:var(--font-mono);color:var(--text-4);background:var(--bg-3);border:1px solid var(--border);border-radius:20px;padding:2px 8px;letter-spacing:0.5px;">&#x23F3; due in ${label}</div>`;
               })()}
               <button class="flashcard-ai-btn" id="aiExplainBtn" title="AI Explanation" onclick="_kiwiAiExplain(event)">&#x2726; Explain</button>
-              <button id="quickQBtn" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:10px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--green-bright);z-index:2;">&#x26A1;</button>
+              <button id="quickQBtn" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:13px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 7px;cursor:pointer;color:var(--green-bright);z-index:2;line-height:1;">&#x26A1;</button>
               <button id="studyEditBtn" title="Edit this card" style="position:absolute;top:10px;right:10px;font-size:10px;background:rgba(62,201,201,0.08);border:1px solid rgba(62,201,201,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--teal);z-index:2;">&#x270F;</button>
             </div>
             <div class="flashcard-face back">
@@ -10526,7 +10530,7 @@
               <div class="flashcard-content">${renderClozeText(card.back || card.back_content || "", true)}</div>
               <div class="flashcard-stage" style="background:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]}33;color:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]};">${stageLabel}</div>
               <button class="flashcard-ai-btn" id="aiExplainBtnBack" title="AI Explanation" onclick="_kiwiAiExplain(event)">&#x2726; Explain</button>
-              <button id="quickQBtnBack" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:10px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--green-bright);z-index:2;">&#x26A1;</button>
+              <button id="quickQBtnBack" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:10px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--green-bright);z-index:2;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;letter-spacing:0.2px;">&#x26A1; <span style="font-size:9px;opacity:0.85;">Quick Q</span></button>
             </div>
             <!-- Stage transition bloom effects -->
             <div class="stage-transition-bloom" id="stageBloom"></div>
@@ -10780,7 +10784,7 @@
             ? (qq.mode === 'review' ? '✓ Review' : '✓ Results')
             : (answered + '/' + total + ' done');
           el.innerHTML = `
-            <div id="_qqFAB" style="position:fixed;bottom:88px;right:18px;z-index:9000;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;${pulse}">
+            <div id="_qqFAB" style="position:fixed;bottom:88px;right:18px;z-index:9000;cursor:grab;display:flex;flex-direction:column;align-items:center;gap:5px;touch-action:none;${pulse}">
               <div style="position:relative;width:56px;height:56px;">
                 <svg width="56" height="56" style="position:absolute;inset:0;transform:rotate(-90deg);" viewBox="0 0 56 56">
                   <circle cx="28" cy="28" r="${R1}" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="3"/>
@@ -10791,22 +10795,107 @@
                 </svg>
                 <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:${bgCol};border-radius:50%;border:1px solid ${bcCol};font-size:20px;box-shadow:0 4px 16px rgba(0,0,0,0.35);">⚡</div>
               </div>
-              <div style="background:${bgCol};border:1px solid ${bcCol};border-radius:20px;padding:3px 10px;font-size:9px;font-family:var(--font-mono);color:${iconCol};letter-spacing:0.5px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);">${label}</div>
+              <div id="_qqFABLabel" style="background:${bgCol};border:1px solid ${bcCol};border-radius:20px;padding:3px 10px;font-size:9px;font-family:var(--font-mono);color:${iconCol};letter-spacing:0.5px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);">${label}</div>
+            </div>
+            <div id="_qqCancelZone" style="display:none;position:fixed;bottom:0;left:0;right:0;height:80px;z-index:8999;background:linear-gradient(to top,rgba(224,82,82,0.22),transparent);border-top:1px dashed rgba(224,82,82,0.4);display:none;align-items:center;justify-content:center;">
+              <span style="font-size:11px;font-family:var(--font-mono);color:var(--red-bright);letter-spacing:0.5px;">✕ Drop to cancel</span>
             </div>`;
-          document.getElementById('_qqFAB').addEventListener('click', _qqOpenOverlay);
+          var fab = document.getElementById('_qqFAB');
+          var cancelZone = document.getElementById('_qqCancelZone');
+
+          // ── Tap to open overlay ──
+          fab.addEventListener('click', function(e) {
+            if (fab._dragging) return;
+            _qqOpenOverlay();
+          });
+
+          // ── Drag logic (touch + mouse) ──
+          var _dragStartX, _dragStartY, _fabStartX, _fabStartY;
+          fab._dragging = false;
+
+          function _fabDragStart(clientX, clientY) {
+            var rect = fab.getBoundingClientRect();
+            _dragStartX = clientX; _dragStartY = clientY;
+            _fabStartX  = rect.left; _fabStartY = rect.top;
+            fab._dragging = false;
+            fab.style.transition = 'none';
+            if (cancelZone) cancelZone.style.display = 'flex';
+          }
+          function _fabDragMove(clientX, clientY) {
+            var dx = clientX - _dragStartX, dy = clientY - _dragStartY;
+            if (!fab._dragging && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) fab._dragging = true;
+            if (!fab._dragging) return;
+            fab.style.position = 'fixed';
+            fab.style.left = (_fabStartX + dx) + 'px';
+            fab.style.top  = (_fabStartY + dy) + 'px';
+            fab.style.right = 'auto';
+            fab.style.bottom = 'auto';
+            // Highlight cancel zone if dragged over it
+            var overCancel = clientY > window.innerHeight - 90;
+            if (cancelZone) cancelZone.style.background = overCancel
+              ? 'linear-gradient(to top,rgba(224,82,82,0.45),transparent)'
+              : 'linear-gradient(to top,rgba(224,82,82,0.22),transparent)';
+          }
+          function _fabDragEnd(clientX, clientY) {
+            if (cancelZone) cancelZone.style.display = 'none';
+            if (!fab._dragging) { fab._dragging = false; return; }
+            fab._dragging = false;
+            var overCancel = clientY > window.innerHeight - 90;
+            if (overCancel) {
+              // Animate into cancel zone then destroy
+              fab.style.transition = 'transform 0.18s ease,opacity 0.18s ease';
+              fab.style.transform = 'scale(0.5)';
+              fab.style.opacity = '0';
+              setTimeout(function() { _qqClearState(); }, 200);
+              return;
+            }
+            // Snap to nearest side
+            var cx = parseFloat(fab.style.left) + fab.offsetWidth / 2;
+            var snapRight = cx > window.innerWidth / 2;
+            fab.style.transition = 'left 0.25s var(--ease-spring),top 0.25s var(--ease-spring),right 0.25s,bottom 0.25s';
+            if (snapRight) {
+              fab.style.right = '18px'; fab.style.left = 'auto';
+            } else {
+              fab.style.left = '18px'; fab.style.right = 'auto';
+            }
+          }
+          // Touch
+          fab.addEventListener('touchstart', function(e) {
+            var t = e.touches[0]; _fabDragStart(t.clientX, t.clientY);
+          }, { passive: true });
+          fab.addEventListener('touchmove', function(e) {
+            var t = e.touches[0]; _fabDragMove(t.clientX, t.clientY);
+          }, { passive: true });
+          fab.addEventListener('touchend', function(e) {
+            var t = e.changedTouches[0]; _fabDragEnd(t.clientX, t.clientY);
+          });
+          // Mouse
+          fab.addEventListener('mousedown', function(e) { _fabDragStart(e.clientX, e.clientY); });
+          document.addEventListener('mousemove', function _mm(e) {
+            if (_dragStartX === undefined) return;
+            _fabDragMove(e.clientX, e.clientY);
+          });
+          document.addEventListener('mouseup', function _mu(e) {
+            if (_dragStartX === undefined) return;
+            _fabDragEnd(e.clientX, e.clientY);
+            _dragStartX = undefined;
+          });
+
           // Live countdown tick — restarts each render to avoid stacking
           clearInterval(el._tick);
           el._tick = setInterval(function() {
             var qq2 = AppState.quickQ;
             var fl2 = document.getElementById('_qqFloat');
             if (!qq2 || !fl2) { clearInterval(el._tick); return; }
+            // ── EXAM PAGE: pause timer visually (do NOT count down) ──
+            if (AppState.currentPage === 'exam') return;
             var age2 = (Date.now() - qq2.generatedAt) / 1000;
             var rem2 = Math.max(0, 240 - age2);
             // Update outer ring dashoffset
             var outerCirc = fl2.querySelector('circle:nth-child(2)');
             if (outerCirc) outerCirc.setAttribute('stroke-dashoffset', (C1*(1-rem2/240)).toFixed(1));
-            // Expiry — only clear if not submitted
-            if (rem2 <= 0 && !qq2.submitted) { _qqClearState(); clearInterval(el._tick); renderActiveStudySession(document.getElementById('mainContent')); }
+            // Expiry — cancel regardless of submitted state when time runs out
+            if (rem2 <= 0) { _qqClearState(); clearInterval(el._tick); if(typeof renderActiveStudySession==='function') renderActiveStudySession(document.getElementById('mainContent')); }
           }, 1000);
         };
 
@@ -16418,7 +16507,11 @@
                     const cStateColor = _stateColor[cState] || '#4a7a64';
                     const cStateEmoji = _stateEmoji[cState] || '◌';
                     return `
-                    <div class="card" style="margin-bottom:10px;padding:14px 16px;border-left:3px solid ${cStateColor}22;">
+                    <div class="card cb-selectable-card" data-card-id="${escapeHTML(c.id)}" style="margin-bottom:10px;padding:14px 16px;border-left:3px solid ${cStateColor}22;position:relative;transition:outline 0.12s,padding-left 0.15s;">
+                      <!-- Selection checkbox (hidden until select mode) -->
+                      <div class="cb-select-check" style="display:none;position:absolute;left:10px;top:50%;transform:translateY(-50%);width:22px;height:22px;border-radius:50%;background:var(--surface-2);border:1.5px solid var(--border-2);align-items:center;justify-content:center;flex-shrink:0;transition:background 0.12s,border-color 0.12s;">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="display:none;"><polyline points="1.5,6 4.5,9 10.5,2.5" stroke="var(--bg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      </div>
                       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
                         <div style="flex:1;">
                           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
@@ -16454,6 +16547,17 @@
                     </div>`;
                   }).join("")
                 }
+              </div>
+
+              <!-- Bulk select action bar (hidden by default) -->
+              <div id="cb-bulk-bar" style="display:none;position:fixed;bottom:64px;left:0;right:0;z-index:200;padding:10px 16px;background:var(--surface);border-top:1px solid var(--border-2);box-shadow:0 -4px 20px rgba(0,0,0,0.3);">
+                <div style="display:flex;align-items:center;gap:8px;max-width:600px;margin:0 auto;">
+                  <span id="cb-bulk-count" style="font-size:var(--text-sm);color:var(--text-2);font-family:var(--font-mono);flex:1;">0 selected</span>
+                  <button id="cb-bulk-select-all" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);">Select All</button>
+                  <button id="cb-bulk-reset" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#f59e0b;opacity:0.4;" disabled>&#x21BA; Reset</button>
+                  <button id="cb-bulk-delete" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;opacity:0.4;" disabled>Delete</button>
+                  <button id="cb-bulk-cancel" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--text-3);">Cancel</button>
+                </div>
               </div>
 
               <!-- Pagination -->
@@ -16521,6 +16625,166 @@
                 var match = delBtn.getAttribute('onclick').match(/handleDeleteCard\('([^']+)'/);
                 if (match) cardEl.dataset.swipeCardId = match[1];
               }
+            });
+          }
+
+          // ── Card Browser Multi-Select ─────────────────────────────────────────
+          var _cbSelectMode = false;
+          var _cbSelected   = new Set(); // set of card IDs
+
+          function _cbUpdateBulkBar() {
+            var bar      = document.getElementById('cb-bulk-bar');
+            var countEl  = document.getElementById('cb-bulk-count');
+            var resetBtn = document.getElementById('cb-bulk-reset');
+            var delBtn   = document.getElementById('cb-bulk-delete');
+            var selAllBtn= document.getElementById('cb-bulk-select-all');
+            if (!bar) return;
+            var n = _cbSelected.size;
+            var total = bs.cards.length;
+            if (countEl) countEl.textContent = n + ' card' + (n !== 1 ? 's' : '') + ' selected';
+            if (resetBtn) { resetBtn.disabled = n === 0; resetBtn.style.opacity = n === 0 ? '0.4' : '1'; }
+            if (delBtn)   { delBtn.disabled   = n === 0; delBtn.style.opacity   = n === 0 ? '0.4' : '1'; }
+            if (selAllBtn) selAllBtn.textContent = _cbSelected.size === total ? 'Deselect All' : 'Select All';
+          }
+
+          function _cbSetCardSelected(cardEl, selected) {
+            var chkBox  = cardEl.querySelector('.cb-select-check');
+            var chkMark = chkBox ? chkBox.querySelector('svg') : null;
+            if (selected) {
+              cardEl.style.outline = '2px solid var(--teal)';
+              if (chkBox)  { chkBox.style.background = 'var(--teal)'; chkBox.style.borderColor = 'var(--teal)'; }
+              if (chkMark) chkMark.style.display = 'block';
+            } else {
+              cardEl.style.outline = '';
+              if (chkBox)  { chkBox.style.background = ''; chkBox.style.borderColor = ''; }
+              if (chkMark) chkMark.style.display = 'none';
+            }
+          }
+
+          function _cbEnterSelectMode() {
+            _cbSelectMode = true;
+            _cbSelected.clear();
+            var bar = document.getElementById('cb-bulk-bar');
+            if (bar) bar.style.display = 'block';
+            main.querySelectorAll('.cb-selectable-card').forEach(function(cardEl) {
+              var chk = cardEl.querySelector('.cb-select-check');
+              if (chk) chk.style.display = 'flex';
+              cardEl.style.paddingLeft = '44px';
+              cardEl.style.cursor = 'pointer';
+            });
+            _cbUpdateBulkBar();
+          }
+
+          function _cbExitSelectMode() {
+            _cbSelectMode = false;
+            _cbSelected.clear();
+            var bar = document.getElementById('cb-bulk-bar');
+            if (bar) bar.style.display = 'none';
+            main.querySelectorAll('.cb-selectable-card').forEach(function(cardEl) {
+              var chk = cardEl.querySelector('.cb-select-check');
+              if (chk) chk.style.display = 'none';
+              cardEl.style.paddingLeft = '';
+              cardEl.style.cursor = '';
+              cardEl.style.outline = '';
+              var chkBox  = cardEl.querySelector('.cb-select-check');
+              var chkMark = chkBox ? chkBox.querySelector('svg') : null;
+              if (chkBox)  { chkBox.style.background = ''; chkBox.style.borderColor = ''; }
+              if (chkMark) chkMark.style.display = 'none';
+            });
+          }
+
+          // Tap to toggle in select mode; long-press to enter select mode
+          main.querySelectorAll('.cb-selectable-card').forEach(function(cardEl) {
+            cardEl.addEventListener('click', function(e) {
+              if (!_cbSelectMode) return;
+              if (e.target.closest('button')) return;
+              var id = cardEl.dataset.cardId;
+              if (!id) return;
+              if (_cbSelected.has(id)) { _cbSelected.delete(id); _cbSetCardSelected(cardEl, false); }
+              else { _cbSelected.add(id); _cbSetCardSelected(cardEl, true); }
+              _cbUpdateBulkBar();
+            });
+
+            // Long-press (500ms) to enter select mode
+            var _cbLpTimer = null;
+            cardEl.addEventListener('touchstart', function(e) {
+              if (_cbSelectMode) return;
+              if (e.target.closest('button')) return;
+              _cbLpTimer = setTimeout(function() {
+                _cbLpTimer = null;
+                if (navigator.vibrate) navigator.vibrate(40);
+                _cbEnterSelectMode();
+                var id = cardEl.dataset.cardId;
+                if (id) { _cbSelected.add(id); _cbSetCardSelected(cardEl, true); _cbUpdateBulkBar(); }
+              }, 500);
+            }, { passive: true });
+            cardEl.addEventListener('touchend',    function() { if (_cbLpTimer) { clearTimeout(_cbLpTimer); _cbLpTimer = null; } });
+            cardEl.addEventListener('touchmove',   function() { if (_cbLpTimer) { clearTimeout(_cbLpTimer); _cbLpTimer = null; } });
+            cardEl.addEventListener('touchcancel', function() { if (_cbLpTimer) { clearTimeout(_cbLpTimer); _cbLpTimer = null; } });
+          });
+
+          // Select All / Deselect All
+          var cbSelAllBtn = document.getElementById('cb-bulk-select-all');
+          if (cbSelAllBtn) {
+            cbSelAllBtn.addEventListener('click', function() {
+              var allSelected = _cbSelected.size === bs.cards.length;
+              main.querySelectorAll('.cb-selectable-card').forEach(function(cardEl) {
+                var id = cardEl.dataset.cardId;
+                if (!id) return;
+                if (allSelected) { _cbSelected.delete(id); _cbSetCardSelected(cardEl, false); }
+                else { _cbSelected.add(id); _cbSetCardSelected(cardEl, true); }
+              });
+              _cbUpdateBulkBar();
+            });
+          }
+
+          // Cancel
+          var cbCancelBtn = document.getElementById('cb-bulk-cancel');
+          if (cbCancelBtn) cbCancelBtn.addEventListener('click', _cbExitSelectMode);
+
+          // Bulk Reset
+          var cbBulkReset = document.getElementById('cb-bulk-reset');
+          if (cbBulkReset) {
+            cbBulkReset.addEventListener('click', function() {
+              if (_cbSelected.size === 0) return;
+              var ids = Array.from(_cbSelected);
+              showCustomConfirm(
+                'Reset ' + ids.length + ' Card' + (ids.length > 1 ? 's' : ''),
+                'Reset progress for ' + ids.length + ' card' + (ids.length > 1 ? 's' : '') + '? This cannot be undone.',
+                async function() {
+                  try {
+                    await Promise.all(ids.map(function(id) { return apiRequest('/cards/' + id + '/reset', { method: 'POST' }); }));
+                    showToast(ids.length + ' card' + (ids.length > 1 ? 's' : '') + ' reset', 'success');
+                    _cbExitSelectMode();
+                    bs.cards = []; await loadCards();
+                  } catch(e) { showToast(e.message || 'Reset failed', 'error'); }
+                }
+              );
+            });
+          }
+
+          // Bulk Delete
+          var cbBulkDel = document.getElementById('cb-bulk-delete');
+          if (cbBulkDel) {
+            cbBulkDel.addEventListener('click', function() {
+              if (_cbSelected.size === 0) return;
+              var ids = Array.from(_cbSelected);
+              showCustomConfirm(
+                'Delete ' + ids.length + ' Card' + (ids.length > 1 ? 's' : ''),
+                'Permanently delete ' + ids.length + ' card' + (ids.length > 1 ? 's' : '') + '? This cannot be undone.',
+                async function() {
+                  try {
+                    await Promise.all(ids.map(function(id) { return api.deleteCard(id); }));
+                    if (AppState._cardBrowser) {
+                      AppState._cardBrowser.cards = (AppState._cardBrowser.cards || []).filter(function(c) { return !ids.includes(c.id); });
+                      AppState._cardBrowser.total = Math.max(0, (AppState._cardBrowser.total || 0) - ids.length);
+                    }
+                    showToast(ids.length + ' card' + (ids.length > 1 ? 's' : '') + ' deleted', 'success');
+                    _cbExitSelectMode();
+                    bs.cards = []; await loadCards();
+                  } catch(e) { showToast(e.message || 'Delete failed', 'error'); }
+                }
+              );
             });
           }
         }
