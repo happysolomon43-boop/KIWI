@@ -10422,6 +10422,14 @@
           // the base CSS transform — this is the historical jerk trigger.
           cardEl.style.transform = END_TRANSFORM;
           anim.cancel();
+          // POINTER-EVENTS FIX: restore after animation so quickQ / edit buttons
+          // inside the back face are tappable. pointer-events: none was set at
+          // flip start to block accidental double-taps during the 600ms animation.
+          // Safe to restore here because the flashcard click-to-flip listener is
+          // only added when !t.flipped (see renderActiveStudySession), so the card
+          // body won't re-trigger a flip now that t.flipped is true.
+          cardEl.style.pointerEvents = '';
+          cardEl._kiwiFlipping = false;
           if (AppState.tempStudy) AppState.tempStudy._justFlipped = true;
           // Surgical update: toggle the flipped class and inject only the rating
           // row — the prev button and AI summary panel are untouched, eliminating
@@ -10760,7 +10768,7 @@
             <div style="font-size:var(--text-xs);color:var(--text-3);letter-spacing:0.5px;">ELAPSED</div>
           </div>
         </div>
-        <div id="_studyRatingRow" style="width:100%;max-width:600px;">${_buildRatingRowHTML(t, card)}</div>
+        <div id="_studyRatingRow">${_buildRatingRowHTML(t, card)}</div>
       </div>
     </div>
     <!-- F15: Card priority indicator -->
