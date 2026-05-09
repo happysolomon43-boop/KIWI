@@ -485,8 +485,8 @@ async findByIdFull(userId, id) {
   );
   if (!deck) return null;
   const { rows: cards } = await query(
-    'SELECT * FROM cards WHERE deck_id = $1 AND user_id = $2',
-    [id, userId]
+    'SELECT * FROM cards WHERE deck_id = $1',
+    [id]
   );
   deck.cards = cards;
   return deck;
@@ -16134,7 +16134,7 @@ if (deck.user_id && deck.user_id !== req.user.id) {
 return res.status(403).json({ error: 'You can only publish your own decks' });
 }
 const user = await db.users.findById(req.user.id);
-const cardCount = deck.cards?.length ?? deck.card_count ?? 0;
+const cardCount = deck.cards?.length || deck.card_count || 0;
 if (cardCount < 5) {
 return res.status(400).json({ error: 'Deck must have at least 5 cards to publish' });
 }
