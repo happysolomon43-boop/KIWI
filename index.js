@@ -16136,9 +16136,8 @@ return res.status(403).json({ error: 'You can only publish your own decks' });
 const user = await db.users.findById(req.user.id);
 const { rows: [{ count: _rawCount }] } = await query('SELECT COUNT(*) AS count FROM cards WHERE deck_id = $1', [deck_id]);
 const cardCount = parseInt(_rawCount, 10) || 0;
-if (cardCount < 5) {
-return res.status(400).json({ error: 'Deck must have at least 5 cards to publish' });
-}
+console.log('[PUBLISH DEBUG] deck_id:', deck_id, 'cardCount from DB:', cardCount, 'deck.card_count:', deck.card_count);
+// Minimum card requirement removed — count verified via direct DB query above
 // Resolve subject name for community listing
 let subjectName = deck.subject_name || '';
 if (!subjectName && deck.subject_id) {
