@@ -16134,7 +16134,8 @@ if (deck.user_id && deck.user_id !== req.user.id) {
 return res.status(403).json({ error: 'You can only publish your own decks' });
 }
 const user = await db.users.findById(req.user.id);
-const cardCount = deck.cards?.length || deck.card_count || 0;
+const { rows: [{ count: _rawCount }] } = await query('SELECT COUNT(*) AS count FROM cards WHERE deck_id = $1', [deck_id]);
+const cardCount = parseInt(_rawCount, 10) || 0;
 if (cardCount < 5) {
 return res.status(400).json({ error: 'Deck must have at least 5 cards to publish' });
 }
