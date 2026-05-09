@@ -5268,12 +5268,123 @@
       .toast.success { border-color: rgba(82,183,136,0.35) !important; }
 
       /* ── Active study header Prev btn: teal ── */
-      .kiwi-prev-btn {
-        color: var(--teal) !important;
-        border-color: var(--teal-border) !important;
+      /* ── Previous Card — floating pill button ─────────────────────────────── */
+      .kiwi-prev-nav {
+        position: fixed;
+        bottom: 84px;
+        left: 16px;
+        z-index: 400;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 10px 16px;
+        background: var(--surface-2);
+        border: 1px solid var(--border-2);
+        border-radius: 50px;
+        cursor: pointer;
+        color: var(--teal-bright);
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.45);
+        transition: background 0.18s, border-color 0.18s, transform 0.18s, box-shadow 0.18s;
+        animation: prevBtnSlideIn 0.22s var(--ease-spring) both;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        white-space: nowrap;
       }
-      .kiwi-prev-btn:hover {
-        background: var(--teal-soft) !important;
+      .kiwi-prev-nav:hover,
+      .kiwi-prev-nav:active {
+        background: var(--surface-3);
+        border-color: var(--teal-2);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 28px rgba(0,0,0,0.5), 0 0 0 1px rgba(45,212,191,0.15);
+      }
+      .kiwi-prev-nav:active {
+        transform: translateY(0px) scale(0.97);
+      }
+      .kiwi-prev-nav-arrow {
+        font-size: 16px;
+        line-height: 1;
+        color: var(--teal-glow);
+        flex-shrink: 0;
+      }
+      .kiwi-prev-nav-top {
+        font-size: var(--text-sm);
+        color: var(--teal-bright);
+        display: block;
+        line-height: 1.2;
+      }
+      .kiwi-prev-nav-sub {
+        font-size: var(--text-xs);
+        color: var(--text-3);
+        font-weight: 400;
+        display: block;
+        line-height: 1.2;
+      }
+      @keyframes prevBtnSlideIn {
+        from { opacity: 0; transform: translateX(-18px) translateY(4px); }
+        to   { opacity: 1; transform: translateX(0)     translateY(0);   }
+      }
+      /* ── Resume (forward) button — mirrors prev pill on the right ─────────── */
+      .kiwi-resume-nav {
+        position: fixed;
+        bottom: 84px;
+        right: 16px;
+        z-index: 400;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 10px 16px;
+        background: var(--surface-2);
+        border: 1px solid rgba(45,212,191,0.35);
+        border-radius: 50px;
+        cursor: pointer;
+        color: var(--teal-bright);
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.45), 0 0 0 1px rgba(45,212,191,0.1);
+        transition: background 0.18s, border-color 0.18s, transform 0.18s, box-shadow 0.18s;
+        animation: resumeBtnSlideIn 0.22s var(--ease-spring) both;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        white-space: nowrap;
+      }
+      .kiwi-resume-nav:hover,
+      .kiwi-resume-nav:active {
+        background: var(--surface-3);
+        border-color: var(--teal-2);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 28px rgba(0,0,0,0.5), 0 0 0 1px rgba(45,212,191,0.25);
+      }
+      .kiwi-resume-nav:active {
+        transform: translateY(0px) scale(0.97);
+      }
+      .kiwi-resume-nav-arrow {
+        font-size: 16px;
+        line-height: 1;
+        color: var(--teal-glow);
+        flex-shrink: 0;
+      }
+      .kiwi-resume-nav-top {
+        font-size: var(--text-sm);
+        color: var(--teal-bright);
+        display: block;
+        line-height: 1.2;
+      }
+      .kiwi-resume-nav-sub {
+        font-size: var(--text-xs);
+        color: var(--text-3);
+        font-weight: 400;
+        display: block;
+        line-height: 1.2;
+      }
+      @keyframes resumeBtnSlideIn {
+        from { opacity: 0; transform: translateX(18px) translateY(4px); }
+        to   { opacity: 1; transform: translateX(0)    translateY(0);   }
       }
 
       /* ── Card question shown on back face ── */
@@ -10315,7 +10426,7 @@
     <div class="study-layout${t.flipped ? ' is-flipped' : ''}" id="studyLayout">
       <div class="study-header">
         <button class="btn btn-ghost btn-icon" onclick="confirmEndStudy()" title="End session (Esc)">&#x2715;</button>
-        ${t.currentIndex > 0 ? `<button class="btn btn-ghost btn-sm kiwi-prev-btn" onclick="prevCard()" title="Go back to previous card" style="font-size:var(--text-xs);padding:3px 10px;opacity:0.75;border:1px solid var(--border);border-radius:var(--r-sm);display:flex;align-items:center;gap:4px;"><span style='font-size:14px;'>←</span> Prev</button>` : ""}
+
         <div class="study-progress-bar">
           <div class="study-progress-track"><div class="study-progress-fill" style="width:${progress}%"></div></div>
           <div style="display:flex;justify-content:space-between;font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);margin-top:4px;">
@@ -10337,6 +10448,22 @@
           ${t.currentIndex < t.queue.length - 1 ? `<button class="btn btn-ghost btn-sm" onclick="skipCard()" title="Skip card to end of queue" style="font-size:var(--text-xs);padding:3px 8px;opacity:0.65;">Skip &#x21E3;</button>` : ""}
         </div>
       </div>
+      ${t.currentIndex > 0 ? `
+      <button class="kiwi-prev-nav" onclick="prevCard()" title="Go to previous card (Arrow Left)">
+        <span class="kiwi-prev-nav-arrow">&#x2190;</span>
+        <span>
+          <span class="kiwi-prev-nav-top">Previous</span>
+          <span class="kiwi-prev-nav-sub">Card ${t.currentIndex} of ${t.queue.length}</span>
+        </span>
+      </button>` : ""}
+      ${t._viewingPrev && t._browseOriginIndex !== undefined ? `
+      <button class="kiwi-resume-nav" onclick="nextCard()" title="Resume session (Arrow Right)">
+        <span>
+          <span class="kiwi-resume-nav-top">Resume &#x2192;</span>
+          <span class="kiwi-resume-nav-sub">${t._browseOriginIndex - t.currentIndex} card${t._browseOriginIndex - t.currentIndex !== 1 ? 's' : ''} ahead</span>
+        </span>
+        <span class="kiwi-resume-nav-arrow">&#x2192;</span>
+      </button>` : ""}
       <div class="session-seed ${getSeedStage(t.seedHealth).stage}" id="focusSeed">
         <div class="seed-visual">${getSeedStage(t.seedHealth).emoji}</div>
         <div class="seed-info">
@@ -10399,6 +10526,7 @@
               <div class="flashcard-content">${renderClozeText(card.back || card.back_content || "", true)}</div>
               <div class="flashcard-stage" style="background:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]}33;color:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]};">${stageLabel}</div>
               <button class="flashcard-ai-btn" id="aiExplainBtnBack" title="AI Explanation" onclick="_kiwiAiExplain(event)">&#x2726; Explain</button>
+              <button id="quickQBtnBack" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:10px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--green-bright);z-index:2;">&#x26A1;</button>
             </div>
             <!-- Stage transition bloom effects -->
             <div class="stage-transition-bloom" id="stageBloom"></div>
@@ -10434,7 +10562,17 @@
           (() => {
             // determine whether to show rating buttons
             let _showRating = false;
-            if (t._viewingPrev) return `<div style="display:flex;justify-content:center;margin-top:12px;"><div style="padding:6px 18px;background:rgba(62,201,201,0.08);border:1px solid rgba(62,201,201,0.25);border-radius:20px;font-size:var(--text-xs);font-family:var(--font-mono);color:var(--teal);letter-spacing:1px;">✓ ALREADY REVIEWED — read only</div></div>`;
+            if (t._viewingPrev) {
+              const _stepsBack = t._browseOriginIndex !== undefined ? t._browseOriginIndex - t.currentIndex : '?';
+              return `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:12px;">
+                <div style="padding:6px 16px;background:rgba(62,201,201,0.06);border:1px solid rgba(62,201,201,0.2);border-radius:20px;font-size:var(--text-xs);font-family:var(--font-mono);color:var(--teal);letter-spacing:0.8px;">
+                  ← Browsing history · card already reviewed
+                </div>
+                <button onclick="nextCard()" style="padding:9px 22px;border:1px solid rgba(45,212,191,0.4);border-radius:50px;background:rgba(45,212,191,0.08);color:var(--teal-bright);font-size:var(--text-sm);font-weight:700;cursor:pointer;font-family:var(--font-mono);letter-spacing:0.3px;transition:background 0.15s;">
+                  Resume &#x2192;&nbsp; <span style="font-weight:400;opacity:0.7;">${_stepsBack} card${_stepsBack !== 1 ? 's' : ''} ahead</span>
+                </button>
+              </div>`;
+            }
             if (t.flipped) { _showRating = true; }
             // occlusion: show when all masks revealed
             try { const _op = JSON.parse(card.front || card.front_content || ""); if (_op && _op._type === "occlusion") { const _ms = _op.masks||[]; const _rv = t.revealedMasks||{}; _showRating = _ms.length>0 && _ms.every(_m=>_rv[_m.id]); } } catch(_e) {}
@@ -10788,7 +10926,7 @@
             _cancelled = true; genEl.remove(); _qqResumeStudyTimer();
           });
           try {
-            var resp = await apiRequest('/cards/' + card.id + '/quick-questions', { method: 'POST', body: JSON.stringify({ count: count, calcOnly: calcOnly }) });
+            var resp = await apiRequest('/cards/' + card.id + '/quick-questions', { method: 'POST', body: { count: count, calcOnly: calcOnly } });
             genEl.remove();
             if (_cancelled) return;
             if (!resp.questions || !resp.questions.length) { showToast('No questions generated. Try again.', 'error'); return; }
@@ -11051,16 +11189,32 @@
       function prevCard() {
         const t = AppState.tempStudy;
         if (!t || t.currentIndex <= 0) return;
+        // Save the origin index the first time we go back so we know where to resume to
+        if (t._browseOriginIndex === undefined) {
+          t._browseOriginIndex = t.currentIndex;
+        }
         t.currentIndex--;
         t.flipped = false;
         t.aiSummary = null;
         t.cardShownAt = Date.now();
-        // Show card in read-only reviewed mode by temporarily marking it
-        t._viewingPrev = true;
+        t._viewingPrev = true; // persists — cleared only by nextCard() or handleStudyResponse()
         renderActiveStudySession(document.getElementById("mainContent"));
-        // Auto-clear the prev-view flag after render so ratings still work normally
-        // (ratings are disabled when _viewingPrev is true — see renderActiveStudySession patch)
-        setTimeout(() => { if (t) t._viewingPrev = false; }, 0);
+      }
+
+      function nextCard() {
+        const t = AppState.tempStudy;
+        if (!t || t._browseOriginIndex === undefined) return;
+        if (t.currentIndex >= t._browseOriginIndex) return; // already back at origin
+        t.currentIndex++;
+        t.flipped = false;
+        t.aiSummary = null;
+        t.cardShownAt = Date.now();
+        // Clear browse mode when we reach the card we came from
+        if (t.currentIndex >= t._browseOriginIndex) {
+          t._viewingPrev = false;
+          t._browseOriginIndex = undefined;
+        }
+        renderActiveStudySession(document.getElementById("mainContent"));
       }
 
       async function handleStudyResponse(rating) {
@@ -11072,6 +11226,15 @@
           if (typeof _qqOpenOverlay === 'function') _qqOpenOverlay();
           return;
         }
+        // Browse-mode guard: rating from a previously-viewed card is not allowed.
+        // The user must Resume back to their actual position first.
+        if (t._viewingPrev) {
+          showToast('Use Resume → to return to your current card first', 'warning', 3000);
+          return;
+        }
+        // Clear any lingering browse state just in case
+        t._viewingPrev = false;
+        t._browseOriginIndex = undefined;
         const card = t.queue[t.currentIndex];
         if (!card) return;
         // OPTIMISTIC ADVANCE: snapshot the card, update UI immediately,
@@ -19941,18 +20104,14 @@
             if (!t.flipped) {
               if (e.key === "ArrowLeft" && t.currentIndex > 0) {
                 e.preventDefault();
-                t.currentIndex--;
-                t.aiSummary = null;
-                t.cardShownAt = Date.now();
-                renderActiveStudySession(document.getElementById("mainContent"));
+                prevCard();
                 return;
               }
-              if (e.key === "ArrowRight" && t.currentIndex < t.queue.length - 1) {
+              if (e.key === "ArrowRight") {
                 e.preventDefault();
-                t.currentIndex++;
-                t.aiSummary = null;
-                t.cardShownAt = Date.now();
-                renderActiveStudySession(document.getElementById("mainContent"));
+                if (t._browseOriginIndex !== undefined) {
+                  nextCard(); // in browse mode: go forward toward origin
+                }
                 return;
               }
             }
