@@ -16151,7 +16151,7 @@ author_id: req.user.id,
 description: description || deck.description || '',
 subject: subjectName,
 tags: tags || deck.tags || [],
-cards: cardCount,
+card_count: cardCount,
 likes: 0,
 downloads: 0,
 clone_count: 0,
@@ -19690,6 +19690,8 @@ async function runSchemaMigrations() {
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS title text`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS is_public boolean DEFAULT true`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS subject text`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS likes integer DEFAULT 0`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS downloads integer DEFAULT 0`,
     // DB-FIX: exam_questions needs card_id for SRS feedback linkage (Issue #1 fix)
     `ALTER TABLE exam_questions ADD COLUMN IF NOT EXISTS card_id text`,
     // DB-FIX: background_jobs table for job polling fallback
