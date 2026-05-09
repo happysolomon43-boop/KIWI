@@ -421,6 +421,21 @@
           transform: translateY(-2px) rotate(1deg);
         }
       }
+      @keyframes qqFloatPulse {
+        0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0px transparent); }
+        50% { transform: scale(1.06); filter: drop-shadow(0 0 8px rgba(245,158,11,0.5)); }
+      }
+      @keyframes qqGenBarAnim {
+        0%   { width: 0%; }
+        20%  { width: 38%; }
+        50%  { width: 62%; }
+        80%  { width: 80%; }
+        100% { width: 88%; }
+      }
+      @keyframes qqSlideUp {
+        from { opacity: 0; transform: translateY(40px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
       @keyframes seedCrack {
         0% {
           transform: scale(1);
@@ -10375,13 +10390,15 @@
                 return `<div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);font-size:9px;font-family:var(--font-mono);color:var(--text-4);background:var(--bg-3);border:1px solid var(--border);border-radius:20px;padding:2px 8px;letter-spacing:0.5px;">&#x23F3; due in ${label}</div>`;
               })()}
               <button class="flashcard-ai-btn" id="aiExplainBtn" title="AI Explanation" onclick="_kiwiAiExplain(event)">&#x2726; Explain</button>
+              <button id="quickQBtn" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:10px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--green-bright);z-index:2;">&#x26A1;</button>
               <button id="studyEditBtn" title="Edit this card" style="position:absolute;top:10px;right:10px;font-size:10px;background:rgba(62,201,201,0.08);border:1px solid rgba(62,201,201,0.2);border-radius:var(--r-sm);padding:3px 8px;cursor:pointer;font-family:var(--font-mono);color:var(--teal);z-index:2;">&#x270F;</button>
             </div>
             <div class="flashcard-face back">
               <span class="flashcard-front-label">Answer &middot; ${escapeHTML(card.subjectName || "")}</span>
-              <div style="font-size:var(--text-sm);color:var(--teal);opacity:0.55;border-bottom:1px solid var(--teal-border);padding-bottom:10px;margin-bottom:12px;font-style:italic;line-height:1.5;">${renderClozeText(card.front || card.front_content || "", true)}</div>
+              <div class="flashcard-back-question" style="font-size:var(--text-sm);color:var(--teal);opacity:0.55;border-bottom:1px solid var(--teal-border);padding-bottom:10px;margin-bottom:12px;font-style:italic;line-height:1.5;">${renderClozeText(card.front || card.front_content || "", true)}</div>
               <div class="flashcard-content">${renderClozeText(card.back || card.back_content || "", true)}</div>
               <div class="flashcard-stage" style="background:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]}33;color:${["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"][stage - 1]};">${stageLabel}</div>
+              <button class="flashcard-ai-btn" id="aiExplainBtnBack" title="AI Explanation" onclick="_kiwiAiExplain(event)">&#x2726; Explain</button>
             </div>
             <!-- Stage transition bloom effects -->
             <div class="stage-transition-bloom" id="stageBloom"></div>
@@ -10422,6 +10439,17 @@
             // occlusion: show when all masks revealed
             try { const _op = JSON.parse(card.front || card.front_content || ""); if (_op && _op._type === "occlusion") { const _ms = _op.masks||[]; const _rv = t.revealedMasks||{}; _showRating = _ms.length>0 && _ms.every(_m=>_rv[_m.id]); } } catch(_e) {}
             if (!_showRating) return "";
+            // ── QQ Lock: replace rating buttons while Quick Questions unsubmitted ──
+            if (AppState.quickQ && !AppState.quickQ.submitted) {
+              var _qqTotal   = (AppState.quickQ.questions || []).length;
+              var _qqDone    = Object.keys(AppState.quickQ.answers).length;
+              return `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:12px;">
+                <div style="padding:8px 16px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.25);border-radius:var(--r);font-size:11px;font-family:var(--font-mono);color:#f59e0b;letter-spacing:0.5px;text-align:center;">
+                  ⚡ Quick Questions active — submit to rate this card<br><span style="opacity:0.7;">${_qqDone}/${_qqTotal} answered</span>
+                </div>
+                <button onclick="_qqOpenOverlay()" style="padding:10px 28px;border:none;border-radius:var(--r);background:linear-gradient(135deg,rgba(245,158,11,0.15),rgba(245,158,11,0.08));border:1px solid rgba(245,158,11,0.35);color:#f59e0b;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font-mono);">Resume Questions ⚡</button>
+              </div>`;
+            }
             return `
         <div class="response-row">
           <button class="resp-btn resp-again" data-rating="1" title="Press 1">
@@ -10469,7 +10497,7 @@
         // Render LaTeX/math in flashcard content areas after innerHTML is set (Issue 02)
         const studyContainer = document.getElementById("studyLayout");
         if (studyContainer) {
-          studyContainer.querySelectorAll(".flashcard-content").forEach(el => renderMathContent(el));
+          studyContainer.querySelectorAll(".flashcard-content, .flashcard-back-question").forEach(el => renderMathContent(el));
         }
 
         // FIX: Auto-size the flashcard so long text never bleeds outside the card boundary.
@@ -10520,8 +10548,11 @@
           // If the user rates and advances before the response arrives,
           // we discard the stale result instead of painting it on the next card.
           var _targetCardId = currentCard.id;
+          // Set loading state on whichever Explain button is visible (front or back)
           var btn = document.getElementById('aiExplainBtn');
+          var btnBack = document.getElementById('aiExplainBtnBack');
           if (btn) btn.textContent = 'Loading...';
+          if (btnBack) btnBack.textContent = 'Loading...';
           try {
             var data = await api.getAISummary(_targetCardId);
             // Guard: only apply if we're still on the same card
@@ -10541,6 +10572,450 @@
             }
           }
         };
+        // ══════════════════════════════════════════════════════════════════
+        // ⚡ QUICK QUESTIONS — Full session-integrated card-scoped CBT
+        // ══════════════════════════════════════════════════════════════════
+
+        // ── State helpers ─────────────────────────────────────────────────
+        window._qqClearState = function() {
+          var qq = AppState.quickQ;
+          if (qq && qq._expireTimer) clearTimeout(qq._expireTimer);
+          AppState.quickQ = null;
+          var f = document.getElementById('_qqFloat'); if (f) f.remove();
+          var o = document.getElementById('_qqOverlay'); if (o) o.remove();
+        };
+
+        // ── Timer pause / resume ──────────────────────────────────────────
+        window._qqPauseStudyTimer = function() {
+          var t = AppState.tempStudy;
+          if (!t || t._qqPauseStart) return;
+          t._qqPauseStart = Date.now();
+          if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
+        };
+        window._qqResumeStudyTimer = function() {
+          var t = AppState.tempStudy;
+          if (!t) return;
+          if (t._qqPauseStart) {
+            t.cardShownAt = (t.cardShownAt || Date.now()) + (Date.now() - t._qqPauseStart);
+            t._qqPauseStart = null;
+          }
+          if (!t._cardTimerInterval) {
+            t._cardTimerInterval = setInterval(function() {
+              var el  = document.getElementById('cardElapsedTimer');
+              var arc = document.getElementById('cardTimerArc');
+              if (!el) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; return; }
+              var s = Math.floor((Date.now() - (t.cardShownAt || Date.now())) / 1000);
+              el.textContent = s < 60 ? s + 's' : Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
+              el.style.color = s < 15 ? 'var(--text-2)' : s < 30 ? '#f59e0b' : 'var(--red-bright)';
+              if (arc) {
+                var circ = 81.7;
+                arc.style.strokeDashoffset = String(circ * (1 - Math.min(s/30,1)));
+                arc.style.stroke = s < 15 ? 'var(--green-bright)' : s < 30 ? '#f59e0b' : 'var(--red-bright)';
+              }
+            }, 1000);
+          }
+        };
+
+        // ── Floating action button (FAB) ──────────────────────────────────
+        window._qqRenderFloat = function() {
+          var qq = AppState.quickQ;
+          var el = document.getElementById('_qqFloat');
+          if (!qq) { if (el) el.remove(); return; }
+          if (!el) {
+            el = document.createElement('div');
+            el.id = '_qqFloat';
+            document.body.appendChild(el);
+          }
+          var answered = Object.keys(qq.answers).length;
+          var total    = (qq.questions || []).length;
+          var pct      = total > 0 ? answered / total : 0;
+          var ageMs    = Date.now() - qq.generatedAt;
+          var remSec   = Math.max(0, 240 - ageMs / 1000);
+          var rimPct   = remSec / 240;
+          var R1 = 22, R2 = 11;
+          var C1 = 2*Math.PI*R1, C2 = 2*Math.PI*R2;
+          var pulse = !qq.submitted ? 'animation:qqFloatPulse 2.2s ease-in-out infinite;' : '';
+          var iconCol = qq.submitted ? 'var(--green-bright)' : '#f59e0b';
+          var bgCol   = qq.submitted ? 'rgba(82,183,136,0.13)' : 'rgba(245,158,11,0.13)';
+          var bcCol   = qq.submitted ? 'rgba(82,183,136,0.4)'  : 'rgba(245,158,11,0.4)';
+          var label   = qq.submitted
+            ? (qq.mode === 'review' ? '✓ Review' : '✓ Results')
+            : (answered + '/' + total + ' done');
+          el.innerHTML = `
+            <div id="_qqFAB" style="position:fixed;bottom:88px;right:18px;z-index:9000;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;${pulse}">
+              <div style="position:relative;width:56px;height:56px;">
+                <svg width="56" height="56" style="position:absolute;inset:0;transform:rotate(-90deg);" viewBox="0 0 56 56">
+                  <circle cx="28" cy="28" r="${R1}" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="3"/>
+                  <circle cx="28" cy="28" r="${R1}" fill="none" stroke="${rimPct<0.2?'var(--red-bright)':'rgba(255,255,255,0.15)'}" stroke-width="3"
+                    stroke-dasharray="${C1.toFixed(1)}" stroke-dashoffset="${(C1*(1-rimPct)).toFixed(1)}" stroke-linecap="round"/>
+                  <circle cx="28" cy="28" r="${R2}" fill="none" stroke="${iconCol}" stroke-width="2.5" opacity="0.85"
+                    stroke-dasharray="${C2.toFixed(1)}" stroke-dashoffset="${(C2*(1-pct)).toFixed(1)}" stroke-linecap="round"/>
+                </svg>
+                <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:${bgCol};border-radius:50%;border:1px solid ${bcCol};font-size:20px;box-shadow:0 4px 16px rgba(0,0,0,0.35);">⚡</div>
+              </div>
+              <div style="background:${bgCol};border:1px solid ${bcCol};border-radius:20px;padding:3px 10px;font-size:9px;font-family:var(--font-mono);color:${iconCol};letter-spacing:0.5px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);">${label}</div>
+            </div>`;
+          document.getElementById('_qqFAB').addEventListener('click', _qqOpenOverlay);
+          // Live countdown tick — restarts each render to avoid stacking
+          clearInterval(el._tick);
+          el._tick = setInterval(function() {
+            var qq2 = AppState.quickQ;
+            var fl2 = document.getElementById('_qqFloat');
+            if (!qq2 || !fl2) { clearInterval(el._tick); return; }
+            var age2 = (Date.now() - qq2.generatedAt) / 1000;
+            var rem2 = Math.max(0, 240 - age2);
+            // Update outer ring dashoffset
+            var outerCirc = fl2.querySelector('circle:nth-child(2)');
+            if (outerCirc) outerCirc.setAttribute('stroke-dashoffset', (C1*(1-rem2/240)).toFixed(1));
+            // Expiry — only clear if not submitted
+            if (rem2 <= 0 && !qq2.submitted) { _qqClearState(); clearInterval(el._tick); renderActiveStudySession(document.getElementById('mainContent')); }
+          }, 1000);
+        };
+
+        // ── Open / close overlay ──────────────────────────────────────────
+        window._qqOpenOverlay = function() {
+          var qq = AppState.quickQ;
+          if (!qq) return;
+          qq.overlayOpen = true;
+          _qqPauseStudyTimer();
+          // Remove any stale overlay
+          var old = document.getElementById('_qqOverlay'); if (old) old.remove();
+          var el = document.createElement('div');
+          el.id = '_qqOverlay';
+          el.style.cssText = 'position:fixed;inset:0;z-index:9400;background:var(--bg);display:flex;flex-direction:column;animation:qqSlideUp 0.22s ease both;';
+          document.body.appendChild(el);
+          _qqRenderOverlayContent(el);
+        };
+        window._qqCloseOverlay = function() {
+          var qq = AppState.quickQ;
+          var el = document.getElementById('_qqOverlay');
+          if (el) {
+            el.style.animation = 'none'; el.style.opacity = '0'; el.style.transform = 'translateY(30px)'; el.style.transition = 'opacity 0.18s,transform 0.18s';
+            setTimeout(function() { var e2 = document.getElementById('_qqOverlay'); if (e2) e2.remove(); }, 200);
+          }
+          if (qq) qq.overlayOpen = false;
+          _qqResumeStudyTimer();
+          _qqRenderFloat();
+          // Re-render study session to reflect QQ state (lock/unlock rating row)
+          setTimeout(function() { renderActiveStudySession(document.getElementById('mainContent')); }, 50);
+        };
+
+        // ── Count picker ──────────────────────────────────────────────────
+        window._kiwiQuickQ = async function(ev) {
+          if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+          var _t = AppState.tempStudy;
+          if (!_t) return;
+          var card = _t.queue[_t.currentIndex];
+          if (!card) return;
+          // If same card's QQ is still active, just reopen it
+          if (AppState.quickQ && AppState.quickQ.cardId === card.id && !AppState.quickQ.submitted) {
+            _qqOpenOverlay(); return;
+          }
+          // Count picker bottom sheet
+          var picker = document.createElement('div');
+          picker.id = '_qqPicker';
+          picker.style.cssText = 'position:fixed;inset:0;z-index:9600;display:flex;align-items:flex-end;justify-content:center;';
+          var frontPreview = (card.front || card.front_content || '').substring(0, 75);
+          picker.innerHTML = `
+            <div style="position:absolute;inset:0;background:rgba(3,13,11,0.72);backdrop-filter:blur(6px);" id="_qqPickBg"></div>
+            <div style="position:relative;z-index:1;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-xl) var(--r-xl) 0 0;padding:24px 20px 40px;width:100%;max-width:480px;box-shadow:var(--shadow-lg);animation:qqSlideUp 0.2s ease both;">
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+                <div style="width:36px;height:36px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">⚡</div>
+                <div>
+                  <div style="font-size:15px;font-weight:700;color:var(--text);">Quick Questions</div>
+                  <div style="font-size:10px;color:var(--text-4);font-family:var(--font-mono);">Card-scoped · No KS effect · Timers pause</div>
+                </div>
+              </div>
+              <div style="font-size:12px;color:var(--text-3);margin-bottom:18px;padding:9px 12px;background:var(--bg-3);border-radius:var(--r-sm);border:1px solid var(--border);line-height:1.55;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">"${escapeHTML(frontPreview)}${frontPreview.length < (card.front||card.front_content||'').length ? '…' : ''}"</div>
+              <div style="font-size:10px;color:var(--text-4);margin-bottom:10px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;">How many questions?</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px;">
+                ${[1,2,3].map(function(n){ return '<button class="_qqCountBtn" data-count="'+n+'" style="padding:20px 0;border-radius:var(--r);border:1px solid var(--border);background:var(--bg-3);color:var(--text);font-size:26px;font-weight:700;cursor:pointer;transition:border-color 0.15s,color 0.15s,background 0.15s;">'+n+'</button>'; }).join('')}
+              </div>
+              <label id="_qqCalcLabel" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-3);cursor:pointer;margin-bottom:14px;transition:border-color 0.15s,background 0.15s;">
+                <input type="checkbox" id="_qqCalcOnly" style="width:15px;height:15px;accent-color:#f59e0b;cursor:pointer;flex-shrink:0;">
+                <div>
+                  <div style="font-size:12px;font-weight:600;color:var(--text);">Calculation only</div>
+                  <div style="font-size:10px;color:var(--text-4);font-family:var(--font-mono);">Uses CALC prompt · gemini-3.1-flash-lite</div>
+                </div>
+              </label>
+              <button id="_qqPickCancel" style="width:100%;padding:10px;border:none;background:none;color:var(--text-4);font-size:12px;cursor:pointer;font-family:var(--font-mono);letter-spacing:0.5px;">Cancel — stay focused</button>
+            </div>`;
+          document.body.appendChild(picker);
+          document.getElementById('_qqPickBg').addEventListener('click', function() { picker.remove(); });
+          document.getElementById('_qqPickCancel').addEventListener('click', function() { picker.remove(); });
+          // Highlight calc label when checked
+          var calcLbl = document.getElementById('_qqCalcLabel');
+          var calcCbx = document.getElementById('_qqCalcOnly');
+          if (calcCbx && calcLbl) {
+            calcCbx.addEventListener('change', function() {
+              calcLbl.style.borderColor = calcCbx.checked ? 'rgba(245,158,11,0.5)' : 'var(--border)';
+              calcLbl.style.background  = calcCbx.checked ? 'rgba(245,158,11,0.07)'  : 'var(--bg-3)';
+            });
+          }
+          picker.querySelectorAll('._qqCountBtn').forEach(function(btn) {
+            btn.addEventListener('mouseenter', function() { btn.style.borderColor='rgba(245,158,11,0.5)'; btn.style.color='#f59e0b'; btn.style.background='rgba(245,158,11,0.08)'; });
+            btn.addEventListener('mouseleave', function() { btn.style.borderColor='var(--border)'; btn.style.color='var(--text)'; btn.style.background='var(--bg-3)'; });
+            btn.addEventListener('click', function() {
+              var count    = parseInt(btn.dataset.count);
+              var calcOnly = !!(document.getElementById('_qqCalcOnly') || {checked:false}).checked;
+              picker.remove();
+              _qqStartGeneration(card, count, calcOnly);
+            });
+          });
+        };
+
+        // ── Generation ────────────────────────────────────────────────────
+        async function _qqStartGeneration(card, count, calcOnly) {
+          calcOnly = !!calcOnly;
+          _qqClearState(); // override any old session
+          var _cancelled = false;
+          var genEl = document.createElement('div');
+          genEl.id = '_qqGenOverlay';
+          genEl.style.cssText = 'position:fixed;inset:0;z-index:9600;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(3,13,11,0.93);backdrop-filter:blur(12px);';
+          genEl.innerHTML = `
+            <div style="text-align:center;max-width:300px;padding:0 20px;">
+              <div style="font-size:38px;margin-bottom:20px;animation:seedPulse 1.3s ease-in-out infinite;">⚡</div>
+              <div style="font-family:var(--font-display);font-size:19px;font-weight:700;color:var(--text);margin-bottom:6px;">Generating ${count} question${count>1?'s':''}…</div>
+              <div style="font-size:11px;color:var(--text-4);font-family:var(--font-mono);margin-bottom:4px;">${calcOnly ? '🔢 Calculation only · gemini-3.1-flash-lite' : 'Based only on this card'}</div>
+              <div style="font-size:11px;color:var(--text-4);margin-bottom:28px;font-style:italic;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;">"${escapeHTML((card.front||card.front_content||'').substring(0,55))}…"</div>
+              <div style="width:200px;height:2px;background:var(--bg-3);border-radius:2px;overflow:hidden;margin:0 auto 28px;">
+                <div id="_qqGenBar" style="height:100%;background:linear-gradient(90deg,#f59e0b,#fcd34d);border-radius:2px;width:0%;animation:qqGenBarAnim 25s linear forwards;"></div>
+              </div>
+              <button id="_qqCancelGen" style="padding:9px 22px;border:1px solid var(--border);border-radius:var(--r);background:none;color:var(--text-3);font-size:12px;cursor:pointer;font-family:var(--font-mono);">Cancel / Forfeit</button>
+            </div>`;
+          document.body.appendChild(genEl);
+          document.getElementById('_qqCancelGen').addEventListener('click', function() {
+            _cancelled = true; genEl.remove(); _qqResumeStudyTimer();
+          });
+          try {
+            var resp = await apiRequest('/cards/' + card.id + '/quick-questions', { method: 'POST', body: JSON.stringify({ count: count, calcOnly: calcOnly }) });
+            genEl.remove();
+            if (_cancelled) return;
+            if (!resp.questions || !resp.questions.length) { showToast('No questions generated. Try again.', 'error'); return; }
+            AppState.quickQ = {
+              cardId: card.id,
+              cardFront: card.front || card.front_content || '',
+              questions: resp.questions.slice(0, count),
+              answers: {},
+              flagged: new Set(),
+              currentQIndex: 0,
+              submitted: false,
+              mode: 'answering',
+              reviewIndex: 0,
+              generatedAt: Date.now(),
+              overlayOpen: false,
+              _expireTimer: null,
+            };
+            _qqRenderFloat();
+            _qqOpenOverlay();
+          } catch(err) {
+            if (_cancelled) return;
+            var ge = document.getElementById('_qqGenOverlay'); if (ge) ge.remove();
+            showToast('Quick Questions failed: ' + (err.message || 'Unknown error'), 'error');
+          }
+        }
+
+        // ── Overlay dispatcher ────────────────────────────────────────────
+        function _qqRenderOverlayContent(el) {
+          var qq = AppState.quickQ;
+          if (!qq) { _qqCloseOverlay(); return; }
+          if (qq.mode === 'answering') _qqRenderAnswering(el, qq);
+          else if (qq.mode === 'results') _qqRenderResults(el, qq);
+          else if (qq.mode === 'review') _qqRenderReview(el, qq);
+        }
+
+        // ── Shared header builder ─────────────────────────────────────────
+        function _qqHeader(qq, rightSlot) {
+          var frontSnip = escapeHTML((qq.cardFront||'').substring(0,55));
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;gap:8px;">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+              <div style="font-size:16px;flex-shrink:0;">⚡</div>
+              <div style="min-width:0;">
+                <div style="font-size:13px;font-weight:700;color:var(--text);">Quick Questions</div>
+                <div style="font-size:10px;color:var(--text-4);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">"${frontSnip}…"</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">${rightSlot}</div>
+          </div>`;
+        }
+
+        // ── Answering mode ────────────────────────────────────────────────
+        function _qqRenderAnswering(el, qq) {
+          var q       = qq.questions[qq.currentQIndex];
+          var isFlagged = qq.flagged.has(qq.currentQIndex);
+          var chosen  = qq.answers[qq.currentQIndex];
+          var total   = qq.questions.length;
+          var answered = Object.keys(qq.answers).length;
+          var isLast  = qq.currentQIndex === total - 1;
+          var unanswered = total - answered;
+          var opts = [{id:'A',text:q.option_a},{id:'B',text:q.option_b},{id:'C',text:q.option_c},{id:'D',text:q.option_d}].filter(function(o){return o.text;});
+          var dots = qq.questions.map(function(_,i){
+            var a=qq.answers[i]!==undefined, f=qq.flagged.has(i), cur=i===qq.currentQIndex;
+            var bg=cur?'var(--green-bright)':a?'rgba(82,183,136,0.1)':f?'var(--gold-glow)':'var(--bg-3)';
+            var bc=cur?'var(--green-bright)':a?'rgba(82,183,136,0.3)':f?'rgba(212,160,23,0.4)':'var(--border)';
+            var col=cur?'var(--bg)':a?'var(--green-bright)':f?'var(--gold)':'var(--text-4)';
+            return '<div class="q-dot _qqDot'+(cur?' current':'')+(a?' answered':'')+(f?' flagged':'')+'" data-qi="'+i+'" style="background:'+bg+';border-color:'+bc+';color:'+col+';cursor:pointer;" title="Q'+(i+1)+'">'+(i+1)+'</div>';
+          }).join('');
+          var rightSlot = `
+            <span style="font-size:11px;color:var(--text-4);font-family:var(--font-mono);">Q${qq.currentQIndex+1}/${total}</span>
+            <button id="_qqFlagBtn" title="Flag" style="padding:6px 10px;border:1px solid ${isFlagged?'rgba(212,160,23,0.4)':'var(--border)'};background:${isFlagged?'var(--gold-glow)':'var(--bg-3)'};border-radius:var(--r-sm);font-size:14px;cursor:pointer;color:${isFlagged?'var(--gold)':'var(--text-3)'};">${isFlagged?'⚑':'⚐'}</button>
+            <button id="_qqForfeit" style="padding:6px 10px;border:1px solid var(--border);background:var(--bg-3);border-radius:var(--r-sm);font-size:10px;cursor:pointer;color:var(--text-4);font-family:var(--font-mono);">Forfeit</button>
+            <button id="_qqClose" style="padding:6px 12px;border:1px solid rgba(62,201,201,0.2);background:rgba(62,201,201,0.06);border-radius:var(--r-sm);font-size:10px;cursor:pointer;color:var(--teal);font-family:var(--font-mono);">↙ Study</button>`;
+          el.innerHTML = _qqHeader(qq, rightSlot) + `
+            <div style="padding:10px 16px 6px;flex-shrink:0;">
+              <div class="q-dots" style="margin-bottom:6px;">${dots}</div>
+              <div style="height:3px;background:var(--bg-3);border-radius:2px;overflow:hidden;">
+                <div id="_qqPBar" style="height:100%;background:var(--green-bright);border-radius:2px;width:${Math.round(answered/total*100)}%;transition:width 0.3s;"></div>
+              </div>
+            </div>
+            <div style="flex:1;overflow-y:auto;padding:14px 16px 8px;">
+              <div class="_qqStem" style="font-size:16px;font-weight:600;color:var(--text);line-height:1.65;margin-bottom:18px;">${escapeHTML(q.stem||q.question||'')}</div>
+              <div class="exam-options" id="_qqOpts">
+                ${opts.map(function(o){
+                  var sel = chosen === o.id;
+                  return '<div class="exam-option _qqOpt'+(sel?' selected':'')+'" data-opt="'+o.id+'"><div class="option-letter">'+o.id+'</div><div class="option-text _qqOptTxt">'+escapeHTML(o.text)+'</div></div>';
+                }).join('')}
+              </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px 32px;border-top:1px solid var(--border);gap:10px;flex-shrink:0;">
+              <button id="_qqPrev" ${qq.currentQIndex===0?'disabled':''} style="padding:10px 18px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg-3);color:var(--text-3);font-size:13px;cursor:pointer;">← Prev</button>
+              ${isLast
+                ? '<button id="_qqSubmit" style="flex:1;padding:10px 20px;border:none;border-radius:var(--r);background:var(--green);color:#000;font-weight:700;font-size:13px;cursor:pointer;'+(unanswered?'opacity:0.8;':'')+'">Submit'+(unanswered?' ('+unanswered+' left)':'')+'</button>'
+                : '<button id="_qqNext" style="flex:1;padding:10px 18px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg-3);color:var(--text-2);font-size:13px;cursor:pointer;">Next →</button>'
+              }
+            </div>`;
+          // Wire dots
+          el.querySelectorAll('._qqDot').forEach(function(d){ d.addEventListener('click',function(){ qq.currentQIndex=parseInt(d.dataset.qi); _qqRenderOverlayContent(el); }); });
+          // Wire options
+          el.querySelectorAll('._qqOpt').forEach(function(o){ o.addEventListener('click',function(){
+            qq.answers[qq.currentQIndex] = o.dataset.opt;
+            el.querySelectorAll('._qqOpt').forEach(function(x){x.classList.remove('selected');});
+            o.classList.add('selected');
+            var dot = el.querySelector('._qqDot[data-qi="'+qq.currentQIndex+'"]');
+            if (dot) { dot.classList.add('answered'); dot.style.background='rgba(82,183,136,0.1)'; dot.style.borderColor='rgba(82,183,136,0.3)'; dot.style.color='var(--green-bright)'; }
+            var pb = document.getElementById('_qqPBar'); if (pb) pb.style.width=Math.round(Object.keys(qq.answers).length/total*100)+'%';
+            var sb = document.getElementById('_qqSubmit');
+            if (sb) { var un2=total-Object.keys(qq.answers).length; sb.textContent=un2?'Submit ('+un2+' left)':'Submit'; sb.style.opacity=un2?'0.8':'1'; }
+            _qqRenderFloat();
+          }); });
+          // Wire flag
+          var fb = document.getElementById('_qqFlagBtn');
+          if (fb) fb.addEventListener('click', function(){ if(qq.flagged.has(qq.currentQIndex))qq.flagged.delete(qq.currentQIndex);else qq.flagged.add(qq.currentQIndex); _qqRenderOverlayContent(el); });
+          // Wire nav
+          var pb2 = document.getElementById('_qqPrev'); if (pb2) pb2.addEventListener('click',function(){ qq.currentQIndex--; _qqRenderOverlayContent(el); });
+          var nb = document.getElementById('_qqNext'); if (nb) nb.addEventListener('click',function(){ qq.currentQIndex++; _qqRenderOverlayContent(el); });
+          var sb2 = document.getElementById('_qqSubmit');
+          if (sb2) sb2.addEventListener('click', function(){
+            qq.submitted = true; qq.mode = 'results';
+            if (qq._expireTimer) clearTimeout(qq._expireTimer);
+            qq._expireTimer = setTimeout(function(){ _qqClearState(); }, 4*60*1000);
+            _qqRenderOverlayContent(el); _qqRenderFloat();
+            // Re-render study session to unlock rating row
+            setTimeout(function(){ renderActiveStudySession(document.getElementById('mainContent')); }, 50);
+          });
+          // Wire close / forfeit
+          var cl = document.getElementById('_qqClose'); if (cl) cl.addEventListener('click', _qqCloseOverlay);
+          var ff = document.getElementById('_qqForfeit');
+          if (ff) ff.addEventListener('click', function(){
+            _qqCloseOverlay();
+            setTimeout(function(){ _qqClearState(); renderActiveStudySession(document.getElementById('mainContent')); }, 250);
+            showToast('Quick Questions forfeited — no penalties applied', 'info', 3000);
+          });
+          // Math render
+          requestAnimationFrame(function(){
+            var s = el.querySelector('._qqStem'); if(s&&typeof renderMathContent==='function') renderMathContent(s);
+            el.querySelectorAll('._qqOptTxt').forEach(function(x){if(typeof renderMathContent==='function')renderMathContent(x);});
+          });
+        }
+
+        // ── Results mode ──────────────────────────────────────────────────
+        function _qqRenderResults(el, qq) {
+          var total = qq.questions.length;
+          var correct = 0;
+          qq.questions.forEach(function(q,i){ var c=q.correct_option||q.correctOption||q.answer; if(qq.answers[i]===c)correct++; });
+          var pct = total>0 ? Math.round(correct/total*100) : 0;
+          var grade = pct>=80?'🟢':pct>=50?'🟡':'🔴';
+          var gradeMsg = pct>=80?'Excellent work!':pct>=60?'Getting there!':pct>=40?'Keep practising':'More study needed';
+          var gradeCol = pct>=80?'var(--green-bright)':pct>=50?'#f59e0b':'var(--red-bright)';
+          var dots = qq.questions.map(function(q,i){
+            var c=q.correct_option||q.correctOption||q.answer;
+            var ok=qq.answers[i]===c, ans=qq.answers[i]!==undefined;
+            return '<div class="_qqResDot" data-qi="'+i+'" title="Q'+(i+1)+'" style="width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;border:1px solid '+(ans?ok?'rgba(82,183,136,0.4)':'rgba(193,68,14,0.4)':'var(--border)')+';background:'+(ans?ok?'rgba(82,183,136,0.12)':'rgba(193,68,14,0.1)':'var(--bg-3)')+';color:'+(ans?ok?'var(--green-bright)':'var(--red-bright)':'var(--text-4)')+';">'+(ans?(ok?'✓':'✗'):(i+1))+'</div>';
+          }).join('');
+          var rightSlot = `<button id="_qqCloseFinal" style="padding:6px 12px;border:1px solid rgba(62,201,201,0.2);background:rgba(62,201,201,0.06);border-radius:var(--r-sm);font-size:10px;cursor:pointer;color:var(--teal);font-family:var(--font-mono);">↙ Back to Study</button>`;
+          el.innerHTML = _qqHeader(qq, rightSlot) + `
+            <div style="flex:1;overflow-y:auto;padding:28px 16px 32px;display:flex;flex-direction:column;align-items:center;">
+              <div style="text-align:center;margin-bottom:28px;">
+                <div style="font-size:52px;margin-bottom:10px;">${grade}</div>
+                <div style="font-family:var(--font-display);font-size:42px;font-weight:800;color:${gradeCol};line-height:1;">${pct}%</div>
+                <div style="font-size:14px;color:var(--text-2);margin-top:6px;">${correct}/${total} correct — ${gradeMsg}</div>
+                <div style="font-size:10px;color:var(--text-4);font-family:var(--font-mono);margin-top:6px;padding:4px 12px;background:var(--bg-3);border-radius:20px;display:inline-block;">No KS or pressure-point effect</div>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:28px;">${dots}</div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+                <button id="_qqReviewBtn" style="padding:12px 22px;border:1px solid rgba(82,183,136,0.3);border-radius:var(--r);background:rgba(82,183,136,0.08);color:var(--green-bright);font-size:13px;font-weight:600;cursor:pointer;">📋 Review All Answers</button>
+                <button id="_qqDoneBtn" style="padding:12px 22px;border:none;border-radius:var(--r);background:var(--green);color:#000;font-size:13px;font-weight:700;cursor:pointer;">Done — back to study</button>
+              </div>
+            </div>`;
+          el.querySelectorAll('._qqResDot').forEach(function(d){ d.addEventListener('click',function(){ qq.mode='review'; qq.reviewIndex=parseInt(d.dataset.qi); _qqRenderOverlayContent(el); }); });
+          var rb = document.getElementById('_qqReviewBtn'); if (rb) rb.addEventListener('click',function(){ qq.mode='review'; qq.reviewIndex=0; _qqRenderOverlayContent(el); });
+          var db = document.getElementById('_qqDoneBtn'); if (db) db.addEventListener('click', _qqCloseOverlay);
+          var cb = document.getElementById('_qqCloseFinal'); if (cb) cb.addEventListener('click', _qqCloseOverlay);
+        }
+
+        // ── Review mode ───────────────────────────────────────────────────
+        function _qqRenderReview(el, qq) {
+          var qi    = qq.reviewIndex;
+          var total = qq.questions.length;
+          var q     = qq.questions[qi];
+          var correct = q.correct_option || q.correctOption || q.answer;
+          var chosen  = qq.answers[qi];
+          var isCorrect = chosen === correct;
+          var opts = [{id:'A',text:q.option_a},{id:'B',text:q.option_b},{id:'C',text:q.option_c},{id:'D',text:q.option_d}].filter(function(o){return o.text;});
+          var dots = qq.questions.map(function(rq,i){
+            var rc=rq.correct_option||rq.correctOption||rq.answer, ri=qq.answers[i]===rc, ra=qq.answers[i]!==undefined, cur=i===qi;
+            return '<div class="q-dot _qqRevDot'+(cur?' current':'')+(ra?ri?' answered':' flagged':'')+'" data-ri="'+i+'" style="cursor:pointer;'+(cur?'background:var(--green-bright);border-color:var(--green-bright);color:var(--bg);':(ra?(ri?'background:rgba(82,183,136,0.1);border-color:rgba(82,183,136,0.3);color:var(--green-bright);':'background:rgba(193,68,14,0.08);border-color:rgba(193,68,14,0.3);color:var(--red-bright);'):''))+'" title="Q'+(i+1)+'">'+(cur?'Q'+(i+1):(ra?(ri?'✓':'✗'):(i+1)))+'</div>';
+          }).join('');
+          var rightSlot = `<button id="_qqBackRes" style="padding:6px 10px;border:1px solid var(--border);background:var(--bg-3);border-radius:var(--r-sm);font-size:10px;cursor:pointer;color:var(--text-3);font-family:var(--font-mono);">← Results</button>
+            <button id="_qqCloseRev" style="padding:6px 12px;border:1px solid rgba(62,201,201,0.2);background:rgba(62,201,201,0.06);border-radius:var(--r-sm);font-size:10px;cursor:pointer;color:var(--teal);font-family:var(--font-mono);">↙ Study</button>`;
+          el.innerHTML = _qqHeader(qq, rightSlot) + `
+            <div style="padding:10px 16px 6px;flex-shrink:0;">
+              <div class="q-dots">${dots}</div>
+            </div>
+            <div style="flex:1;overflow-y:auto;padding:10px 16px 8px;">
+              <div style="font-size:10px;font-family:var(--font-mono);color:${isCorrect?'var(--green-bright)':chosen?'var(--red-bright)':'var(--text-4)'};margin-bottom:8px;letter-spacing:0.5px;">${chosen?(isCorrect?'✓ Correct':'✗ Incorrect'):'— Not answered'}</div>
+              <div class="_qqRevStem" style="font-size:15px;font-weight:600;color:var(--text);line-height:1.65;margin-bottom:16px;">${escapeHTML(q.stem||q.question||'')}</div>
+              <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
+                ${opts.map(function(o){
+                  var isCor=o.id===correct, isCho=o.id===chosen;
+                  var bg=isCor?'rgba(82,183,136,0.1)':isCho&&!isCor?'rgba(193,68,14,0.07)':'var(--bg-3)';
+                  var bc=isCor?'rgba(82,183,136,0.4)':isCho&&!isCor?'rgba(193,68,14,0.4)':'var(--border)';
+                  var col=isCor?'var(--green-bright)':isCho&&!isCor?'var(--red-bright)':'var(--text-3)';
+                  var tag=isCor?' ✓':isCho&&!isCor?' ✗':'';
+                  return '<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 13px;border-radius:var(--r);border:1px solid '+bc+';background:'+bg+';"><div style="width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-family:var(--font-mono);font-weight:700;flex-shrink:0;background:'+bc+';color:'+col+';">'+o.id+'</div><div class="_qqRevOpt" style="font-size:13px;color:'+col+';line-height:1.5;flex:1;">'+escapeHTML(o.text)+tag+'</div></div>';
+                }).join('')}
+              </div>
+              ${q.explanation?'<div style="padding:12px 14px;background:rgba(62,201,201,0.05);border:1px solid rgba(62,201,201,0.15);border-radius:var(--r);"><div style="font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:1.2px;color:var(--teal);margin-bottom:6px;">Explanation</div><div class="_qqRevExp" style="font-size:13px;color:var(--text-2);line-height:1.65;">'+escapeHTML(q.explanation)+'</div></div>':''}
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px 32px;border-top:1px solid var(--border);gap:10px;flex-shrink:0;">
+              <button id="_qqRevPrev" ${qi===0?'disabled':''} style="padding:10px 18px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg-3);color:var(--text-3);font-size:13px;cursor:pointer;">← Prev</button>
+              ${qi===total-1
+                ? '<button id="_qqRevDone" style="flex:1;padding:10px 20px;border:none;border-radius:var(--r);background:var(--green);color:#000;font-weight:700;font-size:13px;cursor:pointer;">Done ✓</button>'
+                : '<button id="_qqRevNext" style="flex:1;padding:10px 18px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg-3);color:var(--text-2);font-size:13px;cursor:pointer;">Next →</button>'
+              }
+            </div>`;
+          el.querySelectorAll('._qqRevDot').forEach(function(d){d.addEventListener('click',function(){qq.reviewIndex=parseInt(d.dataset.ri);_qqRenderOverlayContent(el);});});
+          var backRes = document.getElementById('_qqBackRes'); if(backRes) backRes.addEventListener('click',function(){qq.mode='results';_qqRenderOverlayContent(el);});
+          var clRev   = document.getElementById('_qqCloseRev'); if(clRev) clRev.addEventListener('click',_qqCloseOverlay);
+          var rp = document.getElementById('_qqRevPrev'); if(rp) rp.addEventListener('click',function(){qq.reviewIndex--;_qqRenderOverlayContent(el);});
+          var rn = document.getElementById('_qqRevNext'); if(rn) rn.addEventListener('click',function(){qq.reviewIndex++;_qqRenderOverlayContent(el);});
+          var rd = document.getElementById('_qqRevDone'); if(rd) rd.addEventListener('click',_qqCloseOverlay);
+          requestAnimationFrame(function(){
+            var s=el.querySelector('._qqRevStem'); if(s&&typeof renderMathContent==='function')renderMathContent(s);
+            el.querySelectorAll('._qqRevOpt,._qqRevExp').forEach(function(x){if(typeof renderMathContent==='function')renderMathContent(x);});
+          });
+        }
+
         // Response buttons
         document.querySelectorAll(".resp-btn").forEach((btn) => {
           btn.addEventListener("click", async () => {
@@ -10591,6 +11066,12 @@
       async function handleStudyResponse(rating) {
         const t = AppState.tempStudy;
         if (!t) return;
+        // QQ guard: must submit Quick Questions before advancing
+        if (AppState.quickQ && !AppState.quickQ.submitted) {
+          showToast('⚡ Submit your Quick Questions to continue', 'warning', 3000);
+          if (typeof _qqOpenOverlay === 'function') _qqOpenOverlay();
+          return;
+        }
         const card = t.queue[t.currentIndex];
         if (!card) return;
         // OPTIMISTIC ADVANCE: snapshot the card, update UI immediately,
@@ -11041,7 +11522,13 @@
       // On session end the count is sent to the backend which applies +1 pressure per event.
       function skipCard() {
         const t = AppState.tempStudy;
-        if (!t || !t.queue || t.currentIndex >= t.queue.length - 1) return; // nothing to skip
+        if (!t || !t.queue || t.currentIndex >= t.queue.length - 1) return;
+        // QQ guard
+        if (AppState.quickQ && !AppState.quickQ.submitted) {
+          showToast('⚡ Submit your Quick Questions to continue', 'warning', 3000);
+          if (typeof _qqOpenOverlay === 'function') _qqOpenOverlay();
+          return;
+        }
         const card = t.queue[t.currentIndex];
         t.queue.splice(t.currentIndex, 1);
         t.queue.push(card);
@@ -11062,6 +11549,8 @@
         const t = AppState.tempStudy;
         if (!t) return;
         if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
+        // Clean up Quick Questions session on study end
+        if (typeof _qqClearState === 'function') _qqClearState();
         stopFocusTracking();
         const savedTempStudy = AppState.tempStudy;
         const focusData = t.focusData || { tabAwayCount: 0, idleSeconds: 0 };
@@ -11956,7 +12445,7 @@
         navigateTo('dashboard');
       }
 
-      async function createRetryDeckFromExam() {
+      window.createRetryDeckFromExam = async function createRetryDeckFromExam() {
         const e = AppState.tempExam;
         if (!e || !e.examId) { showToast('No exam data to create retry deck', 'error'); return; }
         const btn = document.getElementById('retryDeckBtn');

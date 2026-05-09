@@ -12961,6 +12961,48 @@ res.status(500).json({ error: 'Failed to reset card', details: e.message });
 }
 });
 
+// ── POST /cards/:id/quick-questions — generate 1-3 CBT questions from a single card ──
+cardRouter.post('/:id/quick-questions', async (req, res) => {
+try {
+  const card = await db.cards.findById(req.user.id, req.params.id);
+  if (!card) return res.status(404).json({ error: 'Card not found' });
+  const count    = Math.min(3, Math.max(1, parseInt(req.body?.count) || 1));
+  const calcOnly = req.body?.calcOnly === true || req.body?.calcOnly === 'true';
+  if (checkAIRateLimit(req.user.id, 'quick_questions', 30)) {
+    return res.status(429).json({ error: 'Quick Questions rate limit reached. Please wait a moment.' });
+  }
+  const front = card.front || card.front_content || '';
+  const back  = card.back  || card.back_content  || '';
+  const cardContent = `Card Front (Question/Concept):\n${front}\n\nCard Back (Answer/Explanation):\n${back}`;
+
+  const _basePrompt = calcOnly ? CALC_CBT_PROMPT : CBT_PROMPT;
+  const _cardConstraint = calcOnly
+    ? `## CARD-SCOPED CONSTRAINT — CRITICAL\n\nYou are generating CALCULATION questions ONLY from the following flashcard. Every question must require numerical or mathematical working directly derivable from the card content. Do NOT introduce outside knowledge. Generate exactly ${count} calculation MCQ question${count > 1 ? 's' : ''}.\n\n## PRE-OUTPUT CHECKLIST`
+    : `## CARD-SCOPED CONSTRAINT — CRITICAL\n\nYou are generating questions ONLY from the following flashcard. Do NOT introduce outside knowledge. Every question must be directly answerable from the card content above. The card's front is the concept/question; the card's back is the answer/explanation. Generate exactly ${count} MCQ question${count > 1 ? 's' : ''} that test understanding of this specific card.\n\n## PRE-OUTPUT CHECKLIST`;
+
+  const prompt = _basePrompt
+    .replace('[NOTES]', cardContent)
+    .replace('[COUNT]', String(count))
+    .replace('## PRE-OUTPUT CHECKLIST', _cardConstraint);
+
+  console.log(`[KIWI QQ] generating ${count} question(s) — calcOnly=${calcOnly} — model=gemini-3.1-flash-lite-preview`);
+  const result = await geminiModel.generateContent(
+    prompt,
+    { maxOutputTokens: Math.max(4000, count * 900), thinkingConfig: { thinkingLevel: 'minimal' } },
+    { timeoutMs: 60000 }
+  );
+  const aiText = result.response.text();
+  const questions = parseCBTResponse(aiText, null, []);
+  if (!questions.length) {
+    return res.status(500).json({ error: 'Could not parse questions from AI response. Please try again.' });
+  }
+  res.json({ ok: true, count: questions.length, calcOnly, questions: questions.slice(0, count) });
+} catch (e) {
+  console.error('[KIWI QQ] quick-questions error:', e.message);
+  res.status(500).json({ error: e.message || 'Quick Questions generation failed' });
+}
+});
+
 cardRouter.get('/:id/summary', async (req, res) => {
 try {
 const card = await db.cards.findById(req.user.id, req.params.id);
