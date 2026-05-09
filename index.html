@@ -10321,6 +10321,59 @@
         }
       }
 
+      // ── Rating row builder — called by both full render and surgical flip update ──
+      // Extracted so _kiwiFlipCard can update only this section on flip without
+      // nuking the entire study layout (which causes prev button + AI panel to blink).
+      function _buildRatingRowHTML(t, card) {
+        if (t._viewingPrev) {
+          const _hist2 = t._cardHistory || [];
+          const _stepsBack = t._browseHistoryIdx !== undefined ? (_hist2.length - 1 - t._browseHistoryIdx) : 0;
+          return `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:12px;">
+            <div style="padding:6px 16px;background:rgba(62,201,201,0.06);border:1px solid rgba(62,201,201,0.2);border-radius:20px;font-size:var(--text-xs);font-family:var(--font-mono);color:var(--teal);letter-spacing:0.8px;">
+              ← Browsing history · card already reviewed
+            </div>
+            <button onclick="nextCard()" style="padding:9px 22px;border:1px solid rgba(45,212,191,0.4);border-radius:50px;background:rgba(45,212,191,0.08);color:var(--teal-bright);font-size:var(--text-sm);font-weight:700;cursor:pointer;font-family:var(--font-mono);letter-spacing:0.3px;transition:background 0.15s;">
+              Resume &#x2192;&nbsp; <span style="font-weight:400;opacity:0.7;">${_stepsBack} card${_stepsBack !== 1 ? 's' : ''} ahead</span>
+            </button>
+          </div>`;
+        }
+        let _showRating = false;
+        if (t.flipped) { _showRating = true; }
+        try { const _op = JSON.parse(card.front || card.front_content || ""); if (_op && _op._type === "occlusion") { const _ms = _op.masks||[]; const _rv = t.revealedMasks||{}; _showRating = _ms.length>0 && _ms.every(_m=>_rv[_m.id]); } } catch(_e) {}
+        if (!_showRating) return "";
+        if (AppState.quickQ && !AppState.quickQ.submitted) {
+          var _qqTotal = (AppState.quickQ.questions || []).length;
+          var _qqDone  = Object.keys(AppState.quickQ.answers).length;
+          return `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:12px;">
+            <div style="padding:8px 16px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.25);border-radius:var(--r);font-size:11px;font-family:var(--font-mono);color:#f59e0b;letter-spacing:0.5px;text-align:center;">
+              ⚡ Quick Questions active — submit to rate this card<br><span style="opacity:0.7;">${_qqDone}/${_qqTotal} answered</span>
+            </div>
+            <button onclick="_qqOpenOverlay()" style="padding:10px 28px;border:none;border-radius:var(--r);background:linear-gradient(135deg,rgba(245,158,11,0.15),rgba(245,158,11,0.08));border:1px solid rgba(245,158,11,0.35);color:#f59e0b;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font-mono);">Resume Questions ⚡</button>
+          </div>`;
+        }
+        const _doRespAnim = !!t._justFlipped;
+        if (t._justFlipped) t._justFlipped = false;
+        return `
+        <div class="response-row"${_doRespAnim ? '' : ' style="animation:none"'}>
+          <button class="resp-btn resp-again" data-rating="1" title="Press 1">
+            <span class="resp-btn-label">Again</span>
+            <span class="resp-btn-interval">${escapeHTML(card.intervalHintAgain || "&lt;1m")}</span>
+          </button>
+          <button class="resp-btn resp-hard" data-rating="2" title="Press 2">
+            <span class="resp-btn-label">Hard</span>
+            <span class="resp-btn-interval">${escapeHTML(card.intervalHintHard || "~1d")}</span>
+          </button>
+          <button class="resp-btn resp-good" data-rating="3" title="Press 3">
+            <span class="resp-btn-label">Good</span>
+            <span class="resp-btn-interval">${escapeHTML(card.intervalHintGood || "~2d")}</span>
+          </button>
+          <button class="resp-btn resp-easy" data-rating="4" title="Press 4">
+            <span class="resp-btn-label">Easy</span>
+            <span class="resp-btn-interval">${escapeHTML(card.intervalHintEasy || "~4d")}</span>
+          </button>
+        </div>`;
+      }
+
       /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
          _kiwiFlipCard(cardEl)
          Executes the card flip using the Web Animations API.
@@ -10369,16 +10422,28 @@
           // the base CSS transform — this is the historical jerk trigger.
           cardEl.style.transform = END_TRANSFORM;
           anim.cancel();
-          // Signal that this render is the direct result of a flip —
-          // the rating row animation should play exactly once here,
-          // then be suppressed on every subsequent re-render.
           if (AppState.tempStudy) AppState.tempStudy._justFlipped = true;
-          // DOM swap — the incoming .flashcard.flipped node has:
-          //   transition:none  (no CSS transition fires)
-          //   transform: rotateY(180deg) translateY(-24px)  (matches above)
-          // The old node (with committed inline style) is discarded.
-          // The new node appears at the correct position instantly.
-          renderActiveStudySession(document.getElementById('mainContent'));
+          // Surgical update: toggle the flipped class and inject only the rating
+          // row — the prev button and AI summary panel are untouched, eliminating
+          // the blink caused by a full innerHTML swap.
+          const _layout = document.getElementById('studyLayout');
+          const _ratingRow = document.getElementById('_studyRatingRow');
+          const _t = AppState.tempStudy;
+          const _card = _t && _t.queue[_t.currentIndex];
+          if (_layout && _ratingRow && _t && _card) {
+            _layout.classList.add('is-flipped');
+            _ratingRow.innerHTML = _buildRatingRowHTML(_t, _card);
+            // Re-wire rating button handlers on the freshly injected buttons
+            _ratingRow.querySelectorAll('.resp-btn').forEach(function(btn) {
+              btn.addEventListener('click', async function() {
+                await handleStudyResponse(parseInt(btn.dataset.rating));
+              });
+            });
+            _autoSizeStudyCard();
+          } else {
+            // Fallback: full re-render if surgical targets are missing
+            renderActiveStudySession(document.getElementById('mainContent'));
+          }
         };
       }
 
@@ -10695,63 +10760,7 @@
             <div style="font-size:var(--text-xs);color:var(--text-3);letter-spacing:0.5px;">ELAPSED</div>
           </div>
         </div>
-        ${
-          (() => {
-            // determine whether to show rating buttons
-            let _showRating = false;
-            if (t._viewingPrev) {
-              const _hist2 = t._cardHistory || [];
-              const _stepsBack = t._browseHistoryIdx !== undefined ? (_hist2.length - 1 - t._browseHistoryIdx) : 0;
-              return `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:12px;">
-                <div style="padding:6px 16px;background:rgba(62,201,201,0.06);border:1px solid rgba(62,201,201,0.2);border-radius:20px;font-size:var(--text-xs);font-family:var(--font-mono);color:var(--teal);letter-spacing:0.8px;">
-                  ← Browsing history · card already reviewed
-                </div>
-                <button onclick="nextCard()" style="padding:9px 22px;border:1px solid rgba(45,212,191,0.4);border-radius:50px;background:rgba(45,212,191,0.08);color:var(--teal-bright);font-size:var(--text-sm);font-weight:700;cursor:pointer;font-family:var(--font-mono);letter-spacing:0.3px;transition:background 0.15s;">
-                  Resume &#x2192;&nbsp; <span style="font-weight:400;opacity:0.7;">${_stepsBack} card${_stepsBack !== 1 ? 's' : ''} ahead</span>
-                </button>
-              </div>`;
-            }
-            if (t.flipped) { _showRating = true; }
-            // occlusion: show when all masks revealed
-            try { const _op = JSON.parse(card.front || card.front_content || ""); if (_op && _op._type === "occlusion") { const _ms = _op.masks||[]; const _rv = t.revealedMasks||{}; _showRating = _ms.length>0 && _ms.every(_m=>_rv[_m.id]); } } catch(_e) {}
-            if (!_showRating) return "";
-            // ── QQ Lock: replace rating buttons while Quick Questions unsubmitted ──
-            if (AppState.quickQ && !AppState.quickQ.submitted) {
-              var _qqTotal   = (AppState.quickQ.questions || []).length;
-              var _qqDone    = Object.keys(AppState.quickQ.answers).length;
-              return `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:12px;">
-                <div style="padding:8px 16px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.25);border-radius:var(--r);font-size:11px;font-family:var(--font-mono);color:#f59e0b;letter-spacing:0.5px;text-align:center;">
-                  ⚡ Quick Questions active — submit to rate this card<br><span style="opacity:0.7;">${_qqDone}/${_qqTotal} answered</span>
-                </div>
-                <button onclick="_qqOpenOverlay()" style="padding:10px 28px;border:none;border-radius:var(--r);background:linear-gradient(135deg,rgba(245,158,11,0.15),rgba(245,158,11,0.08));border:1px solid rgba(245,158,11,0.35);color:#f59e0b;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font-mono);">Resume Questions ⚡</button>
-              </div>`;
-            }
-            // Only play the rise animation on the genuine flip, not on every
-            // subsequent re-render (timer updates, AI explain, QQ events, etc.)
-            // _justFlipped is set by _kiwiFlipCard and consumed exactly once here.
-            const _doRespAnim = !!t._justFlipped;
-            if (t._justFlipped) t._justFlipped = false;
-            return `
-        <div class="response-row"${_doRespAnim ? '' : ' style="animation:none"'}>
-          <button class="resp-btn resp-again" data-rating="1" title="Press 1">
-            <span class="resp-btn-label">Again</span>
-            <span class="resp-btn-interval">${escapeHTML(card.intervalHintAgain || "&lt;1m")}</span>
-          </button>
-          <button class="resp-btn resp-hard" data-rating="2" title="Press 2">
-            <span class="resp-btn-label">Hard</span>
-            <span class="resp-btn-interval">${escapeHTML(card.intervalHintHard || "~1d")}</span>
-          </button>
-          <button class="resp-btn resp-good" data-rating="3" title="Press 3">
-            <span class="resp-btn-label">Good</span>
-            <span class="resp-btn-interval">${escapeHTML(card.intervalHintGood || "~2d")}</span>
-          </button>
-          <button class="resp-btn resp-easy" data-rating="4" title="Press 4">
-            <span class="resp-btn-label">Easy</span>
-            <span class="resp-btn-interval">${escapeHTML(card.intervalHintEasy || "~4d")}</span>
-          </button>
-        </div>`;
-          })()
-        }
+        <div id="_studyRatingRow">${_buildRatingRowHTML(t, card)}</div>
       </div>
     </div>
     <!-- F15: Card priority indicator -->
@@ -11357,7 +11366,7 @@
           var qi    = qq.reviewIndex;
           var total = qq.questions.length;
           var q     = qq.questions[qi];
-          var correct = q.correct_option || q.correctOption || q.answer;
+          var correct = q.correct_answer || q.correct_option || q.correctOption || q.answer;
           var chosen  = qq.answers[qi];
           var isCorrect = chosen === correct;
           var opts = [{id:'A',text:q.option_a},{id:'B',text:q.option_b},{id:'C',text:q.option_c},{id:'D',text:q.option_d}].filter(function(o){return o.text;});
