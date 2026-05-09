@@ -19689,6 +19689,7 @@ async function runSchemaMigrations() {
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS description text`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS title text`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS is_public boolean DEFAULT true`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS subject text`,
     // DB-FIX: exam_questions needs card_id for SRS feedback linkage (Issue #1 fix)
     `ALTER TABLE exam_questions ADD COLUMN IF NOT EXISTS card_id text`,
     // DB-FIX: background_jobs table for job polling fallback
