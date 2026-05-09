@@ -19443,6 +19443,76 @@ async function runSchemaMigrations() {
       acquired_at timestamptz,
       updated_at timestamptz DEFAULT NOW()
     )`,
+    // ── Missing tables (health-check gap fix) ────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS mastery_clusters (
+      id text PRIMARY KEY,
+      goal_id text,
+      user_id text,
+      name text,
+      card_ids jsonb DEFAULT '[]',
+      cluster_ks numeric DEFAULT 0,
+      cluster_status text DEFAULT 'WEAK',
+      identified_at timestamptz DEFAULT NOW(),
+      last_ks_update timestamptz DEFAULT NOW(),
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS bubble_sessions (
+      id text PRIMARY KEY,
+      bubble_id text,
+      user_id text,
+      session_id text,
+      cards_reviewed integer DEFAULT 0,
+      ks_gain numeric DEFAULT 0,
+      duration_seconds integer DEFAULT 0,
+      completed boolean DEFAULT false,
+      completed_at timestamptz,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS biome_zones (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      zone_name text,
+      ks_score numeric DEFAULT 0,
+      pressure_score numeric DEFAULT 0,
+      state_class text DEFAULT 'zone-growing',
+      drought_days integer DEFAULT 0,
+      state_distribution jsonb DEFAULT '{}',
+      last_updated timestamptz DEFAULT NOW(),
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS biome_zone_descriptions (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      zone_name text,
+      description text,
+      generated_at timestamptz DEFAULT NOW(),
+      expires_at timestamptz DEFAULT (NOW() + INTERVAL '24 hours'),
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS onboarding_state (
+      id text PRIMARY KEY,
+      user_id text UNIQUE,
+      completed_steps jsonb DEFAULT '[]',
+      current_step text DEFAULT 'welcome',
+      completed boolean DEFAULT false,
+      completed_at timestamptz,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS notifications (
+      id text PRIMARY KEY,
+      user_id text,
+      type text,
+      title text,
+      body text,
+      data jsonb DEFAULT '{}',
+      read boolean DEFAULT false,
+      sent_at timestamptz,
+      created_at timestamptz DEFAULT NOW()
+    )`,
   ];
   for (const sql of createTables) {
     try {
