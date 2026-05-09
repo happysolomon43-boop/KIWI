@@ -4353,13 +4353,13 @@
           gap: 6px;
         }
         .resp-btn {
-          padding: 10px 6px;
+          padding: 14px 8px;
         }
         .resp-btn-label {
-          font-size: 11px;
+          font-size: 12px;
         }
         .resp-btn-interval {
-          font-size: 9px;
+          font-size: 10px;
         }
         .biome-zone {
           padding: 16px;
@@ -4479,11 +4479,11 @@
           font-size: 12px;
         }
         .resp-btn {
-          padding: 8px 4px;
-          border-radius: var(--r-sm);
+          padding: 14px 8px;
+          border-radius: var(--r);
         }
         .resp-btn-label {
-          font-size: 10px;
+          font-size: 12px;
         }
         .session-stats-bar {
           gap: 12px;
@@ -10916,6 +10916,25 @@
           }
         };
 
+        // ── Page Visibility: pause study card timer when tab is backgrounded ──
+        document.addEventListener('visibilitychange', function() {
+          var t = AppState.tempStudy;
+          if (!t) return;
+          if (document.hidden) {
+            // Tab went background — pause the per-card elapsed timer
+            if (!t._qqPauseStart) {
+              t._qqPauseStart = Date.now();
+              if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
+            }
+          } else {
+            // Tab came back — resume only if QQ overlay is NOT open
+            var qq = AppState.quickQ;
+            if (!qq || !qq.overlayOpen) {
+              _qqResumeStudyTimer();
+            }
+          }
+        });
+
         // ── Floating action button (FAB) ──────────────────────────────────
         window._qqRenderFloat = function() {
           var qq = AppState.quickQ;
@@ -10929,7 +10948,8 @@
           var answered = Object.keys(qq.answers).length;
           var total    = (qq.questions || []).length;
           var pct      = total > 0 ? answered / total : 0;
-          var ageMs    = Date.now() - qq.generatedAt;
+          var pausedMs = (qq._totalPausedMs || 0) + (qq._pauseStart ? (Date.now() - qq._pauseStart) : 0);
+          var ageMs    = Date.now() - qq.generatedAt - pausedMs;
           var remSec   = Math.max(0, 240 - ageMs / 1000);
           var rimPct   = remSec / 240;
           var R1 = 22, R2 = 11;
@@ -10981,7 +11001,7 @@
           }
           function _fabDragMove(clientX, clientY) {
             var dx = clientX - _dragStartX, dy = clientY - _dragStartY;
-            if (!fab._dragging && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) fab._dragging = true;
+            if (!fab._dragging && (Math.abs(dx) > 14 || Math.abs(dy) > 14)) fab._dragging = true;
             if (!fab._dragging) return;
             fab.style.position = 'fixed';
             fab.style.left = (_fabStartX + dx) + 'px';
@@ -10997,6 +11017,7 @@
           function _fabDragEnd(clientX, clientY) {
             if (cancelZone) cancelZone.style.display = 'none';
             if (!fab._dragging) { fab._dragging = false; return; }
+            fab._wasDragging = true;
             fab._dragging = false;
             var overCancel = clientY > window.innerHeight - 90;
             if (overCancel) {
@@ -11031,6 +11052,13 @@
           }, { passive: true });
           fab.addEventListener('touchend', function(e) {
             var t = e.changedTouches[0]; _fabDragEnd(t.clientX, t.clientY);
+            if (fab._dragging === false && _dragStartX !== undefined) {
+              // drag was just resolved — prevent the ghost click the browser fires
+            }
+            // Always prevent default on touchend so the 300ms click delay and ghost
+            // click don't fire after a drag gesture. The click listener guards with
+            // fab._dragging anyway, but this is belt-and-suspenders for mobile.
+            if (fab._wasDragging) { e.preventDefault(); fab._wasDragging = false; }
           });
           // Mouse
           fab.addEventListener('mousedown', function(e) { _fabDragStart(e.clientX, e.clientY); });
@@ -11052,7 +11080,10 @@
             if (!qq2 || !fl2) { clearInterval(el._tick); return; }
             // ── EXAM PAGE: pause timer visually (do NOT count down) ──
             if (AppState.currentPage === 'exam') return;
-            var age2 = (Date.now() - qq2.generatedAt) / 1000;
+            // ── OVERLAY OPEN: pause countdown while user is answering ──
+            if (qq2.overlayOpen) return;
+            var pausedMs = (qq2._totalPausedMs || 0);
+            var age2 = (Date.now() - qq2.generatedAt - pausedMs) / 1000;
             var rem2 = Math.max(0, 240 - age2);
             // Update outer ring dashoffset
             var outerCirc = fl2.querySelector('circle:nth-child(2)');
@@ -11067,6 +11098,8 @@
           var qq = AppState.quickQ;
           if (!qq) return;
           qq.overlayOpen = true;
+          // Pause the 4-min countdown while the user is actively viewing the overlay
+          if (!qq._pauseStart) qq._pauseStart = Date.now();
           _qqPauseStudyTimer();
           // Remove any stale overlay
           var old = document.getElementById('_qqOverlay'); if (old) old.remove();
@@ -11079,6 +11112,11 @@
         window._qqCloseOverlay = function() {
           var qq = AppState.quickQ;
           var el = document.getElementById('_qqOverlay');
+          // Accumulate paused time so the 4-min countdown only ticks while minimised
+          if (qq && qq._pauseStart) {
+            qq._totalPausedMs = (qq._totalPausedMs || 0) + (Date.now() - qq._pauseStart);
+            qq._pauseStart = null;
+          }
           if (el) {
             el.style.animation = 'none'; el.style.opacity = '0'; el.style.transform = 'translateY(30px)'; el.style.transition = 'opacity 0.18s,transform 0.18s';
             setTimeout(function() { var e2 = document.getElementById('_qqOverlay'); if (e2) e2.remove(); }, 200);
@@ -11338,13 +11376,13 @@
         function _qqRenderResults(el, qq) {
           var total = qq.questions.length;
           var correct = 0;
-          qq.questions.forEach(function(q,i){ var c=q.correct_option||q.correctOption||q.answer; if(qq.answers[i]===c)correct++; });
+          qq.questions.forEach(function(q,i){ var c=q.correct_answer||q.correct_option||q.correctOption||q.answer; if(qq.answers[i]===c)correct++; });
           var pct = total>0 ? Math.round(correct/total*100) : 0;
           var grade = pct>=80?'🟢':pct>=50?'🟡':'🔴';
           var gradeMsg = pct>=80?'Excellent work!':pct>=60?'Getting there!':pct>=40?'Keep practising':'More study needed';
           var gradeCol = pct>=80?'var(--green-bright)':pct>=50?'#f59e0b':'var(--red-bright)';
           var dots = qq.questions.map(function(q,i){
-            var c=q.correct_option||q.correctOption||q.answer;
+            var c=q.correct_answer||q.correct_option||q.correctOption||q.answer;
             var ok=qq.answers[i]===c, ans=qq.answers[i]!==undefined;
             return '<div class="_qqResDot" data-qi="'+i+'" title="Q'+(i+1)+'" style="width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;border:1px solid '+(ans?ok?'rgba(82,183,136,0.4)':'rgba(193,68,14,0.4)':'var(--border)')+';background:'+(ans?ok?'rgba(82,183,136,0.12)':'rgba(193,68,14,0.1)':'var(--bg-3)')+';color:'+(ans?ok?'var(--green-bright)':'var(--red-bright)':'var(--text-4)')+';">'+(ans?(ok?'✓':'✗'):(i+1))+'</div>';
           }).join('');
@@ -11379,7 +11417,7 @@
           var isCorrect = chosen === correct;
           var opts = [{id:'A',text:q.option_a},{id:'B',text:q.option_b},{id:'C',text:q.option_c},{id:'D',text:q.option_d}].filter(function(o){return o.text;});
           var dots = qq.questions.map(function(rq,i){
-            var rc=rq.correct_option||rq.correctOption||rq.answer, ri=qq.answers[i]===rc, ra=qq.answers[i]!==undefined, cur=i===qi;
+            var rc=rq.correct_answer||rq.correct_option||rq.correctOption||rq.answer, ri=qq.answers[i]===rc, ra=qq.answers[i]!==undefined, cur=i===qi;
             return '<div class="q-dot _qqRevDot'+(cur?' current':'')+(ra?ri?' answered':' flagged':'')+'" data-ri="'+i+'" style="cursor:pointer;'+(cur?'background:var(--green-bright);border-color:var(--green-bright);color:var(--bg);':(ra?(ri?'background:rgba(82,183,136,0.1);border-color:rgba(82,183,136,0.3);color:var(--green-bright);':'background:rgba(193,68,14,0.08);border-color:rgba(193,68,14,0.3);color:var(--red-bright);'):''))+'" title="Q'+(i+1)+'">'+(cur?'Q'+(i+1):(ra?(ri?'✓':'✗'):(i+1)))+'</div>';
           }).join('');
           var rightSlot = `<button id="_qqBackRes" style="padding:6px 10px;border:1px solid var(--border);background:var(--bg-3);border-radius:var(--r-sm);font-size:10px;cursor:pointer;color:var(--text-3);font-family:var(--font-mono);">← Results</button>

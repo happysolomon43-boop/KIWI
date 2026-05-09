@@ -2018,13 +2018,17 @@ function fsrsStabilityAfterLapse(D, S, R) {
 }
 
 function fsrsRetrievability(daysSinceReview, S) {
+  // FSRS exponential forgetting curve: R(t,S) = 0.9^(t/S)
+  // At t=S days R=0.90 (target). Replaces the power-law approximation which
+  // decayed too slowly, causing SLIPPING and weight modulation to fire ~56%
+  // later than intended and miscalibrating stability growth via incorrect R.
   if (!S || S <= 0 || !daysSinceReview || daysSinceReview <= 0) return 1;
-  return Math.pow(1 + daysSinceReview / (9 * S), -1);
+  return Math.pow(0.9, daysSinceReview / S);
 }
 
 function fsrsInterval(S, targetRetention) {
-  // I = 9 * S * (R_target^-1 - 1)
-  return Math.max(1, Math.round(9 * S * (Math.pow(targetRetention, -1) - 1)));
+  // Exact inverse of exponential R: I = S × ln(R_target) / ln(0.9)
+  return Math.max(1, Math.round(S * Math.log(targetRetention) / Math.log(0.9)));
 }
 
 // Bootstrap FSRS state from existing SM-2 fields for cards that pre-date FSRS.
@@ -2067,6 +2071,30 @@ function computeStageFromStability(S, repetitionCount) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── HYBRID: computeStageHybrid — FSRS stability + SM-2 rep dual gate ─────────
+// Stage advancement requires BOTH gates: memory strength (FSRS stability S) AND
+// behavioural confirmation (repetition_count). In practice, natural FSRS
+// progression accumulates reps in parallel with S, so the rep gate rarely
+// blocks honest reviews — it only prevents a single "Easy" click from leaping
+// to stage 4 without behavioural confirmation.
+//
+// Rep thresholds (calibrated to natural FSRS progression):
+//   Stage 5: S ≥ 90  AND rep ≥ 5   (very long-term + confirmed mastery)
+//   Stage 4: S ≥ 21  AND rep ≥ 3   (strong memory + confirmed several times)
+//   Stage 3: S ≥ 7   AND rep ≥ 2   (meaningful stability + confirmed twice)
+//   Stage 2: S ≥ 1   AND rep ≥ 1   (any real stability + first confirmation)
+//   Stage 1: everything else
+function computeStageHybrid(S, repetitionCount) {
+  if (!repetitionCount || repetitionCount === 0) return 1;
+  if (!S || S < 0.1) return 1;
+  if (S >= 90 && repetitionCount >= 5) return 5;
+  if (S >= 21 && repetitionCount >= 3) return 4;
+  if (S >= 7  && repetitionCount >= 2) return 3;
+  if (S >= 1  && repetitionCount >= 1) return 2;
+  return 1;
+}
+
 
 function calculateNextReview(card, response, mode = 'normal', responseTimeMs = null) {
 const mi              = STUDY_MODE_INTERVALS[mode] || STUDY_MODE_INTERVALS.normal;
@@ -2122,7 +2150,7 @@ if (isLearning) {
   } else {
     repetition_count = (repetition_count || 0) + 1;
     interval_days    = 1;
-    stage            = computeStageFromStability(newS, repetition_count);
+    stage            = computeStageHybrid(newS, repetition_count);
     if (response === 'hard') {
       nextReviewAt = new Date(Date.now() + mi.hard_ms);
     } else if (response === 'good') {
@@ -2165,7 +2193,7 @@ if (isLearning) {
     interval_days    = fsrsInterval(newS, targetRetention);
   }
 
-  stage        = computeStageFromStability(newS, repetition_count);
+  stage        = computeStageHybrid(newS, repetition_count);
   nextReviewAt = new Date(Date.now() + interval_days * 24 * 60 * 60 * 1000);
 }
 
@@ -2181,9 +2209,10 @@ return {
 };
 }
 
-// computeStage — legacy SM-2 stage computation kept for backward compatibility.
-// The scheduling core now uses computeStageFromStability (added above).
-// Do not remove: may be referenced by analytics or external tooling.
+// computeStage — DEPRECATED. Legacy SM-2 stage computation kept for backward
+// compatibility only (analytics, external tooling, old card migration reads).
+// Scheduling now uses computeStageHybrid (S + rep dual-gate) since hybrid rollout.
+// DO NOT use for new scheduling logic — see computeStageHybrid above.
 function computeStage(repetitions, interval) {
 if (repetitions === 0) return 1;
 if (interval <= 1) return 2;
@@ -6325,6 +6354,18 @@ return { state: CARD_STATES.AVOIDED, stage, verified: false };
 }
 }
 }
+// HYBRID CHANGE 5: FSRS early-warning SLIPPING — predictive signal.
+// Fires for review-phase cards (stage >= 3) whose FSRS retrievability has
+// dropped below 0.40. Memory is critically weak even if recent reviews went
+// well (lucky streak). This is a predictive check; the behavioural SLIPPING
+// below is reactive. Intentionally precedes the behavioural check.
+if (stage >= 3 && card.fsrs_stability && card.last_reviewed_at) {
+const _fsrsElapsed = daysSince(card.last_reviewed_at);
+const _fsrsR = fsrsRetrievability(_fsrsElapsed, card.fsrs_stability);
+if (_fsrsR < 0.40) {
+return { state: CARD_STATES.SLIPPING, stage, verified: false };
+}
+}
 // SLIPPING: early-warning state — last 2 responses both Again/Hard.
 // Fires with as few as 2 reviews. Lower severity than STUCK (+1 pressure).
 // AVOIDED takes priority: this check only reaches here if not overdue enough for AVOIDED.
@@ -6588,7 +6629,7 @@ return 3.0;
 function computeEffectiveWeight(cardState, card) {
 const { stage, verified } = cardState;
 const isFragile = cardState.state === CARD_STATES.FRAGILE;
-const isGhost = cardState.state === CARD_STATES.GHOST;
+const isGhost   = cardState.state === CARD_STATES.GHOST;
 // Issue-2 FIX: Pristine SEEDLINGs (stage=1, never reviewed, no repetitions)
 // contribute weight=0 instead of weight=1. This prevents fresh AI imports from
 // flooring KS at 20 and satisfies spec Principle 3: "Importing SEEDLINGs
@@ -6599,10 +6640,20 @@ const isPristineSeedling = stage === 1 &&
   !verified &&
   (card.repetition_count === 0 || card.repetition_count == null);
 if (isPristineSeedling) return 0;
-const baseWeight = getBaseWeight(stage, verified, isFragile);
+const baseWeight      = getBaseWeight(stage, verified, isFragile);
 const daysSinceReview = daysSince(card.last_reviewed_at);
 if (isGhost || (stage === 5 && daysSinceReview >= 60)) {
-return applyGhostDecay(baseWeight, daysSinceReview, verified, isGhost);
+  return applyGhostDecay(baseWeight, daysSinceReview, verified, isGhost);
+}
+// HYBRID CHANGE 4: FSRS retrievability modulation for review-phase cards (stage >= 3).
+// R(t) in [0.6, 1.0] scales the base weight continuously as memory fades between
+// reviews. Cards at full health (R ≈ 1.0) get full stage weight; degrading cards
+// lose weight proportionally — not just at the ghost threshold. Learning cards
+// (stage 1-2) are unmodulated because their memory hasn't stabilised yet.
+if (stage >= 3 && card.fsrs_stability && card.last_reviewed_at) {
+  const R       = fsrsRetrievability(daysSinceReview, card.fsrs_stability);
+  const rFactor = Math.max(0.6, Math.min(1.0, R));
+  return parseFloat((baseWeight * rFactor).toFixed(4));
 }
 return baseWeight;
 }
@@ -13990,6 +14041,39 @@ const prevStage = card.stage;
 const userStats = await db.userStats.get(req.user.id);
 const mode = userStats?.study_mode || 'normal';
 const nextReview = calculateNextReview(card, response, mode, response_time_ms);
+// HYBRID CHANGE 6: Wire wrapIntervalWithUrgency — previously dead code.
+// Applies deadline interval compression when the card belongs to an active
+// goal that has an exam phase (HARDENING caps at 5d, RESCUE caps at 1d, etc).
+// Only review-phase cards (stage >= 3) with interval > 1 day are compressed.
+// FSRS stability is NEVER modified — only interval_days + next_review_at.
+// Non-fatal: urgency failure must never break the card review response.
+try {
+  if ((nextReview.stage || 1) >= 3 && nextReview.interval_days > 1) {
+    const _activeGoals = await db.masteryGoals.findActive(req.user.id);
+    const _matchGoal   = _activeGoals.find(
+      (g) => Array.isArray(g.card_ids) && g.card_ids.includes(cardId)
+    );
+    if (_matchGoal && _matchGoal.phase) {
+      const _stateDocs = await db.cardStates
+        .findByCards(req.user.id, [cardId])
+        .catch(() => []);
+      const _stateDoc  = _stateDocs.find((d) => d.card_id === cardId) || null;
+      const _wrapped   = wrapIntervalWithUrgency(
+        nextReview.interval_days,
+        _stateDoc,
+        _matchGoal.phase
+      );
+      if (_wrapped < nextReview.interval_days) {
+        nextReview.interval_days  = _wrapped;
+        nextReview.next_review_at = new Date(
+          Date.now() + _wrapped * 24 * 60 * 60 * 1000
+        );
+      }
+    }
+  }
+} catch (_urgencyErr) {
+  console.error('[KIWI] urgency wrap failed:', _urgencyErr.message);
+}
 let xpEarned = 0;
 if (response === 'good') xpEarned = 5;
 if (response === 'easy') xpEarned = 8;
@@ -14495,19 +14579,17 @@ for (const d of decks) {
   const cards = await db.cards.findByDeck(req.user.id, d.id);
   allCards.push(...cards);
 }
-// Ebbinghaus forgetting curve: R(t) = e^(-t/S) × 100
-// SRS stage → stability in days (approximate SM-2 style)
-const stageStability = { 0: 1, 1: 2, 2: 4, 3: 8, 4: 16, 5: 32 };
+// FSRS forgetting curve projection — uses real fsrs_stability per card.
+// Cards with no stability yet return R=1 via the guard in fsrsRetrievability.
 const today = new Date();
 const snapshots = [0, 1, 3, 7, 14, 30].map(days => {
   const futDate = new Date(today);
   futDate.setDate(today.getDate() + days);
   let sum = 0;
   allCards.forEach(card => {
-    const S = stageStability[card.stage || 0] || 1;
     const lastRev = card.last_reviewed_at ? new Date(card.last_reviewed_at) : today;
     const t = Math.max(0, (futDate - lastRev) / 86400000); // days
-    sum += Math.min(100, Math.max(0, Math.exp(-t / S) * 100));
+    sum += Math.min(100, Math.max(0, fsrsRetrievability(t, card.fsrs_stability) * 100));
   });
   const avg = allCards.length > 0 ? sum / allCards.length : 0;
   return { day: days, retention: Math.round(avg * 10) / 10 };
