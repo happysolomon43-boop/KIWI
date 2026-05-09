@@ -1456,10 +1456,6 @@
         display: flex;
         flex-direction: column;
         background: var(--bg);
-        /* PERF FIX: Always reserve button space so card never jumps on flip.
-           Previously padding-bottom:116px was added only on .is-flipped,
-           which shifted the flex-center axis upward on every re-render. */
-        padding-bottom: 140px;
       }
       .study-header {
         display: flex;
@@ -1828,7 +1824,7 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: 12px 8px;
+        padding: 20px 16px;
         border-radius: var(--r);
         border: 1px solid;
         cursor: pointer;
@@ -1844,11 +1840,11 @@
         transform: scale(0.96) translateY(0);
       }
       .resp-btn-label {
-        font-size: 12px;
+        font-size: 15px;
         font-weight: 600;
       }
       .resp-btn-interval {
-        font-size: 10px;
+        font-size: 12px;
         opacity: 0.6;
         font-family: var(--font-mono);
         margin-top: 2px;
@@ -4350,16 +4346,16 @@
           font-size: 10px;
         }
         .response-row {
-          gap: 6px;
+          gap: 8px;
         }
         .resp-btn {
-          padding: 14px 8px;
+          padding: 20px 12px;
         }
         .resp-btn-label {
-          font-size: 12px;
+          font-size: 15px;
         }
         .resp-btn-interval {
-          font-size: 10px;
+          font-size: 12px;
         }
         .biome-zone {
           padding: 16px;
@@ -4479,11 +4475,11 @@
           font-size: 12px;
         }
         .resp-btn {
-          padding: 14px 8px;
+          padding: 18px 10px;
           border-radius: var(--r);
         }
         .resp-btn-label {
-          font-size: 12px;
+          font-size: 14px;
         }
         .session-stats-bar {
           gap: 12px;
@@ -4662,8 +4658,8 @@
           padding: 16px;
         }
         .resp-btn {
-          padding: 14px 8px;
-          min-height: 64px;
+          padding: 22px 16px;
+          min-height: 88px;
         }
         .task-item {
           padding: 16px;
@@ -5243,6 +5239,10 @@
       }
 
       /* ── Response buttons: teal "Good" highlight ── */
+      #_studyRatingRow {
+        width: 100%;
+        min-height: 152px; /* Reserve button-row space pre-flip so card never jumps */
+      }
       .resp-btn.resp-good:hover {
         border-color: var(--teal) !important;
         color: var(--teal) !important;
@@ -10563,10 +10563,10 @@
           e.preventDefault(); // prevent scroll hijack while dragging
           var t0 = e.touches[0];
           _start(t0.clientX, t0.clientY);
-          function onMove(e2) { e2.preventDefault(); var t1 = e2.touches[0]; _move(t1.clientX, t1.clientY); }
-          function onEnd(e2)  { _end(); btn.removeEventListener('touchmove', onMove); btn.removeEventListener('touchend', onEnd); }
-          btn.addEventListener('touchmove', onMove, { passive: false });
-          btn.addEventListener('touchend', onEnd);
+          function onMove(e2) { e2.preventDefault(); var t1 = e2.touches[0]; if (t1) _move(t1.clientX, t1.clientY); }
+          function onEnd()    { _end(); document.removeEventListener('touchmove', onMove); document.removeEventListener('touchend', onEnd); }
+          document.addEventListener('touchmove', onMove, { passive: false });
+          document.addEventListener('touchend', onEnd);
         }, { passive: false });
 
         // Prevent the onclick from firing after a drag gesture
