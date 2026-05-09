@@ -10966,9 +10966,12 @@
               </div>
               <label id="_qqCalcLabel" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-3);cursor:pointer;margin-bottom:14px;transition:border-color 0.15s,background 0.15s;">
                 <input type="checkbox" id="_qqCalcOnly" style="width:15px;height:15px;accent-color:#f59e0b;cursor:pointer;flex-shrink:0;">
-                <div>
-                  <div style="font-size:12px;font-weight:600;color:var(--text);">Calculation only</div>
-                  <div style="font-size:10px;color:var(--text-4);font-family:var(--font-mono);">Uses CALC prompt · gemini-3.1-flash-lite</div>
+                <div style="flex:1;">
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <div style="font-size:12px;font-weight:600;color:var(--text);">Calculation only</div>
+                    <div id="_qqCalcBadge" style="display:none;font-size:8px;font-family:var(--font-mono);font-weight:700;letter-spacing:0.5px;padding:1px 6px;border-radius:20px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.35);color:#f59e0b;">RECOMMENDED</div>
+                  </div>
+                  <div id="_qqCalcSub" style="font-size:10px;color:var(--text-4);font-family:var(--font-mono);">Uses CALC prompt · gemini-3.1-flash-lite</div>
                 </div>
               </label>
               <button id="_qqPickCancel" style="width:100%;padding:10px;border:none;background:none;color:var(--text-4);font-size:12px;cursor:pointer;font-family:var(--font-mono);letter-spacing:0.5px;">Cancel — stay focused</button>
@@ -10985,6 +10988,19 @@
               calcLbl.style.background  = calcCbx.checked ? 'rgba(245,158,11,0.07)'  : 'var(--bg-3)';
             });
           }
+          // ── Formula detection — show RECOMMENDED badge, no auto-check ──────────
+          (function() {
+            var cardText = ((card.front || card.front_content || '') + ' ' + (card.back || card.back_content || ''));
+            var hasFormula = /[=÷×√∫∑∆λθωπ]|[a-zA-Z]\s*=\s*[a-zA-Z0-9]|\d+\s*[+\-*\/]\s*\d+|\\frac|\\sin|\\cos|\\tan|sin|cos|tan|log|ln\b|\^[0-9²³]|m\/s|kg|Newton|joule/i.test(cardText);
+            if (hasFormula) {
+              var badge  = document.getElementById('_qqCalcBadge');
+              var subLbl = document.getElementById('_qqCalcSub');
+              var lbl    = document.getElementById('_qqCalcLabel');
+              if (badge)  badge.style.display = 'inline-block';
+              if (subLbl) subLbl.style.color   = '#f59e0b';
+              if (lbl)    lbl.style.borderColor = 'rgba(245,158,11,0.3)';
+            }
+          })();
           picker.querySelectorAll('._qqCountBtn').forEach(function(btn) {
             btn.addEventListener('mouseenter', function() { btn.style.borderColor='rgba(245,158,11,0.5)'; btn.style.color='#f59e0b'; btn.style.background='rgba(245,158,11,0.08)'; });
             btn.addEventListener('mouseleave', function() { btn.style.borderColor='var(--border)'; btn.style.color='var(--text)'; btn.style.background='var(--bg-3)'; });
