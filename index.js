@@ -16156,6 +16156,7 @@ likes: 0,
 downloads: 0,
 clone_count: 0,
 average_rating: 0,
+is_public: true,
 });
 // Mark the original deck as public
 await db.decks.update(req.user.id, deck_id, { is_public: true });
@@ -19089,111 +19090,6 @@ async function ensureCommunityDeckAuthorColumn() {
 
 // ════════════════════════════════════════════════════════════════════════════
 const PORT = process.env.PORT || 8080;
-// B22: Seed sample community decks
-
-async function seedCommunityDecks() {
-try {
-const existing = await db.communityDecks.findMany({}, { page: 1, limit: 1 });
-if (existing.decks && existing.decks.length > 0) return; // already seeded
-const sampleDecks = [
-{
-title: 'Introduction to Biology',
-description: 'Core concepts: cell biology, genetics, and ecosystems.',
-subject_hint: 'Biology',
-tags: ['biology', 'science', 'cells'],
-author_name: 'KIWI Team',
-card_count: 15,
-average_rating: 4.8,
-clone_count: 0,
-is_featured: true,
-sample_cards: [
-{
-front: 'What is the powerhouse of the cell?',
-back: 'The mitochondria — responsible for producing ATP through cellular respiration.',
-},
-{
-front: 'Define osmosis.',
-back: 'The movement of water molecules from a region of lower solute concentration to higher solute concentration across a semi-permeable membrane.',
-},
-],
-},
-{
-title: 'Physics Fundamentals',
-description: 'Kinematics, forces, energy, and waves — foundational physics.',
-subject_hint: 'Physics',
-tags: ['physics', 'science', 'mechanics'],
-author_name: 'KIWI Team',
-card_count: 12,
-average_rating: 4.6,
-clone_count: 0,
-is_featured: true,
-sample_cards: [
-{
-front: "State Newton's Second Law.",
-back: 'F = ma — Force equals mass multiplied by acceleration.',
-},
-{
-front: "What is Hooke's Law?",
-back: 'F = -kx — The force exerted by a spring is proportional to its displacement from equilibrium.',
-},
-],
-},
-{
-title: 'Mathematics: Calculus Basics',
-description: 'Limits, derivatives, and integrals for beginners.',
-subject_hint: 'Mathematics',
-tags: ['math', 'calculus', 'derivatives'],
-author_name: 'KIWI Team',
-card_count: 10,
-average_rating: 4.7,
-clone_count: 0,
-is_featured: true,
-sample_cards: [
-{
-front: 'What is the derivative of x²?',
-back: '2x — using the power rule: d/dx[xⁿ] = nxⁿ⁻¹',
-},
-{ front: 'What is the integral of 1/x?', back: 'ln|x| + C' },
-],
-},
-{
-title: 'KIWI Study Tips',
-description: 'Master spaced repetition, active recall, and the KIWI system.',
-subject_hint: 'Study Skills',
-tags: ['study-tips', 'srs', 'kiwi'],
-author_name: 'KIWI Team',
-card_count: 8,
-average_rating: 4.9,
-clone_count: 0,
-is_featured: true,
-sample_cards: [
-{
-front: 'When should you press "Again"?',
-back: 'When you could not recall the answer at all, or recalled it incorrectly.',
-},
-{
-front: 'What is a Reckoning?',
-back: 'A mandatory high-stakes exam triggered when your subject pressure score is too high.',
-},
-],
-},
-];
-for (const deck of sampleDecks) {
-const id = randomUUID();
-await db.communityDecks.upsertByOriginalDeck(id, {
-...deck,
-original_deck_id: null,
-is_public: true,
-created_at: new Date(),
-updated_at: new Date(),
-});
-}
-console.log(`[KIWI] ✅ ${sampleDecks.length} community decks seeded`);
-} catch (e) {
-console.error('[KIWI] Community deck seeding failed:', e.message);
-}
-}
-
 // ── Schema migrations — idempotent ALTER TABLE statements run at every boot ──
 // Adds columns that were absent from the initial schema.sql but required by the
 // application. ADD COLUMN IF NOT EXISTS is a no-op when the column already exists.
@@ -19692,6 +19588,8 @@ async function runSchemaMigrations() {
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS subject text`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS likes integer DEFAULT 0`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS downloads integer DEFAULT 0`,
+    // Remove hardcoded KIWI Team seed decks — library is user-populated only
+    `DELETE FROM community_decks WHERE author_name = 'KIWI Team' AND original_deck_id IS NULL`,
     // DB-FIX: exam_questions needs card_id for SRS feedback linkage (Issue #1 fix)
     `ALTER TABLE exam_questions ADD COLUMN IF NOT EXISTS card_id text`,
     // DB-FIX: background_jobs table for job polling fallback
@@ -19889,7 +19787,7 @@ await runSchemaMigrations();
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }
 try { await db.marketplaceItems.seed(); } catch(e) { console.warn('[KIWI] Marketplace seeding skipped:', e.message); }
-try { await seedCommunityDecks(); } catch(e) { console.warn('[KIWI] Community deck seeding skipped:', e.message); }
+// seedCommunityDecks removed — community library is user-populated only
 console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear above if DB tables are missing)`);
 
 
