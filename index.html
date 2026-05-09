@@ -10278,11 +10278,11 @@
                 session.sessionId || (session.session && session.session.id) || null;
               AppState.tempStudy = {
                 sessionId,
-                queue: (session.cards || []).map((c) => ({
+                queue: _sortQueueAnkiStyle((session.cards || []).map((c) => ({
                   ...c,
                   front: c.front || c.front_content || "",
                   back: c.back || c.back_content || "",
-                })),
+                }))),
                 _hasMore: session.has_more || false,
                 _totalCards: session.total_cards || (session.cards || []).length,
                 _fetchingMore: false,
@@ -11439,27 +11439,29 @@
 
       // ── Anki-style queue sort: due cards before new/unseen cards ──────────────
       // Priority tiers (ascending = shown first):
-      //   0 = overdue (next_review_at in the past, or no next_review_at but has been seen)
-      //   1 = new / never reviewed (no next_review_at, stage 1 and never reviewed)
-      // Within tier 0, most-overdue cards come first (smallest next_review_at timestamp).
+      //   0 = due / overdue  (next_review_at in the past, or no schedule but reviewed before)
+      //   1 = SEEDLING       (never reviewed — surfaces after all genuinely due cards)
+      //   2 = not yet due    (shouldn't appear normally; scheduling guard on backend)
+      // Within tier 0, most-overdue cards come first (smallest next_review_at first).
+      //
+      // FIX: previous heuristic checked next_review_at === null to detect new cards.
+      // db.cards.create always stamps next_review_at = new Date(), so null never occurs —
+      // SEEDLING cards fell through to tier 0, sorting before genuinely due cards by their
+      // creation timestamp. Now uses server-assigned card.state as the ground truth.
       function _sortQueueAnkiStyle(queue) {
         const now = Date.now();
         function tier(c) {
+          if ((c.state || '') === 'SEEDLING') return 1;             // new — never reviewed
           const nra = c.next_review_at ? new Date(c.next_review_at).getTime() : null;
-          // A card is "new" if it has never been reviewed:
-          // heuristic — no next_review_at AND (stage is 1 or missing) AND _warmup truthy
-          // OR the server explicitly marks it (is_new flag).
-          const isNew = c.is_new === true || c._warmup === true ||
-                        (nra === null && (c.stage || 1) <= 1 && !c.last_reviewed_at);
-          if (isNew) return 1;           // new card → goes after due
-          if (nra === null) return 0;    // reviewed but no scheduled date → treat as due
-          if (nra <= now) return 0;      // overdue / due
-          return 2;                      // not yet due (shouldn't appear normally)
+          if (nra === null || nra <= now) return 0;                 // due / overdue
+          return 2;                                                  // not yet due
         }
         queue.sort(function(a, b) {
           const ta = tier(a), tb = tier(b);
           if (ta !== tb) return ta - tb;
-          // Within the same tier, sort by how overdue (most overdue first)
+          // Within the same tier, most overdue first (earliest next_review_at first).
+          // For SEEDLING (tier 1), next_review_at = creation time — ascending order
+          // surfaces the oldest-imported unreviewed cards first.
           const na = a.next_review_at ? new Date(a.next_review_at).getTime() : now;
           const nb = b.next_review_at ? new Date(b.next_review_at).getTime() : now;
           return na - nb;

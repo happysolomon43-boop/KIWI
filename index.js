@@ -13770,37 +13770,44 @@ const queue = allCards.map(card => ({ card, state: statesById.get(card.id) || { 
 // P2 FIX: Corrected order — DANGEROUS must surface before GHOST (exam urgency > dormancy)
 // P12 FIX: Secondary sort by overdue date within same priority tier (most overdue first)
 queue.sort((a, b) => {
+// Priority tiers:
+//   0 = DANGEROUS  — critical failure-risk cards
+//   1 = AVOIDED    — user-skipped, needs intervention
+//   2 = GHOST      — long-dormant, never reinforced
+//   3 = STUCK      — repeated recall failures
+//   4 = FRAGILE    — barely passing, at-risk
+//   5 = due        — reviewed cards whose next_review_at is now in the past
+//   6 = SEEDLING   — never reviewed; next_review_at = creation timestamp (not a real due date)
+//   7 = not yet due
+//
+// BUG FIX: SEEDLING was absent from priorityMap, so cards created months ago fell
+// through to the isCardDue() branch (creation timestamp is always in the past) and
+// landed at tier 5 — identical to genuinely due cards. The ascending secondary sort
+// then placed the oldest-created SEEDLINGs first, filling the entire card_limit before
+// any real due cards could surface. Assigning SEEDLING its own tier (6) corrects the
+// ordering: reviewed-but-due cards always precede never-reviewed cards.
 const priorityMap = {
-[CARD_STATES.DANGEROUS]: 0,
-[CARD_STATES.AVOIDED]:   1,
-[CARD_STATES.GHOST]:     2,
-[CARD_STATES.STUCK]:     3,
-[CARD_STATES.FRAGILE]:   4,
+  [CARD_STATES.DANGEROUS]: 0,
+  [CARD_STATES.AVOIDED]:   1,
+  [CARD_STATES.GHOST]:     2,
+  [CARD_STATES.STUCK]:     3,
+  [CARD_STATES.FRAGILE]:   4,
+  [CARD_STATES.SEEDLING]:  6, // tier 6: new cards surface after all genuinely due cards
 };
-// Priority tiers: 0-4=special states, 5=due, 6=new (null next_review_at), 7=not-yet-due
-// FIX: previously null next_review_at passed isCardDue()→true, landing in tier 5,
-// then secondary sort mapped null→0 (epoch) pushing new cards BEFORE due cards.
-const pa =
-priorityMap[a.state.state] !== undefined
-? priorityMap[a.state.state]
-: !a.card.next_review_at
-? 6
-: isCardDue(a.card)
-? 5
-: 7;
-const pb =
-priorityMap[b.state.state] !== undefined
-? priorityMap[b.state.state]
-: !b.card.next_review_at
-? 6
-: isCardDue(b.card)
-? 5
-: 7;
+const getTier = (card, state) => {
+  if (priorityMap[state] !== undefined) return priorityMap[state];
+  if (!card.next_review_at) return 6; // defensive — db.cards.create always sets a timestamp
+  return isCardDue(card) ? 5 : 7;
+};
+const pa = getTier(a.card, a.state.state);
+const pb = getTier(b.card, b.state.state);
 if (pa !== pb) return pa - pb;
-// Within the same priority tier, surface most overdue cards first
+// Within the same tier: surface the most overdue card first (earliest next_review_at first).
+// For SEEDLING (tier 6), next_review_at equals creation time, so ascending order surfaces
+// the oldest-imported unreviewed cards first — a sensible default for new-card sequencing.
 const aOverdue = a.card.next_review_at ? new Date(a.card.next_review_at).getTime() : 0;
 const bOverdue = b.card.next_review_at ? new Date(b.card.next_review_at).getTime() : 0;
-return aOverdue - bOverdue; // earlier next_review_at = more overdue = first
+return aOverdue - bOverdue; // earlier timestamp = more overdue = first
 });
 // PB.9: Apply bubble queue modifications [DESIGN: §4, §15.2]
 const bubbleSubjectId  = subject_id || (deck ? deck.subject_id : null);
