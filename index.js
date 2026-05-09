@@ -1945,62 +1945,245 @@ const STUDY_MODE_INTERVALS = {
   casual:  { again_ms: 20 * 60 * 1000, hard_ms: 6 * 60 * 60 * 1000, good_ms: 24 * 60 * 60 * 1000, easy_days: 5 },
 };
 
-function calculateNextReview(card, response, mode = 'normal') {
-const mi = STUDY_MODE_INTERVALS[mode] || STUDY_MODE_INTERVALS.normal;
-const qualityMap = { again: 0, hard: 2, good: 3, easy: 5 };
-const q = qualityMap[response];
-if (q === undefined) throw new Error(`Invalid response: ${response}`);
-let { interval_days, easiness_factor, repetition_count, stage } = card;
-const isLearning = (stage || 1) <= 2; // Stage 1–2 = learning, 3–5 = review
+// ── FSRS-4.5 Implementation ───────────────────────────────────────────────
+// Pre-trained weights from the FSRS-4.5 paper (do not modify).
+const FSRS_W = [
+  0.4072, 1.1829, 3.1262, 15.4722, // w[0-3]:  initial stability per rating
+  7.2102, 0.5316, 1.0651,  0.0589, // w[4-7]:  initial difficulty
+  1.5330, 0.1544, 1.0070,  1.9395, // w[8-11]: stability after recall
+  0.1100, 0.2900, 2.2700,  0.0000, // w[12-15]:stability after lapse
+  2.9898, 0.5100, 0.3400,          // w[16-18]:difficulty update
+];
 
-// SM-2 easiness factor update (runs for all responses — affects long-term growth)
-easiness_factor = Math.max(1.3, easiness_factor + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)));
-if (q < 3) {
-  // again or hard — reset progress
-  repetition_count = 0;
-  interval_days = 1;
-  stage = Math.max(1, stage - 1);
-} else {
-  repetition_count += 1;
-  if (repetition_count === 1) {
-    interval_days = q === 5 ? 3 : 1;
-  } else if (repetition_count === 2) {
-    interval_days = q === 5 ? 7 : 6;
-  } else {
-    interval_days = Math.round(interval_days * easiness_factor);
-    if (q === 5) interval_days = Math.round(interval_days * 1.3);
-    if (q === 2) interval_days = Math.round(interval_days * 0.8);
-  }
-  stage = computeStage(repetition_count, interval_days);
+// Study-mode → target retention mapping (replaces SM-2 interval growth as the
+// mode-specific scheduling lever for review-phase cards).
+const FSRS_TARGET_RETENTION = {
+  intense: 0.95, // review more often, less forgetting tolerated
+  normal:  0.90, // standard FSRS default
+  casual:  0.85, // longer intervals, more forgetting acceptable
+};
+
+// ── FSRS helper functions ─────────────────────────────────────────────────
+
+function fsrsInitialDifficulty(rating) {
+  // rating: 1=again, 2=hard, 3=good, 4=easy
+  return Math.min(10, Math.max(1, FSRS_W[4] - (rating - 3) * FSRS_W[5]));
 }
 
-// Requeue: again always; hard on learning cards (stage 1–2)
+function fsrsInitialStability(rating) {
+  // w[0]=again, w[1]=hard, w[2]=good, w[3]=easy
+  return Math.max(0.1, FSRS_W[rating - 1]);
+}
+
+function fsrsNextDifficulty(D, rating) {
+  const D0_3 = fsrsInitialDifficulty(3); // neutral anchor
+  const rawD  = D - FSRS_W[6] * (rating - 3);
+  return Math.min(10, Math.max(1, FSRS_W[7] * D0_3 + (1 - FSRS_W[7]) * rawD));
+}
+
+function fsrsStabilityAfterRecall(D, S, R, rating) {
+  const easyBonus = rating === 4 ? FSRS_W[16] : 1;
+  // Core growth term — excludes hard penalty so we can branch on it cleanly.
+  const growthTerm =
+    Math.exp(FSRS_W[8]) *
+    (11 - D) *
+    Math.pow(S, -FSRS_W[9]) *
+    (Math.exp(FSRS_W[10] * (1 - R)) - 1) *
+    easyBonus;
+
+  if (rating === 2) {
+    if (FSRS_W[15] === 0) {
+      // Default FSRS-4.5 weights set w[15]=0, zeroing out stability growth for
+      // hard responses and causing perpetual interval stagnation.
+      // Geometric-mean correction: hard stability lands at √(S × S′_good),
+      // always strictly between no-growth (S) and full-good-growth (S′_good).
+      // Adapts automatically to D, S, R — no magic constant required.
+      const sGood = S * (growthTerm + 1); // what 'good' would give
+      return Math.sqrt(S * sGood);
+    }
+    // w[15] is non-zero (recalibrated weights) — use standard FSRS formula.
+    return S * (growthTerm * FSRS_W[15] + 1);
+  }
+
+  return S * (growthTerm + 1);
+}
+
+function fsrsStabilityAfterLapse(D, S, R) {
+  return Math.max(
+    FSRS_W[11],
+    Math.pow(D, -FSRS_W[12]) *
+    (Math.pow(S + 1, FSRS_W[13]) - 1) *
+    Math.exp(FSRS_W[14] * (1 - R))
+  );
+}
+
+function fsrsRetrievability(daysSinceReview, S) {
+  if (!S || S <= 0 || !daysSinceReview || daysSinceReview <= 0) return 1;
+  return Math.pow(1 + daysSinceReview / (9 * S), -1);
+}
+
+function fsrsInterval(S, targetRetention) {
+  // I = 9 * S * (R_target^-1 - 1)
+  return Math.max(1, Math.round(9 * S * (Math.pow(targetRetention, -1) - 1)));
+}
+
+// Bootstrap FSRS state from existing SM-2 fields for cards that pre-date FSRS.
+function initFsrsFromSm2(card) {
+  const S      = Math.max(0.1, card.interval_days || 1);
+  const efNorm = Math.max(0, Math.min(1, ((card.easiness_factor || 2.5) - 1.3) / (3.5 - 1.3)));
+  const D      = Math.round((10 - efNorm * 9) * 10) / 10;
+  return { S, D };
+}
+
+// ── Latency Modulation Layer ──────────────────────────────────────────────
+
+function computeLatencyModifier(responseTimeMs, cardBaselineMs) {
+  if (!cardBaselineMs || cardBaselineMs <= 0 || !responseTimeMs) return 1.0;
+  const cappedMs = Math.min(responseTimeMs, 90000);
+  const ratio    = cappedMs / cardBaselineMs;
+  if (ratio < 0.40) return 1.15; // very fast: strong fluency signal
+  if (ratio < 0.75) return 1.07; // fast: above-baseline fluency
+  if (ratio < 1.50) return 1.00; // normal range: no adjustment
+  if (ratio < 2.50) return 0.92; // slow: effortful retrieval
+  if (ratio < 4.00) return 0.82; // very slow: marginal recall
+  return 0.72;                   // extremely slow: borderline failure
+}
+
+function updateCardBaseline(existingAvg, newResponseMs, reviewCount) {
+  const alpha = 0.3;
+  if (!existingAvg || reviewCount < 1) return newResponseMs;
+  return Math.round(existingAvg * (1 - alpha) + newResponseMs * alpha);
+}
+
+// Stage from FSRS stability — replaces SM-2 computeStage(repetitions, interval).
+// Thresholds mirror the old SM-2 interval thresholds so UX disruption is minimal.
+function computeStageFromStability(S, repetitionCount) {
+  if (!repetitionCount || repetitionCount === 0) return 1;
+  if (!S || S < 1)  return 1;
+  if (S < 7)        return 2;
+  if (S < 21)       return 3;
+  if (S < 90)       return 4;
+  return 5;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function calculateNextReview(card, response, mode = 'normal', responseTimeMs = null) {
+const mi              = STUDY_MODE_INTERVALS[mode] || STUDY_MODE_INTERVALS.normal;
+const targetRetention = FSRS_TARGET_RETENTION[mode] || FSRS_TARGET_RETENTION.normal;
+const ratingMap       = { again: 1, hard: 2, good: 3, easy: 4 };
+const rating          = ratingMap[response];
+if (!rating) throw new Error(`Invalid response: ${response}`);
+
+let {
+  interval_days, easiness_factor, repetition_count, stage,
+  fsrs_stability, fsrs_difficulty, avg_response_time_ms, last_reviewed_at, last_response,
+} = card;
+
+const isLearning = (stage || 1) <= 2; // Stage 1–2 = learning, 3–5 = review
+
+// SM-2 easiness_factor kept for backward compat (analytics, cloning, resets).
+// It no longer drives scheduling but is still updated and stored.
+const qualityMap  = { again: 0, hard: 2, good: 3, easy: 5 };
+const q           = qualityMap[response];
+easiness_factor   = Math.max(1.3, (easiness_factor || 2.5) + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)));
+
+// Requeue flag — unchanged from SM-2: again always; hard on learning cards only.
 const requeue = response === 'again' || (response === 'hard' && isLearning);
 
-// next_review_at:
-// - again: always use mode again_ms (short window for in-session requeue)
-// - learning card (stage 1–2): use mode sub-day intervals
-// - review card (stage 3–5): use SM-2 interval_days (multi-day, exact ms)
-let nextReviewAt;
-if (response === 'again') {
-  nextReviewAt = new Date(Date.now() + mi.again_ms);
-} else if (isLearning) {
-  if (response === 'hard') {
-    nextReviewAt = new Date(Date.now() + mi.hard_ms);
-  } else if (response === 'good') {
-    nextReviewAt = new Date(Date.now() + mi.good_ms);
+// Days since last review (needed for retrievability R).
+const daysSinceReview = last_reviewed_at
+  ? Math.max(0, (Date.now() - new Date(last_reviewed_at).getTime()) / 86400000)
+  : 0;
+
+let newS, newD, nextReviewAt;
+
+if (isLearning) {
+  // ── Learning phase (stage 1–2) ────────────────────────────────────────
+  // Sub-day intervals are unchanged. We still run FSRS formulas so the card
+  // has correct stability/difficulty ready the moment it graduates to review.
+  if (!fsrs_stability || !fsrs_difficulty) {
+    newS = fsrsInitialStability(rating);
+    newD = fsrsInitialDifficulty(rating);
   } else {
-    // easy — graduate learning card
-    nextReviewAt = new Date(Date.now() + mi.easy_days * 24 * 60 * 60 * 1000);
+    newD       = fsrsNextDifficulty(fsrs_difficulty, rating);
+    const R    = fsrsRetrievability(daysSinceReview, fsrs_stability);
+    newS = response === 'again'
+      ? fsrsStabilityAfterLapse(newD, fsrs_stability, R)
+      : fsrsStabilityAfterRecall(newD, fsrs_stability, R, rating);
+  }
+  newS = Math.max(0.1, newS);
+
+  if (response === 'again') {
+    repetition_count = 0;
+    interval_days    = 1;
+    stage            = Math.max(1, (stage || 1) - 1);
+    nextReviewAt     = new Date(Date.now() + mi.again_ms);
+  } else {
+    repetition_count = (repetition_count || 0) + 1;
+    interval_days    = 1;
+    stage            = computeStageFromStability(newS, repetition_count);
+    if (response === 'hard') {
+      nextReviewAt = new Date(Date.now() + mi.hard_ms);
+    } else if (response === 'good') {
+      nextReviewAt = new Date(Date.now() + mi.good_ms);
+    } else {
+      // easy — graduate
+      nextReviewAt = new Date(Date.now() + mi.easy_days * 24 * 60 * 60 * 1000);
+    }
   }
 } else {
-  // Review card — SM-2 computed interval_days (exact ms, not date-stripped)
+  // ── Review phase (stage 3–5) ─────────────────────────────────────────
+  // Bootstrap FSRS from SM-2 fields for cards that pre-date this implementation.
+  if (!fsrs_stability || !fsrs_difficulty) {
+    const init   = initFsrsFromSm2(card);
+    fsrs_stability  = init.S;
+    fsrs_difficulty = init.D;
+  }
+
+  const R = fsrsRetrievability(daysSinceReview, fsrs_stability);
+  newD    = fsrsNextDifficulty(fsrs_difficulty, rating);
+
+  if (response === 'again') {
+    newS             = Math.max(0.1, fsrsStabilityAfterLapse(newD, fsrs_stability, R));
+    repetition_count = 0;
+    interval_days    = 1;
+  } else {
+    newS = fsrsStabilityAfterRecall(newD, fsrs_stability, R, rating);
+
+    // Latency modulation — apply only on correct responses in review phase.
+    const cappedRtMs = responseTimeMs ? Math.min(responseTimeMs, 90000) : null;
+    let modifier     = computeLatencyModifier(cappedRtMs, avg_response_time_ms);
+    // Flaw-3 skepticism cap: very fast answer right after an 'again' → no fluency boost.
+    if (last_response === 'again' && cappedRtMs && avg_response_time_ms &&
+        cappedRtMs / avg_response_time_ms < 0.4) {
+      modifier = Math.min(1.0, modifier);
+    }
+    newS = Math.max(0.1, newS * modifier);
+
+    repetition_count = (repetition_count || 0) + 1;
+    interval_days    = fsrsInterval(newS, targetRetention);
+  }
+
+  stage        = computeStageFromStability(newS, repetition_count);
   nextReviewAt = new Date(Date.now() + interval_days * 24 * 60 * 60 * 1000);
 }
 
-return { interval_days, easiness_factor, repetition_count, stage, next_review_at: nextReviewAt, requeue };
+return {
+  interval_days,
+  easiness_factor,
+  repetition_count,
+  stage,
+  next_review_at: nextReviewAt,
+  requeue,
+  fsrs_stability: newS,
+  fsrs_difficulty: newD,
+};
 }
 
+// computeStage — legacy SM-2 stage computation kept for backward compatibility.
+// The scheduling core now uses computeStageFromStability (added above).
+// Do not remove: may be referenced by analytics or external tooling.
 function computeStage(repetitions, interval) {
 if (repetitions === 0) return 1;
 if (interval <= 1) return 2;
@@ -7212,6 +7395,9 @@ easiness_factor: srsResult.easiness_factor,
 repetition_count: srsResult.repetition_count,
 next_review_at: srsResult.next_review_at,
 last_response: 'again',
+// FIX 1: persist FSRS state so scheduling stays consistent after exam failures
+fsrs_stability: srsResult.fsrs_stability,
+fsrs_difficulty: srsResult.fsrs_difficulty,
 });
 const newStateType = srsResult.stage <= 2 ? CARD_STATES.GROWING : CARD_STATES.STABLE;
 await db.cardStates.update(userId, card.id, {
@@ -13591,18 +13777,25 @@ const priorityMap = {
 [CARD_STATES.STUCK]:     3,
 [CARD_STATES.FRAGILE]:   4,
 };
+// Priority tiers: 0-4=special states, 5=due, 6=new (null next_review_at), 7=not-yet-due
+// FIX: previously null next_review_at passed isCardDue()→true, landing in tier 5,
+// then secondary sort mapped null→0 (epoch) pushing new cards BEFORE due cards.
 const pa =
 priorityMap[a.state.state] !== undefined
 ? priorityMap[a.state.state]
+: !a.card.next_review_at
+? 6
 : isCardDue(a.card)
 ? 5
-: 6;
+: 7;
 const pb =
 priorityMap[b.state.state] !== undefined
 ? priorityMap[b.state.state]
+: !b.card.next_review_at
+? 6
 : isCardDue(b.card)
 ? 5
-: 6;
+: 7;
 if (pa !== pb) return pa - pb;
 // Within the same priority tier, surface most overdue cards first
 const aOverdue = a.card.next_review_at ? new Date(a.card.next_review_at).getTime() : 0;
@@ -13788,7 +13981,7 @@ if (q === undefined) return res.status(400).json({ error: 'Invalid response' });
 const prevStage = card.stage;
 const userStats = await db.userStats.get(req.user.id);
 const mode = userStats?.study_mode || 'normal';
-const nextReview = calculateNextReview(card, response, mode);
+const nextReview = calculateNextReview(card, response, mode, response_time_ms);
 let xpEarned = 0;
 if (response === 'good') xpEarned = 5;
 if (response === 'easy') xpEarned = 8;
@@ -13810,6 +14003,12 @@ stage: nextReview.stage,
 next_review_at: nextReview.next_review_at,
 last_reviewed_at: new Date(),
 last_response: response,
+fsrs_stability: nextReview.fsrs_stability,
+fsrs_difficulty: nextReview.fsrs_difficulty,
+// Latency baseline: update only for correct, non-distracted reviews (500ms–120s window)
+...(response !== 'again' && response_time_ms > 500 && response_time_ms < 120000
+  ? { avg_response_time_ms: updateCardBaseline(card.avg_response_time_ms, response_time_ms, card.review_count || 0) }
+  : {}),
 });
 const newMastered = nextReview.stage === 5 && prevStage !== 5 ? 1 : 0;
 const statsUpdates = {
@@ -13834,6 +14033,7 @@ next_review_at: nextReview.next_review_at || null,
 previous_review_at: card.last_reviewed_at || null,
 // BUG-2 FIX: reviewed_at was missing — findByUser queries filter on this field
 reviewed_at: new Date(),
+fsrs_stability_after: nextReview.fsrs_stability,
 });
 // Phase 2 & 3: Fire-and-forget — do not block card response latency
 queueKSRecompute(req.user.id, cardId); // queued — drained every 60s
@@ -14120,7 +14320,10 @@ studyRouter.post('/review', async (req, res) => {
     if (!card) return res.status(404).json({ error: 'Card not found' });
     const ratingMap = { again: 1, hard: 2, good: 3, easy: 4 };
     const numericRating = typeof rating === 'number' ? rating : (ratingMap[rating] || 3);
-    const { next_review_at, stage } = calculateNextReview(card, numericRating);
+    // FIX 2: calculateNextReview expects a string response, not a numeric rating.
+    const reverseRatingMap = { 1: 'again', 2: 'hard', 3: 'good', 4: 'easy' };
+    const responseStr = reverseRatingMap[numericRating] || 'good';
+    const { next_review_at, stage } = calculateNextReview(card, responseStr);
     await db.cards.update(req.user.id, card_id, {
       next_review_at,
       stage,
@@ -19393,6 +19596,11 @@ async function runSchemaMigrations() {
       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_background_jobs_expires ON background_jobs(expires_at)`,
+    // FSRS-4.5 + latency modulation columns
+    `ALTER TABLE cards ADD COLUMN IF NOT EXISTS fsrs_stability numeric DEFAULT NULL`,
+    `ALTER TABLE cards ADD COLUMN IF NOT EXISTS fsrs_difficulty numeric DEFAULT NULL`,
+    `ALTER TABLE cards ADD COLUMN IF NOT EXISTS avg_response_time_ms numeric DEFAULT NULL`,
+    `ALTER TABLE review_logs ADD COLUMN IF NOT EXISTS fsrs_stability_after numeric DEFAULT NULL`,
   ];
   for (const sql of migrations) {
     try {

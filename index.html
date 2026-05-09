@@ -7068,7 +7068,7 @@
         };
       };
 
-      api.submitReview = async (cardId, rating, sessionId) => {
+      api.submitReview = async (cardId, rating, sessionId, responseTimeMs) => {
         if (isDemoMode()) {
           const card = DEMO_CARDS.find((c) => c.id === cardId) || {};
           const newStage = Math.min(5, Math.max(1, (card.stage || 1) + (rating >= 3 ? 1 : 0)));
@@ -7087,7 +7087,7 @@
           (rating <= 1 ? "again" : rating === 2 ? "hard" : rating === 3 ? "good" : "easy");
         const data = await apiRequest("/study/card/" + cardId + "/response", {
           method: "POST",
-          body: { session_id: sessionId, response: responseStr },
+          body: { session_id: sessionId, response: responseStr, response_time_ms: responseTimeMs || 0 },
         });
         // Normalize for frontend: ensure newStage is set
         return { ...data, newStage: data.newStage || data.new_stage };
@@ -9104,6 +9104,7 @@
           stageTransitions: [],
           focusData: { tabAwayCount: 0, idleSeconds: 0 },
           isDemo: true,
+          _cardHistory: [],
         };
         startFocusTracking();
         navigateTo("study");
@@ -10062,6 +10063,7 @@
                     // M3 FIX: store return flag and subjectId for zone restoration
                     isReturnSession: session.is_first_return_session || false,
                     subjectId: session.subject_id || null,
+                    _cardHistory: [],
                   };
                   startFocusTracking();
                   navigateTo("study");
@@ -10278,10 +10280,10 @@
                 aiSummary: null,
                 stageTransitions: [],
                 focusData: { tabAwayCount: 0, idleSeconds: 0 },
-                // M3 FIX: store return flag and subjectId for zone restoration
                 isReturnSession: session.is_first_return_session || false,
                 subjectId: subjectId,
-                avoidedSuppressionsCount: 0, // P9.4-07: tracks AVOIDED cards skipped to end
+                avoidedSuppressionsCount: 0,
+                _cardHistory: [],
               };
               // Start focus tracking
               startFocusTracking();
@@ -10410,7 +10412,11 @@
     `;
           return;
         }
-        const card = t.queue[t.currentIndex];
+        // When browsing history, show the history snapshot instead of the live queue card
+        const _browsingHist = t._browseHistoryIdx !== undefined;
+        const card = _browsingHist
+          ? (t._cardHistory && t._cardHistory[t._browseHistoryIdx]) || t.queue[t.currentIndex]
+          : t.queue[t.currentIndex];
         // CRASH-FIX: Defensive guard — queue length checks passed but element could still be
         // undefined if the array was mutated by an async requeue between the guard and here.
         if (!card) {
@@ -10424,9 +10430,18 @@
           return;
         }
 
+        // Progress always reflects live queue position, not browse position
         const progress = (t.currentIndex / t.queue.length) * 100;
         const stage = card.stage || card.level || 1;
         const stageLabel = getStageLabel(stage);
+        // Prev button: enabled when we have ≥2 cards in history (can go back)
+        const _histLen = (t._cardHistory || []).length;
+        const _canGoPrev = _browsingHist ? t._browseHistoryIdx > 0 : _histLen >= 2;
+        const _prevLabel = _browsingHist
+          ? `Card ${t._browseHistoryIdx + 1} of ${_histLen}`
+          : (_histLen >= 2 ? `${_histLen - 1} card${_histLen - 1 !== 1 ? 's' : ''} back` : 'First card');
+        // Steps ahead in history (to resume label)
+        const _stepsAhead = _browsingHist ? (_histLen - 1 - t._browseHistoryIdx) : 0;
         container.innerHTML = `
     <div class="study-layout${t.flipped ? ' is-flipped' : ''}" id="studyLayout">
       <div class="study-header">
@@ -10453,18 +10468,18 @@
           ${t.currentIndex < t.queue.length - 1 ? `<button class="btn btn-ghost btn-sm" onclick="skipCard()" title="Skip card to end of queue" style="font-size:var(--text-xs);padding:3px 8px;opacity:0.65;">Skip &#x21E3;</button>` : ""}
         </div>
       </div>
-      <button class="kiwi-prev-nav${t.currentIndex === 0 ? ' kiwi-prev-nav--disabled' : ''}" onclick="if(${t.currentIndex}>0)prevCard()" title="Go to previous card (Arrow Left)" ${t.currentIndex === 0 ? 'aria-disabled="true"' : ''}>
+      <button class="kiwi-prev-nav${_canGoPrev ? '' : ' kiwi-prev-nav--disabled'}" onclick="${_canGoPrev ? 'prevCard()' : ''}" title="Go to previous card (Arrow Left)" ${_canGoPrev ? '' : 'aria-disabled="true"'}>
         <span class="kiwi-prev-nav-arrow">&#x2190;</span>
         <span>
           <span class="kiwi-prev-nav-top">Previous</span>
-          <span class="kiwi-prev-nav-sub">${t.currentIndex === 0 ? 'First card' : `Card ${t.currentIndex} of ${t.queue.length}`}</span>
+          <span class="kiwi-prev-nav-sub">${_prevLabel}</span>
         </span>
       </button>
-      ${t._viewingPrev && t._browseOriginIndex !== undefined ? `
+      ${t._viewingPrev && _browsingHist ? `
       <button class="kiwi-resume-nav" onclick="nextCard()" title="Resume session (Arrow Right)">
         <span>
           <span class="kiwi-resume-nav-top">Resume &#x2192;</span>
-          <span class="kiwi-resume-nav-sub">${t._browseOriginIndex - t.currentIndex} card${t._browseOriginIndex - t.currentIndex !== 1 ? 's' : ''} ahead</span>
+          <span class="kiwi-resume-nav-sub">${_stepsAhead} card${_stepsAhead !== 1 ? 's' : ''} ahead</span>
         </span>
         <span class="kiwi-resume-nav-arrow">&#x2192;</span>
       </button>` : ""}
@@ -10568,7 +10583,8 @@
             // determine whether to show rating buttons
             let _showRating = false;
             if (t._viewingPrev) {
-              const _stepsBack = t._browseOriginIndex !== undefined ? t._browseOriginIndex - t.currentIndex : '?';
+              const _hist2 = t._cardHistory || [];
+              const _stepsBack = t._browseHistoryIdx !== undefined ? (_hist2.length - 1 - t._browseHistoryIdx) : 0;
               return `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:12px;">
                 <div style="padding:6px 16px;background:rgba(62,201,201,0.06);border:1px solid rgba(62,201,201,0.2);border-radius:20px;font-size:var(--text-xs);font-family:var(--font-mono);color:var(--teal);letter-spacing:0.8px;">
                   ← Browsing history · card already reviewed
@@ -11297,34 +11313,93 @@
         }, 1000);
       }
 
+      // ── Anki-style queue sort: due cards before new/unseen cards ──────────────
+      // Priority tiers (ascending = shown first):
+      //   0 = overdue (next_review_at in the past, or no next_review_at but has been seen)
+      //   1 = new / never reviewed (no next_review_at, stage 1 and never reviewed)
+      // Within tier 0, most-overdue cards come first (smallest next_review_at timestamp).
+      function _sortQueueAnkiStyle(queue) {
+        const now = Date.now();
+        function tier(c) {
+          const nra = c.next_review_at ? new Date(c.next_review_at).getTime() : null;
+          // A card is "new" if it has never been reviewed:
+          // heuristic — no next_review_at AND (stage is 1 or missing) AND _warmup truthy
+          // OR the server explicitly marks it (is_new flag).
+          const isNew = c.is_new === true || c._warmup === true ||
+                        (nra === null && (c.stage || 1) <= 1 && !c.last_reviewed_at);
+          if (isNew) return 1;           // new card → goes after due
+          if (nra === null) return 0;    // reviewed but no scheduled date → treat as due
+          if (nra <= now) return 0;      // overdue / due
+          return 2;                      // not yet due (shouldn't appear normally)
+        }
+        queue.sort(function(a, b) {
+          const ta = tier(a), tb = tier(b);
+          if (ta !== tb) return ta - tb;
+          // Within the same tier, sort by how overdue (most overdue first)
+          const na = a.next_review_at ? new Date(a.next_review_at).getTime() : now;
+          const nb = b.next_review_at ? new Date(b.next_review_at).getTime() : now;
+          return na - nb;
+        });
+        return queue;
+      }
+
+      // ── History-based Previous Card ──────────────────────────────────────────
+      // _cardHistory stores snapshots of every card shown in order.
+      // prevCard / nextCard walk this history — independent of queue reshuffling.
+      function _pushCardToHistory(t) {
+        if (!t) return;
+        const card = t.queue[t.currentIndex];
+        if (!card) return;
+        // Only push if we're not already browsing history (avoids duplicates)
+        if (t._browseHistoryIdx !== undefined) return;
+        // Guard: initialise _cardHistory if missing (sessions started via other code paths)
+        if (!t._cardHistory) t._cardHistory = [];
+        const hist = t._cardHistory;
+        // Avoid duplicate consecutive pushes of same card
+        if (!hist.length || hist[hist.length - 1].id !== card.id) {
+          hist.push(Object.assign({}, card)); // snapshot
+        }
+      }
+
       function prevCard() {
         const t = AppState.tempStudy;
-        if (!t || t.currentIndex <= 0) return;
-        // Save the origin index the first time we go back so we know where to resume to
-        if (t._browseOriginIndex === undefined) {
-          t._browseOriginIndex = t.currentIndex;
+        if (!t) return;
+        // First call: snapshot current card into history if not already there
+        _pushCardToHistory(t);
+        // _browseHistoryIdx points to what we're currently viewing in history.
+        // Undefined means we're at the live position (end of history array).
+        const hist = t._cardHistory;
+        if (!hist.length) return;
+        if (t._browseHistoryIdx === undefined) {
+          // Start browsing from second-to-last (the card before the current one)
+          if (hist.length < 2) return; // nothing to go back to
+          t._browseHistoryIdx = hist.length - 2;
+        } else {
+          if (t._browseHistoryIdx <= 0) return; // already at first card
+          t._browseHistoryIdx--;
         }
-        t.currentIndex--;
+        t._viewingPrev = true;
         t.flipped = false;
         t.aiSummary = null;
         t.cardShownAt = Date.now();
-        t._viewingPrev = true; // persists — cleared only by nextCard() or handleStudyResponse()
         renderActiveStudySession(document.getElementById("mainContent"));
       }
 
       function nextCard() {
         const t = AppState.tempStudy;
-        if (!t || t._browseOriginIndex === undefined) return;
-        if (t.currentIndex >= t._browseOriginIndex) return; // already back at origin
-        t.currentIndex++;
+        if (!t || t._browseHistoryIdx === undefined) return;
+        const hist = t._cardHistory;
+        t._browseHistoryIdx++;
+        if (t._browseHistoryIdx >= hist.length - 1) {
+          // Back at the live card — exit browse mode
+          t._browseHistoryIdx = undefined;
+          t._viewingPrev = false;
+        } else {
+          t._viewingPrev = true;
+        }
         t.flipped = false;
         t.aiSummary = null;
         t.cardShownAt = Date.now();
-        // Clear browse mode when we reach the card we came from
-        if (t.currentIndex >= t._browseOriginIndex) {
-          t._viewingPrev = false;
-          t._browseOriginIndex = undefined;
-        }
         renderActiveStudySession(document.getElementById("mainContent"));
       }
 
@@ -11343,11 +11418,16 @@
           showToast('Use Resume → to return to your current card first', 'warning', 3000);
           return;
         }
-        // Clear any lingering browse state just in case
+        // Clear any lingering browse state
         t._viewingPrev = false;
-        t._browseOriginIndex = undefined;
+        t._browseHistoryIdx = undefined; // exit history browse mode
         const card = t.queue[t.currentIndex];
         if (!card) return;
+        // Push this card to history BEFORE advancing (so prev can always reach it)
+        if (!t._cardHistory) t._cardHistory = [];
+        if (!t._cardHistory.length || t._cardHistory[t._cardHistory.length - 1].id !== card.id) {
+          t._cardHistory.push(Object.assign({}, card));
+        }
         // OPTIMISTIC ADVANCE: snapshot the card, update UI immediately,
         // then fire the review API in the background so there is zero
         // perceived delay between pressing a rating button and the next card.
@@ -11384,9 +11464,10 @@
           apiRequest('/study/session/' + t.sessionId + '/next-cards?offset=' + t.queue.length + '&limit=20')
             .then(function(d) {
               if (d && d.cards && d.cards.length > 0) {
-                d.cards.forEach(function(c) {
-                  t.queue.push(Object.assign({}, c, { front: c.front || c.front_content || '', back: c.back || c.back_content || '' }));
+                var _newCards = d.cards.map(function(c) {
+                  return Object.assign({}, c, { front: c.front || c.front_content || '', back: c.back || c.back_content || '' });
                 });
+                _newCards.forEach(function(c) { t.queue.push(c); });
                 t._hasMore = d.has_more || false;
               } else { t._hasMore = false; }
               t._fetchingMore = false;
@@ -11396,7 +11477,8 @@
         // Render next card immediately — no waiting for network
         renderActiveStudySession(document.getElementById("mainContent"));
         // Fire review API in background
-        api.submitReview(_reviewCardId, rating, t.sessionId)
+        const _responseTimeMs = t.cardShownAt ? (Date.now() - t.cardShownAt) : null;
+        api.submitReview(_reviewCardId, rating, t.sessionId, _responseTimeMs)
           .then(function(result) {
             // Handle Again requeue: undo the optimistic +1 and splice card to end
             if (result && result.requeue) {
@@ -15673,7 +15755,8 @@
                   reviews: [], cardsReviewed: 0, seedStatus: "alive", seedHealth: 0, // FIX P9.4-01
                   aiSummary: null, stageTransitions: [], focusData: { tabAwayCount: 0, idleSeconds: 0 },
                   isReturnSession: session.is_first_return_session || false,
-                  subjectId: subjectId
+                  subjectId: subjectId,
+                  _cardHistory: [],
                 };
                 startFocusTracking();
                 navigateTo("study");
@@ -17310,6 +17393,7 @@
             // M3 FIX: store return flag and subjectId for zone restoration
             isReturnSession: session.is_first_return_session || false,
             subjectId: subjectId,
+            _cardHistory: [],
           };
           startFocusTracking();
           navigateTo("study");
@@ -20388,15 +20472,15 @@
             }
             // Arrow keys for navigation (only if not flipped)
             if (!t.flipped) {
-              if (e.key === "ArrowLeft" && t.currentIndex > 0) {
-                e.preventDefault();
-                prevCard();
-                return;
+              if (e.key === "ArrowLeft") {
+                const _hist = t._cardHistory || [];
+                const _canBack = t._browseHistoryIdx !== undefined ? t._browseHistoryIdx > 0 : _hist.length >= 2;
+                if (_canBack) { e.preventDefault(); prevCard(); return; }
               }
               if (e.key === "ArrowRight") {
                 e.preventDefault();
-                if (t._browseOriginIndex !== undefined) {
-                  nextCard(); // in browse mode: go forward toward origin
+                if (t._browseHistoryIdx !== undefined) {
+                  nextCard(); // in history browse mode: go forward toward live card
                 }
                 return;
               }
