@@ -18827,7 +18827,7 @@
             try {
               showToast(`Importing ${t.subject || t.title || 'community'} deck...`, "info");
               // Find or create subject
-              let subj = AppState.subjects.find((s) =>
+              let subj = (AppState.subjects || []).find((s) =>
                 s.name.toLowerCase().includes((t.subject || t.title || '').toLowerCase()),
               );
               if (!subj) {
