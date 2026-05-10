@@ -1824,7 +1824,7 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: 20px 16px;
+        padding: 16px 16px;
         border-radius: var(--r);
         border: 1px solid;
         cursor: pointer;
@@ -4349,7 +4349,7 @@
           gap: 8px;
         }
         .resp-btn {
-          padding: 20px 12px;
+          padding: 16px 10px;
         }
         .resp-btn-label {
           font-size: 15px;
@@ -4475,7 +4475,7 @@
           font-size: 12px;
         }
         .resp-btn {
-          padding: 18px 10px;
+          padding: 14px 8px;
           border-radius: var(--r);
         }
         .resp-btn-label {
@@ -4658,8 +4658,8 @@
           padding: 16px;
         }
         .resp-btn {
-          padding: 22px 16px;
-          min-height: 88px;
+          padding: 18px 13px;
+          min-height: 71px;
         }
         .task-item {
           padding: 16px;
@@ -7701,8 +7701,19 @@
 
       // Community endpoints (F12)
 
-      api.getCommunityDecks = async () => {
-        return await apiRequest("/community/decks");
+      api.getCommunityDecks = async (params) => {
+        const _p = params || {};
+        const _qs = new URLSearchParams();
+        if (_p.limit)   _qs.set('limit',   _p.limit);
+        if (_p.page)    _qs.set('page',    _p.page);
+        if (_p.search)  _qs.set('search',  _p.search);
+        if (_p.group)   _qs.set('group',   _p.group);
+        if (_p.subject) _qs.set('subject', _p.subject);
+        const _q = _qs.toString();
+        return await apiRequest('/community/decks' + (_q ? '?' + _q : ''));
+      };
+      api.deleteCommunityGroup = async (groupName) => {
+        return await apiRequest('/community/groups/' + encodeURIComponent(groupName), { method: 'DELETE' });
       };
 
       // 062 FIX: publish a user's deck to the community library
@@ -10503,6 +10514,11 @@
               });
             }
             _autoSizeStudyCard();
+            // Slide card + rating buttons into view for mobile convenience
+            setTimeout(function() {
+              var _ratingEl = document.getElementById('_studyRatingRow');
+              if (_ratingEl) _ratingEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 120);
           } else {
             // Fallback: full re-render if surgical targets are missing
             renderActiveStudySession(document.getElementById('mainContent'));
@@ -10583,7 +10599,15 @@
         }
 
         function _end() {
-          if (!_dragging) { btn.style.cursor = 'grab'; return; }
+          if (!_dragging) {
+            btn.style.cursor = 'grab';
+            // Touch: touchstart e.preventDefault() blocks the synthetic click event.
+            // Manually call prevCard() when the button is enabled and user just tapped.
+            if (!btn.classList.contains('kiwi-prev-nav--disabled') && typeof prevCard === 'function') {
+              prevCard();
+            }
+            return;
+          }
           _dragging = false;
           btn.style.cursor = 'grab';
           btn._kiwiDragEnded = true; // suppress the onclick that fires after touchend/mouseup
@@ -16251,12 +16275,22 @@
 
       async function renderLibrary() {
         const main = document.getElementById("mainContent");
+        const _LIB_CACHE_KEY = 'kiwi_lib_cache_v2';
         const _hasCache = AppState.subjects && AppState.subjects.length > 0;
-        if (!_hasCache) renderLoadingState(main, "Loading library...");
+        // sessionStorage fallback — paint instantly from prior session
+        if (!_hasCache) {
+          try {
+            const _sc = sessionStorage.getItem(_LIB_CACHE_KEY);
+            if (_sc) { AppState.subjects = JSON.parse(_sc); }
+          } catch(_ce) {}
+        }
+        const _hasCacheNow = AppState.subjects && AppState.subjects.length > 0;
+        if (!_hasCacheNow) renderLoadingState(main, "Loading library...");
         try {
-          if (!_hasCache) {
+          if (!_hasCacheNow) {
             const data = await api.getLibrary();
             AppState.subjects = data.subjects || [];
+            try { sessionStorage.setItem(_LIB_CACHE_KEY, JSON.stringify(AppState.subjects)); } catch(_se) {}
           } else {
             api.getLibrary().then(function(d) {
               const freshSubjects = d.subjects || [];
@@ -16264,6 +16298,7 @@
               const _oldJson = JSON.stringify(AppState.subjects || []);
               const _newJson = JSON.stringify(freshSubjects);
               AppState.subjects = freshSubjects;
+              try { sessionStorage.setItem(_LIB_CACHE_KEY, JSON.stringify(freshSubjects)); } catch(_se) {}
               if (AppState.currentPage === 'library' && _oldJson !== _newJson) renderLibrary();
             }).catch(function() {});
           }
@@ -16434,14 +16469,18 @@
                       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
                         <div style="font-size:var(--text-xs);color:var(--text-4);margin-bottom:6px;letter-spacing:0.05em;text-transform:uppercase;">Decks</div>
                         ${(subj.decks || []).map(function(dk) {
+                          const _dkPublicBadge = dk.is_public
+                            ? '<span style="font-size:var(--text-xs);color:var(--green-bright);background:rgba(82,183,136,0.12);border:1px solid rgba(82,183,136,0.25);border-radius:20px;padding:1px 7px;margin-left:5px;">&#x2713; Published</span>'
+                            : '';
                           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);margin-bottom:5px;">' +
                             '<span style="font-size:var(--text-sm);color:var(--text-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHTML(dk.name || 'Deck') + '">' +
                             '<svg style="width:10px;height:10px;vertical-align:-1px;margin-right:5px;opacity:0.5;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><path d="M12 12v3"/></svg>' +
-                            escapeHTML(dk.name || 'Default Deck') + ' <span style="color:var(--text-4);font-size:var(--text-xs);">(' + (dk.card_count || 0) + ' cards)</span></span>' +
-                            '<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);margin-left:8px;flex-shrink:0;" ' +
+                            escapeHTML(dk.name || 'Default Deck') + ' <span style="color:var(--text-4);font-size:var(--text-xs);">(' + (dk.card_count || 0) + ' cards)</span>' + _dkPublicBadge + '</span>' +
+                            (!dk.is_public ? '<button class="btn btn-ghost btn-sm lib-publish-deck-btn" data-deck-id="' + escapeHTML(dk.id) + '" data-deck-name="' + escapeHTML(dk.name||'Deck') + '" style="font-size:var(--text-xs);color:var(--teal);margin-left:6px;flex-shrink:0;">&#x2191; Publish</button>' : '') +
+                            '<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);margin-left:6px;flex-shrink:0;" ' +
                             'onclick="handleRenameDeck(\'' + escapeHTML(dk.id) + '\',\'' + escapeHTML(dk.name || 'Deck') + '\')" title="Rename deck">' +
                             '<svg style="width:10px;height:10px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg> Rename</button>' +
-                            '<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;margin-left:8px;flex-shrink:0;" ' +
+                            '<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;margin-left:6px;flex-shrink:0;" ' +
                             'onclick="handleDeleteDeck(\'' + escapeHTML(dk.id) + '\',\'' + escapeHTML(dk.name || 'Deck') + '\',\'' + escapeHTML(safeDisplayName(subj.name)) + '\')">' +
                             '<svg style="width:10px;height:10px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Delete</button>' +
                             '</div>';
@@ -16699,22 +16738,36 @@
                 myDecks.forEach(function(d) { if (d.group_name && !seen.has(d.group_name)) { seen.add(d.group_name); existingGroups.push(d.group_name); } });
               } catch(e) {}
               // Show group picker modal
-              _showGroupPickerModal(existingGroups, async function(groupName) {
+              _showGroupPickerModal(existingGroups, function(groupName) {
                 if (!groupName) return;
-                var published = 0, failed = 0;
-                for (var i = 0; i < allDecks.length; i++) {
-                  var item = allDecks[i];
-                  try {
-                    await api.publishDeck(item.deck.id, '', [], groupName);
-                    published++;
-                  } catch(e) { failed++; }
-                }
-                _exitSelectMode();
-                showToast(
-                  failed === 0
-                    ? published + ' deck' + (published!==1?'s':'') + ' published as group "' + groupName + '"'
-                    : published + ' published, ' + failed + ' failed',
-                  failed ? 'error' : 'success'
+                var deckNames = allDecks.map(function(item) { return '"' + escapeHTML(item.deck.name || 'Deck') + '"'; }).slice(0, 5).join(', ');
+                var moreCount = allDecks.length > 5 ? ' +' + (allDecks.length - 5) + ' more' : '';
+                showCustomConfirm(
+                  'Publish ' + allDecks.length + ' deck' + (allDecks.length !== 1 ? 's' : '') + ' as Group',
+                  'Publish ' + deckNames + moreCount + ' to group "' + groupName + '"? Publishing will run in the background — you can continue using the app.',
+                  function() {
+                    // Update button state immediately (fire-and-forget)
+                    var _pubBtn = document.getElementById('lib-bulk-publish-group');
+                    if (_pubBtn) { _pubBtn.textContent = '↻ Publishing…'; _pubBtn.disabled = true; }
+                    _exitSelectMode();
+                    // Background publish — does not block navigation
+                    (async function() {
+                      var published = 0, failed = 0;
+                      for (var i = 0; i < allDecks.length; i++) {
+                        var item = allDecks[i];
+                        try { await api.publishDeck(item.deck.id, '', [], groupName); published++; }
+                        catch(_pe) { failed++; }
+                      }
+                      showToast(
+                        failed === 0
+                          ? published + ' deck' + (published!==1?'s':'') + ' published as group "' + groupName + '"'
+                          : published + ' published, ' + failed + ' failed',
+                        failed ? 'error' : 'success'
+                      );
+                      AppState.subjects = null;
+                      try { sessionStorage.removeItem('kiwi_lib_cache_v2'); } catch(_se) {}
+                    })();
+                  }
                 );
               });
             });
@@ -16776,6 +16829,34 @@
                 btn.textContent = "↑ Publish Deck";
                 btn.disabled = false;
               }
+            });
+          });
+
+          // ── Per-deck publish handler ──────────────────────────────────────────
+          main.querySelectorAll('.lib-publish-deck-btn').forEach(function(btn) {
+            btn.addEventListener('click', async function(e) {
+              e.stopPropagation();
+              var dkId   = btn.dataset.deckId;
+              var dkName = btn.dataset.deckName || 'this deck';
+              showCustomConfirm(
+                'Publish "' + dkName + '"',
+                'Publish this deck to the community library? It will be visible to all users.',
+                async function() {
+                  btn.textContent = 'Publishing…';
+                  btn.disabled = true;
+                  try {
+                    await api.publishDeck(dkId);
+                    showToast('"' + dkName + '" published to community!', 'success');
+                    AppState.subjects = null;
+                    try { sessionStorage.removeItem('kiwi_lib_cache_v2'); } catch(_se) {}
+                    renderLibrary();
+                  } catch(e2) {
+                    showToast(e2.message || 'Publish failed', 'error');
+                    btn.textContent = '↑ Publish';
+                    btn.disabled = false;
+                  }
+                }
+              );
             });
           });
 
@@ -18846,8 +18927,10 @@
         renderLoadingState(main, "Loading community decks...");
         let templates = [];
         try {
-          const data = await api.getCommunityDecks({ limit: 100 });
+          const data = await api.getCommunityDecks({ limit: 20, page: 1 });
           templates = data.decks || data || [];
+          _total = data.total || templates.length;
+          try { sessionStorage.setItem(_CD_CACHE_KEY, JSON.stringify(templates)); } catch(_se) {}
         } catch (err) {
           main.innerHTML = `
       <div class="page-wrap page-enter">
@@ -18862,18 +18945,33 @@
         }
 
         // ── State ────────────────────────────────────────────────────────────
-        let _searchQuery = '';
-        let _selectMode  = false;
-        const _selected  = new Set(); // community deck ids
+        let _searchQuery   = '';
+        let _filterSubject = '';
+        let _filterGroup   = '';
+        let _page          = 1;
+        const PAGE_SIZE    = 20;
+        let _total         = 0;
+        let _loadingMore   = false;
+        let _selectMode    = false;
+        const _selected    = new Set(); // community deck ids
+
+        // sessionStorage cache — stale-while-revalidate
+        const _CD_CACHE_KEY = 'kiwi_cd_cache_v2';
+        try {
+          const _cached = sessionStorage.getItem(_CD_CACHE_KEY);
+          if (_cached && templates.length === 0) templates = JSON.parse(_cached);
+        } catch(_ce) {}
 
         // ── Helpers ──────────────────────────────────────────────────────────
         const currentUserId = AppState.user?.id || AppState.userId || null;
 
         function _filtered() {
           const q = _searchQuery.toLowerCase();
-          return q
-            ? templates.filter(t => (t.title||'').toLowerCase().includes(q) || (t.subject||'').toLowerCase().includes(q) || (t.author_name||'').toLowerCase().includes(q))
-            : templates;
+          let list = templates;
+          if (q) list = list.filter(t => (t.title||'').toLowerCase().includes(q) || (t.subject||'').toLowerCase().includes(q) || (t.author_name||'').toLowerCase().includes(q));
+          if (_filterSubject) list = list.filter(t => t.subject === _filterSubject);
+          if (_filterGroup)   list = list.filter(t => t.group_name === _filterGroup);
+          return list;
         }
 
         function _grouped(list) {
@@ -18917,7 +19015,7 @@
             <div style="display:flex;align-items:center;gap:4px;margin:6px 0 2px;">${stars}<span style="font-size:var(--text-xs);color:var(--text-3);margin-left:4px;">${avgRating}</span></div>
             <div class="community-card-footer">
               <span style="font-size:var(--text-sm);color:var(--text-3);font-family:var(--font-mono);">&#x2193; ${t.clone_count||0} clones</span>
-              ${!_selectMode ? `<button class="btn btn-primary btn-sm _cd-import-btn" data-import-id="${t.id}">Import</button>` : ''}
+              ${!_selectMode ? `<button class="btn btn-primary btn-sm _cd-detail-btn" data-detail-id="${t.id}" title="View details before importing">Import</button>` : ''}
             </div>
             ${!_selectMode && isOwner ? `<button class="_cd-group-btn" data-group-id="${t.id}" data-group-current="${escapeHTML(t.group_name||'')}" style="margin-top:6px;background:none;border:1px solid var(--border-2);border-radius:6px;color:var(--text-3);font-size:var(--text-xs);padding:3px 8px;cursor:pointer;font-family:var(--font-body);">&#x25A3; ${t.group_name ? 'Change group' : 'Add to group'}</button>` : ''}
             ${selectBox ? '</div></div>' : ''}
@@ -18925,6 +19023,7 @@
         }
 
         function _groupCardHTML(groupName, decks) {
+          const _isGroupAuthor = decks.some(d => d.author_id === currentUserId);
           return `
           <div class="_cd-group-card" data-group-name="${escapeHTML(groupName)}" style="background:var(--surface-2,var(--surface));border:1px solid var(--border-2);border-radius:14px;padding:16px;margin-bottom:12px;cursor:pointer;position:relative;">
             <div style="display:flex;align-items:center;gap:10px;">
@@ -18933,38 +19032,66 @@
                 <div style="font-weight:700;font-size:var(--text-base);color:var(--text-1);">${escapeHTML(groupName)}</div>
                 <div style="font-size:var(--text-sm);color:var(--text-3);margin-top:2px;">${decks.length} deck${decks.length!==1?'s':''}</div>
               </div>
+              ${_isGroupAuthor ? `<button class="_cd-del-group-btn" data-del-group="${escapeHTML(groupName)}" style="background:none;border:none;color:#e57373;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;z-index:2;" title="Delete group" onclick="event.stopPropagation()">&#x1F5D1;</button>` : ''}
               <div style="color:var(--text-3);font-size:20px;">&#x276F;</div>
             </div>
           </div>`;
         }
 
+        function _getFilteredSubjects() {
+          return [...new Set(templates.filter(t => t.subject).map(t => t.subject))].sort();
+        }
+        function _getFilteredGroups() {
+          return [...new Set(templates.filter(t => t.group_name).map(t => t.group_name))].sort();
+        }
+
         function _render() {
           const list = _filtered();
           const { groups, ungrouped } = _grouped(list);
+          const _subjects = _getFilteredSubjects();
+          const _groups   = _getFilteredGroups();
 
           let groupsHTML = Object.entries(groups).map(([name, decks]) => _groupCardHTML(name, decks)).join('');
           let cardsHTML  = ungrouped.map((t, i) => _deckCardHTML(t, i, false)).join('');
 
           const hasAny = list.length > 0;
+          const _canLoadMore = templates.length < _total && !_loadingMore;
+
+          // Build filter pills
+          const _mkPill = (label, type, val) => {
+            const _active = type === 'subject' ? _filterSubject === val : _filterGroup === val;
+            return `<button class="_cd-filter-pill" data-ftype="${type}" data-fval="${escapeHTML(val)}"
+              style="white-space:nowrap;flex-shrink:0;padding:4px 10px;border-radius:20px;border:1px solid ${_active?'var(--teal)':'var(--border-2)'};background:${_active?'rgba(13,148,136,0.15)':'transparent'};color:${_active?'var(--teal)':'var(--text-3)'};font-size:var(--text-xs);cursor:pointer;font-family:var(--font-body);">${escapeHTML(label)}</button>`;
+          };
+          const filterBar = (_subjects.length > 0 || _groups.length > 0) ? `
+            <div style="display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:6px;margin-bottom:10px;scrollbar-width:none;">
+              ${_mkPill('All', 'subject', '')}
+              ${_subjects.map(s => _mkPill(s, 'subject', s)).join('')}
+              ${_groups.length > 0 ? '<span style="color:var(--border-2);font-size:12px;flex-shrink:0;align-self:center;">|</span>' : ''}
+              ${_groups.map(g => _mkPill('📚 '+g, 'group', g)).join('')}
+            </div>` : '';
 
           main.innerHTML = `
     <div class="page-wrap page-enter" id="_cd-page">
       <div class="section-header" style="display:flex;align-items:center;gap:8px;">
         <div style="flex:1;">
           <div class="section-title">Community Decks</div>
-          <div class="section-sub">Shared by students worldwide</div>
+          <div class="section-sub">${_total > 0 ? _total + ' decks · ' : ''}Shared by students worldwide</div>
         </div>
-        <button id="_cd-search-btn" style="background:none;border:none;color:var(--text-2);font-size:20px;cursor:pointer;padding:4px 8px;" title="Search">&#x1F50D;</button>
+        <button id="_cd-search-btn" class="btn btn-ghost btn-sm" style="display:flex;align-items:center;gap:4px;padding:5px 8px;font-size:var(--text-sm);" title="Search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
         <button id="_cd-select-btn" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);">${_selectMode ? 'Done' : 'Select'}</button>
       </div>
 
       <!-- Search bar (hidden by default) -->
       <div id="_cd-search-bar" style="display:${_searchQuery?'flex':'none'};align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--surface-2,var(--surface));border-radius:10px;border:1px solid var(--border-2);">
-        <span style="color:var(--text-3);">&#x1F50D;</span>
+        <span style="color:var(--text-3);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
         <input id="_cd-search-input" type="text" placeholder="Search decks, subjects, authors..." value="${escapeHTML(_searchQuery)}"
           style="flex:1;background:none;border:none;outline:none;color:var(--text-1);font-family:var(--font-body);font-size:var(--text-sm);">
         <button id="_cd-search-clear" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:16px;">&#x2715;</button>
       </div>
+
+      <!-- Filter pills -->
+      ${filterBar}
 
       <!-- Bulk select bar -->
       <div id="_cd-bulk-bar" style="display:${_selectMode?'flex':'none'};align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--surface-2,var(--surface));border-radius:10px;border:1px solid var(--border-2);">
@@ -18978,6 +19105,7 @@
         ${groupsHTML}
         ${cardsHTML}
       </div>
+      ${_canLoadMore ? `<div style="text-align:center;padding:16px 0 8px;"><button id="_cd-load-more" class="btn btn-ghost btn-sm" style="color:var(--teal);font-size:var(--text-sm);">Load More ↓</button></div>` : ''}
     </div>`;
 
           _attachHandlers();
@@ -19041,7 +19169,7 @@
             });
           });
 
-          // ── Card taps in select mode ──────────────────────────────────────
+          // ── Card taps in select mode + long-press to enter select ────────
           document.querySelectorAll('._cd-item').forEach(el => {
             el.addEventListener('click', () => {
               if (!_selectMode) return;
@@ -19051,13 +19179,85 @@
               if (countEl) countEl.textContent = _selected.size + ' selected';
               const delBtn = document.getElementById('_cd-bulk-del-btn');
               if (delBtn) delBtn.disabled = _selected.size === 0;
-              // toggle checkbox visually without full re-render
               const check = el.querySelector('._cd-check');
               if (check) {
                 const on = _selected.has(id);
                 check.style.background = on ? 'var(--teal)' : 'transparent';
                 check.innerHTML = on ? '<span style="color:#fff;font-size:11px;font-weight:700;">✓</span>' : '';
               }
+            });
+            // Long-press (500ms) to enter select mode
+            let _lpTimer = null;
+            el.addEventListener('touchstart', function(e) {
+              if (_selectMode || e.target.closest('button')) return;
+              _lpTimer = setTimeout(function() {
+                _lpTimer = null;
+                if (navigator.vibrate) navigator.vibrate(40);
+                _selectMode = true;
+                _selected.clear();
+                const id = el.dataset.cdId;
+                if (id) _selected.add(id);
+                _render();
+              }, 500);
+            }, { passive: true });
+            el.addEventListener('touchend',    function() { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } });
+            el.addEventListener('touchmove',   function() { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } });
+            el.addEventListener('touchcancel', function() { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } });
+          });
+
+          // ── Filter pills ──────────────────────────────────────────────────
+          document.querySelectorAll('._cd-filter-pill').forEach(pill => {
+            pill.addEventListener('click', () => {
+              const type = pill.dataset.ftype, val = pill.dataset.fval;
+              if (type === 'subject') { _filterSubject = _filterSubject === val ? '' : val; _filterGroup = ''; }
+              else if (type === 'group')  { _filterGroup = _filterGroup === val ? '' : val; _filterSubject = ''; }
+              _render();
+            });
+          });
+
+          // ── Load More ─────────────────────────────────────────────────────
+          const loadMoreBtn = document.getElementById('_cd-load-more');
+          if (loadMoreBtn) {
+            loadMoreBtn.addEventListener('click', async () => {
+              if (_loadingMore) return;
+              _loadingMore = true;
+              loadMoreBtn.textContent = 'Loading...';
+              loadMoreBtn.disabled = true;
+              try {
+                _page++;
+                const d = await api.getCommunityDecks({ limit: PAGE_SIZE, page: _page });
+                const fresh = d.decks || [];
+                _total = d.total || _total;
+                fresh.forEach(dk => { if (!templates.find(t => t.id === dk.id)) templates.push(dk); });
+                try { sessionStorage.setItem(_CD_CACHE_KEY, JSON.stringify(templates)); } catch(_se) {}
+              } catch(e) { _page--; showToast('Load failed', 'error'); }
+              _loadingMore = false;
+              _render();
+            });
+          }
+
+          // ── Group delete ──────────────────────────────────────────────────
+          document.querySelectorAll('._cd-del-group-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const groupName = btn.dataset.delGroup;
+              const myDecks = templates.filter(d => d.group_name === groupName && d.author_id === currentUserId);
+              showCustomConfirm('Delete Group', `Remove all ${myDecks.length} deck${myDecks.length!==1?'s':''} in group "${groupName}"? This cannot be undone.`, async () => {
+                try {
+                  await api.deleteCommunityGroup(groupName);
+                  templates = templates.filter(d => !(d.group_name === groupName && d.author_id === currentUserId));
+                  showToast(`Group "${groupName}" deleted`, 'success');
+                } catch(e2) {
+                  // Fallback: delete each deck individually
+                  let failed = 0;
+                  for (const dk of myDecks) {
+                    try { await api.deleteCommunityDeck(dk.id); templates = templates.filter(t => t.id !== dk.id); }
+                    catch(_e) { failed++; }
+                  }
+                  showToast(failed ? `${myDecks.length - failed} removed, ${failed} failed` : `Group "${groupName}" deleted`, failed ? 'error' : 'success');
+                }
+                _render();
+              });
             });
           });
 
@@ -19116,14 +19316,14 @@
             });
           });
 
-          // ── Import button ────────────────────────────────────────────────
-          document.querySelectorAll('._cd-import-btn').forEach(btn => {
+          // ── Detail overlay before import ─────────────────────────────────
+          document.querySelectorAll('._cd-detail-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
               e.stopPropagation();
-              const id = btn.dataset.importId;
+              const id = btn.dataset.detailId;
               const t  = templates.find(t => t.id === id);
               if (!t) return;
-              await _doImport(t);
+              _showDeckDetail(t);
             });
           });
 
@@ -19163,6 +19363,7 @@
                   try {
                     await api.deleteCommunityDeck(id);
                     templates = templates.filter(t => t.id !== id);
+                    _persistCache();
                     showToast('Deck removed', 'success');
                     _render();
                   } catch(e) {
@@ -19173,11 +19374,37 @@
               },
               90, { confirmFirst: true }
             );
+            // Swipe groups to delete (author's groups)
+            _attachSwipeToDelete(
+              grid, '._cd-group-card',
+              el => el.dataset.groupName,
+              (groupName, el) => {
+                const myDecks = templates.filter(d => d.group_name === groupName && d.author_id === currentUserId);
+                if (myDecks.length === 0) { el.style.transform=''; el.style.opacity=''; return; }
+                showCustomConfirm('Delete Group', `Remove all ${myDecks.length} deck${myDecks.length!==1?'s':''} in "${groupName}"?`, async () => {
+                  try {
+                    await api.deleteCommunityGroup(groupName);
+                    templates = templates.filter(d => !(d.group_name === groupName && d.author_id === currentUserId));
+                  } catch(_ge) {
+                    let failed = 0;
+                    for (const dk of myDecks) {
+                      try { await api.deleteCommunityDeck(dk.id); templates = templates.filter(t => t.id !== dk.id); }
+                      catch(_e) { failed++; }
+                    }
+                  }
+                  _persistCache();
+                  showToast(`Group "${groupName}" deleted`, 'success');
+                  _render();
+                });
+              },
+              90, { confirmFirst: true }
+            );
           }
         }
 
         // ── Group overlay ─────────────────────────────────────────────────
-        function _openGroupOverlay(groupName, decks) {
+        function _openGroupOverlay(groupName, _decksInit) {
+          let decks = _decksInit.slice(); // mutable local copy
           const overlay = document.createElement('div');
           overlay.style.cssText = 'position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.7);display:flex;flex-direction:column;';
           overlay.innerHTML = `
@@ -19194,7 +19421,8 @@
                   return `
                   <div class="community-card" style="margin-bottom:10px;">
                     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
-                      <div class="community-card-title" style="margin:0;">${escapeHTML(t.title)}</div>
+                      <div class="community-card-title" style="margin:0;flex:1;">${escapeHTML(t.title)}</div>
+                      ${t.author_id === currentUserId ? `<button class="_og-del-btn" data-oid="${t.id}" data-otitle="${escapeHTML(t.title)}" style="background:none;border:none;color:#e57373;font-size:16px;cursor:pointer;padding:0 2px;flex-shrink:0;" title="Remove from community">&#x1F5D1;</button>` : ''}
                     </div>
                     <div class="community-card-meta">
                       <span>by ${escapeHTML(authorName)}</span>
@@ -19218,7 +19446,28 @@
               const t = decks.find(d => d.id === btn.dataset.oid);
               if (!t) return;
               overlay.remove();
-              await _doImport(t);
+              _showDeckDetail(t);
+            });
+          });
+
+          overlay.querySelectorAll('._og-del-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const oid = btn.dataset.oid;
+              const otitle = btn.dataset.otitle;
+              showCustomConfirm('Remove Deck', `Remove "${otitle}" from the community?`, async () => {
+                try {
+                  await api.deleteCommunityDeck(oid);
+                  templates = templates.filter(t => t.id !== oid);
+                  decks = decks.filter(d => d.id !== oid);
+                  _persistCache();
+                  showToast('Deck removed', 'success');
+                  if (decks.length === 0) { overlay.remove(); _render(); return; }
+                  // Re-render overlay with remaining decks
+                  overlay.remove();
+                  _openGroupOverlay(groupName, decks);
+                } catch(e2) { showToast(e2.message || 'Failed to remove', 'error'); }
+              });
             });
           });
         }
@@ -19247,6 +19496,55 @@
           } catch(err) {
             showToast(err.message || 'Import failed', 'error');
           }
+        }
+
+        // ── Deck detail overlay ───────────────────────────────────────────
+        function _showDeckDetail(deck) {
+          const ov = document.createElement('div');
+          ov.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.75);display:flex;align-items:flex-end;justify-content:center;';
+          const stars = [1,2,3,4,5].map(n =>
+            `<span style="font-size:16px;color:${n <= Math.round(deck.average_rating||0) ? '#c9a227' : 'var(--text-4)'};">★</span>`
+          ).join('');
+          ov.innerHTML = `
+            <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:600px;padding:24px 20px 36px;max-height:82vh;overflow-y:auto;">
+              <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px;">
+                <div style="flex:1;">
+                  <div style="font-weight:700;font-size:var(--text-xl);color:var(--text);line-height:1.3;">${escapeHTML(deck.title)}</div>
+                  <div style="font-size:var(--text-sm);color:var(--text-3);margin-top:4px;">by ${escapeHTML(deck.author_name||'Anonymous')}</div>
+                </div>
+                <button id="_dd-close" style="background:none;border:none;color:var(--text-3);font-size:22px;cursor:pointer;flex-shrink:0;line-height:1;">&#x2715;</button>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;">
+                <div style="text-align:center;background:var(--surface-2);border-radius:10px;padding:10px 6px;">
+                  <div style="font-size:var(--text-2xl);font-weight:700;color:var(--green-bright);">${deck.card_count||deck.cards||0}</div>
+                  <div style="font-size:var(--text-xs);color:var(--text-4);margin-top:2px;">CARDS</div>
+                </div>
+                <div style="text-align:center;background:var(--surface-2);border-radius:10px;padding:10px 6px;">
+                  <div style="font-size:var(--text-xl);font-weight:700;color:var(--amber);">${stars}</div>
+                  <div style="font-size:var(--text-xs);color:var(--text-4);margin-top:2px;">${(deck.average_rating||0).toFixed(1)} AVG</div>
+                </div>
+                <div style="text-align:center;background:var(--surface-2);border-radius:10px;padding:10px 6px;">
+                  <div style="font-size:var(--text-2xl);font-weight:700;color:var(--text-2);">${deck.clone_count||0}</div>
+                  <div style="font-size:var(--text-xs);color:var(--text-4);margin-top:2px;">CLONES</div>
+                </div>
+              </div>
+              ${deck.subject ? `<div style="margin-bottom:10px;"><span style="font-size:var(--text-xs);color:var(--teal);background:rgba(13,148,136,0.12);border:1px solid rgba(13,148,136,0.25);border-radius:20px;padding:3px 10px;">${escapeHTML(deck.subject)}</span></div>` : ''}
+              ${deck.group_name ? `<div style="margin-bottom:10px;font-size:var(--text-sm);color:var(--text-3);">📚 Group: <strong>${escapeHTML(deck.group_name)}</strong></div>` : ''}
+              ${deck.description ? `<div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:16px;line-height:1.65;border-left:2px solid var(--border-2);padding-left:12px;">${escapeHTML(deck.description)}</div>` : ''}
+              <button id="_dd-import-btn" class="btn btn-primary" style="width:100%;padding:14px;font-size:var(--text-base);">&#x2B07; Import to Library</button>
+            </div>`;
+          document.body.appendChild(ov);
+          document.getElementById('_dd-close').addEventListener('click', () => ov.remove());
+          ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+          document.getElementById('_dd-import-btn').addEventListener('click', async () => {
+            ov.remove();
+            await _doImport(deck);
+          });
+        }
+
+        // ── Save to sessionStorage after any template mutation ────────────
+        function _persistCache() {
+          try { sessionStorage.setItem(_CD_CACHE_KEY, JSON.stringify(templates)); } catch(_se) {}
         }
 
         _render();

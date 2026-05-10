@@ -1027,22 +1027,24 @@ async findById(userId, taskId) {
 },
 // ── community_decks ─────────────────────────────────────────────────────────
 communityDecks: {
-async findMany({ search, tags } = {}, { page = 1, limit = 20 } = {}) {
+async findMany({ search, tags, group, subject } = {}, { page = 1, limit = 20 } = {}) {
   // Fix #52: filter to is_public=true — prevents exposing draft/unlisted decks
-  let sql = 'SELECT *, COALESCE(author_name, author_id::text, \'Anonymous\') AS author FROM community_decks WHERE is_public = true';
+  // Group/subject filtering added for community filter bar feature
+  const conditions = ['is_public = true'];
   const vals = [];
   if (search) {
-    sql += ` AND title ILIKE $${vals.length + 1}`;
+    conditions.push(`(title ILIKE $${vals.length + 1} OR subject ILIKE $${vals.length + 1})`);
     vals.push(`%${search}%`);
   }
-  // Parameterized COUNT — avoids string interpolation in the prior version
-  const countVals = search ? [`%${search}%`] : [];
-  const countSQL = `SELECT COUNT(*) AS count FROM community_decks WHERE is_public = true${search ? ' AND title ILIKE $1' : ''}`;
-  const { rows: [{ count }] } = await query(countSQL, countVals);
+  if (group)   { conditions.push(`group_name = $${vals.length + 1}`);  vals.push(group); }
+  if (subject) { conditions.push(`subject ILIKE $${vals.length + 1}`); vals.push(`%${subject}%`); }
+  const whereClause = conditions.join(' AND ');
+  const countSQL = `SELECT COUNT(*) AS count FROM community_decks WHERE ${whereClause}`;
+  const { rows: [{ count }] } = await query(countSQL, vals);
   const offset = (page - 1) * limit;
-  vals.push(limit, offset);
-  sql += ` ORDER BY clone_count DESC LIMIT $${vals.length - 1} OFFSET $${vals.length}`;
-  const { rows: decks } = await query(sql, vals);
+  const dataVals = [...vals, limit, offset];
+  const sql = `SELECT *, COALESCE(author_name, author_id::text, 'Anonymous') AS author FROM community_decks WHERE ${whereClause} ORDER BY clone_count DESC LIMIT $${dataVals.length - 1} OFFSET $${dataVals.length}`;
+  const { rows: decks } = await query(sql, dataVals);
   return { decks, total: parseInt(count || '0', 10) };
 },
 async findById(id) {
@@ -16001,9 +16003,9 @@ communityRouter.use(reckoningLockout);
 
 communityRouter.get('/decks', async (req, res) => {
 try {
-const { search, tags, page = 1, limit = 20 } = req.query;
+const { search, tags, page = 1, limit = 20, group, subject } = req.query;
 const result = await db.communityDecks.findMany(
-{ search, tags },
+{ search, tags, group, subject },
 { page: parseInt(page), limit: parseInt(limit) }
 );
 res.json(result);
@@ -16184,6 +16186,21 @@ communityRouter.delete('/decks/:id', async (req, res) => {
     res.json({ message: 'Deck removed from community' });
   } catch (e) {
     res.status(500).json({ error: 'Failed to delete deck', details: e.message });
+  }
+});
+
+// DELETE /api/community/groups/:groupName — delete all author's decks in a group
+communityRouter.delete('/groups/:groupName', async (req, res) => {
+  try {
+    const groupName = decodeURIComponent(req.params.groupName);
+    if (!groupName) return res.status(400).json({ error: 'Group name required' });
+    const { rowCount } = await query(
+      'DELETE FROM community_decks WHERE group_name = $1 AND author_id = $2',
+      [groupName, req.user.id]
+    );
+    res.json({ success: true, deleted: rowCount || 0, group_name: groupName });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete group', details: e.message });
   }
 });
 
