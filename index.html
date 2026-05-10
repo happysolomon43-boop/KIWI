@@ -5733,7 +5733,7 @@
   50%  { box-shadow: 0 0 0 9999px rgba(3,13,11,.88), 0 0 0 3px var(--green-bright), 0 0 0 14px rgba(110,231,160,.0); }
   100% { box-shadow: 0 0 0 9999px rgba(3,13,11,.88), 0 0 0 2px var(--green-bright), 0 0 0 6px rgba(110,231,160,.3); }
 }
-#kiwiSpot.interactive { pointer-events: all; cursor: pointer; animation: pulseRing 1.4s ease-in-out infinite; }
+#kiwiSpot.interactive { pointer-events: none; cursor: pointer; animation: pulseRing 1.4s ease-in-out infinite; }
 #kiwiArrow {
   position: fixed; z-index: 9992; font-size: 26px; pointer-events: none; opacity: 0;
   transition: opacity .3s ease, top .5s cubic-bezier(.34,1.2,.64,1), left .5s cubic-bezier(.34,1.2,.64,1);
@@ -9530,9 +9530,12 @@
           updateUserFooter();
           showToast(`Welcome back, ${data.user?.full_name || data.user?.name || 'Student'}!`, 'success', 4000);
           navigateTo('dashboard');
+          initKiwiWS();
           // PATCH FIX-6: ensure back button history stack is initialised after login too
           history.replaceState({ kiwi: 1 }, '');
           history.pushState({ kiwi: 1 }, '');
+          // Start tour for users who haven't completed or skipped it yet (e.g. registered on another device)
+          setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
         } catch (err) {
           setAuthLoading('login', false);
           if (err.status >= 500 || err.status === 0) {
@@ -20009,9 +20012,9 @@
                   </div>
                 </div>
                 <button class="btn btn-primary" style="width:100%;padding:16px;font-size:var(--text-base);"
-                  onclick="showKiwiTour('study')">Start First Session →</button>
+                  onclick="navigateTo('study')">Start First Session →</button>
                 <div style="margin-top:12px;">
-                  <button class="btn btn-ghost btn-sm" onclick="(function(b){b.disabled=true;b.textContent='Loading...';showKiwiTour('dashboard');})(this)">Go to Dashboard</button>
+                  <button class="btn btn-ghost btn-sm" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">Go to Dashboard</button>
                 </div>
                 <div style="margin-top:24px;padding:16px;background:var(--surface-2,var(--bg-2));border-radius:10px;text-align:left;">
                   <div style="font-size:var(--text-sm);color:var(--text-3);font-weight:600;margin-bottom:10px;"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Features that unlock as you study:</div>
@@ -20607,8 +20610,8 @@
           <div class="guide-row" id="guideReplayTour">
             <span class="guide-row-icon">🌱</span>
             <div class="guide-row-text">
-              <div class="guide-row-label">Replay the Awakening Tour</div>
-              <div class="guide-row-sub">Walk through the 5-screen intro to KIWI's ecosystem</div>
+              <div class="guide-row-label">Replay the KIWI Tour</div>
+              <div class="guide-row-sub">Walk through the 20-step guided tour of KIWI's ecosystem</div>
             </div>
             <span class="guide-row-chevron">›</span>
           </div>
@@ -21414,7 +21417,7 @@ const KIWI_TOUR_STEPS = [
 ];
 
 async function startKiwiTour() {
-  if (localStorage.getItem('kiwi_tour_seen') === 'done') return;
+  if (localStorage.getItem('kiwi_tour_seen')) return; // blocks both 'done' and 'skipped'
   _tourActive = true; _tourStep = 0;
   const skipEl = document.getElementById('kiwiTourSkip');
   const ctrEl  = document.getElementById('kiwiTourCounter');
@@ -21518,7 +21521,8 @@ async function _tourShowSpot(step, idx) {
     await _sleep(500);
   } else if (step.action === 'sidebar') {
     await new Promise(resolve => {
-      function _sbH() { target.removeEventListener('click', _sbH); resolve(); }
+      _tourNavResolve = resolve;
+      function _sbH() { target.removeEventListener('click', _sbH); _tourNavResolve = null; resolve(); }
       target.addEventListener('click', _sbH, { once: true });
     });
     await _sleep(400);
