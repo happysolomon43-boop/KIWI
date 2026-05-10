@@ -10488,22 +10488,23 @@
             // no layout reflow, no blink of the rate row OR the prev button.
             var _preRR = _ratingRow.querySelector('.response-row');
             if (_preRR && _preRR.style.visibility === 'hidden') {
-              // Step 1: make visible and restore pointer events
+              // Step 1: reset animation BEFORE making visible, so the opacity:0
+              // "from" frame is never painted (element still hidden during reflow).
+              _preRR.style.animation = 'none';
+              //   Force the browser to commit that state (reflow read)
+              void _preRR.offsetWidth;
+              // Step 2: make visible and restore pointer events, then release
+              // animation — browser renders the first frame at opacity:0 and
+              // immediately starts animating to opacity:1. No visible flash.
               _preRR.style.visibility = 'visible';
               _preRR.style.pointerEvents = '';
-              // Step 2: re-trigger the kiwi-resp-rise CSS animation.
-              //   a) Stamp animation:none inline (overrides the CSS rule)
-              _preRR.style.animation = 'none';
-              //   b) Force the browser to commit that state (reflow read)
-              void _preRR.offsetWidth;
-              //   c) Remove the inline override — CSS animation restarts from frame 0
+              //   Remove the inline override — CSS animation restarts from frame 0
               _preRR.style.animation = '';
-              // Step 3: wire click handlers now that buttons are interactive
-              _preRR.querySelectorAll('.resp-btn').forEach(function(btn) {
-                btn.addEventListener('click', async function() {
-                  await handleStudyResponse(parseInt(btn.dataset.rating));
-                });
-              });
+              // NOTE: click handlers were already attached to these buttons during
+              // renderActiveStudySession. Do NOT add them again here — duplicates
+              // cause handleStudyResponse to fire twice per tap, which triggers two
+              // full re-renders and makes the prev button slide-in animation replay
+              // (the visible "blink"). Pointer-events restored above is sufficient.
             } else {
               // Fallback: pre-render not found (e.g. browsing prev, quick Q)
               _ratingRow.innerHTML = _buildRatingRowHTML(_t, _card);
@@ -18926,6 +18927,7 @@
         const main = document.getElementById("mainContent");
         renderLoadingState(main, "Loading community decks...");
         let templates = [];
+        let _total = 0;
         try {
           const data = await api.getCommunityDecks({ limit: 20, page: 1 });
           templates = data.decks || data || [];
@@ -18950,7 +18952,6 @@
         let _filterGroup   = '';
         let _page          = 1;
         const PAGE_SIZE    = 20;
-        let _total         = 0;
         let _loadingMore   = false;
         let _selectMode    = false;
         const _selected    = new Set(); // community deck ids
