@@ -5714,116 +5714,115 @@
     .flip-card-front, .flip-card-back { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border-radius: var(--r); }
     .flip-card-back { transform: rotateY(180deg); }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   AWAKENING TOUR OVERLAY — Guide System Component 1
-   ═══════════════════════════════════════════════════════════════════════════ */
-.kiwi-tour-overlay {
-  position: fixed; inset: 0; z-index: 8500;
-  background: rgba(6, 12, 9, 0.95);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-  display: flex; align-items: center; justify-content: center;
-  padding: 20px;
-  animation: fadeIn var(--t-mid) var(--ease);
+/* ════════════════════════════════════════════════════════════════════
+   KIWI TOUR ENGINE CSS
+════════════════════════════════════════════════════════════════════ */
+#kiwiSpot {
+  position: fixed; z-index: 9990; border-radius: 12px; pointer-events: none; opacity: 0;
+  transition: top .55s cubic-bezier(.34,1.2,.64,1), left .55s cubic-bezier(.34,1.2,.64,1),
+              width .55s cubic-bezier(.34,1.2,.64,1), height .55s cubic-bezier(.34,1.2,.64,1),
+              border-radius .4s ease, opacity .3s ease;
+  box-shadow: 0 0 0 0 rgba(3,13,11,0), 0 0 0 2px var(--green-bright), 0 0 28px 4px rgba(110,231,160,.2);
 }
-.kiwi-tour-card {
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-xl);
-  width: 100%; max-width: 520px;
-  max-height: 90vh;
-  overflow: hidden;
-  box-shadow: var(--shadow-lg), 0 0 60px rgba(82,183,136,0.08);
-  display: flex; flex-direction: column;
-  position: relative;
+#kiwiSpot.visible {
+  opacity: 1;
+  box-shadow: 0 0 0 9999px rgba(3,13,11,.88), 0 0 0 2px var(--green-bright), 0 0 28px 6px rgba(110,231,160,.25);
 }
-.kiwi-tour-topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px 0;
-  min-height: 44px;
+@keyframes pulseRing {
+  0%   { box-shadow: 0 0 0 9999px rgba(3,13,11,.88), 0 0 0 2px var(--green-bright), 0 0 0 6px rgba(110,231,160,.3); }
+  50%  { box-shadow: 0 0 0 9999px rgba(3,13,11,.88), 0 0 0 3px var(--green-bright), 0 0 0 14px rgba(110,231,160,.0); }
+  100% { box-shadow: 0 0 0 9999px rgba(3,13,11,.88), 0 0 0 2px var(--green-bright), 0 0 0 6px rgba(110,231,160,.3); }
 }
-.kiwi-tour-back {
-  background: none; border: none; cursor: pointer;
-  color: var(--text-3); font-size: 12px; padding: 4px 8px;
-  border-radius: var(--r-sm); transition: color var(--t-fast);
-  display: flex; align-items: center; gap: 4px;
-  font-family: var(--font-mono);
+#kiwiSpot.interactive { pointer-events: all; cursor: pointer; animation: pulseRing 1.4s ease-in-out infinite; }
+#kiwiArrow {
+  position: fixed; z-index: 9992; font-size: 26px; pointer-events: none; opacity: 0;
+  transition: opacity .3s ease, top .5s cubic-bezier(.34,1.2,.64,1), left .5s cubic-bezier(.34,1.2,.64,1);
+  filter: drop-shadow(0 2px 8px rgba(110,231,160,.5));
 }
-.kiwi-tour-back:hover { color: var(--text); }
-.kiwi-tour-skip {
-  background: none; border: none; cursor: pointer;
-  color: var(--text-4); font-size: 12px; padding: 4px 10px;
-  border-radius: 99px; transition: color var(--t-fast);
-  font-family: var(--font-mono);
+#kiwiArrow.visible { opacity: 1; }
+@keyframes arrowBounce {
+  0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); }
 }
-.kiwi-tour-skip:hover { color: var(--text-3); }
-.kiwi-tour-illus {
-  height: 200px; display: flex; align-items: center; justify-content: center;
-  padding: 16px; flex-shrink: 0;
+#kiwiArrow.bounce { animation: arrowBounce .85s ease-in-out infinite; }
+#kiwiTourCounter {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 9995;
+  background: rgba(3,13,11,.8); border: 1px solid var(--border-2); color: var(--text-4);
+  font-family: var(--font-mono); font-size: 11px; padding: 5px 16px 5px 12px;
+  border-radius: 20px; backdrop-filter: blur(12px);
+  display: flex; align-items: center; gap: 8px;
+  opacity: 0; pointer-events: none; transition: opacity .3s ease; white-space: nowrap;
 }
-.kiwi-tour-body { padding: 0 28px 8px; flex: 1; }
-.kiwi-tour-headline {
-  font-family: var(--font-display); font-size: 22px; font-weight: 700;
-  color: var(--text); margin-bottom: 12px; line-height: 1.25;
+#kiwiTourCounter.visible { opacity: 1; }
+.tc-dots { display: flex; gap: 4px; align-items: center; }
+.tc-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--bg-3); transition: all .3s ease; flex-shrink: 0; }
+.tc-dot.done { background: var(--green); }
+.tc-dot.active { background: var(--green-bright); width: 14px; border-radius: 3px; }
+#kiwiTourSkip {
+  position: fixed; top: 14px; right: 16px; z-index: 9996;
+  background: rgba(3,13,11,.75); border: 1px solid var(--border); color: var(--text-4);
+  font-family: var(--font-mono); font-size: 11px; padding: 6px 14px; border-radius: 20px;
+  backdrop-filter: blur(12px); opacity: 0; pointer-events: none; transition: opacity .3s ease, color .2s, border-color .2s;
 }
-.kiwi-tour-text { font-size: 14px; color: var(--text-3); line-height: 1.7; }
-.kiwi-tour-bottom { padding: 16px 28px 24px; display: flex; flex-direction: column; gap: 12px; }
-.kiwi-tour-dots { display: flex; align-items: center; justify-content: center; gap: 6px; }
-.kiwi-tour-dot {
-  height: 8px; border-radius: 99px;
-  background: var(--border); transition: width 300ms ease, background 300ms ease;
-  width: 8px;
+#kiwiTourSkip.visible { opacity: 1; pointer-events: all; }
+#kiwiTourSkip:hover { color: var(--red-bright); border-color: rgba(193,68,14,.5); }
+#kiwiTip {
+  position: fixed; z-index: 9994; width: min(340px, calc(100vw - 28px));
+  background: var(--surface); border: 1px solid var(--border-2); border-radius: var(--r-lg);
+  padding: 18px 20px 16px; box-shadow: var(--shadow-lg), 0 0 0 1px rgba(110,231,160,.06);
+  opacity: 0; transform: scale(.94) translateY(6px); pointer-events: none;
+  transition: opacity .35s cubic-bezier(.4,0,.2,1), transform .35s cubic-bezier(.34,1.2,.64,1);
 }
-.kiwi-tour-dot.active { width: 20px; background: var(--green-bright); }
-@keyframes tourSlideIn   { from { opacity:0; transform:translateX(30px);  } to { opacity:1; transform:translateX(0);   } }
-@keyframes tourSlideOut  { from { opacity:1; transform:translateX(0);     } to { opacity:0; transform:translateX(-30px);} }
-@keyframes tourSlideInR  { from { opacity:0; transform:translateX(-30px); } to { opacity:1; transform:translateX(0);   } }
-@keyframes tourSlideOutR { from { opacity:1; transform:translateX(0);     } to { opacity:0; transform:translateX(30px); } }
-.kiwi-tour-screen { animation: tourSlideIn 300ms ease forwards; }
-.kiwi-tour-screen.exiting { animation: tourSlideOut 300ms ease forwards; }
-.kiwi-tour-screen.entering-back { animation: tourSlideInR 300ms ease forwards; }
-@keyframes seedPulse   { 0%,100%{box-shadow:0 0 0 0 rgba(82,183,136,0.5);} 50%{box-shadow:0 0 0 12px rgba(82,183,136,0);} }
-@keyframes stemGrow    { from{transform:scaleY(0);transform-origin:bottom;} to{transform:scaleY(1);transform-origin:bottom;} }
-@keyframes leafUnfurl  { from{opacity:0;transform:rotate(-90deg) scale(0);} to{opacity:1;transform:rotate(0) scale(1);} }
-@keyframes dotLight    { from{opacity:0.2;transform:scale(0.6);} to{opacity:1;transform:scale(1);} }
-@keyframes particleRise{ 0%{opacity:1;transform:translateY(0) scale(1);} 100%{opacity:0;transform:translateY(-60px) scale(0.3);} }
-@keyframes twinkle     { 0%,100%{opacity:0.3;} 50%{opacity:1;} }
-@keyframes canopyPulse { 0%,100%{box-shadow:0 0 20px rgba(82,183,136,0.3);} 50%{box-shadow:0 0 40px rgba(82,183,136,0.5);} }
-.tour-card-wrap {
-  perspective: 800px; width: 260px; height: 120px; cursor: pointer; margin: 0 auto;
+#kiwiTip.visible { opacity: 1; transform: scale(1) translateY(0); pointer-events: all; }
+#kiwiTip::before {
+  content: ''; position: absolute; width: 12px; height: 12px;
+  background: var(--surface); border: 1px solid var(--border-2); transform: rotate(45deg);
+  transition: top .35s ease, bottom .35s ease, left .35s ease;
 }
-.tour-card-inner {
-  position: relative; width: 100%; height: 100%;
-  transform-style: preserve-3d;
-  transition: transform 0.55s cubic-bezier(0.22,1,0.36,1);
+#kiwiTip.arrow-up::before    { top: -7px; left: 50%; margin-left:-6px; border-bottom:none; border-right:none; }
+#kiwiTip.arrow-down::before  { bottom: -7px; left: 50%; margin-left:-6px; border-top:none; border-left:none; }
+#kiwiTip.arrow-left::before  { left: -7px; top: 28px; border-bottom:none; border-left:none; }
+#kiwiTip.arrow-right::before { right: -7px; top: 28px; border-top:none; border-right:none; }
+.tip-header { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.tip-mascot { width:38px; height:38px; border-radius:10px; background:var(--green-dim); border:1px solid var(--border-2); display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; }
+.tip-title  { font-family:var(--font-display); font-weight:700; font-size:15px; color:var(--text); line-height:1.25; }
+.tip-step   { font-family:var(--font-mono); font-size:10px; color:var(--text-4); margin-top:2px; }
+.tip-body   { font-size:13px; color:var(--text-2); line-height:1.7; margin-bottom:14px; }
+.tip-actions { display:flex; align-items:center; gap:8px; }
+.tip-btn-next {
+  flex:1; padding:11px; border:none; border-radius:var(--r);
+  background:linear-gradient(135deg,var(--green),var(--teal)); color:#000;
+  font-family:var(--font-display); font-weight:700; font-size:13px;
+  transition:transform .15s, box-shadow .15s;
 }
-.tour-card-wrap.flipped .tour-card-inner { transform: rotateY(180deg); }
-.tour-card-face {
-  position: absolute; inset: 0;
-  background: var(--glass-bg); border-radius: 14px;
+.tip-btn-next:hover { transform:translateY(-1px); box-shadow:0 4px 16px rgba(82,183,136,.3); }
+.tip-btn-next:disabled { background:var(--bg-3); color:var(--text-4); transform:none; box-shadow:none; cursor:not-allowed; }
+.tip-btn-back { padding:11px 13px; border:1px solid var(--border); border-radius:var(--r); background:transparent; color:var(--text-4); font-size:13px; transition:color .2s, border-color .2s; }
+.tip-btn-back:hover { color:var(--text-2); border-color:var(--border-2); }
+.tip-hint { font-family:var(--font-mono); font-size:10px; color:var(--teal); text-align:center; margin-top:9px; letter-spacing:.3px; animation:tipHintPulse 1.8s ease-in-out infinite; }
+@keyframes tipHintPulse { 0%,100%{opacity:.7;} 50%{opacity:1;} }
+#kiwiSplash {
+  position: fixed; inset: 0; z-index: 9997; background: rgba(3,13,11,.97);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 14px; text-align: center; backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  padding: 32px 24px; text-align: center;
+  opacity: 0; pointer-events: none; transition: opacity .45s ease; backdrop-filter: blur(12px);
 }
-.tour-card-front {
-  border: 2px solid rgba(82,183,136,0.7);
-  box-shadow: 0 0 16px rgba(82,183,136,0.3);
-  animation: tipPulseRing 2s ease infinite;
-}
-.tour-card-back { transform: rotateY(180deg); border: 2px solid rgba(62,201,201,0.7); box-shadow: 0 0 16px rgba(62,201,201,0.3); }
-.tour-rating-row { display: flex; gap: 6px; justify-content: center; margin-top: 6px; flex-wrap: wrap; }
-.tour-rating-btn {
-  padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border);
-  background: var(--bg-3); color: var(--text-2); font-size: 11px;
-  cursor: pointer; transition: all var(--t-fast);
-}
-.tour-rating-btn:hover { border-color: var(--green); color: var(--green-bright); }
-.tour-tl-dot {
-  width: 10px; height: 10px; border-radius: 50%; background: var(--bg-3);
-  border: 2px solid var(--border); transition: all 0.4s; margin-bottom: 6px;
-}
-.tour-tl-dot.lit { background: var(--green-bright); border-color: var(--green-bright); box-shadow: 0 0 8px rgba(82,183,136,0.6); }
-.tour-tl-label { font-family: var(--font-mono); font-size: 9px; color: var(--text-4); margin-top: 4px; }
+#kiwiSplash.visible { opacity:1; pointer-events:all; }
+.splash-tree { margin-bottom:24px; animation:treeReveal .8s cubic-bezier(.34,1.56,.64,1) .2s both; }
+@keyframes treeReveal { from{opacity:0;transform:scale(.7) translateY(20px);} to{opacity:1;transform:scale(1) translateY(0);} }
+.splash-eyebrow { font-family:var(--font-mono); font-size:10px; color:var(--green); letter-spacing:2px; text-transform:uppercase; margin-bottom:12px; animation:fadeInUp .6s .4s both; }
+.splash-headline { font-family:var(--font-display); font-size:clamp(24px,5vw,32px); font-weight:800; color:var(--text); line-height:1.15; margin-bottom:14px; animation:fadeInUp .6s .55s both; }
+.splash-headline span{color:var(--green-bright);}
+.splash-sub { font-size:14px; color:var(--text-3); line-height:1.7; max-width:360px; margin:0 auto 28px; animation:fadeInUp .6s .7s both; }
+.splash-cta { padding:14px 32px; border:none; border-radius:50px; background:linear-gradient(135deg,var(--green),var(--teal)); color:#000; font-family:var(--font-display); font-weight:800; font-size:15px; box-shadow:0 8px 32px rgba(82,183,136,.3); transition:transform .2s, box-shadow .2s; animation:fadeInUp .6s .85s both; }
+.splash-cta:hover{transform:translateY(-2px);box-shadow:0 12px 40px rgba(82,183,136,.45);}
+.splash-skip { margin-top:16px; background:none; border:none; color:var(--text-4); font-size:12px; font-family:var(--font-mono); cursor:pointer; animation:fadeInUp .6s 1s both; transition:color .2s; }
+.splash-skip:hover{color:var(--text-3);}
+.splash-features { display:flex; gap:20px; margin-top:20px; flex-wrap:wrap; justify-content:center; animation:fadeInUp .6s .95s both; }
+.splash-feat { font-size:11px; color:var(--text-4); font-family:var(--font-mono); display:flex; align-items:center; gap:5px; }
+@keyframes fadeInUp { from{opacity:0;transform:translateY(16px);} to{opacity:1;transform:translateY(0);} }
+@keyframes confettiDrop { 0%{opacity:1;transform:translateY(-20px) rotate(0deg);} 100%{opacity:0;transform:translateY(100px) rotate(var(--r,360deg));} }
+.confetti-piece { position:absolute; width:8px; height:8px; border-radius:2px; animation:confettiDrop 1.5s ease-in var(--d,0s) both; }
+@keyframes seedPulse { 0%,100%{box-shadow:0 0 0 0 rgba(82,183,136,0.5);} 50%{box-shadow:0 0 0 12px rgba(82,183,136,0);} }
 /* ═══════════════════════════════════════════════════════════════════════════
    HELP & GUIDE — Settings Rows
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -8934,6 +8933,7 @@
         // Update bottom nav and mobile bar
         updateBottomNav(page);
         updateMobileBar(page);
+        if (typeof _tourNavResolve === 'function') { var _tnr = _tourNavResolve; _tourNavResolve = null; setTimeout(_tnr, 0); }
       }
 
       // ── Navigation helpers ──
@@ -9461,13 +9461,25 @@
           const _regAppDiv = document.getElementById('app');
           if (_regAppDiv) _regAppDiv.style.display = '';
           document.getElementById('appContainer').style.display = 'flex';
+          // PATCH FIX-3: close auth overlay (was never closed after registration,
+          // leaving it stacked over the dashboard). Also add _appBooting guard
+          // and WS init to match the doLogin() success path.
+          closeAuth();
+          _appBooting = true;
+          setTimeout(() => { _appBooting = false; }, 8000);
+          initKiwiWS();
+          // Push history state so Android back button doesn't exit the app
+          history.replaceState({ kiwi: 1 }, '');
+          history.pushState({ kiwi: 1 }, '');
           updateUserFooter();
           if (data.welcome) {
             showToast(`Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('onboarding');
+            setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
           } else {
             showToast(`Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('dashboard');
+            setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
           }
         } catch (err) {
           setAuthLoading('register', false);
@@ -9515,6 +9527,9 @@
           updateUserFooter();
           showToast(`Welcome back, ${data.user?.full_name || data.user?.name || 'Student'}!`, 'success', 4000);
           navigateTo('dashboard');
+          // PATCH FIX-6: ensure back button history stack is initialised after login too
+          history.replaceState({ kiwi: 1 }, '');
+          history.pushState({ kiwi: 1 }, '');
         } catch (err) {
           setAuthLoading('login', false);
           if (err.status >= 500 || err.status === 0) {
@@ -9838,7 +9853,7 @@
         <div class="dashboard-grid">
           <div class="dashboard-left">
             <!-- Daily Invitations -->
-            <div class="card">
+            <div class="card" id="invitations-card">
               <div class="section-header">
                 <div>
                   <div class="section-title">Daily Invitations</div>
@@ -9878,7 +9893,7 @@
           </div>
           <div class="dashboard-right">
             <!-- KiwiTree -->
-            <div class="card glow">
+            <div class="card glow" id="tree-card">
               <div class="section-header">
                 <div>
                   <div class="section-title">Your KIWI Tree</div>
@@ -9932,7 +9947,7 @@
             ${
               brainPreview
                 ? `
-            <div class="card">
+            <div class="card" id="brain-preview-card">
               <div class="section-header">
                 <div>
                   <div class="section-title">Brain Monitor</div>
@@ -10483,6 +10498,7 @@
           const _card = _t && _t.queue[_t.currentIndex];
           if (_layout && _ratingRow && _t && _card) {
             _layout.classList.add('is-flipped');
+            if (typeof _tourFlipResolve === 'function') { var _tfr = _tourFlipResolve; _tourFlipResolve = null; _tfr(); }
             // Surgical reveal: rating buttons are already in the DOM, pre-rendered
             // with visibility:hidden. Just toggle them visible — no innerHTML swap,
             // no layout reflow, no blink of the rate row OR the prev button.
@@ -11667,6 +11683,7 @@
       async function handleStudyResponse(rating) {
         const t = AppState.tempStudy;
         if (!t) return;
+        if (typeof _tourRateResolve === 'function') { var _trr = _tourRateResolve; _tourRateResolve = null; _trr(); }
         // QQ guard: must submit Quick Questions before advancing
         if (AppState.quickQ && !AppState.quickQ.submitted) {
           showToast('⚡ Submit your Quick Questions to continue', 'warning', 3000);
@@ -13785,7 +13802,7 @@
           <div class="tree-stage-label">${globalTreeState?.stageLabel || "SEEDLING"}</div>
         </div>
         <!-- Zone Grid -->
-        <div class="biome-container">
+        <div class="biome-container" id="biome-container">
           ${(zones || []).map((zone) => renderBiomeZone(zone)).join("")}
         </div>
         ${
@@ -14148,7 +14165,7 @@
           </div>
           <div class="dashboard-right">
             <!-- Pressure Gauges -->
-            <div class="card">
+            <div class="card" id="brain-gauges">
               <div class="section-header">
                 <div><div class="section-title">Pressure Gauges</div></div>
               </div>
@@ -19060,27 +19077,35 @@
 
           // Build filter pills
           const _mkPill = (label, type, val) => {
-            const _active = type === 'subject' ? _filterSubject === val : _filterGroup === val;
+            // PATCH FIX-5: 'all' pill is active when no filter selected
+            const _active = type === 'all'
+              ? (_filterSubject === '' && _filterGroup === '')
+              : (type === 'subject' ? _filterSubject === val : _filterGroup === val);
             return `<button class="_cd-filter-pill" data-ftype="${type}" data-fval="${escapeHTML(val)}"
               style="white-space:nowrap;flex-shrink:0;padding:4px 10px;border-radius:20px;border:1px solid ${_active?'var(--teal)':'var(--border-2)'};background:${_active?'rgba(13,148,136,0.15)':'transparent'};color:${_active?'var(--teal)':'var(--text-3)'};font-size:var(--text-xs);cursor:pointer;font-family:var(--font-body);">${escapeHTML(label)}</button>`;
           };
-          const filterBar = (_subjects.length > 0 || _groups.length > 0) ? `
-            <div style="display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:6px;margin-bottom:10px;scrollbar-width:none;">
-              ${_mkPill('All', 'subject', '')}
-              ${_subjects.map(s => _mkPill(s, 'subject', s)).join('')}
-              ${_groups.length > 0 ? '<span style="color:var(--border-2);font-size:12px;flex-shrink:0;align-self:center;">|</span>' : ''}
+          // PATCH FIX-5: only show group filters (subject codes like "BIOLOGY 101"
+          // are too specific and noisy on mobile). Search covers subject lookup.
+          const filterBar = _groups.length > 0 ? `
+            <div style="display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;margin-bottom:10px;scrollbar-width:none;-webkit-overflow-scrolling:touch;">
+              ${_mkPill('All', 'all', '')}
               ${_groups.map(g => _mkPill('📚 '+g, 'group', g)).join('')}
             </div>` : '';
 
           main.innerHTML = `
     <div class="page-wrap page-enter" id="_cd-page">
-      <div class="section-header" style="display:flex;align-items:center;gap:8px;">
-        <div style="flex:1;">
+      <div class="section-header">
+        <div>
           <div class="section-title">Community Decks</div>
           <div class="section-sub">${_total > 0 ? _total + ' decks · ' : ''}Shared by students worldwide</div>
         </div>
-        <button id="_cd-search-btn" class="btn btn-ghost btn-sm" style="display:flex;align-items:center;gap:4px;padding:5px 8px;font-size:var(--text-sm);" title="Search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
-        <button id="_cd-select-btn" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);">${_selectMode ? 'Done' : 'Select'}</button>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <button id="_cd-search-btn" class="btn btn-ghost btn-sm" style="display:flex;align-items:center;gap:5px;padding:6px 10px;" title="Search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span style="font-size:var(--text-xs);">Search</span>
+          </button>
+          <button id="_cd-select-btn" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);white-space:nowrap;">${_selectMode ? '✓ Done' : 'Select'}</button>
+        </div>
       </div>
 
       <!-- Search bar (hidden by default) -->
@@ -19210,7 +19235,9 @@
           document.querySelectorAll('._cd-filter-pill').forEach(pill => {
             pill.addEventListener('click', () => {
               const type = pill.dataset.ftype, val = pill.dataset.fval;
-              if (type === 'subject') { _filterSubject = _filterSubject === val ? '' : val; _filterGroup = ''; }
+              // PATCH FIX-5b: 'all' clears both filters; 'group' toggles group
+              if (type === 'all') { _filterSubject = ''; _filterGroup = ''; }
+              else if (type === 'subject') { _filterSubject = _filterSubject === val ? '' : val; _filterGroup = ''; }
               else if (type === 'group')  { _filterGroup = _filterGroup === val ? '' : val; _filterSubject = ''; }
               _render();
             });
@@ -19322,8 +19349,9 @@
             btn.addEventListener('click', async (e) => {
               e.stopPropagation();
               const id = btn.dataset.detailId;
-              const t  = templates.find(t => t.id === id);
-              if (!t) return;
+              // PATCH FIX-2: use String() coercion so numeric IDs also match
+              const t  = templates.find(t => String(t.id) === String(id));
+              if (!t) { console.warn('[KIWI] Import: deck not found for id', id); return; }
               _showDeckDetail(t);
             });
           });
@@ -20084,283 +20112,8 @@
         setTimeout(() => inputs[0].focus(), 80);
       }
 
-      // ═══════════════════════════════════════════════════════════════════════
-      // THE AWAKENING TOUR — Guide System Component 1
-      // Triggered after onboarding Ready step; replayable from Settings.
-      // localStorage key: kiwi_tour_seen ('done' | 'skipped' | null)
-      // ═══════════════════════════════════════════════════════════════════════
-      function showKiwiTour(destination) {
-        if (localStorage.getItem('kiwi_tour_seen')) { navigateTo(destination); return; }
-        var _ts = 0; // current screen index
-        var _tourCardFlipped = false;
-        var TOTAL = 5;
 
-        var overlay = document.createElement('div');
-        overlay.className = 'kiwi-tour-overlay';
-        overlay.id = 'kiwiTourOverlay';
-        document.body.appendChild(overlay);
-
-        function _dots(idx) {
-          return Array.from({length: TOTAL}, function(_, i) {
-            return '<div class="kiwi-tour-dot' + (i === idx ? ' active' : '') + '"></div>';
-          }).join('');
-        }
-
-        function _illus0() {
-          return '<div style="position:relative;width:80px;text-align:center;">' +
-            '<div style="font-size:36px;animation:seedPulse 2s infinite;">🌱</div>' +
-            '<div style="width:4px;height:56px;background:linear-gradient(to top,var(--green-dim),var(--green-bright));border-radius:2px;margin:4px auto 0;animation:stemGrow 1s ease-out forwards;"></div>' +
-            '<div style="display:flex;justify-content:center;gap:8px;margin-top:2px;">' +
-              '<div style="width:20px;height:12px;background:var(--green);border-radius:50% 0 50% 0;animation:leafUnfurl 0.8s 0.6s ease-out both;"></div>' +
-              '<div style="width:20px;height:12px;background:var(--green);border-radius:0 50% 0 50%;animation:leafUnfurl 0.8s 0.9s ease-out both;"></div>' +
-            '</div></div>';
-        }
-
-        function _illus1() {
-          return '<div style="width:100%;max-width:280px;margin:0 auto;">' +
-            '<div class="tour-card-wrap" id="tourMiniCard">' +
-              '<div class="tour-card-inner">' +
-                '<div class="tour-card-face tour-card-front">' +
-                  '<div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:8px;">What is the powerhouse of the cell?</div>' +
-                  '<div style="font-size:10px;color:var(--text-4);font-family:var(--font-mono);">Tap the card to flip it</div>' +
-                '</div>' +
-                '<div class="tour-card-face tour-card-back">' +
-                  '<div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:6px;">The mitochondria.</div>' +
-                  '<div id="tourRatingRow" style="display:none;">' +
-                    '<div style="font-size:9px;color:var(--text-4);font-family:var(--font-mono);margin-bottom:6px;">Rate how well you knew it</div>' +
-                    '<div class="tour-rating-row">' +
-                      '<button class="tour-rating-btn" onclick="window._tourRate(this)">Again</button>' +
-                      '<button class="tour-rating-btn" onclick="window._tourRate(this)">Hard</button>' +
-                      '<button class="tour-rating-btn" onclick="window._tourRate(this)">Good</button>' +
-                      '<button class="tour-rating-btn" onclick="window._tourRate(this)">Easy</button>' +
-                    '</div>' +
-                  '</div>' +
-                '</div>' +
-              '</div>' +
-            '</div></div>';
-        }
-
-        function _illus2() {
-          function tl(items, lbl, pfx) {
-            return '<div style="margin-bottom:8px;">' +
-              '<div style="font-size:9px;font-family:var(--font-mono);color:var(--text-4);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">' + lbl + '</div>' +
-              '<div style="display:flex;align-items:flex-end;gap:4px;height:80px;">' +
-              items.map(function(d, i) {
-                return '<div style="display:flex;flex-direction:column;align-items:center;flex:1;">' +
-                  '<div class="tour-tl-dot" style="animation:dotLight 0.4s ' + (0.3 + i * 0.35) + 's ease-out both;"></div>' +
-                  '<div style="width:3px;border-radius:2px;background:var(--green-bright);flex:1;max-height:' + d[1] + '%;animation:stemGrow 0.4s ' + (0.5 + i * 0.35) + 's ease-out both;"></div>' +
-                  '<div class="tour-tl-label">' + d[0] + '</div></div>';
-              }).join('') + '</div></div>';
-          }
-          return '<div style="width:100%;max-width:300px;margin:0 auto;">' +
-            tl([['D1',18],['D3',30],['D9',50],['D25',72],['D70',100]], 'Easy card schedule', 'e') +
-            tl([['D1',12],['D2',22],['D4',36],['D8',54],['D16',76]], 'Hard card schedule', 'h') +
-            '</div>';
-        }
-
-        function _illus3() {
-          return '<div style="width:100%;max-width:380px;margin:0 auto;">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">' +
-              '<div style="background:var(--bg-3);border-radius:10px;padding:12px;text-align:center;">' +
-                '<div id="tourSeedCycle" style="font-size:28px;margin-bottom:4px;">🌱</div>' +
-                '<div style="font-size:9px;font-family:var(--font-mono);color:var(--text-4);text-transform:uppercase;letter-spacing:1px;">Focus Seed</div>' +
-                '<div style="font-size:10px;color:var(--text-3);margin-top:4px;line-height:1.4;">Grows when you stay focused</div>' +
-              '</div>' +
-              '<div style="background:var(--bg-3);border-radius:10px;padding:12px;text-align:center;">' +
-                '<div id="tourKsCount" style="font-size:28px;font-family:var(--font-mono);font-weight:700;color:var(--green-bright);">0.0</div>' +
-                '<div style="font-size:9px;font-family:var(--font-mono);color:var(--text-4);text-transform:uppercase;letter-spacing:1px;">Knowledge Score</div>' +
-                '<div style="font-size:10px;color:var(--text-3);margin-top:4px;line-height:1.4;">Rises as you master cards</div>' +
-              '</div>' +
-            '</div>' +
-            '<div style="background:var(--bg-3);border-radius:10px;padding:12px;">' +
-              '<div style="font-size:9px;font-family:var(--font-mono);color:var(--text-4);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Feature Unlocks</div>' +
-              '<div style="font-size:11px;color:var(--green-bright);margin-bottom:4px;">🟢 Library &amp; Study — Now</div>' +
-              '<div style="font-size:10px;color:var(--text-4);">📝 Exams — 20 cards reviewed</div>' +
-              '<div style="font-size:10px;color:var(--text-4);">🛒 Marketplace — 3 sessions</div>' +
-              '<div style="font-size:10px;color:var(--text-4);">⚡ Reckoning — 50 cards reviewed</div>' +
-            '</div></div>';
-        }
-
-        function _illus4() {
-          var stars = '';
-          for (var si = 0; si < 8; si++) {
-            stars += '<div style="position:absolute;width:3px;height:3px;border-radius:50%;background:var(--text-4);top:' + (5 + Math.floor(si * 3.7)) + '%;left:' + (8 + si * 11) + '%;animation:twinkle ' + (1.5 + si * 0.25) + 's ease-in-out infinite ' + (si * 0.18) + 's;"></div>';
-          }
-          var particles = '';
-          for (var pi = 0; pi < 4; pi++) {
-            particles += '<div style="position:absolute;bottom:' + (108 + pi * 10) + 'px;left:' + (78 + pi * 13) + 'px;width:5px;height:5px;border-radius:50%;background:var(--green-bright);animation:particleRise ' + (1.6 + pi * 0.4) + 's ' + (pi * 0.5) + 's ease-out infinite;"></div>';
-          }
-          return '<div style="position:relative;width:200px;height:180px;margin:0 auto;overflow:hidden;">' +
-            stars +
-            '<div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:20px;height:80px;background:linear-gradient(to top,#3d2b1f,#5c3d2e);border-radius:4px 4px 0 0;"></div>' +
-            '<div style="position:absolute;bottom:58px;left:50%;transform:translateX(-50%);width:120px;height:100px;border-radius:50%;background:radial-gradient(circle,var(--green-bright) 0%,var(--green) 45%,var(--green-dim) 100%);animation:canopyPulse 3s ease-in-out infinite;"></div>' +
-            particles +
-            '</div>';
-        }
-
-        var SCREENS = [
-          {
-            illus: _illus0,
-            headline: 'Welcome to your living ecosystem.',
-            text: 'KIWI isn\'t a note-taking app. It\'s a memory engine.<br>Every card you study here is a seed. Every session is sunlight.<br>Over time, you build knowledge that actually sticks.',
-            cta: 'Show me how it works →',
-            ctaDisabled: false,
-          },
-          {
-            illus: _illus1,
-            headline: 'Tap. Flip. Rate. Repeat.',
-            text: 'You recall the answer in your head, then flip to check.<br>Rate yourself honestly — that single tap schedules your next review.<br>This is the loop that builds real memory.',
-            cta: 'Next →',
-            ctaDisabled: true,
-          },
-          {
-            illus: _illus2,
-            headline: 'The right card at the right moment.',
-            text: 'KIWI tracks every card individually. Rate something Easy?<br>You won\'t see it for weeks — your time goes to what needs it.<br>Rate it Again? It comes back today. This is how memory works.',
-            cta: 'Next →',
-            ctaDisabled: false,
-          },
-          {
-            illus: _illus3,
-            headline: 'The more you study, the more unlocks.',
-            text: 'Your Focus Seed grows when you stay in the app during sessions.<br>Your Knowledge Score is a live measure of real mastery — not effort, not time.<br>New features unlock automatically as your ecosystem grows.',
-            cta: 'One more thing →',
-            ctaDisabled: false,
-          },
-          {
-            illus: _illus4,
-            headline: 'Your ecosystem is waiting.',
-            text: 'Every session plants something that can\'t be unlearned.<br>Every honest rating schedules a memory that will still be there in a year.<br>The knowledge you build here is yours, permanently.',
-            cta: null,
-            ctaDisabled: false,
-          },
-        ];
-
-        function _tourDone(dest) {
-          localStorage.setItem('kiwi_tour_seen', 'done');
-          overlay.remove();
-          document.removeEventListener('keydown', _tourKey);
-          navigateTo(dest || destination);
-        }
-
-        function _render(idx) {
-          _ts = idx;
-          var s = SCREENS[idx];
-          var isLast = idx === TOTAL - 1;
-          var isFirst = idx === 0;
-          overlay.innerHTML =
-            '<div class="kiwi-tour-card">' +
-              '<div class="kiwi-tour-topbar">' +
-                '<button class="kiwi-tour-back" id="_tBack" style="' + (isFirst ? 'visibility:hidden' : '') + '">← Back</button>' +
-                '<button class="kiwi-tour-skip" id="_tSkip">I\'ll figure it out</button>' +
-              '</div>' +
-              '<div class="kiwi-tour-illus" id="_tIllus">' + s.illus() + '</div>' +
-              '<div class="kiwi-tour-body kiwi-tour-screen">' +
-                '<div class="kiwi-tour-headline">' + s.headline + '</div>' +
-                '<div class="kiwi-tour-text">' + s.text + '</div>' +
-              '</div>' +
-              '<div class="kiwi-tour-bottom">' +
-                '<div class="kiwi-tour-dots">' + _dots(idx) + '</div>' +
-                (isLast
-                  ? '<button class="btn btn-primary" id="_tCta" style="width:100%;padding:14px;font-size:15px;">Start My First Session 🌱</button>' +
-                    '<button class="btn btn-ghost btn-sm" id="_tDash" style="text-align:center;">Go to Dashboard →</button>'
-                  : '<button class="btn btn-primary" id="_tCta" style="width:100%;padding:14px;' + (s.ctaDisabled ? 'opacity:0.4;cursor:not-allowed;' : '') + '"' + (s.ctaDisabled ? ' disabled' : '') + '>' + s.cta + '</button>'
-                ) +
-              '</div>' +
-            '</div>';
-
-          var backBtn = document.getElementById('_tBack');
-          var skipBtn = document.getElementById('_tSkip');
-          var ctaBtn  = document.getElementById('_tCta');
-          var dashBtn = document.getElementById('_tDash');
-
-          if (backBtn) backBtn.addEventListener('click', function() { if (idx > 0) _render(idx - 1); });
-          if (skipBtn) skipBtn.addEventListener('click', function() {
-            if (confirm('Skip the tour? You can replay it from Settings anytime.')) {
-              localStorage.setItem('kiwi_tour_seen', 'skipped');
-              overlay.remove();
-              document.removeEventListener('keydown', _tourKey);
-              navigateTo(destination);
-            }
-          });
-          if (ctaBtn) ctaBtn.addEventListener('click', function() {
-            if (isLast) _tourDone(destination);
-            else if (!ctaBtn.disabled) _render(idx + 1);
-          });
-          if (dashBtn) dashBtn.addEventListener('click', function() { _tourDone('dashboard'); });
-
-          // Screen 1: mini flashcard interaction
-          if (idx === 1) {
-            var mc = document.getElementById('tourMiniCard');
-            if (mc) mc.addEventListener('click', function() {
-              if (!_tourCardFlipped) {
-                _tourCardFlipped = true;
-                mc.classList.add('flipped');
-                setTimeout(function() {
-                  var rr = document.getElementById('tourRatingRow');
-                  if (rr) rr.style.display = 'block';
-                }, 320);
-              }
-            });
-          }
-          // Screen 3: seed cycle + KS count
-          if (idx === 3) {
-            var seeds = ['🌑','🌱','🌿','🌳','🍃','✨']; var si2 = 1;
-            var seedEl = document.getElementById('tourSeedCycle');
-            if (seedEl) {
-              var _si = setInterval(function() {
-                if (!seedEl.isConnected) { clearInterval(_si); return; }
-                seedEl.textContent = seeds[si2 % seeds.length]; si2++;
-              }, 700);
-            }
-            var ksEl = document.getElementById('tourKsCount');
-            if (ksEl) {
-              var ksV = 0; var ksTarget = 47.3;
-              var _ksStep = function() {
-                ksV = Math.min(ksV + 1.6, ksTarget);
-                if (ksEl.isConnected) { ksEl.textContent = ksV.toFixed(1); if (ksV < ksTarget) requestAnimationFrame(_ksStep); }
-              };
-              requestAnimationFrame(_ksStep);
-            }
-          }
-        }
-
-        // Rating button handler — enables Next after rating
-        window._tourRate = function(btn) {
-          btn.style.borderColor = 'var(--green-bright)'; btn.style.color = 'var(--green-bright)';
-          var ctaBtn = document.getElementById('_tCta');
-          if (ctaBtn) { ctaBtn.disabled = false; ctaBtn.style.opacity = '1'; ctaBtn.style.cursor = 'pointer'; }
-        };
-
-        // Swipe support
-        var _tx = null;
-        overlay.addEventListener('touchstart', function(e) { _tx = e.touches[0].clientX; }, {passive:true});
-        overlay.addEventListener('touchend', function(e) {
-          if (_tx === null) return;
-          var dx = e.changedTouches[0].clientX - _tx; _tx = null;
-          if (Math.abs(dx) < 50) return;
-          if (dx < 0 && _ts < TOTAL - 1) _render(_ts + 1);
-          if (dx > 0 && _ts > 0) _render(_ts - 1);
-        }, {passive:true});
-
-        // Keyboard support
-        function _tourKey(e) {
-          if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); if (_ts < TOTAL - 1) _render(_ts + 1); }
-          else if (e.key === 'ArrowLeft') { e.preventDefault(); if (_ts > 0) _render(_ts - 1); }
-          else if (e.key === 'Escape') {
-            if (confirm('Skip the tour? You can replay it from Settings anytime.')) {
-              localStorage.setItem('kiwi_tour_seen', 'skipped');
-              overlay.remove();
-              document.removeEventListener('keydown', _tourKey);
-              navigateTo(destination);
-            }
-          }
-        }
-        document.addEventListener('keydown', _tourKey);
-
-        _render(0);
-      }
-
+      // (old showKiwiTour removed — replaced by startKiwiTour in KIWI Tour Engine)
       function _handleVersionTap() {
         _adminTapCount++;
         if (_adminTapTimer) clearTimeout(_adminTapTimer);
@@ -21069,7 +20822,7 @@
             _guideReplayTour.addEventListener('click', () => {
               localStorage.removeItem('kiwi_tour_seen');
               showToast('Tour reset — launching now…', 'success');
-              setTimeout(() => showKiwiTour('settings'), 400);
+              setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 400);
             });
           }
 
@@ -21362,7 +21115,41 @@
           // during initial page render will be covered; after this, session
           // expiry toasts are shown normally (user is actively in the app).
           setTimeout(() => { _appBooting = false; }, 8000);
+          // PATCH FIX-6: seed history so back button has somewhere to pop
+          // before reaching the browser's "exit" entry.
+          history.replaceState({ kiwi: 1 }, '');
+          history.pushState({ kiwi: 1 }, '');
         }
+
+        // ── Back-button interception (PATCH FIX-6 + FIX-7) ──────────────────
+        // Intercept the Android hardware back button / browser back arrow.
+        // Instead of exiting the site, handle navigation within KIWI.
+        window.addEventListener('popstate', function(_pse) {
+          // Priority 1: exit community select-mode if active
+          const _bulkBar  = document.getElementById('_cd-bulk-bar');
+          const _selBtn   = document.getElementById('_cd-select-btn');
+          if (_bulkBar && _bulkBar.style.display !== 'none' && _selBtn) {
+            _selBtn.click(); // triggers Done → exits select mode
+            history.pushState({ kiwi: 1 }, '');
+            return;
+          }
+          // Priority 2: close any floating overlays (detail / group)
+          const _overlays = document.querySelectorAll(
+            '[style*="position:fixed"][style*="z-index:6"], [style*="position:fixed"][style*="z-index:5"]'
+          );
+          if (_overlays.length > 0) {
+            // Click the close button of the topmost overlay if possible
+            const _top = _overlays[_overlays.length - 1];
+            const _close = _top.querySelector('button[id$="-close"], #_dd-close, #_og-close');
+            if (_close) _close.click(); else _top.remove();
+            history.pushState({ kiwi: 1 }, '');
+            return;
+          }
+          // Priority 3: navigate back within the app
+          goBack();
+          // Re-push so the NEXT back press is also caught
+          history.pushState({ kiwi: 1 }, '');
+        });
 
         // ── Keyboard Shortcuts ──
         document.addEventListener("keydown", (e) => {
@@ -21544,6 +21331,338 @@
       if (typeof showNotification === 'function') showNotification('ks-negative', 'AI Explanation Failed', 'Please try again', 3000);
     });
   }
+</script>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     KIWI TOUR ENGINE DOM ELEMENTS
+════════════════════════════════════════════════════════════════════ -->
+<div id="kiwiSpot"></div>
+<div id="kiwiArrow"></div>
+<div id="kiwiTourCounter"><div id="tcText"></div><div class="tc-dots" id="tcDots"></div></div>
+<button id="kiwiTourSkip" onclick="kiwiTourSkip()">Skip tour</button>
+<div id="kiwiTip"></div>
+<div id="kiwiSplash"></div>
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   KIWI TOUR ENGINE
+════════════════════════════════════════════════════════════════════ */
+let _tourNavResolve = null;
+let _tourFlipResolve = null;
+let _tourRateResolve = null;
+let _tourNextResolve = null;
+let _tourStep = 0;
+let _tourActive = false;
+
+const KIWI_TOUR_STEPS = [
+  {type:'splash',icon:'🌱',eyebrow:'Welcome to KIWI',
+   headline:'Your brain just found\\na <span>co-pilot.</span>',
+   body:"KIWI isn't a flashcard app. It's a living memory engine that tracks every card you've ever seen — and knows exactly when to show it to you again before you forget it.<br><br>Let us show you around. Takes about 2 minutes.",
+   cta:'Start the Tour →',
+   features:['🔥 Streak system','📈 Knowledge Score','🌿 Living Biome','📝 CBT Exams']},
+  {type:'spot',nav:'dashboard',sel:'.ks-hero',pos:'bottom',icon:'📊',title:'Your Knowledge Score',
+   body:'This is your KS — a single number from 0 to 100 that reflects how well you actually know your material across all subjects. It rises every time you study and correctly recall cards.',action:'next'},
+  {type:'spot',nav:'dashboard',sel:'#tree-card',pos:'left',icon:'🌳',title:'Your KIWI Tree',
+   body:'This tree grows with you. Study consistently and it thrives — growing leaves, bearing fruit, climbing stages from Seedling to Mastered. Skip sessions and it withers. Your tree is your effort made visible.',action:'next'},
+  {type:'spot',nav:'dashboard',sel:'.streak-widget',pos:'top',icon:'🔥',title:'Streak & Shields',
+   body:'Study every day to keep your streak alive. Miss a day and it resets — unless you have a 🛡️ Shield. Shields give you one free missed day. Earn them by studying extra. Protect them carefully.',action:'next'},
+  {type:'spot',nav:'dashboard',sel:'#brain-preview-card',pos:'left',icon:'⚡',title:'Brain Monitor',
+   body:"This mini-panel shows exam risk building across your subjects. A pressure above 50% is a warning. We'll explain the full Brain page shortly — it's one of KIWI's most powerful features.",action:'next'},
+  {type:'spot',nav:'dashboard',sel:'#invitations-card',pos:'right',icon:'✉️',title:'Daily Invitations',
+   body:'Each morning KIWI generates personalised action cards — review this subject, take that exam, rescue those ghost cards. Think of these as your daily study agenda, curated by the algorithm.',action:'next'},
+  {type:'spot',nav:'dashboard',sel:'.bnav-item[data-route="study"]',pos:'top',icon:'📖',title:'Time to study.',
+   body:'The Study Session is the core of everything in KIWI. This is where memory is built. Tap the <strong>Study</strong> button now to continue.',action:'click',hint:'👆 Tap Study to continue'},
+  {type:'spot',nav:'study',sel:'#flashcard',pos:'bottom',icon:'🃏',title:'The Core Loop: Tap to Flip',
+   body:"Read the question. Try to recall the answer in your head — even if you're not sure. Then tap the card to reveal it. This act of retrieval is what builds real memory. Go ahead — <strong>tap the card now.</strong>",action:'flip',hint:'👆 Tap the card to flip it'},
+  {type:'spot',nav:'study',sel:'#_studyRatingRow',pos:'top',icon:'⭐',title:'Rate Yourself Honestly',
+   body:'How well did you know it? Be honest — the algorithm only works if you are. <strong>Again</strong> brings it back today. <strong>Easy</strong> schedules it weeks away. One tap sets your next review. <strong>Tap any button.</strong>',action:'rate',hint:'👆 Tap a rating button to continue'},
+  {type:'spot',nav:'study',sel:'#quickQBtn',pos:'top',icon:'⚡',title:'Quick Questions — Hidden Gem',
+   body:"During any study session, tap this ⚡ button to instantly generate AI-written multiple choice questions from the card you're looking at. It's exam practice in 5 seconds, right inside your study session.",action:'next'},
+  {type:'spot',nav:'study',sel:'#hamburgerBtn',pos:'bottom',icon:'☰',title:'Open the Menu',
+   body:'The sidebar contains everything else — The Biome, The Brain, Progress, Community Decks, and more. Tap the <strong>menu button</strong> to open it now.',action:'sidebar',hint:'👆 Tap ☰ to open the menu'},
+  {type:'spot',sel:'.nav-item[data-route="biome"]',pos:'right',icon:'🌿',title:'The Biome is Calling',
+   body:'Tap <strong>The Biome</strong> to see your knowledge come alive as a visual ecosystem. Each subject you study becomes a living zone.',action:'click',hint:'👆 Tap The Biome to continue'},
+  {type:'spot',nav:'biome',sel:'#biome-container',pos:'top',icon:'🌿',title:'Your Living Ecosystem',
+   body:'Each subject you study becomes a zone here — <span style="color:var(--green-bright)">Thriving 🟢</span>, Growing, <span style="color:var(--gold)">Struggling 🟡</span>, or <span style="color:var(--red-bright)">Neglected 🔴</span>. The pressure bar shows exam risk building. Tap any zone for an AI health report.',action:'next'},
+  {type:'spot',sel:'.nav-item[data-route="brain"]',pos:'right',icon:'🧠',title:'Now — The Brain',
+   body:'Tap <strong>The Brain</strong> to see your pressure dashboard and active interventions.',action:'click',hint:'👆 Tap The Brain to continue'},
+  {type:'spot',nav:'brain',sel:'#brain-gauges',pos:'left',icon:'⚠️',title:'Pressure Gauges',
+   body:'The Brain tracks pressure across all subjects. Above <strong>50% = warning</strong>. Above <strong>80% = critical</strong>. When pressure builds, The Brain fires an intervention — a targeted alert telling you exactly what to fix before your exam.',action:'next'},
+  {type:'spot',nav:'brain',sel:'.bnav-item[data-route="exam-config"]',pos:'top',icon:'📝',title:'CBT Exam',
+   body:'Tap <strong>Exam</strong> to see how CBT practice works — AI-generated multiple choice questions from your actual cards.',action:'click',hint:'👆 Tap Exam to continue'},
+  {type:'spot',nav:'exam-config',sel:'.exam-config',pos:'right',icon:'📝',title:'Configure Your Exam',
+   body:"Pick subject, question count (10–100 questions), and balance Theory vs Calculation. Click Generate — KIWI's AI writes the entire paper from your cards in seconds. Pass → earn credentials. Fail → know exactly what to study.",action:'next'},
+  {type:'spot',nav:'exam-config',sel:'.nav-item[data-route="import"]',pos:'right',icon:'📥',title:'Import Cards',
+   body:'Tap <strong>Import Cards</strong> to see all the ways to add content to your Library.',action:'click',hint:'👆 Tap Import Cards to continue'},
+  {type:'spot',nav:'import',sel:'#tab-ai-notes',pos:'right',icon:'🤖',title:'AI Notes — Start Here',
+   body:"This is your fastest path to a full Library. Paste any text — lecture slides, a textbook paragraph, rough notes — and KIWI AI generates perfect flashcard pairs in seconds. No formatting. No effort. Just paste and go.",action:'next'},
+  {type:'spot',sel:'.nav-item[data-route="progress"]',pos:'right',icon:'📊',title:'Progress Board',
+   body:"The Progress page tracks your Knowledge Score trend, a 52-week study heatmap, your trouble cards, exam history, and a Forgetting Curve predictor. The data never lies.",action:'next'},
+  {type:'spot',sel:'.nav-item[data-route="community"]',pos:'right',icon:'🌍',title:'Community Decks',
+   body:"Browse thousands of flashcard decks shared by students worldwide. Clone a full deck in one tap and it appears in your Library instantly. The fastest way to start a new subject.",action:'next'},
+  {type:'splash',done:true,icon:'🌳',eyebrow:"You're ready.",
+   headline:'Your ecosystem\\nis <span>alive.</span>',
+   body:"Every session you complete grows your tree, raises your Knowledge Score, and evolves your Biome. The more you give KIWI — the more powerful it gets.<br><br>Where do you want to start?",
+   cta:'Import my first cards →',cta2:'Explore the app',
+   features:['🌿 Live ecosystem','📈 KS tracking','⚡ AI exams','🌍 Community']},
+];
+
+async function startKiwiTour() {
+  if (localStorage.getItem('kiwi_tour_seen') === 'done') return;
+  _tourActive = true; _tourStep = 0;
+  const skipEl = document.getElementById('kiwiTourSkip');
+  const ctrEl  = document.getElementById('kiwiTourCounter');
+  if (skipEl) skipEl.classList.add('visible');
+  if (ctrEl)  ctrEl.classList.add('visible');
+  await _tourRenderStep(0);
+}
+
+async function _tourRenderStep(idx) {
+  if (!_tourActive) return;
+  _tourStep = idx;
+  const step = KIWI_TOUR_STEPS[idx];
+  if (!step) { _tourFinish(); return; }
+  _tourUpdateCounter(idx);
+  if (step.type === 'splash') await _tourShowSplash(step, idx);
+  else await _tourShowSpot(step, idx);
+}
+
+function _tourUpdateCounter(idx) {
+  const spots = KIWI_TOUR_STEPS.filter(s => s.type === 'spot');
+  const spotIdx = KIWI_TOUR_STEPS.slice(0, idx + 1).filter(s => s.type === 'spot').length;
+  const tcText = document.getElementById('tcText');
+  const dotsEl = document.getElementById('tcDots');
+  if (tcText) tcText.textContent = spotIdx + '/' + spots.length;
+  if (dotsEl) dotsEl.innerHTML = spots.slice(0, Math.min(spots.length, 12)).map((_, i) => {
+    const cls = i < spotIdx - 1 ? 'tc-dot done' : i === spotIdx - 1 ? 'tc-dot active' : 'tc-dot';
+    return '<div class="' + cls + '"></div>';
+  }).join('');
+}
+
+async function _tourShowSplash(step, idx) {
+  _hideSpot(); _hideTip(); _hideArrow();
+  const el = document.getElementById('kiwiSplash');
+  if (!el) { _tourRenderStep(idx + 1); return; }
+  const confettiHtml = step.done ? Array.from({length: 20}, (_, i) => {
+    const colors = ['#6ee7a0', '#3ec9c9', '#fbbf24', '#f97316'];
+    return '<div class="confetti-piece" style="background:' + colors[i%4] + ';left:' + (5 + i*4.5) + '%;top:' + (10 + Math.random()*20) + '%;--r:' + (Math.random()*720) + 'deg;--d:' + (i*0.07) + 's;"></div>';
+  }).join('') : '';
+  const treeHtml = step.done
+    ? '<svg width="130" height="160" viewBox="0 0 100 130" fill="none"><rect x="44" y="92" width="12" height="38" rx="4" fill="#3d2b1f"/><path d="M44 126 Q32 133 24 130" stroke="#3d2b1f" stroke-width="2.5" stroke-linecap="round" fill="none"/><path d="M56 126 Q68 133 76 130" stroke="#3d2b1f" stroke-width="2.5" stroke-linecap="round" fill="none"/><ellipse cx="50" cy="70" rx="36" ry="30" fill="#52b788" opacity=".9"/><ellipse cx="50" cy="48" rx="24" ry="20" fill="#6ee7a0" opacity=".88"/><ellipse cx="50" cy="30" rx="14" ry="12" fill="#6ee7a0"/><circle cx="36" cy="64" r="4" fill="#fbbf24"/><circle cx="64" cy="60" r="4" fill="#fbbf24"/><circle cx="50" cy="80" r="3.5" fill="#f97316" opacity=".85"/></svg>'
+    : '<div style="font-size:64px;animation:seedPulse 2s infinite;">🌱</div>';
+  el.innerHTML = confettiHtml +
+    '<div class="splash-tree">' + treeHtml + '</div>' +
+    '<div class="splash-eyebrow">' + step.eyebrow + '</div>' +
+    '<h2 class="splash-headline">' + step.headline + '</h2>' +
+    '<p class="splash-sub">' + step.body + '</p>' +
+    '<button class="splash-cta" id="splashCta">' + step.cta + '</button>' +
+    (step.cta2 ? '<button class="splash-skip" id="splashCta2">' + step.cta2 + '</button>' : '') +
+    (!step.done ? '<button class="splash-skip" onclick="kiwiTourSkip()">Skip tour</button>' : '') +
+    '<div class="splash-features">' + (step.features||[]).map(f => '<div class="splash-feat">✓ ' + f + '</div>').join('') + '</div>';
+  el.classList.add('visible');
+  await new Promise(resolve => {
+    const ctaBtn = document.getElementById('splashCta');
+    if (ctaBtn) ctaBtn.onclick = () => {
+      if (step.done) { _tourFinish(); navigateTo('import'); }
+      else { el.classList.remove('visible'); setTimeout(resolve, 400); }
+    };
+    const cta2 = document.getElementById('splashCta2');
+    if (cta2) cta2.onclick = () => { _tourFinish(); navigateTo('dashboard'); };
+  });
+  el.classList.remove('visible');
+  await _sleep(400);
+  _tourRenderStep(idx + 1);
+}
+
+async function _tourShowSpot(step, idx) {
+  _hideSplash();
+  if (step.nav && AppState.currentPage !== step.nav) {
+    await new Promise(resolve => { _tourNavResolve = resolve; navigateTo(step.nav); });
+    await _sleep(120);
+  }
+  if (step.action === 'sidebar' || (step.sel && step.sel.includes('.nav-item'))) {
+    const _sidebar = document.getElementById('sidebar');
+    if (_sidebar && !_sidebar.classList.contains('open') && step.action !== 'sidebar') {
+      _sidebar.classList.add('open');
+      const _sov = document.getElementById('sidebarOverlay');
+      if (_sov) _sov.classList.add('show');
+      await _sleep(350);
+    }
+  }
+  const target = document.querySelector(step.sel);
+  if (!target) { _tourRenderStep(idx + 1); return; }
+  target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  await _sleep(200);
+  _positionSpot(target, step.action !== 'next');
+  const isLast = idx === KIWI_TOUR_STEPS.length - 1;
+  _showTip(step, idx, isLast);
+  _positionArrow(target, step.pos);
+  if (step.action === 'next') {
+    await new Promise(resolve => { _tourNextResolve = resolve; });
+  } else if (step.action === 'click') {
+    await new Promise(resolve => {
+      _tourNavResolve = resolve;
+      function _clickH() { target.removeEventListener('click', _clickH); _tourNavResolve = null; resolve(); }
+      target.addEventListener('click', _clickH, { once: true });
+    });
+    await _sleep(500);
+  } else if (step.action === 'sidebar') {
+    await new Promise(resolve => {
+      function _sbH() { target.removeEventListener('click', _sbH); resolve(); }
+      target.addEventListener('click', _sbH, { once: true });
+    });
+    await _sleep(400);
+  } else if (step.action === 'flip') {
+    await new Promise(resolve => { _tourFlipResolve = resolve; });
+    await _sleep(700);
+  } else if (step.action === 'rate') {
+    await new Promise(resolve => { _tourRateResolve = resolve; });
+    await _sleep(400);
+  }
+  _hideSpot(); _hideTip(); _hideArrow();
+  await _sleep(200);
+  _tourRenderStep(idx + 1);
+}
+
+function _showTip(step, idx, isLast) {
+  const el = document.getElementById('kiwiTip');
+  if (!el) return;
+  const isInteractive = step.action !== 'next';
+  const spots = KIWI_TOUR_STEPS.filter(s => s.type === 'spot');
+  const stepNum = KIWI_TOUR_STEPS.slice(0, idx + 1).filter(s => s.type === 'spot').length;
+  el.className = '';
+  el.innerHTML =
+    '<div class="tip-header">' +
+      '<div class="tip-mascot">' + (step.icon||'🌱') + '</div>' +
+      '<div><div class="tip-title">' + (step.title||'') + '</div>' +
+          '<div class="tip-step">Step ' + stepNum + ' of ' + spots.length + '</div></div>' +
+    '</div>' +
+    '<div class="tip-body">' + (step.body||'') + '</div>' +
+    '<div class="tip-actions">' +
+      (idx > 1 ? '<button class="tip-btn-back" id="tipBack">←</button>' : '') +
+      '<button class="tip-btn-next" id="tipNext"' + (isInteractive ? ' disabled' : '') + '>' +
+        (isLast ? 'Finish ✓' : 'Next →') + '</button>' +
+    '</div>' +
+    (step.hint ? '<div class="tip-hint">' + step.hint + '</div>' : '');
+  const backBtn = document.getElementById('tipBack');
+  if (backBtn) backBtn.onclick = () => {
+    _hideTip(); _hideSpot(); _hideArrow();
+    if (_tourNextResolve) { const r = _tourNextResolve; _tourNextResolve = null; r(); }
+    _tourRenderStep(Math.max(0, idx - 1));
+  };
+  const nextBtn = document.getElementById('tipNext');
+  if (nextBtn && !isInteractive) {
+    nextBtn.onclick = () => { if (_tourNextResolve) { const r = _tourNextResolve; _tourNextResolve = null; r(); } };
+  }
+  if (isInteractive) {
+    setTimeout(() => {
+      const nb = document.getElementById('tipNext');
+      if (nb && nb.disabled) {
+        nb.disabled = false; nb.textContent = 'Skip →';
+        nb.style.background = 'var(--bg-3)'; nb.style.color = 'var(--text-3)';
+        nb.onclick = () => {
+          if (_tourNextResolve)  { const r = _tourNextResolve;  _tourNextResolve  = null; r(); }
+          if (_tourFlipResolve)  { const r = _tourFlipResolve;  _tourFlipResolve  = null; r(); }
+          if (_tourRateResolve)  { const r = _tourRateResolve;  _tourRateResolve  = null; r(); }
+          if (_tourNavResolve)   { const r = _tourNavResolve;   _tourNavResolve   = null; r(); }
+        };
+      }
+    }, 6000);
+  }
+  requestAnimationFrame(() => { _positionTip(step.pos, step.sel); el.classList.add('visible'); });
+}
+
+function _positionTip(pos, sel) {
+  const el = document.getElementById('kiwiTip');
+  if (!el) return;
+  const target = sel ? document.querySelector(sel) : null;
+  if (!target) { el.style.top='50%'; el.style.left='50%'; el.style.transform='translate(-50%,-50%)'; return; }
+  el.style.transform = '';
+  const r = target.getBoundingClientRect();
+  const tw = el.offsetWidth || 340, th = el.offsetHeight || 220;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const pad = 16, gap = 18;
+  let top, left;
+  el.className = '';
+  if (pos === 'bottom') {
+    top = Math.min(r.bottom + gap, vh - th - pad);
+    left = Math.max(pad, Math.min(r.left + r.width/2 - tw/2, vw - tw - pad));
+    el.classList.add('arrow-up');
+  } else if (pos === 'top') {
+    top = Math.max(pad, r.top - th - gap);
+    left = Math.max(pad, Math.min(r.left + r.width/2 - tw/2, vw - tw - pad));
+    el.classList.add('arrow-down');
+  } else if (pos === 'right') {
+    top = Math.max(pad, Math.min(r.top + r.height/2 - th/2, vh - th - pad));
+    left = Math.min(r.right + gap, vw - tw - pad);
+    if (left + tw > vw - pad) { left = Math.max(pad, r.left - tw - gap); el.classList.add('arrow-right'); }
+    else el.classList.add('arrow-left');
+  } else if (pos === 'left') {
+    top = Math.max(pad, Math.min(r.top + r.height/2 - th/2, vh - th - pad));
+    left = Math.max(pad, r.left - tw - gap);
+    el.classList.add('arrow-right');
+    if (left < pad) { left = Math.min(r.right + gap, vw - tw - pad); el.classList.remove('arrow-right'); el.classList.add('arrow-left'); }
+  } else { top = vh/2 - th/2; left = vw/2 - tw/2; }
+  el.style.top = top + 'px'; el.style.left = left + 'px';
+}
+
+function _positionSpot(target, interactive) {
+  const spot = document.getElementById('kiwiSpot');
+  if (!spot) return;
+  const r = target.getBoundingClientRect(), pad = 8;
+  spot.style.top    = (r.top    - pad) + 'px';
+  spot.style.left   = (r.left   - pad) + 'px';
+  spot.style.width  = (r.width  + pad*2) + 'px';
+  spot.style.height = (r.height + pad*2) + 'px';
+  const cs = getComputedStyle(target);
+  spot.style.borderRadius = cs.borderRadius || '10px';
+  spot.className = 'visible' + (interactive ? ' interactive' : '');
+}
+function _hideSpot()  { const s = document.getElementById('kiwiSpot');  if (s) s.className = ''; }
+function _positionArrow(target, pos) {
+  const arr = document.getElementById('kiwiArrow');
+  if (!arr) return;
+  const r = target.getBoundingClientRect();
+  const offsets = {
+    top:    { top: r.top - 36,           left: r.left + r.width/2 - 13,  sym: '▼' },
+    bottom: { top: r.bottom + 8,         left: r.left + r.width/2 - 13,  sym: '▲' },
+    left:   { top: r.top + r.height/2 - 13, left: r.left - 38,           sym: '▶' },
+    right:  { top: r.top + r.height/2 - 13, left: r.right + 10,          sym: '◀' },
+  };
+  const o = offsets[pos] || offsets.bottom;
+  arr.textContent = o.sym;
+  arr.style.top  = Math.max(8, o.top) + 'px';
+  arr.style.left = Math.max(8, Math.min(o.left, window.innerWidth - 40)) + 'px';
+  arr.className = 'visible bounce';
+}
+function _hideArrow() { const a = document.getElementById('kiwiArrow'); if (a) a.className = ''; }
+function _hideTip()   { const e = document.getElementById('kiwiTip');   if (e) { e.className = ''; e.innerHTML = ''; } }
+function _hideSplash(){ const e = document.getElementById('kiwiSplash');if (e) e.classList.remove('visible'); }
+function _sleep(ms)   { return new Promise(r => setTimeout(r, ms)); }
+
+function kiwiTourSkip() {
+  showCustomConfirm(
+    'Skip the tour?',
+    'You can replay it from Settings → Help & Guide anytime.',
+    () => { localStorage.setItem('kiwi_tour_seen','skipped'); _tourCleanup(); navigateTo('dashboard'); }
+  );
+}
+function _tourFinish() { localStorage.setItem('kiwi_tour_seen','done'); _tourCleanup(); }
+function _tourCleanup() {
+  _tourActive = false;
+  _hideSplash(); _hideSpot(); _hideTip(); _hideArrow();
+  const skipEl = document.getElementById('kiwiTourSkip');
+  const ctrEl  = document.getElementById('kiwiTourCounter');
+  if (skipEl) skipEl.classList.remove('visible');
+  if (ctrEl)  ctrEl.classList.remove('visible');
+  [_tourNavResolve, _tourFlipResolve, _tourRateResolve, _tourNextResolve].forEach(r => r && r());
+  _tourNavResolve = _tourFlipResolve = _tourRateResolve = _tourNextResolve = null;
+}
+window.addEventListener('resize', () => {
+  const step = KIWI_TOUR_STEPS[_tourStep];
+  if (!step || step.type !== 'spot' || !_tourActive) return;
+  const t = document.querySelector(step.sel);
+  if (t) { _positionSpot(t, step.action !== 'next'); _positionArrow(t, step.pos); _positionTip(step.pos, step.sel); }
+});
 </script>
 </body>
 </html>

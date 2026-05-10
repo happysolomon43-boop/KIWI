@@ -18103,14 +18103,19 @@ const dashTotalFruits = subjectBreakdown.reduce((sum, s) => sum + (s._subjectSta
 // PERF FIX: Derive globalKS from already-computed subject breakdown — no extra DB round-trip.
 // Weighted average by subject card count; falls back to stats.knowledge_score_global.
 const dashGlobalKS = (() => {
-if (!subjectBreakdown.length) return stats?.knowledge_score_global || 0;
+// PATCH: always return a finite number — stats.knowledge_score_global may be
+// a string from the DB, and reduce can produce NaN when ks fields are undefined.
+if (!subjectBreakdown.length) return Number(stats?.knowledge_score_global) || 0;
 let totalW = 0, totalCards = 0;
 for (const s of subjectBreakdown) {
 const cardCount = allCards.filter(c => (s._subjectStat?.deck_ids || []).includes(c.deck_id)).length;
-totalW += s.ks * cardCount;
+totalW += (Number(s.ks) || 0) * cardCount;
 totalCards += cardCount;
 }
-return totalCards > 0 ? totalW / totalCards : (subjectBreakdown.reduce((a, s) => a + s.ks, 0) / subjectBreakdown.length);
+const _ksResult = totalCards > 0
+  ? totalW / totalCards
+  : (subjectBreakdown.reduce((a, s) => a + (Number(s.ks) || 0), 0) / subjectBreakdown.length);
+return isFinite(_ksResult) ? _ksResult : 0;
 })();
 const globalKS = {
 score: parseFloat(dashGlobalKS.toFixed(2)),
