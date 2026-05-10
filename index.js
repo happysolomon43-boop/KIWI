@@ -4513,8 +4513,11 @@ ANSWERS AND EXPLANATIONS
 
 Question [N]:
 Correct Answer: [Letter]
+Verification: [Mandatory — compute the answer in one line: state the formula, substitute the exact values from the stem, compute the numerical result with units. Example: "R = √(400²+300²+2·400·300·cos60°) = √370,000 = 608.3 N → matches option B". If your computed result does NOT match the text of the letter you wrote above, CHANGE the Correct Answer letter before proceeding. This check is non-negotiable.]
 Explanation: [Full solution pathway — every step shown, with units carried through
 each line. Name the specific mistake that produces the most dangerous distractor.]
+
+⚠ CORRECT ANSWER INTEGRITY RULE: The letter in "Correct Answer:" MUST be the option whose text equals your Verification result. Mismatches indicate a question-writing error. If you detect a mismatch, either (a) change the Correct Answer letter to match your computed result, or (b) rewrite the question so it is internally consistent. Leaving a mismatch is a critical error.
 
 **Output Sequence — Non-negotiable:**
 1. ALL questions first (no answers, no working shown)
@@ -4596,6 +4599,8 @@ Before generating, confirm:
 - [ ] Every formula appears in at least one Isolation question
 - [ ] All [COUNT] questions are Calculation type — zero Theory questions
 - [ ] All questions come before all answers
+- [ ] Every question stem is internally consistent — no impossible scenarios (e.g., asking for a force that would require subtracting from a smaller number to reach a larger number)
+- [ ] For every Calculation question: I have computed the answer and verified the declared Correct Answer letter matches the option text that contains my result
 
 FINAL COUNT CHECK — before outputting answers: count your questions. If the total does not equal [COUNT], write additional calculation questions before proceeding.
 
@@ -5868,7 +5873,84 @@ explanation: ans.explanation || 'No explanation provided.',
 });
 const passed = mapped.filter(Boolean);
 console.log(`[KIWI CBT PARSE] After filter: ${passed.length} questions passed (${questions.length - passed.length} dropped)`);
-return passed;
+
+// ── CALC ANSWER SANITY CHECK ──────────────────────────────────────────────────
+// For Calculation questions, cross-check the declared correct_answer letter
+// against the numerical values in the explanation.
+//
+// Root cause: the AI (gemini-3.1-flash-lite) sometimes computes the right value
+// but assigns the wrong letter, or writes an explanation that leads to a different
+// result than the declared answer. This pass detects clear mismatches and auto-
+// corrects them rather than serving wrong answers to students.
+//
+// Strategy: extract the last significant number from the explanation and check if
+// it appears in the declared correct option. If instead it clearly matches a
+// different option, swap the correct_answer. Only correct when confidence is high
+// (unique match to exactly one alternative option).
+function _extractNumbers(str) {
+  // Extract all numbers ≥ 0.01 found in the string (skip page numbers / question numbers)
+  const matches = (str || '').match(/\b\d[\d,]*\.?\d*\b/g) || [];
+  return matches.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => n >= 0.01 && n < 1e9);
+}
+
+function _optionContainsNumber(optText, num) {
+  if (!optText || num == null) return false;
+  const optNums = _extractNumbers(optText);
+  // Allow ±0.5% tolerance for rounding differences
+  return optNums.some(n => Math.abs(n - num) / Math.max(n, num, 1) < 0.005);
+}
+
+const sanityChecked = passed.map(q => {
+  // Only check Calculation questions with a non-trivial explanation
+  if ((q.question_type || '').toLowerCase() !== 'calculation') return q;
+  const expl = q.explanation || '';
+  if (expl.length < 20) return q;
+
+  const opts = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
+  const declaredLetter = q.correct_answer;
+  const declaredText   = opts[declaredLetter] || '';
+
+  // Extract numbers from explanation
+  const explNums = _extractNumbers(expl);
+  if (!explNums.length) return q;
+
+  // Take the last significant number in the explanation (usually the final result)
+  // and the most-frequent number — prefer the one that uniquely matches an option
+  const candidateNums = [...new Set(explNums)].filter(n => n > 0.1);
+
+  // Check if declared correct option contains any explanation number
+  const declaredOk = candidateNums.some(n => _optionContainsNumber(declaredText, n));
+  if (declaredOk) return q; // declared answer matches explanation — no correction needed
+
+  // Declared option does NOT match — look for a unique alternative
+  const letters = ['A', 'B', 'C', 'D'].filter(l => l !== declaredLetter);
+  const matchingLetters = letters.filter(l => {
+    const optText = opts[l] || '';
+    return candidateNums.some(n => _optionContainsNumber(optText, n));
+  });
+
+  if (matchingLetters.length === 1) {
+    // Exactly one other option matches the explanation's numbers — high confidence swap
+    const correctedLetter = matchingLetters[0];
+    console.warn(
+      `[KIWI SANITY] Q${q.question_number} (${q.question_type}): declared correct=${declaredLetter} ` +
+      `("${declaredText}") but explanation numbers match ${correctedLetter} ` +
+      `("${opts[correctedLetter]}") — auto-correcting correct_answer`
+    );
+    return { ...q, correct_answer: correctedLetter };
+  }
+
+  // Ambiguous or no match — log a warning but leave as-is
+  if (matchingLetters.length !== 1) {
+    console.warn(
+      `[KIWI SANITY] Q${q.question_number} (${q.question_type}): declared correct=${declaredLetter} ` +
+      `does not match explanation (${matchingLetters.length} alternatives matched) — leaving unchanged`
+    );
+  }
+  return q;
+});
+
+return sanityChecked;
 }
 
 function parseFlashcards(rawText) {
@@ -13217,7 +13299,7 @@ try {
 
   const _basePrompt = calcOnly ? CALC_CBT_PROMPT : CBT_PROMPT;
   const _cardConstraint = calcOnly
-    ? `## CARD-SCOPED CONSTRAINT — CRITICAL\n\nYou are generating CALCULATION questions ONLY from the following flashcard. Every question must require numerical or mathematical working directly derivable from the card content. Do NOT introduce outside knowledge. Generate exactly ${count} calculation MCQ question${count > 1 ? 's' : ''}.\n\n## PRE-OUTPUT CHECKLIST`
+    ? `## CARD-SCOPED CONSTRAINT — CRITICAL\n\nYou are generating CALCULATION questions ONLY from the following flashcard. Every question must require numerical or mathematical working directly derivable from the card content. Do NOT introduce outside knowledge. Generate exactly ${count} calculation MCQ question${count > 1 ? 's' : ''}.\n\n## ⚠ MANDATORY ANSWER VERIFICATION (Quick Questions — non-negotiable)\n\nFor EVERY question you generate, before writing "Correct Answer:", you MUST:\n1. Compute the answer from the stem's given values using the relevant formula.\n2. Identify which option (A/B/C/D) contains the exact numerical result of your computation.\n3. Write ONLY that option's letter as the Correct Answer.\n4. If your computed result does not appear in any option, rewrite one distractor to contain the correct result, then mark it.\n\nIf the question stem has a logical contradiction (e.g., it asks for a value that is mathematically impossible to reach given the constraints), REWRITE the stem to remove the contradiction before generating options.\n\nThis rule overrides all other rules. A wrong Correct Answer is always a critical failure.\n\n## PRE-OUTPUT CHECKLIST`
     : `## CARD-SCOPED CONSTRAINT — CRITICAL\n\nYou are generating questions ONLY from the following flashcard. Do NOT introduce outside knowledge. Every question must be directly answerable from the card content above. The card's front is the concept/question; the card's back is the answer/explanation. Generate exactly ${count} MCQ question${count > 1 ? 's' : ''} that test understanding of this specific card.\n\n## PRE-OUTPUT CHECKLIST`;
 
   const prompt = _basePrompt
