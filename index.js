@@ -16032,7 +16032,7 @@ const newDeck = await db.decks.create(req.user.id, {
 name: `${communityDeck.title || 'Cloned'} (Clone)`,
 description: communityDeck.description,
 subject_id: req.body.subject_id || null,
-card_count: (communityDeck.originalDeck?.cards || []).length,
+card_count: (communityDeck.originalDeck?.cards || communityDeck.sample_cards || []).length || communityDeck.card_count || 0,
 is_public: false,
 });
 const originalCards = communityDeck.originalDeck?.cards || [];
@@ -16045,6 +16045,8 @@ back_image_url: c.back_image_url,
 tags: c.tags || [],
 }));
 const created = await db.cards.createMany(req.user.id, newDeck.id, cardsData);
+// Update deck card_count to actual number of cards created
+await db.decks.update(req.user.id, newDeck.id, { card_count: created.length });
 await batchInitializeSeedlingStates(
 req.user.id,
 created.map((c) => c.id)
@@ -16078,7 +16080,7 @@ subject_id: subject_id || null,
 card_count: (communityDeck.originalDeck?.cards || []).length,
 is_public: false,
 });
-const originalCards = communityDeck.originalDeck?.cards || communityDeck.sample_cards || [];
+const originalCards = (communityDeck.originalDeck?.cards?.length ? communityDeck.originalDeck.cards : null) || communityDeck.sample_cards || [];
 if (originalCards.length > 0) {
 const cardsData = originalCards.map((c) => ({
 front_content: c.front_content || c.front || '',
@@ -16126,7 +16128,7 @@ res.status(500).json({ error: 'Failed to rate deck' });
 // the DB layer but was never exposed as an endpoint.
 communityRouter.post('/decks/publish', async (req, res) => {
 try {
-const { deck_id, description, tags } = req.body;
+const { deck_id, description, tags, group_name } = req.body;
 if (!deck_id) return res.status(400).json({ error: 'deck_id required' });
 const deck = await db.decks.findByIdFull(req.user.id, deck_id);
 if (!deck) return res.status(404).json({ error: 'Deck not found' });
@@ -16144,6 +16146,8 @@ if (!subjectName && deck.subject_id) {
 const subjectDoc = await db.subjects.findById(deck.subject_id).catch(() => null);
 if (subjectDoc) subjectName = subjectDoc.name || '';
 }
+// Snapshot cards at publish time so import works even if original deck is deleted
+const { rows: _snapshotCards } = await query('SELECT front_content, back_content, tags FROM cards WHERE deck_id = $1', [deck_id]);
 const communityEntry = await db.communityDecks.upsertByOriginalDeck(deck_id, {
 title: deck.name,
 author_name: user?.username || 'Anonymous',
@@ -16151,12 +16155,14 @@ author_id: req.user.id,
 description: description || deck.description || '',
 subject: subjectName,
 tags: tags || deck.tags || [],
-card_count: cardCount,
+card_count: _snapshotCards.length || cardCount,
+sample_cards: _snapshotCards,
 likes: 0,
 downloads: 0,
 clone_count: 0,
 average_rating: 0,
 is_public: true,
+...(group_name ? { group_name } : {}),
 });
 // Mark the original deck as public
 await db.decks.update(req.user.id, deck_id, { is_public: true });
@@ -16166,6 +16172,33 @@ res.status(201).json({ message: 'Deck published to community', community_deck: c
 } catch (e) {
 res.status(500).json({ error: 'Failed to publish deck', details: e.message });
 }
+});
+
+// DELETE /api/community/decks/:id — author or admin can remove
+communityRouter.delete('/decks/:id', async (req, res) => {
+  try {
+    const deck = await db.communityDecks.findById(req.params.id);
+    if (!deck) return res.status(404).json({ error: 'Deck not found' });
+    if (deck.author_id !== req.user.id) return res.status(403).json({ error: 'Not your deck' });
+    await query('DELETE FROM community_decks WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Deck removed from community' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete deck', details: e.message });
+  }
+});
+
+// PATCH /api/community/decks/:id/group — set group_name for a deck
+communityRouter.patch('/decks/:id/group', async (req, res) => {
+  try {
+    const { group_name } = req.body;
+    const deck = await db.communityDecks.findById(req.params.id);
+    if (!deck) return res.status(404).json({ error: 'Deck not found' });
+    if (deck.author_id !== req.user.id) return res.status(403).json({ error: 'Not your deck' });
+    await query('UPDATE community_decks SET group_name = $1, updated_at = NOW() WHERE id = $2', [group_name || null, req.params.id]);
+    res.json({ message: 'Group updated' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update group', details: e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -19588,6 +19621,7 @@ async function runSchemaMigrations() {
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS subject text`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS likes integer DEFAULT 0`,
     `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS downloads integer DEFAULT 0`,
+    `ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS group_name text`,
     // Remove hardcoded KIWI Team seed decks — library is user-populated only
     `DELETE FROM community_decks WHERE author_name = 'KIWI Team' AND original_deck_id IS NULL`,
     // DB-FIX: exam_questions needs card_id for SRS feedback linkage (Issue #1 fix)

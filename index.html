@@ -7706,10 +7706,10 @@
       };
 
       // 062 FIX: publish a user's deck to the community library
-      api.publishDeck = async (deckId, description, tags) => {
+      api.publishDeck = async (deckId, description, tags, groupName) => {
         return await apiRequest("/community/decks/publish", {
           method: "POST",
-          body: { deck_id: deckId, description: description || "", tags: tags || [] },
+          body: { deck_id: deckId, description: description || "", tags: tags || [], ...(groupName ? { group_name: groupName } : {}) },
         });
       };
 
@@ -7736,6 +7736,15 @@
             body: { subject_id: subjectId || null },
           });
         }
+      };
+
+      api.deleteCommunityDeck = async (deckId) => {
+        return await apiRequest("/community/decks/" + deckId, { method: "DELETE" });
+      };
+      api.groupCommunityDeck = async (deckId, groupName) => {
+        return await apiRequest("/community/decks/" + deckId + "/group", {
+          method: "PATCH", body: { group_name: groupName || null }
+        });
       };
 
       // ── Library endpoints ──
@@ -16371,7 +16380,11 @@
                       <!-- Action buttons FIRST, before cards -->
                       <div style="display:flex;gap:6px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:10px;">
                         <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--green-bright);" onclick="handleRenameSubject('${escapeHTML(subj.id)}','${escapeHTML(safeDisplayName(subj.name))}')" title="Rename subject"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg> Rename</button>
-                        ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" data-publish-deck="${escapeHTML(subj.decks[0].id)}" data-publish-name="${escapeHTML(subj.name)}" style="font-size:var(--text-xs);">↑ Publish Deck</button>` : ''}
+                        ${(subj.decks && subj.decks.length > 0) ? (
+  subj.decks[0].is_public
+    ? `<button class="btn btn-ghost btn-sm" disabled style="font-size:var(--text-xs);opacity:0.5;cursor:default;">✓ Published</button>`
+    : `<button class="btn btn-ghost btn-sm" data-publish-deck="${escapeHTML(subj.decks[0].id)}" data-publish-name="${escapeHTML(subj.name)}" style="font-size:var(--text-xs);">↑ Publish Deck</button>`
+) : ''}
                         ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMergeDecksModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg> Merge Decks</button>` : ''}
                         ${(subj.decks && subj.decks.length >= 2) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="showMoveCardsModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg> Move Cards</button>` : ''}
                         ${(subj.decks && subj.decks.length > 0) ? `<button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);" onclick="showReassignDeckModal('${escapeHTML(subj.id)}','${escapeHTML(subj.name)}',${JSON.stringify((subj.decks||[]).map(function(d){return {id:d.id,name:d.name,card_count:d.card_count||0};})).replace(/"/g,'&quot;')})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg> Move Deck</button>` : ''}
@@ -16445,6 +16458,7 @@
                 <div style="display:flex;align-items:center;gap:8px;max-width:600px;margin:0 auto;">
                   <span id="lib-bulk-count" style="font-size:var(--text-sm);color:var(--text-2);font-family:var(--font-mono);flex:1;">0 selected</span>
                   <button id="lib-bulk-select-all" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);">Select All</button>
+                  <button id="lib-bulk-publish-group" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);opacity:0.4;" disabled>&#x2191; Publish Group</button>
                   <button id="lib-bulk-reset" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#f59e0b;" disabled>&#x21BA; Reset</button>
                   <button id="lib-bulk-delete" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;" disabled>Delete</button>
                   <button id="lib-bulk-cancel" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--text-3);">Cancel</button>
@@ -16471,6 +16485,7 @@
             var resetBtn = document.getElementById('lib-bulk-reset');
             var delBtn   = document.getElementById('lib-bulk-delete');
             var selAllBtn= document.getElementById('lib-bulk-select-all');
+            var pubGrpBtn = document.getElementById('lib-bulk-publish-group');
             if (!bar) return;
             var n = _selected.size;
             countEl.textContent = n + ' subject' + (n !== 1 ? 's' : '') + ' selected';
@@ -16478,6 +16493,7 @@
             delBtn.disabled     = n === 0;
             resetBtn.style.opacity = n === 0 ? '0.4' : '1';
             delBtn.style.opacity   = n === 0 ? '0.4' : '1';
+            if (pubGrpBtn) { pubGrpBtn.disabled = n === 0; pubGrpBtn.style.opacity = n === 0 ? '0.4' : '1'; }
             var allSelected = _selected.size === subjects.length;
             selAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
           }
@@ -16658,6 +16674,49 @@
                   navigateTo('library');
                 }
               );
+            });
+          }
+
+          // ── Publish as Group (library → community) ──────────────────────────
+          var pubGrpBtn2 = document.getElementById('lib-bulk-publish-group');
+          if (pubGrpBtn2) {
+            pubGrpBtn2.addEventListener('click', async function() {
+              if (_selected.size === 0) return;
+              // Collect decks from selected subjects
+              var selectedSubjIds = Array.from(_selected);
+              var allDecks = [];
+              selectedSubjIds.forEach(function(sid) {
+                var subj = subjects.find(function(s) { return s.id === sid; });
+                if (subj && subj.decks) subj.decks.forEach(function(dk) { allDecks.push({ deck: dk, subj: subj }); });
+              });
+              if (allDecks.length === 0) { showToast('No decks found in selected subjects', 'error'); return; }
+              // Collect existing community group names from user's published decks
+              var existingGroups = [];
+              try {
+                var cdData = await api.getCommunityDecks({ limit: 200 });
+                var myDecks = (cdData.decks || []).filter(function(d) { return d.author_id === (AppState.user&&AppState.user.id||AppState.userId); });
+                var seen = new Set();
+                myDecks.forEach(function(d) { if (d.group_name && !seen.has(d.group_name)) { seen.add(d.group_name); existingGroups.push(d.group_name); } });
+              } catch(e) {}
+              // Show group picker modal
+              _showGroupPickerModal(existingGroups, async function(groupName) {
+                if (!groupName) return;
+                var published = 0, failed = 0;
+                for (var i = 0; i < allDecks.length; i++) {
+                  var item = allDecks[i];
+                  try {
+                    await api.publishDeck(item.deck.id, '', [], groupName);
+                    published++;
+                  } catch(e) { failed++; }
+                }
+                _exitSelectMode();
+                showToast(
+                  failed === 0
+                    ? published + ' deck' + (published!==1?'s':'') + ' published as group "' + groupName + '"'
+                    : published + ' published, ' + failed + ' failed',
+                  failed ? 'error' : 'success'
+                );
+              });
             });
           }
 
@@ -17559,6 +17618,51 @@
             _activeEl = null; _dx = 0; _dragging = false;
           }
         }, { passive: true });
+      }
+
+      // ── Group picker modal (shared by community + library publish-as-group) ──
+      // existingGroups: string[], onConfirm(groupName): called with chosen/new name
+      function _showGroupPickerModal(existingGroups, onConfirm) {
+        var overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.6);display:flex;align-items:flex-end;';
+        var groupListHTML = existingGroups.length
+          ? existingGroups.map(function(g) {
+              return '<button class="_gpicker-existing" data-gname="' + escapeHTML(g) + '" style="display:block;width:100%;text-align:left;padding:12px 16px;background:var(--surface-2,var(--surface));border:1px solid var(--border-2);border-radius:10px;color:var(--text-1);font-size:var(--text-sm);font-family:var(--font-body);cursor:pointer;margin-bottom:8px;">&#x1F4DA; ' + escapeHTML(g) + '</button>';
+            }).join('')
+          : '';
+        overlay.innerHTML = '<div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;padding:20px 16px 32px;max-height:80vh;overflow-y:auto;">' +
+          '<div style="font-weight:700;font-size:var(--text-base);color:var(--text-1);margin-bottom:4px;">Choose a Group</div>' +
+          '<div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:16px;">Select an existing group or create a new one</div>' +
+          (groupListHTML ? '<div style="margin-bottom:12px;">' + groupListHTML + '</div>' : '') +
+          '<div style="font-size:var(--text-xs);color:var(--text-3);margin-bottom:6px;font-weight:600;">NEW GROUP</div>' +
+          '<div style="display:flex;gap:8px;">' +
+            '<input id="_gpicker-input" type="text" placeholder="Type a group name..." style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--border-2);background:var(--surface-2,var(--surface));color:var(--text-1);font-family:var(--font-body);font-size:var(--text-sm);outline:none;">' +
+            '<button id="_gpicker-confirm" class="btn btn-primary btn-sm" style="flex-shrink:0;">Create</button>' +
+          '</div>' +
+          '<button id="_gpicker-cancel" style="margin-top:14px;width:100%;padding:10px;background:none;border:1px solid var(--border-2);border-radius:10px;color:var(--text-3);font-family:var(--font-body);font-size:var(--text-sm);cursor:pointer;">Cancel</button>' +
+        '</div>';
+        document.body.appendChild(overlay);
+        function _close() { overlay.remove(); }
+        overlay.addEventListener('click', function(e) { if (e.target === overlay) _close(); });
+        document.getElementById('_gpicker-cancel').addEventListener('click', _close);
+        // Existing group buttons
+        overlay.querySelectorAll('._gpicker-existing').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            _close();
+            onConfirm(btn.dataset.gname);
+          });
+        });
+        // New group confirm
+        document.getElementById('_gpicker-confirm').addEventListener('click', function() {
+          var val = (document.getElementById('_gpicker-input').value || '').trim();
+          if (!val) { showToast('Enter a group name', 'error'); return; }
+          _close();
+          onConfirm(val);
+        });
+        document.getElementById('_gpicker-input').addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') document.getElementById('_gpicker-confirm').click();
+        });
+        setTimeout(function() { var inp = document.getElementById('_gpicker-input'); if (inp) inp.focus(); }, 100);
       }
 
       async function handleResetSubject(subjectId, subjectName) {
@@ -18742,129 +18846,413 @@
         renderLoadingState(main, "Loading community decks...");
         let templates = [];
         try {
-          const data = await api.getCommunityDecks();
+          const data = await api.getCommunityDecks({ limit: 100 });
           templates = data.decks || data || [];
         } catch (err) {
-          // Endpoint may not yet be live — show empty state with message
           main.innerHTML = `
       <div class="page-wrap page-enter">
-        <div class="section-header"><div><div class="section-title">Community Decks</div><div class="section-sub">Shared by medical students worldwide</div></div></div>
+        <div class="section-header"><div><div class="section-title">Community Decks</div><div class="section-sub">Shared by students worldwide</div></div></div>
         <div class="empty-state">
           <div class="empty-icon">&#x2764;</div>
           <div class="empty-title">Community Coming Soon</div>
           <div class="empty-sub">The community deck library is being populated. Check back soon.</div>
         </div>
-      </div>
-    `;
+      </div>`;
           return;
         }
-        // F22: no hardcoded fallback data
-        main.innerHTML = `
-    <div class="page-wrap page-enter">
-      <div class="section-header">
-        <div>
-          <div class="section-title">Community Decks</div>
-          <div class="section-sub">Shared by students worldwide</div>
-        </div>
-      </div>
-      <div class="community-grid">
-        ${templates
-          .map(
-            (t, i) => {
-              const cardCount = t.cards || t.card_count || 0;
-              const authorName = t.author || t.author_name || 'Anonymous';
-              const avgRating = typeof t.average_rating === 'number' ? t.average_rating.toFixed(1) : '—';
-              const stars = [1,2,3,4,5].map(n =>
-                `<span class="rate-star" data-deck-idx="${i}" data-star="${n}" style="cursor:pointer;font-size:18px;color:${n <= Math.round(t.average_rating||0) ? 'var(--accent-gold,#c9a227)' : 'var(--text-3)'}" title="Rate ${n} star${n>1?'s':''}">★</span>`
-              ).join('');
-              return `
-          <div class="community-card">
-            <div class="community-card-title">${escapeHTML(t.title)}</div>
+
+        // ── State ────────────────────────────────────────────────────────────
+        let _searchQuery = '';
+        let _selectMode  = false;
+        const _selected  = new Set(); // community deck ids
+
+        // ── Helpers ──────────────────────────────────────────────────────────
+        const currentUserId = AppState.user?.id || AppState.userId || null;
+
+        function _filtered() {
+          const q = _searchQuery.toLowerCase();
+          return q
+            ? templates.filter(t => (t.title||'').toLowerCase().includes(q) || (t.subject||'').toLowerCase().includes(q) || (t.author_name||'').toLowerCase().includes(q))
+            : templates;
+        }
+
+        function _grouped(list) {
+          const groups = {};
+          const ungrouped = [];
+          list.forEach(t => {
+            if (t.group_name) {
+              if (!groups[t.group_name]) groups[t.group_name] = [];
+              groups[t.group_name].push(t);
+            } else {
+              ungrouped.push(t);
+            }
+          });
+          return { groups, ungrouped };
+        }
+
+        function _deckCardHTML(t, idx, inGroup) {
+          const cardCount  = t.card_count || t.cards || 0;
+          const authorName = t.author_name || t.author || 'Anonymous';
+          const avgRating  = typeof t.average_rating === 'number' ? t.average_rating.toFixed(1) : '—';
+          const stars = [1,2,3,4,5].map(n =>
+            `<span class="rate-star" data-deck-id="${t.id}" data-star="${n}" style="cursor:pointer;font-size:16px;color:${n <= Math.round(t.average_rating||0) ? 'var(--accent-gold,#c9a227)' : 'var(--text-3)'}" title="Rate ${n} star${n>1?'s':''}">★</span>`
+          ).join('');
+          const isOwner = currentUserId && t.author_id === currentUserId;
+          const selectBox = _selectMode
+            ? `<div class="_cd-check" data-check-id="${t.id}" style="width:20px;height:20px;border-radius:50%;border:2px solid var(--border-2);background:${_selected.has(t.id)?'var(--teal)':'transparent'};flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+                ${_selected.has(t.id) ? '<span style="color:#fff;font-size:11px;font-weight:700;">✓</span>' : ''}
+               </div>` : '';
+          return `
+          <div class="community-card _cd-item" data-cd-id="${t.id}" style="position:relative;overflow:hidden;cursor:${_selectMode?'pointer':'default'}">
+            ${selectBox ? `<div style="display:flex;align-items:flex-start;gap:10px;"><div style="padding-top:2px;">${selectBox}</div><div style="flex:1;min-width:0;">` : ''}
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+              <div class="community-card-title" style="margin:0;">${escapeHTML(t.title)}</div>
+              ${!_selectMode && isOwner ? `<button class="_cd-del-btn" data-del-id="${t.id}" data-del-title="${escapeHTML(t.title)}" style="background:none;border:none;color:#e57373;font-size:18px;padding:0 2px;cursor:pointer;flex-shrink:0;line-height:1;" title="Remove from community">&#x1F5D1;</button>` : ''}
+            </div>
             <div class="community-card-meta">
               <span>by ${escapeHTML(authorName)}</span>
               <span>${cardCount} cards</span>
+              ${t.group_name ? `<span style="color:var(--teal);font-size:var(--text-xs);">&#x25A3; ${escapeHTML(t.group_name)}</span>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:4px;margin:6px 0 2px;">${stars}<span style="font-size:var(--text-xs);color:var(--text-3);margin-left:4px;">${avgRating}</span></div>
             <div class="community-card-footer">
-              <div style="display:flex;gap:8px;font-size:var(--text-sm);color:var(--text-3);font-family:var(--font-mono);">
-                <span>&#x2193; ${t.clone_count || t.downloads || 0} clones</span>
-              </div>
-              <button class="btn btn-primary btn-sm" data-import-idx="${i}">Import</button>
+              <span style="font-size:var(--text-sm);color:var(--text-3);font-family:var(--font-mono);">&#x2193; ${t.clone_count||0} clones</span>
+              ${!_selectMode ? `<button class="btn btn-primary btn-sm _cd-import-btn" data-import-id="${t.id}">Import</button>` : ''}
             </div>
-          </div>
-        `;}
-          )
-          .join("")}
+            ${!_selectMode && isOwner ? `<button class="_cd-group-btn" data-group-id="${t.id}" data-group-current="${escapeHTML(t.group_name||'')}" style="margin-top:6px;background:none;border:1px solid var(--border-2);border-radius:6px;color:var(--text-3);font-size:var(--text-xs);padding:3px 8px;cursor:pointer;font-family:var(--font-body);">&#x25A3; ${t.group_name ? 'Change group' : 'Add to group'}</button>` : ''}
+            ${selectBox ? '</div></div>' : ''}
+          </div>`;
+        }
+
+        function _groupCardHTML(groupName, decks) {
+          return `
+          <div class="_cd-group-card" data-group-name="${escapeHTML(groupName)}" style="background:var(--surface-2,var(--surface));border:1px solid var(--border-2);border-radius:14px;padding:16px;margin-bottom:12px;cursor:pointer;position:relative;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="font-size:28px;">&#x1F4DA;</div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:700;font-size:var(--text-base);color:var(--text-1);">${escapeHTML(groupName)}</div>
+                <div style="font-size:var(--text-sm);color:var(--text-3);margin-top:2px;">${decks.length} deck${decks.length!==1?'s':''}</div>
+              </div>
+              <div style="color:var(--text-3);font-size:20px;">&#x276F;</div>
+            </div>
+          </div>`;
+        }
+
+        function _render() {
+          const list = _filtered();
+          const { groups, ungrouped } = _grouped(list);
+
+          let groupsHTML = Object.entries(groups).map(([name, decks]) => _groupCardHTML(name, decks)).join('');
+          let cardsHTML  = ungrouped.map((t, i) => _deckCardHTML(t, i, false)).join('');
+
+          const hasAny = list.length > 0;
+
+          main.innerHTML = `
+    <div class="page-wrap page-enter" id="_cd-page">
+      <div class="section-header" style="display:flex;align-items:center;gap:8px;">
+        <div style="flex:1;">
+          <div class="section-title">Community Decks</div>
+          <div class="section-sub">Shared by students worldwide</div>
+        </div>
+        <button id="_cd-search-btn" style="background:none;border:none;color:var(--text-2);font-size:20px;cursor:pointer;padding:4px 8px;" title="Search">&#x1F50D;</button>
+        <button id="_cd-select-btn" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);">${_selectMode ? 'Done' : 'Select'}</button>
       </div>
-    </div>
-  `;
-        // Rate star click handlers
-        document.querySelectorAll(".rate-star").forEach((star) => {
-          star.addEventListener("click", async () => {
-            const idx = parseInt(star.dataset.deckIdx);
-            const rating = parseInt(star.dataset.star);
-            const t = templates[idx];
-            if (!t) return;
-            try {
-              const result = await api.rateCommunityDeck(t.id, rating);
-              showToast(`Rated ${rating} ★ — avg now ${result.average_rating}`, "success");
-              // Update local template so stars reflect immediately
-              t.average_rating = result.average_rating;
-              document.querySelectorAll(`.rate-star[data-deck-idx="${idx}"]`).forEach((s) => {
-                s.style.color = parseInt(s.dataset.star) <= Math.round(result.average_rating)
-                  ? 'var(--accent-gold,#c9a227)' : 'var(--text-3)';
+
+      <!-- Search bar (hidden by default) -->
+      <div id="_cd-search-bar" style="display:${_searchQuery?'flex':'none'};align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--surface-2,var(--surface));border-radius:10px;border:1px solid var(--border-2);">
+        <span style="color:var(--text-3);">&#x1F50D;</span>
+        <input id="_cd-search-input" type="text" placeholder="Search decks, subjects, authors..." value="${escapeHTML(_searchQuery)}"
+          style="flex:1;background:none;border:none;outline:none;color:var(--text-1);font-family:var(--font-body);font-size:var(--text-sm);">
+        <button id="_cd-search-clear" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:16px;">&#x2715;</button>
+      </div>
+
+      <!-- Bulk select bar -->
+      <div id="_cd-bulk-bar" style="display:${_selectMode?'flex':'none'};align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--surface-2,var(--surface));border-radius:10px;border:1px solid var(--border-2);">
+        <span id="_cd-bulk-count" style="flex:1;font-size:var(--text-sm);color:var(--text-2);font-family:var(--font-mono);">${_selected.size} selected</span>
+        <button id="_cd-sel-all-btn" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:var(--teal);">Select All</button>
+        <button id="_cd-bulk-del-btn" class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;" ${_selected.size===0?'disabled':''}>Delete</button>
+      </div>
+
+      <div class="community-grid" id="_cd-grid">
+        ${!hasAny ? `<div class="empty-state"><div class="empty-icon">&#x1F4DA;</div><div class="empty-title">No decks found</div></div>` : ''}
+        ${groupsHTML}
+        ${cardsHTML}
+      </div>
+    </div>`;
+
+          _attachHandlers();
+        }
+
+        function _attachHandlers() {
+          // ── Search ────────────────────────────────────────────────────────
+          const searchBtn   = document.getElementById('_cd-search-btn');
+          const searchBar   = document.getElementById('_cd-search-bar');
+          const searchInput = document.getElementById('_cd-search-input');
+          const searchClear = document.getElementById('_cd-search-clear');
+
+          if (searchBtn) searchBtn.addEventListener('click', () => {
+            searchBar.style.display = 'flex';
+            searchInput.focus();
+          });
+          if (searchInput) searchInput.addEventListener('input', () => {
+            _searchQuery = searchInput.value;
+            _render();
+          });
+          if (searchClear) searchClear.addEventListener('click', () => {
+            _searchQuery = '';
+            _render();
+          });
+
+          // ── Select mode ───────────────────────────────────────────────────
+          const selectBtn = document.getElementById('_cd-select-btn');
+          if (selectBtn) selectBtn.addEventListener('click', () => {
+            _selectMode = !_selectMode;
+            if (!_selectMode) _selected.clear();
+            _render();
+          });
+
+          // Select all
+          const selAllBtn = document.getElementById('_cd-sel-all-btn');
+          if (selAllBtn) selAllBtn.addEventListener('click', () => {
+            const list = _filtered();
+            if (_selected.size === list.length) {
+              _selected.clear();
+            } else {
+              list.forEach(t => _selected.add(t.id));
+            }
+            _render();
+          });
+
+          // Bulk delete
+          const bulkDelBtn = document.getElementById('_cd-bulk-del-btn');
+          if (bulkDelBtn) bulkDelBtn.addEventListener('click', async () => {
+            if (_selected.size === 0) return;
+            const ids = [..._selected];
+            showCustomConfirm('Remove Decks', `Remove ${ids.length} deck${ids.length!==1?'s':''} from the community?`, async () => {
+              let failed = 0;
+              for (const id of ids) {
+                try { await api.deleteCommunityDeck(id); templates = templates.filter(t => t.id !== id); }
+                catch(e) { failed++; }
+              }
+              _selected.clear();
+              _selectMode = false;
+              showToast(failed ? `${ids.length - failed} removed, ${failed} failed` : `${ids.length} deck${ids.length!==1?'s':''} removed`, failed ? 'error' : 'success');
+              _render();
+            });
+          });
+
+          // ── Card taps in select mode ──────────────────────────────────────
+          document.querySelectorAll('._cd-item').forEach(el => {
+            el.addEventListener('click', () => {
+              if (!_selectMode) return;
+              const id = el.dataset.cdId;
+              if (_selected.has(id)) _selected.delete(id); else _selected.add(id);
+              const countEl = document.getElementById('_cd-bulk-count');
+              if (countEl) countEl.textContent = _selected.size + ' selected';
+              const delBtn = document.getElementById('_cd-bulk-del-btn');
+              if (delBtn) delBtn.disabled = _selected.size === 0;
+              // toggle checkbox visually without full re-render
+              const check = el.querySelector('._cd-check');
+              if (check) {
+                const on = _selected.has(id);
+                check.style.background = on ? 'var(--teal)' : 'transparent';
+                check.innerHTML = on ? '<span style="color:#fff;font-size:11px;font-weight:700;">✓</span>' : '';
+              }
+            });
+          });
+
+          // ── Group card: open overlay ──────────────────────────────────────
+          document.querySelectorAll('._cd-group-card').forEach(el => {
+            el.addEventListener('click', () => {
+              const groupName = el.dataset.groupName;
+              const decks = templates.filter(t => t.group_name === groupName);
+              _openGroupOverlay(groupName, decks);
+            });
+          });
+
+          // ── Delete individual deck ────────────────────────────────────────
+          document.querySelectorAll('._cd-del-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const id    = btn.dataset.delId;
+              const title = btn.dataset.delTitle;
+              showCustomConfirm('Remove Deck', `Remove "${title}" from the community?`, async () => {
+                try {
+                  await api.deleteCommunityDeck(id);
+                  templates = templates.filter(t => t.id !== id);
+                  showToast('Deck removed from community', 'success');
+                  _render();
+                } catch(e) {
+                  showToast(e.message || 'Failed to remove deck', 'error');
+                }
               });
-            } catch (err) {
-              showToast(err.message || "Rating failed", "error");
-            }
+            });
           });
-        });
-        document.querySelectorAll("[data-import-idx]").forEach((btn) => {
-          btn.addEventListener("click", async () => {
-            const idx = parseInt(btn.dataset.importIdx);
-            const t = templates[idx];
-            if (!t) return;
-            try {
-              showToast(`Importing ${t.subject || t.title || 'community'} deck...`, "info");
-              // Find or create subject
-              let subj = (AppState.subjects || []).find((s) =>
-                s.name.toLowerCase().includes((t.subject || t.title || '').toLowerCase()),
+
+          // ── Group button ──────────────────────────────────────────────────
+          document.querySelectorAll('._cd-group-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const id      = btn.dataset.groupId;
+              const current = btn.dataset.groupCurrent || '';
+              const myGroups = [...new Set(
+                templates.filter(t => t.author_id === currentUserId && t.group_name).map(t => t.group_name)
+              )];
+              const choices = current
+                ? myGroups.filter(g => g !== current).concat(['— Remove from group —'])
+                : myGroups;
+              _showGroupPickerModal(choices, async (val) => {
+                const newGroup = val === '— Remove from group —' ? '' : val;
+                try {
+                  await api.groupCommunityDeck(id, newGroup);
+                  const t = templates.find(t => t.id === id);
+                  if (t) t.group_name = newGroup || null;
+                  showToast(newGroup ? `Added to group "${newGroup}"` : 'Removed from group', 'success');
+                  _render();
+                } catch(e) {
+                  showToast(e.message || 'Failed to update group', 'error');
+                }
+              });
+            });
+          });
+
+          // ── Import button ────────────────────────────────────────────────
+          document.querySelectorAll('._cd-import-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const id = btn.dataset.importId;
+              const t  = templates.find(t => t.id === id);
+              if (!t) return;
+              await _doImport(t);
+            });
+          });
+
+          // ── Rate stars ────────────────────────────────────────────────────
+          document.querySelectorAll('.rate-star').forEach(star => {
+            star.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              if (_selectMode) return;
+              const id     = star.dataset.deckId;
+              const rating = parseInt(star.dataset.star);
+              const t      = templates.find(t => t.id === id);
+              if (!t) return;
+              try {
+                const result = await api.rateCommunityDeck(id, rating);
+                t.average_rating = result.average_rating;
+                document.querySelectorAll(`.rate-star[data-deck-id="${id}"]`).forEach(s => {
+                  s.style.color = parseInt(s.dataset.star) <= Math.round(result.average_rating)
+                    ? 'var(--accent-gold,#c9a227)' : 'var(--text-3)';
+                });
+                showToast(`Rated ${rating} ★`, 'success');
+              } catch(err) {
+                showToast(err.message || 'Rating failed', 'error');
+              }
+            });
+          });
+
+          // ── Swipe to delete (own decks only) ─────────────────────────────
+          const grid = document.getElementById('_cd-grid');
+          if (grid && !_selectMode) {
+            _attachSwipeToDelete(
+              grid, '._cd-item',
+              el => el.dataset.cdId,
+              (id, el) => {
+                const t = templates.find(t => t.id === id);
+                if (!t || t.author_id !== currentUserId) { el.style.transform=''; el.style.opacity=''; return; }
+                showCustomConfirm('Remove Deck', `Remove "${t.title}" from the community?`, async () => {
+                  try {
+                    await api.deleteCommunityDeck(id);
+                    templates = templates.filter(t => t.id !== id);
+                    showToast('Deck removed', 'success');
+                    _render();
+                  } catch(e) {
+                    showToast(e.message || 'Failed', 'error');
+                    el.style.transform=''; el.style.opacity='';
+                  }
+                });
+              },
+              90, { confirmFirst: true }
+            );
+          }
+        }
+
+        // ── Group overlay ─────────────────────────────────────────────────
+        function _openGroupOverlay(groupName, decks) {
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.7);display:flex;flex-direction:column;';
+          overlay.innerHTML = `
+            <div style="background:var(--surface);border-radius:20px 20px 0 0;margin-top:60px;flex:1;display:flex;flex-direction:column;overflow:hidden;">
+              <div style="display:flex;align-items:center;gap:12px;padding:16px 16px 12px;border-bottom:1px solid var(--border-2);">
+                <div style="flex:1;font-weight:700;font-size:var(--text-lg);color:var(--text-1);">&#x1F4DA; ${escapeHTML(groupName)}</div>
+                <button id="_og-close" style="background:none;border:none;color:var(--text-3);font-size:22px;cursor:pointer;">&#x2715;</button>
+              </div>
+              <div style="overflow-y:auto;flex:1;padding:12px 12px 24px;" id="_og-grid">
+                ${decks.map(t => {
+                  const cardCount  = t.card_count || t.cards || 0;
+                  const authorName = t.author_name || 'Anonymous';
+                  const avgRating  = typeof t.average_rating === 'number' ? t.average_rating.toFixed(1) : '—';
+                  return `
+                  <div class="community-card" style="margin-bottom:10px;">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+                      <div class="community-card-title" style="margin:0;">${escapeHTML(t.title)}</div>
+                    </div>
+                    <div class="community-card-meta">
+                      <span>by ${escapeHTML(authorName)}</span>
+                      <span>${cardCount} cards</span>
+                    </div>
+                    <div class="community-card-footer" style="margin-top:8px;">
+                      <span style="font-size:var(--text-sm);color:var(--text-3);">&#11088; ${avgRating} &nbsp;&#x2193; ${t.clone_count||0} clones</span>
+                      <button class="btn btn-primary btn-sm _og-import" data-oid="${t.id}">Import</button>
+                    </div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>`;
+
+          document.body.appendChild(overlay);
+          document.getElementById('_og-close').addEventListener('click', () => overlay.remove());
+          overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+          overlay.querySelectorAll('._og-import').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const t = decks.find(d => d.id === btn.dataset.oid);
+              if (!t) return;
+              overlay.remove();
+              await _doImport(t);
+            });
+          });
+        }
+
+        // ── Import helper ─────────────────────────────────────────────────
+        async function _doImport(t) {
+          try {
+            showToast(`Importing ${t.title}...`, 'info');
+            let subj = (AppState.subjects || []).find(s =>
+              s.name.toLowerCase().includes((t.subject || t.title || '').toLowerCase())
+            );
+            if (!subj) {
+              const colors = ['#d03030','#3080d0','#80d030','#d08030','#c0a030','#c030d0','#30c0d0'];
+              const result = await api.createSubject(
+                t.subject || t.title || 'Community',
+                colors[(AppState.subjects||[]).length % colors.length],
+                '&#x25A0;'
               );
-              if (!subj) {
-                const colors = [
-                  "#d03030",
-                  "#3080d0",
-                  "#80d030",
-                  "#d08030",
-                  "#c0a030",
-                  "#c030d0",
-                  "#30c0d0",
-                ];
-                const result = await api.createSubject(
-                  t.subject || t.title || 'Community',
-                  colors[AppState.subjects.length % colors.length],
-                  "&#x25A0;",
-                );
-                // Backend returns the subject object directly (not wrapped in {subject:...})
-                subj = result && result.id ? result : (result.subject || null);
-                if (subj) AppState.subjects.push(subj);
-              }
-              // Import deck via API (F12 / F22 — no hardcoded mock data)
-              const deckId = t.id || t.title;
-              if (!subj || !subj.id) {
-                showToast("Could not resolve a subject — please create one first", "error");
-                return;
-              }
-              await api.importCommunityDeck(deckId, subj.id);
-              showToast(`Imported ${escapeHTML(t.title)} to library`, "success");
-              navigateTo("library");
-            } catch (err) {
-              showToast(err.message || "Import failed", "error");
+              subj = result && result.id ? result : (result.subject || null);
+              if (subj && AppState.subjects) AppState.subjects.push(subj);
             }
-          });
-        });
+            if (!subj || !subj.id) { showToast('Could not resolve a subject — please create one first', 'error'); return; }
+            await api.importCommunityDeck(t.id, subj.id);
+            showToast(`Imported "${t.title}" to library`, 'success');
+            navigateTo('library');
+          } catch(err) {
+            showToast(err.message || 'Import failed', 'error');
+          }
+        }
+
+        _render();
       }
-      // F-20 FIX: getSampleCards removed — dead code (never called in production)
+
+            // F-20 FIX: getSampleCards removed — dead code (never called in production)
 
       async function renderAchievements() {
         const main = document.getElementById("mainContent");
