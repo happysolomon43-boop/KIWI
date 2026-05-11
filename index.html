@@ -1542,6 +1542,7 @@
         /* Grid overlap: both faces share cell 1/1 so the card auto-sizes
            to whichever face is taller — no fixed height, no overflow. */
         grid-area: 1 / 1;
+        position: relative; /* contain absolutely-positioned children like quickQBtn */
         background: var(--glass-bg);
         border-radius: var(--r-xl);
         backface-visibility: hidden;
@@ -21621,26 +21622,50 @@ function _showTip(step, idx, isLast, target) {
 }
 
 function _positionTip(pos, sel, target) {
-  // Position tip card so it never covers the spotlight target.
-  // If the target sits in the bottom 45% of the viewport, anchor tip to the top instead.
   const el = document.getElementById('kiwiTip');
   if (!el) return;
-  el.style.left = '';
-  el.style.right = '';
+
+  // Reset all inline positions
+  el.style.top    = '';
+  el.style.bottom = '';
+  el.style.left   = '12px';
+  el.style.right  = '12px';
   el.style.transform = '';
-  if (target) {
-    const r  = target.getBoundingClientRect();
-    const vh = window.innerHeight;
-    if (r.top > vh * 0.45) {
-      el.style.top    = '72px';
-      el.style.bottom = '';
-    } else {
-      el.style.top    = '';
-      el.style.bottom = '80px';
-    }
+
+  if (!target) { el.style.bottom = '80px'; return; }
+
+  const r      = target.getBoundingClientRect();
+  const vh     = window.innerHeight;
+  const tipH   = el.offsetHeight || 260;  // real height after innerHTML rendered
+  const GAP    = 16;   // breathing room between target and tip
+  const TOP_MIN = 68;  // clear the tour counter bar
+  const BOT_MIN = 80;  // clear the bottom nav bar
+
+  // Try BELOW the target first
+  const belowTop = r.bottom + GAP;
+  if (belowTop + tipH <= vh - BOT_MIN) {
+    el.style.top    = Math.max(TOP_MIN, belowTop) + 'px';
+    el.style.bottom = '';
+    return;
+  }
+
+  // Try ABOVE the target
+  const aboveBottom = r.top - GAP;
+  if (aboveBottom - tipH >= TOP_MIN) {
+    el.style.top    = '';
+    el.style.bottom = (vh - aboveBottom) + 'px';
+    return;
+  }
+
+  // Fallback: whichever side has more room
+  const spaceBelow = vh - r.bottom - BOT_MIN;
+  const spaceAbove = r.top - TOP_MIN;
+  if (spaceBelow >= spaceAbove) {
+    el.style.top    = Math.max(TOP_MIN, r.bottom + GAP) + 'px';
+    el.style.bottom = '';
   } else {
     el.style.top    = '';
-    el.style.bottom = '80px';
+    el.style.bottom = Math.max(BOT_MIN, vh - r.top + GAP) + 'px';
   }
 }
 
