@@ -7088,14 +7088,10 @@
       };
 
       api.submitReview = async (cardId, rating, sessionId, responseTimeMs) => {
-        if (isDemoMode()) {
+        if (isDemoMode() || sessionId === 'tour-demo-session') {
           const card = DEMO_CARDS.find((c) => c.id === cardId) || {};
           const newStage = Math.min(5, Math.max(1, (card.stage || 1) + (rating >= 3 ? 1 : 0)));
-          return {
-            success: true,
-            newStage,
-            nextDue: new Date(Date.now() + 86400000).toISOString(),
-          };
+          return { success: true, newStage, nextDue: new Date(Date.now() + 86400000).toISOString() };
         }
         // Backend: POST /study/card/:cardId/response
         // Expects: {session_id, response ('again'|'hard'|'good'|'easy'), response_time_ms}
@@ -7113,7 +7109,7 @@
       };
 
       api.endStudySession = async (sessionId, focusData) => {
-        if (isDemoMode()) {
+        if (isDemoMode() || sessionId === 'tour-demo-session') {
           const ts = AppState.tempStudy;
           const health = ts ? ts.seedHealth : 50;
           const ss = getSeedStage(health);
@@ -8877,7 +8873,7 @@
           page = "landing";
         }
         // Clean up any active sessions when navigating away
-        if (AppState.currentPage === "study" && AppState.tempStudy && page !== "study") {
+        if (AppState.currentPage === "study" && AppState.tempStudy && page !== "study" && !_tourActive) {
           // FIX P9.4-08: replaced native confirm() with showCustomConfirm
           const _navTarget = page;
           showCustomConfirm(
@@ -19478,7 +19474,7 @@
 
           overlay.querySelectorAll('._og-import').forEach(btn => {
             btn.addEventListener('click', async () => {
-              const t = decks.find(d => d.id === btn.dataset.oid);
+              const t = decks.find(d => String(d.id) === String(btn.dataset.oid));
               if (!t) return;
               overlay.remove();
               _showDeckDetail(t);
@@ -19519,7 +19515,7 @@
               const result = await api.createSubject(
                 t.subject || t.title || 'Community',
                 colors[(AppState.subjects||[]).length % colors.length],
-                '&#x25A0;'
+                '📚'
               );
               subj = result && result.id ? result : (result.subject || null);
               if (subj && AppState.subjects) AppState.subjects.push(subj);
@@ -21408,7 +21404,11 @@ const KIWI_TOUR_STEPS = [
   {type:'spot',sel:'.nav-item[data-route="progress"]',pos:'right',icon:'📊',title:'Progress Board',
    body:"The Progress page tracks your Knowledge Score trend, a 52-week study heatmap, your trouble cards, exam history, and a Forgetting Curve predictor. The data never lies.",action:'next'},
   {type:'spot',sel:'.nav-item[data-route="community"]',pos:'right',icon:'🌍',title:'Community Decks',
-   body:"Browse thousands of flashcard decks shared by students worldwide. Clone a full deck in one tap and it appears in your Library instantly. The fastest way to start a new subject.",action:'next'},
+   body:"Browse decks shared by students worldwide. Tap <strong>Community</strong> to open it.",action:'click',hint:'👆 Tap Community to continue'},
+  {type:'spot',nav:'community',sel:'._cd-detail-btn',pos:'bottom',icon:'🌍',title:'Preview Before Importing',
+   body:"Every deck shows card count, average rating, and clone count. Tap <strong>Import</strong> on any deck to preview it in full before adding it to your Library.",action:'click',hint:'👆 Tap Import on any deck'},
+  {type:'spot',sel:'#_dd-import-btn',pos:'top',icon:'📥',title:'One-Tap Import',
+   body:"This imports the entire deck straight to your Library. KIWI automatically creates a subject for it. Your card collection starts here — no manual entry needed.",action:'next'},
   {type:'splash',done:true,icon:'🌳',eyebrow:"You're ready.",
    headline:'Your ecosystem\\nis <span>alive.</span>',
    body:"Every session you complete grows your tree, raises your Knowledge Score, and evolves your Biome. The more you give KIWI — the more powerful it gets.<br><br>Where do you want to start?",
@@ -21487,7 +21487,7 @@ async function _tourShowSpot(step, idx) {
   _hideSplash();
   if (step.nav && AppState.currentPage !== step.nav) {
     await new Promise(resolve => { _tourNavResolve = resolve; navigateTo(step.nav); });
-    await _sleep(120);
+    await _sleep(500);
   }
   if (step.action === 'sidebar' || (step.sel && step.sel.includes('.nav-item'))) {
     const _sidebar = document.getElementById('sidebar');
@@ -21495,16 +21495,43 @@ async function _tourShowSpot(step, idx) {
       _sidebar.classList.add('open');
       const _sov = document.getElementById('sidebarOverlay');
       if (_sov) _sov.classList.add('show');
-      await _sleep(350);
+      await _sleep(600);
     }
+  }
+  // If this is a flip/rate step and there's no active session, inject a tour demo session
+  if ((step.action === 'flip' || step.action === 'rate') && !AppState.tempStudy) {
+    AppState.tempStudy = {
+      sessionId: 'tour-demo-session',
+      queue: [
+        Object.assign({}, DEMO_CARDS[0], { id: 'tour-card-1' }),
+        Object.assign({}, DEMO_CARDS[1], { id: 'tour-card-2' }),
+      ],
+      currentIndex: 0,
+      flipped: false,
+      startTime: Date.now(),
+      reviews: [],
+      cardsReviewed: 0,
+      seedStage: 'dormant',
+      seedHealth: 0,
+      aiSummary: null,
+      stageTransitions: [],
+      focusData: { tabAwayCount: 0, idleSeconds: 0 },
+      isDemo: false,
+      _isTourSession: true,
+      _cardHistory: [],
+    };
+    if (typeof renderActiveStudySession === 'function') {
+      renderActiveStudySession(document.getElementById('mainContent'));
+    }
+    await _sleep(400);
   }
   const target = document.querySelector(step.sel);
   if (!target) { _tourRenderStep(idx + 1); return; }
   target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  await _sleep(200);
+  await _sleep(450);
   _positionSpot(target, step.action !== 'next');
   const isLast = idx === KIWI_TOUR_STEPS.length - 1;
-  _showTip(step, idx, isLast);
+  _showTip(step, idx, isLast, target);
   _positionArrow(target, step.pos);
   if (step.action === 'next') {
     // Also allow tapping the spotlight target to advance
@@ -21518,27 +21545,30 @@ async function _tourShowSpot(step, idx) {
       function _clickH() { target.removeEventListener('click', _clickH); _tourNavResolve = null; resolve(); }
       target.addEventListener('click', _clickH, { once: true });
     });
-    await _sleep(500);
+    // Overlay-spawning selectors (e.g. ._cd-detail-btn) only need 600ms for DOM to appear;
+    // full page navigations need the full 1800ms.
+    const _isOverlayClick = step.sel && (step.sel.includes('_cd-detail-btn') || step.sel.includes('_dd-'));
+    await _sleep(_isOverlayClick ? 600 : 1800);
   } else if (step.action === 'sidebar') {
     await new Promise(resolve => {
       _tourNavResolve = resolve;
       function _sbH() { target.removeEventListener('click', _sbH); _tourNavResolve = null; resolve(); }
       target.addEventListener('click', _sbH, { once: true });
     });
-    await _sleep(400);
+    await _sleep(800);
   } else if (step.action === 'flip') {
     await new Promise(resolve => { _tourFlipResolve = resolve; });
-    await _sleep(700);
+    await _sleep(1000);
   } else if (step.action === 'rate') {
     await new Promise(resolve => { _tourRateResolve = resolve; });
-    await _sleep(400);
+    await _sleep(700);
   }
   _hideSpot(); _hideTip(); _hideArrow();
-  await _sleep(200);
+  await _sleep(300);
   _tourRenderStep(idx + 1);
 }
 
-function _showTip(step, idx, isLast) {
+function _showTip(step, idx, isLast, target) {
   const el = document.getElementById('kiwiTip');
   if (!el) return;
   const isInteractive = step.action !== 'next';
@@ -21585,20 +21615,33 @@ function _showTip(step, idx, isLast) {
   }
   // Show immediately — CSS bottom-anchor handles position
   requestAnimationFrame(() => {
-    _positionTip(step.pos, step.sel);
+    _positionTip(step.pos, step.sel, target);
     el.classList.add('visible');
   });
 }
 
-function _positionTip(pos, sel) {
-  // Tip is always anchored to bottom of viewport via CSS (bottom: 80px).
-  // No dynamic positioning needed — just ensure no stale top/left overrides.
+function _positionTip(pos, sel, target) {
+  // Position tip card so it never covers the spotlight target.
+  // If the target sits in the bottom 45% of the viewport, anchor tip to the top instead.
   const el = document.getElementById('kiwiTip');
   if (!el) return;
-  el.style.top = '';
   el.style.left = '';
   el.style.right = '';
   el.style.transform = '';
+  if (target) {
+    const r  = target.getBoundingClientRect();
+    const vh = window.innerHeight;
+    if (r.top > vh * 0.45) {
+      el.style.top    = '72px';
+      el.style.bottom = '';
+    } else {
+      el.style.top    = '';
+      el.style.bottom = '80px';
+    }
+  } else {
+    el.style.top    = '';
+    el.style.bottom = '80px';
+  }
 }
 
 function _positionSpot(target, interactive) {
@@ -21652,12 +21695,19 @@ function _tourCleanup() {
   if (ctrEl)  ctrEl.classList.remove('visible');
   [_tourNavResolve, _tourFlipResolve, _tourRateResolve, _tourNextResolve].forEach(r => r && r());
   _tourNavResolve = _tourFlipResolve = _tourRateResolve = _tourNextResolve = null;
+  // Clean up any tour demo study session so it doesn't block real sessions
+  if (AppState.tempStudy && AppState.tempStudy._isTourSession) {
+    AppState.tempStudy = null;
+  }
+  // Close any open community deck detail overlay left by the tour
+  const ddOv = document.querySelector('#_dd-import-btn');
+  if (ddOv) { const ov = ddOv.closest('[style*="position:fixed"]'); if (ov) ov.remove(); }
 }
 window.addEventListener('resize', () => {
   const step = KIWI_TOUR_STEPS[_tourStep];
   if (!step || step.type !== 'spot' || !_tourActive) return;
   const t = document.querySelector(step.sel);
-  if (t) { _positionSpot(t, step.action !== 'next'); _positionArrow(t, step.pos); _positionTip(step.pos, step.sel); }
+  if (t) { _positionSpot(t, step.action !== 'next'); _positionArrow(t, step.pos); _positionTip(step.pos, step.sel, t); }
 });
 </script>
 </body>
