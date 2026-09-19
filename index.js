@@ -238,6 +238,13 @@ async findByUsernameOrEmail(username, email) {
   );
   return rows[0] || null;
 },
+async findByEmail(email) {
+  const { rows } = await query(
+    'SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+    [email]
+  );
+  return rows[0] || null;
+},
 async findByEmailWithStats(email) {
   const { rows } = await query('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
   if (!rows[0]) return null;
