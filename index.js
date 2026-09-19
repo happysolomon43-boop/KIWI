@@ -18071,7 +18071,7 @@ const ks = { score: ksScore };
 const subjectDeckIds = (s.decks || []).map(d => d.id);
 const subjectCards = allCards.filter(c => subjectDeckIds.includes(c.deck_id));
 const subjectDueCount = subjectCards.filter(c => isCardDue(c)).length;
-return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount, _subjectStat: storedSubjectStat };
+return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount, cardCount: subjectCards.length, _subjectStat: storedSubjectStat };
 })),
 db.userPersona.get(req.user.id).catch(() => null),                                   // Perf: was sequential
 computeReturnStatus(req.user.id).catch(() => null),                                  // Perf: was sequential
@@ -18108,7 +18108,7 @@ const dashGlobalKS = (() => {
 if (!subjectBreakdown.length) return Number(stats?.knowledge_score_global) || 0;
 let totalW = 0, totalCards = 0;
 for (const s of subjectBreakdown) {
-const cardCount = allCards.filter(c => (s._subjectStat?.deck_ids || []).includes(c.deck_id)).length;
+const cardCount = Number(s.cardCount) || 0;
 totalW += (Number(s.ks) || 0) * cardCount;
 totalCards += cardCount;
 }

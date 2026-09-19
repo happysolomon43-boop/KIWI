@@ -6190,6 +6190,10 @@
               var _jd = msg.data || {};
               var job_id = _jd.job_id, type = _jd.type, result = _jd.result, exam = _jd.exam;
               if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(job_id);
+              if (_ignoredJobIds.has(job_id)) {
+                _hideGenBanner();
+                return;
+              }
               if (type === 'note_generation') {
                 _hideGenBanner();
                 var count = (result && result.count) || 0;
@@ -6416,7 +6420,7 @@
           var tok    = authToken || localStorage.getItem('kiwi_auth_token');
           if (examId && tok) {
             try {
-              fetch('/api/exams/' + examId + '/forfeit', {
+              fetch(API_BASE_URL + '/exams/' + examId + '/forfeit', {
                 method: 'POST',
                 headers: { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json' },
                 keepalive: true,
@@ -6523,6 +6527,7 @@
 
       // Track pending jobs for optional polling fallback
       const _pendingJobs = new Map(); // jobId → { type, pollInterval }
+      const _ignoredJobIds = new Set(); // jobs the user chose not to wait for
 
       // ── Fix 6: Persistent generation status banner ──────────────────────────
 
@@ -6605,6 +6610,10 @@
             if (event === 'job_done') {
               var _jd = data || {};
               var _jType = _jd.type;
+              if (_ignoredJobIds.has(_jd.job_id)) {
+                _hideGenBanner();
+                return;
+              }
               _hideGenBanner();
               if (_jType === 'cbt_generation') {
                 var _examData = (_jd.exam && (_jd.exam.exam || _jd.exam)) || (_jd.result && (_jd.result.exam || _jd.result));
@@ -6715,6 +6724,17 @@
         _pendingJobs.set(jobId, { type, pollInterval: iv });
       }
 
+      function _stopWaitingForJob(jobId) {
+        var pending = _pendingJobs.get(jobId);
+        if (pending && pending.pollInterval) clearInterval(pending.pollInterval);
+        _pendingJobs.delete(jobId);
+        _ignoredJobIds.add(jobId);
+        setTimeout(function() { _ignoredJobIds.delete(jobId); }, 15 * 60 * 1000);
+        _hideGenBanner();
+        if (typeof navigateTo === 'function') navigateTo('exam-config');
+        showToast('Exam generation is still running in the background. KIWI will not redirect you when it finishes.', 'info', 6000);
+      }
+
       // safeDisplayName: parse JSON-encoded names (e.g. {"name":"Physics","color":"..."})
       function safeDisplayName(rawName) {
         if (!rawName || typeof rawName !== 'string') return rawName || '';
@@ -6726,6 +6746,13 @@
           } catch (e) {}
         }
         return rawName;
+      }
+
+      function getUserDisplayName(user, fallback) {
+        var value = user && (user.full_name || user.name || user.username);
+        if (value && String(value).trim()) return String(value).trim();
+        if (user && user.email) return String(user.email).split('@')[0];
+        return fallback || 'Student';
       }
 
       const AppState = {
@@ -6979,7 +7006,7 @@
         // Backend returns the user object directly (not wrapped in {user: ...})
         const data = await apiRequest("/auth/me");
         AppState.user = data.user || data; // handle both shapes for safety
-        return data;
+        return AppState.user;
       };
 
       // ── Dashboard endpoints ──
@@ -7567,6 +7594,17 @@
       // Issue-054: Delete card
       api.deleteCard = async (cardId) => apiRequest('/cards/' + cardId, { method: 'DELETE' });
       api.updateCard = async (cardId, front, back) => apiRequest('/cards/' + cardId, { method: 'PATCH', body: { front, back } });
+      api.createCard = async (deckId, card) => apiRequest('/cards', {
+        method: 'POST',
+        body: {
+          deck_id: deckId,
+          front_content: card.front_content,
+          back_content: card.back_content,
+          front_image_url: card.front_image_url,
+          back_image_url: card.back_image_url,
+          tags: card.tags || []
+        }
+      });
       // Issue-055: Delete deck/subject (subject delete cascades on backend)
       // FIX: deleteDeck now correctly targets /decks/:id (was wrongly hitting /subjects/)
       api.deleteDeck = async (deckId) => apiRequest('/decks/' + deckId, { method: 'DELETE' });
@@ -7793,11 +7831,11 @@
         });
       };
 
-      api.addCard = async (subjectId, front, back) => {
-        // Backend: POST /library/cards → accepts {subjectId, front, back}, auto-resolves deck
+      api.addCard = async (subjectId, front, back, deckId) => {
+        // Prefer an explicit deck when the caller has one; otherwise the backend resolves the default.
         return await apiRequest("/library/cards", {
           method: "POST",
-          body: { subjectId, front, back },
+          body: { subjectId, front, back, deck_id: deckId || undefined },
         });
       };
 
@@ -9393,7 +9431,17 @@
         if (!newPass || newPass.length < 8) { if (errEl) { errEl.textContent = 'Password must be at least 8 characters.'; errEl.classList.add('visible'); } return; }
         if (errEl) { errEl.textContent = ''; errEl.classList.remove('visible'); }
         try {
-          await apiRequest('/auth/reset-password', { method: 'POST', body: { email, otp, newPassword: newPass } });
+          const verification = await apiRequest('/auth/verify-reset-otp', {
+            method: 'POST',
+            body: { email, otp }
+          });
+          if (!verification || !verification.resetToken) {
+            throw new Error('The reset code could not be verified. Please request a new code.');
+          }
+          await apiRequest('/auth/reset-password', {
+            method: 'POST',
+            body: { resetToken: verification.resetToken, newPassword: newPass }
+          });
           showToast('Password reset! Please log in with your new password.', 'success', 6000);
           showForgotPassword(false);
           switchAuthTab('login');
@@ -9473,11 +9521,11 @@
           history.pushState({ kiwi: 1 }, '');
           updateUserFooter();
           if (data.welcome) {
-            showToast(`Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
+            showToast(`Welcome, ${getUserDisplayName(data.user, name)}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('onboarding');
             setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
           } else {
-            showToast(`Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
+            showToast(`Welcome, ${getUserDisplayName(data.user, name)}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('dashboard');
             setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
           }
@@ -9525,7 +9573,7 @@
           if (_loginAppDiv) _loginAppDiv.style.display = '';
           document.getElementById('appContainer').style.display = 'flex';
           updateUserFooter();
-          showToast(`Welcome back, ${data.user?.full_name || data.user?.name || 'Student'}!`, 'success', 4000);
+          showToast(`Welcome back, ${getUserDisplayName(data.user)}!`, 'success', 4000);
           navigateTo('dashboard');
           initKiwiWS();
           // PATCH FIX-6: ensure back button history stack is initialised after login too
@@ -9623,7 +9671,7 @@
               needsPersona ? api.getPersona()     : Promise.resolve(null),
             ]);
             if (needsUser && userData.status === 'fulfilled' && userData.value) {
-              user = userData.value.user;
+              user = userData.value.user || userData.value;
             }
             if (needsPersona && personaData.status === 'fulfilled' && personaData.value) {
               persona = personaData.value.currentPersona;
@@ -9645,9 +9693,9 @@
         const level = AppState.dashboard?.level || { level: 1, xp: 0, nextLevelXp: 100 };
         footer.innerHTML = `
     <div class="user-mini">
-      <div class="user-avatar">${user ? user.name.charAt(0).toUpperCase() : "S"}</div>
+      <div class="user-avatar">${getUserDisplayName(user).charAt(0).toUpperCase()}</div>
       <div>
-        <div class="user-name">${escapeHTML(user?.name || "Student")}</div>
+        <div class="user-name">${escapeHTML(getUserDisplayName(user))}</div>
         <div class="user-level">Lv ${level.level || 1}</div>
         ${persona ? `<div class="user-persona">${escapeHTML(persona.icon || "&#x1F9E0;")} ${escapeHTML(persona.name || "Undiscovered")}</div>${persona.description ? `<div style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);margin-top:2px;line-height:1.3;">${escapeHTML(persona.description.substring(0, 60))}${persona.description.length > 60 ? "..." : ""}</div>` : ""}` : ""}
       </div>
@@ -11715,6 +11763,7 @@
         const _reviewCardId  = card.id;
         const _reviewCardIdx = t.currentIndex;
         const _oldStage      = card.stage || card.level || 1;
+        const _responseTimeMs = t.cardShownAt ? (Date.now() - t.cardShownAt) : null;
         // Update seed + counters immediately
         t.seedHealth = Math.min(100, t.seedHealth + 3);
         t.seedStatus = getSeedStage(t.seedHealth).stage;
@@ -11758,7 +11807,6 @@
         // Render next card immediately — no waiting for network
         renderActiveStudySession(document.getElementById("mainContent"));
         // Fire review API in background
-        const _responseTimeMs = t.cardShownAt ? (Date.now() - t.cardShownAt) : null;
         api.submitReview(_reviewCardId, rating, t.sessionId, _responseTimeMs)
           .then(function(result) {
             // Handle Again requeue: undo the optimistic +1 and splice card to end
@@ -12683,7 +12731,7 @@
                       This takes 15–30 seconds. You can leave this page — we'll redirect you automatically when it's ready.
                     </div>
                     <div class="loading-dots" style="margin-top:var(--space-3);"><span></span><span></span><span></span></div>
-                    <button class="btn btn-ghost btn-sm" id="cancelExamGenBtn" style="margin-top:var(--space-4);font-size:var(--text-sm);color:var(--text-3);border-color:var(--border);" onclick="(function(){ if(typeof _hideGenBanner==='function') _hideGenBanner(); if(typeof navigateTo==='function') navigateTo('exam-config'); showToast('Generation cancelled.','info',3000); })()">✕ Cancel Generation</button>
+                    <button class="btn btn-ghost btn-sm" id="cancelExamGenBtn" style="margin-top:var(--space-4);font-size:var(--text-sm);color:var(--text-3);border-color:var(--border);" onclick="_stopWaitingForJob('${job.job_id}')">← Stop Waiting</button>
                     <div class="gen-progress-wrap" id="examGenProgress" style="display:none">
                       <div class="gen-progress-track">
                         <div class="gen-progress-fill" id="examGenProgressFill"></div>
@@ -18318,10 +18366,13 @@
               var newSubject = await api.createSubject({ name: nameVal, color: "#2d6a4f", icon: "book" });
               var subjectId  = newSubject.id || (newSubject.subject && newSubject.subject.id);
               if (!subjectId) throw new Error("Subject creation did not return an id");
-              // Create default deck inside the new subject
-              var newDeck = await api.createDeck(subjectId, nameVal + " — Main Deck");
-              var deckId  = newDeck.id || (newDeck.deck && newDeck.deck.id);
-              if (!deckId) throw new Error("Deck creation did not return an id");
+              // Subject creation already creates its default deck. Fall back only if it did not.
+              var deckId = newSubject.default_deck_id || (newSubject.subject && newSubject.subject.default_deck_id) || null;
+              if (!deckId) {
+                var newDeck = await api.createDeck(subjectId, nameVal + " — Main Deck");
+                deckId = newDeck.id || (newDeck.deck && newDeck.deck.id);
+              }
+              if (!deckId) throw new Error("Subject creation did not return a default deck id");
               // Refresh library so AppState.subjects is current
               var data = await api.getLibrary();
               AppState.subjects = data.subjects || [];
@@ -19739,6 +19790,7 @@
               const subj = await api.createSubject({ name, emoji: emoji || "" });
               OB.subjectId = subj.id || subj.subject?.id;
               OB.subjectName = name;
+              OB.deckId = subj.default_deck_id || subj.subject?.default_deck_id || null;
               OB.step = 2;
               renderStep();
             } catch (e) {
@@ -19776,8 +19828,10 @@
             const btn = document.getElementById("ob-deck-btn");
             btn.disabled = true; btn.textContent = "Creating...";
             try {
-              const deck = await api.createDeck(OB.subjectId, { name, description: "" });
-              OB.deckId = deck.id || deck.deck?.id;
+              const deck = OB.deckId
+                ? await api.updateDeck(OB.deckId, { name, description: "" })
+                : await api.createDeck(OB.subjectId, { name, description: "" });
+              OB.deckId = deck.id || deck.deck?.id || OB.deckId;
               OB.deckName = name;
               OB.step = 3;
               renderStep();
@@ -19959,7 +20013,7 @@
             btn.disabled = true; btn.textContent = "Saving…";
             try {
               // FIX: api.createCard never existed — use api.addCard which posts to /library/cards
-              await api.addCard(OB.subjectId, front, back);
+              await api.addCard(OB.subjectId, front, back, OB.deckId);
               addedCards.push({ front, back });
               OB.cardsAdded = addedCards.length;
               if (frontEl) frontEl.value = "";
@@ -20476,7 +20530,7 @@
               <div class="settings-row-label">Display Name</div>
               <div class="settings-row-sub">Shown in the sidebar</div>
             </div>
-            <input class="input" style="max-width:200px;" id="settingName" value="${escapeHTML(AppState.user?.name || "Student")}" />
+            <input class="input" style="max-width:200px;" id="settingName" value="${escapeHTML(getUserDisplayName(AppState.user))}" />
           </div>
         </div>
         <!-- Study Mode -->
@@ -20653,7 +20707,10 @@
           document.getElementById("settingName").addEventListener("change", async (e) => {
             try {
               await api.updateSettings({ name: e.target.value });
-              if (AppState.user) AppState.user.name = e.target.value;
+              if (AppState.user) {
+                AppState.user.name = e.target.value;
+                AppState.user.full_name = e.target.value;
+              }
               updateUserFooter();
               showToast("Name updated", "success");
             } catch (err) {
@@ -20804,7 +20861,7 @@
               if (newPass !== confirmPass) { setMsg('Passwords do not match.', 'var(--red-bright)'); return; }
               changePassBtn.disabled = true; changePassBtn.textContent = 'Updating…';
               try {
-                await apiRequest('/auth/change-password', { method: 'POST', body: { currentPassword: currentPass, newPassword: newPass } });
+                await apiRequest('/auth/change-password', { method: 'PATCH', body: { currentPassword: currentPass, newPassword: newPass } });
                 setMsg('Password changed successfully.', 'var(--green-bright)');
                 document.getElementById('settingCurrentPass').value = '';
                 document.getElementById('settingNewPass').value = '';
@@ -20937,7 +20994,7 @@
             let telegramToken = "";
             let isAdmin = false;
             try {
-              const me = await api.getMe().catch(() => ({}));
+              const me = await api.getCurrentUser().catch(() => ({}));
               currentPrefs = me.notification_preferences || currentPrefs;
               telegramLinked = !!me.telegram_chat_id;
               telegramToken = me.telegram_link_token || "";
