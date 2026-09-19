@@ -3560,6 +3560,60 @@
       .auth-code-input { font-family:var(--font-mono)!important; letter-spacing:6px; font-size:20px!important; }
       @media(max-width:1050px){ #authOverlay .auth-modal{grid-template-columns:1fr;max-width:620px}.auth-brand-panel{display:none}.auth-form-panel{min-height:min(760px,92vh)} }
       @media(max-width:760px){ #authOverlay{padding:0}#authOverlay .auth-modal{width:100%;min-height:100vh;border-radius:0;border:0}.auth-form-panel{padding:72px 22px 30px;justify-content:flex-start;overflow-y:auto}.auth-form-title{font-size:34px} }
+
+      /* EXPERIMENTAL REDESIGN — FULL-DEPTH V2 DASHBOARD */
+      .kiwi-v2-dashboard {
+        --v2-ink:#132018; --v2-muted:#68746d; --v2-paper:#efeada; --v2-card:#fbf9f2;
+        --v2-line:#d8d1c0; --v2-dark:#102118; --v2-dark-2:#152a1d; --v2-lime:#b8ff65;
+        color:var(--v2-ink); background:var(--v2-paper); border-radius:26px; padding:30px;
+        min-height:calc(100vh - 48px);
+      }
+      .v2-dash-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:24px}
+      .v2-dash-title{color:var(--v2-ink);font-family:var(--font-display);font-size:32px;line-height:1.12;letter-spacing:-1px}
+      .v2-dash-sub{margin-top:8px;color:var(--v2-muted);font-size:13px}
+      .v2-dash-streak-pill{flex:0 0 auto;min-width:170px;padding:11px 16px;border-radius:999px;background:#fff5d3;border:1px solid #e7d9a7;color:#66551f;text-align:center;font-weight:700;font-size:12px}
+      .v2-dash-top-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(220px,.94fr) minmax(220px,.9fr);gap:16px}
+      .v2-panel{min-width:0;border-radius:22px;border:1px solid var(--v2-line);background:var(--v2-card);padding:20px}
+      .v2-panel.dark{color:#eef2ed;border-color:#25402f;background:var(--v2-dark)}
+      .v2-eyebrow{color:#7d877f;font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase}
+      .v2-panel.dark .v2-eyebrow{color:#83a08c}
+      .v2-ks-row{display:flex;align-items:flex-end;gap:16px;margin-top:12px}
+      .v2-ks-number{color:#f7f2de;font-family:var(--font-display);font-size:clamp(62px,6vw,88px);line-height:.88;font-weight:800}
+      .v2-ks-band{padding-bottom:9px;color:#b8ff65;font-size:13px;font-weight:700}
+      .v2-ks-subjects{margin-top:24px;display:flex;gap:8px;flex-wrap:wrap}
+      .v2-subject-chip{padding:8px 10px;border-radius:10px;background:#173022;color:#a8b9ae;font-size:11px;cursor:pointer}
+      .v2-subject-chip strong{color:#eef2ed}
+      .v2-tree-wrap{height:150px;margin:8px auto 2px;overflow:hidden}
+      .v2-tree-wrap #dashboardTree,.v2-tree-wrap #dashboardTree svg,.v2-tree-wrap #dashboardTree canvas{width:100%!important;height:100%!important;max-height:150px!important}
+      .v2-health-track,.v2-pressure-track{height:9px;margin-top:12px;overflow:hidden;border-radius:999px;background:#e0e0d6}
+      .v2-panel.dark .v2-pressure-track{background:#263a2e}
+      .v2-health-fill,.v2-pressure-fill{height:100%;border-radius:inherit}
+      .v2-meta-row{margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:#6e7972;font-size:10px}
+      .v2-panel.dark .v2-meta-row{color:#91a397}
+      .v2-streak-card{background:#fff5d3;border-color:#e7d9a7}
+      .v2-streak-number{margin-top:14px;color:#5c4e20;font-family:var(--font-display);font-size:58px;line-height:1;font-weight:800}
+      .v2-streak-label{margin-top:6px;color:#7d7044;font-size:13px}
+      .v2-shields{margin-top:22px;color:#876f22;font-size:13px}
+      .v2-insight-strip{margin-top:16px;padding:13px 16px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;border-radius:16px;background:#e8e2d3;border:1px solid #d5cebe}
+      .v2-insight{color:#526058;font-size:11px;line-height:1.45}.v2-insight strong{display:block;margin-bottom:2px;color:#29362f;font-size:10px;text-transform:uppercase;letter-spacing:.7px}
+      .v2-dash-middle{margin-top:16px;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(280px,.75fr);gap:16px}
+      .v2-panel-title{color:var(--v2-ink);font-family:var(--font-display);font-size:17px;font-weight:800}.v2-panel.dark .v2-panel-title{color:#f4f0e4}
+      .v2-panel-sub{margin-top:4px;color:#758078;font-size:11px}.v2-panel.dark .v2-panel-sub{color:#8ea296}
+      .v2-heatmap-wrap{margin-top:16px;min-height:76px;padding:14px;overflow-x:auto;border-radius:14px;background:#f1eee5}
+      .v2-brain-value{margin-top:20px;color:#f4f0e4;font-family:var(--font-display);font-size:31px;font-weight:800}
+      .v2-brain-status{margin-top:5px;color:#98ab9f;font-size:11px}
+      .v2-brain-link{display:inline-flex;margin-top:22px;padding:9px 12px;border-radius:11px;border:1px solid #31503b;color:#c7ff78;background:#152a1d;cursor:pointer;font-size:11px;font-weight:700}
+      .v2-dash-bottom{margin-top:16px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+      .v2-invitation-list,.v2-subject-list{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+      .v2-invitation{position:relative;padding:13px 42px 13px 14px;border-radius:13px;border:1px solid #ddd6c7;background:#f3efe5;cursor:pointer;transition:transform .18s ease,border-color .18s ease}
+      .v2-invitation:hover{transform:translateY(-1px);border-color:#b8c5b0}
+      .v2-invitation-title{color:#1b2820;font-size:12px;font-weight:700}.v2-invitation-context{margin-top:4px;color:#707a73;font-size:10px;line-height:1.45}.v2-invitation-action{margin-top:7px;color:#55753d;font-size:10px;font-weight:700}
+      .v2-invitation-dismiss{position:absolute;top:8px;right:9px;width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#828b85;background:#e6e1d6;font-size:15px}
+      .v2-subject-row{padding:12px 13px;display:grid;grid-template-columns:1fr auto;gap:6px 14px;border-radius:12px;background:#152a1d}
+      .v2-subject-name{color:#edf1ec;font-size:12px;font-weight:700}.v2-subject-ks{color:#b8ff65;font-size:12px;font-weight:700}.v2-subject-state{grid-column:1/-1;color:#8ea296;font-size:10px}
+      .v2-empty{padding:22px 0;color:#7b867f;font-size:11px}
+      @media(max-width:1050px){.v2-dash-top-grid{grid-template-columns:1fr 1fr}.v2-dash-top-grid>.v2-panel:first-child{grid-column:1/-1}}
+      @media(max-width:760px){.kiwi-v2-dashboard{margin:-8px;padding:18px;border-radius:0;min-height:100vh}.v2-dash-header{flex-direction:column}.v2-dash-streak-pill{align-self:flex-start}.v2-dash-top-grid,.v2-dash-middle,.v2-dash-bottom,.v2-insight-strip{grid-template-columns:1fr}.v2-ks-number{font-size:64px}}
       /* ═══════════════════════════════════════════════════════════════════════════
    LIBRARY
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -9900,6 +9954,128 @@
       }
 
       // ── Paint dashboard: renders data into main (called from cache or network path) ──
+      function buildExperimentalDashboardHTML(data, band) {
+  const overallKS = data.overallKS;
+  const subjectBreakdown = data.subjectBreakdown || [];
+  const streak = data.streak || {};
+  const invitations = data.invitations || [];
+  const brainPreview = data.brainPreview || null;
+  const weeklyAnchor = data.weeklyAnchor || "";
+  const morningBrief = data.morningBrief || "";
+  const returnGreeting = data.returnGreeting || "";
+  const treeState = data.treeState || {};
+
+  const subjectChips = subjectBreakdown.length
+    ? subjectBreakdown.slice(0, 6).map((subject) =>
+        `<span class="v2-subject-chip" onclick="navigateTo('biome')">${escapeHTML(subject.name)} <strong>${Math.round(subject.ks || 0)}</strong></span>`
+      ).join("")
+    : `<span class="v2-subject-chip">Start studying to build your Knowledge Score</span>`;
+
+  const insights = (returnGreeting || morningBrief || weeklyAnchor)
+    ? `<div class="v2-insight-strip">
+        <div class="v2-insight"><strong>Welcome back</strong>${escapeHTML(returnGreeting || "Your ecosystem is ready.")}</div>
+        <div class="v2-insight"><strong>Morning brief</strong>${escapeHTML(morningBrief || "No new brief yet.")}</div>
+        <div class="v2-insight"><strong>Weekly anchor</strong>${escapeHTML(weeklyAnchor || "Keep the learning rhythm steady.")}</div>
+      </div>`
+    : "";
+
+  const invitationRows = invitations.length
+    ? invitations.slice(0, 6).map((inv, i) =>
+        `<div class="invitation-item v2-invitation" data-inv="${i}">
+          <div class="v2-invitation-title">${escapeHTML(inv.title || "Invitation")}</div>
+          <div class="v2-invitation-context">${escapeHTML(inv.context || "")}</div>
+          ${inv.action ? `<div class="v2-invitation-action">${escapeHTML(inv.action)}</div>` : ""}
+          <span class="v2-invitation-dismiss" data-dismiss="${i}">&times;</span>
+        </div>`
+      ).join("")
+    : `<div class="v2-empty">All caught up. Invitations will appear as your ecosystem develops.</div>`;
+
+  const subjectRows = subjectBreakdown.length
+    ? subjectBreakdown.slice(0, 7).map((subject) =>
+        `<div class="v2-subject-row" onclick="navigateTo('biome')" style="cursor:pointer;">
+          <div class="v2-subject-name">${escapeHTML(subject.name)}</div>
+          <div class="v2-subject-ks">${Math.round(subject.ks || 0)} KS</div>
+          <div class="v2-subject-state">Open in Biome to inspect health, pressure and memory states.</div>
+        </div>`
+      ).join("")
+    : `<div class="v2-empty" style="color:#8ea296;">Subjects will appear here as your library grows.</div>`;
+
+  const pressure = Math.max(0, Math.min(100, brainPreview?.highestPressure || 0));
+  const pressureLabel = !brainPreview ? "Calm" : pressure > 50 ? "High" : pressure > 30 ? "Moderate" : "Calm";
+  const pressureColor = pressure > 50 ? "#df6f5e" : pressure > 30 ? "#d5a15d" : "#70ad68";
+  const health = Math.max(0, Math.min(100, treeState.health || 0));
+  const healthColor = health > 60 ? "#70a84e" : health > 30 ? "#d5a15d" : "#cf6f50";
+
+  return `
+    <div class="page-wrap page-enter kiwi-v2-dashboard">
+      <div class="v2-dash-header">
+        <div>
+          <div class="v2-dash-title">Knowledge Command Center</div>
+          <div class="v2-dash-sub">Your memory, pressure, growth and review priorities in one place.</div>
+        </div>
+        <div class="v2-dash-streak-pill">${streak.current || 0} day${(streak.current || 0) === 1 ? "" : "s"} streak</div>
+      </div>
+
+      <div class="v2-dash-top-grid">
+        <section class="v2-panel dark">
+          <div class="v2-eyebrow">Knowledge score</div>
+          <div class="v2-ks-row">
+            <div class="v2-ks-number">${Math.round(overallKS || 0)}</div>
+            <div class="v2-ks-band">${escapeHTML(band.name)} · ${escapeHTML(band.label)}</div>
+          </div>
+          <div class="v2-ks-subjects">${subjectChips}</div>
+        </section>
+
+        <section class="v2-panel">
+          <div class="v2-eyebrow">Biome health</div>
+          <div class="v2-tree-wrap"><div id="dashboardTree"></div></div>
+          <div class="v2-health-track"><div class="v2-health-fill" style="width:${health}%;background:${healthColor};"></div></div>
+          <div class="v2-meta-row"><span>${escapeHTML(treeState.stageLabel || "Seedling")}</span><strong>${health}%</strong></div>
+        </section>
+
+        <section class="v2-panel v2-streak-card">
+          <div class="v2-eyebrow">Streak</div>
+          <div class="v2-streak-number">${streak.current || 0}</div>
+          <div class="v2-streak-label">day${(streak.current || 0) === 1 ? "" : "s"} in rhythm</div>
+          <div class="v2-shields">${streak.shields !== undefined ? "🛡️".repeat(Math.min(streak.shields,5)) + (streak.shields > 5 ? " +" + (streak.shields - 5) : "") : "Keep returning to protect the streak"}</div>
+        </section>
+      </div>
+
+      ${insights}
+
+      <div class="v2-dash-middle">
+        <section class="v2-panel">
+          <div class="v2-panel-title">Review activity</div>
+          <div class="v2-panel-sub">12 weeks · real review history from KIWI</div>
+          <div class="v2-heatmap-wrap"><div id="dashHeatmap">Loading activity…</div></div>
+        </section>
+
+        <section class="v2-panel dark">
+          <div class="v2-eyebrow">Brain pressure</div>
+          <div class="v2-brain-value">${pressureLabel}</div>
+          <div class="v2-brain-status">${brainPreview ? `${brainPreview.interventionCount || 0} active intervention${(brainPreview.interventionCount || 0) === 1 ? "" : "s"}` : "No active pressure signals"}</div>
+          <div class="v2-pressure-track"><div class="v2-pressure-fill" style="width:${pressure}%;background:${pressureColor};"></div></div>
+          <button class="v2-brain-link" onclick="navigateTo('brain')">Open Brain monitor →</button>
+        </section>
+      </div>
+
+      <div class="v2-dash-bottom">
+        <section class="v2-panel">
+          <div class="v2-panel-title">Priority review queue</div>
+          <div class="v2-panel-sub">What KIWI recommends you act on next</div>
+          <div class="v2-invitation-list" id="invitations-card">${invitationRows}</div>
+        </section>
+
+        <section class="v2-panel dark">
+          <div class="v2-panel-title">Subject ecosystem</div>
+          <div class="v2-panel-sub">Knowledge score by subject</div>
+          <div class="v2-subject-list">${subjectRows}</div>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
       function _paintDashboard(main, data, _dashStartPage) {
         if (AppState.currentPage !== _dashStartPage) return;
         AppState.dashboard = data;
@@ -9919,196 +10095,7 @@
             treeState,
           } = data;
           const band = getKSBand(Math.round(overallKS || 0));
-          main.innerHTML = `
-      <div class="page-wrap page-enter">
-        <!-- KS Hero -->
-        <div class="ks-hero">
-          <div class="ks-hero-number">${Math.round(overallKS || 0)}<span>/100</span></div>
-          <div class="ks-hero-details">
-            <div class="ks-hero-label">Overall Knowledge Score</div>
-            <div class="ks-hero-band">${escapeHTML(band.name)} &middot; ${escapeHTML(band.label)}</div>
-            <div class="ks-hero-subjects">
-              ${
-                (subjectBreakdown || [])
-                  .map(
-                    (s) => `
-                <span style="cursor:pointer;" onclick="navigateTo('biome')">
-                  ${escapeHTML(s.name)}: <strong>${Math.round(s.ks)}</strong>
-                </span>
-              `,
-                  )
-                  .join(" &middot; ") || "Start studying to build your Knowledge Score"
-              }
-            </div>
-          </div>
-        </div>
-        ${
-          returnGreeting
-            ? `
-        <!-- Return Greeting -->
-        <div class="return-greeting">
-          <div class="return-greeting-label">Welcome Back</div>
-          <div class="return-greeting-text">${escapeHTML(returnGreeting)}</div>
-        </div>
-        `
-            : ""
-        }
-        ${
-          morningBrief
-            ? `
-        <!-- Morning Brief -->
-        <div class="morning-brief">
-          <div class="morning-brief-label">Morning Brief</div>
-          <div class="morning-brief-text">${escapeHTML(morningBrief)}</div>
-        </div>
-        `
-            : ""
-        }
-        <!-- F20: Weekly Anchor — always render when weeklyAnchor is truthy -->
-        ${
-          weeklyAnchor
-            ? `
-        <!-- Weekly Anchor -->
-        <div class="weekly-anchor">
-          <div class="weekly-anchor-label">Weekly Anchor</div>
-          <div class="weekly-anchor-text">${escapeHTML(weeklyAnchor)}</div>
-        </div>
-        `
-            : ""
-        }
-        <div class="dashboard-grid">
-          <div class="dashboard-left">
-            <!-- Daily Invitations -->
-            <div class="card" id="invitations-card">
-              <div class="section-header">
-                <div>
-                  <div class="section-title">Daily Invitations</div>
-                  <div class="section-sub">${(invitations || []).length} action cards for today</div>
-                </div>
-              </div>
-              ${
-                !invitations || invitations.length === 0
-                  ? `
-                <div class="empty-state" style="padding:24px;">
-                  <div class="empty-icon" style="font-size:32px;">&#x270D;</div>
-                  <div class="empty-title" style="font-size:var(--text-base);">All caught up!</div>
-                  <div class="empty-sub" style="font-size:var(--text-sm);">Invitations will appear as your ecosystem develops.</div>
-                </div>
-              `
-                  : `
-                <div class="invitations-list">
-                  ${(invitations || [])
-                    .map(
-                      (inv, i) => `
-                    <div class="invitation-item" data-inv="${i}">
-                      <div class="invitation-header">
-                        <div class="invitation-title">${escapeHTML(inv.title || "Invitation")}</div>
-                        <span class="invitation-dismiss" data-dismiss="${i}">&times;</span>
-                      </div>
-                      <div class="invitation-context">${escapeHTML(inv.context || "")}</div>
-                      ${inv.action ? `<div class="invitation-action">${escapeHTML(inv.action)}</div>` : ""}
-                    </div>
-                  `,
-                    )
-                    .join("")}
-                </div>
-              `
-              }
-            </div>
-            <!-- F10/F21: Daily Quests removed — V2 leftover -->
-          </div>
-          <div class="dashboard-right">
-            <!-- KiwiTree -->
-            <div class="card glow" id="tree-card">
-              <div class="section-header">
-                <div>
-                  <div class="section-title">Your KIWI Tree</div>
-                  <div class="section-sub">${treeState?.stageLabel || "Seedling"}</div>
-                </div>
-              </div>
-              <div class="tree-container" id="dashboardTree"></div>
-              ${
-                treeState?.health !== undefined
-                  ? `
-              <div class="tree-health-bar">
-                <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">Health</span>
-                <div class="tree-health-track">
-                  <div class="tree-health-fill" style="width:${Math.max(0,Math.min(100,treeState.health||0))}%;background:${(treeState.health||0) > 60 ? "var(--green-bright)" : (treeState.health||0) > 30 ? "var(--gold)" : "var(--red-bright)"}"></div>
-                </div>
-                <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">${Math.max(0,Math.min(100,treeState.health||0))}%</span>
-              </div>
-              `
-                  : ""
-              }
-              ${
-                treeState?.rings !== undefined
-                  ? `
-              <div class="tree-ring-marks">${Array(treeState.rings).fill("&#x25CB;").join(" ")}</div>
-              `
-                  : ""
-              }
-              <div class="tree-stage-label">${treeState?.stageLabel || "SEEDLING"}</div>
-            </div>
-            <!-- Streak Widget -->
-            <div class="streak-widget">
-              <div class="streak-flame">${streak?.current > 0 ? "&#x1F525;" : "&#x1F311;"}</div>
-              <div>
-                <div class="streak-count">${streak?.current || 0}</div>
-                <div class="streak-label">day${(streak?.current || 0) === 1 ? "" : "s"} streak</div>
-                ${
-                  streak?.shields !== undefined
-                    ? `
-                <div class="streak-shields">${"&#x1F6E1;".repeat(Math.min(streak.shields, 5))}${streak.shields > 5 ? "+" + (streak.shields - 5) : ""}</div>
-                `
-                    : ""
-                }
-              </div>
-            </div>
-            <!-- Mini 12-week activity heatmap on dashboard -->
-            <div class="card" id="dashHeatmapCard" style="margin-top:12px;">
-              <div style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">12-Week Activity</div>
-              <div id="dashHeatmap" style="font-size:var(--text-xs);color:var(--text-4);">Loading...</div>
-            </div>
-            <!-- Brain Preview -->
-            ${
-              brainPreview
-                ? `
-            <div class="card" id="brain-preview-card">
-              <div class="section-header">
-                <div>
-                  <div class="section-title">Brain Monitor</div>
-                  <div class="section-sub">${brainPreview.interventionCount || 0} active interventions</div>
-                </div>
-              </div>
-              <div style="display:flex;flex-direction:column;gap:8px;">
-                ${
-                  (brainPreview.highestPressure || 0) > 0
-                    ? `
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                  <span style="font-size:var(--text-base);color:var(--text-2);">Highest Pressure</span>
-                  <span style="font-family:var(--font-mono);font-size:var(--text-lg);font-weight:700;color:${brainPreview.highestPressure > 50 ? "var(--red-bright)" : brainPreview.highestPressure > 30 ? "var(--gold)" : "var(--green-bright)"}">
-                    ${brainPreview.highestPressure}%
-                  </span>
-                </div>
-                <div class="progress-bar" style="height:3px;">
-                  <div class="progress-fill" style="width:${brainPreview.highestPressure}%;background:${brainPreview.highestPressure > 50 ? "linear-gradient(90deg,var(--red),var(--red-bright))" : brainPreview.highestPressure > 30 ? "linear-gradient(90deg,var(--gold),var(--red-bright))" : "var(--green-bright)"}"
-                  ></div>
-                </div>
-                `
-                    : `<div style="font-size:var(--text-sm);color:var(--text-4);">All systems calm.</div>`
-                }
-                <button class="btn btn-ghost btn-sm" onclick="navigateTo('brain')" style="margin-top:8px;">
-                  View The Brain &rarr;
-                </button>
-              </div>
-            </div>
-            `
-                : ""
-            }
-          </div>
-        </div>
-      </div>
-    `;
+          main.innerHTML = buildExperimentalDashboardHTML(data, band);
           // F23: KiwiTree with real backend data; robust fallback if treeState absent
           const treeContainer = document.getElementById("dashboardTree");
           if (treeContainer && typeof KiwiTree === 'function') {
