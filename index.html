@@ -6818,6 +6818,27 @@
           const response = await fetch(url, opts);
           // Handle 401 Unauthorized — attempt token refresh
           if (response.status === 401) {
+            // Public auth endpoints must surface their own 401 errors (for example
+            // "Invalid credentials") instead of being mistaken for an expired app
+            // session. A stale token may still exist in localStorage while the user
+            // is on the login screen, so attempting refresh here creates the false
+            // "Session expired" error seen during login.
+            const _publicAuth401 = new Set([
+              "/auth/login",
+              "/auth/register",
+              "/auth/guest",
+              "/auth/forgot-password",
+              "/auth/verify-reset-otp",
+              "/auth/reset-password",
+            ]);
+            if (_publicAuth401.has(endpoint)) {
+              const data = await response.json().catch(() => ({}));
+              throw new ApiError(
+                401,
+                data.error || data.message || "Authentication failed",
+                endpoint,
+              );
+            }
             const refreshed = await api.refreshAccessToken();
             if (refreshed) {
               opts.headers["Authorization"] = `Bearer ${authToken}`;
