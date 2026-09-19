@@ -3479,6 +3479,87 @@
         border-radius: 6px; transition: all 150ms;
       }
       .auth-retry-btn:hover { background: rgba(245,158,11,0.25); }
+
+      /* EXPERIMENTAL REDESIGN — LOGIN + PASSWORD RESET */
+      #authOverlay {
+        background: radial-gradient(circle at 78% 18%, rgba(184,255,101,.10), transparent 34%), rgba(2,9,6,.86);
+        padding: 28px;
+      }
+      #authOverlay .auth-modal {
+        width: min(1240px,96vw); max-width:1240px; min-height:min(780px,92vh);
+        padding:0; display:grid; grid-template-columns:minmax(390px,.92fr) minmax(480px,1.08fr);
+        overflow:hidden; border-radius:30px; border:1px solid rgba(113,159,128,.26);
+        background:#07130d; box-shadow:0 32px 100px rgba(0,0,0,.58);
+      }
+      .auth-brand-panel {
+        position:relative; padding:54px; display:flex; flex-direction:column; min-height:760px;
+        background:radial-gradient(circle at 82% 17%,rgba(184,255,101,.12),transparent 27%),linear-gradient(145deg,#0b1b12 0%,#0b1710 62%,#08130d 100%);
+        border-right:1px solid rgba(61,91,70,.45); overflow:hidden;
+      }
+      .auth-brand-panel::after { content:""; position:absolute; width:420px; height:420px; border-radius:50%; right:-190px; bottom:-170px; background:rgba(184,255,101,.06); filter:blur(30px); pointer-events:none; }
+      .auth-brand-top,.auth-brand-login-copy,.auth-brand-reset-copy,.auth-brand-foot { position:relative; z-index:1; }
+      .auth-logo.auth-logo-left { text-align:left; font-family:var(--font-display); font-size:54px; line-height:1; letter-spacing:3px; color:#c7ff78; }
+      .auth-brand-kicker { margin-top:12px; color:#708779; font-family:var(--font-mono); font-size:10px; font-weight:700; letter-spacing:2px; }
+      .auth-brand-login-copy,.auth-brand-reset-copy { margin-top:74px; }
+      .auth-brand-reset-copy { display:none; }
+      .auth-brand-title { font-family:var(--font-display); font-size:clamp(42px,4.2vw,62px); line-height:.98; letter-spacing:-2px; font-weight:800; color:#f7f2de; }
+      .auth-brand-desc { max-width:470px; margin-top:28px; color:#a9bbb0; font-size:18px; line-height:1.55; }
+      .auth-momentum-card { margin-top:72px; width:min(100%,500px); padding:24px; border-radius:24px; border:1px solid #264530; background:#12251a; }
+      .auth-momentum-label { color:#7e9a88; font-family:var(--font-mono); font-size:10px; font-weight:700; letter-spacing:1.5px; }
+      .auth-momentum-row { display:flex; align-items:baseline; gap:14px; margin-top:8px; }
+      .auth-momentum-number { color:#f7f2de; font-family:var(--font-display); font-size:62px; line-height:1; font-weight:800; }
+      .auth-momentum-unit { color:#b7c5ba; font-size:18px; }
+      .auth-momentum-meta { margin-top:20px; color:#b8ff65; font-size:14px; font-weight:600; }
+      .auth-momentum-meta span { color:#617669; padding:0 8px; }
+      .auth-brand-foot { margin-top:auto; color:#587063; font-size:11px; }
+      .auth-form-panel { position:relative; padding:74px clamp(42px,6vw,86px) 44px; color:#f3f1e8; background:#07130d; display:flex; flex-direction:column; justify-content:center; }
+      .auth-form-head { margin-bottom:28px; }
+      .auth-form-badge { display:inline-flex; align-items:center; min-height:30px; padding:0 13px; border-radius:999px; background:#173022; color:#aadb78; font-family:var(--font-mono); font-size:9px; font-weight:700; letter-spacing:1.2px; }
+      .auth-form-title { margin-top:18px; color:#f7f2de; font-family:var(--font-display); font-size:40px; line-height:1.1; letter-spacing:-1px; }
+      .auth-form-copy { margin-top:10px; color:#95aa9d; font-size:16px; }
+      #authOverlay .auth-tabs { background:#0d1c14; border:1px solid #203b2a; padding:4px; border-radius:14px; margin-bottom:24px; }
+      #authOverlay .auth-tab { min-height:42px; border-radius:10px; color:#71897a; }
+      #authOverlay .auth-tab.active { color:#d8ff9d; background:#193322; }
+      #authOverlay .auth-form-group { margin-bottom:18px; }
+      #authOverlay .auth-form-label { margin:0 0 7px 2px; color:#718a7a; font-size:9px; letter-spacing:1.4px; }
+      #authOverlay .auth-form-input { min-height:62px; padding:19px 18px; border-radius:17px; border:1px solid #294734; background:#0d1c14; color:#f1f2e9; font-size:15px; }
+      #authOverlay .auth-form-input:focus { border-color:#6d9e50; box-shadow:0 0 0 3px rgba(184,255,101,.08); background:#102118; }
+      #authOverlay .btn-auth { min-height:56px; margin-top:8px; border-radius:17px; background:#b8ff65; color:#102113; font-family:var(--font-body); font-size:15px; font-weight:800; box-shadow:none; }
+      #authOverlay .btn-auth:hover:not(:disabled) { background:#c9ff89; transform:translateY(-1px); }
+      .auth-secondary-action { text-align:right; margin-top:13px; }
+      .auth-secondary-action button { border:0; background:none; color:#b8ff65; cursor:pointer; font:inherit; font-size:13px; font-weight:600; }
+      .auth-security-note { margin-top:24px; padding:16px 18px; border-radius:16px; color:#616a64; background:#e9e4d6; font-size:12px; line-height:1.55; }
+      .auth-experiment-note { margin-top:34px; color:#587063; font-size:10px; }
+      #authOverlay .auth-close { top:22px; right:24px; width:38px; height:38px; background:rgba(19,38,28,.86); border-color:#294734; color:#a3b4a8; }
+      #authOverlay .auth-switch { margin-top:22px; color:#819889; }
+      #authOverlay .auth-switch button { color:#b8ff65; }
+      #authOverlay.forgot-mode .auth-brand-login-copy { display:none; }
+      #authOverlay.forgot-mode .auth-brand-reset-copy { display:block; }
+      #authOverlay.forgot-mode .auth-tabs,#authOverlay.forgot-mode #authSwitch { display:none; }
+      #authOverlay.forgot-mode .auth-form-panel { background:#f2eedf; color:#142019; }
+      #authOverlay.forgot-mode .auth-form-badge { background:#e4f1d2; color:#48632f; }
+      #authOverlay.forgot-mode .auth-form-title { color:#142019; }
+      #authOverlay.forgot-mode .auth-form-copy { color:#68736c; }
+      #authOverlay.forgot-mode .auth-form-label { color:#818a84; }
+      #authOverlay.forgot-mode .auth-form-input { background:#fcfaf3; border-color:#cfc8b6; color:#19241e; }
+      #authOverlay.forgot-mode .auth-form-input:focus { border-color:#789463; background:#fffdf8; box-shadow:0 0 0 3px rgba(99,128,78,.10); }
+      #authOverlay.forgot-mode .auth-secondary-action { text-align:left; }
+      #authOverlay.forgot-mode .auth-secondary-action button { color:#45664e; }
+      #authOverlay.forgot-mode .btn-auth { background:#173022; color:#d8ff9d; }
+      #authOverlay.forgot-mode .auth-experiment-note { color:#8d938e; }
+      #authOverlay.forgot-mode .auth-close { background:#e8e3d6; border-color:#cec7b8; color:#626b65; }
+      .auth-reset-progress { margin-top:86px; display:flex; flex-direction:column; gap:14px; }
+      .auth-reset-step { width:100%; max-width:360px; min-height:48px; padding:0 17px; display:flex; align-items:center; gap:14px; border-radius:14px; color:#789081; background:transparent; border:1px solid transparent; }
+      .auth-reset-step span { width:25px; height:25px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:#12251a; color:#789081; font-size:11px; }
+      .auth-reset-step strong { font-size:13px; font-weight:650; }
+      .auth-reset-step.active { color:#d9ffa6; background:#173022; border-color:#31523c; }
+      .auth-reset-step.active span { color:#102113; background:#b8ff65; }
+      #authOverlay.reset-code-stage #resetProgressEmail { color:#8faa99; }
+      #authOverlay.reset-code-stage #resetProgressVerify,#authOverlay.reset-code-stage #resetProgressPassword { color:#d9ffa6; background:#173022; border-color:#31523c; }
+      #authOverlay.reset-code-stage #resetProgressVerify span,#authOverlay.reset-code-stage #resetProgressPassword span { color:#102113; background:#b8ff65; }
+      .auth-code-input { font-family:var(--font-mono)!important; letter-spacing:6px; font-size:20px!important; }
+      @media(max-width:1050px){ #authOverlay .auth-modal{grid-template-columns:1fr;max-width:620px}.auth-brand-panel{display:none}.auth-form-panel{min-height:min(760px,92vh)} }
+      @media(max-width:760px){ #authOverlay{padding:0}#authOverlay .auth-modal{width:100%;min-height:100vh;border-radius:0;border:0}.auth-form-panel{padding:72px 22px 30px;justify-content:flex-start;overflow-y:auto}.auth-form-title{font-size:34px} }
       /* ═══════════════════════════════════════════════════════════════════════════
    LIBRARY
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -6011,88 +6092,82 @@
     <!-- Auth Modal (index 3 design) -->
     <div id="authOverlay">
       <div class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
-        <button class="auth-close" onclick="closeAuth()" aria-label="Close">✕</button>
-        <div class="auth-logo">KIWI</div>
-        <div class="auth-sub">The Living Ecosystem</div>
-        <div class="auth-tabs">
-          <button class="auth-tab active" id="tabRegister" onclick="switchAuthTab('register')">Create Account</button>
-          <button class="auth-tab" id="tabLogin" onclick="switchAuthTab('login')">Log In</button>
-        </div>
-        <!-- Register form -->
-        <div id="formRegister">
-          <div class="auth-form-group">
-            <label class="auth-form-label" for="regName">Name</label>
-            <input class="auth-form-input" type="text" id="regName" placeholder="Your full name" autocomplete="name"/>
+        <section class="auth-brand-panel" aria-hidden="true">
+          <div class="auth-brand-top">
+            <div class="auth-logo auth-logo-left">KIWI</div>
+            <div class="auth-brand-kicker">THE LIVING ECOSYSTEM</div>
           </div>
-          <div class="auth-form-group">
-            <label class="auth-form-label" for="regEmail">Email</label>
-            <input class="auth-form-input" type="email" id="regEmail" placeholder="you@email.com" autocomplete="email"/>
-          </div>
-          <div class="auth-form-group">
-            <label class="auth-form-label" for="regPassword">Password</label>
-            <input class="auth-form-input" type="password" id="regPassword" placeholder="Min 6 characters" autocomplete="new-password"/>
-          </div>
-          <div class="auth-error" id="regError"></div>
-          <div class="auth-retry" id="regRetry">
-            <strong>Server is waking up</strong><br>
-            Our server sleeps between sessions. Please wait 15–30 seconds and try again.
-            <br><button class="auth-retry-btn" onclick="retryAuth()">Try Again</button>
-          </div>
-          <button class="btn-auth" id="btnRegister" onclick="doRegister()">Get Started</button>
-        </div>
-        <!-- Login form -->
-        <div id="formLogin" style="display:none">
-          <div class="auth-form-group">
-            <label class="auth-form-label" for="loginEmail">Email</label>
-            <input class="auth-form-input" type="email" id="loginEmail" placeholder="you@email.com" autocomplete="email"/>
-          </div>
-          <div class="auth-form-group">
-            <label class="auth-form-label" for="loginPassword">Password</label>
-            <input class="auth-form-input" type="password" id="loginPassword" placeholder="Your password" autocomplete="current-password"/>
-          </div>
-          <div class="auth-error" id="loginError"></div>
-          <div class="auth-retry" id="loginRetry">
-            <strong>Server is waking up</strong><br>
-            Our server sleeps between sessions. Wait 15–30 seconds and try again.
-            <br><button class="auth-retry-btn" onclick="retryAuth()">Try Again</button>
-          </div>
-          <button class="btn-auth" id="btnLogin" onclick="doLogin()">Log In</button>
-          <div style="text-align:center;margin-top:10px;">
-            <button onclick="showForgotPassword()" style="background:none;border:none;color:var(--text-3);font-size:var(--text-sm);cursor:pointer;text-decoration:underline;">Forgot password?</button>
-          </div>
-        </div>
-        <!-- Forgot Password flow (hidden by default) -->
-        <div id="formForgotPassword" style="display:none;">
-          <div id="forgotStep1">
-            <div class="auth-form-group">
-              <label class="auth-form-label">Email address</label>
-              <input class="auth-form-input" type="email" id="forgotEmail" placeholder="you@email.com" autocomplete="email"/>
-            </div>
-            <div class="auth-error" id="forgotError"></div>
-            <button class="btn-auth" onclick="doSendOtp()">Send Reset Code</button>
-            <div style="text-align:center;margin-top:10px;">
-              <button onclick="showForgotPassword(false)" style="background:none;border:none;color:var(--text-3);font-size:var(--text-sm);cursor:pointer;text-decoration:underline;">Back to login</button>
+          <div class="auth-brand-login-copy">
+            <div class="auth-brand-title">Make knowledge<br>stick.</div>
+            <div class="auth-brand-desc">A focused learning space that turns small daily sessions into long-term memory.</div>
+            <div class="auth-momentum-card">
+              <div class="auth-momentum-label">TODAY'S MOMENTUM</div>
+              <div class="auth-momentum-row"><div class="auth-momentum-number">12</div><div class="auth-momentum-unit">cards due</div></div>
+              <div class="auth-momentum-meta">7 day streak <span>·</span> 82% retention</div>
             </div>
           </div>
-          <div id="forgotStep2" style="display:none;">
-            <div class="auth-form-group">
-              <label class="auth-form-label">6-digit reset code</label>
-              <input class="auth-form-input" type="text" id="forgotOtp" placeholder="123456" maxlength="6" inputmode="numeric"/>
-            </div>
-            <div class="auth-form-group">
-              <label class="auth-form-label">New password</label>
-              <input class="auth-form-input" type="password" id="forgotNewPass" placeholder="Min. 8 characters" autocomplete="new-password"/>
-            </div>
-            <div class="auth-error" id="forgotError2"></div>
-            <button class="btn-auth" onclick="doResetPassword()">Reset Password</button>
-            <div style="text-align:center;margin-top:10px;">
-              <button onclick="showForgotPassword()" style="background:none;border:none;color:var(--text-3);font-size:var(--text-sm);cursor:pointer;text-decoration:underline;">Re-send code</button>
+          <div class="auth-brand-reset-copy">
+            <div class="auth-brand-title">Get back to<br>your learning.</div>
+            <div class="auth-brand-desc">Resetting your password should feel simple, clear and safe.</div>
+            <div class="auth-reset-progress">
+              <div class="auth-reset-step active" id="resetProgressEmail"><span>1</span><strong>Email</strong></div>
+              <div class="auth-reset-step" id="resetProgressVerify"><span>2</span><strong>Verify code</strong></div>
+              <div class="auth-reset-step" id="resetProgressPassword"><span>3</span><strong>New password</strong></div>
             </div>
           </div>
-        </div>
-        <div class="auth-switch" id="authSwitch">
-          Already have an account? <button onclick="switchAuthTab('login')">Log In</button>
-        </div>
+          <div class="auth-brand-foot">Experimental redesign · existing KIWI logic preserved</div>
+        </section>
+
+        <section class="auth-form-panel">
+          <button class="auth-close" onclick="closeAuth()" aria-label="Close">✕</button>
+          <div class="auth-form-head">
+            <div class="auth-form-badge" id="authFormBadge">ACCOUNT ACCESS</div>
+            <h2 class="auth-form-title" id="authTitle">Welcome back</h2>
+            <p class="auth-form-copy" id="authFormCopy">Continue building your memory.</p>
+          </div>
+          <div class="auth-tabs">
+            <button class="auth-tab active" id="tabRegister" onclick="switchAuthTab('register')">Create Account</button>
+            <button class="auth-tab" id="tabLogin" onclick="switchAuthTab('login')">Log In</button>
+          </div>
+
+          <div id="formRegister">
+            <div class="auth-form-group"><label class="auth-form-label" for="regName">Name</label><input class="auth-form-input" type="text" id="regName" placeholder="Your full name" autocomplete="name"/></div>
+            <div class="auth-form-group"><label class="auth-form-label" for="regEmail">Email</label><input class="auth-form-input" type="email" id="regEmail" placeholder="you@email.com" autocomplete="email"/></div>
+            <div class="auth-form-group"><label class="auth-form-label" for="regPassword">Password</label><input class="auth-form-input" type="password" id="regPassword" placeholder="Min 6 characters" autocomplete="new-password"/></div>
+            <div class="auth-error" id="regError"></div>
+            <div class="auth-retry" id="regRetry"><strong>Server is waking up</strong><br>Our server sleeps between sessions. Please wait 15–30 seconds and try again.<br><button class="auth-retry-btn" onclick="retryAuth()">Try Again</button></div>
+            <button class="btn-auth" id="btnRegister" onclick="doRegister()">Get Started</button>
+          </div>
+
+          <div id="formLogin" style="display:none">
+            <div class="auth-form-group"><label class="auth-form-label" for="loginEmail">Email address</label><input class="auth-form-input" type="email" id="loginEmail" placeholder="name@example.com" autocomplete="email"/></div>
+            <div class="auth-form-group"><label class="auth-form-label" for="loginPassword">Password</label><input class="auth-form-input" type="password" id="loginPassword" placeholder="Your password" autocomplete="current-password"/></div>
+            <div class="auth-error" id="loginError"></div>
+            <div class="auth-retry" id="loginRetry"><strong>Server is waking up</strong><br>Our server sleeps between sessions. Wait 15–30 seconds and try again.<br><button class="auth-retry-btn" onclick="retryAuth()">Try Again</button></div>
+            <button class="btn-auth" id="btnLogin" onclick="doLogin()">Sign in</button>
+            <div class="auth-secondary-action"><button onclick="showForgotPassword()">Forgot password?</button></div>
+          </div>
+
+          <div id="formForgotPassword" style="display:none;">
+            <div id="forgotStep1">
+              <div class="auth-form-group"><label class="auth-form-label" for="forgotEmail">Email address</label><input class="auth-form-input" type="email" id="forgotEmail" placeholder="name@example.com" autocomplete="email"/></div>
+              <div class="auth-error" id="forgotError"></div>
+              <button class="btn-auth" onclick="doSendOtp()">Send Reset Code</button>
+              <div class="auth-security-note">For your security, KIWI won't reveal whether an email is registered until verification is complete.</div>
+              <div class="auth-secondary-action"><button onclick="showForgotPassword(false)">← Back to sign in</button></div>
+            </div>
+            <div id="forgotStep2" style="display:none;">
+              <div class="auth-form-group"><label class="auth-form-label" for="forgotOtp">6-digit reset code</label><input class="auth-form-input auth-code-input" type="text" id="forgotOtp" placeholder="123456" maxlength="6" inputmode="numeric"/></div>
+              <div class="auth-form-group"><label class="auth-form-label" for="forgotNewPass">New password</label><input class="auth-form-input" type="password" id="forgotNewPass" placeholder="Min. 8 characters" autocomplete="new-password"/></div>
+              <div class="auth-error" id="forgotError2"></div>
+              <button class="btn-auth" onclick="doResetPassword()">Reset Password</button>
+              <div class="auth-secondary-action"><button onclick="showForgotPassword()">Re-send code</button></div>
+            </div>
+          </div>
+
+          <div class="auth-switch" id="authSwitch">Already have an account? <button onclick="switchAuthTab('login')">Log In</button></div>
+          <div class="auth-experiment-note">Experimental design · no API or session behavior changed</div>
+        </section>
       </div>
     </div>
     <script>
@@ -9356,6 +9431,8 @@
       function switchAuthTab(tab) {
         _currentAuthTab = tab;
         const isReg = tab === 'register';
+        const overlay = document.getElementById('authOverlay');
+        if (overlay) overlay.classList.remove('forgot-mode', 'reset-code-stage');
         document.getElementById('formRegister').style.display = isReg ? '' : 'none';
         document.getElementById('formLogin').style.display    = isReg ? 'none' : '';
         const fpForm = document.getElementById('formForgotPassword');
@@ -9365,6 +9442,12 @@
         document.getElementById('authSwitch').innerHTML = isReg
           ? 'Already have an account? <button onclick="switchAuthTab(\'login\')">Log In</button>'
           : 'New here? <button onclick="switchAuthTab(\'register\')">Create Account</button>';
+        const title = document.getElementById('authTitle');
+        const copy = document.getElementById('authFormCopy');
+        const badge = document.getElementById('authFormBadge');
+        if (title) title.textContent = isReg ? 'Create your KIWI' : 'Welcome back';
+        if (copy) copy.textContent = isReg ? 'Start building a learning ecosystem that remembers with you.' : 'Continue building your memory.';
+        if (badge) badge.textContent = isReg ? 'NEW ECOSYSTEM' : 'ACCOUNT ACCESS';
         clearAuthErrors();
       }
 
@@ -9374,17 +9457,30 @@
         const fpForm = document.getElementById('formForgotPassword');
         const step1 = document.getElementById('forgotStep1');
         const step2 = document.getElementById('forgotStep2');
+        const overlay = document.getElementById('authOverlay');
         if (!fpForm || !loginForm) return;
         if (show) {
           loginForm.style.display = 'none';
           fpForm.style.display = '';
           if (step1) step1.style.display = '';
           if (step2) step2.style.display = 'none';
-          const authSwitch = document.getElementById('authSwitch');
-          if (authSwitch) authSwitch.innerHTML = 'New here? <button onclick="switchAuthTab(\'register\')">Create Account</button>';
+          if (overlay) { overlay.classList.add('forgot-mode'); overlay.classList.remove('reset-code-stage'); }
+          const title = document.getElementById('authTitle');
+          const copy = document.getElementById('authFormCopy');
+          const badge = document.getElementById('authFormBadge');
+          if (title) title.textContent = 'Reset your password';
+          if (copy) copy.textContent = 'Enter the email linked to your KIWI account. We’ll send you a short verification code.';
+          if (badge) badge.textContent = 'ACCOUNT RECOVERY';
         } else {
           fpForm.style.display = 'none';
           loginForm.style.display = '';
+          if (overlay) overlay.classList.remove('forgot-mode', 'reset-code-stage');
+          const title = document.getElementById('authTitle');
+          const copy = document.getElementById('authFormCopy');
+          const badge = document.getElementById('authFormBadge');
+          if (title) title.textContent = 'Welcome back';
+          if (copy) copy.textContent = 'Continue building your memory.';
+          if (badge) badge.textContent = 'ACCOUNT ACCESS';
         }
       }
 
@@ -9399,6 +9495,12 @@
           const step2 = document.getElementById('forgotStep2');
           if (step1) step1.style.display = 'none';
           if (step2) step2.style.display = '';
+          const overlay = document.getElementById('authOverlay');
+          if (overlay) overlay.classList.add('reset-code-stage');
+          const title = document.getElementById('authTitle');
+          const copy = document.getElementById('authFormCopy');
+          if (title) title.textContent = 'Verify and reset';
+          if (copy) copy.textContent = 'Enter the code from your email, then choose a new password.';
           showToast('Reset code sent — check your email (and spam folder).', 'success', 6000);
         } catch (err) {
           if (errEl) { errEl.textContent = err.message || 'Failed to send reset code.'; errEl.classList.add('visible'); }
