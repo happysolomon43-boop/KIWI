@@ -48,11 +48,17 @@ function computeSessionQuality(input) {
     attention: round2(focusRatio * 20),
     goal_progress: round2(Math.min(cardsReviewed / 25, 1) * 15),
   };
-  const score = Math.round(clamp(
+  let score = Math.round(clamp(
     breakdown.meaningful_work + breakdown.active_focus + breakdown.attention + breakdown.goal_progress,
     0,
     100
   ));
+  // Quality may describe a short session, but a short/repetitive interaction may
+  // not present itself as Thriving/Blooming/Fruiting. This keeps every downstream
+  // system aligned with the same meaningful-session contract.
+  if (uniqueCards < 5 || activeSeconds < 300) {
+    score = Math.min(score, 39);
+  }
   return { score, breakdown, focusRatio: round2(focusRatio) };
 }
 
@@ -69,7 +75,7 @@ function focusStageForQuality(score) {
 function isMeaningfulSession(input) {
   const uniqueCards = Math.max(0, Number(input && input.uniqueCards) || 0);
   const activeSeconds = Math.max(0, Number(input && input.activeSeconds) || 0);
-  return uniqueCards >= 5 || (uniqueCards >= 1 && activeSeconds >= 600);
+  return uniqueCards >= 5 && activeSeconds >= 300;
 }
 
 function qualifiesForFruit(input) {
@@ -786,7 +792,6 @@ function createEcosystemV2(options) {
         active_seconds: activeSeconds,
         cards_reviewed: cardsReviewed,
         unique_cards_reviewed: uniqueCards,
-        xp_earned: Number(session.xp_earned) || 0,
         ks_delta: Number(input.ksDelta) || 0,
         ksDelta: Number(input.ksDelta) || 0,
         session_quality: quality.score,
@@ -883,6 +888,8 @@ function createEcosystemV2(options) {
     awardSeedlingsForEvent: awardSeedlingsForEvent,
     computeSessionQuality: computeSessionQuality,
     focusStageForQuality: focusStageForQuality,
+    isMeaningfulSession: isMeaningfulSession,
+    qualifiesForFruit: qualifiesForFruit,
     computeTreeStage: computeTreeStage,
     nextTreeStage: nextTreeStage,
   };

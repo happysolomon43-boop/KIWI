@@ -174,7 +174,6 @@ function _buildIncrementUpdate(table, whereCol, whereVal, data) {
 // Replaces per-review recomputeAndStoreCardState fire-and-forget.
 // Cards accumulate here; a 60s cron drains them in a single pass.
 const _ksQueue = new Map(); // key: `${userId}:${cardId}`
-const _preMarkCache = new Map(); // key: examId → Map(questionNumber → {answer,processed})
 function queueKSRecompute(userId, cardId) {
   if (_ksQueue.size < 50000) _ksQueue.set(`${userId}:${cardId}`, { userId, cardId }); // F-11 FIX: cap unbounded growth
   // KS-CACHE: Best-effort invalidation — the 30s TTL means stale data is short-lived anyway
@@ -1412,7 +1411,7 @@ async create(userId, data) {
     ...data,
     created_at: new Date(),
   };
-  const q = _buildInsert('user_persona', payload);
+  const q = _buildUpsert('user_persona', ['id'], payload);
   await query(q.text, q.values);
   return { id, ...payload };
 },
@@ -2241,7 +2240,9 @@ if (!card.next_review_at) return true;
 // Date-only stripping is intentionally removed.
 return new Date(card.next_review_at) <= now;
 }
-// ── xpService ────────────────────────────────────────────────────────────────
+// ── Legacy progression compatibility ────────────────────────────────────────
+// XP has been retired from KIWI. These helpers remain only so historical rows
+// can be read without a destructive database migration; no new XP is awarded.
 
 function computeLevel(totalXP) {
 const bands = [
@@ -2281,17 +2282,30 @@ return 15000;
 }
 
 async function awardXP(userId, amount) {
-const stats = await db.userStats.get(userId);
+return { retired: true, awarded: 0 };
+}
+
+function toPublicStats(stats) {
 if (!stats) return null;
-const newTotal = stats.total_xp + amount;
-const { level, xpIntoLevel } = computeLevel(newTotal);
-const xpToNext = getXpToNextLevel(level);
-await db.userStats.update(userId, {
-total_xp: newTotal,
-current_level: level,
-xp_in_current_level: xpIntoLevel,
-});
-return { totalXP: newTotal, level, xpIntoLevel, xpToNext };
+const {
+total_xp: _totalXp,
+xp_in_current_level: _xpInLevel,
+current_level: _currentLevel,
+xp_earned: _xpEarned,
+...publicStats
+} = stats;
+return publicStats;
+}
+
+// One study contract feeds every product surface. Historical rows may predate
+// the meaningful_session column, so their recorded evidence is evaluated using
+// the same five-distinct-card / five-active-minute threshold.
+function sessionIsMeaningful(session) {
+  if (!session) return false;
+  if (session.meaningful_session === true) return true;
+  const uniqueCards = Number(session.unique_cards_reviewed ?? session.unique_cards) || 0;
+  const activeSeconds = Number(session.active_seconds) || 0;
+  return ecosystemV2.isMeaningfulSession({ uniqueCards, activeSeconds });
 }
 // ════════════════════════════════════════════════════════════════════════════
 //  DEADLINE FSRS SERVICE (PB.7)  [DESIGN: §5]
@@ -2768,8 +2782,9 @@ else if (existing?.average_quiz_score != null) examPerf = parseFloat(existing.av
 const thirtyDaysAgo = new Date();
 thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 const sessionList = await db.sessions.findBySubject(userId, subjectId, thirtyDaysAgo);
+const meaningfulSessionList = sessionList.filter(sessionIsMeaningful);
 const uniqueDays = new Set(
-sessionList.map((s) => new Date(s.started_at).toISOString().split('T')[0])
+meaningfulSessionList.map((s) => new Date(s.started_at).toISOString().split('T')[0])
 ).size;
 const consistency = (uniqueDays / 30) * 100;
 const healthScore = srsQuality * 0.4 + examPerf * 0.3 + stageScore * 0.2 + consistency * 0.1;
@@ -2801,8 +2816,8 @@ total_reviews: totalReviews,
 days_studied_last_30: uniqueDays,
 total_study_minutes: existing?.total_study_minutes || 0,
 last_studied_at:
-sessionList.length > 0
-? sessionList[sessionList.length - 1].started_at
+meaningfulSessionList.length > 0
+? meaningfulSessionList[meaningfulSessionList.length - 1].started_at
 : existing?.last_studied_at || null,
 };
 await db.subjectStats.upsert(userId, subjectId, sharedData);
@@ -5265,12 +5280,42 @@ const _opts            = options || {};
 const customizeBalance = !!_opts.customize_balance;
 const broadCoverage    = !!_opts.broad_coverage;
 const forceType        = _opts.force_type || null; // 'theory' | 'calculation' | null
+const difficultyLevel  = ['easy', 'hard', 'very_hard', 'hell'].includes(_opts.difficulty_level)
+  ? _opts.difficulty_level : null;
 
 // Model upgrade: use 3-flash when any advanced feature is active, including split generation.
-const _useFlash = customizeBalance || broadCoverage || !!forceType;
+const _useFlash = customizeBalance || broadCoverage || !!forceType || !!difficultyLevel;
 const _model    = _useFlash ? 'gemini-3-flash-preview' : undefined; // undefined = use default lite
 
 let dynamicDirectives = '';
+
+if (difficultyLevel) {
+  const difficultyDirectives = {
+    easy: [
+      'EASY: test direct understanding and recognition from the supplied subject data.',
+      'Use clear wording, mostly single-step reasoning, and distractors that are plausible but distinguishable.',
+      'Do not make questions trivial and do not introduce outside facts.'
+    ],
+    hard: [
+      'HARD: require application, comparison, and multi-step reasoning rather than direct recall.',
+      'Use close distractors based on real misconceptions and connect related facts from the supplied data.',
+      'Hard is intentionally above the normal/default exam and must not be treated as medium.'
+    ],
+    very_hard: [
+      'VERY HARD: require synthesis across multiple concepts, exception handling, and two-to-three-step reasoning.',
+      'All distractors must remain defensible until the learner notices a precise conceptual distinction.',
+      'Stay entirely within the supplied subject data.'
+    ],
+    hell: [
+      'HELL: use the maximum justified complexity available inside the supplied subject data.',
+      'Require cross-concept synthesis, reverse reasoning, exception chains, error diagnosis, and consequence analysis.',
+      'Every distractor must be highly plausible. Never rely on obscure outside knowledge, ambiguous wording, or cheap tricks.',
+      'The difficulty must come from mastery of the subject data itself.'
+    ],
+  };
+  dynamicDirectives += '\n## SELECTED DIFFICULTY — MANDATORY\n\n' +
+    difficultyDirectives[difficultyLevel].join('\n- ') + '\n\n---\n';
+}
 
 // NOTE: Custom balance (customize_balance=true) is always handled via the SPLIT PATH in the
 // route handler — the handler computes theoryN/calcN and calls generateCBTQuestions twice with
@@ -5337,14 +5382,14 @@ const prompt = _basePrompt
 // This prevents MAX_TOKENS truncation which was causing partial generation.
 const scaledTokens = Math.min(65536, Math.max(24000, count * 900));
 const _theoryPct = customizeBalance && typeof _opts.theory_percent === 'number' ? _opts.theory_percent : 'auto';
-console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, theory=${_theoryPct}%, broad=${broadCoverage}, customBalance=${customizeBalance}, forceType=${forceType || 'none'}, model=${_model || 'lite-default'}, maxOutputTokens=${scaledTokens}`);
+console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, difficulty=${difficultyLevel || 'off/default'}, theory=${_theoryPct}%, broad=${broadCoverage}, customBalance=${customizeBalance}, forceType=${forceType || 'none'}, model=${_model || 'lite-default'}, maxOutputTokens=${scaledTokens}`);
 const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 180000, modelOverride: _model });
 if (result.response.finishReason === 'MAX_TOKENS') {
   console.warn(`[KIWI CBT] Output truncated at ${count} questions \u2014 response cut short. Consider lowering count or notes size.`);
 }
 return result.response.text();
 }
-async function generateCBTCompletionQuestions(notes, existingQuestions, needed, forceType) {
+async function generateCBTCompletionQuestions(notes, existingQuestions, needed, forceType, difficultyLevel) {
   const existingSummary = existingQuestions.map((q, i) =>
     `Q${i + 1}: ${q.stem}\n  A) ${q.option_a}  B) ${q.option_b}  C) ${q.option_c}  D) ${q.option_d}`
   ).join('\n\n');
@@ -5355,6 +5400,9 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
     ? '6. Question type — ALL completion questions must be Theory type ONLY. Do not generate any Calculation questions.'
     : forceType === 'calculation'
     ? '6. Question type — ALL completion questions must be Calculation type ONLY. Do not generate any Theory questions.'
+    : null;
+  const _difficultyConstraint = difficultyLevel
+    ? '7. Difficulty — Every completion question must preserve the selected "' + difficultyLevel.replace('_', ' ') + '" standard. Stay entirely within the supplied notes.'
     : null;
 
   const completionPrompt = [
@@ -5371,6 +5419,7 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
     '4. Same output format — Use the identical format: Question N, Stem, Options A-D, then ANSWERS AND EXPLANATIONS after a --- separator.',
     '5. Question numbering — Start from Question ' + (existingQuestions.length + 1) + '.',
     ...(_typeConstraint ? [_typeConstraint] : []),
+    ...(_difficultyConstraint ? [_difficultyConstraint] : []),
     '',
     '## EXISTING QUESTIONS (do not repeat these concepts or options)',
     '',
@@ -5499,7 +5548,6 @@ return 'Extraction failed.';
 async function generateTasksWithGemini(userData) {
 const prompt = `You are a study coach for a spaced-repetition learning app. Generate personalized study tasks for a student based on their current progress.
 STUDENT PROFILE
-- Level: ${userData.current_level || 1} | Total XP: ${userData.total_xp || 0}
 - Current streak: ${userData.current_streak || 0} days
 - Total cards reviewed (lifetime): ${userData.total_cards_reviewed || 0}
 - Total cards mastered: ${userData.total_cards_mastered || 0}
@@ -5511,12 +5559,11 @@ TASK OUTPUT RULES
 - Generate tasks that are achievable based on the student's current level — not too easy, not impossible.
 - Use concrete numbers tied to the student's data above (e.g. "Review 20 cards" not "Review some cards").
 - task_category must be one of: review_cards, accuracy_target, study_time, quiz_score, master_cards, reduce_again, streak, complete_deck
-- xp_reward must be proportional to difficulty (daily: 30–100, weekly: 150–400, monthly: 500–1000).
 JSON STRUCTURE
 {
-  "daily": [{"title":"...","description":"...","task_category":"review_cards","target_value":20,"xp_reward":50}],
-  "weekly": [{"title":"...","description":"...","task_category":"streak","target_value":5,"xp_reward":200}],
-  "monthly": [{"title":"...","description":"...","task_category":"master_cards","target_value":30,"xp_reward":750}]
+  "daily": [{"title":"...","description":"...","task_category":"review_cards","target_value":20}],
+  "weekly": [{"title":"...","description":"...","task_category":"streak","target_value":5}],
+  "monthly": [{"title":"...","description":"...","task_category":"master_cards","target_value":30}]
 }
 Generate exactly: 3 daily tasks, 2 weekly tasks, 1 monthly task.`;
 try {
@@ -6099,21 +6146,18 @@ title: `Review ${Math.min(30, dueCards || 20)} cards today`,
 description: 'Complete a study session',
 task_category: 'review_cards',
 target_value: Math.min(30, dueCards || 20),
-xp_reward: 50,
 },
 {
 title: 'Maintain your streak',
 description: 'Study at least 5 cards to keep your streak alive',
 task_category: 'streak',
 target_value: 5,
-xp_reward: 40,
 },
 {
 title: 'Hit 70% accuracy',
 description: 'Get at least 70% Good or Easy responses',
 task_category: 'accuracy_target',
 target_value: 70,
-xp_reward: 50,
 },
 ],
 weekly: [
@@ -6122,14 +6166,12 @@ title: 'Review 150 cards this week',
 description: 'Accumulate 150 card reviews',
 task_category: 'review_cards',
 target_value: 150,
-xp_reward: 200,
 },
 {
 title: 'Study 3 hours this week',
 description: 'Accumulate 180 minutes of study time',
 task_category: 'study_time',
 target_value: 180,
-xp_reward: 200,
 },
 ],
 monthly: [
@@ -6138,7 +6180,6 @@ title: 'Complete 600 reviews this month',
 description: 'Study consistently',
 task_category: 'review_cards',
 target_value: 600,
-xp_reward: 600,
 },
 ],
 };
@@ -6204,7 +6245,6 @@ current_value: newValue,
 status: 'completed',
 completed_at: new Date(),
 });
-await awardXP(userId, task.xp_reward);
 } else {
 await db.tasks.update(userId, task.id, { current_value: newValue });
 }
@@ -7842,6 +7882,11 @@ const stateDoc = stateMap.get(card.id);
 if (!stateDoc) continue; // guard: initializeCardState can fail; skip rather than crash
 cardStates.push({ card, state: stateDoc });
 }
+// Pressure is derived, but event penalties and earned Reckoning relief are
+// inputs to that derivation. Loading the previous record prevents a canonical
+// recalculation from silently erasing a consequence just shown to the learner.
+const existingPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+const previousSources = existingPressure?.sources || {};
 const pressureSources = {};
 let pressureScore = 0;
 // 1. GHOST cards (+3 each)
@@ -7885,7 +7930,12 @@ const subjectExamsForPressure = (Array.isArray(allCompletedExams) ? allCompleted
 .filter(e => e.subject_id === subjectId)
 .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
 const lastSubjectExam = subjectExamsForPressure[0] || null;
-if (!lastSubjectExam || daysSince(lastSubjectExam.completed_at) >= 21) {
+// New and tiny subjects are not neglected merely because they have never had
+// an exam. Recency pressure begins after the subject can support a real exam.
+const subjectForPressure = await db.subjects.findById(subjectId).catch(() => null);
+const subjectAgeDays = subjectForPressure?.created_at ? daysSince(subjectForPressure.created_at) : 0;
+const examEligible = allCards.length >= 10 && subjectAgeDays >= 21;
+if (examEligible && (!lastSubjectExam || daysSince(lastSubjectExam.completed_at) >= 21)) {
 pressureSources.no_exam = 2;
 pressureScore += 2;
 }
@@ -7927,7 +7977,6 @@ pressureSources.dangerous = dangerousPressure;
 pressureScore += dangerousPressure;
 }
 // 9. Ignored reclassification alert 3+ days (+2)
-const existingPressure = await db.brainPressure.get(userId, subjectId);
 if (existingPressure?.alert_ignored_at && daysSince(existingPressure.alert_ignored_at) >= 3) {
 pressureSources.ignored_alert = 2;
 pressureScore += 2;
@@ -7950,25 +7999,20 @@ try {
   const subjectBubbles = await db.masteryGoals.findBySubject(userId, subjectId);
   for (const bubble of subjectBubbles) {
     if (bubble.status !== 'active') continue;
-    // Source 10: Bubble DRIFTING (+1 per bubble) [DESIGN: §15.1]
-    if (bubble.trajectory_status === 'DRIFTING') {
-      pressureSources.bubble_drifting = (pressureSources.bubble_drifting || 0) + 1;
-      pressureScore += 1;
-    }
-    // Source 11: Bubble BEHIND (+3 per bubble) [DESIGN: §15.1]
-    if (bubble.trajectory_status === 'BEHIND') {
-      pressureSources.bubble_behind = (pressureSources.bubble_behind || 0) + 3;
-      pressureScore += 3;
-    }
-    // Source 12: Bubble CRITICAL (+5 per bubble) [DESIGN: §15.1]
-    if (bubble.trajectory_status === 'CRITICAL') {
-      pressureSources.bubble_critical = (pressureSources.bubble_critical || 0) + 5;
-      pressureScore += 5;
-    }
-    // Source 13: Bubble RESCUE (+7 per bubble) [DESIGN: §15.1]
+    // Bubble trajectory states are mutually exclusive. RESCUE supersedes
+    // CRITICAL/BEHIND/DRIFTING instead of double-counting the same problem.
     if (bubble.rescue_active || bubble.phase === 'RESCUE') {
       pressureSources.bubble_rescue = (pressureSources.bubble_rescue || 0) + 7;
       pressureScore += 7;
+    } else if (bubble.trajectory_status === 'CRITICAL') {
+      pressureSources.bubble_critical = (pressureSources.bubble_critical || 0) + 5;
+      pressureScore += 5;
+    } else if (bubble.trajectory_status === 'BEHIND') {
+      pressureSources.bubble_behind = (pressureSources.bubble_behind || 0) + 3;
+      pressureScore += 3;
+    } else if (bubble.trajectory_status === 'DRIFTING') {
+      pressureSources.bubble_drifting = (pressureSources.bubble_drifting || 0) + 1;
+      pressureScore += 1;
     }
     // Source 14: Test Date gate failed (+3, one-time per bubble) [DESIGN: §15.1]
     if (bubble.test_date_gate_failed && !pressureSources.test_date_gate) {
@@ -7995,8 +8039,27 @@ try {
 } catch (e) {
   // Non-fatal — bubble pressure sources are best-effort
 }
+// Explicit event consequences are canonical pressure inputs until a resolving
+// event clears them. Recalculation must never make forfeits or failures vanish.
+for (const [key, value] of Object.entries(previousSources)) {
+  if (!key.startsWith('manual_')) continue;
+  const points = Math.max(0, Number(value) || 0);
+  if (!points) continue;
+  pressureSources[key] = points;
+  pressureScore += points;
+}
+
+// A passed Reckoning proves current recall without pretending every weak card
+// disappeared. Give bounded, durable relief for seven days.
+const reliefUntil = previousSources.reckoning_relief_until;
+if (reliefUntil && new Date(reliefUntil).getTime() > Date.now()) {
+  const relief = Math.min(15, Math.max(0, pressureScore));
+  pressureSources.reckoning_relief = -relief;
+  pressureSources.reckoning_relief_until = reliefUntil;
+  pressureScore -= relief;
+}
 // P5.6 FIX: cap pressure at 100 before storing/returning to prevent bar overflow
-const cappedPressureScore = Math.min(100, pressureScore);
+const cappedPressureScore = Math.min(100, Math.max(0, pressureScore));
 const interventionLevel = computeInterventionLevel(cappedPressureScore);
 await db.brainPressure.set(userId, subjectId, {
 pressure_score: cappedPressureScore,
@@ -8014,7 +8077,7 @@ function computeInterventionLevel(pressureScore) {
 if (pressureScore >= 20) return 'L4';
 if (pressureScore >= 15) return 'L3';
 if (pressureScore >= 5) return 'L2';
-// FIX #8: Return 'L0' for calm state (pressure < 5), not 'L1'
+if (pressureScore > 0) return 'L1';
 return 'L0';
 }
 
@@ -8049,6 +8112,9 @@ if (active) return { reckoning_id: active.id, status: active.status };
 // BUG 13 FIX: db.subjects.findById is a function — always truthy. Ternary guard was dead code.
 const subject = await db.subjects.findById(subjectId).catch(() => null);
 const pressureData = await calculateSubjectPressure(userId, subjectId);
+if (pressureData.intervention_level !== 'L4') {
+return { status: 'not_required', pressure_score: pressureData.pressure_score };
+}
 // Fix #50: share the bulk fetches with calculateSubjectPressure — no per-card WHERE scans
 const decks = await db.decks.findBySubject(userId, subjectId);
 const deckIdSet = new Set(decks.map(d => d.id));
@@ -8074,6 +8140,28 @@ CARD_STATES.FRAGILE,
 flaggedCards.push(card);
 }
 }
+// A lockout must always have a valid remedy. L4 may come from deadline, debt,
+// credential divergence, or Bubble sources without any adverse-state cards.
+// In that case, use the subject's weakest available cards as evidence.
+if (flaggedCards.length === 0) {
+flaggedCards = [...subjectCardsForReckoning]
+.sort((a, b) => {
+const aState = _reckStateMap.get(a.id) || {};
+const bState = _reckStateMap.get(b.id) || {};
+const aStage = Number(a.stage || aState.stage || 1);
+const bStage = Number(b.stage || bState.stage || 1);
+if (aStage !== bStage) return aStage - bStage;
+return new Date(a.last_reviewed_at || a.created_at || 0) - new Date(b.last_reviewed_at || b.created_at || 0);
+})
+.slice(0, 25);
+}
+if (flaggedCards.length === 0) {
+return {
+status: 'intervention_required',
+error: 'Reckoning cannot start until this subject contains study cards.',
+pressure_score: pressureData.pressure_score,
+};
+}
 // PB.11: Bubble-critical card weighting for Reckoning pool [DESIGN: §15.2]
 // Cards belonging to active Bubbles are sorted to the front so they are
 // preferentially included when the pool is sliced to questionCount.
@@ -8090,7 +8178,7 @@ try {
     flaggedCards = [...shuffle(bubbleCards), ...shuffle(nonBubbleCards)];
   }
 } catch (_e) { /* non-fatal — Reckoning proceeds with unweighted pool */ }
-const questionCount = Math.min(25, Math.max(15, flaggedCards.length));
+const questionCount = Math.min(25, Math.max(5, flaggedCards.length));
 const reckoning = await db.reckoningSessions.create(userId, {
 subject_id: subjectId,
 subject_name: subject?.name || 'Unknown',
@@ -8123,6 +8211,16 @@ const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => n
 if (!reckoning) return null;
 if (reckoning.deferral_used) return { error: 'Deferral already used' };
 const deferredUntil = new Date(Date.now() + 4 * 3600000); // 4 hours
+const currentPressure = await db.brainPressure.get(reckoning.user_id, reckoning.subject_id).catch(() => null);
+const deferralSources = currentPressure?.sources || {};
+await db.brainPressure.set(reckoning.user_id, reckoning.subject_id, {
+pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5),
+intervention_level: 'L4',
+sources: {
+...deferralSources,
+manual_reckoning_deferral: (Number(deferralSources.manual_reckoning_deferral) || 0) + 5,
+},
+});
 await db.reckoningSessions.update(reckoningId, {
 status: 'deferred',
 deferral_used: true,
@@ -8149,14 +8247,33 @@ const userId = reckoning.user_id;
 // Previously unconditional — a failed reckoning gave a free pressure escape.
 const survived = parseFloat(scorePct) >= 70;
 if (survived) {
+const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+const currentSources = currentPressure?.sources || {};
+const reliefUntil = new Date(Date.now() + 7 * 86400000).toISOString();
+const relievedScore = Math.max(0, (Number(currentPressure?.pressure_score) || 0) - 15);
 await db.brainPressure.set(userId, subjectId, {
-pressure_score: 0,
-intervention_level: 'L0',
-sources: {},
+pressure_score: relievedScore,
+intervention_level: computeInterventionLevel(relievedScore),
+sources: {
+...currentSources,
+reckoning_relief_until: reliefUntil,
+reckoning_relief: -15,
+},
+});
+} else {
+const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+const currentSources = currentPressure?.sources || {};
+await db.brainPressure.set(userId, subjectId, {
+pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5),
+intervention_level: 'L4',
+sources: {
+...currentSources,
+manual_reckoning_failure: (Number(currentSources.manual_reckoning_failure) || 0) + 5,
+},
 });
 }
 await db.reckoningSessions.update(reckoningId, {
-status: 'completed',
+status: survived ? 'completed' : 'triggered',
 score_pct: scorePct,
 debrief_text: debriefText,
 completed_at: new Date(),
@@ -8171,7 +8288,15 @@ userId,
 'reckoning-survival:' + reckoning.id
 );
 }
-return { status: 'completed', pressure_reset: survived, survived, debrief_text: debriefText };
+return {
+status: survived ? 'completed' : 'triggered',
+pressure_reset: false,
+pressure_relief_applied: survived,
+survived,
+retry_required: !survived,
+relief_until: survived ? new Date(Date.now() + 7 * 86400000).toISOString() : null,
+debrief_text: debriefText,
+};
 }
 // ── credentialService ─────────────────────────────────────────────────────────
 const CREDENTIAL_TIERS = [
@@ -8557,7 +8682,7 @@ return mastery_moment;
 // ── biomeService ──────────────────────────────────────────────────────────────
 // BIOME_ZONES constant removed — dead 3-zone KS-only system. Replaced by 4-state determineZoneState(). (P5.1-F1)
 // P5.1 FIX: 4-signal, 4-state zone determination (replaces KS-only 3-state function)
-// Inputs: knowledgeScore (0-100), pressure (0-100+), cardStateCounts {STATE: count}, daysSinceLastSession
+// Inputs: knowledgeScore (0-100), pressure points (L4 at 20), card states, and inactivity.
 
 function determineZoneState(knowledgeScore, pressure, cardStateCounts, daysSinceLastSession) {
 const totalCards = Object.values(cardStateCounts || {}).reduce((a, b) => a + b, 0);
@@ -8569,15 +8694,15 @@ const days = daysSinceLastSession || 0;
 // that rely on KS or days only fire when there IS a study history to degrade from.
 // "days > 0" is the proxy for "this subject has been studied at least once".
 // Neglected — highest priority; requires actual deterioration, not just a new subject
-if (pressure >= 50 || (knowledgeScore < 15 && days > 0) || days >= 14) {
+if (pressure >= 20 || (knowledgeScore < 15 && days > 0) || days >= 14) {
 return { zoneName: 'Neglected', stateClass: 'zone-neglected' };
 }
 // Struggling — KS-based condition also requires study history
-if (pressure >= 30 || troublePct >= 10 || (knowledgeScore < 30 && days > 0)) {
+if (pressure >= 15 || troublePct >= 10 || (knowledgeScore < 30 && days > 0)) {
 return { zoneName: 'Struggling', stateClass: 'zone-struggling' };
 }
 // Thriving — all three conditions must be met
-if (pressure < 10 && troublePct < 5 && knowledgeScore > 60) {
+if (pressure === 0 && troublePct < 5 && knowledgeScore > 60) {
 return { zoneName: 'Thriving', stateClass: 'zone-thriving' };
 }
 // Growing — default for everything in between
@@ -8603,6 +8728,11 @@ if (cached) { return cached; }
 const user = await db.users.findById(userId);
 const stats = await db.userStats.get(userId);
 const rawSubjects = await db.subjects.findManyWithDecks(userId);
+const inventory = await db.userInventory.findByUser(userId).catch(() => []);
+const rareFloraSubjects = new Set(inventory
+.map((item) => item.item_code || '')
+.filter((code) => code.startsWith('rare_flora_'))
+.map((code) => code.slice('rare_flora_'.length)));
 // P4-FIX-DEDUP: Deduplicate subjects by lowercased name — duplicate Firestore documents
 // caused the same subject to render twice in the Biome (ISSUE-027). Keep the copy with
 // the most decks/cards so real data is never discarded.
@@ -8686,13 +8816,14 @@ knowledge_band: ks.band,
 credential_tier: credential.tier,
 credential_name: credential.name,
 pressure_score: pressureScore,
-// P3.2-B1 FIX: L1 is never returned by computeInterventionLevel; calm = L0.
+// Canonical intervention level from the strict L0–L4 pressure scale.
 intervention_level: pressure?.intervention_level || 'L0',
 zone: zoneResult.zoneName,
 stateClass: zoneResult.stateClass,
 card_count: allCards.length,
 state_distribution: stateCounts,
 fruit_count: subjectStatDoc?.fruit_count || 0,
+rare_flora: rareFloraSubjects.has(subject.id),
 last_studied_at: lastStudied || null,
 days_since_last_session: daysSinceLastSession,
 exam_date: subject.exam_date || null,
@@ -8849,19 +8980,16 @@ generated_by: 'fallback',
 };
 }
 
-async function generateWeeklyChronicle(userId, force = false) {
-// P5.3-F FIX: checkAIRateLimit is sync — removed await; guard on return value
-if (!force && checkAIRateLimit(userId, 'chronicle', 5)) {
-const cached = await db.chronicleEntries.findLatest(userId).catch(() => null);
-if (cached) return cached;
-return null;
-}
+async function generateWeeklyChronicle(userId, force = false, timezoneOffsetMinutes = 0) {
 const now = new Date();
-const weekStart = new Date(now);
+const safeTimezoneOffset = Math.max(-840, Math.min(840, Number(timezoneOffsetMinutes) || 0));
+const localNow = new Date(now.getTime() - safeTimezoneOffset * 60000);
+const localWeekStart = new Date(localNow);
 // FIX-10: Monday-anchored week. (getDay()+6)%7 = 0 on Mon, 6 on Sun.
-weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
-weekStart.setHours(0, 0, 0, 0);
-const weekStr = weekStart.toISOString().split('T')[0];
+localWeekStart.setDate(localWeekStart.getDate() - ((localWeekStart.getDay() + 6) % 7));
+localWeekStart.setHours(0, 0, 0, 0);
+const weekStart = new Date(localWeekStart.getTime() + safeTimezoneOffset * 60000);
+const weekStr = localWeekStart.toISOString().split('T')[0];
 const existing = await db.chronicleEntries.findLatest(userId);
 // Normalize existing.week_start to YYYY-MM-DD string for reliable comparison
 // (PostgreSQL date columns may come back as Date objects or ISO strings with time)
@@ -8872,16 +9000,34 @@ const existingWeekStr = existing
         ? new Date(existing.week_start).toISOString().slice(0, 10)
         : '')
   : '';
-// If force=true, delete the cached entry so a fresh one gets written.
-// This lets the user manually regenerate a new Chronicle entry for the same week.
-if (force && existing && existingWeekStr === weekStr) {
-  await query('DELETE FROM chronicle_entries WHERE user_id = $1 AND week_start = $2', [userId, weekStr]).catch(() => {});
-} else if (!force && existing && existingWeekStr === weekStr) { return existing; }
+// Keep one stable Chronicle identity per week. A manual refresh recomputes the
+// evidence and updates that row only after generation succeeds.
+if (!force && existing && existingWeekStr === weekStr) return existing;
+if (checkAIRateLimit(userId, 'chronicle', 5)) {
+if (existing) return existing;
+return null;
+}
 const stats = await db.userStats.get(userId);
 const subjects = await db.subjects.findManyWithDecks(userId);
 const logs = await db.reviewLogs.findByUser(userId, weekStart);
 const sessions = await db.sessions.findMany(userId, { session_completed: true, started_at_gte: weekStart }, { limit: 200 }); // Fix #45 corrected: filter by week, 200 covers any week
-const weekSessions = sessions.sessions.filter((s) => new Date(s.started_at) >= weekStart);
+const weekInteractions = sessions.sessions.filter((s) => new Date(s.started_at) >= weekStart);
+const weekSessions = weekInteractions.filter(sessionIsMeaningful);
+const deckToSubjectForChronicle = new Map();
+for (const subject of subjects) {
+const subjectDecks = await db.decks.findBySubject(userId, subject.id).catch(() => []);
+for (const deck of subjectDecks) deckToSubjectForChronicle.set(deck.id, subject.id);
+}
+const allCardsForChronicle = await db.cards.findAllForUser(userId).catch(() => []);
+const cardToSubjectForChronicle = new Map(allCardsForChronicle.map((card) => [
+card.id,
+deckToSubjectForChronicle.get(card.deck_id) || null,
+]));
+const subjectReviewCounts = {};
+for (const log of logs) {
+const sid = log.subject_id || cardToSubjectForChronicle.get(log.card_id) || null;
+if (sid) subjectReviewCounts[sid] = (subjectReviewCounts[sid] || 0) + 1;
+}
 // B12: Collect rich per-subject stats for the chronicle prompt
 const subjectSnapshots = [];
 for (const sub of subjects) {
@@ -8897,11 +9043,11 @@ credential: cred.name,
 pressure: press?.pressure_score || 0,
 fruit_count: sStat?.fruit_count || 0,
 total_cards: sub.total_cards || 0,
+cards_reviewed_this_week: subjectReviewCounts[sub.id] || 0,
 });
 } catch (e) {}
 }
 const fruitings = weekSessions.filter((s) => s.fruiting_achieved).length;
-const totalXPEarned = weekSessions.reduce((s, sess) => s + (sess.xp_earned || 0), 0);
 
 // CHRONICLE-ENRICH: Gather richer per-subject and aggregate signals for the teacher-voice prompt.
 // (a) Total "Again" responses this week — high count = the student struggled a lot.
@@ -8910,7 +9056,8 @@ const totalAgain = weekSessions.reduce((sum, s) => sum + (s.cards_again || 0), 0
 // (b) Per-subject session count this week
 const subjectSessionCountsEnriched = {};
 for (const s of weekSessions) {
-  if (s.subject_id) subjectSessionCountsEnriched[s.subject_id] = (subjectSessionCountsEnriched[s.subject_id] || 0) + 1;
+  const sid = s.subject_id || deckToSubjectForChronicle.get(s.deck_id) || null;
+  if (sid) subjectSessionCountsEnriched[sid] = (subjectSessionCountsEnriched[sid] || 0) + 1;
 }
 
 // (c) All card states for this user — one DB call, then group by subject_id
@@ -8952,19 +9099,20 @@ const allChronicles = await db.chronicleEntries.findByUser(userId).catch(() => [
 // GAP-1 FIX: fetch exam sessions for the week so Chronicle narrator knows about CBT results
 const allExamSessions = await db.examSessions.findMany(userId, { started_at_gte: weekStart }, { limit: 200 }).catch(() => []); // Fix #45 corrected: filter by week
 const weekExams = allExamSessions.filter(
-(e) => new Date(e.created_at) >= weekStart && e.score_percentage != null
+(e) => new Date(e.created_at || e.started_at) >= weekStart && (e.score_pct != null || e.score_percentage != null)
 );
 const examLines = weekExams.map((e) => {
 const subName = subjects.find((s) => s.id === e.subject_id)?.name || 'Unknown';
-return `${subName}: ${Math.round(e.score_percentage)}% (${
+return `${subName}: ${Math.round(Number(e.score_pct ?? e.score_percentage) || 0)}% (${
     e.is_reckoning ? 'Reckoning' : 'CBT'
   })`;
 }).join(', ') || 'None';
 // (f) Best and worst exam this week — placed here so weekExams is already declared
-const sortedExams = [...weekExams].sort((a, b) => (a.score_percentage || 0) - (b.score_percentage || 0));
-const worstExam  = sortedExams[0]  ? `${subjects.find(s => s.id === sortedExams[0].subject_id)?.name || 'Unknown'}: ${Math.round(sortedExams[0].score_percentage)}%` : null;
-const bestExam   = sortedExams[sortedExams.length - 1] ? `${subjects.find(s => s.id === sortedExams[sortedExams.length - 1].subject_id)?.name || 'Unknown'}: ${Math.round(sortedExams[sortedExams.length - 1].score_percentage)}%` : null;
+const sortedExams = [...weekExams].sort((a, b) => Number(a.score_pct ?? a.score_percentage) - Number(b.score_pct ?? b.score_percentage));
+const worstExam  = sortedExams[0]  ? `${subjects.find(s => s.id === sortedExams[0].subject_id)?.name || 'Unknown'}: ${Math.round(Number(sortedExams[0].score_pct ?? sortedExams[0].score_percentage) || 0)}%` : null;
+const bestExam   = sortedExams[sortedExams.length - 1] ? `${subjects.find(s => s.id === sortedExams[sortedExams.length - 1].subject_id)?.name || 'Unknown'}: ${Math.round(Number(sortedExams[sortedExams.length - 1].score_pct ?? sortedExams[sortedExams.length - 1].score_percentage) || 0)}%` : null;
 const prevChronicles = allChronicles
+.filter((c) => c.id !== existing?.id)
 .sort((a, b) => new Date(b.week_start) - new Date(a.week_start))
 .slice(0, 2);
 const prevChronicleText =
@@ -8988,8 +9136,8 @@ const personaLine = currentPersona
 // Most-attended subject (by session count this week)
 const subjectSessionCounts = {};
 for (const s of weekSessions) {
-if (s.subject_id)
-subjectSessionCounts[s.subject_id] = (subjectSessionCounts[s.subject_id] || 0) + 1;
+const sid = s.subject_id || deckToSubjectForChronicle.get(s.deck_id) || null;
+if (sid) subjectSessionCounts[sid] = (subjectSessionCounts[sid] || 0) + 1;
 }
 const mostAttendedId = Object.entries(subjectSessionCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
 const mostAttendedSubject =
@@ -9032,14 +9180,13 @@ No metaphors. No atmospheric language. Every sentence must be grounded in a spec
 
 STUDENT PROFILE
 Persona: ${personaLine}
-Level ${stats?.current_level || 1} — ${stats?.total_xp || 0} XP total
 Streak: ${stats?.current_streak || 0} days active
 
 THIS WEEK
 Week of: ${weekStr}
-Sessions: ${weekSessions.length} | Cards reviewed: ${logs.length} | Stage advances: ${stageAdvances}
+Meaningful sessions: ${weekSessions.length} | Short interactions: ${weekInteractions.length - weekSessions.length} | Cards reviewed: ${logs.length} | Stage advances: ${stageAdvances}
 "Again" responses (struggle count): ${totalAgain}
-Fruitings this week: ${fruitings} | XP earned: ${totalXPEarned}
+Fruitings this week: ${fruitings}
 Reckoning: ${reckoningLine}
 Exams: ${examLines}${worstExam ? `\nWorst exam: ${worstExam}` : ''}${bestExam && bestExam !== worstExam ? `\nBest exam: ${bestExam}` : ''}
 ${bubbleChronicleContext}
@@ -9047,7 +9194,7 @@ SUBJECT BREAKDOWN
 ${subjectSnapshots.map((s) => [
   `${s.name}:`,
   `  KS ${s.ks.toFixed(1)} | Credential: ${s.credential} | Pressure: ${s.pressure}`,
-  `  Sessions this week: ${s.sessions_this_week} | Days since last session: ${s.days_since_last_session === null ? 'never studied' : s.days_since_last_session + 'd'}`,
+  `  Sessions this week: ${s.sessions_this_week} | Cards reviewed this week: ${s.cards_reviewed_this_week} | Days since last session: ${s.days_since_last_session === null ? 'never studied' : s.days_since_last_session + 'd'}`,
   `  Problem cards — GHOST: ${s.ghost_count}, FRAGILE: ${s.fragile_count}, STUCK: ${s.stuck_count}, AVOIDED: ${s.avoided_count}, DANGEROUS: ${s.dangerous_count}`,
   `  Total cards: ${s.total_cards} | Fruits: ${s.fruit_count}`,
 ].join('\n')).join('\n\n')}
@@ -9088,17 +9235,39 @@ Return only the 5 paragraphs. No labels. No headers. No preamble.
 `;
   const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
   const narrative = result.response.text().trim();
-  const entry = await db.chronicleEntries.create(userId, {
+  const entryData = {
     week_start: weekStr,
-    week_end: new Date(weekStart.getTime() + 6 * 86400000).toISOString().split('T')[0],
+    week_end: new Date(localWeekStart.getTime() + 6 * 86400000).toISOString().split('T')[0],
     narrative,
     stats_snapshot: {
       streak: stats?.current_streak || 0,
-      sessions: weekSessions.length,
+      meaningful_sessions: weekSessions.length,
+      short_interactions: weekInteractions.length - weekSessions.length,
       cards_reviewed: logs.length,
+      again_responses: totalAgain,
+      fruiting_sessions: fruitings,
+      stage_advances: stageAdvances,
+      subjects: subjectSnapshots,
+      exams: weekExams.map((e) => ({
+        subject_id: e.subject_id,
+        score: Number(e.score_percentage ?? e.score_pct) || 0,
+        is_reckoning: !!e.is_reckoning,
+      })),
+      neglected_subjects: subjectSnapshots
+        .filter((s) => s.total_cards > 0 && (s.days_since_last_session === null || s.days_since_last_session >= 7))
+        .map((s) => s.name),
     },
-  });
-  return entry;
+  };
+  if (force && existing && existingWeekStr === weekStr) {
+    await query(
+      `UPDATE chronicle_entries
+       SET week_end = $1, narrative = $2, stats_snapshot = $3
+       WHERE id = $4 AND user_id = $5`,
+      [entryData.week_end, entryData.narrative, entryData.stats_snapshot, existing.id, userId]
+    );
+    return { ...existing, ...entryData, updated_at: new Date() };
+  }
+  return db.chronicleEntries.create(userId, entryData);
 }
 // ── almanacService ────────────────────────────────────────────────────────────
 const ALMANAC_DEFINITIONS = [
@@ -10022,7 +10191,6 @@ BEHAVIORAL DATA
 - Verified (exam-tested) cards: ${verifiedCards}
 - Stuck cards: ${stuckCards}
 - Current streak: ${stats?.current_streak || 0}
-- Total XP: ${stats?.total_xp || 0}
 - Total cards mastered: ${totalMastered}
 - Number of subjects: ${subjectCount}
 - Peak study hour: ${maxHour >= 0 ? maxHour + ':00' : 'unknown'}
@@ -10318,20 +10486,81 @@ if (actionType === 'review_specific_cards') return 'Review These Cards →';
 return 'Start Study Session →';
 }
 
-async function getDailyInvitations(userId) {
-const todayStr = new Date().toISOString().split('T')[0];
+async function enrichInvitationCompletion(userId, invitations, todayStr, timezoneOffsetMinutes = 0) {
+const [year, month, day] = todayStr.split('-').map(Number);
+const start = new Date(Date.UTC(year, month - 1, day) + Number(timezoneOffsetMinutes || 0) * 60000);
+const end = new Date(start.getTime() + 86400000);
+const [sessionResult, examsResult, reviews, decksResult] = await Promise.all([
+db.sessions.findMany(userId, { session_completed: true, started_at_gte: start }, { limit: 200 }).catch(() => ({ sessions: [] })),
+db.examSessions.findMany(userId, { status: 'completed', started_at_gte: start }, { limit: 100 }).catch(() => []),
+db.reviewLogs.findByUser(userId, start).catch(() => []),
+db.decks.findMany(userId).catch(() => ({ decks: [] })),
+]);
+const sessions = (sessionResult?.sessions || [])
+.filter((session) => new Date(session.ended_at || session.started_at) < end);
+const exams = (Array.isArray(examsResult) ? examsResult : (examsResult?.exams || []))
+.filter((exam) => new Date(exam.completed_at || exam.ended_at || exam.started_at) < end);
+const decks = decksResult?.decks || decksResult || [];
+const deckSubjects = new Map(decks.map((deck) => [deck.id, deck.subject_id]));
+const reviewsInDay = reviews.filter((review) => new Date(review.reviewed_at || review.created_at) < end);
+const reviewedCards = new Set(reviewsInDay.map((review) => review.card_id));
+
+return (invitations || []).map((invitation) => {
+let completed = false;
+let completedAt = null;
+if (invitation.action_type === 'exam') {
+const match = exams.find((exam) => !invitation.subject_id || exam.subject_id === invitation.subject_id);
+completed = !!match;
+completedAt = match?.completed_at || match?.ended_at || null;
+} else if (invitation.action_type === 'review_specific_cards') {
+const targets = Array.isArray(invitation.card_ids) ? invitation.card_ids : [];
+completed = targets.length > 0 && targets.every((cardId) => reviewedCards.has(cardId));
+if (completed) completedAt = reviewsInDay.filter((review) => targets.includes(review.card_id)).sort((a, b) => new Date(b.reviewed_at) - new Date(a.reviewed_at))[0]?.reviewed_at || null;
+} else {
+const match = sessions.find((session) => {
+const sessionSubject = session.subject_id || deckSubjects.get(session.deck_id) || null;
+return sessionIsMeaningful(session) && (!invitation.subject_id || sessionSubject === invitation.subject_id);
+});
+completed = !!match;
+completedAt = match?.ended_at || null;
+}
+return { ...invitation, completed, completed_at: completedAt };
+});
+}
+
+async function getDailyInvitations(userId, requestedDate = null, timezoneOffsetMinutes = 0) {
+const serverToday = new Date().toISOString().split('T')[0];
+const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedDate || ''));
+const requestedTime = isValidDate ? new Date(`${requestedDate}T12:00:00.000Z`).getTime() : NaN;
+const todayStr = Number.isFinite(requestedTime) && Math.abs(requestedTime - Date.now()) <= 36 * 3600000
+? requestedDate
+: serverToday;
+const safeTimezoneOffset = Math.max(-840, Math.min(840, Number(timezoneOffsetMinutes) || 0));
 const cached = await db.dailyRitualCache.get(userId, 'daily_invitations', todayStr);
-// NOTE: Cache keyed by date — any stale pre-fix results expire at midnight automatically.
-if (cached) return cached.data;
+// Older cached invitation shapes are regenerated once so completion contracts
+// and stable IDs are available immediately after this release.
+if (cached && Array.isArray(cached.data) && cached.data.every((item) => item?.completion && item?.id)) {
+const enriched = await enrichInvitationCompletion(userId, cached.data, todayStr, safeTimezoneOffset);
+await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: enriched }).catch(() => {});
+return enriched;
+}
 const subjects = await db.subjects.findManyWithDecks(userId);
 const pressureList = await db.brainPressure.findByUser(userId);
-// REAL-DATA FIX: load user stats so the AI knows streak, level, XP, total cards
+// Load user stats for streak and study-history context.
 const userStatsRow = await db.userStats.get(userId).catch(() => null);
 // B15: AI-generated invitations with specific card names and situations
 const invitations = [];
 // Gather rich context for AI
 const activeReckoning = await db.reckoningSessions.findActiveByUser(userId);
 const allCardStatesForInv = await db.cardStates.findByUser(userId);
+let totalDue = 0;
+for (const subject of subjects) {
+const decks = await db.decks.findBySubject(userId, subject.id).catch(() => []);
+for (const deck of decks) {
+const cards = await db.cards.findByDeck(userId, deck.id).catch(() => []);
+totalDue += cards.filter((card) => isCardDue(card)).length;
+}
+}
 const dangerousCardStates = allCardStatesForInv
 .filter((s) => s.state === 'DANGEROUS')
 .slice(0, 3);
@@ -10418,22 +10647,18 @@ action: invitationActionLabel('exam'),
 const needed = 3 - invitations.length;
 try {
 // P7.2 FIX: Updated prompt to request spec-compliant shape and action_types
-// REAL-DATA FIX: include user level, streak, XP, and total card counts so AI
-// generates invitations that reference the student's actual current state.
+// Include streak and card counts so invitations reference current reality.
 const totalCards      = allCardStatesForInv.length;
-const totalDue        = allCardStatesForInv.filter((s) => s.state !== 'SEEDLING').length;
 const totalDangerous  = allCardStatesForInv.filter((s) => s.state === 'DANGEROUS').length;
 const totalGhost      = allCardStatesForInv.filter((s) => s.state === 'GHOST').length;
 const totalStuck      = allCardStatesForInv.filter((s) => s.state === 'STUCK').length;
-const userLevel       = userStatsRow?.current_level   || 1;
-const userXP          = userStatsRow?.total_xp        || 0;
 const userStreak      = userStatsRow?.current_streak  || 0;
 const allSubjectNames = subjects.map((s) => s.name).join(', ') || 'none';
 const aiPrompt = `
 ROLE
 You are KIWI\'s invitation generator. Create ${needed} specific, motivating daily study invitations.
 STUDENT CONTEXT (real data — use these exact numbers and names in your invitations)
-- Student level: ${userLevel} | Total XP: ${userXP} | Current streak: ${userStreak} day(s)
+- Current streak: ${userStreak} day(s)
 - Total cards in the forest: ${totalCards} | Cards due today: ${totalDue}
 - Dangerous cards (${totalDangerous} total; exam approaching, stage 1-2): ${dangerousFronts.join(', ') || 'none'}
 - Ghost cards (${totalGhost} total; stage 5, overdue 20+ days): ${ghostFronts.join(', ') || 'none'}
@@ -10567,12 +10792,57 @@ RULES
       });
     }
   }
-  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: invitations });
-  return invitations;
+  // Keep invitations deterministic, actionable, and honest about what completing
+  // them changes.  The AI may write the invitation, but it may not invent the
+  // completion contract or the pressure outcome.
+  const normalizedInvitations = invitations.slice(0, 3).map((invitation, index) => {
+    const subject = invitation.subject_id
+      ? subjects.find((item) => item.id === invitation.subject_id)
+      : null;
+    const pressure = invitation.subject_id
+      ? pressureList.find((item) => item.subject_id === invitation.subject_id)
+      : null;
+    const cardCount = Array.isArray(invitation.card_ids) ? invitation.card_ids.length : 0;
+    const priority = invitation.action_type === 'exam' || pressure?.intervention_level === 'L4'
+      ? 'critical'
+      : cardCount > 0 || ['L2', 'L3'].includes(pressure?.intervention_level)
+        ? 'important'
+        : 'steady';
+    const completion = invitation.action_type === 'exam'
+      ? 'Complete the required exam and submit every answer.'
+      : invitation.action_type === 'review_specific_cards'
+        ? `Review ${cardCount || 'the'} targeted card${cardCount === 1 ? '' : 's'} once each.`
+        : 'Complete one meaningful session: at least 5 unique cards and 5 active minutes.';
+
+    return {
+      ...invitation,
+      id: `${todayStr}:${invitation.action_type || 'study'}:${invitation.subject_id || 'general'}:${index}`,
+      subject_name: subject?.name || null,
+      priority,
+      completion,
+      estimated_minutes: invitation.action_type === 'exam'
+        ? 20
+        : invitation.action_type === 'review_specific_cards'
+          ? Math.max(5, cardCount * 2)
+          : 15,
+      pressure_effect: invitation.subject_id
+        ? 'Completion recalculates pressure from fresh evidence; only resolved causes disappear.'
+        : 'Completion contributes fresh evidence to today\'s forest health.',
+    };
+  });
+  const enrichedInvitations = await enrichInvitationCompletion(userId, normalizedInvitations, todayStr, safeTimezoneOffset);
+  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: enrichedInvitations });
+  return enrichedInvitations;
 }
 
-async function dismissInvitation(userId, invitationIndex) {
-const todayStr = new Date().toISOString().split('T')[0];
+async function dismissInvitation(userId, invitationIndex, requestedDate = null) {
+const serverToday = new Date().toISOString().split('T')[0];
+const requestedTime = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedDate || ''))
+? new Date(`${requestedDate}T12:00:00.000Z`).getTime()
+: NaN;
+const todayStr = Number.isFinite(requestedTime) && Math.abs(requestedTime - Date.now()) <= 36 * 3600000
+? requestedDate
+: serverToday;
 const cached = await db.dailyRitualCache.get(userId, 'daily_invitations', todayStr);
 if (!cached || !cached.data) return { error: 'No invitations found' };
 const invitations = cached.data;
@@ -10623,19 +10893,17 @@ const history = historyDoc?.data || [];
           currentPressure = { pressure_score: 0, intervention_level: 'L0', sources: {} };
         }
         {
-          // M-2 FIX: Compute new score and level inline — don't defer to cron
+          // Compute the durable avoidance source here. Canonical pressure
+          // recalculation preserves manual sources, so the consequence cannot
+          // vanish on the next dashboard refresh.
           const newPressureScore = (currentPressure.pressure_score || 0) + 1;
-          const newInterventionLevel =
-            newPressureScore >= 20 ? 'L4' :
-            newPressureScore >= 15 ? 'L3' :
-            newPressureScore >= 5  ? 'L2' :
-            newPressureScore >= 1  ? 'L1' : 'L0';
+          const newInterventionLevel = computeInterventionLevel(newPressureScore);
           await db.brainPressure.set(userId, invitation.subject_id, {
             pressure_score: newPressureScore,
             intervention_level: newInterventionLevel,
             sources: {
               ...(currentPressure.sources || {}),
-              repeated_invitation_dismissal: (currentPressure.sources?.repeated_invitation_dismissal || 0) + 1,
+              manual_invitation_avoidance: (currentPressure.sources?.manual_invitation_avoidance || 0) + 1,
             },
           });
           pressureApplied = true;
@@ -11033,8 +11301,6 @@ async function checkLearningDebtCleared(userId, subjectId) {
           notes:       `All learning debt cleared for subject ${subjectId}.`,
         }).catch((e) => console.error("[KIWI] silent catch:", e.message));
       }
-      // Fire Almanac check for 'Debt Settled' [DESIGN: §15.5]
-      await checkAlmanacUnlocks(userId, 'debt_settled', { subjectId }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
   } catch (_e) { /* non-fatal */ }
 }
@@ -11069,7 +11335,10 @@ const sourceLabelMap = {
   dangerous:      'beginner-level cards with an upcoming exam',
   ignored_alert:                 'a reclassification alert ignored for 3 or more days',
   ai_crutch:                     'over-reliance on AI explanations without independent recall',
-  repeated_invitation_dismissal: 'repeatedly dismissing study invitations for the same subject',
+  manual_invitation_avoidance:  'repeatedly dismissing the same subject invitation across two weeks',
+  manual_exam_forfeit:          'forfeiting an exam before submission',
+  manual_reckoning_deferral:    'deferring an active Reckoning',
+  manual_reckoning_failure:     'not yet meeting the Reckoning pass threshold',
   // PB.11 bubble sources [DESIGN: §15.1]
   bubble_drifting:  'a mastery goal slightly behind its learning trajectory',
   bubble_behind:    'a mastery goal falling behind its required pace',
@@ -11221,13 +11490,37 @@ async function hookSeedlingEarnings(userId, eventType, context = {}) {
 
 async function getMarketplaceCatalog(userId) {
 await db.marketplaceItems.seed();
-const items = await db.marketplaceItems.findAll();
+// Only sell effects that are implemented end-to-end. Historical decorative and
+// artifact rows remain readable in inventory, but are not advertised as live
+// products until they change an actual KIWI surface.
+const usefulCodes = new Set(['reckoning_buffer', 'deep_audit', 'archive_expansion', 'rare_flora']);
+const items = (await db.marketplaceItems.findAll()).filter((item) => usefulCodes.has(item.item_code));
 const stats = await db.userStats.get(userId);
 const inventory = await db.userInventory.findByUser(userId);
+const subjects = await db.subjects.findManyWithDecks(userId);
 const enriched = [];
 for (const item of items) {
 const owned = inventory.find((i) => i.item_code === item.item_code);
-const gate1Progress = await checkGate1Progress(userId, item.gate1_condition);
+let gate1Progress = await checkGate1Progress(userId, item.gate1_condition);
+let subjectEligibility = null;
+if (['rare_flora', 'archive_expansion'].includes(item.item_code)) {
+subjectEligibility = {};
+for (const subject of subjects) {
+const scopedProgress = await checkGate1Progress(userId, {
+...item.gate1_condition,
+subject_id: subject.id,
+});
+subjectEligibility[subject.id] = scopedProgress;
+}
+const eligibleEntries = Object.values(subjectEligibility).filter((entry) => entry.met);
+gate1Progress = eligibleEntries[0]
+|| Object.values(subjectEligibility).sort((a, b) => {
+const aRatio = (Number(a.current) || 0) / Math.max(1, Number(a.target) || 1);
+const bRatio = (Number(b.current) || 0) / Math.max(1, Number(b.target) || 1);
+return bRatio - aRatio;
+})[0]
+|| gate1Progress;
+}
 const gate2Met = (stats?.seedlings_balance || 0) >= item.gate2_seedling_cost;
 enriched.push({
 ...item,
@@ -11244,6 +11537,7 @@ gate2_met: gate2Met,
 gate2_current: stats?.seedlings_balance || 0,
 gate2_target: item.gate2_seedling_cost,
 purchasable: gate1Progress.met && gate2Met,
+subject_eligibility: subjectEligibility,
 });
 }
 // P8-01 FIX: wrap return with top-level seedlings_balance for reliable frontend access
@@ -11338,7 +11632,7 @@ const subjectsM2 = await db.subjects.findManyWithDecks(userId);
 let bestKsM2 = 0;
 let bestFruitingsM2 = 0;
 let metM2 = false;
-for (const subM2 of subjectsM2) {
+for (const subM2 of subjectsM2.filter((subject) => !condition.subject_id || subject.id === condition.subject_id)) {
 const ksM2 = await computeKnowledgeScore(userId, subM2.id);
 const sessionsM2 = await db.sessions.findMany(userId, { session_completed: true }, { limit: 2000 }); // Fix #45 corrected: lifetime count for gate check
 const subjectDecksM2 = await db.decks.findBySubject(userId, subM2.id);
@@ -11432,7 +11726,7 @@ return thriving.length >= condition.count && uniqueSubjectsM4c.size >= (conditio
 }
 case 'subject_ks_and_fruiting': {
 const subjects = await db.subjects.findManyWithDecks(userId);
-for (const sub of subjects) {
+for (const sub of subjects.filter((subject) => !condition.subject_id || subject.id === condition.subject_id)) {
 const ks = await computeKnowledgeScore(userId, sub.id);
 const sessions = await db.sessions.findMany(
 userId,
@@ -11512,6 +11806,9 @@ return false;
 async function purchaseItem(userId, itemCode, subjectId = null) {
 const item = await db.marketplaceItems.findByCode(itemCode);
 if (!item) return { error: 'Item not found' };
+if (['rare_flora', 'deep_audit', 'archive_expansion'].includes(itemCode) && !subjectId) {
+return { error: 'subject_id is required for this item' };
+}
 
 // P8.8: Block reckoning_buffer purchase during an active Reckoning (spec P8.8)
 if (itemCode === 'reckoning_buffer') {
@@ -11526,7 +11823,7 @@ code: 'RECKONING_ACTIVE',
 
 // P8.3: for Rare Flora, inject subject_id into gate condition so per-subject count works
 const gate1Condition =
-item.item_code === 'rare_flora' && subjectId
+['rare_flora', 'archive_expansion'].includes(item.item_code) && subjectId
 ? { ...item.gate1_condition, subject_id: subjectId }
 : item.gate1_condition;
 
@@ -11540,13 +11837,21 @@ if ((existingForZone?.quantity || 0) >= 1) {
 return { error: 'Rare Flora already owned for this zone', limit: 1, owned: 1 };
 }
 }
+if (item.item_code === 'archive_expansion') {
+const subjectInventoryKey = `archive_expansion_${subjectId}`;
+const existingForSubject = await db.userInventory.getItem(userId, subjectInventoryKey);
+if ((existingForSubject?.quantity || 0) >= 1) {
+return { error: 'Archive Expansion already applied to this subject', limit: 1, owned: 1 };
+}
+}
 
 const gate1Met = await checkGate1Condition(userId, gate1Condition);
 if (!gate1Met) return { error: 'Gate 1 condition not met', gate: 1 };
 
 // P8.4a: Enforce purchase_limit — prevent repurchase of permanent items (spec P8.4)
+const scopedPermanent = ['rare_flora', 'archive_expansion'].includes(item.item_code);
 const existingForLimit = await db.userInventory.getItem(userId, itemCode);
-if (item.purchase_limit && (existingForLimit?.quantity || 0) >= item.purchase_limit) {
+if (!scopedPermanent && item.purchase_limit && (existingForLimit?.quantity || 0) >= item.purchase_limit) {
 return {
 error: 'Purchase limit reached',
 limit: item.purchase_limit,
@@ -11565,7 +11870,9 @@ if (spendResult.error) return spendResult;
 // BUG 8 FIX: use per-subject key for rare_flora so each zone tracks independently
 const inventoryKey = (item.item_code === 'rare_flora' && subjectId)
 ? `rare_flora_${subjectId}`
-: itemCode;
+: (item.item_code === 'archive_expansion' && subjectId)
+  ? `archive_expansion_${subjectId}`
+  : itemCode;
 const existing = await db.userInventory.getItem(userId, inventoryKey);
 const newQty = (existing?.quantity || 0) + 1;
 await db.userInventory.setItem(userId, inventoryKey, {
@@ -11573,14 +11880,7 @@ quantity: newQty,
 unlocked: true,
 acquired_at: new Date(),
 });
-
-// BUG 11 FIX: Purchased artifacts must appear in Chronicle and Almanac, just like
-// auto-earned artifacts. Call checkAlmanacUnlocks after any successful artifact purchase.
-if (item.category === 'artifact') {
-await checkAlmanacUnlocks(userId, { event: 'artifact_purchased', item_code: itemCode }).catch(
-(e) => console.error('[KIWI] Almanac unlock after artifact purchase failed:', e.message)
-);
-}
+_biomeCache.delete(userId);
 
 // P8.4b + P8.5: For Deep Audit (service), auto-trigger AI call immediately.
 // If Gemini fails, refund Seedlings and roll back inventory. (spec P8.4, P8.5)
@@ -11628,10 +11928,26 @@ return { error: 'Audit unavailable; please retry.' };
 // BUG 1 removed the dedicated route correctly, but the trigger was never added here.
 // The purchase completed without ever archiving any cards or setting subject status.
 if (item.item_code === 'archive_expansion') {
-if (!subjectId) return { error: 'subject_id required to archive a subject' };
-await applyArchiveExpansion(userId, subjectId).catch((e) =>
-console.error('[KIWI] applyArchiveExpansion failed:', e.message)
-);
+try {
+const archiveResult = await applyArchiveExpansion(userId, subjectId);
+if (!archiveResult.archived_count) {
+throw new Error('No verified mature cards were eligible for archive expansion');
+}
+} catch (archiveError) {
+await awardSeedlings(
+userId,
+item.gate2_seedling_cost,
+'archive_expansion_refund',
+'Archive Expansion failed — Seedlings refunded',
+'seedling-refund:' + spendResult.event_key
+).catch(() => {});
+await db.userInventory.setItem(userId, inventoryKey, {
+quantity: existing?.quantity || 0,
+unlocked: (existing?.quantity || 0) > 0,
+acquired_at: existing?.acquired_at || null,
+}).catch(() => {});
+return { error: 'Archive Expansion could not be applied; Seedlings were refunded.' };
+}
 }
 return {
 purchased: true,
@@ -12028,9 +12344,9 @@ const RECKONING_EXEMPT_PATHS = [
 '/reckoning/submit',
 '/reckoning/defer',
 '/reckoning/use-buffer',
-'/pressure/',  // acknowledge-alert sub-path
+'/pressure',   // exact pressure state and acknowledge-alert sub-path
 ];
-if (RECKONING_EXEMPT_PATHS.some(p => req.path === p || req.path.endsWith(p))) return next();
+if (RECKONING_EXEMPT_PATHS.some(p => req.path === p || req.path.startsWith(p + '/') || req.path.endsWith(p))) return next();
 // P3-C1 FIX: /exams/generate must be reachable to START a reckoning exam.
 // The lockout middleware is mounted on examRouter which intercepts this path.
 // A body guard (not a blanket exemption) prevents the path being used to bypass.
@@ -12169,7 +12485,6 @@ notification_preferences: { email: true, telegram: false },
 });
 _createdUserId = user.id; // set before post-creation steps so catch can clean up
 await db.userStats.create(user.id);
-await seedAlmanacForUser(user.id);
 // Send welcome email
 await sendEmailNotification(user.id, 'welcome', { name: username }).catch((e) =>
 console.error('[KIWI] Welcome email failed:', e.message)
@@ -12261,8 +12576,8 @@ const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex
 const expiresAt = new Date(Date.now() + 30 * 86400000);
 await db.refreshTokens.create(user.id, refreshHash, expiresAt);
 // Streak rewards commit only with the active-day event, never on login.
-// Generate persona weekly
-generateWeeklyPersona(user.id).catch(e => console.error('[KIWI] Persona gen failed on login:', e.message));
+// Refresh the evidence-backed living persona weekly.
+generateLivingPersona(user.id).catch(e => console.error('[KIWI] Living persona refresh failed on login:', e.message));
 // P6.2 FIX: Chronicle catch-up — if last chronicle is older than 7 days, generate on login
 const latestChronicle = await db.chronicleEntries.findLatest(user.id).catch(() => null);
 const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
@@ -12272,10 +12587,6 @@ generateWeeklyChronicle(user.id)
 .then(() => hookSeedlingEarnings(user.id, 'weekly_chronicle', {}).catch((e) => console.error("[KIWI] silent catch:", e.message)))
 .catch((e) => console.error('[KIWI] Chronicle catch-up failed:', e.message));
 }
-// B13: Almanac unlock check on login
-checkAlmanacUnlocks(user.id).catch((e) =>
-console.error('[KIWI] Almanac check failed:', e.message)
-);
 const { password_hash, stats: _stats, ...safeUser } = user;
 res.json({
 user: safeUser,
@@ -12361,7 +12672,6 @@ guest_expires_at: new Date(Date.now() + 7 * 86400000),
 last_login_at: new Date(),
 });
 await db.userStats.create(user.id);
-await seedAlmanacForUser(user.id);
 // Seed a demo subject and deck with 10 cards
 const demoSubject = await db.subjects.create(user.id, {
 name: 'Demo: Study Skills',
@@ -12562,7 +12872,7 @@ authRouter.get('/me', authenticate, async (req, res) => {
 try {
 const stats = await db.userStats.get(req.user.id);
 const { password_hash, ...safeUser } = req.user;
-res.json({ ...safeUser, stats });
+res.json({ ...safeUser, stats: toPublicStats(stats) });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch user' });
 }
@@ -13879,6 +14189,7 @@ const _firstPage = normalizedCards.slice(0, PAGE_SIZE);
 res.status(201).json({
 session,
 sessionId: session.id,
+server_now: new Date().toISOString(),
 cards: _firstPage,
 total_cards: normalizedCards.length,
 total_due: normalizedCards.length,
@@ -13955,18 +14266,12 @@ try {
 } catch (_urgencyErr) {
   console.error('[KIWI] urgency wrap failed:', _urgencyErr.message);
 }
-let xpEarned = 0;
-if (response === 'good') xpEarned = 5;
-if (response === 'easy') xpEarned = 8;
-if (response === 'hard') xpEarned = 2;
-if (response === 'again') xpEarned = 1;
 let sessionUpdates = {};
 if (response === 'again') sessionUpdates.cards_again = { increment: 1 };
 if (response === 'hard') sessionUpdates.cards_hard = { increment: 1 };
 if (response === 'good') sessionUpdates.cards_good = { increment: 1 };
 if (response === 'easy') sessionUpdates.cards_easy = { increment: 1 };
 sessionUpdates.cards_reviewed = { increment: 1 };
-sessionUpdates.xp_earned = { increment: xpEarned };
 await db.sessions.update(req.user.id, session_id, sessionUpdates);
 await db.cards.update(req.user.id, cardId, {
 interval_days: nextReview.interval_days,
@@ -13986,7 +14291,6 @@ fsrs_difficulty: nextReview.fsrs_difficulty,
 const newMastered = nextReview.stage === 5 && prevStage !== 5 ? 1 : 0;
 const statsUpdates = {
 total_cards_reviewed: { increment: 1 },
-total_xp: { increment: xpEarned },
 };
 if (newMastered) statsUpdates.total_cards_mastered = { increment: 1 };
 await db.userStats.update(req.user.id, statsUpdates);
@@ -14054,7 +14358,6 @@ success: true,
 new_stage: nextReview.stage,
 newStage: nextReview.stage,
 interval_days: nextReview.interval_days,
-xp_earned: xpEarned,
 next_review_at: nextReview.next_review_at,
 // ISSUE-010 FIX: tell frontend to requeue this card at end of session queue
 requeue: response === 'again',
@@ -14063,7 +14366,7 @@ intervalHintHard:  _fmtMs(new Date(_hH.next_review_at).getTime() - _hintNow),
 intervalHintGood:  _fmtMs(new Date(_hG.next_review_at).getTime() - _hintNow),
 intervalHintEasy:  _fmtMs(new Date(_hE.next_review_at).getTime() - _hintNow),
 });
-wsSend(req.user.id, 'card_reviewed', { xp_earned: xpEarned, new_stage: nextReview.stage, card_id: cardId });
+wsSend(req.user.id, 'card_reviewed', { new_stage: nextReview.stage, card_id: cardId });
 } catch (e) {
 res.status(500).json({ error: 'Failed to record response', details: e.message });
 }
@@ -14141,7 +14444,6 @@ studyRouter.post('/end', async (req, res) => {
     res.json(outcome);
     wsSend(req.user.id, 'session_complete', {
       committed: true,
-      xp_earned: outcome.xp_earned,
       cards_reviewed: outcome.cards_reviewed,
       session_quality: outcome.session_quality,
       focus_seed_stage: outcome.focus_seed_stage,
@@ -14166,15 +14468,7 @@ studyRouter.post('/end', async (req, res) => {
           await updateAllBubblesForUser(req.user.id).catch(() => null);
         }
         const sessionFull = await db.sessions.findByIdFull(req.user.id, session_id).catch(() => session);
-        await checkAchievements(req.user.id, {
-          deckId: session.deck_id,
-          session: sessionFull,
-          sessionStart: session.started_at,
-          sessionCompleted: outcome.session_completed,
-          seedGrowth: outcome.session_quality,
-        }).catch(() => null);
         await updateTaskProgress(req.user.id, sessionFull).catch(() => null);
-        await checkAlmanacUnlocks(req.user.id).catch(() => null);
       } catch (backgroundError) {
         console.error('[KIWI] post-session enrichment failed:', backgroundError.message);
       }
@@ -14297,7 +14591,7 @@ try {
 const stats = await db.userStats.get(req.user.id);
 if (!stats) return res.status(404).json({ error: 'Stats not found' });
 const nextStage = computeDaysUntilNextStage(stats);
-res.json({ ...stats, is_streak_frozen: Number(stats?.streak_shields_held) > 0, next_stage_requirements: nextStage });
+res.json({ ...toPublicStats(stats), is_streak_frozen: Number(stats?.streak_shields_held) > 0, next_stage_requirements: nextStage });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch stats' });
 }
@@ -14333,7 +14627,9 @@ const studyHistory = sessions.map(s => {
     cardsReviewed: s.cards_reviewed || 0,
     ksDelta: s.ks_delta || 0,
     duration: s.duration_seconds || 0,
-    xpEarned: s.xp_earned || 0,
+    activeSeconds: s.active_seconds || 0,
+    focusQuality: s.session_quality || 0,
+    meaningful: sessionIsMeaningful(s),
     seedOutcome: s.focus_seed_stage || 'Dormant',
     status: 'completed',
   };
@@ -14360,6 +14656,7 @@ function normaliseExam(e, status) {
     scorePct: e.score_pct != null ? Math.round(e.score_pct) : null,
     ksDelta: e.ks_delta || 0,
     duration: e.duration_seconds || 0,
+    timedOut: e.timed_out === true,
     status,
   };
 }
@@ -14518,7 +14815,13 @@ time_limit_seconds = 1800,
 theory_percent = null,
 customize_balance = false,
 broad_coverage = false,
+difficulty_level = null,
 } = body;
+if (difficulty_level != null && difficulty_level !== '' && !['easy', 'hard', 'very_hard', 'hell'].includes(difficulty_level)) {
+return res.status(400).json({ error: 'difficulty_level must be easy, hard, very_hard, hell, or omitted' });
+}
+const selectedDifficulty = ['easy', 'hard', 'very_hard', 'hell'].includes(difficulty_level)
+  ? difficulty_level : null;
 if (!subject_id) return res.status(400).json({ error: 'subject_id required' });
 const targetDeckIds =
 deck_ids && deck_ids.length > 0
@@ -14673,6 +14976,7 @@ question_count: count,
 card_range,
 time_limit_seconds,
 status: 'ready',
+difficulty_level: selectedDifficulty,
 });
 
 // FIX: strip {{c1::answer}} cloze syntax before sending to AI — raw cloze
@@ -14695,7 +14999,7 @@ const _cbtNotes       = notes;
 const _cbtCount       = count;
 const _cbtCards       = selectedCards;
 const _cbtBody        = body;
-const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? Math.max(0, Math.min(100, Number(theory_percent))) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage };
+const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? Math.max(0, Math.min(100, Number(theory_percent))) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage, difficulty_level: selectedDifficulty };
 setImmediate(async () => {
   try {
     let questions;
@@ -14740,7 +15044,7 @@ setImmediate(async () => {
         const tNeeded = theoryN - theoryQs.length;
         console.log(`[KIWI CBT] Theory pass 1: ${theoryQs.length}/${theoryN} — completing ${tNeeded}`);
         try {
-          const tCompText = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded, 'theory');
+          const tCompText = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded, 'theory', _cbtOptions.difficulty_level);
           if (tCompText) {
             const tCompQs = parseCBTResponse(tCompText, _cbtSessionId, _cbtCards);
             tCompQs.forEach(q => { q.question_type = 'Theory'; });
@@ -14753,7 +15057,7 @@ setImmediate(async () => {
           const tNeeded2 = theoryN - theoryQs.length;
           console.log(`[KIWI CBT] Theory pass 2: ${theoryQs.length}/${theoryN} — completing ${tNeeded2}`);
           try {
-            const tComp2Text = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded2, 'theory');
+            const tComp2Text = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded2, 'theory', _cbtOptions.difficulty_level);
             if (tComp2Text) {
               const tComp2Qs = parseCBTResponse(tComp2Text, _cbtSessionId, _cbtCards);
               tComp2Qs.forEach(q => { q.question_type = 'Theory'; });
@@ -14770,7 +15074,7 @@ setImmediate(async () => {
         const cNeeded = calcN - calcQs.length;
         console.log(`[KIWI CBT] Calc pass 1: ${calcQs.length}/${calcN} — completing ${cNeeded}`);
         try {
-          const cCompText = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded, 'calculation');
+          const cCompText = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded, 'calculation', _cbtOptions.difficulty_level);
           if (cCompText) {
             const cCompQs = parseCBTResponse(cCompText, _cbtSessionId, _cbtCards);
             cCompQs.forEach(q => { q.question_type = 'Calculation'; });
@@ -14783,7 +15087,7 @@ setImmediate(async () => {
           const cNeeded2 = calcN - calcQs.length;
           console.log(`[KIWI CBT] Calc pass 2: ${calcQs.length}/${calcN} — completing ${cNeeded2}`);
           try {
-            const cComp2Text = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded2, 'calculation');
+            const cComp2Text = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded2, 'calculation', _cbtOptions.difficulty_level);
             if (cComp2Text) {
               const cComp2Qs = parseCBTResponse(cComp2Text, _cbtSessionId, _cbtCards);
               cComp2Qs.forEach(q => { q.question_type = 'Calculation'; });
@@ -14818,7 +15122,7 @@ setImmediate(async () => {
         const needed = _cbtCount - questions.length;
         console.log('[KIWI CBT] First pass: ' + questions.length + '/' + _cbtCount + ' — issuing completion prompt for ' + needed + ' missing');
         try {
-          const completionText = await generateCBTCompletionQuestions(_cbtNotes, questions, needed);
+          const completionText = await generateCBTCompletionQuestions(_cbtNotes, questions, needed, null, _cbtOptions.difficulty_level);
           if (completionText) {
             const completionQs = parseCBTResponse(completionText, _cbtSessionId, _cbtCards);
             const offset = questions.length;
@@ -14831,7 +15135,7 @@ setImmediate(async () => {
           const stillNeeded = _cbtCount - questions.length;
           console.log('[KIWI CBT] After 2 passes: ' + questions.length + '/' + _cbtCount + ' — attempting 3rd pass for ' + stillNeeded + ' missing');
           try {
-            const pass3Text = await generateCBTCompletionQuestions(_cbtNotes, questions, stillNeeded);
+            const pass3Text = await generateCBTCompletionQuestions(_cbtNotes, questions, stillNeeded, null, _cbtOptions.difficulty_level);
             if (pass3Text) {
               const pass3Qs = parseCBTResponse(pass3Text, _cbtSessionId, _cbtCards);
               const offset3 = questions.length;
@@ -14921,7 +15225,11 @@ try {
     const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
     await db.brainPressure.set(req.user.id, exam.subject_id, {
       pressure_score: Math.min(100, cur + 15),
-      intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
+      intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
+      sources: {
+        ...(bp?.sources || {}),
+        manual_exam_forfeit: (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15,
+      },
     }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 
     // KS-FORFEIT-FIX: treat all exam questions as wrong answers so cards get downgraded.
@@ -15029,7 +15337,11 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
       const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
       await db.brainPressure.set(userId, exam.subject_id, {
         pressure_score: Math.min(100, cur + 15),
-        intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
+        intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
+        sources: {
+          ...(bp?.sources || {}),
+          manual_exam_forfeit: (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15,
+        },
       }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 
       // KS-FORFEIT-FIX: treat all exam questions as wrong answers so cards get downgraded
@@ -15137,11 +15449,19 @@ res.status(500).json({ error: 'Failed to fetch exam' });
 
 examRouter.post('/:id/start', async (req, res) => {
 try {
-const exam = await db.examSessions.update(req.user.id, req.params.id, {
+const existing = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+if (!existing) return res.status(404).json({ error: 'Exam not found' });
+if (!['ready', 'active'].includes(existing.status)) {
+return res.status(409).json({ error: `Exam is already ${existing.status}` });
+}
+const exam = existing.status === 'active' && existing.started_at
+? existing
+: await db.examSessions.update(req.user.id, req.params.id, {
 status: 'active',
 started_at: new Date(),
 });
-res.json(exam);
+const { questions: _questions, ...safeExam } = exam;
+res.json({ ...safeExam, server_now: new Date().toISOString() });
 } catch (e) {
 res.status(500).json({ error: 'Failed to start exam' });
 }
@@ -15176,48 +15496,42 @@ res.status(500).json({ error: 'Failed to fetch question' });
 });
 
 examRouter.post('/:id/pre-mark', async (req, res) => {
-// BUG-09 progressive pre-marking: process a single question answer in the background
-// while the user is still taking the exam. On final submit, already-processed
-// questions are skipped, making the submit response near-instant.
-res.json({ ok: true }); // always respond immediately
-setImmediate(async () => {
-  try {
-    const { question_number, selected_option } = req.body || {};
-    if (question_number == null || !selected_option) return;
-    const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id).catch(() => null);
-    if (!exam || !['active', 'ready'].includes(exam.status)) return;
-    const q = exam.questions.find(qq => String(qq.question_number) === String(question_number));
-    if (!q) return;
-    // Stamp is_correct so processExamVerification can read it
-    q.is_correct = selected_option === q.correct_answer;
-    q.selected_option = selected_option;
-    const miniExam = { ...exam, questions: [q] };
-    await processExamVerification(req.user.id, miniExam).catch(() => null);
-    await applyExamSRSFeedback(req.user.id, miniExam).catch(() => null);
-    // Record in cache so submit can skip this question
-    if (!_preMarkCache.has(req.params.id)) _preMarkCache.set(req.params.id, new Map());
-    _preMarkCache.get(req.params.id).set(String(question_number), {
-      answer: selected_option,
-      processed: true,
-    });
-    // Auto-expire cache entry after 30 minutes to prevent memory leak
-    setTimeout(() => {
-      const m = _preMarkCache.get(req.params.id);
-      if (m) { m.delete(String(question_number)); if (m.size === 0) _preMarkCache.delete(req.params.id); }
-    }, 30 * 60 * 1000);
-  } catch (e) {
-    console.error('[KIWI] pre-mark background failed:', e.message);
+try {
+  const { question_number, selected_option, time_spent_seconds = 0 } = req.body || {};
+  if (question_number == null || !/^[A-D]$/.test(String(selected_option || ''))) {
+    return res.status(400).json({ error: 'question_number and selected_option A-D are required' });
   }
-});
+  const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+  if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (exam.status !== 'active' || !exam.started_at) {
+    return res.status(409).json({ error: 'Exam must be active before an answer can be saved' });
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(exam.started_at).getTime()) / 1000));
+  const timeLimitSeconds = Math.max(1, Number(exam.time_limit_seconds) || 1800);
+  if (elapsedSeconds > timeLimitSeconds + 15) {
+    return res.status(409).json({ error: 'Exam time has expired', timed_out: true });
+  }
+  const question = exam.questions.find((item) => String(item.question_number) === String(question_number));
+  if (!question) return res.status(404).json({ error: 'Question not found' });
+  // Save the current choice only. Card verification, SRS, KS, credentials, and
+  // pressure must change exactly once, after the whole exam is submitted.
+  await db.examQuestions.update(req.user.id, question.id, {
+    selected_option: String(selected_option),
+    time_spent_seconds: Math.max(0, Number(time_spent_seconds) || 0),
+  });
+  res.json({ ok: true, server_now: new Date().toISOString() });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to save exam answer', details: e.message });
+}
 });
 
 examRouter.post('/:id/submit', async (req, res) => {
 try {
-const { answers, ended_early = false } = req.body;
-if (!answers || !Array.isArray(answers))
+const { answers: submittedAnswers, ended_early = false } = req.body;
+if (!submittedAnswers || !Array.isArray(submittedAnswers))
 return res.status(400).json({ error: 'answers array required' });
 // Validate answer shapes — null/undefined selected_option is allowed (unanswered = wrong)
-for (const a of answers) {
+for (const a of submittedAnswers) {
 const qn = a.question_number ?? a.questionId;
 if (qn === undefined) {
 return res.status(400).json({ error: 'Each answer must have question_number or questionId' });
@@ -15232,13 +15546,22 @@ return res.status(400).json({ error: 'selected_option must be a single letter A-
 }
 const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
-// P3-FIX: Accept both 'active' and 'ready' — frontend may not have called /start first.
-// If still in 'ready' state, auto-transition here so the exam submits cleanly.
-if (!['active', 'ready'].includes(exam.status))
-  return res.status(400).json({ error: 'Exam not active' });
-if (exam.status === 'ready') {
-  await db.examSessions.update(req.user.id, req.params.id, { status: 'active' });
+if (exam.status !== 'active' || !exam.started_at) {
+  return res.status(409).json({ error: 'Exam must be started before it can be submitted' });
 }
+const submittedAt = new Date();
+const elapsedSeconds = Math.max(0, Math.floor((submittedAt - new Date(exam.started_at)) / 1000));
+const timeLimitSeconds = Math.max(1, Number(exam.time_limit_seconds) || 1800);
+const timedOut = elapsedSeconds > timeLimitSeconds + 15;
+// The client gets a small network grace period. Beyond it, only choices already
+// saved by pre-mark count; a late request cannot add or change answers.
+const answers = timedOut
+  ? exam.questions.map((question) => ({
+      question_number: question.question_number,
+      selected_option: question.selected_option || null,
+      time_spent_seconds: question.time_spent_seconds || 0,
+    }))
+  : submittedAnswers;
 // PERF-FIX: preKsScore is only needed for the background ks_delta calculation.
 // Computing it here (3+ DB queries: decks + all cards + all card_states) was
 // the primary cause of "Exam submission timed out" — it sat on the critical
@@ -15250,7 +15573,7 @@ const questionResults = [];
 // PERF: score all questions synchronously first (no DB), then batch-write in parallel
 const _dbUpdatePromises = [];
 for (const q of exam.questions) {
-const answer = answers.find((a) => (a.question_number ?? a.questionId) === q.question_number);
+const answer = answers.find((a) => String(a.question_number ?? a.questionId) === String(q.question_number));
 const selectedOption = answer ? (answer.selected_option ?? answer.selectedOptionId) : null;
 const isCorrect = answer && selectedOption === q.correct_answer;
 // P3-FIX: stamp is_correct onto the in-memory question object so that
@@ -15277,14 +15600,15 @@ time_spent_seconds: answer.time_spent_seconds || 0,
 // They do not affect the synchronous response payload (questionResults is already
 // built in-memory above), so there is no reason to block res.json() on them.
 const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
-const now = new Date();
-const durationSec = exam.started_at ? Math.floor((now - new Date(exam.started_at)) / 1000) : 0;
+const now = submittedAt;
+const durationSec = Math.min(elapsedSeconds, timeLimitSeconds);
 const completedExam = await db.examSessions.update(req.user.id, req.params.id, {
 status: 'completed',
 score_pct: scorePct,
 correct_answers: correct,
 total_questions: total,
-ended_early,
+ended_early: timedOut ? false : ended_early,
+timed_out: timedOut,
 completed_at: now,
 duration_seconds: durationSec,
 });
@@ -15294,7 +15618,7 @@ duration_seconds: durationSec,
     // Build question_review synchronously (only needs exam.questions + answers)
     const question_review = exam.questions.map((q) => {
       const userAnswer = answers.find(
-        (a) => (a.question_number ?? a.questionId) === q.question_number
+        (a) => String(a.question_number ?? a.questionId) === String(q.question_number)
       );
       const selected = userAnswer ? (userAnswer.selected_option ?? userAnswer.selectedOptionId) : null;
       return {
@@ -15323,6 +15647,7 @@ duration_seconds: durationSec,
       correct_answers: correct,
       total_questions: total,
       duration_seconds: durationSec,
+      timed_out: timedOut,
       question_results: questionResults,
       question_review,
       verification: null,
@@ -15351,21 +15676,10 @@ duration_seconds: durationSec,
         Promise.all(_dbUpdatePromises), // persist selected_option / is_correct per question
       ]);
       const preKsScore = (_preKs && _preKs.score) || 0;
-      // BUG-09 / Progressive Pre-marking: skip questions already processed by /pre-mark
-      const _preMarks = _preMarkCache.get(req.params.id) || new Map();
-      const _questionsToProcess = _debriefExam.questions.filter(q => {
-        const _sub = answers.find(a => (a.question_number ?? a.questionId) === q.question_number);
-        const _ans = _sub ? (_sub.selected_option ?? _sub.selectedOptionId) : null;
-        const pm = _preMarks.get(String(q.question_number));
-        return !(pm && pm.processed && pm.answer === _ans);
-      });
-      _preMarkCache.delete(req.params.id);
       let _bgVerification = null, _bgReclassified = [], _bgCredential = null, _bgRegression = null;
       let _bgKsDelta = 0, _bgCredentialEarned = false, _bgNewAchievements = [], _bgAlmanacUnlocks = [];
       try {
-        const _examForSrs = _questionsToProcess.length > 0
-          ? { ..._debriefExam, questions: _questionsToProcess }
-          : _debriefExam;
+        const _examForSrs = _debriefExam;
         // Phase 2: Stage 5 verification
         _bgVerification = await processExamVerification(_debriefUserId, _examForSrs)
           .catch((e) => { console.error('[KIWI] processExamVerification failed:', e.message); return null; });
@@ -15460,16 +15774,8 @@ duration_seconds: durationSec,
         await db.examSessions.update(_debriefUserId, _debriefExam.id, { ks_delta: _bgKsDelta })
           .catch((e) => console.error('[KIWI] Failed to persist exam ks_delta:', e.message));
         _bgCredentialEarned = !!(_bgCredential && _bgCredential.tier && _bgCredential.newlyEarned);
-        _bgNewAchievements = await checkAchievements(_debriefUserId, {
-          exam: completedExam,
-          subjectId: _debriefExam.subject_id,
-        }).catch((e) => { console.error('[KIWI] checkAchievements failed:', e.message); return []; });
         await updateTaskProgress(_debriefUserId, null, completedExam)
           .catch((e) => console.error('[KIWI] updateTaskProgress failed:', e.message));
-        _bgAlmanacUnlocks = await checkAlmanacUnlocks(_debriefUserId).catch((e) => {
-          console.error('[KIWI] Almanac check failed:', e.message);
-          return [];
-        });
         await sendTelegramExamResult(_debriefUserId, _debriefExam.subject_id, _debriefScorePct, _debriefScorePct >= 70)
           .catch((e) => console.error("[KIWI] silent catch:", e.message));
         {
@@ -15488,10 +15794,8 @@ duration_seconds: durationSec,
           credential: _bgCredential,
           regression_warning: _bgRegression,
           reclassification_alert_text: (_bgRegression && _bgRegression.message) || null,
-          new_achievements: _bgNewAchievements,
           ksDelta: _bgKsDelta,
           credentialEarned: _bgCredentialEarned,
-          new_almanac_unlocks: _bgAlmanacUnlocks,
           passed: _debriefScorePct >= 70,
         });
       } catch (_srsErr) {
@@ -15999,8 +16303,6 @@ is_public: true,
 });
 // Mark the original deck as public
 await db.decks.update(req.user.id, deck_id, { is_public: true });
-// Check almanac — publishing a deck may unlock Community Spirit entries
-await checkAlmanacUnlocks(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 res.status(201).json({ message: 'Deck published to community', community_deck: communityEntry });
 } catch (e) {
 res.status(500).json({ error: 'Failed to publish deck', details: e.message });
@@ -16065,7 +16367,7 @@ db.users.findAll(),
 db.userStats.findAll(),
 ]);
 const statsMap = new Map(allStats.map(s => [s.userId, s]));
-const result = users.map((u) => ({ ...u, password_hash: undefined, stats: statsMap.get(u.id) || null }));
+const result = users.map((u) => ({ ...u, password_hash: undefined, stats: toPublicStats(statsMap.get(u.id) || null) }));
 res.json(result);
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch users' });
@@ -16326,10 +16628,6 @@ adminRouter.get('/health', async (req, res) => {
   checks.push({ id: 'ks_queue',       label: 'KS recompute queue',    status: 'pass', value: `${_ksQueue.size} pending item(s)` });
   checks.push({ id: 'session_queues', label: 'Active session queues', status: 'pass', value: `${_sessionQueues.size} active session(s)` });
   checks.push({ id: 'job_store',      label: 'In-memory job store',   status: 'pass', value: `${_jobStore.size} job(s)` });
-  try {
-    checks.push({ id: 'premark_cache', label: 'Pre-mark exam cache', status: 'pass', value: `${_preMarkCache.size} exam(s)` });
-  } catch(_) {}
-
   // 6 — Gemini AI key pool
   try {
     const geminiTotal    = _geminiKeyObjs.length;
@@ -16778,6 +17076,7 @@ name: s.subject_name,
 knowledgeScore: s.knowledge_score,
 pressure: s.pressure_score,
 fruits: s.fruit_count || 0,
+rareFlora: s.rare_flora === true,
 cardCount: s.card_count,
 // P5.1 FIX: stateClass now comes directly from buildBiomeData (not remapped here)
 stateClass: s.stateClass || 'zone-growing',
@@ -16859,7 +17158,7 @@ if (checkAIRateLimit(req.user.id, 'daily_invitations', 10))
 return res
 .status(429)
 .json({ error: 'Rate limit: max 10 Daily Invitation requests per hour' });
-const invitations = await getDailyInvitations(req.user.id);
+const invitations = await getDailyInvitations(req.user.id, req.query.local_date, req.query.timezone_offset_minutes);
 res.json({ invitations });
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate invitations', details: e.message });
@@ -16872,7 +17171,7 @@ if (checkAIRateLimit(req.user.id, 'daily_invitations', 10))
 return res
 .status(429)
 .json({ error: 'Rate limit: max 10 Daily Invitation requests per hour' });
-const invitations = await getDailyInvitations(req.user.id);
+const invitations = await getDailyInvitations(req.user.id, req.body?.local_date, req.body?.timezone_offset_minutes);
 res.json({ invitations });
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate invitations', details: e.message });
@@ -16881,9 +17180,9 @@ res.status(500).json({ error: 'Failed to generate invitations', details: e.messa
 
 ritualRouter.post('/dismiss-invitation', async (req, res) => {
 try {
-const { index } = req.body;
+const { index, local_date } = req.body;
 if (index === undefined) return res.status(400).json({ error: 'index required' });
-const result = await dismissInvitation(req.user.id, parseInt(index));
+const result = await dismissInvitation(req.user.id, parseInt(index), local_date);
 // L-5 FIX: Return spec-mandated acknowledgement string
 res.json({ ...result, message: "Noted — The Brain will not offer this again today." });
 } catch (e) {
@@ -16992,19 +17291,158 @@ narrativeRouter.use(authenticate);
 
 narrativeRouter.use(reckoningLockout);
 
+async function generateLivingPersona(userId, timezoneOffsetMinutes = 0) {
+const safeTimezoneOffset = Math.max(-840, Math.min(840, Number(timezoneOffsetMinutes) || 0));
+const toLocalClock = (value) => new Date(new Date(value).getTime() - safeTimezoneOffset * 60000);
+const now = new Date();
+const weekStart = new Date(now);
+weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+weekStart.setHours(0, 0, 0, 0);
+const weekKey = weekStart.toISOString().slice(0, 10);
+const localDayKey = toLocalClock(now).toISOString().slice(0, 10);
+const personaCacheKey = `${localDayKey}_tz${safeTimezoneOffset}`;
+const cached = await db.dailyRitualCache.get(userId, 'living_persona', personaCacheKey).catch(() => null);
+if (cached?.data?.name) return cached.data;
+
+const since = new Date(Date.now() - 28 * 86400000);
+const [stats, sessionResult, states, subjects, exams, pressures, reviews, latestChronicle] = await Promise.all([
+db.userStats.get(userId),
+db.sessions.findMany(userId, { session_completed: true, started_at_gte: since }, { limit: 500 }),
+db.cardStates.findByUser(userId),
+db.subjects.findManyWithDecks(userId),
+db.examSessions.findMany(userId, { started_at_gte: since }, { limit: 200 }).catch(() => []),
+db.brainPressure.findByUser(userId).catch(() => []),
+db.reviewLogs.findByUser(userId, since).catch(() => []),
+db.chronicleEntries.findLatest(userId).catch(() => null),
+]);
+const completedInteractions = sessionResult?.sessions || [];
+const sessions = completedInteractions.filter(sessionIsMeaningful);
+if (sessions.length < 3) {
+return {
+ready: false,
+sessions_observed: sessions.length,
+sessions_needed: 3 - sessions.length,
+short_interactions_observed: completedInteractions.length - sessions.length,
+message: `KIWI needs ${3 - sessions.length} more meaningful session${3 - sessions.length === 1 ? '' : 's'} before it can describe a real pattern. A meaningful session includes at least five distinct cards and five active minutes.`,
+};
+}
+
+const completedExams = (Array.isArray(exams) ? exams : exams?.exams || []).filter((e) => e.status === 'completed' || e.score_pct != null);
+const hourCounts = {};
+const dayCounts = {};
+for (const session of sessions) {
+const d = toLocalClock(session.started_at);
+hourCounts[d.getUTCHours()] = (hourCounts[d.getUTCHours()] || 0) + 1;
+const day = d.toISOString().slice(0, 10);
+dayCounts[day] = (dayCounts[day] || 0) + 1;
+}
+const peakHour = Number(Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1);
+const subjectEvidence = [];
+for (const subject of subjects) {
+const ks = await computeKnowledgeScore(userId, subject.id, states).catch(() => ({ score: 0 }));
+const pressure = pressures.find((p) => p.subject_id === subject.id);
+const deckIds = new Set((subject.decks || []).map((d) => d.id));
+const subjectSessions = sessions.filter((s) => s.subject_id === subject.id || deckIds.has(s.deck_id));
+const subjectStates = states.filter((s) => s.subject_id === subject.id);
+const subjectExams = completedExams.filter((e) => e.subject_id === subject.id);
+subjectEvidence.push({
+id: subject.id,
+name: subject.name,
+knowledge_score: Number(ks.score || 0).toFixed(1),
+sessions_28d: subjectSessions.length,
+avg_focus_quality: subjectSessions.length ? Math.round(subjectSessions.reduce((n, s) => n + (Number(s.session_quality) || 0), 0) / subjectSessions.length) : 0,
+again_responses: subjectSessions.reduce((n, s) => n + (Number(s.cards_again) || 0), 0),
+fruiting_sessions: subjectSessions.filter((s) => s.fruiting_achieved).length,
+problem_cards: subjectStates.filter((s) => ['GHOST','FRAGILE','STUCK','AVOIDED','DANGEROUS'].includes(s.state)).length,
+verified_cards: subjectStates.filter((s) => s.verified || s.state === 'VERIFIED').length,
+pressure: Number(pressure?.pressure_score) || 0,
+exam_scores: subjectExams.map((e) => Math.round(Number(e.score_pct ?? e.score_percentage) || 0)),
+});
+}
+const evidence = {
+window_days: 28,
+meaningful_sessions: sessions.length,
+short_interactions: completedInteractions.length - sessions.length,
+active_days: Object.keys(dayCounts).length,
+average_session_minutes: Math.round(sessions.reduce((n, s) => n + (Number(s.duration_seconds) || 0), 0) / Math.max(1, sessions.length) / 60),
+average_focus_quality: Math.round(sessions.reduce((n, s) => n + (Number(s.session_quality) || 0), 0) / Math.max(1, sessions.length)),
+peak_study_hour: peakHour >= 0 ? `${String(peakHour).padStart(2, '0')}:00` : 'unknown',
+again_responses: reviews.filter((r) => r.response === 'again').length,
+hard_responses: reviews.filter((r) => r.response === 'hard').length,
+current_streak: Number(stats?.current_streak) || 0,
+subjects: subjectEvidence,
+chronicle_excerpt: String(latestChronicle?.narrative || '').slice(0, 700),
+};
+
+let profile;
+try {
+const prompt = `
+ROLE
+You are KIWI's learning-pattern observer. Create a unique, evolving persona from the learner's verified 28-day data. You are not choosing from a list. You are naming the pattern you can actually prove.
+
+DATA
+${JSON.stringify(evidence, null, 2)}
+
+OUTPUT RULES
+- Return valid JSON only.
+- name: an original 2-5 word persona name that fits this learner, not a stock archetype.
+- emoji: one fitting emoji.
+- essence: 2-3 sentences describing the dominant study pattern without pretending it is permanent.
+- evidence: exactly 3 short statements, each naming a real number and subject where possible.
+- strengths: exactly 2 data-backed strengths.
+- friction: exactly 2 data-backed weaknesses or avoidance patterns.
+- experiments: exactly 2 specific seven-day experiments with measurable actions.
+- evolution: one sentence explaining how this persona changed or what KIWI needs to watch next.
+- confidence: integer 0-100 based on data quantity and consistency.
+- Never mention XP, levels, personality diagnosis, or facts absent from the data.
+
+FORMAT
+{"name":"...","emoji":"...","essence":"...","evidence":["..."],"strengths":["..."],"friction":["..."],"experiments":["..."],"evolution":"...","confidence":75}
+`;
+const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
+const raw = result.response.text();
+const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
+profile = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw.replace(/```json|```/g, '').trim());
+} catch (e) {
+const strongest = [...subjectEvidence].sort((a, b) => b.sessions_28d - a.sessions_28d)[0];
+const weakest = [...subjectEvidence].sort((a, b) => b.pressure - a.pressure || a.knowledge_score - b.knowledge_score)[0];
+profile = {
+name: strongest ? `${strongest.name} Builder` : 'Emerging Pattern', emoji: '🌿',
+essence: `Across ${sessions.length} sessions, your current pattern is becoming visible. KIWI will rename it as your behavior changes.`,
+evidence: [`${sessions.length} sessions across ${Object.keys(dayCounts).length} active days`, `${evidence.average_focus_quality}/100 average Focus Quality`, strongest ? `${strongest.sessions_28d} sessions in ${strongest.name}` : 'Subject pattern still forming'],
+strengths: [strongest ? `You return most often to ${strongest.name}.` : 'You have begun building a repeatable study record.', `${states.filter((s) => s.verified).length} cards are exam-verified.`],
+friction: [weakest ? `${weakest.name} carries ${weakest.pressure} pressure.` : 'No strong friction signal yet.', `${evidence.again_responses} Again responses show where recall still breaks.`],
+experiments: [weakest ? `Complete two focused sessions in ${weakest.name} this week.` : 'Complete three focused sessions this week.', 'Take one subject exam after reviewing its weakest cards.'],
+evolution: 'KIWI will update this identity as new sessions and exam evidence accumulate.', confidence: Math.min(85, 35 + sessions.length * 3),
+};
+}
+profile = {
+ready: true,
+...profile,
+confidence: Math.max(0, Math.min(100, Number(profile.confidence) || 50)),
+observed_window: {
+start: since.toISOString(),
+end: now.toISOString(),
+meaningful_sessions: sessions.length,
+short_interactions: completedInteractions.length - sessions.length,
+},
+generated_at: now.toISOString(),
+};
+await db.dailyRitualCache.set(userId, 'living_persona', personaCacheKey, { data: profile }).catch(() => {});
+await db.userPersona.create(userId, {
+persona_code: `living_${weekKey}`,
+persona_label: String(profile.name || 'Living Persona').slice(0, 120),
+persona_icon: String(profile.emoji || '🌿').slice(0, 16),
+persona_description: String(profile.essence || '').slice(0, 1000),
+assigned_week_start: weekStart,
+}).catch(() => {});
+return profile;
+}
+
 narrativeRouter.get('/chronicle', async (req, res) => {
 try {
 const entries = await db.chronicleEntries.findByUser(req.user.id);
 res.json(entries);
-// Auto-regenerate in background if latest entry is >24h old (stale data fix)
-// so next page load gets fresh Chronicle without user needing to click Generate.
-const latest = Array.isArray(entries) ? entries[0] : null;
-if (latest) {
-  const ageMs = Date.now() - new Date(latest.created_at || latest.updated_at || 0).getTime();
-  if (ageMs > 24 * 60 * 60 * 1000) {
-    generateWeeklyChronicle(req.user.id, false).catch(() => {}); // fire-and-forget
-  }
-}
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch chronicle' });
 }
@@ -17012,11 +17450,13 @@ res.status(500).json({ error: 'Failed to fetch chronicle' });
 
 narrativeRouter.post('/chronicle/generate', async (req, res) => {
 try {
+const force = req.body?.force === true;
 // BUG-8 FIX: only award seedlings when a NEW entry is actually created
 const existingBefore = await db.chronicleEntries.findLatest(req.user.id).catch(() => null);
-// force=true: bypass cache, delete existing entry, generate fresh narrative for this week
-const force = req.body?.force === true || req.query?.force === 'true';
-const entry = await generateWeeklyChronicle(req.user.id, force);
+// One canonical Chronicle per week. Regeneration does not delete the current
+// entry, change its identity, or mint the same weekly reward more than once.
+const entry = await generateWeeklyChronicle(req.user.id, force, req.body?.timezone_offset_minutes);
+if (!entry) return res.status(429).json({ error: 'Chronicle limit reached. Try again later.' });
 const isNew = !existingBefore || existingBefore.id !== entry?.id;
 if (isNew) await hookSeedlingEarnings(req.user.id, 'weekly_chronicle', {});
 res.json(entry);
@@ -17026,105 +17466,50 @@ res.status(500).json({ error: 'Chronicle generation failed', details: e.message 
 });
 
 narrativeRouter.get('/almanac', async (req, res) => {
-try {
-await seedAlmanacForUser(req.user.id);
-// 070-A FIX: checkAlmanacUnlocks was never called here — entries were seeded as locked
-// and never evaluated on page load. Unlocks only fired from session/exam end events.
-// Now we check on every almanac load so already-met conditions surface immediately.
-await checkAlmanacUnlocks(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-const entries = await db.almanacEntries.findByUser(req.user.id);
-// [Fix 3.6] Frontend accesses rawAlmanacData.chapters — wrap array in object.
-res.json({ chapters: entries });
-} catch (e) {
-res.status(500).json({ error: 'Failed to fetch almanac' });
-}
+res.status(410).json({
+error: 'The Almanac has been retired.',
+replacement: '/api/achievements',
+message: 'Living Achievements now appear inside Progress.',
+});
 });
 
 narrativeRouter.get('/persona', async (req, res) => {
 try {
-const persona = await generateWeeklyPersona(req.user.id);
-
-    // P6.6 FIX: Reshape response to match frontend expectation:
-    // Frontend renderPersona() destructures { currentPersona, weeklyUpdate, allPersonas }
-    // Backend was returning a flat persona document — persona was always undefined.
-    const ALL_PERSONAS = [
-      {
-        code: 'the_tide',
-        label: 'The Tide',
-        emoji: '🌊',
-        description:
-          'You ebb and flow. Intense stretches followed by quiet — your rhythm is tidal, not daily.',
-      },
-      {
-        code: 'the_storm',
-        label: 'The Storm',
-        emoji: '⛈️',
-        description:
-          'You arrive suddenly and study hard. Sessions are intense, frequent, then gone — until the next front.',
-      },
-      {
-        code: 'the_dawn',
-        label: 'The Dawn',
-        emoji: '🌄',
-        description:
-          'You study in the early hours before the world wakes. Your focus is deep and solitary.',
-      },
-      {
-        code: 'the_night',
-        label: 'The Night',
-        emoji: '🌙',
-        description: 'The night fuels your mind. You learn when the world sleeps.',
-      },
-      {
-        code: 'the_specialist',
-        label: 'The Specialist',
-        emoji: '🔬',
-        description: 'One subject, one obsession. You go deep rather than wide.',
-      },
-      {
-        code: 'the_resilient',
-        label: 'The Resilient',
-        emoji: '🌱',
-        description:
-          'You stumble, but you never stop. Reckoning, gaps, hard weeks — you return every time.',
-      },
-      {
-        code: 'the_honest_one',
-        label: 'The Honest One',
-        emoji: '🪞',
-        description:
-          'You press Again when you should. No inflated streaks, no easy ratings. Just truth.',
-      },
-      {
-        code: 'the_avoider',
-        label: 'The Avoider',
-        emoji: '🌫️',
-        description:
-          'Certain cards keep getting pushed to the bottom. The pattern is known — the question is when you face it.',
-      },
-    ];
-
-    res.json({
-      currentPersona: persona
-        ? {
-            id: persona.persona_code,
-            name: persona.persona_label,
-            emoji: persona.persona_icon,
-            description: persona.persona_description,
-            detectedAt: persona.assigned_week_start,
-          }
-        : null,
-      weeklyUpdate: null, // Reserved for future use
-      allPersonas: ALL_PERSONAS.map((p) => ({
-        id: p.code,
-        name: p.label,
-        emoji: p.emoji,
-        description: p.description,
-      })),
-    });
+const profile = await generateLivingPersona(req.user.id);
+res.json({
+currentPersona: profile?.ready ? {
+id: `living_${profile.generated_at}`,
+name: profile.name,
+emoji: profile.emoji,
+description: profile.essence,
+detectedAt: profile.generated_at,
+confidence: profile.confidence,
+evidence: profile.evidence || [],
+strengths: profile.strengths || [],
+friction: profile.friction || [],
+experiments: profile.experiments || [],
+evolution: profile.evolution || '',
+observedWindow: profile.observed_window,
+} : null,
+readiness: profile?.ready ? null : profile,
+weeklyUpdate: profile?.ready ? profile.evolution : null,
+allPersonas: [],
+});
 
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate persona', details: e.message });
+}
+});
+
+narrativeRouter.get('/living-profile', async (req, res) => {
+try {
+const [persona, chronicle] = await Promise.all([
+generateLivingPersona(req.user.id, req.query.timezone_offset_minutes),
+db.chronicleEntries.findByUser(req.user.id),
+]);
+res.json({ persona, chronicle: Array.isArray(chronicle) ? chronicle : [] });
+} catch (e) {
+res.status(500).json({ error: 'Failed to build living profile', details: e.message });
 }
 });
 
@@ -17252,12 +17637,12 @@ You are KIWI's Reckoning Debrief Voice — unflinching, honest, but ultimately s
 RECKONING DATA
 Subject pressure had reached L4 (threshold: 20).
 Score: ${scorePct}% (${correct}/${total} correct)
-Outcome: ${survived ? 'SURVIVED — pressure reset' : 'FAILED — pressure remains elevated'}
+Outcome: ${survived ? 'SURVIVED — seven-day pressure relief applied' : 'FAILED — pressure remains elevated'}
 Incorrect questions: ${wrong.length}
 RULES
 - Write exactly 3 paragraphs.
 - Paragraph 1: Honest assessment. Name the outcome directly — survived or not. Reference the pressure that caused this.
-- Paragraph 2: What the score means for the ecosystem. If survived: what resets, what remains fragile. If failed: what the ongoing pressure means.
+- Paragraph 2: What the score means for the ecosystem. If survived: explain the seven-day relief without claiming the underlying weak cards vanished. If failed: what the ongoing pressure means.
 - Paragraph 3: One precise instruction — the single most important thing to do next.
 - Tone: Unflinching but not punitive. The forest speaks plainly.
 - Total length: 120-200 words.
@@ -17269,8 +17654,8 @@ Return only the debrief text.`;
         // Fallback: structured static debrief
         const survived = scorePct >= 70;
         reckoningDebriefText =
-          `The Reckoning is complete. You scored ${scorePct}% — ${survived ? 'enough to reset the pressure and return to the ecosystem' : 'not enough to clear the pressure. The forest remains under strain'}.` +
-          `\n\n${survived ? 'The flagged cards have been reclassified based on your performance. Pressure resets to zero. The Biome breathes again.' : 'The pressure does not reset below L4 threshold. The flagged cards remain. Another Reckoning will come.'}` +
+          `The Reckoning is complete. You scored ${scorePct}% — ${survived ? 'enough to lift the lockout and begin a seven-day recovery window' : 'not enough to clear the pressure. The forest remains under strain'}.` +
+          `\n\n${survived ? 'The flagged cards have been reclassified from your answers. KIWI applies bounded relief, but unresolved evidence and earlier penalties remain visible.' : 'Pressure remains at the L4 threshold. The flagged cards remain, and the Reckoning must be faced again.'}` +
           `\n\n${survived ? 'Do not mistake survival for mastery. Return to the cards that cost you points and review them deliberately before the next session.' : 'Focus immediately on the cards that failed. Use targeted study sessions — not passive review — to drive the pressure down before the next Reckoning.'}`;
       }
       // P3.3-B2 FIX: apply SRS feedback — incorrect reckoning answers drop card stages.
@@ -17423,9 +17808,20 @@ const highestPressure =
 enriched.length > 0 ? Math.max(...enriched.map((p) => p.pressure_score || 0)) : 0;
 // P3.2-B1 FIX: filter for anything above L0, not L1 (L1 is never emitted).
 const interventions = enriched.filter((p) => p.intervention_level !== 'L0');
-const activeReckoning = await db.reckoningSessions
+// L4 has one meaning everywhere: a Reckoning is created immediately, not only
+// after an unrelated study/exam event happens to run an enrichment hook.
+let activeReckoning = await db.reckoningSessions
 .findActiveByUser(req.user.id)
 .catch(() => null);
+if (!activeReckoning) {
+const l4Subject = enriched.find((p) => p.intervention_level === 'L4');
+if (l4Subject) {
+const triggered = await triggerReckoning(req.user.id, l4Subject.subject_id).catch(() => null);
+if (triggered?.reckoning_id) {
+activeReckoning = await db.reckoningSessions.findById(triggered.reckoning_id).catch(() => null);
+}
+}
+}
 // BUG #2 FIX: fetch userStats only when a reckoning exists — needed for shields field
 const userStatsForBrain = activeReckoning
 ? await db.userStats.get(req.user.id).catch(() => null)
@@ -17433,7 +17829,10 @@ const userStatsForBrain = activeReckoning
 res.json({
 pressures: enriched,
 overallStatus:
-interventions.length === 0 ? 'Calm' : interventions.length < 3 ? 'Elevated' : 'Critical',
+interventions.some((p) => p.intervention_level === 'L4') ? 'Reckoning' :
+interventions.some((p) => p.intervention_level === 'L3') ? 'Urgent' :
+interventions.some((p) => p.intervention_level === 'L2') ? 'Building' :
+interventions.some((p) => p.intervention_level === 'L1') ? 'Watch' : 'Calm',
 totalInterventions: interventions.length,
 highestPressure,
 interventions,
@@ -17528,7 +17927,7 @@ const progressRouter = express.Router();
 progressRouter.use(authenticate);
 
 progressRouter.use(reckoningLockout);
-// GET /api/user/stats — lightweight stat summary (seedlings_balance, streak, xp, tree)
+// GET /api/user/stats — lightweight stat summary (seedlings, streak, and tree)
 // Used by the dashboard header / seedlings fallback in the frontend.
 progressRouter.get('/user/stats', async (req, res) => {
 try {
@@ -17537,9 +17936,6 @@ if (!stats) return res.status(404).json({ error: 'Stats not found' });
 res.json({
 seedlings_balance: stats.seedlings_balance || 0,
 current_streak: stats.current_streak || 0,
-total_xp: stats.total_xp || 0,
-current_level: stats.current_level || 1,
-xp_in_current_level: stats.xp_in_current_level || 0,
 tree_health: stats.tree_health ?? 100,
 tree_stage: stats.tree_stage || 1,
 total_cards_reviewed: stats.total_cards_reviewed || 0,
@@ -17551,35 +17947,241 @@ res.status(500).json({ error: 'Failed to fetch user stats', details: e.message }
 }
 });
 
-// GET /api/achievements — all achievements with unlock status
+// Living Achievements are evaluated from current study evidence on every load.
+// The fixed set provides stable milestones; the weekly AI set watches the
+// learner's actual habits but may only choose metrics the server can verify.
+async function buildLivingAchievements(userId, timezoneOffsetMinutes = 0) {
+const safeTimezoneOffset = Math.max(-840, Math.min(840, Number(timezoneOffsetMinutes) || 0));
+const toLocalClock = (value) => new Date(new Date(value).getTime() - safeTimezoneOffset * 60000);
+const now = new Date();
+const weekStart = new Date(now);
+weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+weekStart.setHours(0, 0, 0, 0);
+const weekKey = weekStart.toISOString().slice(0, 10);
+const achievementCacheKey = `${weekKey}_tz${safeTimezoneOffset}`;
+
+const [stats, sessionResult, states, subjects, exams, reckonings, reviewLogs] = await Promise.all([
+db.userStats.get(userId),
+db.sessions.findMany(userId, { session_completed: true }, { limit: 2000 }),
+db.cardStates.findByUser(userId),
+db.subjects.findManyWithDecks(userId),
+db.examSessions.findMany(userId, { status: 'completed' }, { limit: 500 }).catch(() => []),
+db.reckoningSessions.findByUser(userId).catch(() => []),
+db.reviewLogs.findByUser(userId, new Date(0)).catch(() => []),
+]);
+const completedInteractions = sessionResult?.sessions || [];
+const sessions = completedInteractions.filter(sessionIsMeaningful);
+const completedExams = Array.isArray(exams) ? exams : (exams?.exams || []);
+const deckToSubject = new Map();
+for (const subject of subjects) {
+for (const deck of (subject.decks || [])) deckToSubject.set(deck.id, subject.id);
+}
+const sessionSubject = (session) => session.subject_id || deckToSubject.get(session.deck_id) || null;
+const uniqueDays = new Set(sessions.map((s) => toLocalClock(s.started_at).toISOString().slice(0, 10)));
+const subjectSessionCounts = {};
+for (const session of sessions) {
+const sid = sessionSubject(session);
+if (sid) subjectSessionCounts[sid] = (subjectSessionCounts[sid] || 0) + 1;
+}
+const metrics = {
+sessions: sessions.length,
+streak: Number(stats?.current_streak) || 0,
+unique_study_days: uniqueDays.size,
+fruiting_sessions: sessions.filter((s) => s.fruiting_achieved).length,
+focus_quality: sessions.filter((s) => Number(s.session_quality) >= 75).length,
+honest_again: reviewLogs.filter((r) => r.response === 'again').length,
+verified_cards: states.filter((s) => s.verified || s.state === 'VERIFIED').length,
+mastered_cards: Number(stats?.total_cards_mastered) || states.filter((s) => Number(s.stage) >= 5).length,
+exam_passes: completedExams.filter((e) => Number(e.score_pct ?? e.score_percentage) >= 70).length,
+best_exam_score: completedExams.reduce((best, e) => Math.max(best, Number(e.score_pct ?? e.score_percentage) || 0), 0),
+reckoning_survivals: reckonings.filter((r) => r.status === 'completed' && Number(r.score_pct) >= 70).length,
+early_sessions: sessions.filter((s) => { const h = toLocalClock(s.started_at).getUTCHours(); return h >= 4 && h < 8; }).length,
+late_sessions: sessions.filter((s) => { const h = toLocalClock(s.started_at).getUTCHours(); return h >= 22 || h < 3; }).length,
+cross_subject_sessions: Object.values(subjectSessionCounts).filter((n) => n > 0).length,
+};
+
+const makeAchievement = (code, name, icon, description, metric, target, category, evidence) => {
+const current = Math.max(0, Number(metrics[metric]) || 0);
+return {
+code, name, icon_emoji: icon, description, category, metric,
+current, target, progress_pct: Math.min(100, Math.round((current / Math.max(1, target)) * 100)),
+unlocked: current >= target,
+evidence,
+is_personalized: false,
+};
+};
+const achievements = [
+makeAchievement('first_roots', 'First Roots', '🌱', 'Complete your first meaningful study session: five distinct cards and five active minutes.', 'sessions', 1, 'Beginning', `${metrics.sessions} meaningful session${metrics.sessions === 1 ? '' : 's'}`),
+makeAchievement('honest_mirror', 'The Honest Mirror', '🪞', 'Choose Again when recall is not there. Honest feedback strengthens scheduling.', 'honest_again', 25, 'Learning Character', `${metrics.honest_again} honest Again responses`),
+makeAchievement('focused_flame', 'Focused Flame', '🔥', 'Complete five sessions at Blooming quality or higher.', 'focus_quality', 5, 'Focus', `${metrics.focus_quality} high-focus sessions`),
+makeAchievement('first_fruit', 'Fruit Bearer', '🥝', 'Produce a permanent fruit through a genuine Fruiting session.', 'fruiting_sessions', 1, 'Ecosystem', `${metrics.fruiting_sessions} Fruiting sessions`),
+makeAchievement('rooted_week', 'Rooted Week', '🌳', 'Maintain a seven-day study streak.', 'streak', 7, 'Consistency', `${metrics.streak}-day current streak`),
+makeAchievement('verified_ground', 'Verified Ground', '✓', 'Prove ten cards in completed exams.', 'verified_cards', 10, 'Evidence', `${metrics.verified_cards} verified cards`),
+makeAchievement('exam_proof', 'Exam Proof', '📝', 'Pass your first completed CBT exam.', 'exam_passes', 1, 'Exams', `${metrics.exam_passes} passed exams`),
+makeAchievement('three_gardens', 'Keeper of Three Gardens', '🌿', 'Complete meaningful sessions across three different subjects.', 'cross_subject_sessions', 3, 'Breadth', `${metrics.cross_subject_sessions} subjects studied meaningfully`),
+makeAchievement('reckoning_return', 'Returned From Reckoning', '⚔️', 'Survive a Reckoning and earn a recovery window.', 'reckoning_survivals', 1, 'Resilience', `${metrics.reckoning_survivals} Reckonings survived`),
+makeAchievement('deep_canopy', 'Deep Canopy', '🍃', 'Bring fifty cards to mastery.', 'mastered_cards', 50, 'Mastery', `${metrics.mastered_cards} mastered cards`),
+];
+
+let personalized = [];
+const cached = await db.dailyRitualCache.get(userId, 'living_achievements', achievementCacheKey).catch(() => null);
+if (cached?.data && Array.isArray(cached.data)) {
+personalized = cached.data;
+} else if (sessions.length >= 3) {
+try {
+const subjectLines = subjects.map((s) => `${s.id}|${s.name}|sessions:${subjectSessionCounts[s.id] || 0}`).join('\n');
+const prompt = `
+ROLE
+You design three personal, measurable achievements for one learner. They should feel observant, specific, and attainable this week.
+
+CURRENT VERIFIED METRICS
+${JSON.stringify(metrics)}
+
+SUBJECTS
+${subjectLines || 'No subjects'}
+
+ALLOWED METRICS
+sessions, streak, unique_study_days, fruiting_sessions, focus_quality, honest_again, verified_cards, mastered_cards, exam_passes, best_exam_score, reckoning_survivals, early_sessions, late_sessions, cross_subject_sessions
+
+RULES
+- Return exactly 3 achievements as valid JSON only.
+- Each must use one allowed metric and an integer target greater than the current value but reachable within 7 days.
+- Personalize the title and description to an observed habit. Do not diagnose personality or invent facts.
+- No XP, levels, points, currencies, or generic motivational filler.
+- Subject names may appear in the wording, but the measurable metric must remain one of the allowed metrics.
+- Format: [{"code":"weekly_slug","name":"...","icon_emoji":"...","description":"...","metric":"sessions","target":5,"category":"Personal"}]
+`;
+const aiResult = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
+const raw = aiResult.response.text();
+const start = raw.indexOf('['), end = raw.lastIndexOf(']');
+const parsed = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw.replace(/```json|```/g, '').trim());
+const allowed = new Set(Object.keys(metrics));
+const metricMaximums = {
+best_exam_score: 100,
+cross_subject_sessions: Math.max(0, subjects.length),
+verified_cards: states.length,
+mastered_cards: states.length,
+};
+personalized = (Array.isArray(parsed) ? parsed : [])
+.filter((a) => allowed.has(a.metric) && (metricMaximums[a.metric] == null || Number(metrics[a.metric]) < metricMaximums[a.metric]))
+.slice(0, 3).map((a, index) => ({
+code: String(a.code || `weekly_${index + 1}`).replace(/[^a-z0-9_]/gi, '_').toLowerCase(),
+name: String(a.name || 'Personal Challenge').slice(0, 80),
+icon_emoji: String(a.icon_emoji || '✦').slice(0, 8),
+description: String(a.description || '').slice(0, 240),
+metric: a.metric,
+target: Math.min(
+metricMaximums[a.metric] ?? Number.MAX_SAFE_INTEGER,
+Math.max((Number(metrics[a.metric]) || 0) + 1, Number(a.target) || 1)
+),
+category: 'AI Personal',
+is_personalized: true,
+}));
+} catch (e) {
+personalized = [];
+}
+}
+
+if (sessions.length >= 3 && personalized.length < 3) {
+const strongestSubject = subjects
+.map((subject) => ({ subject, count: subjectSessionCounts[subject.id] || 0 }))
+.sort((a, b) => b.count - a.count)[0]?.subject;
+const fallbackCandidates = [
+{
+code: 'weekly_focus_return', name: 'Turn Attention Into Proof', icon_emoji: '🎯',
+description: `You have ${metrics.focus_quality} high-focus sessions. Complete two more sessions at Blooming quality or higher${strongestSubject ? `, beginning with ${strongestSubject.name}` : ''}.`,
+metric: 'focus_quality', target: metrics.focus_quality + 2,
+},
+{
+code: 'weekly_show_up', name: 'Three More Returns', icon_emoji: '🌱',
+description: `Your record contains ${metrics.sessions} meaningful sessions. Add three deliberate sessions this week.`,
+metric: 'sessions', target: metrics.sessions + 3,
+},
+{
+code: 'weekly_active_days', name: 'Widen the Week', icon_emoji: '🗓️',
+description: `You have studied on ${metrics.unique_study_days} distinct days. Return on two additional days instead of concentrating everything into one sitting.`,
+metric: 'unique_study_days', target: metrics.unique_study_days + 2,
+},
+{
+code: 'weekly_exam_evidence', name: 'Put Recall on Record', icon_emoji: '📝',
+description: `You have ${metrics.exam_passes} passed exams. Prepare your weakest subject and add one evidence-backed pass.`,
+metric: 'exam_passes', target: metrics.exam_passes + 1,
+},
+];
+const usedMetrics = new Set(personalized.map((item) => item.metric));
+for (const candidate of fallbackCandidates) {
+if (personalized.length >= 3) break;
+if (usedMetrics.has(candidate.metric)) continue;
+personalized.push({ ...candidate, category: 'Personal', is_personalized: true });
+usedMetrics.add(candidate.metric);
+}
+}
+
+if (sessions.length >= 3) {
+await db.dailyRitualCache.set(userId, 'living_achievements', achievementCacheKey, { data: personalized }).catch(() => {});
+}
+
+personalized = personalized.map((a) => {
+const current = Math.max(0, Number(metrics[a.metric]) || 0);
+const target = Math.max(1, Number(a.target) || 1);
+return {
+...a, current, target,
+progress_pct: Math.min(100, Math.round((current / target) * 100)),
+unlocked: current >= target,
+evidence: `${current} of ${target} — measured from your current study record`,
+is_personalized: true,
+};
+});
+
+const strongestSignal = metrics.focus_quality > 0
+? `${metrics.focus_quality} high-focus session${metrics.focus_quality === 1 ? '' : 's'}`
+: metrics.sessions > 0 ? `${metrics.sessions} meaningful session${metrics.sessions === 1 ? '' : 's'}` : 'no meaningful sessions yet';
+return {
+achievements: [...personalized, ...achievements],
+observer_summary: `KIWI is currently watching ${strongestSignal}, ${metrics.verified_cards} verified cards, and study across ${metrics.cross_subject_sessions} subjects.`,
+generated_at: new Date().toISOString(),
+week_start: weekKey,
+};
+}
 
 progressRouter.get('/achievements', async (req, res) => {
 try {
-const [allAchievements, userAchievements] = await Promise.all([
-db.achievements.findAll(),
-db.userAchievements.findManyWithAchievement(req.user.id),
-]);
-const unlockedMap = new Map(userAchievements.map((ua) => [ua.achievement?.code, ua]));
-const result = allAchievements.map((ach) => ({
-...ach,
-unlocked: unlockedMap.has(ach.code),
-unlocked_at: unlockedMap.get(ach.code)?.unlocked_at || null,
-}));
-res.json(result);
+res.json(await buildLivingAchievements(req.user.id, req.query.timezone_offset_minutes));
 } catch (e) {
-res.status(500).json({ error: 'Failed to fetch achievements', details: e.message });
+res.status(500).json({ error: 'Failed to build living achievements', details: e.message });
+}
+});
+
+// Complete, user-owned export. The previous client-side export only contained
+// whatever happened to be cached in the current tab, which looked successful
+// while silently omitting cards, reviews, exams, and narrative history.
+progressRouter.get('/settings/export', async (req, res) => {
+try {
+const userId = req.user.id;
+const tableNames = [
+'subjects', 'decks', 'cards', 'card_states', 'sessions', 'review_logs',
+'exam_sessions', 'mastery_goals', 'brain_pressure', 'fruits',
+'chronicle_entries', 'user_inventory', 'seedling_transactions',
+];
+const rows = await Promise.all(tableNames.map(async (tableName) => {
+const result = await query(`SELECT * FROM ${tableName} WHERE user_id = $1 ORDER BY created_at NULLS LAST`, [userId])
+.catch(async () => query(`SELECT * FROM ${tableName} WHERE user_id = $1`, [userId]).catch(() => ({ rows: [] })));
+return [tableName, result.rows || []];
+}));
+const { password_hash, ...safeUser } = req.user;
+res.json({
+format: 'kiwi-user-export-v1',
+exported_at: new Date().toISOString(),
+user: safeUser,
+data: Object.fromEntries(rows),
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to export data', details: e.message });
 }
 });
 // GET /api/progress — aggregated progress overview
 
 progressRouter.get('/progress', async (req, res) => {
-// Fix #56: rate limit — prevent quota exhaustion from rapid /progress polling
-const _lastProgressCall = _progressRateLimit.get(req.user.id);
-if (_lastProgressCall && Date.now() - _lastProgressCall < PROGRESS_RATE_LIMIT_MS) {
-return res.status(429).json({ error: 'Progress refresh rate limit. Please wait 30 seconds.' });
-}
-_progressRateLimit.set(req.user.id, Date.now());
-setTimeout(() => _progressRateLimit.delete(req.user.id), PROGRESS_RATE_LIMIT_MS); // F-17 FIX: TTL eviction
 try {
 // Fix #18: removed duplicate findByUser call
 // Fix #19: globalKS computed from per-subject results — no extra N findByUser scans
@@ -17603,7 +18205,7 @@ _globalCardCount += (ks.totalCards || 0);
 const globalKS = { score: _globalCardCount > 0 ? parseFloat((_globalWeightedSum / _globalCardCount).toFixed(2)) : 0 };
 // Fix #27: pre-load all cards + decks once; eliminate 2 Firestore reads per trouble card
 const TROUBLE_STATES = ['STUCK', 'AVOIDED', 'GHOST', 'DANGEROUS', 'FRAGILE'];
-const troubleStatesList = allStates.filter((s) => TROUBLE_STATES.includes(s.state));
+const troubleStatesList = allStates.filter((s) => TROUBLE_STATES.includes(s.state) || s.learning_debt === true);
 const troubleCards = [];
 const [_allUserCards, _allUserDecksResult] = await Promise.all([
 db.cards.findAllForUser(req.user.id),
@@ -17618,6 +18220,7 @@ const deck = _deckMap.get(card.deck_id);
 troubleCards.push({
 id: st.card_id,
 state: st.state,
+learning_debt: st.learning_debt === true,
 front: card.front_content || '',
 back: card.back_content || '',
 subjectId: deck?.subject_id || null,
@@ -17734,7 +18337,7 @@ const user = await db.users.findById(req.user.id);
 if (!user) return res.status(404).json({ error: 'User not found' });
 const stats = await db.userStats.get(req.user.id);
 const { password_hash, ...safeUser } = user;
-res.json({ ...safeUser, stats });
+res.json({ ...safeUser, stats: toPublicStats(stats) });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch settings', details: e.message });
 }
@@ -17812,9 +18415,6 @@ const storedSubjectStat = await db.subjectStats.get(req.user.id, s.id).catch(() 
 // and db.cardStates.findByUser for EVERY subject — N duplicate round-trips to Supabase.
 // Now: use stored value if fresh, else derive from in-memory data (zero extra DB calls).
 const ksScore = (() => {
-if (storedSubjectStat?.knowledge_score !== undefined) {
-return storedSubjectStat.knowledge_score; // fast path: use persisted value
-}
 const subjectDeckIds = new Set((s.decks || []).map(d => d.id));
 const subjectCards = allCards.filter(c => subjectDeckIds.has(c.deck_id));
 if (!subjectCards.length) return 0;
@@ -17823,6 +18423,9 @@ for (const c of subjectCards) sumW += computeEffectiveWeight(_dashStateMap.get(c
 return Math.min(100, parseFloat(((sumW / (subjectCards.length * 5)) * 100).toFixed(2)));
 })();
 const ks = { score: ksScore };
+if (Number(storedSubjectStat?.knowledge_score) !== Number(ksScore)) {
+db.subjectStats.upsert(req.user.id, s.id, { knowledge_score: ksScore }).catch(() => {});
+}
 const subjectDeckIds = (s.decks || []).map(d => d.id);
 const subjectCards = allCards.filter(c => subjectDeckIds.includes(c.deck_id));
 const subjectDueCount = subjectCards.filter(c => isCardDue(c)).length;
@@ -17891,21 +18494,6 @@ rings: dashActiveMilestones.length,
 stageLabel: treeStageLabels[stats?.tree_stage || 1] || 'SEEDLING',
 milestones: dashActiveMilestones,
 };
-// Level info
-const level = {
-level: stats?.current_level || 1,
-xp: stats?.xp_in_current_level || 0,
-nextLevelXp: (() => {
-const lv = stats?.current_level || 1;
-if (lv < 10) return 500;
-if (lv < 20) return 1000;
-if (lv < 30) return 2000;
-if (lv < 50) return 3000;
-if (lv < 75) return 5000;
-if (lv < 100) return 8000;
-return 15000;
-})(),
-};
 // Brain preview
 const brainPreview = {
 interventionCount: // P3.2-B1 FIX: L0 is the correct calm baseline.
@@ -17941,7 +18529,7 @@ const invitations = invitationsCache ? invitationsCache.data : null;
 if (!invitationsCache) getDailyInvitations(req.user.id).catch(() => {});
 res.json({
 // Original fields
-user_stats: stats,
+user_stats: toPublicStats(stats),
 global_ks: globalKS,
 due_today: dueCount,
 total_subjects: subjects.length,
@@ -17974,7 +18562,6 @@ return safe;
 overallKS: globalKS.score,
 subjectBreakdown,
 streak: { current: stats?.current_streak || 0, shields: stats?.streak_shields_held || 0 },
-dailyXP: stats?.total_xp || 0,
 invitations,
 tasks: [],
 brainPreview,
@@ -17989,7 +18576,6 @@ icon: persona.persona_icon || '🌿',
 description: persona.persona_description,
 }
 : null,
-level,
 achievements: [],
 });
 } catch (e) {
@@ -18584,7 +19170,11 @@ cron.schedule('*/10 * * * *', async () => {
         const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
         await db.brainPressure.set(es.user_id, es.subject_id, {
           pressure_score: Math.min(100, cur + 15),
-          intervention_level: cur + 15 >= 80 ? 'L4' : cur + 15 >= 60 ? 'L3' : cur + 15 >= 40 ? 'L2' : cur + 15 >= 20 ? 'L1' : 'L0',
+          intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
+          sources: {
+            ...(bp?.sources || {}),
+            manual_exam_forfeit: (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15,
+          },
         }).catch(() => {});
         wsSend(es.user_id, 'pressure_change', {
           subject_id: es.subject_id,
@@ -18665,20 +19255,7 @@ console.log(`[KIWI CRON] Tasks generated for ${allUsers.length} users`);
 } catch (e) {
 console.error('[KIWI CRON] Daily task gen cron failed:', e.message);
 }
-// 5. Almanac unlock check for all users
-try {
-for (const user of allUsers) {
-try {
-await checkAlmanacUnlocks(user.id);
-} catch (e) {
-console.error(`[KIWI CRON] Almanac check failed for ${user.id}:`, e.message);
-}
-}
-console.log(`[KIWI CRON] Almanac unlocks checked for ${allUsers.length} users`);
-} catch (e) {
-console.error('[KIWI CRON] Daily almanac cron failed:', e.message);
-}
-// 6. Streak gaps are resolved by the idempotent active-day event.
+// 5. Streak gaps are resolved by the idempotent active-day event.
 });
 // ── Daily at 8:00 AM: Morning login reminder (email + Telegram) ──────────────
 
@@ -19390,7 +19967,15 @@ async function runSchemaMigrations() {
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS completed_at timestamptz`,
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS time_limit_seconds integer DEFAULT 1800`,
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS card_range text DEFAULT 'all'`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS difficulty_level text DEFAULT NULL`,
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'exam_sessions_difficulty_level_check') THEN
+         ALTER TABLE exam_sessions ADD CONSTRAINT exam_sessions_difficulty_level_check
+         CHECK (difficulty_level IS NULL OR difficulty_level IN ('easy','hard','very_hard','hell'));
+       END IF;
+     END $$`,
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ended_early boolean DEFAULT false`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS timed_out boolean DEFAULT false`,
     // KS-EXAM-FIX: persist ks_delta on exam sessions so history review always shows real delta
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_delta numeric DEFAULT 0`,
 

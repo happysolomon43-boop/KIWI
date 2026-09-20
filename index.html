@@ -353,14 +353,6 @@
           background-position: 200% 0;
         }
       }
-      @keyframes xpFill {
-        from {
-          width: 0;
-        }
-        to {
-          width: var(--xp-w);
-        }
-      }
       @keyframes countUp {
         from {
           transform: translateY(8px);
@@ -673,40 +665,6 @@
         color: var(--text-4);
         font-family: var(--font-mono);
         margin-top: 2px;
-      }
-      .xp-bar-wrap {
-        margin-bottom: 4px;
-      }
-      .xp-bar-track {
-        height: 3px;
-        background: var(--bg-3);
-        border-radius: 99px;
-        overflow: hidden;
-      }
-      .xp-bar-fill {
-        height: 100%;
-        background: linear-gradient(90deg, var(--green), var(--green-bright));
-        border-radius: 99px;
-        transition: width 0.8s var(--ease);
-        position: relative;
-        overflow: hidden;
-      }
-      .xp-bar-fill::after {
-        content: "";
-        position: absolute;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        width: 30px;
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2));
-        animation: shimmer 2s infinite;
-      }
-      .xp-label {
-        font-size: 9px;
-        color: var(--text-4);
-        font-family: var(--font-mono);
-        text-align: right;
-        margin-top: 3px;
       }
       .ks-bar-wrap {
         margin-top: 10px;
@@ -2128,11 +2086,6 @@
         font-weight: 500;
         color: var(--text);
       }
-      .task-xp {
-        font-size: 10px;
-        font-family: var(--font-mono);
-        color: var(--teal);
-      }
       .task-progress-track {
         height: 3px;
         background: var(--bg-2);
@@ -3051,20 +3004,6 @@
         color: var(--text-2);
         margin-bottom: 20px;
       }
-      .achieve-xp {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        background: var(--gold-glow);
-        border: 1px solid rgba(212, 160, 23, 0.3);
-        border-radius: 99px;
-        padding: 6px 16px;
-        font-family: var(--font-mono);
-        font-size: 14px;
-        font-weight: 700;
-        color: var(--gold);
-        margin-bottom: 24px;
-      }
       /* ═══════════════════════════════════════════════════════════════════════════
    LANDING PAGE
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -3798,12 +3737,6 @@
         font-size: 10px;
         color: var(--text-3);
         line-height: 1.4;
-      }
-      .achieve-item-xp {
-        font-size: 10px;
-        font-family: var(--font-mono);
-        color: var(--teal);
-        margin-top: 8px;
       }
       .achieve-item-date {
         font-size: 9px;
@@ -5867,6 +5800,7 @@
 }
 
 </style>
+  <link rel="stylesheet" href="/kiwi_product_v3.css">
   </head>
   <body>
   <!-- Persistent AI generation indicator (Fix 6) — lives outside mainContent so it survives navigation -->
@@ -5920,17 +5854,11 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-1.07-4.56A3 3 0 0 1 3.5 11a3 3 0 0 1 2.38-2.93 2.5 2.5 0 0 1 3.62-3.07"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 1.07-4.56A3 3 0 0 0 20.5 11a3 3 0 0 0-2.38-2.93 2.5 2.5 0 0 0-3.62-3.07"/></svg></span><span class="nav-label">The Brain</span>
             </div>
             <div class="nav-item" data-route="chronicle">
-              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span><span class="nav-label">The Chronicle</span>
-            </div>
-            <div class="nav-item" data-route="almanac">
-              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><span class="nav-label">The Almanac</span>
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span><span class="nav-label">Living Profile</span>
             </div>
             <div class="nav-section-label">Track</div>
             <div class="nav-item" data-route="progress">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span><span class="nav-label">Progress</span>
-            </div>
-            <div class="nav-item" data-route="achievements">
-              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg></span><span class="nav-label">Achievements</span>
             </div>
             <div class="nav-section-label">Tools</div>
             <div class="nav-item" data-route="import">
@@ -5938,9 +5866,6 @@
             </div>
             <div class="nav-item" data-route="community">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="nav-label">Community</span>
-            </div>
-            <div class="nav-item" data-route="persona">
-              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><span class="nav-label">My Persona</span>
             </div>
             <div class="nav-item" data-route="marketplace">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg></span><span class="nav-label">Marketplace</span>
@@ -6098,48 +6023,7 @@
     <script>
 
   // ═══════════════════════════════════════════════════════════════════════════
-  //  AUTO-FORFEIT DETECTION — Issue #1 Fix
   // ═══════════════════════════════════════════════════════════════════════════
-  var _forfeitToken = null;
-  var _activeExamId = null;
-  var _examSubmitted = false;
-  var _forfeitSent = false;
-
-  function setActiveExam(examId, token) {
-    _activeExamId = examId;
-    _forfeitToken = token;
-    _examSubmitted = false;
-    _forfeitSent = false;
-  }
-  function markExamSubmitted() {
-    _examSubmitted = true;
-  }
-  function sendAutoForfeit() {
-    if (!_activeExamId || _examSubmitted || _forfeitSent) return;
-    _forfeitSent = true;
-    try {
-      var data = JSON.stringify({ forfeiture_token: _forfeitToken });
-      var url = '/api/exams/' + _activeExamId + '/auto-forfeit';
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon(url, new Blob([data], { type: 'application/json' }));
-      } else {
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', url, false);
-        xhr.setRequestHeader('Content-Type', 'application/json');
-        xhr.send(data);
-      }
-    } catch(e) {}
-  }
-  window.addEventListener('beforeunload', function() {
-    if (_activeExamId && !_examSubmitted && !_forfeitSent) sendAutoForfeit();
-  });
-  document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'hidden' && _activeExamId && !_examSubmitted && !_forfeitSent) sendAutoForfeit();
-  });
-  window.addEventListener('popstate', function() {
-    if (_activeExamId && !_examSubmitted && !_forfeitSent) sendAutoForfeit();
-  });
-
       // ═══════════════════════════════════════════════════════════════════════════
       // KIWI FRONTEND — Complete Living Ecosystem UI
       // Phase 9 Implementation: Wired to Real Backend API
@@ -6173,16 +6057,6 @@
         _kiwiWS.onmessage = function(ev) {
           try {
             var msg = JSON.parse(ev.data);
-            if (msg.event === 'card_reviewed') {
-              // Optionally animate XP — lightweight update
-              var xpEl = document.getElementById('navXpVal') || document.querySelector('[data-xp]');
-              if (xpEl && msg.data.xp_earned) {
-                var cur = parseInt(xpEl.textContent || '0', 10);
-                xpEl.textContent = cur + msg.data.xp_earned;
-                xpEl.classList.add('xp-bump');
-                setTimeout(function(){ xpEl.classList.remove('xp-bump'); }, 600);
-              }
-            }
             if (msg.event === 'session_complete') {
               console.log('[KIWI WS] session_complete', msg.data);
             }
@@ -6245,7 +6119,14 @@
                     _warnedAt20: false, _warnedAt10: false, submitted: false,
                     isReckoning: _isReck,
                   };
-                  if (typeof apiRequest === 'function') apiRequest('/exams/' + examData.id + '/start', { method: 'POST' }).catch(function(){});
+                  if (typeof startExamClock === 'function') {
+                    startExamClock(examData.id, qCount * SECS_PER_Q).then(function(clock) {
+                      if (!AppState.tempExam || AppState.tempExam.examId !== examData.id) return;
+                      AppState.tempExam.startTime = clock.startTime;
+                      AppState.tempExam.timeLimit = _isReck ? Infinity : clock.timeLimit;
+                      AppState.tempExam.totalTime = _isReck ? Infinity : clock.timeLimit;
+                    }).catch(function(){});
+                  }
                   // Fix 7: navigate first, THEN lock — avoids guard blocking self-navigation
                   var _examIsReck = !!(examData.is_reckoning || examData.isReckoning);
                   if (typeof navigateTo === 'function') { _origNavigateTo ? _origNavigateTo('exam') : navigateTo('exam'); }
@@ -6281,11 +6162,6 @@
                 if (_erd.reclassified && _erd.reclassified.length > 0) _r.reclassified = _erd.reclassified;
                 if (_erd.credential != null) { _r.credential = _erd.credential; _r.credentialEarned = _erd.credentialEarned || false; _r.credentialName = (_erd.credential && (_erd.credential.name || _erd.credential.tier_name)) || _r.credentialName || ''; }
                 if (_erd.ksDelta != null) _r.ksDelta = _erd.ksDelta;
-                if (_erd.new_achievements && _erd.new_achievements.length > 0) _r.new_achievements = _erd.new_achievements;
-                if (_erd.new_almanac_unlocks && _erd.new_almanac_unlocks.length > 0) {
-                  _r.new_almanac_unlocks = _erd.new_almanac_unlocks;
-                  showToast('A new entry has appeared in your Almanac.', 'success', 6000);
-                }
                 if (_erd.regression_warning) _r.regression_warning = _erd.regression_warning;
                 AppState.tempExam.result = _r;
                 // Re-render results page if currently visible
@@ -6357,13 +6233,21 @@
             }
             if (msg.event === 'ks_change') {
               var _kd = msg.data || {};
-              var _ksDelta = _kd.ks_delta || 0;
-              var _newKs = _kd.new_ks;
+              var _ksDelta = Number(_kd.ks_delta) || 0;
+              var _newKs = _kd.new_ks !== undefined ? Number(_kd.new_ks) : undefined;
               if (_ksDelta < 0) {
                 if (typeof showToast === 'function') showToast('📉 Knowledge Score ' + _ksDelta.toFixed(2) + (_newKs !== undefined ? ' → ' + _newKs.toFixed(1) + '%' : ''), 'warning', 6000);
               } else if (_ksDelta > 0) {
                 if (typeof showToast === 'function') showToast('📈 Knowledge Score +' + _ksDelta.toFixed(2) + (_newKs !== undefined ? ' → ' + _newKs.toFixed(1) + '%' : ''), 'success', 6000);
               }
+              if (typeof _bustDashboardCache === 'function') _bustDashboardCache();
+              api.getDashboard().then(function(fresh) {
+                AppState.dashboard = fresh;
+                if (typeof _saveDashboardCache === 'function') _saveDashboardCache(fresh);
+                if (typeof updateMobileBar === 'function') updateMobileBar(AppState.currentPage);
+                if (typeof updateUserFooter === 'function') updateUserFooter();
+                if (AppState.currentPage === 'dashboard' && typeof renderDashboard === 'function') renderDashboard();
+              }).catch(function(){});
             }
           } catch(_e) {}
         };
@@ -6404,7 +6288,9 @@
       // beforeunload — warn on tab close / hard refresh during exam
       window.addEventListener('beforeunload', function(e) {
         if (_examPageLocked || _studyPageLocked) {
-          var msg = 'You have an active ' + (_examPageLocked ? 'exam' : 'study session') + '. Leaving will forfeit it.';
+          var msg = _examPageLocked
+            ? 'You have an active exam. Leaving will forfeit it.'
+            : 'You have an active study session. Your latest saved snapshot can be resumed.';
           e.preventDefault();
           e.returnValue = msg;
           return msg;
@@ -6439,7 +6325,7 @@
         m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;';
         var title = isStudy ? 'Leave Study Session?' : 'Leave Exam?';
         var body  = isStudy
-          ? 'You are in an active study session. Leaving will forfeit your progress and affect your card states.'
+          ? 'You are in an active study session. End it now to save the reviews you completed, or continue studying.'
           : 'You are in an active exam. Leaving will forfeit it and negatively affect your Knowledge Score and card states.';
         var forfeitBtn = isReckoning
           ? '' // Reckoning exams cannot be forfeited
@@ -6458,13 +6344,8 @@
           var fb = document.getElementById('_ewForfeit');
           if (fb) fb.onclick = function() {
             m.remove();
-            if (isStudy) {
-              if (typeof AppState !== 'undefined' && AppState.tempStudy && AppState.tempStudy.sessionId) {
-                endStudySession();
-              }
-              _unlockStudyPage();
-            } else { _unlockExamPage(); }
-            if (typeof onForfeit === 'function') onForfeit();
+            if (!isStudy) _unlockExamPage();
+            if (typeof onForfeit === 'function') Promise.resolve(onForfeit()).catch(function(){});
           };
         }
       }
@@ -6498,10 +6379,12 @@
           if (_studyPageLocked && !_isGenPage) {
             _showExitWarningModal(
               null,
-              function() {
+              async function() {
+                var saved = true;
                 if (typeof AppState !== 'undefined' && AppState.tempStudy && AppState.tempStudy.sessionId) {
-                  endStudySession();
+                  saved = await endStudySession();
                 }
+                if (!saved) return;
                 _unlockStudyPage();
                 _origNavigateTo(page, params);
               },
@@ -6623,7 +6506,12 @@
                 var SECS_PER_Q = 66;
                 var _isReck = !!(_examData.is_reckoning || _examData.isReckoning);
                 AppState.tempExam = { examId: _examData.id, questions: typeof normalizeExamQuestions === 'function' ? normalizeExamQuestions(_examData.questions || []) : (_examData.questions || []), currentIndex: 0, answers: {}, flagged: new Set(), startTime: Date.now(), timeLimit: _isReck ? Infinity : qCount * SECS_PER_Q, totalTime: _isReck ? Infinity : qCount * SECS_PER_Q, _warnedAt20: false, _warnedAt10: false, submitted: false, isReckoning: _isReck };
-                if (typeof apiRequest === 'function') apiRequest('/exams/' + _examData.id + '/start', { method: 'POST' }).catch(function(){});
+                if (typeof startExamClock === 'function') startExamClock(_examData.id, qCount * SECS_PER_Q).then(function(clock) {
+                  if (!AppState.tempExam || AppState.tempExam.examId !== _examData.id) return;
+                  AppState.tempExam.startTime = clock.startTime;
+                  AppState.tempExam.timeLimit = _isReck ? Infinity : clock.timeLimit;
+                  AppState.tempExam.totalTime = _isReck ? Infinity : clock.timeLimit;
+                }).catch(function(){});
                 if (typeof navigateTo === 'function') { _origNavigateTo ? _origNavigateTo('exam') : navigateTo('exam'); }
                 _lockExamPage(_isReck);
               }
@@ -7038,7 +6926,6 @@
             overallKS: 42,
             subjectBreakdown: [{ id: "demo-subj", name: "Demo Subject", ks: 42, dueCount: 6 }],
             streak: { current: 3, shields: 1 },
-            dailyXP: 80,
             invitations: [
               {
                 title: "Review overdue cards",
@@ -7060,7 +6947,6 @@
               milestones: [],
             },
             persona: { name: "The Consistent Scholar", icon: "book" },
-            level: { level: 3, xp: 240, nextLevelXp: 350 },
             achievements: [],
           };
         }
@@ -7075,15 +6961,17 @@
       };
 
       api.getDailyInvitations = async () => {
-        // BUG #5 FIX: spec requires POST /ritual/invitations, not GET /ritual/daily-invitations
-        return await apiRequest("/ritual/invitations", { method: "POST", body: {} });
+        return await apiRequest("/ritual/invitations", {
+          method: "POST",
+          body: { local_date: todayStr(), timezone_offset_minutes: new Date().getTimezoneOffset() },
+        });
       };
 
       api.dismissInvitation = async (invitationIndex, invitationType) => {
         // Backend expects {index} not {invitationIndex, invitationType}
         return await apiRequest("/ritual/dismiss-invitation", {
           method: "POST",
-          body: { index: invitationIndex },
+          body: { index: invitationIndex, local_date: todayStr() },
         });
       };
 
@@ -7144,7 +7032,7 @@
         }
         // Backend: POST /study/card/:cardId/response
         // Expects: {session_id, response ('again'|'hard'|'good'|'easy'), response_time_ms}
-        // Returns: {success, new_stage, newStage, interval_days, xp_earned, next_review_at}
+        // Returns the updated card stage and its next scheduled review.
         const ratingToResponse = { 1: "again", 2: "hard", 3: "good", 4: "easy" };
         const responseStr =
           ratingToResponse[rating] ||
@@ -7165,9 +7053,8 @@
           return {
             committed: true,
             session_completed: (study?.reviews || []).length > 0,
-            meaningful_session: new Set((study?.reviews || []).map((r) => r.cardId)).size >= 5,
+            meaningful_session: new Set((study?.reviews || []).map((r) => r.cardId)).size >= 5 && preview.activeSeconds >= 300,
             cardsReviewed: study?.cardsReviewed || 0,
-            xpGained: Math.round((study?.cardsReviewed || 0) * 8),
             ksDelta: Math.round((study?.cardsReviewed || 0) * 0.5),
             sessionQuality: preview.score,
             qualityBreakdown: preview.breakdown,
@@ -7201,7 +7088,6 @@
         return {
           ...data,
           cardsReviewed: data.cards_reviewed ?? 0,
-          xpGained: data.xp_earned ?? 0,
           ksDelta: data.ks_delta ?? 0,
           durationSeconds: data.duration_seconds ?? 0,
           activeSeconds: data.active_seconds ?? 0,
@@ -7249,7 +7135,7 @@
           question_count: config?.count || config?.question_count || 25,
           deck_ids: config?.deckIds || config?.deck_ids || null,
           card_range: config?.card_range || "all",
-          time_limit_seconds: config?.time_limit_seconds || 1800,
+          time_limit_seconds: config?.time_limit_seconds || ((config?.count || config?.question_count || 25) * 66),
           is_reckoning: config?.isReckoning || false,
           reckoning_id: config?.reckoningId || null,
           // P3-C2 FIX: forward card_state_filter so backend P3.5 logic activates
@@ -7260,6 +7146,7 @@
           theory_percent: (config?.customize_balance && typeof config?.theory_percent === 'number') ? config.theory_percent : null,
           customize_balance: config?.customize_balance || false,
           broad_coverage: config?.broad_coverage || false,
+          difficulty_level: config?.difficulty_level || null,
         };
         return await apiRequest("/exams/generate", { method: "POST", body });
       };
@@ -7451,9 +7338,9 @@
           return {
             pressures,
             overallStatus: "Unknown",
-            totalInterventions: pressures.filter((p) => p.level > 1).length,
+            totalInterventions: pressures.filter((p) => p.level > 0).length,
             highestPressure: pressures.reduce((m, p) => Math.max(m, p.pressure || 0), 0),
-            interventions: pressures.filter((p) => p.level > 1),
+            interventions: pressures.filter((p) => p.level > 0),
             pendingReckoning: null,
           };
         }
@@ -7500,7 +7387,7 @@
         // NOTE: apiRequest already JSON.stringifies options.body — do NOT pre-stringify here
         return await apiRequest("/narrative/chronicle/generate", {
           method: "POST",
-          body: { force },
+          body: { force, timezone_offset_minutes: new Date().getTimezoneOffset() },
         });
       };
       api.resetSubject = async (subjectId) => apiRequest('/subjects/' + subjectId + '/reset', { method: 'POST' });
@@ -7626,7 +7513,8 @@
       api.deleteDeck = async (deckId) => apiRequest('/decks/' + deckId, { method: 'DELETE' });
       // BUG-04B FIX: api.updateDeck — backend PUT /api/decks/:id already exists
       api.updateDeck = async (deckId, updates) => apiRequest('/decks/' + deckId, { method: 'PUT', body: updates });
-      // BUG-09 progressive pre-marking: fire-and-forget per-question background processing
+      // Persist each choice as it changes so an authoritative server timeout can
+      // score only answers that were actually saved before the deadline.
       api.preMarkQuestion = async (examId, questionNumber, selectedOption) =>
         apiRequest('/exams/' + examId + '/pre-mark', { method: 'POST', body: { question_number: questionNumber, selected_option: selectedOption } }).catch(() => null);
       // Progressive KS flush: drain _ksQueue for the user every N cards
@@ -7866,9 +7754,10 @@
       // ── Achievements endpoints (F13) ──
 
       api.getAchievements = async () => {
-        // Backend: GET /achievements — now correct via single /api mount in progressRouter
-        return await apiRequest("/achievements");
+        return await apiRequest("/achievements?timezone_offset_minutes=" + encodeURIComponent(new Date().getTimezoneOffset()));
       };
+
+      api.exportData = async () => apiRequest('/settings/export');
 
       // ── Settings endpoints ──
 
@@ -8103,7 +7992,10 @@
       }
 
       function todayStr() {
-        return new Date().toISOString().split("T")[0];
+        const now = new Date();
+        const month = String(now.getMonth() + 1).padStart(2, "0");
+        const day = String(now.getDate()).padStart(2, "0");
+        return `${now.getFullYear()}-${month}-${day}`;
       }
 
       function clamp(n, min, max) {
@@ -8914,13 +8806,13 @@
         "card-browser": { render: renderCardBrowser, title: "Card Browser", auth: true },
         import: { render: renderImport, title: "Import Cards", auth: true },
         brain: { render: renderBrain, title: "The Brain", auth: true },
-        chronicle: { render: renderChronicle, title: "The Chronicle", auth: true },
-        almanac: { render: renderAlmanac, title: "The Almanac", auth: true },
+        chronicle: { render: renderChronicle, title: "Living Profile", auth: true },
+        almanac: { render: () => navigateTo("progress"), title: "Progress", auth: true },
         progress: { render: renderProgress, title: "Progress", auth: true },
-        persona: { render: renderPersona, title: "Study Persona", auth: true },
+        persona: { render: () => navigateTo("chronicle"), title: "Living Profile", auth: true },
         marketplace: { render: renderMarketplace, title: "Marketplace", auth: true },
         settings: { render: renderSettings, title: "Settings", auth: true },
-        achievements: { render: renderAchievements, title: "Achievements", auth: true },
+        achievements: { render: () => navigateTo("progress"), title: "Progress", auth: true },
         community: { render: renderCommunity, title: "Community Decks", auth: true },
         landing: { render: showLanding, title: "KIWI", auth: false },
         onboarding: { render: renderOnboarding, title: "Getting Started", auth: true },
@@ -9279,13 +9171,13 @@
         </div>
         <div class="feature-card">
           <div class="feature-icon">&#x1F4D6;</div>
-          <div class="feature-title">The Chronicle</div>
-          <div class="feature-desc">Weekly AI-written narrative journals of your learning journey.</div>
+          <div class="feature-title">Living Profile</div>
+          <div class="feature-desc">A weekly evidence-backed reading of your subjects, exams, habits, strengths, and friction.</div>
         </div>
         <div class="feature-card">
           <div class="feature-icon">&#x1F4D4;</div>
-          <div class="feature-title">The Almanac</div>
-          <div class="feature-desc">A living book of records. Chapters unlock as you achieve milestones.</div>
+          <div class="feature-title">Living Achievements</div>
+          <div class="feature-desc">Stable milestones and personal weekly challenges measured from your actual study record.</div>
         </div>
         <div class="feature-card">
           <div class="feature-icon">&#x1F3C6;</div>
@@ -9294,8 +9186,8 @@
         </div>
         <div class="feature-card">
           <div class="feature-icon">&#x1F31F;</div>
-          <div class="feature-title">Study Persona</div>
-          <div class="feature-desc">AI-classified learning identity based on your actual study patterns.</div>
+          <div class="feature-title">Evolving Identity</div>
+          <div class="feature-desc">A unique current pattern that changes as your evidence changes—never a default archetype.</div>
         </div>
       </div>
       <div id="landingContactSection" class="landing-contact">
@@ -9724,19 +9616,13 @@
         // Get streak and persona
         const streak = AppState.dashboard?.streak?.current || 0;
         const shields = AppState.dashboard?.streak?.shields || 0;
-        const level = AppState.dashboard?.level || { level: 1, xp: 0, nextLevelXp: 100 };
         footer.innerHTML = `
     <div class="user-mini">
       <div class="user-avatar">${getUserDisplayName(user).charAt(0).toUpperCase()}</div>
       <div>
         <div class="user-name">${escapeHTML(getUserDisplayName(user))}</div>
-        <div class="user-level">Lv ${level.level || 1}</div>
         ${persona ? `<div class="user-persona">${escapeHTML(persona.icon || "&#x1F9E0;")} ${escapeHTML(persona.name || "Undiscovered")}</div>${persona.description ? `<div style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);margin-top:2px;line-height:1.3;">${escapeHTML(persona.description.substring(0, 60))}${persona.description.length > 60 ? "..." : ""}</div>` : ""}` : ""}
       </div>
-    </div>
-    <div class="xp-bar-wrap">
-      <div class="xp-bar-track"><div class="xp-bar-fill" style="width:${Math.round(((level.xp || 0) / (level.nextLevelXp || 100)) * 100)}%"></div></div>
-      <div class="xp-label">${level.xp || 0} / ${level.nextLevelXp || 100} XP</div>
     </div>
     <div class="ks-bar-wrap">
       <div class="ks-label">Knowledge Score</div>
@@ -9868,7 +9754,6 @@
             overallKS,
             subjectBreakdown,
             streak,
-            dailyXP,
             invitations,
             tasks,
             brainPreview,
@@ -10060,12 +9945,12 @@
                     ? `
                 <div style="display:flex;justify-content:space-between;align-items:center;">
                   <span style="font-size:var(--text-base);color:var(--text-2);">Highest Pressure</span>
-                  <span style="font-family:var(--font-mono);font-size:var(--text-lg);font-weight:700;color:${brainPreview.highestPressure > 50 ? "var(--red-bright)" : brainPreview.highestPressure > 30 ? "var(--gold)" : "var(--green-bright)"}">
-                    ${brainPreview.highestPressure}%
+                  <span style="font-family:var(--font-mono);font-size:var(--text-lg);font-weight:700;color:${brainPreview.highestPressure >= 20 ? "var(--red-bright)" : brainPreview.highestPressure >= 15 ? "var(--gold)" : "var(--green-bright)"}">
+                    ${brainPreview.highestPressure} pts
                   </span>
                 </div>
                 <div class="progress-bar" style="height:3px;">
-                  <div class="progress-fill" style="width:${brainPreview.highestPressure}%;background:${brainPreview.highestPressure > 50 ? "linear-gradient(90deg,var(--red),var(--red-bright))" : brainPreview.highestPressure > 30 ? "linear-gradient(90deg,var(--gold),var(--red-bright))" : "var(--green-bright)"}"
+                  <div class="progress-fill" style="width:${Math.min(100,(brainPreview.highestPressure / 20) * 100)}%;background:${brainPreview.highestPressure >= 20 ? "linear-gradient(90deg,var(--red),var(--red-bright))" : brainPreview.highestPressure >= 15 ? "linear-gradient(90deg,var(--gold),var(--red-bright))" : "var(--green-bright)"}"
                   ></div>
                 </div>
                 `
@@ -10149,6 +10034,10 @@
               const idx = parseInt(btn.dataset.dismiss);
               const inv = invitations[idx];
               if (!inv) return;
+              if (inv.completed) {
+                showToast("This invitation is already complete for today.", "success");
+                return;
+              }
               try {
                 // FIX-C: was inv.type (undefined) — now correctly passes action_type
                 await api.dismissInvitation(idx, inv.action_type);
@@ -10175,6 +10064,10 @@
               const idx = parseInt(item.dataset.inv);
               const inv = invitations[idx];
               if (!inv || inv.dismissed) return;
+              if (inv.completed) {
+                showToast("Already complete — choose another invitation when you are ready.", "success");
+                return;
+              }
               try {
                 const actionType = inv.action_type || "study_session";
                 if (actionType === "exam") {
@@ -10203,7 +10096,7 @@
                     })),
                     currentIndex: 0,
                     flipped: false,
-                    startTime: Date.now(),
+                    startTime: getServerSessionStart(session),
                     cardShownAt: Date.now(),
                     reviews: [],
                     cardsReviewed: 0,
@@ -10288,6 +10181,20 @@
         return { stage: "dormant", label: "Dormant", emoji: "💤", pct: quality };
       }
 
+      function getServerSessionStart(payload) {
+        const raw = payload?.session?.started_at || payload?.started_at;
+        const parsed = raw ? new Date(raw).getTime() : NaN;
+        return Number.isFinite(parsed) ? parsed : Date.now();
+      }
+
+      async function startExamClock(examId, fallbackSeconds) {
+        const started = await apiRequest(`/exams/${examId}/start`, { method: "POST" });
+        return {
+          startTime: getServerSessionStart(started),
+          timeLimit: Math.max(1, Number(started?.time_limit_seconds) || Number(fallbackSeconds) || 1800),
+        };
+      }
+
       function computeLiveSessionQuality(study) {
         if (!study) return {
           score: 0, activeSeconds: 0, elapsedSeconds: 0, focusRatio: 0,
@@ -10312,10 +10219,11 @@
           attention: round2(focusRatio * 20),
           goal_progress: round2(Math.min(cardsReviewed / 25, 1) * 15),
         };
-        const score = Math.round(Math.max(0, Math.min(
+        let score = Math.round(Math.max(0, Math.min(
           100,
           breakdown.meaningful_work + breakdown.active_focus + breakdown.attention + breakdown.goal_progress
         )));
+        if (uniqueCards < 5 || activeSeconds < 300) score = Math.min(score, 39);
         return { score, activeSeconds, elapsedSeconds, focusRatio, breakdown };
       }
 
@@ -10476,7 +10384,7 @@
                 _fetchingMore: false,
                 currentIndex: 0,
                 flipped: false,
-                startTime: Date.now(),
+                    startTime: getServerSessionStart(session),
                 cardShownAt: Date.now(),
                 reviews: [],
                 cardsReviewed: 0,
@@ -12327,7 +12235,7 @@
 
       async function endStudySession() {
         const study = AppState.tempStudy;
-        if (!study || study._ending) return;
+        if (!study || study._ending) return false;
         study._ending = true;
         if (study._cardTimerInterval) {
           clearInterval(study._cardTimerInterval);
@@ -12350,6 +12258,7 @@
           AppState.biome = null;
           _bustDashboardCache();
           renderSessionEnd(result);
+          return true;
         } catch (error) {
           study._ending = false;
           main.innerHTML = `
@@ -12360,6 +12269,7 @@
               <button class="btn btn-primary" onclick="endStudySession()">Retry finalization</button>
             </div>`;
           showToast(error.message || "Session could not be finalized.", "error");
+          return false;
         }
       }
 
@@ -12447,8 +12357,50 @@
           study.focusData.focusRatio = 0;
         }
         document.addEventListener("visibilitychange", handleVisibilityChange);
-        tracking._interval = setInterval(refreshFocusSeedPreview, 1000);
+        ["pointerdown", "keydown", "touchstart", "mousemove"].forEach((eventName) => {
+          document.addEventListener(eventName, handleStudyActivity, { passive: true });
+        });
+        _lockStudyPage();
+        tracking._interval = setInterval(() => {
+          const now = Date.now();
+          if (!document.hidden && !tracking.idleStart && now - tracking.lastActive >= 60000) {
+            tracking.idleStart = tracking.lastActive + 60000;
+          }
+          refreshFocusSeedPreview();
+          persistActiveStudySnapshot();
+        }, 1000);
         refreshFocusSeedPreview();
+      }
+
+      function handleStudyActivity() {
+        const tracking = AppState.focusTracking;
+        if (!AppState.tempStudy || document.hidden) return;
+        const now = Date.now();
+        if (tracking.idleStart) {
+          tracking.idleMs = (Number(tracking.idleMs) || 0) + Math.max(0, now - tracking.idleStart);
+          tracking.idleStart = null;
+        }
+        tracking.lastActive = now;
+      }
+
+      function persistActiveStudySnapshot() {
+        const study = AppState.tempStudy;
+        if (!study || !study.sessionId || study.isDemo) return;
+        try {
+          sessionStorage.setItem('kiwi_active_study_v1', JSON.stringify({
+            savedAt: Date.now(),
+            study: {
+              ...study,
+              _ending: false,
+              _cardTimerInterval: null,
+              finalFocusSnapshot: null,
+            },
+            focus: {
+              idleMs: Number(AppState.focusTracking?.idleMs) || 0,
+              lastActive: Number(AppState.focusTracking?.lastActive) || Date.now(),
+            },
+          }));
+        } catch (_) {}
       }
 
       function stopFocusTracking() {
@@ -12466,6 +12418,9 @@
           study.focusData.focusRatio = preview.focusRatio;
         }
         document.removeEventListener("visibilitychange", handleVisibilityChange);
+        ["pointerdown", "keydown", "touchstart", "mousemove"].forEach((eventName) => {
+          document.removeEventListener(eventName, handleStudyActivity);
+        });
         if (tracking?._interval) {
           clearInterval(tracking._interval);
           tracking._interval = null;
@@ -12546,6 +12501,25 @@
               <option value="50">50 questions (Full)</option>
               <option value="100">100 questions (Marathon)</option>
             </select>
+          </div>
+          <!-- Difficulty is optional. Off preserves KIWI's normal balanced exam. -->
+          <div class="input-group" style="margin-bottom:20px;">
+            <label class="input-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;">
+              <input type="checkbox" id="enableExamDifficulty" style="cursor:pointer;width:15px;height:15px;accent-color:var(--green-bright);">
+              <span>Choose a difficulty level</span>
+            </label>
+            <div id="examDifficultyWrap" style="display:none;margin-top:12px;padding:12px;background:var(--surface);border-radius:var(--r);border:1px solid var(--border);">
+              <select class="input" id="examDifficulty">
+                <option value="easy">Easy — direct understanding</option>
+                <option value="hard">Hard — application and close distractors</option>
+                <option value="very_hard">Very Hard — synthesis and exception reasoning</option>
+                <option value="hell">Hell — maximum subject-bound complexity</option>
+              </select>
+              <div id="examDifficultyHint" style="font-size:var(--text-sm);color:var(--text-3);margin-top:8px;line-height:1.55;">
+                Easy stays clear without becoming trivial. Difficulty never uses facts outside your subject data.
+              </div>
+            </div>
+            <div style="font-size:var(--text-xs);color:var(--text-4);margin-top:6px;">Off by default. Off is KIWI's normal balanced difficulty.</div>
           </div>
           <!-- Theory / Calculation Balance (optional) -->
           <div class="input-group" style="margin-bottom:16px;">
@@ -12661,6 +12635,25 @@
               });
             }
           })();
+          // ── Optional difficulty wiring ──
+          (function() {
+            var enabled = document.getElementById("enableExamDifficulty");
+            var wrap = document.getElementById("examDifficultyWrap");
+            var select = document.getElementById("examDifficulty");
+            var hint = document.getElementById("examDifficultyHint");
+            var hints = {
+              easy: "Direct understanding and mostly single-step reasoning. Clear, plausible distractors; never trivial.",
+              hard: "Application, comparison, and multi-step reasoning. Hard is above normal difficulty, not medium.",
+              very_hard: "Cross-concept synthesis, exception handling, and two-to-three-step reasoning.",
+              hell: "Maximum justified complexity inside your cards: reverse reasoning, exception chains, error diagnosis, and highly plausible distractors."
+            };
+            if (enabled) enabled.addEventListener("change", function() {
+              wrap.style.display = this.checked ? "block" : "none";
+            });
+            if (select) select.addEventListener("change", function() {
+              hint.textContent = hints[this.value] || hints.easy;
+            });
+          })();
           document.getElementById("generateExamBtn").addEventListener("click", async () => {
             const subjectId = document.getElementById("examSubject").value;
             if (!subjectId) {
@@ -12686,6 +12679,10 @@
             // Broad Coverage flag
             const _bcChk     = document.getElementById("enableBroadCoverage");
             const broadCoverage = !!(_bcChk && _bcChk.checked);
+            const _difficultyEnabled = document.getElementById("enableExamDifficulty");
+            const _difficultySelect = document.getElementById("examDifficulty");
+            const difficultyLevel = (_difficultyEnabled && _difficultyEnabled.checked && _difficultySelect)
+              ? _difficultySelect.value : null;
 
             try {
               const btn = document.getElementById("generateExamBtn");
@@ -12696,6 +12693,7 @@
                 theory_percent: theoryPercent,
                 customize_balance: customizeBalance,
                 broad_coverage: broadCoverage,
+                difficulty_level: difficultyLevel,
               });
               // Server now returns a job_id immediately (background generation)
               if (job && job.job_id) {
@@ -12735,15 +12733,15 @@
               // Legacy sync path (fallback if server returns full exam directly)
               const examData = job.exam || job;
               const examId   = job.examId || examData.id || null;
-              await apiRequest(`/exams/${examId}/start`, { method: "POST" }).catch(() => {});
               const qCount = (job.questions || examData.questions || []).length;
               const SECS_PER_Q = 66;
+              const clock = await startExamClock(examId, qCount * SECS_PER_Q);
               AppState.tempExam = {
                 examId, questions: normalizeExamQuestions(job.questions || examData.questions || []),
                 currentIndex: 0, answers: {}, flagged: new Set(),
-                startTime: Date.now(),
-                timeLimit: job.isReckoning ? Infinity : qCount * SECS_PER_Q,
-                totalTime: job.isReckoning ? Infinity : qCount * SECS_PER_Q,
+                startTime: clock.startTime,
+                timeLimit: job.isReckoning ? Infinity : clock.timeLimit,
+                totalTime: job.isReckoning ? Infinity : clock.timeLimit,
                 _warnedAt20: false, _warnedAt10: false, submitted: false,
               };
               navigateTo("exam");
@@ -12835,7 +12833,7 @@
                           'const r=await apiRequest(\'/study/start\',{method:\'POST\',body:{deck_id:deckId}});' +
                           'const sid=r.sessionId||(r.session&&r.session.id)||null;' +
                           'if(!sid){showToast(\'Could not start session\',\'error\');btn.disabled=false;btn.textContent=\'▶ Study\';return;}' +
-                          'AppState.tempStudy={sessionId:sid,queue:(r.cards||[]).map(function(c){return Object.assign({},c,{front:c.front_content||c.front||\'\',back:c.back_content||c.back||\'\'});}),currentIndex:0,flipped:false,startTime:Date.now(),cardShownAt:Date.now(),reviews:[],cardsReviewed:0,seedHealth:0,aiSummary:null,stageTransitions:[],focusData:{tabAwayCount:0,idleSeconds:0},subjectId:r.subject_id||null,deckId:deckId};' +
+                          'AppState.tempStudy={sessionId:sid,queue:(r.cards||[]).map(function(c){return Object.assign({},c,{front:c.front_content||c.front||\'\',back:c.back_content||c.back||\'\'});}),currentIndex:0,flipped:false,startTime:getServerSessionStart(r),cardShownAt:Date.now(),reviews:[],cardsReviewed:0,seedHealth:0,aiSummary:null,stageTransitions:[],focusData:{tabAwayCount:0,idleSeconds:0},subjectId:r.subject_id||null,deckId:deckId};' +
                           'if(typeof startFocusTracking==="function")startFocusTracking();' +
                           'navigateTo(\'study\');' +
                         '}catch(err){showToast((err&&err.error)||\'Failed to start session\',\'error\');btn.disabled=false;btn.textContent=\'▶ Study\';}' +
@@ -12994,8 +12992,8 @@
                     : 'Submit Exam';
                 }
               }
-              // BUG-09 progressive pre-marking: fire-and-forget background SRS processing
-              // so that the final submit response is near-instant.
+              // Save the current choice without scoring it. All learning effects
+              // are committed once, only after final exam submission.
               if (e.examId && q.question_number != null) {
                 api.preMarkQuestion(e.examId, q.question_number, optionId);
               }
@@ -13198,10 +13196,6 @@
               result.question_review = reviewRes?.question_review || [];
             } catch (_) { result.question_review = []; }
           }
-          // P6.4 FIX: Show dignified notification when almanac entries unlock after exam
-          if (result.new_almanac_unlocks && result.new_almanac_unlocks.length > 0) {
-            showToast('A new entry has appeared in your Almanac.', 'success', 6000);
-          }
           renderExamResults();
         } catch (err) {
           if (err.status === 403 && AppState.reckoning) {
@@ -13285,11 +13279,11 @@
           <div style="font-size:var(--text-sm);color:${reckoningSurvived
             ? 'var(--green-bright)'
             : 'var(--red-bright)'};font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
-            ${reckoningSurvived ? "Pressure Reset" : "Lockout Remains"}
+            ${reckoningSurvived ? "Recovery Window" : "Lockout Remains"}
           </div>
           <div style="font-size:var(--text-base);color:var(--text-2);line-height:1.6;">
-            ${(reckoningOutcome?.pressure_reset ?? reckoningSurvived)
-              ? "You cleared the Reckoning. Pressure has been reset to L0. The lockout has been lifted."
+            ${reckoningSurvived
+              ? "You cleared the Reckoning. The lockout is lifted and a seven-day recovery relief now applies while pressure continues to follow current evidence."
               : "You did not meet the threshold. Pressure has not been reset. Face the Reckoning again to unlock this subject."}
           </div>
         </div>
@@ -13604,7 +13598,7 @@
         <div class="reckoning-stats">
           <div class="stat-card">
             <div class="stat-label">Current Pressure</div>
-            <div class="stat-value" style="color:var(--red-bright)">${Math.round(reckoning.pressure || 0)}%</div>
+            <div class="stat-value" style="color:var(--red-bright)">${Math.round(reckoning.pressure || 0)} pts</div>
           </div>
           <div class="stat-card">
             <div class="stat-label">Required Score</div>
@@ -13658,7 +13652,7 @@
         ${
           reckoning.canDefer !== false
             ? `
-        <div class="reckoning-defer">Deferring increases pressure by ${reckoning.deferPenalty || 5}%</div>
+        <div class="reckoning-defer">Deferring adds ${reckoning.deferPenalty || 5} persistent pressure points.</div>
         `
             : ""
         }
@@ -13695,14 +13689,14 @@
             const reckoningExamData = response.exam || response;
             const reckoningExamId = response.examId || reckoningExamData.id || null;
             // P3-FIX: Transition exam from 'ready' → 'active'
-            await apiRequest(`/exams/${reckoningExamId}/start`, { method: "POST" }).catch(() => {});
+            const reckoningClock = await startExamClock(reckoningExamId, 1800);
             AppState.tempExam = {
               examId: reckoningExamId,
               questions: normalizeExamQuestions(response.questions || reckoningExamData.questions || []),
               currentIndex: 0,
               answers: {},
               flagged: new Set(),
-              startTime: Date.now(),
+              startTime: reckoningClock.startTime,
               timeLimit: Infinity,
               totalTime: Infinity,
               _warnedAt20: false, _warnedAt10: false, submitted: false,
@@ -14009,7 +14003,7 @@
         const fruits = zone.fruits || 0;
         const credential = zone.credential || null;
         const stateClass = zone.stateClass || "zone-growing"; // stateClass always provided by /api/biome
-        const isHighPressure = pressure >= 30;
+        const isHighPressure = pressure >= 15;
         // P5.5 FIX: extract state distribution for STUCK/AVOIDED/GHOST visual mappings
         const stateDist = zone.state_distribution || {};
         const ghostCount = stateDist.GHOST || 0;
@@ -14036,6 +14030,7 @@
         <span>${zone.cardCount || 0} cards &middot; ${fruits} fruit${fruits === 1 ? "" : "s"}</span>
         ${credential ? `<span class="badge badge-gold">${escapeHTML(credential)}</span>` : ""}
       </div>
+      ${zone.rareFlora ? '<div style="margin-top:8px;padding:7px 10px;border:1px solid rgba(82,183,136,.35);border-radius:10px;background:rgba(82,183,136,.07);color:var(--green-bright);font-size:var(--text-sm);">🌺 Rare Flora · earned for this zone</div>' : ''}
       <!-- P5.5-3: STUCK blight indicator -->
       ${stuckCount > 0 ? `<div class="bz-blight" style="margin-top:6px;font-size:var(--text-xs);color:var(--red);font-family:var(--font-mono);">&#x2B1B; ${stuckCount} stuck card${stuckCount === 1 ? '' : 's'}</div>` : ''}
       <!-- P5.5-4: AVOIDED bare-patch indicator -->
@@ -14045,9 +14040,9 @@
         <div style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);margin-bottom:3px;">Pressure</div>
         <div class="pressure-bar-track">
           <!-- P5.6-F12 FIX: Math.min cap prevents bar exceeding 100% -->
-          <div class="pressure-bar-fill" style="width:${Math.min(pressure, 100)}%;background:linear-gradient(90deg,${getPressureColor(pressure)})"></div>
+          <div class="pressure-bar-fill" style="width:${Math.min(100, (pressure / 20) * 100)}%;background:linear-gradient(90deg,${getPressureColor(pressure)})"></div>
         </div>
-        <div class="pressure-bar-labels"><span>0</span><span>50</span><span>100</span></div>
+        <div class="pressure-bar-labels"><span>0</span><span>10</span><span>20 critical</span></div>
       </div>
       <!-- Drought visual -->
       ${
@@ -14078,9 +14073,9 @@
 
       function getPressureColor(pressure) {
         // P5.6 FIX: pressure 17 must return amber (old threshold <20 gave green)
-        if (pressure < 10) return "var(--green),var(--green-bright)";
-        if (pressure < 20) return "var(--green-bright),var(--teal)";
-        if (pressure < 40) return "var(--teal),var(--red-bright)";
+        if (pressure < 5) return "var(--green),var(--green-bright)";
+        if (pressure < 15) return "var(--green-bright),var(--gold)";
+        if (pressure < 20) return "var(--gold),var(--red-bright)";
         return "var(--red-bright),var(--red)";
       }
 
@@ -14096,7 +14091,7 @@
         const _cachedBrain = AppState.brain;
         if (_cachedBrain) {
           const { pressures, overallStatus, totalInterventions } = _cachedBrain;
-          main.innerHTML = `<div class="page-wrap page-enter"><div class="section-header"><div><div class="section-title">The Brain</div><div class="section-sub">${totalInterventions || 0} interventions &middot; Status: ${escapeHTML(overallStatus || "Calm")}</div></div></div><div style="display:flex;flex-direction:column;gap:12px;padding-top:8px;">${(pressures || []).map((p) => `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);"><span style="font-size:var(--text-base);color:var(--text-2);">${escapeHTML(p.subjectName)}</span><span style="font-family:var(--font-mono);font-size:var(--text-base);color:${p.pressure > 50 ? "var(--red-bright)" : p.pressure > 30 ? "var(--gold)" : "var(--green-bright)"};">${Math.round(p.pressure)}%</span></div>`).join("")}</div></div>`;
+          main.innerHTML = `<div class="page-wrap page-enter"><div class="section-header"><div><div class="section-title">The Brain</div><div class="section-sub">${totalInterventions || 0} interventions &middot; Status: ${escapeHTML(overallStatus || "Calm")}</div></div></div><div style="display:flex;flex-direction:column;gap:12px;padding-top:8px;">${(pressures || []).map((p) => `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);"><span style="font-size:var(--text-base);color:var(--text-2);">${escapeHTML(p.subjectName)}</span><span style="font-family:var(--font-mono);font-size:var(--text-base);color:${p.pressure >= 20 ? "var(--red-bright)" : p.pressure >= 15 ? "var(--gold)" : "var(--green-bright)"};">${Math.round(p.pressure)} pts</span></div>`).join("")}</div></div>`;
         } else {
           renderLoadingState(main, "Consulting The Brain...");
         }
@@ -14137,7 +14132,7 @@
         </div>
         <!-- Highest Pressure Alert -->
         ${
-          (highestPressure || 0) >= 30
+          (highestPressure || 0) >= 15
             ? `
         <div class="card" style="margin-bottom:20px;border-color:var(--red);">
           <div style="display:flex;align-items:center;gap:12px;">
@@ -14146,7 +14141,7 @@
               <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;color:var(--red-bright);">High Pressure Alert</div>
               <div style="font-size:var(--text-base);color:var(--text-2);">
                 ${escapeHTML(pressures && pressures[0] ? pressures[0].subjectName : "A subject")} is at
-                <strong style="color:var(--red-bright)">${Math.round(highestPressure || 0)}%</strong> pressure.
+                <strong style="color:var(--red-bright)">${Math.round(highestPressure || 0)} points</strong> pressure.
                 <button class="btn btn-primary btn-sm" onclick="navigateTo('exam-config')" style="margin-left:12px;">Take Exam</button>
               </div>
             </div>
@@ -14210,12 +14205,12 @@
                     <div class="brain-pressure-row" data-subject-id="${escapeHTML(p.subjectId || '')}" style="cursor:pointer;" title="Tap to understand this pressure">
                       <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
                         <span style="font-size:var(--text-base);color:var(--text-2);">${escapeHTML(p.subjectName)}</span>
-                        <span style="font-family:var(--font-mono);font-size:var(--text-base);color:${p.pressure > 50 ? "var(--red-bright)" : p.pressure > 30 ? "var(--gold)" : "var(--green-bright)"};">
-                          ${Math.round(p.pressure)}%
+                        <span style="font-family:var(--font-mono);font-size:var(--text-base);color:${p.pressure >= 20 ? "var(--red-bright)" : p.pressure >= 15 ? "var(--gold)" : "var(--green-bright)"};">
+                          ${Math.round(p.pressure)} pts
                         </span>
                       </div>
                       <div class="progress-bar" style="height:4px;">
-                        <div class="progress-fill" style="width:${Math.min(100, p.pressure)}%;background:linear-gradient(90deg,${getPressureColor(p.pressure)})"></div>
+                        <div class="progress-fill" style="width:${Math.min(100, (p.pressure / 20) * 100)}%;background:linear-gradient(90deg,${getPressureColor(p.pressure)})"></div>
                       </div>
                     </div>
                   `,
@@ -15699,10 +15694,11 @@
               var status  = escapeHTML(e.status || "completed");
               var date    = formatDateShort(e.completed_at || e.created_at || e.date);
               var isReck  = e.is_reckoning ? ' <span class="badge badge-gold" style="font-size:var(--text-xs);">Reckoning</span>' : "";
+              var timedOut = e.timed_out ? ' <span class="badge" style="font-size:var(--text-xs);color:var(--amber);">Timed out</span>' : "";
               var scoreColor = score >= 70 ? "var(--green-bright)" : score >= 50 ? "var(--teal)" : "var(--red-bright)";
               var examId  = escapeHTML(e.id || e.exam_id || '');
               return '<div data-exam-id="' + examId + '" onclick="if(this.dataset.examId)openExamReview(this.dataset.examId)" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;">' +
-                '<div><div style="font-size:var(--text-base);color:var(--text);">' + subject + isReck + '</div>' +
+                '<div><div style="font-size:var(--text-base);color:var(--text);">' + subject + isReck + timedOut + '</div>' +
                 '<div style="font-size:var(--text-sm);color:var(--text-3);">' + date + ' &middot; ' + status + '</div></div>' +
                 '<div style="display:flex;align-items:center;gap:6px;"><span style="font-family:var(--font-mono);font-size:var(--text-xl);font-weight:700;color:' + scoreColor + ';">' + score + '%</span><span style="color:var(--text-3);font-size:var(--text-base);">›</span></div>' +
                 '</div>';
@@ -15835,7 +15831,7 @@
         ${healthHTML ? `
         <div class="card" style="margin-bottom:20px;">
           <div class="section-header">
-            <div><div class="section-title">Subject Health</div><div class="section-sub">Secondary metric — independent of KS</div></div>
+            <div><div class="section-title">Subject Health</div><div class="section-sub">Recall 40% · exams 30% · card maturity 20% · meaningful study days 10%</div></div>
           </div>
           ${healthHTML}
         </div>
@@ -15874,7 +15870,9 @@
                 // ── source badge ───────────────────────────────────────────
                 var sourceBadge = '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:' + tm.color + '22;color:' + tm.color + ';font-family:var(--font-mono);margin-left:6px;">'
                   + escapeHTML(s.source || tm.label) + '</span>'
-                  + (isForfeited ? '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#ff000022;color:#ff6b6b;font-family:var(--font-mono);margin-left:4px;">forfeited</span>' : '');
+                  + (isForfeited ? '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#ff000022;color:#ff6b6b;font-family:var(--font-mono);margin-left:4px;">forfeited</span>' : '')
+                  + (s.timedOut ? '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(212,160,23,.12);color:var(--amber);font-family:var(--font-mono);margin-left:4px;">timed out</span>' : '')
+                  + (s.type === 'Study' && s.meaningful === false ? '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.05);color:var(--text-3);font-family:var(--font-mono);margin-left:4px;">short · no ecosystem growth</span>' : '');
 
                 // ── subtitle line ──────────────────────────────────────────
                 var subtitle;
@@ -16048,8 +16046,7 @@
               try {
                 showToast("Starting focused review...", "info");
                 var session = await api.startStudySession(subjectId, {
-                  focusMode: true,
-                  cardStates: ["STUCK", "GHOST", "DANGEROUS"]
+                  cardIds: [card.dataset.cardId]
                 });
                 var tSessionId = session.sessionId || (session.session && session.session.id) || null;
                 AppState.tempStudy = {
@@ -16057,7 +16054,7 @@
                   queue: (session.cards || []).map(function(c) {
                     return Object.assign({}, c, { front: c.front || c.front_content || "", back: c.back || c.back_content || "" });
                   }),
-                  currentIndex: 0, flipped: false, startTime: Date.now(), cardShownAt: Date.now(),
+                  currentIndex: 0, flipped: false, startTime: getServerSessionStart(session), cardShownAt: Date.now(),
                   reviews: [], cardsReviewed: 0, seedStatus: "alive", seedHealth: 0, // FIX P9.4-01
                   aiSummary: null, stageTransitions: [], focusData: { tabAwayCount: 0, idleSeconds: 0 },
                   isReturnSession: session.is_first_return_session || false,
@@ -16113,6 +16110,13 @@
           // F2: build code→name lookup from catalog so inventory badges show names
           const codeToName = {};
           (itemsArr || []).forEach((i) => { codeToName[i.item_code] = i.name; });
+          const subjectNameById = new Map((AppState.subjects || []).map((subject) => [subject.id, subject.name]));
+          const inventoryLabel = (item) => {
+            const code = item.item_code || item.code || '';
+            if (code.startsWith('rare_flora_')) return `Rare Flora — ${subjectNameById.get(code.slice('rare_flora_'.length)) || 'Subject'}`;
+            if (code.startsWith('archive_expansion_')) return `Archive Expansion — ${subjectNameById.get(code.slice('archive_expansion_'.length)) || 'Subject'}`;
+            return codeToName[code] || code.replace(/_/g, ' ') || 'Marketplace item';
+          };
           main.innerHTML = `
       <div class="page-wrap page-enter">
         <div class="section-header">
@@ -16136,7 +16140,7 @@
             ${ownedItems
               .map(
                 (item) => `
-              <span class="badge badge-green">${escapeHTML(codeToName[item.item_code] || item.item_code)}${(item.quantity || 0) > 1 ? ` x${item.quantity}` : ""}</span>
+              <span class="badge badge-green">${escapeHTML(inventoryLabel(item))}${(item.quantity || 0) > 1 ? ` x${item.quantity}` : ""}</span>
             `,
               )
               .join("")}
@@ -16156,13 +16160,22 @@
                 ? `<div style="grid-column:1/-1;font-size:var(--text-xs);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:2px;color:var(--text-3);padding:18px 0 6px;border-top:1px solid var(--border);margin-top:4px;">${escapeHTML(item.category || "General")}</div>`
                 : "";
 
-              // F1: backend returns snake_case — fix all field names
-              // NEW-C3 FIX: Rare Flora inventory is stored under a per-subject key
-              // ('rare_flora_<subjectId>'), so ownedCodes never contains bare 'rare_flora'.
-              // Detect ownership by prefix match instead.
-              const isOwned = item.item_code === 'rare_flora'
-                ? ownedItemsArr.some(i => (i.item_code || i.code || '').startsWith('rare_flora_'))
-                : ownedCodes.has(item.item_code);
+              const rareOwnedSubjectIds = new Set(ownedItemsArr
+                .map(i => i.item_code || i.code || '')
+                .filter(code => code.startsWith('rare_flora_'))
+                .map(code => code.slice('rare_flora_'.length)));
+              const archiveOwnedSubjectIds = new Set(ownedItemsArr
+                .map(i => i.item_code || i.code || '')
+                .filter(code => code.startsWith('archive_expansion_'))
+                .map(code => code.slice('archive_expansion_'.length)));
+              const scopedItem = item.item_code === 'rare_flora' || item.item_code === 'archive_expansion';
+              const scopedOwned = item.item_code === 'rare_flora' ? rareOwnedSubjectIds : archiveOwnedSubjectIds;
+              const scopedEligibility = item.subject_eligibility || {};
+              const scopedHasAvailableSubject = (AppState.subjects || []).some(s =>
+                !scopedOwned.has(s.id) && (!scopedEligibility[s.id] || scopedEligibility[s.id].met)
+              );
+              const isRepeatableService = item.item_code === 'deep_audit';
+              const isOwned = !scopedItem && !isRepeatableService && ownedCodes.has(item.item_code);
               const g1cur = item.gate1_current ?? 0;
               const g1tgt = item.gate1_target ?? 0;
               const gate1Progress = g1tgt > 0 ? Math.min(100, (g1cur / g1tgt) * 100) : (item.gate1_met ? 100 : 0);
@@ -16170,8 +16183,8 @@
               const canAfford = (seedlings || 0) >= cost;
               // For rare_flora, don't block purchase just because another zone is owned.
               // The backend enforces per-zone uniqueness. The isOwned badge still shows.
-              const canPurchase = item.item_code === 'rare_flora'
-                ? item.gate1_met && canAfford
+              const canPurchase = scopedItem
+                ? item.gate1_met && canAfford && scopedHasAvailableSubject
                 : item.gate1_met && canAfford && !isOwned;
               const gate1Label = (item.gate1_condition?.type || "progress").replace(/_/g, " ");
               // NEW-C4 FIX: items that need a subject must let the user choose.
@@ -16182,7 +16195,11 @@
                 <div style="font-size:var(--text-xs);color:var(--text-3);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${escapeHTML(item.category || "General")}</div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                   <div class="item-name">${escapeHTML(item.name)}</div>
-                  ${isOwned ? '<span class="badge badge-green">Owned</span>' : ""}
+                  ${scopedItem && scopedOwned.size > 0
+                    ? `<span class="badge badge-green">Applied in ${scopedOwned.size} subject${scopedOwned.size === 1 ? '' : 's'}</span>`
+                    : isRepeatableService && item.owned_quantity > 0
+                      ? `<span class="badge badge-green">${item.owned_quantity} report${item.owned_quantity === 1 ? '' : 's'} run</span>`
+                    : isOwned ? '<span class="badge badge-green">Owned</span>' : ""}
                 </div>
                 <div class="item-desc">${escapeHTML(item.description)}</div>
                 <!-- Gate 1: Progress -->
@@ -16234,13 +16251,21 @@
                 }
                 <div class="item-actions">
                   ${needsSubject && AppState.subjects && AppState.subjects.length > 0
-                    ? `<select class="subject-select" data-for-item="${item.item_code}" style="width:100%;margin-bottom:8px;padding:6px 8px;border-radius:6px;background:var(--bg-3,#1a1a2e);color:var(--text-1,#fff);border:1px solid var(--border-1,#333);font-size:var(--text-base);">${AppState.subjects.map(s => `<option value="${s.id}">${escapeHTML(s.name)}</option>`).join('')}</select>`
+                    ? `<select class="subject-select" data-for-item="${item.item_code}" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;background:var(--bg-3,#1a1a2e);color:var(--text-1,#fff);border:1px solid var(--border-1,#333);font-size:var(--text-base);">${AppState.subjects.map(s => {
+                        const alreadyApplied = scopedItem && scopedOwned.has(s.id);
+                        const eligible = !scopedItem || !scopedEligibility[s.id] || scopedEligibility[s.id].met;
+                        const disabled = alreadyApplied || !eligible;
+                        const suffix = alreadyApplied ? ' — already applied' : !eligible ? ' — learning gate incomplete' : '';
+                        const eligibility = scopedEligibility[s.id] || {};
+                        return `<option value="${s.id}" data-current="${Number(eligibility.current) || 0}" data-target="${Number(eligibility.target) || 0}" data-ks-current="${Number(eligibility.ks_current) || 0}" data-ks-target="${Number(eligibility.ks_target) || 0}" ${disabled ? 'disabled' : ''}>${escapeHTML(s.name)}${suffix}</option>`;
+                      }).join('')}</select>`
                     : ''}
+                  ${scopedItem ? '<div class="subject-gate-status" style="margin:-2px 0 9px;color:var(--text-3);font-size:var(--text-xs);line-height:1.45;"></div>' : ''}
                   <button class="btn btn-primary btn-sm"
                     data-item-code="${escapeHTML(item.item_code)}"
                     data-needs-subject="${needsSubject}"
                     ${!canPurchase ? "disabled" : ""}>
-                    ${isOwned ? "Owned" : canPurchase ? "Purchase" : "Locked"}
+                    ${isOwned ? "Owned" : canPurchase ? (isRepeatableService ? "Run New Audit" : "Purchase") : (scopedItem && !scopedHasAvailableSubject ? "No eligible subject" : "Locked")}
                   </button>
                 </div>
               </div>
@@ -16305,6 +16330,24 @@
                 btn.disabled = false;
               }
             });
+          });
+          document.querySelectorAll('.subject-select').forEach((select) => {
+            const updateSubjectGateStatus = () => {
+              const status = select.parentElement?.querySelector('.subject-gate-status');
+              const option = select.selectedOptions?.[0];
+              if (!status || !option) return;
+              const current = Number(option.dataset.current) || 0;
+              const target = Number(option.dataset.target) || 0;
+              const ksTarget = Number(option.dataset.ksTarget) || 0;
+              const ksCurrent = Number(option.dataset.ksCurrent) || 0;
+              status.textContent = ksTarget > 0
+                ? `Selected subject evidence: KS ${Math.round(ksCurrent)}/${Math.round(ksTarget)} · ${current}/${target} Fruiting sessions.`
+                : target > 0
+                  ? `Selected subject evidence: ${current}/${target} Fruiting sessions.`
+                  : 'This service will use the selected subject’s current cards and evidence.';
+            };
+            select.addEventListener('change', updateSubjectGateStatus);
+            updateSubjectGateStatus();
           });
         } catch (err) {
           renderErrorState(main, err.message || "Failed to load marketplace", () =>
@@ -16451,7 +16494,7 @@
                     <div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);margin-top:10px;">
                       <button class="btn btn-primary btn-sm" onclick="startStudySession('${escapeHTML(subj.id)}')">▶ Study</button>
                       <button class="btn btn-secondary btn-sm" onclick="startExam('${escapeHTML(subj.id)}')"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Exam</button>
-                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="navigateTo('import')">＋ Cards</button>
+                      <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="navigateTo('import',{subjectId:'${escapeHTML(subj.id)}'})">＋ Cards</button>
                       <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);" onclick="navigateTo('card-browser',{subjectId:'${escapeHTML(subj.id)}',subjectName:'${escapeHTML(subj.name)}'})"><svg style="width:11px;height:11px;vertical-align:-1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Browse</button>
                       <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#f59e0b;" onclick="handleResetSubject('${escapeHTML(subj.id)}','${escapeHTML(safeDisplayName(subj.name))}')">&#x21BA; Reset</button>
                       <button class="btn btn-ghost btn-sm" style="font-size:var(--text-xs);color:#e57373;margin-left:auto;" onclick="handleDeleteSubject('${escapeHTML(subj.id)}','${escapeHTML(safeDisplayName(subj.name))}')">Delete</button>
@@ -17839,7 +17882,7 @@
             queue: session.cards || [],
             currentIndex: 0,
             flipped: false,
-            startTime: Date.now(),
+            startTime: getServerSessionStart(session),
             cardShownAt: Date.now(),
             reviews: [],
             cardsReviewed: 0,
@@ -17933,7 +17976,7 @@
         <div class="section-header">
           <div>
             <div class="section-title">Import Cards</div>
-            <div class="section-sub">Seven ways to grow your ecosystem</div>
+            <div class="section-sub">Eleven ways to add trustworthy subject material</div>
           </div>
         </div>
         <!-- Subject selector + auto-create deck — shared across all tabs -->
@@ -17959,7 +18002,7 @@
           </div>
         </div>
         <!-- Tab buttons -->
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">
+        <div class="import-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">
           ${[
             {label:"Manual",    tab:"manual"},
             {label:"AI Notes",  tab:"ai-notes"},
@@ -18283,8 +18326,9 @@
               try { localStorage.setItem('kiwi_last_import_tab', btn.dataset.tab); } catch(_) {}
             });
           });
-          // Restore last-used import subject
-          try { var _impSubjEl = document.getElementById('importSubject'); if (_impSubjEl) { var _sImSubj = localStorage.getItem('kiwi_last_import_subject'); if (_sImSubj) { var _io = _impSubjEl.querySelector('option[value="' + _sImSubj + '"]'); if (_io) _impSubjEl.value = _sImSubj; } _impSubjEl.addEventListener('change', function() { try { localStorage.setItem('kiwi_last_import_subject', this.value); } catch(_) {} }); } } catch(_) {}
+          // A subject-specific Library action wins; otherwise remember the last
+          // import target. This prevents adding cards to the wrong subject.
+          try { var _impSubjEl = document.getElementById('importSubject'); if (_impSubjEl) { var _routeSubject = AppState.routeParams && AppState.routeParams.subjectId; var _sImSubj = _routeSubject || localStorage.getItem('kiwi_last_import_subject'); if (_sImSubj) { var _io = _impSubjEl.querySelector('option[value="' + _sImSubj + '"]'); if (_io) _impSubjEl.value = _sImSubj; } _impSubjEl.addEventListener('change', function() { try { localStorage.setItem('kiwi_last_import_subject', this.value); } catch(_) {} }); } } catch(_) {}
           // Restore last used import tab
           try {
             var _lastImportTab = localStorage.getItem('kiwi_last_import_tab');
@@ -19181,7 +19225,16 @@
           });
           if (searchInput) searchInput.addEventListener('input', () => {
             _searchQuery = searchInput.value;
+            const caret = searchInput.selectionStart;
             _render();
+            requestAnimationFrame(() => {
+              const restored = document.getElementById('_cd-search-input');
+              if (restored) {
+                restored.focus();
+                const pos = Math.min(Number(caret) || restored.value.length, restored.value.length);
+                restored.setSelectionRange(pos, pos);
+              }
+            });
           });
           if (searchClear) searchClear.addEventListener('click', () => {
             _searchQuery = '';
@@ -19637,7 +19690,6 @@
             <div class="achieve-item-icon">${a.unlocked ? a.icon_emoji : a.is_secret ? "?" : a.icon_emoji}</div>
             <div class="achieve-item-name">${a.unlocked ? escapeHTML(a.name) : a.is_secret ? "???" : escapeHTML(a.name)}</div>
             <div class="achieve-item-desc">${a.unlocked ? escapeHTML(a.description) : a.is_secret ? "Hidden achievement" : escapeHTML(a.description)}</div>
-            ${a.unlocked ? `<div class="achieve-item-xp">+${a.xp_reward} XP</div>` : ""}
             ${a.unlocked && a.unlocked_at ? `<div class="achieve-item-date">${formatDate(a.unlocked_at)}</div>` : ""}
           </div>
         `,
@@ -19854,7 +19906,7 @@
 
               <div class="card" style="padding:24px;">
                 <div style="font-size:var(--text-lg);font-weight:600;margin-bottom:4px;">Create a card for <em style="color:var(--green-bright);font-style:normal;">${escapeHTML(subj)}</em></div>
-                <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:18px;">Add at least 3 to start your first session. You can add more anytime from the Library.</div>
+                <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:18px;">Add at least 5 to start a meaningful first session. You can add more anytime from the Library.</div>
 
                 <!-- Live card preview -->
                 <div id="ob-card-preview" style="display:none;margin-bottom:18px;">
@@ -19890,9 +19942,9 @@
                 <!-- Progress indicator -->
                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
                   <div style="display:flex;gap:5px;">
-                    ${[1,2,3].map(n => `<div id="ob-dot-${n}" style="width:10px;height:10px;border-radius:50%;border:2px solid var(--border);background:transparent;transition:all 0.3s;"></div>`).join("")}
+                    ${[1,2,3,4,5].map(n => `<div id="ob-dot-${n}" style="width:10px;height:10px;border-radius:50%;border:2px solid var(--border);background:transparent;transition:all 0.3s;"></div>`).join("")}
                   </div>
-                  <div style="font-size:var(--text-sm);color:var(--text-3);" id="ob-progress-label">Add 3 cards to continue</div>
+                  <div style="font-size:var(--text-sm);color:var(--text-3);" id="ob-progress-label">Add 5 cards to continue</div>
                 </div>
 
                 <button class="btn btn-primary" id="ob-done-cards-btn" style="width:100%;padding:14px;font-size:var(--text-base);" disabled>
@@ -19926,7 +19978,7 @@
             const doneBtn = document.getElementById("ob-done-cards-btn");
             const label = document.getElementById("ob-progress-label");
             // Colour the dots
-            [1,2,3].forEach(n => {
+            [1,2,3,4,5].forEach(n => {
               const dot = document.getElementById("ob-dot-" + n);
               if (!dot) return;
               if (addedCards.length >= n) {
@@ -19940,15 +19992,15 @@
               }
             });
             if (label) {
-              const rem = Math.max(0, 3 - addedCards.length);
+              const rem = Math.max(0, 5 - addedCards.length);
               label.textContent = addedCards.length === 0
-                ? "Add 3 cards to continue"
+                ? "Add 5 cards to continue"
                 : rem > 0
                   ? `${rem} more card${rem > 1 ? "s" : ""} to go`
                   : "🎉 You're ready!";
-              label.style.color = addedCards.length >= 3 ? "var(--green-bright)" : "var(--text-3)";
+              label.style.color = addedCards.length >= 5 ? "var(--green-bright)" : "var(--text-3)";
             }
-            if (doneBtn) doneBtn.disabled = addedCards.length < 3;
+            if (doneBtn) doneBtn.disabled = addedCards.length < 5;
             if (addedCards.length === 0) { if (listEl) listEl.innerHTML = ""; return; }
             if (listEl) listEl.innerHTML = addedCards.map((c) => `
               <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 12px;
@@ -20530,7 +20582,7 @@
             ${inventory.items
               .map(
                 (item) => `
-              <span class="badge badge-green">${escapeHTML(item.name)}</span>
+              <span class="badge badge-green">${escapeHTML(item.name || (item.item_code || item.code || 'Marketplace item').replace(/^rare_flora_/, 'Rare Flora — ').replace(/^archive_expansion_/, 'Archive Expansion — ').replace(/_/g, ' '))}</span>
             `,
               )
               .join("")}
@@ -20539,17 +20591,6 @@
               : '<div style="font-size:var(--text-base);color:var(--text-4);margin-bottom:12px;">No items purchased yet. Visit the Marketplace.</div>'
           }
           <button class="btn btn-secondary btn-sm" onclick="navigateTo('marketplace')">Go to Marketplace</button>
-        </div>
-        <!-- Archive Expansion (Tier 1 Fix #5: api.archiveExpansion wired) -->
-        <div class="card" style="margin-bottom:20px;" id="archiveExpansionCard">
-          <div class="settings-section-title">Archive Expansion</div>
-          <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:12px;">
-            When a subject reaches KS 100, purchase Archive Expansion to extend review intervals to 90–180 days.
-            Gate: KS 100 &middot; 15 Fruiting sessions in subject &middot; 60 Seedlings.
-          </div>
-          <div id="archiveSubjectList">
-            <div style="font-size:var(--text-base);color:var(--text-4);">Loading subjects...</div>
-          </div>
         </div>
         <!-- Data Management -->
         <div class="card" style="margin-bottom:20px;">
@@ -20563,10 +20604,10 @@
           </div>
           <div class="settings-row">
             <div>
-              <div class="settings-row-label">Reset Progress</div>
-              <div class="settings-row-sub" style="color:var(--red-bright);">Clear all local data. Cannot be undone.</div>
+              <div class="settings-row-label">Clear Local Cache</div>
+              <div class="settings-row-sub">Refresh cached screens without deleting server study data.</div>
             </div>
-            <button class="btn btn-danger btn-sm" id="resetBtn">Reset</button>
+            <button class="btn btn-secondary btn-sm" id="resetBtn">Clear Cache</button>
           </div>
         </div>
         <!-- Notifications -->
@@ -20628,7 +20669,7 @@
             </div>
             <div class="stat-card">
               <div class="stat-label">API Status</div>
-              <div class="stat-value" style="font-size:var(--text-2xl);color:var(--green-bright);">Connected</div>
+              <div class="stat-value" id="apiStatusValue" style="font-size:var(--text-lg);color:var(--text-3);">Checking…</div>
             </div>
           </div>
         </div>
@@ -20767,13 +20808,12 @@
             }
             renderTiles(currentMode);
           })();
-          document.getElementById("exportBtn").addEventListener("click", () => {
-            const exportData = {
-              user: AppState.user,
-              dashboard: AppState.dashboard,
-              exportDate: new Date().toISOString(),
-              version: "2.0",
-            };
+          document.getElementById("exportBtn").addEventListener("click", async (event) => {
+            const button = event.currentTarget;
+            button.disabled = true;
+            button.textContent = 'Preparing…';
+            try {
+            const exportData = await api.exportData();
             const blob = new Blob([JSON.stringify(exportData, null, 2)], {
               type: "application/json",
             });
@@ -20783,47 +20823,30 @@
             a.download = `kiwi_backup_${todayStr()}.json`;
             a.click();
             URL.revokeObjectURL(url);
-            showToast("Data exported", "success");
+            showToast("Complete study data exported", "success");
+            } catch (error) {
+              showToast(error.message || 'Export failed', 'error');
+            } finally {
+              button.disabled = false;
+              button.textContent = 'Export';
+            }
           });
-          // Tier 1 Fix #5: wire Archive Expansion buttons
-          (async function() {
-            try {
-              var listEl = document.getElementById("archiveSubjectList");
-              if (!listEl) return;
-              var subjects = AppState.subjects && AppState.subjects.length > 0
-                ? AppState.subjects
-                : ((await api.getLibrary()).subjects || []);
-              var eligible = subjects.filter(function(s) {
-                return Math.round(s.knowledge_score || s.ks || 0) >= 100;
-              });
-              if (eligible.length === 0) {
-                listEl.innerHTML = '<div style="font-size:var(--text-base);color:var(--text-4);">No subjects at KS 100 yet. Keep studying!</div>';
-                return;
-              }
-              listEl.innerHTML = eligible.map(function(s) {
-                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">' +
-                  '<div><div style="font-size:var(--text-base);color:var(--text);">' + escapeHTML(s.name) + '</div>' +
-                  '<div style="font-size:var(--text-sm);color:var(--text-3);">KS ' + Math.round(s.knowledge_score || s.ks || 0) + '</div></div>' +
-                  '<button class="btn btn-secondary btn-sm archive-expand-btn" data-subject-id="' + s.id + '">Archive</button>' +
-                  '</div>';
-              }).join("");
-              listEl.querySelectorAll(".archive-expand-btn").forEach(function(btn) {
-                btn.addEventListener("click", async function() {
-                  var subjectId = btn.dataset.subjectId;
-                  btn.disabled = true; btn.textContent = "Processing...";
-                  try {
-                    await api.archiveExpansion(subjectId);
-                    showToast("Subject archived successfully!", "success");
-                    btn.textContent = "Archived ✓";
-                  } catch(err) {
-                    showToast(err.message || "Archive failed — check gate requirements (Seedlings, Fruiting sessions)", "error");
-                    btn.disabled = false; btn.textContent = "Archive";
-                  }
-                });
-              });
-            } catch(_e) {}
-          })();
 
+          (async function checkApiReality() {
+            const el = document.getElementById('apiStatusValue');
+            if (!el) return;
+            try {
+              const health = await fetch(API_BASE_URL + '/health', { cache: 'no-store' }).then(r => {
+                if (!r.ok) throw new Error('offline');
+                return r.json();
+              });
+              el.textContent = health.status === 'ok' ? 'Connected' : 'Degraded';
+              el.style.color = health.status === 'ok' ? 'var(--green-bright)' : 'var(--amber)';
+            } catch (_) {
+              el.textContent = 'Unavailable';
+              el.style.color = 'var(--red-bright)';
+            }
+          })();
           // ── Change Password wiring ──────────────────────────────────────────
           const changePassBtn = document.getElementById('changePassBtn');
           if (changePassBtn) {
@@ -20938,8 +20961,8 @@
           if (_resetBtnEl) {
             _resetBtnEl.addEventListener("click", () => {
               showCustomConfirm(
-                "Reset ALL local progress?",
-                "This will clear cached data. Your server data is safe.",
+                "Clear local cache?",
+                "This refreshes local screens only. Your server study data remains safe.",
                 () => {
                   AppState.cache = {};
                   AppState.dashboard = null;
@@ -20952,7 +20975,9 @@
                   AppState.inventory = null;
                   AppState.progress = null;
                   AppState.subjects = [];
-                  AppState.tempStudy = null;
+          AppState.tempStudy = null;
+          try { sessionStorage.removeItem('kiwi_active_study_v1'); } catch (_) {}
+          _unlockStudyPage();
                   AppState.tempExam = null;
                   AppState.treeInstance = null;
                   AppState.reckoning = null;
@@ -21407,7 +21432,7 @@ const KIWI_TOUR_STEPS = [
   {type:'spot',nav:'dashboard',sel:'.streak-widget',pos:'top',icon:'🔥',title:'Streak & Shields',
    body:'Study every day to keep your streak alive. Miss a day and it resets — unless you have a 🛡️ Shield. Shields preserve a streak across exactly one missed calendar day. A shield is earned at each 30-day streak milestone, up to three held.',action:'next'},
   {type:'spot',nav:'dashboard',sel:'#brain-preview-card',pos:'left',icon:'⚡',title:'Brain Monitor',
-   body:"This mini-panel shows exam risk building across your subjects. A pressure above 50% is a warning. We'll explain the full Brain page shortly — it's one of KIWI's most powerful features.",action:'next'},
+   body:"This mini-panel shows exam risk building across your subjects. Pressure becomes urgent at 15 points and triggers a Reckoning at 20. The Brain explains every source.",action:'next'},
   {type:'spot',nav:'dashboard',sel:'#invitations-card',pos:'right',icon:'✉️',title:'Daily Invitations',
    body:'Each morning KIWI generates personalised action cards — review this subject, take that exam, rescue those ghost cards. Think of these as your daily study agenda, curated by the algorithm.',action:'next'},
   {type:'spot',nav:'dashboard',sel:'.bnav-item[data-route="study"]',pos:'top',icon:'📖',title:'Time to study.',
@@ -21427,7 +21452,7 @@ const KIWI_TOUR_STEPS = [
   {type:'spot',sel:'.nav-item[data-route="brain"]',pos:'right',icon:'🧠',title:'Now — The Brain',
    body:'Tap <strong>The Brain</strong> to see your pressure dashboard and active interventions.',action:'click',hint:'👆 Tap The Brain to continue'},
   {type:'spot',nav:'brain',sel:'#brain-gauges',pos:'left',icon:'⚠️',title:'Pressure Gauges',
-   body:'The Brain tracks pressure across all subjects. Above <strong>50% = warning</strong>. Above <strong>80% = critical</strong>. When pressure builds, The Brain fires an intervention — a targeted alert telling you exactly what to fix before your exam.',action:'next'},
+   body:'The Brain uses one strict scale: <strong>L1 at 1</strong>, <strong>L2 at 5</strong>, <strong>L3 at 15</strong>, and <strong>L4/Reckoning at 20</strong>. Every intervention must name the evidence that caused it.',action:'next'},
   {type:'spot',nav:'brain',sel:'.bnav-item[data-route="exam-config"]',pos:'top',icon:'📝',title:'CBT Exam',
    body:'Tap <strong>Exam</strong> to see how CBT practice works — AI-generated multiple choice questions from your actual cards.',action:'click',hint:'👆 Tap Exam to continue'},
   {type:'spot',nav:'exam-config',sel:'.exam-config',pos:'right',icon:'📝',title:'Configure Your Exam',
@@ -21769,5 +21794,6 @@ window.addEventListener('resize', () => {
   if (t) { _positionSpot(t, step.action !== 'next'); _positionArrow(t, step.pos); _positionTip(step.pos, step.sel, t); }
 });
 </script>
+<script src="/kiwi_product_v3.js"></script>
 </body>
 </html>
