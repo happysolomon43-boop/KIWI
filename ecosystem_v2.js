@@ -168,6 +168,8 @@ function createEcosystemV2(options) {
       "ALTER TABLE seedling_transactions ADD COLUMN IF NOT EXISTS event_type text",
       "ALTER TABLE seedling_transactions ADD COLUMN IF NOT EXISTS description text",
       "ALTER TABLE seedling_transactions ADD COLUMN IF NOT EXISTS balance_after integer DEFAULT 0",
+      "ALTER TABLE seedling_transactions ADD COLUMN IF NOT EXISTS type text",
+      "ALTER TABLE seedling_transactions ADD COLUMN IF NOT EXISTS reason text",
       "CREATE TABLE IF NOT EXISTS progression_events (" +
         "event_key text PRIMARY KEY, user_id text NOT NULL, event_type text NOT NULL, " +
         "subject_id text, session_id text, growth_points integer DEFAULT 0, seedlings integer DEFAULT 0, " +
@@ -196,12 +198,76 @@ function createEcosystemV2(options) {
         "meaningful_session boolean NOT NULL, fruit_id text, seedlings_earned integer DEFAULT 0, " +
         "growth_points_earned integer DEFAULT 0, vitality_after integer NOT NULL, tree_stage_after integer NOT NULL, " +
         "outcome jsonb NOT NULL, created_at timestamptz DEFAULT NOW())",
+      "UPDATE seedling_transactions SET " +
+        "type = COALESCE(NULLIF(type,''), event_type), reason = COALESCE(reason, description), " +
+        "event_type = COALESCE(NULLIF(event_type,''), NULLIF(type,''), 'unspecified'), " +
+        "description = COALESCE(description, reason) " +
+        "WHERE type IS DISTINCT FROM COALESCE(NULLIF(type,''), event_type) " +
+        "OR reason IS DISTINCT FROM COALESCE(reason, description) " +
+        "OR event_type IS NULL OR BTRIM(event_type) = '' OR description IS NULL",
+      "CREATE OR REPLACE FUNCTION kiwi_sync_seedling_transaction_fields() RETURNS trigger " +
+        "LANGUAGE plpgsql SET search_path = '' AS $ BEGIN " +
+        "NEW.event_type := COALESCE(NULLIF(BTRIM(NEW.event_type), ''), NULLIF(BTRIM(NEW.type), ''), 'unspecified'); " +
+        "NEW.type := NEW.event_type; NEW.description := COALESCE(NEW.description, NEW.reason); " +
+        "NEW.reason := NEW.description; RETURN NEW; END; $",
+      "REVOKE EXECUTE ON FUNCTION kiwi_sync_seedling_transaction_fields() FROM PUBLIC, anon, authenticated",
+      "DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger " +
+        "WHERE tgname = 'kiwi_sync_seedling_transaction_fields' AND NOT tgisinternal) THEN " +
+        "CREATE TRIGGER kiwi_sync_seedling_transaction_fields BEFORE INSERT ON seedling_transactions " +
+        "FOR EACH ROW EXECUTE FUNCTION kiwi_sync_seedling_transaction_fields(); END IF; END $",
+      "ALTER TABLE progression_events ENABLE ROW LEVEL SECURITY",
+      "ALTER TABLE ecosystem_seedling_ledger ENABLE ROW LEVEL SECURITY",
+      "ALTER TABLE card_growth_milestones ENABLE ROW LEVEL SECURITY",
+      "ALTER TABLE daily_activity ENABLE ROW LEVEL SECURITY",
+      "ALTER TABLE fruits ENABLE ROW LEVEL SECURITY",
+      "ALTER TABLE session_outcomes ENABLE ROW LEVEL SECURITY",
       "CREATE UNIQUE INDEX IF NOT EXISTS seedling_transactions_event_key_idx ON seedling_transactions(event_key)",
       "CREATE INDEX IF NOT EXISTS progression_events_user_idx ON progression_events(user_id, created_at DESC)",
       "CREATE INDEX IF NOT EXISTS progression_events_session_idx ON progression_events(session_id)",
       "CREATE INDEX IF NOT EXISTS daily_activity_user_date_idx ON daily_activity(user_id, activity_date DESC)",
       "CREATE INDEX IF NOT EXISTS fruits_user_idx ON fruits(user_id, created_at DESC)",
       "CREATE INDEX IF NOT EXISTS session_outcomes_user_idx ON session_outcomes(user_id, created_at DESC)",
+      "CREATE INDEX IF NOT EXISTS ecosystem_seedling_ledger_user_idx " +
+        "ON ecosystem_seedling_ledger(user_id, created_at DESC)",
+      "CREATE INDEX IF NOT EXISTS card_growth_milestones_user_card_idx " +
+        "ON card_growth_milestones(user_id, card_id, stage)",
+      "DO $ BEGIN " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_stats_ecosystem_ranges_ck' " +
+        "AND conrelid = 'user_stats'::regclass) THEN ALTER TABLE user_stats ADD CONSTRAINT " +
+        "user_stats_ecosystem_ranges_ck CHECK (COALESCE(growth_points,0) >= 0 AND tree_stage BETWEEN 1 AND 8 " +
+        "AND tree_health BETWEEN 0 AND 100 AND seedlings_balance >= 0 AND fruit_count >= 0 " +
+        "AND streak_shields_held BETWEEN 0 AND 3 AND COALESCE(streak_shields_consumed,0) >= 0); END IF; " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sessions_ecosystem_ranges_ck' " +
+        "AND conrelid = 'sessions'::regclass) THEN ALTER TABLE sessions ADD CONSTRAINT " +
+        "sessions_ecosystem_ranges_ck CHECK (COALESCE(session_quality,0) BETWEEN 0 AND 100 " +
+        "AND COALESCE(active_seconds,0) >= 0 AND COALESCE(focus_ratio,0) BETWEEN 0 AND 1 " +
+        "AND COALESCE(unique_cards_reviewed,0) >= 0); END IF; " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'progression_events_amounts_ck' " +
+        "AND conrelid = 'progression_events'::regclass) THEN ALTER TABLE progression_events ADD CONSTRAINT " +
+        "progression_events_amounts_ck CHECK (COALESCE(growth_points,0) >= 0); END IF; " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ecosystem_seedling_ledger_balance_ck' " +
+        "AND conrelid = 'ecosystem_seedling_ledger'::regclass) THEN ALTER TABLE ecosystem_seedling_ledger " +
+        "ADD CONSTRAINT ecosystem_seedling_ledger_balance_ck CHECK (balance_after >= 0); END IF; " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'card_growth_milestones_ranges_ck' " +
+        "AND conrelid = 'card_growth_milestones'::regclass) THEN ALTER TABLE card_growth_milestones " +
+        "ADD CONSTRAINT card_growth_milestones_ranges_ck CHECK (stage BETWEEN 2 AND 5 " +
+        "AND COALESCE(growth_points,0) >= 0 AND COALESCE(seedlings,0) >= 0); END IF; " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'daily_activity_nonnegative_ck' " +
+        "AND conrelid = 'daily_activity'::regclass) THEN ALTER TABLE daily_activity ADD CONSTRAINT " +
+        "daily_activity_nonnegative_ck CHECK (COALESCE(meaningful_sessions,0) >= 0 " +
+        "AND COALESCE(active_seconds,0) >= 0 AND COALESCE(cards_reviewed,0) >= 0); END IF; " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fruits_qualification_ck' " +
+        "AND conrelid = 'fruits'::regclass) THEN ALTER TABLE fruits ADD CONSTRAINT " +
+        "fruits_qualification_ck CHECK (quality_score BETWEEN 85 AND 100 " +
+        "AND active_seconds >= 1200 AND unique_cards >= 15); END IF; " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'session_outcomes_ranges_ck' " +
+        "AND conrelid = 'session_outcomes'::regclass) THEN ALTER TABLE session_outcomes ADD CONSTRAINT " +
+        "session_outcomes_ranges_ck CHECK (quality_score BETWEEN 0 AND 100 AND elapsed_seconds >= 0 " +
+        "AND active_seconds BETWEEN 0 AND elapsed_seconds AND focus_ratio BETWEEN 0 AND 1 " +
+        "AND unique_cards >= 0 AND COALESCE(seedlings_earned,0) >= 0 " +
+        "AND COALESCE(growth_points_earned,0) >= 0 AND vitality_after BETWEEN 0 AND 100 " +
+        "AND tree_stage_after BETWEEN 1 AND 8); END IF; END $",
+
       "UPDATE user_stats SET last_active_date = last_study_date::date " +
         "WHERE last_active_date IS NULL AND last_study_date IS NOT NULL",
       "UPDATE user_stats SET growth_points = CASE " +
