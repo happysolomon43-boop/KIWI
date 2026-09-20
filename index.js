@@ -12283,7 +12283,7 @@ accessToken,
 refreshToken,
 expiresIn: 900,
 return_status: returnStatus,
-is_streak_frozen: !!(stats?.streak_shields_held),
+is_streak_frozen: !!(user.stats?.streak_shields_held),
 });
 } catch (e) {
 console.error('Login error:', e);
