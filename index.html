@@ -1405,7 +1405,7 @@
         border-color: var(--green-2);
         box-shadow: 0 0 12px rgba(64, 145, 108, 0.2);
       }
-      .session-seed.glowing {
+      .session-seed.blooming {
         border-color: var(--green-bright);
         box-shadow: 0 0 20px rgba(82, 183, 136, 0.3);
       }
@@ -6190,6 +6190,10 @@
               var _jd = msg.data || {};
               var job_id = _jd.job_id, type = _jd.type, result = _jd.result, exam = _jd.exam;
               if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(job_id);
+              if (_ignoredJobIds.has(job_id)) {
+                _hideGenBanner();
+                return;
+              }
               if (type === 'note_generation') {
                 _hideGenBanner();
                 var count = (result && result.count) || 0;
@@ -6416,7 +6420,7 @@
           var tok    = authToken || localStorage.getItem('kiwi_auth_token');
           if (examId && tok) {
             try {
-              fetch('/api/exams/' + examId + '/forfeit', {
+              fetch(API_BASE_URL + '/exams/' + examId + '/forfeit', {
                 method: 'POST',
                 headers: { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json' },
                 keepalive: true,
@@ -6523,6 +6527,7 @@
 
       // Track pending jobs for optional polling fallback
       const _pendingJobs = new Map(); // jobId → { type, pollInterval }
+      const _ignoredJobIds = new Set(); // jobs the user chose not to wait for
 
       // ── Fix 6: Persistent generation status banner ──────────────────────────
 
@@ -6605,6 +6610,10 @@
             if (event === 'job_done') {
               var _jd = data || {};
               var _jType = _jd.type;
+              if (_ignoredJobIds.has(_jd.job_id)) {
+                _hideGenBanner();
+                return;
+              }
               _hideGenBanner();
               if (_jType === 'cbt_generation') {
                 var _examData = (_jd.exam && (_jd.exam.exam || _jd.exam)) || (_jd.result && (_jd.result.exam || _jd.result));
@@ -6715,6 +6724,17 @@
         _pendingJobs.set(jobId, { type, pollInterval: iv });
       }
 
+      function _stopWaitingForJob(jobId) {
+        var pending = _pendingJobs.get(jobId);
+        if (pending && pending.pollInterval) clearInterval(pending.pollInterval);
+        _pendingJobs.delete(jobId);
+        _ignoredJobIds.add(jobId);
+        setTimeout(function() { _ignoredJobIds.delete(jobId); }, 15 * 60 * 1000);
+        _hideGenBanner();
+        if (typeof navigateTo === 'function') navigateTo('exam-config');
+        showToast('Exam generation is still running in the background. KIWI will not redirect you when it finishes.', 'info', 6000);
+      }
+
       // safeDisplayName: parse JSON-encoded names (e.g. {"name":"Physics","color":"..."})
       function safeDisplayName(rawName) {
         if (!rawName || typeof rawName !== 'string') return rawName || '';
@@ -6726,6 +6746,13 @@
           } catch (e) {}
         }
         return rawName;
+      }
+
+      function getUserDisplayName(user, fallback) {
+        var value = user && (user.full_name || user.name || user.username);
+        if (value && String(value).trim()) return String(value).trim();
+        if (user && user.email) return String(user.email).split('@')[0];
+        return fallback || 'Student';
       }
 
       const AppState = {
@@ -7000,7 +7027,7 @@
         // Backend returns the user object directly (not wrapped in {user: ...})
         const data = await apiRequest("/auth/me");
         AppState.user = data.user || data; // handle both shapes for safety
-        return data;
+        return AppState.user;
       };
 
       // ── Dashboard endpoints ──
@@ -7131,69 +7158,64 @@
       };
 
       api.endStudySession = async (sessionId, focusData) => {
+        const study = AppState.tempStudy;
+        const preview = study?.finalFocusSnapshot || computeLiveSessionQuality(study);
         if (isDemoMode() || sessionId === 'tour-demo-session') {
-          const ts = AppState.tempStudy;
-          const health = ts ? ts.seedHealth : 50;
-          const ss = getSeedStage(health);
+          const stage = getSeedStage(preview.score);
           return {
-            cardsReviewed: ts ? ts.cardsReviewed : 0,
-            xpGained: Math.round((ts ? ts.cardsReviewed : 0) * 8),
-            ksDelta: Math.round((ts ? ts.cardsReviewed : 0) * 0.5),
-            seedOutcome: (ss.stage || "dormant").toLowerCase(),
-            newStageCounts: (() => {
-              const transitions = ts ? ts.stageTransitions || [] : [];
-              return transitions.reduce((acc, tr) => {
-                const dest = tr.to;
-                if (dest) acc[dest] = (acc[dest] || 0) + 1;
-                return acc;
-              }, {});
-            })(),
+            committed: true,
+            session_completed: (study?.reviews || []).length > 0,
+            meaningful_session: new Set((study?.reviews || []).map((r) => r.cardId)).size >= 5,
+            cardsReviewed: study?.cardsReviewed || 0,
+            xpGained: Math.round((study?.cardsReviewed || 0) * 8),
+            ksDelta: Math.round((study?.cardsReviewed || 0) * 0.5),
+            sessionQuality: preview.score,
+            qualityBreakdown: preview.breakdown,
+            activeSeconds: preview.activeSeconds,
+            durationSeconds: preview.elapsedSeconds,
+            seedOutcome: stage.stage,
+            fruiting_achieved: false,
+            seedlingsEarned: 0,
+            growthPointsEarned: 0,
+            treeHealth: 68,
+            treeStage: 2,
+            newStageCounts: {},
           };
         }
-        // Expects: {session_id, break_count, reason}
-        // Returns: {session_id, session_completed, duration_seconds, cards_reviewed, xp_earned, focus_seed_stage, seed_survived, new_achievements, streak, tree_health, tree_stage}
-        // P3 FIX: Send focused_seconds (idle excluded) and seed_killed so backend
-        // can use actual focus time instead of wall-clock elapsed time.
-        // focusData.idleSeconds = total idle seconds tracked by focus system
-        // focusData.seedDied    = true if user was away >5 min (death threshold)
+        const now = new Date();
+        const localDate = now.getFullYear() + "-" +
+          String(now.getMonth() + 1).padStart(2, "0") + "-" +
+          String(now.getDate()).padStart(2, "0");
         const data = await apiRequest("/study/end", {
           method: "POST",
           body: {
             session_id: sessionId,
-            break_count: focusData?.tabAwayCount || focusData?.breakCount || 0,
-            idle_seconds: focusData?.idleSeconds || 0,
-            focused_seconds: focusData?.idleSeconds !== undefined
-              ? Math.max(0, Math.round(
-                  (Date.now() - (AppState.tempStudy?.sessionStartMs || Date.now())) / 1000
-                  - (focusData.idleSeconds || 0)
-                ))
-              : 0,
-            seed_killed: !!(focusData?.seedDied),
+            break_count: focusData?.tabAwayCount || 0,
+            idle_seconds: Math.max(0, Number(focusData?.idleSeconds) || 0),
+            focused_seconds: preview.activeSeconds,
+            local_date: localDate,
             reason: "user_ended",
-            avoided_suppressions: AppState.tempStudy?.avoidedSuppressionsCount || 0, // P9.4-07
+            avoided_suppressions: study?.avoidedSuppressionsCount || 0,
           },
         });
-        // Normalize for frontend rendering
-        // P13 FIX: added durationSeconds passthrough (backend already returns duration_seconds)
         return {
           ...data,
-          cardsReviewed: data.cards_reviewed || data.cardsReviewed || 0,
-          xpGained: data.xp_earned || data.xpGained || 0,
-          ksDelta: data.ksDelta ?? data.ks_delta ?? 0,
-          durationSeconds: data.duration_seconds || data.durationSeconds || 0,
-          // P4-03 FIX: normalize to lowercase so comparisons and CSS classes match
-          seedOutcome: (data.focus_seed_stage || data.seedOutcome || "dormant").toLowerCase(),
-          newStageCounts: (() => {
-            const transitions = data.stage_transitions || [];
-            return transitions.reduce((acc, t) => {
-              const dest =
-                typeof t === "string"
-                  ? parseInt((t.split("\u2192")[1] || "").trim(), 10)
-                  : t.to || t.dest || null;
-              if (dest && !isNaN(dest)) acc[dest] = (acc[dest] || 0) + 1;
-              return acc;
-            }, {});
-          })(),
+          cardsReviewed: data.cards_reviewed ?? 0,
+          xpGained: data.xp_earned ?? 0,
+          ksDelta: data.ks_delta ?? 0,
+          durationSeconds: data.duration_seconds ?? 0,
+          activeSeconds: data.active_seconds ?? 0,
+          sessionQuality: data.session_quality ?? 0,
+          qualityBreakdown: data.quality_breakdown || {},
+          meaningfulSession: !!data.meaningful_session,
+          seedOutcome: String(data.focus_seed_stage || "Dormant").toLowerCase(),
+          seedlingsEarned: data.seedlings_earned ?? 0,
+          growthPointsEarned: data.growth_points_earned ?? 0,
+          growthPointsTotal: data.growth_points_total ?? 0,
+          treeHealth: data.tree_health ?? 0,
+          treeStage: data.tree_stage ?? 1,
+          fruit: data.fruit || null,
+          newStageCounts: {},
         };
       };
 
@@ -7365,7 +7387,7 @@
           globalKS: data.globalKS !== undefined ? data.globalKS : data.global_knowledge_score || 0,
           globalTreeState: data.globalTreeState || {
             stage: data.tree_stage || 1,
-            health: data.tree_health || 100,
+            health: data.tree_health ?? 100,
             leaves: 0,
             fruits: 0,
             stageLabel:
@@ -7588,6 +7610,17 @@
       // Issue-054: Delete card
       api.deleteCard = async (cardId) => apiRequest('/cards/' + cardId, { method: 'DELETE' });
       api.updateCard = async (cardId, front, back) => apiRequest('/cards/' + cardId, { method: 'PATCH', body: { front, back } });
+      api.createCard = async (deckId, card) => apiRequest('/cards', {
+        method: 'POST',
+        body: {
+          deck_id: deckId,
+          front_content: card.front_content,
+          back_content: card.back_content,
+          front_image_url: card.front_image_url,
+          back_image_url: card.back_image_url,
+          tags: card.tags || []
+        }
+      });
       // Issue-055: Delete deck/subject (subject delete cascades on backend)
       // FIX: deleteDeck now correctly targets /decks/:id (was wrongly hitting /subjects/)
       api.deleteDeck = async (deckId) => apiRequest('/decks/' + deckId, { method: 'DELETE' });
@@ -7814,11 +7847,11 @@
         });
       };
 
-      api.addCard = async (subjectId, front, back) => {
-        // Backend: POST /library/cards → accepts {subjectId, front, back}, auto-resolves deck
+      api.addCard = async (subjectId, front, back, deckId) => {
+        // Prefer an explicit deck when the caller has one; otherwise the backend resolves the default.
         return await apiRequest("/library/cards", {
           method: "POST",
-          body: { subjectId, front, back },
+          body: { subjectId, front, back, deck_id: deckId || undefined },
         });
       };
 
@@ -8340,7 +8373,9 @@
           this.svg.innerHTML = "";
           const { stage, health, leaves, fruits, rings } = this.state;
           const W = this.width, H = this.height;
-          const st  = Math.max(1, Math.min(5, Math.floor(stage)));
+          const maturityStage = Math.max(1, Math.min(8, Math.floor(stage)));
+          const st  = Math.min(5, maturityStage);
+          const leafBoost = Math.max(0, maturityStage - 5) * 4 + Math.min(8, Math.floor((Number(leaves) || 0) / 12));
           const hp  = Math.max(0, Math.min(100, health));
           const sc  = W / 340;  // scale factor
           const cx  = W / 2;
@@ -8490,7 +8525,23 @@
           }
 
           // ── BRANCHES + LEAVES ──────────────────────────────────────────
-          const branchTips = this._drawBranches(cx, trunkTopY, st, hp, sc, u);
+          const branchTips = this._drawBranches(cx, trunkTopY, st, hp, sc, u, leafBoost);
+
+          // Mature stages keep stable geometry, then gain visible canopy density and crown rings.
+          if (maturityStage >= 6) {
+            for (let crown = 0; crown < maturityStage - 5; crown++) {
+              this.svg.appendChild(this._el("ellipse", {
+                cx,
+                cy: trunkTopY - (38 + crown * 8) * sc,
+                rx: (70 + crown * 12) * sc,
+                ry: (42 + crown * 7) * sc,
+                fill: "none",
+                stroke: crown === 2 ? "#d4f5a0" : "#74c69d",
+                "stroke-width": (0.7 + crown * 0.25) * sc,
+                opacity: 0.16 + crown * 0.05,
+              }));
+            }
+          }
 
           // ── FRUITS ───────────────────────────────────────────────────
           if (st >= 3 && fruits > 0) {
@@ -8499,7 +8550,7 @@
 
           // ── AMBIENT PARTICLES ──────────────────────────────────────────
           if (st >= 2) {
-            this._drawParticles(W, H, groundY, st, sc, u);
+            this._drawParticles(W, H, groundY, maturityStage, sc, u);
           }
         }
 
@@ -8683,7 +8734,7 @@
         }
 
         // ── Full branch crown + leaves ──────────────────────────────────
-        _drawBranches(cx, trunkTopY, stage, health, sc, u) {
+        _drawBranches(cx, trunkTopY, stage, health, sc, u, leafBoost = 0) {
           const maxD  = stage <= 2 ? 1 : stage === 3 ? 2 : stage === 4 ? 3 : 4;
           const rootL = (54 + stage * 12) * sc;
           const rootW = (3.0 + stage * 0.8) * sc;
@@ -8711,7 +8762,7 @@
             : [];
           const allTips = [...tipsL, ...tipsC, ...tipsR];
 
-          const perTip = Math.max(11, Math.round(42 / allTips.length) + 8);
+          const perTip = Math.max(11, Math.round(42 / allTips.length) + 8 + leafBoost);
 
           // Layer 0: dark background leaves (depth/shadow)
           allTips.forEach((tip, i) => this._drawLeafCluster(tip.x, tip.y, perTip, i, stage, health, 0, sc, u));
@@ -9414,7 +9465,17 @@
         if (!newPass || newPass.length < 8) { if (errEl) { errEl.textContent = 'Password must be at least 8 characters.'; errEl.classList.add('visible'); } return; }
         if (errEl) { errEl.textContent = ''; errEl.classList.remove('visible'); }
         try {
-          await apiRequest('/auth/reset-password', { method: 'POST', body: { email, otp, newPassword: newPass } });
+          const verification = await apiRequest('/auth/verify-reset-otp', {
+            method: 'POST',
+            body: { email, otp }
+          });
+          if (!verification || !verification.resetToken) {
+            throw new Error('The reset code could not be verified. Please request a new code.');
+          }
+          await apiRequest('/auth/reset-password', {
+            method: 'POST',
+            body: { resetToken: verification.resetToken, newPassword: newPass }
+          });
           showToast('Password reset! Please log in with your new password.', 'success', 6000);
           showForgotPassword(false);
           switchAuthTab('login');
@@ -9494,11 +9555,11 @@
           history.pushState({ kiwi: 1 }, '');
           updateUserFooter();
           if (data.welcome) {
-            showToast(`Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
+            showToast(`Welcome, ${getUserDisplayName(data.user, name)}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('onboarding');
             setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
           } else {
-            showToast(`Welcome, ${data.user?.name || name}! Your ecosystem is alive.`, 'success', 5000);
+            showToast(`Welcome, ${getUserDisplayName(data.user, name)}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('dashboard');
             setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
           }
@@ -9546,7 +9607,7 @@
           if (_loginAppDiv) _loginAppDiv.style.display = '';
           document.getElementById('appContainer').style.display = 'flex';
           updateUserFooter();
-          showToast(`Welcome back, ${data.user?.full_name || data.user?.name || 'Student'}!`, 'success', 4000);
+          showToast(`Welcome back, ${getUserDisplayName(data.user)}!`, 'success', 4000);
           navigateTo('dashboard');
           initKiwiWS();
           // PATCH FIX-6: ensure back button history stack is initialised after login too
@@ -9644,7 +9705,7 @@
               needsPersona ? api.getPersona()     : Promise.resolve(null),
             ]);
             if (needsUser && userData.status === 'fulfilled' && userData.value) {
-              user = userData.value.user;
+              user = userData.value.user || userData.value;
             }
             if (needsPersona && personaData.status === 'fulfilled' && personaData.value) {
               persona = personaData.value.currentPersona;
@@ -9666,9 +9727,9 @@
         const level = AppState.dashboard?.level || { level: 1, xp: 0, nextLevelXp: 100 };
         footer.innerHTML = `
     <div class="user-mini">
-      <div class="user-avatar">${user ? user.name.charAt(0).toUpperCase() : "S"}</div>
+      <div class="user-avatar">${getUserDisplayName(user).charAt(0).toUpperCase()}</div>
       <div>
-        <div class="user-name">${escapeHTML(user?.name || "Student")}</div>
+        <div class="user-name">${escapeHTML(getUserDisplayName(user))}</div>
         <div class="user-level">Lv ${level.level || 1}</div>
         ${persona ? `<div class="user-persona">${escapeHTML(persona.icon || "&#x1F9E0;")} ${escapeHTML(persona.name || "Undiscovered")}</div>${persona.description ? `<div style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);margin-top:2px;line-height:1.3;">${escapeHTML(persona.description.substring(0, 60))}${persona.description.length > 60 ? "..." : ""}</div>` : ""}` : ""}
       </div>
@@ -9929,11 +9990,26 @@
                 treeState?.health !== undefined
                   ? `
               <div class="tree-health-bar">
-                <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">Health</span>
+                <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">Vitality</span>
                 <div class="tree-health-track">
                   <div class="tree-health-fill" style="width:${Math.max(0,Math.min(100,treeState.health||0))}%;background:${(treeState.health||0) > 60 ? "var(--green-bright)" : (treeState.health||0) > 30 ? "var(--gold)" : "var(--red-bright)"}"></div>
                 </div>
                 <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">${Math.max(0,Math.min(100,treeState.health||0))}%</span>
+              </div>
+              `
+                  : ""
+              }
+              ${
+                treeState?.nextStage
+                  ? `
+              <div style="margin-top:12px;">
+                <div style="display:flex;justify-content:space-between;font-size:var(--text-xs);color:var(--text-3);margin-bottom:5px;">
+                  <span>${treeState.growthPoints || 0} Growth Points</span>
+                  <span>${treeState.nextStage.growth_points_needed} to ${escapeHTML(treeState.nextStage.next_stage_label || "next stage")}</span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width:${Math.max(0,Math.min(100,((treeState.growthPoints || 0) / Math.max(1,treeState.nextStage.target_growth_points || 1))*100))}%;"></div>
+                </div>
               </div>
               `
                   : ""
@@ -10202,13 +10278,66 @@
 
       // ── Focus Seed Stage Helper (F4) ──
 
-      function getSeedStage(health) {
-        if (health <= 0) return { stage: "dormant", label: "Dormant", emoji: "", pct: 0 };
-        if (health <= 20) return { stage: "waking", label: "Waking", emoji: "", pct: health };
-        if (health <= 40) return { stage: "growing", label: "Growing", emoji: "", pct: health };
-        if (health <= 60) return { stage: "thriving", label: "Thriving", emoji: "", pct: health };
-        if (health <= 85) return { stage: "glowing", label: "Glowing", emoji: "", pct: health };
-        return { stage: "fruiting", label: "Fruiting", emoji: "", pct: health };
+      function getSeedStage(score) {
+        const quality = Math.max(0, Math.min(100, Number(score) || 0));
+        if (quality >= 85) return { stage: "fruiting", label: "Fruiting", emoji: "🥝", pct: quality };
+        if (quality >= 75) return { stage: "blooming", label: "Blooming", emoji: "✨", pct: quality };
+        if (quality >= 60) return { stage: "thriving", label: "Thriving", emoji: "🌿", pct: quality };
+        if (quality >= 40) return { stage: "growing", label: "Growing", emoji: "🌱", pct: quality };
+        if (quality >= 20) return { stage: "waking", label: "Waking", emoji: "🌰", pct: quality };
+        return { stage: "dormant", label: "Dormant", emoji: "💤", pct: quality };
+      }
+
+      function computeLiveSessionQuality(study) {
+        if (!study) return {
+          score: 0, activeSeconds: 0, elapsedSeconds: 0, focusRatio: 0,
+          breakdown: { meaningful_work: 0, active_focus: 0, attention: 0, goal_progress: 0 },
+        };
+        const now = Date.now();
+        const elapsedSeconds = Math.max(0, Math.round((now - (study.startTime || now)) / 1000));
+        const tracking = AppState.focusTracking || {};
+        const openIdleMs = tracking.idleStart ? Math.max(0, now - tracking.idleStart) : 0;
+        const idleSeconds = Math.max(
+          Number(study.focusData?.idleSeconds) || 0,
+          Math.round(((Number(tracking.idleMs) || 0) + openIdleMs) / 1000)
+        );
+        const activeSeconds = Math.max(0, Math.min(elapsedSeconds, elapsedSeconds - idleSeconds));
+        const uniqueCards = new Set((study.reviews || []).map((review) => review.cardId).filter(Boolean)).size;
+        const cardsReviewed = Number(study.cardsReviewed) || 0;
+        const focusRatio = elapsedSeconds > 0 ? Math.max(0, Math.min(1, activeSeconds / elapsedSeconds)) : 0;
+        const round2 = (value) => Math.round(Number(value) * 100) / 100;
+        const breakdown = {
+          meaningful_work: round2(Math.min(uniqueCards / 20, 1) * 35),
+          active_focus: round2(Math.min(activeSeconds / 1500, 1) * 30),
+          attention: round2(focusRatio * 20),
+          goal_progress: round2(Math.min(cardsReviewed / 25, 1) * 15),
+        };
+        const score = Math.round(Math.max(0, Math.min(
+          100,
+          breakdown.meaningful_work + breakdown.active_focus + breakdown.attention + breakdown.goal_progress
+        )));
+        return { score, activeSeconds, elapsedSeconds, focusRatio, breakdown };
+      }
+
+      function refreshFocusSeedPreview() {
+        const study = AppState.tempStudy;
+        if (!study) return;
+        const preview = computeLiveSessionQuality(study);
+        const seed = getSeedStage(preview.score);
+        study.seedHealth = preview.score;
+        study.seedStatus = seed.stage;
+        study.focusData = study.focusData || {};
+        study.focusData.activeSeconds = preview.activeSeconds;
+        study.focusData.focusRatio = preview.focusRatio;
+        const seedEl = document.getElementById("focusSeed");
+        if (!seedEl) return;
+        seedEl.className = "session-seed " + seed.stage;
+        const fill = seedEl.querySelector(".seed-bar-fill");
+        if (fill) fill.style.width = preview.score + "%";
+        const status = seedEl.querySelector(".seed-status");
+        if (status) status.textContent = seed.label + " · " + preview.score + "/100";
+        const visual = seedEl.querySelector(".seed-visual");
+        if (visual) visual.textContent = seed.emoji;
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -10700,13 +10829,7 @@
         if (!t || !t.queue || t.queue.length === 0 || t.currentIndex >= t.queue.length) {
           var _sessStats = AppState.tempStudy || {};
           var _sessCardsReviewed = _sessStats.cardsReviewed || _sessStats.currentIndex || 0;
-          // PRE-MARK PATTERN: Fire session-end API in background as soon as queue
-          // completes so results are ready instantly when user clicks Finish Session.
-          if (t && !t._sessionEndStarted) {
-            t._sessionEndStarted = true;
-            t._sessionEndPromise = api.endStudySession(t.sessionId, t.focusData || { tabAwayCount: 0, idleSeconds: 0 })
-              .catch(function(e) { return null; }); // store null on failure; fallback handled in endStudySession
-          }
+          // The session remains active until Finish Session is explicitly requested.
           container.innerHTML = `
       <div class="page-wrap page-enter" style="text-align:center;padding:60px 20px;">
         <div style="font-size:56px;margin-bottom:16px;">🌿</div>
@@ -11736,11 +11859,11 @@
         const _reviewCardId  = card.id;
         const _reviewCardIdx = t.currentIndex;
         const _oldStage      = card.stage || card.level || 1;
-        // Update seed + counters immediately
-        t.seedHealth = Math.min(100, t.seedHealth + 3);
-        t.seedStatus = getSeedStage(t.seedHealth).stage;
+        const _responseTimeMs = t.cardShownAt ? (Date.now() - t.cardShownAt) : null;
+        // Update review inputs, then recompute the canonical quality preview.
         t.reviews.push({ cardId: _reviewCardId, rating, timestamp: new Date().toISOString() });
         t.cardsReviewed++;
+        refreshFocusSeedPreview();
         t.aiSummary = null;
         // Progressive KS flush: drain _ksQueue every 5 cards so session-end is fast
         if (t.cardsReviewed % 5 === 0) {
@@ -11779,7 +11902,6 @@
         // Render next card immediately — no waiting for network
         renderActiveStudySession(document.getElementById("mainContent"));
         // Fire review API in background
-        const _responseTimeMs = t.cardShownAt ? (Date.now() - t.cardShownAt) : null;
         api.submitReview(_reviewCardId, rating, t.sessionId, _responseTimeMs)
           .then(function(result) {
             // Handle Again requeue: undo the optimistic +1 and splice card to end
@@ -12204,289 +12326,171 @@
       }
 
       async function endStudySession() {
-        const t = AppState.tempStudy;
-        if (!t) return;
-        if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
-        // Clean up Quick Questions session on study end
-        if (typeof _qqClearState === 'function') _qqClearState();
+        const study = AppState.tempStudy;
+        if (!study || study._ending) return;
+        study._ending = true;
+        if (study._cardTimerInterval) {
+          clearInterval(study._cardTimerInterval);
+          study._cardTimerInterval = null;
+        }
+        if (typeof _qqClearState === "function") _qqClearState();
         stopFocusTracking();
-        const savedTempStudy = AppState.tempStudy;
-        const focusData = t.focusData || { tabAwayCount: 0, idleSeconds: 0 };
-        const sessionId = t.sessionId;
-        // Save subjects snapshot BEFORE clearing so local KS delta can compute
-        const _savedSubjects = AppState.subjects ? [...AppState.subjects] : [];
-        // Clear session state immediately — no blocking loading screen
-        AppState.tempStudy = null;
-        AppState.subjects = null;
-        _bustDashboardCache();
-        // ── LOCAL KS DELTA ESTIMATOR ──────────────────────────────────────────
-        // Uses the exact same stage weights as the server so the estimate is
-        // accurate. Overwritten with the real server value when API responds.
-        function _computeLocalKsDelta(stageTransitions, subjectId) {
-          const subj = (_savedSubjects || AppState.subjects || []).find(function(s) { return s.id === subjectId; });
-          if (!subj) return null;
-          const totalCards = subj.total_cards ||
-            (subj.decks || []).reduce(function(n, d) { return n + (d.card_count || d.total_cards || 0); }, 0);
-          if (!totalCards) return null;
-          // Mirror of server getBaseWeight(): 1→1, 2→2, 3→3, 4→4.5, 5→4.5
-          var stageWeights = { 1: 1, 2: 2, 3: 3, 4: 4.5, 5: 4.5 };
-          var weightDelta = 0;
-          (stageTransitions || []).forEach(function(t) {
-            var oldW = stageWeights[t.from] != null ? stageWeights[t.from] : 1;
-            var newW = stageWeights[t.to]   != null ? stageWeights[t.to]   : 1;
-            weightDelta += (newW - oldW);
-          });
-          return parseFloat(((weightDelta / (totalCards * 5)) * 100).toFixed(2));
-        }
-
-        // Show session end screen right away with placeholder data while saving
-        const placeholderResult = {
-          cardsReviewed: savedTempStudy?.cardsReviewed || savedTempStudy?.reviews?.length || 0,
-          xpGained: null,
-          // Compute local KS delta immediately from stage transitions already recorded
-          ksDelta: _computeLocalKsDelta(savedTempStudy?.stageTransitions, savedTempStudy?.subjectId),
-          seedOutcome: savedTempStudy?.seedStatus || 'dormant',
-          durationSeconds: savedTempStudy?.startTime ? Math.round((Date.now() - savedTempStudy.startTime) / 1000) : 0,
-        };
-        renderSessionEnd(placeholderResult, savedTempStudy);
-        // Save in background — use pre-fired promise (pre-mark pattern) if available,
-        // otherwise fire now. Either way result updates the screen when ready.
-        try {
-          // Use pre-fired result if available; if it was null (network failure), retry once
-          let result = savedTempStudy?._sessionEndPromise ? await savedTempStudy._sessionEndPromise : null;
-          if (!result) result = await api.endStudySession(sessionId, focusData);
-          if (savedTempStudy?.isReturnSession && savedTempStudy?.subjectId) {
-            AppState.returnZoneSubjectId = savedTempStudy.subjectId;
-          }
-          if (result.new_almanac_unlocks && result.new_almanac_unlocks.length > 0) {
-            showToast('A new entry has appeared in your Almanac.', 'success', 6000);
-          }
-          // Frontend fix: patch cached biome state with real tree values from session end
-          // so the home page reflects the correct health immediately on navigate-back
-          if (AppState.biome && result.tree_health != null && result.tree_health !== 0) {
-            if (!AppState.biome.globalTreeState) AppState.biome.globalTreeState = {};
-            AppState.biome.globalTreeState.health = result.tree_health;
-            if (result.tree_stage && result.tree_stage !== 0) {
-              AppState.biome.globalTreeState.stage = result.tree_stage;
-            }
-            if (result.streak != null) AppState.biome.current_streak = result.streak;
-            // Invalidate so next home render re-fetches fresh biome data
-            AppState.biome = null;
-          }
-          // Re-render with real data — renderSessionEnd updates stats in-place if screen already shown
-          if (AppState.currentPage === 'study') {
-            renderSessionEnd(result, savedTempStudy);
-          }
-        } catch (err) {
-          showToast("Session could not be saved. Check your connection.", "error");
-        }
-      }
-
-      function renderSessionEnd(result, savedStudy) {
+        study.finalFocusSnapshot = study.finalFocusSnapshot || computeLiveSessionQuality(study);
+      
         const main = document.getElementById("mainContent");
-        // P6b FIX: added durationSeconds from normalization
-        const { cardsReviewed, newStageCounts, ksDelta, seedOutcome, xpGained, durationSeconds } = result || {};
-        // F5: Detect fruiting from live seed health if server doesn't return it
-        // M2 FIX: use pre-captured state (AppState.tempStudy already cleared by caller)
-        const ts = savedStudy;
-        const reachedFruiting =
-          seedOutcome === "fruiting" ||
-          (ts && getSeedStage(ts.seedHealth || 0).stage === "fruiting");
-        if (reachedFruiting && result) result.seedOutcome = "fruiting";
-
-        // If session-end screen is already rendered, update stat values in-place
-        // to avoid a jarring full page re-render (fixes the double-flash bug)
-        if (main.querySelector('[data-session-end]')) {
-          const _set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-          const _setHTML = (id, val) => { const el = document.getElementById(id); if (el) el.innerHTML = val; };
-          _set('se-cards', cardsReviewed || 0);
-          _set('se-xp', xpGained != null ? xpGained : '–');
-          const ksDeltaEl = document.getElementById('se-ks');
-          if (ksDeltaEl) {
-            if (ksDelta != null) {
-              ksDeltaEl.textContent = (ksDelta > 0 ? '+' : '') + Math.round(ksDelta);
-              ksDeltaEl.style.color = ksDelta >= 0 ? 'var(--green-bright)' : 'var(--red-bright)';
-            }
-            // If ksDelta is still null (no transitions yet), leave whatever was already shown
+        renderLoadingState(main, "Committing session outcome…");
+        try {
+          const result = await api.endStudySession(study.sessionId, study.focusData || {});
+          if (!result?.committed) throw new Error("The server did not confirm the session outcome");
+          if (study.isReturnSession && study.subjectId) {
+            AppState.returnZoneSubjectId = study.subjectId;
           }
-          _set('se-seed', seedOutcome || 'survived');
-          const durEl = document.getElementById('se-duration');
-          if (durEl) durEl.textContent = durationSeconds ? (Math.floor(durationSeconds / 60) + 'm ' + (durationSeconds % 60) + 's') : '—';
-          const subEl = document.getElementById('se-subtitle');
-          if (subEl) subEl.textContent = (cardsReviewed || 0) + ' cards reviewed · ' + (xpGained != null ? xpGained + ' XP earned' : 'saving…');
-          return;
+          AppState.tempStudy = null;
+          AppState.subjects = null;
+          AppState.biome = null;
+          _bustDashboardCache();
+          renderSessionEnd(result);
+        } catch (error) {
+          study._ending = false;
+          main.innerHTML = `
+            <div class="page-wrap page-enter" style="text-align:center;padding:72px 20px;">
+              <div style="font-size:42px;margin-bottom:14px;">↻</div>
+              <div style="font-family:var(--font-display);font-size:var(--text-2xl);font-weight:750;margin-bottom:8px;">Outcome not confirmed</div>
+              <div style="color:var(--text-3);margin-bottom:22px;">Your reviews are safe. Retry finalization; the session ID prevents duplicate rewards.</div>
+              <button class="btn btn-primary" onclick="endStudySession()">Retry finalization</button>
+            </div>`;
+          showToast(error.message || "Session could not be finalized.", "error");
         }
+      }
 
+      function renderSessionEnd(result) {
+        const main = document.getElementById("mainContent");
+        const quality = Number(result?.sessionQuality ?? result?.session_quality) || 0;
+        const breakdown = result?.qualityBreakdown || result?.quality_breakdown || {};
+        const seed = getSeedStage(quality);
+        const cardsReviewed = Number(result?.cardsReviewed ?? result?.cards_reviewed) || 0;
+        const activeSeconds = Number(result?.activeSeconds ?? result?.active_seconds) || 0;
+        const durationSeconds = Number(result?.durationSeconds ?? result?.duration_seconds) || 0;
+        const meaningful = Boolean(result?.meaningfulSession ?? result?.meaningful_session);
+        const fruiting = Boolean(result?.fruiting_achieved && result?.fruit);
+        const growthEarned = Number(result?.growthPointsEarned ?? result?.growth_points_earned) || 0;
+        const seedlingsEarned = Number(result?.seedlingsEarned ?? result?.seedlings_earned) || 0;
+        const vitality = Number(result?.treeHealth ?? result?.tree_health) || 0;
+        const nextStage = result?.next_stage || null;
+        const formatTime = (seconds) => Math.floor(seconds / 60) + "m " + Math.round(seconds % 60) + "s";
+        const component = (label, value, max) => {
+          const numeric = Number(value) || 0;
+          const pct = max > 0 ? Math.max(0, Math.min(100, (numeric / max) * 100)) : 0;
+          return `
+            <div style="margin-bottom:11px;">
+              <div style="display:flex;justify-content:space-between;font-size:var(--text-sm);margin-bottom:5px;">
+                <span style="color:var(--text-2);">${label}</span>
+                <span style="font-family:var(--font-mono);color:var(--text);">${numeric.toFixed(1)} / ${max}</span>
+              </div>
+              <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;"></div></div>
+            </div>`;
+        };
+      
         main.innerHTML = `
-    <div class="page-wrap page-enter" style="text-align:center;padding:60px 20px;" data-session-end="1">
-      <!-- P6 FIX: Emoji selector updated to current 6-stage FOCUS_STAGES names -->
-      <div style="font-size:var(--text-3xl);margin-bottom:var(--space-4);">${seedOutcome === "fruiting" ? "\uD83E\uDD5D" : seedOutcome === "glowing" ? "\u2728" : seedOutcome === "thriving" ? "\uD83C\uDF3F" : seedOutcome === "growing" ? "\uD83C\uDF31" : seedOutcome === "waking" ? "\uD83C\uDF30" : "\uD83D\uDCA4"}</div>
-      <div style="font-family:var(--font-display);font-size:24px;font-weight:800;color:var(--text);margin-bottom:8px;">Session Complete</div>
-      <div id="se-subtitle" style="font-size:var(--text-lg);color:var(--text-2);margin-bottom:32px;">
-        ${cardsReviewed || 0} cards reviewed &middot; ${xpGained != null ? xpGained + ' XP earned' : 'saving&hellip;'}
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;max-width:600px;margin:0 auto 32px;">
-        <div class="stat-card">
-          <div class="stat-label">Cards Reviewed</div>
-          <div class="stat-value" id="se-cards">${cardsReviewed || 0}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">KS Change</div>
-          <div class="stat-value" id="se-ks" style="color:${(ksDelta != null && ksDelta < 0) ? "var(--red-bright)" : "var(--green-bright)"}">${ksDelta != null ? (ksDelta > 0 ? "+" : "") + Math.round(ksDelta) : "–"}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">XP Earned</div>
-          <div class="stat-value" style="color:var(--gold)" id="se-xp">${xpGained != null ? xpGained : "–"}</div>
-        </div>
-        <!-- P6b FIX: Session Time stat card — required by spec P4.6 -->
-        <div class="stat-card">
-          <div class="stat-label">Session Time</div>
-          <div class="stat-value" id="se-duration">${durationSeconds ? (Math.floor(durationSeconds / 60) + 'm ' + (durationSeconds % 60) + 's') : '—'}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Seed Outcome</div>
-          <div class="stat-value" id="se-seed" style="font-size:var(--text-2xl);text-transform:capitalize;color:var(--green-bright)">${seedOutcome || "survived"}</div>
-        </div>
-      </div>
-      ${
-        newStageCounts && Object.keys(newStageCounts).length > 0
-          ? `
-      <div style="max-width:500px;margin:0 auto 32px;">
-        <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:12px;">Stage Advances</div>
-        ${Object.entries(newStageCounts)
-          .map(
-            ([stage, count]) => `
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
-            <span style="font-size:var(--text-base);color:var(--text-2);">Stage ${stage}: ${getStageLabel(parseInt(stage))}</span>
-            <span style="font-family:var(--font-mono);font-size:var(--text-base);color:var(--green-bright);font-weight:700;">+${count}</span>
-          </div>
-        `,
-          )
-          .join("")}
-      </div>
-      `
-          : ""
-      }
-      ${
-        reachedFruiting
-          ? `
-      <div class="card" style="max-width:500px;margin:0 auto 24px;border-color:var(--gold);background:rgba(13,148,136,0.06);">
-        <div style="font-size:28px;margin-bottom:8px;"></div>
-        <div style="font-family:var(--font-display);font-size:var(--text-lg);font-weight:700;color:var(--gold);margin-bottom:4px;">Fruiting Achieved!</div>
-        <div style="font-size:var(--text-base);color:var(--text-2);">A permanent fruit has been added to this subject's Biome zone — a physical record of your deep focus today. It cannot be removed.</div>
-      </div>
-      `
-          : ""
-      }
-      <div style="display:flex;gap:12px;justify-content:center;">
-        <button class="btn btn-primary" onclick="(function(b){b.disabled=true;b.textContent='Loading...';navigateTo('dashboard');})(this)">Back to Dashboard</button>
-        <button class="btn btn-secondary" onclick="navigateTo('study')">Study More</button>
-      </div>
-    </div>
-  `;
+          <div class="page-wrap page-enter" style="text-align:center;padding:50px 20px;" data-session-end="1">
+            <div style="font-size:46px;margin-bottom:10px;">${seed.emoji}</div>
+            <div style="font-family:var(--font-display);font-size:26px;font-weight:800;margin-bottom:6px;">Session committed</div>
+            <div style="font-size:var(--text-base);color:var(--text-3);margin-bottom:28px;">
+              ${meaningful ? "Meaningful session" : "Saved session"} · ${seed.label} Focus Seed
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:12px;max-width:760px;margin:0 auto 24px;">
+              <div class="stat-card"><div class="stat-label">Quality</div><div class="stat-value" style="color:var(--green-bright);">${quality}/100</div></div>
+              <div class="stat-card"><div class="stat-label">Distinct Reviews</div><div class="stat-value">${result?.unique_cards_reviewed ?? cardsReviewed}</div></div>
+              <div class="stat-card"><div class="stat-label">Active Focus</div><div class="stat-value">${formatTime(activeSeconds)}</div></div>
+              <div class="stat-card"><div class="stat-label">Elapsed Time</div><div class="stat-value">${formatTime(durationSeconds)}</div></div>
+              <div class="stat-card"><div class="stat-label">Growth Points</div><div class="stat-value" style="color:var(--green-bright);">+${growthEarned}</div></div>
+              <div class="stat-card"><div class="stat-label">Seedlings</div><div class="stat-value" style="color:var(--gold);">+${seedlingsEarned}</div></div>
+              <div class="stat-card"><div class="stat-label">Tree Vitality</div><div class="stat-value">${vitality}%</div></div>
+            </div>
+            <div class="card" style="max-width:620px;margin:0 auto 22px;text-align:left;">
+              <div style="font-family:var(--font-display);font-weight:700;margin-bottom:14px;">Why the seed reached ${seed.label}</div>
+              ${component("Meaningful work", breakdown.meaningful_work, 35)}
+              ${component("Active focus", breakdown.active_focus, 30)}
+              ${component("Attention", breakdown.attention, 20)}
+              ${component("Goal progress", breakdown.goal_progress, 15)}
+            </div>
+            ${fruiting ? `
+              <div class="card" style="max-width:620px;margin:0 auto 22px;border-color:var(--gold);background:rgba(13,148,136,0.06);">
+                <div style="font-size:30px;margin-bottom:7px;">🥝</div>
+                <div style="font-family:var(--font-display);font-size:var(--text-lg);font-weight:700;color:var(--gold);">Permanent fruit created</div>
+                <div style="font-size:var(--text-sm);color:var(--text-2);margin-top:5px;">This fruit is tied to the committed session and cannot be duplicated by retrying.</div>
+              </div>` : ""}
+            ${nextStage ? `
+              <div style="max-width:620px;margin:0 auto 24px;color:var(--text-2);font-size:var(--text-sm);">
+                ${nextStage.growth_points_needed} Growth Points to ${escapeHTML(nextStage.next_stage_label || "the next tree stage")}.
+              </div>` : ""}
+            <div style="display:flex;gap:12px;justify-content:center;">
+              <button class="btn btn-primary" onclick="navigateTo('dashboard')">Back to Dashboard</button>
+              <button class="btn btn-secondary" onclick="navigateTo('study')">Study More</button>
+            </div>
+          </div>`;
       }
 
-      // ── Focus Tracking (F11: wilt at 2 min, death at 5 min) ──
-      const FOCUS_WILT_MS = 2 * 60 * 1000; // 2 minutes
-      const FOCUS_DEATH_MS = 5 * 60 * 1000; // 5 minutes
-
+      // ── Focus Tracking: attention measurement for the shared quality formula ──
       function startFocusTracking() {
-        AppState.focusTracking.tabVisible = !document.hidden;
-        AppState.focusTracking.lastActive = Date.now();
+        stopFocusTracking();
+        const tracking = AppState.focusTracking;
+        tracking.tabVisible = !document.hidden;
+        tracking.lastActive = Date.now();
+        tracking.idleMs = 0;
+        tracking.idleStart = document.hidden ? Date.now() : null;
+        const study = AppState.tempStudy;
+        if (study) {
+          study.focusData = study.focusData || {};
+          study.focusData.idleSeconds = 0;
+          study.focusData.activeSeconds = 0;
+          study.focusData.focusRatio = 0;
+        }
         document.addEventListener("visibilitychange", handleVisibilityChange);
-        // Interval-based focus health check every 10 seconds
-        AppState.focusTracking._interval = setInterval(() => {
-          const ts = AppState.tempStudy;
-          if (!ts) {
-            stopFocusTracking();
-            return;
-          }
-          const ft = AppState.focusTracking;
-          if (document.hidden && ft.idleStart) {
-            const awayMs = Date.now() - ft.idleStart;
-            let newHealth = ts.seedHealth;
-            if (awayMs >= FOCUS_DEATH_MS) {
-              // Dead — drain to 0
-              newHealth = 0;
-              if (!ts.focusData.seedDied) {
-                ts.focusData.seedDied = true;
-                ts.focusData.deathTime = new Date().toISOString();
-              }
-            } else if (awayMs >= FOCUS_WILT_MS) {
-              // Wilting — drain health proportionally between WILT and DEATH thresholds
-              const wiltRatio = Math.min(
-                1,
-                (awayMs - FOCUS_WILT_MS) / (FOCUS_DEATH_MS - FOCUS_WILT_MS),
-              );
-              newHealth = Math.round(Math.max(1, 40 - wiltRatio * 40));
-              if (!ts.focusData.seedWilted) {
-                ts.focusData.seedWilted = true;
-                ts.focusData.wiltTime = new Date().toISOString();
-              }
-            }
-            if (newHealth !== ts.seedHealth) {
-              ts.seedHealth = newHealth;
-              ts.seedStatus = getSeedStage(newHealth).stage;
-              const seedEl = document.getElementById("focusSeed");
-              if (seedEl) {
-                const ss = getSeedStage(newHealth);
-                seedEl.className = `session-seed ${ss.stage}`;
-                const fill = seedEl.querySelector(".seed-bar-fill");
-                if (fill) fill.style.width = newHealth + "%";
-                const status = seedEl.querySelector(".seed-status");
-                if (status) status.textContent = ss.label;
-                const visual = seedEl.querySelector(".seed-visual");
-                if (visual) visual.textContent = ss.emoji;
-              }
-            }
-          }
-        }, 10000);
+        tracking._interval = setInterval(refreshFocusSeedPreview, 1000);
+        refreshFocusSeedPreview();
       }
 
       function stopFocusTracking() {
+        const tracking = AppState.focusTracking;
+        const study = AppState.tempStudy;
+        if (tracking?.idleStart) {
+          tracking.idleMs = (Number(tracking.idleMs) || 0) + Math.max(0, Date.now() - tracking.idleStart);
+          tracking.idleStart = null;
+        }
+        if (study) {
+          study.focusData = study.focusData || {};
+          study.focusData.idleSeconds = Math.round((Number(tracking?.idleMs) || 0) / 1000);
+          const preview = computeLiveSessionQuality(study);
+          study.focusData.activeSeconds = preview.activeSeconds;
+          study.focusData.focusRatio = preview.focusRatio;
+        }
         document.removeEventListener("visibilitychange", handleVisibilityChange);
-        if (AppState.focusTracking._interval) {
-          clearInterval(AppState.focusTracking._interval);
-          AppState.focusTracking._interval = null;
+        if (tracking?._interval) {
+          clearInterval(tracking._interval);
+          tracking._interval = null;
         }
       }
 
       function handleVisibilityChange() {
-        const ft = AppState.focusTracking;
-        const ts = AppState.tempStudy;
-        if (!ts) return;
+        const tracking = AppState.focusTracking;
+        const study = AppState.tempStudy;
+        if (!study) return;
+        study.focusData = study.focusData || {};
         if (document.hidden) {
-          ft.tabVisible = false;
-          ft.idleStart = Date.now();
-          if (ts.focusData) ts.focusData.tabAwayCount++;
+          tracking.tabVisible = false;
+          if (!tracking.idleStart) tracking.idleStart = Date.now();
+          study.focusData.tabAwayCount = (Number(study.focusData.tabAwayCount) || 0) + 1;
         } else {
-          ft.tabVisible = true;
-          if (ft.idleStart) {
-            const idleMs = Date.now() - ft.idleStart;
-            ft.idleMs += idleMs;
-            if (ts.focusData) ts.focusData.idleSeconds = Math.round(ft.idleMs / 1000);
-            ft.idleStart = null;
+          tracking.tabVisible = true;
+          if (tracking.idleStart) {
+            tracking.idleMs = (Number(tracking.idleMs) || 0) + Math.max(0, Date.now() - tracking.idleStart);
+            tracking.idleStart = null;
           }
-          ft.lastActive = Date.now();
+          tracking.lastActive = Date.now();
+          study.focusData.idleSeconds = Math.round((Number(tracking.idleMs) || 0) / 1000);
         }
-        // Update seed health based on tab away
-        if (ts && document.hidden) {
-          // Wilt/death managed by focus timer (F11); tab-away just marks idle start
-          const main = document.getElementById("mainContent");
-          if (main && AppState.currentPage === "study") {
-            const seedEl = document.getElementById("focusSeed");
-            if (seedEl) {
-              const ss = getSeedStage(ts.seedHealth);
-              seedEl.className = `session-seed ${ss.stage}`;
-              const fill = seedEl.querySelector(".seed-bar-fill");
-              if (fill) fill.style.width = ts.seedHealth + "%";
-              const status = seedEl.querySelector(".seed-status");
-              if (status) status.textContent = ss.label;
-              const visual = seedEl.querySelector(".seed-visual");
-              if (visual) visual.textContent = ss.emoji;
-            }
-          }
-        }
+        refreshFocusSeedPreview();
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -12704,7 +12708,7 @@
                       This takes 15–30 seconds. You can leave this page — we'll redirect you automatically when it's ready.
                     </div>
                     <div class="loading-dots" style="margin-top:var(--space-3);"><span></span><span></span><span></span></div>
-                    <button class="btn btn-ghost btn-sm" id="cancelExamGenBtn" style="margin-top:var(--space-4);font-size:var(--text-sm);color:var(--text-3);border-color:var(--border);" onclick="(function(){ if(typeof _hideGenBanner==='function') _hideGenBanner(); if(typeof navigateTo==='function') navigateTo('exam-config'); showToast('Generation cancelled.','info',3000); })()">✕ Cancel Generation</button>
+                    <button class="btn btn-ghost btn-sm" id="cancelExamGenBtn" style="margin-top:var(--space-4);font-size:var(--text-sm);color:var(--text-3);border-color:var(--border);" onclick="_stopWaitingForJob('${job.job_id}')">← Stop Waiting</button>
                     <div class="gen-progress-wrap" id="examGenProgress" style="display:none">
                       <div class="gen-progress-track">
                         <div class="gen-progress-fill" id="examGenProgressFill"></div>
@@ -13851,7 +13855,7 @@
               height: 360,
               state: {
                 stage: globalTreeState.stage || 1,
-                health: globalTreeState.health || 100,
+                health: globalTreeState.health ?? 100,
                 leaves: globalTreeState.leaves || 12,
                 fruits: globalTreeState.fruits || 0,
                 rings: globalTreeState.rings || 0,
@@ -18339,10 +18343,13 @@
               var newSubject = await api.createSubject({ name: nameVal, color: "#2d6a4f", icon: "book" });
               var subjectId  = newSubject.id || (newSubject.subject && newSubject.subject.id);
               if (!subjectId) throw new Error("Subject creation did not return an id");
-              // Create default deck inside the new subject
-              var newDeck = await api.createDeck(subjectId, nameVal + " — Main Deck");
-              var deckId  = newDeck.id || (newDeck.deck && newDeck.deck.id);
-              if (!deckId) throw new Error("Deck creation did not return an id");
+              // Subject creation already creates its default deck. Fall back only if it did not.
+              var deckId = newSubject.default_deck_id || (newSubject.subject && newSubject.subject.default_deck_id) || null;
+              if (!deckId) {
+                var newDeck = await api.createDeck(subjectId, nameVal + " — Main Deck");
+                deckId = newDeck.id || (newDeck.deck && newDeck.deck.id);
+              }
+              if (!deckId) throw new Error("Subject creation did not return a default deck id");
               // Refresh library so AppState.subjects is current
               var data = await api.getLibrary();
               AppState.subjects = data.subjects || [];
@@ -19760,6 +19767,7 @@
               const subj = await api.createSubject({ name, emoji: emoji || "" });
               OB.subjectId = subj.id || subj.subject?.id;
               OB.subjectName = name;
+              OB.deckId = subj.default_deck_id || subj.subject?.default_deck_id || null;
               OB.step = 2;
               renderStep();
             } catch (e) {
@@ -19797,8 +19805,10 @@
             const btn = document.getElementById("ob-deck-btn");
             btn.disabled = true; btn.textContent = "Creating...";
             try {
-              const deck = await api.createDeck(OB.subjectId, { name, description: "" });
-              OB.deckId = deck.id || deck.deck?.id;
+              const deck = OB.deckId
+                ? await api.updateDeck(OB.deckId, { name, description: "" })
+                : await api.createDeck(OB.subjectId, { name, description: "" });
+              OB.deckId = deck.id || deck.deck?.id || OB.deckId;
               OB.deckName = name;
               OB.step = 3;
               renderStep();
@@ -19980,7 +19990,7 @@
             btn.disabled = true; btn.textContent = "Saving…";
             try {
               // FIX: api.createCard never existed — use api.addCard which posts to /library/cards
-              await api.addCard(OB.subjectId, front, back);
+              await api.addCard(OB.subjectId, front, back, OB.deckId);
               addedCards.push({ front, back });
               OB.cardsAdded = addedCards.length;
               if (frontEl) frontEl.value = "";
@@ -20497,7 +20507,7 @@
               <div class="settings-row-label">Display Name</div>
               <div class="settings-row-sub">Shown in the sidebar</div>
             </div>
-            <input class="input" style="max-width:200px;" id="settingName" value="${escapeHTML(AppState.user?.name || "Student")}" />
+            <input class="input" style="max-width:200px;" id="settingName" value="${escapeHTML(getUserDisplayName(AppState.user))}" />
           </div>
         </div>
         <!-- Study Mode -->
@@ -20674,7 +20684,10 @@
           document.getElementById("settingName").addEventListener("change", async (e) => {
             try {
               await api.updateSettings({ name: e.target.value });
-              if (AppState.user) AppState.user.name = e.target.value;
+              if (AppState.user) {
+                AppState.user.name = e.target.value;
+                AppState.user.full_name = e.target.value;
+              }
               updateUserFooter();
               showToast("Name updated", "success");
             } catch (err) {
@@ -20825,7 +20838,7 @@
               if (newPass !== confirmPass) { setMsg('Passwords do not match.', 'var(--red-bright)'); return; }
               changePassBtn.disabled = true; changePassBtn.textContent = 'Updating…';
               try {
-                await apiRequest('/auth/change-password', { method: 'POST', body: { currentPassword: currentPass, newPassword: newPass } });
+                await apiRequest('/auth/change-password', { method: 'PATCH', body: { currentPassword: currentPass, newPassword: newPass } });
                 setMsg('Password changed successfully.', 'var(--green-bright)');
                 document.getElementById('settingCurrentPass').value = '';
                 document.getElementById('settingNewPass').value = '';
@@ -20902,7 +20915,7 @@
                 ['🧠 Spaced Repetition', 'KIWI uses a scheduling algorithm that shows each card exactly when you\'re about to forget it. Rate a card "Easy" and it comes back in weeks. Rate it "Again" and it comes back today. Over time, every card settles into the interval where your brain retains it with the minimum effort.'],
                 ['📊 Knowledge Score (KS)', 'KS is a weighted average across all your cards, from 0–100. Stage 1 (Seedling) cards contribute less weight; Stage 5 (Verified) cards contribute the most. KS rises when cards advance stages and drops when they go past due or fall back. It measures real mastery — not sessions started or time spent.'],
                 ['⚡ Brain Pressure', 'Pressure rises when cards become GHOST, FRAGILE, STUCK, or AVOIDED. High pressure triggers Invitations and eventually The Reckoning. Pressure drops when you review overdue cards and they advance. A pressure score of 0 is the goal.'],
-                ['🌱 Focus Seed', 'Your Focus Seed grows during a session when you stay in the app. Leave and return repeatedly and it wilts. A "Fruiting" session (highest quality) earns 3 Seedlings. The Seed resets each session and has no effect on KS.'],
+                ['🌱 Focus Seed', 'Your Focus Seed previews one shared quality score: distinct reviews, active focus, attention ratio, and progress toward 25 reviews. Fruiting requires quality 85+, 15 distinct cards, 20 active minutes, and at least 70% attention. The Seed resets each session and has no effect on KS.'],
                 ['⚡ The Reckoning', 'When pressure across any subject reaches 20, The Reckoning triggers. It is a mandatory high-stakes exam — your KS is directly affected by the result. It cannot be skipped, only deferred by 4 hours (or 24 hours with a Reckoning Buffer item).'],
                 ['🏆 Credentials', 'Each subject has 5 credential tiers: Novice → Apprentice → Proficient → Expert → Master. Credentials require a minimum KS and passing a 70%+ exam. They are permanent badges of verified mastery.'],
               ];
@@ -20958,7 +20971,7 @@
             let telegramToken = "";
             let isAdmin = false;
             try {
-              const me = await api.getMe().catch(() => ({}));
+              const me = await api.getCurrentUser().catch(() => ({}));
               currentPrefs = me.notification_preferences || currentPrefs;
               telegramLinked = !!me.telegram_chat_id;
               telegramToken = me.telegram_link_token || "";
@@ -21392,7 +21405,7 @@ const KIWI_TOUR_STEPS = [
   {type:'spot',nav:'dashboard',sel:'#tree-card',pos:'left',icon:'🌳',title:'Your KIWI Tree',
    body:'This tree grows with you. Study consistently and it thrives — growing leaves, bearing fruit, climbing stages from Seedling to Mastered. Skip sessions and it withers. Your tree is your effort made visible.',action:'next'},
   {type:'spot',nav:'dashboard',sel:'.streak-widget',pos:'top',icon:'🔥',title:'Streak & Shields',
-   body:'Study every day to keep your streak alive. Miss a day and it resets — unless you have a 🛡️ Shield. Shields give you one free missed day. Earn them by studying extra. Protect them carefully.',action:'next'},
+   body:'Study every day to keep your streak alive. Miss a day and it resets — unless you have a 🛡️ Shield. Shields preserve a streak across exactly one missed calendar day. A shield is earned at each 30-day streak milestone, up to three held.',action:'next'},
   {type:'spot',nav:'dashboard',sel:'#brain-preview-card',pos:'left',icon:'⚡',title:'Brain Monitor',
    body:"This mini-panel shows exam risk building across your subjects. A pressure above 50% is a warning. We'll explain the full Brain page shortly — it's one of KIWI's most powerful features.",action:'next'},
   {type:'spot',nav:'dashboard',sel:'#invitations-card',pos:'right',icon:'✉️',title:'Daily Invitations',

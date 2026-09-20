@@ -34,6 +34,7 @@ const cron = require('node-cron');
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { WebSocketServer } = require('ws');
+const { createEcosystemV2 } = require('./ecosystem_v2');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
@@ -63,6 +64,10 @@ async function withTransaction(fn) {
     client.release();
   }
 }
+
+// Ecosystem V2 owns session quality, permanent growth, fruit, vitality, streaks,
+// and their idempotent reward ledger. Other services consume its committed result.
+const ecosystemV2 = createEcosystemV2({ pool, query, randomUUID });
 
 // ── Dynamic SQL builders ─────────────────────────────────────────────────────
 // Used for tables where the route handler passes an arbitrary data spread.
@@ -2714,101 +2719,17 @@ const lastStudy = userStats.last_study_date ? getDateString(userStats.last_study
 const yesterday = getDateString(new Date(Date.now() - 86400000));
 if (lastStudy === today) return { action: 'none', reason: 'already_studied_today' };
 if (lastStudy === yesterday) return { action: 'none', reason: 'studied_yesterday' };
-// P3.9-B4 FIX: deprecated old grace system. consumeShieldOnMiss (called
-// from the login handler after P3.9-B1a fix) now handles missed days.
-// Returning action:missed_day with no updates so the grace path is a no-op
-// and the shield system takes over.
-return { action: 'missed_day', reason: 'use_shield_system' };
+// Ecosystem V2 resolves missed calendar dates only when the next meaningful session commits.
+return { action: 'none', reason: 'streak_resolved_on_meaningful_session' };
 }
 
-function computeStreakAfterSession(userStats, now = new Date()) {
-const today = getDateString(now);
-const lastStudy = userStats.last_study_date ? getDateString(userStats.last_study_date) : null;
-let newStreak = userStats.current_streak;
-if (lastStudy !== today) newStreak += 1;
-// P5.4-F8 FIX: track permanent streak milestone rings (survive streak breaks)
-const allMilestoneThresholds = [7, 30, 100, 365];
-const earned = userStats.streak_milestones_earned || [];
-const newlyEarned = allMilestoneThresholds.filter(m => newStreak >= m && !earned.includes(m));
-const updatedEarned = newlyEarned.length > 0 ? [...earned, ...newlyEarned] : earned;
-return {
-current_streak: newStreak,
-longest_streak: Math.max(userStats.longest_streak || 0, newStreak),
-last_study_date: now,
-streak_grace_used: false,
-...(newlyEarned.length > 0 ? { streak_milestones_earned: updatedEarned } : {}),
-};
-}
-
-async function applyDailyHealthPenalty() {
-const yesterday = getDateString(new Date(Date.now() - 86400000));
-const today = getDateString(new Date()); // F-10 FIX: also skip users who studied today (timezone edge case)
-const allStats = await db.userStats.findAll();
-await Promise.all(
-allStats.map(async (stat) => {
-const lastStudy = stat.last_study_date ? getDateString(stat.last_study_date) : null;
-if (lastStudy && lastStudy !== yesterday && lastStudy !== today) {
-// FIX: stat.user_id (snake_case PG column), not stat.userId (camelCase — was always undefined)
-await db.userStats.update(stat.user_id, {
-tree_health: Math.max(0, stat.tree_health - 10),
-});
-}
-})
-);
-}
-// ── treeService ───────────────────────────────────────────────────────────────
-const TREE_THRESHOLDS = [
-{ stage: 1, streak: 0, mastered: 0 },
-{ stage: 2, streak: 7, mastered: 10 },
-{ stage: 3, streak: 14, mastered: 50 },
-{ stage: 4, streak: 30, mastered: 100 },
-{ stage: 5, streak: 60, mastered: 250 },
-{ stage: 6, streak: 90, mastered: 500 },
-{ stage: 7, streak: 120, mastered: 1000 },
-{ stage: 8, streak: 180, mastered: 2000 },
-];
-
-function computeTreeStage(currentStreak, totalMastered) {
-let stage = 1;
-for (const t of TREE_THRESHOLDS) {
-if (currentStreak >= t.streak && totalMastered >= t.mastered) stage = t.stage;
-else break;
-}
-return stage;
-}
-
-async function updateTreeStage(userId) {
-const stats = await db.userStats.get(userId);
-if (!stats) return null;
-let newStage = computeTreeStage(stats.current_streak, stats.total_cards_mastered);
-// TREE-FIX: Clamp to valid range [1, 9] and ensure integer
-newStage = Math.max(1, Math.min(9, parseInt(newStage) || 1));
-const currentStage = parseInt(stats.tree_stage) || 1;
-if (newStage !== currentStage) {
-await db.userStats.update(userId, { tree_stage: newStage });
-}
-return newStage;
-}
-
+// ── treeService: Ecosystem V2 permanent Growth Points ────────────────────────
 function computeDaysUntilNextStage(stats) {
-const thresholds = [
-{ stage: 2, streak: 7, mastered: 10 },
-{ stage: 3, streak: 14, mastered: 50 },
-{ stage: 4, streak: 30, mastered: 100 },
-{ stage: 5, streak: 60, mastered: 250 },
-{ stage: 6, streak: 90, mastered: 500 },
-{ stage: 7, streak: 120, mastered: 1000 },
-{ stage: 8, streak: 180, mastered: 2000 },
-];
-const next = thresholds.find((t) => t.stage === stats.tree_stage + 1);
-if (!next) return null;
-return {
-streak_needed: Math.max(0, next.streak - stats.current_streak),
-mastered_needed: Math.max(0, next.mastered - stats.total_cards_mastered),
-};
+  return ecosystemV2.nextTreeStage(stats);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  SERVICE: analyticsService// ════════════════════════════════════════════════════════════════════════════
 //  SERVICE: analyticsService
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -7525,7 +7446,8 @@ await db.cards.update(userId, card.id, { verified: true, verified_at: new Date()
 results.verified.push(card.id);
 // P8.1c: +1 Seedling for first-time VERIFIED card (spec P8.1)
 await awardSeedlings(userId, 1, 'card_verified_first_time',
-`Card ${card.id} verified for the first time in exam`).catch((e) => console.error("[KIWI] silent catch:", e.message));
+`Card ${card.id} verified for the first time in exam`,
+'card-verified:' + userId + ':' + card.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
 } else {
 // B7: Apply full SRS "Again" treatment — recalculate EF and repetitions
@@ -8245,7 +8167,8 @@ await awardSeedlings(
 userId,
 5,
 'reckoning_survival',
-`Survived Reckoning in ${reckoning.subject_name} with ${scorePct}%`
+`Survived Reckoning in ${reckoning.subject_name} with ${scorePct}%`,
+'reckoning-survival:' + reckoning.id
 );
 }
 return { status: 'completed', pressure_reset: survived, survived, debrief_text: debriefText };
@@ -8395,76 +8318,6 @@ return null;
 }
 // ── Streak Engine Redesign ────────────────────────────────────────────────────
 
-async function evaluateStreakShield(userId) {
-const stats = await db.userStats.get(userId);
-if (!stats) return null;
-// P3.9-B2 FIX: use streak days (longest ever), not session count.
-// Session count is inflated by multi-session days, causing premature shield earnings.
-const longestStreak = Math.max(stats.current_streak || 0, stats.longest_streak || 0);
-const shieldsEarned = Math.floor(longestStreak / 30);
-const shieldsHeld = Math.min(3, shieldsEarned - (stats.streak_shields_consumed || 0));
-await db.userStats.update(userId, {
-streak_shields_earned: shieldsEarned,
-streak_shields_held: shieldsHeld,
-});
-return { shields_held: shieldsHeld, shields_earned: shieldsEarned };
-}
-
-async function consumeShieldOnMiss(userId) {
-const stats = await db.userStats.get(userId);
-if (!stats) return { streak_broken: true };
-if (stats.streak_shields_held > 0) {
-await db.userStats.update(userId, {
-streak_shields_held: stats.streak_shields_held - 1,
-streak_shields_consumed: (stats.streak_shields_consumed || 0) + 1,
-});
-return { streak_broken: false, shield_consumed: true };
-}
-await db.userStats.update(userId, {
-current_streak: 0,
-tree_health: Math.max(0, stats.tree_health - 20),
-});
-return { streak_broken: true, shield_consumed: false };
-}
-
-// P3.9-B3 FIX: use >= with stored-rings guard so milestones fire once and
-// are PERMANENTLY recorded — spec says ring marks survive streak breaks.
-async function detectStreakMilestones(userId) {
-const stats = await db.userStats.get(userId);
-if (!stats) return [];
-const streak = stats.current_streak;
-const milestones = [14, 30, 100, 365];
-// Use streak_milestone_rings as the permanent record (streak_milestones_earned
-// also covers this via computeStreakAfterSession — both are kept in sync).
-const existingRings = new Set(
-stats.streak_milestone_rings || stats.streak_milestones_earned || []
-);
-const triggered = [];
-for (const m of milestones) {
-// >= not === : fires even if streak jumps over the threshold
-// existingRings guard: fires only once per lifetime
-if (streak >= m && !existingRings.has(m)) {
-existingRings.add(m);
-triggered.push(m);
-if (m === 14)
-await awardSeedlings(userId, 2, 'streak_14', '14-day streak');
-if (m === 30)
-await awardSeedlings(userId, 5, 'streak_milestone_30', '30-day streak milestone');
-if (m === 100)
-await awardSeedlings(userId, 10, 'streak_milestone_100', '100-day streak milestone');
-}
-}
-if (triggered.length > 0) {
-// Persist the updated ring set so it survives streak resets
-// Fix 3: streak milestone hit → full health reset to 100
-await db.userStats.update(userId, {
-streak_milestone_rings: Array.from(existingRings),
-streak_milestones_earned: Array.from(existingRings), // keep both fields in sync
-tree_health: 100,
-});
-}
-return triggered;
-}
 // ── P3.10: Reclassification Alert (D3) ───────────────────────────────────────────
 
 async function triggerReclassificationAlert(userId, subjectId, scorePct, reclassifiedCards) {
@@ -8641,61 +8494,8 @@ return aOverdue - bOverdue;
 });
 return queue;
 }
-// ── Focus Seed Progression ────────────────────────────────────────────────────
-// B10: Corrected 6-stage Focus Seed design
-const FOCUS_STAGES = {
-DORMANT: 'Dormant',
-WAKING: 'Waking',
-GROWING: 'Growing',
-THRIVING: 'Thriving',
-GLOWING: 'Glowing',
-FRUITING: 'Fruiting',
-};
-// B10: Correct five-interval six-stage progression
-
-// P3 FIX: Accept focusDurationSec (actual focused time, idle excluded) from frontend.
-// Accept seedKilled flag so a single long idle (>5 min) forces DORMANT regardless of time.
-function computeFocusStage(startTime, breaks, focusDurationSec = 0, seedKilled = false) {
-if (seedKilled) return FOCUS_STAGES.DORMANT; // frontend detected death event
-if (breaks >= 3) return FOCUS_STAGES.DORMANT;
-const now = new Date();
-const elapsedSec = Math.max(0, Math.floor((now - new Date(startTime)) / 1000));
-// Use actual focused duration from frontend when provided — prevents idle time
-// from counting toward Fruiting (was measuring absence, not focus).
-const effectiveSec = focusDurationSec > 0 ? focusDurationSec : elapsedSec;
-if (effectiveSec >= 3600) return FOCUS_STAGES.FRUITING; // 60 min — deep fruiting
-if (effectiveSec >= 2400) return FOCUS_STAGES.GLOWING;  // 40 min
-if (effectiveSec >= 1500) return FOCUS_STAGES.THRIVING;  // 25 min
-if (effectiveSec >= 900)  return FOCUS_STAGES.GROWING;   // 15 min
-if (effectiveSec >= 300)  return FOCUS_STAGES.WAKING;    // 5 min
-return FOCUS_STAGES.DORMANT;
-}
-
-async function persistFocusSeed(sessionId, stage) {
-await db.sessions.update(null, sessionId, { focus_seed_stage: stage });
-}
-// B11: Per-subject fruit count + global counter
-
-async function processFruiting(userId, session) {
-if (session.focus_seed_stage === FOCUS_STAGES.FRUITING) {
-// Global counter (kept for backward compat)
-await db.userStats.update(userId, { fruit_count: { increment: 1 } });
-// Per-subject fruit count stored in subject_stats
-let subjectId = null;
-try {
-if (session.deck_id) {
-const deck = await db.decks.findById(userId, session.deck_id);
-if (deck && deck.subject_id) {
-subjectId = deck.subject_id;
-await db.subjectStats.upsert(userId, subjectId, { fruit_count: { increment: 1 } });
-}
-}
-} catch (e) {}
-return { fruiting_achieved: true, subject_id: subjectId };
-}
-return { fruiting_achieved: false };
-}
-// ── Return Mechanic ─────────────────────────────────────────────────────────
+// Focus Seed stages are computed and committed by Ecosystem V2.
+// ── Return Mechanic// ── Return Mechanic ─────────────────────────────────────────────────────────
 
 async function computeReturnStatus(userId) {
 // P5.3-F FIX: removed misplaced rate-limit guard (this function makes no AI calls)
@@ -8919,20 +8719,17 @@ const activeMilestones = [...new Set([
 ...earnedMilestones,
 ...allMilestoneThresholds.filter(m => currentStreak >= m),
 ])].sort((a, b) => a - b);
-// P5.4-F9 FIX: derive tree health from zone states (blended with stored health)
-const zoneHealthMap = { Thriving: 100, Growing: 70, Struggling: 40, Neglected: 10 };
-const zoneHealthValues = subjectsData.map(s => zoneHealthMap[s.zone] || 50);
-const derivedTreeHealth = zoneHealthValues.length > 0
-? Math.round(zoneHealthValues.reduce((a, b) => a + b, 0) / zoneHealthValues.length)
-: 100;
-const blendedTreeHealth = Math.max(0, Math.min(100, Math.round((derivedTreeHealth + (stats?.tree_health || 100)) / 2)));
+// Ecosystem V2: one canonical persisted Vitality value everywhere.
+const canonicalTreeHealth = Math.max(0, Math.min(100, Math.round(stats?.tree_health ?? 100)));
 const _biomeResult = {
 user_id: userId,
 username: user?.username,
 global_knowledge_score: globalKS.score,
 global_zone: globalZoneResult.zoneName,
 tree_stage: stats?.tree_stage || 1,
-tree_health: blendedTreeHealth,
+tree_health: canonicalTreeHealth,
+growth_points: Number(stats?.growth_points) || 0,
+next_tree_stage: ecosystemV2.nextTreeStage(stats || {}),
 current_streak: currentStreak,
 streak_milestones: activeMilestones,
 subjects: subjectsData,
@@ -11328,92 +11125,98 @@ Return only the explanation text.
 // ════════════════════════════════════════════════════════════════════════════
 // ── seedlingService ───────────────────────────────────────────────────────────
 
-async function awardSeedlings(userId, amount, eventType, description) {
-const stats = await db.userStats.get(userId);
-if (!stats) return null;
-await db.userStats.update(userId, {
-seedlings_balance: { increment: amount },
-});
-// BUG 9 FIX: re-read stats after the atomic increment so balance_after in the
-// transaction log reflects the real committed balance, not the pre-read value.
-const updatedStatsAward = await db.userStats.get(userId);
-await db.seedlingTransactions.create(userId, {
-amount,
-event_type: eventType,
-description,
-balance_after: updatedStatsAward?.seedlings_balance || 0,
-});
-return { awarded: amount, new_balance: updatedStatsAward?.seedlings_balance || 0 };
+async function awardSeedlings(userId, amount, eventType, description, eventKey = null) {
+  const stableKey = eventKey || ('legacy-award:' + eventType + ':' + randomUUID());
+  const result = await ecosystemV2.awardSeedlingsForEvent(userId, {
+    eventKey: stableKey,
+    eventType,
+    amount,
+    description,
+  });
+  const stats = await db.userStats.get(userId);
+  return {
+    awarded: result.applied ? Number(amount) || 0 : 0,
+    duplicate: !result.applied,
+    new_balance: Number(stats?.seedlings_balance) || 0,
+    event_key: stableKey,
+  };
 }
 
 async function spendSeedlings(userId, amount, eventType, description) {
-const stats = await db.userStats.get(userId);
-if (!stats || (stats.seedlings_balance || 0) < amount) {
-return { error: 'Insufficient seedlings', balance: stats?.seedlings_balance || 0 };
+  const spendAmount = Math.max(0, Number(amount) || 0);
+  if (spendAmount <= 0) return { error: 'Invalid Seedling amount' };
+  return withTransaction(async (client) => {
+    const updated = await client.query(
+      'UPDATE user_stats SET seedlings_balance = seedlings_balance - $2, updated_at = NOW() ' +
+      'WHERE user_id = $1 AND seedlings_balance >= $2 RETURNING seedlings_balance',
+      [userId, spendAmount]
+    );
+    if (updated.rowCount === 0) {
+      const current = await client.query(
+        'SELECT seedlings_balance FROM user_stats WHERE user_id = $1',
+        [userId]
+      );
+      return {
+        error: 'Insufficient seedlings',
+        balance: Number(current.rows[0]?.seedlings_balance) || 0,
+      };
+    }
+    const balance = Number(updated.rows[0].seedlings_balance) || 0;
+    const eventKey = 'seedling-spend:' + eventType + ':' + randomUUID();
+    await client.query(
+      'INSERT INTO progression_events ' +
+      '(event_key, user_id, event_type, growth_points, seedlings, metadata, created_at) ' +
+      'VALUES ($1,$2,$3,0,$4,$5,NOW())',
+      [eventKey, userId, eventType, -spendAmount, JSON.stringify({ description })]
+    );
+    await client.query(
+      'INSERT INTO ecosystem_seedling_ledger ' +
+      '(event_key, user_id, amount, balance_after, event_type, description, created_at) ' +
+      'VALUES ($1,$2,$3,$4,$5,$6,NOW())',
+      [eventKey, userId, -spendAmount, balance, eventType, description]
+    );
+    await client.query(
+      'INSERT INTO seedling_transactions ' +
+      '(id, user_id, type, amount, reason, event_key, event_type, description, balance_after, created_at) ' +
+      'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())',
+      [randomUUID(), userId, eventType, -spendAmount, description, eventKey, eventType, description, balance]
+    );
+    return { spent: spendAmount, new_balance: balance, event_key: eventKey };
+  });
 }
-await db.userStats.update(userId, {
-seedlings_balance: { increment: -amount },
-});
-// BUG 9 FIX: re-read stats after the atomic decrement for accurate balance_after.
-const updatedStatsSpend = await db.userStats.get(userId);
-await db.seedlingTransactions.create(userId, {
-amount: -amount,
-event_type: eventType,
-description,
-balance_after: updatedStatsSpend?.seedlings_balance || 0,
-});
-return { spent: amount, new_balance: updatedStatsSpend?.seedlings_balance || 0 };
-}
-// Hook into existing events
 
+// Non-session rewards use stable event keys. Session quality and card growth are
+// intentionally absent: Ecosystem V2 is their only authority.
 async function hookSeedlingEarnings(userId, eventType, context = {}) {
-switch (eventType) {
-case 'session_end':
-if (context.session_completed && (context.cards_reviewed || 0) >= 10) {
-await awardSeedlings(userId, 1, 'session_10_cards', 'Completed a 10+ card session');
+  let amount = 0;
+  let key = null;
+  let description = null;
+
+  if (eventType === 'exam_result') {
+    const score = Number(context.score_pct) || 0;
+    amount = score === 100 ? 10 : score >= 80 ? 5 : 0;
+    key = context.exam_id ? 'exam-result:' + context.exam_id : null;
+    description = score === 100 ? 'Perfect exam result' : 'Passed exam with ' + score + '%';
+  } else if (eventType === 'weekly_chronicle') {
+    const date = new Date();
+    const weekStart = new Date(Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate() - ((date.getUTCDay() + 6) % 7)
+    )).toISOString().slice(0, 10);
+    amount = 2;
+    key = 'weekly-chronicle:' + userId + ':' + weekStart;
+    description = 'Weekly chronicle generated';
+  } else if (eventType === 'almanac_unlock' && context.entry_code) {
+    amount = 5;
+    key = 'almanac:' + userId + ':' + context.entry_code;
+    description = 'Unlocked almanac entry: ' + context.entry_code;
+  }
+
+  if (!amount || !key) return { awarded: 0, ignored: true };
+  return awardSeedlings(userId, amount, eventType, description, key);
 }
-// P8.1a: award Seedlings for Glowing (+2) and Thriving (+1) sessions (spec P8.1)
-if (context.fruiting_achieved || context.focus_seed_stage === 'Fruiting') {
-await awardSeedlings(userId, 3, 'fruition', 'Achieved focus fruiting');
-} else if (context.focus_seed_stage === 'Glowing') {
-await awardSeedlings(userId, 2, 'session_glowing', 'Achieved Glowing focus seed');
-} else if (context.focus_seed_stage === 'Thriving') {
-await awardSeedlings(userId, 1, 'session_thriving', 'Achieved Thriving focus seed');
-}
-break;
-case 'stage_change':
-if (context.new_stage === 5 && context.old_stage === 4) {
-await awardSeedlings(userId, 1, 'stage_5_mastery', 'Card promoted to Stage 5');
-}
-break;
-case 'exam_pass':
-if (context.score_pct >= 80) {
-await awardSeedlings(userId, 5, 'exam_pass_80', `Passed exam with ${context.score_pct}%`);
-}
-break;
-case 'exam_perfect':
-if (context.score_pct === 100) {
-await awardSeedlings(userId, 10, 'exam_perfect', 'Perfect exam score');
-}
-break;
-case 'streak_milestone':
-if (context.days === 7) {
-await awardSeedlings(userId, 2, 'streak_7', '7-day streak');
-}
-break;
-case 'weekly_chronicle':
-await awardSeedlings(userId, 2, 'weekly_chronicle', 'Weekly chronicle generated');
-break;
-case 'almanac_unlock':
-await awardSeedlings(
-userId,
-5,
-'almanac_unlock',
-`Unlocked almanac entry: ${context.entry_code}`
-);
-break;
-}
-}
+
 // ── Marketplace Catalog ──────────────────────────────────────────────────────
 
 async function getMarketplaceCatalog(userId) {
@@ -11808,7 +11611,8 @@ await awardSeedlings(
 userId,
 item.gate2_seedling_cost,
 'deep_audit_refund',
-'Deep Audit AI failed — Seedlings refunded'
+'Deep Audit AI failed — Seedlings refunded',
+'seedling-refund:' + spendResult.event_key
 ).catch((e) => console.error("[KIWI] silent catch:", e.message));
 // Roll back inventory quantity
 await db.userInventory.setItem(userId, itemCode, {
@@ -12413,13 +12217,7 @@ const streakCheck = checkStreakOnLogin(user.stats || {});
 if (streakCheck.updates) {
 await db.userStats.update(user.id, streakCheck.updates);
 }
-// P3.9-B1a FIX: consume shield (or break streak) for missed days.
-// checkStreakOnLogin returns action:'missed_day' after P3.9-B4 deprecates the grace system.
-if (streakCheck.action === 'missed_day' || streakCheck.action === 'streak_broken') {
-await consumeShieldOnMiss(user.id).catch(e =>
-console.error('[KIWI] Shield miss check failed on login:', e.message)
-);
-}
+// Ecosystem V2 resolves streak gaps once, when a meaningful session commits.
 // Phase 7: Return greeting — Perf-3 FIX: race computeReturnStatus against
 // a 400ms deadline. If it resolves in time the real status is used; if it
 // takes longer (slow DB) we send the safe 'active' default and the dashboard
@@ -12462,16 +12260,7 @@ const refreshToken = generateRefreshToken(user);
 const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
 const expiresAt = new Date(Date.now() + 30 * 86400000);
 await db.refreshTokens.create(user.id, refreshHash, expiresAt);
-// Seedling hook: login streak
-const stats = await db.userStats.get(user.id);
-// BUG 7 FIX (login path): guard with streak_milestones_earned so the login hook
-// cannot double-award +2 Seedlings on day 7 when detectStreakMilestones also runs.
-if (stats && stats.current_streak > 0 && stats.current_streak % 7 === 0) {
-const earnedAtLogin = stats.streak_milestones_earned || [];
-if (!earnedAtLogin.includes(stats.current_streak)) {
-await hookSeedlingEarnings(user.id, 'streak_milestone', { days: stats.current_streak });
-}
-}
+// Streak rewards commit only with the active-day event, never on login.
 // Generate persona weekly
 generateWeeklyPersona(user.id).catch(e => console.error('[KIWI] Persona gen failed on login:', e.message));
 // P6.2 FIX: Chronicle catch-up — if last chronicle is older than 7 days, generate on login
@@ -12520,11 +12309,12 @@ const newHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex'
 const newExpires = new Date(Date.now() + 30 * 86400000);
 await db.refreshTokens.deleteByHash(refreshHash);
 await db.refreshTokens.create(user.id, newHash, newExpires);
+const refreshStats = await db.userStats.get(user.id).catch(() => null);
 res.json({
 accessToken: newAccessToken,
 refreshToken: newRefreshToken,
 expiresIn: 900,
-is_streak_frozen: !!(user?.streak_shield_held),
+is_streak_frozen: Number(refreshStats?.streak_shields_held) > 0,
 });
 } catch (e) {
 console.error('Refresh error:', e);
@@ -14223,10 +14013,12 @@ queueKSRecompute(req.user.id, cardId); // queued — drained every 60s
 propagateCrossBubbleKSUpdate(req.user.id, cardId).catch((e) => console.error("[KIWI] silent catch:", e.message));
 updateClusterKSForCard(req.user.id, cardId).catch((e) => console.error("[KIWI] silent catch:", e.message));
 if (nextReview.stage !== prevStage) {
-hookSeedlingEarnings(req.user.id, 'stage_change', {
-old_stage: prevStage,
-new_stage: nextReview.stage,
-}).catch((e) => console.error("[KIWI] silent catch:", e.message));
+ecosystemV2.awardCardGrowthMilestones(
+  req.user.id,
+  cardId,
+  nextReview.stage,
+  session_id
+).catch((e) => console.error('[KIWI] card growth milestone failed:', e.message));
 }
 // P5 FIX: AI Mastery Moment (B1) — first time card reaches Stage 5
 // Fire-and-forget: does not delay response; sentence stored in Firestore for frontend to read
@@ -14238,13 +14030,7 @@ card.front_content || card.front || '',
 card.back_content || card.back || ''
 ).catch((e) => console.error("[KIWI] silent catch:", e.message));
 }
-// Phase 4: Focus seed tracking
-const updatedSession = await db.sessions.findById(req.user.id, session_id);
-const focusStage = computeFocusStage(
-updatedSession.started_at,
-updatedSession.focus_breaks || 0
-);
-await db.sessions.update(req.user.id, session_id, { focus_seed_stage: focusStage });
+// Phase 4: Focus Seed is previewed in the client and committed only at session finalization.
 // FIX P9.4-05: compute per-button interval hints using exact next_review_at timestamps
 // so sub-day mode intervals display correctly (e.g. "6m", "3h", "2d")
 const _fmtMs = (ms) => {
@@ -14300,159 +14086,110 @@ try {
 });
 
 studyRouter.post('/end', async (req, res) => {
-try {
-const { session_id, break_count = 0, focused_seconds = 0, seed_killed = false, reason = 'user_ended' } = req.body;
-if (!session_id) return res.status(400).json({ error: 'session_id required' });
-const session = await db.sessions.findById(req.user.id, session_id);
-if (!session) return res.status(404).json({ error: 'Session not found' });
-const now = new Date();
-const durationSec = Math.floor((now - new Date(session.started_at)) / 1000);
-const _cardsReviewed = session.cards_reviewed || 0;
-const completed = _cardsReviewed >= 25; // minimum qualifying session
-// Tiered health recovery: 25→+2, 50→+5, 100→+10
-const _sessionHealthGain = _cardsReviewed >= 100 ? 10 : _cardsReviewed >= 50 ? 5 : _cardsReviewed >= 25 ? 2 : 0;
-const focusDurationSec = focused_seconds > 0 ? focused_seconds : 0;
-const focusStage = computeFocusStage(session.started_at, break_count, focusDurationSec, seed_killed);
-const seedSurvived = focusStage !== FOCUS_STAGES.DORMANT;
-// KS-BUG-1 FIX: Compute ks_delta BEFORE sessions.update so it can be persisted
-// in the same write. Previous order computed it after, then never saved it.
-let _sessionKsDelta = 0;
-try {
-  const _sDeck = await db.decks.findById(req.user.id, session.deck_id).catch(() => null);
-  if (_sDeck?.subject_id) {
-    const _preStats = await db.subjectStats.get(req.user.id, _sDeck.subject_id).catch(() => null);
-    const _preKS = _preStats?.knowledge_score || 0;
-    // Flush all queued card state recomputes for this user immediately —
-    // avoids waiting 60s for the cron to run.
-    const _userKeys = [..._ksQueue.keys()].filter(k => k.startsWith(req.user.id + ':'));
-    const _userBatch = _userKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
-    await Promise.all(_userBatch.map(({ userId, cardId }) =>
-      recomputeAndStoreCardState(userId, cardId).catch(() => null)
-    ));
-    const _newKS = await persistKnowledgeScore(req.user.id, _sDeck.subject_id).catch(() => null);
-    _sessionKsDelta = parseFloat(((_newKS?.score || 0) - _preKS).toFixed(2));
-  }
-} catch (_ksErr) { /* non-fatal — delta stays 0 */ }
-await db.sessions.update(req.user.id, session_id, {
-  ended_at: now,
-  duration_seconds: durationSec,
-  session_completed: completed,
-  focus_breaks: break_count,
-  focus_seed_stage: focusStage,
-  seed_survived: seedSurvived,
-  ks_delta: _sessionKsDelta,  // KS-BUG-1 FIX: persist so progress history shows real delta
-});
-// Fix 4: Read real tree values before responding — backend was hardcoding 0/0
-const _statsForResponse = await db.userStats.get(req.user.id).catch(() => null);
-const _currentHealth = _statsForResponse?.tree_health ?? 100;
-const _projectedHealth = completed
-  ? Math.min(100, _currentHealth + _sessionHealthGain)
-  : Math.max(0, _currentHealth - 10);
-const _responseStage = _statsForResponse?.tree_stage ?? 1;
-const _responseStreak = _statsForResponse?.current_streak ?? 0;
-// Respond immediately — heavy analytics run in the background
-res.json({
-  session_id,
-  session_completed: completed,
-  duration_seconds: durationSec,
-  cards_reviewed: session.cards_reviewed || 0,
-  xp_earned: session.xp_earned || 0,
-  focus_seed_stage: focusStage,
-  seed_survived: seedSurvived,
-  new_achievements: [],
-  streak: _responseStreak,
-  tree_health: _projectedHealth,
-  tree_stage: _responseStage,
-  new_almanac_unlocks: [],
-  ks_delta: _sessionKsDelta,
-  ksDelta: _sessionKsDelta,
-  stage_transitions: [],
-});
-wsSend(req.user.id, 'session_complete', { xp_earned: session.xp_earned || 0, cards_reviewed: session.cards_reviewed || 0, seed_survived: seedSurvived });
-// Background analytics — non-blocking fire-and-forget
-(async () => {
   try {
-    if (focusStage === FOCUS_STAGES.FRUITING) {
-      await processFruiting(req.user.id, { ...session, focus_seed_stage: focusStage }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    }
-    if (completed) {
-      // Fix 1: tiered health on session completion (capped at 100); reuse pre-fetched stats
-      const _bgStats = await db.userStats.get(req.user.id);
-      const _bgNewHealth = Math.min(100, (_bgStats?.tree_health ?? 100) + _sessionHealthGain);
-      const streakUpdates = computeStreakAfterSession(_bgStats, now);
-      await db.userStats.update(req.user.id, {
-        ...streakUpdates,
-        total_sessions_completed: { increment: 1 },
-        total_study_minutes: { increment: Math.round(durationSec / 60) },
-        tree_health: _bgNewHealth,
-      });
-      await detectStreakMilestones(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-      await evaluateStreakShield(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    } else {
-      await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    }
-    await hookSeedlingEarnings(req.user.id, 'session_end', {
-      session_completed: completed,
-      cards_reviewed: session.cards_reviewed || 0,
-      fruiting_achieved: focusStage === FOCUS_STAGES.FRUITING,
-      focus_seed_stage: focusStage,
-    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    await updateTreeStage(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    const deck = await db.decks.findById(req.user.id, session.deck_id).catch(() => null);
-    if (deck?.subject_id) {
-      await persistKnowledgeScore(req.user.id, deck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-      await db.subjectStats.upsert(req.user.id, deck.subject_id, { last_studied_at: new Date() }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-      const _preSessionPressure = await db.brainPressure.get(req.user.id, deck.subject_id).catch(() => null);
-      const _preSessionScore = parseFloat(_preSessionPressure?.pressure_score) || 0;
-      const pressureAfterSession = await calculateSubjectPressure(req.user.id, deck.subject_id).catch(() => null);
-      if (pressureAfterSession) {
-        const _sessionPDelta = (pressureAfterSession.pressure_score || 0) - _preSessionScore;
-        if (_sessionPDelta !== 0) {
-          wsSend(req.user.id, 'pressure_change', {
-            subject_id: deck.subject_id,
-            pressure_score: pressureAfterSession.pressure_score || 0,
-            delta: parseFloat(_sessionPDelta.toFixed(1)),
-            source: 'study_session',
-          });
-        }
-        if (pressureAfterSession.intervention_level === 'L4') {
-          triggerReckoning(req.user.id, deck.subject_id).catch((e) => console.error('[KIWI] silent catch:', e.message));
-        }
+    const {
+      session_id,
+      break_count = 0,
+      focused_seconds,
+      idle_seconds = 0,
+      local_date = null,
+    } = req.body;
+    if (!session_id) return res.status(400).json({ error: 'session_id required' });
+
+    const session = await db.sessions.findById(req.user.id, session_id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    let deck = null;
+    let subjectId = null;
+    let sessionKsDelta = 0;
+    try {
+      deck = session.deck_id
+        ? await db.decks.findById(req.user.id, session.deck_id).catch(() => null)
+        : null;
+      subjectId = deck && deck.subject_id ? deck.subject_id : null;
+      if (subjectId) {
+        const preStats = await db.subjectStats.get(req.user.id, subjectId).catch(() => null);
+        const preKS = Number(preStats && preStats.knowledge_score) || 0;
+        const userKeys = [..._ksQueue.keys()].filter((key) => key.startsWith(req.user.id + ':'));
+        const userBatch = userKeys.map((key) => {
+          const value = _ksQueue.get(key);
+          _ksQueue.delete(key);
+          return value;
+        });
+        await Promise.all(userBatch.map(({ userId, cardId }) =>
+          recomputeAndStoreCardState(userId, cardId).catch(() => null)
+        ));
+        const newKS = await persistKnowledgeScore(req.user.id, subjectId).catch(() => null);
+        sessionKsDelta = parseFloat(((Number(newKS && newKS.score) || 0) - preKS).toFixed(2));
+        // Pressure is part of Vitality, so it must be current before the outcome commits.
+        await calculateSubjectPressure(req.user.id, subjectId).catch(() => null);
       }
-      await updateAllBubblesForUser(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    } catch (preFinalizeError) {
+      console.error('[KIWI] ecosystem pre-finalization analytics failed:', preFinalizeError.message);
     }
-    const sessionFull = await db.sessions.findByIdFull(req.user.id, session_id).catch(() => session);
-    await checkAchievements(req.user.id, {
-      deckId: session.deck_id,
-      session: sessionFull,
-      sessionStart: session.started_at,
-      sessionCompleted: completed,
-      seedGrowth: 100,
-    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    await updateTaskProgress(req.user.id, sessionFull).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    if (deck?.subject_id) {
+
+    const outcome = await ecosystemV2.finalizeSession({
+      userId: req.user.id,
+      sessionId: session_id,
+      breakCount: break_count,
+      focusedSeconds: focused_seconds,
+      idleSeconds: idle_seconds,
+      localDate: local_date,
+      ksDelta: sessionKsDelta,
+    });
+
+    res.json(outcome);
+    wsSend(req.user.id, 'session_complete', {
+      committed: true,
+      xp_earned: outcome.xp_earned,
+      cards_reviewed: outcome.cards_reviewed,
+      session_quality: outcome.session_quality,
+      focus_seed_stage: outcome.focus_seed_stage,
+      fruiting_achieved: outcome.fruiting_achieved,
+      growth_points_earned: outcome.growth_points_earned,
+      seedlings_earned: outcome.seedlings_earned,
+      tree_health: outcome.tree_health,
+      tree_stage: outcome.tree_stage,
+    });
+
+    // Non-progression enrichment may run after the committed response. It cannot
+    // mint fruit, alter Growth Points, change streaks, or reinterpret Vitality.
+    (async () => {
       try {
-        const prevSubStat = await db.subjectStats.get(req.user.id, deck.subject_id);
-        const daysSinceLastStudied = prevSubStat?.last_study_date
-          ? Math.floor((Date.now() - new Date(prevSubStat.last_study_date).getTime()) / 86400000)
-          : 0;
-        if (prevSubStat?.last_zone_state === 'Neglected' && daysSinceLastStudied >= 14) {
-          await db.subjectStats.update(req.user.id, deck.subject_id, { was_neglected_then_resumed: true });
+        if (subjectId) {
+          const pressure = await db.brainPressure.get(req.user.id, subjectId).catch(() => null);
+          if (pressure && pressure.intervention_level === 'L4') {
+            triggerReckoning(req.user.id, subjectId).catch((e) =>
+              console.error('[KIWI] Reckoning trigger failed:', e.message)
+            );
+          }
+          await updateAllBubblesForUser(req.user.id).catch(() => null);
         }
-      } catch (_e) { /* non-fatal */ }
-    }
-    await checkAlmanacUnlocks(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-  } catch (bgErr) {
-    console.error('[KIWI] session end background error:', bgErr.message);
+        const sessionFull = await db.sessions.findByIdFull(req.user.id, session_id).catch(() => session);
+        await checkAchievements(req.user.id, {
+          deckId: session.deck_id,
+          session: sessionFull,
+          sessionStart: session.started_at,
+          sessionCompleted: outcome.session_completed,
+          seedGrowth: outcome.session_quality,
+        }).catch(() => null);
+        await updateTaskProgress(req.user.id, sessionFull).catch(() => null);
+        await checkAlmanacUnlocks(req.user.id).catch(() => null);
+      } catch (backgroundError) {
+        console.error('[KIWI] post-session enrichment failed:', backgroundError.message);
+      }
+    })();
+  } catch (error) {
+    const status = error.statusCode || 500;
+    res.status(status).json({
+      error: status === 404 ? 'Session not found' : 'Failed to end session',
+      details: error.message,
+    });
   }
-})();
-} catch (e) {
-res.status(500).json({ error: 'Failed to end session', details: e.message });
-}
 });
 
 
-// ── POST /study/queue (BUG 2 FIX) ────────────────────────────────────────────
+// ── POST /study/queue// ── POST /study/queue (BUG 2 FIX) ────────────────────────────────────────────
 // Lightweight queue endpoint. Returns due cards for a subject without creating
 // a full session. Clients that expect /queue (vs /start) will now resolve.
 studyRouter.post('/queue', async (req, res) => {
@@ -14560,7 +14297,7 @@ try {
 const stats = await db.userStats.get(req.user.id);
 if (!stats) return res.status(404).json({ error: 'Stats not found' });
 const nextStage = computeDaysUntilNextStage(stats);
-res.json({ ...stats, is_streak_frozen: !!(stats?.streak_shield_held), next_stage_requirements: nextStage });
+res.json({ ...stats, is_streak_frozen: Number(stats?.streak_shields_held) > 0, next_stage_requirements: nextStage });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch stats' });
 }
@@ -15179,7 +14916,6 @@ try {
     status: 'forfeited',
     completed_at: new Date(),
   });
-  await db.userStats.update(req.user.id, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
   if (exam.subject_id) {
     const bp = await db.brainPressure.get(req.user.id, exam.subject_id);
     const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
@@ -15236,8 +14972,12 @@ try {
       new_ks: (_forfeitPostKs.score || 0),
     });
 
+    await ecosystemV2.refreshVitality(req.user.id)
+      .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
     res.json({ success: true, message: 'Exam forfeited. Penalties applied.', ksDelta: _forfeitKsDelta });
   } else {
+    await ecosystemV2.refreshVitality(req.user.id)
+      .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
     res.json({ success: true, message: 'Exam forfeited. Penalties applied.', ksDelta: 0 });
   }
 } catch (e) {
@@ -15284,7 +15024,6 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
       completed_at: new Date(),
       forfeited_by: 'auto_leave_detection',
     });
-    await db.userStats.update(userId, { tree_health: { increment: -10 } }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     if (exam.subject_id) {
       const bp = await db.brainPressure.get(userId, exam.subject_id);
       const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
@@ -15323,8 +15062,12 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
         new_ks: (_forfeitPostKs.score || 0),
       });
 
+      await ecosystemV2.refreshVitality(userId)
+        .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
       res.json({ success: true, message: 'Exam auto-forfeited. Penalties applied.', ksDelta: _forfeitKsDelta });
     } else {
+      await ecosystemV2.refreshVitality(userId)
+        .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
       res.json({ success: true, message: 'Exam auto-forfeited. Penalties applied.', ksDelta: 0 });
     }
   } catch (e) {
@@ -15653,8 +15396,9 @@ duration_seconds: durationSec,
           if (_bgCredential && _bgCredential.tier > prevCredTier) {
             const tiersGained = _bgCredential.tier - prevCredTier;
             await awardSeedlings(
-              _debriefUserId, tiersGained * 3, 'credential_tier_advance',
-              `Credential advanced to tier ${_bgCredential.tier} in subject ${_debriefExam.subject_id}`
+              _debriefUserId, Math.min(tiersGained, 2) * 3, 'credential_tier_advance',
+              `Credential advanced to tier ${_bgCredential.tier} in subject ${_debriefExam.subject_id}`,
+              'credential-exam:' + _debriefExam.id
             ).catch((e) => console.error("[KIWI] silent catch:", e.message));
             await db.subjectStats.upsert(_debriefUserId, _debriefExam.subject_id, {
               credential_tier: _bgCredential.tier,
@@ -15662,16 +15406,12 @@ duration_seconds: durationSec,
           }
         }
         await db.userStats.update(_debriefUserId, { total_exams_completed: { increment: 1 } });
-        // Fix 2: CBT exam pass ≥ 80% → +5 health (capped at 100)
         if (_debriefScorePct >= 80) {
-          const _examStats = await db.userStats.get(_debriefUserId).catch(() => null);
-          const _examNewHealth = Math.min(100, (_examStats?.tree_health ?? 100) + 5);
-          await db.userStats.update(_debriefUserId, { tree_health: _examNewHealth }).catch((e) => console.error('[KIWI] silent catch:', e.message));
+          await hookSeedlingEarnings(_debriefUserId, 'exam_result', {
+            score_pct: _debriefScorePct,
+            exam_id: _debriefExam.id,
+          });
         }
-        if (_debriefScorePct >= 80)
-          await hookSeedlingEarnings(_debriefUserId, 'exam_pass', { score_pct: _debriefScorePct });
-        if (_debriefScorePct === 100)
-          await hookSeedlingEarnings(_debriefUserId, 'exam_perfect', { score_pct: _debriefScorePct });
         const _bgCurrentAvg = _bgExisting?.average_exam_score || 0;
         const _bgTotalExams = (_bgExisting?.total_exams || 0) + 1;
         const _bgNewAvg = parseFloat(((_bgCurrentAvg * (_bgTotalExams - 1) + _debriefScorePct) / _bgTotalExams).toFixed(2));
@@ -15711,6 +15451,8 @@ duration_seconds: durationSec,
         // KS-BUG-3 FIX: sync goal.current_ks in Biome after exam changes card states
         await updateAllBubblesForUser(_debriefUserId)
           .catch((e) => console.error('[KIWI] updateAllBubblesForUser (exam) failed:', e.message));
+        await ecosystemV2.refreshVitality(_debriefUserId)
+          .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
         const _bgPostKs = await computeKnowledgeScore(_debriefUserId, _debriefExam.subject_id).catch(() => ({ score: preKsScore }));
         _bgKsDelta = parseFloat(((_bgPostKs.score || 0) - preKsScore).toFixed(2));
         // KS-EXAM-FIX: persist delta to exam session so history review always shows the real value.
@@ -17021,7 +16763,9 @@ const enriched = {
 globalKS: globalKSScore,
 globalTreeState: {
 stage: biome.tree_stage || 1,
-health: biome.tree_health || 100,
+health: biome.tree_health ?? 100,
+growthPoints: biome.growth_points || 0,
+nextStage: biome.next_tree_stage || null,
 leaves: leavesCount,
 fruits: totalFruits,
 rings: (biome.streak_milestones || []).length,
@@ -17488,8 +17232,12 @@ completed_at: now,
 duration_seconds: durationSec,
 });
 await db.userStats.update(req.user.id, { total_exams_completed: { increment: 1 } });
-if (scorePct >= 80)
-await hookSeedlingEarnings(req.user.id, 'exam_pass', { score_pct: scorePct });
+if (scorePct >= 80) {
+await hookSeedlingEarnings(req.user.id, 'exam_result', {
+  score_pct: scorePct,
+  exam_id: examId,
+});
+}
 // Complete the reckoning
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
 let reckoningResult = null;
@@ -18078,7 +17826,7 @@ const ks = { score: ksScore };
 const subjectDeckIds = (s.decks || []).map(d => d.id);
 const subjectCards = allCards.filter(c => subjectDeckIds.includes(c.deck_id));
 const subjectDueCount = subjectCards.filter(c => isCardDue(c)).length;
-return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount, _subjectStat: storedSubjectStat };
+return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount, cardCount: subjectCards.length, _subjectStat: storedSubjectStat };
 })),
 db.userPersona.get(req.user.id).catch(() => null),                                   // Perf: was sequential
 computeReturnStatus(req.user.id).catch(() => null),                                  // Perf: was sequential
@@ -18115,7 +17863,7 @@ const dashGlobalKS = (() => {
 if (!subjectBreakdown.length) return Number(stats?.knowledge_score_global) || 0;
 let totalW = 0, totalCards = 0;
 for (const s of subjectBreakdown) {
-const cardCount = allCards.filter(c => (s._subjectStat?.deck_ids || []).includes(c.deck_id)).length;
+const cardCount = Number(s.cardCount) || 0;
 totalW += (Number(s.ks) || 0) * cardCount;
 totalCards += cardCount;
 }
@@ -18134,7 +17882,9 @@ totalCards: allCards.length,
 const biomeForTree = await _biomePromise;
 const treeState = biomeForTree.treeState || {
 stage: stats?.tree_stage || 1,
-health: stats?.tree_health || 100,
+health: stats?.tree_health ?? 100,
+growthPoints: Number(stats?.growth_points) || 0,
+nextStage: ecosystemV2.nextTreeStage(stats || {}),
 leaves: Math.max(4, Math.round(dashGlobalKS * 0.5)),
 fruits: dashTotalFruits,
 rings: dashActiveMilestones.length,
@@ -18870,20 +18620,15 @@ allUsers = await getUsersWithCache(); // Fix #33: TTL cache
 console.error('[KIWI CRON] Failed to fetch users:', e.message);
 return;
 }
-// 1. Apply daily health penalty to all users
-try {
-await applyDailyHealthPenalty();
-console.log('[KIWI CRON] Health penalty applied');
-} catch (e) {
-console.error('[KIWI CRON] Health penalty failed:', e.message);
-}
+// 1. Vitality is derived; daily maintenance never applies a health penalty.
 // 2. Recalculate brain pressure for every subject of every user
 try {
 for (const user of allUsers) {
 try {
 await calculateAllSubjectPressures(user.id);
+await ecosystemV2.refreshVitality(user.id);
 } catch (e) {
-console.error(`[KIWI CRON] Pressure recalc failed for ${user.id}:`, e.message);
+console.error(`[KIWI CRON] Pressure/Vitality recalc failed for ${user.id}:`, e.message);
 }
 }
 console.log(`[KIWI CRON] Pressure recalculated for ${allUsers.length} users`);
@@ -18933,34 +18678,7 @@ console.log(`[KIWI CRON] Almanac unlocks checked for ${allUsers.length} users`);
 } catch (e) {
 console.error('[KIWI CRON] Daily almanac cron failed:', e.message);
 }
-// 6. P3.9-B1b FIX: Daily streak miss check — consume shield or break streak.
-// consumeShieldOnMiss was never called from the cron; shields were accumulating
-// via evaluateStreakShield but were never consumed on missed days.
-try {
-const yesterday = getDateString(new Date(Date.now() - 86400000));
-for (const user of allUsers) {
-if (user.is_guest) continue;
-try {
-const stats = await db.userStats.get(user.id);
-if (!stats) continue;
-const lastStudy = stats.last_study_date ? getDateString(stats.last_study_date) : null;
-// Only fire if the user was active at some point but missed yesterday
-if (lastStudy && lastStudy !== yesterday) {
-const _streakBeforeMiss = stats.current_streak || 0;
-const _missResult = await consumeShieldOnMiss(user.id);
-// Wire streak_broken email
-if (_missResult.streak_broken && _streakBeforeMiss > 0) {
-  await sendEmailNotification(user.id, 'streak_broken', { streak: _streakBeforeMiss }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-}
-}
-} catch (e) {
-console.error(`[KIWI CRON] Streak miss check failed for ${user.id}:`, e.message);
-}
-}
-console.log(`[KIWI CRON] Streak miss check complete for ${allUsers.length} users`);
-} catch (e) {
-console.error('[KIWI CRON] Streak miss cron failed:', e.message);
-}
+// 6. Streak gaps are resolved by the idempotent active-day event.
 });
 // ── Daily at 8:00 AM: Morning login reminder (email + Telegram) ──────────────
 
@@ -19628,7 +19346,6 @@ async function runSchemaMigrations() {
     `ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
     `ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS study_mode text DEFAULT 'normal'`,
     `ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS streak_milestones_earned jsonb DEFAULT '[]'`,
-    `ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS streak_shield_held boolean DEFAULT false`,
 
     // sessions: updated_at required by _buildIncrementUpdate
     `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
@@ -19761,7 +19478,8 @@ async function runSchemaMigrations() {
       console.error('[KIWI] Migration failed:', sql, e.message);
     }
   }
-  console.log('[KIWI] ✅ Schema migrations applied');
+  await ecosystemV2.migrate();
+  console.log('[KIWI] ✅ Schema migrations + Ecosystem V2 applied');
 }
 
 // ════════════════════════════════════════════════════════════════════════════
