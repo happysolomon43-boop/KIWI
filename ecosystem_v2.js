@@ -206,15 +206,15 @@ function createEcosystemV2(options) {
         "OR reason IS DISTINCT FROM COALESCE(reason, description) " +
         "OR event_type IS NULL OR BTRIM(event_type) = '' OR description IS NULL",
       "CREATE OR REPLACE FUNCTION kiwi_sync_seedling_transaction_fields() RETURNS trigger " +
-        "LANGUAGE plpgsql SET search_path = '' AS $ BEGIN " +
+        "LANGUAGE plpgsql SET search_path = '' AS $$ BEGIN " +
         "NEW.event_type := COALESCE(NULLIF(BTRIM(NEW.event_type), ''), NULLIF(BTRIM(NEW.type), ''), 'unspecified'); " +
         "NEW.type := NEW.event_type; NEW.description := COALESCE(NEW.description, NEW.reason); " +
-        "NEW.reason := NEW.description; RETURN NEW; END; $",
+        "NEW.reason := NEW.description; RETURN NEW; END; $$",
       "REVOKE EXECUTE ON FUNCTION kiwi_sync_seedling_transaction_fields() FROM PUBLIC, anon, authenticated",
-      "DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger " +
+      "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger " +
         "WHERE tgname = 'kiwi_sync_seedling_transaction_fields' AND NOT tgisinternal) THEN " +
         "CREATE TRIGGER kiwi_sync_seedling_transaction_fields BEFORE INSERT ON seedling_transactions " +
-        "FOR EACH ROW EXECUTE FUNCTION kiwi_sync_seedling_transaction_fields(); END IF; END $",
+        "FOR EACH ROW EXECUTE FUNCTION kiwi_sync_seedling_transaction_fields(); END IF; END $$",
       "ALTER TABLE progression_events ENABLE ROW LEVEL SECURITY",
       "ALTER TABLE ecosystem_seedling_ledger ENABLE ROW LEVEL SECURITY",
       "ALTER TABLE card_growth_milestones ENABLE ROW LEVEL SECURITY",
@@ -231,7 +231,7 @@ function createEcosystemV2(options) {
         "ON ecosystem_seedling_ledger(user_id, created_at DESC)",
       "CREATE INDEX IF NOT EXISTS card_growth_milestones_user_card_idx " +
         "ON card_growth_milestones(user_id, card_id, stage)",
-      "DO $ BEGIN " +
+      "DO $$ BEGIN " +
         "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_stats_ecosystem_ranges_ck' " +
         "AND conrelid = 'user_stats'::regclass) THEN ALTER TABLE user_stats ADD CONSTRAINT " +
         "user_stats_ecosystem_ranges_ck CHECK (COALESCE(growth_points,0) >= 0 AND tree_stage BETWEEN 1 AND 8 " +
@@ -266,7 +266,7 @@ function createEcosystemV2(options) {
         "AND active_seconds BETWEEN 0 AND elapsed_seconds AND focus_ratio BETWEEN 0 AND 1 " +
         "AND unique_cards >= 0 AND COALESCE(seedlings_earned,0) >= 0 " +
         "AND COALESCE(growth_points_earned,0) >= 0 AND vitality_after BETWEEN 0 AND 100 " +
-        "AND tree_stage_after BETWEEN 1 AND 8); END IF; END $",
+        "AND tree_stage_after BETWEEN 1 AND 8); END IF; END $$",
 
       "UPDATE user_stats SET last_active_date = last_study_date::date " +
         "WHERE last_active_date IS NULL AND last_study_date IS NOT NULL",
