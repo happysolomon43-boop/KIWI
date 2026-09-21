@@ -12537,6 +12537,30 @@ if (!req.user) return next();
 try {
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
 if (!active) return next();
+
+// A Reckoning lockout must still allow the exact exam that belongs to that
+// Reckoning to function. Previously the middleware blocked /exams/:id/start,
+// /pre-mark, and GET /exams/:id as soon as startReckoningExam() changed the
+// session to in_progress. That left the generated exam stuck in "ready" while
+// the frontend was already displaying it.
+if (
+  req.baseUrl === '/api/exams' &&
+  active.status === 'in_progress' &&
+  active.exam_session_id
+) {
+  const linkedExamId = String(active.exam_session_id);
+  const path = String(req.path || '');
+  const exactExamPath = '/' + linkedExamId;
+  const isLinkedExamRead =
+    req.method === 'GET' &&
+    (path === exactExamPath || path.startsWith(exactExamPath + '/question/'));
+  const isLinkedExamWrite =
+    req.method === 'POST' &&
+    (path === exactExamPath + '/start' || path === exactExamPath + '/pre-mark');
+
+  if (isLinkedExamRead || isLinkedExamWrite) return next();
+}
+
 // Honour deferral window — if still deferred and timer has NOT expired, pass through
 if (active.status === 'deferred' && active.deferred_until) {
 if (new Date(active.deferred_until) > new Date()) return next();
