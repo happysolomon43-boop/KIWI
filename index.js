@@ -560,6 +560,14 @@ async findById(userId, id) {
   );
   return rows[0] || null;
 },
+async findByIds(userId, cardIds) {
+  if (!cardIds || cardIds.length === 0) return [];
+  const { rows } = await query(
+    'SELECT * FROM cards WHERE user_id = $1 AND id = ANY($2::text[])',
+    [userId, cardIds]
+  );
+  return rows;
+},
 async findMany(userId, filters = {}, { page = 1, limit = 50 } = {}) {
   // Fix #46: use COUNT for total; avoid loading all cards to count
   let baseSQL = 'FROM cards WHERE user_id = $1';
@@ -1308,6 +1316,16 @@ async findActiveByUser(userId) {
     [userId]
   );
   return rows[0] || null;
+},
+async claimActivationAnnouncement(userId, id) {
+  const { rows } = await query(
+    `UPDATE reckoning_sessions
+     SET activation_announced_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND activation_announced_at IS NULL
+     RETURNING activation_announced_at`,
+    [id, userId]
+  );
+  return rows.length > 0;
 },
 async findByUser(userId) {
   const { rows } = await query(
@@ -2409,25 +2427,86 @@ function wrapIntervalWithUrgency(baseInterval, cardStateDoc, phase) {
 function computeAllocationWeights(activeGoals) {
   if (!activeGoals || activeGoals.length === 0) return {};
   if (activeGoals.length === 1) return { [activeGoals[0].id]: 100 };
-  const gaps     = activeGoals.map((g) => Math.max(0, g.trajectory_gap || 0));
+
+  const n = activeGoals.length;
+  const gaps = activeGoals.map((g) => Math.max(0, Number(g.trajectory_gap) || 0));
   const totalGap = gaps.reduce((a, b) => a + b, 0);
-  const raw      = {};
-  if (totalGap === 0) {
-    const share = Math.floor(100 / activeGoals.length);
-    activeGoals.forEach((g) => { raw[g.id] = share; });
-    raw[activeGoals[0].id] += 100 - share * activeGoals.length;
-  } else {
-    activeGoals.forEach((g, i) => {
-      raw[g.id] = Math.round((gaps[i] / totalGap) * 100);
-    });
+  const raw = activeGoals.map((g, i) => ({
+    id: g.id,
+    target: totalGap > 0 ? (gaps[i] / totalGap) * 100 : 100 / n,
+  }));
+
+  const minWeight = n * 15 <= 100 ? 15 : 0;
+  const maxWeight = 70;
+  const weights = new Map();
+  let free = raw.map((r) => r.id);
+  let remaining = 100;
+
+  for (let pass = 0; pass < n + 2 && free.length > 0; pass++) {
+    const targetTotal = free.reduce(
+      (sum, id) => sum + (raw.find((r) => r.id === id)?.target || 0),
+      0
+    );
+    const proposed = new Map();
+    for (const id of free) {
+      const base = raw.find((r) => r.id === id)?.target || 0;
+      proposed.set(id, targetTotal > 0 ? remaining * (base / targetTotal) : remaining / free.length);
+    }
+
+    const newlyFixed = [];
+    for (const id of free) {
+      const value = proposed.get(id);
+      if (value < minWeight) {
+        weights.set(id, minWeight);
+        remaining -= minWeight;
+        newlyFixed.push(id);
+      } else if (value > maxWeight) {
+        weights.set(id, maxWeight);
+        remaining -= maxWeight;
+        newlyFixed.push(id);
+      }
+    }
+
+    if (newlyFixed.length === 0) {
+      for (const id of free) weights.set(id, proposed.get(id));
+      remaining = 0;
+      break;
+    }
+    free = free.filter((id) => !newlyFixed.includes(id));
   }
-  for (const id of Object.keys(raw)) raw[id] = Math.min(70, Math.max(15, raw[id]));
-  const total = Object.values(raw).reduce((s, v) => s + v, 0);
-  if (total !== 100) {
-    const firstId = Object.keys(raw)[0];
-    raw[firstId]  = Math.min(70, Math.max(15, raw[firstId] + (100 - total)));
+
+  if (free.length > 0 && remaining > 0) {
+    const share = remaining / free.length;
+    free.forEach((id) => weights.set(id, share));
   }
-  return raw;
+
+  const result = {};
+  const remainders = raw.map(({ id }) => {
+    const exact = weights.get(id) ?? (100 / n);
+    const floored = Math.floor(exact);
+    result[id] = floored;
+    return { id, remainder: exact - floored };
+  });
+  let diff = 100 - Object.values(result).reduce((sum, v) => sum + v, 0);
+  remainders.sort((a, b) => b.remainder - a.remainder);
+  let guard = 0;
+  while (diff !== 0 && guard++ < 1000) {
+    let changed = false;
+    for (const { id } of remainders) {
+      if (diff > 0 && result[id] < maxWeight) {
+        result[id] += 1;
+        diff -= 1;
+        changed = true;
+      } else if (diff < 0 && result[id] > minWeight) {
+        result[id] -= 1;
+        diff += 1;
+        changed = true;
+      }
+      if (diff === 0) break;
+    }
+    if (!changed) break;
+  }
+  return result;
 }
 
 // [DESIGN: §4.2] Cards eligible for parking: STABLE or VERIFIED, next_review ≥ 5 days away.
@@ -6872,16 +6951,25 @@ function computeCurrentPhase(goal, now = new Date()) {
 async function computeBubbleKS(userId, goal) {
   const cardIds = goal.card_ids || [];
   if (cardIds.length === 0) return { score: 0, band: '🌱 Seed', totalCards: 0, sumWeights: 0 };
-  const allStatesDocs  = await db.cardStates.findByUser(userId);
+
+  const [allStatesDocs, bubbleCards] = await Promise.all([
+    db.cardStates.findByUser(userId),
+    db.cards.findByIds(userId, cardIds),
+  ]);
   const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+  const cardsById = new Map(bubbleCards.map((card) => [card.id, card]));
+
   let sumWeights = 0;
-  let validCount  = 0;
+  let validCount = 0;
   for (const cardId of cardIds) {
-    const card = await db.cards.findById(userId, cardId).catch(() => null);
+    const card = cardsById.get(cardId);
     if (!card) continue;
     validCount++;
     let stateDoc = statesByCardId.get(cardId);
-    if (!stateDoc) stateDoc = await initializeCardState(userId, cardId, CARD_STATES.SEEDLING);
+    if (!stateDoc) {
+      stateDoc = await initializeCardState(userId, cardId, CARD_STATES.SEEDLING);
+      statesByCardId.set(cardId, stateDoc);
+    }
     sumWeights += computeEffectiveWeight(stateDoc, card);
   }
   if (validCount === 0) return { score: 0, band: '🌱 Seed', totalCards: 0, sumWeights: 0 };
@@ -6906,10 +6994,34 @@ function computeRequiredKSPerDay(goal, currentKS, now = new Date()) {
 }
 
 // ─── PB.4: Rolling Velocity ───────────────────────────────────────────────────
+// Samples are daily net KS deltas. Legacy numeric samples remain readable.
+function velocitySampleValue(sample) {
+  if (typeof sample === 'number') return Number.isFinite(sample) ? sample : 0;
+  return Number(sample?.delta) || 0;
+}
+
+function appendDailyVelocitySample(existingSamples, delta, now = new Date()) {
+  const samples = [...(existingSamples || [])];
+  const day = now.toISOString().slice(0, 10);
+  const roundedDelta = parseFloat((Number(delta) || 0).toFixed(3));
+  const last = samples[samples.length - 1];
+
+  if (last && typeof last === 'object' && last.date === day) {
+    samples[samples.length - 1] = {
+      ...last,
+      date: day,
+      delta: parseFloat((velocitySampleValue(last) + roundedDelta).toFixed(3)),
+    };
+  } else {
+    samples.push({ date: day, delta: roundedDelta });
+  }
+  return samples.slice(-90);
+}
+
 function computeVelocityFromGoal(goal) {
   const samples = goal.velocity_samples || [];
   if (samples.length === 0) return 0;
-  const window = samples.slice(-7); // 7-day rolling average [DESIGN: §3.1]
+  const window = samples.slice(-7).map(velocitySampleValue);
   return parseFloat((window.reduce((a, b) => a + b, 0) / window.length).toFixed(3));
 }
 
@@ -7130,11 +7242,11 @@ async function updateBubbleTrajectory(userId, goalId) {
 
   const now       = new Date();
   const ksResult  = await computeBubbleKS(userId, goal);
-  const prevKS    = goal.current_ks || 0;
-  const ksDelta   = Math.max(0, ksResult.score - prevKS);
+  const prevKS    = Number(goal.current_ks) || 0;
+  const ksDelta   = parseFloat((ksResult.score - prevKS).toFixed(3));
 
-  // Rolling velocity — last 7 samples; keep up to 90 for Autopsy [DESIGN: §3.4]
-  const samples   = [...(goal.velocity_samples || []), ksDelta].slice(-90);
+  // Aggregate repeated same-day trajectory updates into one net daily sample.
+  const samples   = appendDailyVelocitySample(goal.velocity_samples || [], ksDelta, now);
   const velocity  = computeVelocityFromGoal({ velocity_samples: samples });
 
   // Gap and trajectory status [DESIGN: §3.1, §3.2]
@@ -7341,8 +7453,8 @@ async function updateBubbleTrajectory(userId, goalId) {
         updates.seeding_early_stall_checked = true;
         // Check velocity directly — require only 1 sample (vs normal 3) [DESIGN: §2.2]
         const earlyVelocity = samples.length > 0
-          ? samples.slice(-Math.min(7, samples.length)).reduce((a, b) => a + b, 0) /
-            Math.min(7, samples.length)
+          ? samples.slice(-Math.min(7, samples.length)).map(velocitySampleValue)
+              .reduce((a, b) => a + b, 0) / Math.min(7, samples.length)
           : 0;
         if (earlyVelocity < 0.3) {
           const cause = await diagnoseStallCause(userId, { ...goal, ...updates }).catch(() => 'STUCK_CLUSTER');
@@ -7398,21 +7510,31 @@ async function createMasteryGoal(userId, data) {
     const examStr = new Date(data.exam_date).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
     data.name = `${subject?.name || 'Exam'} — ${examStr}`;
   }
-  const goal     = await db.masteryGoals.create(userId, { ...data, card_ids: cardIds });
-  const ksResult = await computeBubbleKS(userId, goal);
-  const now      = new Date();
-  const required = computeRequiredKSPerDay(goal, ksResult.score, now);
-  await db.masteryGoals.update(userId, goal.id, {
-    current_ks:          ksResult.score,
-    required_ks_per_day: required,
-  });
-  await generateDailyContract(userId, goal.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-  await db.masteryGoals.addHistoryEntry(goal.id, {
-    event_type:  'created',
-    ks_at_event:  ksResult.score,
-    notes:       `Bubble created. ${cardIds.length} cards. Exam: ${data.exam_date}. Required: ${required.toFixed(2)} KS/day.`,
-  });
-  return { ...goal, current_ks: ksResult.score, required_ks_per_day: required };
+  let goal = null;
+  try {
+    goal = await db.masteryGoals.create(userId, { ...data, card_ids: cardIds });
+    const ksResult = await computeBubbleKS(userId, goal);
+    const now      = new Date();
+    const required = computeRequiredKSPerDay(goal, ksResult.score, now);
+    await db.masteryGoals.update(userId, goal.id, {
+      current_ks:          ksResult.score,
+      required_ks_per_day: required,
+    });
+    await generateDailyContract(userId, goal.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    await db.masteryGoals.addHistoryEntry(goal.id, {
+      event_type:  'created',
+      ks_at_event:  ksResult.score,
+      notes:       `Bubble created. ${cardIds.length} cards. Exam: ${data.exam_date}. Required: ${required.toFixed(2)} KS/day.`,
+    });
+    return { ...goal, current_ks: ksResult.score, required_ks_per_day: required };
+  } catch (e) {
+    if (goal?.id) {
+      await query('DELETE FROM goal_history WHERE goal_id = $1', [goal.id]).catch(() => {});
+      await query('DELETE FROM concept_clusters WHERE goal_id = $1', [goal.id]).catch(() => {});
+      await query('DELETE FROM mastery_goals WHERE id = $1 AND user_id = $2', [goal.id, userId]).catch(() => {});
+    }
+    throw e;
+  }
 }
 
 // ─── Close a mastery goal [DESIGN: §10.1, §2.6] ──────────────────────────────
@@ -7538,12 +7660,10 @@ return results;
 async function detectAndMarkCrossBubbleCards(userId, newGoalCardIds, existingGoals) {
   const existingCardSet  = new Set(existingGoals.flatMap((g) => g.card_ids || []));
   const overlappingCards = newGoalCardIds.filter((id) => existingCardSet.has(id));
-  // [DESIGN: §8.2] Only prompt the user if overlap is meaningful (>40% of smaller set)
   const smallerSetSize = Math.min(newGoalCardIds.length, existingCardSet.size);
   const overlapPct     = smallerSetSize > 0 ? overlappingCards.length / smallerSetSize : 0;
   for (const cardId of overlappingCards) {
     await db.cardStates.update(userId, cardId, { cross_bubble: true }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    // Update bubble_ids on the card state doc
     const st = await db.cardStates.get(userId, cardId).catch(() => null);
     if (st) {
       const existingGoalIds = existingGoals.map((g) => g.id);
@@ -7551,11 +7671,21 @@ async function detectAndMarkCrossBubbleCards(userId, newGoalCardIds, existingGoa
       await db.cardStates.update(userId, cardId, { bubble_ids: merged }).catch((e) => console.error("[KIWI] silent catch:", e.message));
     }
   }
-  // Return overlap data for the user prompt [DESIGN: §8.2]
+
+  for (const goal of existingGoals) {
+    const goalCards = new Set(goal.card_ids || []);
+    const sharedWithGoal = overlappingCards.filter((id) => goalCards.has(id));
+    if (sharedWithGoal.length === 0) continue;
+    const merged = [...new Set([...(goal.cross_bubble_card_ids || []), ...sharedWithGoal])];
+    await db.masteryGoals.update(userId, goal.id, { cross_bubble_card_ids: merged })
+      .catch((e) => console.error("[KIWI] silent catch:", e.message));
+  }
+
   return {
     overlapping_card_count: overlappingCards.length,
+    overlapping_card_ids:   overlappingCards,
     overlap_pct:            parseFloat((overlapPct * 100).toFixed(1)),
-    should_prompt_user:     overlapPct > 0.40,   // [DESIGN: §8.2 — >40% threshold]
+    should_prompt_user:     overlapPct > 0.40,
   };
 }
 
@@ -7564,7 +7694,7 @@ async function detectAndMarkCrossBubbleCards(userId, newGoalCardIds, existingGoa
 async function checkBubbleOverlap(userId, newCardIds) {
   const existingGoals = await db.masteryGoals.findActive(userId);
   if (existingGoals.length === 0) {
-    return { should_prompt_user: false, overlap_pct: 0, overlapping_card_count: 0 };
+    return { should_prompt_user: false, overlap_pct: 0, overlapping_card_count: 0, overlapping_card_ids: [] };
   }
   const existingCardSet = new Set(existingGoals.flatMap((g) => g.card_ids || []));
   const overlappingCards = (newCardIds || []).filter((id) => existingCardSet.has(id));
@@ -7572,6 +7702,7 @@ async function checkBubbleOverlap(userId, newCardIds) {
   const overlapPct = smallerSetSize > 0 ? overlappingCards.length / smallerSetSize : 0;
   return {
     overlapping_card_count: overlappingCards.length,
+    overlapping_card_ids: overlappingCards,
     overlap_pct: parseFloat((overlapPct * 100).toFixed(1)),
     should_prompt_user: overlapPct > 0.40,
   };
@@ -7656,7 +7787,7 @@ async function detectStall(userId, goal) {
     // The samples.length < 3 guard above already handled the zero-samples case.
   }
   // Condition 1: average daily KS gain < 0.3 over last _stallWindow days [DESIGN: §6.1 / GAP-S3]
-  const recent      = samples.slice(-Math.min(_stallWindow, samples.length));
+  const recent      = samples.slice(-Math.min(_stallWindow, samples.length)).map(velocitySampleValue);
   const avgVelocity = recent.reduce((a, b) => a + b, 0) / recent.length;
   if (avgVelocity >= 0.3) return { isStall: false, cause: null };
   // Stall confirmed — diagnose cause
@@ -7742,7 +7873,7 @@ async function resolveStallIfRecovered(userId, goalId) {
   if (!goal || !goal.stall_active) return;
   const samples = goal.velocity_samples || [];
   if (samples.length < 7) return;
-  const last7  = samples.slice(-7);
+  const last7  = samples.slice(-7).map(velocitySampleValue);
   const minOf7 = Math.min(...last7);
   // All 7 consecutive days must be ≥ 0.5 [DESIGN: §6.3]
   if (minOf7 >= 0.5) {
@@ -11135,7 +11266,7 @@ async function generateBubbleAutopsy(userId, goal) {
   const weeklyVelocities = [];
   const samples = goal.velocity_samples || [];
   for (let i = 0; i < samples.length - 6; i += 7) {
-    const week = samples.slice(i, i + 7);
+    const week = samples.slice(i, i + 7).map(velocitySampleValue);
     weeklyVelocities.push(week.reduce((a, b) => a + b, 0) / week.length);
   }
   const bestWeekVelocity  = weeklyVelocities.length > 0 ? Math.max(...weeklyVelocities) : 0;
@@ -12362,6 +12493,7 @@ const RECKONING_EXEMPT_PATHS = [
 '/reckoning/submit',
 '/reckoning/defer',
 '/reckoning/use-buffer',
+'/reckoning/active',
 '/pressure',   // exact pressure state and acknowledge-alert sub-path
 ];
 if (RECKONING_EXEMPT_PATHS.some(p => req.path === p || req.path.startsWith(p + '/') || req.path.endsWith(p))) return next();
@@ -12377,6 +12509,9 @@ if (!active) return next();
 if (active.status === 'deferred' && active.deferred_until) {
 if (new Date(active.deferred_until) > new Date()) return next();
 }
+const shouldAnnounce = await db.reckoningSessions
+.claimActivationAnnouncement(req.user.id, active.id)
+.catch(() => active.activation_announced_at == null);
 // P3-01 FIX: add all fields consumed by frontend showReckoningOverlay()
 const userStatsForLockout = await db.userStats.get(req.user.id).catch(() => null);
 return res.status(403).json({
@@ -12400,6 +12535,7 @@ canDefer: !active.deferral_used,
 can_defer: !active.deferral_used,
 deferHours: 4,
 deferPenalty: 5,
+should_announce: shouldAnnounce,
 },
 });
 } catch (e) {
@@ -16783,6 +16919,13 @@ bubbleRouter.post('/', async (req, res) => {
       req.user.id, resolvedCardIds, existingGoals
     ).catch(() => overlapPreview);
 
+    if ((overlapResult.overlapping_card_ids || []).length > 0) {
+      await db.masteryGoals.update(req.user.id, goal.id, {
+        cross_bubble_card_ids: overlapResult.overlapping_card_ids,
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      goal.cross_bubble_card_ids = overlapResult.overlapping_card_ids;
+    }
+
     // Stamp bubble_id onto each card_state
     for (const cardId of resolvedCardIds) {
       const st = await db.cardStates.get(req.user.id, cardId).catch(() => null);
@@ -17800,7 +17943,26 @@ res.status(500).json({ error: 'Failed to use buffer', details: e.message });
 brainRouter.get('/reckoning/active', async (req, res) => {
 try {
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
-res.json(active || { status: 'none' });
+if (!active) return res.json({ status: 'none' });
+const shouldAnnounce = await db.reckoningSessions
+  .claimActivationAnnouncement(req.user.id, active.id)
+  .catch(() => active.activation_announced_at == null);
+const userStats = await db.userStats.get(req.user.id).catch(() => null);
+res.json({
+  ...active,
+  subjectId: active.subject_id,
+  subjectName: active.subject_name,
+  reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
+  requiredScore: 70,
+  pressure: active.pressure_score || 0,
+  shields: userStats?.streak_shields_held || 0,
+  canDefer: !active.deferral_used,
+  can_defer: !active.deferral_used,
+  deferHours: 4,
+  deferPenalty: 5,
+  deferral_expires_at: active.deferred_until || null,
+  should_announce: shouldAnnounce,
+});
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch active reckoning', details: e.message });
 }
@@ -17861,6 +18023,10 @@ activeReckoning = await db.reckoningSessions.findById(triggered.reckoning_id).ca
 const userStatsForBrain = activeReckoning
 ? await db.userStats.get(req.user.id).catch(() => null)
 : null;
+const shouldAnnounceReckoning = activeReckoning
+? await db.reckoningSessions.claimActivationAnnouncement(req.user.id, activeReckoning.id)
+    .catch(() => activeReckoning.activation_announced_at == null)
+: false;
 res.json({
 pressures: enriched,
 overallStatus:
@@ -17892,6 +18058,7 @@ canDefer: !activeReckoning.deferral_used,
 can_defer: !activeReckoning.deferral_used,
 deferHours: 4,
 deferPenalty: 5,
+should_announce: shouldAnnounceReckoning,
 }
 : null,
 });
@@ -19785,6 +19952,7 @@ async function runSchemaMigrations() {
       user_id text,
       subject_id text,
       status text DEFAULT 'triggered',
+      activation_announced_at timestamptz,
       created_at timestamptz DEFAULT NOW(),
       updated_at timestamptz DEFAULT NOW()
     )`,
@@ -20024,6 +20192,12 @@ async function runSchemaMigrations() {
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS deferral_used boolean DEFAULT false`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS debrief_text text`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS score_pct numeric`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS activation_announced_at timestamptz`,
+
+    // Legacy Bubble tables are unused by the current service. Keep them inaccessible
+    // through PostgREST instead of leaving public-schema tables without RLS.
+    `ALTER TABLE IF EXISTS public.mastery_clusters ENABLE ROW LEVEL SECURITY`,
+    `ALTER TABLE IF EXISTS public.bubble_sessions ENABLE ROW LEVEL SECURITY`,
 
     // mastery_goals: bubble trajectory, contract streak, rescue and stall tracking
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS contract_streak_current integer DEFAULT 0`,
