@@ -1542,11 +1542,14 @@ async findBySubject(userId, subjectId) {
 },
 async update(userId, goalId, data) {
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('mastery_goals', 'id', goalId, payload);
-  await query(q.text, q.values);
-  // update() DOES re-fetch (source line 1420: const doc = await ref.get())
-  const { rows } = await query('SELECT * FROM mastery_goals WHERE id = $1', [goalId]);
-  return { id: goalId, ...rows[0] };
+  const q = _buildUpdate('mastery_goals', 'id', goalId, payload, userId);
+  const result = await query(q.text, q.values);
+  if (result.rowCount === 0) return null;
+  const { rows } = await query(
+    'SELECT * FROM mastery_goals WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [goalId, userId]
+  );
+  return rows[0] ? { id: goalId, ...rows[0] } : null;
 },
 async archive(userId, goalId, finalStatus = 'archived') {
   return this.update(userId, goalId, {
@@ -1555,26 +1558,33 @@ async archive(userId, goalId, finalStatus = 'archived') {
   });
 },
 // goal_history sub-collection [DESIGN: §12.2] — migrated to goal_history table
+// Event-specific fields live in data JSONB so history writes remain schema-stable.
 async addHistoryEntry(goalId, entry) {
   const id = randomUUID();
-  const payload = { id, goal_id: goalId, ...entry, created_at: new Date() };
-  const q = _buildInsert('goal_history', payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const createdAt = entry?.created_at ? new Date(entry.created_at) : new Date();
+  const eventType = entry?.event_type || null;
+  const data = { ...(entry || {}) };
+  delete data.event_type;
+  delete data.created_at;
+  await query(
+    'INSERT INTO goal_history (id, goal_id, event_type, data, created_at) VALUES ($1,$2,$3,$4,$5)',
+    [id, goalId, eventType, JSON.stringify(data), createdAt]
+  );
+  return { id, goal_id: goalId, event_type: eventType, ...data, created_at: createdAt };
 },
 async getHistory(goalId, limit = 90) {
   const { rows } = await query(
     'SELECT * FROM goal_history WHERE goal_id = $1 ORDER BY created_at DESC LIMIT $2',
     [goalId, limit]
   );
-  return rows;
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
 },
 async getHistoryForWeek(goalId, weekStart, weekEnd) {
   const { rows } = await query(
     'SELECT * FROM goal_history WHERE goal_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY created_at ASC',
     [goalId, weekStart, weekEnd]
   );
-  return rows;
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
 },
 // concept_clusters sub-collection [DESIGN: §12.3] — migrated to concept_clusters table
 async addCluster(goalId, clusterData) {
