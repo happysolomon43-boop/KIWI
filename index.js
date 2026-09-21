@@ -15042,20 +15042,26 @@ const card_state_filter = Array.isArray(raw_csf)
 : ((raw_csf || 'all').toLowerCase());
 let selectedCards;
 let sourceCards;
+let reckoningQuestionCount = null;
 
 const isReckoningExam = !!(body.is_reckoning || body.reckoning_id);
 if (isReckoningExam) {
-// Reckoning: load flagged pool from session document
+// Reckoning: load flagged pool from the active session and bind generation to that exact id.
 const activeReck = await db.reckoningSessions.findActiveByUser(req.user.id).catch(() => null);
+if (!activeReck) {
+  return res.status(409).json({ error: 'No active Reckoning exists for this account.' });
+}
+if (body.reckoning_id && body.reckoning_id !== activeReck.id) {
+  return res.status(409).json({ error: 'Reckoning id does not match the active Reckoning.' });
+}
+reckoningQuestionCount = Math.max(1, Number(activeReck.question_count) || Number(question_count) || 25);
 const flaggedIds = activeReck?.flagged_card_ids || [];
 if (flaggedIds.length === 0) {
   return res.status(400).json({ error: 'Reckoning session has no flagged cards. Complete more study sessions to flag cards before attempting a Reckoning exam.' });
 }
 if (flaggedIds.length > 0) {
-const flaggedPool = (await Promise.all(
-  flaggedIds.map((id) => db.cards.findById(req.user.id, id).catch(() => null))
-)).filter(Boolean);
-const reckoningCount = activeReck.question_count || question_count;
+const flaggedPool = await db.cards.findByIds(req.user.id, flaggedIds).catch(() => []);
+const reckoningCount = reckoningQuestionCount;
 sourceCards = flaggedPool;
 
 // PB.11: Weight Bubble cards 3× in the Reckoning selection pool [DESIGN: §15.2]
@@ -15148,15 +15154,16 @@ selectedCards = sourceCards
 .sort(() => 0.5 - Math.random())
 .slice(0, Math.min(question_count, sourceCards.length));
 }
-// FIX: Use user-requested question_count, not selectedCards.length.
-// selectedCards are source material; AI generates multiple Qs per card.
-const count = question_count;
+// Normal exams use the requested count. Reckoning exams must honor the count
+// recorded when the Reckoning was triggered.
+const count = isReckoningExam ? reckoningQuestionCount : question_count;
 const examSession = await db.examSessions.create(req.user.id, {
 subject_id,
 deck_ids: targetDeckIds,
 question_count: count,
 card_range,
 time_limit_seconds,
+is_reckoning: isReckoningExam,
 status: 'ready',
 difficulty_level: selectedDifficulty,
 });
@@ -17789,6 +17796,13 @@ if (!examId || !Array.isArray(answers))
 return res.status(400).json({ error: 'examId and answers required' });
 const exam = await db.examSessions.findByIdWithQuestions(req.user.id, examId);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (!exam.is_reckoning) {
+  return res.status(409).json({ error: 'This exam is not the active Reckoning exam.' });
+}
+const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (!active || active.status !== 'in_progress' || active.exam_session_id !== examId) {
+  return res.status(409).json({ error: 'This exam is not linked to the active Reckoning.' });
+}
 // Delegate to exam submit logic
 let correct = 0;
 const total = exam.questions.length;
@@ -17829,8 +17843,7 @@ await hookSeedlingEarnings(req.user.id, 'exam_result', {
   exam_id: examId,
 });
 }
-// Complete the reckoning
-const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+// Complete the exact Reckoning already validated above.
 let reckoningResult = null;
 if (active) {
 // Bug 5 fix: Generate Gemini debrief with reckoning-specific tone instead of static string
