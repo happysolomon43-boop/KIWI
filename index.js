@@ -8773,6 +8773,51 @@ return {
 async function reconcileActiveReckoning(userId, active) {
 if (!active || active.user_id !== userId) return active || null;
 
+// Legacy/self-healing attempt accounting: earlier deployments did not persist a
+// failure counter. Reconstruct it from completed Reckoning exams belonging to
+// this same Reckoning era. If the user already crossed the six-failure circuit
+// breaker, release the stale lockdown immediately and apply the one-time KS
+// consequence rather than making them fail six more times after the upgrade.
+if ((Number(active.failure_count) || 0) < RECKONING_FAILSAFE_FAILURES) {
+  const { rows: legacyFailures } = await query(
+    `SELECT id
+     FROM exam_sessions
+     WHERE user_id = $1
+       AND subject_id = $2
+       AND is_reckoning = true
+       AND status = 'completed'
+       AND score_pct < 70
+       AND total_questions > 0
+       AND completed_at >= $3
+     ORDER BY completed_at ASC`,
+    [userId, active.subject_id, active.created_at || new Date(0)]
+  ).catch(() => ({ rows: [] }));
+
+  const historicalFailureCount = legacyFailures.length;
+  if (historicalFailureCount > (Number(active.failure_count) || 0)) {
+    const lastFailureId = legacyFailures[legacyFailures.length - 1]?.id || active.last_failure_exam_id || null;
+    await db.reckoningSessions.update(active.id, {
+      failure_count: historicalFailureCount,
+      last_failure_exam_id: lastFailureId,
+    });
+    active = {
+      ...active,
+      failure_count: historicalFailureCount,
+      last_failure_exam_id: lastFailureId,
+    };
+  }
+
+  if (historicalFailureCount >= RECKONING_FAILSAFE_FAILURES) {
+    await applyReckoningFailsafePenalty(
+      userId,
+      active.subject_id,
+      active.id,
+      historicalFailureCount
+    );
+    return null;
+  }
+}
+
 const now = Date.now();
 const expiryMs = active.deferred_until
 ? new Date(active.deferred_until).getTime()
