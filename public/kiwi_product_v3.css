@@ -827,3 +827,178 @@ button:disabled {
     padding-inline: 8px !important;
   }
 }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Responsive shell refinement
+   - retract the fixed mobile title bar while scrolling down
+   - restore it immediately on upward scroll / near the top
+   - let medium/desktop layouts use the available screen instead of looking
+     like the mobile composition was simply stretched onto a larger viewport
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --kiwi-content-max: 1480px;
+}
+
+@media (min-width: 1280px) {
+  body {
+    font-size: 15px;
+  }
+
+  .page-wrap {
+    width: min(100%, var(--kiwi-content-max)) !important;
+    max-width: var(--kiwi-content-max) !important;
+    padding: 32px clamp(32px, 3vw, 48px) 44px !important;
+  }
+
+  .section-title {
+    font-size: 20px !important;
+    line-height: 1.2;
+  }
+
+  .section-sub {
+    font-size: 13px !important;
+    line-height: 1.5;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr) clamp(330px, 23vw, 390px) !important;
+    gap: 26px !important;
+  }
+
+  .dashboard-left,
+  .dashboard-right {
+    gap: 24px !important;
+  }
+
+  .card {
+    padding: 24px 26px;
+  }
+}
+
+@media (min-width: 1101px) and (max-width: 1279px) {
+  .sidebar {
+    width: 240px !important;
+    min-width: 240px !important;
+  }
+
+  .main-content,
+  #mainContent {
+    margin-left: 240px !important;
+  }
+
+  .page-wrap {
+    width: 100% !important;
+    max-width: none !important;
+    padding: 26px 28px 40px !important;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr) 300px !important;
+    gap: 20px !important;
+  }
+
+  .section-title {
+    font-size: 19px !important;
+  }
+
+  .section-sub {
+    font-size: 13px !important;
+  }
+}
+
+/* "Desktop site" on a phone and small laptops commonly report a viewport in
+   this range. Keep a real desktop sidebar, but stop it from consuming ~1/4 of
+   the whole viewport and collapse dense two-column dashboard compositions. */
+@media (min-width: 769px) and (max-width: 1100px) {
+  .sidebar {
+    width: 216px !important;
+    min-width: 216px !important;
+  }
+
+  .main-content,
+  #mainContent {
+    margin-left: 216px !important;
+    width: auto !important;
+    min-width: 0 !important;
+  }
+
+  .sidebar-logo {
+    padding: 18px 14px 15px !important;
+  }
+
+  .sidebar-nav {
+    padding: 12px 8px 16px !important;
+  }
+
+  .nav-item {
+    gap: 8px !important;
+    padding: 9px 10px !important;
+    font-size: 12px !important;
+  }
+
+  .nav-section-label {
+    padding-inline: 10px !important;
+  }
+
+  .page-wrap {
+    width: 100% !important;
+    max-width: none !important;
+    padding: 24px 24px 38px !important;
+  }
+
+  .dashboard-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 18px !important;
+  }
+
+  .dashboard-left {
+    order: 1 !important;
+  }
+
+  .dashboard-right {
+    order: 2 !important;
+  }
+
+  .section-title {
+    font-size: 19px !important;
+  }
+
+  .section-sub {
+    font-size: 13px !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .mobile-bar {
+    will-change: transform, opacity;
+    transition:
+      transform .22s cubic-bezier(.4, 0, .2, 1),
+      opacity .17s ease,
+      box-shadow .22s ease !important;
+  }
+
+  .sidebar,
+  .sidebar-overlay {
+    transition:
+      top .22s cubic-bezier(.4, 0, .2, 1),
+      transform var(--t-slow) var(--ease) !important;
+  }
+
+  body.kiwi-mobile-chrome-retracted .mobile-bar {
+    transform: translateY(-100%) !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    box-shadow: none !important;
+  }
+
+  body.kiwi-mobile-chrome-retracted .sidebar {
+    top: env(safe-area-inset-top, 0px) !important;
+  }
+
+  body.kiwi-mobile-chrome-retracted .sidebar-overlay {
+    inset: env(safe-area-inset-top, 0px) 0 0 0 !important;
+  }
+}
