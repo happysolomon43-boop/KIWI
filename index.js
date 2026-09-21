@@ -8385,40 +8385,107 @@ question_count,
 }
 
 async function deferReckoning(reckoningId) {
-// NEW-L2 FIX: db.reckoningSessions.findById is a function reference — always
-// truthy, so the null branch was dead code. Same BUG 13 pattern fixed in
-// generateDeepAudit but missed here. Use .catch(() => null) instead.
 const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
 if (!reckoning) return null;
+
+const now = Date.now();
+const existingExpiry = reckoning.deferred_until
+? new Date(reckoning.deferred_until).getTime()
+: 0;
+
+if (reckoning.status === 'completed') {
+return { error: 'This Reckoning is already completed' };
+}
+if (reckoning.status === 'in_progress') {
+return { error: 'A Reckoning cannot be deferred after its exam has started' };
+}
+// Idempotent retry: repeated taps/network retries must not charge pressure twice.
+if (existingExpiry > now) {
+if (reckoning.status !== 'deferred' || reckoning.exam_session_id) {
+await db.reckoningSessions.update(reckoningId, {
+status: 'deferred',
+exam_session_id: null,
+});
+}
+return { status: 'deferred', deferred_until: new Date(existingExpiry) };
+}
 if (reckoning.deferral_used) return { error: 'Deferral already used' };
-const deferredUntil = new Date(Date.now() + 4 * 3600000); // 4 hours
-const currentPressure = await db.brainPressure.get(reckoning.user_id, reckoning.subject_id).catch(() => null);
+
+const deferredUntil = new Date(now + 4 * 3600000);
+await db.reckoningSessions.update(reckoningId, {
+status: 'deferred',
+deferral_used: true,
+was_deferred: true,
+deferred_until: deferredUntil,
+exam_session_id: null,
+});
+
+// Apply the +5 penalty exactly once, even if two defer requests race.
+const currentPressure = await db.brainPressure
+.get(reckoning.user_id, reckoning.subject_id)
+.catch(() => null);
 const deferralSources = currentPressure?.sources || {};
+if (deferralSources.reckoning_deferral_attempt_id !== reckoningId) {
 await db.brainPressure.set(reckoning.user_id, reckoning.subject_id, {
 pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5),
 intervention_level: 'L4',
 sources: {
 ...deferralSources,
 manual_reckoning_deferral: (Number(deferralSources.manual_reckoning_deferral) || 0) + 5,
+reckoning_deferral_attempt_id: reckoningId,
 },
 });
-await db.reckoningSessions.update(reckoningId, {
-status: 'deferred',
-deferral_used: true,
-deferred_until: deferredUntil,
-});
+}
+
 return { status: 'deferred', deferred_until: deferredUntil };
 }
 
 async function startReckoningExam(reckoningId, examSessionId) {
+const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+if (!reckoning) throw new Error('Reckoning not found');
+
+const expiryMs = reckoning.deferred_until
+? new Date(reckoning.deferred_until).getTime()
+: 0;
+if (expiryMs > Date.now()) {
+const err = new Error('This Reckoning is still deferred. Wait for the cooldown to end.');
+err.code = 'RECKONING_DEFERRED';
+err.deferred_until = reckoning.deferred_until;
+throw err;
+}
+
+if (reckoning.status === 'completed') {
+throw new Error('This Reckoning is already completed');
+}
+if (reckoning.status === 'in_progress') {
+if (String(reckoning.exam_session_id || '') === String(examSessionId || '')) {
+return { status: 'in_progress', exam_session_id: reckoning.exam_session_id };
+}
+throw new Error('Another Reckoning exam is already in progress. Resume it instead.');
+}
+if (reckoning.status === 'deferred') {
+await db.reckoningSessions.update(reckoningId, {
+status: 'triggered',
+deferred_until: null,
+exam_session_id: null,
+});
+}
+if (reckoning.status !== 'triggered' && reckoning.status !== 'deferred') {
+throw new Error('Reckoning is not ready to start');
+}
+
 await db.reckoningSessions.update(reckoningId, {
 status: 'in_progress',
 exam_session_id: examSessionId,
+deferred_until: null,
+score_pct: null,
+debrief_text: null,
+completed_at: null,
 });
-return { status: 'in_progress' };
+return { status: 'in_progress', exam_session_id: examSessionId };
 }
 
-async function completeReckoning(reckoningId, scorePct, debriefText) {
+async function completeReckoning(reckoningId, scorePct, debriefText) {async function completeReckoning(reckoningId, scorePct, debriefText) {
 // NEW-L2 FIX (completeReckoning): same always-truthy guard pattern — fixed.
 const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
 if (!reckoning) return null;
@@ -8468,6 +8535,10 @@ status: survived ? 'completed' : 'triggered',
 score_pct: scorePct,
 debrief_text: debriefText,
 completed_at: new Date(),
+// A failed attempt returns to a clean retry state. Never carry an old exam link
+// or a stale deferral window into the next attempt.
+exam_session_id: survived ? reckoning.exam_session_id : null,
+deferred_until: null,
 };
 try {
 await db.reckoningSessions.update(reckoningId, reckoningOutcome);
@@ -8513,15 +8584,62 @@ debrief_text: debriefText,
 //   • completed linked exam     -> finish the Reckoning idempotently
 //   • missing/invalid linked exam -> roll back to triggered so it can be rebuilt
 async function reconcileActiveReckoning(userId, active) {
-if (!active || active.user_id !== userId || active.status !== 'in_progress') return active || null;
+if (!active || active.user_id !== userId) return active || null;
+
+const now = Date.now();
+const expiryMs = active.deferred_until
+? new Date(active.deferred_until).getTime()
+: 0;
+
+// Deferral is a time-based state. Heal legacy/inconsistent rows where the
+// timestamp is still in the future but status was accidentally changed back to
+// triggered after a failed attempt.
+if (
+expiryMs > now &&
+active.status !== 'in_progress' &&
+active.status !== 'completed'
+) {
+if (active.status !== 'deferred' || active.exam_session_id) {
+await db.reckoningSessions.update(active.id, {
+status: 'deferred',
+exam_session_id: null,
+});
+}
+return {
+...active,
+status: 'deferred',
+exam_session_id: null,
+deferred_until: active.deferred_until,
+recovered_state: true,
+};
+}
+
+// Expired deferrals become a clean triggered state exactly once.
+if (active.status === 'deferred') {
+await db.reckoningSessions.update(active.id, {
+status: 'triggered',
+deferred_until: null,
+exam_session_id: null,
+});
+return {
+...active,
+status: 'triggered',
+deferred_until: null,
+exam_session_id: null,
+recovered_state: true,
+};
+}
+
+if (active.status !== 'in_progress') return active;
 
 const examId = active.exam_session_id;
 if (!examId) {
 await db.reckoningSessions.update(active.id, {
 status: 'triggered',
 exam_session_id: null,
+deferred_until: null,
 });
-return { ...active, status: 'triggered', exam_session_id: null, recovered_from_crash: true };
+return { ...active, status: 'triggered', exam_session_id: null, deferred_until: null, recovered_from_crash: true };
 }
 
 const exam = await db.examSessions.findByIdWithQuestions(userId, examId).catch(() => null);
@@ -8529,8 +8647,9 @@ if (!exam) {
 await db.reckoningSessions.update(active.id, {
 status: 'triggered',
 exam_session_id: null,
+deferred_until: null,
 });
-return { ...active, status: 'triggered', exam_session_id: null, recovered_from_crash: true };
+return { ...active, status: 'triggered', exam_session_id: null, deferred_until: null, recovered_from_crash: true };
 }
 
 if (exam.status === 'completed') {
@@ -8544,7 +8663,7 @@ recoveredScore = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 
 }
 const recoveryDebrief =
 active.debrief_text ||
-`This Reckoning result was recovered after an interrupted session. Your recorded score was ${recoveredScore}%. KIWI restored the server-backed outcome so the account cannot remain trapped in a stale lockout.`;
+`This Reckoning result was recovered after an interrupted session. Your recorded score was ${recoveredScore}%. KIWI restored the server-backed outcome so the subject cannot remain trapped in a stale lock.`;
 await completeReckoning(active.id, recoveredScore, recoveryDebrief);
 return await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
 }
@@ -8553,15 +8672,16 @@ if (exam.status === 'ready' || exam.status === 'active') {
 return active;
 }
 
-// A Reckoning exam is never intentionally forfeited. Any other terminal/corrupt
-// state is safer to rebuild than to leave the user permanently locked out.
+// Any other terminal/corrupt linked exam is detached so the user can safely
+// generate a fresh attempt instead of being trapped behind Resume.
 await db.reckoningSessions.update(active.id, {
 status: 'triggered',
 exam_session_id: null,
+deferred_until: null,
 });
-return { ...active, status: 'triggered', exam_session_id: null, recovered_from_crash: true };
+return { ...active, status: 'triggered', exam_session_id: null, deferred_until: null, recovered_from_crash: true };
 }
-// ── credentialService ─────────────────────────────────────────────────────────
+// ── credentialService// ── credentialService ─────────────────────────────────────────────────────────
 const CREDENTIAL_TIERS = [
 {
 tier: 0,
@@ -12600,65 +12720,88 @@ const _otpStore = new Map();
 // ── Reckoning Lockout Middleware (B4) ─────────────────────────────────────────
 
 async function reckoningLockout(req, res, next) {
-// P3.3-B1 FIX: reckoning action routes must never be blocked by this middleware.
-// Without this, /reckoning/submit is unreachable while status = in_progress
-// because findActiveByUser returns the in_progress session and triggers the 403.
-const RECKONING_EXEMPT_PATHS = [
-'/reckoning/submit',
-'/reckoning/defer',
-'/reckoning/use-buffer',
-'/reckoning/active',
-'/pressure',   // exact pressure state and acknowledge-alert sub-path
-];
-if (RECKONING_EXEMPT_PATHS.some(p => req.path === p || req.path.startsWith(p + '/') || req.path.endsWith(p))) return next();
-// P3-C1 FIX: /exams/generate must be reachable to START a reckoning exam.
-// The lockout middleware is mounted on examRouter which intercepts this path.
-// A body guard (not a blanket exemption) prevents the path being used to bypass.
-if (req.path === '/generate' && (req.body?.is_reckoning || req.body?.reckoning_id)) return next();
+// Reckoning is SUBJECT-SCOPED, not an account-wide app lock. Only block
+// attempts to START study or a normal exam in the affected subject. Reads,
+// navigation, session finalization, progress, marketplace, other subjects, etc.
+// must remain usable so the UI cannot enter a 403/overlay feedback loop.
 if (!req.user) return next();
+
+const baseUrl = String(req.baseUrl || '');
+const pathName = String(req.path || '');
+const method = String(req.method || '').toUpperCase();
+
+const isStudyStart =
+baseUrl.endsWith('/study') &&
+method === 'POST' &&
+pathName === '/start';
+
+const isExamGenerate =
+baseUrl.endsWith('/exams') &&
+method === 'POST' &&
+(pathName === '/generate' || pathName === '/');
+
+const examStartMatch =
+baseUrl.endsWith('/exams') &&
+method === 'POST'
+? pathName.match(/^\/([^/]+)\/start$/)
+: null;
+
+if (!isStudyStart && !isExamGenerate && !examStartMatch) return next();
+
+// The Reckoning generator itself must always be allowed.
+if (isExamGenerate && (req.body?.is_reckoning || req.body?.reckoning_id)) return next();
+
 try {
 let active = await db.reckoningSessions.findActiveByUser(req.user.id);
 if (active) active = await reconcileActiveReckoning(req.user.id, active);
 if (!active) return next();
 
-// A Reckoning lockout must still allow the exact exam that belongs to that
-// Reckoning to function. Previously the middleware blocked /exams/:id/start,
-// /pre-mark, and GET /exams/:id as soon as startReckoningExam() changed the
-// session to in_progress. That left the generated exam stuck in "ready" while
-// the frontend was already displaying it.
+// A live deferral intentionally lifts the subject lock until expiry.
+const expiryMs = active.deferred_until
+? new Date(active.deferred_until).getTime()
+: 0;
+if (expiryMs > Date.now()) return next();
+
+let requestedSubjectId =
+req.body?.subject_id ||
+req.body?.subjectId ||
+req.query?.subject_id ||
+req.query?.subjectId ||
+null;
+
+if (isStudyStart && !requestedSubjectId && req.body?.deck_id) {
+const deck = await db.decks.findById(req.user.id, req.body.deck_id).catch(() => null);
+requestedSubjectId = deck?.subject_id || null;
+}
+
+if (examStartMatch) {
+const examId = examStartMatch[1];
 if (
-  req.baseUrl === '/api/exams' &&
-  active.status === 'in_progress' &&
-  active.exam_session_id
+active.status === 'in_progress' &&
+String(active.exam_session_id || '') === String(examId)
 ) {
-  const linkedExamId = String(active.exam_session_id);
-  const path = String(req.path || '');
-  const exactExamPath = '/' + linkedExamId;
-  const isLinkedExamRead =
-    req.method === 'GET' &&
-    (path === exactExamPath || path.startsWith(exactExamPath + '/question/'));
-  const isLinkedExamWrite =
-    req.method === 'POST' &&
-    (path === exactExamPath + '/start' || path === exactExamPath + '/pre-mark');
-
-  if (isLinkedExamRead || isLinkedExamWrite) return next();
+return next();
+}
+const exam = await db.examSessions.findByIdWithQuestions(req.user.id, examId).catch(() => null);
+if (exam?.is_reckoning && String(active.exam_session_id || '') === String(examId)) {
+return next();
+}
+requestedSubjectId = exam?.subject_id || requestedSubjectId;
 }
 
-// Honour deferral window — if still deferred and timer has NOT expired, pass through
-if (active.status === 'deferred' && active.deferred_until) {
-if (new Date(active.deferred_until) > new Date()) return next();
+// If the request is not for the Reckoning subject, it is unrelated and allowed.
+if (!requestedSubjectId || String(requestedSubjectId) !== String(active.subject_id)) {
+return next();
 }
-const shouldAnnounce = await db.reckoningSessions
-.claimActivationAnnouncement(req.user.id, active.id)
-.catch(() => active.activation_announced_at == null);
-// P3-01 FIX: add all fields consumed by frontend showReckoningOverlay()
+
 const userStatsForLockout = await db.userStats.get(req.user.id).catch(() => null);
 return res.status(403).json({
-error: 'A Reckoning is active. Complete or defer it before resuming other activity.',
+error: 'This subject is locked by The Reckoning until you pass it.',
+code: 'RECKONING_SUBJECT_LOCKED',
+locked_subject_id: active.subject_id,
 reckoning: {
 id: active.id,
 subject_id: active.subject_id,
-// Provide both snake_case and camelCase for frontend compatibility
 subject_name: active.subject_name,
 subjectName: active.subject_name,
 status: active.status,
@@ -12671,20 +12814,21 @@ reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_nam
 requiredScore: 70,
 pressure: active.pressure_score || 0,
 shields: userStatsForLockout?.streak_shields_held || 0,
-canDefer: !active.deferral_used,
-can_defer: !active.deferral_used,
+canDefer: active.status === 'triggered' && !active.deferral_used,
+can_defer: active.status === 'triggered' && !active.deferral_used,
 deferHours: 4,
 deferPenalty: 5,
-should_announce: shouldAnnounce,
+should_announce: true,
 },
 });
 } catch (e) {
-console.error('[KIWI] Reckoning lockout check failed:', e.message);
-next(); // fail-open — never block the user due to internal errors
+console.error('[KIWI] Reckoning subject-lock check failed:', e.message);
+next(); // fail-open: internal errors never strand the whole app.
 }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  AUTH ROUTES// ════════════════════════════════════════════════════════════════════════════
 //  AUTH ROUTES
 
 // ════════════════════════════════════════════════════════════════════════════
