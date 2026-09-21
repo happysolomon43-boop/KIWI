@@ -21916,13 +21916,6 @@ async function _tourPersistState(status) {
   }
 }
 
-async function maybeStartKiwiTour(prefetchedState = null) {
-  if (_tourActive) return false;
-  const state = prefetchedState || await _tourGetState();
-  if (state?.status !== 'unseen') return false;
-  return startKiwiTour({ auto: true });
-}
-
 async function startKiwiTour(options = {}) {
   if (_tourActive) return false;
   const force = !!options.force;
