@@ -677,11 +677,11 @@ async create(userId, data) {
   return { id, ...payload };
 },
 async update(userId, id, data) {
-  // Fix #38: eliminate post-write re-fetch
+  // Scope exam writes to the authenticated owner.
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('exam_sessions', 'id', id, payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const q = _buildUpdate('exam_sessions', 'id', id, payload, userId);
+  const result = await query(q.text, q.values);
+  return result.rowCount > 0 ? { id, ...payload } : null;
 },
 async findByIdWithQuestions(userId, id) {
   const { rows: [exam] } = await query(
@@ -737,11 +737,10 @@ async findById(userId, id) {
   return rows[0] || null;
 },
 async update(userId, id, data) {
-  // Fix #38: eliminate post-write re-fetch
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('exam_questions', 'id', id, payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const q = _buildUpdate('exam_questions', 'id', id, payload, userId);
+  const result = await query(q.text, q.values);
+  return result.rowCount > 0 ? { id, ...payload } : null;
 },
 // BUG #4 FIX: findBySession was absent — recomputeAndStoreCardState always received
 // examLogs = [] because the guard `db.examQuestions.findBySession ?` silently failed.
