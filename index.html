@@ -9839,6 +9839,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         AppState.tempExam = null;
         AppState.treeInstance = null;
         AppState.reckoning = null;
+        _setReckoningLockdownUi(false);
         AppState.isDemo = false;
         localStorage.removeItem("kiwi_is_demo");
         // Re-render landing without a full reload
@@ -13625,6 +13626,30 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               debrief:        '⏳ Generating personalised debrief — hang tight…',
             };
           }
+          if (e.isReckoning && result && result.reckoning) {
+            if (result.reckoning.status === "triggered" || result.reckoning.status === "in_progress") {
+              try {
+                const activeAfterAttempt = await apiRequest("/brain/reckoning/active");
+                AppState.reckoning = activeAfterAttempt && activeAfterAttempt.id ? activeAfterAttempt : result.reckoning;
+              } catch (_) {
+                AppState.reckoning = result.reckoning;
+              }
+              _setReckoningLockdownUi(true);
+            } else if (result.reckoning.status === "completed" || result.reckoning.status === "failsafe_released") {
+              AppState.reckoning = null;
+              _setReckoningLockdownUi(false);
+              if (result.reckoning.status === "failsafe_released") {
+                const afterKs = result.failsafe && result.failsafe.ks_after != null ? result.failsafe.ks_after : result.ks_after;
+                showToast(
+                  "Reckoning failsafe released the lockdown. Subject KS was reduced by 90%" +
+                    (Number.isFinite(Number(afterKs)) ? " to " + Math.round(Number(afterKs)) + "." : "."),
+                  "warning",
+                  9000
+                );
+              }
+            }
+          }
+
           // Normalize field names for frontend rendering
           result = {
             ...result,
@@ -13663,7 +13688,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           }
           renderExamResults();
         } catch (err) {
-          if (err.status === 403 && AppState.reckoning) {
+          if ((err.status === 403 || err.status === 423) && AppState.reckoning) {
             return; // Reckoning overlay shown by API handler
           }
           // Always log the real error to console for debugging
@@ -14372,6 +14397,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 can_defer: false,
               };
               AppState.reckoning = null;
+              _setReckoningLockdownUi(false);
               _scheduleDeferredReckoningWakeup(deferredReckoning);
               _closeReckoningSurface();
               const _deferUntilText = new Date(deferredUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -14395,6 +14421,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   await api.useReckoningBuffer();
                   container.innerHTML = "";
                   AppState.reckoning = null;
+                  _setReckoningLockdownUi(false);
                   // F4: remove buffer from local inventory (array, not {items:[]})
                   const invArr2 = Array.isArray(AppState.inventory) ? AppState.inventory : [];
                   const bufIdx = invArr2.findIndex((i) => i.item_code === "reckoning_buffer");
