@@ -14185,6 +14185,24 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         _reckoningOverlayRenderKey = stateKey;
 
         const isInProgress = reckoning.status === "in_progress" && !!reckoning.exam_session_id;
+        const failureCount = Math.max(0, Number(reckoning.failure_count) || 0);
+        const failsafeThreshold = Math.max(1, Number(reckoning.failsafe_threshold) || 6);
+        const failsafeNoteHtml = isMandatory
+          ? '<div class="reckoning-failsafe-note">Failed attempts: <strong>' + failureCount + '/' + failsafeThreshold + '</strong>. After the sixth failed attempt, the lockdown is released and this subject\'s effective KS is reduced by 90%.</div>'
+          : "";
+        const secondaryActionHtml = isMandatory
+          ? '<button class="btn btn-secondary" id="openReckoningSettingsBtn" type="button" style="width:100%;">Open Settings</button>'
+          : '<button class="btn btn-secondary" id="minimizeReckoningBtnBottom" type="button" style="width:100%;">Minimize</button>';
+
+        // Settings is the sole normal feature exempt from a mandatory Reckoning.
+        if (isMandatory && AppState.currentPage === "settings" && options.forceSettingsOverlay !== true) {
+          _setReckoningLockdownUi(true);
+          _closeReckoningSurface();
+          if (typeof renderSettings === "function") renderSettings();
+          return;
+        }
+
+        _setReckoningLockdownUi(isMandatory);
         container.innerHTML = `
     <div class="reckoning-overlay" id="reckoningOverlay">
       <div class="reckoning-card" style="position:relative;">
@@ -14200,8 +14218,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         </div>
         ${isMandatory ? `
         <div style="margin:10px 0 14px;padding:10px 12px;border:1px solid rgba(224,82,82,.28);border-radius:var(--r);background:rgba(224,82,82,.07);color:var(--red-bright);font-size:var(--text-sm);line-height:1.55;text-align:center;">
-          This subject is locked. The Reckoning cannot be minimized or dismissed; pass the required score to unlock it.
+          KIWI is locked while The Reckoning is active. The lock cannot be minimized or dismissed. Settings remains available.
         </div>` : ""}
+        ${failsafeNoteHtml}
         <div class="reckoning-stats">
           <div class="stat-card">
             <div class="stat-label">Current Pressure</div>
@@ -14230,9 +14249,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           <button class="btn btn-primary btn-lg" id="startReckoningBtn" style="width:100%;">
             ${isInProgress ? "Resume The Reckoning" : "Begin The Reckoning"}
           </button>
-          ${!isMandatory ? `<button class="btn btn-secondary" id="minimizeReckoningBtnBottom" type="button" style="width:100%;">
-            Minimize
-          </button>` : ""}
+          ${secondaryActionHtml}
           ${isInProgress ? `
           <div style="font-size:var(--text-xs);color:var(--text-2);text-align:center;line-height:1.6;">
             Your exam is already saved on KIWI. Resume from the last server-saved answer.
@@ -14277,6 +14294,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const _minimizeCurrentReckoning = () => _minimizeReckoningSurface(reckoning);
         document.getElementById("minimizeReckoningBtn")?.addEventListener("click", _minimizeCurrentReckoning);
         document.getElementById("minimizeReckoningBtnBottom")?.addEventListener("click", _minimizeCurrentReckoning);
+        document.getElementById("openReckoningSettingsBtn")?.addEventListener("click", () => {
+          _closeReckoningSurface();
+          _setReckoningLockdownUi(true);
+          navigateTo("settings", { fromReckoning: true });
+        });
         document.getElementById("startReckoningBtn").addEventListener("click", async () => {
           const _startBtn = document.getElementById("startReckoningBtn");
           if (_startBtn) {
