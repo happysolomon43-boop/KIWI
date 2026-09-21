@@ -6717,6 +6717,46 @@
 
       // ── Core request handler ──
 
+      const DEFAULT_API_TIMEOUT_MS = 35000;
+
+      /**
+       * Browser fetch has no built-in deadline. On a sleeping or unhealthy API,
+       * that left KIWI's login button and page skeletons spinning indefinitely.
+       * Keep every interactive request bounded while still giving Render enough
+       * time to wake from a cold start.
+       */
+      async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_API_TIMEOUT_MS) {
+        const controller = new AbortController();
+        const externalSignal = options.signal;
+        let timedOut = false;
+        const forwardAbort = () => controller.abort();
+
+        if (externalSignal) {
+          if (externalSignal.aborted) controller.abort();
+          else externalSignal.addEventListener("abort", forwardAbort, { once: true });
+        }
+
+        const timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, Math.max(1000, Number(timeoutMs) || DEFAULT_API_TIMEOUT_MS));
+
+        try {
+          return await fetch(url, { ...options, signal: controller.signal });
+        } catch (error) {
+          if (timedOut) {
+            const timeoutError = new Error("KIWI's server took too long to respond.");
+            timeoutError.name = "KiwiTimeoutError";
+            timeoutError.code = "REQUEST_TIMEOUT";
+            throw timeoutError;
+          }
+          throw error;
+        } finally {
+          clearTimeout(timer);
+          if (externalSignal) externalSignal.removeEventListener("abort", forwardAbort);
+        }
+      }
+
       async function apiRequest(endpoint, options = {}) {
         const url = `${API_BASE_URL}${endpoint}`;
         const opts = {
@@ -6730,7 +6770,7 @@
           ...(options.body ? { body: JSON.stringify(options.body) } : {}),
         };
         try {
-          const response = await fetch(url, opts);
+          const response = await fetchWithTimeout(url, opts, options.timeoutMs);
           // Handle 401 Unauthorized — attempt token refresh
           if (response.status === 401) {
             // Public auth endpoints must surface their own 401 errors (for example
@@ -6757,7 +6797,7 @@
             const refreshed = await api.refreshAccessToken();
             if (refreshed) {
               opts.headers["Authorization"] = `Bearer ${authToken}`;
-              const retryResponse = await fetch(url, opts);
+              const retryResponse = await fetchWithTimeout(url, opts, options.timeoutMs);
               if (!retryResponse.ok) {
                 const err = await retryResponse.json().catch(() => ({}));
                 throw new ApiError(
@@ -6768,17 +6808,18 @@
               }
               return await retryResponse.json();
             } else {
-              // Token refresh failed — force re-authentication.
-              // showToast is gated by _appBooting at the source, so this fires
-              // only when the session drops while the user is actively in the app.
-              // Guard BEFORE logout so parallel API calls don't each call logout.
-              // Also skip logout during boot/post-login window (_appBooting) so that
-              // background API calls (persona, footer) don't kick the user back to
-              // landing immediately after a fresh login.
-              if (!_sessionExpiredNotified && !_appBooting) {
+              // Token refresh failed — the stored session cannot be used. Always
+              // leave the app shell so a returning user is not trapped behind a
+              // dashboard skeleton with no path back to login. During cold boot we
+              // recover silently; for an active session we explain what happened.
+              // Set the guard before logout so parallel requests cannot repeat it.
+              if (!_sessionExpiredNotified) {
                 _sessionExpiredNotified = true;
+                const shouldNotify = !_appBooting;
                 logout();
-                showToast("Session expired. Please log in again.", "error", 6000);
+                if (shouldNotify) {
+                  showToast("Session expired. Please log in again.", "error", 6000);
+                }
               }
               // Mark alreadyReported so caller catch blocks don't show a second toast.
               const _sessionErr = new ApiError(401, "Session expired", endpoint);
@@ -6819,9 +6860,18 @@
           return data;
         } catch (err) {
           if (err instanceof ApiError) throw err;
+          if (err && err.code === "REQUEST_TIMEOUT") {
+            const message = "KIWI's server is taking too long to respond. It may still be waking up — wait a moment, then try again.";
+            showToast(message, "warning", 8000);
+            const timeoutError = new ApiError(0, message, endpoint);
+            timeoutError.code = "REQUEST_TIMEOUT";
+            timeoutError.alreadyReported = true;
+            throw timeoutError;
+          }
           // Network error — show toast here and mark so callers don't double-toast
-          showToast("Network error. Check your connection.", "error", 5000);
-          const _netErr = new ApiError(0, "Network error: " + err.message, endpoint);
+          const message = "KIWI could not reach its server. Check your connection and try again.";
+          showToast(message, "error", 6000);
+          const _netErr = new ApiError(0, message, endpoint);
           _netErr.alreadyReported = true;
           throw _netErr;
         }
@@ -6842,7 +6892,11 @@
       // ── Auth endpoints ──
 
       api.login = async (email, password) => {
-        const data = await apiRequest("/auth/login", { method: "POST", body: { email, password } });
+        const data = await apiRequest("/auth/login", {
+          method: "POST",
+          body: { email, password },
+          timeoutMs: 60000,
+        });
         if (data.accessToken) {
           authToken = data.accessToken;
           _sessionExpiredNotified = false;
@@ -6859,6 +6913,7 @@
         const data = await apiRequest("/auth/register", {
           method: "POST",
           body: { name, email, password },
+          timeoutMs: 60000,
         });
         if (data.accessToken) {
           authToken = data.accessToken;
@@ -6883,11 +6938,11 @@
         //   fail with "Invalid or expired refresh token", forcing re-login every 15 min.
         try {
           if (!refreshToken) return false;
-          const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+          const res = await fetchWithTimeout(`${API_BASE_URL}/auth/refresh`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ refreshToken }),
-          });
+          }, 30000);
           if (!res.ok) {
             // Refresh token is invalid/expired — nothing to do but re-auth
             return false;
@@ -9395,13 +9450,13 @@
         if (el) el.classList.add('visible');
       }
 
-      function setAuthLoading(formType, loading) {
+      function setAuthLoading(formType, loading, statusText) {
         const btnId = formType === 'register' ? 'btnRegister' : 'btnLogin';
         const btn = document.getElementById(btnId);
         if (!btn) return;
         btn.disabled = loading;
         btn.textContent = loading
-          ? (formType === 'register' ? 'Creating account…' : 'Logging in…')
+          ? (statusText || (formType === 'register' ? 'Creating account…' : 'Logging in…'))
           : (formType === 'register' ? 'Get Started' : 'Log In');
       }
 
@@ -9416,6 +9471,9 @@
 
         _lastAuthAction = { type: 'register', name, email, pass };
         setAuthLoading('register', true);
+        const slowStatusTimer = setTimeout(() => {
+          setAuthLoading('register', true, 'Waking KIWI’s server…');
+        }, 7000);
         try {
           const data = await api.register(name, email, pass);
           authToken = data.accessToken;
@@ -9456,12 +9514,15 @@
             setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
           }
         } catch (err) {
-          setAuthLoading('register', false);
           if (err.status >= 500 || err.status === 0) {
+            showAuthError('register', err.message || 'KIWI could not connect. Please try again.');
             showAuthRetry('register');
           } else {
             showAuthError('register', err.message || 'Registration failed. Please try again.');
           }
+        } finally {
+          clearTimeout(slowStatusTimer);
+          setAuthLoading('register', false);
         }
       }
 
@@ -9474,6 +9535,9 @@
 
         _lastAuthAction = { type: 'login', email, pass };
         setAuthLoading('login', true);
+        const slowStatusTimer = setTimeout(() => {
+          setAuthLoading('login', true, 'Waking KIWI’s server…');
+        }, 7000);
         try {
           const data = await api.login(email, pass);
           authToken = data.accessToken;
@@ -9508,12 +9572,15 @@
           // Start tour for users who haven't completed or skipped it yet (e.g. registered on another device)
           setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
         } catch (err) {
-          setAuthLoading('login', false);
           if (err.status >= 500 || err.status === 0) {
+            showAuthError('login', err.message || 'KIWI could not connect. Please try again.');
             showAuthRetry('login');
           } else {
             showAuthError('login', err.message || 'Login failed. Please check your credentials.');
           }
+        } finally {
+          clearTimeout(slowStatusTimer);
+          setAuthLoading('login', false);
         }
       }
 
@@ -20836,7 +20903,7 @@
             const el = document.getElementById('apiStatusValue');
             if (!el) return;
             try {
-              const health = await fetch(API_BASE_URL + '/health', { cache: 'no-store' }).then(r => {
+              const health = await fetchWithTimeout(API_BASE_URL + '/health', { cache: 'no-store' }, 12000).then(r => {
                 if (!r.ok) throw new Error('offline');
                 return r.json();
               });
