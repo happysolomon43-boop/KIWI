@@ -9643,15 +9643,15 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           history.replaceState({ kiwi: 1 }, '');
           history.pushState({ kiwi: 1 }, '');
           updateUserFooter();
-          if (data.welcome) {
-            showToast(`Welcome, ${getUserDisplayName(data.user, name)}! Your ecosystem is alive.`, 'success', 5000);
-            navigateTo('onboarding');
-            setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour({ auto: true }); }, 700);
-          } else {
-            showToast(`Welcome, ${getUserDisplayName(data.user, name)}! Your ecosystem is alive.`, 'success', 5000);
-            navigateTo('dashboard');
-            setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour({ auto: true }); }, 700);
-          }
+          showToast(`Welcome, ${getUserDisplayName(data.user, name)}! Your ecosystem is alive.`, 'success', 5000);
+          // First-run guidance has one owner: the guided tour. Do not mount the
+          // separate 4-step onboarding wizard underneath it; that created two
+          // competing onboarding flows and left users in an odd page when they
+          // ended the tour.
+          navigateTo('dashboard');
+          setTimeout(() => {
+            if (typeof startKiwiTour === 'function') startKiwiTour({ auto: true });
+          }, 500);
         } catch (err) {
           if (err.status >= 500 || err.status === 0) {
             showAuthError('register', err.message || 'KIWI could not connect. Please try again.');
