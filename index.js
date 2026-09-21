@@ -7018,10 +7018,35 @@ function appendDailyVelocitySample(existingSamples, delta, now = new Date()) {
   return samples.slice(-90);
 }
 
-function computeVelocityFromGoal(goal) {
+function getVelocityWindow(goal, days, now = new Date()) {
   const samples = goal.velocity_samples || [];
-  if (samples.length === 0) return 0;
-  const window = samples.slice(-7).map(velocitySampleValue);
+  if (samples.length === 0) return [];
+
+  const allDated = samples.every((sample) => sample && typeof sample === 'object' && sample.date);
+  if (!allDated) {
+    return samples.slice(-days).map(velocitySampleValue);
+  }
+
+  const byDate = new Map();
+  for (const sample of samples) {
+    byDate.set(sample.date, (byDate.get(sample.date) || 0) + velocitySampleValue(sample));
+  }
+
+  const createdDay = goal.created_at ? new Date(goal.created_at).toISOString().slice(0, 10) : null;
+  const values = [];
+  for (let offset = days - 1; offset >= 0; offset--) {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - offset);
+    const day = d.toISOString().slice(0, 10);
+    if (createdDay && day < createdDay) continue;
+    values.push(byDate.get(day) || 0);
+  }
+  return values;
+}
+
+function computeVelocityFromGoal(goal, now = new Date()) {
+  const window = getVelocityWindow(goal, 7, now);
+  if (window.length === 0) return 0;
   return parseFloat((window.reduce((a, b) => a + b, 0) / window.length).toFixed(3));
 }
 
@@ -7037,7 +7062,7 @@ function computeTrajectoryStatus(goal, currentKS, now = new Date()) {
   const daysRemaining = Math.ceil((examDate - now) / 86400000);
   if (daysRemaining <= 0) return 'CRITICAL';
   const required = computeRequiredKSPerDay(goal, currentKS, now);
-  const velocity = computeVelocityFromGoal({ ...goal });
+  const velocity = computeVelocityFromGoal({ ...goal }, now);
   const gap      = parseFloat((required - velocity).toFixed(3)); // [DESIGN: §3.1]
   if (gap <= 0)   return 'ON_TRACK';
   if (gap <= 0.3) return 'DRIFTING';  // [DESIGN: §3.2]
@@ -7247,7 +7272,7 @@ async function updateBubbleTrajectory(userId, goalId) {
 
   // Aggregate repeated same-day trajectory updates into one net daily sample.
   const samples   = appendDailyVelocitySample(goal.velocity_samples || [], ksDelta, now);
-  const velocity  = computeVelocityFromGoal({ velocity_samples: samples });
+  const velocity  = computeVelocityFromGoal({ ...goal, velocity_samples: samples }, now);
 
   // Gap and trajectory status [DESIGN: §3.1, §3.2]
   const requiredPerDay   = computeRequiredKSPerDay(goal, ksResult.score, now);
@@ -7452,9 +7477,9 @@ async function updateBubbleTrajectory(userId, goalId) {
       ) {
         updates.seeding_early_stall_checked = true;
         // Check velocity directly — require only 1 sample (vs normal 3) [DESIGN: §2.2]
-        const earlyVelocity = samples.length > 0
-          ? samples.slice(-Math.min(7, samples.length)).map(velocitySampleValue)
-              .reduce((a, b) => a + b, 0) / Math.min(7, samples.length)
+        const earlyWindow = getVelocityWindow({ ...goal, velocity_samples: samples }, 7, now);
+        const earlyVelocity = earlyWindow.length > 0
+          ? earlyWindow.reduce((a, b) => a + b, 0) / earlyWindow.length
           : 0;
         if (earlyVelocity < 0.3) {
           const cause = await diagnoseStallCause(userId, { ...goal, ...updates }).catch(() => 'STUCK_CLUSTER');
@@ -7787,8 +7812,10 @@ async function detectStall(userId, goal) {
     // The samples.length < 3 guard above already handled the zero-samples case.
   }
   // Condition 1: average daily KS gain < 0.3 over last _stallWindow days [DESIGN: §6.1 / GAP-S3]
-  const recent      = samples.slice(-Math.min(_stallWindow, samples.length)).map(velocitySampleValue);
-  const avgVelocity = recent.reduce((a, b) => a + b, 0) / recent.length;
+  const recent      = getVelocityWindow(goal, _stallWindow);
+  const avgVelocity = recent.length > 0
+    ? recent.reduce((a, b) => a + b, 0) / recent.length
+    : 0;
   if (avgVelocity >= 0.3) return { isStall: false, cause: null };
   // Stall confirmed — diagnose cause
   const cause = await diagnoseStallCause(userId, goal);
@@ -7873,9 +7900,10 @@ async function resolveStallIfRecovered(userId, goalId) {
   if (!goal || !goal.stall_active) return;
   const samples = goal.velocity_samples || [];
   if (samples.length < 7) return;
-  const last7  = samples.slice(-7).map(velocitySampleValue);
+  const last7  = getVelocityWindow(goal, 7);
+  if (last7.length < 7) return;
   const minOf7 = Math.min(...last7);
-  // All 7 consecutive days must be ≥ 0.5 [DESIGN: §6.3]
+  // All 7 consecutive calendar days must be ≥ 0.5 [DESIGN: §6.3]
   if (minOf7 >= 0.5) {
     await db.masteryGoals.update(userId, goalId, {
       stall_active:          false,
