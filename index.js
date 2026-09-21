@@ -12674,10 +12674,9 @@ function _tourStateMarker(status, version = KIWI_TOUR_VERSION) {
 }
 
 async function getKiwiTourState(userId, version = KIWI_TOUR_VERSION) {
-  const rowId = `${userId}:tour`;
   const { rows } = await query(
-    'SELECT completed_steps FROM onboarding_state WHERE id = $1 AND user_id = $2 LIMIT 1',
-    [rowId, userId]
+    'SELECT completed_steps FROM onboarding_state WHERE user_id = $1 LIMIT 1',
+    [userId]
   );
   const raw = rows[0]?.completed_steps;
   const steps = Array.isArray(raw)
@@ -12708,7 +12707,7 @@ async function setKiwiTourState(userId, status, version = KIWI_TOUR_VERSION) {
        (id, user_id, completed_steps, current_step, completed, completed_at, created_at, updated_at)
      VALUES ($1, $2, jsonb_build_array($3::text), $4, $5,
              CASE WHEN $5 THEN NOW() ELSE NULL END, NOW(), NOW())
-     ON CONFLICT (id) DO UPDATE SET
+     ON CONFLICT (user_id) DO UPDATE SET
        completed_steps = CASE
          WHEN COALESCE(onboarding_state.completed_steps, '[]'::jsonb) @> jsonb_build_array($3::text)
            THEN COALESCE(onboarding_state.completed_steps, '[]'::jsonb)
@@ -12868,10 +12867,12 @@ generateWeeklyChronicle(user.id)
 .then(() => hookSeedlingEarnings(user.id, 'weekly_chronicle', {}).catch((e) => console.error("[KIWI] silent catch:", e.message)))
 .catch((e) => console.error('[KIWI] Chronicle catch-up failed:', e.message));
 }
-const tourState = await getKiwiTourState(user.id).catch(() => ({
-  version: KIWI_TOUR_VERSION,
-  status: 'unseen',
-}));
+// Autostart must fail closed. A temporary database/read failure is not proof
+// that this account has never seen the tour, so never turn it into "unseen".
+const tourState = await getKiwiTourState(user.id).catch((error) => {
+  console.error('[KIWI TOUR] Failed to load account tour state on login:', error.message);
+  return { version: KIWI_TOUR_VERSION, status: 'unknown' };
+});
 const { password_hash, stats: _stats, ...safeUser } = user;
 res.json({
 user: safeUser,

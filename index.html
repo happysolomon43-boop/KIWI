@@ -9759,6 +9759,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       });
 
       function logout() {
+        // Session expiry and explicit logout must dismantle every tour-owned
+        // overlay, listener and demo object before account state is cleared.
+        if (typeof _tourCleanup === 'function' && typeof _tourActive !== 'undefined' && _tourActive) {
+          _tourCleanup();
+        }
         // Tier 1 Fix #6: revoke refresh token server-side before clearing local state
         var _logoutRt = refreshToken || localStorage.getItem("kiwi_refresh_token");
         if (_logoutRt) { api.logout(_logoutRt).catch(function() {}); }
@@ -21063,7 +21068,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             <span class="guide-row-icon">🌱</span>
             <div class="guide-row-text">
               <div class="guide-row-label">Replay the KIWI Tour</div>
-              <div class="guide-row-sub">Walk through KIWI's core features at your own pace</div>
+              <div class="guide-row-sub">Revisit KIWI at your own pace — your first-run status stays unchanged</div>
             </div>
             <span class="guide-row-chevron">›</span>
           </div>
@@ -21800,18 +21805,18 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 <div id="kiwiArrow" aria-hidden="true"></div>
 <div id="kiwiTourChrome" aria-label="KIWI tour controls">
   <div id="kiwiTourCounter" aria-live="polite"><div id="tcText"></div><div class="tc-dots" id="tcDots"></div></div>
-  <button id="kiwiTourSkip" type="button" onclick="kiwiTourSkip()" aria-label="End KIWI tour">End tour</button>
+  <button id="kiwiTourSkip" type="button" onclick="kiwiTourSkip()" aria-label="Exit KIWI tour">Exit tour</button>
 </div>
 <div id="kiwiTip" role="dialog" aria-live="polite" aria-label="KIWI tour step"></div>
 <div id="kiwiSplash"></div>
 <div id="kiwiTourExit" aria-hidden="true">
   <div class="kiwi-tour-exit-card" role="dialog" aria-modal="true" aria-labelledby="kiwiTourExitTitle">
     <div class="kiwi-tour-exit-icon">🌱</div>
-    <div id="kiwiTourExitTitle" class="kiwi-tour-exit-title">End the tour?</div>
+    <div id="kiwiTourExitTitle" class="kiwi-tour-exit-title">Exit the tour?</div>
     <div class="kiwi-tour-exit-copy">Your place does not need to be saved. You can replay the full tour anytime from <strong>Settings → Help &amp; Guide</strong>.</div>
     <div class="kiwi-tour-exit-actions">
       <button class="btn btn-secondary" id="kiwiTourContinueBtn" type="button">Continue tour</button>
-      <button class="btn btn-primary" id="kiwiTourEndBtn" type="button">End tour</button>
+      <button class="btn btn-primary" id="kiwiTourEndBtn" type="button">Exit tour</button>
     </div>
   </div>
 </div>
@@ -21906,7 +21911,9 @@ async function _tourGetState() {
   } catch (_) {}
   return {
     version: KIWI_TOUR_VERSION,
-    status: ['started', 'done', 'skipped'].includes(localStatus) ? localStatus : 'unseen',
+    // A failed account-state read is not evidence of a first visit. Only the
+    // registration/login response or a successful state read may say unseen.
+    status: ['started', 'done', 'skipped'].includes(localStatus) ? localStatus : 'unknown',
   };
 }
 
@@ -21962,6 +21969,11 @@ async function startKiwiTour(options = {}) {
       ? options.prefetchedState
       : await _tourGetState();
     if (state?.status !== 'unseen') return false;
+
+    // Claim the first run before mounting any tour UI. If the account-level
+    // write cannot be confirmed, stay quiet instead of reopening later.
+    const persisted = await _tourPersistState('started');
+    if (!persisted && !AppState?.isDemo) return false;
   }
 
   _tourActive = true;
@@ -21977,11 +21989,6 @@ async function startKiwiTour(options = {}) {
   if (skipEl) skipEl.classList.add('visible');
   if (ctrEl) ctrEl.classList.add('visible');
 
-  if (auto && !force) {
-    // Persist before the first step is shown so a later login/device never
-    // interprets an already-launched tour as unseen.
-    await _tourPersistState('started');
-  }
   _tourGoTo(0);
   return true;
 }
@@ -22020,7 +22027,7 @@ async function _tourRenderStep(idx) {
   _tourStep = idx;
   const step = KIWI_TOUR_STEPS[idx];
   if (!step) {
-    await _tourFinish('dashboard', 'done');
+    await _tourFinish('dashboard', _tourReplay ? null : 'done');
     return;
   }
 
@@ -22046,11 +22053,11 @@ async function _tourRenderStep(idx) {
     return;
   }
   if (result === 'finish-import') {
-    await _tourFinish('import', 'done');
+    await _tourFinish('import', _tourReplay ? null : 'done');
     return;
   }
   if (result === 'finish-dashboard') {
-    await _tourFinish('dashboard', 'done');
+    await _tourFinish('dashboard', _tourReplay ? null : 'done');
     return;
   }
   _tourGoTo(idx + 1);
@@ -22068,6 +22075,52 @@ function _tourWait(signal, installer) {
     _tourWaitResolve = done;
     signal.addEventListener('abort', () => done('cancelled'), { once: true });
     installer(done);
+  });
+}
+
+function _tourDelay(ms, signal) {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve(false);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', cancel);
+      resolve(true);
+    }, ms);
+    const cancel = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+  });
+}
+
+function _tourWaitForLayout(target, signal, timeout = 900) {
+  return new Promise((resolve) => {
+    if (!target || signal?.aborted) return resolve(false);
+    const started = performance.now();
+    let previous = null;
+    let stableFrames = 0;
+    let raf = 0;
+
+    const finish = (settled) => {
+      if (raf) cancelAnimationFrame(raf);
+      signal?.removeEventListener('abort', cancel);
+      resolve(settled);
+    };
+    const cancel = () => finish(false);
+    const tick = (now) => {
+      if (signal?.aborted || !target.isConnected) return finish(false);
+      const rect = target.getBoundingClientRect();
+      const current = [rect.top, rect.left, rect.width, rect.height];
+      const stable = previous && current.every((value, i) => Math.abs(value - previous[i]) < 0.5);
+      stableFrames = stable ? stableFrames + 1 : 0;
+      previous = current;
+      if (stableFrames >= 3) return finish(true);
+      if (now - started >= timeout) return finish(true);
+      raf = requestAnimationFrame(tick);
+    };
+
+    signal?.addEventListener('abort', cancel, { once: true });
+    raf = requestAnimationFrame(tick);
   });
 }
 
@@ -22151,7 +22204,7 @@ function _tourIsVisible(el) {
   return r.width > 1 && r.height > 1;
 }
 
-async function _tourFindTarget(selector, signal, timeout = 2200) {
+async function _tourFindTarget(selector, signal, timeout = 4500) {
   const alternates = {
     '.bnav-item[data-route="study"]': ['.nav-item[data-route="study"]'],
     '.bnav-item[data-route="exam-config"]': ['.nav-item[data-route="exam-config"]'],
@@ -22162,7 +22215,7 @@ async function _tourFindTarget(selector, signal, timeout = 2200) {
 
   while (!signal.aborted && Date.now() <= deadline) {
     for (const candidate of selectors) {
-      const el = document.querySelector(candidate);
+      const el = Array.from(document.querySelectorAll(candidate)).find(_tourIsVisible);
       if (_tourIsVisible(el)) {
         return {
           target: el,
@@ -22171,7 +22224,7 @@ async function _tourFindTarget(selector, signal, timeout = 2200) {
         };
       }
     }
-    await _sleep(60);
+    await _tourDelay(60, signal);
   }
   return { target: null, selector, fallback: false };
 }
@@ -22231,16 +22284,10 @@ async function _tourShowSpot(step, idx, signal) {
 
   if (step.nav && AppState.currentPage !== step.nav) {
     navigateTo(step.nav);
-    await _sleep(160);
-    if (signal.aborted) return 'cancelled';
   }
 
   _tourEnsureSidebar(step);
   _tourPrepareDemoStudy(step);
-  if (['flip', 'rate'].includes(step.action)) {
-    await _sleep(120);
-    if (signal.aborted) return 'cancelled';
-  }
 
   const found = await _tourFindTarget(step.sel, signal);
   if (signal.aborted) return 'cancelled';
@@ -22260,8 +22307,8 @@ async function _tourShowSpot(step, idx, signal) {
 
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
   target.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center', inline: 'nearest' });
-  await _sleep(reducedMotion ? 30 : 240);
-  if (signal.aborted) return 'cancelled';
+  const layoutReady = await _tourWaitForLayout(target, signal, reducedMotion ? 180 : 900);
+  if (!layoutReady || signal.aborted) return 'cancelled';
 
   _tourCurrentTarget = target;
   _tourTargetInteractive = effectiveAction !== 'next';
@@ -22316,7 +22363,7 @@ function _showTip(step, idx, target, action, missing, signal) {
       '<div class="tip-mascot">' + (step.icon || '🌱') + '</div>' +
       '<div class="tip-header-copy"><div class="tip-title">' + (step.title || '') + '</div>' +
       '<div class="tip-step">Step ' + stepNum + ' of ' + spots.length + '</div></div>' +
-      '<button class="tip-end" id="tipEndTour" type="button" aria-label="End tour">×</button>' +
+      '<button class="tip-end" id="tipEndTour" type="button" aria-label="Exit tour">×</button>' +
     '</div>' +
     '<div class="tip-body">' + (step.body || '') + '</div>' +
     (missing ? '<div class="tip-unavailable">This control is not available in your current account state. You can continue without getting stuck here.</div>' : '') +
@@ -22501,20 +22548,20 @@ function _tourOpenExitSheet() {
 
   if (continueBtn) {
     continueBtn.disabled = false;
-    continueBtn.onclick = _tourCloseExitSheet;
+    continueBtn.onclick = () => _tourCloseExitSheet();
     setTimeout(() => continueBtn.focus({ preventScroll: true }), 0);
   }
 
   if (endBtn) {
     endBtn.disabled = false;
-    endBtn.textContent = 'End tour';
+    endBtn.textContent = 'Exit tour';
     endBtn.onclick = async () => {
       if (exit.dataset.busy === '1') return;
       exit.dataset.busy = '1';
       exit.setAttribute('aria-busy', 'true');
       endBtn.disabled = true;
       if (continueBtn) continueBtn.disabled = true;
-      endBtn.textContent = 'Ending…';
+      endBtn.textContent = 'Exiting…';
 
       const origin = _tourOriginPage || 'dashboard';
       await _tourFinish(origin, _tourReplay ? null : 'skipped');
@@ -22529,11 +22576,26 @@ function _tourOpenExitSheet() {
   };
 }
 
-function _tourCloseExitSheet() {
+function _tourCloseExitSheet(force = false) {
   const exit = document.getElementById('kiwiTourExit');
-  if (!exit || exit.dataset.busy === '1') return;
+  if (!exit || (!force && exit.dataset.busy === '1')) return;
   exit.classList.remove('visible');
   exit.setAttribute('aria-hidden', 'true');
+  delete exit.dataset.busy;
+  exit.removeAttribute('aria-busy');
+  exit.onclick = null;
+
+  const continueBtn = document.getElementById('kiwiTourContinueBtn');
+  const endBtn = document.getElementById('kiwiTourEndBtn');
+  if (continueBtn) {
+    continueBtn.disabled = false;
+    continueBtn.onclick = null;
+  }
+  if (endBtn) {
+    endBtn.disabled = false;
+    endBtn.textContent = 'Exit tour';
+    endBtn.onclick = null;
+  }
 }
 
 function kiwiTourSkip() {
@@ -22569,7 +22631,12 @@ function _tourCleanup() {
   _hideSpot();
   _hideTip();
   _hideArrow();
-  _tourCloseExitSheet();
+  _tourCloseExitSheet(true);
+
+  if (_tourPositionRaf) {
+    cancelAnimationFrame(_tourPositionRaf);
+    _tourPositionRaf = 0;
+  }
 
   const chrome = document.getElementById('kiwiTourChrome');
   const skipEl = document.getElementById('kiwiTourSkip');
