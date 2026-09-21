@@ -6796,7 +6796,9 @@
               if (!AppState.inventory) {
                 api.getInventory().then(inv => { AppState.inventory = inv; }).catch(() => {});
               }
-              showReckoningOverlay(data.reckoning);
+              if (data.reckoning.should_announce !== false) {
+                showReckoningOverlay(data.reckoning);
+              }
               throw new ApiError(403, "Reckoning lockout active", endpoint);
             }
             throw new ApiError(403, data.error || data.message || "Forbidden", endpoint); // [Fix 5.1]
@@ -14109,17 +14111,21 @@
             interventions,
             pendingReckoning,
           } = data;
-          // If there's a pending reckoning, show it immediately
+          // The activation overlay is a one-time announcement. The server
+          // atomically grants should_announce=true only once per Reckoning id.
+          let activeReckoningForPage = pendingReckoning || null;
           if (pendingReckoning) {
-            showReckoningOverlay(pendingReckoning);
+            if (pendingReckoning.should_announce !== false) {
+              showReckoningOverlay(pendingReckoning);
+            }
           } else {
-            // P9.7-03 FIX: proactive fallback if backend omitted pendingReckoning
-            // PATH-FIX: /reckoning/active was on unmounted reckoningRouter.
-            // Now wired on brainRouter at /brain/reckoning/active.
             try {
               const activeReckoning = await apiRequest("/brain/reckoning/active");
               if (activeReckoning && activeReckoning.id) {
-                showReckoningOverlay(activeReckoning);
+                activeReckoningForPage = activeReckoning;
+                if (activeReckoning.should_announce !== false) {
+                  showReckoningOverlay(activeReckoning);
+                }
               }
             } catch (_e) {}
           }
@@ -14131,6 +14137,23 @@
             <div class="section-sub">${totalInterventions || 0} interventions &middot; Status: ${escapeHTML(overallStatus || "Calm")}</div>
           </div>
         </div>
+        ${activeReckoningForPage ? `
+        <div class="card" id="brainActiveReckoningCard" style="margin-bottom:20px;border-color:var(--red);background:rgba(224,82,82,0.045);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+              <div style="font-size:30px;">&#x26A0;</div>
+              <div style="min-width:0;">
+                <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;color:var(--red-bright);">Reckoning active</div>
+                <div style="font-size:var(--text-base);color:var(--text-2);margin-top:2px;">
+                  ${escapeHTML(activeReckoningForPage.subjectName || activeReckoningForPage.subject_name || "Subject")} ·
+                  ${Math.round(activeReckoningForPage.pressure || activeReckoningForPage.pressure_score || 0)} pressure points
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="resumeReckoningBtn">Open Reckoning</button>
+          </div>
+        </div>
+        ` : ""}
         <!-- Highest Pressure Alert -->
         ${
           (highestPressure || 0) >= 15
@@ -14225,6 +14248,12 @@
         </div>
       </div>
     `;
+          const resumeReckoningBtn = document.getElementById("resumeReckoningBtn");
+          if (resumeReckoningBtn && activeReckoningForPage) {
+            resumeReckoningBtn.addEventListener("click", () => {
+              showReckoningOverlay(activeReckoningForPage);
+            });
+          }
           // FIX-12B (audit P7.5): wire brain pressure gauge rows -> getPressureExplanation
           // PB.11 F5-1: sourceLabelMap — human-readable descriptions for all pressure source keys [DESIGN: §15.1]
           // KEY-SYNC FIX: keys now match what calculateSubjectPressure() writes to pressureSources.
