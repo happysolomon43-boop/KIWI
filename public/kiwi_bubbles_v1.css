@@ -1,0 +1,520 @@
+/* Mastery Bubble discovery and exam-goal hub */
+.bubble-hub-page {
+  padding-bottom: 96px;
+}
+
+.bubble-hub-header {
+  align-items: flex-end;
+}
+
+.bubble-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.bubble-hub-grid-closed {
+  opacity: .88;
+}
+
+.bubble-hub-card {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  padding: 18px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 14px);
+  background: var(--surface-1, var(--surface));
+  color: var(--text);
+  cursor: pointer;
+  transition: transform var(--t-fast), border-color var(--t-fast), background var(--t-fast);
+}
+
+.bubble-hub-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(82, 183, 136, .45);
+  background: var(--surface-2);
+}
+
+.bubble-hub-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.bubble-hub-kicker {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.bubble-hub-name {
+  margin-top: 4px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.bubble-hub-status {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.bubble-hub-status.status-on_track {
+  color: var(--green-bright);
+  border-color: rgba(82, 183, 136, .36);
+  background: rgba(82, 183, 136, .07);
+}
+
+.bubble-hub-status.status-drifting,
+.bubble-hub-status.status-behind {
+  color: var(--amber);
+  border-color: rgba(245, 158, 11, .34);
+  background: rgba(245, 158, 11, .07);
+}
+
+.bubble-hub-status.status-critical,
+.bubble-hub-status.status-rescue {
+  color: var(--red-bright);
+  border-color: rgba(248, 113, 113, .38);
+  background: rgba(248, 113, 113, .07);
+}
+
+.bubble-hub-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.bubble-hub-metrics > div {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.bubble-hub-metrics strong,
+.bubble-hub-metrics span {
+  display: block;
+}
+
+.bubble-hub-metrics strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bubble-hub-metrics span {
+  margin-top: 2px;
+  color: var(--text-4);
+  font-size: var(--text-xs);
+}
+
+.bubble-hub-progress,
+.bubble-unlock-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-3, rgba(255,255,255,.05));
+}
+
+.bubble-hub-progress {
+  margin-top: 14px;
+}
+
+.bubble-hub-progress span,
+.bubble-unlock-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green), var(--green-bright));
+}
+
+.bubble-hub-deadline {
+  margin-top: 8px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.bubble-hub-empty {
+  grid-column: 1 / -1;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md, 14px);
+  background: rgba(82, 183, 136, .025);
+}
+
+.bubble-unlock-card,
+.bubble-dashboard-entry {
+  display: grid;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid rgba(82, 183, 136, .24);
+  border-radius: var(--r-md, 14px);
+  background: radial-gradient(circle at 6% 20%, rgba(82,183,136,.1), transparent 30%), var(--surface-1, var(--surface));
+}
+
+.bubble-unlock-card {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.bubble-unlock-card.is-unlocked {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.bubble-unlock-icon,
+.bubble-dashboard-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  background: rgba(82, 183, 136, .09);
+}
+
+.bubble-unlock-icon {
+  width: 52px;
+  height: 52px;
+  font-size: 27px;
+}
+
+.bubble-unlock-title,
+.bubble-dashboard-title,
+.bubble-create-title {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-weight: 780;
+}
+
+.bubble-unlock-title,
+.bubble-dashboard-title {
+  font-size: var(--text-xl);
+}
+
+.bubble-unlock-copy,
+.bubble-dashboard-sub,
+.bubble-create-copy {
+  margin-top: 4px;
+  color: var(--text-3);
+  line-height: 1.55;
+}
+
+.bubble-unlock-progress {
+  margin-top: 10px;
+}
+
+.bubble-unlock-meta {
+  margin-top: 5px;
+  color: var(--text-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.bubble-dashboard-entry {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: 14px 0 20px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color var(--t-fast), transform var(--t-fast);
+}
+
+.bubble-dashboard-entry:hover {
+  border-color: rgba(82, 183, 136, .5);
+  transform: translateY(-1px);
+}
+
+.bubble-dashboard-icon {
+  width: 48px;
+  height: 48px;
+  font-size: 24px;
+}
+
+.bubble-ai-locked-hint {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(82, 183, 136, .3);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+.bubble-ai-locked-hint strong {
+  color: var(--green-bright);
+}
+
+.bubble-ai-locked-hint span {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.bubble-ai-locked-hint .btn {
+  justify-self: start;
+  margin-top: 3px;
+}
+
+.bubble-create-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, .72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.bubble-create-shell {
+  position: relative;
+  width: min(680px, 100%);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+  padding: 26px;
+  border-color: rgba(82, 183, 136, .35);
+  box-shadow: var(--shadow-lg);
+}
+
+.bubble-create-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 26px;
+  cursor: pointer;
+}
+
+.bubble-create-close:hover {
+  color: var(--text);
+  background: rgba(255,255,255,.05);
+}
+
+.bubble-create-mark {
+  margin-bottom: 10px;
+  font-size: 42px;
+}
+
+.bubble-create-title {
+  margin-top: 5px;
+  font-size: clamp(24px, 4vw, 34px);
+  line-height: 1.15;
+}
+
+.bubble-create-copy {
+  max-width: 60ch;
+  margin-bottom: 20px;
+}
+
+.bubble-field {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.bubble-field > span {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.bubble-field em {
+  color: var(--text-4);
+  font-style: normal;
+  font-weight: 400;
+}
+
+.bubble-field input,
+.bubble-field select {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-3);
+  color: var(--text);
+  font: inherit;
+}
+
+.bubble-field input:focus,
+.bubble-field select:focus {
+  outline: none;
+  border-color: var(--green-bright);
+  box-shadow: 0 0 0 3px rgba(82,183,136,.08);
+}
+
+.bubble-date-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.bubble-deck-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.bubble-deck-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255,255,255,.02);
+  cursor: pointer;
+}
+
+.bubble-deck-option:has(input:checked) {
+  border-color: rgba(82,183,136,.48);
+  background: rgba(82,183,136,.06);
+}
+
+.bubble-deck-option input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  accent-color: var(--green-bright);
+}
+
+.bubble-deck-option span {
+  min-width: 0;
+}
+
+.bubble-deck-option strong,
+.bubble-deck-option small {
+  display: block;
+}
+
+.bubble-deck-option strong {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bubble-deck-option small {
+  margin-top: 2px;
+  color: var(--text-4);
+}
+
+.bubble-create-error {
+  min-height: 20px;
+  margin-top: 12px;
+  color: var(--red-bright);
+  font-size: var(--text-sm);
+}
+
+.bubble-create-error:empty {
+  min-height: 0;
+  margin-top: 0;
+}
+
+.bubble-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.bubble-no-subjects {
+  padding: 18px 0 2px;
+}
+
+.bubble-no-subjects .btn {
+  margin-top: 14px;
+}
+
+.bubble-unlock-celebration {
+  text-align: left;
+}
+
+.bubble-nav-item .nav-label::after {
+  content: 'Goal';
+  margin-left: 6px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: var(--green-bright);
+  background: rgba(82,183,136,.08);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 800px) {
+  .bubble-hub-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bubble-unlock-card,
+  .bubble-dashboard-entry {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .bubble-unlock-card > .btn,
+  .bubble-dashboard-entry > .btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .bubble-deck-picker,
+  .bubble-date-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bubble-create-overlay {
+    align-items: start;
+    padding: max(12px, env(safe-area-inset-top)) 10px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .bubble-create-shell {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+    padding: 22px 16px 18px;
+  }
+}
+
+@media (max-width: 480px) {
+  .bubble-hub-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .bubble-hub-card-top {
+    flex-direction: column;
+  }
+
+  .bubble-hub-status {
+    align-self: flex-start;
+  }
+}
