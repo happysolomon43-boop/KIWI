@@ -8424,6 +8424,10 @@ const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => n
 if (!reckoning) return null;
 const subjectId = reckoning.subject_id;
 const userId = reckoning.user_id;
+// Every generated Reckoning exam is a distinct attempt. Recording the attempt id
+// in pressure.sources makes outcome application idempotent if the server/browser
+// dies after pressure changes but before the Reckoning row is finalized.
+const attemptKey = reckoning.exam_session_id || reckoning.id;
 // P3.3-B4 FIX: pressure resets ONLY when reckoning is survived (score >= 70).
 // Previously unconditional — a failed reckoning gave a free pressure escape.
 const survived = parseFloat(scorePct) >= 70;
@@ -8431,6 +8435,7 @@ if (survived) {
 const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
 const currentSources = currentPressure?.sources || {};
 const reliefUntil = new Date(Date.now() + 7 * 86400000).toISOString();
+if (currentSources.reckoning_relief_attempt_id !== attemptKey) {
 const relievedScore = Math.max(0, (Number(currentPressure?.pressure_score) || 0) - 15);
 await db.brainPressure.set(userId, subjectId, {
 pressure_score: relievedScore,
@@ -8439,19 +8444,24 @@ sources: {
 ...currentSources,
 reckoning_relief_until: reliefUntil,
 reckoning_relief: -15,
+reckoning_relief_attempt_id: attemptKey,
 },
 });
+}
 } else {
 const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
 const currentSources = currentPressure?.sources || {};
+if (currentSources.reckoning_failure_attempt_id !== attemptKey) {
 await db.brainPressure.set(userId, subjectId, {
 pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5),
 intervention_level: 'L4',
 sources: {
 ...currentSources,
 manual_reckoning_failure: (Number(currentSources.manual_reckoning_failure) || 0) + 5,
+reckoning_failure_attempt_id: attemptKey,
 },
 });
+}
 }
 await db.reckoningSessions.update(reckoningId, {
 status: survived ? 'completed' : 'triggered',
@@ -8478,6 +8488,63 @@ retry_required: !survived,
 relief_until: survived ? new Date(Date.now() + 7 * 86400000).toISOString() : null,
 debrief_text: debriefText,
 };
+}
+
+// Crash/reload fail-safe for Reckoning sessions.
+//
+// The durable source of truth is the Reckoning row + its linked exam. A browser
+// refresh must never strand an account in an unrecoverable in_progress lockout:
+//   • ready/active linked exam  -> keep it resumable
+//   • completed linked exam     -> finish the Reckoning idempotently
+//   • missing/invalid linked exam -> roll back to triggered so it can be rebuilt
+async function reconcileActiveReckoning(userId, active) {
+if (!active || active.user_id !== userId || active.status !== 'in_progress') return active || null;
+
+const examId = active.exam_session_id;
+if (!examId) {
+await db.reckoningSessions.update(active.id, {
+status: 'triggered',
+exam_session_id: null,
+});
+return { ...active, status: 'triggered', exam_session_id: null, recovered_from_crash: true };
+}
+
+const exam = await db.examSessions.findByIdWithQuestions(userId, examId).catch(() => null);
+if (!exam) {
+await db.reckoningSessions.update(active.id, {
+status: 'triggered',
+exam_session_id: null,
+});
+return { ...active, status: 'triggered', exam_session_id: null, recovered_from_crash: true };
+}
+
+if (exam.status === 'completed') {
+let recoveredScore = Number(exam.score_pct);
+if (!Number.isFinite(recoveredScore)) {
+const total = Array.isArray(exam.questions) ? exam.questions.length : 0;
+const correct = total > 0
+? exam.questions.filter((q) => q.is_correct === true).length
+: 0;
+recoveredScore = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
+}
+const recoveryDebrief =
+active.debrief_text ||
+`This Reckoning result was recovered after an interrupted session. Your recorded score was ${recoveredScore}%. KIWI restored the server-backed outcome so the account cannot remain trapped in a stale lockout.`;
+await completeReckoning(active.id, recoveredScore, recoveryDebrief);
+return await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
+}
+
+if (exam.status === 'ready' || exam.status === 'active') {
+return active;
+}
+
+// A Reckoning exam is never intentionally forfeited. Any other terminal/corrupt
+// state is safer to rebuild than to leave the user permanently locked out.
+await db.reckoningSessions.update(active.id, {
+status: 'triggered',
+exam_session_id: null,
+});
+return { ...active, status: 'triggered', exam_session_id: null, recovered_from_crash: true };
 }
 // ── credentialService ─────────────────────────────────────────────────────────
 const CREDENTIAL_TIERS = [
@@ -12535,7 +12602,8 @@ if (RECKONING_EXEMPT_PATHS.some(p => req.path === p || req.path.startsWith(p + '
 if (req.path === '/generate' && (req.body?.is_reckoning || req.body?.reckoning_id)) return next();
 if (!req.user) return next();
 try {
-const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (active) active = await reconcileActiveReckoning(req.user.id, active);
 if (!active) return next();
 
 // A Reckoning lockout must still allow the exact exam that belongs to that
@@ -12581,6 +12649,7 @@ subjectName: active.subject_name,
 status: active.status,
 flagged_card_count: active.flagged_card_count,
 question_count: active.question_count,
+exam_session_id: active.exam_session_id || null,
 deferred_until: active.deferred_until || null,
 deferral_expires_at: active.deferred_until || null,
 reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
@@ -15152,9 +15221,17 @@ let reckoningQuestionCount = null;
 const isReckoningExam = !!(body.is_reckoning || body.reckoning_id);
 if (isReckoningExam) {
 // Reckoning: load flagged pool from the active session and bind generation to that exact id.
-const activeReck = await db.reckoningSessions.findActiveByUser(req.user.id).catch(() => null);
+let activeReck = await db.reckoningSessions.findActiveByUser(req.user.id).catch(() => null);
+if (activeReck) activeReck = await reconcileActiveReckoning(req.user.id, activeReck).catch(() => activeReck);
 if (!activeReck) {
   return res.status(409).json({ error: 'No active Reckoning exists for this account.' });
+}
+if (activeReck.status === 'in_progress' && activeReck.exam_session_id) {
+  return res.status(409).json({
+    error: 'A Reckoning exam is already in progress. Resume the existing exam instead of generating another one.',
+    code: 'RECKONING_RESUME_REQUIRED',
+    exam_session_id: activeReck.exam_session_id,
+  });
 }
 if (body.reckoning_id && body.reckoning_id !== activeReck.id) {
   return res.status(409).json({ error: 'Reckoning id does not match the active Reckoning.' });
@@ -15475,16 +15552,35 @@ setImmediate(async () => {
     await Promise.all(questions.map(q => db.examQuestions.create(_cbtUserId, _cbtSessionId, q)));
     const readyExam = await db.examSessions.findByIdWithQuestions(_cbtUserId, _cbtSessionId);
     // Link the generated exam to the exact Reckoning that requested it.
+    // For Reckoning this link is not optional: silently swallowing a failure here
+    // leaves the account locked while the client thinks generation succeeded.
     if (_cbtBody.is_reckoning || _cbtBody.reckoning_id) {
-      try {
-        let activeReck = null;
-        if (_cbtBody.reckoning_id) {
-          const requested = await db.reckoningSessions.findById(_cbtBody.reckoning_id).catch(() => null);
-          if (requested?.user_id === _cbtUserId) activeReck = requested;
-        }
-        if (!activeReck) activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
-        if (activeReck) await startReckoningExam(activeReck.id, _cbtSessionId);
-      } catch (_) {}
+      let activeReck = null;
+      if (_cbtBody.reckoning_id) {
+        const requested = await db.reckoningSessions.findById(_cbtBody.reckoning_id).catch(() => null);
+        if (requested?.user_id === _cbtUserId) activeReck = requested;
+      }
+      if (!activeReck) activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
+      if (!activeReck) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => null);
+        throw new Error('Active Reckoning disappeared before the generated exam could be linked. Please retry.');
+      }
+
+      activeReck = await reconcileActiveReckoning(_cbtUserId, activeReck).catch(() => activeReck);
+      if (
+        activeReck?.status === 'in_progress' &&
+        activeReck.exam_session_id &&
+        String(activeReck.exam_session_id) !== String(_cbtSessionId)
+      ) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => null);
+        throw new Error('Another Reckoning exam is already active. Resume the existing exam.');
+      }
+
+      if (!activeReck) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => null);
+        throw new Error('Reckoning recovery completed before this exam could be linked. Refresh and continue.');
+      }
+      await startReckoningExam(activeReck.id, _cbtSessionId);
     }
     _jobStoreSet(cbtJobId, { status: 'done', type: 'cbt_generation', result: readyExam });
     wsSend(_cbtUserId, 'job_done', { job_id: cbtJobId, type: 'cbt_generation', result: readyExam, exam: readyExam });
@@ -18096,7 +18192,8 @@ Return only the debrief text.`;
 
 reckoningRouter.get('/active', async (req, res) => {
 try {
-const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (active) active = await reconcileActiveReckoning(req.user.id, active);
 res.json(active || { status: 'none' });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch active reckoning' });
@@ -18170,7 +18267,8 @@ res.status(500).json({ error: 'Failed to use buffer', details: e.message });
 // Wired here so /api/brain/reckoning/active resolves correctly.
 brainRouter.get('/reckoning/active', async (req, res) => {
 try {
-const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (active) active = await reconcileActiveReckoning(req.user.id, active);
 if (!active) return res.json({ status: 'none' });
 const shouldAnnounce = await db.reckoningSessions
   .claimActivationAnnouncement(req.user.id, active.id)
@@ -18238,6 +18336,9 @@ const interventions = enriched.filter((p) => p.intervention_level !== 'L0');
 let activeReckoning = await db.reckoningSessions
 .findActiveByUser(req.user.id)
 .catch(() => null);
+if (activeReckoning) {
+activeReckoning = await reconcileActiveReckoning(req.user.id, activeReckoning).catch(() => activeReckoning);
+}
 if (!activeReckoning) {
 const l4Subject = enriched.find((p) => p.intervention_level === 'L4');
 if (l4Subject) {
@@ -18275,6 +18376,7 @@ subjectName: activeReckoning.subject_name,
 status: activeReckoning.status,
 flagged_card_count: activeReckoning.flagged_card_count,
 question_count: activeReckoning.question_count,
+exam_session_id: activeReckoning.exam_session_id || null,
 // Both field names needed: overlay reads deferral_expires_at; legacy reads deferred_until
 deferred_until: activeReckoning.deferred_until || null,
 deferral_expires_at: activeReckoning.deferred_until || null,

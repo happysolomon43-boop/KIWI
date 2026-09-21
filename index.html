@@ -6328,19 +6328,24 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               var _labels = { note_generation: 'Note generation', cbt_generation: 'Exam generation', exam_submit: 'Exam submission' };
               if (typeof showToast === 'function') showToast('(' + (_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
               if (_jf.type === 'cbt_generation') {
-                var _gb = document.getElementById('generateExamBtn');
-                if (_gb) { _gb.disabled = false; _gb.textContent = 'Generate Exam'; }
-                else {
-                  // generateExamBtn is gone — loading screen is showing; replace it with retry UI
-                  var _genScreen = document.getElementById('examGeneratingScreen');
-                  if (_genScreen) {
-                    _genScreen.innerHTML = '<div style="text-align:center;padding:40px 20px;">' +
-                      '<div style="font-size:var(--text-xl);font-weight:600;color:var(--red-bright);margin-bottom:16px;">&#x26A0; Exam generation failed</div>' +
-                      '<div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:24px;">' +
-                      ((_jf.error || 'Unknown error').replace(/</g,'&lt;').replace(/>/g,'&gt;')) +
-                      '</div>' +
-                      '<button class="btn btn-primary" onclick="navigateTo(\'exam-config\')">Try Again</button></div>';
-                  } else if (typeof navigateTo === 'function') { navigateTo('exam-config'); }
+                if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
+                  showReckoningOverlay(AppState.reckoning);
+                } else {
+                  var _gb = document.getElementById('generateExamBtn');
+                  if (_gb) { _gb.disabled = false; _gb.textContent = 'Generate Exam'; }
+                  else {
+                    // Normal CBT generation can return to exam config. Reckoning
+                    // generation is handled above so it can never fall into lockout.
+                    var _genScreen = document.getElementById('examGeneratingScreen');
+                    if (_genScreen) {
+                      _genScreen.innerHTML = '<div style="text-align:center;padding:40px 20px;">' +
+                        '<div style="font-size:var(--text-xl);font-weight:600;color:var(--red-bright);margin-bottom:16px;">&#x26A0; Exam generation failed</div>' +
+                        '<div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:24px;">' +
+                        ((_jf.error || 'Unknown error').replace(/</g,'&lt;').replace(/>/g,'&gt;')) +
+                        '</div>' +
+                        '<button class="btn btn-primary" onclick="navigateTo(\'exam-config\')">Try Again</button></div>';
+                    } else if (typeof navigateTo === 'function') { navigateTo('exam-config'); }
+                  }
                 }
               }
               if (_jf.type === 'note_generation') { var _ib = document.getElementById('aiNotesImportBtn'); if (_ib) { _ib.disabled = false; _ib.textContent = 'Generate Cards with AI'; } }
@@ -6695,9 +6700,13 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               var _failPrefix = _failPrefixes[_jf2.type] || 'Task failed';
               showToast(_failPrefix + ': ' + (_jf2.error || 'Task failed'), 'error', 8000);
               if (_jf2.type === 'cbt_generation') {
-                var _gb = document.getElementById('generateExamBtn');
-                if (_gb) { _gb.disabled = false; _gb.textContent = 'Generate Exam'; }
-                else { var _gs = document.getElementById('examGeneratingScreen'); if (_gs) _gs.innerHTML = '<div style="text-align:center;padding:40px 20px;"><div style="font-size:var(--text-xl);font-weight:600;color:var(--red-bright);margin-bottom:16px;">&#x26A0; Exam generation failed</div><div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:24px;">' + (_jf2.error||'Unknown error').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div><button class="btn btn-primary" onclick="navigateTo(\'exam-config\')">Try Again</button></div>'; else if (typeof navigateTo === 'function') navigateTo('exam-config'); }
+                if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
+                  showReckoningOverlay(AppState.reckoning);
+                } else {
+                  var _gb = document.getElementById('generateExamBtn');
+                  if (_gb) { _gb.disabled = false; _gb.textContent = 'Generate Exam'; }
+                  else { var _gs = document.getElementById('examGeneratingScreen'); if (_gs) _gs.innerHTML = '<div style="text-align:center;padding:40px 20px;"><div style="font-size:var(--text-xl);font-weight:600;color:var(--red-bright);margin-bottom:16px;">&#x26A0; Exam generation failed</div><div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:24px;">' + (_jf2.error||'Unknown error').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div><button class="btn btn-primary" onclick="navigateTo(\'exam-config\')">Try Again</button></div>'; else if (typeof navigateTo === 'function') navigateTo('exam-config'); }
+                }
               }
               if (_jf2.type === 'note_generation') {
                 var _ib = document.getElementById('aiNotesImportBtn');
@@ -6971,10 +6980,20 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               if (!AppState.inventory) {
                 api.getInventory().then(inv => { AppState.inventory = inv; }).catch(() => {});
               }
-              if (data.reckoning.should_announce !== false) {
+              const _linkedReckExam = String(data.reckoning.exam_session_id || "");
+              const _openReckExam = String((AppState.tempExam && AppState.tempExam.examId) || "");
+              const _alreadyInLinkedExam =
+                data.reckoning.status === "in_progress" &&
+                _linkedReckExam &&
+                _openReckExam === _linkedReckExam &&
+                AppState.currentPage === "exam";
+              if (!_alreadyInLinkedExam) {
                 showReckoningOverlay(data.reckoning);
               }
-              throw new ApiError(403, "Reckoning lockout active", endpoint);
+              const _reckoningErr = new ApiError(403, "Reckoning lockout active", endpoint);
+              _reckoningErr.reckoningLockout = true;
+              _reckoningErr.alreadyReported = true;
+              throw _reckoningErr;
             }
             throw new ApiError(403, data.error || data.message || "Forbidden", endpoint); // [Fix 5.1]
           }
@@ -8328,6 +8347,17 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       }
 
       function renderErrorState(container, message, onRetry) {
+        if (message === "Reckoning lockout active" && AppState && AppState.reckoning) {
+          if (typeof showReckoningOverlay === "function") showReckoningOverlay(AppState.reckoning);
+          container.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">&#x26A0;</div>
+              <div class="empty-title">Reckoning recovery active</div>
+              <div class="empty-sub">Your account is not lost. Resume or rebuild the active Reckoning from the recovery panel.</div>
+            </div>
+          `;
+          return;
+        }
         const _hasHistory = AppState && AppState.navHistory && AppState.navHistory.length > 0;
         container.innerHTML = `
     <div class="error-state">
@@ -10443,6 +10473,19 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           return false;
         }
 
+        // Answers are pre-marked server-side as the student selects them. On a
+        // refresh/crash, rebuild local exam state from those durable selections.
+        const restoredAnswers = {};
+        questions.forEach((question) => {
+          const selected = question.selected_option || question.selectedOption || null;
+          if (/^[A-D]$/.test(String(selected || ""))) {
+            restoredAnswers[question.id] = String(selected);
+          }
+        });
+        const firstUnansweredIndex = questions.findIndex(
+          (question) => restoredAnswers[question.id] === undefined,
+        );
+
         const fallbackSeconds = Math.max(
           1,
           Number(examData.time_limit_seconds) || questions.length * 66 || 1800,
@@ -10472,8 +10515,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         AppState.tempExam = {
           examId: examData.id,
           questions,
-          currentIndex: 0,
-          answers: {},
+          currentIndex:
+            options.resume === true
+              ? (firstUnansweredIndex >= 0 ? firstUnansweredIndex : Math.max(0, questions.length - 1))
+              : 0,
+          answers: options.resume === true ? restoredAnswers : {},
           flagged: new Set(),
           startTime: Number.isFinite(startTime) ? startTime : Date.now(),
           timeLimit,
@@ -10502,21 +10548,42 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       async function _restoreActiveReckoningExam() {
         try {
           const active = await apiRequest("/brain/reckoning/active");
+          if (!active || !active.id) return false;
+
+          AppState.reckoning = active;
+
+          // A valid deferral is intentionally non-blocking until it expires.
           if (
-            !active ||
-            active.status !== "in_progress" ||
-            !active.exam_session_id
+            active.status === "deferred" &&
+            active.deferred_until &&
+            new Date(active.deferred_until).getTime() > Date.now()
           ) {
+            // A live deferral deliberately lifts the lockout. Do not keep a
+            // stale Reckoning marker that could hijack unrelated CBT failures.
+            AppState.reckoning = null;
+            return false;
+          }
+
+          // If generation failed before an exam was linked, the durable Reckoning
+          // still exists. Re-open its panel so Begin can safely retry generation.
+          if (active.status !== "in_progress" || !active.exam_session_id) {
+            if (typeof showReckoningOverlay === "function") showReckoningOverlay(active);
             return false;
           }
 
           const exam = await apiRequest(
             "/exams/" + encodeURIComponent(active.exam_session_id),
           );
-          if (!exam || !exam.id) return false;
-          return await _activateAndOpenGeneratedExam(exam, { announce: false });
+          if (!exam || !exam.id) {
+            if (typeof showReckoningOverlay === "function") showReckoningOverlay(active);
+            return false;
+          }
+          return await _activateAndOpenGeneratedExam(exam, { announce: false, resume: true });
         } catch (err) {
           console.warn("[KIWI] Reckoning resume unavailable:", err?.message || err);
+          if (AppState && AppState.reckoning && typeof showReckoningOverlay === "function") {
+            showReckoningOverlay(AppState.reckoning);
+          }
           return false;
         }
       }
@@ -13937,13 +14004,15 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
       function showReckoningOverlay(reckoning) {
         const container = document.getElementById("reckoningContainer");
-        if (!container) return;
+        if (!container || !reckoning) return;
+        AppState.reckoning = reckoning;
+        const isInProgress = reckoning.status === "in_progress" && !!reckoning.exam_session_id;
         container.innerHTML = `
     <div class="reckoning-overlay" id="reckoningOverlay">
       <div class="reckoning-card">
         <div class="reckoning-icon">&#x26A0;</div>
         <div class="reckoning-title">The Reckoning</div>
-        <div class="reckoning-subject">${escapeHTML(reckoning.subjectName || "Unknown Subject")}</div>
+        <div class="reckoning-subject">${escapeHTML(reckoning.subjectName || reckoning.subject_name || "Unknown Subject")}</div>
         <div class="reckoning-reason">
           <strong style="color:var(--text);">Reason:</strong> ${escapeHTML(reckoning.reason || "Pressure threshold exceeded")}<br>
           <strong style="color:var(--text);">Required:</strong> ${escapeHTML(reckoning.requiredScore || "70")}% or higher to unlock<br>
@@ -13975,10 +14044,14 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         }
         <div style="display:flex;flex-direction:column;gap:10px;">
           <button class="btn btn-primary btn-lg" id="startReckoningBtn" style="width:100%;">
-            Begin The Reckoning
+            ${isInProgress ? "Resume The Reckoning" : "Begin The Reckoning"}
           </button>
+          ${isInProgress ? `
+          <div style="font-size:var(--text-xs);color:var(--text-2);text-align:center;line-height:1.6;">
+            Your exam is already saved on KIWI. Resume from the last server-saved answer.
+          </div>` : ""}
           ${
-            reckoning.canDefer !== false
+            !isInProgress && reckoning.canDefer !== false
               ? `
           <button class="btn btn-secondary" id="deferReckoningBtn" style="width:100%;">
             Defer (${reckoning.deferHours || 4}h cooldown)
@@ -13987,6 +14060,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               : ""
           }
           ${(() => {
+            if (isInProgress) return "";
             const inv = AppState.inventory;
             // F4: inventory is a flat array, not {items:[]}. Match on item_code directly.
             const invArr = Array.isArray(inv) ? inv : (inv?.items || []);
@@ -14004,7 +14078,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           })()}
         </div>
         ${
-          reckoning.canDefer !== false
+          !isInProgress && reckoning.canDefer !== false
             ? `
         <div class="reckoning-defer">Deferring adds ${reckoning.deferPenalty || 5} persistent pressure points.</div>
         `
@@ -14015,8 +14089,16 @@ body.kiwi-tour-active { overscroll-behavior: none; }
   `;
         document.getElementById("startReckoningBtn").addEventListener("click", async () => {
           const _startBtn = document.getElementById("startReckoningBtn");
-          if (_startBtn) { _startBtn.disabled = true; _startBtn.textContent = "Starting…"; }
+          if (_startBtn) {
+            _startBtn.disabled = true;
+            _startBtn.textContent = isInProgress ? "Resuming…" : "Starting…";
+          }
           try {
+            if (isInProgress) {
+              const resumed = await _restoreActiveReckoningExam();
+              if (!resumed) throw new Error("Saved Reckoning exam could not be resumed yet");
+              return;
+            }
             // BUG1-FIX: generateExam returns a 202 job_id object, not a completed exam.
             // Detect async path and show spinner; WS job_done handler will navigate to exam.
             const response = await api.generateExam(reckoning.subject_id || reckoning.subjectId, {
@@ -14026,7 +14108,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             if (response && response.job_id) {
               // Async path: register polling fallback and show waiting UI
               _pollJobFallback(response.job_id, authToken, 'cbt_generation');
-              AppState.reckoning = null;
+              // Keep the Reckoning object while AI generation is pending. If the
+              // job/server/browser fails, this is the retry path instead of a dead lockout.
+              AppState.reckoning = reckoning;
               container.innerHTML = `
                 <div class="reckoning-overlay" id="examGeneratingScreen" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-5);text-align:center;padding:var(--space-8);">
                   <svg style="width:36px;height:36px" viewBox="0 0 24 24" fill="none" stroke="var(--red-bright)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
@@ -14051,7 +14135,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           } catch (err) {
             showToast("Failed to start Reckoning exam", "error");
             const _sb = document.getElementById("startReckoningBtn");
-            if (_sb) { _sb.disabled = false; _sb.textContent = "Begin The Reckoning"; }
+            if (_sb) {
+              _sb.disabled = false;
+              _sb.textContent = isInProgress ? "Resume The Reckoning" : "Begin The Reckoning";
+            }
           }
         });
         const deferBtn = document.getElementById("deferReckoningBtn");
@@ -21567,8 +21654,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           if (_savedPage === "exam") {
             const _main = document.getElementById("mainContent");
             if (_main) renderLoadingState(_main, "Restoring your exam…");
-            _restoredActiveExam = await _restoreActiveReckoningExam();
           }
+          _restoredActiveExam = await _restoreActiveReckoningExam();
           if (!_restoredActiveExam) {
             let _restorePage = _savedPage;
             if (_savedPage === "study") _restorePage = "study";
@@ -21678,6 +21765,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 const idx = parseInt(e.key) - 1;
                 if (q.options[idx]) {
                   e_state.answers[q.id] = q.options[idx].id;
+                  if (e_state.examId && q.question_number != null) {
+                    api.preMarkQuestion(e_state.examId, q.question_number, q.options[idx].id);
+                  }
                   renderExam();
                 }
               }
