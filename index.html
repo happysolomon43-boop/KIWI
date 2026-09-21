@@ -6431,12 +6431,19 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         _examPageLocked = false;
         _examIsReckoning = false;
       }
-      function _lockStudyPage() { _studyPageLocked = true; }
-      function _unlockStudyPage() { _studyPageLocked = false; }
+      function _lockStudyPage() {
+        _studyPageLocked = !!(AppState && AppState.tempStudy);
+      }
+      function _unlockStudyPage() {
+        _studyPageLocked = false;
+        const staleModal = document.getElementById('_exitWarnModal');
+        if (staleModal) staleModal.remove();
+      }
 
       // beforeunload — warn on tab close / hard refresh during exam
       window.addEventListener('beforeunload', function(e) {
-        if (_examPageLocked || _studyPageLocked) {
+        const _hasLiveStudy = _studyPageLocked && !!(AppState && AppState.tempStudy);
+        if (_examPageLocked || _hasLiveStudy) {
           var msg = _examPageLocked
             ? 'You have an active exam. Leaving will forfeit it.'
             : 'You have an active study session. Your latest saved snapshot can be resumed.';
@@ -6478,7 +6485,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           : 'You are in an active exam. Leaving will forfeit it and negatively affect your Knowledge Score and card states.';
         var forfeitBtn = isReckoning
           ? '' // Reckoning exams cannot be forfeited
-          : '<button id="_ewForfeit" style="background:#c0392b;color:#fff;border:none;border-radius:8px;padding:12px 22px;cursor:pointer;font-size:14px;font-weight:600;">Forfeit ' + (isStudy ? 'Session' : 'Exam') + '</button>';
+          : isStudy
+            ? '<button id="_ewForfeit" style="background:var(--green-bright,#52b788);color:#07150f;border:none;border-radius:8px;padding:12px 22px;cursor:pointer;font-size:14px;font-weight:700;">End & Save Session</button>'
+            : '<button id="_ewForfeit" style="background:#c0392b;color:#fff;border:none;border-radius:8px;padding:12px 22px;cursor:pointer;font-size:14px;font-weight:600;">Forfeit Exam</button>';
         m.innerHTML =
           '<div style="background:var(--card-bg,#1a2e1a);border:1px solid var(--green-bright,#52b788);border-radius:16px;padding:32px;max-width:420px;width:92%;text-align:center;">' +
           '<div style="font-size:20px;font-weight:700;color:var(--red-bright,#e57373);margin-bottom:12px;">' + title + '</div>' +
@@ -6522,23 +6531,6 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               },
               _examIsReckoning,
               false
-            );
-            return;
-          }
-          if (_studyPageLocked && !_isGenPage) {
-            _showExitWarningModal(
-              null,
-              async function() {
-                var saved = true;
-                if (typeof AppState !== 'undefined' && AppState.tempStudy && AppState.tempStudy.sessionId) {
-                  saved = await endStudySession();
-                }
-                if (!saved) return;
-                _unlockStudyPage();
-                _origNavigateTo(page, params);
-              },
-              false,
-              true
             );
             return;
           }
@@ -6988,7 +6980,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 _openReckExam === _linkedReckExam &&
                 AppState.currentPage === "exam";
               if (!_alreadyInLinkedExam) {
-                showReckoningOverlay(data.reckoning);
+                showReckoningOverlay(data.reckoning, {
+                  force: data.code === "RECKONING_SUBJECT_LOCKED",
+                });
               }
               const _reckoningErr = new ApiError(403, "Reckoning lockout active", endpoint);
               _reckoningErr.reckoningLockout = true;
@@ -9064,14 +9058,17 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         }
         // Clean up any active sessions when navigating away
         if (AppState.currentPage === "study" && AppState.tempStudy && page !== "study" && !_tourActive) {
-          // FIX P9.4-08: replaced native confirm() with showCustomConfirm
           const _navTarget = page;
+          const _navParams = params;
           showCustomConfirm(
             "Leave study session?",
-            "You have an active session in progress. End it and continue?",
-            () => { endStudySession(); navigateTo(_navTarget); }
+            "End and save this study session, then continue?",
+            async () => {
+              const ended = await endStudySession();
+              if (ended) navigateTo(_navTarget, _navParams);
+            }
           );
-          page = "study"; // default: stay; callback handles nav if confirmed
+          return;
         }
         // Clean up exam timer when leaving exam
         if (AppState.currentPage === "exam" && AppState.tempExam && page !== "exam") {
@@ -12651,7 +12648,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
       async function endStudySession() {
         const study = AppState.tempStudy;
-        if (!study || study._ending) return false;
+        if (!study) {
+          try { sessionStorage.removeItem('kiwi_active_study_v1'); } catch (_) {}
+          _unlockStudyPage();
+          return true;
+        }
+        if (study._ending) return false;
         study._ending = true;
         if (study._cardTimerInterval) {
           clearInterval(study._cardTimerInterval);
@@ -12670,6 +12672,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             AppState.returnZoneSubjectId = study.subjectId;
           }
           AppState.tempStudy = null;
+          try { sessionStorage.removeItem('kiwi_active_study_v1'); } catch (_) {}
+          _unlockStudyPage();
           AppState.subjects = null;
           AppState.biome = null;
           _bustDashboardCache();
@@ -14015,6 +14019,19 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // ═══════════════════════════════════════════════════════════════════════════
 
       let _deferredReckoningWakeupTimerId = null;
+      let _reckoningOverlayRenderKey = null;
+      let _reckoningOverlayDismissedKey = null;
+
+      function _reckoningStateKey(reckoning) {
+        if (!reckoning) return "";
+        return [
+          reckoning.id || "",
+          reckoning.status || "",
+          reckoning.exam_session_id || "",
+          reckoning.deferred_until || reckoning.deferral_expires_at || "",
+          reckoning.score_pct ?? "",
+        ].join("|");
+      }
 
       function _getReckoningDeferralExpiry(reckoning) {
         const raw = reckoning?.deferral_expires_at || reckoning?.deferred_until || null;
@@ -14023,7 +14040,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       }
 
       function _isLiveReckoningDeferral(reckoning) {
-        if (!reckoning || reckoning.status !== "deferred") return false;
+        if (!reckoning || reckoning.status === "in_progress" || reckoning.status === "completed") return false;
         const expiryMs = _getReckoningDeferralExpiry(reckoning);
         return expiryMs !== null && expiryMs > Date.now();
       }
@@ -14062,6 +14079,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       function _closeReckoningSurface() {
         const host = document.getElementById("reckoningContainer");
         if (host) host.innerHTML = "";
+        _reckoningOverlayRenderKey = null;
+      }
+
+      function _minimizeReckoningSurface(reckoning) {
+        _reckoningOverlayDismissedKey = _reckoningStateKey(reckoning);
+        _closeReckoningSurface();
       }
 
       function showReckoningOverlay(reckoning, options = {}) {
@@ -14072,71 +14095,25 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         if (isLiveDeferred) {
           _scheduleDeferredReckoningWakeup(reckoning);
           AppState.reckoning = null;
-
-          // Automatic checks must stay invisible throughout the cooldown. The
-          // only deferred UI we show is the one-time status card immediately
-          // after the user presses Defer, and that card can be minimized.
-          if (options.showDeferredNotice !== true) {
-            _closeReckoningSurface();
-            return;
-          }
-
-          const expiryMs = _getReckoningDeferralExpiry(reckoning);
-          container.innerHTML = `
-            <div class="reckoning-overlay" id="reckoningOverlay">
-              <div class="reckoning-card" style="max-width:520px;position:relative;">
-                <button id="minimizeDeferredReckoningBtn" aria-label="Minimize deferred Reckoning"
-                  style="position:absolute;right:18px;top:16px;border:0;background:transparent;color:var(--text-2);font-size:28px;line-height:1;cursor:pointer;padding:4px 8px;">&times;</button>
-                <div class="reckoning-icon">&#x23F3;</div>
-                <div class="reckoning-title">Reckoning Deferred</div>
-                <div class="reckoning-subject">${escapeHTML(reckoning.subjectName || reckoning.subject_name || "Unknown Subject")}</div>
-                <div style="font-size:var(--text-base);color:var(--text-2);line-height:1.65;text-align:center;margin:12px 0 18px;">
-                  The Reckoning is minimized during the cooldown. You can keep using KIWI now.
-                  It will return automatically when the timer reaches zero.
-                </div>
-                <div style="margin:12px 0 18px;padding:14px 16px;background:rgba(13,148,136,0.08);border:1px solid rgba(13,148,136,0.2);border-radius:var(--r);text-align:center;">
-                  <div style="font-size:var(--text-xs);color:var(--text-3);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Returns In</div>
-                  <div id="deferredReckoningNoticeTimer" style="font-family:var(--font-mono);font-size:var(--text-3xl);font-weight:700;color:var(--teal);">--:--:--</div>
-                </div>
-                <button class="btn btn-secondary btn-lg" id="minimizeDeferredReckoningBtnBottom" style="width:100%;">Minimize</button>
-              </div>
-            </div>
-          `;
-
-          let noticeIntervalId = null;
-          const updateDeferredNoticeTimer = () => {
-            const el = document.getElementById("deferredReckoningNoticeTimer");
-            if (!el) {
-              if (noticeIntervalId) clearInterval(noticeIntervalId);
-              return;
-            }
-            const remaining = Math.max(0, expiryMs - Date.now());
-            const h = Math.floor(remaining / 3600000);
-            const m = Math.floor((remaining % 3600000) / 60000);
-            const s = Math.floor((remaining % 60000) / 1000);
-            el.textContent = remaining === 0
-              ? "00:00:00"
-              : `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-            if (remaining === 0 && noticeIntervalId) clearInterval(noticeIntervalId);
-          };
-          updateDeferredNoticeTimer();
-          noticeIntervalId = setInterval(updateDeferredNoticeTimer, 1000);
-
-          const minimizeDeferredNotice = () => {
-            if (noticeIntervalId) clearInterval(noticeIntervalId);
-            _closeReckoningSurface();
-          };
-          document.getElementById("minimizeDeferredReckoningBtn")?.addEventListener("click", minimizeDeferredNotice);
-          document.getElementById("minimizeDeferredReckoningBtnBottom")?.addEventListener("click", minimizeDeferredNotice);
+          _closeReckoningSurface();
           return;
         }
 
         _clearDeferredReckoningWakeup();
         AppState.reckoning = reckoning;
+        const stateKey = _reckoningStateKey(reckoning);
+        const existingOverlay = document.getElementById("reckoningOverlay");
+        if (options.force !== true && _reckoningOverlayDismissedKey === stateKey) return;
+        if (existingOverlay && _reckoningOverlayRenderKey === stateKey) return;
+        _reckoningOverlayRenderKey = stateKey;
+        if (options.force === true) _reckoningOverlayDismissedKey = null;
+
         const isInProgress = reckoning.status === "in_progress" && !!reckoning.exam_session_id;
         container.innerHTML = `
     <div class="reckoning-overlay" id="reckoningOverlay">
-      <div class="reckoning-card">
+      <div class="reckoning-card" style="position:relative;">
+        <button id="minimizeReckoningBtn" type="button" aria-label="Minimize The Reckoning"
+          style="position:absolute;right:16px;top:12px;border:0;background:transparent;color:var(--text-2);font-size:30px;line-height:1;cursor:pointer;padding:6px 9px;z-index:2;">&times;</button>
         <div class="reckoning-icon">&#x26A0;</div>
         <div class="reckoning-title">The Reckoning</div>
         <div class="reckoning-subject">${escapeHTML(reckoning.subjectName || reckoning.subject_name || "Unknown Subject")}</div>
@@ -14214,6 +14191,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       </div>
     </div>
   `;
+        document.getElementById("minimizeReckoningBtn")?.addEventListener("click", () => {
+          _minimizeReckoningSurface(reckoning);
+        });
         document.getElementById("startReckoningBtn").addEventListener("click", async () => {
           const _startBtn = document.getElementById("startReckoningBtn");
           if (_startBtn) {
@@ -14287,9 +14267,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 can_defer: false,
               };
               AppState.reckoning = null;
-              showToast("Reckoning deferred. You can continue until the timer ends.", "warning");
+              _scheduleDeferredReckoningWakeup(deferredReckoning);
+              _closeReckoningSurface();
+              const _deferUntilText = new Date(deferredUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+              showToast("Reckoning deferred until " + _deferUntilText + ". It will stay hidden until then.", "warning", 7000);
               navigateTo("dashboard");
-              showReckoningOverlay(deferredReckoning, { showDeferredNotice: true });
             } catch (err) {
               showToast("Cannot defer at this time", "error");
             }
@@ -14832,7 +14814,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           const resumeReckoningBtn = document.getElementById("resumeReckoningBtn");
           if (resumeReckoningBtn && activeReckoningForPage) {
             resumeReckoningBtn.addEventListener("click", () => {
-              showReckoningOverlay(activeReckoningForPage);
+              showReckoningOverlay(activeReckoningForPage, { force: true });
             });
           }
           // FIX-12B (audit P7.5): wire brain pressure gauge rows -> getPressureExplanation
@@ -21805,10 +21787,6 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             try { return sessionStorage.getItem("kiwi_page"); } catch (_) { return null; }
           })();
           let _restoredActiveExam = false;
-          if (_savedPage === "exam") {
-            const _main = document.getElementById("mainContent");
-            if (_main) renderLoadingState(_main, "Restoring your exam…");
-          }
           _restoredActiveExam = await _restoreActiveReckoningExam();
           if (!_restoredActiveExam) {
             let _restorePage = _savedPage;
