@@ -414,6 +414,14 @@ async findById(userId, id) {
   );
   return rows[0] || null;
 },
+async findByIds(userId, cardIds) {
+  if (!cardIds || cardIds.length === 0) return [];
+  const { rows } = await query(
+    'SELECT * FROM cards WHERE user_id = $1 AND id = ANY($2::text[])',
+    [userId, cardIds]
+  );
+  return rows;
+},
 async findMany(userId, filters = {}, { page = 1, limit = 50 } = {}) {
   // Fix #46: use COUNT for total; avoid loading all cards to count
   let baseSQL = 'FROM cards WHERE user_id = $1';
@@ -1133,6 +1141,16 @@ async findActiveByUser(userId) {
     [userId]
   );
   return rows[0] || null;
+},
+async claimActivationAnnouncement(userId, id) {
+  const { rows } = await query(
+    `UPDATE reckoning_sessions
+     SET activation_announced_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND activation_announced_at IS NULL
+     RETURNING activation_announced_at`,
+    [id, userId]
+  );
+  return rows.length > 0;
 },
 async findByUser(userId) {
   const { rows } = await query(
