@@ -17798,6 +17798,9 @@ if (!exam) return res.status(404).json({ error: 'Exam not found' });
 if (!exam.is_reckoning) {
   return res.status(409).json({ error: 'This exam is not the active Reckoning exam.' });
 }
+if (exam.status !== 'active' || !exam.started_at) {
+  return res.status(409).json({ error: 'Reckoning exam must be active before it can be submitted.' });
+}
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
 if (!active || active.status !== 'in_progress' || active.exam_session_id !== examId) {
   return res.status(409).json({ error: 'This exam is not linked to the active Reckoning.' });
