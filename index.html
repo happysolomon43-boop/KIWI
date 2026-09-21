@@ -21797,12 +21797,20 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 /* ════════════════════════════════════════════════════════════════════
    KIWI TOUR ENGINE
 ════════════════════════════════════════════════════════════════════ */
-let _tourNavResolve = null;
+let _tourNavResolve = null; // legacy bridge used by navigateTo
 let _tourFlipResolve = null;
 let _tourRateResolve = null;
-let _tourNextResolve = null;
+let _tourNextResolve = null; // retained for compatibility with older inline hooks
 let _tourStep = 0;
 let _tourActive = false;
+let _tourStepAbort = null;
+let _tourWaitResolve = null;
+let _tourCurrentTarget = null;
+let _tourTargetInteractive = false;
+let _tourPositionRaf = 0;
+let _tourOriginPage = 'dashboard';
+let _tourReplay = false;
+const KIWI_TOUR_VERSION = 'v2';
 
 const KIWI_TOUR_STEPS = [
   {type:'splash',icon:'🌱',eyebrow:'Welcome to KIWI',
@@ -21861,90 +21869,293 @@ const KIWI_TOUR_STEPS = [
    features:['🌿 Live ecosystem','📈 KS tracking','⚡ AI exams','🌍 Community']},
 ];
 
-async function startKiwiTour() {
-  if (localStorage.getItem('kiwi_tour_seen')) return; // blocks both 'done' and 'skipped'
-  _tourActive = true; _tourStep = 0;
+function _tourLocalKey() {
+  const userId = AppState?.user?.id || 'anonymous';
+  return 'kiwi_tour_' + KIWI_TOUR_VERSION + ':' + userId;
+}
+
+async function _tourGetState() {
+  let localStatus = null;
+  try { localStatus = localStorage.getItem(_tourLocalKey()); } catch (_) {}
+  try {
+    const remote = await apiRequest('/tour/state');
+    if (remote && remote.status) {
+      try { localStorage.setItem(_tourLocalKey(), remote.status); } catch (_) {}
+      return remote;
+    }
+  } catch (_) {}
+  return {
+    version: KIWI_TOUR_VERSION,
+    status: ['started', 'done', 'skipped'].includes(localStatus) ? localStatus : 'unseen',
+  };
+}
+
+async function _tourPersistState(status) {
+  if (!['started', 'done', 'skipped'].includes(status)) return null;
+  try { localStorage.setItem(_tourLocalKey(), status); } catch (_) {}
+  try {
+    return await apiRequest('/tour/state', {
+      method: 'PUT',
+      body: { version: KIWI_TOUR_VERSION, status },
+    });
+  } catch (err) {
+    console.warn('[KIWI TOUR] Could not sync tour state:', err?.message || err);
+    return null;
+  }
+}
+
+async function maybeStartKiwiTour(prefetchedState = null) {
+  if (_tourActive) return false;
+  const state = prefetchedState || await _tourGetState();
+  if (state?.status !== 'unseen') return false;
+  return startKiwiTour({ auto: true });
+}
+
+async function startKiwiTour(options = {}) {
+  if (_tourActive) return false;
+  const force = !!options.force;
+  const auto = !!options.auto;
+
+  if (!authToken && !AppState?.isDemo) return false;
+  if (AppState?.tempExam) {
+    if (force) showToast('Finish your active exam before replaying the tour.', 'warning', 5000);
+    return false;
+  }
+  if (AppState?.tempStudy && !AppState.tempStudy._isTourSession) {
+    if (force) showToast('End your active study session before replaying the tour.', 'warning', 5000);
+    return false;
+  }
+
+  if (auto && !force) {
+    const state = await _tourGetState();
+    if (state.status !== 'unseen') return false;
+  }
+
+  _tourActive = true;
+  _tourReplay = force;
+  _tourStep = 0;
+  _tourOriginPage = AppState?.currentPage || 'dashboard';
+  document.body.classList.add('kiwi-tour-active');
+
+  const chrome = document.getElementById('kiwiTourChrome');
+  if (chrome) chrome.classList.add('visible');
   const skipEl = document.getElementById('kiwiTourSkip');
-  const ctrEl  = document.getElementById('kiwiTourCounter');
+  const ctrEl = document.getElementById('kiwiTourCounter');
   if (skipEl) skipEl.classList.add('visible');
-  if (ctrEl)  ctrEl.classList.add('visible');
-  await _tourRenderStep(0);
+  if (ctrEl) ctrEl.classList.add('visible');
+
+  if (auto && !force) _tourPersistState('started');
+  _tourGoTo(0);
+  return true;
+}
+
+function _tourCancelCurrentStep() {
+  if (_tourStepAbort) {
+    const controller = _tourStepAbort;
+    _tourStepAbort = null;
+    try { controller.abort(); } catch (_) {}
+  }
+  if (_tourWaitResolve) {
+    const resolve = _tourWaitResolve;
+    _tourWaitResolve = null;
+    try { resolve('cancelled'); } catch (_) {}
+  }
+  _tourNavResolve = null;
+  _tourFlipResolve = null;
+  _tourRateResolve = null;
+  _tourNextResolve = null;
+  _tourCurrentTarget = null;
+  _tourTargetInteractive = false;
+}
+
+function _tourGoTo(idx) {
+  if (!_tourActive) return;
+  _tourCancelCurrentStep();
+  _hideSplash();
+  _hideSpot();
+  _hideTip();
+  _hideArrow();
+  _tourCloseExitSheet();
+  const nextIdx = Math.max(0, Math.min(idx, KIWI_TOUR_STEPS.length - 1));
+  queueMicrotask(() => _tourRenderStep(nextIdx));
 }
 
 async function _tourRenderStep(idx) {
   if (!_tourActive) return;
   _tourStep = idx;
   const step = KIWI_TOUR_STEPS[idx];
-  if (!step) { _tourFinish(); return; }
+  if (!step) {
+    await _tourFinish('dashboard', 'done');
+    return;
+  }
+
+  const controller = new AbortController();
+  _tourStepAbort = controller;
   _tourUpdateCounter(idx);
-  if (step.type === 'splash') await _tourShowSplash(step, idx);
-  else await _tourShowSpot(step, idx);
+
+  let result = 'cancelled';
+  try {
+    result = step.type === 'splash'
+      ? await _tourShowSplash(step, idx, controller.signal)
+      : await _tourShowSpot(step, idx, controller.signal);
+  } catch (err) {
+    if (!controller.signal.aborted) {
+      console.warn('[KIWI TOUR] Step failed:', err);
+      result = 'next';
+    }
+  }
+
+  if (!_tourActive || controller.signal.aborted || result === 'cancelled') return;
+  if (result === 'back') {
+    _tourGoTo(idx - 1);
+    return;
+  }
+  if (result === 'finish-import') {
+    await _tourFinish('import', 'done');
+    return;
+  }
+  if (result === 'finish-dashboard') {
+    await _tourFinish('dashboard', 'done');
+    return;
+  }
+  _tourGoTo(idx + 1);
+}
+
+function _tourWait(signal, installer) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (result = 'next') => {
+      if (settled) return;
+      settled = true;
+      if (_tourWaitResolve === done) _tourWaitResolve = null;
+      resolve(result);
+    };
+    _tourWaitResolve = done;
+    signal.addEventListener('abort', () => done('cancelled'), { once: true });
+    installer(done);
+  });
 }
 
 function _tourUpdateCounter(idx) {
-  const spots = KIWI_TOUR_STEPS.filter(s => s.type === 'spot');
-  const spotIdx = KIWI_TOUR_STEPS.slice(0, idx + 1).filter(s => s.type === 'spot').length;
+  const step = KIWI_TOUR_STEPS[idx];
+  const spots = KIWI_TOUR_STEPS.filter((s) => s.type === 'spot');
+  const spotIdx = KIWI_TOUR_STEPS.slice(0, idx + 1).filter((s) => s.type === 'spot').length;
   const tcText = document.getElementById('tcText');
   const dotsEl = document.getElementById('tcDots');
-  if (tcText) tcText.textContent = spotIdx + '/' + spots.length;
-  if (dotsEl) dotsEl.innerHTML = spots.slice(0, Math.min(spots.length, 12)).map((_, i) => {
-    const cls = i < spotIdx - 1 ? 'tc-dot done' : i === spotIdx - 1 ? 'tc-dot active' : 'tc-dot';
-    return '<div class="' + cls + '"></div>';
-  }).join('');
+
+  if (tcText) {
+    if (step?.type === 'splash' && !step.done) tcText.textContent = 'KIWI tour';
+    else if (step?.done) tcText.textContent = 'Tour complete';
+    else tcText.textContent = 'Step ' + spotIdx + ' of ' + spots.length;
+  }
+  if (dotsEl) {
+    const shown = Math.min(spots.length, 12);
+    const scaled = spots.length <= shown
+      ? spotIdx - 1
+      : Math.min(shown - 1, Math.floor(((Math.max(1, spotIdx) - 1) / Math.max(1, spots.length - 1)) * (shown - 1)));
+    dotsEl.innerHTML = Array.from({ length: shown }, (_, i) => {
+      const cls = i < scaled ? 'tc-dot done' : i === scaled ? 'tc-dot active' : 'tc-dot';
+      return '<div class="' + cls + '"></div>';
+    }).join('');
+  }
 }
 
-async function _tourShowSplash(step, idx) {
-  _hideSpot(); _hideTip(); _hideArrow();
+async function _tourShowSplash(step, idx, signal) {
+  _hideSpot();
+  _hideTip();
+  _hideArrow();
+  _tourCurrentTarget = null;
+  _tourTargetInteractive = false;
+
   const el = document.getElementById('kiwiSplash');
-  if (!el) { _tourRenderStep(idx + 1); return; }
-  const confettiHtml = step.done ? Array.from({length: 20}, (_, i) => {
+  if (!el) return 'next';
+
+  const confettiHtml = step.done ? Array.from({ length: 20 }, (_, i) => {
     const colors = ['#6ee7a0', '#3ec9c9', '#fbbf24', '#f97316'];
-    return '<div class="confetti-piece" style="background:' + colors[i%4] + ';left:' + (5 + i*4.5) + '%;top:' + (10 + Math.random()*20) + '%;--r:' + (Math.random()*720) + 'deg;--d:' + (i*0.07) + 's;"></div>';
+    return '<div class="confetti-piece" style="background:' + colors[i % 4] + ';left:' +
+      (5 + i * 4.5) + '%;top:' + (10 + Math.random() * 20) + '%;--r:' +
+      (Math.random() * 720) + 'deg;--d:' + (i * 0.07) + 's;"></div>';
   }).join('') : '';
+
   const treeHtml = step.done
     ? '<svg width="130" height="160" viewBox="0 0 100 130" fill="none"><rect x="44" y="92" width="12" height="38" rx="4" fill="#3d2b1f"/><path d="M44 126 Q32 133 24 130" stroke="#3d2b1f" stroke-width="2.5" stroke-linecap="round" fill="none"/><path d="M56 126 Q68 133 76 130" stroke="#3d2b1f" stroke-width="2.5" stroke-linecap="round" fill="none"/><ellipse cx="50" cy="70" rx="36" ry="30" fill="#52b788" opacity=".9"/><ellipse cx="50" cy="48" rx="24" ry="20" fill="#6ee7a0" opacity=".88"/><ellipse cx="50" cy="30" rx="14" ry="12" fill="#6ee7a0"/><circle cx="36" cy="64" r="4" fill="#fbbf24"/><circle cx="64" cy="60" r="4" fill="#fbbf24"/><circle cx="50" cy="80" r="3.5" fill="#f97316" opacity=".85"/></svg>'
     : '<div style="font-size:64px;animation:seedPulse 2s infinite;">🌱</div>';
+
   el.innerHTML = confettiHtml +
     '<div class="splash-tree">' + treeHtml + '</div>' +
     '<div class="splash-eyebrow">' + step.eyebrow + '</div>' +
     '<h2 class="splash-headline">' + step.headline + '</h2>' +
     '<p class="splash-sub">' + step.body + '</p>' +
-    '<button class="splash-cta" id="splashCta">' + step.cta + '</button>' +
-    (step.cta2 ? '<button class="splash-skip" id="splashCta2">' + step.cta2 + '</button>' : '') +
-    (!step.done ? '<button class="splash-skip" onclick="kiwiTourSkip()">Skip tour</button>' : '') +
-    '<div class="splash-features">' + (step.features||[]).map(f => '<div class="splash-feat">✓ ' + f + '</div>').join('') + '</div>';
+    '<button class="splash-cta" id="splashCta" type="button">' + step.cta + '</button>' +
+    (step.cta2 ? '<button class="splash-skip" id="splashCta2" type="button">' + step.cta2 + '</button>' : '') +
+    (!step.done ? '<button class="splash-skip" id="splashEndTour" type="button">Not now</button>' : '') +
+    '<div class="splash-features">' + (step.features || []).map((f) => '<div class="splash-feat">✓ ' + f + '</div>').join('') + '</div>';
+
   el.classList.add('visible');
-  await new Promise(resolve => {
-    const ctaBtn = document.getElementById('splashCta');
-    if (ctaBtn) ctaBtn.onclick = () => {
-      if (step.done) { _tourFinish(); navigateTo('import'); }
-      else { el.classList.remove('visible'); setTimeout(resolve, 400); }
-    };
-    const cta2 = document.getElementById('splashCta2');
-    if (cta2) cta2.onclick = () => { _tourFinish(); navigateTo('dashboard'); };
+
+  return _tourWait(signal, (done) => {
+    document.getElementById('splashCta')?.addEventListener('click', () => {
+      done(step.done ? 'finish-import' : 'next');
+    }, { once: true, signal });
+
+    document.getElementById('splashCta2')?.addEventListener('click', () => {
+      done('finish-dashboard');
+    }, { once: true, signal });
+
+    document.getElementById('splashEndTour')?.addEventListener('click', () => {
+      _tourOpenExitSheet();
+    }, { signal });
   });
-  el.classList.remove('visible');
-  await _sleep(400);
-  _tourRenderStep(idx + 1);
 }
 
-async function _tourShowSpot(step, idx) {
-  _hideSplash();
-  if (step.nav && AppState.currentPage !== step.nav) {
-    await new Promise(resolve => { _tourNavResolve = resolve; navigateTo(step.nav); });
-    await _sleep(500);
-  }
-  if (step.action === 'sidebar' || (step.sel && step.sel.includes('.nav-item'))) {
-    const _sidebar = document.getElementById('sidebar');
-    if (_sidebar && !_sidebar.classList.contains('open') && step.action !== 'sidebar') {
-      _sidebar.classList.add('open');
-      const _sov = document.getElementById('sidebarOverlay');
-      if (_sov) _sov.classList.add('show');
-      await _sleep(600);
+function _tourIsVisible(el) {
+  if (!el || !el.isConnected) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  const r = el.getBoundingClientRect();
+  return r.width > 1 && r.height > 1;
+}
+
+async function _tourFindTarget(selector, signal, timeout = 2200) {
+  const alternates = {
+    '.bnav-item[data-route="study"]': ['.nav-item[data-route="study"]'],
+    '.bnav-item[data-route="exam-config"]': ['.nav-item[data-route="exam-config"]'],
+    '#hamburgerBtn': ['#sidebar'],
+  };
+  const selectors = [selector, ...(alternates[selector] || [])].filter(Boolean);
+  const deadline = Date.now() + timeout;
+
+  while (!signal.aborted && Date.now() <= deadline) {
+    for (const candidate of selectors) {
+      const el = document.querySelector(candidate);
+      if (_tourIsVisible(el)) {
+        return {
+          target: el,
+          selector: candidate,
+          fallback: candidate !== selector,
+        };
+      }
     }
+    await _sleep(60);
   }
-  // If this is a flip/rate step and there's no active session, inject a tour demo session
-  if ((step.action === 'flip' || step.action === 'rate') && !AppState.tempStudy) {
+  return { target: null, selector, fallback: false };
+}
+
+function _tourEnsureSidebar(step) {
+  if (!step?.sel?.includes('.nav-item')) return;
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  const rect = sidebar.getBoundingClientRect();
+  const offscreen = rect.right <= 0 || rect.left >= window.innerWidth;
+  if (offscreen || (!sidebar.classList.contains('open') && window.innerWidth <= 900)) {
+    sidebar.classList.add('open');
+    document.getElementById('sidebarOverlay')?.classList.add('show');
+  }
+}
+
+function _tourPrepareDemoStudy(step) {
+  if (!['flip', 'rate'].includes(step.action)) return;
+  if (!AppState.tempStudy || !AppState.tempStudy._isTourSession) {
     AppState.tempStudy = {
       sessionId: 'tour-demo-session',
       queue: [
@@ -21965,101 +22176,126 @@ async function _tourShowSpot(step, idx) {
       _isTourSession: true,
       _cardHistory: [],
     };
-    if (typeof renderActiveStudySession === 'function') {
-      renderActiveStudySession(document.getElementById('mainContent'));
-    }
-    await _sleep(400);
   }
-  const target = document.querySelector(step.sel);
-  if (!target) { _tourRenderStep(idx + 1); return; }
-  target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  await _sleep(450);
-  _positionSpot(target, step.action !== 'next');
-  const isLast = idx === KIWI_TOUR_STEPS.length - 1;
-  _showTip(step, idx, isLast, target);
-  _positionArrow(target, step.pos);
-  if (step.action === 'next') {
-    // Also allow tapping the spotlight target to advance
-    function _targetAdvance() { target.removeEventListener('click', _targetAdvance); if (_tourNextResolve) { const r = _tourNextResolve; _tourNextResolve = null; r(); } }
-    target.addEventListener('click', _targetAdvance, { once: true });
-    await new Promise(resolve => { _tourNextResolve = resolve; });
-    target.removeEventListener('click', _targetAdvance);
-  } else if (step.action === 'click') {
-    await new Promise(resolve => {
-      _tourNavResolve = resolve;
-      function _clickH() { target.removeEventListener('click', _clickH); _tourNavResolve = null; resolve(); }
-      target.addEventListener('click', _clickH, { once: true });
-    });
-    // Overlay-spawning selectors (e.g. ._cd-detail-btn) only need 600ms for DOM to appear;
-    // full page navigations need the full 1800ms.
-    const _isOverlayClick = step.sel && (step.sel.includes('_cd-detail-btn') || step.sel.includes('_dd-'));
-    await _sleep(_isOverlayClick ? 600 : 1800);
-  } else if (step.action === 'sidebar') {
-    await new Promise(resolve => {
-      _tourNavResolve = resolve;
-      function _sbH() { target.removeEventListener('click', _sbH); _tourNavResolve = null; resolve(); }
-      target.addEventListener('click', _sbH, { once: true });
-    });
-    await _sleep(800);
-  } else if (step.action === 'flip') {
-    await new Promise(resolve => { _tourFlipResolve = resolve; });
-    await _sleep(1000);
+
+  if (step.action === 'flip') {
+    AppState.tempStudy.currentIndex = 0;
+    AppState.tempStudy.flipped = false;
   } else if (step.action === 'rate') {
-    await new Promise(resolve => { _tourRateResolve = resolve; });
-    await _sleep(700);
+    AppState.tempStudy.currentIndex = 0;
+    AppState.tempStudy.flipped = true;
   }
-  _hideSpot(); _hideTip(); _hideArrow();
-  await _sleep(300);
-  _tourRenderStep(idx + 1);
+
+  if (typeof renderActiveStudySession === 'function') {
+    renderActiveStudySession(document.getElementById('mainContent'));
+  }
 }
 
-function _showTip(step, idx, isLast, target) {
+async function _tourShowSpot(step, idx, signal) {
+  _hideSplash();
+
+  if (step.nav && AppState.currentPage !== step.nav) {
+    navigateTo(step.nav);
+    await _sleep(160);
+    if (signal.aborted) return 'cancelled';
+  }
+
+  _tourEnsureSidebar(step);
+  _tourPrepareDemoStudy(step);
+  if (['flip', 'rate'].includes(step.action)) {
+    await _sleep(120);
+    if (signal.aborted) return 'cancelled';
+  }
+
+  const found = await _tourFindTarget(step.sel, signal);
+  if (signal.aborted) return 'cancelled';
+
+  let target = found.target;
+  let effectiveAction = step.action;
+  if (found.fallback && step.sel === '#hamburgerBtn' && found.selector === '#sidebar') {
+    effectiveAction = 'next';
+  }
+
+  if (!target) {
+    _tourCurrentTarget = null;
+    _tourTargetInteractive = false;
+    _showTip(step, idx, null, effectiveAction, true, signal);
+    return _tourWait(signal, (done) => _tourWireTipActions(idx, effectiveAction, true, done, signal));
+  }
+
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  target.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center', inline: 'nearest' });
+  await _sleep(reducedMotion ? 30 : 240);
+  if (signal.aborted) return 'cancelled';
+
+  _tourCurrentTarget = target;
+  _tourTargetInteractive = effectiveAction !== 'next';
+  _positionSpot(target, _tourTargetInteractive);
+  _positionArrow(target, step.pos);
+  _showTip(step, idx, target, effectiveAction, false, signal);
+
+  return _tourWait(signal, (done) => {
+    _tourWireTipActions(idx, effectiveAction, false, done, signal);
+
+    if (effectiveAction === 'click' || effectiveAction === 'sidebar') {
+      target.addEventListener('click', () => done('next'), { once: true, signal });
+    } else if (effectiveAction === 'flip') {
+      _tourFlipResolve = () => {
+        _tourFlipResolve = null;
+        done('next');
+      };
+    } else if (effectiveAction === 'rate') {
+      _tourRateResolve = () => {
+        _tourRateResolve = null;
+        done('next');
+      };
+    }
+  });
+}
+
+function _tourWireTipActions(idx, action, missing, done, signal) {
+  const backBtn = document.getElementById('tipBack');
+  const nextBtn = document.getElementById('tipNext');
+  const skipStep = document.getElementById('tipSkipStep');
+  const endBtn = document.getElementById('tipEndTour');
+
+  backBtn?.addEventListener('click', () => done('back'), { once: true, signal });
+  if (nextBtn && (action === 'next' || missing)) {
+    nextBtn.addEventListener('click', () => done('next'), { once: true, signal });
+  }
+  skipStep?.addEventListener('click', () => done('next'), { once: true, signal });
+  endBtn?.addEventListener('click', () => _tourOpenExitSheet(), { signal });
+}
+
+function _showTip(step, idx, target, action, missing, signal) {
   const el = document.getElementById('kiwiTip');
   if (!el) return;
-  const isInteractive = step.action !== 'next';
-  const spots = KIWI_TOUR_STEPS.filter(s => s.type === 'spot');
-  const stepNum = KIWI_TOUR_STEPS.slice(0, idx + 1).filter(s => s.type === 'spot').length;
+
+  const spots = KIWI_TOUR_STEPS.filter((s) => s.type === 'spot');
+  const stepNum = KIWI_TOUR_STEPS.slice(0, idx + 1).filter((s) => s.type === 'spot').length;
+  const interactive = action !== 'next' && !missing;
+
   el.className = '';
   el.innerHTML =
     '<div class="tip-header">' +
-      '<div class="tip-mascot">' + (step.icon||'🌱') + '</div>' +
-      '<div><div class="tip-title">' + (step.title||'') + '</div>' +
-          '<div class="tip-step">Step ' + stepNum + ' of ' + spots.length + '</div></div>' +
+      '<div class="tip-mascot">' + (step.icon || '🌱') + '</div>' +
+      '<div class="tip-header-copy"><div class="tip-title">' + (step.title || '') + '</div>' +
+      '<div class="tip-step">Step ' + stepNum + ' of ' + spots.length + '</div></div>' +
+      '<button class="tip-end" id="tipEndTour" type="button" aria-label="End tour">×</button>' +
     '</div>' +
-    '<div class="tip-body">' + (step.body||'') + '</div>' +
+    '<div class="tip-body">' + (step.body || '') + '</div>' +
+    (missing ? '<div class="tip-unavailable">This control is not available in your current account state. You can continue without getting stuck here.</div>' : '') +
     '<div class="tip-actions">' +
-      (idx > 1 ? '<button class="tip-btn-back" id="tipBack">←</button>' : '') +
-      '<button class="tip-btn-next" id="tipNext"' + (isInteractive ? ' disabled' : '') + '>' +
-        (isLast ? 'Finish ✓' : 'Next →') + '</button>' +
+      (idx > 0 ? '<button class="tip-btn-back" id="tipBack" type="button" aria-label="Previous step">←</button>' : '') +
+      '<button class="tip-btn-next" id="tipNext" type="button"' + (interactive ? ' disabled' : '') + '>' +
+        (interactive ? 'Use the highlighted control' : 'Next →') +
+      '</button>' +
     '</div>' +
-    (step.hint ? '<div class="tip-hint">' + step.hint + '</div>' : '');
-  const backBtn = document.getElementById('tipBack');
-  if (backBtn) backBtn.onclick = () => {
-    _hideTip(); _hideSpot(); _hideArrow();
-    if (_tourNextResolve) { const r = _tourNextResolve; _tourNextResolve = null; r(); }
-    _tourRenderStep(Math.max(0, idx - 1));
-  };
-  const nextBtn = document.getElementById('tipNext');
-  if (nextBtn && !isInteractive) {
-    nextBtn.onclick = () => { if (_tourNextResolve) { const r = _tourNextResolve; _tourNextResolve = null; r(); } };
-  }
-  if (isInteractive) {
-    setTimeout(() => {
-      const nb = document.getElementById('tipNext');
-      if (nb && nb.disabled) {
-        nb.disabled = false; nb.textContent = 'Skip →';
-        nb.style.background = 'var(--bg-3)'; nb.style.color = 'var(--text-3)';
-        nb.onclick = () => {
-          if (_tourNextResolve)  { const r = _tourNextResolve;  _tourNextResolve  = null; r(); }
-          if (_tourFlipResolve)  { const r = _tourFlipResolve;  _tourFlipResolve  = null; r(); }
-          if (_tourRateResolve)  { const r = _tourRateResolve;  _tourRateResolve  = null; r(); }
-          if (_tourNavResolve)   { const r = _tourNavResolve;   _tourNavResolve   = null; r(); }
-        };
-      }
-    }, 6000);
-  }
-  // Show immediately — CSS bottom-anchor handles position
+    (interactive ? '<button class="tip-btn-skip-step" id="tipSkipStep" type="button">Skip this step</button>' : '') +
+    (step.hint && !missing ? '<div class="tip-hint">' + step.hint + '</div>' : '');
+
   requestAnimationFrame(() => {
+    if (signal.aborted) return;
     _positionTip(step.pos, step.sel, target);
     el.classList.add('visible');
   });
@@ -22069,115 +22305,256 @@ function _positionTip(pos, sel, target) {
   const el = document.getElementById('kiwiTip');
   if (!el) return;
 
-  // Reset all inline positions
-  el.style.top    = '';
+  el.style.top = '';
   el.style.bottom = '';
-  el.style.left   = '12px';
-  el.style.right  = '12px';
+  el.style.left = '';
+  el.style.right = '';
   el.style.transform = '';
 
-  if (!target) { el.style.bottom = '80px'; return; }
-
-  const r      = target.getBoundingClientRect();
-  const vh     = window.innerHeight;
-  const tipH   = el.offsetHeight || 260;  // real height after innerHTML rendered
-  const GAP    = 16;   // breathing room between target and tip
-  const TOP_MIN = 68;  // clear the tour counter bar
-  const BOT_MIN = 80;  // clear the bottom nav bar
-
-  // Try BELOW the target first
-  const belowTop = r.bottom + GAP;
-  if (belowTop + tipH <= vh - BOT_MIN) {
-    el.style.top    = Math.max(TOP_MIN, belowTop) + 'px';
-    el.style.bottom = '';
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if (vw <= 720) {
+    el.style.left = '8px';
+    el.style.right = '8px';
+    el.style.bottom = 'max(70px, calc(58px + env(safe-area-inset-bottom)))';
     return;
   }
 
-  // Try ABOVE the target
-  const aboveBottom = r.top - GAP;
-  if (aboveBottom - tipH >= TOP_MIN) {
-    el.style.top    = '';
-    el.style.bottom = (vh - aboveBottom) + 'px';
+  const w = Math.min(el.offsetWidth || 380, vw - 24);
+  const h = Math.min(el.offsetHeight || 260, vh - 96);
+  const GAP = 16;
+  const TOP = 64;
+  const EDGE = 12;
+  const BOTTOM = 18;
+
+  if (!target) {
+    el.style.left = Math.max(EDGE, (vw - w) / 2) + 'px';
+    el.style.top = Math.max(TOP, (vh - h) / 2) + 'px';
     return;
   }
 
-  // Fallback: whichever side has more room
-  const spaceBelow = vh - r.bottom - BOT_MIN;
-  const spaceAbove = r.top - TOP_MIN;
-  if (spaceBelow >= spaceAbove) {
-    el.style.top    = Math.max(TOP_MIN, r.bottom + GAP) + 'px';
-    el.style.bottom = '';
-  } else {
-    el.style.top    = '';
-    el.style.bottom = Math.max(BOT_MIN, vh - r.top + GAP) + 'px';
-  }
+  const r = target.getBoundingClientRect();
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const candidates = {
+    right: {
+      left: r.right + GAP,
+      top: clamp(r.top + r.height / 2 - h / 2, TOP, vh - h - BOTTOM),
+    },
+    left: {
+      left: r.left - GAP - w,
+      top: clamp(r.top + r.height / 2 - h / 2, TOP, vh - h - BOTTOM),
+    },
+    bottom: {
+      left: clamp(r.left + r.width / 2 - w / 2, EDGE, vw - w - EDGE),
+      top: r.bottom + GAP,
+    },
+    top: {
+      left: clamp(r.left + r.width / 2 - w / 2, EDGE, vw - w - EDGE),
+      top: r.top - GAP - h,
+    },
+  };
+
+  const fits = (p) =>
+    p.left >= EDGE &&
+    p.left + w <= vw - EDGE &&
+    p.top >= TOP &&
+    p.top + h <= vh - BOTTOM;
+
+  const order = [pos, 'right', 'left', 'bottom', 'top'].filter((v, i, a) => v && a.indexOf(v) === i);
+  const chosen = order.map((name) => candidates[name]).find(fits) || {
+    left: clamp((vw - w) / 2, EDGE, vw - w - EDGE),
+    top: clamp(vh - h - 80, TOP, vh - h - BOTTOM),
+  };
+
+  el.style.left = chosen.left + 'px';
+  el.style.top = chosen.top + 'px';
 }
 
 function _positionSpot(target, interactive) {
   const spot = document.getElementById('kiwiSpot');
-  if (!spot) return;
-  const r = target.getBoundingClientRect(), pad = 8;
-  spot.style.top    = (r.top    - pad) + 'px';
-  spot.style.left   = (r.left   - pad) + 'px';
-  spot.style.width  = (r.width  + pad*2) + 'px';
-  spot.style.height = (r.height + pad*2) + 'px';
+  if (!spot || !target) return;
+
+  const r = target.getBoundingClientRect();
+  const pad = 7;
+  const top = Math.max(4, r.top - pad);
+  const left = Math.max(4, r.left - pad);
+  const right = Math.min(window.innerWidth - 4, r.right + pad);
+  const bottom = Math.min(window.innerHeight - 4, r.bottom + pad);
+
+  spot.style.top = top + 'px';
+  spot.style.left = left + 'px';
+  spot.style.width = Math.max(2, right - left) + 'px';
+  spot.style.height = Math.max(2, bottom - top) + 'px';
   const cs = getComputedStyle(target);
   spot.style.borderRadius = cs.borderRadius || '10px';
   spot.className = 'visible' + (interactive ? ' interactive' : '');
 }
-function _hideSpot()  { const s = document.getElementById('kiwiSpot');  if (s) s.className = ''; }
+
 function _positionArrow(target, pos) {
   const arr = document.getElementById('kiwiArrow');
-  if (!arr) return;
+  if (!arr || !target) return;
+  if (window.innerWidth <= 720) {
+    _hideArrow();
+    return;
+  }
+
   const r = target.getBoundingClientRect();
   const offsets = {
-    top:    { top: r.top - 36,           left: r.left + r.width/2 - 13,  sym: '▼' },
-    bottom: { top: r.bottom + 8,         left: r.left + r.width/2 - 13,  sym: '▲' },
-    left:   { top: r.top + r.height/2 - 13, left: r.left - 38,           sym: '▶' },
-    right:  { top: r.top + r.height/2 - 13, left: r.right + 10,          sym: '◀' },
+    top:    { top: r.top - 36, left: r.left + r.width / 2 - 13, sym: '▼' },
+    bottom: { top: r.bottom + 8, left: r.left + r.width / 2 - 13, sym: '▲' },
+    left:   { top: r.top + r.height / 2 - 13, left: r.left - 38, sym: '▶' },
+    right:  { top: r.top + r.height / 2 - 13, left: r.right + 10, sym: '◀' },
   };
   const o = offsets[pos] || offsets.bottom;
   arr.textContent = o.sym;
-  arr.style.top  = Math.max(8, o.top) + 'px';
+  arr.style.top = Math.max(56, Math.min(o.top, window.innerHeight - 40)) + 'px';
   arr.style.left = Math.max(8, Math.min(o.left, window.innerWidth - 40)) + 'px';
   arr.className = 'visible bounce';
 }
-function _hideArrow() { const a = document.getElementById('kiwiArrow'); if (a) a.className = ''; }
-function _hideTip()   { const e = document.getElementById('kiwiTip');   if (e) { e.className = ''; e.innerHTML = ''; } }
-function _hideSplash(){ const e = document.getElementById('kiwiSplash');if (e) e.classList.remove('visible'); }
-function _sleep(ms)   { return new Promise(r => setTimeout(r, ms)); }
+
+function _tourOpenExitSheet() {
+  if (!_tourActive) return;
+  const exit = document.getElementById('kiwiTourExit');
+  if (!exit) return;
+  exit.classList.add('visible');
+  exit.setAttribute('aria-hidden', 'false');
+
+  const continueBtn = document.getElementById('kiwiTourContinueBtn');
+  const endBtn = document.getElementById('kiwiTourEndBtn');
+  if (continueBtn) {
+    continueBtn.onclick = _tourCloseExitSheet;
+    setTimeout(() => continueBtn.focus({ preventScroll: true }), 0);
+  }
+  if (endBtn) {
+    endBtn.onclick = () => {
+      const origin = _tourOriginPage || 'dashboard';
+      _tourFinish(origin, _tourReplay ? null : 'skipped');
+    };
+  }
+  exit.onclick = (event) => {
+    if (event.target === exit) _tourCloseExitSheet();
+  };
+}
+
+function _tourCloseExitSheet() {
+  const exit = document.getElementById('kiwiTourExit');
+  if (!exit) return;
+  exit.classList.remove('visible');
+  exit.setAttribute('aria-hidden', 'true');
+}
 
 function kiwiTourSkip() {
-  showCustomConfirm(
-    'Skip the tour?',
-    'You can replay it from Settings → Help & Guide anytime.',
-    () => { localStorage.setItem('kiwi_tour_seen','skipped'); _tourCleanup(); navigateTo('dashboard'); }
-  );
+  _tourOpenExitSheet();
 }
-function _tourFinish() { localStorage.setItem('kiwi_tour_seen','done'); _tourCleanup(); }
+
+async function _tourFinish(destination = null, state = 'done') {
+  if (!_tourActive) return;
+  if (state) _tourPersistState(state);
+  _tourCleanup();
+
+  if (destination && typeof navigateTo === 'function') {
+    navigateTo(destination);
+  }
+}
+
 function _tourCleanup() {
   _tourActive = false;
-  _hideSplash(); _hideSpot(); _hideTip(); _hideArrow();
+  _tourCancelCurrentStep();
+  document.body.classList.remove('kiwi-tour-active');
+  _hideSplash();
+  _hideSpot();
+  _hideTip();
+  _hideArrow();
+  _tourCloseExitSheet();
+
+  const chrome = document.getElementById('kiwiTourChrome');
   const skipEl = document.getElementById('kiwiTourSkip');
-  const ctrEl  = document.getElementById('kiwiTourCounter');
+  const ctrEl = document.getElementById('kiwiTourCounter');
+  if (chrome) chrome.classList.remove('visible');
   if (skipEl) skipEl.classList.remove('visible');
-  if (ctrEl)  ctrEl.classList.remove('visible');
-  [_tourNavResolve, _tourFlipResolve, _tourRateResolve, _tourNextResolve].forEach(r => r && r());
-  _tourNavResolve = _tourFlipResolve = _tourRateResolve = _tourNextResolve = null;
-  // Clean up any tour demo study session so it doesn't block real sessions
+  if (ctrEl) ctrEl.classList.remove('visible');
+
   if (AppState.tempStudy && AppState.tempStudy._isTourSession) {
     AppState.tempStudy = null;
   }
-  // Close any open community deck detail overlay left by the tour
-  const ddOv = document.querySelector('#_dd-import-btn');
-  if (ddOv) { const ov = ddOv.closest('[style*="position:fixed"]'); if (ov) ov.remove(); }
+
+  const sidebar = document.getElementById('sidebar');
+  const sidebarOverlay = document.getElementById('sidebarOverlay');
+  sidebar?.classList.remove('open');
+  sidebarOverlay?.classList.remove('show');
+
+  const detailButton = document.querySelector('#_dd-import-btn');
+  if (detailButton) {
+    const overlay = detailButton.closest('[style*="position:fixed"]');
+    if (overlay) overlay.remove();
+  }
+
+  _tourReplay = false;
+  _tourCurrentTarget = null;
+  _tourTargetInteractive = false;
 }
-window.addEventListener('resize', () => {
-  const step = KIWI_TOUR_STEPS[_tourStep];
-  if (!step || step.type !== 'spot' || !_tourActive) return;
-  const t = document.querySelector(step.sel);
-  if (t) { _positionSpot(t, step.action !== 'next'); _positionArrow(t, step.pos); _positionTip(step.pos, step.sel, t); }
-});
+
+function _hideSpot() {
+  const spot = document.getElementById('kiwiSpot');
+  if (spot) spot.className = '';
+}
+function _hideArrow() {
+  const arrow = document.getElementById('kiwiArrow');
+  if (arrow) arrow.className = '';
+}
+function _hideTip() {
+  const tip = document.getElementById('kiwiTip');
+  if (tip) {
+    tip.className = '';
+    tip.innerHTML = '';
+  }
+}
+function _hideSplash() {
+  document.getElementById('kiwiSplash')?.classList.remove('visible');
+}
+function _sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function _tourScheduleReposition() {
+  if (!_tourActive || _tourPositionRaf) return;
+  _tourPositionRaf = requestAnimationFrame(() => {
+    _tourPositionRaf = 0;
+    const step = KIWI_TOUR_STEPS[_tourStep];
+    const target = _tourCurrentTarget;
+    if (!step || step.type !== 'spot' || !target || !target.isConnected) return;
+    _positionSpot(target, _tourTargetInteractive);
+    _positionArrow(target, step.pos);
+    _positionTip(step.pos, step.sel, target);
+  });
+}
+
+// Keep the tour in control of navigation while it is active. Clicking elsewhere
+// cannot accidentally move the app to a state that no longer matches the step.
+document.addEventListener('click', (event) => {
+  if (!_tourActive) return;
+  const allowedUi = event.target.closest?.(
+    '#kiwiTip, #kiwiTourChrome, #kiwiSplash, #kiwiTourExit'
+  );
+  if (allowedUi) return;
+  if (_tourTargetInteractive && _tourCurrentTarget?.contains(event.target)) return;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}, true);
+
+document.addEventListener('keydown', (event) => {
+  if (!_tourActive || event.key !== 'Escape') return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+
+  const exit = document.getElementById('kiwiTourExit');
+  if (exit?.classList.contains('visible')) _tourCloseExitSheet();
+  else _tourOpenExitSheet();
+}, true);
+
+window.addEventListener('resize', _tourScheduleReposition, { passive: true });
+window.addEventListener('scroll', _tourScheduleReposition, { passive: true, capture: true });
 </script>
 <script src="/kiwi_product_v3.js"></script>
 <script src="/kiwi_bubbles_v1.js"></script>
