@@ -9092,7 +9092,6 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         // Update bottom nav and mobile bar
         updateBottomNav(page);
         updateMobileBar(page);
-        if (typeof _tourNavResolve === 'function') { var _tnr = _tourNavResolve; _tourNavResolve = null; setTimeout(_tnr, 0); }
       }
 
       // ── Navigation helpers ──
@@ -21812,10 +21811,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 /* ════════════════════════════════════════════════════════════════════
    KIWI TOUR ENGINE
 ════════════════════════════════════════════════════════════════════ */
-let _tourNavResolve = null; // legacy bridge used by navigateTo
 let _tourFlipResolve = null;
 let _tourRateResolve = null;
-let _tourNextResolve = null; // retained for compatibility with older inline hooks
 let _tourStep = 0;
 let _tourActive = false;
 let _tourStepAbort = null;
@@ -21975,10 +21972,8 @@ function _tourCancelCurrentStep() {
     _tourWaitResolve = null;
     try { resolve('cancelled'); } catch (_) {}
   }
-  _tourNavResolve = null;
   _tourFlipResolve = null;
   _tourRateResolve = null;
-  _tourNextResolve = null;
   _tourCurrentTarget = null;
   _tourTargetInteractive = false;
 }
