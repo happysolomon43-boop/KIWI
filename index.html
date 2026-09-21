@@ -12739,15 +12739,21 @@
               const qCount = (job.questions || examData.questions || []).length;
               const SECS_PER_Q = 66;
               const clock = await startExamClock(examId, qCount * SECS_PER_Q);
+              const legacyIsReckoning = !!(
+                job.is_reckoning || job.isReckoning ||
+                examData.is_reckoning || examData.isReckoning
+              );
               AppState.tempExam = {
                 examId, questions: normalizeExamQuestions(job.questions || examData.questions || []),
                 currentIndex: 0, answers: {}, flagged: new Set(),
                 startTime: clock.startTime,
-                timeLimit: job.isReckoning ? Infinity : clock.timeLimit,
-                totalTime: job.isReckoning ? Infinity : clock.timeLimit,
+                timeLimit: legacyIsReckoning ? Infinity : clock.timeLimit,
+                totalTime: legacyIsReckoning ? Infinity : clock.timeLimit,
                 _warnedAt20: false, _warnedAt10: false, submitted: false,
+                isReckoning: legacyIsReckoning,
               };
               navigateTo("exam");
+              _lockExamPage(legacyIsReckoning);
             } catch (err) {
               if (err.status === 403 && AppState.reckoning) return;
               var genBtn2 = document.getElementById("generateExamBtn");
