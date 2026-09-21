@@ -329,7 +329,8 @@
 
   function expandSidebarSectionForRoute(route) {
     if (!route) return;
-    const item = document.querySelector(`.nav-item[data-route="${CSS.escape(String(route))}"]`);
+    const item = Array.from(document.querySelectorAll('.nav-item[data-route]'))
+      .find((candidate) => candidate.dataset.route === String(route));
     const group = item?.closest?.('.kiwi-nav-section');
     if (group) setSidebarSectionCollapsed(group, false, false);
   }
