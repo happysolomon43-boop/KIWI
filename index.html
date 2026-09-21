@@ -5760,6 +5760,154 @@
 @keyframes confettiDrop { 0%{opacity:1;transform:translateY(-20px) rotate(0deg);} 100%{opacity:0;transform:translateY(100px) rotate(var(--r,360deg));} }
 .confetti-piece { position:absolute; width:8px; height:8px; border-radius:2px; animation:confettiDrop 1.5s ease-in var(--d,0s) both; }
 @keyframes seedPulse { 0%,100%{box-shadow:0 0 0 0 rgba(82,183,136,0.5);} 50%{box-shadow:0 0 0 12px rgba(82,183,136,0);} }
+/* ── Tour v2: integrated chrome, resilient positioning, mobile polish ── */
+#kiwiTourChrome {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 24px));
+  z-index: 10010;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease;
+}
+#kiwiTourChrome.visible { opacity: 1; pointer-events: auto; }
+#kiwiTourCounter {
+  position: static;
+  transform: none;
+  opacity: 1;
+  pointer-events: none;
+  min-width: 0;
+  max-width: calc(100% - 96px);
+  padding: 7px 12px;
+  background: rgba(3,13,11,.9);
+}
+#kiwiTourCounter.visible { opacity: 1; }
+#kiwiTourSkip {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  color: var(--text-3);
+  background: rgba(3,13,11,.9);
+}
+#kiwiTourSkip.visible { opacity: 1; pointer-events: auto; }
+#kiwiTip {
+  width: min(380px, calc(100vw - 24px));
+  max-width: 380px;
+  left: 12px;
+  right: auto;
+  margin: 0;
+  padding: 18px;
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  z-index: 10000;
+}
+.tip-header { position: relative; }
+.tip-header-copy { min-width: 0; flex: 1; }
+.tip-end {
+  margin-left: auto;
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: var(--text-4);
+  font-size: 18px;
+  line-height: 1;
+  padding: 5px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.tip-end:hover { color: var(--text); background: rgba(255,255,255,.05); }
+.tip-actions { margin-top: 2px; }
+.tip-btn-skip-step {
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-4);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.tip-btn-skip-step:hover { color: var(--text-2); }
+.tip-unavailable {
+  margin: -2px 0 12px;
+  padding: 9px 10px;
+  border: 1px solid rgba(251,191,36,.2);
+  border-radius: 10px;
+  color: var(--gold);
+  background: rgba(251,191,36,.05);
+  font-size: 11px;
+  line-height: 1.5;
+}
+#kiwiTourExit {
+  position: fixed;
+  inset: 0;
+  z-index: 10030;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(3,13,11,.78);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease;
+}
+#kiwiTourExit.visible { opacity: 1; pointer-events: auto; }
+.kiwi-tour-exit-card {
+  width: min(390px, 100%);
+  padding: 24px;
+  text-align: center;
+  border: 1px solid var(--border-2);
+  border-radius: 20px;
+  background: var(--surface, #0e2019);
+  box-shadow: 0 24px 80px rgba(0,0,0,.6);
+}
+.kiwi-tour-exit-icon { font-size: 34px; margin-bottom: 8px; }
+.kiwi-tour-exit-title { font-family: var(--font-display); font-size: 19px; font-weight: 750; color: var(--text); }
+.kiwi-tour-exit-copy { margin: 10px 0 20px; color: var(--text-3); font-size: 13px; line-height: 1.65; }
+.kiwi-tour-exit-actions { display: flex; gap: 10px; }
+.kiwi-tour-exit-actions .btn { flex: 1; }
+body.kiwi-tour-active { overscroll-behavior: none; }
+
+@media (max-width: 720px) {
+  #kiwiTourChrome {
+    width: calc(100vw - 16px);
+    top: max(8px, env(safe-area-inset-top));
+  }
+  #kiwiTourCounter { padding: 6px 10px; }
+  #kiwiTourSkip { padding: 6px 10px; font-size: 10px; }
+  .tc-dots { display: none; }
+  #kiwiTip {
+    left: 8px !important;
+    right: 8px !important;
+    top: auto !important;
+    bottom: max(70px, calc(58px + env(safe-area-inset-bottom))) !important;
+    width: auto;
+    max-width: none;
+    max-height: 44vh;
+    border-radius: 18px;
+  }
+  .tip-body { line-height: 1.55; }
+  #kiwiSplash { padding-top: max(72px, calc(56px + env(safe-area-inset-top))); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #kiwiSpot, #kiwiArrow, #kiwiTip, #kiwiSplash, #kiwiTourChrome, #kiwiTourExit {
+    transition: none !important;
+    animation: none !important;
+  }
+  #kiwiSpot.interactive, #kiwiArrow.bounce, .tip-hint { animation: none !important; }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    HELP & GUIDE — Settings Rows
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -9484,11 +9632,11 @@
           if (data.welcome) {
             showToast(`Welcome, ${getUserDisplayName(data.user, name)}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('onboarding');
-            setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
+            setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour({ auto: true }); }, 700);
           } else {
             showToast(`Welcome, ${getUserDisplayName(data.user, name)}! Your ecosystem is alive.`, 'success', 5000);
             navigateTo('dashboard');
-            setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
+            setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour({ auto: true }); }, 700);
           }
         } catch (err) {
           if (err.status >= 500 || err.status === 0) {
@@ -9546,8 +9694,8 @@
           // PATCH FIX-6: ensure back button history stack is initialised after login too
           history.replaceState({ kiwi: 1 }, '');
           history.pushState({ kiwi: 1 }, '');
-          // Start tour for users who haven't completed or skipped it yet (e.g. registered on another device)
-          setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 600);
+          // The guided tour is first-run only. Returning users can replay it
+          // deliberately from Settings → Help & Guide.
         } catch (err) {
           if (err.status >= 500 || err.status === 0) {
             showAuthError('login', err.message || 'KIWI could not connect. Please try again.');
@@ -11890,6 +12038,17 @@
         const t = AppState.tempStudy;
         if (!t) return;
         if (typeof _tourRateResolve === 'function') { var _trr = _tourRateResolve; _tourRateResolve = null; _trr(); }
+        // Tour sessions are isolated demonstrations. Never write fake reviews,
+        // pressure, SRS changes, or session activity to the real account.
+        if (t._isTourSession) {
+          t.cardsReviewed = (t.cardsReviewed || 0) + 1;
+          t.currentIndex = Math.min(t.currentIndex + 1, Math.max(0, t.queue.length - 1));
+          t.flipped = false;
+          t.aiSummary = null;
+          t.cardShownAt = Date.now();
+          renderActiveStudySession(document.getElementById("mainContent"));
+          return;
+        }
         // QQ guard: must submit Quick Questions before advancing
         if (AppState.quickQ && !AppState.quickQ.submitted) {
           showToast('⚡ Submit your Quick Questions to continue', 'warning', 3000);
@@ -21086,9 +21245,12 @@
           const _guideReplayTour = document.getElementById('guideReplayTour');
           if (_guideReplayTour) {
             _guideReplayTour.addEventListener('click', () => {
-              localStorage.removeItem('kiwi_tour_seen');
-              showToast('Tour reset — launching now…', 'success');
-              setTimeout(() => { if (typeof startKiwiTour === 'function') startKiwiTour(); }, 400);
+              showToast('Opening the KIWI tour…', 'info');
+              setTimeout(() => {
+                if (typeof startKiwiTour === 'function') {
+                  startKiwiTour({ force: true, source: 'settings' });
+                }
+              }, 250);
             });
           }
 
@@ -21612,12 +21774,25 @@
 <!-- ════════════════════════════════════════════════════════════════════
      KIWI TOUR ENGINE DOM ELEMENTS
 ════════════════════════════════════════════════════════════════════ -->
-<div id="kiwiSpot"></div>
-<div id="kiwiArrow"></div>
-<div id="kiwiTourCounter"><div id="tcText"></div><div class="tc-dots" id="tcDots"></div></div>
-<button id="kiwiTourSkip" onclick="kiwiTourSkip()">Skip tour</button>
-<div id="kiwiTip"></div>
+<div id="kiwiSpot" aria-hidden="true"></div>
+<div id="kiwiArrow" aria-hidden="true"></div>
+<div id="kiwiTourChrome" aria-label="KIWI tour controls">
+  <div id="kiwiTourCounter" aria-live="polite"><div id="tcText"></div><div class="tc-dots" id="tcDots"></div></div>
+  <button id="kiwiTourSkip" type="button" onclick="kiwiTourSkip()" aria-label="End KIWI tour">End tour</button>
+</div>
+<div id="kiwiTip" role="dialog" aria-live="polite" aria-label="KIWI tour step"></div>
 <div id="kiwiSplash"></div>
+<div id="kiwiTourExit" aria-hidden="true">
+  <div class="kiwi-tour-exit-card" role="dialog" aria-modal="true" aria-labelledby="kiwiTourExitTitle">
+    <div class="kiwi-tour-exit-icon">🌱</div>
+    <div id="kiwiTourExitTitle" class="kiwi-tour-exit-title">End the tour?</div>
+    <div class="kiwi-tour-exit-copy">Your place does not need to be saved. You can replay the full tour anytime from <strong>Settings → Help &amp; Guide</strong>.</div>
+    <div class="kiwi-tour-exit-actions">
+      <button class="btn btn-secondary" id="kiwiTourContinueBtn" type="button">Continue tour</button>
+      <button class="btn btn-primary" id="kiwiTourEndBtn" type="button">End tour</button>
+    </div>
+  </div>
+</div>
 <script>
 /* ════════════════════════════════════════════════════════════════════
    KIWI TOUR ENGINE
