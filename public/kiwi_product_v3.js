@@ -504,7 +504,12 @@
     /* Route renders replace main-content children without replacing the
        scroller itself. Showing the bar on a fresh route avoids carrying a
        retracted title/close control into the next page. */
+    let lastRoute = AppState?.currentPage;
     const routeObserver = new MutationObserver(() => {
+      const currentRoute = AppState?.currentPage;
+      if (currentRoute === lastRoute) return;
+      lastRoute = currentRoute;
+
       clearTimeout(resetTimer);
       resetTimer = window.setTimeout(() => {
         showChrome();
