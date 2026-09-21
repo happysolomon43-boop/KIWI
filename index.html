@@ -14019,6 +14019,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // ═══════════════════════════════════════════════════════════════════════════
 
       let _deferredReckoningWakeupTimerId = null;
+      let _brainReckoningCountdownIntervalId = null;
       let _reckoningOverlayRenderKey = null;
       let _reckoningOverlayDismissedKey = null;
 
@@ -14669,8 +14670,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           // is different: it must stay completely out of the way until its timer
           // expires, at which point _scheduleDeferredReckoningWakeup() restores it.
           let activeReckoningForPage = null;
+          let deferredReckoningForPage = null;
           if (pendingReckoning) {
             if (_isLiveReckoningDeferral(pendingReckoning)) {
+              deferredReckoningForPage = pendingReckoning;
               _scheduleDeferredReckoningWakeup(pendingReckoning);
               _closeReckoningSurface();
             } else {
@@ -14684,6 +14687,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               const activeReckoning = await apiRequest("/brain/reckoning/active");
               if (activeReckoning && activeReckoning.id) {
                 if (_isLiveReckoningDeferral(activeReckoning)) {
+                  deferredReckoningForPage = activeReckoning;
                   _scheduleDeferredReckoningWakeup(activeReckoning);
                   _closeReckoningSurface();
                 } else {
@@ -14703,6 +14707,28 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             <div class="section-sub">${totalInterventions || 0} interventions &middot; Status: ${escapeHTML(overallStatus || "Calm")}</div>
           </div>
         </div>
+        ${deferredReckoningForPage ? `
+        <div class="card" id="brainDeferredReckoningCard" style="margin-bottom:20px;border-color:var(--teal);background:rgba(45,212,191,0.045);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+              <div style="font-size:30px;">&#x23F3;</div>
+              <div style="min-width:0;">
+                <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;color:var(--teal);">Reckoning deferred</div>
+                <div style="font-size:var(--text-base);color:var(--text-2);margin-top:2px;">
+                  ${escapeHTML(deferredReckoningForPage.subjectName || deferredReckoningForPage.subject_name || "Subject")}
+                </div>
+                <div style="font-size:var(--text-sm);color:var(--text-3);margin-top:4px;">
+                  The Reckoning stays hidden until this countdown reaches zero.
+                </div>
+              </div>
+            </div>
+            <div style="min-width:150px;text-align:center;padding:10px 14px;border:1px solid rgba(45,212,191,0.22);border-radius:var(--r);background:rgba(45,212,191,0.055);">
+              <div style="font-size:var(--text-xs);color:var(--text-3);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Returns in</div>
+              <div id="brainReckoningCountdown" style="font-family:var(--font-mono);font-size:var(--text-2xl);font-weight:700;color:var(--teal);">--:--:--</div>
+            </div>
+          </div>
+        </div>
+        ` : ""}
         ${activeReckoningForPage ? `
         <div class="card" id="brainActiveReckoningCard" style="margin-bottom:20px;border-color:var(--red);background:rgba(224,82,82,0.045);">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
@@ -14814,6 +14840,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         </div>
       </div>
     `;
+          if (_brainReckoningCountdownIntervalId) {
+            clearInterval(_brainReckoningCountdownIntervalId);
+            _brainReckoningCountdownIntervalId = null;
+          }
+          if (deferredReckoningForPage) {
+            const _brainDeferralExpiry = _getReckoningDeferralExpiry(deferredReckoningForPage);
+            const _updateBrainReckoningCountdown = () => {
+              const el = document.getElementById("brainReckoningCountdown");
+              if (!el || AppState.currentPage !== "brain") {
+                if (_brainReckoningCountdownIntervalId) {
+                  clearInterval(_brainReckoningCountdownIntervalId);
+                  _brainReckoningCountdownIntervalId = null;
+                }
+                return;
+              }
+              const remaining = Math.max(0, (_brainDeferralExpiry || 0) - Date.now());
+              const h = Math.floor(remaining / 3600000);
+              const m = Math.floor((remaining % 3600000) / 60000);
+              const s = Math.floor((remaining % 60000) / 1000);
+              el.textContent = String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+              if (remaining <= 0 && _brainReckoningCountdownIntervalId) {
+                clearInterval(_brainReckoningCountdownIntervalId);
+                _brainReckoningCountdownIntervalId = null;
+              }
+            };
+            _updateBrainReckoningCountdown();
+            _brainReckoningCountdownIntervalId = setInterval(_updateBrainReckoningCountdown, 1000);
+          }
+
           const resumeReckoningBtn = document.getElementById("resumeReckoningBtn");
           if (resumeReckoningBtn && activeReckoningForPage) {
             resumeReckoningBtn.addEventListener("click", () => {
