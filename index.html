@@ -12884,24 +12884,16 @@
               // Legacy sync path (fallback if server returns full exam directly)
               const examData = job.exam || job;
               const examId   = job.examId || examData.id || null;
-              const qCount = (job.questions || examData.questions || []).length;
-              const SECS_PER_Q = 66;
-              const clock = await startExamClock(examId, qCount * SECS_PER_Q);
               const legacyIsReckoning = !!(
                 job.is_reckoning || job.isReckoning ||
                 examData.is_reckoning || examData.isReckoning
               );
-              AppState.tempExam = {
-                examId, questions: normalizeExamQuestions(job.questions || examData.questions || []),
-                currentIndex: 0, answers: {}, flagged: new Set(),
-                startTime: clock.startTime,
-                timeLimit: legacyIsReckoning ? Infinity : clock.timeLimit,
-                totalTime: legacyIsReckoning ? Infinity : clock.timeLimit,
-                _warnedAt20: false, _warnedAt10: false, submitted: false,
-                isReckoning: legacyIsReckoning,
-              };
-              navigateTo("exam");
-              _lockExamPage(legacyIsReckoning);
+              await _activateAndOpenGeneratedExam({
+                ...examData,
+                id: examId,
+                questions: job.questions || examData.questions || [],
+                is_reckoning: legacyIsReckoning,
+              });
             } catch (err) {
               if (err.status === 403 && AppState.reckoning) return;
               var genBtn2 = document.getElementById("generateExamBtn");
@@ -13864,23 +13856,12 @@
             // Legacy sync path (fallback if server returns full exam directly)
             const reckoningExamData = response.exam || response;
             const reckoningExamId = response.examId || reckoningExamData.id || null;
-            // P3-FIX: Transition exam from 'ready' → 'active'
-            const reckoningClock = await startExamClock(reckoningExamId, 1800);
-            AppState.tempExam = {
-              examId: reckoningExamId,
-              questions: normalizeExamQuestions(response.questions || reckoningExamData.questions || []),
-              currentIndex: 0,
-              answers: {},
-              flagged: new Set(),
-              startTime: reckoningClock.startTime,
-              timeLimit: reckoningClock.timeLimit,
-              totalTime: reckoningClock.timeLimit,
-              _warnedAt20: false, _warnedAt10: false, submitted: false,
-              isReckoning: true,
-            };
-            AppState.reckoning = null;
-            container.innerHTML = "";
-            navigateTo("exam");
+            await _activateAndOpenGeneratedExam({
+              ...reckoningExamData,
+              id: reckoningExamId,
+              questions: response.questions || reckoningExamData.questions || [],
+              is_reckoning: true,
+            });
           } catch (err) {
             showToast("Failed to start Reckoning exam", "error");
             const _sb = document.getElementById("startReckoningBtn");
