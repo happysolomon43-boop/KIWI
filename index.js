@@ -1723,11 +1723,14 @@ async findBySubject(userId, subjectId) {
 },
 async update(userId, goalId, data) {
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('mastery_goals', 'id', goalId, payload);
-  await query(q.text, q.values);
-  // update() DOES re-fetch (source line 1420: const doc = await ref.get())
-  const { rows } = await query('SELECT * FROM mastery_goals WHERE id = $1', [goalId]);
-  return { id: goalId, ...rows[0] };
+  const q = _buildUpdate('mastery_goals', 'id', goalId, payload, userId);
+  const result = await query(q.text, q.values);
+  if (result.rowCount === 0) return null;
+  const { rows } = await query(
+    'SELECT * FROM mastery_goals WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [goalId, userId]
+  );
+  return rows[0] ? { id: goalId, ...rows[0] } : null;
 },
 async archive(userId, goalId, finalStatus = 'archived') {
   return this.update(userId, goalId, {
@@ -1736,26 +1739,33 @@ async archive(userId, goalId, finalStatus = 'archived') {
   });
 },
 // goal_history sub-collection [DESIGN: §12.2] — migrated to goal_history table
+// Event-specific fields live in data JSONB so history writes remain schema-stable.
 async addHistoryEntry(goalId, entry) {
   const id = randomUUID();
-  const payload = { id, goal_id: goalId, ...entry, created_at: new Date() };
-  const q = _buildInsert('goal_history', payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const createdAt = entry?.created_at ? new Date(entry.created_at) : new Date();
+  const eventType = entry?.event_type || null;
+  const data = { ...(entry || {}) };
+  delete data.event_type;
+  delete data.created_at;
+  await query(
+    'INSERT INTO goal_history (id, goal_id, event_type, data, created_at) VALUES ($1,$2,$3,$4,$5)',
+    [id, goalId, eventType, JSON.stringify(data), createdAt]
+  );
+  return { id, goal_id: goalId, event_type: eventType, ...data, created_at: createdAt };
 },
 async getHistory(goalId, limit = 90) {
   const { rows } = await query(
     'SELECT * FROM goal_history WHERE goal_id = $1 ORDER BY created_at DESC LIMIT $2',
     [goalId, limit]
   );
-  return rows;
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
 },
 async getHistoryForWeek(goalId, weekStart, weekEnd) {
   const { rows } = await query(
     'SELECT * FROM goal_history WHERE goal_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY created_at ASC',
     [goalId, weekStart, weekEnd]
   );
-  return rows;
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
 },
 // concept_clusters sub-collection [DESIGN: §12.3] — migrated to concept_clusters table
 async addCluster(goalId, clusterData) {
@@ -7556,7 +7566,15 @@ async function checkBubbleOverlap(userId, newCardIds) {
   if (existingGoals.length === 0) {
     return { should_prompt_user: false, overlap_pct: 0, overlapping_card_count: 0 };
   }
-  return detectAndMarkCrossBubbleCards(userId, newCardIds, existingGoals);
+  const existingCardSet = new Set(existingGoals.flatMap((g) => g.card_ids || []));
+  const overlappingCards = (newCardIds || []).filter((id) => existingCardSet.has(id));
+  const smallerSetSize = Math.min((newCardIds || []).length, existingCardSet.size);
+  const overlapPct = smallerSetSize > 0 ? overlappingCards.length / smallerSetSize : 0;
+  return {
+    overlapping_card_count: overlappingCards.length,
+    overlap_pct: parseFloat((overlapPct * 100).toFixed(1)),
+    should_prompt_user: overlapPct > 0.40,
+  };
 }
 
 // [DESIGN: §8.2] When a cross_bubble card is reviewed, propagate KS to all containing bubbles.
@@ -16723,6 +16741,16 @@ bubbleRouter.get('/', async (req, res) => {
 // ── POST /api/bubbles — create bubble [DESIGN: §14] ──────────────────────
 bubbleRouter.post('/', async (req, res) => {
   try {
+    const gateStats = await db.userStats.get(req.user.id);
+    const completedSessions = Number(gateStats?.total_sessions_completed) || 0;
+    if (completedSessions < 5) {
+      return res.status(403).json({
+        error: 'Mastery Bubbles unlock after 5 completed sessions',
+        code: 'BUBBLE_LOCKED',
+        current_sessions: completedSessions,
+        required_sessions: 5,
+      });
+    }
     const { subject_id, deck_ids, exam_date, test_date, card_ids, name } = req.body;
     if (!subject_id || !exam_date)
       return res.status(400).json({ error: 'subject_id and exam_date required' });
@@ -16740,9 +16768,8 @@ bubbleRouter.post('/', async (req, res) => {
         resolvedCardIds.push(...cards.map((c) => c.id));
       }
     }
-    const overlapResult = await detectAndMarkCrossBubbleCards(
-      req.user.id, resolvedCardIds, existingGoals
-    ).catch(() => ({ overlapping_card_count: 0, should_prompt_user: false }));
+    const overlapPreview = await checkBubbleOverlap(req.user.id, resolvedCardIds)
+      .catch(() => ({ overlapping_card_count: 0, overlap_pct: 0, should_prompt_user: false }));
 
     const goal = await createMasteryGoal(req.user.id, {
       subject_id, deck_ids, name: name || null,
@@ -16750,6 +16777,12 @@ bubbleRouter.post('/', async (req, res) => {
       test_date: test_date ? new Date(test_date) : null,
       card_ids:  resolvedCardIds,
     });
+
+    // Apply cross-bubble metadata only after the new Bubble has been created successfully.
+    const overlapResult = await detectAndMarkCrossBubbleCards(
+      req.user.id, resolvedCardIds, existingGoals
+    ).catch(() => overlapPreview);
+
     // Stamp bubble_id onto each card_state
     for (const cardId of resolvedCardIds) {
       const st = await db.cardStates.get(req.user.id, cardId).catch(() => null);
@@ -16968,6 +17001,8 @@ bubbleRouter.get('/:id/history', async (req, res) => {
 // ── GET /api/bubbles/:id/clusters [DESIGN: §14, §7] ──────────────────────
 bubbleRouter.get('/:id/clusters', async (req, res) => {
   try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
     const clusters = await db.masteryGoals.getClusters(req.params.id).catch(() => []);
     const enriched = await Promise.all(clusters.map(async (c) => {
       const ks     = await computeClusterKS(req.user.id, c).catch(() => c.cluster_ks || 0);
