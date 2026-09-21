@@ -15,7 +15,12 @@
       if (!next || next.classList.contains('nav-section-label')) label.remove();
     });
     const chronicleLabel = document.querySelector('.nav-item[data-route="chronicle"] .nav-label');
-    if (chronicleLabel) chronicleLabel.textContent = 'Living Profile';
+    // MutationObserver safety: only write when the DOM actually needs changing.
+    // Reassigning the same textContent still replaces the text node and can
+    // recursively retrigger a childList observer.
+    if (chronicleLabel && chronicleLabel.textContent !== 'Living Profile') {
+      chronicleLabel.textContent = 'Living Profile';
+    }
   }
 
   function renderAchievementCards(data) {
@@ -272,16 +277,53 @@
     });
   }
 
+  const PRODUCT_WATCH_SELECTOR =
+    '.nav-item, .nav-section-label, .feature-title, #invitations-card, .invitation-item';
+
+  function productMutationIsRelevant(mutations) {
+    return mutations.some((mutation) =>
+      Array.from(mutation.addedNodes || []).some((node) => {
+        if (node.nodeType !== 1) return false;
+        return node.matches?.(PRODUCT_WATCH_SELECTOR) ||
+          !!node.querySelector?.(PRODUCT_WATCH_SELECTOR);
+      }),
+    );
+  }
+
   function boot() {
     installProductRoutes();
     removeRetiredNavigation();
     refreshRetiredLandingCopy();
-    const observer = new MutationObserver(() => {
-      removeRetiredNavigation();
-      decorateInvitations();
-      refreshRetiredLandingCopy();
+
+    // Watch only the two application roots that can contain product UI.
+    // Do not observe document.body: toasts, overlays, tour effects, and other
+    // unrelated DOM churn must not trigger full-page product rescans.
+    const observerRoots = [
+      document.getElementById('app'),
+      document.getElementById('authPage'),
+    ].filter(Boolean);
+
+    const observer = new MutationObserver((mutations) => {
+      if (!productMutationIsRelevant(mutations)) return;
+
+      // Disconnect while applying our own DOM normalization. This guarantees
+      // observer callbacks cannot recursively feed on mutations they create.
+      observer.disconnect();
+      try {
+        removeRetiredNavigation();
+        decorateInvitations();
+        refreshRetiredLandingCopy();
+      } finally {
+        observerRoots.forEach((root) =>
+          observer.observe(root, { childList: true, subtree: true }),
+        );
+      }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    observerRoots.forEach((root) =>
+      observer.observe(root, { childList: true, subtree: true }),
+    );
+
     let attempts = 0;
     const resumeTimer = setInterval(() => {
       attempts += 1;
