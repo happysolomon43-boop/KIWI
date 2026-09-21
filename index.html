@@ -5876,7 +5876,9 @@
 .kiwi-tour-exit-title { font-family: var(--font-display); font-size: 19px; font-weight: 750; color: var(--text); }
 .kiwi-tour-exit-copy { margin: 10px 0 20px; color: var(--text-3); font-size: 13px; line-height: 1.65; }
 .kiwi-tour-exit-actions { display: flex; gap: 10px; }
-.kiwi-tour-exit-actions .btn { flex: 1; }
+.kiwi-tour-exit-actions .btn { flex: 1; min-height: 44px; }
+#kiwiTourExit[aria-busy="true"] .kiwi-tour-exit-card { opacity: .92; }
+#kiwiTourExit[aria-busy="true"] .btn { cursor: wait; }
 body.kiwi-tour-active { overscroll-behavior: none; }
 
 @media (max-width: 720px) {
@@ -5899,6 +5901,21 @@ body.kiwi-tour-active { overscroll-behavior: none; }
   }
   .tip-body { line-height: 1.55; }
   #kiwiSplash { padding-top: max(72px, calc(56px + env(safe-area-inset-top))); }
+  #kiwiTourExit {
+    align-items: flex-end;
+    padding:
+      12px
+      12px
+      max(12px, env(safe-area-inset-bottom));
+  }
+  .kiwi-tour-exit-card {
+    width: 100%;
+    border-radius: 20px 20px 16px 16px;
+    padding: 22px 18px 18px;
+  }
+  .kiwi-tour-exit-actions {
+    flex-direction: column-reverse;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   #kiwiSpot, #kiwiArrow, #kiwiTip, #kiwiSplash, #kiwiTourChrome, #kiwiTourExit {
@@ -22415,30 +22432,46 @@ function _positionArrow(target, pos) {
 function _tourOpenExitSheet() {
   if (!_tourActive) return;
   const exit = document.getElementById('kiwiTourExit');
-  if (!exit) return;
+  if (!exit || exit.dataset.busy === '1') return;
   exit.classList.add('visible');
   exit.setAttribute('aria-hidden', 'false');
 
   const continueBtn = document.getElementById('kiwiTourContinueBtn');
   const endBtn = document.getElementById('kiwiTourEndBtn');
+
   if (continueBtn) {
+    continueBtn.disabled = false;
     continueBtn.onclick = _tourCloseExitSheet;
     setTimeout(() => continueBtn.focus({ preventScroll: true }), 0);
   }
+
   if (endBtn) {
-    endBtn.onclick = () => {
+    endBtn.disabled = false;
+    endBtn.textContent = 'End tour';
+    endBtn.onclick = async () => {
+      if (exit.dataset.busy === '1') return;
+      exit.dataset.busy = '1';
+      exit.setAttribute('aria-busy', 'true');
+      endBtn.disabled = true;
+      if (continueBtn) continueBtn.disabled = true;
+      endBtn.textContent = 'Ending…';
+
       const origin = _tourOriginPage || 'dashboard';
-      _tourFinish(origin, _tourReplay ? null : 'skipped');
+      await _tourFinish(origin, _tourReplay ? null : 'skipped');
+
+      delete exit.dataset.busy;
+      exit.removeAttribute('aria-busy');
     };
   }
+
   exit.onclick = (event) => {
-    if (event.target === exit) _tourCloseExitSheet();
+    if (event.target === exit && exit.dataset.busy !== '1') _tourCloseExitSheet();
   };
 }
 
 function _tourCloseExitSheet() {
   const exit = document.getElementById('kiwiTourExit');
-  if (!exit) return;
+  if (!exit || exit.dataset.busy === '1') return;
   exit.classList.remove('visible');
   exit.setAttribute('aria-hidden', 'true');
 }
@@ -22449,7 +22482,18 @@ function kiwiTourSkip() {
 
 async function _tourFinish(destination = null, state = 'done') {
   if (!_tourActive) return;
-  if (state) _tourPersistState(state);
+
+  // Save the account-level decision before dismantling the tour. The local
+  // cache updates immediately; the short wait gives the backend a chance to
+  // persist "done"/"skipped" without making the exit feel blocked on a slow
+  // connection.
+  if (state) {
+    await Promise.race([
+      _tourPersistState(state),
+      _sleep(1200),
+    ]);
+  }
+
   _tourCleanup();
 
   if (destination && typeof navigateTo === 'function') {
