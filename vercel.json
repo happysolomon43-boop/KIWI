@@ -1,9 +1,12 @@
 {
   "version": 2,
   "builds": [
-    { "src": "index.html", "use": "@vercel/static" }
+    { "src": "index.html", "use": "@vercel/static" },
+    { "src": "public/**", "use": "@vercel/static" }
   ],
   "routes": [
+    { "src": "/kiwi_product_v3.css", "dest": "/public/kiwi_product_v3.css" },
+    { "src": "/kiwi_product_v3.js", "dest": "/public/kiwi_product_v3.js" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
