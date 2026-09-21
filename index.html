@@ -6055,7 +6055,7 @@
           _kiwiWSRetry = 0;
           console.log('[KIWI WS] Connected');
         };
-        _kiwiWS.onmessage = function(ev) {
+        _kiwiWS.onmessage = async function(ev) {
           try {
             var msg = JSON.parse(ev.data);
             if (msg.event === 'session_complete') {
@@ -6064,7 +6064,11 @@
             if (msg.event === 'job_done') {
               var _jd = msg.data || {};
               var job_id = _jd.job_id, type = _jd.type, result = _jd.result, exam = _jd.exam;
-              if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(job_id);
+              if (typeof _pendingJobs !== 'undefined') {
+                var _pendingJob = _pendingJobs.get(job_id);
+                if (_pendingJob && _pendingJob.pollInterval) clearInterval(_pendingJob.pollInterval);
+                _pendingJobs.delete(job_id);
+              }
               if (_ignoredJobIds.has(job_id)) {
                 _hideGenBanner();
                 return;
@@ -6104,35 +6108,11 @@
               if (type === 'cbt_generation') {
                 _hideGenBanner();
                 var examData = (exam && (exam.exam || exam)) || (result && (result.exam || result));
-                if (!examData || !examData.id) { if (typeof showToast === 'function') showToast('Exam data missing — please refresh.', 'error'); return; }
-                if (typeof showToast === 'function') showToast('Exam ready! Taking you there now…', 'success', 4000);
-                var qCount = (examData.questions || []).length;
-                var SECS_PER_Q = 66;
-                if (typeof AppState !== 'undefined') {
-                  var _isReck = !!(examData.is_reckoning || examData.isReckoning);
-                  AppState.tempExam = {
-                    examId: examData.id,
-                    questions: typeof normalizeExamQuestions === 'function' ? normalizeExamQuestions(examData.questions || []) : (examData.questions || []),
-                    currentIndex: 0, answers: {}, flagged: new Set(),
-                    startTime: Date.now(),
-                    timeLimit: _isReck ? Infinity : qCount * SECS_PER_Q,
-                    totalTime: _isReck ? Infinity : qCount * SECS_PER_Q,
-                    _warnedAt20: false, _warnedAt10: false, submitted: false,
-                    isReckoning: _isReck,
-                  };
-                  if (typeof startExamClock === 'function') {
-                    startExamClock(examData.id, qCount * SECS_PER_Q).then(function(clock) {
-                      if (!AppState.tempExam || AppState.tempExam.examId !== examData.id) return;
-                      AppState.tempExam.startTime = clock.startTime;
-                      AppState.tempExam.timeLimit = _isReck ? Infinity : clock.timeLimit;
-                      AppState.tempExam.totalTime = _isReck ? Infinity : clock.timeLimit;
-                    }).catch(function(){});
-                  }
-                  // Fix 7: navigate first, THEN lock — avoids guard blocking self-navigation
-                  var _examIsReck = !!(examData.is_reckoning || examData.isReckoning);
-                  if (typeof navigateTo === 'function') { _origNavigateTo ? _origNavigateTo('exam') : navigateTo('exam'); }
-                  _lockExamPage(_examIsReck);
+                if (!examData || !examData.id) {
+                  if (typeof showToast === 'function') showToast('Exam data missing — please refresh.', 'error');
+                  return;
                 }
+                await _activateAndOpenGeneratedExam(examData);
               }
               if (type === 'exam_submit') {
                 var r = result || {};
@@ -6486,7 +6466,7 @@
         if (_pendingJobs.has(jobId)) return;
         var _pollStart = Date.now();
         var _MAX_POLL_MS = (type === 'cbt_generation' ? 10 : 4) * 60 * 1000; // CBT: 10 min (3 passes), others: 4 min
-        var _simulateWsMsg = function(event, data) {
+        var _simulateWsMsg = async function(event, data) {
           if (_kiwiWS && _kiwiWS.readyState === 1) {
             _kiwiWS.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ event: event, data: data }) }));
           } else {
@@ -6501,20 +6481,11 @@
               _hideGenBanner();
               if (_jType === 'cbt_generation') {
                 var _examData = (_jd.exam && (_jd.exam.exam || _jd.exam)) || (_jd.result && (_jd.result.exam || _jd.result));
-                if (!_examData || !_examData.id) { showToast('Exam data missing — please refresh.', 'error'); return; }
-                showToast('Exam ready! Taking you there now…', 'success', 4000);
-                var qCount = (_examData.questions || []).length;
-                var SECS_PER_Q = 66;
-                var _isReck = !!(_examData.is_reckoning || _examData.isReckoning);
-                AppState.tempExam = { examId: _examData.id, questions: typeof normalizeExamQuestions === 'function' ? normalizeExamQuestions(_examData.questions || []) : (_examData.questions || []), currentIndex: 0, answers: {}, flagged: new Set(), startTime: Date.now(), timeLimit: _isReck ? Infinity : qCount * SECS_PER_Q, totalTime: _isReck ? Infinity : qCount * SECS_PER_Q, _warnedAt20: false, _warnedAt10: false, submitted: false, isReckoning: _isReck };
-                if (typeof startExamClock === 'function') startExamClock(_examData.id, qCount * SECS_PER_Q).then(function(clock) {
-                  if (!AppState.tempExam || AppState.tempExam.examId !== _examData.id) return;
-                  AppState.tempExam.startTime = clock.startTime;
-                  AppState.tempExam.timeLimit = _isReck ? Infinity : clock.timeLimit;
-                  AppState.tempExam.totalTime = _isReck ? Infinity : clock.timeLimit;
-                }).catch(function(){});
-                if (typeof navigateTo === 'function') { _origNavigateTo ? _origNavigateTo('exam') : navigateTo('exam'); }
-                _lockExamPage(_isReck);
+                if (!_examData || !_examData.id) {
+                  showToast('Exam data missing — please refresh.', 'error');
+                  return;
+                }
+                await _activateAndOpenGeneratedExam(_examData);
               }
               if (_jType === 'note_generation') {
                 var _nr = _jd.result || {};
@@ -8095,8 +8066,11 @@
       // ── Format seconds to mm:ss ──
 
       function formatDuration(seconds) {
-        const m = Math.floor(seconds / 60);
-        const s = seconds % 60;
+        const numeric = Number(seconds);
+        if (!Number.isFinite(numeric) || numeric < 0) return "--:--";
+        const whole = Math.max(0, Math.floor(numeric));
+        const m = Math.floor(whole / 60);
+        const s = whole % 60;
         return `${m}:${s.toString().padStart(2, "0")}`;
       }
 
@@ -10263,6 +10237,113 @@
           startTime: getServerSessionStart(started),
           timeLimit: Math.max(1, Number(started?.time_limit_seconds) || Number(fallbackSeconds) || 1800),
         };
+      }
+
+      function _clearExamGenerationTransition() {
+        _hideGenBanner();
+        const screen = document.getElementById("examGeneratingScreen");
+        if (!screen) return;
+        const host = screen.parentElement;
+        screen.remove();
+        if (host && host.id === "reckoningContainer") host.innerHTML = "";
+      }
+
+      async function _activateAndOpenGeneratedExam(examData, options = {}) {
+        if (!examData || !examData.id) return false;
+
+        // WebSocket and polling can race. If this exact exam is already open,
+        // a second delivery must be a no-op rather than reinitialising answers.
+        if (
+          AppState.tempExam &&
+          AppState.tempExam.examId === examData.id &&
+          AppState.currentPage === "exam"
+        ) {
+          _clearExamGenerationTransition();
+          return true;
+        }
+
+        const questions = normalizeExamQuestions(examData.questions || []);
+        if (questions.length === 0) {
+          showToast("Exam data is incomplete. Please try generating it again.", "error", 7000);
+          return false;
+        }
+
+        const fallbackSeconds = Math.max(
+          1,
+          Number(examData.time_limit_seconds) || questions.length * 66 || 1800,
+        );
+
+        let clock;
+        try {
+          // Activation is part of the transition, not background housekeeping.
+          // The exam is never rendered until the server confirms it is active.
+          clock = await startExamClock(examData.id, fallbackSeconds);
+        } catch (err) {
+          console.error("[KIWI] Could not activate generated exam:", err);
+          showToast(
+            "Your exam was generated, but KIWI could not activate it. Please retry.",
+            "error",
+            8000,
+          );
+          return false;
+        }
+
+        const timeLimit = Math.max(
+          1,
+          Number(clock?.timeLimit) || fallbackSeconds,
+        );
+        const startTime = Number(clock?.startTime);
+
+        AppState.tempExam = {
+          examId: examData.id,
+          questions,
+          currentIndex: 0,
+          answers: {},
+          flagged: new Set(),
+          startTime: Number.isFinite(startTime) ? startTime : Date.now(),
+          timeLimit,
+          totalTime: timeLimit,
+          _warnedAt20: false,
+          _warnedAt10: false,
+          submitted: false,
+          isReckoning: !!(examData.is_reckoning || examData.isReckoning),
+        };
+
+        if (AppState.tempExam.isReckoning) AppState.reckoning = null;
+        _clearExamGenerationTransition();
+
+        if (options.announce !== false && typeof showToast === "function") {
+          showToast("Exam ready! Taking you there now…", "success", 3000);
+        }
+
+        // Bypass the active-exam navigation guard for this internal transition.
+        if (typeof navigateTo === "function") {
+          _origNavigateTo ? _origNavigateTo("exam") : navigateTo("exam");
+        }
+        _lockExamPage(AppState.tempExam.isReckoning);
+        return true;
+      }
+
+      async function _restoreActiveReckoningExam() {
+        try {
+          const active = await apiRequest("/brain/reckoning/active");
+          if (
+            !active ||
+            active.status !== "in_progress" ||
+            !active.exam_session_id
+          ) {
+            return false;
+          }
+
+          const exam = await apiRequest(
+            "/exams/" + encodeURIComponent(active.exam_session_id),
+          );
+          if (!exam || !exam.id) return false;
+          return await _activateAndOpenGeneratedExam(exam, { announce: false });
+        } catch (err) {
+          console.warn("[KIWI] Reckoning resume unavailable:", err?.message || err);
+          return false;
+        }
       }
 
       function computeLiveSessionQuality(study) {
@@ -12956,10 +13037,21 @@
           const q = e.questions[e.currentIndex];
           const answered = e.answers[q.id] !== undefined;
           const isFlagged = e.flagged.has(q.id);
-          const timeElapsed = Math.floor((Date.now() - e.startTime) / 1000);
-          const timeRemaining = Math.max(0, e.timeLimit - timeElapsed);
+          const safeStartTime = Number.isFinite(Number(e.startTime))
+            ? Number(e.startTime)
+            : Date.now();
+          const safeTimeLimit = Number.isFinite(Number(e.timeLimit)) && Number(e.timeLimit) > 0
+            ? Number(e.timeLimit)
+            : 1800;
+          e.startTime = safeStartTime;
+          e.timeLimit = safeTimeLimit;
+          if (!Number.isFinite(Number(e.totalTime)) || Number(e.totalTime) <= 0) {
+            e.totalTime = safeTimeLimit;
+          }
+          const timeElapsed = Math.floor((Date.now() - safeStartTime) / 1000);
+          const timeRemaining = Math.max(0, safeTimeLimit - timeElapsed);
           // Update timer styling based on remaining time (proportional to total)
-          const _tt = e.totalTime || e.timeLimit || 1;
+          const _tt = e.totalTime;
           let timerClass = "";
           if (timeRemaining <= Math.max(60, _tt * 0.10)) timerClass = "danger";
           else if (timeRemaining <= Math.max(120, _tt * 0.20)) timerClass = "warning";
@@ -13124,7 +13216,15 @@
         // FIX: Clear any globally tracked old exam timer to prevent leaks when tempExam is reassigned
         if (window.__kiwiLastExamTimer) { clearInterval(window.__kiwiLastExamTimer); window.__kiwiLastExamTimer = null; }
         if (e._timerInterval) return;
-        const totalT = e.totalTime || e.timeLimit || 1;
+        const safeTimeLimit = Number.isFinite(Number(e.timeLimit)) && Number(e.timeLimit) > 0
+          ? Number(e.timeLimit)
+          : 1800;
+        const totalT = Number.isFinite(Number(e.totalTime)) && Number(e.totalTime) > 0
+          ? Number(e.totalTime)
+          : safeTimeLimit;
+        e.timeLimit = safeTimeLimit;
+        e.totalTime = totalT;
+        if (!Number.isFinite(Number(e.startTime))) e.startTime = Date.now();
         const dangerThreshold = Math.max(60, totalT * 0.10);
         const warnThreshold   = Math.max(120, totalT * 0.20);
         e._timerInterval = setInterval(() => {
@@ -13750,7 +13850,7 @@
               _pollJobFallback(response.job_id, authToken, 'cbt_generation');
               AppState.reckoning = null;
               container.innerHTML = `
-                <div id="examGeneratingScreen" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:var(--space-5);text-align:center;padding:var(--space-8);">
+                <div class="reckoning-overlay" id="examGeneratingScreen" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-5);text-align:center;padding:var(--space-8);">
                   <svg style="width:36px;height:36px" viewBox="0 0 24 24" fill="none" stroke="var(--red-bright)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
                   <div style="font-size:var(--text-xl);font-weight:600;color:var(--red-bright);">Preparing The Reckoning…</div>
                   <div style="font-size:var(--text-base);color:var(--text-2);max-width:320px;">
@@ -13773,8 +13873,8 @@
               answers: {},
               flagged: new Set(),
               startTime: reckoningClock.startTime,
-              timeLimit: Infinity,
-              totalTime: Infinity,
+              timeLimit: reckoningClock.timeLimit,
+              totalTime: reckoningClock.timeLimit,
               _warnedAt20: false, _warnedAt10: false, submitted: false,
               isReckoning: true,
             };
@@ -21201,7 +21301,7 @@
       // SECTION 24: BOOTSTRAP & EVENT HANDLERS
 
       // ═══════════════════════════════════════════════════════════════════════════
-      document.addEventListener("DOMContentLoaded", () => {
+      document.addEventListener("DOMContentLoaded", async () => {
         // Mobile hamburger
         const hamburger = document.getElementById("hamburgerBtn");
         const sidebar = document.getElementById("sidebar");
@@ -21287,17 +21387,25 @@
           // Load initial data
           updateUserFooter();
           initKiwiWS(); // FIX Bug-5a: returning users (stored-token path) never got a WS connection
-          // Restore previous page on refresh; fall back to dashboard for volatile session pages
+          // Restore previous page on refresh. An in-progress Reckoning is
+          // server-backed, so recover it instead of discarding the volatile
+          // AppState.tempExam and leaving the user stranded.
           const _savedPage = (() => {
             try { return sessionStorage.getItem("kiwi_page"); } catch (_) { return null; }
           })();
-          // study and exam cannot be restored (volatile AppState.tempStudy/tempExam lost on refresh)
-          // redirect them to the setup screens instead
-          let _restorePage = _savedPage;
-          if (_savedPage === "study") _restorePage = "study";       // shows setup screen
-          if (_savedPage === "exam")  _restorePage = "exam-config"; // shows config screen
-          const _safeToRestore = _restorePage && _restorePage !== "landing";
-          navigateTo(_safeToRestore ? _restorePage : "dashboard");
+          let _restoredActiveExam = false;
+          if (_savedPage === "exam") {
+            const _main = document.getElementById("mainContent");
+            if (_main) renderLoadingState(_main, "Restoring your exam…");
+            _restoredActiveExam = await _restoreActiveReckoningExam();
+          }
+          if (!_restoredActiveExam) {
+            let _restorePage = _savedPage;
+            if (_savedPage === "study") _restorePage = "study";
+            if (_savedPage === "exam") _restorePage = "exam-config";
+            const _safeToRestore = _restorePage && _restorePage !== "landing";
+            navigateTo(_safeToRestore ? _restorePage : "dashboard");
+          }
           // Clear boot flag after a generous window — any API calls that fire
           // during initial page render will be covered; after this, session
           // expiry toasts are shown normally (user is actively in the app).
