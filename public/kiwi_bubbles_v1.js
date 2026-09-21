@@ -469,7 +469,13 @@
   }
 
   function wireDormantBubbleWidgets(root = document) {
-    root.querySelectorAll?.('.bubble-mini-indicator').forEach((widget) => {
+    const widgets = [];
+    if (root?.nodeType === 1 && root.matches?.('.bubble-mini-indicator')) {
+      widgets.push(root);
+    }
+    root.querySelectorAll?.('.bubble-mini-indicator').forEach((widget) => widgets.push(widget));
+
+    widgets.forEach((widget) => {
       if (widget.dataset.bubbleCreateWired === '1') return;
       const isCreateState = !widget.dataset.bubbleId &&
         (widget.title || '').toLowerCase().includes('no active exam goal');
@@ -603,17 +609,22 @@
     wireDormantBubbleWidgets();
     appendBubbleDashboardCard();
 
-    const observer = new MutationObserver((mutations) => {
-      installBubbleNavigation();
-      wireDormantBubbleWidgets();
-      if (AppState?.currentPage === 'dashboard') appendBubbleDashboardCard();
-      for (const mutation of mutations) {
-        mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === 1) wireDormantBubbleWidgets(node);
-        });
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+    // Bubble discovery only needs to react to Bubble widgets rendered inside
+    // mainContent. Navigation is static and is installed once above; dashboard
+    // integration is handled by the route hook plus the initial append call.
+    // Keeping this observer scoped prevents unrelated overlays, toasts, tours,
+    // and navigation mutations from causing whole-document rescans.
+    const contentRoot = document.getElementById('mainContent');
+    if (contentRoot) {
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeType === 1) wireDormantBubbleWidgets(node);
+          });
+        }
+      });
+      observer.observe(contentRoot, { childList: true, subtree: true });
+    }
   }
 
   window.openBubbleCreateModal = openBubbleCreateModal;
