@@ -8807,7 +8807,10 @@ if ((Number(active.failure_count) || 0) < RECKONING_FAILSAFE_FAILURES) {
     };
   }
 
-  if (historicalFailureCount >= RECKONING_FAILSAFE_FAILURES) {
+  if (
+    historicalFailureCount >= RECKONING_FAILSAFE_FAILURES &&
+    active.status !== 'in_progress'
+  ) {
     await applyReckoningFailsafePenalty(
       userId,
       active.subject_id,
