@@ -21343,6 +21343,13 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             }
           }
           const settings = AppState.settings || {};
+          const settingsLockedByReckoning = _reckoningGlobalLockActive();
+          const settingsLockBannerHtml = settingsLockedByReckoning
+            ? '<div class="card reckoning-settings-banner" id="reckoningSettingsLockBanner" style="margin-bottom:20px;"><div><div class="settings-section-title" style="color:var(--red-bright);">The Reckoning is active</div><div style="font-size:var(--text-sm);color:var(--text-2);line-height:1.6;">Settings is the only normal KIWI area available during lockdown. Failed attempts: ' + (Number(AppState.reckoning?.failure_count) || 0) + '/' + (Number(AppState.reckoning?.failsafe_threshold) || 6) + '.</div></div><button class="btn btn-primary btn-sm" id="returnToReckoningBtn">Return to Reckoning</button></div>'
+            : "";
+          const marketplaceSettingsAction = settingsLockedByReckoning
+            ? '<div style="font-size:var(--text-sm);color:var(--text-4);">Marketplace is unavailable until The Reckoning ends.</div>'
+            : '<button class="btn btn-secondary btn-sm" onclick="navigateTo(\'marketplace\')">Go to Marketplace</button>';
           main.innerHTML = `
       <div class="page-wrap page-enter">
         <div class="section-header">
@@ -21351,6 +21358,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             <div class="section-sub">Manage your ecosystem</div>
           </div>
         </div>
+        ${settingsLockBannerHtml}
         <!-- Profile -->
         <div class="card" style="margin-bottom:20px;">
           <div class="settings-section-title">Profile</div>
@@ -21390,7 +21398,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           `
               : '<div style="font-size:var(--text-base);color:var(--text-4);margin-bottom:12px;">No items purchased yet. Visit the Marketplace.</div>'
           }
-          <button class="btn btn-secondary btn-sm" onclick="navigateTo('marketplace')">Go to Marketplace</button>
+          ${marketplaceSettingsAction}
         </div>
         <!-- Data Management -->
         <div class="card" style="margin-bottom:20px;">
@@ -21522,6 +21530,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         </div>
       </div>
     `;
+          document.getElementById("returnToReckoningBtn")?.addEventListener("click", () => {
+            showReckoningOverlay(AppState.reckoning, { force: true, mandatory: true, forceSettingsOverlay: true });
+          });
+
           document.getElementById("settingName").addEventListener("change", async (e) => {
             try {
               await api.updateSettings({ name: e.target.value });
@@ -21783,9 +21795,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           _unlockStudyPage();
                   AppState.tempExam = null;
                   AppState.treeInstance = null;
-                  AppState.reckoning = null;
+                  const hadReckoningLock = _reckoningGlobalLockActive();
+                  const activeReckoningSnapshot = AppState.reckoning;
+                  if (!hadReckoningLock) AppState.reckoning = null;
+                  else AppState.reckoning = activeReckoningSnapshot;
                   showToast("Local cache cleared", "info");
-                  navigateTo("dashboard");
+                  navigateTo(hadReckoningLock ? "settings" : "dashboard");
                 }
               );
             });
