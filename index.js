@@ -12662,6 +12662,70 @@ async function _safeUserCreate(data) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// ── Account-level KIWI tour state ────────────────────────────────────────────
+// The tour is versioned so future tour redesigns can be introduced deliberately.
+// State is stored in a dedicated onboarding_state row per user; localStorage is
+// only a client cache/fallback and is never the source of truth.
+const KIWI_TOUR_VERSION = 'v2';
+const KIWI_TOUR_STATUSES = new Set(['started', 'done', 'skipped']);
+
+function _tourStateMarker(status, version = KIWI_TOUR_VERSION) {
+  return `tour:${version}:${status}`;
+}
+
+async function getKiwiTourState(userId, version = KIWI_TOUR_VERSION) {
+  const rowId = `${userId}:tour`;
+  const { rows } = await query(
+    'SELECT completed_steps FROM onboarding_state WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [rowId, userId]
+  );
+  const raw = rows[0]?.completed_steps;
+  const steps = Array.isArray(raw)
+    ? raw
+    : (typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch (_) { return []; } })() : []);
+  const has = (status) => steps.includes(_tourStateMarker(status, version));
+  const status = has('done') ? 'done' : has('skipped') ? 'skipped' : has('started') ? 'started' : 'unseen';
+  return { version, status };
+}
+
+async function setKiwiTourState(userId, status, version = KIWI_TOUR_VERSION) {
+  if (version !== KIWI_TOUR_VERSION) {
+    const err = new Error('Unsupported tour version');
+    err.status = 400;
+    throw err;
+  }
+  if (!KIWI_TOUR_STATUSES.has(status)) {
+    const err = new Error('Invalid tour status');
+    err.status = 400;
+    throw err;
+  }
+
+  const rowId = `${userId}:tour`;
+  const marker = _tourStateMarker(status, version);
+  const completed = status === 'done' || status === 'skipped';
+  await query(
+    `INSERT INTO onboarding_state
+       (id, user_id, completed_steps, current_step, completed, completed_at, created_at, updated_at)
+     VALUES ($1, $2, jsonb_build_array($3::text), $4, $5,
+             CASE WHEN $5 THEN NOW() ELSE NULL END, NOW(), NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       completed_steps = CASE
+         WHEN COALESCE(onboarding_state.completed_steps, '[]'::jsonb) @> jsonb_build_array($3::text)
+           THEN COALESCE(onboarding_state.completed_steps, '[]'::jsonb)
+         ELSE COALESCE(onboarding_state.completed_steps, '[]'::jsonb) || jsonb_build_array($3::text)
+       END,
+       current_step = EXCLUDED.current_step,
+       completed = onboarding_state.completed OR EXCLUDED.completed,
+       completed_at = CASE
+         WHEN EXCLUDED.completed THEN COALESCE(onboarding_state.completed_at, NOW())
+         ELSE onboarding_state.completed_at
+       END,
+       updated_at = NOW()`,
+    [rowId, userId, marker, `tour_${version}_${status}`, completed]
+  );
+  return getKiwiTourState(userId, version);
+}
+
 const authRouter = express.Router();
 
 authRouter.post('/register', async (req, res) => {
@@ -12705,7 +12769,14 @@ const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex
 const expiresAt = new Date(Date.now() + 30 * 86400000);
 await db.refreshTokens.create(user.id, refreshHash, expiresAt);
 const { password_hash, ...safeUser } = user;
-res.status(201).json({ user: safeUser, accessToken, refreshToken, expiresIn: 900, welcome: true });
+res.status(201).json({
+  user: safeUser,
+  accessToken,
+  refreshToken,
+  expiresIn: 900,
+  welcome: true,
+  tour_state: { version: KIWI_TOUR_VERSION, status: 'unseen' },
+});
 } catch (e) {
 console.error('[KIWI] Registration error:', e.message);
 // If the error happened after user creation (e.g. JWT_SECRET missing, almanac seed fail),
@@ -12797,6 +12868,10 @@ generateWeeklyChronicle(user.id)
 .then(() => hookSeedlingEarnings(user.id, 'weekly_chronicle', {}).catch((e) => console.error("[KIWI] silent catch:", e.message)))
 .catch((e) => console.error('[KIWI] Chronicle catch-up failed:', e.message));
 }
+const tourState = await getKiwiTourState(user.id).catch(() => ({
+  version: KIWI_TOUR_VERSION,
+  status: 'unseen',
+}));
 const { password_hash, stats: _stats, ...safeUser } = user;
 res.json({
 user: safeUser,
@@ -12805,6 +12880,7 @@ refreshToken,
 expiresIn: 900,
 return_status: returnStatus,
 is_streak_frozen: !!(user.stats?.streak_shields_held),
+tour_state: tourState,
 });
 } catch (e) {
 console.error('Login error:', e);
@@ -19296,7 +19372,30 @@ res.status(500).json({ error: 'Import failed', details: e.message });
 
 // ════════════════════════════════════════════════════════════════════════════
 
+const tourRouter = express.Router();
+tourRouter.use(authenticate);
+
+tourRouter.get('/state', async (req, res) => {
+  try {
+    res.json(await getKiwiTourState(req.user.id));
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to load tour state', details: e.message });
+  }
+});
+
+tourRouter.put('/state', async (req, res) => {
+  try {
+    const status = String(req.body?.status || '');
+    const version = String(req.body?.version || KIWI_TOUR_VERSION);
+    const state = await setKiwiTourState(req.user.id, status, version);
+    res.json(state);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message || 'Failed to update tour state' });
+  }
+});
+
 app.use('/api/auth', authRouter);
+app.use('/api/tour', tourRouter);
 
 app.use('/api/subjects', subjectRouter);
 
