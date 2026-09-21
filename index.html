@@ -10446,11 +10446,21 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
       function _clearExamGenerationTransition() {
         _hideGenBanner();
+
+        // Generation and resume use two different Reckoning surfaces:
+        //   1) #examGeneratingScreen while AI is building the exam
+        //   2) #reckoningOverlay while resuming an already-linked exam
+        // The old implementation returned early when #examGeneratingScreen was
+        // absent, so a successful resume rendered the exam *behind* the still-open
+        // Reckoning overlay. The user only saw a disabled "Resuming…" button.
         const screen = document.getElementById("examGeneratingScreen");
-        if (!screen) return;
-        const host = screen.parentElement;
-        screen.remove();
-        if (host && host.id === "reckoningContainer") host.innerHTML = "";
+        if (screen) screen.remove();
+
+        const overlay = document.getElementById("reckoningOverlay");
+        if (overlay) overlay.remove();
+
+        const host = document.getElementById("reckoningContainer");
+        if (host) host.innerHTML = "";
       }
 
       async function _activateAndOpenGeneratedExam(examData, options = {}) {
