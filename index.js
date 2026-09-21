@@ -6685,6 +6685,18 @@ if (allExamSessions.length > 0 && db.examQuestions.findBySession) {
 examLogs = []; // non-fatal
 }
 const stateResult = await determineCardState(card, cardLogs, examLogs, subjectExamDate);
+const existingStateForPenalty = await db.cardStates.get(userId, cardId).catch(() => null);
+if (
+  existingStateForPenalty &&
+  Number(existingStateForPenalty.reckoning_penalty_factor) < 1 &&
+  existingStateForPenalty.reckoning_penalty_applied_at &&
+  card.last_reviewed_at &&
+  new Date(card.last_reviewed_at).getTime() >
+    new Date(existingStateForPenalty.reckoning_penalty_applied_at).getTime()
+) {
+  stateResult.reckoning_penalty_factor = 1;
+  stateResult.reckoning_penalty_applied_at = null;
+}
 await db.cardStates.update(userId, cardId, stateResult);
 return stateResult;
 }
@@ -8552,71 +8564,139 @@ const RECKONING_FAILSAFE_FAILURES = 6;
 const RECKONING_FAILSAFE_KS_FACTOR = 0.10;
 
 async function applyReckoningFailsafePenalty(userId, subjectId, reckoningId, failureCount) {
-  invalidateKSCache(userId, subjectId);
-  const before = await computeKnowledgeScore(userId, subjectId).catch(() => ({ score: 0 }));
-  const beforeScore = Number(before?.score) || 0;
+  // Claim the one-time consequence atomically. This protects against two tabs,
+  // duplicated submit requests, crash recovery and multi-instance deployments
+  // applying the 90% reduction more than once.
+  const freshBeforeClaim = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+  if (!freshBeforeClaim) throw new Error('Reckoning not found while applying failsafe');
 
-  const decks = await db.decks.findBySubject(userId, subjectId).catch(() => []);
-  const deckIds = new Set(decks.map((d) => d.id));
-  const allCards = await db.cards.findAllForUser(userId).catch(() => []);
-  const subjectCards = allCards.filter((card) => deckIds.has(card.deck_id));
-  const cardIds = subjectCards.map((card) => card.id);
-
-  if (cardIds.length > 0) {
-    await batchInitializeSeedlingStates(userId, cardIds);
-    await query(
-      `UPDATE card_states
-       SET reckoning_penalty_factor = $1,
-           reckoning_penalty_applied_at = NOW(),
-           updated_at = NOW()
-       WHERE user_id = $2
-         AND card_id = ANY($3::text[])`,
-      [RECKONING_FAILSAFE_KS_FACTOR, userId, cardIds]
-    );
+  const alreadyReleased = freshBeforeClaim.status === 'failsafe_released' || freshBeforeClaim.failsafe_released_at;
+  if (alreadyReleased) {
+    return {
+      released: true,
+      already_applied: true,
+      failure_count: Number(freshBeforeClaim.failure_count) || failureCount,
+      ks_before: Number(freshBeforeClaim.failsafe_penalty_ks_before) || 0,
+      ks_after: Number(freshBeforeClaim.failsafe_penalty_ks_after) || 0,
+      reduction_pct: 90,
+    };
   }
 
-  invalidateKSCache(userId, subjectId);
-  const after = await persistKnowledgeScore(userId, subjectId).catch(() => ({ score: beforeScore * RECKONING_FAILSAFE_KS_FACTOR }));
-  const afterScore = Number(after?.score) || 0;
+  const { rows: claimedRows } = await query(
+    `UPDATE reckoning_sessions
+     SET failsafe_claimed_at = NOW(), updated_at = NOW()
+     WHERE id = $1
+       AND failsafe_released_at IS NULL
+       AND (
+         failsafe_claimed_at IS NULL OR
+         failsafe_claimed_at < NOW() - INTERVAL '2 minutes'
+       )
+     RETURNING id`,
+    [reckoningId]
+  );
 
-  const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
-  await db.brainPressure.set(userId, subjectId, {
-    pressure_score: Number(currentPressure?.pressure_score) || 0,
-    intervention_level: currentPressure?.intervention_level || 'L4',
-    sources: {
-      ...(currentPressure?.sources || {}),
-      reckoning_failsafe_latched: true,
-      reckoning_failsafe_released_at: new Date().toISOString(),
-      reckoning_failsafe_failure_count: failureCount,
-    },
-  });
+  if (!claimedRows[0]) {
+    // Another request owns the claim. Wait briefly for it to finish rather than
+    // racing a second 90% reduction. If it is still running, return a retryable
+    // error and leave the lockdown intact.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const current = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+      if (current?.status === 'failsafe_released' || current?.failsafe_released_at) {
+        return {
+          released: true,
+          already_applied: true,
+          failure_count: Number(current.failure_count) || failureCount,
+          ks_before: Number(current.failsafe_penalty_ks_before) || 0,
+          ks_after: Number(current.failsafe_penalty_ks_after) || 0,
+          reduction_pct: 90,
+        };
+      }
+    }
+    const err = new Error('Reckoning failsafe is already being applied. Retry shortly.');
+    err.code = 'RECKONING_FAILSAFE_IN_PROGRESS';
+    throw err;
+  }
 
-  await db.reckoningSessions.update(reckoningId, {
-    status: 'failsafe_released',
-    failsafe_released_at: new Date(),
-    failsafe_penalty_ks_before: beforeScore,
-    failsafe_penalty_ks_after: afterScore,
-    completed_at: new Date(),
-    deferred_until: null,
-    exam_session_id: null,
-  });
+  try {
+    invalidateKSCache(userId, subjectId);
+    const before = await computeKnowledgeScore(userId, subjectId).catch(() => ({ score: 0 }));
+    const beforeScore = Number(before?.score) || 0;
 
-  wsSend(userId, 'ks_change', {
-    subject_id: subjectId,
-    ks_delta: parseFloat((afterScore - beforeScore).toFixed(2)),
-    new_ks: afterScore,
-    source: 'reckoning_failsafe',
-  });
+    const decks = await db.decks.findBySubject(userId, subjectId).catch(() => []);
+    const deckIds = new Set(decks.map((d) => d.id));
+    const allCards = await db.cards.findAllForUser(userId).catch(() => []);
+    const subjectCards = allCards.filter((card) => deckIds.has(card.deck_id));
+    const cardIds = subjectCards.map((card) => card.id);
 
-  return {
-    released: true,
-    failure_count: failureCount,
-    ks_before: beforeScore,
-    ks_after: afterScore,
-    reduction_pct: beforeScore > 0
-      ? parseFloat((((beforeScore - afterScore) / beforeScore) * 100).toFixed(2))
-      : 90,
-  };
+    if (cardIds.length > 0) {
+      await batchInitializeSeedlingStates(userId, cardIds);
+      await query(
+        `UPDATE card_states
+         SET reckoning_penalty_factor = $1,
+             reckoning_penalty_applied_at = NOW(),
+             updated_at = NOW()
+         WHERE user_id = $2
+           AND card_id = ANY($3::text[])`,
+        [RECKONING_FAILSAFE_KS_FACTOR, userId, cardIds]
+      );
+    }
+
+    invalidateKSCache(userId, subjectId);
+    const after = await persistKnowledgeScore(userId, subjectId).catch(() => ({
+      score: beforeScore * RECKONING_FAILSAFE_KS_FACTOR,
+    }));
+    const afterScore = Number(after?.score) || 0;
+
+    const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+    await db.brainPressure.set(userId, subjectId, {
+      pressure_score: Number(currentPressure?.pressure_score) || 0,
+      intervention_level: currentPressure?.intervention_level || 'L4',
+      sources: {
+        ...(currentPressure?.sources || {}),
+        reckoning_failsafe_latched: true,
+        reckoning_failsafe_released_at: new Date().toISOString(),
+        reckoning_failsafe_failure_count: failureCount,
+      },
+    });
+
+    await db.reckoningSessions.update(reckoningId, {
+      status: 'failsafe_released',
+      failsafe_released_at: new Date(),
+      failsafe_claimed_at: null,
+      failsafe_penalty_ks_before: beforeScore,
+      failsafe_penalty_ks_after: afterScore,
+      completed_at: new Date(),
+      deferred_until: null,
+      exam_session_id: null,
+    });
+
+    wsSend(userId, 'ks_change', {
+      subject_id: subjectId,
+      ks_delta: parseFloat((afterScore - beforeScore).toFixed(2)),
+      new_ks: afterScore,
+      source: 'reckoning_failsafe',
+    });
+
+    return {
+      released: true,
+      failure_count: failureCount,
+      ks_before: beforeScore,
+      ks_after: afterScore,
+      reduction_pct: beforeScore > 0
+        ? parseFloat((((beforeScore - afterScore) / beforeScore) * 100).toFixed(2))
+        : 90,
+    };
+  } catch (err) {
+    // Leave the lock active, but release this claim so a later request can retry.
+    await query(
+      `UPDATE reckoning_sessions
+       SET failsafe_claimed_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND failsafe_released_at IS NULL`,
+      [reckoningId]
+    ).catch(() => null);
+    throw err;
+  }
 }
 
 async function completeReckoning(reckoningId, scorePct, debriefText) {
@@ -8772,6 +8852,20 @@ return {
 //   • missing/invalid linked exam -> roll back to triggered so it can be rebuilt
 async function reconcileActiveReckoning(userId, active) {
 if (!active || active.user_id !== userId) return active || null;
+
+const storedFailureCount = Number(active.failure_count) || 0;
+if (
+  storedFailureCount >= RECKONING_FAILSAFE_FAILURES &&
+  active.status !== 'in_progress'
+) {
+  await applyReckoningFailsafePenalty(
+    userId,
+    active.subject_id,
+    active.id,
+    storedFailureCount
+  );
+  return null;
+}
 
 // Legacy/self-healing attempt accounting: earlier deployments did not persist a
 // failure counter. Reconstruct it from completed Reckoning exams belonging to
@@ -20971,6 +21065,7 @@ async function runSchemaMigrations() {
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_released_at timestamptz`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_penalty_ks_before numeric`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_penalty_ks_after numeric`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_claimed_at timestamptz`,
     `ALTER TABLE card_states ADD COLUMN IF NOT EXISTS reckoning_penalty_factor numeric NOT NULL DEFAULT 1`,
     `ALTER TABLE card_states ADD COLUMN IF NOT EXISTS reckoning_penalty_applied_at timestamptz`,
 
