@@ -290,9 +290,149 @@
     );
   }
 
+
+  const SIDEBAR_SECTION_STORAGE_KEY = 'kiwi_sidebar_sections_v2';
+
+  function readSidebarSectionState() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SIDEBAR_SECTION_STORAGE_KEY) || '{}');
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function writeSidebarSectionState(state) {
+    try { localStorage.setItem(SIDEBAR_SECTION_STORAGE_KEY, JSON.stringify(state)); } catch (_) {}
+  }
+
+  function sidebarSectionKey(label) {
+    return (label || 'section')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'section';
+  }
+
+  function setSidebarSectionCollapsed(group, collapsed, persist = true) {
+    if (!group) return;
+    const label = group.querySelector(':scope > .nav-section-label');
+    const key = group.dataset.sectionKey;
+    group.classList.toggle('is-collapsed', !!collapsed);
+    if (label) label.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+
+    if (persist && key) {
+      const state = readSidebarSectionState();
+      state[key] = !!collapsed;
+      writeSidebarSectionState(state);
+    }
+  }
+
+  function expandSidebarSectionForRoute(route) {
+    if (!route) return;
+    const item = document.querySelector(`.nav-item[data-route="${CSS.escape(String(route))}"]`);
+    const group = item?.closest?.('.kiwi-nav-section');
+    if (group) setSidebarSectionCollapsed(group, false, false);
+  }
+
+  function expandAllSidebarSections() {
+    document.querySelectorAll('.kiwi-nav-section').forEach((group) => {
+      setSidebarSectionCollapsed(group, false, false);
+    });
+  }
+
+  function enhanceSidebarSections() {
+    const nav = document.getElementById('sidebarNav');
+    if (!nav || nav.dataset.accordionReady === 'true') return;
+    nav.dataset.accordionReady = 'true';
+
+    const savedState = readSidebarSectionState();
+    const labels = Array.from(nav.children).filter((node) => node.classList?.contains('nav-section-label'));
+
+    labels.forEach((label, index) => {
+      const rawTitle = label.textContent.trim();
+      const key = sidebarSectionKey(rawTitle);
+      const members = [];
+      let cursor = label.nextElementSibling;
+
+      while (cursor && !cursor.classList.contains('nav-section-label')) {
+        members.push(cursor);
+        cursor = cursor.nextElementSibling;
+      }
+
+      const group = document.createElement('section');
+      group.className = 'kiwi-nav-section';
+      group.dataset.sectionKey = key;
+
+      const items = document.createElement('div');
+      items.className = 'kiwi-nav-section-items';
+      items.id = `kiwiNavSection-${key}-${index}`;
+
+      const inner = document.createElement('div');
+      inner.className = 'kiwi-nav-section-items-inner';
+      items.appendChild(inner);
+
+      nav.insertBefore(group, label);
+      group.appendChild(label);
+      group.appendChild(items);
+      members.forEach((member) => inner.appendChild(member));
+
+      label.setAttribute('role', 'button');
+      label.setAttribute('tabindex', '0');
+      label.setAttribute('aria-controls', items.id);
+
+      const title = document.createElement('span');
+      title.className = 'kiwi-nav-section-title';
+      title.textContent = rawTitle;
+
+      const chevron = document.createElement('span');
+      chevron.className = 'kiwi-nav-section-chevron';
+      chevron.setAttribute('aria-hidden', 'true');
+
+      label.replaceChildren(title, chevron);
+
+      const defaultCollapsed = key !== 'learn';
+      const initialCollapsed = Object.prototype.hasOwnProperty.call(savedState, key)
+        ? !!savedState[key]
+        : defaultCollapsed;
+
+      setSidebarSectionCollapsed(group, initialCollapsed, false);
+
+      const toggle = () => {
+        const collapsed = !group.classList.contains('is-collapsed');
+        setSidebarSectionCollapsed(group, collapsed, true);
+      };
+
+      label.addEventListener('click', toggle);
+      label.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
+      });
+    });
+
+    expandSidebarSectionForRoute(AppState?.currentPage);
+
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) {
+      const sidebarObserver = new MutationObserver((mutations) => {
+        if (!mutations.some((mutation) => mutation.attributeName === 'class')) return;
+        if (!sidebar.classList.contains('open')) return;
+
+        if (typeof _tourActive !== 'undefined' && _tourActive) {
+          expandAllSidebarSections();
+        } else {
+          expandSidebarSectionForRoute(AppState?.currentPage);
+        }
+      });
+
+      sidebarObserver.observe(sidebar, { attributes: true, attributeFilter: ['class'] });
+    }
+  }
+
   function boot() {
     installProductRoutes();
     removeRetiredNavigation();
+    enhanceSidebarSections();
     refreshRetiredLandingCopy();
 
     // Watch only the two application roots that can contain product UI.
