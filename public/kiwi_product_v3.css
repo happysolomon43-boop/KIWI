@@ -1002,3 +1002,171 @@ button:disabled {
     inset: env(safe-area-inset-top, 0px) 0 0 0 !important;
   }
 }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Reckoning global-lock shell
+   Keep the mandatory recovery path usable on small screens and make Settings
+   visually distinct as the only normal surface left available.
+   ───────────────────────────────────────────────────────────────────────────── */
+body.kiwi-reckoning-global-lock .nav-item:not([data-route="settings"]) {
+  opacity: .28 !important;
+  pointer-events: none !important;
+}
+
+body.kiwi-reckoning-global-lock .bottom-nav .bnav-item {
+  opacity: .28 !important;
+  pointer-events: none !important;
+}
+
+.reckoning-lock-notice {
+  margin: 10px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(224, 82, 82, .28);
+  border-radius: var(--r);
+  background: rgba(224, 82, 82, .07);
+  color: var(--red-bright);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  text-align: center;
+}
+
+.reckoning-failsafe-note {
+  margin: 0 0 14px;
+  padding: 9px 11px;
+  border: 1px solid rgba(212, 160, 23, .18);
+  border-radius: var(--r-sm);
+  background: rgba(212, 160, 23, .055);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  text-align: center;
+}
+
+.reckoning-settings-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-color: rgba(224, 82, 82, .28) !important;
+  background: rgba(224, 82, 82, .045) !important;
+}
+
+@media (max-width: 768px) {
+  .reckoning-overlay {
+    box-sizing: border-box !important;
+    justify-content: flex-start !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    overscroll-behavior-y: contain;
+    padding:
+      max(10px, env(safe-area-inset-top))
+      10px
+      calc(18px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .reckoning-card {
+    box-sizing: border-box !important;
+    width: min(100%, 560px) !important;
+    max-width: 560px !important;
+    margin: auto !important;
+    padding: 18px 16px !important;
+    overflow: visible !important;
+    border-radius: 22px !important;
+  }
+
+  .reckoning-icon {
+    font-size: 32px !important;
+    margin-bottom: 7px !important;
+  }
+
+  .reckoning-title {
+    font-size: clamp(24px, 8vw, 32px) !important;
+    line-height: 1.05 !important;
+    margin-bottom: 5px !important;
+  }
+
+  .reckoning-subject {
+    margin-bottom: 10px !important;
+    font-size: 13px !important;
+  }
+
+  .reckoning-reason {
+    margin-bottom: 10px !important;
+    padding: 11px 13px !important;
+    font-size: 11px !important;
+    line-height: 1.5 !important;
+  }
+
+  .reckoning-lock-notice {
+    margin: 8px 0 !important;
+    padding: 8px 10px !important;
+    font-size: 10px !important;
+    line-height: 1.45 !important;
+  }
+
+  .reckoning-failsafe-note {
+    margin-bottom: 10px !important;
+    padding: 7px 9px !important;
+    font-size: 9px !important;
+  }
+
+  .reckoning-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 7px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .reckoning-stats .stat-card {
+    min-width: 0 !important;
+    padding: 9px 5px !important;
+    border-radius: 12px !important;
+  }
+
+  .reckoning-stats .stat-label {
+    font-size: 7px !important;
+    line-height: 1.25 !important;
+    letter-spacing: .8px !important;
+  }
+
+  .reckoning-stats .stat-value {
+    margin-top: 4px !important;
+    font-size: 18px !important;
+    line-height: 1 !important;
+  }
+
+  .reckoning-actions {
+    gap: 7px !important;
+  }
+
+  .reckoning-actions .btn {
+    min-height: 42px !important;
+    padding-block: 9px !important;
+    font-size: 12px !important;
+  }
+
+  .reckoning-defer {
+    margin-top: 7px !important;
+    font-size: 9px !important;
+  }
+
+  .reckoning-settings-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 390px) {
+  .reckoning-card {
+    padding: 14px 12px !important;
+    border-radius: 18px !important;
+  }
+
+  .reckoning-stats {
+    gap: 5px !important;
+  }
+
+  .reckoning-stats .stat-value {
+    font-size: 16px !important;
+  }
+}
