@@ -560,6 +560,14 @@ async findById(userId, id) {
   );
   return rows[0] || null;
 },
+async findByIds(userId, cardIds) {
+  if (!cardIds || cardIds.length === 0) return [];
+  const { rows } = await query(
+    'SELECT * FROM cards WHERE user_id = $1 AND id = ANY($2::text[])',
+    [userId, cardIds]
+  );
+  return rows;
+},
 async findMany(userId, filters = {}, { page = 1, limit = 50 } = {}) {
   // Fix #46: use COUNT for total; avoid loading all cards to count
   let baseSQL = 'FROM cards WHERE user_id = $1';
@@ -815,11 +823,11 @@ async create(userId, data) {
   return { id, ...payload };
 },
 async update(userId, id, data) {
-  // Fix #38: eliminate post-write re-fetch
+  // Scope exam writes to the authenticated owner.
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('exam_sessions', 'id', id, payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const q = _buildUpdate('exam_sessions', 'id', id, payload, userId);
+  const result = await query(q.text, q.values);
+  return result.rowCount > 0 ? { id, ...payload } : null;
 },
 async findByIdWithQuestions(userId, id) {
   const { rows: [exam] } = await query(
@@ -892,11 +900,10 @@ async findById(userId, id) {
   return rows[0] || null;
 },
 async update(userId, id, data) {
-  // Fix #38: eliminate post-write re-fetch
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('exam_questions', 'id', id, payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const q = _buildUpdate('exam_questions', 'id', id, payload, userId);
+  const result = await query(q.text, q.values);
+  return result.rowCount > 0 ? { id, ...payload } : null;
 },
 // BUG #4 FIX: findBySession was absent — recomputeAndStoreCardState always received
 // examLogs = [] because the guard `db.examQuestions.findBySession ?` silently failed.
@@ -1308,6 +1315,16 @@ async findActiveByUser(userId) {
     [userId]
   );
   return rows[0] || null;
+},
+async claimActivationAnnouncement(userId, id) {
+  const { rows } = await query(
+    `UPDATE reckoning_sessions
+     SET activation_announced_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND activation_announced_at IS NULL
+     RETURNING activation_announced_at`,
+    [id, userId]
+  );
+  return rows.length > 0;
 },
 async findByUser(userId) {
   const { rows } = await query(
@@ -1723,11 +1740,14 @@ async findBySubject(userId, subjectId) {
 },
 async update(userId, goalId, data) {
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('mastery_goals', 'id', goalId, payload);
-  await query(q.text, q.values);
-  // update() DOES re-fetch (source line 1420: const doc = await ref.get())
-  const { rows } = await query('SELECT * FROM mastery_goals WHERE id = $1', [goalId]);
-  return { id: goalId, ...rows[0] };
+  const q = _buildUpdate('mastery_goals', 'id', goalId, payload, userId);
+  const result = await query(q.text, q.values);
+  if (result.rowCount === 0) return null;
+  const { rows } = await query(
+    'SELECT * FROM mastery_goals WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [goalId, userId]
+  );
+  return rows[0] ? { id: goalId, ...rows[0] } : null;
 },
 async archive(userId, goalId, finalStatus = 'archived') {
   return this.update(userId, goalId, {
@@ -1736,26 +1756,33 @@ async archive(userId, goalId, finalStatus = 'archived') {
   });
 },
 // goal_history sub-collection [DESIGN: §12.2] — migrated to goal_history table
+// Event-specific fields live in data JSONB so history writes remain schema-stable.
 async addHistoryEntry(goalId, entry) {
   const id = randomUUID();
-  const payload = { id, goal_id: goalId, ...entry, created_at: new Date() };
-  const q = _buildInsert('goal_history', payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const createdAt = entry?.created_at ? new Date(entry.created_at) : new Date();
+  const eventType = entry?.event_type || null;
+  const data = { ...(entry || {}) };
+  delete data.event_type;
+  delete data.created_at;
+  await query(
+    'INSERT INTO goal_history (id, goal_id, event_type, data, created_at) VALUES ($1,$2,$3,$4,$5)',
+    [id, goalId, eventType, JSON.stringify(data), createdAt]
+  );
+  return { id, goal_id: goalId, event_type: eventType, ...data, created_at: createdAt };
 },
 async getHistory(goalId, limit = 90) {
   const { rows } = await query(
     'SELECT * FROM goal_history WHERE goal_id = $1 ORDER BY created_at DESC LIMIT $2',
     [goalId, limit]
   );
-  return rows;
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
 },
 async getHistoryForWeek(goalId, weekStart, weekEnd) {
   const { rows } = await query(
     'SELECT * FROM goal_history WHERE goal_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY created_at ASC',
     [goalId, weekStart, weekEnd]
   );
-  return rows;
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
 },
 // concept_clusters sub-collection [DESIGN: §12.3] — migrated to concept_clusters table
 async addCluster(goalId, clusterData) {
@@ -2399,25 +2426,86 @@ function wrapIntervalWithUrgency(baseInterval, cardStateDoc, phase) {
 function computeAllocationWeights(activeGoals) {
   if (!activeGoals || activeGoals.length === 0) return {};
   if (activeGoals.length === 1) return { [activeGoals[0].id]: 100 };
-  const gaps     = activeGoals.map((g) => Math.max(0, g.trajectory_gap || 0));
+
+  const n = activeGoals.length;
+  const gaps = activeGoals.map((g) => Math.max(0, Number(g.trajectory_gap) || 0));
   const totalGap = gaps.reduce((a, b) => a + b, 0);
-  const raw      = {};
-  if (totalGap === 0) {
-    const share = Math.floor(100 / activeGoals.length);
-    activeGoals.forEach((g) => { raw[g.id] = share; });
-    raw[activeGoals[0].id] += 100 - share * activeGoals.length;
-  } else {
-    activeGoals.forEach((g, i) => {
-      raw[g.id] = Math.round((gaps[i] / totalGap) * 100);
-    });
+  const raw = activeGoals.map((g, i) => ({
+    id: g.id,
+    target: totalGap > 0 ? (gaps[i] / totalGap) * 100 : 100 / n,
+  }));
+
+  const minWeight = n * 15 <= 100 ? 15 : 0;
+  const maxWeight = 70;
+  const weights = new Map();
+  let free = raw.map((r) => r.id);
+  let remaining = 100;
+
+  for (let pass = 0; pass < n + 2 && free.length > 0; pass++) {
+    const targetTotal = free.reduce(
+      (sum, id) => sum + (raw.find((r) => r.id === id)?.target || 0),
+      0
+    );
+    const proposed = new Map();
+    for (const id of free) {
+      const base = raw.find((r) => r.id === id)?.target || 0;
+      proposed.set(id, targetTotal > 0 ? remaining * (base / targetTotal) : remaining / free.length);
+    }
+
+    const newlyFixed = [];
+    for (const id of free) {
+      const value = proposed.get(id);
+      if (value < minWeight) {
+        weights.set(id, minWeight);
+        remaining -= minWeight;
+        newlyFixed.push(id);
+      } else if (value > maxWeight) {
+        weights.set(id, maxWeight);
+        remaining -= maxWeight;
+        newlyFixed.push(id);
+      }
+    }
+
+    if (newlyFixed.length === 0) {
+      for (const id of free) weights.set(id, proposed.get(id));
+      remaining = 0;
+      break;
+    }
+    free = free.filter((id) => !newlyFixed.includes(id));
   }
-  for (const id of Object.keys(raw)) raw[id] = Math.min(70, Math.max(15, raw[id]));
-  const total = Object.values(raw).reduce((s, v) => s + v, 0);
-  if (total !== 100) {
-    const firstId = Object.keys(raw)[0];
-    raw[firstId]  = Math.min(70, Math.max(15, raw[firstId] + (100 - total)));
+
+  if (free.length > 0 && remaining > 0) {
+    const share = remaining / free.length;
+    free.forEach((id) => weights.set(id, share));
   }
-  return raw;
+
+  const result = {};
+  const remainders = raw.map(({ id }) => {
+    const exact = weights.get(id) ?? (100 / n);
+    const floored = Math.floor(exact);
+    result[id] = floored;
+    return { id, remainder: exact - floored };
+  });
+  let diff = 100 - Object.values(result).reduce((sum, v) => sum + v, 0);
+  remainders.sort((a, b) => b.remainder - a.remainder);
+  let guard = 0;
+  while (diff !== 0 && guard++ < 1000) {
+    let changed = false;
+    for (const { id } of remainders) {
+      if (diff > 0 && result[id] < maxWeight) {
+        result[id] += 1;
+        diff -= 1;
+        changed = true;
+      } else if (diff < 0 && result[id] > minWeight) {
+        result[id] -= 1;
+        diff += 1;
+        changed = true;
+      }
+      if (diff === 0) break;
+    }
+    if (!changed) break;
+  }
+  return result;
 }
 
 // [DESIGN: §4.2] Cards eligible for parking: STABLE or VERIFIED, next_review ≥ 5 days away.
@@ -6862,16 +6950,25 @@ function computeCurrentPhase(goal, now = new Date()) {
 async function computeBubbleKS(userId, goal) {
   const cardIds = goal.card_ids || [];
   if (cardIds.length === 0) return { score: 0, band: '🌱 Seed', totalCards: 0, sumWeights: 0 };
-  const allStatesDocs  = await db.cardStates.findByUser(userId);
+
+  const [allStatesDocs, bubbleCards] = await Promise.all([
+    db.cardStates.findByUser(userId),
+    db.cards.findByIds(userId, cardIds),
+  ]);
   const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+  const cardsById = new Map(bubbleCards.map((card) => [card.id, card]));
+
   let sumWeights = 0;
-  let validCount  = 0;
+  let validCount = 0;
   for (const cardId of cardIds) {
-    const card = await db.cards.findById(userId, cardId).catch(() => null);
+    const card = cardsById.get(cardId);
     if (!card) continue;
     validCount++;
     let stateDoc = statesByCardId.get(cardId);
-    if (!stateDoc) stateDoc = await initializeCardState(userId, cardId, CARD_STATES.SEEDLING);
+    if (!stateDoc) {
+      stateDoc = await initializeCardState(userId, cardId, CARD_STATES.SEEDLING);
+      statesByCardId.set(cardId, stateDoc);
+    }
     sumWeights += computeEffectiveWeight(stateDoc, card);
   }
   if (validCount === 0) return { score: 0, band: '🌱 Seed', totalCards: 0, sumWeights: 0 };
@@ -6896,10 +6993,59 @@ function computeRequiredKSPerDay(goal, currentKS, now = new Date()) {
 }
 
 // ─── PB.4: Rolling Velocity ───────────────────────────────────────────────────
-function computeVelocityFromGoal(goal) {
+// Samples are daily net KS deltas. Legacy numeric samples remain readable.
+function velocitySampleValue(sample) {
+  if (typeof sample === 'number') return Number.isFinite(sample) ? sample : 0;
+  return Number(sample?.delta) || 0;
+}
+
+function appendDailyVelocitySample(existingSamples, delta, now = new Date()) {
+  const samples = [...(existingSamples || [])];
+  const day = now.toISOString().slice(0, 10);
+  const roundedDelta = parseFloat((Number(delta) || 0).toFixed(3));
+  const last = samples[samples.length - 1];
+
+  if (last && typeof last === 'object' && last.date === day) {
+    samples[samples.length - 1] = {
+      ...last,
+      date: day,
+      delta: parseFloat((velocitySampleValue(last) + roundedDelta).toFixed(3)),
+    };
+  } else {
+    samples.push({ date: day, delta: roundedDelta });
+  }
+  return samples.slice(-90);
+}
+
+function getVelocityWindow(goal, days, now = new Date()) {
   const samples = goal.velocity_samples || [];
-  if (samples.length === 0) return 0;
-  const window = samples.slice(-7); // 7-day rolling average [DESIGN: §3.1]
+  if (samples.length === 0) return [];
+
+  const allDated = samples.every((sample) => sample && typeof sample === 'object' && sample.date);
+  if (!allDated) {
+    return samples.slice(-days).map(velocitySampleValue);
+  }
+
+  const byDate = new Map();
+  for (const sample of samples) {
+    byDate.set(sample.date, (byDate.get(sample.date) || 0) + velocitySampleValue(sample));
+  }
+
+  const createdDay = goal.created_at ? new Date(goal.created_at).toISOString().slice(0, 10) : null;
+  const values = [];
+  for (let offset = days - 1; offset >= 0; offset--) {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - offset);
+    const day = d.toISOString().slice(0, 10);
+    if (createdDay && day < createdDay) continue;
+    values.push(byDate.get(day) || 0);
+  }
+  return values;
+}
+
+function computeVelocityFromGoal(goal, now = new Date()) {
+  const window = getVelocityWindow(goal, 7, now);
+  if (window.length === 0) return 0;
   return parseFloat((window.reduce((a, b) => a + b, 0) / window.length).toFixed(3));
 }
 
@@ -6915,7 +7061,7 @@ function computeTrajectoryStatus(goal, currentKS, now = new Date()) {
   const daysRemaining = Math.ceil((examDate - now) / 86400000);
   if (daysRemaining <= 0) return 'CRITICAL';
   const required = computeRequiredKSPerDay(goal, currentKS, now);
-  const velocity = computeVelocityFromGoal({ ...goal });
+  const velocity = computeVelocityFromGoal({ ...goal }, now);
   const gap      = parseFloat((required - velocity).toFixed(3)); // [DESIGN: §3.1]
   if (gap <= 0)   return 'ON_TRACK';
   if (gap <= 0.3) return 'DRIFTING';  // [DESIGN: §3.2]
@@ -7120,12 +7266,12 @@ async function updateBubbleTrajectory(userId, goalId) {
 
   const now       = new Date();
   const ksResult  = await computeBubbleKS(userId, goal);
-  const prevKS    = goal.current_ks || 0;
-  const ksDelta   = Math.max(0, ksResult.score - prevKS);
+  const prevKS    = Number(goal.current_ks) || 0;
+  const ksDelta   = parseFloat((ksResult.score - prevKS).toFixed(3));
 
-  // Rolling velocity — last 7 samples; keep up to 90 for Autopsy [DESIGN: §3.4]
-  const samples   = [...(goal.velocity_samples || []), ksDelta].slice(-90);
-  const velocity  = computeVelocityFromGoal({ velocity_samples: samples });
+  // Aggregate repeated same-day trajectory updates into one net daily sample.
+  const samples   = appendDailyVelocitySample(goal.velocity_samples || [], ksDelta, now);
+  const velocity  = computeVelocityFromGoal({ ...goal, velocity_samples: samples }, now);
 
   // Gap and trajectory status [DESIGN: §3.1, §3.2]
   const requiredPerDay   = computeRequiredKSPerDay(goal, ksResult.score, now);
@@ -7330,9 +7476,9 @@ async function updateBubbleTrajectory(userId, goalId) {
       ) {
         updates.seeding_early_stall_checked = true;
         // Check velocity directly — require only 1 sample (vs normal 3) [DESIGN: §2.2]
-        const earlyVelocity = samples.length > 0
-          ? samples.slice(-Math.min(7, samples.length)).reduce((a, b) => a + b, 0) /
-            Math.min(7, samples.length)
+        const earlyWindow = getVelocityWindow({ ...goal, velocity_samples: samples }, 7, now);
+        const earlyVelocity = earlyWindow.length > 0
+          ? earlyWindow.reduce((a, b) => a + b, 0) / earlyWindow.length
           : 0;
         if (earlyVelocity < 0.3) {
           const cause = await diagnoseStallCause(userId, { ...goal, ...updates }).catch(() => 'STUCK_CLUSTER');
@@ -7374,12 +7520,12 @@ async function updateAllBubblesForUser(userId) {
 
 // ─── Full Bubble creation flow ────────────────────────────────────────────────
 async function createMasteryGoal(userId, data) {
-  let cardIds = data.card_ids || [];
+  let cardIds = [...new Set(data.card_ids || [])];
   if (cardIds.length === 0 && (data.deck_ids || []).length > 0) {
-    for (const deckId of data.deck_ids) {
-      const cards = await db.cards.findByDeck(userId, deckId).catch(() => []);
-      cardIds.push(...cards.map((c) => c.id));
-    }
+    const deckCards = await Promise.all(
+      data.deck_ids.map((deckId) => db.cards.findByDeck(userId, deckId).catch(() => []))
+    );
+    cardIds = [...new Set(deckCards.flat().map((card) => card.id))];
   }
   await batchInitializeSeedlingStates(userId, cardIds).catch((e) => console.error("[KIWI] silent catch:", e.message));
   // Default bubble name if not provided [DESIGN: §12.1]
@@ -7388,21 +7534,31 @@ async function createMasteryGoal(userId, data) {
     const examStr = new Date(data.exam_date).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
     data.name = `${subject?.name || 'Exam'} — ${examStr}`;
   }
-  const goal     = await db.masteryGoals.create(userId, { ...data, card_ids: cardIds });
-  const ksResult = await computeBubbleKS(userId, goal);
-  const now      = new Date();
-  const required = computeRequiredKSPerDay(goal, ksResult.score, now);
-  await db.masteryGoals.update(userId, goal.id, {
-    current_ks:          ksResult.score,
-    required_ks_per_day: required,
-  });
-  await generateDailyContract(userId, goal.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-  await db.masteryGoals.addHistoryEntry(goal.id, {
-    event_type:  'created',
-    ks_at_event:  ksResult.score,
-    notes:       `Bubble created. ${cardIds.length} cards. Exam: ${data.exam_date}. Required: ${required.toFixed(2)} KS/day.`,
-  });
-  return { ...goal, current_ks: ksResult.score, required_ks_per_day: required };
+  let goal = null;
+  try {
+    goal = await db.masteryGoals.create(userId, { ...data, card_ids: cardIds });
+    const ksResult = await computeBubbleKS(userId, goal);
+    const now      = new Date();
+    const required = computeRequiredKSPerDay(goal, ksResult.score, now);
+    await db.masteryGoals.update(userId, goal.id, {
+      current_ks:          ksResult.score,
+      required_ks_per_day: required,
+    });
+    await generateDailyContract(userId, goal.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    await db.masteryGoals.addHistoryEntry(goal.id, {
+      event_type:  'created',
+      ks_at_event:  ksResult.score,
+      notes:       `Bubble created. ${cardIds.length} cards. Exam: ${data.exam_date}. Required: ${required.toFixed(2)} KS/day.`,
+    });
+    return { ...goal, current_ks: ksResult.score, required_ks_per_day: required };
+  } catch (e) {
+    if (goal?.id) {
+      await query('DELETE FROM goal_history WHERE goal_id = $1', [goal.id]).catch(() => {});
+      await query('DELETE FROM concept_clusters WHERE goal_id = $1', [goal.id]).catch(() => {});
+      await query('DELETE FROM mastery_goals WHERE id = $1 AND user_id = $2', [goal.id, userId]).catch(() => {});
+    }
+    throw e;
+  }
 }
 
 // ─── Close a mastery goal [DESIGN: §10.1, §2.6] ──────────────────────────────
@@ -7528,24 +7684,37 @@ return results;
 async function detectAndMarkCrossBubbleCards(userId, newGoalCardIds, existingGoals) {
   const existingCardSet  = new Set(existingGoals.flatMap((g) => g.card_ids || []));
   const overlappingCards = newGoalCardIds.filter((id) => existingCardSet.has(id));
-  // [DESIGN: §8.2] Only prompt the user if overlap is meaningful (>40% of smaller set)
   const smallerSetSize = Math.min(newGoalCardIds.length, existingCardSet.size);
   const overlapPct     = smallerSetSize > 0 ? overlappingCards.length / smallerSetSize : 0;
-  for (const cardId of overlappingCards) {
-    await db.cardStates.update(userId, cardId, { cross_bubble: true }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    // Update bubble_ids on the card state doc
-    const st = await db.cardStates.get(userId, cardId).catch(() => null);
-    if (st) {
-      const existingGoalIds = existingGoals.map((g) => g.id);
-      const merged = [...new Set([...(st.bubble_ids || []), ...existingGoalIds])];
-      await db.cardStates.update(userId, cardId, { bubble_ids: merged }).catch((e) => console.error("[KIWI] silent catch:", e.message));
-    }
+  if (overlappingCards.length > 0) {
+    const existingGoalIds = existingGoals.map((goal) => goal.id);
+    await query(
+      `UPDATE card_states cs
+       SET cross_bubble = true,
+           bubble_ids = (
+             SELECT COALESCE(jsonb_agg(DISTINCT item), '[]'::jsonb)
+             FROM jsonb_array_elements(COALESCE(cs.bubble_ids, '[]'::jsonb) || $3::jsonb) AS item
+           ),
+           updated_at = NOW()
+       WHERE cs.user_id = $1 AND cs.card_id = ANY($2::text[])`,
+      [userId, overlappingCards, JSON.stringify(existingGoalIds)]
+    ).catch((e) => console.error('[KIWI] Cross-Bubble state update failed:', e.message));
   }
-  // Return overlap data for the user prompt [DESIGN: §8.2]
+
+  for (const goal of existingGoals) {
+    const goalCards = new Set(goal.card_ids || []);
+    const sharedWithGoal = overlappingCards.filter((id) => goalCards.has(id));
+    if (sharedWithGoal.length === 0) continue;
+    const merged = [...new Set([...(goal.cross_bubble_card_ids || []), ...sharedWithGoal])];
+    await db.masteryGoals.update(userId, goal.id, { cross_bubble_card_ids: merged })
+      .catch((e) => console.error("[KIWI] silent catch:", e.message));
+  }
+
   return {
     overlapping_card_count: overlappingCards.length,
+    overlapping_card_ids:   overlappingCards,
     overlap_pct:            parseFloat((overlapPct * 100).toFixed(1)),
-    should_prompt_user:     overlapPct > 0.40,   // [DESIGN: §8.2 — >40% threshold]
+    should_prompt_user:     overlapPct > 0.40,
   };
 }
 
@@ -7554,9 +7723,18 @@ async function detectAndMarkCrossBubbleCards(userId, newGoalCardIds, existingGoa
 async function checkBubbleOverlap(userId, newCardIds) {
   const existingGoals = await db.masteryGoals.findActive(userId);
   if (existingGoals.length === 0) {
-    return { should_prompt_user: false, overlap_pct: 0, overlapping_card_count: 0 };
+    return { should_prompt_user: false, overlap_pct: 0, overlapping_card_count: 0, overlapping_card_ids: [] };
   }
-  return detectAndMarkCrossBubbleCards(userId, newCardIds, existingGoals);
+  const existingCardSet = new Set(existingGoals.flatMap((g) => g.card_ids || []));
+  const overlappingCards = (newCardIds || []).filter((id) => existingCardSet.has(id));
+  const smallerSetSize = Math.min((newCardIds || []).length, existingCardSet.size);
+  const overlapPct = smallerSetSize > 0 ? overlappingCards.length / smallerSetSize : 0;
+  return {
+    overlapping_card_count: overlappingCards.length,
+    overlapping_card_ids: overlappingCards,
+    overlap_pct: parseFloat((overlapPct * 100).toFixed(1)),
+    should_prompt_user: overlapPct > 0.40,
+  };
 }
 
 // [DESIGN: §8.2] When a cross_bubble card is reviewed, propagate KS to all containing bubbles.
@@ -7638,8 +7816,10 @@ async function detectStall(userId, goal) {
     // The samples.length < 3 guard above already handled the zero-samples case.
   }
   // Condition 1: average daily KS gain < 0.3 over last _stallWindow days [DESIGN: §6.1 / GAP-S3]
-  const recent      = samples.slice(-Math.min(_stallWindow, samples.length));
-  const avgVelocity = recent.reduce((a, b) => a + b, 0) / recent.length;
+  const recent      = getVelocityWindow(goal, _stallWindow);
+  const avgVelocity = recent.length > 0
+    ? recent.reduce((a, b) => a + b, 0) / recent.length
+    : 0;
   if (avgVelocity >= 0.3) return { isStall: false, cause: null };
   // Stall confirmed — diagnose cause
   const cause = await diagnoseStallCause(userId, goal);
@@ -7724,9 +7904,10 @@ async function resolveStallIfRecovered(userId, goalId) {
   if (!goal || !goal.stall_active) return;
   const samples = goal.velocity_samples || [];
   if (samples.length < 7) return;
-  const last7  = samples.slice(-7);
+  const last7  = getVelocityWindow(goal, 7);
+  if (last7.length < 7) return;
   const minOf7 = Math.min(...last7);
-  // All 7 consecutive days must be ≥ 0.5 [DESIGN: §6.3]
+  // All 7 consecutive calendar days must be ≥ 0.5 [DESIGN: §6.3]
   if (minOf7 >= 0.5) {
     await db.masteryGoals.update(userId, goalId, {
       stall_active:          false,
@@ -11117,7 +11298,7 @@ async function generateBubbleAutopsy(userId, goal) {
   const weeklyVelocities = [];
   const samples = goal.velocity_samples || [];
   for (let i = 0; i < samples.length - 6; i += 7) {
-    const week = samples.slice(i, i + 7);
+    const week = samples.slice(i, i + 7).map(velocitySampleValue);
     weeklyVelocities.push(week.reduce((a, b) => a + b, 0) / week.length);
   }
   const bestWeekVelocity  = weeklyVelocities.length > 0 ? Math.max(...weeklyVelocities) : 0;
@@ -12344,6 +12525,7 @@ const RECKONING_EXEMPT_PATHS = [
 '/reckoning/submit',
 '/reckoning/defer',
 '/reckoning/use-buffer',
+'/reckoning/active',
 '/pressure',   // exact pressure state and acknowledge-alert sub-path
 ];
 if (RECKONING_EXEMPT_PATHS.some(p => req.path === p || req.path.startsWith(p + '/') || req.path.endsWith(p))) return next();
@@ -12359,6 +12541,9 @@ if (!active) return next();
 if (active.status === 'deferred' && active.deferred_until) {
 if (new Date(active.deferred_until) > new Date()) return next();
 }
+const shouldAnnounce = await db.reckoningSessions
+.claimActivationAnnouncement(req.user.id, active.id)
+.catch(() => active.activation_announced_at == null);
 // P3-01 FIX: add all fields consumed by frontend showReckoningOverlay()
 const userStatsForLockout = await db.userStats.get(req.user.id).catch(() => null);
 return res.status(403).json({
@@ -12382,6 +12567,7 @@ canDefer: !active.deferral_used,
 can_defer: !active.deferral_used,
 deferHours: 4,
 deferPenalty: 5,
+should_announce: shouldAnnounce,
 },
 });
 } catch (e) {
@@ -14860,20 +15046,26 @@ const card_state_filter = Array.isArray(raw_csf)
 : ((raw_csf || 'all').toLowerCase());
 let selectedCards;
 let sourceCards;
+let reckoningQuestionCount = null;
 
 const isReckoningExam = !!(body.is_reckoning || body.reckoning_id);
 if (isReckoningExam) {
-// Reckoning: load flagged pool from session document
+// Reckoning: load flagged pool from the active session and bind generation to that exact id.
 const activeReck = await db.reckoningSessions.findActiveByUser(req.user.id).catch(() => null);
+if (!activeReck) {
+  return res.status(409).json({ error: 'No active Reckoning exists for this account.' });
+}
+if (body.reckoning_id && body.reckoning_id !== activeReck.id) {
+  return res.status(409).json({ error: 'Reckoning id does not match the active Reckoning.' });
+}
+reckoningQuestionCount = Math.max(1, Number(activeReck.question_count) || Number(question_count) || 25);
 const flaggedIds = activeReck?.flagged_card_ids || [];
 if (flaggedIds.length === 0) {
   return res.status(400).json({ error: 'Reckoning session has no flagged cards. Complete more study sessions to flag cards before attempting a Reckoning exam.' });
 }
 if (flaggedIds.length > 0) {
-const flaggedPool = (await Promise.all(
-  flaggedIds.map((id) => db.cards.findById(req.user.id, id).catch(() => null))
-)).filter(Boolean);
-const reckoningCount = activeReck.question_count || question_count;
+const flaggedPool = await db.cards.findByIds(req.user.id, flaggedIds).catch(() => []);
+const reckoningCount = reckoningQuestionCount;
 sourceCards = flaggedPool;
 
 // PB.11: Weight Bubble cards 3× in the Reckoning selection pool [DESIGN: §15.2]
@@ -14966,15 +15158,16 @@ selectedCards = sourceCards
 .sort(() => 0.5 - Math.random())
 .slice(0, Math.min(question_count, sourceCards.length));
 }
-// FIX: Use user-requested question_count, not selectedCards.length.
-// selectedCards are source material; AI generates multiple Qs per card.
-const count = question_count;
+// Normal exams use the requested count. Reckoning exams must honor the count
+// recorded when the Reckoning was triggered.
+const count = isReckoningExam ? reckoningQuestionCount : question_count;
 const examSession = await db.examSessions.create(req.user.id, {
 subject_id,
 deck_ids: targetDeckIds,
 question_count: count,
 card_range,
 time_limit_seconds,
+is_reckoning: isReckoningExam,
 status: 'ready',
 difficulty_level: selectedDifficulty,
 });
@@ -15180,10 +15373,15 @@ setImmediate(async () => {
     console.log(`[KIWI CBT] ✅ Generation complete: ${questions.length}/${_cbtCount} questions ready for session ${_cbtSessionId}`);
     await Promise.all(questions.map(q => db.examQuestions.create(_cbtUserId, _cbtSessionId, q)));
     const readyExam = await db.examSessions.findByIdWithQuestions(_cbtUserId, _cbtSessionId);
-    // Link reckoning session if applicable
+    // Link the generated exam to the exact Reckoning that requested it.
     if (_cbtBody.is_reckoning || _cbtBody.reckoning_id) {
       try {
-        const activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
+        let activeReck = null;
+        if (_cbtBody.reckoning_id) {
+          const requested = await db.reckoningSessions.findById(_cbtBody.reckoning_id).catch(() => null);
+          if (requested?.user_id === _cbtUserId) activeReck = requested;
+        }
+        if (!activeReck) activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
         if (activeReck) await startReckoningExam(activeReck.id, _cbtSessionId);
       } catch (_) {}
     }
@@ -16723,45 +16921,113 @@ bubbleRouter.get('/', async (req, res) => {
 // ── POST /api/bubbles — create bubble [DESIGN: §14] ──────────────────────
 bubbleRouter.post('/', async (req, res) => {
   try {
+    const gateStats = await db.userStats.get(req.user.id);
+    const completedSessions = Number(gateStats?.total_sessions_completed) || 0;
+    if (completedSessions < 5) {
+      return res.status(403).json({
+        error: 'Mastery Bubbles unlock after 5 completed sessions',
+        code: 'BUBBLE_LOCKED',
+        current_sessions: completedSessions,
+        required_sessions: 5,
+      });
+    }
     const { subject_id, deck_ids, exam_date, test_date, card_ids, name } = req.body;
     if (!subject_id || !exam_date)
       return res.status(400).json({ error: 'subject_id and exam_date required' });
+
+    const examDate = new Date(exam_date);
+    const testDate = test_date ? new Date(test_date) : null;
+    if (Number.isNaN(examDate.getTime()))
+      return res.status(400).json({ error: 'exam_date must be a valid date' });
+    if (testDate && Number.isNaN(testDate.getTime()))
+      return res.status(400).json({ error: 'test_date must be a valid date' });
+    if (testDate && testDate > examDate)
+      return res.status(400).json({ error: 'test_date cannot be after exam_date' });
+    if (name != null && (typeof name !== 'string' || name.trim().length > 120))
+      return res.status(400).json({ error: 'name must be 120 characters or fewer' });
+
+    const subject = await db.subjects.findById(subject_id).catch(() => null);
+    if (!subject || subject.user_id !== req.user.id)
+      return res.status(404).json({ error: 'Subject not found' });
+
+    const normalizedDeckIds = [...new Set(
+      (Array.isArray(deck_ids) ? deck_ids : []).filter((id) => typeof id === 'string' && id)
+    )];
+    const normalizedCardIds = [...new Set(
+      (Array.isArray(card_ids) ? card_ids : []).filter((id) => typeof id === 'string' && id)
+    )];
     // GAP-M4: deck_ids is optional when card_ids is provided directly [DESIGN: §14]
     // Either deck_ids (resolved to card_ids server-side) or card_ids must be present.
-    const hasDecks = deck_ids && Array.isArray(deck_ids) && deck_ids.length > 0;
-    const hasCards = card_ids && Array.isArray(card_ids) && card_ids.length > 0;
+    const hasDecks = normalizedDeckIds.length > 0;
+    const hasCards = normalizedCardIds.length > 0;
     if (!hasDecks && !hasCards)
       return res.status(400).json({ error: 'Either deck_ids or card_ids must be provided' });
-    const existingGoals = await db.masteryGoals.findActive(req.user.id);
-    let resolvedCardIds = card_ids || [];
-    if (resolvedCardIds.length === 0) {
-      for (const deckId of deck_ids) {
-        const cards = await db.cards.findByDeck(req.user.id, deckId).catch(() => []);
-        resolvedCardIds.push(...cards.map((c) => c.id));
+
+    if (hasDecks) {
+      const selectedDecks = await Promise.all(
+        normalizedDeckIds.map((deckId) => db.decks.findById(req.user.id, deckId).catch(() => null))
+      );
+      if (selectedDecks.some((deck) => !deck || deck.subject_id !== subject_id)) {
+        return res.status(400).json({ error: 'Every selected deck must belong to the selected subject' });
       }
     }
-    const overlapResult = await detectAndMarkCrossBubbleCards(
-      req.user.id, resolvedCardIds, existingGoals
-    ).catch(() => ({ overlapping_card_count: 0, should_prompt_user: false }));
+
+    const existingGoals = await db.masteryGoals.findActive(req.user.id);
+    let resolvedCardIds = [...normalizedCardIds];
+    if (resolvedCardIds.length === 0) {
+      const deckCards = await Promise.all(
+        normalizedDeckIds.map((deckId) => db.cards.findByDeck(req.user.id, deckId).catch(() => []))
+      );
+      resolvedCardIds = [...new Set(deckCards.flat().map((card) => card.id))];
+    } else {
+      const { rows: matchingCards } = await query(
+        `SELECT c.id
+         FROM cards c
+         INNER JOIN decks d ON d.id = c.deck_id AND d.user_id = c.user_id
+         WHERE c.user_id = $1 AND d.subject_id = $2 AND c.id = ANY($3::text[])`,
+        [req.user.id, subject_id, resolvedCardIds]
+      );
+      if (matchingCards.length !== resolvedCardIds.length) {
+        return res.status(400).json({ error: 'Every selected card must belong to the selected subject' });
+      }
+    }
+    if (resolvedCardIds.length === 0)
+      return res.status(400).json({ error: 'The selected decks do not contain any cards' });
+
+    const overlapPreview = await checkBubbleOverlap(req.user.id, resolvedCardIds)
+      .catch(() => ({ overlapping_card_count: 0, overlap_pct: 0, should_prompt_user: false }));
 
     const goal = await createMasteryGoal(req.user.id, {
-      subject_id, deck_ids, name: name || null,
-      exam_date: new Date(exam_date),
-      test_date: test_date ? new Date(test_date) : null,
+      subject_id, deck_ids: normalizedDeckIds, name: name || null,
+      exam_date: examDate,
+      test_date: testDate,
       card_ids:  resolvedCardIds,
     });
-    // Stamp bubble_id onto each card_state
-    for (const cardId of resolvedCardIds) {
-      const st = await db.cardStates.get(req.user.id, cardId).catch(() => null);
-      if (st) {
-        const ids = st.bubble_ids || [];
-        if (!ids.includes(goal.id)) {
-          await db.cardStates
-            .update(req.user.id, cardId, { bubble_ids: [...ids, goal.id] })
-            .catch((e) => console.error("[KIWI] silent catch:", e.message));
-        }
-      }
+
+    // Apply cross-bubble metadata only after the new Bubble has been created successfully.
+    const overlapResult = await detectAndMarkCrossBubbleCards(
+      req.user.id, resolvedCardIds, existingGoals
+    ).catch(() => overlapPreview);
+
+    if ((overlapResult.overlapping_card_ids || []).length > 0) {
+      await db.masteryGoals.update(req.user.id, goal.id, {
+        cross_bubble_card_ids: overlapResult.overlapping_card_ids,
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      goal.cross_bubble_card_ids = overlapResult.overlapping_card_ids;
     }
+
+    // Stamp the new Bubble onto every included state in one write. The former
+    // per-card read/update loop made large deck creation take long enough for
+    // the browser to time out even though the goal had already been created.
+    await query(
+      `UPDATE card_states cs
+       SET bubble_ids = (
+         SELECT COALESCE(jsonb_agg(DISTINCT item), '[]'::jsonb)
+         FROM jsonb_array_elements(COALESCE(cs.bubble_ids, '[]'::jsonb) || jsonb_build_array($3::text)) AS item
+       ), updated_at = NOW()
+       WHERE cs.user_id = $1 AND cs.card_id = ANY($2::text[])`,
+      [req.user.id, resolvedCardIds, goal.id]
+    ).catch((e) => console.error('[KIWI] Bubble state stamping failed:', e.message));
     res.status(201).json({ ...goal, overlap: overlapResult });
   } catch (e) {
     res.status(500).json({ error: 'Failed to create bubble', details: e.message });
@@ -16841,17 +17107,39 @@ bubbleRouter.get('/:id', async (req, res) => {
 bubbleRouter.patch('/:id', async (req, res) => {
   try {
     const { exam_date, test_date, name } = req.body;
+    const existingGoal = await db.masteryGoals.findById(req.user.id, req.params.id).catch(() => null);
+    if (!existingGoal) return res.status(404).json({ error: 'Bubble not found' });
+
     const updates = {};
-    if (exam_date)              updates.exam_date  = new Date(exam_date);
-    if (test_date !== undefined) updates.test_date = test_date ? new Date(test_date) : null;
-    if (name)                   updates.name       = name;
+    if (exam_date) {
+      const parsedExamDate = new Date(exam_date);
+      if (Number.isNaN(parsedExamDate.getTime()))
+        return res.status(400).json({ error: 'exam_date must be a valid date' });
+      updates.exam_date = parsedExamDate;
+    }
+    if (test_date !== undefined) {
+      const parsedTestDate = test_date ? new Date(test_date) : null;
+      if (parsedTestDate && Number.isNaN(parsedTestDate.getTime()))
+        return res.status(400).json({ error: 'test_date must be a valid date' });
+      updates.test_date = parsedTestDate;
+    }
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 120)
+        return res.status(400).json({ error: 'name must be between 1 and 120 characters' });
+      updates.name = name.trim();
+    }
     if (Object.keys(updates).length === 0)
       return res.status(400).json({ error: 'exam_date, test_date, or name required' });
+
+    const effectiveExamDate = updates.exam_date || (existingGoal.exam_date ? new Date(existingGoal.exam_date) : null);
+    const effectiveTestDate = Object.prototype.hasOwnProperty.call(updates, 'test_date')
+      ? updates.test_date
+      : (existingGoal.test_date ? new Date(existingGoal.test_date) : null);
+    if (effectiveTestDate && effectiveExamDate && effectiveTestDate > effectiveExamDate)
+      return res.status(400).json({ error: 'test_date cannot be after exam_date' });
+
     // G2: Transition DORMANT → active when exam_date is set for the first time [DESIGN: §12.1]
-    if (exam_date) {
-      const existingGoal = await db.masteryGoals.findById(req.user.id, req.params.id).catch(() => null);
-      if (existingGoal?.status === 'dormant') updates.status = 'active';
-    }
+    if (exam_date && existingGoal.status === 'dormant') updates.status = 'active';
     const goal = await db.masteryGoals.update(req.user.id, req.params.id, updates);
     await updateBubbleTrajectory(req.user.id, req.params.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
     res.json(goal);
@@ -16865,7 +17153,8 @@ bubbleRouter.patch('/:id', async (req, res) => {
 bubbleRouter.delete('/:id', async (req, res) => {
   try {
     const result = await closeMasteryGoal(req.user.id, req.params.id, 'archived');
-    res.json(result || { status: 'archived' });
+    if (!result) return res.status(404).json({ error: 'Bubble not found' });
+    res.json(result);
   } catch (e) {
     res.status(500).json({ error: 'Failed to archive bubble', details: e.message });
   }
@@ -16915,8 +17204,13 @@ bubbleRouter.get('/:id/trajectory', async (req, res) => {
 // ── GET /api/bubbles/:id/contract [DESIGN: §14, §9] ──────────────────────
 bubbleRouter.get('/:id/contract', async (req, res) => {
   try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+    if (!['active', 'dormant'].includes(goal.status)) {
+      return res.status(409).json({ error: 'Daily contracts are available only for active exam goals' });
+    }
     const contract = await generateDailyContract(req.user.id, req.params.id);
-    if (!contract) return res.status(404).json({ error: 'Bubble not found' });
+    if (!contract) return res.status(409).json({ error: 'A daily contract could not be generated for this goal' });
     // F-16 FIX: batch card + state fetch instead of 2N individual queries
     const _bubbleCardIds = contract.cards || [];
     let _bubbleCardMap = new Map(), _bubbleStateMap = new Map();
@@ -16968,6 +17262,8 @@ bubbleRouter.get('/:id/history', async (req, res) => {
 // ── GET /api/bubbles/:id/clusters [DESIGN: §14, §7] ──────────────────────
 bubbleRouter.get('/:id/clusters', async (req, res) => {
   try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
     const clusters = await db.masteryGoals.getClusters(req.params.id).catch(() => []);
     const enriched = await Promise.all(clusters.map(async (c) => {
       const ks     = await computeClusterKS(req.user.id, c).catch(() => c.cluster_ks || 0);
@@ -17583,6 +17879,16 @@ if (!examId || !Array.isArray(answers))
 return res.status(400).json({ error: 'examId and answers required' });
 const exam = await db.examSessions.findByIdWithQuestions(req.user.id, examId);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (!exam.is_reckoning) {
+  return res.status(409).json({ error: 'This exam is not the active Reckoning exam.' });
+}
+if (exam.status !== 'active' || !exam.started_at) {
+  return res.status(409).json({ error: 'Reckoning exam must be active before it can be submitted.' });
+}
+const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (!active || active.status !== 'in_progress' || active.exam_session_id !== examId) {
+  return res.status(409).json({ error: 'This exam is not linked to the active Reckoning.' });
+}
 // Delegate to exam submit logic
 let correct = 0;
 const total = exam.questions.length;
@@ -17623,8 +17929,7 @@ await hookSeedlingEarnings(req.user.id, 'exam_result', {
   exam_id: examId,
 });
 }
-// Complete the reckoning
-const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+// Complete the exact Reckoning already validated above.
 let reckoningResult = null;
 if (active) {
 // Bug 5 fix: Generate Gemini debrief with reckoning-specific tone instead of static string
@@ -17765,7 +18070,26 @@ res.status(500).json({ error: 'Failed to use buffer', details: e.message });
 brainRouter.get('/reckoning/active', async (req, res) => {
 try {
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
-res.json(active || { status: 'none' });
+if (!active) return res.json({ status: 'none' });
+const shouldAnnounce = await db.reckoningSessions
+  .claimActivationAnnouncement(req.user.id, active.id)
+  .catch(() => active.activation_announced_at == null);
+const userStats = await db.userStats.get(req.user.id).catch(() => null);
+res.json({
+  ...active,
+  subjectId: active.subject_id,
+  subjectName: active.subject_name,
+  reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
+  requiredScore: 70,
+  pressure: active.pressure_score || 0,
+  shields: userStats?.streak_shields_held || 0,
+  canDefer: !active.deferral_used,
+  can_defer: !active.deferral_used,
+  deferHours: 4,
+  deferPenalty: 5,
+  deferral_expires_at: active.deferred_until || null,
+  should_announce: shouldAnnounce,
+});
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch active reckoning', details: e.message });
 }
@@ -17826,6 +18150,10 @@ activeReckoning = await db.reckoningSessions.findById(triggered.reckoning_id).ca
 const userStatsForBrain = activeReckoning
 ? await db.userStats.get(req.user.id).catch(() => null)
 : null;
+const shouldAnnounceReckoning = activeReckoning
+? await db.reckoningSessions.claimActivationAnnouncement(req.user.id, activeReckoning.id)
+    .catch(() => activeReckoning.activation_announced_at == null)
+: false;
 res.json({
 pressures: enriched,
 overallStatus:
@@ -17857,6 +18185,7 @@ canDefer: !activeReckoning.deferral_used,
 can_defer: !activeReckoning.deferral_used,
 deferHours: 4,
 deferPenalty: 5,
+should_announce: shouldAnnounceReckoning,
 }
 : null,
 });
@@ -19750,6 +20079,7 @@ async function runSchemaMigrations() {
       user_id text,
       subject_id text,
       status text DEFAULT 'triggered',
+      activation_announced_at timestamptz,
       created_at timestamptz DEFAULT NOW(),
       updated_at timestamptz DEFAULT NOW()
     )`,
@@ -19837,10 +20167,8 @@ async function runSchemaMigrations() {
     `CREATE TABLE IF NOT EXISTS goal_history (
       id text PRIMARY KEY,
       goal_id text,
-      user_id text,
-      ks_value numeric,
       event_type text,
-      data jsonb,
+      data jsonb DEFAULT '{}',
       created_at timestamptz DEFAULT NOW()
     )`,
     `CREATE TABLE IF NOT EXISTS concept_clusters (
@@ -19989,6 +20317,12 @@ async function runSchemaMigrations() {
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS deferral_used boolean DEFAULT false`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS debrief_text text`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS score_pct numeric`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS activation_announced_at timestamptz`,
+
+    // Legacy Bubble tables are unused by the current service. Keep them inaccessible
+    // through PostgREST instead of leaving public-schema tables without RLS.
+    `ALTER TABLE IF EXISTS public.mastery_clusters ENABLE ROW LEVEL SECURITY`,
+    `ALTER TABLE IF EXISTS public.bubble_sessions ENABLE ROW LEVEL SECURITY`,
 
     // mastery_goals: bubble trajectory, contract streak, rescue and stall tracking
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS contract_streak_current integer DEFAULT 0`,

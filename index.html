@@ -5801,6 +5801,7 @@
 
 </style>
   <link rel="stylesheet" href="/kiwi_product_v3.css">
+  <link rel="stylesheet" href="/kiwi_bubbles_v1.css">
   </head>
   <body>
   <!-- Persistent AI generation indicator (Fix 6) — lives outside mainContent so it survives navigation -->
@@ -6836,7 +6837,9 @@
               if (!AppState.inventory) {
                 api.getInventory().then(inv => { AppState.inventory = inv; }).catch(() => {});
               }
-              showReckoningOverlay(data.reckoning);
+              if (data.reckoning.should_announce !== false) {
+                showReckoningOverlay(data.reckoning);
+              }
               throw new ApiError(403, "Reckoning lockout active", endpoint);
             }
             throw new ApiError(403, data.error || data.message || "Forbidden", endpoint); // [Fix 5.1]
@@ -12803,15 +12806,21 @@
               const qCount = (job.questions || examData.questions || []).length;
               const SECS_PER_Q = 66;
               const clock = await startExamClock(examId, qCount * SECS_PER_Q);
+              const legacyIsReckoning = !!(
+                job.is_reckoning || job.isReckoning ||
+                examData.is_reckoning || examData.isReckoning
+              );
               AppState.tempExam = {
                 examId, questions: normalizeExamQuestions(job.questions || examData.questions || []),
                 currentIndex: 0, answers: {}, flagged: new Set(),
                 startTime: clock.startTime,
-                timeLimit: job.isReckoning ? Infinity : clock.timeLimit,
-                totalTime: job.isReckoning ? Infinity : clock.timeLimit,
+                timeLimit: legacyIsReckoning ? Infinity : clock.timeLimit,
+                totalTime: legacyIsReckoning ? Infinity : clock.timeLimit,
                 _warnedAt20: false, _warnedAt10: false, submitted: false,
+                isReckoning: legacyIsReckoning,
               };
               navigateTo("exam");
+              _lockExamPage(legacyIsReckoning);
             } catch (err) {
               if (err.status === 403 && AppState.reckoning) return;
               var genBtn2 = document.getElementById("generateExamBtn");
@@ -14175,17 +14184,21 @@
             interventions,
             pendingReckoning,
           } = data;
-          // If there's a pending reckoning, show it immediately
+          // The activation overlay is a one-time announcement. The server
+          // atomically grants should_announce=true only once per Reckoning id.
+          let activeReckoningForPage = pendingReckoning || null;
           if (pendingReckoning) {
-            showReckoningOverlay(pendingReckoning);
+            if (pendingReckoning.should_announce !== false) {
+              showReckoningOverlay(pendingReckoning);
+            }
           } else {
-            // P9.7-03 FIX: proactive fallback if backend omitted pendingReckoning
-            // PATH-FIX: /reckoning/active was on unmounted reckoningRouter.
-            // Now wired on brainRouter at /brain/reckoning/active.
             try {
               const activeReckoning = await apiRequest("/brain/reckoning/active");
               if (activeReckoning && activeReckoning.id) {
-                showReckoningOverlay(activeReckoning);
+                activeReckoningForPage = activeReckoning;
+                if (activeReckoning.should_announce !== false) {
+                  showReckoningOverlay(activeReckoning);
+                }
               }
             } catch (_e) {}
           }
@@ -14197,6 +14210,23 @@
             <div class="section-sub">${totalInterventions || 0} interventions &middot; Status: ${escapeHTML(overallStatus || "Calm")}</div>
           </div>
         </div>
+        ${activeReckoningForPage ? `
+        <div class="card" id="brainActiveReckoningCard" style="margin-bottom:20px;border-color:var(--red);background:rgba(224,82,82,0.045);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+              <div style="font-size:30px;">&#x26A0;</div>
+              <div style="min-width:0;">
+                <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;color:var(--red-bright);">Reckoning active</div>
+                <div style="font-size:var(--text-base);color:var(--text-2);margin-top:2px;">
+                  ${escapeHTML(activeReckoningForPage.subjectName || activeReckoningForPage.subject_name || "Subject")} ·
+                  ${Math.round(activeReckoningForPage.pressure || activeReckoningForPage.pressure_score || 0)} pressure points
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="resumeReckoningBtn">Open Reckoning</button>
+          </div>
+        </div>
+        ` : ""}
         <!-- Highest Pressure Alert -->
         ${
           (highestPressure || 0) >= 15
@@ -14291,6 +14321,12 @@
         </div>
       </div>
     `;
+          const resumeReckoningBtn = document.getElementById("resumeReckoningBtn");
+          if (resumeReckoningBtn && activeReckoningForPage) {
+            resumeReckoningBtn.addEventListener("click", () => {
+              showReckoningOverlay(activeReckoningForPage);
+            });
+          }
           // FIX-12B (audit P7.5): wire brain pressure gauge rows -> getPressureExplanation
           // PB.11 F5-1: sourceLabelMap — human-readable descriptions for all pressure source keys [DESIGN: §15.1]
           // KEY-SYNC FIX: keys now match what calculateSubjectPressure() writes to pressureSources.
@@ -14850,25 +14886,26 @@
         });
 
         try {
-          // [DESIGN: §17.2] Load all panel data in parallel
+          // Load the goal first so a closed goal never regenerates or rewrites a
+          // daily contract merely because the user opened its historical record.
+          var detail = await api.getBubble(bubbleId);
+          var CLOSED_STATUSES = ['completed', 'missed', 'partially_completed', 'archived'];
+          var isClosedBubble = CLOSED_STATUSES.indexOf(detail.status) !== -1;
+
           var results = await Promise.all([
-            api.getBubble(bubbleId),
             api.getBubbleTrajectory(bubbleId),
-            api.getDailyContract(bubbleId),
+            isClosedBubble ? Promise.resolve({}) : api.getDailyContract(bubbleId),
             api.getBubbleHistory(bubbleId).catch(function() { return []; }),
             api.getBubbleClusters(bubbleId).catch(function() { return []; }),
           ]);
-          var detail      = results[0];
-          var trajectory  = results[1];
-          var contract    = results[2];
-          var historyData = Array.isArray(results[3]) ? results[3] : (results[3].history || []);
-          var clusters    = Array.isArray(results[4]) ? results[4] : (results[4].clusters || []);
+          var trajectory  = results[0];
+          var contract    = results[1];
+          var historyData = Array.isArray(results[2]) ? results[2] : (results[2].history || []);
+          var clusters    = Array.isArray(results[3]) ? results[3] : (results[3].clusters || []);
 
           // ⚠ GAP FIX 2: Fetch Autopsy for closed bubbles [DESIGN: §11.3, §17.2]
           // openBubbleDetailPanel previously had no branch on detail.status.
           // COMPLETED / MISSED / PARTIALLY_COMPLETED panels must show full Autopsy.
-          var CLOSED_STATUSES = ['completed', 'missed', 'partially_completed'];
-          var isClosedBubble  = CLOSED_STATUSES.indexOf(detail.status) !== -1;
           var autopsy = null;
           if (isClosedBubble) {
             autopsy = await api.getBubbleAutopsy(bubbleId).catch(function() { return null; });
@@ -14959,7 +14996,7 @@
           }
 
           // [DESIGN: §17.2] Advisory section — visible when trajectory is at risk [DESIGN: §16.1]
-          var showAdvisory = (tStatus === 'BEHIND' || tStatus === 'CRITICAL' ||
+          var showAdvisory = !isClosedBubble && (tStatus === 'BEHIND' || tStatus === 'CRITICAL' ||
                               tStatus === 'RESCUE'  || detail.rescue_active   ||
                               detail.stall_active);
 
@@ -14986,7 +15023,7 @@
 
           // [DESIGN: §17.2] Stall indicator
           var stallHTML = '';
-          if (detail.stall_active) {
+          if (!isClosedBubble && detail.stall_active) {
             stallHTML =
               '<div style="padding:8px 12px;background:var(--bg-3);border:1px solid var(--red-bright);' +
                 'border-radius:var(--r);margin-bottom:12px;font-size:var(--text-xs);' +
@@ -15002,7 +15039,7 @@
           //   when trajectory_status is CRITICAL or RESCUE (backend should populate this field).
           //   Falls back to state-count breakdown if priority_cards is absent.
           var criticalCardsHTML = '';
-          if (tStatus === 'CRITICAL' || tStatus === 'RESCUE') {
+          if (!isClosedBubble && (tStatus === 'CRITICAL' || tStatus === 'RESCUE')) {
             var priorityCards = contract.priority_cards || [];
             var bdCrit = contract.daily_contract_breakdown || detail.daily_contract_breakdown || {};
             var BLOCKING_STATES = ['STUCK', 'FRAGILE', 'AVOIDED', 'DANGEROUS'];
@@ -15132,7 +15169,8 @@
             debtHTML,
 
             // [DESIGN: §17.2] Today's Contract
-            '<div style="margin-bottom:20px;">',
+            !isClosedBubble ? [
+              '<div style="margin-bottom:20px;">',
               '<div style="font-family:var(--font-mono);font-size:var(--text-xs);text-transform:uppercase;' +
                 'letter-spacing:1.5px;color:var(--green-bright);margin-bottom:4px;">Today\'s Contract</div>',
               '<div style="font-size:var(--text-sm);color:var(--text-3);">' +
@@ -15140,7 +15178,8 @@
                 (contract.estimated_minutes || detail.daily_contract_minutes || 0) + ' min' +
               '</div>',
               contractBreakdownHTML,
-            '</div>',
+              '</div>',
+            ].join('') : '',
 
             // [DESIGN: §17.2] Cluster health
             clusterHTML,
@@ -15159,7 +15198,8 @@
             historyChartHTML ? '<div style="margin-bottom:20px;">' + historyChartHTML + '</div>' : '',
 
             // [DESIGN: §17.2] Inline edit controls — deadline and test_date editable [DESIGN: §14]
-            '<div style="margin-bottom:16px;padding:14px;background:var(--bg-3);border-radius:var(--r);">',
+            !isClosedBubble ? [
+              '<div style="margin-bottom:16px;padding:14px;background:var(--bg-3);border-radius:var(--r);">',
               '<div style="font-family:var(--font-mono);font-size:var(--text-xs);text-transform:uppercase;' +
                 'letter-spacing:1.5px;color:var(--text-3);margin-bottom:10px;">Edit Goal Dates</div>',
               '<div style="display:flex;flex-direction:column;gap:8px;">',
@@ -15180,14 +15220,16 @@
                 '<button class="btn btn-secondary btn-sm" id="saveBubbleDatesBtn" ' +
                   'style="align-self:flex-start;margin-top:2px;">Save Dates</button>',
               '</div>',
-            '</div>',
+              '</div>',
+            ].join('') : '',
 
             // Action row
             '<div style="display:flex;gap:8px;flex-wrap:wrap;">',
-              '<button class="btn btn-secondary btn-sm" id="studyBubbleBtn">Study Now</button>',
-              '<button class="btn btn-secondary btn-sm" ' +
+              '<button class="btn btn-secondary btn-sm" id="studyBubbleBtn">' +
+                (isClosedBubble ? 'Review This Subject' : 'Study Toward This Goal') + '</button>',
+              !isClosedBubble ? '<button class="btn btn-secondary btn-sm" ' +
                 'style="color:var(--red-bright);border-color:var(--red-bright);" ' +
-                'id="archiveBubbleBtn">Archive Bubble</button>',
+                'id="archiveBubbleBtn">Archive Bubble</button>' : '',
             '</div>',
           ].join('');
 
@@ -15195,9 +15237,16 @@
           document.getElementById("closeBubblePanel")
             .addEventListener("click", closeBubbleDetailPanel);
 
-          document.getElementById("studyBubbleBtn").addEventListener("click", function() {
+          document.getElementById("studyBubbleBtn").addEventListener("click", async function() {
+            var studyBtn = this;
+            studyBtn.disabled = true;
+            studyBtn.textContent = "Starting…";
             closeBubbleDetailPanel();
-            navigateTo("study");
+            if (detail.subject_id && typeof startStudySession === "function") {
+              await startStudySession(detail.subject_id);
+            } else {
+              navigateTo("study");
+            }
           });
 
           // [DESIGN: §16.1] Advisory — cached per bubble per calendar day server-side
@@ -15223,7 +15272,8 @@
 
           // [DESIGN: §14 — PATCH /api/bubbles/:id] Inline date save
           // ⚠ PATCH not PUT — v2.0 correction from v1.0 [DESIGN: §14]
-          document.getElementById("saveBubbleDatesBtn").addEventListener("click", async function() {
+          var saveBubbleDatesBtn = document.getElementById("saveBubbleDatesBtn");
+          if (saveBubbleDatesBtn) saveBubbleDatesBtn.addEventListener("click", async function() {
             var btn       = document.getElementById("saveBubbleDatesBtn");
             var examInput = document.getElementById("bubbleExamDateEdit");
             var testInput = document.getElementById("bubbleTestDateEdit");
@@ -15250,16 +15300,20 @@
 
           // [DESIGN: §14 — DELETE /api/bubbles/:id soft archive]
           // ⚠ DELETE not POST /archive — v2.0 correction from v1.0 [DESIGN: §14]
-          document.getElementById("archiveBubbleBtn").addEventListener("click", function() {
+          var archiveBubbleBtn = document.getElementById("archiveBubbleBtn");
+          if (archiveBubbleBtn) archiveBubbleBtn.addEventListener("click", function() {
             showCustomConfirm(
               "Archive this bubble?",
-              "This will close the goal. Unmastered cards below VERIFIED will carry learning debt [DESIGN: §10.1].",
+              "This closes the goal without marking it missed. Its history and final Knowledge Score will remain available under Past Goals.",
               async function() {
                 try {
                   await api.archiveBubble(bubbleId);
                   showToast("Bubble archived.", "success");
                   AppState.bubbles = null;
                   closeBubbleDetailPanel();
+                  if (AppState.currentPage === "bubbles" && typeof renderBubbleHub === "function") {
+                    renderBubbleHub();
+                  }
                 } catch (_e) { showToast("Failed to archive.", "error"); }
               }
             );
@@ -21862,5 +21916,6 @@ window.addEventListener('resize', () => {
 });
 </script>
 <script src="/kiwi_product_v3.js"></script>
+<script src="/kiwi_bubbles_v1.js"></script>
 </body>
 </html>

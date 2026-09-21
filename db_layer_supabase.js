@@ -47,7 +47,7 @@ function _buildInsert(table, obj) {
   return { text: `INSERT INTO ${table} (${cols}) VALUES (${placeholders})`, values: vals };
 }
 
-function _buildUpdate(table, whereCol, whereVal, obj) {
+function _buildUpdate(table, whereCol, whereVal, obj, userId = null) {
   // Detects { increment: N } values and emits `"field" = "field" + $N` clauses.
   // This allows any db.X.update() call to receive FieldValue.increment-style objects.
   const setClauses = [];
@@ -64,8 +64,13 @@ function _buildUpdate(table, whereCol, whereVal, obj) {
     }
   }
   vals.push(whereVal);
+  let whereClause = `WHERE "${whereCol}" = $${vals.length}`;
+  if (userId !== undefined && userId !== null) {
+    vals.push(userId);
+    whereClause += ` AND "user_id" = $${vals.length}`;
+  }
   return {
-    text: `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "${whereCol}" = $${vals.length}`,
+    text: `UPDATE ${table} SET ${setClauses.join(', ')} ${whereClause}`,
     values: vals,
   };
 }
@@ -409,6 +414,14 @@ async findById(userId, id) {
   );
   return rows[0] || null;
 },
+async findByIds(userId, cardIds) {
+  if (!cardIds || cardIds.length === 0) return [];
+  const { rows } = await query(
+    'SELECT * FROM cards WHERE user_id = $1 AND id = ANY($2::text[])',
+    [userId, cardIds]
+  );
+  return rows;
+},
 async findMany(userId, filters = {}, { page = 1, limit = 50 } = {}) {
   // Fix #46: use COUNT for total; avoid loading all cards to count
   let baseSQL = 'FROM cards WHERE user_id = $1';
@@ -664,11 +677,11 @@ async create(userId, data) {
   return { id, ...payload };
 },
 async update(userId, id, data) {
-  // Fix #38: eliminate post-write re-fetch
+  // Scope exam writes to the authenticated owner.
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('exam_sessions', 'id', id, payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const q = _buildUpdate('exam_sessions', 'id', id, payload, userId);
+  const result = await query(q.text, q.values);
+  return result.rowCount > 0 ? { id, ...payload } : null;
 },
 async findByIdWithQuestions(userId, id) {
   const { rows: [exam] } = await query(
@@ -724,11 +737,10 @@ async findById(userId, id) {
   return rows[0] || null;
 },
 async update(userId, id, data) {
-  // Fix #38: eliminate post-write re-fetch
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('exam_questions', 'id', id, payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const q = _buildUpdate('exam_questions', 'id', id, payload, userId);
+  const result = await query(q.text, q.values);
+  return result.rowCount > 0 ? { id, ...payload } : null;
 },
 // BUG #4 FIX: findBySession was absent — recomputeAndStoreCardState always received
 // examLogs = [] because the guard `db.examQuestions.findBySession ?` silently failed.
@@ -1128,6 +1140,16 @@ async findActiveByUser(userId) {
     [userId]
   );
   return rows[0] || null;
+},
+async claimActivationAnnouncement(userId, id) {
+  const { rows } = await query(
+    `UPDATE reckoning_sessions
+     SET activation_announced_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND activation_announced_at IS NULL
+     RETURNING activation_announced_at`,
+    [id, userId]
+  );
+  return rows.length > 0;
 },
 async findByUser(userId) {
   const { rows } = await query(
@@ -1542,11 +1564,14 @@ async findBySubject(userId, subjectId) {
 },
 async update(userId, goalId, data) {
   const payload = { ...data, updated_at: new Date() };
-  const q = _buildUpdate('mastery_goals', 'id', goalId, payload);
-  await query(q.text, q.values);
-  // update() DOES re-fetch (source line 1420: const doc = await ref.get())
-  const { rows } = await query('SELECT * FROM mastery_goals WHERE id = $1', [goalId]);
-  return { id: goalId, ...rows[0] };
+  const q = _buildUpdate('mastery_goals', 'id', goalId, payload, userId);
+  const result = await query(q.text, q.values);
+  if (result.rowCount === 0) return null;
+  const { rows } = await query(
+    'SELECT * FROM mastery_goals WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [goalId, userId]
+  );
+  return rows[0] ? { id: goalId, ...rows[0] } : null;
 },
 async archive(userId, goalId, finalStatus = 'archived') {
   return this.update(userId, goalId, {
@@ -1555,26 +1580,33 @@ async archive(userId, goalId, finalStatus = 'archived') {
   });
 },
 // goal_history sub-collection [DESIGN: §12.2] — migrated to goal_history table
+// Event-specific fields live in data JSONB so history writes remain schema-stable.
 async addHistoryEntry(goalId, entry) {
   const id = randomUUID();
-  const payload = { id, goal_id: goalId, ...entry, created_at: new Date() };
-  const q = _buildInsert('goal_history', payload);
-  await query(q.text, q.values);
-  return { id, ...payload };
+  const createdAt = entry?.created_at ? new Date(entry.created_at) : new Date();
+  const eventType = entry?.event_type || null;
+  const data = { ...(entry || {}) };
+  delete data.event_type;
+  delete data.created_at;
+  await query(
+    'INSERT INTO goal_history (id, goal_id, event_type, data, created_at) VALUES ($1,$2,$3,$4,$5)',
+    [id, goalId, eventType, JSON.stringify(data), createdAt]
+  );
+  return { id, goal_id: goalId, event_type: eventType, ...data, created_at: createdAt };
 },
 async getHistory(goalId, limit = 90) {
   const { rows } = await query(
     'SELECT * FROM goal_history WHERE goal_id = $1 ORDER BY created_at DESC LIMIT $2',
     [goalId, limit]
   );
-  return rows;
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
 },
 async getHistoryForWeek(goalId, weekStart, weekEnd) {
   const { rows } = await query(
     'SELECT * FROM goal_history WHERE goal_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY created_at ASC',
     [goalId, weekStart, weekEnd]
   );
-  return rows;
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
 },
 // concept_clusters sub-collection [DESIGN: §12.3] — migrated to concept_clusters table
 async addCluster(goalId, clusterData) {
