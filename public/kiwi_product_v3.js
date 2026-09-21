@@ -430,10 +430,121 @@
     }
   }
 
+
+  function installMobileChromeRetraction() {
+    const mobileQuery = window.matchMedia?.('(max-width: 768px)');
+    const bar = document.querySelector('.mobile-bar');
+    const main = document.getElementById('mainContent');
+    const sidebar = document.getElementById('sidebar');
+    if (!mobileQuery || !bar || !main) return;
+
+    const scrollState = new WeakMap();
+    let windowLastY = Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
+    let resetTimer = 0;
+
+    const isTourRunning = () =>
+      typeof _tourActive !== 'undefined' && !!_tourActive;
+
+    const showChrome = () => {
+      document.body.classList.remove('kiwi-mobile-chrome-retracted');
+    };
+
+    const hideChrome = () => {
+      if (!mobileQuery.matches || isTourRunning()) return;
+      document.body.classList.add('kiwi-mobile-chrome-retracted');
+    };
+
+    const getY = (target) => {
+      if (target === window) {
+        return Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
+      }
+      return Math.max(0, Number(target?.scrollTop) || 0);
+    };
+
+    const handleScroll = (target) => {
+      if (!mobileQuery.matches) {
+        showChrome();
+        return;
+      }
+
+      const y = getY(target);
+      const previous = target === window
+        ? windowLastY
+        : (scrollState.get(target) ?? y);
+      const delta = y - previous;
+
+      if (target === window) windowLastY = y;
+      else scrollState.set(target, y);
+
+      if (y <= 14 || delta < -4) {
+        showChrome();
+        return;
+      }
+
+      if (delta > 5 && y > 46) {
+        hideChrome();
+      }
+    };
+
+    const onWindowScroll = () => handleScroll(window);
+    const onMainScroll = () => handleScroll(main);
+    const onSidebarScroll = () => handleScroll(sidebar);
+
+    window.addEventListener('scroll', onWindowScroll, { passive: true });
+    main.addEventListener('scroll', onMainScroll, { passive: true });
+    sidebar?.addEventListener('scroll', onSidebarScroll, { passive: true });
+
+    mobileQuery.addEventListener?.('change', () => {
+      showChrome();
+      windowLastY = Math.max(0, window.scrollY || document.documentElement.scrollTop || 0);
+      scrollState.delete(main);
+      if (sidebar) scrollState.delete(sidebar);
+    });
+
+    /* Route renders replace main-content children without replacing the
+       scroller itself. Showing the bar on a fresh route avoids carrying a
+       retracted title/close control into the next page. */
+    let lastRoute = AppState?.currentPage;
+    const routeObserver = new MutationObserver(() => {
+      const currentRoute = AppState?.currentPage;
+      if (currentRoute === lastRoute) return;
+      lastRoute = currentRoute;
+
+      clearTimeout(resetTimer);
+      resetTimer = window.setTimeout(() => {
+        showChrome();
+        scrollState.set(main, getY(main));
+      }, 40);
+    });
+    routeObserver.observe(main, { childList: true });
+
+    /* Opening the drawer always starts with a visible close control. From
+       there, scrolling the drawer downward can retract it again. */
+    if (sidebar) {
+      const openObserver = new MutationObserver((mutations) => {
+        if (!mutations.some((mutation) => mutation.attributeName === 'class')) return;
+        if (sidebar.classList.contains('open')) {
+          showChrome();
+          scrollState.set(sidebar, getY(sidebar));
+        } else {
+          showChrome();
+        }
+      });
+      openObserver.observe(sidebar, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    document.addEventListener('focusin', (event) => {
+      if (event.target?.closest?.('.mobile-bar')) showChrome();
+    });
+
+    showChrome();
+  }
+
   function boot() {
     installProductRoutes();
     removeRetiredNavigation();
     enhanceSidebarSections();
+    installMobileChromeRetraction();
     refreshRetiredLandingCopy();
 
     // Watch only the two application roots that can contain product UI.
