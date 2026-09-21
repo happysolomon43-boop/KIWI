@@ -656,8 +656,12 @@ button:disabled {
     letter-spacing: 1.15px !important;
   }
 
-  .nav-section-label:first-child {
+  .sidebar-nav > .kiwi-nav-section:first-child > .nav-section-label {
     padding-top: 4px !important;
+  }
+
+  .sidebar-nav > .kiwi-nav-section:not(:first-child) > .nav-section-label {
+    padding-top: 11px !important;
   }
 
   .kiwi-nav-section-items-inner {
