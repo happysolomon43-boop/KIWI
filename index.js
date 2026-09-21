@@ -8502,7 +8502,7 @@ completed_at: null,
 return { status: 'in_progress', exam_session_id: examSessionId };
 }
 
-async function completeReckoning(reckoningId, scorePct, debriefText) {async function completeReckoning(reckoningId, scorePct, debriefText) {
+async function completeReckoning(reckoningId, scorePct, debriefText) {
 // NEW-L2 FIX (completeReckoning): same always-truthy guard pattern — fixed.
 const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
 if (!reckoning) return null;
@@ -8698,7 +8698,7 @@ deferred_until: null,
 });
 return { ...active, status: 'triggered', exam_session_id: null, deferred_until: null, recovered_from_crash: true };
 }
-// ── credentialService// ── credentialService ─────────────────────────────────────────────────────────
+// ── credentialService ─────────────────────────────────────────────────────────
 const CREDENTIAL_TIERS = [
 {
 tier: 0,
@@ -12845,7 +12845,6 @@ next(); // fail-open: internal errors never strand the whole app.
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  AUTH ROUTES// ════════════════════════════════════════════════════════════════════════════
 //  AUTH ROUTES
 
 // ════════════════════════════════════════════════════════════════════════════
