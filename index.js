@@ -8401,9 +8401,12 @@ question_count,
 };
 }
 
-async function deferReckoning(reckoningId) {
+async function deferReckoning(reckoningId, expectedUserId = null) {
 const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
 if (!reckoning) return null;
+if (expectedUserId && String(reckoning.user_id) !== String(expectedUserId)) {
+return { error: 'Reckoning not found' };
+}
 
 const now = Date.now();
 const existingExpiry = reckoning.deferred_until
@@ -12840,7 +12843,15 @@ should_announce: true,
 });
 } catch (e) {
 console.error('[KIWI] Reckoning subject-lock check failed:', e.message);
-next(); // fail-open: internal errors never strand the whole app.
+// This middleware only reaches this catch for protected START actions. Failing
+// open here silently bypasses a mandatory Reckoning when the DB/schema is sick.
+// Fail closed for this one action while leaving navigation, reads, progress,
+// other routes and the rest of the application fully usable.
+return res.status(503).json({
+error: 'KIWI could not verify the Reckoning lock right now. Please retry shortly.',
+code: 'RECKONING_STATE_UNAVAILABLE',
+retryable: true,
+});
 }
 }
 
@@ -15185,7 +15196,7 @@ function normaliseExam(e, status) {
     correctAnswers: e.correct_answers || 0,
     totalQuestions: e.total_questions || 0,
     scorePct: e.score_pct != null ? Math.round(e.score_pct) : null,
-    ksDelta: e.ks_delta || 0,
+    ksDelta: e.ks_delta == null ? null : Number(e.ks_delta),
     duration: e.duration_seconds || 0,
     timedOut: e.timed_out === true,
     status,
@@ -15320,6 +15331,74 @@ async function sendTelegramDailyReminder(userId) {
   } catch (e) {
     console.error('[KIWI] Telegram reminder failed:', e.message);
   }
+}
+
+// ── Exam Knowledge Score accounting ──────────────────────────────────────────
+// KS is a state-derived score, not currency. An exam history row must therefore
+// store the actual before/after snapshots and derive delta from those snapshots.
+// Never substitute the absolute post-exam KS into a field named ks_delta.
+function _finiteKsNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function ensureExamKsBaseline(userId, exam) {
+  if (!exam?.id || !exam?.subject_id) return null;
+  const stored = _finiteKsNumber(exam.ks_before);
+  if (stored !== null) return stored;
+
+  invalidateKSCache(userId, exam.subject_id);
+  const current = await computeKnowledgeScore(userId, exam.subject_id).catch(() => null);
+  const baseline = _finiteKsNumber(current?.score);
+  if (baseline === null) return null;
+
+  await db.examSessions.update(userId, exam.id, { ks_before: baseline });
+  exam.ks_before = baseline;
+  return baseline;
+}
+
+async function finalizeExamKsOutcome(userId, exam, scorePct, baselineOverride = null) {
+  if (!exam?.id || !exam?.subject_id) {
+    return { before: null, after: null, delta: null };
+  }
+
+  const before = _finiteKsNumber(baselineOverride) ?? _finiteKsNumber(exam.ks_before);
+  const persisted = await persistKnowledgeScore(userId, exam.subject_id).catch((err) => {
+    console.error('[KIWI] Failed to persist post-exam KS:', err.message);
+    return null;
+  });
+  const after = _finiteKsNumber(persisted?.score);
+  let delta = before !== null && after !== null
+    ? parseFloat((after - before).toFixed(2))
+    : null;
+
+  // Integrity invariant: a zero-score exam cannot be represented as a positive
+  // KS contribution. If an unrelated state bug ever violates that invariant,
+  // preserve the actual after snapshot but never tell history that the exam
+  // awarded positive KS.
+  if (Number(scorePct) === 0 && delta !== null && delta > 0) {
+    console.error('[KIWI] KS integrity guard: zero-score exam produced positive delta', {
+      examId: exam.id, before, after, computedDelta: delta,
+    });
+    delta = 0;
+  }
+
+  const update = {
+    ks_after: after,
+    ks_delta: delta,
+    ks_processed_at: new Date(),
+  };
+  if (before !== null) update.ks_before = before;
+  await db.examSessions.update(userId, exam.id, update);
+
+  if (delta !== null && delta !== 0) {
+    wsSend(userId, 'ks_change', {
+      subject_id: exam.subject_id,
+      ks_delta: delta,
+      new_ks: after,
+    });
+  }
+  return { before, after, delta };
 }
 
 const examRouter = express.Router();
@@ -15783,8 +15862,7 @@ try {
   }
 
   // KS-FORFEIT-FIX: capture pre-forfeit KS so we can compute a real delta.
-  const _forfeitPreKs = await computeKnowledgeScore(req.user.id, exam.subject_id).catch(() => ({ score: 0 }));
-  const _forfeitPreKsScore = _forfeitPreKs.score || 0;
+  const _forfeitPreKsScore = await ensureExamKsBaseline(req.user.id, exam).catch(() => null);
 
   await db.examSessions.update(req.user.id, req.params.id, {
     status: 'forfeited',
@@ -15829,13 +15907,11 @@ try {
       .catch(() => null);
     const _forfeitFinalScore = _forfeitFreshPressure?.pressure_score ?? Math.min(100, _forfeitCurPressure + 15);
 
-    await persistKnowledgeScore(req.user.id, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-
-    // Compute delta, persist to exam session, include in response.
-    const _forfeitPostKs = await computeKnowledgeScore(req.user.id, exam.subject_id).catch(() => ({ score: _forfeitPreKsScore }));
-    const _forfeitKsDelta = parseFloat(((_forfeitPostKs.score || 0) - _forfeitPreKsScore).toFixed(2));
-    await db.examSessions.update(req.user.id, req.params.id, { ks_delta: _forfeitKsDelta })
-      .catch((e) => console.error('[KIWI] Failed to persist forfeit ks_delta:', e.message));
+    const _forfeitKsOutcome = await finalizeExamKsOutcome(
+      req.user.id, exam, 0, _forfeitPreKsScore
+    ).catch(() => ({ after: null, delta: null }));
+    const _forfeitPostKs = { score: _forfeitKsOutcome.after };
+    const _forfeitKsDelta = _forfeitKsOutcome.delta;
 
     // Notify frontend in real-time so pressure/KS widgets update without a reload
     // Use the freshly computed pressure for the WS event (not the raw +15 value)
@@ -15894,8 +15970,7 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
     }
 
     // Capture pre-forfeit KS
-    const _forfeitPreKs = await computeKnowledgeScore(userId, exam.subject_id).catch(() => ({ score: 0 }));
-    const _forfeitPreKsScore = _forfeitPreKs.score || 0;
+    const _forfeitPreKsScore = await ensureExamKsBaseline(userId, exam).catch(() => null);
 
     await db.examSessions.update(userId, req.params.id, {
       status: 'forfeited',
@@ -15922,13 +15997,11 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
       await applyExamSRSFeedback(userId, _forfeitExamForSRS)
         .catch((e) => console.error('[KIWI] Forfeit SRS downgrade failed:', e.message));
 
-      await persistKnowledgeScore(userId, exam.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-
-      // Compute delta, persist to exam session
-      const _forfeitPostKs = await computeKnowledgeScore(userId, exam.subject_id).catch(() => ({ score: _forfeitPreKsScore }));
-      const _forfeitKsDelta = parseFloat(((_forfeitPostKs.score || 0) - _forfeitPreKsScore).toFixed(2));
-      await db.examSessions.update(userId, req.params.id, { ks_delta: _forfeitKsDelta })
-        .catch((e) => console.error('[KIWI] Failed to persist forfeit ks_delta:', e.message));
+      const _forfeitKsOutcome = await finalizeExamKsOutcome(
+        userId, exam, 0, _forfeitPreKsScore
+      ).catch(() => ({ after: null, delta: null }));
+      const _forfeitPostKs = { score: _forfeitKsOutcome.after };
+      const _forfeitKsDelta = _forfeitKsOutcome.delta;
 
       // Notify via WebSocket
       const _forfeitBp = await db.brainPressure.get(userId, exam.subject_id).catch(() => null);
@@ -16024,11 +16097,15 @@ if (!existing) return res.status(404).json({ error: 'Exam not found' });
 if (!['ready', 'active'].includes(existing.status)) {
 return res.status(409).json({ error: `Exam is already ${existing.status}` });
 }
+await ensureExamKsBaseline(req.user.id, existing).catch((err) => {
+console.error('[KIWI] Could not snapshot pre-exam KS:', err.message);
+});
 const exam = existing.status === 'active' && existing.started_at
 ? existing
 : await db.examSessions.update(req.user.id, req.params.id, {
 status: 'active',
 started_at: new Date(),
+ks_before: _finiteKsNumber(existing.ks_before),
 });
 const { questions: _questions, ...safeExam } = exam;
 res.json({ ...safeExam, server_now: new Date().toISOString() });
@@ -16226,7 +16303,7 @@ duration_seconds: durationSec,
       regression_warning: null,
       reclassification_alert_text: null,
       new_achievements: [],
-      ksDelta: 0,
+      ksDelta: null,
       passed,
       credentialEarned: false,
       new_almanac_unlocks: [],
@@ -16241,11 +16318,10 @@ duration_seconds: durationSec,
     setImmediate(async () => {
       // PERF-FIX: Flush question-answer writes that were deferred from the critical path.
       // Run in parallel with preKsScore fetch so neither blocks the other.
-      const [_preKs] = await Promise.all([
-        computeKnowledgeScore(_debriefUserId, _debriefExam.subject_id).catch(() => ({ score: 0 })),
+      const [preKsScore] = await Promise.all([
+        ensureExamKsBaseline(_debriefUserId, _debriefExam).catch(() => null),
         Promise.all(_dbUpdatePromises), // persist selected_option / is_correct per question
       ]);
-      const preKsScore = (_preKs && _preKs.score) || 0;
       let _bgVerification = null, _bgReclassified = [], _bgCredential = null, _bgRegression = null;
       let _bgKsDelta = 0, _bgCredentialEarned = false, _bgNewAchievements = [], _bgAlmanacUnlocks = [];
       try {
@@ -16330,19 +16406,18 @@ duration_seconds: durationSec,
             triggerReckoning(_debriefUserId, _debriefExam.subject_id).catch((e) => console.error('[KIWI] silent catch:', e.message));
           }
         }
-        await persistKnowledgeScore(_debriefUserId, _debriefExam.subject_id)
-          .catch((e) => console.error('[KIWI] persistKnowledgeScore failed:', e.message));
+        const _bgKsOutcome = await finalizeExamKsOutcome(
+          _debriefUserId, _debriefExam, _debriefScorePct, preKsScore
+        ).catch((e) => {
+          console.error('[KIWI] Failed to finalize exam KS snapshots:', e.message);
+          return { delta: null };
+        });
+        _bgKsDelta = _bgKsOutcome.delta;
         // KS-BUG-3 FIX: sync goal.current_ks in Biome after exam changes card states
         await updateAllBubblesForUser(_debriefUserId)
           .catch((e) => console.error('[KIWI] updateAllBubblesForUser (exam) failed:', e.message));
         await ecosystemV2.refreshVitality(_debriefUserId)
           .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
-        const _bgPostKs = await computeKnowledgeScore(_debriefUserId, _debriefExam.subject_id).catch(() => ({ score: preKsScore }));
-        _bgKsDelta = parseFloat(((_bgPostKs.score || 0) - preKsScore).toFixed(2));
-        // KS-EXAM-FIX: persist delta to exam session so history review always shows the real value.
-        // This runs server-side regardless of whether the student is still on the summary page.
-        await db.examSessions.update(_debriefUserId, _debriefExam.id, { ks_delta: _bgKsDelta })
-          .catch((e) => console.error('[KIWI] Failed to persist exam ks_delta:', e.message));
         _bgCredentialEarned = !!(_bgCredential && _bgCredential.tier && _bgCredential.newlyEarned);
         await updateTaskProgress(_debriefUserId, null, completedExam)
           .catch((e) => console.error('[KIWI] updateTaskProgress failed:', e.message));
@@ -18207,7 +18282,7 @@ res.status(500).json({ error: 'Failed to trigger reckoning', details: e.message 
 
 reckoningRouter.post('/:id/defer', async (req, res) => {
 try {
-const result = await deferReckoning(req.params.id);
+const result = await deferReckoning(req.params.id, req.user.id);
 res.json(result);
 } catch (e) {
 res.status(500).json({ error: 'Failed to defer reckoning', details: e.message });
@@ -18215,13 +18290,10 @@ res.status(500).json({ error: 'Failed to defer reckoning', details: e.message })
 });
 
 reckoningRouter.post('/:id/complete', async (req, res) => {
-try {
-const { score_pct, debrief_text } = req.body;
-const result = await completeReckoning(req.params.id, score_pct, debrief_text);
-res.json(result);
-} catch (e) {
-res.status(500).json({ error: 'Failed to complete reckoning', details: e.message });
-}
+  return res.status(410).json({
+    error: 'Direct Reckoning completion is retired. Submit the linked Reckoning exam instead.',
+    code: 'RECKONING_COMPLETE_VIA_EXAM',
+  });
 });
 const brainRouter = express.Router();
 
@@ -18236,7 +18308,7 @@ brainRouter.post('/reckoning/defer', async (req, res) => {
 try {
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
 if (!active) return res.status(404).json({ error: 'No active reckoning to defer' });
-const result = await deferReckoning(active.id);
+const result = await deferReckoning(active.id, req.user.id);
 if (result?.error) return res.status(400).json(result);
 res.json(result);
 } catch (e) {
@@ -18244,7 +18316,7 @@ res.status(500).json({ error: 'Failed to defer reckoning', details: e.message })
 }
 });
 
-brainRouter.post('/reckoning/submit', async (req, res) => {
+async function submitReckoningHandler(req, res) {
 try {
 const { examId, answers } = req.body;
 if (!examId || !Array.isArray(answers))
@@ -18258,31 +18330,38 @@ if (exam.status !== 'active' || !exam.started_at) {
   return res.status(409).json({ error: 'Reckoning exam must be active before it can be submitted.' });
 }
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
-if (!active || active.status !== 'in_progress' || active.exam_session_id !== examId) {
+if (!active || active.status !== 'in_progress' || String(active.exam_session_id) !== String(examId)) {
   return res.status(409).json({ error: 'This exam is not linked to the active Reckoning.' });
 }
-// Delegate to exam submit logic
+
+// Snapshot the genuine pre-attempt KS before any SRS mutation. Usually this was
+// already captured at /exams/:id/start; this fallback protects legacy active exams.
+const reckoningKsBefore = await ensureExamKsBaseline(req.user.id, exam).catch(() => null);
+
 let correct = 0;
 const total = exam.questions.length;
 const questionResults = [];
+const questionWrites = [];
 for (const q of exam.questions) {
-const answer = answers.find((a) => a.question_number === q.question_number);
-const isCorrect = answer && answer.selected_option === q.correct_answer;
+const answer = answers.find((a) => String(a.question_number ?? a.questionId) === String(q.question_number));
+const selected = answer ? (answer.selected_option ?? answer.selectedOptionId ?? null) : null;
+const isCorrect = !!answer && selected === q.correct_answer;
+q.is_correct = isCorrect;
 if (isCorrect) correct++;
 questionResults.push({
 question_number: q.question_number,
-selected: answer?.selected_option || null,
+selected: selected || null,
 correct: isCorrect,
 correct_answer: q.correct_answer,
 });
-if (answer) {
-await db.examQuestions.update(req.user.id, q.id, {
-selected_option: answer.selected_option,
+questionWrites.push(db.examQuestions.update(req.user.id, q.id, {
+selected_option: selected,
 is_correct: isCorrect,
-time_spent_seconds: answer.time_spent_seconds || 0,
-});
+time_spent_seconds: answer?.time_spent_seconds || 0,
+}).catch((e) => console.error('[KIWI] Reckoning answer persistence failed:', e.message)));
 }
-}
+await Promise.all(questionWrites);
+
 const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
 const now = new Date();
 const durationSec = exam.started_at ? Math.floor((now - new Date(exam.started_at)) / 1000) : 0;
@@ -18301,10 +18380,7 @@ await hookSeedlingEarnings(req.user.id, 'exam_result', {
   exam_id: examId,
 });
 }
-// Complete the exact Reckoning already validated above.
-let reckoningResult = null;
-if (active) {
-// Bug 5 fix: Generate Gemini debrief with reckoning-specific tone instead of static string
+
 let reckoningDebriefText = '';
 try {
 const wrong = questionResults.filter((qr) => !qr.correct);
@@ -18325,46 +18401,63 @@ RULES
 - Total length: 120-200 words.
 OUTPUT
 Return only the debrief text.`;
-        const aiResult = await geminiModel.generateContent(reckoningDebriefPrompt);
-        reckoningDebriefText = aiResult.response.text().trim();
-      } catch (_) {
-        // Fallback: structured static debrief
-        const survived = scorePct >= 70;
-        reckoningDebriefText =
-          `The Reckoning is complete. You scored ${scorePct}% — ${survived ? 'enough to lift the lockout and begin a seven-day recovery window' : 'not enough to clear the pressure. The forest remains under strain'}.` +
-          `\n\n${survived ? 'The flagged cards have been reclassified from your answers. KIWI applies bounded relief, but unresolved evidence and earlier penalties remain visible.' : 'Pressure remains at the L4 threshold. The flagged cards remain, and the Reckoning must be faced again.'}` +
-          `\n\n${survived ? 'Do not mistake survival for mastery. Return to the cards that cost you points and review them deliberately before the next session.' : 'Focus immediately on the cards that failed. Use targeted study sessions — not passive review — to drive the pressure down before the next Reckoning.'}`;
-      }
-      // P3.3-B2 FIX: apply SRS feedback — incorrect reckoning answers drop card stages.
-      // P3.3-B3 FIX: apply FRAGILE → VERIFIED promotion for correctly answered stage-5 cards.
-      // Both were present in the regular exam path but missing from the reckoning path.
-      const completedReckoningExam = await db.examSessions.findByIdWithQuestions(
-        req.user.id, examId
-      ).catch(() => null);
-      if (completedReckoningExam) {
-        await processExamVerification(req.user.id, completedReckoningExam).catch((e) => console.error("[KIWI] silent catch:", e.message));
-        await applyExamSRSFeedback(req.user.id, completedReckoningExam).catch((e) => console.error("[KIWI] silent catch:", e.message));
-      }
-      reckoningResult = await completeReckoning(active.id, scorePct, reckoningDebriefText);
-      // Bug 6 fix: Send Telegram notification for reckoning outcome
-      await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, scorePct >= 70).catch(
-        () => {}
-      );
-    }
-    res.json({
-      score_pct: scorePct,
-      correct_answers: correct,
-      total_questions: total,
-      duration_seconds: durationSec,
-      question_results: questionResults,
-      reckoning: reckoningResult,
-      debrief: reckoningResult?.debrief_text || '',
-    });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to submit reckoning', details: e.message });
-  }
+const aiResult = await geminiModel.generateContent(reckoningDebriefPrompt);
+reckoningDebriefText = aiResult.response.text().trim();
+} catch (_) {
+const survived = scorePct >= 70;
+reckoningDebriefText =
+  `The Reckoning is complete. You scored ${scorePct}% — ${survived ? 'enough to lift the lockout and begin a seven-day recovery window' : 'not enough to clear the pressure. The forest remains under strain'}.` +
+  `\n\n${survived ? 'The flagged cards have been reclassified from your answers. KIWI applies bounded relief, but unresolved evidence and earlier penalties remain visible.' : 'Pressure remains at the L4 threshold. The flagged cards remain, and the Reckoning must be faced again.'}` +
+  `\n\n${survived ? 'Do not mistake survival for mastery. Return to the cards that cost you points and review them deliberately before the next session.' : 'Focus immediately on the cards that failed. Use targeted study sessions — not passive review — to drive the pressure down before the next Reckoning.'}`;
+}
+
+const completedReckoningExam = await db.examSessions.findByIdWithQuestions(req.user.id, examId).catch(() => null);
+if (completedReckoningExam) {
+  // Preserve in-memory grading results; the freshly fetched questions can race
+  // older DB replicas on some deployments.
+  const correctness = new Map(exam.questions.map((q) => [String(q.question_number), q.is_correct]));
+  completedReckoningExam.questions = (completedReckoningExam.questions || []).map((q) => ({
+    ...q,
+    is_correct: correctness.get(String(q.question_number)) ?? q.is_correct,
+  }));
+  await processExamVerification(req.user.id, completedReckoningExam)
+    .catch((e) => console.error('[KIWI] Reckoning verification failed:', e.message));
+  await applyExamSRSFeedback(req.user.id, completedReckoningExam)
+    .catch((e) => console.error('[KIWI] Reckoning SRS feedback failed:', e.message));
+
+  const cardIds = [...new Set((completedReckoningExam.questions || []).map((q) => q.card_id).filter(Boolean))];
+  await Promise.all(cardIds.map((cardId) =>
+    recomputeAndStoreCardState(req.user.id, cardId).catch(() => null)
+  ));
+}
+
+const ksOutcome = await finalizeExamKsOutcome(
+  req.user.id, exam, scorePct, reckoningKsBefore
+).catch((e) => {
+  console.error('[KIWI] Reckoning KS finalization failed:', e.message);
+  return { before: reckoningKsBefore, after: null, delta: null };
 });
 
+const reckoningResult = await completeReckoning(active.id, scorePct, reckoningDebriefText);
+await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, scorePct >= 70).catch(() => {});
+
+res.json({
+score_pct: scorePct,
+correct_answers: correct,
+total_questions: total,
+duration_seconds: durationSec,
+question_results: questionResults,
+reckoning: reckoningResult,
+debrief: reckoningResult?.debrief_text || '',
+ksDelta: ksOutcome.delta,
+ks_after: ksOutcome.after,
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to submit reckoning', details: e.message });
+}
+}
+
+brainRouter.post('/reckoning/submit', submitReckoningHandler);
 reckoningRouter.get('/active', async (req, res) => {
 try {
 let active = await db.reckoningSessions.findActiveByUser(req.user.id);
@@ -18378,43 +18471,7 @@ res.status(500).json({ error: 'Failed to fetch active reckoning' });
 // ── POST /reckoning/submit (BUG 3 FIX) ───────────────────────────────────────
 // Previously only reachable at /brain/reckoning/submit. Now also available at
 // /reckoning/submit so both paths resolve correctly.
-reckoningRouter.post('/submit', async (req, res) => {
-  try {
-    const { examId, answers } = req.body;
-    if (!examId || !Array.isArray(answers))
-      return res.status(400).json({ error: 'examId and answers[] are required' });
-    const exam = await db.examSessions.findByIdWithQuestions(req.user.id, examId);
-    if (!exam) return res.status(404).json({ error: 'Exam not found' });
-    let correct = 0;
-    const total = exam.questions.length;
-    const questionResults = [];
-    for (const q of exam.questions) {
-      const answer = answers.find((a) => a.question_number === q.question_number);
-      const isCorrect = answer && answer.selected_option === q.correct_answer;
-      if (isCorrect) correct++;
-      questionResults.push({
-        question_number: q.question_number,
-        selected: answer?.selected_option || null,
-        correct: isCorrect,
-        correct_answer: q.correct_answer,
-      });
-    }
-    const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
-    const now = new Date();
-    const durationSec = exam.started_at
-      ? Math.floor((now - new Date(exam.started_at)) / 1000) : 0;
-    await db.examSessions.update(req.user.id, examId, {
-      status: 'completed', score_pct: scorePct, correct_answers: correct,
-      total_questions: total, completed_at: now, duration_seconds: durationSec,
-    });
-    await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, scorePct >= 70)
-      .catch((e) => console.error("[KIWI] silent catch:", e.message));
-    res.json({ score_pct: scorePct, correct_answers: correct, total_questions: total,
-      duration_seconds: durationSec, question_results: questionResults });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to submit reckoning', details: e.message });
-  }
-});
+reckoningRouter.post('/submit', submitReckoningHandler);
 
 // ── Brain / Pressure Routes (Phase 3) ─────────────────────────────────────
 // POST /brain/reckoning/use-buffer — spend seedling buffer to skip reckoning
@@ -20193,47 +20250,49 @@ console.error('[KIWI CRON] Weekly cron failed:', e.message);
 //  STARTUP RECOVERY — Complete any interrupted background KS calculations
 // ════════════════════════════════════════════════════════════════════════════
 async function recoverInterruptedExams() {
-  console.log('[KIWI] Checking for interrupted exam processing...');
+  console.log('[KIWI] Checking for interrupted exam KS accounting...');
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const { rows: recentExams } = await query(
-      `SELECT * FROM exam_sessions WHERE status = 'completed' AND completed_at >= $1 AND (ks_delta IS NULL OR ks_delta = 0) AND total_questions > 0`,
+      `SELECT * FROM exam_sessions
+       WHERE status IN ('completed','forfeited')
+         AND completed_at >= $1
+         AND ks_delta IS NULL
+         AND ks_processed_at IS NULL
+         AND total_questions > 0`,
       [since]
     );
+
     for (const exam of recentExams) {
       try {
-        console.log(`[KIWI] Recovering KS for exam ${exam.id}...`);
-        await persistKnowledgeScore(exam.user_id, exam.subject_id);
-        const ks = await computeKnowledgeScore(exam.user_id, exam.subject_id).catch(() => ({ score: 0 }));
-        await db.examSessions.update(exam.user_id, exam.id, { ks_delta: ks.score });
-        console.log(`[KIWI] Recovered KS for exam ${exam.id}: ${ks.score}`);
+        // A server restart cannot reconstruct what portion of today's current KS
+        // was caused by this historical exam. Recompute the current canonical KS,
+        // store the after snapshot, and explicitly leave delta NULL rather than
+        // fabricating '+current KS' as the old recovery routine did.
+        const current = await persistKnowledgeScore(exam.user_id, exam.subject_id).catch(() => null);
+        await db.examSessions.update(exam.user_id, exam.id, {
+          ks_after: _finiteKsNumber(current?.score),
+          ks_delta: null,
+          ks_processed_at: new Date(),
+        });
+        console.warn(`[KIWI] Exam ${exam.id} recovered with KS delta unavailable; no historical delta was invented.`);
       } catch (e) {
-        console.error(`[KIWI] Failed to recover exam ${exam.id}:`, e.message);
-      }
-    }
-    const { rows: forfeitedExams } = await query(
-      `SELECT * FROM exam_sessions WHERE status = 'forfeited' AND completed_at >= $1 AND (ks_delta IS NULL) AND total_questions > 0`,
-      [since]
-    );
-    for (const exam of forfeitedExams) {
-      try {
-        console.log(`[KIWI] Recovering KS for forfeited exam ${exam.id}...`);
-        await persistKnowledgeScore(exam.user_id, exam.subject_id);
-        const ks = await computeKnowledgeScore(exam.user_id, exam.subject_id).catch(() => ({ score: 0 }));
-        await db.examSessions.update(exam.user_id, exam.id, { ks_delta: ks.score });
-      } catch (e) {
-        console.error(`[KIWI] Failed to recover forfeited exam ${exam.id}:`, e.message);
+        console.error(`[KIWI] Failed to reconcile exam ${exam.id}:`, e.message);
       }
     }
   } catch (e) {
-    console.error('[KIWI] Exam recovery failed:', e.message);
+    console.error('[KIWI] Exam KS recovery failed:', e.message);
   }
 }
 
 // Ensure ks_delta column exists (idempotent migration)
 async function ensureKSDeltaColumn() {
   try {
-    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_delta NUMERIC DEFAULT 0`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_delta NUMERIC`);
+    await query(`ALTER TABLE exam_sessions ALTER COLUMN ks_delta DROP DEFAULT`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_before NUMERIC`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_after NUMERIC`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_processed_at timestamptz`);
     await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS forfeited_by VARCHAR(50) DEFAULT NULL`);
     await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS forfeiture_token VARCHAR(100) DEFAULT NULL`);
     console.log('[KIWI] ks_delta columns verified');
@@ -20705,8 +20764,12 @@ async function runSchemaMigrations() {
      END $$`,
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ended_early boolean DEFAULT false`,
     `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS timed_out boolean DEFAULT false`,
-    // KS-EXAM-FIX: persist ks_delta on exam sessions so history review always shows real delta
-    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_delta numeric DEFAULT 0`,
+    // Persist exact before/after snapshots; NULL delta means historical change is unknown.
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_delta numeric`,
+    `ALTER TABLE exam_sessions ALTER COLUMN ks_delta DROP DEFAULT`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_before numeric`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_after numeric`,
+    `ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_processed_at timestamptz`,
 
     // reckoning_sessions: fields referenced in brain router and lockout middleware
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS subject_name text`,
@@ -20719,6 +20782,7 @@ async function runSchemaMigrations() {
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS debrief_text text`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS score_pct numeric`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS activation_announced_at timestamptz`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS completed_at timestamptz`,
 
     // Legacy Bubble tables are unused by the current service. Keep them inaccessible
     // through PostgREST instead of leaving public-schema tables without RLS.
