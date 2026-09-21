@@ -8463,12 +8463,27 @@ reckoning_failure_attempt_id: attemptKey,
 });
 }
 }
-await db.reckoningSessions.update(reckoningId, {
+const reckoningOutcome = {
 status: survived ? 'completed' : 'triggered',
 score_pct: scorePct,
 debrief_text: debriefText,
 completed_at: new Date(),
-});
+};
+try {
+await db.reckoningSessions.update(reckoningId, reckoningOutcome);
+} catch (err) {
+// Schema-drift fail-safe: an older database may not yet have completed_at.
+// Never leave a finished exam stuck as in_progress (and therefore forever
+// "Resume The Reckoning") just because this optional audit timestamp is absent.
+const isMissingCompletedAt =
+err?.code === '42703' &&
+/completed_at/i.test(String(err?.message || '')) &&
+/reckoning_sessions/i.test(String(err?.message || ''));
+if (!isMissingCompletedAt) throw err;
+const { completed_at: _ignoredCompletedAt, ...legacyOutcome } = reckoningOutcome;
+console.warn('[KIWI] reckoning_sessions.completed_at is missing; finalizing without the audit timestamp.');
+await db.reckoningSessions.update(reckoningId, legacyOutcome);
+}
 // Award seedling for survival
 if (survived) {
 await awardSeedlings(
