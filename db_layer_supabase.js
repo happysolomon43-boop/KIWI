@@ -54,20 +54,20 @@ function _buildUpdate(table, whereCol, whereVal, obj, userId = null) {
   const vals = [];
   for (const [k, v] of Object.entries(obj)) {
     if (v !== null && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v) && v.increment !== undefined) {
-      setClauses.push(`"${k}" = "${k}" + ${vals.length + 1}`);
+      setClauses.push(`"${k}" = "${k}" + $${vals.length + 1}`);
       vals.push(v.increment);
     } else {
       const val = (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date))
         ? JSON.stringify(v) : v;
-      setClauses.push(`"${k}" = ${vals.length + 1}`);
+      setClauses.push(`"${k}" = $${vals.length + 1}`);
       vals.push(val);
     }
   }
   vals.push(whereVal);
-  let whereClause = `WHERE "${whereCol}" = ${vals.length}`;
+  let whereClause = `WHERE "${whereCol}" = $${vals.length}`;
   if (userId !== undefined && userId !== null) {
     vals.push(userId);
-    whereClause += ` AND "user_id" = ${vals.length}`;
+    whereClause += ` AND "user_id" = $${vals.length}`;
   }
   return {
     text: `UPDATE ${table} SET ${setClauses.join(', ')} ${whereClause}`,
