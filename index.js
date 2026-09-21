@@ -20068,10 +20068,8 @@ async function runSchemaMigrations() {
     `CREATE TABLE IF NOT EXISTS goal_history (
       id text PRIMARY KEY,
       goal_id text,
-      user_id text,
-      ks_value numeric,
       event_type text,
-      data jsonb,
+      data jsonb DEFAULT '{}',
       created_at timestamptz DEFAULT NOW()
     )`,
     `CREATE TABLE IF NOT EXISTS concept_clusters (
