@@ -10558,6 +10558,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             active.deferred_until &&
             new Date(active.deferred_until).getTime() > Date.now()
           ) {
+            // A live deferral deliberately lifts the lockout. Do not keep a
+            // stale Reckoning marker that could hijack unrelated CBT failures.
+            AppState.reckoning = null;
             return false;
           }
 
@@ -14075,7 +14078,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           })()}
         </div>
         ${
-          reckoning.canDefer !== false
+          !isInProgress && reckoning.canDefer !== false
             ? `
         <div class="reckoning-defer">Deferring adds ${reckoning.deferPenalty || 5} persistent pressure points.</div>
         `
