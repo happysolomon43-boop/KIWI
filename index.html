@@ -14150,6 +14150,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           <button class="btn btn-primary btn-lg" id="startReckoningBtn" style="width:100%;">
             ${isInProgress ? "Resume The Reckoning" : "Begin The Reckoning"}
           </button>
+          <button class="btn btn-secondary" id="minimizeReckoningBtnBottom" type="button" style="width:100%;">
+            Minimize
+          </button>
           ${isInProgress ? `
           <div style="font-size:var(--text-xs);color:var(--text-2);text-align:center;line-height:1.6;">
             Your exam is already saved on KIWI. Resume from the last server-saved answer.
@@ -14191,9 +14194,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       </div>
     </div>
   `;
-        document.getElementById("minimizeReckoningBtn")?.addEventListener("click", () => {
-          _minimizeReckoningSurface(reckoning);
-        });
+        const _minimizeCurrentReckoning = () => _minimizeReckoningSurface(reckoning);
+        document.getElementById("minimizeReckoningBtn")?.addEventListener("click", _minimizeCurrentReckoning);
+        document.getElementById("minimizeReckoningBtnBottom")?.addEventListener("click", _minimizeCurrentReckoning);
         document.getElementById("startReckoningBtn").addEventListener("click", async () => {
           const _startBtn = document.getElementById("startReckoningBtn");
           if (_startBtn) {
