@@ -47,25 +47,30 @@ function _buildInsert(table, obj) {
   return { text: `INSERT INTO ${table} (${cols}) VALUES (${placeholders})`, values: vals };
 }
 
-function _buildUpdate(table, whereCol, whereVal, obj) {
+function _buildUpdate(table, whereCol, whereVal, obj, userId = null) {
   // Detects { increment: N } values and emits `"field" = "field" + $N` clauses.
   // This allows any db.X.update() call to receive FieldValue.increment-style objects.
   const setClauses = [];
   const vals = [];
   for (const [k, v] of Object.entries(obj)) {
     if (v !== null && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v) && v.increment !== undefined) {
-      setClauses.push(`"${k}" = "${k}" + $${vals.length + 1}`);
+      setClauses.push(`"${k}" = "${k}" + ${vals.length + 1}`);
       vals.push(v.increment);
     } else {
       const val = (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date))
         ? JSON.stringify(v) : v;
-      setClauses.push(`"${k}" = $${vals.length + 1}`);
+      setClauses.push(`"${k}" = ${vals.length + 1}`);
       vals.push(val);
     }
   }
   vals.push(whereVal);
+  let whereClause = `WHERE "${whereCol}" = ${vals.length}`;
+  if (userId !== undefined && userId !== null) {
+    vals.push(userId);
+    whereClause += ` AND "user_id" = ${vals.length}`;
+  }
   return {
-    text: `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "${whereCol}" = $${vals.length}`,
+    text: `UPDATE ${table} SET ${setClauses.join(', ')} ${whereClause}`,
     values: vals,
   };
 }
