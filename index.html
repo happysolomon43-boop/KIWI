@@ -10568,8 +10568,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             active.deferred_until &&
             new Date(active.deferred_until).getTime() > Date.now()
           ) {
-            // A live deferral deliberately lifts the lockout. Do not keep a
-            // stale Reckoning marker that could hijack unrelated CBT failures.
+            // A live deferral deliberately lifts the lockout. Keep the full
+            // overlay hidden and schedule its return for the exact expiry time.
+            _scheduleDeferredReckoningWakeup(active);
+            _closeReckoningSurface();
             AppState.reckoning = null;
             return false;
           }
@@ -14012,9 +14014,124 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
       // ═══════════════════════════════════════════════════════════════════════════
 
-      function showReckoningOverlay(reckoning) {
+      let _deferredReckoningWakeupTimerId = null;
+
+      function _getReckoningDeferralExpiry(reckoning) {
+        const raw = reckoning?.deferral_expires_at || reckoning?.deferred_until || null;
+        const expiryMs = raw ? new Date(raw).getTime() : NaN;
+        return Number.isFinite(expiryMs) ? expiryMs : null;
+      }
+
+      function _isLiveReckoningDeferral(reckoning) {
+        if (!reckoning || reckoning.status !== "deferred") return false;
+        const expiryMs = _getReckoningDeferralExpiry(reckoning);
+        return expiryMs !== null && expiryMs > Date.now();
+      }
+
+      function _clearDeferredReckoningWakeup() {
+        if (_deferredReckoningWakeupTimerId) {
+          clearTimeout(_deferredReckoningWakeupTimerId);
+          _deferredReckoningWakeupTimerId = null;
+        }
+      }
+
+      function _scheduleDeferredReckoningWakeup(reckoning) {
+        _clearDeferredReckoningWakeup();
+        if (!_isLiveReckoningDeferral(reckoning)) return false;
+
+        const expiryMs = _getReckoningDeferralExpiry(reckoning);
+        const remainingMs = Math.max(0, expiryMs - Date.now());
+
+        // A deferred Reckoning is deliberately non-blocking. Keep the full
+        // Reckoning hidden, then wake it exactly when the cooldown expires.
+        _deferredReckoningWakeupTimerId = setTimeout(async () => {
+          _deferredReckoningWakeupTimerId = null;
+          try {
+            const active = await apiRequest("/brain/reckoning/active");
+            if (!active || !active.id) return;
+            if (_scheduleDeferredReckoningWakeup(active)) return;
+            showReckoningOverlay(active);
+          } catch (err) {
+            console.warn("[KIWI] Deferred Reckoning wakeup check failed:", err?.message || err);
+          }
+        }, Math.min(remainingMs + 500, 2147483000));
+
+        return true;
+      }
+
+      function _closeReckoningSurface() {
+        const host = document.getElementById("reckoningContainer");
+        if (host) host.innerHTML = "";
+      }
+
+      function showReckoningOverlay(reckoning, options = {}) {
         const container = document.getElementById("reckoningContainer");
         if (!container || !reckoning) return;
+
+        const isLiveDeferred = _isLiveReckoningDeferral(reckoning);
+        if (isLiveDeferred) {
+          _scheduleDeferredReckoningWakeup(reckoning);
+          AppState.reckoning = null;
+
+          // Automatic checks must stay invisible throughout the cooldown. The
+          // only deferred UI we show is the one-time status card immediately
+          // after the user presses Defer, and that card can be minimized.
+          if (options.showDeferredNotice !== true) {
+            _closeReckoningSurface();
+            return;
+          }
+
+          const expiryMs = _getReckoningDeferralExpiry(reckoning);
+          container.innerHTML = `
+            <div class="reckoning-overlay" id="reckoningOverlay">
+              <div class="reckoning-card" style="max-width:520px;position:relative;">
+                <button id="minimizeDeferredReckoningBtn" aria-label="Minimize deferred Reckoning"
+                  style="position:absolute;right:18px;top:16px;border:0;background:transparent;color:var(--text-2);font-size:28px;line-height:1;cursor:pointer;padding:4px 8px;">&times;</button>
+                <div class="reckoning-icon">&#x23F3;</div>
+                <div class="reckoning-title">Reckoning Deferred</div>
+                <div class="reckoning-subject">${escapeHTML(reckoning.subjectName || reckoning.subject_name || "Unknown Subject")}</div>
+                <div style="font-size:var(--text-base);color:var(--text-2);line-height:1.65;text-align:center;margin:12px 0 18px;">
+                  The Reckoning is minimized during the cooldown. You can keep using KIWI now.
+                  It will return automatically when the timer reaches zero.
+                </div>
+                <div style="margin:12px 0 18px;padding:14px 16px;background:rgba(13,148,136,0.08);border:1px solid rgba(13,148,136,0.2);border-radius:var(--r);text-align:center;">
+                  <div style="font-size:var(--text-xs);color:var(--text-3);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Returns In</div>
+                  <div id="deferredReckoningNoticeTimer" style="font-family:var(--font-mono);font-size:var(--text-3xl);font-weight:700;color:var(--teal);">--:--:--</div>
+                </div>
+                <button class="btn btn-secondary btn-lg" id="minimizeDeferredReckoningBtnBottom" style="width:100%;">Minimize</button>
+              </div>
+            </div>
+          `;
+
+          let noticeIntervalId = null;
+          const updateDeferredNoticeTimer = () => {
+            const el = document.getElementById("deferredReckoningNoticeTimer");
+            if (!el) {
+              if (noticeIntervalId) clearInterval(noticeIntervalId);
+              return;
+            }
+            const remaining = Math.max(0, expiryMs - Date.now());
+            const h = Math.floor(remaining / 3600000);
+            const m = Math.floor((remaining % 3600000) / 60000);
+            const s = Math.floor((remaining % 60000) / 1000);
+            el.textContent = remaining === 0
+              ? "00:00:00"
+              : `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+            if (remaining === 0 && noticeIntervalId) clearInterval(noticeIntervalId);
+          };
+          updateDeferredNoticeTimer();
+          noticeIntervalId = setInterval(updateDeferredNoticeTimer, 1000);
+
+          const minimizeDeferredNotice = () => {
+            if (noticeIntervalId) clearInterval(noticeIntervalId);
+            _closeReckoningSurface();
+          };
+          document.getElementById("minimizeDeferredReckoningBtn")?.addEventListener("click", minimizeDeferredNotice);
+          document.getElementById("minimizeDeferredReckoningBtnBottom")?.addEventListener("click", minimizeDeferredNotice);
+          return;
+        }
+
+        _clearDeferredReckoningWakeup();
         AppState.reckoning = reckoning;
         const isInProgress = reckoning.status === "in_progress" && !!reckoning.exam_session_id;
         container.innerHTML = `
@@ -14155,11 +14272,24 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         if (deferBtn) {
           deferBtn.addEventListener("click", async () => {
             try {
-              await api.deferReckoning();
-              container.innerHTML = "";
+              const deferred = await api.deferReckoning();
+              const deferredUntil =
+                deferred?.deferred_until ||
+                deferred?.deferral_expires_at ||
+                new Date(Date.now() + (reckoning.deferHours || 4) * 3600000).toISOString();
+              const deferredReckoning = {
+                ...reckoning,
+                ...deferred,
+                status: "deferred",
+                deferred_until: deferredUntil,
+                deferral_expires_at: deferredUntil,
+                canDefer: false,
+                can_defer: false,
+              };
               AppState.reckoning = null;
-              showToast("Reckoning deferred. Pressure increased.", "warning");
+              showToast("Reckoning deferred. You can continue until the timer ends.", "warning");
               navigateTo("dashboard");
+              showReckoningOverlay(deferredReckoning, { showDeferredNotice: true });
             } catch (err) {
               showToast("Cannot defer at this time", "error");
             }
@@ -14194,14 +14324,16 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             );
           });
         }
-        // N4: Deferral countdown timer — live remaining time when reckoning is already deferred
+        // N4: Deferral countdown timer — only visible after the cooldown has
+        // expired (live deferrals are handled by the minimizable notice above).
         if (reckoning.deferral_expires_at) {
           const expiryMs = new Date(reckoning.deferral_expires_at).getTime();
+          let countdownIntervalId = null;
 
           const updateTimer = () => {
             const el = document.getElementById("reckoningTimerDisplay");
             if (!el) {
-              clearInterval(countdownIntervalId);
+              if (countdownIntervalId) clearInterval(countdownIntervalId);
               return;
             }
             const remaining = Math.max(0, expiryMs - Date.now());
@@ -14212,10 +14344,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               remaining === 0
                 ? "EXPIRED"
                 : `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-            if (remaining === 0) clearInterval(countdownIntervalId);
+            if (remaining === 0 && countdownIntervalId) clearInterval(countdownIntervalId);
           };
           updateTimer();
-          const countdownIntervalId = setInterval(updateTimer, 1000);
+          countdownIntervalId = setInterval(updateTimer, 1000);
         }
       }
 
@@ -14548,20 +14680,32 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             interventions,
             pendingReckoning,
           } = data;
-          // The activation overlay is a one-time announcement. The server
-          // atomically grants should_announce=true only once per Reckoning id.
-          let activeReckoningForPage = pendingReckoning || null;
+          // The activation overlay is a one-time announcement. A live deferral
+          // is different: it must stay completely out of the way until its timer
+          // expires, at which point _scheduleDeferredReckoningWakeup() restores it.
+          let activeReckoningForPage = null;
           if (pendingReckoning) {
-            if (pendingReckoning.should_announce !== false) {
-              showReckoningOverlay(pendingReckoning);
+            if (_isLiveReckoningDeferral(pendingReckoning)) {
+              _scheduleDeferredReckoningWakeup(pendingReckoning);
+              _closeReckoningSurface();
+            } else {
+              activeReckoningForPage = pendingReckoning;
+              if (pendingReckoning.should_announce !== false) {
+                showReckoningOverlay(pendingReckoning);
+              }
             }
           } else {
             try {
               const activeReckoning = await apiRequest("/brain/reckoning/active");
               if (activeReckoning && activeReckoning.id) {
-                activeReckoningForPage = activeReckoning;
-                if (activeReckoning.should_announce !== false) {
-                  showReckoningOverlay(activeReckoning);
+                if (_isLiveReckoningDeferral(activeReckoning)) {
+                  _scheduleDeferredReckoningWakeup(activeReckoning);
+                  _closeReckoningSurface();
+                } else {
+                  activeReckoningForPage = activeReckoning;
+                  if (activeReckoning.should_announce !== false) {
+                    showReckoningOverlay(activeReckoning);
+                  }
                 }
               }
             } catch (_e) {}
