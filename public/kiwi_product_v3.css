@@ -448,3 +448,220 @@ button:disabled {
   .mobile-bar { padding-inline: 10px !important; }
   .achievement-topline { align-items: flex-start; flex-direction: column; }
 }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Mobile shell polish — Issue 1
+   Keep all navigation, but give the mobile header, More drawer and bottom nav
+   separate visual planes so they never stack on top of each other.
+   ───────────────────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  :root {
+    --kiwi-mobile-bar-height: 64px;
+    --kiwi-bottom-nav-height: 68px;
+  }
+
+  .mobile-bar {
+    box-sizing: border-box;
+    min-height: calc(var(--kiwi-mobile-bar-height) + env(safe-area-inset-top));
+    padding: calc(10px + env(safe-area-inset-top)) 14px 10px !important;
+    gap: 10px !important;
+    background: rgba(4, 13, 10, .94) !important;
+    border-bottom-color: rgba(82, 183, 136, .10) !important;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .16);
+  }
+
+  .hamburger,
+  .mob-back-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .hamburger {
+    gap: 5px;
+  }
+
+  .mob-page-title {
+    min-width: 0;
+    padding: 0 4px !important;
+    font-size: 15px !important;
+    line-height: 1.2;
+    letter-spacing: -.01em;
+  }
+
+  #mobKsBadge {
+    min-width: 44px !important;
+    padding-inline: 2px;
+  }
+
+  .main-content,
+  #mainContent {
+    padding-top: calc(var(--kiwi-mobile-bar-height) + env(safe-area-inset-top)) !important;
+    padding-bottom: calc(var(--kiwi-bottom-nav-height) + env(safe-area-inset-bottom)) !important;
+  }
+
+  .sidebar {
+    top: calc(var(--kiwi-mobile-bar-height) + env(safe-area-inset-top)) !important;
+    bottom: 0 !important;
+    height: auto !important;
+    width: min(86vw, 320px) !important;
+    min-width: 0 !important;
+    z-index: 296 !important;
+    overflow: hidden !important;
+    background:
+      linear-gradient(180deg, rgba(8, 22, 17, .98), rgba(4, 13, 10, .985)) !important;
+    border-right: 1px solid rgba(82, 183, 136, .12) !important;
+    box-shadow: 22px 0 56px rgba(0, 0, 0, .34) !important;
+  }
+
+  .sidebar-overlay {
+    inset: calc(var(--kiwi-mobile-bar-height) + env(safe-area-inset-top)) 0 0 0 !important;
+    z-index: 295 !important;
+    background: rgba(2, 8, 6, .66) !important;
+    backdrop-filter: blur(7px) !important;
+    -webkit-backdrop-filter: blur(7px) !important;
+  }
+
+  .sidebar-overlay.show {
+    touch-action: none;
+    overscroll-behavior: contain;
+  }
+
+  .sidebar-logo {
+    flex: 0 0 auto;
+    padding: 17px 18px 14px !important;
+    border-bottom-color: rgba(82, 183, 136, .09) !important;
+  }
+
+  .sidebar-logo-mark {
+    font-size: 18px !important;
+    letter-spacing: 2.4px !important;
+  }
+
+  .sidebar-logo-mark svg {
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  .sidebar-logo-sub {
+    margin-top: 5px !important;
+    font-size: 9px !important;
+    letter-spacing: 1.2px !important;
+    opacity: .72;
+  }
+
+  .sidebar-nav {
+    padding: 12px 12px 18px !important;
+    gap: 4px !important;
+    overscroll-behavior-y: contain;
+    scrollbar-width: none;
+  }
+
+  .sidebar-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-section-label {
+    padding: 16px 12px 6px !important;
+    font-size: 9px !important;
+    letter-spacing: 1.35px !important;
+  }
+
+  .nav-section-label:first-child {
+    padding-top: 5px !important;
+  }
+
+  .nav-item {
+    min-height: 48px;
+    padding: 11px 12px !important;
+    gap: 12px !important;
+    border-radius: 12px !important;
+    font-size: 14px !important;
+    line-height: 1.25;
+  }
+
+  .nav-icon {
+    width: 22px !important;
+  }
+
+  .nav-icon svg {
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  .nav-item.active {
+    background: rgba(82, 183, 136, .105) !important;
+    border-color: rgba(82, 183, 136, .18) !important;
+  }
+
+  .sidebar-footer {
+    flex: 0 0 auto;
+    padding: 14px 16px 10px !important;
+    border-top-color: rgba(82, 183, 136, .09) !important;
+    background: rgba(2, 9, 7, .42);
+  }
+
+  #staticLogoutBtn {
+    flex: 0 0 auto;
+    padding: 8px 16px calc(14px + env(safe-area-inset-bottom)) !important;
+    border-top: 0 !important;
+    background: rgba(2, 9, 7, .42);
+  }
+
+  #staticLogoutBtn button {
+    min-height: 44px !important;
+    border-radius: 12px !important;
+    padding: 10px 12px !important;
+  }
+
+  .bottom-nav {
+    height: calc(var(--kiwi-bottom-nav-height) + env(safe-area-inset-bottom)) !important;
+    padding: 6px 6px max(8px, env(safe-area-inset-bottom)) !important;
+    box-sizing: border-box;
+    border-top-color: rgba(82, 183, 136, .10) !important;
+    background: rgba(4, 12, 9, .955) !important;
+    transition:
+      transform .24s cubic-bezier(.4, 0, .2, 1),
+      opacity .18s ease,
+      visibility .18s ease;
+  }
+
+  .bnav-item {
+    gap: 2px !important;
+    padding: 4px 2px 2px !important;
+  }
+
+  .bnav-icon-wrap {
+    width: 38px !important;
+    height: 28px !important;
+  }
+
+  .bnav-label {
+    font-size: 10px !important;
+    line-height: 1.1 !important;
+  }
+
+  /* The drawer is the active navigation plane. Do not leave a second nav bar
+     visually competing with it underneath. */
+  .sidebar.open ~ .bottom-nav {
+    transform: translateY(calc(100% + env(safe-area-inset-bottom))) !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+}
+
+@media (max-width: 390px) {
+  .sidebar {
+    width: min(88vw, 320px) !important;
+  }
+
+  .mobile-bar {
+    padding-inline: 10px !important;
+  }
+}
