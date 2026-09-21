@@ -6963,8 +6963,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               throw _sessionErr;
             }
           }
-          // Handle 403 Forbidden — Reckoning lockout
-          if (response.status === 403) {
+          // Handle Reckoning locks. 423 is the canonical global-lock response;
+          // 403 remains supported for older deployments and unrelated forbidden states.
+          if (response.status === 403 || response.status === 423) {
             const data = await response.json().catch(() => ({}));
             if (data.reckoning) {
               AppState.reckoning = data.reckoning;
@@ -6981,10 +6982,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 AppState.currentPage === "exam";
               if (!_alreadyInLinkedExam) {
                 showReckoningOverlay(data.reckoning, {
-                  force: data.code === "RECKONING_SUBJECT_LOCKED",
+                  force: data.code === "RECKONING_SUBJECT_LOCKED" || data.code === "RECKONING_GLOBAL_LOCKED",
+                  mandatory: data.code === "RECKONING_GLOBAL_LOCKED",
                 });
               }
-              const _reckoningErr = new ApiError(403, "Reckoning lockout active", endpoint);
+              const _reckoningErr = new ApiError(response.status, "Reckoning lockout active", endpoint);
               _reckoningErr.reckoningLockout = true;
               _reckoningErr.alreadyReported = true;
               throw _reckoningErr;
@@ -9039,9 +9041,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         "generating-cards": { render: renderGeneratingCards, title: "Generating Cards", auth: true },
       };
 
+      function _reckoningGlobalLockActive() {
+        return !!(AppState && AppState.reckoning && typeof _isMandatoryReckoning === "function" && _isMandatoryReckoning(AppState.reckoning));
+      }
+
+      function _reckoningRouteAllowed(page) {
+        if (!_reckoningGlobalLockActive()) return true;
+        if (page === "settings") return true;
+        if (page === "exam" && AppState.tempExam && AppState.tempExam.isReckoning) return true;
+        return false;
+      }
+
+      function _setReckoningLockdownUi(active) {
+        document.body.classList.toggle("kiwi-reckoning-global-lock", !!active);
+      }
+
       function navigateTo(page, params) {
         // Store route params so render functions can access them
         AppState.routeParams = params || {};
+
+        if (!_reckoningRouteAllowed(page)) {
+          _setReckoningLockdownUi(true);
+          showReckoningOverlay(AppState.reckoning, { force: true, mandatory: true });
+          return;
+        }
+
+        if (_reckoningGlobalLockActive() && page === "settings") {
+          _setReckoningLockdownUi(true);
+          if (typeof _closeReckoningSurface === "function") _closeReckoningSurface();
+        }
         // P9.13-02 FIX: demo mode route guards
         if (AppState.isDemo && !["landing", "study", "biome", "dashboard"].includes(page)) {
           showToast("Create an account to access the full ecosystem.", "warning");
