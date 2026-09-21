@@ -8360,7 +8360,9 @@ try {
   }
 } catch (_e) { /* non-fatal — Reckoning proceeds with unweighted pool */ }
 const questionCount = Math.min(25, Math.max(5, flaggedCards.length));
-const reckoning = await db.reckoningSessions.create(userId, {
+let reckoning;
+try {
+reckoning = await db.reckoningSessions.create(userId, {
 subject_id: subjectId,
 subject_name: subject?.name || 'Unknown',
 pressure_score: pressureData.pressure_score,
@@ -8376,6 +8378,21 @@ debrief_text: null,
 // the correct pool instead of the standard stage >= 3 eligibility filter.
 flagged_card_ids: flaggedCards.map(c => c.id),
 });
+} catch (err) {
+// Database uniqueness is the final arbiter. Two concurrent pressure refreshes can
+// both observe "no active Reckoning" before either inserts; in that race, return
+// the already-created state instead of surfacing a 500 or creating duplicates.
+if (err?.code !== '23505') throw err;
+const racedActive = await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
+if (!racedActive) throw err;
+return {
+reckoning_id: racedActive.id,
+status: racedActive.status,
+flagged_card_count: racedActive.flagged_card_count,
+question_count: racedActive.question_count,
+recovered_race: true,
+};
+}
 return {
 reckoning_id: reckoning.id,
 status: 'triggered',
