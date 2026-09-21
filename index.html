@@ -14019,6 +14019,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // ═══════════════════════════════════════════════════════════════════════════
 
       let _deferredReckoningWakeupTimerId = null;
+      let _deferredReckoningRetryTimerId = null;
+      let _deferredReckoningSnapshot = null;
       let _brainReckoningCountdownIntervalId = null;
       let _reckoningOverlayRenderKey = null;
       let _reckoningOverlayDismissedKey = null;
@@ -14046,10 +14048,46 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         return expiryMs !== null && expiryMs > Date.now();
       }
 
-      function _clearDeferredReckoningWakeup() {
+      function _clearDeferredReckoningWakeup({ forgetSnapshot = false } = {}) {
         if (_deferredReckoningWakeupTimerId) {
           clearTimeout(_deferredReckoningWakeupTimerId);
           _deferredReckoningWakeupTimerId = null;
+        }
+        if (_deferredReckoningRetryTimerId) {
+          clearTimeout(_deferredReckoningRetryTimerId);
+          _deferredReckoningRetryTimerId = null;
+        }
+        if (forgetSnapshot) _deferredReckoningSnapshot = null;
+      }
+
+      function _isMandatoryReckoning(reckoning) {
+        if (!reckoning || reckoning.status === "completed" || reckoning.status === "none") return false;
+        if (_isLiveReckoningDeferral(reckoning)) return false;
+        return reckoning.status === "triggered" || reckoning.status === "in_progress" || reckoning.status === "deferred";
+      }
+
+      async function _enforceDeferredReckoningDeadline() {
+        try {
+          const active = await apiRequest("/brain/reckoning/active");
+          if (!active || !active.id || active.status === "none") {
+            _clearDeferredReckoningWakeup({ forgetSnapshot: true });
+            return;
+          }
+          if (_scheduleDeferredReckoningWakeup(active)) return;
+
+          // Server reconciliation is authoritative: once the deadline has passed,
+          // the active row is triggered/in_progress and this becomes a mandatory
+          // subject lock. A stale local dismissal must never suppress it.
+          _deferredReckoningSnapshot = null;
+          showReckoningOverlay(active, { force: true, mandatory: true });
+        } catch (err) {
+          console.warn("[KIWI] Deferred Reckoning deadline check failed; retrying:", err?.message || err);
+          if (!_deferredReckoningRetryTimerId) {
+            _deferredReckoningRetryTimerId = setTimeout(() => {
+              _deferredReckoningRetryTimerId = null;
+              _enforceDeferredReckoningDeadline();
+            }, 15000);
+          }
         }
       }
 
@@ -14057,25 +14095,31 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         _clearDeferredReckoningWakeup();
         if (!_isLiveReckoningDeferral(reckoning)) return false;
 
+        _deferredReckoningSnapshot = reckoning;
         const expiryMs = _getReckoningDeferralExpiry(reckoning);
         const remainingMs = Math.max(0, expiryMs - Date.now());
 
-        // A deferred Reckoning is deliberately non-blocking. Keep the full
-        // Reckoning hidden, then wake it exactly when the cooldown expires.
-        _deferredReckoningWakeupTimerId = setTimeout(async () => {
+        _deferredReckoningWakeupTimerId = setTimeout(() => {
           _deferredReckoningWakeupTimerId = null;
-          try {
-            const active = await apiRequest("/brain/reckoning/active");
-            if (!active || !active.id) return;
-            if (_scheduleDeferredReckoningWakeup(active)) return;
-            showReckoningOverlay(active);
-          } catch (err) {
-            console.warn("[KIWI] Deferred Reckoning wakeup check failed:", err?.message || err);
-          }
-        }, Math.min(remainingMs + 500, 2147483000));
+          _enforceDeferredReckoningDeadline();
+        }, Math.min(remainingMs + 350, 2147483000));
 
         return true;
       }
+
+      // Mobile browsers can suspend timers in the background. Reconcile against
+      // server time whenever the tab becomes usable again so an expired deferral
+      // cannot remain accidentally unlocked until the next navigation.
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible" || !_deferredReckoningSnapshot) return;
+        const expiry = _getReckoningDeferralExpiry(_deferredReckoningSnapshot);
+        if (expiry !== null && expiry <= Date.now() + 1000) _enforceDeferredReckoningDeadline();
+      });
+      window.addEventListener("focus", () => {
+        if (!_deferredReckoningSnapshot) return;
+        const expiry = _getReckoningDeferralExpiry(_deferredReckoningSnapshot);
+        if (expiry !== null && expiry <= Date.now() + 1000) _enforceDeferredReckoningDeadline();
+      });
 
       function _closeReckoningSurface() {
         const host = document.getElementById("reckoningContainer");
@@ -14084,8 +14128,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       }
 
       function _minimizeReckoningSurface(reckoning) {
+        if (_isMandatoryReckoning(reckoning)) return false;
         _reckoningOverlayDismissedKey = _reckoningStateKey(reckoning);
         _closeReckoningSurface();
+        return true;
       }
 
       function showReckoningOverlay(reckoning, options = {}) {
@@ -14100,21 +14146,22 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           return;
         }
 
-        _clearDeferredReckoningWakeup();
+        _clearDeferredReckoningWakeup({ forgetSnapshot: true });
         AppState.reckoning = reckoning;
         const stateKey = _reckoningStateKey(reckoning);
         const existingOverlay = document.getElementById("reckoningOverlay");
-        if (options.force !== true && _reckoningOverlayDismissedKey === stateKey) return;
+        const isMandatory = options.mandatory === true || _isMandatoryReckoning(reckoning);
+        if (isMandatory || options.force === true) _reckoningOverlayDismissedKey = null;
+        if (!isMandatory && options.force !== true && _reckoningOverlayDismissedKey === stateKey) return;
         if (existingOverlay && _reckoningOverlayRenderKey === stateKey) return;
         _reckoningOverlayRenderKey = stateKey;
-        if (options.force === true) _reckoningOverlayDismissedKey = null;
 
         const isInProgress = reckoning.status === "in_progress" && !!reckoning.exam_session_id;
         container.innerHTML = `
     <div class="reckoning-overlay" id="reckoningOverlay">
       <div class="reckoning-card" style="position:relative;">
-        <button id="minimizeReckoningBtn" type="button" aria-label="Minimize The Reckoning"
-          style="position:absolute;right:16px;top:12px;border:0;background:transparent;color:var(--text-2);font-size:30px;line-height:1;cursor:pointer;padding:6px 9px;z-index:2;">&times;</button>
+        ${!isMandatory ? `<button id="minimizeReckoningBtn" type="button" aria-label="Minimize The Reckoning"
+          style="position:absolute;right:16px;top:12px;border:0;background:transparent;color:var(--text-2);font-size:30px;line-height:1;cursor:pointer;padding:6px 9px;z-index:2;">&times;</button>` : ""}
         <div class="reckoning-icon">&#x26A0;</div>
         <div class="reckoning-title">The Reckoning</div>
         <div class="reckoning-subject">${escapeHTML(reckoning.subjectName || reckoning.subject_name || "Unknown Subject")}</div>
@@ -14123,6 +14170,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           <strong style="color:var(--text);">Required:</strong> ${escapeHTML(reckoning.requiredScore || "70")}% or higher to unlock<br>
           <strong style="color:var(--text);">Stakes:</strong> Failure increases pressure further
         </div>
+        ${isMandatory ? `
+        <div style="margin:10px 0 14px;padding:10px 12px;border:1px solid rgba(224,82,82,.28);border-radius:var(--r);background:rgba(224,82,82,.07);color:var(--red-bright);font-size:var(--text-sm);line-height:1.55;text-align:center;">
+          This subject is locked. The Reckoning cannot be minimized or dismissed; pass the required score to unlock it.
+        </div>` : ""}
         <div class="reckoning-stats">
           <div class="stat-card">
             <div class="stat-label">Current Pressure</div>
@@ -14151,9 +14202,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           <button class="btn btn-primary btn-lg" id="startReckoningBtn" style="width:100%;">
             ${isInProgress ? "Resume The Reckoning" : "Begin The Reckoning"}
           </button>
-          <button class="btn btn-secondary" id="minimizeReckoningBtnBottom" type="button" style="width:100%;">
+          ${!isMandatory ? `<button class="btn btn-secondary" id="minimizeReckoningBtnBottom" type="button" style="width:100%;">
             Minimize
-          </button>
+          </button>` : ""}
           ${isInProgress ? `
           <div style="font-size:var(--text-xs);color:var(--text-2);text-align:center;line-height:1.6;">
             Your exam is already saved on KIWI. Resume from the last server-saved answer.
@@ -14863,6 +14914,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               if (remaining <= 0 && _brainReckoningCountdownIntervalId) {
                 clearInterval(_brainReckoningCountdownIntervalId);
                 _brainReckoningCountdownIntervalId = null;
+                _enforceDeferredReckoningDeadline();
               }
             };
             _updateBrainReckoningCountdown();
@@ -16558,8 +16610,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 }
 
                 // ── KS delta colour ────────────────────────────────────────
-                var ksDelta = Math.round(s.ksDelta || 0);
-                var ksColor = ksDelta > 0 ? 'var(--green, #52b788)' : ksDelta < 0 ? '#ff6b6b' : 'var(--text-3)';
+                var hasKsDelta = s.ksDelta !== null && s.ksDelta !== undefined && Number.isFinite(Number(s.ksDelta));
+                var ksDelta = hasKsDelta ? Math.round(Number(s.ksDelta)) : null;
+                var ksColor = !hasKsDelta ? 'var(--text-4)' : ksDelta > 0 ? 'var(--green, #52b788)' : ksDelta < 0 ? '#ff6b6b' : 'var(--text-3)';
+                var ksDeltaLabel = hasKsDelta ? ((ksDelta >= 0 ? '+' : '') + ksDelta + ' KS') : '— KS';
 
                 return '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);transition:all var(--t-mid);opacity:' + rowOpacity + ';" class="session-history-item" data-stage-advances="' + encodeURIComponent(JSON.stringify(s.stage_advances || s.stageTransitions || [])) + '">'
                   + '<div style="min-width:0;flex:1;">'
@@ -16570,7 +16624,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   +   '<div style="font-size:var(--text-sm);color:var(--text-3);margin-top:2px;">' + subtitle + '</div>'
                   + '</div>'
                   + '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'
-                  +   '<div style="font-family:var(--font-mono);font-size:var(--text-lg);font-weight:700;color:' + ksColor + ';">' + (ksDelta >= 0 ? '+' : '') + ksDelta + ' KS</div>'
+                  +   '<div style="font-family:var(--font-mono);font-size:var(--text-lg);font-weight:700;color:' + ksColor + ';">' + ksDeltaLabel + '</div>'
                   +   '<div style="font-size:var(--text-xs);color:var(--text-4);">' + Math.round((s.duration || 0) / 60) + 'm</div>'
                   + '</div>'
                   + '</div>';
@@ -21791,7 +21845,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               }
               // Close any modal overlays
               const reckoningOverlay = document.getElementById("reckoningOverlay");
-              if (reckoningOverlay) reckoningOverlay.style.display = "none";
+              if (reckoningOverlay && !_isMandatoryReckoning(AppState.reckoning)) {
+                reckoningOverlay.style.display = "none";
+              }
             }
           },
           { capture: false },
