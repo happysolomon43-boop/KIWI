@@ -15338,6 +15338,7 @@ async function sendTelegramDailyReminder(userId) {
 // store the actual before/after snapshots and derive delta from those snapshots.
 // Never substitute the absolute post-exam KS into a field named ks_delta.
 function _finiteKsNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -15920,12 +15921,6 @@ try {
       pressure_score: _forfeitFinalScore,
       delta: _forfeitFinalScore - _forfeitCurPressure,
     });
-    wsSend(req.user.id, 'ks_change', {
-      subject_id: exam.subject_id,
-      ks_delta: _forfeitKsDelta,
-      new_ks: (_forfeitPostKs.score || 0),
-    });
-
     await ecosystemV2.refreshVitality(req.user.id)
       .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
     res.json({ success: true, message: 'Exam forfeited. Penalties applied.', ksDelta: _forfeitKsDelta });
@@ -16011,12 +16006,6 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
         pressure_score: _forfeitCurPressure,
         delta: 15,
       });
-      wsSend(userId, 'ks_change', {
-        subject_id: exam.subject_id,
-        ks_delta: _forfeitKsDelta,
-        new_ks: (_forfeitPostKs.score || 0),
-      });
-
       await ecosystemV2.refreshVitality(userId)
         .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
       res.json({ success: true, message: 'Exam auto-forfeited. Penalties applied.', ksDelta: _forfeitKsDelta });
