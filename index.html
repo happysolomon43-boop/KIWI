@@ -5892,8 +5892,6 @@ body.kiwi-tour-active { overscroll-behavior: none; }
   #kiwiTip {
     left: 8px !important;
     right: 8px !important;
-    top: auto !important;
-    bottom: max(70px, calc(58px + env(safe-area-inset-bottom))) !important;
     width: auto;
     max-width: none;
     max-height: 44vh;
@@ -22331,9 +22329,51 @@ function _positionTip(pos, sel, target) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   if (vw <= 720) {
-    el.style.left = '8px';
-    el.style.right = '8px';
-    el.style.bottom = 'max(70px, calc(58px + env(safe-area-inset-bottom)))';
+    const MOBILE_EDGE = 8;
+    const MOBILE_TOP = 58;
+    const MOBILE_BOTTOM = 70;
+    const MOBILE_GAP = 12;
+    const tipH = Math.min(el.offsetHeight || 250, Math.max(180, vh * 0.44));
+
+    el.style.left = MOBILE_EDGE + 'px';
+    el.style.right = MOBILE_EDGE + 'px';
+
+    if (!target) {
+      el.style.top = Math.max(MOBILE_TOP, (vh - tipH) / 2) + 'px';
+      el.style.bottom = '';
+      return;
+    }
+
+    const r = target.getBoundingClientRect();
+    const roomAbove = r.top - MOBILE_GAP - MOBILE_TOP;
+    const roomBelow = vh - MOBILE_BOTTOM - r.bottom - MOBILE_GAP;
+
+    // Put the guide card on the opposite side of the highlighted control.
+    // This is especially important for bottom-nav steps: the old fixed-bottom
+    // card covered the Study/Exam buttons the user was being asked to tap.
+    if (roomBelow >= tipH) {
+      el.style.top = Math.max(MOBILE_TOP, r.bottom + MOBILE_GAP) + 'px';
+      el.style.bottom = '';
+      return;
+    }
+
+    if (roomAbove >= tipH) {
+      el.style.top = Math.max(MOBILE_TOP, r.top - MOBILE_GAP - tipH) + 'px';
+      el.style.bottom = '';
+      return;
+    }
+
+    const targetCenter = r.top + r.height / 2;
+    if (targetCenter >= vh / 2) {
+      el.style.top = MOBILE_TOP + 'px';
+      el.style.bottom = '';
+    } else {
+      el.style.top = Math.max(
+        MOBILE_TOP,
+        vh - MOBILE_BOTTOM - tipH,
+      ) + 'px';
+      el.style.bottom = '';
+    }
     return;
   }
 
