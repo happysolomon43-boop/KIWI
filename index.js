@@ -15552,16 +15552,35 @@ setImmediate(async () => {
     await Promise.all(questions.map(q => db.examQuestions.create(_cbtUserId, _cbtSessionId, q)));
     const readyExam = await db.examSessions.findByIdWithQuestions(_cbtUserId, _cbtSessionId);
     // Link the generated exam to the exact Reckoning that requested it.
+    // For Reckoning this link is not optional: silently swallowing a failure here
+    // leaves the account locked while the client thinks generation succeeded.
     if (_cbtBody.is_reckoning || _cbtBody.reckoning_id) {
-      try {
-        let activeReck = null;
-        if (_cbtBody.reckoning_id) {
-          const requested = await db.reckoningSessions.findById(_cbtBody.reckoning_id).catch(() => null);
-          if (requested?.user_id === _cbtUserId) activeReck = requested;
-        }
-        if (!activeReck) activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
-        if (activeReck) await startReckoningExam(activeReck.id, _cbtSessionId);
-      } catch (_) {}
+      let activeReck = null;
+      if (_cbtBody.reckoning_id) {
+        const requested = await db.reckoningSessions.findById(_cbtBody.reckoning_id).catch(() => null);
+        if (requested?.user_id === _cbtUserId) activeReck = requested;
+      }
+      if (!activeReck) activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
+      if (!activeReck) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => null);
+        throw new Error('Active Reckoning disappeared before the generated exam could be linked. Please retry.');
+      }
+
+      activeReck = await reconcileActiveReckoning(_cbtUserId, activeReck).catch(() => activeReck);
+      if (
+        activeReck?.status === 'in_progress' &&
+        activeReck.exam_session_id &&
+        String(activeReck.exam_session_id) !== String(_cbtSessionId)
+      ) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => null);
+        throw new Error('Another Reckoning exam is already active. Resume the existing exam.');
+      }
+
+      if (!activeReck) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => null);
+        throw new Error('Reckoning recovery completed before this exam could be linked. Refresh and continue.');
+      }
+      await startReckoningExam(activeReck.id, _cbtSessionId);
     }
     _jobStoreSet(cbtJobId, { status: 'done', type: 'cbt_generation', result: readyExam });
     wsSend(_cbtUserId, 'job_done', { job_id: cbtJobId, type: 'cbt_generation', result: readyExam, exam: readyExam });
