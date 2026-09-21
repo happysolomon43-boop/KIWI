@@ -15368,10 +15368,15 @@ setImmediate(async () => {
     console.log(`[KIWI CBT] ✅ Generation complete: ${questions.length}/${_cbtCount} questions ready for session ${_cbtSessionId}`);
     await Promise.all(questions.map(q => db.examQuestions.create(_cbtUserId, _cbtSessionId, q)));
     const readyExam = await db.examSessions.findByIdWithQuestions(_cbtUserId, _cbtSessionId);
-    // Link reckoning session if applicable
+    // Link the generated exam to the exact Reckoning that requested it.
     if (_cbtBody.is_reckoning || _cbtBody.reckoning_id) {
       try {
-        const activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
+        let activeReck = null;
+        if (_cbtBody.reckoning_id) {
+          const requested = await db.reckoningSessions.findById(_cbtBody.reckoning_id).catch(() => null);
+          if (requested?.user_id === _cbtUserId) activeReck = requested;
+        }
+        if (!activeReck) activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
         if (activeReck) await startReckoningExam(activeReck.id, _cbtSessionId);
       } catch (_) {}
     }
