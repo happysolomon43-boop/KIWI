@@ -93,3 +93,80 @@ The builder clamps malformed input, deduplicates milestones, normalizes next-sta
 PixiJS should consume this TreeState and must not directly read database-shaped values such as `tree_health`, `tree_stage` or `growth_points`.
 
 The renderer may derive visual presentation from the canonical state, but it should never mutate academic progression or redefine Vitality/Growth semantics.
+
+
+## Continuous growth model
+
+Tree stages are now milestone labels, not visual replacement models.
+
+`services/tree-growth-model.js` defines the continuous biological growth contract. Each milestone has a visual-maturity anchor:
+
+- Seedling: 0.00
+- Sprout: 0.12
+- Sapling: 0.26
+- Young Tree: 0.43
+- Thriving: 0.61
+- Blooming: 0.75
+- Mature: 0.89
+- Ancient: 1.00
+
+The anchors intentionally are not `growth_points / 3000`. KIWI's Growth Point intervals widen sharply at higher stages, so a raw linear mapping would compress the early tree into a tiny visual range. Instead, Growth Points determine progress inside the current milestone interval, and that interval is smoothly mapped between the two visual-maturity anchors.
+
+`growthProgress` is the raw 0..1 progress inside the current stage interval.
+
+`overallGrowthProgress` is the continuous 0..1 biological maturity used by the future renderer.
+
+A smootherstep interpolation is used at milestone boundaries, which has zero velocity at both ends of each interval. This means crossing 99 → 100 GP or 299 → 300 GP changes the stage label but does not create a geometry snap.
+
+At Ancient, `overallGrowthProgress` is 1.0. Growth beyond 3000 GP is represented by `postAncientGrowth`, an asymptotic 0..1 signal. This allows subtle long-term thickening and root expansion without inventing a ninth stage.
+
+## Permanent structural morphology
+
+All structural values are normalized 0..1 and are deterministic functions of continuous maturity.
+
+The canonical `structuralGrowth` object contains:
+
+- `trunkHeight`
+- `trunkThickness`
+- `rootSpread`
+- `branchDevelopment`
+- `branchComplexity`
+- `canopyCapacity`
+- `barkMaturity`
+- `fruitingCapacity`
+
+The equations deliberately grow different structures at different rates. Roots and trunk thickness establish earlier, branch complexity and bark maturity develop later, and fruiting capacity appears only after substantial maturity.
+
+No Vitality value participates in these equations. A low-Vitality Ancient tree remains structurally Ancient.
+
+## Reversible visual health
+
+Vitality is normalized to 0..1 and converted into a `visualHealth` object:
+
+- `leafDensity`
+- `leafRetention`
+- `droop`
+- `saturation`
+- `movementStrength`
+- `bloomStrength`
+- `stress`
+
+These values affect only current presentation. They can recover upward or fall downward as the ecosystem changes.
+
+A renderer must never use `visualHealth` to shrink the trunk, delete permanent branches, reduce Growth Points, or move the tree to a younger stage.
+
+## TreeState schema v2
+
+The canonical TreeState schema is now version 2. In addition to the previous compatibility fields it exposes:
+
+- `growthModelVersion`
+- `growthProgress`
+- `overallGrowthProgress`
+- `postAncientGrowth`
+- `growthInterval`
+- `structuralGrowth`
+- `visualHealth`
+
+The legacy `health` field remains an alias of `vitality` so the existing SVG tree can continue to render unchanged until the renderer migration begins.
+
+The current SVG renderer does not consume the new morphology fields yet. This change only defines and exposes the continuous growth model.

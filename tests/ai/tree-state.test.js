@@ -12,10 +12,14 @@ const {
 test('TreeState defaults are safe and renderer-compatible', () => {
   const state = buildTreeState();
 
-  assert.equal(state.schemaVersion, 1);
+  assert.equal(state.schemaVersion, 2);
+  assert.equal(state.growthModelVersion, 1);
   assert.equal(state.stage, 1);
   assert.equal(state.stageLabel, 'SEEDLING');
   assert.equal(state.growthPoints, 0);
+  assert.equal(state.growthProgress, 0);
+  assert.equal(state.overallGrowthProgress, 0);
+  assert.equal(state.postAncientGrowth, 0);
   assert.equal(state.vitality, 100);
   assert.equal(state.health, 100);
   assert.equal(state.knowledgeScore, 0);
@@ -24,7 +28,20 @@ test('TreeState defaults are safe and renderer-compatible', () => {
   assert.equal(state.rings, 0);
   assert.deepEqual(state.milestones, []);
   assert.equal(state.streak, 0);
-  assert.equal(state.nextStage, null);
+  assert.deepEqual(state.nextStage, {
+    next_stage: 2,
+    next_stage_label: 'SPROUT',
+    current_growth_points: 0,
+    target_growth_points: 25,
+    growth_points_needed: 25,
+  });
+  assert.deepEqual(state.growthInterval, {
+    currentStageStart: 0,
+    nextStageStart: 25,
+    pointsIntoStage: 0,
+    pointsInStage: 25,
+    pointsToNextStage: 25,
+  });
 });
 
 test('TreeState clamps maturity and vitality while preserving permanent progression inputs', () => {
@@ -42,10 +59,14 @@ test('TreeState clamps maturity and vitality while preserving permanent progress
   assert.equal(state.vitality, 0);
   assert.equal(state.health, 0);
   assert.equal(state.growthPoints, 3450);
+  assert.equal(state.growthProgress, 1);
+  assert.equal(state.overallGrowthProgress, 1);
+  assert.ok(state.postAncientGrowth > 0);
   assert.equal(state.knowledgeScore, 100);
   assert.equal(state.leaves, 50);
   assert.equal(state.fruits, 6);
   assert.equal(state.streak, 12);
+  assert.equal(state.nextStage, null);
 });
 
 test('TreeState derives canopy density from global KS only when no explicit leaf hint is supplied', () => {
@@ -55,18 +76,11 @@ test('TreeState derives canopy density from global KS only when no explicit leaf
   assert.equal(buildTreeState({ knowledgeScore: 100, leaves: 17 }).leaves, 17);
 });
 
-test('TreeState normalizes milestone rings and next-stage payload', () => {
+test('TreeState derives next-stage state from permanent Growth Points', () => {
   const state = buildTreeState({
     stage: 4,
     growthPoints: 320,
     milestones: [30, 7, 30, '100', -1, 'bad'],
-    nextStage: {
-      next_stage: 5,
-      next_stage_label: 'THRIVING',
-      current_growth_points: 320,
-      target_growth_points: 700,
-      growth_points_needed: 380,
-    },
   });
 
   assert.deepEqual(state.milestones, [7, 30, 100]);
@@ -78,6 +92,12 @@ test('TreeState normalizes milestone rings and next-stage payload', () => {
     target_growth_points: 700,
     growth_points_needed: 380,
   });
+  assert.equal(state.growthInterval.currentStageStart, 300);
+  assert.equal(state.growthInterval.nextStageStart, 700);
+  assert.equal(state.growthInterval.pointsIntoStage, 20);
+  assert.equal(state.growthInterval.pointsInStage, 400);
+  assert.equal(state.growthInterval.pointsToNextStage, 380);
+  assert.equal(state.growthProgress, 0.05);
 });
 
 test('TreeState accepts database snake_case inputs and keeps health as a vitality alias', () => {
@@ -103,12 +123,39 @@ test('TreeState accepts database snake_case inputs and keeps health as a vitalit
   assert.equal(state.knowledgeScore, 64);
   assert.equal(state.leaves, 32);
   assert.equal(state.streak, 9);
+  assert.ok(state.growthProgress > 0);
+  assert.ok(state.overallGrowthProgress > 0);
   assert.deepEqual(state.vitalityBreakdown, {
     memory_condition: 61.5,
     seven_day_consistency: 71.43,
     calmness: 80,
     recent_session_quality: 55,
   });
+});
+
+test('Growth Points can advance a stale persisted stage but can never visually de-age it', () => {
+  const advanced = buildTreeState({ stage: 1, growthPoints: 320 });
+  assert.equal(advanced.stage, 4);
+  assert.equal(advanced.stageLabel, 'YOUNG TREE');
+
+  const protectedStage = buildTreeState({ stage: 5, growthPoints: 100 });
+  assert.equal(protectedStage.stage, 5);
+  assert.equal(protectedStage.stageLabel, 'THRIVING');
+  assert.equal(protectedStage.growthProgress, 0);
+});
+
+test('Vitality changes visual condition without changing permanent structure', () => {
+  const healthy = buildTreeState({ growthPoints: 900, vitality: 95 });
+  const critical = buildTreeState({ growthPoints: 900, vitality: 10 });
+
+  assert.equal(healthy.stage, critical.stage);
+  assert.equal(healthy.overallGrowthProgress, critical.overallGrowthProgress);
+  assert.deepEqual(healthy.structuralGrowth, critical.structuralGrowth);
+
+  assert.notDeepEqual(healthy.visualHealth, critical.visualHealth);
+  assert.ok(healthy.visualHealth.leafDensity > critical.visualHealth.leafDensity);
+  assert.ok(healthy.visualHealth.droop < critical.visualHealth.droop);
+  assert.ok(healthy.visualHealth.saturation > critical.visualHealth.saturation);
 });
 
 test('Tree stage labels stay aligned with the eight-stage ecosystem', () => {

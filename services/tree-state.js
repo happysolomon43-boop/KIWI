@@ -1,18 +1,12 @@
 'use strict';
 
-const TREE_STATE_SCHEMA_VERSION = 1;
+const {
+  TREE_GROWTH_MODEL_VERSION,
+  TREE_STAGE_LABELS,
+  computeContinuousTreeGrowth,
+} = require('./tree-growth-model');
 
-const TREE_STAGE_LABELS = Object.freeze([
-  '',
-  'SEEDLING',
-  'SPROUT',
-  'SAPLING',
-  'YOUNG TREE',
-  'THRIVING',
-  'BLOOMING',
-  'MATURE',
-  'ANCIENT',
-]);
+const TREE_STATE_SCHEMA_VERSION = 2;
 
 function firstDefined() {
   for (let i = 0; i < arguments.length; i += 1) {
@@ -36,7 +30,7 @@ function nonNegativeInt(value, fallback) {
 }
 
 function normalizeStage(value) {
-  return Math.floor(clamp(value, 1, 8, 1));
+  return Math.floor(clamp(value, 1, TREE_STAGE_LABELS.length - 1, 1));
 }
 
 function labelForStage(stage) {
@@ -96,23 +90,23 @@ function normalizeNextStage(value, currentGrowthPoints) {
 /**
  * Build the single renderer-facing KIWI TreeState contract.
  *
- * Canonical fields:
- * - stage / stageLabel: permanent maturity (1-8)
- * - growthPoints / nextStage: permanent progression
- * - vitality: current reversible health (0-100)
- * - knowledgeScore: current global KS used only for canopy-density hinting
- * - leaves: visual density hint, currently derived from global KS for compatibility
- * - fruits: permanent fruit count
- * - rings / milestones: permanent streak milestone marks
- * - streak: current streak context
+ * Permanent progression:
+ * - stage / stageLabel: named maturity milestones
+ * - growthPoints: permanent progression
+ * - growthProgress: continuous 0..1 progress inside the current milestone span
+ * - overallGrowthProgress: continuous biological maturity across the whole tree life
+ * - structuralGrowth: deterministic physical-development values
  *
- * health is intentionally retained as a backwards-compatible alias for vitality
- * until the SVG renderer is replaced.
+ * Current condition:
+ * - vitality: reversible 0..100 ecosystem health
+ * - visualHealth: deterministic reversible presentation values
+ *
+ * The existing flat renderer fields remain for compatibility until the visual
+ * renderer is replaced. In particular, health is an alias for vitality.
  */
 function buildTreeState(input) {
   const source = input && typeof input === 'object' ? input : {};
 
-  const stage = normalizeStage(firstDefined(source.stage, source.tree_stage));
   const vitality = Math.round(clamp(
     firstDefined(source.vitality, source.health, source.tree_health),
     0,
@@ -123,6 +117,17 @@ function buildTreeState(input) {
     firstDefined(source.growthPoints, source.growth_points),
     0
   );
+  const requestedStage = normalizeStage(
+    firstDefined(source.stage, source.tree_stage, 1)
+  );
+
+  const continuousGrowth = computeContinuousTreeGrowth({
+    growthPoints,
+    stage: requestedStage,
+    vitality,
+  });
+  const stage = continuousGrowth.stage;
+
   const knowledgeScore = Math.round(
     clamp(
       firstDefined(source.knowledgeScore, source.globalKS, source.global_knowledge_score),
@@ -150,21 +155,34 @@ function buildTreeState(input) {
     firstDefined(source.streak, source.currentStreak, source.current_streak),
     0
   );
-  const nextStage = normalizeNextStage(
-    firstDefined(source.nextStage, source.next_tree_stage),
-    growthPoints
-  );
 
   return {
     schemaVersion: TREE_STATE_SCHEMA_VERSION,
+    growthModelVersion: TREE_GROWTH_MODEL_VERSION,
+
     stage,
     stageLabel: labelForStage(stage),
     growthPoints,
-    nextStage,
+    nextStage: normalizeNextStage(continuousGrowth.nextStage, growthPoints),
+
+    growthProgress: continuousGrowth.growthProgress,
+    overallGrowthProgress: continuousGrowth.overallGrowthProgress,
+    postAncientGrowth: continuousGrowth.postAncientGrowth,
+    growthInterval: {
+      currentStageStart: continuousGrowth.currentStageStart,
+      nextStageStart: continuousGrowth.nextStageStart,
+      pointsIntoStage: continuousGrowth.pointsIntoStage,
+      pointsInStage: continuousGrowth.pointsInStage,
+      pointsToNextStage: continuousGrowth.pointsToNextStage,
+    },
+    structuralGrowth: continuousGrowth.structuralGrowth,
+
     vitality,
     vitalityBreakdown: normalizeVitalityBreakdown(
       firstDefined(source.vitalityBreakdown, source.vitality_breakdown)
     ),
+    visualHealth: continuousGrowth.visualHealth,
+
     knowledgeScore,
     leaves,
     fruits,
