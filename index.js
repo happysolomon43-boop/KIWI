@@ -5434,10 +5434,9 @@ const prompt = _basePrompt
   .replace('[NOTES]', notes)
   .replace('[COUNT]', count);
 
-// Scale output tokens: ~900 tokens per question (stem + 4 options + answer + explanation),
-// minimum 24000 to give ample room even for small exams.
-// This prevents MAX_TOKENS truncation which was causing partial generation.
-const scaledTokens = Math.min(65536, Math.max(24000, count * 900));
+// Allocate enough output for the requested exam without forcing every small exam
+// into a 24k-token generation. Oversized budgets materially increase latency.
+const scaledTokens = Math.min(48000, Math.max(8000, count * 700));
 const _theoryPct = customizeBalance && typeof _opts.theory_percent === 'number' ? _opts.theory_percent : 'auto';
 console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, difficulty=${difficultyLevel || 'off/default'}, theory=${_theoryPct}%, broad=${broadCoverage}, customBalance=${customizeBalance}, forceType=${forceType || 'none'}, route=${_taskId}, maxOutputTokens=${scaledTokens}`);
 const result = await ai.run(
@@ -5497,7 +5496,7 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
     'Generate exactly ' + needed + ' question(s) following all rules above.',
   ].join('\n');
 
-  const completionTokens = Math.min(65536, Math.max(16000, needed * 900));
+  const completionTokens = Math.min(24000, Math.max(6000, needed * 700));
   const completionGroupId = generationGroupId || null;
   const result = await ai.run(
     'CBT_COMPLETION',
@@ -16127,62 +16126,45 @@ setImmediate(async () => {
       theoryQs.forEach(q => { q.question_type = 'Theory'; });
       calcQs.forEach(q   => { q.question_type = 'Calculation'; });
 
-      // ── Completion passes — theory side ──────────────────────────────────────
+      // ── One bounded completion wave, both sides in parallel ────────────────
+      // The former 2nd/3rd serial completion passes could turn a 2-call exam into
+      // six sequential model calls. One parallel repair wave preserves quality
+      // while keeping generation time predictable.
+      const completionTasks = [];
       if (theoryQs.length < theoryN) {
-        const tNeeded = theoryN - theoryQs.length;
-        console.log(`[KIWI CBT] Theory pass 1: ${theoryQs.length}/${theoryN} — completing ${tNeeded}`);
-        try {
-          const tCompText = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded, 'theory', _cbtOptions.difficulty_level, _cbtSessionId);
-          if (tCompText) {
-            const tCompQs = parseCBTResponse(tCompText, _cbtSessionId, _cbtCards);
-            tCompQs.forEach(q => { q.question_type = 'Theory'; });
-            theoryQs = [...theoryQs, ...tCompQs.slice(0, tNeeded)];
-          }
-        } catch (tCompErr) {
-          console.warn('[KIWI CBT] Theory completion pass 2 failed:', tCompErr.message);
-        }
-        if (theoryQs.length < theoryN) {
-          const tNeeded2 = theoryN - theoryQs.length;
-          console.log(`[KIWI CBT] Theory pass 2: ${theoryQs.length}/${theoryN} — completing ${tNeeded2}`);
-          try {
-            const tComp2Text = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded2, 'theory', _cbtOptions.difficulty_level, _cbtSessionId);
-            if (tComp2Text) {
-              const tComp2Qs = parseCBTResponse(tComp2Text, _cbtSessionId, _cbtCards);
-              tComp2Qs.forEach(q => { q.question_type = 'Theory'; });
-              theoryQs = [...theoryQs, ...tComp2Qs.slice(0, tNeeded2)];
-            }
-          } catch (tComp2Err) {
-            console.warn('[KIWI CBT] Theory completion pass 3 failed:', tComp2Err.message);
-          }
-        }
+        const needed = theoryN - theoryQs.length;
+        completionTasks.push(
+          generateCBTCompletionQuestions(
+            _cbtNotes, theoryQs, needed, 'theory',
+            _cbtOptions.difficulty_level, _cbtSessionId
+          ).then((text) => ({ kind: 'theory', needed, text }))
+        );
       }
-
-      // ── Completion passes — calc side ─────────────────────────────────────────
       if (calcQs.length < calcN) {
-        const cNeeded = calcN - calcQs.length;
-        console.log(`[KIWI CBT] Calc pass 1: ${calcQs.length}/${calcN} — completing ${cNeeded}`);
-        try {
-          const cCompText = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded, 'calculation', _cbtOptions.difficulty_level, _cbtSessionId);
-          if (cCompText) {
-            const cCompQs = parseCBTResponse(cCompText, _cbtSessionId, _cbtCards);
-            cCompQs.forEach(q => { q.question_type = 'Calculation'; });
-            calcQs = [...calcQs, ...cCompQs.slice(0, cNeeded)];
-          }
-        } catch (cCompErr) {
-          console.warn('[KIWI CBT] Calc completion pass 2 failed:', cCompErr.message);
-        }
-        if (calcQs.length < calcN) {
-          const cNeeded2 = calcN - calcQs.length;
-          console.log(`[KIWI CBT] Calc pass 2: ${calcQs.length}/${calcN} — completing ${cNeeded2}`);
-          try {
-            const cComp2Text = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded2, 'calculation', _cbtOptions.difficulty_level, _cbtSessionId);
-            if (cComp2Text) {
-              const cComp2Qs = parseCBTResponse(cComp2Text, _cbtSessionId, _cbtCards);
-              cComp2Qs.forEach(q => { q.question_type = 'Calculation'; });
-              calcQs = [...calcQs, ...cComp2Qs.slice(0, cNeeded2)];
+        const needed = calcN - calcQs.length;
+        completionTasks.push(
+          generateCBTCompletionQuestions(
+            _cbtNotes, calcQs, needed, 'calculation',
+            _cbtOptions.difficulty_level, _cbtSessionId
+          ).then((text) => ({ kind: 'calculation', needed, text }))
+        );
+      }
+      if (completionTasks.length > 0) {
+        const repairs = await Promise.allSettled(completionTasks);
+        for (const repair of repairs) {
+          if (repair.status !== 'fulfilled' || !repair.value?.text) {
+            if (repair.status === 'rejected') {
+              console.warn('[KIWI CBT] Split completion wave failed:', repair.reason?.message || repair.reason);
             }
-          } catch (cComp2Err) {
-            console.warn('[KIWI CBT] Calc completion pass 3 failed:', cComp2Err.message);
+            continue;
+          }
+          const parsed = parseCBTResponse(repair.value.text, _cbtSessionId, _cbtCards);
+          if (repair.value.kind === 'theory') {
+            parsed.forEach((q) => { q.question_type = 'Theory'; });
+            theoryQs = [...theoryQs, ...parsed.slice(0, repair.value.needed)];
+          } else {
+            parsed.forEach((q) => { q.question_type = 'Calculation'; });
+            calcQs = [...calcQs, ...parsed.slice(0, repair.value.needed)];
           }
         }
       }
@@ -16216,20 +16198,7 @@ setImmediate(async () => {
         } catch (completionErr) {
           console.warn('[KIWI CBT] Completion prompt failed:', completionErr.message);
         }
-        if (questions.length < _cbtCount) {
-          const stillNeeded = _cbtCount - questions.length;
-          console.log('[KIWI CBT] After 2 passes: ' + questions.length + '/' + _cbtCount + ' — attempting 3rd pass for ' + stillNeeded + ' missing');
-          try {
-            const pass3Text = await generateCBTCompletionQuestions(_cbtNotes, questions, stillNeeded, null, _cbtOptions.difficulty_level, _cbtSessionId);
-            if (pass3Text) {
-              const pass3Qs = parseCBTResponse(pass3Text, _cbtSessionId, _cbtCards);
-              const offset3 = questions.length;
-              questions = [...questions, ...pass3Qs.slice(0, stillNeeded).map((q, i) => ({ ...q, question_number: offset3 + i + 1 }))];
-            }
-          } catch (pass3Err) {
-            console.warn('[KIWI CBT] 3rd pass failed:', pass3Err.message);
-          }
-        }
+
       }
     }
     } catch (generationErr) {
