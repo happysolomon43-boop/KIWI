@@ -102,7 +102,7 @@ function createTelemetry({
     requestedReasoning,
     candidateModels,
     legacyModel = null,
-    projectSlots = [],
+    plannedProjectSlot = null,
   }) {
     const plannedModels = (candidateModels || []).map((candidate) =>
       typeof candidate === 'string' ? candidate : candidate.modelId
@@ -125,7 +125,7 @@ function createTelemetry({
       requestId,
       attemptNumber: 1,
       modelId: primary,
-      projectSlot: projectSlots[0]?.id || null,
+      projectSlot: plannedProjectSlot || null,
       outcome: 'SHADOW_PLAN',
       startedAt: clock(),
       completedAt: clock(),
@@ -136,7 +136,7 @@ function createTelemetry({
       taskClass,
       mode: 'SHADOW',
       selectedModel: primary,
-      selectedProjectSlot: projectSlots[0]?.id || null,
+      selectedProjectSlot: plannedProjectSlot || null,
       outcome: 'SHADOW_ONLY',
       fallbackDepth: 0,
       attemptCount: 0,
