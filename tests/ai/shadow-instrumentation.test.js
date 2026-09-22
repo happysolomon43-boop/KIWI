@@ -7,12 +7,12 @@ const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'index.js'), 'utf8');
 
-test('Phase 6 routes all 27 canonical AI callsites live through ai.run', () => {
+test('Phase 6 routes all 28 canonical AI callsites live through ai.run', () => {
   const legacyCalls = source.match(/geminiModel\.generateContent\s*\(/g) || [];
   const liveCalls = source.match(/\bai\.run\s*\(/g) || [];
 
   assert.equal(legacyCalls.length, 0);
-  assert.equal(liveCalls.length, 27);
+  assert.equal(liveCalls.length, 28);
   assert.doesNotMatch(source, /const geminiModel\s*=\s*\{/);
 });
 
