@@ -407,7 +407,6 @@ button:disabled {
 
   .exam-nav-dots,
   .filter-tabs,
-  .import-tabs,
   .tab-row,
   .chips-row {
     max-width: 100%;
@@ -419,8 +418,30 @@ button:disabled {
   }
 
   .exam-nav-dots::-webkit-scrollbar,
-  .filter-tabs::-webkit-scrollbar,
-  .import-tabs::-webkit-scrollbar { display: none; }
+  .filter-tabs::-webkit-scrollbar { display: none; }
+
+  /* Import methods are a destination picker, not a scrolling chip row.
+     Give every method a stable tap target and let the choices scan vertically. */
+  .import-tabs {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    max-width: 100%;
+    overflow: visible !important;
+    padding-bottom: 0 !important;
+    margin-bottom: 16px !important;
+  }
+
+  .import-tabs .import-tab-btn {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 44px;
+    justify-content: center;
+    white-space: normal !important;
+    text-align: center;
+    line-height: 1.2;
+    padding-inline: 8px !important;
+  }
 
   .session-history-item {
     align-items: flex-start !important;
@@ -447,6 +468,10 @@ button:disabled {
   .card, .stat-card, .marketplace-item { padding: 14px !important; }
   .mobile-bar { padding-inline: 10px !important; }
   .achievement-topline { align-items: flex-start; flex-direction: column; }
+
+  .import-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
