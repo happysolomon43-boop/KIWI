@@ -21,6 +21,7 @@ const { AIError, AI_ERROR_CODES } = require('./errors');
 function createModelRouter({
   registry = AI_TASKS,
   catalog = createModelCatalog(),
+  pins = {},
 } = {}) {
   function getTask(taskId) {
     const task = registry[taskId];
@@ -46,6 +47,18 @@ function createModelRouter({
     ));
   }
 
+
+  function pinFirst(models, modelId) {
+    if (!modelId) return models;
+    const index = models.findIndex((model) => model.id === modelId);
+    if (index < 0) return models;
+    return [
+      models[index],
+      ...models.slice(0, index),
+      ...models.slice(index + 1),
+    ];
+  }
+
   function applyPreferredModel(candidates, preferredModelId) {
     if (!preferredModelId) return candidates;
     const index = candidates.findIndex((entry) => entry.model.id === preferredModelId);
@@ -66,14 +79,20 @@ function createModelRouter({
 
     switch (task.modelPolicy) {
       case MODEL_POLICIES.TOP_STABLE_FLASH:
-        // Keep the strongest three approved stable Flash generations.
-        models = flash.slice(0, 3);
+        // Keep the strongest three approved stable Flash generations unless an
+        // emergency VVIP pin is configured.
+        models = pinFirst(flash, pins.VVIP).slice(0, 3);
         break;
 
       case MODEL_POLICIES.VIP_STABLE_FLASH:
         // VIP starts one generation below the VVIP primary so it cannot consume
-        // the newest model's normal capacity. Keep three Flash generations.
-        models = flash.length > 1 ? flash.slice(1, 4) : flash.slice(0, 3);
+        // the newest model's normal capacity. An emergency VIP pin overrides
+        // only this starting point and still keeps bounded fallbacks.
+        if (pins.VIP) {
+          models = pinFirst(flash, pins.VIP).slice(0, 3);
+        } else {
+          models = flash.length > 1 ? flash.slice(1, 4) : flash.slice(0, 3);
+        }
         if (
           task.degradationAllowed &&
           task.qualityFloor === QUALITY_FLOORS.FLASH_LITE
@@ -83,7 +102,7 @@ function createModelRouter({
         break;
 
       case MODEL_POLICIES.TOP_STABLE_FLASH_LITE:
-        models = lite.slice(0, 2);
+        models = pinFirst(lite, pins.IP).slice(0, 2);
         break;
 
       default:
