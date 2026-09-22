@@ -7700,6 +7700,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       api.updateBubble      = async (id, d)  => apiRequest('/bubbles/' + id, { method: 'PATCH', body: d });
       // ⚠ DELETE not POST /archive [DESIGN: §14 — DELETE /api/bubbles/:id soft archive]
       api.archiveBubble     = async (id)     => apiRequest('/bubbles/' + id, { method: 'DELETE' });
+      // Goal hub swipe-to-delete uses explicit permanent deletion. This removes
+      // only Bubble-owned planning data; cards and ordinary study/exam history remain.
+      api.deleteBubblePermanently = async (id) =>
+        apiRequest('/bubbles/' + encodeURIComponent(id) + '?permanent=1', { method: 'DELETE' });
       api.deleteBubblePermanently = async (id) =>
         apiRequest('/bubbles/' + encodeURIComponent(id) + '?permanent=1', { method: 'DELETE' });
 
@@ -16015,11 +16019,23 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         } catch (err) {
           var panel = overlay.querySelector(".bubble-panel");
           if (panel) {
+            var safeBubbleError = escapeHTML((err && err.message) ? err.message : "Bubble data is temporarily unavailable.");
             panel.innerHTML =
               '<div class="error-state">' +
                 '<div class="error-title">Failed to load bubble</div>' +
-                '<button class="btn btn-secondary btn-sm" id="closeBubblePanelErr">Close</button>' +
+                '<div style="margin:8px 0 14px;font-size:var(--text-sm);color:var(--text-3);line-height:1.5;">' +
+                  safeBubbleError +
+                '</div>' +
+                '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">' +
+                  '<button class="btn btn-primary btn-sm" id="retryBubblePanelErr">Try Again</button>' +
+                  '<button class="btn btn-secondary btn-sm" id="closeBubblePanelErr">Close</button>' +
+                '</div>' +
               '</div>';
+            var retryBtn = document.getElementById("retryBubblePanelErr");
+            if (retryBtn) retryBtn.addEventListener("click", function() {
+              closeBubbleDetailPanel();
+              openBubbleDetailPanel(bubbleId);
+            });
             var errBtn = document.getElementById("closeBubblePanelErr");
             if (errBtn) errBtn.addEventListener("click", closeBubbleDetailPanel);
           }
