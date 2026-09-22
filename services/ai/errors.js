@@ -4,6 +4,7 @@ const AI_ERROR_CODES = Object.freeze({
   CONFIG: 'CONFIG',
   BAD_REQUEST: 'BAD_REQUEST',
   AUTH: 'AUTH',
+  ACCESS_DENIED: 'ACCESS_DENIED',
   MODEL_NOT_FOUND: 'MODEL_NOT_FOUND',
   RATE_LIMIT_RPM: 'RATE_LIMIT_RPM',
   RATE_LIMIT_TPM: 'RATE_LIMIT_TPM',
@@ -80,6 +81,20 @@ function _quotaCode(body) {
   return AI_ERROR_CODES.RATE_LIMIT_UNKNOWN;
 }
 
+function _isCredentialAuthFailure(body) {
+  const text = _safeString(body).toLowerCase();
+  return [
+    'api key not valid',
+    'api key invalid',
+    'invalid api key',
+    'api_key_invalid',
+    'api key expired',
+    'api key was not found',
+    'unauthenticated',
+    'authentication credentials',
+  ].some((needle) => text.includes(needle));
+}
+
 function extractProviderMessage(body, fallback = 'Gemini request failed') {
   if (!body) return fallback;
   if (typeof body === 'string') return body.slice(0, 1000);
@@ -100,7 +115,7 @@ function classifyGeminiHttpError({ status, body }) {
     });
   }
 
-  if (status === 401 || status === 403) {
+  if (status === 401 || (status === 403 && _isCredentialAuthFailure(body))) {
     return new AIError(message, {
       code: AI_ERROR_CODES.AUTH,
       status,
@@ -110,12 +125,28 @@ function classifyGeminiHttpError({ status, body }) {
     });
   }
 
+  if (status === 403) {
+    // A valid key can still lack access to a specific model/project rollout.
+    // Keep this scoped to project × model so another independent project can
+    // still serve the same model.
+    return new AIError(message, {
+      code: AI_ERROR_CODES.ACCESS_DENIED,
+      status,
+      retryable: true,
+      scope: 'MODEL_SLOT',
+      details: body,
+    });
+  }
+
   if (status === 404) {
+    // Gemini model availability may roll out unevenly across independent
+    // projects. Treat the first 404 as project × model availability, not proof
+    // that the model is globally gone.
     return new AIError(message, {
       code: AI_ERROR_CODES.MODEL_NOT_FOUND,
       status,
-      retryable: false,
-      scope: 'MODEL',
+      retryable: true,
+      scope: 'MODEL_SLOT',
       details: body,
     });
   }
@@ -184,6 +215,7 @@ function networkError(cause) {
 }
 
 const AVAILABILITY_ERROR_CODES = new Set([
+  AI_ERROR_CODES.ACCESS_DENIED,
   AI_ERROR_CODES.MODEL_NOT_FOUND,
   AI_ERROR_CODES.RATE_LIMIT_RPM,
   AI_ERROR_CODES.RATE_LIMIT_TPM,
@@ -213,6 +245,7 @@ module.exports = {
   AI_ERROR_CODES,
   AIError,
   classifyGeminiHttpError,
+  _isCredentialAuthFailure,
   extractProviderMessage,
   timeoutError,
   networkError,
