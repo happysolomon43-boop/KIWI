@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {
   AI_ERROR_CODES,
   classifyGeminiHttpError,
+  extractRetryDelayMs,
 } = require('../../services/ai/errors');
 
 test('classifies bad requests as non-retryable request failures', () => {
@@ -74,4 +75,38 @@ test('classifies server errors as transient', () => {
 
   assert.equal(error.code, AI_ERROR_CODES.TRANSIENT);
   assert.equal(error.retryable, true);
+});
+
+
+test('extracts Gemini RetryInfo delays and attaches them to retryable errors', () => {
+  const body = {
+    error: {
+      details: [{
+        '@type': 'type.googleapis.com/google.rpc.RetryInfo',
+        retryDelay: '12.5s',
+      }],
+    },
+  };
+
+  assert.equal(extractRetryDelayMs(body), 12500);
+
+  const error = classifyGeminiHttpError({
+    status: 429,
+    body,
+  });
+  assert.equal(error.retryAfterMs, 12500);
+});
+
+test('Retry-After response header is honored when present', () => {
+  const error = classifyGeminiHttpError({
+    status: 503,
+    body: { error: { message: 'Service unavailable' } },
+    headers: {
+      get(name) {
+        return name.toLowerCase() === 'retry-after' ? '7' : null;
+      },
+    },
+  });
+
+  assert.equal(error.retryAfterMs, 7000);
 });
