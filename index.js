@@ -15681,16 +15681,38 @@ res.status(500).json({ error: 'Failed to fetch session history', details: e.mess
 
 studyRouter.get('/review-heatmap', async (req, res) => {
 try {
-// Support ?days=N param; default 365 for full GitHub-style yearly view
-const days = Math.min(parseInt(req.query.days || '365', 10), 365);
+// Support ?days=N param; default 365 for full GitHub-style yearly view.
+const days = Math.max(1, Math.min(parseInt(req.query.days || '365', 10) || 365, 365));
 const sinceDate = new Date();
 sinceDate.setDate(sinceDate.getDate() - days);
-const logs = await db.reviewLogs.findByUser(req.user.id, sinceDate);
+
+// Review logs remain the detailed source, while daily_activity is the durable
+// day-level ledger used by streak/vitality. Merge with MAX (not sum) so a day
+// still appears if one pipeline was delayed without double-counting reviews.
+const [logs, activityResult] = await Promise.all([
+  db.reviewLogs.findByUser(req.user.id, sinceDate),
+  query(
+    "SELECT activity_date::text AS activity_date, cards_reviewed, meaningful_sessions, active_seconds " +
+    "FROM daily_activity WHERE user_id = $1 AND activity_date >= $2::date ORDER BY activity_date ASC",
+    [req.user.id, sinceDate.toISOString().slice(0, 10)]
+  ).catch(() => ({ rows: [] })),
+]);
 const heatmap = {};
 logs.forEach((l) => {
-const d = new Date(l.reviewed_at).toISOString().split('T')[0];
-heatmap[d] = (heatmap[d] || 0) + 1;
+  if (!l.reviewed_at) return;
+  const d = new Date(l.reviewed_at).toISOString().split('T')[0];
+  heatmap[d] = (heatmap[d] || 0) + 1;
 });
+for (const row of activityResult.rows || []) {
+  const d = String(row.activity_date || '').slice(0, 10);
+  if (!d) continue;
+  const ledgerCount = Math.max(
+    Number(row.cards_reviewed) || 0,
+    Number(row.meaningful_sessions) || 0,
+    Number(row.active_seconds) >= 60 ? 1 : 0
+  );
+  heatmap[d] = Math.max(heatmap[d] || 0, ledgerCount);
+}
 res.json(heatmap);
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate heatmap' });
