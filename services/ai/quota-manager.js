@@ -63,6 +63,7 @@ function createQuotaManager({
   clock = () => new Date(),
   rpmCooldownMs = 65000,
   tpmCooldownMs = 65000,
+  modelUnavailableCooldownMs = 6 * 60 * 60 * 1000,
 } = {}) {
   const cache = new Map();
 
@@ -129,12 +130,15 @@ function createQuotaManager({
 
     if (
       (state.state === PROJECT_MODEL_STATES.COOLDOWN_RPM ||
-       state.state === PROJECT_MODEL_STATES.COOLDOWN_TPM) &&
+       state.state === PROJECT_MODEL_STATES.COOLDOWN_TPM ||
+       state.state === PROJECT_MODEL_STATES.MODEL_UNAVAILABLE) &&
       state.cooldownUntil &&
       new Date(state.cooldownUntil).getTime() <= now.getTime()
     ) {
       state.state = PROJECT_MODEL_STATES.READY;
       state.cooldownUntil = null;
+      state.lastErrorCode = null;
+      state.lastHttpStatus = null;
       changed = true;
     }
 
@@ -225,8 +229,12 @@ function createQuotaManager({
         state.cooldownUntil = null;
         break;
       case AI_ERROR_CODES.MODEL_NOT_FOUND:
+      case AI_ERROR_CODES.ACCESS_DENIED:
         state.state = PROJECT_MODEL_STATES.MODEL_UNAVAILABLE;
-        state.cooldownUntil = null;
+        // Model access can roll out unevenly across independent Google
+        // projects. Re-probe this project later instead of blacklisting the
+        // pairing forever after one 403/404.
+        state.cooldownUntil = new Date(now.getTime() + modelUnavailableCooldownMs);
         break;
       default:
         // Transient/network/request failures do not poison persistent quota state.
