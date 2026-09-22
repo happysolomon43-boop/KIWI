@@ -228,6 +228,28 @@ function _jobStoreSet(jobId, data) {
 //  INLINE DB LAYER (replaces firestore-db — migrated to PostgreSQL/pg)
 
 // ════════════════════════════════════════════════════════════════════════════
+// PostgreSQL NUMERIC columns arrive through node-postgres as strings by default.
+// Normalize Mastery Goal rows at the data-access boundary so every Bubble
+// service consumes numbers consistently rather than repeatedly coercing fields.
+function _normalizeMasteryGoalRow(row) {
+  if (!row) return row;
+  const normalized = { ...row };
+  const numericFields = [
+    'current_ks',
+    'target_ks',
+    'required_ks_per_day',
+    'actual_ks_velocity',
+    'trajectory_gap',
+    'final_ks_at_deadline',
+  ];
+  for (const field of numericFields) {
+    if (normalized[field] == null || normalized[field] === '') continue;
+    const value = Number(normalized[field]);
+    if (Number.isFinite(value)) normalized[field] = value;
+  }
+  return normalized;
+}
+
 const db = {
 // ── users ───────────────────────────────────────────────────────────────────
 users: {
@@ -1631,28 +1653,6 @@ async addIsReckoning(userId, examSessionId, isReckoning) {
   return db.examSessions.update(userId, examSessionId, { is_reckoning: isReckoning });
 },
 },
-// PostgreSQL NUMERIC columns arrive through node-postgres as strings by default.
-// Normalize Mastery Goal rows at the data-access boundary so every Bubble
-// service consumes numbers consistently rather than repeatedly coercing fields.
-function _normalizeMasteryGoalRow(row) {
-  if (!row) return row;
-  const normalized = { ...row };
-  const numericFields = [
-    'current_ks',
-    'target_ks',
-    'required_ks_per_day',
-    'actual_ks_velocity',
-    'trajectory_gap',
-    'final_ks_at_deadline',
-  ];
-  for (const field of numericFields) {
-    if (normalized[field] == null || normalized[field] === '') continue;
-    const value = Number(normalized[field]);
-    if (Number.isFinite(value)) normalized[field] = value;
-  }
-  return normalized;
-}
-
 // ── mastery_goals (PB.1) — [DESIGN: §12.1, §12.2, §12.3] ──────────────────
 masteryGoals: {
 async create(userId, data) {
