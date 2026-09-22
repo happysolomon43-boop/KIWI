@@ -154,7 +154,7 @@ test('CBT completion preserves generation affinity and the established scaled ou
 
   assert.match(body, /ai\.run\(\s*['"]CBT_COMPLETION['"]/);
   assert.match(body, /generationGroupId:\s*completionGroupId/);
-  assert.match(body, /Math\\.min\\(24000,\\s*Math\\.max\\(6000,\\s*needed\\s*\\*\\s*700\\)\\)/);
+  assert.match(body, /Math\.min\(24000,\s*Math\.max\(6000,\s*needed\s*\*\s*700\)\)/);
 });
 
 test('flashcard generation and image extraction are fully live VVIP routes', () => {
