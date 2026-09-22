@@ -270,6 +270,51 @@ function createPostgresAIStore({ query, randomUUID }) {
     );
   }
 
+
+  async function cleanupOperationalHistory({
+    requestRetentionDays = 30,
+    qualificationRetentionDays = 180,
+    rollupRetentionDays = 365,
+  } = {}) {
+    const requestDays = Math.max(7, Math.min(Number(requestRetentionDays) || 30, 180));
+    const qualificationDays = Math.max(30, Math.min(Number(qualificationRetentionDays) || 180, 730));
+    const rollupDays = Math.max(90, Math.min(Number(rollupRetentionDays) || 365, 1825));
+
+    const requests = await query(
+      `DELETE FROM ai_requests
+       WHERE created_at < NOW() - ($1::double precision * INTERVAL '1 day')`,
+      [requestDays]
+    );
+
+    // Keep the latest qualification row for each model forever so operators
+    // retain the reason/status behind the model's current lifecycle decision.
+    const qualifications = await query(
+      `DELETE FROM ai_model_qualifications q
+       WHERE q.created_at < NOW() - ($1::double precision * INTERVAL '1 day')
+         AND q.id NOT IN (
+           SELECT DISTINCT ON (model_id) id
+           FROM ai_model_qualifications
+           ORDER BY model_id, created_at DESC, id DESC
+         )`,
+      [qualificationDays]
+    );
+
+    const rollups = await query(
+      `DELETE FROM ai_daily_rollups
+       WHERE quota_day < (CURRENT_DATE - $1::integer)`,
+      [Math.floor(rollupDays)]
+    );
+
+    return {
+      requestsDeleted: Number(requests?.rowCount) || 0,
+      qualificationsDeleted: Number(qualifications?.rowCount) || 0,
+      rollupsDeleted: Number(rollups?.rowCount) || 0,
+      requestRetentionDays: requestDays,
+      qualificationRetentionDays: qualificationDays,
+      rollupRetentionDays: rollupDays,
+    };
+  }
+
   async function incrementDailyRollup({
     quotaDay,
     taskId,
@@ -334,6 +379,7 @@ function createPostgresAIStore({ query, randomUUID }) {
     createRequest,
     finishRequest,
     recordAttempt,
+    cleanupOperationalHistory,
     incrementDailyRollup,
   });
 }

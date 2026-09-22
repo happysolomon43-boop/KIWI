@@ -17528,26 +17528,61 @@ adminRouter.get('/health', async (req, res) => {
   checks.push({ id: 'ks_queue',       label: 'KS recompute queue',    status: 'pass', value: `${_ksQueue.size} pending item(s)` });
   checks.push({ id: 'session_queues', label: 'Active session queues', status: 'pass', value: `${_sessionQueues.size} active session(s)` });
   checks.push({ id: 'job_store',      label: 'In-memory job store',   status: 'pass', value: `${_jobStore.size} job(s)` });
-  // 6 — Central AI orchestrator project/key pool + model route state
+  // 6 — Central AI orchestrator health (secret-free)
   try {
-    const slotState = _aiRuntime.projectPool.snapshot();
-    const totalSlots = slotState.length;
-    const enabledSlots = slotState.filter((slot) => slot.enabled).length;
-    const routeState = _aiRuntime.quotaManager?.snapshot?.() || [];
-    const unavailableRoutes = routeState.filter((row) => row.state !== 'READY');
-    const stateCounts = unavailableRoutes.reduce((acc, row) => {
-      acc[row.state] = (acc[row.state] || 0) + 1;
-      return acc;
-    }, {});
-    const routeSummary = Object.entries(stateCounts)
+    const aiStatus = _aiRuntime.status();
+    const quotaSummary = Object.entries(aiStatus.quota.states || {})
+      .filter(([state]) => state !== 'READY')
       .map(([state, count]) => `${state}:${count}`)
       .join(', ');
+    const discoveryHealth = aiStatus.discovery.lastError ? 'warn' : 'pass';
+    const routeSummary =
+      `VVIP=${aiStatus.routes.VVIP.primaryModel || 'unavailable'} | ` +
+      `VIP=${aiStatus.routes.VIP.primaryModel || 'unavailable'} | ` +
+      `IP=${aiStatus.routes.IP.primaryModel || 'unavailable'}`;
+
     checks.push({
       id: 'gemini_pool',
       label: 'Gemini AI orchestrator',
-      status: totalSlots === 0 ? 'fail' : enabledSlots === 0 ? 'warn' : 'pass',
-      value: `${enabledSlots}/${totalSlots} project/key slot(s) enabled`
-        + (unavailableRoutes.length > 0 ? ` | route state: ${routeSummary}` : ''),
+      status: aiStatus.projectSlots.total === 0
+        ? 'fail'
+        : aiStatus.projectSlots.enabled === 0
+          ? 'warn'
+          : 'pass',
+      value:
+        `${aiStatus.projectSlots.enabled}/${aiStatus.projectSlots.total} project/key slot(s) enabled | ` +
+        routeSummary +
+        (quotaSummary ? ` | route state: ${quotaSummary}` : ''),
+    });
+
+    checks.push({
+      id: 'ai_model_discovery',
+      label: 'AI stable-model discovery',
+      status: discoveryHealth,
+      value:
+        `enabled=${aiStatus.discovery.enabled} auto-promote=${aiStatus.discovery.autoPromote}` +
+        (aiStatus.discovery.lastCompletedAt
+          ? ` | last completed ${aiStatus.discovery.lastCompletedAt}`
+          : '') +
+        (aiStatus.discovery.lastSummary
+          ? ` | provider=${aiStatus.discovery.lastSummary.providerModels} stable=${aiStatus.discovery.lastSummary.stableFlashModels} promoted=${aiStatus.discovery.lastSummary.promoted.length}`
+          : '') +
+        (aiStatus.discovery.lastError
+          ? ` | last error: ${aiStatus.discovery.lastError.code || aiStatus.discovery.lastError.message}`
+          : ''),
+    });
+
+    checks.push({
+      id: 'ai_retention',
+      label: 'AI operational data retention',
+      status: aiStatus.retention.lastError ? 'warn' : 'pass',
+      value:
+        `requests=${aiStatus.retention.policy.requestRetentionDays}d, ` +
+        `qualifications=${aiStatus.retention.policy.qualificationRetentionDays}d, ` +
+        `rollups=${aiStatus.retention.policy.rollupRetentionDays}d` +
+        (aiStatus.retention.lastCompletedAt
+          ? ` | last cleanup ${aiStatus.retention.lastCompletedAt}`
+          : ''),
     });
   } catch (e) {
     checks.push({ id: 'gemini_pool', label: 'Gemini AI orchestrator', status: 'warn', value: e.message });
