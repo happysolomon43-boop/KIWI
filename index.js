@@ -13067,7 +13067,7 @@ try {
   const pathName = String(req.path || '');
   const method = String(req.method || '').toUpperCase();
 
-  // SETTINGS is the only normal application surface that remains available.
+  // Brain and Settings remain available during a mandatory Reckoning.
   // Keep the exact backing endpoints used by the Settings page functional.
   const settingsAllowed =
     (baseUrl === '/api' && (
@@ -13080,11 +13080,10 @@ try {
 
   if (settingsAllowed) return next();
 
-  // Reckoning control plane must remain reachable or the lockdown would have no
-  // recovery path.
-  if (baseUrl.endsWith('/brain') && pathName.startsWith('/reckoning/')) {
-    return next();
-  }
+  // The Brain is intentionally usable during lockdown. Its router only exposes
+  // pressure/credential reads plus Reckoning recovery actions; normal study,
+  // card, marketplace and CBT routes remain protected by their own routers.
+  if (baseUrl.endsWith('/brain')) return next();
 
   // Generation of the mandatory exam is allowed, but a normal CBT generation is not.
   if (
@@ -13105,10 +13104,11 @@ try {
 
   const userStats = await db.userStats.get(req.user.id).catch(() => null);
   return res.status(423).json({
-    error: 'KIWI is locked while The Reckoning is active. Complete The Reckoning or open Settings.',
+    error: 'KIWI is locked while The Reckoning is active. Complete The Reckoning or open Brain or Settings.',
     code: 'RECKONING_GLOBAL_LOCKED',
     lock_scope: 'global',
     settings_available: true,
+    brain_available: true,
     reckoning: {
       ...active,
       subjectId: active.subject_id,
@@ -13131,7 +13131,7 @@ try {
   // Once a request has entered a protected feature router, inability to verify
   // lock state must never silently unlock the application.
   return res.status(503).json({
-    error: 'KIWI could not verify Reckoning state. Only Settings and Reckoning recovery should be used until verification succeeds.',
+    error: 'KIWI could not verify Reckoning state. Only Brain, Settings and Reckoning recovery should be used until verification succeeds.',
     code: 'RECKONING_STATE_UNAVAILABLE',
     retryable: true,
   });
