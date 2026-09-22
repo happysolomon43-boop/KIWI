@@ -1877,133 +1877,10 @@ const PROGRESS_RATE_LIMIT_MS = 30000;
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ════════════════════════════════════════════════════════════════════════════
-//  CONFIG & GEMINI
-
-// ════════════════════════════════════════════════════════════════════════════
-// Gemini API Key Rotation Pool — CEE-style, daily reset, round-robin
-// Supports: GEMINI_API_KEY  +  GEMINI_API_KEY_2 .. GEMINI_API_KEY_15
-
-function buildGeminiPool() {
-const keys = [];
-if (process.env.GEMINI_API_KEY) keys.push(process.env.GEMINI_API_KEY.trim());
-for (let i = 2; i <= 15; i++) {
-const k = process.env[`GEMINI_API_KEY_${i}`];
-if (k && k.trim()) keys.push(k.trim());
-}
-return keys;
-}
-const _geminiKeyObjs = buildGeminiPool().map((key, idx) => ({
-key, index: idx, exhausted: false, lastResetDate: ''
-}));
-let _geminiRRIdx = 0;
-
-function _resetGeminiKeyIfNewDay(k) {
-const today = new Date().toISOString().split('T')[0];
-if (k.lastResetDate !== today) { k.exhausted = false; k.lastResetDate = today; }
-}
-
-function _pickGeminiKey() {
-if (!_geminiKeyObjs.length) return null;
-for (let attempt = 0; attempt < _geminiKeyObjs.length; attempt++) {
-const idx = (_geminiRRIdx + attempt) % _geminiKeyObjs.length;
-const k = _geminiKeyObjs[idx];
-_resetGeminiKeyIfNewDay(k);
-if (!k.exhausted) { _geminiRRIdx = (idx + 1) % _geminiKeyObjs.length; return k; }
-}
-return null;
-}
-
-// P1.3-C FIX: centralized output parsing helpers
-function parseGeminiText(result) {
-try { return result?.response?.text()?.trim() || ''; } catch (e) { return ''; }
-}
-function parseGeminiJSON(result) {
-const text = parseGeminiText(result);
-try {
-const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*/i, '');
-return JSON.parse(cleaned);
-} catch (e) { return null; }
-}
-
-// Legacy compatibility transport — retained only for AI tasks not yet migrated.
-// Its historical default model is retired and will disappear with the final legacy cleanup.
-const geminiModel = {
-async generateContent(content, generationConfig, { timeoutMs = 30000, modelOverride, taskId = null } = {}) {
-  const _modelName = modelOverride || 'gemini-3.1-flash-lite-preview';
-  if (taskId) _aiRuntime.observeLegacy(taskId, _modelName);
-if (!_geminiKeyObjs.length) throw new Error('No Gemini API keys configured');
-let lastError = null;
-for (let attempt = 0; attempt < Math.max(_geminiKeyObjs.length, 1); attempt++) {
-const k = _pickGeminiKey();
-if (!k) break;
-const url = `https://generativelanguage.googleapis.com/v1beta/models/${_modelName}:generateContent?key=${k.key}`;
-let reqBody;
-if (typeof content === 'string') {
-reqBody = { contents: [{ parts: [{ text: content }] }] };
-} else if (content && content.contents) {
-reqBody = { contents: content.contents };
-} else {
-reqBody = { contents: [{ parts: [{ text: String(content) }] }] };
-}
-// THINKING-DEFAULT FIX: Gemini 3 defaults to HIGH thinking which adds 10-30s latency.
-// Set 'low' as the app-wide default. Callers that need heavy reasoning (exam gen,
-// chronicles, deep audit, daily invitations) must explicitly pass thinkingLevel:'high'.
-const _baseThinkingConfig = { thinkingConfig: { thinkingLevel: 'low' } };
-if (generationConfig) {
-  // Merge: caller can override thinkingLevel by including their own thinkingConfig
-  reqBody.generationConfig = generationConfig.thinkingConfig
-    ? generationConfig
-    : { ..._baseThinkingConfig, ...generationConfig };
-} else {
-  reqBody.generationConfig = _baseThinkingConfig;
-}
-try {
-// Issue-7/8 FIX: AbortController timeout prevents Gemini hangs from blocking
-// the dashboard. Timeout is now per-call — CBT uses 120s, simpler calls use 30s.
-const _abortCtrl  = new AbortController();
-const _abortTimer = setTimeout(() => _abortCtrl.abort(), timeoutMs);
-let res;
-try {
-  res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(reqBody),
-    signal: _abortCtrl.signal,
-  });
-} finally {
-  clearTimeout(_abortTimer);
-}
-if (res.status === 429) {
-k.exhausted = true;
-lastError = 'quota_exceeded';
-console.warn(`[KIWI] Gemini key #${k.index + 1} exhausted (429) — rotating`);
-continue;
-}
-if (!res.ok) { lastError = `HTTP ${res.status}`; continue; }
-const data = await res.json();
-// PARTS-PARSE FIX: Gemini 3 thinking mode puts thought blocks in parts[0].
-// Blindly reading parts[0] returns the thought content, not the answer.
-// Filter to the first non-thought part to get the real response text.
-const _parts = data?.candidates?.[0]?.content?.parts || [];
-const text = (_parts.find(p => !p.thought) || _parts[0])?.text || '';
-const finishReason = data?.candidates?.[0]?.finishReason || 'UNKNOWN';
-if (finishReason === 'MAX_TOKENS') {
-  console.warn(`[KIWI] Gemini response truncated (MAX_TOKENS) — increase maxOutputTokens or reduce input size. Text length: ${text.length}`);
-}
-// Return SDK-compatible object — all existing callers work without changes
-return { response: { text: () => text, finishReason } };
-} catch (e) {
-if (e.name === 'AbortError' || (e.message && (e.message.toLowerCase().includes('aborted') || e.message.toLowerCase().includes('abort')))) {
-  lastError = `AI response timed out after ${Math.round(timeoutMs / 1000)}s — please try with less content or try again`;
-} else {
-  lastError = e.message;
-}
-console.error(`[KIWI] Gemini fetch error (attempt ${attempt + 1}):`, e.message);
-}
-}
-throw new Error(lastError || 'All Gemini API keys exhausted or unavailable');
-},
-};
+//  CENTRAL AI ROUTING
+// All Gemini provider access, model selection, reasoning policy, quota state,
+// project/key rotation, retries and telemetry live under services/ai.
+// Feature code routes through the centralized orchestrator by canonical task ID.
 
 // ════════════════════════════════════════════════════════════════════════════
 //  EXISTING SERVICES (SRS, XP, Streak, Tree, Analytics)
@@ -5409,10 +5286,9 @@ const broadCoverage    = !!_opts.broad_coverage;
 const forceType        = _opts.force_type || null; // 'theory' | 'calculation' | null
 const difficultyLevel  = ['easy', 'hard', 'very_hard', 'hell'].includes(_opts.difficulty_level)
   ? _opts.difficulty_level : null;
-
-// Model upgrade: use 3-flash when any advanced feature is active, including split generation.
-const _useFlash = customizeBalance || broadCoverage || !!forceType || !!difficultyLevel;
-const _model    = _useFlash ? 'gemini-3-flash-preview' : undefined; // undefined = use default lite
+const _generationGroupId = _opts.generation_group_id
+  ? `${_opts.generation_group_id}:${forceType || 'combined'}`
+  : null;
 
 let dynamicDirectives = '';
 
@@ -5509,14 +5385,22 @@ const prompt = _basePrompt
 // This prevents MAX_TOKENS truncation which was causing partial generation.
 const scaledTokens = Math.min(65536, Math.max(24000, count * 900));
 const _theoryPct = customizeBalance && typeof _opts.theory_percent === 'number' ? _opts.theory_percent : 'auto';
-console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, difficulty=${difficultyLevel || 'off/default'}, theory=${_theoryPct}%, broad=${broadCoverage}, customBalance=${customizeBalance}, forceType=${forceType || 'none'}, model=${_model || 'lite-default'}, maxOutputTokens=${scaledTokens}`);
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 180000, modelOverride: _model, taskId: _taskId });
-if (result.response.finishReason === 'MAX_TOKENS') {
-  console.warn(`[KIWI CBT] Output truncated at ${count} questions \u2014 response cut short. Consider lowering count or notes size.`);
+console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, difficulty=${difficultyLevel || 'off/default'}, theory=${_theoryPct}%, broad=${broadCoverage}, customBalance=${customizeBalance}, forceType=${forceType || 'none'}, route=${_taskId}, maxOutputTokens=${scaledTokens}`);
+const result = await ai.run(
+  _taskId,
+  {
+    content: prompt,
+    generationConfig: { maxOutputTokens: scaledTokens },
+  },
+  { generationGroupId: _generationGroupId }
+);
+if (result.finishReason === 'MAX_TOKENS') {
+  console.warn(`[KIWI CBT] Output truncated at ${count} questions \\u2014 response cut short. Consider lowering count or notes size.`);
 }
-return result.response.text();
+console.log(`[KIWI CBT] ${_taskId} served by ${result.requestedModel} via ${result.projectSlot}; fallbackDepth=${result.fallbackDepth}`);
+return result.text;
 }
-async function generateCBTCompletionQuestions(notes, existingQuestions, needed, forceType, difficultyLevel) {
+async function generateCBTCompletionQuestions(notes, existingQuestions, needed, forceType, difficultyLevel, generationGroupId = null) {
   const existingSummary = existingQuestions.map((q, i) =>
     `Q${i + 1}: ${q.stem}\n  A) ${q.option_a}  B) ${q.option_b}  C) ${q.option_c}  D) ${q.option_d}`
   ).join('\n\n');
@@ -5560,8 +5444,18 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
   ].join('\n');
 
   const completionTokens = Math.min(65536, Math.max(16000, needed * 900));
-  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: completionTokens, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 180000, taskId: 'CBT_COMPLETION' });
-  return result.response.text();
+  const completionGroupId = generationGroupId
+    ? `${generationGroupId}:${forceType || 'combined'}`
+    : null;
+  const result = await ai.run(
+    'CBT_COMPLETION',
+    {
+      content: completionPrompt,
+      generationConfig: { maxOutputTokens: completionTokens },
+    },
+    { generationGroupId: completionGroupId }
+  );
+  return result.text;
 }
 
 // B25: Fallback exam question generator (rule-based from card content)
@@ -5614,10 +5508,11 @@ async function generateFlashcards(notes, subjectHint = '') {
 const prompt =
 FLASHCARD_PROMPT.replace('[NOTES]', notes) +
 (subjectHint ? `\nSubject hint: ${subjectHint}` : '');
-// Use gemini-3-flash-preview for note-to-flashcard generation — it produces more
-// thorough multi-card output within the same rate limits as the base model.
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 120000, modelOverride: 'gemini-3-flash-preview', taskId: 'FLASHCARD_GENERATION' });
-return result.response.text();
+const result = await ai.run('FLASHCARD_GENERATION', {
+  content: prompt,
+  generationConfig: { maxOutputTokens: 15000 },
+});
+return result.text;
 }
 
 async function summarizeCard(front, back, context = {}) {
@@ -5647,17 +5542,19 @@ async function extractFromImage(base64Image, mimeType) {
 const prompt =
 'Extract all question-answer pairs or key-value pairs from this image. Return as JSON array of {front, back} objects. If no pairs found, return the raw text.';
 try {
-const result = await geminiModel.generateContent({
-contents: [
-{
-parts: [
-{ text: prompt },
-{ inlineData: { mimeType: mimeType || 'image/jpeg', data: base64Image } },
-],
-},
-],
-}, undefined, { taskId: 'IMPORT_IMAGE_EXTRACTION' });
-return result.response.text();
+const result = await ai.run('IMPORT_IMAGE_EXTRACTION', {
+  content: {
+    contents: [
+      {
+        parts: [
+          { text: prompt },
+          { inlineData: { mimeType: mimeType || 'image/jpeg', data: base64Image } },
+        ],
+      },
+    ],
+  },
+});
+return result.text;
 } catch (e) {
 console.error('Gemini vision error:', e);
 return 'Extraction failed.';
@@ -15955,7 +15852,7 @@ const _cbtNotes       = notes;
 const _cbtCount       = count;
 const _cbtCards       = selectedCards;
 const _cbtBody        = body;
-const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? Math.max(0, Math.min(100, Number(theory_percent))) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage, difficulty_level: selectedDifficulty, ai_task_id: isReckoningExam ? 'RECKONING_CBT' : 'MAIN_CBT' };
+const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? Math.max(0, Math.min(100, Number(theory_percent))) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage, difficulty_level: selectedDifficulty, ai_task_id: isReckoningExam ? 'RECKONING_CBT' : 'MAIN_CBT', generation_group_id: _cbtSessionId };
 setImmediate(async () => {
   try {
     let questions;
@@ -16000,7 +15897,7 @@ setImmediate(async () => {
         const tNeeded = theoryN - theoryQs.length;
         console.log(`[KIWI CBT] Theory pass 1: ${theoryQs.length}/${theoryN} — completing ${tNeeded}`);
         try {
-          const tCompText = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded, 'theory', _cbtOptions.difficulty_level);
+          const tCompText = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded, 'theory', _cbtOptions.difficulty_level, _cbtSessionId);
           if (tCompText) {
             const tCompQs = parseCBTResponse(tCompText, _cbtSessionId, _cbtCards);
             tCompQs.forEach(q => { q.question_type = 'Theory'; });
@@ -16013,7 +15910,7 @@ setImmediate(async () => {
           const tNeeded2 = theoryN - theoryQs.length;
           console.log(`[KIWI CBT] Theory pass 2: ${theoryQs.length}/${theoryN} — completing ${tNeeded2}`);
           try {
-            const tComp2Text = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded2, 'theory', _cbtOptions.difficulty_level);
+            const tComp2Text = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded2, 'theory', _cbtOptions.difficulty_level, _cbtSessionId);
             if (tComp2Text) {
               const tComp2Qs = parseCBTResponse(tComp2Text, _cbtSessionId, _cbtCards);
               tComp2Qs.forEach(q => { q.question_type = 'Theory'; });
@@ -16030,7 +15927,7 @@ setImmediate(async () => {
         const cNeeded = calcN - calcQs.length;
         console.log(`[KIWI CBT] Calc pass 1: ${calcQs.length}/${calcN} — completing ${cNeeded}`);
         try {
-          const cCompText = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded, 'calculation', _cbtOptions.difficulty_level);
+          const cCompText = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded, 'calculation', _cbtOptions.difficulty_level, _cbtSessionId);
           if (cCompText) {
             const cCompQs = parseCBTResponse(cCompText, _cbtSessionId, _cbtCards);
             cCompQs.forEach(q => { q.question_type = 'Calculation'; });
@@ -16043,7 +15940,7 @@ setImmediate(async () => {
           const cNeeded2 = calcN - calcQs.length;
           console.log(`[KIWI CBT] Calc pass 2: ${calcQs.length}/${calcN} — completing ${cNeeded2}`);
           try {
-            const cComp2Text = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded2, 'calculation', _cbtOptions.difficulty_level);
+            const cComp2Text = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded2, 'calculation', _cbtOptions.difficulty_level, _cbtSessionId);
             if (cComp2Text) {
               const cComp2Qs = parseCBTResponse(cComp2Text, _cbtSessionId, _cbtCards);
               cComp2Qs.forEach(q => { q.question_type = 'Calculation'; });
@@ -16078,7 +15975,7 @@ setImmediate(async () => {
         const needed = _cbtCount - questions.length;
         console.log('[KIWI CBT] First pass: ' + questions.length + '/' + _cbtCount + ' — issuing completion prompt for ' + needed + ' missing');
         try {
-          const completionText = await generateCBTCompletionQuestions(_cbtNotes, questions, needed, null, _cbtOptions.difficulty_level);
+          const completionText = await generateCBTCompletionQuestions(_cbtNotes, questions, needed, null, _cbtOptions.difficulty_level, _cbtSessionId);
           if (completionText) {
             const completionQs = parseCBTResponse(completionText, _cbtSessionId, _cbtCards);
             const offset = questions.length;
@@ -16091,7 +15988,7 @@ setImmediate(async () => {
           const stillNeeded = _cbtCount - questions.length;
           console.log('[KIWI CBT] After 2 passes: ' + questions.length + '/' + _cbtCount + ' — attempting 3rd pass for ' + stillNeeded + ' missing');
           try {
-            const pass3Text = await generateCBTCompletionQuestions(_cbtNotes, questions, stillNeeded, null, _cbtOptions.difficulty_level);
+            const pass3Text = await generateCBTCompletionQuestions(_cbtNotes, questions, stillNeeded, null, _cbtOptions.difficulty_level, _cbtSessionId);
             if (pass3Text) {
               const pass3Qs = parseCBTResponse(pass3Text, _cbtSessionId, _cbtCards);
               const offset3 = questions.length;
@@ -17565,7 +17462,7 @@ adminRouter.get('/health', async (req, res) => {
 
   // 3 — Environment variables
   const ENV_REQUIRED = ['DATABASE_URL', 'JWT_SECRET'];
-  const ENV_OPTIONAL = ['GEMINI_API_KEY', 'BREVO_API_KEY', 'TELEGRAM_BOT_TOKEN', 'ADMIN_MASTER_TOKEN', 'APP_URL', 'PORT', 'NODE_ENV'];
+  const ENV_OPTIONAL = ['BREVO_API_KEY', 'TELEGRAM_BOT_TOKEN', 'ADMIN_MASTER_TOKEN', 'APP_URL', 'PORT', 'NODE_ENV'];
   const ENV_ALL = [...ENV_REQUIRED, ...ENV_OPTIONAL];
   const envMissReq = ENV_REQUIRED.filter(k => !process.env[k]);
   const envMissOpt = ENV_OPTIONAL.filter(k => !process.env[k]);
@@ -17591,19 +17488,29 @@ adminRouter.get('/health', async (req, res) => {
   checks.push({ id: 'ks_queue',       label: 'KS recompute queue',    status: 'pass', value: `${_ksQueue.size} pending item(s)` });
   checks.push({ id: 'session_queues', label: 'Active session queues', status: 'pass', value: `${_sessionQueues.size} active session(s)` });
   checks.push({ id: 'job_store',      label: 'In-memory job store',   status: 'pass', value: `${_jobStore.size} job(s)` });
-  // 6 — Gemini AI key pool
+  // 6 — Central AI orchestrator project/key pool + model route state
   try {
-    const geminiTotal    = _geminiKeyObjs.length;
-    const geminiExhausted = _geminiKeyObjs.filter(k => k.exhausted).length;
-    const geminiAvail    = geminiTotal - geminiExhausted;
+    const slotState = _aiRuntime.projectPool.snapshot();
+    const totalSlots = slotState.length;
+    const enabledSlots = slotState.filter((slot) => slot.enabled).length;
+    const routeState = _aiRuntime.quotaManager?.snapshot?.() || [];
+    const unavailableRoutes = routeState.filter((row) => row.state !== 'READY');
+    const stateCounts = unavailableRoutes.reduce((acc, row) => {
+      acc[row.state] = (acc[row.state] || 0) + 1;
+      return acc;
+    }, {});
+    const routeSummary = Object.entries(stateCounts)
+      .map(([state, count]) => `${state}:${count}`)
+      .join(', ');
     checks.push({
-      id: 'gemini_pool', label: 'Gemini AI key pool',
-      status: geminiTotal === 0 ? 'fail' : geminiAvail === 0 ? 'warn' : 'pass',
-      value: `${geminiAvail}/${geminiTotal} key(s) available`
-        + (geminiExhausted > 0 ? ` (${geminiExhausted} rate-limited)` : ''),
+      id: 'gemini_pool',
+      label: 'Gemini AI orchestrator',
+      status: totalSlots === 0 ? 'fail' : enabledSlots === 0 ? 'warn' : 'pass',
+      value: `${enabledSlots}/${totalSlots} project/key slot(s) enabled`
+        + (unavailableRoutes.length > 0 ? ` | route state: ${routeSummary}` : ''),
     });
   } catch (e) {
-    checks.push({ id: 'gemini_pool', label: 'Gemini AI key pool', status: 'warn', value: e.message });
+    checks.push({ id: 'gemini_pool', label: 'Gemini AI orchestrator', status: 'warn', value: e.message });
   }
 
   // 7 — Cron jobs (static manifest — registered at startup if NODE_ENV !== 'test')
