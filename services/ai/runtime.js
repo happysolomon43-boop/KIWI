@@ -122,6 +122,7 @@ function createAIRuntime({
             providerModels: Number(result.providerModels) || 0,
             stableFlashModels: Number(result.stableFlashModels) || 0,
             discovered: [...(result.discovered || [])],
+            requalified: [...(result.requalified || [])],
             promoted: [...(result.promoted || [])],
           }
         : null;
