@@ -16500,9 +16500,14 @@ res.status(500).json({ error: 'Failed to fetch exams' });
 examRouter.get('/retry-decks', async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT d.*, COUNT(c.id) AS card_count_live
+      `SELECT d.*,
+              COUNT(c.id) AS card_count_live,
+              COALESCE(
+                ARRAY_AGG(c.id ORDER BY c.created_at) FILTER (WHERE c.id IS NOT NULL),
+                ARRAY[]::text[]
+              ) AS card_ids
          FROM decks d
-         LEFT JOIN cards c ON c.deck_id = d.id AND c.user_id = d.user_id
+         LEFT JOIN cards c ON c.deck_id = d.id AND c.user_id = d.user_id AND COALESCE(c.archived, false) = false
         WHERE d.user_id = $1 AND d.name LIKE 'Retry — %'
         GROUP BY d.id
         ORDER BY d.created_at DESC
@@ -17178,6 +17183,11 @@ examRouter.get('/:id/review', async (req, res) => {
       explanation: q.explanation || '',
       selected_option: q.selected_option || null,
       is_correct: q.is_correct ?? (q.selected_option === q.correct_answer),
+      bonus_awarded: q.bonus_awarded === true,
+      awarded_point: (q.is_correct ?? (q.selected_option === q.correct_answer)) || q.bonus_awarded === true,
+      audit_reason: q.bonus_awarded === true
+        ? String(q.ai_audit_result?.reason || 'AI integrity review found the question flawed.')
+        : null,
     }));
 
     res.json({
