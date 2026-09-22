@@ -41,25 +41,38 @@ function computeSessionQuality(input) {
   const cardsReviewed = Math.max(0, Number(input.cardsReviewed) || 0);
   const activeSeconds = Math.max(0, Number(input.activeSeconds) || 0);
   const elapsedSeconds = Math.max(0, Number(input.elapsedSeconds) || 0);
+  const averageResponseMs = Math.max(0, Number(input.averageResponseMs) || 0);
   const focusRatio = elapsedSeconds > 0 ? clamp(activeSeconds / elapsedSeconds, 0, 1) : 0;
+
+  // Card dwell is deliberately neutral for the first ~30s, then tapers smoothly.
+  // This makes "leave the card open for minutes" reduce Focus without punishing a
+  // learner for taking a reasonable amount of time on a difficult card.
+  const paceEfficiency = averageResponseMs > 0
+    ? clamp(1 - Math.max(0, averageResponseMs - 30000) / 90000, 0, 1)
+    : 0.65;
   const breakdown = {
-    meaningful_work: round2(Math.min(uniqueCards / 20, 1) * 35),
-    active_focus: round2(Math.min(activeSeconds / 1500, 1) * 30),
-    attention: round2(focusRatio * 20),
-    goal_progress: round2(Math.min(cardsReviewed / 25, 1) * 15),
+    meaningful_work: round2(Math.min(uniqueCards / 20, 1) * 30),
+    active_focus: round2(Math.min(activeSeconds / 1500, 1) * 25),
+    attention: round2(focusRatio * 15),
+    pace_efficiency: round2(paceEfficiency * 20),
+    goal_progress: round2(Math.min(cardsReviewed / 25, 1) * 10),
   };
   let score = Math.round(clamp(
-    breakdown.meaningful_work + breakdown.active_focus + breakdown.attention + breakdown.goal_progress,
+    breakdown.meaningful_work +
+      breakdown.active_focus +
+      breakdown.attention +
+      breakdown.pace_efficiency +
+      breakdown.goal_progress,
     0,
     100
   ));
-  // Quality may describe a short session, but a short/repetitive interaction may
-  // not present itself as Thriving/Blooming/Fruiting. This keeps every downstream
-  // system aligned with the same meaningful-session contract.
-  if (uniqueCards < 5 || activeSeconds < 300) {
-    score = Math.min(score, 39);
-  }
-  return { score, breakdown, focusRatio: round2(focusRatio) };
+
+  // High Focus tiers require enough evidence. Fast tapping can count as activity
+  // for the streak, but it cannot manufacture a high-quality Focus Seed.
+  if (uniqueCards < 5 || activeSeconds < 300) score = Math.min(score, 39);
+  if (uniqueCards < 10 || activeSeconds < 600) score = Math.min(score, 59);
+  if (uniqueCards < 15 || activeSeconds < 900) score = Math.min(score, 74);
+  return { score, breakdown, focusRatio: round2(focusRatio), paceEfficiency: round2(paceEfficiency) };
 }
 
 function focusStageForQuality(score) {
@@ -76,6 +89,13 @@ function isMeaningfulSession(input) {
   const uniqueCards = Math.max(0, Number(input && input.uniqueCards) || 0);
   const activeSeconds = Math.max(0, Number(input && input.activeSeconds) || 0);
   return uniqueCards >= 5 && activeSeconds >= 300;
+}
+
+function qualifiesForActiveDay(input) {
+  const uniqueCards = Math.max(0, Number(input && input.uniqueCards) || 0);
+  const cardsReviewed = Math.max(0, Number(input && input.cardsReviewed) || 0);
+  const activeSeconds = Math.max(0, Number(input && input.activeSeconds) || 0);
+  return activeSeconds >= 60 && (uniqueCards >= 3 || cardsReviewed >= 5);
 }
 
 function qualifiesForFruit(input) {
@@ -453,7 +473,8 @@ function createEcosystemV2(options) {
 
     const activityResult = await client.query(
       "SELECT COUNT(DISTINCT activity_date)::int AS days FROM daily_activity " +
-      "WHERE user_id = $1 AND activity_date >= CURRENT_DATE - INTERVAL '6 days'",
+      "WHERE user_id = $1 AND activity_date >= CURRENT_DATE - INTERVAL '6 days' " +
+      "AND (meaningful_sessions > 0 OR (cards_reviewed >= 3 AND active_seconds >= 60))",
       [userId]
     );
     const activeDays = clamp(activityResult.rows[0].days, 0, 7);
@@ -604,21 +625,29 @@ function createEcosystemV2(options) {
       ));
 
       const reviewResult = await client.query(
-        "SELECT COUNT(*)::int AS reviews, COUNT(DISTINCT card_id)::int AS unique_cards " +
+        "SELECT COUNT(*)::int AS reviews, COUNT(DISTINCT card_id)::int AS unique_cards, " +
+        "AVG(NULLIF(LEAST(GREATEST(COALESCE(response_time_ms,0),0),120000),0))::numeric AS average_response_ms " +
         "FROM review_logs WHERE user_id = $1 AND session_id = $2",
         [input.userId, input.sessionId]
       );
       const cardsReviewed = Math.max(Number(session.cards_reviewed) || 0, Number(reviewResult.rows[0].reviews) || 0);
       const uniqueCards = Number(reviewResult.rows[0].unique_cards) || 0;
+      const averageResponseMs = Number(reviewResult.rows[0].average_response_ms) || 0;
       const quality = computeSessionQuality({
         uniqueCards: uniqueCards,
         cardsReviewed: cardsReviewed,
         activeSeconds: activeSeconds,
         elapsedSeconds: elapsedSeconds,
+        averageResponseMs: averageResponseMs,
       });
       const focusStage = focusStageForQuality(quality.score);
       const sessionCompleted = uniqueCards > 0;
       const meaningfulSession = isMeaningfulSession({ uniqueCards: uniqueCards, activeSeconds: activeSeconds });
+      const activeDayQualified = qualifiesForActiveDay({
+        uniqueCards: uniqueCards,
+        cardsReviewed: cardsReviewed,
+        activeSeconds: activeSeconds,
+      });
       const exactFocusRatio = elapsedSeconds > 0 ? activeSeconds / elapsedSeconds : 0;
       const fruitQualified = qualifiesForFruit({
         meaningfulSession: meaningfulSession,
@@ -675,27 +704,39 @@ function createEcosystemV2(options) {
         });
       }
 
-      if (meaningfulSession) {
+      // Daily activity is an activity ledger, not a reward ledger. Every real
+      // reviewed session contributes to the heatmap. Meaningful-session rewards
+      // remain gated separately, while streaks require a modest anti-tap threshold.
+      if (sessionCompleted) {
         await client.query(
           "INSERT INTO daily_activity " +
           "(id, user_id, activity_date, meaningful_sessions, active_seconds, cards_reviewed, created_at, updated_at) " +
-          "VALUES ($1,$2,$3::date,1,$4,$5,NOW(),NOW()) " +
+          "VALUES ($1,$2,$3::date,$4,$5,$6,NOW(),NOW()) " +
           "ON CONFLICT (user_id, activity_date) DO UPDATE SET " +
-          "meaningful_sessions = daily_activity.meaningful_sessions + 1, " +
+          "meaningful_sessions = daily_activity.meaningful_sessions + EXCLUDED.meaningful_sessions, " +
           "active_seconds = daily_activity.active_seconds + EXCLUDED.active_seconds, " +
           "cards_reviewed = daily_activity.cards_reviewed + EXCLUDED.cards_reviewed, updated_at = NOW()",
-          [input.userId + ':' + localDate, input.userId, localDate, activeSeconds, cardsReviewed]
+          [
+            input.userId + ':' + localDate,
+            input.userId,
+            localDate,
+            meaningfulSession ? 1 : 0,
+            activeSeconds,
+            cardsReviewed,
+          ]
         );
+      }
+      if (activeDayQualified) {
         const activeDayEvent = await recordEvent(client, {
           eventKey: 'active-day:' + input.userId + ':' + localDate,
           userId: input.userId,
-          eventType: 'meaningful_active_day',
+          eventType: 'active_study_day',
           subjectId: subjectId,
           sessionId: input.sessionId,
-          growthPoints: 2,
+          growthPoints: meaningfulSession ? 2 : 0,
           seedlings: 0,
-          description: 'First meaningful study session on ' + localDate,
-          metadata: { local_date: localDate },
+          description: 'First qualifying study activity on ' + localDate,
+          metadata: { local_date: localDate, meaningful_session: meaningfulSession },
         });
         if (activeDayEvent.applied) {
           const refreshedStats = await client.query(
@@ -889,6 +930,7 @@ function createEcosystemV2(options) {
     computeSessionQuality: computeSessionQuality,
     focusStageForQuality: focusStageForQuality,
     isMeaningfulSession: isMeaningfulSession,
+    qualifiesForActiveDay: qualifiesForActiveDay,
     qualifiesForFruit: qualifiesForFruit,
     computeTreeStage: computeTreeStage,
     nextTreeStage: nextTreeStage,
@@ -903,6 +945,7 @@ module.exports = {
   computeSessionQuality,
   focusStageForQuality,
   isMeaningfulSession,
+  qualifiesForActiveDay,
   qualifiesForFruit,
   computeTreeStage,
   nextTreeStage,
