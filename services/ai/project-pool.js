@@ -39,7 +39,7 @@ function createProjectPool({
     return slots.filter((slot) => slot.enabled && !excluded.has(slot.id));
   }
 
-  function orderedSlots(modelId, { excludeSlotIds = [] } = {}) {
+  function orderForModel(modelId, { excludeSlotIds = [], advance = false } = {}) {
     const available = enabledSlots(excludeSlotIds);
     if (available.length === 0) return [];
 
@@ -52,10 +52,21 @@ function createProjectPool({
       ordered.push(available[(normalizedStart + offset) % available.length]);
     }
 
-    // Round-robin state is model-specific. Changing from 3.8 to 3.7 therefore
-    // starts from 3.7's own cursor rather than inheriting 3.8's position.
-    cursors.set(cursorKey, (normalizedStart + 1) % available.length);
+    if (advance) {
+      // Round-robin state is model-specific. Changing from 3.8 to 3.7 therefore
+      // starts from 3.7's own cursor rather than inheriting 3.8's position.
+      cursors.set(cursorKey, (normalizedStart + 1) % available.length);
+    }
+
     return ordered;
+  }
+
+  function orderedSlots(modelId, options = {}) {
+    return orderForModel(modelId, { ...options, advance: true });
+  }
+
+  function peekOrderedSlots(modelId, options = {}) {
+    return orderForModel(modelId, { ...options, advance: false });
   }
 
   function disable(slotId, reason = 'disabled') {
@@ -92,6 +103,7 @@ function createProjectPool({
     count: () => slots.length,
     enabledCount: () => slots.filter((slot) => slot.enabled).length,
     orderedSlots,
+    peekOrderedSlots,
     disable,
     enable,
     get,
