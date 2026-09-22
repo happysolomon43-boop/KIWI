@@ -36,6 +36,7 @@ const { randomUUID } = require('crypto');
 const { WebSocketServer } = require('ws');
 const { createEcosystemV2 } = require('./ecosystem_v2');
 const { createAIRuntime } = require('./services/ai/runtime');
+const { isAIAvailabilityError } = require('./services/ai/errors');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
@@ -50,8 +51,7 @@ const pool = new Pool({
 // Thin query wrapper — pool.query returns { rows, rowCount }
 const query = (text, params) => pool.query(text, params);
 
-// KIWI AI Orchestrator runtime. Phase 4 routes IP tasks live while remaining
-// VIP/VVIP legacy callers stay in shadow mode until their migration phases.
+// KIWI AI Orchestrator runtime. All registered AI tasks route through this layer.
 const _aiRuntime = createAIRuntime({
   query,
   randomUUID,
@@ -5461,47 +5461,67 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
 // B25: Fallback exam question generator (rule-based from card content)
 
 function generateFallbackExamQuestions(cards, examSessionId, count) {
-const questions = [];
-const selected = cards.slice(0, Math.min(count, cards.length));
-selected.forEach((card, idx) => {
-// Build a simple 4-option MCQ from card content
-// FIX: randomly sample 3 distractors from the full pool (not always slice(0,3))
-// so every question gets different wrong options instead of the same first 3 cards.
-const pool = selected.filter((c, i) => i !== idx);
-const otherCards = pool
-  .map((c) => ({ c, _r: Math.random() }))
-  .sort((a, b) => a._r - b._r)
-  .slice(0, 3)
-  .map((x) => x.c);
-const options = [
-card.back_content || 'Answer A',
-...otherCards.map((c) => c.back_content || 'Distractor'),
-].slice(0, 4);
-while (options.length < 4) options.push('None of the above');
-// Shuffle options
-for (let i = options.length - 1; i > 0; i--) {
-const j = Math.floor(Math.random() * (i + 1));
-[options[i], options[j]] = [options[j], options[i]];
-}
-const correctIndex = options.indexOf(card.back_content || 'Answer A');
-const correctLetter = ['A', 'B', 'C', 'D'][Math.max(0, correctIndex)];
-questions.push({
-exam_session_id: examSessionId,
-card_id: card.id,
-question_number: idx + 1,
-cognitive_level: 'Knowledge',
-difficulty: 'Medium',
-question_type: 'Theory',
-stem: card.front_content || 'What is the correct answer?',
-option_a: options[0] || '',
-option_b: options[1] || '',
-option_c: options[2] || '',
-option_d: options[3] || '',
-correct_answer: correctLetter,
-explanation: `The correct answer is based on the card: "${(card.back_content || '').slice(0, 100)}"`,
-});
-});
-return questions;
+  const usable = (cards || []).filter((card) =>
+    String(card?.front_content || '').trim() &&
+    String(card?.back_content || '').trim()
+  );
+  if (usable.length === 0 || count <= 0) return [];
+
+  const answerPool = [...new Set(
+    usable
+      .map((card) => String(card.back_content || '').trim())
+      .filter(Boolean)
+  )];
+
+  const questions = [];
+  for (let idx = 0; idx < count; idx++) {
+    const card = usable[idx % usable.length];
+    const correct = String(card.back_content || '').trim();
+    const correctPoolIndex = Math.max(0, answerPool.indexOf(correct));
+    const distractors = [];
+
+    for (let step = 1; step <= answerPool.length && distractors.length < 3; step++) {
+      const candidate = answerPool[(correctPoolIndex + step + idx) % answerPool.length];
+      if (candidate && candidate !== correct && !distractors.includes(candidate)) {
+        distractors.push(candidate);
+      }
+    }
+
+    for (const candidate of [
+      'None of the supplied alternatives',
+      'A different concept from the study material',
+      'The study material does not support this option',
+    ]) {
+      if (distractors.length >= 3) break;
+      if (candidate !== correct && !distractors.includes(candidate)) {
+        distractors.push(candidate);
+      }
+    }
+
+    const options = [correct, ...distractors.slice(0, 3)];
+    const rotation = idx % options.length;
+    const rotated = options.slice(rotation).concat(options.slice(0, rotation));
+    const correctIndex = rotated.indexOf(correct);
+    const correctLetter = ['A', 'B', 'C', 'D'][Math.max(0, correctIndex)];
+
+    questions.push({
+      exam_session_id: examSessionId,
+      card_id: card.id,
+      question_number: idx + 1,
+      cognitive_level: 'Knowledge',
+      difficulty: 'Medium',
+      question_type: 'Theory',
+      stem: String(card.front_content || '').trim(),
+      option_a: rotated[0] || '',
+      option_b: rotated[1] || '',
+      option_c: rotated[2] || '',
+      option_d: rotated[3] || '',
+      correct_answer: correctLetter,
+      explanation: `The correct answer is grounded directly in the source card: "${correct.slice(0, 160)}"`,
+    });
+  }
+
+  return questions;
 }
 
 async function generateFlashcards(notes, subjectHint = '') {
@@ -15857,6 +15877,7 @@ setImmediate(async () => {
   try {
     let questions;
 
+    try {
     if (_cbtOptions.customize_balance && _cbtOptions.theory_percent !== null) {
       // ── SPLIT PATH: parallel theory + calculation generation ──────────────────
       const theoryN = Math.round(_cbtCount * (_cbtOptions.theory_percent / 100));
@@ -15965,10 +15986,7 @@ setImmediate(async () => {
       if (!aiText) throw new Error('AI exam generation returned empty response');
       questions = parseCBTResponse(aiText, _cbtSessionId, _cbtCards);
       if (questions.length === 0) {
-        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
-        _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'AI generated questions could not be parsed. Ensure your cards have full content.' });
-        wsSend(_cbtUserId, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: 'AI generated questions could not be parsed. Ensure your cards have full content.' });
-        return;
+        throw new Error('AI generated questions could not be parsed. Ensure your cards have full content.');
       }
       // Completion passes — same structure as before
       if (questions.length < _cbtCount) {
@@ -16000,10 +16018,36 @@ setImmediate(async () => {
         }
       }
     }
+    } catch (generationErr) {
+      const _reckoningRecoverable =
+        _cbtOptions.ai_task_id === 'RECKONING_CBT' &&
+        (
+          isAIAvailabilityError(generationErr) ||
+          /could not be parsed|empty response/i.test(String(generationErr?.message || ''))
+        );
+
+      if (!_reckoningRecoverable) throw generationErr;
+
+      questions = generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount);
+      console.warn(
+        `[KIWI CBT] Reckoning VVIP route unavailable (${generationErr.code || generationErr.message}); ` +
+        `using deterministic recovery exam with ${questions.length}/${_cbtCount} questions`
+      );
+    }
 
     // ── Shared post-generation checks (both paths) ────────────────────────────
     // 60% minimum threshold — evaluated against the full requested count.
     const _minAccept = Math.max(1, Math.floor(_cbtCount * 0.6));
+    if (questions.length < _minAccept && _cbtOptions.ai_task_id === 'RECKONING_CBT') {
+      const _fallbackQuestions = generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount);
+      if (_fallbackQuestions.length >= _minAccept) {
+        console.warn(
+          `[KIWI CBT] Reckoning AI output only produced ${questions.length}/${_cbtCount}; ` +
+          `replacing it with deterministic recovery exam (${_fallbackQuestions.length}/${_cbtCount})`
+        );
+        questions = _fallbackQuestions;
+      }
+    }
     if (questions.length < _minAccept) {
       await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
       _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.' });
