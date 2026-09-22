@@ -7704,8 +7704,6 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // only Bubble-owned planning data; cards and ordinary study/exam history remain.
       api.deleteBubblePermanently = async (id) =>
         apiRequest('/bubbles/' + encodeURIComponent(id) + '?permanent=1', { method: 'DELETE' });
-      api.deleteBubblePermanently = async (id) =>
-        apiRequest('/bubbles/' + encodeURIComponent(id) + '?permanent=1', { method: 'DELETE' });
 
       // Issue-054: Delete card
       api.deleteCard = async (cardId) => apiRequest('/cards/' + cardId, { method: 'DELETE' });
