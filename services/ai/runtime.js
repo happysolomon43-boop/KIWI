@@ -95,13 +95,44 @@ function createAIRuntime({
 
   let discoveryTimer = null;
   let discoveryRunning = false;
+  let retentionTimer = null;
+  let retentionRunning = false;
+
+  const operationalState = {
+    lastDiscoveryStartedAt: null,
+    lastDiscoveryCompletedAt: null,
+    lastDiscoverySummary: null,
+    lastDiscoveryError: null,
+    lastRetentionStartedAt: null,
+    lastRetentionCompletedAt: null,
+    lastRetentionSummary: null,
+    lastRetentionError: null,
+  };
 
   async function runDiscoveryCycle() {
     if (discoveryRunning) return null;
     discoveryRunning = true;
+    operationalState.lastDiscoveryStartedAt = new Date().toISOString();
+
     try {
-      return await discovery.discoverOnce();
+      const result = await discovery.discoverOnce();
+      operationalState.lastDiscoverySummary = result
+        ? {
+            enabled: result.enabled,
+            providerModels: Number(result.providerModels) || 0,
+            stableFlashModels: Number(result.stableFlashModels) || 0,
+            discovered: [...(result.discovered || [])],
+            promoted: [...(result.promoted || [])],
+          }
+        : null;
+      operationalState.lastDiscoveryError = null;
+      return result;
     } catch (error) {
+      operationalState.lastDiscoveryError = {
+        code: error?.code || null,
+        status: error?.status || null,
+        message: error?.message || String(error),
+      };
       if (typeof logger?.warn === 'function') {
         logger.warn('[KIWI AI] automatic model discovery failed', {
           code: error?.code || null,
@@ -111,6 +142,7 @@ function createAIRuntime({
       }
       return null;
     } finally {
+      operationalState.lastDiscoveryCompletedAt = new Date().toISOString();
       discoveryRunning = false;
     }
   }
