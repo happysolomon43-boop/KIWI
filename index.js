@@ -843,16 +843,16 @@ async count(userId, filters = {}) {
 examSessions: {
 async create(userId, data) {
   const id = randomUUID();
-  const status = data.status || 'pending';
   const payload = {
     ...data,
     id,
     user_id: userId,
-    // A generated/ready exam has not started. Keeping this null makes the
-    // lifecycle invariant explicit and prevents "ready but started" split-brain.
-    started_at: data.started_at || (status === 'active' ? new Date() : null),
+    // Production schema keeps started_at NOT NULL. Status is authoritative for
+    // whether an exam has actually started; /start and Reckoning activation
+    // overwrite this timestamp with the real activation time.
+    started_at: new Date(),
     is_reckoning: data.is_reckoning || false,
-    status,
+    status: data.status || 'pending',
     created_at: new Date(),
   };
   const q = _buildInsert('exam_sessions', payload);
@@ -5878,7 +5878,7 @@ const oA = _stripMd(cleanQ.option_a) || '';
 const oB = _stripMd(cleanQ.option_b) || '';
 const oC = _stripMd(cleanQ.option_c) || '';
 const oD = _stripMd(cleanQ.option_d) || '';
-const correctLetter = ans.correct_answer || 'A';
+const correctLetter = String(ans.correct_answer || '').toUpperCase();
 if (!cleanQ.stem) {
   console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — no stem`);
   return null;
@@ -8522,7 +8522,7 @@ if (!['ready', 'active'].includes(exam.status)) {
 // The Reckoning and its exam are one state machine. Never mark the Reckoning
 // in_progress while leaving the exam in ready: submission requires both to agree.
 if (exam.status !== 'active' || !exam.started_at) {
-  const startedAt = exam.started_at || new Date();
+  const startedAt = exam.status === 'ready' ? new Date() : (exam.started_at || new Date());
   const activatedExam = await db.examSessions.update(reckoning.user_id, examSessionId, {
     status: 'active',
     started_at: startedAt,
