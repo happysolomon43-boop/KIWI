@@ -104,6 +104,17 @@ const AI_TASKS = Object.freeze({
     affinityGroup: 'ASSESSMENT_GENERATION',
   }),
 
+  CBT_QUESTION_AUDIT: task({
+    class: AI_CLASSES.VVIP,
+    reasoning: REASONING_LEVELS.HIGH,
+    modelPolicy: MODEL_POLICIES.TOP_STABLE_FLASH,
+    qualityFloor: QUALITY_FLOORS.FLASH,
+    capabilities: ['generateContent', 'thinking', 'structuredOutput'],
+    timeoutMs: 35000,
+    retryPolicy: RETRY_POLICIES.VVIP_GENERATION,
+    affinityGroup: 'ASSESSMENT_INTEGRITY',
+  }),
+
   FLASHCARD_GENERATION: task({
     class: AI_CLASSES.VVIP,
     reasoning: REASONING_LEVELS.HIGH,
