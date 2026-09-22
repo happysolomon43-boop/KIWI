@@ -14824,6 +14824,10 @@ studyRouter.use(reckoningLockout);
 studyRouter.post('/start', async (req, res) => {
 try {
 const { deck_id, card_limit, include_all_decks_in_subject, subject_id, card_ids, card_state_filter } = req.body;
+const explicitCardIds = Array.isArray(card_ids)
+  ? [...new Set(card_ids.filter(Boolean).map(id => String(id)))]
+  : [];
+const explicitCardSelection = explicitCardIds.length > 0;
 // Fixed: Allow subject_id + include_all_decks_in_subject without explicit deck_id
 if (!deck_id && !(include_all_decks_in_subject && subject_id)) {
 return res
@@ -14856,9 +14860,9 @@ if (deckIds.length > 0) {
 }
 // FIX-A: If card_ids provided, scope session to those specific cards only.
 // Used by review_specific_cards invitation action_type.
-if (card_ids && Array.isArray(card_ids) && card_ids.length > 0) {
-const idSet = new Set(card_ids);
-allCards = allCards.filter((c) => idSet.has(c.id));
+if (explicitCardSelection) {
+const idSet = new Set(explicitCardIds);
+allCards = allCards.filter((c) => idSet.has(String(c.id)));
 }
 // Phase 4: Build priority queue — batch-fetch all card states in one query (O(1) DB calls)
 const allCardIds = allCards.map(c => c.id);
@@ -14935,15 +14939,17 @@ const dueQueue = queue.filter(
 // queue for users whose entire deck is at stage 3+. Now falls back to the full
 // queue sorted by next_review_at (most-overdue first) so any user can always
 // start a session regardless of their collection's stage distribution.
-const effectiveDueQueue = dueQueue.length > 0
-  ? dueQueue
-  : queue.length > 0
-    ? [...queue].sort((a, b) => {
-        const aDate = a.card.next_review_at ? new Date(a.card.next_review_at).getTime() : 0;
-        const bDate = b.card.next_review_at ? new Date(b.card.next_review_at).getTime() : 0;
-        return aDate - bDate; // earliest next_review_at → most overdue → review first
-      })
-    : [];
+const effectiveDueQueue = explicitCardSelection
+  ? queue
+  : dueQueue.length > 0
+    ? dueQueue
+    : queue.length > 0
+      ? [...queue].sort((a, b) => {
+          const aDate = a.card.next_review_at ? new Date(a.card.next_review_at).getTime() : 0;
+          const bDate = b.card.next_review_at ? new Date(b.card.next_review_at).getTime() : 0;
+          return aDate - bDate; // earliest next_review_at → most overdue → review first
+        })
+      : [];
 // STATE FILTER: If card_state_filter provided, narrow queue to only those states.
 // Returns an honest 422 instead of silently starting an empty or wrong session.
 const csf = Array.isArray(card_state_filter)
@@ -14961,9 +14967,15 @@ if (csf && csf.length > 0) {
     });
   }
 }
-const modifiedQueue    = await modifySessionQueueForBubbles(
-  req.user.id, stateFilteredQueue, bubbleSubjectId
-).catch(() => stateFilteredQueue);
+// A caller-supplied card_ids list is an explicit study contract (targeted
+// invitation, attention deck, exact-card review). Preserve it exactly: normal
+// Bubble queue intervention may duplicate, park, or omit cards, which is correct
+// for ordinary sessions but wrong for an explicit selection.
+const modifiedQueue = explicitCardSelection
+  ? stateFilteredQueue
+  : await modifySessionQueueForBubbles(
+      req.user.id, stateFilteredQueue, bubbleSubjectId
+    ).catch(() => stateFilteredQueue);
 const limitedQueue = card_limit && card_limit > 0
   ? modifiedQueue.slice(0, parseInt(card_limit))
   : modifiedQueue;
@@ -15051,6 +15063,7 @@ total_cards: normalizedCards.length,
 total_due: normalizedCards.length,
 has_more: normalizedCards.length > PAGE_SIZE,
 subject_id: subject_id || (deck ? deck.subject_id : null),
+deck_id: sessionDeckId,
 is_first_return_session,
 });
 } catch (e) {
@@ -19402,18 +19415,29 @@ db.decks.findMany(req.user.id),
 ]);
 const _cardMap = new Map(_allUserCards.map(c => [c.id, c]));
 const _deckMap = new Map((_allUserDecksResult.decks || _allUserDecksResult).map(d => [d.id, d]));
+const _subjectMap = new Map((subjects || []).map(s => [s.id, s]));
 for (const st of troubleStatesList.slice(0, 30)) {
 const card = _cardMap.get(st.card_id);
 if (card) {
 const deck = _deckMap.get(card.deck_id);
+const subject = deck ? _subjectMap.get(deck.subject_id) : null;
+const resolvedDeckId = card.deck_id || st.deck_id || null;
+const resolvedSubjectId = deck?.subject_id || st.subject_id || null;
 troubleCards.push({
 id: st.card_id,
+card_id: st.card_id,
 state: st.state,
 learning_debt: st.learning_debt === true,
 front: card.front_content || '',
 back: card.back_content || '',
-subjectId: deck?.subject_id || null,
-deck_id: card.deck_id,
+subjectId: resolvedSubjectId,
+subject_id: resolvedSubjectId,
+subjectName: subject?.name || null,
+subject_name: subject?.name || null,
+deckId: resolvedDeckId,
+deck_id: resolvedDeckId,
+deckName: deck?.name || 'Deck',
+deck_name: deck?.name || 'Deck',
 });
 }
 }
@@ -19466,18 +19490,38 @@ try {
 const TROUBLE_STATES = ['STUCK', 'AVOIDED', 'GHOST', 'DANGEROUS', 'FRAGILE'];
 const allStates = await db.cardStates.findByUser(req.user.id);
 const troubleStates = allStates.filter((s) => TROUBLE_STATES.includes(s.state));
-// Fix #28: fetch all user cards once instead of 1 findById per trouble card
-const _allCardsForTrouble = await db.cards.findAllForUser(req.user.id);
+// Return one complete study-ready contract. Legacy card_states rows can have
+// null deck_id/subject_id, so derive ownership from the canonical card + deck.
+const [_allCardsForTrouble, _allDecksForTroubleResult] = await Promise.all([
+db.cards.findAllForUser(req.user.id),
+db.decks.findMany(req.user.id),
+]);
 const _cardMapForTrouble = new Map(_allCardsForTrouble.map(c => [c.id, c]));
+const _deckMapForTrouble = new Map(
+  (_allDecksForTroubleResult.decks || _allDecksForTroubleResult).map(d => [d.id, d])
+);
 const enriched = [];
 for (const st of troubleStates.slice(0, 50)) {
 const card = _cardMapForTrouble.get(st.card_id);
-if (card)
+if (!card) continue;
+const deck = _deckMapForTrouble.get(card.deck_id);
+const resolvedDeckId = card.deck_id || st.deck_id || null;
+const resolvedSubjectId = deck?.subject_id || st.subject_id || null;
 enriched.push({
 ...st,
-card_front: card.front_content,
-card_back: card.back_content,
-deck_id: card.deck_id,
+// card_states.id is the state document id (userId_cardId), not the card id.
+// Expose the canonical card id explicitly so focused-study actions cannot target
+// the wrong identifier.
+id: card.id,
+card_id: card.id,
+card_front: card.front_content || '',
+card_back: card.back_content || '',
+deckId: resolvedDeckId,
+deck_id: resolvedDeckId,
+deckName: deck?.name || 'Deck',
+deck_name: deck?.name || 'Deck',
+subjectId: resolvedSubjectId,
+subject_id: resolvedSubjectId,
 });
 }
 res.json({ trouble_cards: enriched, total: troubleStates.length });
