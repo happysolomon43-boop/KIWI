@@ -13876,7 +13876,7 @@ const subjects = await db.subjects.findManyWithDecks(req.user.id);
 const healthPromises = subjects.map(async (s) => {
 try {
 const h = await recalculateSubjectHealth(req.user.id, s.id);
-return { ...s, health_score: h ? Math.min(100, Math.max(0, h)) : 50 };
+return { ...s, health_score: h != null ? Math.min(100, Math.max(0, h)) : 50 };
 } catch (e) {
 return { ...s, health_score: 50 };
 }
@@ -19253,7 +19253,9 @@ try {
 // the meter showed nothing. Now we recalculate all subjects fresh on every Brain page
 // load, so pressure sources (GHOST, STUCK, AVOIDED, no_exam, etc.) are always current.
 // calculateSubjectPressure writes to brain_pressure, then findByUser reads the fresh docs.
-await calculateAllSubjectPressures(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message)); // non-fatal — fall through to stale data if it fails
+await calculateAllSubjectPressures(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+await ecosystemV2.refreshVitality(req.user.id)
+  .catch((e) => console.error('[KIWI] vitality refresh after pressure failed:', e.message));
 // Single JOIN instead of N+1 findById calls — also eliminates "Unknown Subject" for
 // orphaned brain_pressure rows (entries whose subject was deleted are filtered out).
 const { rows: rawPressures } = await query(
@@ -19889,6 +19891,17 @@ try {
 // Previously it was awaited later in the route, blocking the response by up to
 // 2 s on every dashboard load. Running it alongside other fetches means its
 // latency is hidden behind the other queries (which already take ~300-500ms).
+// Refresh derived ecosystem telemetry while the dashboard's other independent
+// reads are in flight. Vitality depends on pressure and on the rolling activity
+// window, so persisting it only at session-end makes the tree look frozen.
+const _freshTelemetryPromise = (async () => {
+  const pressureMap = await calculateAllSubjectPressures(req.user.id);
+  const vitality = await ecosystemV2.refreshVitality(req.user.id);
+  return { pressureMap, vitality };
+})().catch((e) => {
+  console.error('[KIWI] dashboard telemetry refresh failed:', e.message);
+  return null;
+});
 // Perf: fire biome in background immediately
 const _biomePromise = buildBiomeData(req.user.id).catch(() => ({}));
 const now = new Date();
@@ -19907,14 +19920,21 @@ return d.toISOString().split('T')[0];
 // again for EVERY subject — all data that Round 1 already fetches. We now derive
 // globalKS from stats.knowledge_score_global (persisted after every review) and
 // from the inline per-subject computation in Round 2 using already-loaded data.
-const [stats, subjects, allStates, allCards, pressures, activeReckoning] = await Promise.all([
+const [stats, subjects, allStates, allCards, storedPressures, activeReckoning, freshTelemetry] = await Promise.all([
 db.userStats.get(req.user.id),
 db.subjects.findManyWithDecks(req.user.id),
 db.cardStates.findByUser(req.user.id),
-db.cards.findAllForUser(req.user.id),              // Perf: was sequential
-db.brainPressure.findByUser(req.user.id),          // Perf: was sequential
-db.reckoningSessions.findActiveByUser(req.user.id), // Perf: was sequential
+db.cards.findAllForUser(req.user.id),
+db.brainPressure.findByUser(req.user.id),
+db.reckoningSessions.findActiveByUser(req.user.id),
+_freshTelemetryPromise,
 ]);
+const pressures = freshTelemetry?.pressureMap
+  ? Object.values(freshTelemetry.pressureMap)
+  : storedPressures;
+if (freshTelemetry?.vitality?.vitality != null && stats) {
+  stats.tree_health = freshTelemetry.vitality.vitality;
+}
 const dueCount = allCards.filter((c) => isCardDue(c, now)).length;
 const stateDist = {};
 for (const s of allStates) stateDist[s.state] = (stateDist[s.state] || 0) + 1;
@@ -20009,6 +20029,7 @@ rings: dashActiveMilestones.length,
 stageLabel: treeStageLabels[stats?.tree_stage || 1] || 'SEEDLING',
 milestones: dashActiveMilestones,
 };
+treeState.health = Math.max(0, Math.min(100, Math.round(stats?.tree_health ?? treeState.health ?? 100)));
 // Brain preview
 const brainPreview = {
 interventionCount: // P3.2-B1 FIX: L0 is the correct calm baseline.
