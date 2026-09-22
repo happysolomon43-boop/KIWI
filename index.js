@@ -5510,6 +5510,108 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
   return result.text;
 }
 
+function _parseCBTQuestionAudit(rawText) {
+  const cleaned = String(rawText || '').replace(/\`\`\`json|\`\`\`/gi, '').trim();
+  const first = cleaned.indexOf('{');
+  const last = cleaned.lastIndexOf('}');
+  if (first < 0 || last <= first) throw new Error('AI audit did not return JSON');
+  const parsed = JSON.parse(cleaned.slice(first, last + 1));
+  return {
+    question_valid: parsed.question_valid !== false,
+    answer_key_correct: parsed.answer_key_correct !== false,
+    ambiguous: parsed.ambiguous === true,
+    answerable_from_source: parsed.answerable_from_source !== false,
+    recommended_answer: /^[A-D]$/.test(String(parsed.recommended_answer || '').toUpperCase())
+      ? String(parsed.recommended_answer).toUpperCase()
+      : null,
+    reason: String(parsed.reason || '').slice(0, 1200),
+    confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
+  };
+}
+
+const _cbtQuestionAuditPromises = new Map();
+
+async function auditCBTQuestion(userId, exam, question) {
+  const key = userId + ':' + exam.id + ':' + question.id;
+  if (_cbtQuestionAuditPromises.has(key)) return _cbtQuestionAuditPromises.get(key);
+
+  const work = (async () => {
+    await db.examQuestions.update(userId, question.id, {
+      flagged_by_student: true,
+      flagged_at: question.flagged_at || new Date(),
+      ai_audit_status: 'pending',
+    });
+
+    try {
+      const sourceCard = question.card_id
+        ? await db.cards.findById(userId, question.card_id).catch(() => null)
+        : null;
+      const sourceContext = sourceCard
+        ? [
+            'SOURCE CARD FRONT: ' + String(sourceCard.front_content || sourceCard.front || ''),
+            'SOURCE CARD BACK: ' + String(sourceCard.back_content || sourceCard.back || ''),
+          ].join('\n')
+        : 'SOURCE CARD: unavailable. Judge using the question and options only.';
+
+      const prompt = [
+        'You are KIWI Assessment Integrity. Audit one multiple-choice question for correctness.',
+        'Do not grade the student and do not use the learner\'s selected option.',
+        'Determine whether the item itself is valid and whether its stored answer key is defensible.',
+        '',
+        'QUESTION: ' + String(question.stem || ''),
+        'A) ' + String(question.option_a || ''),
+        'B) ' + String(question.option_b || ''),
+        'C) ' + String(question.option_c || ''),
+        'D) ' + String(question.option_d || ''),
+        'STORED ANSWER KEY: ' + String(question.correct_answer || ''),
+        'STORED EXPLANATION: ' + String(question.explanation || ''),
+        sourceContext,
+        '',
+        'Return ONLY JSON with exactly these fields:',
+        '{"question_valid":true,"answer_key_correct":true,"ambiguous":false,"answerable_from_source":true,"recommended_answer":"A","reason":"short reason","confidence":0.0}',
+        '',
+        'Rules:',
+        '- question_valid=false for a malformed, internally contradictory, or materially misleading stem/options.',
+        '- answer_key_correct=false if another option is clearly more correct than the stored key.',
+        '- ambiguous=true if multiple options are reasonably correct under the supplied material.',
+        '- answerable_from_source=false if the source material does not support a defensible answer.',
+        '- Do not mark a question flawed merely because it is difficult.',
+      ].join('\n');
+
+      const result = await ai.run('CBT_QUESTION_AUDIT', {
+        content: prompt,
+        generationConfig: { maxOutputTokens: 1600 },
+      });
+      const audit = _parseCBTQuestionAudit(result.text);
+      const bonusAwarded =
+        audit.question_valid === false ||
+        audit.answer_key_correct === false ||
+        audit.ambiguous === true ||
+        audit.answerable_from_source === false;
+
+      await db.examQuestions.update(userId, question.id, {
+        ai_audit_status: 'reviewed',
+        ai_audit_result: audit,
+        ai_audit_reviewed_at: new Date(),
+        bonus_awarded: bonusAwarded,
+      });
+      return { status: 'reviewed', bonus_awarded: bonusAwarded, audit };
+    } catch (error) {
+      await db.examQuestions.update(userId, question.id, {
+        ai_audit_status: 'error',
+        ai_audit_result: { error: String(error.message || 'audit failed').slice(0, 500) },
+        ai_audit_reviewed_at: new Date(),
+      }).catch(() => null);
+      throw error;
+    } finally {
+      _cbtQuestionAuditPromises.delete(key);
+    }
+  })();
+
+  _cbtQuestionAuditPromises.set(key, work);
+  return work;
+}
+
 // B25: Fallback exam question generator (rule-based from card content)
 
 function generateFallbackExamQuestions(cards, examSessionId, count) {
@@ -16448,19 +16550,37 @@ examRouter.get('/:id', async (req, res) => {
 try {
 const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
-// Normalize questions for frontend: add options[] array from option_a/b/c/d
+// Normalize questions for frontend without leaking the key during a live exam.
+// Completed/forfeited exams may reveal the key and audit outcome for review.
 if (exam.questions && Array.isArray(exam.questions)) {
-exam.questions = exam.questions.map((q) => ({
-...q,
-id: q.id || q.question_number || Math.random().toString(36).slice(2),
-options: [
-{ id: 'A', text: q.option_a || '' },
-{ id: 'B', text: q.option_b || '' },
-{ id: 'C', text: q.option_c || '' },
-{ id: 'D', text: q.option_d || '' },
-].filter((opt) => opt.text),
-correctAnswer: q.correct_answer || 'A',
-}));
+const revealAnswers = ['completed', 'forfeited'].includes(exam.status);
+exam.questions = exam.questions.map((q) => {
+  const {
+    correct_answer,
+    explanation,
+    ai_audit_result,
+    bonus_awarded,
+    ...safe
+  } = q;
+  const normalized = {
+    ...safe,
+    id: q.id || q.question_number || Math.random().toString(36).slice(2),
+    options: [
+      { id: 'A', text: q.option_a || '' },
+      { id: 'B', text: q.option_b || '' },
+      { id: 'C', text: q.option_c || '' },
+      { id: 'D', text: q.option_d || '' },
+    ].filter((opt) => opt.text),
+  };
+  if (revealAnswers) {
+    normalized.correct_answer = correct_answer || 'A';
+    normalized.correctAnswer = correct_answer || 'A';
+    normalized.explanation = explanation || '';
+    normalized.ai_audit_result = ai_audit_result || null;
+    normalized.bonus_awarded = bonus_awarded === true;
+  }
+  return normalized;
+});
 }
 res.json(exam);
 } catch (e) {
@@ -16550,6 +16670,39 @@ try {
 }
 });
 
+// A flag is a request for an integrity audit, not merely a client-side bookmark.
+// The audit never returns the answer key while the exam is active.
+examRouter.post('/:id/flag-question', async (req, res) => {
+try {
+  const { question_number } = req.body || {};
+  if (question_number == null) return res.status(400).json({ error: 'question_number is required' });
+  const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+  if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (exam.status !== 'active' || !exam.started_at) {
+    return res.status(409).json({ error: 'Only an active exam question can be flagged for review' });
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(exam.started_at).getTime()) / 1000));
+  const timeLimitSeconds = Math.max(1, Number(exam.time_limit_seconds) || 1800);
+  if (elapsedSeconds > timeLimitSeconds + 15) {
+    return res.status(409).json({ error: 'Exam time has expired', timed_out: true });
+  }
+  const question = exam.questions.find((item) => String(item.question_number) === String(question_number));
+  if (!question) return res.status(404).json({ error: 'Question not found' });
+
+  if (question.flagged_by_student && question.ai_audit_status === 'reviewed') {
+    return res.json({ ok: true, status: 'reviewed' });
+  }
+
+  await auditCBTQuestion(req.user.id, exam, question);
+  res.json({ ok: true, status: 'reviewed' });
+} catch (e) {
+  res.status(503).json({
+    error: 'Question review could not be completed yet. You can continue the exam and try the flag again.',
+    code: 'QUESTION_AUDIT_FAILED',
+  });
+}
+});
+
 examRouter.post('/:id/submit', async (req, res) => {
 try {
 const { answers: submittedAnswers, ended_early = false } = req.body;
@@ -16569,7 +16722,7 @@ if (so !== null && (typeof so !== 'string' || !/^[A-D]$/.test(so))) {
 return res.status(400).json({ error: 'selected_option must be a single letter A-D or null' });
 }
 }
-const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+let exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
 if (exam.status !== 'active' || !exam.started_at) {
   return res.status(409).json({ error: 'Exam must be started before it can be submitted' });
@@ -16587,6 +16740,19 @@ const answers = timedOut
       time_spent_seconds: question.time_spent_seconds || 0,
     }))
   : submittedAnswers;
+// Resolve any requested question-integrity audits before final scoring. This is
+// the only case where submission may wait on AI, and all flagged questions are
+// audited in parallel. The learner's original right/wrong state is never changed.
+const pendingFlagged = exam.questions.filter(
+  (question) => question.flagged_by_student && question.ai_audit_status !== 'reviewed'
+);
+if (pendingFlagged.length > 0) {
+  await Promise.allSettled(
+    pendingFlagged.map((question) => auditCBTQuestion(req.user.id, exam, question))
+  );
+  exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+}
+
 // PERF-FIX: preKsScore is only needed for the background ks_delta calculation.
 // Computing it here (3+ DB queries: decks + all cards + all card_states) was
 // the primary cause of "Exam submission timed out" — it sat on the critical
@@ -16600,16 +16766,20 @@ const _dbUpdatePromises = [];
 for (const q of exam.questions) {
 const answer = answers.find((a) => String(a.question_number ?? a.questionId) === String(q.question_number));
 const selectedOption = answer ? (answer.selected_option ?? answer.selectedOptionId) : null;
-const isCorrect = answer && selectedOption === q.correct_answer;
-// P3-FIX: stamp is_correct onto the in-memory question object so that
-// processExamVerification and applyExamSRSFeedback can read it when they
-// iterate exam.questions below. completedExam (from update()) has no questions.
+const isCorrect = Boolean(answer && selectedOption === q.correct_answer);
+const bonusAwarded = q.flagged_by_student === true && q.bonus_awarded === true;
+const awardedPoint = isCorrect || bonusAwarded;
+// Preserve raw correctness for SRS/KS learning signals. A bonus repairs a flawed
+// assessment item; it does not pretend the learner selected the stored key.
 q.is_correct = isCorrect;
-if (isCorrect) correct++;
+q.bonus_awarded = bonusAwarded;
+if (awardedPoint) correct++;
 questionResults.push({
 question_number: q.question_number,
 selected: selectedOption || null,
 correct: isCorrect,
+bonus_awarded: bonusAwarded,
+awarded_point: awardedPoint,
 correct_answer: q.correct_answer,
 });
 if (answer) {
@@ -16659,6 +16829,11 @@ duration_seconds: durationSec,
         explanation: q.explanation || '',
         selected_option: selected,
         is_correct: selected === q.correct_answer,
+        bonus_awarded: q.flagged_by_student === true && q.bonus_awarded === true,
+        awarded_point: (selected === q.correct_answer) || (q.flagged_by_student === true && q.bonus_awarded === true),
+        audit_reason: q.flagged_by_student === true && q.bonus_awarded === true
+          ? String(q.ai_audit_result?.reason || 'AI integrity review found the item flawed.')
+          : null,
       };
     });
     const submitJobId = randomUUID();
