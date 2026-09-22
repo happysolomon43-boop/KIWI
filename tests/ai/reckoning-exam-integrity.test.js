@@ -90,5 +90,25 @@ test('Reckoning submission narrowly repairs legacy ready-state split brain', () 
   assert.ok(linkCheck >= 0);
   assert.ok(repair > linkCheck, 'repair must happen only after exact active-Reckoning linkage is proven');
   assert.ok(strictActiveCheck > repair, 'strict active invariant must still be enforced after repair');
+  assert.match(submit, /const recoveredStartedAt = new Date\(\)/);
+  assert.doesNotMatch(submit, /const recoveredStartedAt = exam\.started_at \|\| new Date\(\)/);
   assert.match(submit, /Recovered linked Reckoning exam stuck in ready state before submit/);
+});
+
+test('global Reckoning lockout explicitly allows only the exact linked exam surface', () => {
+  const lockout = section(
+    'async function reckoningLockout',
+    '// ════════════════════════════════════════════════════════════════════════════\n//  AUTH ROUTES'
+  );
+
+  assert.match(lockout, /baseUrl\.endsWith\(['"]\/exams['"]\) && active\.exam_session_id/);
+  assert.match(lockout, /const firstSegment = pathName\.split\(['"]\/['"]\)\.filter\(Boolean\)\[0\] \|\| ['"]['"]/);
+  assert.match(lockout, /String\(firstSegment\) === String\(active\.exam_session_id\)/);
+  assert.match(lockout, /if \(String\(firstSegment\) === String\(active\.exam_session_id\)\) return next\(\)/);
+
+  // Normal/past exams must still fall through to the global 423 response.
+  const exactExamGate = lockout.indexOf("String(firstSegment) === String(active.exam_session_id)");
+  const lockedResponse = lockout.indexOf("res.status(423)");
+  assert.ok(exactExamGate >= 0);
+  assert.ok(lockedResponse > exactExamGate);
 });
