@@ -55,3 +55,21 @@ The four remaining direct legacy callsites are VVIP generation paths:
 - IMPORT_IMAGE_EXTRACTION
 
 Those remain shadow-observed until the dedicated VVIP migration phase.
+
+
+## Post-Phase 6 verification
+
+Phase 5 was re-audited after the VVIP migration.
+
+The verification locks all 15 canonical VIP tasks, their reasoning levels, quality floors, degradation permissions, and their live `ai.run(...)` callsites. There are 16 VIP callsites in `index.js` because `EXAM_DEBRIEF` intentionally has two application entry points backed by one canonical task policy.
+
+The verification also confirms:
+
+- every VIP task starts on the stable VIP Flash chain;
+- non-degradable VIP tasks never reach Flash-Lite;
+- only tasks explicitly marked degradable append the Flash-Lite fallback chain;
+- Quick Questions keeps its dynamic output-token budget;
+- the compact background Exam Debrief keeps its 512-token budget;
+- no VIP feature reintroduced provider-specific model IDs, `thinkingConfig`, or `modelOverride`.
+
+Dedicated coverage lives in `tests/ai/phase5-vip-verification.test.js`.
