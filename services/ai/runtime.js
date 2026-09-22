@@ -53,19 +53,7 @@ function createAIRuntime({
     return state;
   }
 
-  function observeLegacy(taskId, legacyModel = null) {
-    // Shadow mode must never delay or break a user-facing legacy AI request.
-    setImmediate(() => {
-      orchestrator.observe(taskId, { legacyModel }).catch((error) => {
-        if (typeof logger?.warn === 'function') {
-          logger.warn('[KIWI AI] shadow observation failed', {
-            taskId,
-            error: error?.message || String(error),
-          });
-        }
-      });
-    });
-  }
+
 
   return Object.freeze({
     store,
@@ -75,7 +63,6 @@ function createAIRuntime({
     telemetry,
     orchestrator,
     initialize,
-    observeLegacy,
   });
 }
 
