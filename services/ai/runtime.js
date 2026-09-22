@@ -1,7 +1,7 @@
 'use strict';
 
 const { AI_TASKS } = require('./task-registry');
-const { createModelCatalog, DEFAULT_MODEL_CATALOG } = require('./model-catalog');
+const { createModelCatalog, DEFAULT_MODEL_CATALOG, MODEL_STATUS } = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
 const { createProjectPool } = require('./project-pool');
 const { createGeminiTransport } = require('./gemini-transport');
@@ -17,6 +17,18 @@ function parseIntervalMs(value, fallback = 15 * 60 * 1000) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.max(5 * 60 * 1000, Math.min(parsed, 6 * 60 * 60 * 1000));
+}
+
+function parseCleanupIntervalMs(value, fallback = 24 * 60 * 60 * 1000) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(60 * 60 * 1000, Math.min(parsed, 7 * 24 * 60 * 60 * 1000));
+}
+
+function parseRetentionDays(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(min, Math.min(Math.floor(parsed), max));
 }
 
 function createAIRuntime({
@@ -165,7 +177,7 @@ function createAIRuntime({
 
     for (const model of catalog.list()) {
       const manuallySuspended =
-        model.status === 'SUSPENDED' &&
+        model.status === MODEL_STATUS.SUSPENDED &&
         model.metadata?.suspendedReason === 'manual AI_MODEL_DENYLIST';
 
       if (manuallySuspended && !denylist.has(model.id)) {
@@ -181,7 +193,7 @@ function createAIRuntime({
       // reason, otherwise removing the denylist could accidentally re-enable
       // a model that was already unhealthy.
       if (
-        current.status === 'SUSPENDED' &&
+        current.status === MODEL_STATUS.SUSPENDED &&
         current.metadata?.suspendedReason !== 'manual AI_MODEL_DENYLIST'
       ) {
         continue;
@@ -241,5 +253,7 @@ function createAIRuntime({
 
 module.exports = {
   parseIntervalMs,
+  parseCleanupIntervalMs,
+  parseRetentionDays,
   createAIRuntime,
 };
