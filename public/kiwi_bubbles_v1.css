@@ -17,6 +17,14 @@
   opacity: .88;
 }
 
+.bubble-swipe-hint {
+  margin-top: 5px;
+  color: var(--text-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: .01em;
+}
+
 .bubble-swipe-row {
   position: relative;
   min-width: 0;
