@@ -32,5 +32,8 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Check backend syntax
+        run: node --check index.js
+
       - name: Run AI architecture tests
         run: npm run test:ai
