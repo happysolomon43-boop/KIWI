@@ -94,7 +94,38 @@ test('exhausting a model across project slots falls to next model and restarts i
   assert.equal(result.attempts, 3);
 });
 
-test('model-not-found skips remaining keys for that model', async () => {
+test('model-not-found on one project keeps the same model and tries another project', async () => {
+  const calls = [];
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, apiKey: args.apiKey });
+        if (args.modelId === 'gemini-3.8-flash' && args.apiKey === 'key-1') {
+          throw new AIError('not rolled out here', {
+            code: AI_ERROR_CODES.MODEL_NOT_FOUND,
+            status: 404,
+            retryable: true,
+            scope: 'MODEL_SLOT',
+          });
+        }
+        return { raw: successRaw('same-model-next-project'), latencyMs: 10, httpStatus: 200 };
+      },
+    },
+  });
+
+  const result = await ai.run('MAIN_CBT', { content: 'exam' });
+
+  assert.deepEqual(calls, [
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-2' },
+  ]);
+  assert.equal(result.requestedModel, 'gemini-3.8-flash');
+  assert.equal(result.projectSlot, 'p2');
+});
+
+test('model-not-found across every project falls to the next approved model', async () => {
   const calls = [];
   const ai = createAIOrchestrator({
     projectPool: pool(),
@@ -103,11 +134,11 @@ test('model-not-found skips remaining keys for that model', async () => {
       async generate(args) {
         calls.push({ modelId: args.modelId, apiKey: args.apiKey });
         if (args.modelId === 'gemini-3.8-flash') {
-          throw new AIError('gone', {
+          throw new AIError('not available', {
             code: AI_ERROR_CODES.MODEL_NOT_FOUND,
             status: 404,
-            retryable: false,
-            scope: 'MODEL',
+            retryable: true,
+            scope: 'MODEL_SLOT',
           });
         }
         return { raw: successRaw('next-model'), latencyMs: 10, httpStatus: 200 };
@@ -115,11 +146,45 @@ test('model-not-found skips remaining keys for that model', async () => {
     },
   });
 
-  await ai.run('MAIN_CBT', { content: 'exam' });
+  const result = await ai.run('MAIN_CBT', { content: 'exam' });
 
   assert.deepEqual(calls, [
     { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-2' },
     { modelId: 'gemini-3.7-flash', apiKey: 'key-1' },
+  ]);
+  assert.equal(result.requestedModel, 'gemini-3.7-flash');
+});
+
+test('project-specific 403 access denial does not disable the API key globally', async () => {
+  const calls = [];
+  const projectPool = pool();
+  const ai = createAIOrchestrator({
+    projectPool,
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, apiKey: args.apiKey });
+        if (args.apiKey === 'key-1') {
+          throw new AIError('project lacks model access', {
+            code: AI_ERROR_CODES.ACCESS_DENIED,
+            status: 403,
+            retryable: true,
+            scope: 'MODEL_SLOT',
+          });
+        }
+        return { raw: successRaw('ok'), latencyMs: 10, httpStatus: 200 };
+      },
+    },
+  });
+
+  const result = await ai.run('MAIN_CBT', { content: 'exam' });
+
+  assert.equal(result.projectSlot, 'p2');
+  assert.equal(projectPool.get('p1').enabled, true);
+  assert.deepEqual(calls.slice(0, 2), [
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-2' },
   ]);
 });
 
