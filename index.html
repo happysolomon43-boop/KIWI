@@ -9047,7 +9047,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
       function _reckoningRouteAllowed(page) {
         if (!_reckoningGlobalLockActive()) return true;
-        if (page === "settings") return true;
+        if (page === "settings" || page === "brain") return true;
         if (page === "exam" && AppState.tempExam && AppState.tempExam.isReckoning) return true;
         return false;
       }
@@ -9066,7 +9066,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           return;
         }
 
-        if (_reckoningGlobalLockActive() && page === "settings") {
+        if (_reckoningGlobalLockActive() && (page === "settings" || page === "brain")) {
           _setReckoningLockdownUi(true);
           if (typeof _closeReckoningSurface === "function") _closeReckoningSurface();
         }
@@ -14216,14 +14216,22 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           ? '<div class="reckoning-failsafe-note">Failed attempts: <strong>' + failureCount + '/' + failsafeThreshold + '</strong>. After the sixth failed attempt, the lockdown is released and this subject\'s effective KS is reduced by 90%.</div>'
           : "";
         const secondaryActionHtml = isMandatory
-          ? '<button class="btn btn-secondary" id="openReckoningSettingsBtn" type="button" style="width:100%;">Open Settings</button>'
+          ? '<div style="display:flex;flex-direction:column;gap:8px;">' +
+              '<button class="btn btn-secondary" id="openReckoningBrainBtn" type="button" style="width:100%;">Open Brain</button>' +
+              '<button class="btn btn-secondary" id="openReckoningSettingsBtn" type="button" style="width:100%;">Open Settings</button>' +
+            '</div>'
           : '<button class="btn btn-secondary" id="minimizeReckoningBtnBottom" type="button" style="width:100%;">Minimize</button>';
 
-        // Settings is the sole normal feature exempt from a mandatory Reckoning.
-        if (isMandatory && AppState.currentPage === "settings" && options.forceSettingsOverlay !== true) {
+        // Brain and Settings remain usable during a mandatory Reckoning. Suppress
+        // the mandatory overlay on those surfaces unless the user explicitly asks
+        // to reopen it from the in-page Reckoning controls.
+        if (
+          isMandatory &&
+          (AppState.currentPage === "settings" || AppState.currentPage === "brain") &&
+          options.forceLockoutOverlay !== true
+        ) {
           _setReckoningLockdownUi(true);
           _closeReckoningSurface();
-          if (typeof renderSettings === "function") renderSettings();
           return;
         }
 
@@ -14243,7 +14251,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         </div>
         ${isMandatory ? `
         <div style="margin:10px 0 14px;padding:10px 12px;border:1px solid rgba(224,82,82,.28);border-radius:var(--r);background:rgba(224,82,82,.07);color:var(--red-bright);font-size:var(--text-sm);line-height:1.55;text-align:center;">
-          KIWI is locked while The Reckoning is active. The lock cannot be minimized or dismissed. Settings remains available.
+          KIWI is locked while The Reckoning is active. The lock cannot be minimized or dismissed. Brain and Settings remain available.
         </div>` : ""}
         ${failsafeNoteHtml}
         <div class="reckoning-stats">
@@ -14319,6 +14327,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const _minimizeCurrentReckoning = () => _minimizeReckoningSurface(reckoning);
         document.getElementById("minimizeReckoningBtn")?.addEventListener("click", _minimizeCurrentReckoning);
         document.getElementById("minimizeReckoningBtnBottom")?.addEventListener("click", _minimizeCurrentReckoning);
+        document.getElementById("openReckoningBrainBtn")?.addEventListener("click", () => {
+          _closeReckoningSurface();
+          _setReckoningLockdownUi(true);
+          navigateTo("brain", { fromReckoning: true });
+        });
         document.getElementById("openReckoningSettingsBtn")?.addEventListener("click", () => {
           _closeReckoningSurface();
           _setReckoningLockdownUi(true);
@@ -21345,7 +21358,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           const settings = AppState.settings || {};
           const settingsLockedByReckoning = _reckoningGlobalLockActive();
           const settingsLockBannerHtml = settingsLockedByReckoning
-            ? '<div class="card reckoning-settings-banner" id="reckoningSettingsLockBanner" style="margin-bottom:20px;"><div><div class="settings-section-title" style="color:var(--red-bright);">The Reckoning is active</div><div style="font-size:var(--text-sm);color:var(--text-2);line-height:1.6;">Settings is the only normal KIWI area available during lockdown. Failed attempts: ' + (Number(AppState.reckoning?.failure_count) || 0) + '/' + (Number(AppState.reckoning?.failsafe_threshold) || 6) + '.</div></div><button class="btn btn-primary btn-sm" id="returnToReckoningBtn">Return to Reckoning</button></div>'
+            ? '<div class="card reckoning-settings-banner" id="reckoningSettingsLockBanner" style="margin-bottom:20px;"><div><div class="settings-section-title" style="color:var(--red-bright);">The Reckoning is active</div><div style="font-size:var(--text-sm);color:var(--text-2);line-height:1.6;">Brain and Settings remain available during lockdown. Failed attempts: ' + (Number(AppState.reckoning?.failure_count) || 0) + '/' + (Number(AppState.reckoning?.failsafe_threshold) || 6) + '.</div></div><button class="btn btn-primary btn-sm" id="returnToReckoningBtn">Return to Reckoning</button></div>'
             : "";
           const marketplaceSettingsAction = settingsLockedByReckoning
             ? '<div style="font-size:var(--text-sm);color:var(--text-4);">Marketplace is unavailable until The Reckoning ends.</div>'
@@ -21531,7 +21544,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       </div>
     `;
           document.getElementById("returnToReckoningBtn")?.addEventListener("click", () => {
-            showReckoningOverlay(AppState.reckoning, { force: true, mandatory: true, forceSettingsOverlay: true });
+            showReckoningOverlay(AppState.reckoning, { force: true, mandatory: true, forceLockoutOverlay: true });
           });
 
           document.getElementById("settingName").addEventListener("change", async (e) => {
