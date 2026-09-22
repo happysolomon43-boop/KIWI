@@ -15676,15 +15676,16 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
           // [DESIGN: §17.2] Learning Debt indicator — prior Bubble debt on same subject [DESIGN: §10]
           var debtHTML = '';
-          if ((detail.learning_debt_card_count || 0) > 0) {
+          var debtCount = Number(detail.learning_debt_card_count) || 0;
+          if (debtCount > 0) {
             debtHTML =
               '<div style="margin-bottom:16px;padding:10px 14px;background:var(--bg-3);' +
                 'border:1px solid var(--amber);border-radius:var(--r);">' +
                 '<div style="font-family:var(--font-mono);font-size:var(--text-xs);' +
                   'text-transform:uppercase;letter-spacing:1.5px;color:var(--amber);margin-bottom:4px;">⚠ Learning Debt</div>' +
                 '<div style="font-size:var(--text-sm);color:var(--text-2);">' +
-                  detail.learning_debt_card_count + ' card' +
-                  (detail.learning_debt_card_count !== 1 ? 's' : '') +
+                  debtCount + ' card' +
+                  (debtCount !== 1 ? 's' : '') +
                   ' unmastered from a prior closed goal. Cleared only on VERIFIED state in a CBT exam.' +
                 '</div>' +
               '</div>';
