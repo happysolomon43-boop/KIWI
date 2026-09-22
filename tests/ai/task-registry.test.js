@@ -14,7 +14,7 @@ const {
 
 test('AI task registry is structurally valid', () => {
   assert.deepEqual(validateTaskRegistry(), []);
-  assert.equal(CANONICAL_AI_TASK_IDS.length, 27);
+  assert.equal(CANONICAL_AI_TASK_IDS.length, 28);
 });
 
 test('AI task classes match the accepted Phase 1 inventory', () => {
@@ -24,7 +24,7 @@ test('AI task classes match the accepted Phase 1 inventory', () => {
   }, {});
 
   assert.deepEqual(counts, {
-    [AI_CLASSES.VVIP]: 5,
+    [AI_CLASSES.VVIP]: 6,
     [AI_CLASSES.VIP]: 15,
     [AI_CLASSES.IP]: 7,
   });
@@ -35,6 +35,7 @@ test('core assessment and knowledge creation tasks are VVIP with a Flash quality
     'MAIN_CBT',
     'RECKONING_CBT',
     'CBT_COMPLETION',
+    'CBT_QUESTION_AUDIT',
     'FLASHCARD_GENERATION',
     'IMPORT_IMAGE_EXTRACTION',
   ]) {
@@ -50,6 +51,7 @@ test('main CBT, Reckoning CBT, completion, and flashcard generation retain high 
     'MAIN_CBT',
     'RECKONING_CBT',
     'CBT_COMPLETION',
+    'CBT_QUESTION_AUDIT',
     'FLASHCARD_GENERATION',
   ]) {
     assert.equal(AI_TASKS[taskId].reasoning, REASONING_LEVELS.HIGH, taskId);
