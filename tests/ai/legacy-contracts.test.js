@@ -16,9 +16,9 @@ function section(startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test('legacy Gemini inventory has dropped to 20 direct calls after IP migration', () => {
+test('legacy Gemini inventory has dropped to 4 direct VVIP callsites after VIP migration', () => {
   const calls = source.match(/geminiModel\.generateContent\s*\(/g) || [];
-  assert.equal(calls.length, 20);
+  assert.equal(calls.length, 4);
 });
 
 test('legacy Gemini transport remains centralized in one provider endpoint', () => {
