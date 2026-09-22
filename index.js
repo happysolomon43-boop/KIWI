@@ -21263,6 +21263,7 @@ async function runSchemaMigrations() {
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS projected_completion_date timestamptz`,
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS projected_best_case timestamptz`,
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS projected_minimum_viable timestamptz`,
+    `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS last_ks_snapshot_at timestamptz`,
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS final_ks_at_deadline numeric`,
     `ALTER TABLE mastery_goals ADD COLUMN IF NOT EXISTS archived_at timestamptz`,
 
