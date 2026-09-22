@@ -79,9 +79,10 @@ function createModelRouter({
 
     switch (task.modelPolicy) {
       case MODEL_POLICIES.TOP_STABLE_FLASH:
-        // Keep the strongest three approved stable Flash generations unless an
-        // emergency VVIP pin is configured.
-        models = pinAsCeiling(flash, pins.VVIP).slice(0, 3);
+        // Keep four approved stable Flash generations. The fourth route is a
+        // quality-preserving emergency fallback (still FLASH) and only matters
+        // when newer generations are overloaded or quota-limited.
+        models = pinAsCeiling(flash, pins.VVIP).slice(0, 4);
         break;
 
       case MODEL_POLICIES.VIP_STABLE_FLASH:
