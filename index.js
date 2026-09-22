@@ -35,6 +35,7 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { WebSocketServer } = require('ws');
 const { createEcosystemV2 } = require('./ecosystem_v2');
+const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
 
@@ -9721,17 +9722,29 @@ const activeMilestones = [...new Set([
 ])].sort((a, b) => a - b);
 // Ecosystem V2: one canonical persisted Vitality value everywhere.
 const canonicalTreeHealth = Math.max(0, Math.min(100, Math.round(stats?.tree_health ?? 100)));
+const totalFruits = subjectsData.reduce((sum, subject) => sum + (Number(subject.fruit_count) || 0), 0);
+const canonicalTreeState = buildTreeState({
+stage: stats?.tree_stage || 1,
+vitality: canonicalTreeHealth,
+growthPoints: Number(stats?.growth_points) || 0,
+nextStage: ecosystemV2.nextTreeStage(stats || {}),
+knowledgeScore: globalKS.score,
+fruits: totalFruits,
+milestones: activeMilestones,
+streak: currentStreak,
+});
 const _biomeResult = {
 user_id: userId,
 username: user?.username,
 global_knowledge_score: globalKS.score,
 global_zone: globalZoneResult.zoneName,
-tree_stage: stats?.tree_stage || 1,
-tree_health: canonicalTreeHealth,
-growth_points: Number(stats?.growth_points) || 0,
-next_tree_stage: ecosystemV2.nextTreeStage(stats || {}),
-current_streak: currentStreak,
-streak_milestones: activeMilestones,
+tree_stage: canonicalTreeState.stage,
+tree_health: canonicalTreeState.vitality,
+growth_points: canonicalTreeState.growthPoints,
+next_tree_stage: canonicalTreeState.nextStage,
+current_streak: canonicalTreeState.streak,
+streak_milestones: canonicalTreeState.milestones,
+treeState: canonicalTreeState,
 subjects: subjectsData,
 };
 setCachedBiome(userId, _biomeResult);
@@ -18516,39 +18529,25 @@ biomeRouter.use(reckoningLockout);
 biomeRouter.get(['/', ''], async (req, res) => {
 try {
 const biome = await buildBiomeData(req.user.id);
-const treeStageLabels = [
-'',
-'SEEDLING',
-'SPROUT',
-'SAPLING',
-'YOUNG TREE',
-'THRIVING',
-'BLOOMING',
-'MATURE',
-'ANCIENT',
-];
-// P5.2+P5.4+P5.5 FIX: populate globalTreeState with real leaves/fruits/milestones;
-// populate droughtDays and stateClass from subject data computed in buildBiomeData
-const totalFruits = (biome.subjects || []).reduce((sum, s) => sum + (s.fruit_count || 0), 0);
 const globalKSScore = biome.global_knowledge_score || 0;
-// leaves: scaled to KS (4 minimum, up to 54 at KS 100)
-const leavesCount = Math.max(4, Math.round(globalKSScore * 0.5));
+// Dashboard and Biome now share one TreeState contract. Keep globalTreeState as
+// the frontend compatibility name until the PixiJS renderer migration.
+const globalTreeState = biome.treeState || buildTreeState({
+stage: biome.tree_stage || 1,
+vitality: biome.tree_health ?? 100,
+growthPoints: biome.growth_points || 0,
+nextStage: biome.next_tree_stage || null,
+knowledgeScore: globalKSScore,
+fruits: (biome.subjects || []).reduce((sum, s) => sum + (Number(s.fruit_count) || 0), 0),
+milestones: biome.streak_milestones || [],
+streak: biome.current_streak || 0,
+});
 // Add frontend-compatible aliases
 const enriched = {
 ...biome,
 // Frontend-expected fields
 globalKS: globalKSScore,
-globalTreeState: {
-stage: biome.tree_stage || 1,
-health: biome.tree_health ?? 100,
-growthPoints: biome.growth_points || 0,
-nextStage: biome.next_tree_stage || null,
-leaves: leavesCount,
-fruits: totalFruits,
-rings: (biome.streak_milestones || []).length,
-milestones: biome.streak_milestones || [],
-stageLabel: treeStageLabels[biome.tree_stage || 1] || 'SEEDLING',
-},
+globalTreeState,
 zones: (biome.subjects || []).map((s) => ({
 id: s.subject_id,
 name: s.subject_name,
@@ -19929,10 +19928,6 @@ res.status(500).json({ error: 'Failed to update settings', details: e.message })
 
 progressRouter.get('/dashboard', async (req, res) => {
 try {
-// Perf-2 FIX: fire buildBiomeData in parallel with the initial data fetches.
-// Previously it was awaited later in the route, blocking the response by up to
-// 2 s on every dashboard load. Running it alongside other fetches means its
-// latency is hidden behind the other queries (which already take ~300-500ms).
 // Refresh derived ecosystem telemetry while the dashboard's other independent
 // reads are in flight. Vitality depends on pressure and on the rolling activity
 // window, so persisting it only at session-end makes the tree look frozen.
@@ -19944,8 +19939,6 @@ const _freshTelemetryPromise = (async () => {
   console.error('[KIWI] dashboard telemetry refresh failed:', e.message);
   return null;
 });
-// Perf: fire biome in background immediately
-const _biomePromise = buildBiomeData(req.user.id).catch(() => ({}));
 const now = new Date();
 const todayStr = now.toISOString().split('T')[0];
 const weekStartStr = (() => {
@@ -20015,17 +20008,6 @@ db.dailyRitualCache.get(req.user.id, 'weekly_anchor', weekStartStr).catch(() => 
 db.dailyRitualCache.get(req.user.id, 'daily_invitations', todayStr).catch(() => null), // Perf: was sequential
 ]);
 // Tree state
-const treeStageLabels = [
-'',
-'SEEDLING',
-'SPROUT',
-'SAPLING',
-'YOUNG TREE',
-'THRIVING',
-'BLOOMING',
-'MATURE',
-'ANCIENT',
-];
 // M1 FIX: streak milestones — permanent, survive streak breaks (same logic as buildBiomeData)
 const dashStreak = stats?.current_streak || 0;
 const dashEarnedMilestones = stats?.streak_milestones_earned || [];
@@ -20057,21 +20039,17 @@ score: parseFloat(dashGlobalKS.toFixed(2)),
 band: getBandName(dashGlobalKS),
 totalCards: allCards.length,
 };
-// Perf-2 FIX: await the already-started promise — by now it has been running
-// in parallel with all the KS and stats queries above, so this is effectively free.
-const biomeForTree = await _biomePromise;
-const treeState = biomeForTree.treeState || {
+const treeState = buildTreeState({
 stage: stats?.tree_stage || 1,
-health: stats?.tree_health ?? 100,
+vitality: stats?.tree_health ?? 100,
+vitalityBreakdown: freshTelemetry?.vitality?.breakdown || null,
 growthPoints: Number(stats?.growth_points) || 0,
 nextStage: ecosystemV2.nextTreeStage(stats || {}),
-leaves: Math.max(4, Math.round(dashGlobalKS * 0.5)),
+knowledgeScore: dashGlobalKS,
 fruits: dashTotalFruits,
-rings: dashActiveMilestones.length,
-stageLabel: treeStageLabels[stats?.tree_stage || 1] || 'SEEDLING',
 milestones: dashActiveMilestones,
-};
-treeState.health = Math.max(0, Math.min(100, Math.round(stats?.tree_health ?? treeState.health ?? 100)));
+streak: dashStreak,
+});
 // Brain preview
 const brainPreview = {
 interventionCount: // P3.2-B1 FIX: L0 is the correct calm baseline.
