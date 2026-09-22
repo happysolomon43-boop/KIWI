@@ -37,7 +37,15 @@ function createAIRuntime({
   const quotaManager = createQuotaManager({ store });
   const telemetry = createTelemetry({ store, logger });
   const modelLifecycle = createModelLifecycle({ catalog, store, logger });
-  const router = createModelRouter({ registry: AI_TASKS, catalog });
+  const router = createModelRouter({
+    registry: AI_TASKS,
+    catalog,
+    pins: {
+      VVIP: String(env.AI_PIN_VVIP_MODEL || '').trim() || null,
+      VIP: String(env.AI_PIN_VIP_MODEL || '').trim() || null,
+      IP: String(env.AI_PIN_IP_MODEL || '').trim() || null,
+    },
+  });
   const transport = createGeminiTransport({ fetchImpl });
 
   const qualifier = createModelQualifier({
