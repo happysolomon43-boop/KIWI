@@ -1,7 +1,7 @@
 'use strict';
 
 const { AI_TASKS } = require('./task-registry');
-const { createModelCatalog, MODEL_STATUS } = require('./model-catalog');
+const { createModelCatalog } = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
 const { createProjectPool } = require('./project-pool');
 const { createGeminiTransport } = require('./gemini-transport');
@@ -387,10 +387,19 @@ function createAIOrchestrator({
             });
           }
 
-          const lifecycleResult = await sideEffect(
-            'model lifecycle failure',
-            () => modelLifecycle?.recordFailure(candidate.modelId, aiError)
-          );
+          const slotScopedAvailabilityFailure =
+            aiError.code === AI_ERROR_CODES.MODEL_NOT_FOUND ||
+            aiError.code === AI_ERROR_CODES.ACCESS_DENIED;
+
+          // 403/404 can differ by Google project during model rollouts. Those
+          // failures belong to project × model quota/availability state and
+          // must not suspend the model globally after the first project.
+          const lifecycleResult = slotScopedAvailabilityFailure
+            ? null
+            : await sideEffect(
+                'model lifecycle failure',
+                () => modelLifecycle?.recordFailure(candidate.modelId, aiError)
+              );
 
           // A newly auto-promoted model may reveal an incompatibility that the
           // synthetic qualification did not cover. If the lifecycle circuit
@@ -410,23 +419,16 @@ function createAIOrchestrator({
           }
 
           if (aiError.code === AI_ERROR_CODES.AUTH) {
-            // Authentication is key/project-wide, not model-specific.
+            // True credential failures are key/project-wide.
             resolvedProjectPool.disable(slot.id, aiError.code);
             continue;
           }
 
-          if (aiError.code === AI_ERROR_CODES.MODEL_NOT_FOUND) {
-            // A model-level 404 should not burn the remaining project pool.
-            if (modelLifecycle) {
-              await sideEffect('model suspension', () => modelLifecycle.suspend(
-                candidate.modelId,
-                'provider returned MODEL_NOT_FOUND'
-              ));
-            } else {
-              catalog.setStatus(candidate.modelId, MODEL_STATUS.SUSPENDED);
-            }
-            skipRemainingSlotsForModel = true;
-            break;
+          if (slotScopedAvailabilityFailure) {
+            // Continue through the independent project pool for this same
+            // model. Only after every currently healthy project is unavailable
+            // does routing fall to the next approved model.
+            continue;
           }
 
           if (
