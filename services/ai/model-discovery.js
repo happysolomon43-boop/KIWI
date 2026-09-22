@@ -150,8 +150,10 @@ function createModelDiscoveryManager({
 
       // Refresh provider metadata/token limits for known models without
       // overwriting their approved/suspended/denied lifecycle status.
+      let candidate = existing;
+
       if (existing) {
-        const refreshed = catalog.upsert({
+        candidate = catalog.upsert({
           ...existing,
           inputTokenLimit: model.inputTokenLimit || existing.inputTokenLimit,
           outputTokenLimit: model.outputTokenLimit || existing.outputTokenLimit,
@@ -161,17 +163,27 @@ function createModelDiscoveryManager({
             lastSeenAt: new Date().toISOString(),
           },
         });
-        await lifecycle.discover(refreshed);
-        continue;
-      }
+        await lifecycle.discover(candidate);
 
-      const discoveredModel = await lifecycle.discover({
-        ...model,
-        status: deniedNames.has(model.id)
-          ? MODEL_STATUS.DENIED
-          : MODEL_STATUS.DISCOVERED,
-      });
-      discovered.push(discoveredModel.id);
+        // Approved, suspended and denied models keep their lifecycle state.
+        // DISCOVERED models remain eligible for a later qualification retry
+        // after transient quota/network failures or after auto-promotion is enabled.
+        if (
+          candidate.status === MODEL_STATUS.APPROVED ||
+          candidate.status === MODEL_STATUS.SUSPENDED ||
+          candidate.status === MODEL_STATUS.DENIED
+        ) {
+          continue;
+        }
+      } else {
+        candidate = await lifecycle.discover({
+          ...model,
+          status: deniedNames.has(model.id)
+            ? MODEL_STATUS.DENIED
+            : MODEL_STATUS.DISCOVERED,
+        });
+        discovered.push(candidate.id);
+      }
 
       if (deniedNames.has(model.id)) {
         skipped.push({ modelId: model.id, reason: 'denylist' });
@@ -189,7 +201,7 @@ function createModelDiscoveryManager({
         continue;
       }
 
-      const result = await qualifier.qualify(discoveredModel);
+      const result = await qualifier.qualify(candidate);
       if (result.status === 'PASSED') {
         promoted.push(model.id);
       }
