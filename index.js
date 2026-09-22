@@ -6685,6 +6685,18 @@ if (allExamSessions.length > 0 && db.examQuestions.findBySession) {
 examLogs = []; // non-fatal
 }
 const stateResult = await determineCardState(card, cardLogs, examLogs, subjectExamDate);
+const existingStateForPenalty = await db.cardStates.get(userId, cardId).catch(() => null);
+if (
+  existingStateForPenalty &&
+  Number(existingStateForPenalty.reckoning_penalty_factor) < 1 &&
+  existingStateForPenalty.reckoning_penalty_applied_at &&
+  card.last_reviewed_at &&
+  new Date(card.last_reviewed_at).getTime() >
+    new Date(existingStateForPenalty.reckoning_penalty_applied_at).getTime()
+) {
+  stateResult.reckoning_penalty_factor = 1;
+  stateResult.reckoning_penalty_applied_at = null;
+}
 await db.cardStates.update(userId, cardId, stateResult);
 return stateResult;
 }
@@ -6770,32 +6782,52 @@ function computeEffectiveWeight(cardState, card) {
 const { stage, verified } = cardState;
 const isFragile = cardState.state === CARD_STATES.FRAGILE;
 const isGhost   = cardState.state === CARD_STATES.GHOST;
+
+// Failsafe KS penalty is evidence-recoverable rather than destructive: when the
+// 6-failure circuit breaker releases a Reckoning, every existing card contributes
+// only 10% of its normal weight. A card returns to normal contribution after it is
+// genuinely reviewed AFTER the penalty timestamp. This gives an exact ~90% subject
+// KS reduction without erasing SRS history, and lets deliberate study rebuild it.
+const penaltyFactorRaw = Number(cardState.reckoning_penalty_factor);
+const penaltyFactor = Number.isFinite(penaltyFactorRaw)
+  ? Math.max(0, Math.min(1, penaltyFactorRaw))
+  : 1;
+const penaltyAppliedAt = cardState.reckoning_penalty_applied_at
+  ? new Date(cardState.reckoning_penalty_applied_at).getTime()
+  : 0;
+const lastReviewedAt = card.last_reviewed_at
+  ? new Date(card.last_reviewed_at).getTime()
+  : 0;
+const activePenaltyFactor =
+  penaltyFactor < 1 &&
+  penaltyAppliedAt > 0 &&
+  !(lastReviewedAt > penaltyAppliedAt)
+    ? penaltyFactor
+    : 1;
+
+let effectiveWeight;
 // Issue-2 FIX: Pristine SEEDLINGs (stage=1, never reviewed, no repetitions)
-// contribute weight=0 instead of weight=1. This prevents fresh AI imports from
-// flooring KS at 20 and satisfies spec Principle 3: "Importing SEEDLINGs
-// actively lowers a subject's KS because the average weight falls."
-// Cards that regressed to stage 1 after prior reviews still carry weight=1
-// (repetition_count > 0 survives regressions), so they are not zeroed out.
+// contribute weight=0 instead of weight=1.
 const isPristineSeedling = stage === 1 &&
   !verified &&
   (card.repetition_count === 0 || card.repetition_count == null);
-if (isPristineSeedling) return 0;
-const baseWeight      = getBaseWeight(stage, verified, isFragile);
-const daysSinceReview = daysSince(card.last_reviewed_at);
-if (isGhost || (stage === 5 && daysSinceReview >= 60)) {
-  return applyGhostDecay(baseWeight, daysSinceReview, verified, isGhost);
+if (isPristineSeedling) {
+  effectiveWeight = 0;
+} else {
+  const baseWeight      = getBaseWeight(stage, verified, isFragile);
+  const daysSinceReview = daysSince(card.last_reviewed_at);
+  if (isGhost || (stage === 5 && daysSinceReview >= 60)) {
+    effectiveWeight = applyGhostDecay(baseWeight, daysSinceReview, verified, isGhost);
+  } else if (stage >= 3 && card.fsrs_stability && card.last_reviewed_at) {
+    const R       = fsrsRetrievability(daysSinceReview, card.fsrs_stability);
+    const rFactor = Math.max(0.6, Math.min(1.0, R));
+    effectiveWeight = parseFloat((baseWeight * rFactor).toFixed(4));
+  } else {
+    effectiveWeight = baseWeight;
+  }
 }
-// HYBRID CHANGE 4: FSRS retrievability modulation for review-phase cards (stage >= 3).
-// R(t) in [0.6, 1.0] scales the base weight continuously as memory fades between
-// reviews. Cards at full health (R ≈ 1.0) get full stage weight; degrading cards
-// lose weight proportionally — not just at the ghost threshold. Learning cards
-// (stage 1-2) are unmodulated because their memory hasn't stabilised yet.
-if (stage >= 3 && card.fsrs_stability && card.last_reviewed_at) {
-  const R       = fsrsRetrievability(daysSinceReview, card.fsrs_stability);
-  const rFactor = Math.max(0.6, Math.min(1.0, R));
-  return parseFloat((baseWeight * rFactor).toFixed(4));
-}
-return baseWeight;
+
+return parseFloat((effectiveWeight * activePenaltyFactor).toFixed(4));
 }
 
 // Fix #20: accepts cachedStates to eliminate redundant findByUser calls across callers
@@ -8230,6 +8262,18 @@ for (const [key, value] of Object.entries(previousSources)) {
   pressureScore += points;
 }
 
+// A failsafe release must be meaningful. While pressure remains L4, keep a
+// non-scoring latch that prevents an immediate new Reckoning from recreating
+// the lockdown. The latch clears automatically once this subject is genuinely
+// brought below the L4 threshold.
+const failsafeLatched = previousSources.reckoning_failsafe_latched === true;
+if (failsafeLatched) {
+  pressureSources.reckoning_failsafe_latched = true;
+  if (previousSources.reckoning_failsafe_released_at) {
+    pressureSources.reckoning_failsafe_released_at = previousSources.reckoning_failsafe_released_at;
+  }
+}
+
 // A passed Reckoning proves current recall without pretending every weak card
 // disappeared. Give bounded, durable relief for seven days.
 const reliefUntil = previousSources.reckoning_relief_until;
@@ -8242,6 +8286,10 @@ if (reliefUntil && new Date(reliefUntil).getTime() > Date.now()) {
 // P5.6 FIX: cap pressure at 100 before storing/returning to prevent bar overflow
 const cappedPressureScore = Math.min(100, Math.max(0, pressureScore));
 const interventionLevel = computeInterventionLevel(cappedPressureScore);
+if (failsafeLatched && interventionLevel !== 'L4') {
+  pressureSources.reckoning_failsafe_latched = false;
+  pressureSources.reckoning_failsafe_recovered_at = new Date().toISOString();
+}
 await db.brainPressure.set(userId, subjectId, {
 pressure_score: cappedPressureScore,
 intervention_level: interventionLevel,
@@ -8295,6 +8343,13 @@ const subject = await db.subjects.findById(subjectId).catch(() => null);
 const pressureData = await calculateSubjectPressure(userId, subjectId);
 if (pressureData.intervention_level !== 'L4') {
 return { status: 'not_required', pressure_score: pressureData.pressure_score };
+}
+if (pressureData.sources?.reckoning_failsafe_latched === true) {
+return {
+  status: 'failsafe_recovery',
+  pressure_score: pressureData.pressure_score,
+  message: 'Reckoning failsafe recovery is active until this subject falls below L4 pressure.',
+};
 }
 // Fix #50: share the bulk fetches with calculateSubjectPressure — no per-card WHERE scans
 const decks = await db.decks.findBySubject(userId, subjectId);
@@ -8505,94 +8560,286 @@ completed_at: null,
 return { status: 'in_progress', exam_session_id: examSessionId };
 }
 
+const RECKONING_FAILSAFE_FAILURES = 6;
+const RECKONING_FAILSAFE_KS_FACTOR = 0.10;
+
+async function applyReckoningFailsafePenalty(userId, subjectId, reckoningId, failureCount) {
+  // Claim the one-time consequence atomically. This protects against two tabs,
+  // duplicated submit requests, crash recovery and multi-instance deployments
+  // applying the 90% reduction more than once.
+  const freshBeforeClaim = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+  if (!freshBeforeClaim) throw new Error('Reckoning not found while applying failsafe');
+
+  const alreadyReleased = freshBeforeClaim.status === 'failsafe_released' || freshBeforeClaim.failsafe_released_at;
+  if (alreadyReleased) {
+    return {
+      released: true,
+      already_applied: true,
+      failure_count: Number(freshBeforeClaim.failure_count) || failureCount,
+      ks_before: Number(freshBeforeClaim.failsafe_penalty_ks_before) || 0,
+      ks_after: Number(freshBeforeClaim.failsafe_penalty_ks_after) || 0,
+      reduction_pct: 90,
+    };
+  }
+
+  const { rows: claimedRows } = await query(
+    `UPDATE reckoning_sessions
+     SET failsafe_claimed_at = NOW(), updated_at = NOW()
+     WHERE id = $1
+       AND failsafe_released_at IS NULL
+       AND (
+         failsafe_claimed_at IS NULL OR
+         failsafe_claimed_at < NOW() - INTERVAL '2 minutes'
+       )
+     RETURNING id`,
+    [reckoningId]
+  );
+
+  if (!claimedRows[0]) {
+    // Another request owns the claim. Wait briefly for it to finish rather than
+    // racing a second 90% reduction. If it is still running, return a retryable
+    // error and leave the lockdown intact.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const current = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+      if (current?.status === 'failsafe_released' || current?.failsafe_released_at) {
+        return {
+          released: true,
+          already_applied: true,
+          failure_count: Number(current.failure_count) || failureCount,
+          ks_before: Number(current.failsafe_penalty_ks_before) || 0,
+          ks_after: Number(current.failsafe_penalty_ks_after) || 0,
+          reduction_pct: 90,
+        };
+      }
+    }
+    const err = new Error('Reckoning failsafe is already being applied. Retry shortly.');
+    err.code = 'RECKONING_FAILSAFE_IN_PROGRESS';
+    throw err;
+  }
+
+  try {
+    invalidateKSCache(userId, subjectId);
+    const before = await computeKnowledgeScore(userId, subjectId).catch(() => ({ score: 0 }));
+    const beforeScore = Number(before?.score) || 0;
+
+    const decks = await db.decks.findBySubject(userId, subjectId).catch(() => []);
+    const deckIds = new Set(decks.map((d) => d.id));
+    const allCards = await db.cards.findAllForUser(userId).catch(() => []);
+    const subjectCards = allCards.filter((card) => deckIds.has(card.deck_id));
+    const cardIds = subjectCards.map((card) => card.id);
+
+    if (cardIds.length > 0) {
+      await batchInitializeSeedlingStates(userId, cardIds);
+      await query(
+        `UPDATE card_states
+         SET reckoning_penalty_factor = $1,
+             reckoning_penalty_applied_at = NOW(),
+             updated_at = NOW()
+         WHERE user_id = $2
+           AND card_id = ANY($3::text[])`,
+        [RECKONING_FAILSAFE_KS_FACTOR, userId, cardIds]
+      );
+    }
+
+    invalidateKSCache(userId, subjectId);
+    const after = await persistKnowledgeScore(userId, subjectId).catch(() => ({
+      score: beforeScore * RECKONING_FAILSAFE_KS_FACTOR,
+    }));
+    const afterScore = Number(after?.score) || 0;
+
+    const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+    await db.brainPressure.set(userId, subjectId, {
+      pressure_score: Number(currentPressure?.pressure_score) || 0,
+      intervention_level: currentPressure?.intervention_level || 'L4',
+      sources: {
+        ...(currentPressure?.sources || {}),
+        reckoning_failsafe_latched: true,
+        reckoning_failsafe_released_at: new Date().toISOString(),
+        reckoning_failsafe_failure_count: failureCount,
+      },
+    });
+
+    await db.reckoningSessions.update(reckoningId, {
+      status: 'failsafe_released',
+      failsafe_released_at: new Date(),
+      failsafe_claimed_at: null,
+      failsafe_penalty_ks_before: beforeScore,
+      failsafe_penalty_ks_after: afterScore,
+      completed_at: new Date(),
+      deferred_until: null,
+      exam_session_id: null,
+    });
+
+    wsSend(userId, 'ks_change', {
+      subject_id: subjectId,
+      ks_delta: parseFloat((afterScore - beforeScore).toFixed(2)),
+      new_ks: afterScore,
+      source: 'reckoning_failsafe',
+    });
+
+    return {
+      released: true,
+      failure_count: failureCount,
+      ks_before: beforeScore,
+      ks_after: afterScore,
+      reduction_pct: beforeScore > 0
+        ? parseFloat((((beforeScore - afterScore) / beforeScore) * 100).toFixed(2))
+        : 90,
+    };
+  } catch (err) {
+    // Leave the lock active, but release this claim so a later request can retry.
+    await query(
+      `UPDATE reckoning_sessions
+       SET failsafe_claimed_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND failsafe_released_at IS NULL`,
+      [reckoningId]
+    ).catch(() => null);
+    throw err;
+  }
+}
+
 async function completeReckoning(reckoningId, scorePct, debriefText) {
-// NEW-L2 FIX (completeReckoning): same always-truthy guard pattern — fixed.
 const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
 if (!reckoning) return null;
 const subjectId = reckoning.subject_id;
 const userId = reckoning.user_id;
-// Every generated Reckoning exam is a distinct attempt. Recording the attempt id
-// in pressure.sources makes outcome application idempotent if the server/browser
-// dies after pressure changes but before the Reckoning row is finalized.
 const attemptKey = reckoning.exam_session_id || reckoning.id;
-// P3.3-B4 FIX: pressure resets ONLY when reckoning is survived (score >= 70).
-// Previously unconditional — a failed reckoning gave a free pressure escape.
 const survived = parseFloat(scorePct) >= 70;
+
+let failureCount = Number(reckoning.failure_count) || 0;
+let countedThisAttempt = false;
+
+if (!survived) {
+  // Atomic + idempotent attempt accounting. Reconciliation or a retried submit
+  // cannot increment the counter twice for the same exam session.
+  const { rows } = await query(
+    `UPDATE reckoning_sessions
+     SET failure_count = failure_count + 1,
+         last_failure_exam_id = $2,
+         updated_at = NOW()
+     WHERE id = $1
+       AND (last_failure_exam_id IS DISTINCT FROM $2)
+     RETURNING failure_count`,
+    [reckoningId, String(attemptKey)]
+  );
+  if (rows[0]) {
+    failureCount = Number(rows[0].failure_count) || failureCount + 1;
+    countedThisAttempt = true;
+  } else {
+    const fresh = await db.reckoningSessions.findById(reckoningId).catch(() => reckoning);
+    failureCount = Number(fresh?.failure_count) || failureCount;
+  }
+}
+
 if (survived) {
+  const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+  const currentSources = currentPressure?.sources || {};
+  const reliefUntil = new Date(Date.now() + 7 * 86400000).toISOString();
+  if (currentSources.reckoning_relief_attempt_id !== attemptKey) {
+    const relievedScore = Math.max(0, (Number(currentPressure?.pressure_score) || 0) - 15);
+    await db.brainPressure.set(userId, subjectId, {
+      pressure_score: relievedScore,
+      intervention_level: computeInterventionLevel(relievedScore),
+      sources: {
+        ...currentSources,
+        reckoning_relief_until: reliefUntil,
+        reckoning_relief: -15,
+        reckoning_relief_attempt_id: attemptKey,
+        reckoning_failsafe_latched: false,
+      },
+    });
+  }
+
+  await db.reckoningSessions.update(reckoningId, {
+    status: 'completed',
+    score_pct: scorePct,
+    debrief_text: debriefText,
+    completed_at: new Date(),
+    exam_session_id: reckoning.exam_session_id,
+    deferred_until: null,
+  });
+
+  await awardSeedlings(
+    userId,
+    5,
+    'reckoning_survival',
+    `Survived Reckoning in ${reckoning.subject_name} with ${scorePct}%`,
+    'reckoning-survival:' + reckoning.id
+  );
+
+  return {
+    id: reckoning.id,
+    subject_id: subjectId,
+    subject_name: reckoning.subject_name,
+    status: 'completed',
+    pressure_reset: false,
+    pressure_relief_applied: true,
+    survived: true,
+    retry_required: false,
+    failure_count: failureCount,
+    failsafe_threshold: RECKONING_FAILSAFE_FAILURES,
+    relief_until: reliefUntil,
+    debrief_text: debriefText,
+  };
+}
+
+// A failed attempt remains a mandatory global lockdown through attempts 1–5.
 const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
 const currentSources = currentPressure?.sources || {};
-const reliefUntil = new Date(Date.now() + 7 * 86400000).toISOString();
-if (currentSources.reckoning_relief_attempt_id !== attemptKey) {
-const relievedScore = Math.max(0, (Number(currentPressure?.pressure_score) || 0) - 15);
-await db.brainPressure.set(userId, subjectId, {
-pressure_score: relievedScore,
-intervention_level: computeInterventionLevel(relievedScore),
-sources: {
-...currentSources,
-reckoning_relief_until: reliefUntil,
-reckoning_relief: -15,
-reckoning_relief_attempt_id: attemptKey,
-},
+if (countedThisAttempt && currentSources.reckoning_failure_attempt_id !== attemptKey) {
+  await db.brainPressure.set(userId, subjectId, {
+    pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5),
+    intervention_level: 'L4',
+    sources: {
+      ...currentSources,
+      manual_reckoning_failure: (Number(currentSources.manual_reckoning_failure) || 0) + 5,
+      reckoning_failure_attempt_id: attemptKey,
+    },
+  });
+}
+
+if (failureCount >= RECKONING_FAILSAFE_FAILURES) {
+  const failsafe = await applyReckoningFailsafePenalty(
+    userId, subjectId, reckoningId, failureCount
+  );
+  return {
+    id: reckoning.id,
+    subject_id: subjectId,
+    subject_name: reckoning.subject_name,
+    status: 'failsafe_released',
+    survived: false,
+    retry_required: false,
+    failure_count: failureCount,
+    failsafe_threshold: RECKONING_FAILSAFE_FAILURES,
+    failsafe_released: true,
+    failsafe,
+    debrief_text: debriefText,
+  };
+}
+
+await db.reckoningSessions.update(reckoningId, {
+  status: 'triggered',
+  score_pct: scorePct,
+  debrief_text: debriefText,
+  completed_at: new Date(),
+  exam_session_id: null,
+  deferred_until: null,
 });
-}
-} else {
-const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
-const currentSources = currentPressure?.sources || {};
-if (currentSources.reckoning_failure_attempt_id !== attemptKey) {
-await db.brainPressure.set(userId, subjectId, {
-pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5),
-intervention_level: 'L4',
-sources: {
-...currentSources,
-manual_reckoning_failure: (Number(currentSources.manual_reckoning_failure) || 0) + 5,
-reckoning_failure_attempt_id: attemptKey,
-},
-});
-}
-}
-const reckoningOutcome = {
-status: survived ? 'completed' : 'triggered',
-score_pct: scorePct,
-debrief_text: debriefText,
-completed_at: new Date(),
-// A failed attempt returns to a clean retry state. Never carry an old exam link
-// or a stale deferral window into the next attempt.
-exam_session_id: survived ? reckoning.exam_session_id : null,
-deferred_until: null,
-};
-try {
-await db.reckoningSessions.update(reckoningId, reckoningOutcome);
-} catch (err) {
-// Schema-drift fail-safe: an older database may not yet have completed_at.
-// Never leave a finished exam stuck as in_progress (and therefore forever
-// "Resume The Reckoning") just because this optional audit timestamp is absent.
-const isMissingCompletedAt =
-err?.code === '42703' &&
-/completed_at/i.test(String(err?.message || '')) &&
-/reckoning_sessions/i.test(String(err?.message || ''));
-if (!isMissingCompletedAt) throw err;
-const { completed_at: _ignoredCompletedAt, ...legacyOutcome } = reckoningOutcome;
-console.warn('[KIWI] reckoning_sessions.completed_at is missing; finalizing without the audit timestamp.');
-await db.reckoningSessions.update(reckoningId, legacyOutcome);
-}
-// Award seedling for survival
-if (survived) {
-await awardSeedlings(
-userId,
-5,
-'reckoning_survival',
-`Survived Reckoning in ${reckoning.subject_name} with ${scorePct}%`,
-'reckoning-survival:' + reckoning.id
-);
-}
+
 return {
-status: survived ? 'completed' : 'triggered',
-pressure_reset: false,
-pressure_relief_applied: survived,
-survived,
-retry_required: !survived,
-relief_until: survived ? new Date(Date.now() + 7 * 86400000).toISOString() : null,
-debrief_text: debriefText,
+  id: reckoning.id,
+  subject_id: subjectId,
+  subject_name: reckoning.subject_name,
+  status: 'triggered',
+  pressure_reset: false,
+  pressure_relief_applied: false,
+  survived: false,
+  retry_required: true,
+  failure_count: failureCount,
+  failsafe_threshold: RECKONING_FAILSAFE_FAILURES,
+  failures_remaining: Math.max(0, RECKONING_FAILSAFE_FAILURES - failureCount),
+  debrief_text: debriefText,
 };
 }
 
@@ -8605,6 +8852,68 @@ debrief_text: debriefText,
 //   • missing/invalid linked exam -> roll back to triggered so it can be rebuilt
 async function reconcileActiveReckoning(userId, active) {
 if (!active || active.user_id !== userId) return active || null;
+
+const storedFailureCount = Number(active.failure_count) || 0;
+if (
+  storedFailureCount >= RECKONING_FAILSAFE_FAILURES &&
+  active.status !== 'in_progress'
+) {
+  await applyReckoningFailsafePenalty(
+    userId,
+    active.subject_id,
+    active.id,
+    storedFailureCount
+  );
+  return null;
+}
+
+// Legacy/self-healing attempt accounting: earlier deployments did not persist a
+// failure counter. Reconstruct it from completed Reckoning exams belonging to
+// this same Reckoning era. If the user already crossed the six-failure circuit
+// breaker, release the stale lockdown immediately and apply the one-time KS
+// consequence rather than making them fail six more times after the upgrade.
+if ((Number(active.failure_count) || 0) < RECKONING_FAILSAFE_FAILURES) {
+  const { rows: legacyFailures } = await query(
+    `SELECT id
+     FROM exam_sessions
+     WHERE user_id = $1
+       AND subject_id = $2
+       AND is_reckoning = true
+       AND status = 'completed'
+       AND score_pct < 70
+       AND total_questions > 0
+       AND completed_at >= $3
+     ORDER BY completed_at ASC`,
+    [userId, active.subject_id, active.created_at || new Date(0)]
+  ).catch(() => ({ rows: [] }));
+
+  const historicalFailureCount = legacyFailures.length;
+  if (historicalFailureCount > (Number(active.failure_count) || 0)) {
+    const lastFailureId = legacyFailures[legacyFailures.length - 1]?.id || active.last_failure_exam_id || null;
+    await db.reckoningSessions.update(active.id, {
+      failure_count: historicalFailureCount,
+      last_failure_exam_id: lastFailureId,
+    });
+    active = {
+      ...active,
+      failure_count: historicalFailureCount,
+      last_failure_exam_id: lastFailureId,
+    };
+  }
+
+  if (
+    historicalFailureCount >= RECKONING_FAILSAFE_FAILURES &&
+    active.status !== 'in_progress'
+  ) {
+    await applyReckoningFailsafePenalty(
+      userId,
+      active.subject_id,
+      active.id,
+      historicalFailureCount
+    );
+    return null;
+  }
+}
 
 const now = Date.now();
 const expiryMs = active.deferred_until
@@ -12740,118 +13049,92 @@ const _otpStore = new Map();
 // ── Reckoning Lockout Middleware (B4) ─────────────────────────────────────────
 
 async function reckoningLockout(req, res, next) {
-// Reckoning is SUBJECT-SCOPED, not an account-wide app lock. Only block
-// attempts to START study or a normal exam in the affected subject. Reads,
-// navigation, session finalization, progress, marketplace, other subjects, etc.
-// must remain usable so the UI cannot enter a 403/overlay feedback loop.
 if (!req.user) return next();
 
-const baseUrl = String(req.baseUrl || '');
-const pathName = String(req.path || '');
-const method = String(req.method || '').toUpperCase();
-
-const isStudyStart =
-baseUrl.endsWith('/study') &&
-method === 'POST' &&
-pathName === '/start';
-
-const isExamGenerate =
-baseUrl.endsWith('/exams') &&
-method === 'POST' &&
-(pathName === '/generate' || pathName === '/');
-
-const examStartMatch =
-baseUrl.endsWith('/exams') &&
-method === 'POST'
-? pathName.match(/^\/([^/]+)\/start$/)
-: null;
-
-if (!isStudyStart && !isExamGenerate && !examStartMatch) return next();
-
-// The Reckoning generator itself must always be allowed.
-if (isExamGenerate && (req.body?.is_reckoning || req.body?.reckoning_id)) return next();
-
 try {
-let active = await db.reckoningSessions.findActiveByUser(req.user.id);
-if (active) active = await reconcileActiveReckoning(req.user.id, active);
-if (!active) return next();
+  let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+  if (active) active = await reconcileActiveReckoning(req.user.id, active);
+  if (!active) return next();
 
-// A live deferral intentionally lifts the subject lock until expiry.
-const expiryMs = active.deferred_until
-? new Date(active.deferred_until).getTime()
-: 0;
-if (expiryMs > Date.now()) return next();
+  // During a live deferral KIWI is intentionally usable. The instant the
+  // server-side deadline expires, this middleware becomes global again.
+  const expiryMs = active.deferred_until
+    ? new Date(active.deferred_until).getTime()
+    : 0;
+  if (expiryMs > Date.now()) return next();
 
-let requestedSubjectId =
-req.body?.subject_id ||
-req.body?.subjectId ||
-req.query?.subject_id ||
-req.query?.subjectId ||
-null;
+  const baseUrl = String(req.baseUrl || '');
+  const pathName = String(req.path || '');
+  const method = String(req.method || '').toUpperCase();
 
-if (isStudyStart && !requestedSubjectId && req.body?.deck_id) {
-const deck = await db.decks.findById(req.user.id, req.body.deck_id).catch(() => null);
-requestedSubjectId = deck?.subject_id || null;
-}
+  // SETTINGS is the only normal application surface that remains available.
+  // Keep the exact backing endpoints used by the Settings page functional.
+  const settingsAllowed =
+    (baseUrl === '/api' && (
+      pathName === '/settings' ||
+      pathName === '/settings/export' ||
+      pathName === '/settings/notifications'
+    )) ||
+    (baseUrl.endsWith('/study') && pathName === '/mode') ||
+    (baseUrl.endsWith('/marketplace') && pathName === '/inventory' && method === 'GET');
 
-if (examStartMatch) {
-const examId = examStartMatch[1];
-if (
-active.status === 'in_progress' &&
-String(active.exam_session_id || '') === String(examId)
-) {
-return next();
-}
-const exam = await db.examSessions.findByIdWithQuestions(req.user.id, examId).catch(() => null);
-if (exam?.is_reckoning && String(active.exam_session_id || '') === String(examId)) {
-return next();
-}
-requestedSubjectId = exam?.subject_id || requestedSubjectId;
-}
+  if (settingsAllowed) return next();
 
-// If the request is not for the Reckoning subject, it is unrelated and allowed.
-if (!requestedSubjectId || String(requestedSubjectId) !== String(active.subject_id)) {
-return next();
-}
+  // Reckoning control plane must remain reachable or the lockdown would have no
+  // recovery path.
+  if (baseUrl.endsWith('/brain') && pathName.startsWith('/reckoning/')) {
+    return next();
+  }
 
-const userStatsForLockout = await db.userStats.get(req.user.id).catch(() => null);
-return res.status(403).json({
-error: 'This subject is locked by The Reckoning until you pass it.',
-code: 'RECKONING_SUBJECT_LOCKED',
-locked_subject_id: active.subject_id,
-reckoning: {
-id: active.id,
-subject_id: active.subject_id,
-subject_name: active.subject_name,
-subjectName: active.subject_name,
-status: active.status,
-flagged_card_count: active.flagged_card_count,
-question_count: active.question_count,
-exam_session_id: active.exam_session_id || null,
-deferred_until: active.deferred_until || null,
-deferral_expires_at: active.deferred_until || null,
-reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
-requiredScore: 70,
-pressure: active.pressure_score || 0,
-shields: userStatsForLockout?.streak_shields_held || 0,
-canDefer: active.status === 'triggered' && !active.deferral_used,
-can_defer: active.status === 'triggered' && !active.deferral_used,
-deferHours: 4,
-deferPenalty: 5,
-should_announce: true,
-},
-});
+  // Generation of the mandatory exam is allowed, but a normal CBT generation is not.
+  if (
+    baseUrl.endsWith('/exams') &&
+    method === 'POST' &&
+    (pathName === '/generate' || pathName === '/') &&
+    (req.body?.is_reckoning || req.body?.reckoning_id)
+  ) {
+    return next();
+  }
+
+  // Once generated, only the exact server-linked Reckoning exam may be read,
+  // started, pre-marked or resumed. Past/normal exams stay locked.
+  if (baseUrl.endsWith('/exams') && active.exam_session_id) {
+    const firstSegment = pathName.split('/').filter(Boolean)[0] || '';
+    if (String(firstSegment) === String(active.exam_session_id)) return next();
+  }
+
+  const userStats = await db.userStats.get(req.user.id).catch(() => null);
+  return res.status(423).json({
+    error: 'KIWI is locked while The Reckoning is active. Complete The Reckoning or open Settings.',
+    code: 'RECKONING_GLOBAL_LOCKED',
+    lock_scope: 'global',
+    settings_available: true,
+    reckoning: {
+      ...active,
+      subjectId: active.subject_id,
+      subjectName: active.subject_name,
+      reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
+      requiredScore: 70,
+      pressure: active.pressure_score || 0,
+      shields: userStats?.streak_shields_held || 0,
+      canDefer: active.status === 'triggered' && !active.deferral_used,
+      can_defer: active.status === 'triggered' && !active.deferral_used,
+      deferHours: 4,
+      deferPenalty: 5,
+      failure_count: Number(active.failure_count) || 0,
+      failsafe_threshold: RECKONING_FAILSAFE_FAILURES,
+      should_announce: true,
+    },
+  });
 } catch (e) {
-console.error('[KIWI] Reckoning subject-lock check failed:', e.message);
-// This middleware only reaches this catch for protected START actions. Failing
-// open here silently bypasses a mandatory Reckoning when the DB/schema is sick.
-// Fail closed for this one action while leaving navigation, reads, progress,
-// other routes and the rest of the application fully usable.
-return res.status(503).json({
-error: 'KIWI could not verify the Reckoning lock right now. Please retry shortly.',
-code: 'RECKONING_STATE_UNAVAILABLE',
-retryable: true,
-});
+  console.error('[KIWI] Reckoning global-lock check failed:', e.message);
+  // Once a request has entered a protected feature router, inability to verify
+  // lock state must never silently unlock the application.
+  return res.status(503).json({
+    error: 'KIWI could not verify Reckoning state. Only Settings and Reckoning recovery should be used until verification succeeds.',
+    code: 'RECKONING_STATE_UNAVAILABLE',
+    retryable: true,
+  });
 }
 }
 
@@ -16992,6 +17275,7 @@ communityRouter.patch('/decks/:id/group', async (req, res) => {
 const adminRouter = express.Router();
 
 adminRouter.use(requireAdminAccess);
+adminRouter.use(reckoningLockout);
 
 adminRouter.get('/users', async (req, res) => {
 // Fix #51: userStats.findAll() + in-memory join replaces N individual get() calls
@@ -17852,8 +18136,9 @@ res.status(500).json({ error: 'Failed to generate zone description', details: e.
 const ritualRouter = express.Router();
 
 ritualRouter.use(authenticate);
+ritualRouter.use(reckoningLockout);
 
-// C-4 FIX: reckoningLockout removed from router level.
+// Reckoning global-lock policy intentionally includes ritual routes.
 // Spec P1.6 exempts all informational ritual routes. These endpoints are the
 // primary source of context during a Reckoning (morning brief names it,
 // pressure-explanation explains it). Locking them out removes context exactly
@@ -18430,6 +18715,7 @@ const ksOutcome = await finalizeExamKsOutcome(
 const reckoningResult = await completeReckoning(active.id, scorePct, reckoningDebriefText);
 await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, scorePct >= 70).catch(() => {});
 
+const responseKsAfter = reckoningResult?.failsafe?.ks_after ?? ksOutcome.after;
 res.json({
 score_pct: scorePct,
 correct_answers: correct,
@@ -18439,7 +18725,8 @@ question_results: questionResults,
 reckoning: reckoningResult,
 debrief: reckoningResult?.debrief_text || '',
 ksDelta: ksOutcome.delta,
-ks_after: ksOutcome.after,
+ks_after: responseKsAfter,
+failsafe: reckoningResult?.failsafe || null,
 });
 } catch (e) {
 res.status(500).json({ error: 'Failed to submit reckoning', details: e.message });
@@ -19698,6 +19985,7 @@ res.status(500).json({ error: 'Import failed', details: e.message });
 
 const tourRouter = express.Router();
 tourRouter.use(authenticate);
+tourRouter.use(reckoningLockout);
 
 tourRouter.get('/state', async (req, res) => {
   try {
@@ -20772,6 +21060,24 @@ async function runSchemaMigrations() {
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS score_pct numeric`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS activation_announced_at timestamptz`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS completed_at timestamptz`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failure_count integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS last_failure_exam_id text`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_released_at timestamptz`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_penalty_ks_before numeric`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_penalty_ks_after numeric`,
+    `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_claimed_at timestamptz`,
+    `ALTER TABLE card_states ADD COLUMN IF NOT EXISTS reckoning_penalty_factor numeric NOT NULL DEFAULT 1`,
+    `ALTER TABLE card_states ADD COLUMN IF NOT EXISTS reckoning_penalty_applied_at timestamptz`,
+    `DO $ BEGIN
+       IF NOT EXISTS (
+         SELECT 1 FROM pg_constraint
+         WHERE conname = 'card_states_reckoning_penalty_factor_check'
+       ) THEN
+         ALTER TABLE card_states
+           ADD CONSTRAINT card_states_reckoning_penalty_factor_check
+           CHECK (reckoning_penalty_factor >= 0 AND reckoning_penalty_factor <= 1);
+       END IF;
+     END $`,
 
     // Legacy Bubble tables are unused by the current service. Keep them inaccessible
     // through PostgREST instead of leaving public-schema tables without RLS.

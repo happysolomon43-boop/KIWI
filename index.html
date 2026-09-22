@@ -6963,8 +6963,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               throw _sessionErr;
             }
           }
-          // Handle 403 Forbidden — Reckoning lockout
-          if (response.status === 403) {
+          // Handle Reckoning locks. 423 is the canonical global-lock response;
+          // 403 remains supported for older deployments and unrelated forbidden states.
+          if (response.status === 403 || response.status === 423) {
             const data = await response.json().catch(() => ({}));
             if (data.reckoning) {
               AppState.reckoning = data.reckoning;
@@ -6981,10 +6982,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 AppState.currentPage === "exam";
               if (!_alreadyInLinkedExam) {
                 showReckoningOverlay(data.reckoning, {
-                  force: data.code === "RECKONING_SUBJECT_LOCKED",
+                  force: data.code === "RECKONING_SUBJECT_LOCKED" || data.code === "RECKONING_GLOBAL_LOCKED",
+                  mandatory: data.code === "RECKONING_GLOBAL_LOCKED",
                 });
               }
-              const _reckoningErr = new ApiError(403, "Reckoning lockout active", endpoint);
+              const _reckoningErr = new ApiError(response.status, "Reckoning lockout active", endpoint);
               _reckoningErr.reckoningLockout = true;
               _reckoningErr.alreadyReported = true;
               throw _reckoningErr;
@@ -9039,9 +9041,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         "generating-cards": { render: renderGeneratingCards, title: "Generating Cards", auth: true },
       };
 
+      function _reckoningGlobalLockActive() {
+        return !!(AppState && AppState.reckoning && typeof _isMandatoryReckoning === "function" && _isMandatoryReckoning(AppState.reckoning));
+      }
+
+      function _reckoningRouteAllowed(page) {
+        if (!_reckoningGlobalLockActive()) return true;
+        if (page === "settings") return true;
+        if (page === "exam" && AppState.tempExam && AppState.tempExam.isReckoning) return true;
+        return false;
+      }
+
+      function _setReckoningLockdownUi(active) {
+        document.body.classList.toggle("kiwi-reckoning-global-lock", !!active);
+      }
+
       function navigateTo(page, params) {
         // Store route params so render functions can access them
         AppState.routeParams = params || {};
+
+        if (!_reckoningRouteAllowed(page)) {
+          _setReckoningLockdownUi(true);
+          showReckoningOverlay(AppState.reckoning, { force: true, mandatory: true });
+          return;
+        }
+
+        if (_reckoningGlobalLockActive() && page === "settings") {
+          _setReckoningLockdownUi(true);
+          if (typeof _closeReckoningSurface === "function") _closeReckoningSurface();
+        }
         // P9.13-02 FIX: demo mode route guards
         if (AppState.isDemo && !["landing", "study", "biome", "dashboard"].includes(page)) {
           showToast("Create an account to access the full ecosystem.", "warning");
@@ -9811,6 +9839,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         AppState.tempExam = null;
         AppState.treeInstance = null;
         AppState.reckoning = null;
+        _setReckoningLockdownUi(false);
         AppState.isDemo = false;
         localStorage.removeItem("kiwi_is_demo");
         // Re-render landing without a full reload
@@ -13597,6 +13626,30 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               debrief:        '⏳ Generating personalised debrief — hang tight…',
             };
           }
+          if (e.isReckoning && result && result.reckoning) {
+            if (result.reckoning.status === "triggered" || result.reckoning.status === "in_progress") {
+              try {
+                const activeAfterAttempt = await apiRequest("/brain/reckoning/active");
+                AppState.reckoning = activeAfterAttempt && activeAfterAttempt.id ? activeAfterAttempt : result.reckoning;
+              } catch (_) {
+                AppState.reckoning = result.reckoning;
+              }
+              _setReckoningLockdownUi(true);
+            } else if (result.reckoning.status === "completed" || result.reckoning.status === "failsafe_released") {
+              AppState.reckoning = null;
+              _setReckoningLockdownUi(false);
+              if (result.reckoning.status === "failsafe_released") {
+                const afterKs = result.failsafe && result.failsafe.ks_after != null ? result.failsafe.ks_after : result.ks_after;
+                showToast(
+                  "Reckoning failsafe released the lockdown. Subject KS was reduced by 90%" +
+                    (Number.isFinite(Number(afterKs)) ? " to " + Math.round(Number(afterKs)) + "." : "."),
+                  "warning",
+                  9000
+                );
+              }
+            }
+          }
+
           // Normalize field names for frontend rendering
           result = {
             ...result,
@@ -13635,7 +13688,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           }
           renderExamResults();
         } catch (err) {
-          if (err.status === 403 && AppState.reckoning) {
+          if ((err.status === 403 || err.status === 423) && AppState.reckoning) {
             return; // Reckoning overlay shown by API handler
           }
           // Always log the real error to console for debugging
@@ -14157,6 +14210,24 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         _reckoningOverlayRenderKey = stateKey;
 
         const isInProgress = reckoning.status === "in_progress" && !!reckoning.exam_session_id;
+        const failureCount = Math.max(0, Number(reckoning.failure_count) || 0);
+        const failsafeThreshold = Math.max(1, Number(reckoning.failsafe_threshold) || 6);
+        const failsafeNoteHtml = isMandatory
+          ? '<div class="reckoning-failsafe-note">Failed attempts: <strong>' + failureCount + '/' + failsafeThreshold + '</strong>. After the sixth failed attempt, the lockdown is released and this subject\'s effective KS is reduced by 90%.</div>'
+          : "";
+        const secondaryActionHtml = isMandatory
+          ? '<button class="btn btn-secondary" id="openReckoningSettingsBtn" type="button" style="width:100%;">Open Settings</button>'
+          : '<button class="btn btn-secondary" id="minimizeReckoningBtnBottom" type="button" style="width:100%;">Minimize</button>';
+
+        // Settings is the sole normal feature exempt from a mandatory Reckoning.
+        if (isMandatory && AppState.currentPage === "settings" && options.forceSettingsOverlay !== true) {
+          _setReckoningLockdownUi(true);
+          _closeReckoningSurface();
+          if (typeof renderSettings === "function") renderSettings();
+          return;
+        }
+
+        _setReckoningLockdownUi(isMandatory);
         container.innerHTML = `
     <div class="reckoning-overlay" id="reckoningOverlay">
       <div class="reckoning-card" style="position:relative;">
@@ -14172,8 +14243,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         </div>
         ${isMandatory ? `
         <div style="margin:10px 0 14px;padding:10px 12px;border:1px solid rgba(224,82,82,.28);border-radius:var(--r);background:rgba(224,82,82,.07);color:var(--red-bright);font-size:var(--text-sm);line-height:1.55;text-align:center;">
-          This subject is locked. The Reckoning cannot be minimized or dismissed; pass the required score to unlock it.
+          KIWI is locked while The Reckoning is active. The lock cannot be minimized or dismissed. Settings remains available.
         </div>` : ""}
+        ${failsafeNoteHtml}
         <div class="reckoning-stats">
           <div class="stat-card">
             <div class="stat-label">Current Pressure</div>
@@ -14202,9 +14274,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           <button class="btn btn-primary btn-lg" id="startReckoningBtn" style="width:100%;">
             ${isInProgress ? "Resume The Reckoning" : "Begin The Reckoning"}
           </button>
-          ${!isMandatory ? `<button class="btn btn-secondary" id="minimizeReckoningBtnBottom" type="button" style="width:100%;">
-            Minimize
-          </button>` : ""}
+          ${secondaryActionHtml}
           ${isInProgress ? `
           <div style="font-size:var(--text-xs);color:var(--text-2);text-align:center;line-height:1.6;">
             Your exam is already saved on KIWI. Resume from the last server-saved answer.
@@ -14249,6 +14319,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const _minimizeCurrentReckoning = () => _minimizeReckoningSurface(reckoning);
         document.getElementById("minimizeReckoningBtn")?.addEventListener("click", _minimizeCurrentReckoning);
         document.getElementById("minimizeReckoningBtnBottom")?.addEventListener("click", _minimizeCurrentReckoning);
+        document.getElementById("openReckoningSettingsBtn")?.addEventListener("click", () => {
+          _closeReckoningSurface();
+          _setReckoningLockdownUi(true);
+          navigateTo("settings", { fromReckoning: true });
+        });
         document.getElementById("startReckoningBtn").addEventListener("click", async () => {
           const _startBtn = document.getElementById("startReckoningBtn");
           if (_startBtn) {
@@ -14322,6 +14397,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 can_defer: false,
               };
               AppState.reckoning = null;
+              _setReckoningLockdownUi(false);
               _scheduleDeferredReckoningWakeup(deferredReckoning);
               _closeReckoningSurface();
               const _deferUntilText = new Date(deferredUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -14345,6 +14421,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   await api.useReckoningBuffer();
                   container.innerHTML = "";
                   AppState.reckoning = null;
+                  _setReckoningLockdownUi(false);
                   // F4: remove buffer from local inventory (array, not {items:[]})
                   const invArr2 = Array.isArray(AppState.inventory) ? AppState.inventory : [];
                   const bufIdx = invArr2.findIndex((i) => i.item_code === "reckoning_buffer");
@@ -21266,6 +21343,13 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             }
           }
           const settings = AppState.settings || {};
+          const settingsLockedByReckoning = _reckoningGlobalLockActive();
+          const settingsLockBannerHtml = settingsLockedByReckoning
+            ? '<div class="card reckoning-settings-banner" id="reckoningSettingsLockBanner" style="margin-bottom:20px;"><div><div class="settings-section-title" style="color:var(--red-bright);">The Reckoning is active</div><div style="font-size:var(--text-sm);color:var(--text-2);line-height:1.6;">Settings is the only normal KIWI area available during lockdown. Failed attempts: ' + (Number(AppState.reckoning?.failure_count) || 0) + '/' + (Number(AppState.reckoning?.failsafe_threshold) || 6) + '.</div></div><button class="btn btn-primary btn-sm" id="returnToReckoningBtn">Return to Reckoning</button></div>'
+            : "";
+          const marketplaceSettingsAction = settingsLockedByReckoning
+            ? '<div style="font-size:var(--text-sm);color:var(--text-4);">Marketplace is unavailable until The Reckoning ends.</div>'
+            : '<button class="btn btn-secondary btn-sm" onclick="navigateTo(\'marketplace\')">Go to Marketplace</button>';
           main.innerHTML = `
       <div class="page-wrap page-enter">
         <div class="section-header">
@@ -21274,6 +21358,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             <div class="section-sub">Manage your ecosystem</div>
           </div>
         </div>
+        ${settingsLockBannerHtml}
         <!-- Profile -->
         <div class="card" style="margin-bottom:20px;">
           <div class="settings-section-title">Profile</div>
@@ -21313,7 +21398,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           `
               : '<div style="font-size:var(--text-base);color:var(--text-4);margin-bottom:12px;">No items purchased yet. Visit the Marketplace.</div>'
           }
-          <button class="btn btn-secondary btn-sm" onclick="navigateTo('marketplace')">Go to Marketplace</button>
+          ${marketplaceSettingsAction}
         </div>
         <!-- Data Management -->
         <div class="card" style="margin-bottom:20px;">
@@ -21445,6 +21530,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         </div>
       </div>
     `;
+          document.getElementById("returnToReckoningBtn")?.addEventListener("click", () => {
+            showReckoningOverlay(AppState.reckoning, { force: true, mandatory: true, forceSettingsOverlay: true });
+          });
+
           document.getElementById("settingName").addEventListener("change", async (e) => {
             try {
               await api.updateSettings({ name: e.target.value });
@@ -21706,9 +21795,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           _unlockStudyPage();
                   AppState.tempExam = null;
                   AppState.treeInstance = null;
-                  AppState.reckoning = null;
+                  const hadReckoningLock = _reckoningGlobalLockActive();
+                  const activeReckoningSnapshot = AppState.reckoning;
+                  if (!hadReckoningLock) AppState.reckoning = null;
+                  else AppState.reckoning = activeReckoningSnapshot;
                   showToast("Local cache cleared", "info");
-                  navigateTo("dashboard");
+                  navigateTo(hadReckoningLock ? "settings" : "dashboard");
                 }
               );
             });
