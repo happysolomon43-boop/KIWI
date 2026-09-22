@@ -21637,7 +21637,7 @@ await runSchemaMigrations();
 try {
   await _aiRuntime.initialize();
 } catch (e) {
-  console.error('[KIWI AI] Orchestrator startup initialization failed; legacy AI remains available:', e.message);
+  console.error('[KIWI AI] Orchestrator persistent-state initialization failed; continuing with in-memory routing:', e.message);
 }
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }
