@@ -79,7 +79,7 @@ test('qualification approves low/medium/high when MINIMAL is unsupported', async
             retryable: false,
           });
         }
-        if (level === 'low') return { raw: okRaw('OK'), latencyMs: 1 };
+        if (level === 'low' || level === 'medium') return { raw: okRaw('OK'), latencyMs: 1 };
         throw new Error('unexpected level');
       },
     },
@@ -98,7 +98,7 @@ test('qualification approves low/medium/high when MINIMAL is unsupported', async
   const result = await qualifier.qualify(model);
 
   assert.equal(result.status, 'PASSED');
-  assert.deepEqual(levels, ['high', 'minimal', 'low']);
+  assert.deepEqual(levels, ['high', 'minimal', 'low', 'medium']);
   assert.deepEqual(
     catalog.get(model.id).supportedThinking,
     ['LOW', 'MEDIUM', 'HIGH']
@@ -146,7 +146,7 @@ test('qualification preserves MINIMAL when the new model supports it', async () 
 
   const result = await qualifier.qualify(model);
   assert.equal(result.status, 'PASSED');
-  assert.deepEqual(levels, ['high', 'minimal']);
+  assert.deepEqual(levels, ['high', 'minimal', 'medium']);
   assert.deepEqual(
     catalog.get(model.id).supportedThinking,
     ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
@@ -170,6 +170,94 @@ test('transient qualification failures stay DISCOVERED for a later retry', async
           code: AI_ERROR_CODES.RATE_LIMIT_RPD,
           status: 429,
           retryable: true,
+        });
+      },
+    },
+    projectPool: projectPool(),
+    quotaManager: {
+      isEligible() { return true; },
+      async markFailure() {},
+    },
+    lifecycle,
+    store: { async recordModelQualification() {} },
+    logger: { log() {}, warn() {} },
+    env: {},
+  });
+
+  const result = await qualifier.qualify(model);
+  assert.equal(result.status, 'INCONCLUSIVE');
+  assert.equal(catalog.get(model.id).status, MODEL_STATUS.DISCOVERED);
+});
+
+
+test('qualification tries another independent project when one project returns model-not-found', async () => {
+  const catalog = createModelCatalog();
+  const model = candidateModel('gemini-3.9-flash');
+  catalog.upsert(model);
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel() {} },
+    logger: { warn() {} },
+  });
+
+  const calls = [];
+  const qualifier = createModelQualifier({
+    transport: {
+      async generate(args) {
+        calls.push({ apiKey: args.apiKey, level: args.generationConfig.thinkingConfig.thinkingLevel });
+        if (args.apiKey === 'k2') {
+          throw new AIError('not visible in this project yet', {
+            code: AI_ERROR_CODES.MODEL_NOT_FOUND,
+            status: 404,
+            retryable: true,
+            scope: 'MODEL_SLOT',
+          });
+        }
+        const level = args.generationConfig.thinkingConfig.thinkingLevel;
+        return {
+          raw: okRaw(level === 'high' ? '{"ok":true}' : 'OK'),
+          latencyMs: 1,
+        };
+      },
+    },
+    projectPool: projectPool(),
+    quotaManager: {
+      isEligible() { return true; },
+      async markSuccess() {},
+      async markFailure() {},
+    },
+    lifecycle,
+    store: { async recordModelQualification() {} },
+    logger: { log() {}, warn() {} },
+    env: {},
+  });
+
+  const result = await qualifier.qualify(model);
+
+  assert.equal(result.status, 'PASSED');
+  assert.ok(calls.some((call) => call.apiKey === 'k2'));
+  assert.ok(calls.some((call) => call.apiKey === 'k1'));
+  assert.equal(catalog.get(model.id).status, MODEL_STATUS.APPROVED);
+});
+
+test('model-not-found across all qualification projects stays inconclusive for later rollout retry', async () => {
+  const catalog = createModelCatalog();
+  const model = candidateModel('gemini-3.9-flash');
+  catalog.upsert(model);
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel() {} },
+    logger: { warn() {} },
+  });
+
+  const qualifier = createModelQualifier({
+    transport: {
+      async generate() {
+        throw new AIError('not rolled out', {
+          code: AI_ERROR_CODES.MODEL_NOT_FOUND,
+          status: 404,
+          retryable: true,
+          scope: 'MODEL_SLOT',
         });
       },
     },
