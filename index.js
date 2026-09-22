@@ -17896,6 +17896,10 @@ bubbleRouter.delete('/:id', async (req, res) => {
       await client.query('BEGIN');
       await client.query('DELETE FROM goal_history WHERE goal_id = $1', [goal.id]);
       await client.query('DELETE FROM concept_clusters WHERE goal_id = $1', [goal.id]);
+      // Legacy deployments used mastery_clusters before concept_clusters became
+      // the active Bubble cluster store. Clean both so permanent deletion is
+      // actually permanent across upgraded accounts.
+      await client.query('DELETE FROM mastery_clusters WHERE goal_id = $1', [goal.id]);
       await client.query(
         'DELETE FROM bubble_sessions WHERE bubble_id = $1 AND user_id = $2',
         [goal.id, req.user.id]
