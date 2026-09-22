@@ -35,6 +35,7 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { WebSocketServer } = require('ws');
 const { createEcosystemV2 } = require('./ecosystem_v2');
+const { createAIRuntime } = require('./services/ai/runtime');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
@@ -48,6 +49,16 @@ const pool = new Pool({
 
 // Thin query wrapper — pool.query returns { rows, rowCount }
 const query = (text, params) => pool.query(text, params);
+
+// Phase 3: build the new AI Orchestrator beside the legacy Gemini wrapper.
+// It remains observe-only until feature migration begins in later phases.
+const _aiRuntime = createAIRuntime({
+  query,
+  randomUUID,
+  env: process.env,
+  fetchImpl: globalThis.fetch,
+  logger: console,
+});
 
 // Transaction helper
 async function withTransaction(fn) {
@@ -1916,8 +1927,9 @@ return JSON.parse(cleaned);
 // CEE-style raw fetch — returns SDK-compatible shape so all callers work unchanged
 // Model: gemini-3.1-flash-lite-preview (free, high usage) — no paid Pro model used
 const geminiModel = {
-async generateContent(content, generationConfig, { timeoutMs = 30000, modelOverride } = {}) {
+async generateContent(content, generationConfig, { timeoutMs = 30000, modelOverride, taskId = null } = {}) {
   const _modelName = modelOverride || 'gemini-3.1-flash-lite-preview';
+  if (taskId) _aiRuntime.observeLegacy(taskId, _modelName);
 if (!_geminiKeyObjs.length) throw new Error('No Gemini API keys configured');
 let lastError = null;
 for (let attempt = 0; attempt < Math.max(_geminiKeyObjs.length, 1); attempt++) {
@@ -5390,6 +5402,7 @@ async function generateCBTQuestions(notes, count, options) {
 // broad_coverage:    if true, forces maximum topic breadth over depth.
 // force_type:        'theory' | 'calculation' | null — selects a type-specific prompt for split generation.
 const _opts            = options || {};
+const _taskId           = _opts.ai_task_id || 'MAIN_CBT';
 const customizeBalance = !!_opts.customize_balance;
 const broadCoverage    = !!_opts.broad_coverage;
 const forceType        = _opts.force_type || null; // 'theory' | 'calculation' | null
@@ -5496,7 +5509,7 @@ const prompt = _basePrompt
 const scaledTokens = Math.min(65536, Math.max(24000, count * 900));
 const _theoryPct = customizeBalance && typeof _opts.theory_percent === 'number' ? _opts.theory_percent : 'auto';
 console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, difficulty=${difficultyLevel || 'off/default'}, theory=${_theoryPct}%, broad=${broadCoverage}, customBalance=${customizeBalance}, forceType=${forceType || 'none'}, model=${_model || 'lite-default'}, maxOutputTokens=${scaledTokens}`);
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 180000, modelOverride: _model });
+const result = await geminiModel.generateContent(prompt, { maxOutputTokens: scaledTokens, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 180000, modelOverride: _model, taskId: _taskId });
 if (result.response.finishReason === 'MAX_TOKENS') {
   console.warn(`[KIWI CBT] Output truncated at ${count} questions \u2014 response cut short. Consider lowering count or notes size.`);
 }
@@ -5546,7 +5559,7 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
   ].join('\n');
 
   const completionTokens = Math.min(65536, Math.max(16000, needed * 900));
-  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: completionTokens, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 180000 });
+  const result = await geminiModel.generateContent(completionPrompt, { maxOutputTokens: completionTokens, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 180000, taskId: 'CBT_COMPLETION' });
   return result.response.text();
 }
 
@@ -5602,7 +5615,7 @@ FLASHCARD_PROMPT.replace('[NOTES]', notes) +
 (subjectHint ? `\nSubject hint: ${subjectHint}` : '');
 // Use gemini-3-flash-preview for note-to-flashcard generation — it produces more
 // thorough multi-card output within the same rate limits as the base model.
-const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 120000, modelOverride: 'gemini-3-flash-preview' });
+const result = await geminiModel.generateContent(prompt, { maxOutputTokens: 15000, thinkingConfig: { thinkingLevel: 'high' } }, { timeoutMs: 120000, modelOverride: 'gemini-3-flash-preview', taskId: 'FLASHCARD_GENERATION' });
 return result.response.text();
 }
 
@@ -5632,8 +5645,7 @@ Rules:
 const result = await geminiModel.generateContent(
   prompt,
   { thinkingConfig: { thinkingLevel: 'minimal' } },
-  { timeoutMs: 25000 }
-);
+  { timeoutMs: 25000, taskId: 'CARD_EXPLANATION' });
 return result.response.text().trim();
 }
 
@@ -5650,7 +5662,7 @@ parts: [
 ],
 },
 ],
-});
+}, undefined, { taskId: 'IMPORT_IMAGE_EXTRACTION' });
 return result.response.text();
 } catch (e) {
 console.error('Gemini vision error:', e);
@@ -5680,7 +5692,7 @@ JSON STRUCTURE
 }
 Generate exactly: 3 daily tasks, 2 weekly tasks, 1 monthly task.`;
 try {
-const result = await geminiModel.generateContent(prompt);
+const result = await geminiModel.generateContent(prompt, undefined, { taskId: 'STUDY_TASK_GENERATION' });
 const text = result.response
 .text()
 .replace(/```json|```/g, '')
@@ -8031,7 +8043,7 @@ JSON array only.
 `;
   let clusters = [];
   try {
-    const result    = await geminiModel.generateContent(prompt);
+    const result    = await geminiModel.generateContent(prompt, undefined, { taskId: 'CONCEPT_CLUSTERING' });
     const text      = parseGeminiText(result);
     const cleanText = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
     const parsed    = JSON.parse(cleanText);
@@ -9215,7 +9227,7 @@ RULES
 - Tone: Authoritative but not punitive.
 OUTPUT
 Return only the 2-sentence alert text.`;
-    const aiResult = await geminiModel.generateContent(d3Prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
+    const aiResult = await geminiModel.generateContent(d3Prompt, { thinkingConfig: { thinkingLevel: 'minimal' } }, { taskId: 'RECLASSIFICATION_ALERT' });
     alertText = aiResult.response.text().trim();
   } catch (_) {
     alertText = `Your exam score of ${scorePct}% contradicts the advanced stage of ` +
@@ -9412,7 +9424,7 @@ Card front: ${front}
 Card back: ${back}
 
 Write exactly 1 sentence (maximum 20 words) of warm, specific acknowledgement that this concept is now part of their long-term memory. Reference the card content directly. No preamble. Just the sentence.`;
-const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
+const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } }, { taskId: 'MASTERY_MOMENT' });
 const mastery_moment = result.response.text().trim();
 await db.cards.update(userId, cardId, { mastery_moment }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 return mastery_moment;
@@ -9683,7 +9695,7 @@ Rules:
 - Keep it atmospheric and honest.
 Respond with only the description text.
 `;
-  const result = await geminiModel.generateContent(prompt);
+  const result = await geminiModel.generateContent(prompt, undefined, { taskId: 'ZONE_DESCRIPTION' });
   const text = result.response.text().trim();
   await db.dailyRitualCache.set(userId, cacheType, todayStr, { data: text });
   return text;
@@ -9976,7 +9988,7 @@ TONE RULES
 OUTPUT
 Return only the 5 paragraphs. No labels. No headers. No preamble.
 `;
-  const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
+  const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } }, { taskId: 'WEEKLY_CHRONICLE' });
   const narrative = result.response.text().trim();
   const entryData = {
     week_start: weekStr,
@@ -10467,7 +10479,7 @@ OUTPUT FORMAT (JSON only, no markdown)
 {"title": "...", "narrative": "..."}
 `;
   try {
-    const result = await geminiModel.generateContent(prompt);
+    const result = await geminiModel.generateContent(prompt, undefined, { taskId: 'HIDDEN_DISCOVERY' });
     const raw = result.response
       .text()
       .trim()
@@ -10946,7 +10958,7 @@ INSTRUCTIONS
 Analyse the behavioral data holistically. Select the ONE persona code that best describes this student\'s dominant pattern.
 Return ONLY the persona code — no explanation, no punctuation.
 `;
-    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
+    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } }, { taskId: 'WEEKLY_PERSONA' });
     const code = result.response.text().trim().toLowerCase();
     const found = personas.find((p) => p.code === code);
     if (found) selected = found;
@@ -11031,7 +11043,7 @@ Write exactly 3 sentences naming the single most important focus for this week.
 Tone: direct, confident, warm.
 Return only the 3 sentences.
 `;
-    const result = await geminiModel.generateContent(prompt);
+    const result = await geminiModel.generateContent(prompt, undefined, { taskId: 'WEEKLY_ANCHOR' });
     anchorText = result.response.text().trim();
   } catch (_) {
     // P6.7 Fallback: derived from highest-pressure subject or KS gap
@@ -11215,7 +11227,7 @@ RULES
 OUTPUT
 Return only the 3 sentences.
 `;
-  const result = await geminiModel.generateContent(prompt);
+  const result = await geminiModel.generateContent(prompt, undefined, { taskId: 'MORNING_BRIEF' });
   const brief = result.response.text().trim();
   await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, { data: brief });
   return brief;
@@ -11420,7 +11432,7 @@ RULES
 - Total of ${needed} invitations.
 - Return ONLY valid JSON array: [{"title":"...","context":"...","action_type":"study_session|exam|review_specific_cards","target_subject_name":"..."}]
 `;
-    const aiResult = await geminiModel.generateContent(aiPrompt, { thinkingConfig: { thinkingLevel: 'high' } });
+    const aiResult = await geminiModel.generateContent(aiPrompt, { thinkingConfig: { thinkingLevel: 'high' } }, { taskId: 'DAILY_INVITATIONS' });
     // H-4 FIX: Robust JSON extraction — slice from first [ to last ] to survive preambles/fences
     const rawAiText = aiResult.response.text();
     const jsonStartIdx = rawAiText.indexOf('[');
@@ -11724,7 +11736,7 @@ RULES
 OUTPUT
 Return only the greeting paragraph.
 `;
-  const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } });
+  const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } }, { taskId: 'RETURN_GREETING' });
   const greeting = result.response.text().trim();
   const greetingPayload = { greeting, status: status.status, days_since: status.days_since };
   await db.dailyRitualCache
@@ -11797,7 +11809,7 @@ OUTPUT
 Return only the 2-sentence advisory text.
 `;
   try {
-    const result = await geminiModel.generateContent(prompt);
+    const result = await geminiModel.generateContent(prompt, undefined, { taskId: 'BUBBLE_ADVISORY' });
     const text   = parseGeminiText(result);
     if (text && text.trim().length > 10) return text.trim();
     return buildFallbackAdvisory(goal, subjectName, daysToExam, velocity, required, gap, _weakestCluster, _weakestClusterKS);
@@ -12114,7 +12126,7 @@ Return only the explanation text.
 `;
   let explanation;
   try {
-    const result = await geminiModel.generateContent(prompt);
+    const result = await geminiModel.generateContent(prompt, undefined, { taskId: 'PRESSURE_EXPLANATION' });
     explanation = result.response.text().trim();
   } catch (e) {
     const sources = Object.keys(pressure.sources || {});
@@ -12750,7 +12762,7 @@ Return only the audit text.
 `;
   let audit;
   try {
-    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
+    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } }, { taskId: 'DEEP_AUDIT' });
     audit = result.response.text().trim();
   } catch (e) {
     audit = `Your ${subject?.name || 'subject'} audit shows a knowledge score of ${ks.score.toFixed(1)}. Strengths lie in stable cards. Weaknesses gather where cards are stuck or ghosted. Review the flagged cards first. Schedule a reckoning if pressure persists.`;
@@ -12851,7 +12863,7 @@ Return only the inscription.
 `;
   let artifact;
   try {
-    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
+    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } }, { taskId: 'CHRONICLE_ARTIFACT' });
     artifact = result.response.text().trim();
   } catch (e) {
     artifact = 'The forest remembers this week. Your path is recorded in the roots of time.';
@@ -14274,8 +14286,7 @@ try {
   const result = await geminiModel.generateContent(
     prompt,
     { maxOutputTokens: Math.max(4000, count * 900), thinkingConfig: { thinkingLevel: 'minimal' } },
-    { timeoutMs: 60000 }
-  );
+    { timeoutMs: 60000, taskId: 'QUICK_QUESTIONS' });
   const aiText = result.response.text();
   const questions = parseCBTResponse(aiText, null, []);
   if (!questions.length) {
@@ -15952,7 +15963,7 @@ const _cbtNotes       = notes;
 const _cbtCount       = count;
 const _cbtCards       = selectedCards;
 const _cbtBody        = body;
-const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? Math.max(0, Math.min(100, Number(theory_percent))) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage, difficulty_level: selectedDifficulty };
+const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? Math.max(0, Math.min(100, Number(theory_percent))) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage, difficulty_level: selectedDifficulty, ai_task_id: isReckoningExam ? 'RECKONING_CBT' : 'MAIN_CBT' };
 setImmediate(async () => {
   try {
     let questions;
@@ -16835,8 +16846,7 @@ Return only the debrief text.`;
             const aiResult = await geminiModel.generateContent(
               aiDebriefPrompt,
               { maxOutputTokens: 512, thinkingConfig: { thinkingLevel: 'low' } },
-              { timeoutMs: 60000 }
-            );
+              { timeoutMs: 60000, taskId: 'EXAM_DEBRIEF' });
             debriefText = aiResult.response.text().trim();
           } catch (_) {
             debriefText =
@@ -16924,7 +16934,7 @@ RULES
 OUTPUT
 Return only the debrief text.
 `;
-      const aiResult = await geminiModel.generateContent(aiDebriefPrompt);
+      const aiResult = await geminiModel.generateContent(aiDebriefPrompt, undefined, { taskId: 'EXAM_DEBRIEF' });
       debriefText = aiResult.response.text().trim();
     } catch (_) {
       // B25 fallback: structured non-AI debrief
@@ -18578,7 +18588,7 @@ OUTPUT RULES
 FORMAT
 {"name":"...","emoji":"...","essence":"...","evidence":["..."],"strengths":["..."],"friction":["..."],"experiments":["..."],"evolution":"...","confidence":75}
 `;
-const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
+const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } }, { taskId: 'LIVING_PERSONA' });
 const raw = result.response.text();
 const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
 profile = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw.replace(/```json|```/g, '').trim());
@@ -18837,7 +18847,7 @@ RULES
 - Total length: 120-200 words.
 OUTPUT
 Return only the debrief text.`;
-const aiResult = await geminiModel.generateContent(reckoningDebriefPrompt);
+const aiResult = await geminiModel.generateContent(reckoningDebriefPrompt, undefined, { taskId: 'RECKONING_DEBRIEF' });
 reckoningDebriefText = aiResult.response.text().trim();
 } catch (_) {
 const survived = scorePct >= 70;
@@ -19253,7 +19263,7 @@ RULES
 - Subject names may appear in the wording, but the measurable metric must remain one of the allowed metrics.
 - Format: [{"code":"weekly_slug","name":"...","icon_emoji":"...","description":"...","metric":"sessions","target":5,"category":"Personal"}]
 `;
-const aiResult = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } });
+const aiResult = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } }, { taskId: 'LIVING_ACHIEVEMENTS' });
 const raw = aiResult.response.text();
 const start = raw.indexOf('['), end = raw.lastIndexOf(']');
 const parsed = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw.replace(/```json|```/g, '').trim());
@@ -21686,6 +21696,11 @@ async function sendEmailNotification(userId, templateName, params = {}) {
 async function startServer() {
 try {
 await runSchemaMigrations();
+try {
+  await _aiRuntime.initialize();
+} catch (e) {
+  console.error('[KIWI AI] Orchestrator startup initialization failed; legacy AI remains available:', e.message);
+}
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }
 try { await db.marketplaceItems.seed(); } catch(e) { console.warn('[KIWI] Marketplace seeding skipped:', e.message); }
