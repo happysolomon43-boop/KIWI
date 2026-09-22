@@ -6326,7 +6326,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(_jf.job_id);
               _hideGenBanner();
               var _labels = { note_generation: 'Note generation', cbt_generation: 'Exam generation', exam_submit: 'Exam submission' };
-              if (typeof showToast === 'function') showToast('(' + (_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
+              if (typeof showToast === 'function') showToast((_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
+              _handleGenerationFailure(_jf.type, _jf.error);
               if (_jf.type === 'cbt_generation') {
                 if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
                   showReckoningOverlay(AppState.reckoning);
@@ -6599,15 +6600,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       function _updateGenBannerStage(stage) {
         var s = document.getElementById('kiwiGenBannerStage');
         if (s) s.textContent = stage || '';
-        if (stage === 'Pass 1 of 3') _updateExamGenProgress(1);
-        else if (stage === 'Pass 2 of 3') _updateExamGenProgress(2);
-        else if (stage === 'Pass 3 of 3') _updateExamGenProgress(3);
+        if (stage === 'Drafting questions') _updateExamGenProgress(1);
+        else if (stage === 'Validating coverage') _updateExamGenProgress(2);
+        else if (stage === 'Finalizing exam') _updateExamGenProgress(3);
       }
       function _hideGenBanner() {
         var b = document.getElementById('kiwiGenBanner');
         if (b) { b.classList.remove('active'); b.style.display = 'none'; }
         clearTimeout(window._genBannerTimeout);
         try { localStorage.removeItem('kiwi_gen_banner'); } catch(_) {}
+      }
+      function _handleGenerationFailure(type, rawError) {
+        _hideGenBanner();
+        var errorText = String(rawError || 'Generation failed. Please try again.');
+        if (type === 'note_generation') {
+          AppState.cardGenJob = null;
+          var screen = document.getElementById('cardGenScreen');
+          if (screen) {
+            screen.innerHTML =
+              '<div style="text-align:center;padding:40px 20px;max-width:520px;margin:auto;">' +
+                '<div style="margin:0 auto 16px;width:52px;height:52px;color:var(--red-bright);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 17h.01"/></svg></div>' +
+                '<div style="font-family:var(--font-display);font-size:24px;font-weight:750;color:var(--red-bright);margin-bottom:10px;">Card generation failed</div>' +
+                '<div style="font-size:var(--text-base);color:var(--text-2);line-height:1.6;margin-bottom:12px;">' + escapeHTML(errorText) + '</div>' +
+                '<div style="font-size:var(--text-sm);color:var(--text-3);">Returning to Import so you can retry or edit the source…</div>' +
+              '</div>';
+            setTimeout(function() {
+              if (AppState.currentPage === 'generating-cards') navigateTo('import');
+            }, 1600);
+          }
+        }
       }
       // Restore banner on page load if a generation was in progress
       (function() {
@@ -6622,10 +6643,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // FIX 6: Show generation banner when a background job starts polling
       function _pollJobFallback(jobId, token, type) {
         var _bannerLabels = { cbt_generation: 'Building your exam…', note_generation: 'Generating cards…' };
-        if (_bannerLabels[type]) _showGenBanner(_bannerLabels[type], type === 'cbt_generation' ? 'Pass 1 of 3' : '');
+        if (_bannerLabels[type]) _showGenBanner(_bannerLabels[type], type === 'cbt_generation' ? 'Drafting questions' : '');
         if (_pendingJobs.has(jobId)) return;
         var _pollStart = Date.now();
-        var _MAX_POLL_MS = (type === 'cbt_generation' ? 10 : 4) * 60 * 1000; // CBT: 10 min (3 passes), others: 4 min
+        var _MAX_POLL_MS = (type === 'cbt_generation' ? 7 : 4) * 60 * 1000;
         var _simulateWsMsg = async function(event, data) {
           if (_kiwiWS && _kiwiWS.readyState === 1) {
             _kiwiWS.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ event: event, data: data }) }));
@@ -6691,6 +6712,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               var _failPrefixes = { cbt_generation: 'Exam generation failed', note_generation: 'Note generation failed', exam_submit: 'Exam submission failed' };
               var _failPrefix = _failPrefixes[_jf2.type] || 'Task failed';
               showToast(_failPrefix + ': ' + (_jf2.error || 'Task failed'), 'error', 8000);
+              _handleGenerationFailure(_jf2.type, _jf2.error);
               if (_jf2.type === 'cbt_generation') {
                 if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
                   showReckoningOverlay(AppState.reckoning);
@@ -6724,11 +6746,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: _timeoutMsgs[type] || 'Request timed out. Please try again.' });
               return;
             }
-            // Update stage label for CBT generation based on time elapsed
             if (type === 'cbt_generation') {
-              if (_elapsed < 100000) _updateGenBannerStage('Pass 1 of 3');
-              else if (_elapsed < 220000) _updateGenBannerStage('Pass 2 of 3');
-              else _updateGenBannerStage('Pass 3 of 3');
+              if (_elapsed < 60000) _updateGenBannerStage('Drafting questions');
+              else if (_elapsed < 150000) _updateGenBannerStage('Validating coverage');
+              else _updateGenBannerStage('Finalizing exam');
             }
             const job = await apiRequest(`/jobs/${jobId}`);
             if (job.status === 'done') {
@@ -13270,7 +13291,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                     <svg style="width:40px;height:40px" viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="17" stroke="var(--green-bright)" stroke-width="2"/><circle cx="20" cy="20" r="5" fill="var(--green-bright)" opacity="0.7"/><line x1="20" y1="3" x2="20" y2="10" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/><line x1="20" y1="30" x2="20" y2="37" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="20" x2="10" y2="20" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/><line x1="30" y1="20" x2="37" y2="20" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/></svg>
                     <div style="font-size:var(--text-xl);font-weight:600;color:var(--green-bright);">Generating your exam…</div>
                     <div style="font-size:var(--text-base);color:var(--text-2);max-width:320px;">
-                      This takes 15–30 seconds. You can leave this page — we'll redirect you automatically when it's ready.
+                      Generation runs in the background. You can leave this page immediately — KIWI will notify and open the exam when it is ready.
                     </div>
                     <div class="loading-dots" style="margin-top:var(--space-3);"><span></span><span></span><span></span></div>
                     <button class="btn btn-ghost btn-sm" id="cancelExamGenBtn" style="margin-top:var(--space-4);font-size:var(--text-sm);color:var(--text-3);border-color:var(--border);" onclick="_stopWaitingForJob('${job.job_id}')">← Stop Waiting</button>
@@ -13281,15 +13302,15 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                       <div class="gen-progress-steps">
                         <div class="gen-progress-step active" id="examGenStep1">
                           <div class="gen-progress-step-dot"></div>
-                          <div class="gen-progress-step-lbl">Pass 1</div>
+                          <div class="gen-progress-step-lbl">Draft</div>
                         </div>
                         <div class="gen-progress-step" id="examGenStep2">
                           <div class="gen-progress-step-dot"></div>
-                          <div class="gen-progress-step-lbl">Pass 2</div>
+                          <div class="gen-progress-step-lbl">Validate</div>
                         </div>
                         <div class="gen-progress-step" id="examGenStep3">
                           <div class="gen-progress-step-dot"></div>
-                          <div class="gen-progress-step-lbl">Pass 3</div>
+                          <div class="gen-progress-step-lbl">Finalize</div>
                         </div>
                       </div>
                     </div>
@@ -17261,11 +17282,14 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const main = document.getElementById("mainContent");
         renderLoadingState(main, "Loading marketplace...");
         try {
-          // Fetch both catalog and inventory
-          const [catalogData, inventoryData] = await Promise.all([
+          const [catalogData, inventoryData, libraryData] = await Promise.all([
             api.getMarketplaceCatalog(),
             api.getInventory(),
+            (AppState.subjects && AppState.subjects.length)
+              ? Promise.resolve(null)
+              : api.getLibrary().catch(() => null),
           ]);
+          if (libraryData) AppState.subjects = libraryData.subjects || libraryData || [];
           AppState.marketplace = catalogData;
           AppState.inventory = inventoryData;
           // Backend returns array directly; normalize to {items, seedlings}
@@ -17289,6 +17313,22 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             if (code.startsWith('rare_flora_')) return `Rare Flora — ${subjectNameById.get(code.slice('rare_flora_'.length)) || 'Subject'}`;
             if (code.startsWith('archive_expansion_')) return `Archive Expansion — ${subjectNameById.get(code.slice('archive_expansion_'.length)) || 'Subject'}`;
             return codeToName[code] || code.replace(/_/g, ' ') || 'Marketplace item';
+          };
+          const marketplaceRequirementText = (item) => {
+            const cond = item.gate1_condition || {};
+            const count = Number(cond.count) || Number(item.gate1_target) || 0;
+            switch (cond.type) {
+              case 'reckoning_survived': return `Complete and survive ${count || 1} Reckoning`;
+              case 'fruition_sessions': return `Complete ${count} Fruiting study sessions`;
+              case 'thriving_sessions_across_subjects': return `Complete ${count} Thriving-or-better sessions across at least ${Number(cond.min_subjects) || 3} subjects`;
+              case 'subject_ks_and_fruiting': return `For the selected subject: reach KS ${Number(cond.ks) || 100} and complete ${Number(cond.fruiting) || 15} Fruiting sessions`;
+              case 'fruition_sessions_in_subject': return `For the selected subject: complete ${count} Fruiting sessions`;
+              case 'sessions_after_midnight': return `Complete ${count} study sessions after midnight`;
+              case 'sessions_before_7am': return `Complete ${count} study sessions before 7:00 AM`;
+              case 'consecutive_days_no_wilt': return `Maintain ${count} consecutive qualifying study days without wilting`;
+              case 'archive_expansion_owned': return 'Complete one Archive Expansion';
+              default: return 'Complete the learning requirement shown below';
+            }
           };
           main.innerHTML = `
       <div class="page-wrap page-enter">
@@ -17378,6 +17418,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 <!-- Gate 1: Progress -->
                 <div class="item-gate">
                   <div class="gate-label">Gate 1: ${escapeHTML(gate1Label)}</div>
+                  <div style="font-size:var(--text-sm);color:var(--text-2);line-height:1.45;margin:5px 0 8px;"><strong style="color:var(--text);">Requirement:</strong> ${escapeHTML(marketplaceRequirementText(item))}</div>
                   <div class="gate-bar">
                     <div class="gate-fill" style="width:${gate1Progress}%"></div>
                   </div>
@@ -17427,16 +17468,18 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                     ? `<select class="subject-select" data-for-item="${item.item_code}" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;background:var(--bg-3,#1a1a2e);color:var(--text-1,#fff);border:1px solid var(--border-1,#333);font-size:var(--text-base);">${AppState.subjects.map(s => {
                         const alreadyApplied = scopedItem && scopedOwned.has(s.id);
                         const eligible = !scopedItem || !scopedEligibility[s.id] || scopedEligibility[s.id].met;
-                        const disabled = alreadyApplied || !eligible;
-                        const suffix = alreadyApplied ? ' — already applied' : !eligible ? ' — learning gate incomplete' : '';
+                        const disabled = alreadyApplied;
+                        const suffix = alreadyApplied ? ' — already applied' : !eligible ? ' — requirement incomplete' : ' — eligible';
                         const eligibility = scopedEligibility[s.id] || {};
-                        return `<option value="${s.id}" data-current="${Number(eligibility.current) || 0}" data-target="${Number(eligibility.target) || 0}" data-ks-current="${Number(eligibility.ks_current) || 0}" data-ks-target="${Number(eligibility.ks_target) || 0}" ${disabled ? 'disabled' : ''}>${escapeHTML(s.name)}${suffix}</option>`;
+                        return `<option value="${s.id}" data-current="${Number(eligibility.current) || 0}" data-target="${Number(eligibility.target) || 0}" data-ks-current="${Number(eligibility.ks_current) || 0}" data-ks-target="${Number(eligibility.ks_target) || 0}" data-met="${eligible ? 'true' : 'false'}" data-owned="${alreadyApplied ? 'true' : 'false'}" ${disabled ? 'disabled' : ''}>${escapeHTML(s.name)}${suffix}</option>`;
                       }).join('')}</select>`
                     : ''}
                   ${scopedItem ? '<div class="subject-gate-status" style="margin:-2px 0 9px;color:var(--text-3);font-size:var(--text-xs);line-height:1.45;"></div>' : ''}
                   <button class="btn btn-primary btn-sm"
                     data-item-code="${escapeHTML(item.item_code)}"
                     data-needs-subject="${needsSubject}"
+                    data-affordable="${canAfford ? 'true' : 'false'}"
+                    data-default-label="${isRepeatableService ? 'Run New Audit' : 'Purchase'}"
                     ${!canPurchase ? "disabled" : ""}>
                     ${isOwned ? "Owned" : canPurchase ? (isRepeatableService ? "Run New Audit" : "Purchase") : (scopedItem && !scopedHasAvailableSubject ? "No eligible subject" : "Locked")}
                   </button>
@@ -17513,11 +17556,23 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               const target = Number(option.dataset.target) || 0;
               const ksTarget = Number(option.dataset.ksTarget) || 0;
               const ksCurrent = Number(option.dataset.ksCurrent) || 0;
+              const requirementMet = option.dataset.met !== 'false';
+              const alreadyOwned = option.dataset.owned === 'true';
               status.textContent = ksTarget > 0
-                ? `Selected subject evidence: KS ${Math.round(ksCurrent)}/${Math.round(ksTarget)} · ${current}/${target} Fruiting sessions.`
+                ? `Selected subject requirement: KS ${Math.round(ksCurrent)}/${Math.round(ksTarget)} · Fruiting ${current}/${target} — ${requirementMet ? 'eligible' : 'not yet eligible'}.`
                 : target > 0
-                  ? `Selected subject evidence: ${current}/${target} Fruiting sessions.`
+                  ? `Selected subject requirement: Fruiting ${current}/${target} — ${requirementMet ? 'eligible' : 'not yet eligible'}.`
                   : 'This service will use the selected subject’s current cards and evidence.';
+              status.style.color = requirementMet ? 'var(--green-bright)' : 'var(--amber,#f59e0b)';
+              const button = select.parentElement?.querySelector('[data-item-code]');
+              if (button && button.dataset.needsSubject === 'true' && option.dataset.met) {
+                const affordable = button.dataset.affordable === 'true';
+                button.disabled = alreadyOwned || !requirementMet || !affordable;
+                button.textContent = alreadyOwned ? 'Already applied'
+                  : !requirementMet ? 'Requirement not met'
+                  : !affordable ? 'Not enough seedlings'
+                  : (button.dataset.defaultLabel || 'Purchase');
+              }
             };
             select.addEventListener('change', updateSubjectGateStatus);
             updateSubjectGateStatus();
@@ -19098,8 +19153,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
   <div style="font-family:var(--font-display);font-size:28px;font-weight:800;color:var(--text);margin-bottom:8px;">Generating Cards</div>
   ${job.subjectName ? `<div style="font-size:var(--text-base);color:var(--teal);margin-bottom:4px;font-family:var(--font-mono);">${escapeHTML(job.subjectName)}</div>` : ''}
   <div style="font-size:var(--text-base);color:var(--text-2);max-width:480px;margin:0 auto 32px;line-height:1.7;">
-    KIWI is reading your notes and building flashcards. This usually takes 30–90 seconds.<br>
-    You can navigate away — the banner at the top will notify you when cards are ready.
+    KIWI is reading your notes and building flashcards in the background.<br>
+    You can leave this page immediately — the status banner will notify you when the cards are ready.
   </div>
   <!-- Animated progress dots -->
   <div style="display:flex;gap:10px;justify-content:center;margin-bottom:40px;">
@@ -19672,18 +19727,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 showBubbleOnboardingPrompt(job.subject_id, job.deck_id);
               }
             } catch(err) {
-              _hideGenBanner();
-              var _gcScreen = document.getElementById('cardGenScreen');
-              if (_gcScreen) {
-                _gcScreen.innerHTML = '<div style="text-align:center;padding:40px 20px;">' +
-                  '<div style="font-size:64px;margin-bottom:16px;">&#x26A0;&#xFE0F;</div>' +
-                  '<div style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--red-bright);margin-bottom:12px;">Generation Failed</div>' +
-                  '<div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:24px;">' + escapeHTML(err.message || 'Card generation failed. Please try again.') + '</div>' +
-                  '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">' +
-                  '<button class="btn btn-primary" onclick="navigateTo(\'import\')">Try Again</button>' +
-                  '<button class="btn btn-ghost" onclick="navigateTo(\'dashboard\')">Back to Dashboard</button>' +
-                  '</div></div>';
-              }
+              _handleGenerationFailure('note_generation', err?.message || 'Card generation failed. Please try again.');
             } finally {
               btn.disabled = false; btn.textContent = "Generate Cards with AI";
             }
@@ -19881,8 +19925,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 AppState.subjects = null;
                 setTimeout(function() { navigateTo('library'); }, 2500);
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'Extraction failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'Image extraction failed');
                 showToast(err.message || 'Image extraction failed', 'error');
               }
               _imageFile = null; _imageB64 = null; _imageMime = null;
@@ -19939,8 +19982,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'PDF import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'PDF import failed');
                 showToast(err.message || "PDF import failed", "error");
               }
             });
@@ -19991,8 +20033,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'DOCX import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'DOCX import failed');
                 showToast(err.message || "DOCX import failed", "error");
               }
             });
@@ -20071,8 +20112,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'TXT import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'TXT import failed');
                 showToast(err.message || "TXT import failed", "error");
               }
             });
@@ -20118,8 +20158,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'Markdown import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'Markdown import failed');
                 showToast(err.message || "Markdown import failed", "error");
               }
             });
@@ -20165,8 +20204,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'PPTX import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'PPTX import failed');
                 showToast(err.message || "PPTX import failed", "error");
               }
             });
