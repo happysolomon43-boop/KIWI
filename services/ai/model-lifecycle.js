@@ -143,6 +143,7 @@ function createModelLifecycle({
       metadata: {
         ...(current.metadata || {}),
         suspendedReason: reason || 'automatic circuit breaker',
+        preSuspendStatus: current.metadata?.preSuspendStatus || current.status,
         suspendedAt: now.toISOString(),
       },
     });
@@ -151,6 +152,30 @@ function createModelLifecycle({
     if (typeof logger?.warn === 'function') {
       logger.warn('[KIWI AI] model suspended', { modelId, reason });
     }
+    return next;
+  }
+
+
+  async function resume(modelId, reason = 'manual suspension cleared') {
+    const current = catalog.get(modelId);
+    if (!current || current.status !== MODEL_STATUS.SUSPENDED) return current;
+
+    const resumeStatus = current.metadata?.preSuspendStatus || MODEL_STATUS.APPROVED;
+    const metadata = { ...(current.metadata || {}) };
+    delete metadata.suspendedReason;
+    delete metadata.suspendedAt;
+    delete metadata.preSuspendStatus;
+    metadata.resumedAt = new Date().toISOString();
+    metadata.resumeReason = reason;
+
+    const next = catalog.upsert({
+      ...current,
+      status: resumeStatus,
+      suspendedAt: null,
+      metadata,
+    });
+    failures.delete(modelId);
+    await persist(next);
     return next;
   }
 
@@ -219,6 +244,7 @@ function createModelLifecycle({
     approve,
     deny,
     suspend,
+    resume,
     recordSuccess,
     recordFailure,
     reportValidationFailure,
