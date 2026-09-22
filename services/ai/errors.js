@@ -26,6 +26,7 @@ class AIError extends Error {
     scope = 'REQUEST',
     provider = 'gemini',
     details = null,
+    retryAfterMs = null,
     cause = null,
   } = {}) {
     super(message);
@@ -36,6 +37,9 @@ class AIError extends Error {
     this.scope = scope;
     this.provider = provider;
     this.details = details;
+    this.retryAfterMs = Number.isFinite(Number(retryAfterMs))
+      ? Math.max(0, Number(retryAfterMs))
+      : null;
     if (cause) this.cause = cause;
   }
 }
@@ -87,8 +91,80 @@ function extractProviderMessage(body, fallback = 'Gemini request failed') {
   return message ? String(message).slice(0, 1000) : fallback;
 }
 
-function classifyGeminiHttpError({ status, body }) {
+function _durationToMs(value) {
+  if (value == null) return null;
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, value * 1000);
+  }
+
+  if (typeof value === 'object') {
+    const seconds = Number(value.seconds);
+    const nanos = Number(value.nanos);
+    if (Number.isFinite(seconds) || Number.isFinite(nanos)) {
+      return Math.max(
+        0,
+        (Number.isFinite(seconds) ? seconds * 1000 : 0) +
+        (Number.isFinite(nanos) ? nanos / 1000000 : 0)
+      );
+    }
+  }
+
+  const text = String(value).trim();
+  const match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*(ms|s|m)?$/i);
+  if (!match) return null;
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return null;
+  const unit = (match[2] || 's').toLowerCase();
+  if (unit === 'ms') return amount;
+  if (unit === 'm') return amount * 60000;
+  return amount * 1000;
+}
+
+function extractRetryDelayMs(body, headers = null) {
+  const headerValue =
+    headers?.get?.('retry-after') ??
+    headers?.['retry-after'] ??
+    headers?.['Retry-After'] ??
+    null;
+
+  if (headerValue != null) {
+    const numeric = Number(headerValue);
+    if (Number.isFinite(numeric) && numeric >= 0) return numeric * 1000;
+
+    const absolute = Date.parse(String(headerValue));
+    if (Number.isFinite(absolute)) return Math.max(0, absolute - Date.now());
+  }
+
+  let found = null;
+  function walk(value) {
+    if (found != null || value == null) return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    if (typeof value !== 'object') return;
+
+    for (const [key, item] of Object.entries(value)) {
+      if (/retry(delay|after)/i.test(key)) {
+        const parsed = _durationToMs(item);
+        if (parsed != null) {
+          found = parsed;
+          return;
+        }
+      }
+      walk(item);
+    }
+  }
+
+  walk(body);
+  return found;
+}
+
+function classifyGeminiHttpError({ status, body, headers = null }) {
   const message = extractProviderMessage(body, `Gemini HTTP ${status}`);
+  const retryAfterMs = extractRetryDelayMs(body, headers);
 
   if (status === 400 || status === 422) {
     return new AIError(message, {
@@ -137,6 +213,7 @@ function classifyGeminiHttpError({ status, body }) {
       retryable: true,
       scope: 'MODEL_SLOT',
       details: body,
+      retryAfterMs,
     });
   }
 
@@ -147,6 +224,7 @@ function classifyGeminiHttpError({ status, body }) {
       retryable: true,
       scope: 'ATTEMPT',
       details: body,
+      retryAfterMs,
     });
   }
 
@@ -214,6 +292,7 @@ module.exports = {
   AIError,
   classifyGeminiHttpError,
   extractProviderMessage,
+  extractRetryDelayMs,
   timeoutError,
   networkError,
   safetyError,
