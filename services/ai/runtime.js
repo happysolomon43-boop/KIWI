@@ -156,10 +156,22 @@ function createAIRuntime({
   }
 
   async function applyManualDenylist() {
-    const denylist = String(env.AI_MODEL_DENYLIST || '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean);
+    const denylist = new Set(
+      String(env.AI_MODEL_DENYLIST || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    );
+
+    for (const model of catalog.list()) {
+      const manuallySuspended =
+        model.status === 'SUSPENDED' &&
+        model.metadata?.suspendedReason === 'manual AI_MODEL_DENYLIST';
+
+      if (manuallySuspended && !denylist.has(model.id)) {
+        await modelLifecycle.resume(model.id, 'removed from AI_MODEL_DENYLIST');
+      }
+    }
 
     for (const modelId of denylist) {
       if (catalog.get(modelId)) {
