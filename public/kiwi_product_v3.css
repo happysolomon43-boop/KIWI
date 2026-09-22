@@ -1006,15 +1006,16 @@ button:disabled {
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Reckoning global-lock shell
-   Keep the mandatory recovery path usable on small screens and make Settings
-   visually distinct as the only normal surface left available.
+   Keep the mandatory recovery path usable on small screens and leave Brain
+   plus Settings reachable while all other normal surfaces remain locked.
    ───────────────────────────────────────────────────────────────────────────── */
-body.kiwi-reckoning-global-lock .nav-item:not([data-route="settings"]) {
+body.kiwi-reckoning-global-lock .nav-item:not([data-route="settings"]):not([data-route="brain"]) {
   opacity: .28 !important;
   pointer-events: none !important;
 }
 
-body.kiwi-reckoning-global-lock .bottom-nav .bnav-item {
+/* Mobile Brain/Settings live inside the More drawer, so More must remain usable. */
+body.kiwi-reckoning-global-lock .bottom-nav .bnav-item:not(#bnavMore) {
   opacity: .28 !important;
   pointer-events: none !important;
 }
