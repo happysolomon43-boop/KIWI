@@ -88,23 +88,177 @@
     const exam = bubble.exam_date
       ? new Date(bubble.exam_date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
       : 'No deadline';
+    const goalName = bubble.name || subject + ' exam goal';
     return `
-      <button class="bubble-hub-card" type="button" data-bubble-id="${h(bubble.id || '')}">
-        <div class="bubble-hub-card-top">
-          <div>
-            <div class="bubble-hub-kicker">${h(subject)}</div>
-            <div class="bubble-hub-name">${h(bubble.name || subject + ' exam goal')}</div>
+      <div class="bubble-swipe-row" data-bubble-row-id="${h(bubble.id || '')}">
+        <button class="bubble-swipe-delete" type="button" data-bubble-delete="${h(bubble.id || '')}" aria-label="Delete ${h(goalName)}">
+          <span aria-hidden="true">🗑</span>
+          <strong>Delete</strong>
+        </button>
+        <button class="bubble-hub-card bubble-swipe-card" type="button" data-bubble-id="${h(bubble.id || '')}">
+          <div class="bubble-hub-card-top">
+            <div>
+              <div class="bubble-hub-kicker">${h(subject)}</div>
+              <div class="bubble-hub-name">${h(goalName)}</div>
+            </div>
+            <span class="bubble-hub-status status-${h(status.toLowerCase())}">${h(status.replace(/_/g, ' '))}</span>
           </div>
-          <span class="bubble-hub-status status-${h(status.toLowerCase())}">${h(status.replace(/_/g, ' '))}</span>
-        </div>
-        <div class="bubble-hub-metrics">
-          <div><strong>${Math.round(ks)}</strong><span>Knowledge Score</span></div>
-          <div><strong>${h(phaseLabel(bubble))}</strong><span>Phase</span></div>
-          <div><strong>${days == null ? '—' : days}</strong><span>${days === 1 ? 'Day left' : 'Days left'}</span></div>
-        </div>
-        <div class="bubble-hub-progress"><span style="width:${ks}%"></span></div>
-        <div class="bubble-hub-deadline">Exam: ${h(exam)}</div>
-      </button>`;
+          <div class="bubble-hub-metrics">
+            <div><strong>${Math.round(ks)}</strong><span>Knowledge Score</span></div>
+            <div><strong>${h(phaseLabel(bubble))}</strong><span>Phase</span></div>
+            <div><strong>${days == null ? '—' : days}</strong><span>${days === 1 ? 'Day left' : 'Days left'}</span></div>
+          </div>
+          <div class="bubble-hub-progress"><span style="width:${ks}%"></span></div>
+          <div class="bubble-hub-deadline">Exam: ${h(exam)}</div>
+        </button>
+      </div>`;
+  }
+
+  function wireBubbleSwipeDelete(root, gate) {
+    if (!root || gate?.demo) return;
+
+    const SWIPE_WIDTH = 104;
+    let openRow = null;
+
+    const closeRow = (row) => {
+      if (!row) return;
+      row.classList.remove('is-open', 'is-swiping');
+      row.dataset.swipeOpen = '0';
+      const card = row.querySelector('.bubble-swipe-card');
+      if (card) card.style.transform = 'translate3d(0,0,0)';
+      if (openRow === row) openRow = null;
+    };
+
+    root.querySelectorAll('.bubble-swipe-row').forEach((row) => {
+      const card = row.querySelector('.bubble-swipe-card');
+      const deleteBtn = row.querySelector('.bubble-swipe-delete');
+      if (!card || !deleteBtn || row.dataset.swipeWired === '1') return;
+      row.dataset.swipeWired = '1';
+
+      let pointerId = null;
+      let startX = 0;
+      let startY = 0;
+      let baseX = 0;
+      let lastX = 0;
+      let horizontal = false;
+      let suppressUntil = 0;
+
+      const setX = (x, animate) => {
+        const clamped = Math.max(-SWIPE_WIDTH, Math.min(0, x));
+        row.classList.toggle('is-swiping', !animate);
+        if (animate) row.classList.remove('is-swiping');
+        card.style.transform = 'translate3d(' + clamped + 'px,0,0)';
+        lastX = clamped;
+      };
+
+      card.addEventListener('pointerdown', (event) => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        if (openRow && openRow !== row) closeRow(openRow);
+        pointerId = event.pointerId;
+        startX = event.clientX;
+        startY = event.clientY;
+        baseX = row.dataset.swipeOpen === '1' ? -SWIPE_WIDTH : 0;
+        lastX = baseX;
+        horizontal = false;
+        row.classList.add('is-swiping');
+        try { card.setPointerCapture(pointerId); } catch (_) {}
+      });
+
+      card.addEventListener('pointermove', (event) => {
+        if (pointerId == null || event.pointerId !== pointerId) return;
+        const dx = event.clientX - startX;
+        const dy = event.clientY - startY;
+        if (!horizontal) {
+          if (Math.abs(dx) < 7) return;
+          if (Math.abs(dx) <= Math.abs(dy) * 1.15) return;
+          horizontal = true;
+        }
+        event.preventDefault();
+        setX(baseX + dx, false);
+      });
+
+      const finishSwipe = (event) => {
+        if (pointerId == null || (event && event.pointerId !== pointerId)) return;
+        try { card.releasePointerCapture(pointerId); } catch (_) {}
+        pointerId = null;
+        row.classList.remove('is-swiping');
+
+        if (!horizontal) {
+          if (row.dataset.swipeOpen === '1') {
+            closeRow(row);
+            suppressUntil = Date.now() + 350;
+          }
+          return;
+        }
+
+        suppressUntil = Date.now() + 450;
+        const shouldOpen = lastX <= -(SWIPE_WIDTH * 0.42);
+        if (shouldOpen) {
+          row.dataset.swipeOpen = '1';
+          row.classList.add('is-open');
+          setX(-SWIPE_WIDTH, true);
+          openRow = row;
+          if (navigator.vibrate) navigator.vibrate(18);
+        } else {
+          closeRow(row);
+        }
+      };
+
+      card.addEventListener('pointerup', finishSwipe);
+      card.addEventListener('pointercancel', finishSwipe);
+
+      // Capture phase prevents the normal "open Bubble" handler from firing
+      // after a horizontal swipe.
+      card.addEventListener('click', (event) => {
+        if (Date.now() < suppressUntil || row.dataset.swipeOpen === '1') {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, true);
+
+      deleteBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const id = deleteBtn.dataset.bubbleDelete;
+        if (!id) return;
+        const name = card.querySelector('.bubble-hub-name')?.textContent?.trim() || 'this exam goal';
+
+        const performDelete = async () => {
+          deleteBtn.disabled = true;
+          deleteBtn.classList.add('is-busy');
+          try {
+            if (typeof api.deleteBubblePermanently === 'function') {
+              await api.deleteBubblePermanently(id);
+            } else {
+              await apiRequest('/bubbles/' + encodeURIComponent(id) + '?permanent=1', { method: 'DELETE' });
+            }
+            AppState.bubbles = null;
+            if (typeof showToast === 'function') {
+              showToast('Exam goal deleted. Your cards and study history were kept.', 'success', 5000);
+            }
+            await renderBubbleHub();
+          } catch (error) {
+            deleteBtn.disabled = false;
+            deleteBtn.classList.remove('is-busy');
+            closeRow(row);
+            if (!error?.alreadyReported && typeof showToast === 'function') {
+              showToast(error?.message || 'Failed to delete exam goal', 'error', 6000);
+            }
+          }
+        };
+
+        const message =
+          'Delete "' + name + '" permanently? The goal, its trajectory, contracts and Bubble tracking will be removed. ' +
+          'Your flashcards and study/exam history will stay. This cannot be undone.';
+
+        if (typeof showCustomConfirm === 'function') {
+          showCustomConfirm('Delete exam goal?', message, performDelete);
+        } else if (window.confirm(message)) {
+          performDelete();
+        }
+      });
+    });
+
   }
 
   async function renderBubbleHub() {
@@ -157,6 +311,7 @@
               <div>
                 <div class="section-title">Active goals</div>
                 <div class="section-sub">${active.length ? active.length + ' active exam goal' + (active.length === 1 ? '' : 's') : 'No active exam goal yet.'}</div>
+                ${active.length && !gate.demo ? '<div class="bubble-swipe-hint">Swipe left on a goal to delete it.</div>' : ''}
               </div>
             </div>
             <div class="bubble-hub-grid">
@@ -196,6 +351,7 @@
           if (id && typeof openBubbleDetailPanel === 'function') openBubbleDetailPanel(id);
         });
       });
+      wireBubbleSwipeDelete(main, gate);
     } catch (error) {
       if (typeof renderErrorState === 'function') {
         renderErrorState(main, error.message || 'Exam Goals could not be loaded', renderBubbleHub);

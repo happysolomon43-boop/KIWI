@@ -17,6 +17,82 @@
   opacity: .88;
 }
 
+.bubble-swipe-hint {
+  margin-top: 5px;
+  color: var(--text-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: .01em;
+}
+
+.bubble-swipe-row {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--r-md, 14px);
+  isolation: isolate;
+}
+
+.bubble-swipe-delete {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: 104px;
+  min-width: 104px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 0 var(--r-md, 14px) var(--r-md, 14px) 0;
+  background: linear-gradient(135deg, #8f2323, #c24141);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bubble-swipe-delete span {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.bubble-swipe-delete strong {
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.bubble-swipe-delete:disabled,
+.bubble-swipe-delete.is-busy {
+  opacity: .6;
+  cursor: wait;
+}
+
+.bubble-swipe-row .bubble-swipe-card {
+  position: relative;
+  z-index: 1;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  will-change: transform;
+  transition: transform 180ms cubic-bezier(.22, 1, .36, 1),
+              border-color var(--t-fast),
+              background var(--t-fast);
+}
+
+.bubble-swipe-row.is-swiping .bubble-swipe-card {
+  transition: none;
+}
+
+.bubble-swipe-row.is-open .bubble-swipe-delete {
+  box-shadow: inset 12px 0 24px rgba(0, 0, 0, .18);
+}
+
 .bubble-hub-card {
   display: block;
   width: 100%;
@@ -32,9 +108,12 @@
 }
 
 .bubble-hub-card:hover {
-  transform: translateY(-2px);
   border-color: rgba(82, 183, 136, .45);
   background: var(--surface-2);
+}
+
+.bubble-swipe-row:not(.is-open):not(.is-swiping) .bubble-hub-card:hover {
+  transform: translateY(-2px);
 }
 
 .bubble-hub-card-top {
@@ -473,6 +552,23 @@
 }
 
 @media (max-width: 800px) {
+  .bubble-swipe-row::after {
+    content: 'Swipe left to delete';
+    position: absolute;
+    z-index: 0;
+    right: 112px;
+    bottom: 8px;
+    color: rgba(255,255,255,.28);
+    font-family: var(--font-mono);
+    font-size: 8px;
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  .bubble-swipe-row:focus-within::after {
+    opacity: 1;
+  }
+
   .bubble-hub-grid {
     grid-template-columns: 1fr;
   }
