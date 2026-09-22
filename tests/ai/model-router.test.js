@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const { createModelRouter } = require('../../services/ai/model-router');
 
-test('VVIP routes through the three newest approved stable Flash models', () => {
+test('VVIP routes through four approved stable Flash models for resilient quality-preserving fallback', () => {
   const router = createModelRouter();
   const ids = router.resolveCandidates('MAIN_CBT').map((entry) => entry.modelId);
 
@@ -13,6 +13,7 @@ test('VVIP routes through the three newest approved stable Flash models', () => 
     'gemini-3.8-flash',
     'gemini-3.7-flash',
     'gemini-3.6-flash',
+    'gemini-3.5-flash',
   ]);
 });
 
@@ -24,6 +25,7 @@ test('flashcard generation receives the same VVIP model chain as main CBT', () =
     'gemini-3.8-flash',
     'gemini-3.7-flash',
     'gemini-3.6-flash',
+    'gemini-3.5-flash',
   ]);
 });
 
@@ -70,5 +72,6 @@ test('preferred model creates an affinity ceiling instead of upgrading unexpecte
   assert.deepEqual(ids, [
     'gemini-3.7-flash',
     'gemini-3.6-flash',
+    'gemini-3.5-flash',
   ]);
 });

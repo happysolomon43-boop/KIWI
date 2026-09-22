@@ -126,3 +126,59 @@ test('quota limit extraction walks Gemini error detail objects', () => {
     500
   );
 });
+
+
+test('unknown 429 responses enter cooldown instead of remaining READY', async () => {
+  let now = new Date('2026-09-22T20:00:00Z');
+  const manager = createQuotaManager({
+    clock: () => now,
+    unknownRateLimitCooldownMs: 60000,
+  });
+
+  await manager.markFailure('p1', 'm1', new AIError('generic resource exhausted', {
+    code: AI_ERROR_CODES.RATE_LIMIT_UNKNOWN,
+    status: 429,
+    retryable: true,
+  }));
+
+  assert.equal(manager.get('p1', 'm1').state, PROJECT_MODEL_STATES.COOLDOWN_RPM);
+  assert.equal(manager.isEligible('p1', 'm1'), false);
+
+  now = new Date('2026-09-22T20:01:01Z');
+  assert.equal(manager.isEligible('p1', 'm1'), true);
+});
+
+test('provider retry delay overrides the default rate-limit cooldown', async () => {
+  let now = new Date('2026-09-22T20:00:00Z');
+  const manager = createQuotaManager({
+    clock: () => now,
+    unknownRateLimitCooldownMs: 60000,
+  });
+
+  await manager.markFailure('p1', 'm1', new AIError('retry shortly', {
+    code: AI_ERROR_CODES.RATE_LIMIT_UNKNOWN,
+    status: 429,
+    retryable: true,
+    retryAfterMs: 5000,
+  }));
+
+  now = new Date('2026-09-22T20:00:04Z');
+  assert.equal(manager.isEligible('p1', 'm1'), false);
+  now = new Date('2026-09-22T20:00:06Z');
+  assert.equal(manager.isEligible('p1', 'm1'), true);
+});
+
+test('eligible slot ordering favors recently successful routes', async () => {
+  let now = new Date('2026-09-22T20:00:00Z');
+  const manager = createQuotaManager({ clock: () => now });
+
+  await manager.markSuccess('p2', 'm1');
+  now = new Date('2026-09-22T20:00:01Z');
+
+  const ordered = manager.filterEligibleSlots('m1', [
+    { id: 'p1' },
+    { id: 'p2' },
+  ]);
+
+  assert.deepEqual(ordered.map((slot) => slot.id), ['p2', 'p1']);
+});

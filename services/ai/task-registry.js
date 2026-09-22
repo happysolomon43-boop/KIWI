@@ -38,6 +38,29 @@ const RETRY_POLICIES = Object.freeze({
   IP_FAST: 'IP_FAST',
 });
 
+// Retry limits are intentionally bounded. A single learner action must never
+// fan out across every configured Gemini project for every fallback model.
+// Rate limits are project/model scoped, while provider 5xx errors are usually
+// model/service availability signals. These budgets keep fallback useful
+// without turning one request into a quota-burning retry storm.
+const RETRY_POLICY_CONFIG = Object.freeze({
+  [RETRY_POLICIES.VVIP_GENERATION]: Object.freeze({
+    maxAttempts: 8,
+    maxAttemptsPerModel: 2,
+    maxTransientAttemptsPerModel: 1,
+  }),
+  [RETRY_POLICIES.VIP_ANALYSIS]: Object.freeze({
+    maxAttempts: 8,
+    maxAttemptsPerModel: 2,
+    maxTransientAttemptsPerModel: 1,
+  }),
+  [RETRY_POLICIES.IP_FAST]: Object.freeze({
+    maxAttempts: 4,
+    maxAttemptsPerModel: 2,
+    maxTransientAttemptsPerModel: 1,
+  }),
+});
+
 function task(config) {
   return Object.freeze({
     degradationAllowed: false,
@@ -379,6 +402,7 @@ module.exports = {
   QUALITY_FLOORS,
   MODEL_POLICIES,
   RETRY_POLICIES,
+  RETRY_POLICY_CONFIG,
   AI_TASKS,
   CANONICAL_AI_TASK_IDS,
   validateTaskRegistry,

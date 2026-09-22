@@ -80,6 +80,7 @@ function createGeminiTransport({
         throw classifyGeminiHttpError({
           status: response.status,
           body,
+          headers: response.headers,
         });
       }
 

@@ -63,6 +63,7 @@ function createQuotaManager({
   clock = () => new Date(),
   rpmCooldownMs = 65000,
   tpmCooldownMs = 65000,
+  unknownRateLimitCooldownMs = 65000,
 } = {}) {
   const cache = new Map();
 
@@ -152,7 +153,28 @@ function createQuotaManager({
     let count = 0;
     for (const row of rows || []) {
       const state = fromRow(row);
-      const changed = normalize(state);
+      let changed = normalize(state);
+      const now = clock();
+
+      // Older KIWI builds recorded unclassified 429 responses while leaving
+      // the route READY. Repair those rows during hydration so a deploy does
+      // not immediately replay the same rate-limited project/model pair.
+      if (
+        state.state === PROJECT_MODEL_STATES.READY &&
+        state.lastErrorCode === AI_ERROR_CODES.RATE_LIMIT_UNKNOWN &&
+        state.lastHttpStatus === 429 &&
+        state.lastFailureAt
+      ) {
+        const cooldownUntil = new Date(
+          new Date(state.lastFailureAt).getTime() + unknownRateLimitCooldownMs
+        );
+        if (cooldownUntil.getTime() > now.getTime()) {
+          state.state = PROJECT_MODEL_STATES.COOLDOWN_RPM;
+          state.cooldownUntil = cooldownUntil;
+          changed = true;
+        }
+      }
+
       cache.set(key(state.projectSlot, state.modelId), state);
       count++;
       if (changed) await persist(state);
@@ -176,8 +198,51 @@ function createQuotaManager({
     return state.state === PROJECT_MODEL_STATES.READY;
   }
 
+  function slotHealthScore(projectSlot, modelId, now = clock()) {
+    const state = get(projectSlot, modelId);
+    const attempts = Math.max(0, Number(state.attemptsToday) || 0);
+    const successes = Math.max(0, Number(state.successesToday) || 0);
+    const failures = Math.max(0, attempts - successes);
+
+    let score = (successes * 6) - (failures * 2);
+    const nowMs = now.getTime();
+
+    if (state.lastSuccessAt) {
+      const ageMs = Math.max(0, nowMs - new Date(state.lastSuccessAt).getTime());
+      if (ageMs <= 5 * 60 * 1000) score += 20;
+      else if (ageMs <= 30 * 60 * 1000) score += 8;
+    }
+
+    if (state.lastFailureAt) {
+      const ageMs = Math.max(0, nowMs - new Date(state.lastFailureAt).getTime());
+      if (ageMs <= 15 * 1000) score -= 12;
+      else if (ageMs <= 60 * 1000) score -= 5;
+    }
+
+    return score;
+  }
+
   function filterEligibleSlots(modelId, slots) {
-    return (slots || []).filter((slot) => isEligible(slot.id, modelId));
+    return (slots || [])
+      .map((slot, index) => ({
+        slot,
+        index,
+        eligible: isEligible(slot.id, modelId),
+        score: slotHealthScore(slot.id, modelId),
+      }))
+      .filter((entry) => entry.eligible)
+      .sort((a, b) => b.score - a.score || a.index - b.index)
+      .map((entry) => entry.slot);
+  }
+
+  function cooldownDuration(error, fallbackMs) {
+    const providerDelay = Number(error?.retryAfterMs);
+    if (Number.isFinite(providerDelay) && providerDelay >= 0) {
+      // Respect provider RetryInfo/Retry-After while bounding pathological
+      // values so a malformed response cannot quarantine a route indefinitely.
+      return Math.max(1000, Math.min(providerDelay, 10 * 60 * 1000));
+    }
+    return fallbackMs;
   }
 
   async function markSuccess(projectSlot, modelId) {
@@ -214,11 +279,24 @@ function createQuotaManager({
         break;
       case AI_ERROR_CODES.RATE_LIMIT_RPM:
         state.state = PROJECT_MODEL_STATES.COOLDOWN_RPM;
-        state.cooldownUntil = new Date(now.getTime() + rpmCooldownMs);
+        state.cooldownUntil = new Date(
+          now.getTime() + cooldownDuration(error, rpmCooldownMs)
+        );
         break;
       case AI_ERROR_CODES.RATE_LIMIT_TPM:
         state.state = PROJECT_MODEL_STATES.COOLDOWN_TPM;
-        state.cooldownUntil = new Date(now.getTime() + tpmCooldownMs);
+        state.cooldownUntil = new Date(
+          now.getTime() + cooldownDuration(error, tpmCooldownMs)
+        );
+        break;
+      case AI_ERROR_CODES.RATE_LIMIT_UNKNOWN:
+        // Unknown 429s must never remain READY. Treat them conservatively as
+        // a short request-rate cooldown unless the provider supplies a more
+        // precise RetryInfo/Retry-After delay.
+        state.state = PROJECT_MODEL_STATES.COOLDOWN_RPM;
+        state.cooldownUntil = new Date(
+          now.getTime() + cooldownDuration(error, unknownRateLimitCooldownMs)
+        );
         break;
       case AI_ERROR_CODES.AUTH:
         state.state = PROJECT_MODEL_STATES.KEY_INVALID;
@@ -286,6 +364,7 @@ function createQuotaManager({
     get,
     isEligible,
     filterEligibleSlots,
+    slotHealthScore,
     markSuccess,
     markFailure,
     disable,

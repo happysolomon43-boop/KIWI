@@ -71,6 +71,7 @@ test('all VVIP tasks resolve only to the approved stable Flash VVIP chain', () =
     'gemini-3.8-flash',
     'gemini-3.7-flash',
     'gemini-3.6-flash',
+    'gemini-3.5-flash',
   ];
 
   for (const id of [
@@ -86,7 +87,7 @@ test('all VVIP tasks resolve only to the approved stable Flash VVIP chain', () =
   }
 });
 
-test('one VVIP request exhausts every configured project on 3.8 before falling to 3.7', async () => {
+test('one VVIP request uses a bounded number of projects before falling to the next Flash model', async () => {
   const slots = Array.from({ length: 14 }, (_, index) => ({
     id: `p${index + 1}`,
     index: index + 1,
@@ -116,19 +117,11 @@ test('one VVIP request exhausts every configured project on 3.8 before falling t
 
   const result = await ai.run('MAIN_CBT', { content: 'exam' });
 
-  assert.equal(calls.length, 15);
-  assert.deepEqual(
-    calls.slice(0, 14).map((call) => call.modelId),
-    Array(14).fill('gemini-3.8-flash')
-  );
-  assert.deepEqual(
-    calls.slice(0, 14).map((call) => call.apiKey),
-    Array.from({ length: 14 }, (_, index) => `key-${index + 1}`)
-  );
-  assert.deepEqual(calls[14], {
-    modelId: 'gemini-3.7-flash',
-    apiKey: 'key-1',
-  });
+  assert.deepEqual(calls, [
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-2' },
+    { modelId: 'gemini-3.7-flash', apiKey: 'key-1' },
+  ]);
   assert.equal(result.requestedModel, 'gemini-3.7-flash');
 });
 

@@ -1,6 +1,6 @@
 'use strict';
 
-const { AI_TASKS } = require('./task-registry');
+const { AI_TASKS, RETRY_POLICY_CONFIG } = require('./task-registry');
 const { createModelCatalog, MODEL_STATUS } = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
 const { createProjectPool } = require('./project-pool');
@@ -17,6 +17,19 @@ const IMMEDIATE_FAILURE_CODES = new Set([
   AI_ERROR_CODES.BAD_REQUEST,
   AI_ERROR_CODES.SAFETY,
 ]);
+
+const FAST_MODEL_FALLBACK_CODES = new Set([
+  AI_ERROR_CODES.TRANSIENT,
+  AI_ERROR_CODES.TIMEOUT,
+  AI_ERROR_CODES.NETWORK,
+  AI_ERROR_CODES.EMPTY_RESPONSE,
+]);
+
+const DEFAULT_RETRY_POLICY = Object.freeze({
+  maxAttempts: 6,
+  maxAttemptsPerModel: 2,
+  maxTransientAttemptsPerModel: 1,
+});
 
 function validateFeatureGenerationConfig(generationConfig = {}) {
   if (
@@ -49,10 +62,58 @@ function createAIOrchestrator({
   normalizer = normalizeGeminiResponse,
   logger = console,
   env = process.env,
+  clock = () => Date.now(),
 } = {}) {
   const resolvedRouter = router || createModelRouter({ registry, catalog });
   const resolvedProjectPool = projectPool || createProjectPool({ env });
   const resolvedTransport = transport || createGeminiTransport();
+
+  // Provider 5xx overload is model/service scoped much more often than
+  // project-key scoped. Remember a short transient cooldown so concurrent AI
+  // features do not all re-hit the same overloaded model before falling back.
+  const modelTransientCooldowns = new Map();
+  const configuredTransientCooldownMs = Number(env?.AI_MODEL_TRANSIENT_COOLDOWN_MS);
+  const MODEL_TRANSIENT_COOLDOWN_MS = Number.isFinite(configuredTransientCooldownMs)
+    ? Math.max(5000, Math.min(configuredTransientCooldownMs, 120000))
+    : 20000;
+
+  function nowMs() {
+    const value = clock();
+    if (value instanceof Date) return value.getTime();
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : Date.now();
+  }
+
+  function modelCooldownUntil(modelId) {
+    const until = Number(modelTransientCooldowns.get(modelId)) || 0;
+    if (!until) return null;
+    if (until <= nowMs()) {
+      modelTransientCooldowns.delete(modelId);
+      return null;
+    }
+    return until;
+  }
+
+  function isModelTemporarilyAvailable(modelId) {
+    return modelCooldownUntil(modelId) == null;
+  }
+
+  function markModelTransientFailure(modelId, error) {
+    if (error?.code !== AI_ERROR_CODES.TRANSIENT) return;
+    const providerDelay = Number(error?.retryAfterMs);
+    const cooldownMs = Number.isFinite(providerDelay) && providerDelay > 0
+      ? Math.max(5000, Math.min(providerDelay, 120000))
+      : MODEL_TRANSIENT_COOLDOWN_MS;
+    modelTransientCooldowns.set(modelId, nowMs() + cooldownMs);
+  }
+
+  function clearModelTransientFailure(modelId) {
+    modelTransientCooldowns.delete(modelId);
+  }
+
+  function retryPolicyFor(task) {
+    return RETRY_POLICY_CONFIG[task?.retryPolicy] || DEFAULT_RETRY_POLICY;
+  }
 
   // Multi-call workflows (CBT generation + completion/repair passes) should not
   // bounce back up to a stronger model after already falling back. Affinity is
@@ -141,7 +202,10 @@ function createAIOrchestrator({
   function plan(taskId, { preferredModelId = null } = {}) {
     const candidates = resolvedRouter.resolveCandidates(taskId, { preferredModelId });
     const routedCandidates = candidates.map((candidate) => {
-      const eligibleSlots = slotsForModel(candidate.modelId, { advance: false });
+      const cooldownUntil = modelCooldownUntil(candidate.modelId);
+      const eligibleSlots = cooldownUntil
+        ? []
+        : slotsForModel(candidate.modelId, { advance: false });
       return Object.freeze({
         modelId: candidate.modelId,
         class: candidate.class,
@@ -149,6 +213,10 @@ function createAIOrchestrator({
         resolvedReasoning: candidate.resolvedReasoning,
         timeoutMs: candidate.timeoutMs,
         qualityFloor: candidate.qualityFloor,
+        temporarilyUnavailable: Boolean(cooldownUntil),
+        transientCooldownUntil: cooldownUntil
+          ? new Date(cooldownUntil).toISOString()
+          : null,
         eligibleProjectSlots: Object.freeze(eligibleSlots.map((slot) => slot.id)),
       });
     });
@@ -189,9 +257,12 @@ function createAIOrchestrator({
   } = {}) {
     const task = resolvedRouter.getTask(taskId);
     const affinityModelId = preferredModelId || getAffinity(task, generationGroupId);
-    const candidates = resolvedRouter.resolveCandidates(taskId, {
+    const routedCandidates = resolvedRouter.resolveCandidates(taskId, {
       preferredModelId: affinityModelId,
     });
+    const candidates = routedCandidates.filter(
+      (candidate) => isModelTemporarilyAvailable(candidate.modelId)
+    );
     if (!affinityModelId && generationGroupId && task.affinityGroup && candidates[0]) {
       setAffinity(task, generationGroupId, candidates[0].modelId);
     }
@@ -213,7 +284,8 @@ function createAIOrchestrator({
       });
     }
 
-    const plannedModels = candidates.map((candidate) => candidate.modelId);
+    const plannedModels = routedCandidates.map((candidate) => candidate.modelId);
+    const retryPolicy = retryPolicyFor(task);
     const requestId = telemetry
       ? await sideEffect('telemetry begin', () => telemetry.beginRequest({
           taskId,
@@ -245,14 +317,21 @@ function createAIOrchestrator({
       }));
     }
 
+    modelLoop:
     for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
       const candidate = candidates[modelIndex];
       const slots = slotsForModel(candidate.modelId, { advance: true });
       if (slots.length > 0) hadEligibleRoute = true;
       let skipRemainingSlotsForModel = false;
+      let modelAttemptCount = 0;
+      let modelTransientAttemptCount = 0;
 
       for (const slot of slots) {
+        if (attempts.length >= retryPolicy.maxAttempts) break modelLoop;
+        if (modelAttemptCount >= retryPolicy.maxAttemptsPerModel) break;
+
         const attemptNumber = attempts.length + 1;
+        modelAttemptCount += 1;
         const attemptStarted = Date.now();
         const generationConfig = {
           ...featureGenerationConfig,
@@ -295,6 +374,7 @@ function createAIOrchestrator({
             slot.id,
             candidate.modelId
           ));
+          clearModelTransientFailure(candidate.modelId);
           await sideEffect('model lifecycle success', () => modelLifecycle?.recordSuccess(
             candidate.modelId
           ));
@@ -433,6 +513,24 @@ function createAIOrchestrator({
             aiError.retryable ||
             aiError.code === AI_ERROR_CODES.EMPTY_RESPONSE
           ) {
+            if (FAST_MODEL_FALLBACK_CODES.has(aiError.code)) {
+              modelTransientAttemptCount += 1;
+              markModelTransientFailure(candidate.modelId, aiError);
+
+              if (
+                modelTransientAttemptCount >=
+                retryPolicy.maxTransientAttemptsPerModel
+              ) {
+                skipRemainingSlotsForModel = true;
+                break;
+              }
+            }
+
+            if (modelAttemptCount >= retryPolicy.maxAttemptsPerModel) {
+              skipRemainingSlotsForModel = true;
+              break;
+            }
+
             continue;
           }
 
@@ -462,6 +560,11 @@ function createAIOrchestrator({
           attempts,
           lastErrorCode: lastError?.code || null,
           hadEligibleRoute,
+          retryPolicy: task.retryPolicy,
+          maxAttempts: retryPolicy.maxAttempts,
+          temporarilyUnavailableModels: routedCandidates
+            .map((candidate) => candidate.modelId)
+            .filter((modelId) => !isModelTemporarilyAvailable(modelId)),
         },
         cause: lastError,
       }
@@ -484,11 +587,14 @@ function createAIOrchestrator({
     telemetry,
     modelLifecycle,
     generationAffinity,
+    modelTransientCooldowns,
   });
 }
 
 module.exports = {
   IMMEDIATE_FAILURE_CODES,
+  FAST_MODEL_FALLBACK_CODES,
+  DEFAULT_RETRY_POLICY,
   validateFeatureGenerationConfig,
   createAIOrchestrator,
 };

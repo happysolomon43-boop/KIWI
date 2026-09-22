@@ -217,6 +217,7 @@ test('planning is secret-free and supports generation affinity', () => {
   assert.deepEqual(plan.candidates.map((entry) => entry.modelId), [
     'gemini-3.7-flash',
     'gemini-3.6-flash',
+    'gemini-3.5-flash',
   ]);
   assert.doesNotMatch(serialized, /key-1|key-2/);
 });
@@ -297,4 +298,87 @@ test('parallel workflow successes cannot upgrade affinity after a fallback', asy
     ai.generationAffinity.get('ASSESSMENT_GENERATION::exam-parallel').modelId,
     'gemini-3.7-flash'
   );
+});
+
+
+test('transient provider overload fast-falls to the next model and opens a short model cooldown', async () => {
+  const calls = [];
+  let now = Date.parse('2026-09-22T18:44:00Z');
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    clock: () => now,
+    env: { AI_MODEL_TRANSIENT_COOLDOWN_MS: '20000' },
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, apiKey: args.apiKey });
+        if (args.modelId === 'gemini-3.8-flash') {
+          throw new AIError('overloaded', {
+            code: AI_ERROR_CODES.TRANSIENT,
+            status: 503,
+            retryable: true,
+            scope: 'ATTEMPT',
+          });
+        }
+        return { raw: successRaw('fallback-fast'), latencyMs: 10, httpStatus: 200 };
+      },
+    },
+  });
+
+  const first = await ai.run('MAIN_CBT', { content: 'exam' });
+  assert.equal(first.requestedModel, 'gemini-3.7-flash');
+  assert.deepEqual(calls, [
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
+    { modelId: 'gemini-3.7-flash', apiKey: 'key-1' },
+  ]);
+
+  calls.length = 0;
+  const second = await ai.run('MAIN_CBT', { content: 'exam 2' });
+  assert.equal(second.requestedModel, 'gemini-3.7-flash');
+  assert.equal(calls[0].modelId, 'gemini-3.7-flash');
+  assert.ok(calls.every((call) => call.modelId !== 'gemini-3.8-flash'));
+
+  now += 20001;
+  calls.length = 0;
+  await ai.run('MAIN_CBT', { content: 'exam 3' });
+  assert.equal(calls[0].modelId, 'gemini-3.8-flash');
+});
+
+test('retry policy bounds one VVIP request instead of exhausting the whole project pool', async () => {
+  const manySlots = createProjectPool({
+    slots: Array.from({ length: 15 }, (_, index) => ({
+      id: `p${index + 1}`,
+      index: index + 1,
+      envName: `K${index + 1}`,
+      apiKey: `key-${index + 1}`,
+    })),
+  });
+
+  let calls = 0;
+  const ai = createAIOrchestrator({
+    projectPool: manySlots,
+    logger: quietLogger,
+    transport: {
+      async generate() {
+        calls += 1;
+        throw new AIError('rate limited', {
+          code: AI_ERROR_CODES.RATE_LIMIT_UNKNOWN,
+          status: 429,
+          retryable: true,
+          scope: 'MODEL_SLOT',
+        });
+      },
+    },
+  });
+
+  await assert.rejects(
+    ai.run('MAIN_CBT', { content: 'exam' }),
+    (error) => {
+      assert.equal(error.details.maxAttempts, 8);
+      assert.equal(error.details.attempts.length, 8);
+      return true;
+    }
+  );
+
+  assert.equal(calls, 8);
 });
