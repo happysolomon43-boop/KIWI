@@ -50,8 +50,8 @@ const pool = new Pool({
 // Thin query wrapper — pool.query returns { rows, rowCount }
 const query = (text, params) => pool.query(text, params);
 
-// Phase 3: build the new AI Orchestrator beside the legacy Gemini wrapper.
-// It remains observe-only until feature migration begins in later phases.
+// KIWI AI Orchestrator runtime. Phase 4 routes IP tasks live while remaining
+// VIP/VVIP legacy callers stay in shadow mode until their migration phases.
 const _aiRuntime = createAIRuntime({
   query,
   randomUUID,
@@ -1925,8 +1925,8 @@ return JSON.parse(cleaned);
 } catch (e) { return null; }
 }
 
-// CEE-style raw fetch — returns SDK-compatible shape so all callers work unchanged
-// Model: gemini-3.1-flash-lite-preview (free, high usage) — no paid Pro model used
+// Legacy compatibility transport — retained only for AI tasks not yet migrated.
+// Its historical default model is retired and will disappear with the final legacy cleanup.
 const geminiModel = {
 async generateContent(content, generationConfig, { timeoutMs = 30000, modelOverride, taskId = null } = {}) {
   const _modelName = modelOverride || 'gemini-3.1-flash-lite-preview';
@@ -5638,11 +5638,7 @@ Rules:
 - If the answer is a process, name the key step or consequence that makes it memorable.
 - Never say "this card says" or "the answer is". Just explain the concept.
 - Maximum 2 sentences.`;
-// TIMEOUT-FIX: Pass timeoutMs directly to generateContent so the internal
-// AbortController actually cancels the in-flight HTTP request when it fires.
-// The old Promise.race approach left the fetch running for 30s after the 15s
-// race rejected — wasting a connection and causing cascading failures.
-// 25s gives gemini-3.1-flash-lite-preview plenty of headroom with thinkingLevel:'minimal'.
+// Routing, timeout and thinking policy are owned by the centralized AI task registry.
 const result = await ai.run('CARD_EXPLANATION', { content: prompt });
 return result.text.trim();
 }
