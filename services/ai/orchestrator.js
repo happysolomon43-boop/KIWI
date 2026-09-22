@@ -79,7 +79,27 @@ function createAIOrchestrator({
   function setAffinity(task, generationGroupId, modelId) {
     const key = affinityKey(task, generationGroupId);
     if (!key || !modelId) return;
-    generationAffinity.set(key, { modelId, updatedAt: Date.now() });
+
+    const current = generationAffinity.get(key);
+    if (!current) {
+      generationAffinity.set(key, { modelId, updatedAt: Date.now() });
+      return;
+    }
+
+    if (current.modelId === modelId) {
+      current.updatedAt = Date.now();
+      return;
+    }
+
+    const currentModel = catalog.get(current.modelId);
+    const nextModel = catalog.get(modelId);
+
+    // Once a multi-call workflow falls back, keep that lower model as the
+    // ceiling for later repair/completion calls. Parallel calls may finish out
+    // of order, so a late stronger-model success must not upgrade affinity.
+    if (!currentModel || !nextModel || nextModel.rank <= currentModel.rank) {
+      generationAffinity.set(key, { modelId, updatedAt: Date.now() });
+    }
   }
 
   async function sideEffect(label, fn) {
