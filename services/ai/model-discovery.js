@@ -110,6 +110,9 @@ function createModelDiscoveryManager({
         }
       } catch (error) {
         lastError = error;
+        if (error?.code === 'AUTH') {
+          projectPool.disable(slot.id, 'AUTH');
+        }
         if (typeof logger?.warn === 'function') {
           logger.warn('[KIWI AI] model discovery slot failed', {
             slotId: slot.id,
