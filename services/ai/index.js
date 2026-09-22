@@ -9,6 +9,9 @@ const { normalizeGeminiResponse } = require('./response-normalizer');
 const { createQuotaManager } = require('./quota-manager');
 const { createTelemetry } = require('./telemetry');
 const { createPostgresAIStore } = require('./postgres-store');
+const { createModelLifecycle } = require('./model-lifecycle');
+const { createModelQualifier } = require('./model-qualifier');
+const { createModelDiscoveryManager } = require('./model-discovery');
 const { createAIRuntime } = require('./runtime');
 
 module.exports = {
@@ -21,5 +24,8 @@ module.exports = {
   createQuotaManager,
   createTelemetry,
   createPostgresAIStore,
+  createModelLifecycle,
+  createModelQualifier,
+  createModelDiscoveryManager,
   createAIRuntime,
 };
