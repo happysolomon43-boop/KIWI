@@ -53,6 +53,35 @@ function createAIOrchestrator({
   const resolvedProjectPool = projectPool || createProjectPool({ env });
   const resolvedTransport = transport || createGeminiTransport();
 
+  // Multi-call workflows (CBT generation + completion/repair passes) should not
+  // bounce back up to a stronger model after already falling back. Affinity is
+  // process-local, bounded, and keyed only by an opaque generation group ID.
+  const generationAffinity = new Map();
+  const AFFINITY_TTL_MS = 30 * 60 * 1000;
+
+  function affinityKey(task, generationGroupId) {
+    if (!generationGroupId || !task?.affinityGroup) return null;
+    return `${task.affinityGroup}::${generationGroupId}`;
+  }
+
+  function getAffinity(task, generationGroupId) {
+    const key = affinityKey(task, generationGroupId);
+    if (!key) return null;
+    const entry = generationAffinity.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.updatedAt > AFFINITY_TTL_MS) {
+      generationAffinity.delete(key);
+      return null;
+    }
+    return entry.modelId;
+  }
+
+  function setAffinity(task, generationGroupId, modelId) {
+    const key = affinityKey(task, generationGroupId);
+    if (!key || !modelId) return;
+    generationAffinity.set(key, { modelId, updatedAt: Date.now() });
+  }
+
   async function sideEffect(label, fn) {
     if (typeof fn !== 'function') return null;
     try {
@@ -138,7 +167,10 @@ function createAIOrchestrator({
     generationGroupId = null,
   } = {}) {
     const task = resolvedRouter.getTask(taskId);
-    const candidates = resolvedRouter.resolveCandidates(taskId, { preferredModelId });
+    const affinityModelId = preferredModelId || getAffinity(task, generationGroupId);
+    const candidates = resolvedRouter.resolveCandidates(taskId, {
+      preferredModelId: affinityModelId,
+    });
     const featureGenerationConfig = validateFeatureGenerationConfig(
       request.generationConfig || {}
     );
@@ -253,6 +285,8 @@ function createAIOrchestrator({
             startedAt: new Date(attemptStarted),
             completedAt: new Date(),
           }));
+
+          setAffinity(task, generationGroupId, candidate.modelId);
 
           await sideEffect('telemetry finish success', () => telemetry?.finishRequest(requestId, {
             taskId,
@@ -392,6 +426,7 @@ function createAIOrchestrator({
     projectPool: resolvedProjectPool,
     quotaManager,
     telemetry,
+    generationAffinity,
   });
 }
 
