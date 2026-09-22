@@ -5286,9 +5286,7 @@ const broadCoverage    = !!_opts.broad_coverage;
 const forceType        = _opts.force_type || null; // 'theory' | 'calculation' | null
 const difficultyLevel  = ['easy', 'hard', 'very_hard', 'hell'].includes(_opts.difficulty_level)
   ? _opts.difficulty_level : null;
-const _generationGroupId = _opts.generation_group_id
-  ? `${_opts.generation_group_id}:${forceType || 'combined'}`
-  : null;
+const _generationGroupId = _opts.generation_group_id || null;
 
 let dynamicDirectives = '';
 
@@ -5444,9 +5442,7 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
   ].join('\n');
 
   const completionTokens = Math.min(65536, Math.max(16000, needed * 900));
-  const completionGroupId = generationGroupId
-    ? `${generationGroupId}:${forceType || 'combined'}`
-    : null;
+  const completionGroupId = generationGroupId || null;
   const result = await ai.run(
     'CBT_COMPLETION',
     {
