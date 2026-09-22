@@ -5395,7 +5395,7 @@ const result = await ai.run(
   { generationGroupId: _generationGroupId }
 );
 if (result.finishReason === 'MAX_TOKENS') {
-  console.warn(`[KIWI CBT] Output truncated at ${count} questions \\u2014 response cut short. Consider lowering count or notes size.`);
+  console.warn(`[KIWI CBT] Output truncated at ${count} questions — response cut short. Consider lowering count or notes size.`);
 }
 console.log(`[KIWI CBT] ${_taskId} served by ${result.requestedModel} via ${result.projectSlot}; fallbackDepth=${result.fallbackDepth}`);
 return result.text;
@@ -5888,7 +5888,7 @@ console.log(`[KIWI CBT PARSE] After filter: ${passed.length} questions passed ($
 // For Calculation questions, cross-check the declared correct_answer letter
 // against the numerical values in the explanation.
 //
-// Root cause: the AI (gemini-3.1-flash-lite) sometimes computes the right value
+// Root cause: a generative model can compute the right value
 // but assigns the wrong letter, or writes an explanation that leads to a different
 // result than the declared answer. This pass detects clear mismatches and auto-
 // corrects them rather than serving wrong answers to students.
