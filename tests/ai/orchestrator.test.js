@@ -344,7 +344,7 @@ test('transient provider overload fast-falls to the next model and opens a short
   assert.equal(calls[0].modelId, 'gemini-3.8-flash');
 });
 
-test('retry policy bounds one VVIP request instead of exhausting the whole project pool', async () => {
+test('VVIP quota rotation is bounded across a large project pool', async () => {
   const manySlots = createProjectPool({
     slots: Array.from({ length: 15 }, (_, index) => ({
       id: `p${index + 1}`,
@@ -374,11 +374,83 @@ test('retry policy bounds one VVIP request instead of exhausting the whole proje
   await assert.rejects(
     ai.run('MAIN_CBT', { content: 'exam' }),
     (error) => {
-      assert.equal(error.details.maxAttempts, 8);
-      assert.equal(error.details.attempts.length, 8);
+      assert.equal(error.details.maxAttempts, 32);
+      assert.equal(error.details.maxQuotaAttemptsPerModel, 15);
+      assert.equal(error.details.attempts.length, 32);
       return true;
     }
   );
 
-  assert.equal(calls, 8);
+  assert.equal(calls, 32);
+});
+
+test('quota failures rotate beyond two project keys before degrading the model', async () => {
+  const threeSlots = createProjectPool({
+    slots: [
+      { id: 'p1', index: 1, envName: 'K1', apiKey: 'key-1' },
+      { id: 'p2', index: 2, envName: 'K2', apiKey: 'key-2' },
+      { id: 'p3', index: 3, envName: 'K3', apiKey: 'key-3' },
+    ],
+  });
+  const calls = [];
+  const ai = createAIOrchestrator({
+    projectPool: threeSlots,
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, apiKey: args.apiKey });
+        if (args.apiKey !== 'key-3') {
+          throw new AIError('project quota exhausted', {
+            code: AI_ERROR_CODES.RATE_LIMIT_RPD,
+            status: 429,
+            retryable: true,
+            scope: 'MODEL_SLOT',
+          });
+        }
+        return { raw: successRaw('healthy third project'), latencyMs: 5, httpStatus: 200 };
+      },
+    },
+  });
+
+  const result = await ai.run('MAIN_CBT', { content: 'exam' });
+  assert.equal(result.requestedModel, 'gemini-3.8-flash');
+  assert.deepEqual(calls, [
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-2' },
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-3' },
+  ]);
+});
+
+test('provider 503 falls to the next model instead of burning project keys', async () => {
+  const threeSlots = createProjectPool({
+    slots: [
+      { id: 'p1', index: 1, envName: 'K1', apiKey: 'key-1' },
+      { id: 'p2', index: 2, envName: 'K2', apiKey: 'key-2' },
+      { id: 'p3', index: 3, envName: 'K3', apiKey: 'key-3' },
+    ],
+  });
+  const calls = [];
+  const ai = createAIOrchestrator({
+    projectPool: threeSlots,
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, apiKey: args.apiKey });
+        if (args.modelId === 'gemini-3.8-flash') {
+          throw new AIError('provider overloaded', {
+            code: AI_ERROR_CODES.TRANSIENT,
+            status: 503,
+            retryable: true,
+            scope: 'ATTEMPT',
+          });
+        }
+        return { raw: successRaw('fallback model'), latencyMs: 5, httpStatus: 200 };
+      },
+    },
+  });
+
+  const result = await ai.run('MAIN_CBT', { content: 'exam' });
+  assert.equal(result.requestedModel, 'gemini-3.7-flash');
+  assert.equal(calls.filter((call) => call.modelId === 'gemini-3.8-flash').length, 1);
+  assert.equal(calls[1].modelId, 'gemini-3.7-flash');
 });
