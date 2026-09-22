@@ -25,6 +25,13 @@ const FAST_MODEL_FALLBACK_CODES = new Set([
   AI_ERROR_CODES.EMPTY_RESPONSE,
 ]);
 
+const PROJECT_SLOT_QUOTA_CODES = new Set([
+  AI_ERROR_CODES.RATE_LIMIT_RPM,
+  AI_ERROR_CODES.RATE_LIMIT_TPM,
+  AI_ERROR_CODES.RATE_LIMIT_RPD,
+  AI_ERROR_CODES.RATE_LIMIT_UNKNOWN,
+]);
+
 const DEFAULT_RETRY_POLICY = Object.freeze({
   maxAttempts: 6,
   maxAttemptsPerModel: 2,
@@ -324,14 +331,13 @@ function createAIOrchestrator({
       if (slots.length > 0) hadEligibleRoute = true;
       let skipRemainingSlotsForModel = false;
       let modelAttemptCount = 0;
+      let modelQuotaAttemptCount = 0;
       let modelTransientAttemptCount = 0;
 
       for (const slot of slots) {
         if (attempts.length >= retryPolicy.maxAttempts) break modelLoop;
-        if (modelAttemptCount >= retryPolicy.maxAttemptsPerModel) break;
 
         const attemptNumber = attempts.length + 1;
-        modelAttemptCount += 1;
         const attemptStarted = Date.now();
         const generationConfig = {
           ...featureGenerationConfig,
@@ -430,6 +436,10 @@ function createAIOrchestrator({
               });
 
           lastError = aiError;
+          const isProjectSlotQuotaFailure = PROJECT_SLOT_QUOTA_CODES.has(aiError.code);
+          if (isProjectSlotQuotaFailure) modelQuotaAttemptCount += 1;
+          else modelAttemptCount += 1;
+
           attempts.push(Object.freeze({
             modelId: candidate.modelId,
             slotId: slot.id,
@@ -513,6 +523,19 @@ function createAIOrchestrator({
             aiError.retryable ||
             aiError.code === AI_ERROR_CODES.EMPTY_RESPONSE
           ) {
+            if (isProjectSlotQuotaFailure) {
+              // Quota is tied to this project+model route. Keep the same model
+              // and rotate to another healthy key before degrading model quality.
+              if (
+                modelQuotaAttemptCount >=
+                (retryPolicy.maxQuotaAttemptsPerModel || retryPolicy.maxAttemptsPerModel)
+              ) {
+                skipRemainingSlotsForModel = true;
+                break;
+              }
+              continue;
+            }
+
             if (FAST_MODEL_FALLBACK_CODES.has(aiError.code)) {
               modelTransientAttemptCount += 1;
               markModelTransientFailure(candidate.modelId, aiError);
@@ -562,6 +585,7 @@ function createAIOrchestrator({
           hadEligibleRoute,
           retryPolicy: task.retryPolicy,
           maxAttempts: retryPolicy.maxAttempts,
+          maxQuotaAttemptsPerModel: retryPolicy.maxQuotaAttemptsPerModel || null,
           temporarilyUnavailableModels: routedCandidates
             .map((candidate) => candidate.modelId)
             .filter((modelId) => !isModelTemporarilyAvailable(modelId)),
