@@ -14,6 +14,7 @@ const AI_ERROR_CODES = Object.freeze({
   NETWORK: 'NETWORK',
   SAFETY: 'SAFETY',
   EMPTY_RESPONSE: 'EMPTY_RESPONSE',
+  CAPACITY_EXHAUSTED: 'CAPACITY_EXHAUSTED',
   UNKNOWN: 'UNKNOWN',
 });
 
@@ -182,6 +183,23 @@ function networkError(cause) {
   );
 }
 
+const AVAILABILITY_ERROR_CODES = new Set([
+  AI_ERROR_CODES.MODEL_NOT_FOUND,
+  AI_ERROR_CODES.RATE_LIMIT_RPM,
+  AI_ERROR_CODES.RATE_LIMIT_TPM,
+  AI_ERROR_CODES.RATE_LIMIT_RPD,
+  AI_ERROR_CODES.RATE_LIMIT_UNKNOWN,
+  AI_ERROR_CODES.TIMEOUT,
+  AI_ERROR_CODES.TRANSIENT,
+  AI_ERROR_CODES.NETWORK,
+  AI_ERROR_CODES.EMPTY_RESPONSE,
+  AI_ERROR_CODES.CAPACITY_EXHAUSTED,
+]);
+
+function isAIAvailabilityError(error) {
+  return Boolean(error && AVAILABILITY_ERROR_CODES.has(error.code));
+}
+
 function safetyError(details = null) {
   return new AIError('Gemini blocked the response for safety reasons', {
     code: AI_ERROR_CODES.SAFETY,
@@ -199,4 +217,6 @@ module.exports = {
   timeoutError,
   networkError,
   safetyError,
+  AVAILABILITY_ERROR_CODES,
+  isAIAvailabilityError,
 };

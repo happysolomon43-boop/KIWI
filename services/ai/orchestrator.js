@@ -53,6 +53,55 @@ function createAIOrchestrator({
   const resolvedProjectPool = projectPool || createProjectPool({ env });
   const resolvedTransport = transport || createGeminiTransport();
 
+  // Multi-call workflows (CBT generation + completion/repair passes) should not
+  // bounce back up to a stronger model after already falling back. Affinity is
+  // process-local, bounded, and keyed only by an opaque generation group ID.
+  const generationAffinity = new Map();
+  const AFFINITY_TTL_MS = 30 * 60 * 1000;
+
+  function affinityKey(task, generationGroupId) {
+    if (!generationGroupId || !task?.affinityGroup) return null;
+    return `${task.affinityGroup}::${generationGroupId}`;
+  }
+
+  function getAffinity(task, generationGroupId) {
+    const key = affinityKey(task, generationGroupId);
+    if (!key) return null;
+    const entry = generationAffinity.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.updatedAt > AFFINITY_TTL_MS) {
+      generationAffinity.delete(key);
+      return null;
+    }
+    return entry.modelId;
+  }
+
+  function setAffinity(task, generationGroupId, modelId) {
+    const key = affinityKey(task, generationGroupId);
+    if (!key || !modelId) return;
+
+    const current = generationAffinity.get(key);
+    if (!current) {
+      generationAffinity.set(key, { modelId, updatedAt: Date.now() });
+      return;
+    }
+
+    if (current.modelId === modelId) {
+      current.updatedAt = Date.now();
+      return;
+    }
+
+    const currentModel = catalog.get(current.modelId);
+    const nextModel = catalog.get(modelId);
+
+    // Once a multi-call workflow falls back, keep that lower model as the
+    // ceiling for later repair/completion calls. Parallel calls may finish out
+    // of order, so a late stronger-model success must not upgrade affinity.
+    if (!currentModel || !nextModel || nextModel.rank <= currentModel.rank) {
+      generationAffinity.set(key, { modelId, updatedAt: Date.now() });
+    }
+  }
+
   async function sideEffect(label, fn) {
     if (typeof fn !== 'function') return null;
     try {
@@ -138,7 +187,13 @@ function createAIOrchestrator({
     generationGroupId = null,
   } = {}) {
     const task = resolvedRouter.getTask(taskId);
-    const candidates = resolvedRouter.resolveCandidates(taskId, { preferredModelId });
+    const affinityModelId = preferredModelId || getAffinity(task, generationGroupId);
+    const candidates = resolvedRouter.resolveCandidates(taskId, {
+      preferredModelId: affinityModelId,
+    });
+    if (!affinityModelId && generationGroupId && task.affinityGroup && candidates[0]) {
+      setAffinity(task, generationGroupId, candidates[0].modelId);
+    }
     const featureGenerationConfig = validateFeatureGenerationConfig(
       request.generationConfig || {}
     );
@@ -173,6 +228,7 @@ function createAIOrchestrator({
     const attempts = [];
     const requestStarted = Date.now();
     let lastError = null;
+    let hadEligibleRoute = false;
 
     async function finishFailure(error, outcome = 'FAILED') {
       await sideEffect('telemetry finish failure', () => telemetry?.finishRequest(requestId, {
@@ -191,6 +247,7 @@ function createAIOrchestrator({
     for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
       const candidate = candidates[modelIndex];
       const slots = slotsForModel(candidate.modelId, { advance: true });
+      if (slots.length > 0) hadEligibleRoute = true;
       let skipRemainingSlotsForModel = false;
 
       for (const slot of slots) {
@@ -253,6 +310,8 @@ function createAIOrchestrator({
             startedAt: new Date(attemptStarted),
             completedAt: new Date(),
           }));
+
+          setAffinity(task, generationGroupId, candidate.modelId);
 
           await sideEffect('telemetry finish success', () => telemetry?.finishRequest(requestId, {
             taskId,
@@ -362,16 +421,24 @@ function createAIOrchestrator({
       if (skipRemainingSlotsForModel) continue;
     }
 
+    const finalCode = lastError?.code || (
+      hadEligibleRoute
+        ? AI_ERROR_CODES.UNKNOWN
+        : AI_ERROR_CODES.CAPACITY_EXHAUSTED
+    );
     const finalError = new AIError(
-      `All approved routes failed for AI task ${taskId}`,
+      hadEligibleRoute
+        ? `All approved routes failed for AI task ${taskId}`
+        : `No healthy project/model capacity is currently available for AI task ${taskId}`,
       {
-        code: lastError?.code || AI_ERROR_CODES.UNKNOWN,
+        code: finalCode,
         status: lastError?.status || null,
         retryable: false,
         scope: 'REQUEST',
         details: {
           attempts,
           lastErrorCode: lastError?.code || null,
+          hadEligibleRoute,
         },
         cause: lastError,
       }
@@ -392,6 +459,7 @@ function createAIOrchestrator({
     projectPool: resolvedProjectPool,
     quotaManager,
     telemetry,
+    generationAffinity,
   });
 }
 

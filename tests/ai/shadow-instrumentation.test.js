@@ -7,37 +7,35 @@ const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'index.js'), 'utf8');
 
-test('Phase 5 leaves only 4 VVIP legacy callsites and has 23 live orchestrator callsites', () => {
+test('Phase 6 routes all 27 canonical AI callsites live through ai.run', () => {
   const legacyCalls = source.match(/geminiModel\.generateContent\s*\(/g) || [];
-  const taskIds = source.match(/taskId\s*:/g) || [];
   const liveCalls = source.match(/\bai\.run\s*\(/g) || [];
 
-  assert.equal(legacyCalls.length, 4);
-  assert.equal(taskIds.length, 4);
-  assert.equal(liveCalls.length, 23);
-  assert.match(source, /_aiRuntime\.observeLegacy\(taskId, _modelName\)/);
+  assert.equal(legacyCalls.length, 0);
+  assert.equal(liveCalls.length, 27);
+  assert.doesNotMatch(source, /const geminiModel\s*=\s*\{/);
 });
 
-test('normal and Reckoning CBT remain distinguished while the shared VVIP generator is shadowed', () => {
+test('normal and Reckoning CBT remain distinct VVIP task identities', () => {
   assert.match(
     source,
     /ai_task_id:\s*isReckoningExam\s*\?\s*['"]RECKONING_CBT['"]\s*:\s*['"]MAIN_CBT['"]/
   );
   assert.match(source, /const _taskId\s*=\s*_opts\.ai_task_id\s*\|\|\s*['"]MAIN_CBT['"]/);
+  assert.match(source, /ai\.run\(\s*_taskId/);
 });
 
-test('the remaining direct legacy callsites are only VVIP generation paths', () => {
-  assert.match(source, /taskId:\s*_taskId/);
+test('all VVIP generation paths execute through the orchestrator', () => {
   for (const taskId of [
     'CBT_COMPLETION',
     'FLASHCARD_GENERATION',
     'IMPORT_IMAGE_EXTRACTION',
   ]) {
-    assert.match(source, new RegExp(`taskId\\s*:\\s*['"]${taskId}['"]`), taskId);
+    assert.match(source, new RegExp(`ai\\.run\\(\\s*['"]${taskId}['"]`), taskId);
   }
 });
 
-test('all VIP task IDs now execute through ai.run', () => {
+test('all VIP task IDs remain live through ai.run', () => {
   for (const taskId of [
     'STUDY_TASK_GENERATION',
     'CONCEPT_CLUSTERING',
@@ -55,8 +53,7 @@ test('all VIP task IDs now execute through ai.run', () => {
     'RECKONING_DEBRIEF',
     'LIVING_ACHIEVEMENTS',
   ]) {
-    assert.match(source, new RegExp(`ai\\.run\\(['"]${taskId}['"]`), taskId);
-    assert.doesNotMatch(source, new RegExp(`taskId\\s*:\\s*['"]${taskId}['"]`), taskId);
+    assert.match(source, new RegExp(`ai\\.run\\(\\s*['"]${taskId}['"]`), taskId);
   }
 });
 
@@ -70,15 +67,12 @@ test('all seven IP task IDs remain live through ai.run', () => {
     'RETURN_GREETING',
     'CHRONICLE_ARTIFACT',
   ]) {
-    assert.match(source, new RegExp(`ai\\.run\\(['"]${taskId}['"]`), taskId);
+    assert.match(source, new RegExp(`ai\\.run\\(\\s*['"]${taskId}['"]`), taskId);
   }
 });
 
-test('feature callsites no longer provide provider thinkingConfig outside VVIP legacy paths', () => {
-  const liveSection = source.replace(
-    /const geminiModel\s*=\s*\{[\s\S]*?\n\};/,
-    ''
-  );
-  const thinkingOccurrences = liveSection.match(/thinkingConfig\s*:/g) || [];
-  assert.equal(thinkingOccurrences.length, 3, 'only the three text VVIP legacy calls should still specify thinkingConfig');
+test('feature code no longer contains provider thinking or model overrides', () => {
+  assert.doesNotMatch(source, /thinkingConfig\s*:/);
+  assert.doesNotMatch(source, /modelOverride\s*:/);
+  assert.doesNotMatch(source, /gemini-\d+(?:\.\d+)?-[a-z0-9-]+/i);
 });
