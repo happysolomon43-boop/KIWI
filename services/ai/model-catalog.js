@@ -14,10 +14,21 @@ const MODEL_CHANNELS = Object.freeze({
 const MODEL_STATUS = Object.freeze({
   APPROVED: 'APPROVED',
   DISCOVERED: 'DISCOVERED',
+  QUALIFYING: 'QUALIFYING',
   SUSPENDED: 'SUSPENDED',
   RETIRED: 'RETIRED',
   DENIED: 'DENIED',
 });
+
+
+function modelVersionRank(modelId) {
+  const match = String(modelId || '').match(/^gemini-(\d+)\.(\d+)(?:\.(\d+))?-(?:flash|flash-lite)$/i);
+  if (!match) return 0;
+  const major = Number(match[1]) || 0;
+  const minor = Number(match[2]) || 0;
+  const patch = Number(match[3]) || 0;
+  return (major * 1000000) + (minor * 1000) + patch;
+}
 
 const COMMON_TEXT_CAPABILITIES = Object.freeze([
   'generateContent',
@@ -36,7 +47,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-    rank: 380,
+    rank: modelVersionRank('gemini-3.8-flash'),
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -47,7 +58,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-    rank: 370,
+    rank: modelVersionRank('gemini-3.7-flash'),
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -58,7 +69,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-    rank: 360,
+    rank: modelVersionRank('gemini-3.6-flash'),
     supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -69,7 +80,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-    rank: 350,
+    rank: modelVersionRank('gemini-3.5-flash'),
     supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -80,7 +91,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     family: MODEL_FAMILIES.FLASH_LITE,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-    rank: 350,
+    rank: modelVersionRank('gemini-3.5-flash-lite'),
     supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -91,7 +102,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     family: MODEL_FAMILIES.FLASH_LITE,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-    rank: 310,
+    rank: modelVersionRank('gemini-3.1-flash-lite'),
     supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -162,6 +173,8 @@ module.exports = {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
   MODEL_STATUS,
+  modelVersionRank,
+  COMMON_TEXT_CAPABILITIES,
   DEFAULT_MODEL_CATALOG,
   createModelCatalog,
 };
