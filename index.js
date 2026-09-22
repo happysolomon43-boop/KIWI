@@ -847,6 +847,9 @@ async create(userId, data) {
     ...data,
     id,
     user_id: userId,
+    // Production schema keeps started_at NOT NULL. Status is authoritative for
+    // whether an exam has actually started; /start and Reckoning activation
+    // overwrite this timestamp with the real activation time.
     started_at: new Date(),
     is_reckoning: data.is_reckoning || false,
     status: data.status || 'pending',
@@ -5222,46 +5225,68 @@ if (words < 2000) return 65;
 return 100;
 }
 
-// ── CBT post-generation dedup — removes options recycled across questions ─────
-// Root cause: AI reuses the correct answer of question X as a distractor in
-// question Y. This scan detects and removes those cross-contaminated options.
-function deduplicateCBTOptions(questions) {
-  if (!questions || questions.length === 0) return questions;
-  const OPT_KEYS = ['option_a', 'option_b', 'option_c', 'option_d'];
-  const textMap = new Map(); // normalised → [{qi, key}]
-  for (let qi = 0; qi < questions.length; qi++) {
-    for (const key of OPT_KEYS) {
-      const raw = (questions[qi][key] || '').trim();
-      // LATEX FIX: minimum length raised to 20 so short math expressions like
-      // "$-2$" (4 chars), "$0$" (3 chars), "$1/2$" (5 chars) are NEVER deduplicated
-      // across questions — these are valid distinct answers, not recycled distractors.
-      if (!raw || raw.length < 20) continue;
-      // LATEX FIX: do NOT strip LaTeX/math symbols ($ \ ^ _ { }).
-      // Old code used /[^a-z0-9]/g which collapsed "$-2$" → "2" and "$+2$" → "2"
-      // making them appear as cross-question duplicates when they are not.
-      // New approach: whitespace-normalised, lowercased full-text comparison.
-      const norm = raw.toLowerCase().replace(/\s+/g, ' ').trim();
-      if (!textMap.has(norm)) textMap.set(norm, []);
-      textMap.get(norm).push({ qi, key });
-    }
+// ── CBT option integrity ────────────────────────────────────────────────────
+// Repeated option text across DIFFERENT questions is valid and must never be
+// mutated. Integrity is enforced only inside each MCQ: A-D must all be present,
+// non-placeholder, pairwise distinct, and the declared correct answer must be A-D.
+const CBT_OPTION_KEYS = ['option_a', 'option_b', 'option_c', 'option_d'];
+const CBT_OPTION_PLACEHOLDERS = new Set([
+  'option a',
+  'option b',
+  'option c',
+  'option d',
+  '(none of the above applies here)',
+  '[option removed — duplicate]',
+  'not applicable',
+]);
+
+function _normalizeCBTOptionText(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function validateCBTQuestionOptions(question) {
+  const correct = String(question?.correct_answer || '').toUpperCase();
+  if (!['A', 'B', 'C', 'D'].includes(correct)) {
+    return { valid: false, reason: 'invalid_correct_answer' };
   }
-  let replaced = 0;
-  for (const entries of textMap.values()) {
-    if (entries.length < 2) continue;
-    // Keep it where it is the declared correct answer; clobber all other copies
-    for (const { qi, key } of entries) {
-      const q = questions[qi];
-      const correctKey = 'option_' + (q.correct_answer || 'A').toLowerCase();
-      if (key === correctKey) continue; // preserve the correct-answer copy
-      // Also don't clobber if this IS the correct answer for this question
-      if (key === 'option_' + (q.correct_answer || '').toLowerCase()) continue;
-      questions[qi][key] = '[option removed — duplicate]';
-      replaced++;
-    }
+
+  const options = CBT_OPTION_KEYS.map((key) => String(question?.[key] || '').trim());
+  if (options.some((value) => !value)) {
+    return { valid: false, reason: 'missing_option' };
   }
-  if (replaced > 0)
-    console.log('[KIWI CBT] dedup: removed', replaced, 'recycled option(s)');
-  return questions;
+  if (options.some((value) => CBT_OPTION_PLACEHOLDERS.has(_normalizeCBTOptionText(value)))) {
+    return { valid: false, reason: 'placeholder_option' };
+  }
+
+  const normalized = options.map(_normalizeCBTOptionText);
+  if (new Set(normalized).size !== CBT_OPTION_KEYS.length) {
+    return { valid: false, reason: 'duplicate_option_within_question' };
+  }
+
+  return { valid: true };
+}
+
+function filterInvalidCBTQuestions(questions, stage = 'post-generation') {
+  if (!Array.isArray(questions) || questions.length === 0) return [];
+  const kept = [];
+  let dropped = 0;
+
+  for (const question of questions) {
+    const check = validateCBTQuestionOptions(question);
+    if (!check.valid) {
+      dropped++;
+      console.warn(
+        `[KIWI CBT] Q${question?.question_number ?? '?'} dropped during ${stage}: ${check.reason}`
+      );
+      continue;
+    }
+    kept.push(question);
+  }
+
+  if (dropped > 0) {
+    console.warn(`[KIWI CBT] ${stage}: dropped ${dropped} malformed question(s); no option text was mutated`);
+  }
+  return kept;
 }
 
 // Fisher-Yates shuffle — used to interleave theory + calc arrays after split generation
@@ -5845,7 +5870,6 @@ const _missingAnswers = questions.filter(q => !answerMap.has(q.question_number))
 if (_missingAnswers.length > 0) console.warn(`[KIWI CBT PARSE] Questions with no answer mapping: ${_missingAnswers.join(', ')}`);
 // ─────────────────────────────────────────────────────────────────────────────
 
-const _PLACEHOLDERS = new Set(['Option A', 'Option B', 'Option C', 'Option D', '(none of the above applies here)', '[option removed — duplicate]']);
 const mapped = questions.map((q, idx) => {
 const ans = answerMap.get(q.question_number) || {};
 // Strip internal parsing flags (_stemDone) so they don't get inserted into the DB
@@ -5854,28 +5878,31 @@ const oA = _stripMd(cleanQ.option_a) || '';
 const oB = _stripMd(cleanQ.option_b) || '';
 const oC = _stripMd(cleanQ.option_c) || '';
 const oD = _stripMd(cleanQ.option_d) || '';
-const correctLetter = ans.correct_answer || 'A';
-// If the declared correct option slot is empty or a placeholder, mark for removal
-const correctOptionText = { A: oA, B: oB, C: oC, D: oD }[correctLetter] || '';
-if (!correctOptionText || _PLACEHOLDERS.has(correctOptionText)) {
-  console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — correct option ${correctLetter} is empty or placeholder ("${correctOptionText}")`);
-  return null;
-}
+const correctLetter = String(ans.correct_answer || '').toUpperCase();
 if (!cleanQ.stem) {
   console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — no stem`);
   return null;
 }
-return {
-...cleanQ,
-stem: _stripMd(cleanQ.stem),
-question_number: idx + 1,
-option_a: oA || 'Not applicable',
-option_b: oB || 'Not applicable',
-option_c: oC || 'Not applicable',
-option_d: oD || 'Not applicable',
-correct_answer: correctLetter,
-explanation: ans.explanation || 'No explanation provided.',
+
+const parsedQuestion = {
+  ...cleanQ,
+  stem: _stripMd(cleanQ.stem),
+  question_number: idx + 1,
+  option_a: oA,
+  option_b: oB,
+  option_c: oC,
+  option_d: oD,
+  correct_answer: correctLetter,
+  explanation: ans.explanation || 'No explanation provided.',
 };
+const optionCheck = validateCBTQuestionOptions(parsedQuestion);
+if (!optionCheck.valid) {
+  console.warn(
+    `[KIWI CBT PARSE] Q${q.question_number} DROPPED — invalid options (${optionCheck.reason})`
+  );
+  return null;
+}
+return parsedQuestion;
 });
 const passed = mapped.filter(Boolean);
 console.log(`[KIWI CBT PARSE] After filter: ${passed.length} questions passed (${questions.length - passed.length} dropped)`);
@@ -8481,6 +8508,30 @@ throw err;
 if (reckoning.status === 'completed') {
 throw new Error('This Reckoning is already completed');
 }
+
+const exam = await db.examSessions
+  .findByIdWithQuestions(reckoning.user_id, examSessionId)
+  .catch(() => null);
+if (!exam || !exam.is_reckoning) {
+  throw new Error('Linked Reckoning exam was not found');
+}
+if (!['ready', 'active'].includes(exam.status)) {
+  throw new Error(`Linked Reckoning exam is already ${exam.status}`);
+}
+
+// The Reckoning and its exam are one state machine. Never mark the Reckoning
+// in_progress while leaving the exam in ready: submission requires both to agree.
+if (exam.status !== 'active' || !exam.started_at) {
+  const startedAt = exam.status === 'ready' ? new Date() : (exam.started_at || new Date());
+  const activatedExam = await db.examSessions.update(reckoning.user_id, examSessionId, {
+    status: 'active',
+    started_at: startedAt,
+  });
+  if (!activatedExam) throw new Error('Failed to activate linked Reckoning exam');
+  exam.status = 'active';
+  exam.started_at = startedAt;
+}
+
 if (reckoning.status === 'in_progress') {
 if (String(reckoning.exam_session_id || '') === String(examSessionId || '')) {
 return { status: 'in_progress', exam_session_id: reckoning.exam_session_id };
@@ -16032,6 +16083,11 @@ setImmediate(async () => {
     }
 
     // ── Shared post-generation checks (both paths) ────────────────────────────
+    // Enforce the same MCQ invariant on AI output, completion output and
+    // deterministic recovery output before deciding whether the exam is usable.
+    // This never rewrites option text and never treats cross-question reuse as an error.
+    questions = filterInvalidCBTQuestions(questions, 'final integrity');
+
     // 60% minimum threshold — evaluated against the full requested count.
     const _minAccept = Math.max(1, Math.floor(_cbtCount * 0.6));
     if (questions.length < _minAccept && _cbtOptions.ai_task_id === 'RECKONING_CBT') {
@@ -16058,7 +16114,6 @@ setImmediate(async () => {
       console.log('[KIWI CBT] Proceeding with ' + questions.length + '/' + _cbtCount + ' questions (≥60% threshold)');
     }
 
-    questions = deduplicateCBTOptions(questions);
     // Log actual ratio for split path (informational — ratio is guaranteed by the split logic above)
     if (_cbtOptions.customize_balance && _cbtOptions.theory_percent != null) {
       const _actualTheory = questions.filter(q => q.question_type === 'Theory').length;
@@ -18745,12 +18800,32 @@ if (!exam) return res.status(404).json({ error: 'Exam not found' });
 if (!exam.is_reckoning) {
   return res.status(409).json({ error: 'This exam is not the active Reckoning exam.' });
 }
-if (exam.status !== 'active' || !exam.started_at) {
-  return res.status(409).json({ error: 'Reckoning exam must be active before it can be submitted.' });
-}
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
 if (!active || active.status !== 'in_progress' || String(active.exam_session_id) !== String(examId)) {
   return res.status(409).json({ error: 'This exam is not linked to the active Reckoning.' });
+}
+
+// Recovery for the historical split-brain state: older generation flows could
+// mark reckoning_sessions=in_progress while leaving the exact linked exam=ready.
+// Repair ONLY that exact server-linked exam; arbitrary ready exams remain blocked.
+if (exam.status === 'ready') {
+  const recoveredStartedAt = exam.started_at || new Date();
+  const recovered = await db.examSessions.update(req.user.id, examId, {
+    status: 'active',
+    started_at: recoveredStartedAt,
+  });
+  if (!recovered) {
+    return res.status(409).json({ error: 'The linked Reckoning exam could not be recovered. Please retry.' });
+  }
+  exam.status = 'active';
+  exam.started_at = recoveredStartedAt;
+  console.warn('[KIWI] Recovered linked Reckoning exam stuck in ready state before submit', {
+    examId,
+    reckoningId: active.id,
+  });
+}
+if (exam.status !== 'active' || !exam.started_at) {
+  return res.status(409).json({ error: 'Reckoning exam must be active before it can be submitted.' });
 }
 
 // Snapshot the genuine pre-attempt KS before any SRS mutation. Usually this was
