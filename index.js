@@ -5289,7 +5289,7 @@ function filterInvalidCBTQuestions(questions, stage = 'post-generation') {
   return kept;
 }
 
-// Fisher-Yates shuffle — used to interleave theory + calc arrays after split generation// Fisher-Yates shuffle — used to interleave theory + calc arrays after split generation
+// Fisher-Yates shuffle — used to interleave theory + calc arrays after split generation
 function _shuffleArray(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -8560,7 +8560,7 @@ completed_at: null,
 return { status: 'in_progress', exam_session_id: examSessionId };
 }
 
-const RECKONING_FAILSAFE_FAILURES = 6;const RECKONING_FAILSAFE_FAILURES = 6;
+const RECKONING_FAILSAFE_FAILURES = 6;
 const RECKONING_FAILSAFE_KS_FACTOR = 0.10;
 
 async function applyReckoningFailsafePenalty(userId, subjectId, reckoningId, failureCount) {
