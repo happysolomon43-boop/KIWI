@@ -20068,6 +20068,133 @@ app.use('/api/brain', brainRouter);
 app.use('/api/bubbles', bubbleRouter);
 
 app.use('/api/ks', ksRouter);
+// ── Backend self-health ping ─────────────────────────────────────────────────
+// A lightweight external GET against the public /api/health endpoint keeps the
+// Render service warm and continuously verifies that the public route is
+// reachable. It is explicitly configurable so local/test environments never
+// create accidental background traffic.
+const _selfPingState = {
+  enabled: false,
+  target: null,
+  interval_ms: null,
+  last_attempt_at: null,
+  last_success_at: null,
+  last_status: null,
+  last_error: null,
+  consecutive_failures: 0,
+};
+
+function _resolveSelfPingConfig() {
+  const explicitUrl = String(process.env.SELF_PING_URL || '').trim();
+  const renderBase = String(process.env.RENDER_EXTERNAL_URL || '').trim().replace(/\/$/, '');
+  const target = explicitUrl || (renderBase ? renderBase + '/api/health' : '');
+
+  const requestedInterval = Number.parseInt(process.env.SELF_PING_INTERVAL_MS || '600000', 10);
+  // Keep a sane floor so a bad environment value cannot create a request storm.
+  const intervalMs = Number.isFinite(requestedInterval)
+    ? Math.max(60000, requestedInterval)
+    : 600000;
+
+  const explicitlyDisabled = /^(0|false|off|no)$/i.test(
+    String(process.env.SELF_PING_ENABLED || '')
+  );
+
+  return {
+    enabled: !explicitlyDisabled && !!target && process.env.NODE_ENV !== 'test',
+    target,
+    intervalMs,
+  };
+}
+
+function startSelfHealthPing() {
+  const config = _resolveSelfPingConfig();
+  _selfPingState.enabled = config.enabled;
+  _selfPingState.target = config.target || null;
+  _selfPingState.interval_ms = config.intervalMs;
+
+  if (!config.enabled) {
+    console.log('[KIWI SELF-PING] Disabled (no target configured or explicitly disabled).');
+    return null;
+  }
+
+  let inFlight = false;
+  let hasLoggedSuccess = false;
+
+  const pingOnce = async () => {
+    if (inFlight) return;
+    inFlight = true;
+    _selfPingState.last_attempt_at = new Date().toISOString();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    timeout.unref?.();
+
+    try {
+      const response = await fetch(config.target, {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json',
+          'user-agent': 'KIWI-self-health-ping/1.0',
+          'x-kiwi-self-ping': '1',
+        },
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+
+      _selfPingState.last_status = response.status;
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      // Drain the response body so the underlying connection can be reused.
+      await response.text().catch(() => '');
+
+      const wasFailing = _selfPingState.consecutive_failures > 0;
+      _selfPingState.last_success_at = new Date().toISOString();
+      _selfPingState.last_error = null;
+      _selfPingState.consecutive_failures = 0;
+
+      if (!hasLoggedSuccess || wasFailing) {
+        console.log(
+          `[KIWI SELF-PING] Health check OK (${response.status}) -> ${config.target}`
+        );
+        hasLoggedSuccess = true;
+      }
+    } catch (error) {
+      const message = error?.name === 'AbortError'
+        ? 'Timed out after 10s'
+        : String(error?.message || error);
+      _selfPingState.last_error = message;
+      _selfPingState.consecutive_failures += 1;
+      console.warn(
+        `[KIWI SELF-PING] Health check failed (#${_selfPingState.consecutive_failures}): ${message}`
+      );
+    } finally {
+      clearTimeout(timeout);
+      inFlight = false;
+    }
+  };
+
+  // Do not compete with startup migrations/deploy warm-up. First probe runs
+  // after 60 seconds; subsequent probes use the configured interval.
+  const firstTimer = setTimeout(() => {
+    pingOnce().catch(() => {});
+  }, 60000);
+  firstTimer.unref?.();
+
+  const interval = setInterval(() => {
+    pingOnce().catch(() => {});
+  }, config.intervalMs);
+  interval.unref?.();
+
+  console.log(
+    `[KIWI SELF-PING] Enabled every ${Math.round(config.intervalMs / 60000)}m -> ${config.target}`
+  );
+
+  return { firstTimer, interval };
+}
+
 // Health check must be registered BEFORE progressRouter (which applies authenticate
 // to all /api/* routes, which would block this public endpoint)
 app.get('/api/health', (req, res) => {
@@ -20075,6 +20202,13 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     version: '2.0.0-living-ecosystem',
+    self_ping: {
+      enabled: _selfPingState.enabled,
+      interval_ms: _selfPingState.interval_ms,
+      last_success_at: _selfPingState.last_success_at,
+      last_status: _selfPingState.last_status,
+      consecutive_failures: _selfPingState.consecutive_failures,
+    },
   });
 });
 
@@ -21636,6 +21770,7 @@ console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear ab
     const _httpServer = app.listen(PORT, () => {
       console.log(`[KIWI] 🥝 Living Ecosystem backend running on port ${PORT}`);
       console.log(`[KIWI] Environment: ${process.env.NODE_ENV || 'development'}`);
+      startSelfHealthPing();
     });
     // ── WebSocket server ──────────────────────────────────────────────────────
     const _wss = new WebSocketServer({ server: _httpServer });
