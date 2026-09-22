@@ -48,15 +48,15 @@ function createModelRouter({
   }
 
 
-  function pinFirst(models, modelId) {
+  function pinAsCeiling(models, modelId) {
     if (!modelId) return models;
     const index = models.findIndex((model) => model.id === modelId);
     if (index < 0) return models;
-    return [
-      models[index],
-      ...models.slice(0, index),
-      ...models.slice(index + 1),
-    ];
+
+    // A manual pin is an emergency ceiling, not just a preferred first hop.
+    // If 3.9 is suspect and VVIP is pinned to 3.8, fallbacks must continue
+    // downward to 3.7/3.6 rather than re-entering 3.9.
+    return models.slice(index);
   }
 
   function applyPreferredModel(candidates, preferredModelId) {
@@ -81,7 +81,7 @@ function createModelRouter({
       case MODEL_POLICIES.TOP_STABLE_FLASH:
         // Keep the strongest three approved stable Flash generations unless an
         // emergency VVIP pin is configured.
-        models = pinFirst(flash, pins.VVIP).slice(0, 3);
+        models = pinAsCeiling(flash, pins.VVIP).slice(0, 3);
         break;
 
       case MODEL_POLICIES.VIP_STABLE_FLASH:
@@ -89,7 +89,7 @@ function createModelRouter({
         // the newest model's normal capacity. An emergency VIP pin overrides
         // only this starting point and still keeps bounded fallbacks.
         if (pins.VIP) {
-          models = pinFirst(flash, pins.VIP).slice(0, 3);
+          models = pinAsCeiling(flash, pins.VIP).slice(0, 3);
         } else {
           models = flash.length > 1 ? flash.slice(1, 4) : flash.slice(0, 3);
         }
@@ -102,7 +102,7 @@ function createModelRouter({
         break;
 
       case MODEL_POLICIES.TOP_STABLE_FLASH_LITE:
-        models = pinFirst(lite, pins.IP).slice(0, 2);
+        models = pinAsCeiling(lite, pins.IP).slice(0, 2);
         break;
 
       default:
