@@ -13067,7 +13067,11 @@ const settingsAllowed =
   (baseUrl.endsWith('/study') && pathName === '/mode') ||
   (baseUrl.endsWith('/marketplace') && pathName === '/inventory' && method === 'GET');
 
-if (baseUrl.endsWith('/brain') || settingsAllowed) return next();
+const brainReadAllowed =
+  baseUrl.endsWith('/brain') ||
+  (baseUrl.endsWith('/bubbles') && method === 'GET');
+
+if (brainReadAllowed || settingsAllowed) return next();
 
 try {
   let active = await db.reckoningSessions.findActiveByUser(req.user.id);
