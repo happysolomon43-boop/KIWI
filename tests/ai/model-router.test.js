@@ -72,5 +72,6 @@ test('preferred model creates an affinity ceiling instead of upgrading unexpecte
   assert.deepEqual(ids, [
     'gemini-3.7-flash',
     'gemini-3.6-flash',
+    'gemini-3.5-flash',
   ]);
 });
