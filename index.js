@@ -18809,7 +18809,10 @@ if (!active || active.status !== 'in_progress' || String(active.exam_session_id)
 // mark reckoning_sessions=in_progress while leaving the exact linked exam=ready.
 // Repair ONLY that exact server-linked exam; arbitrary ready exams remain blocked.
 if (exam.status === 'ready') {
-  const recoveredStartedAt = exam.started_at || new Date();
+  // A ready-state Reckoning has not actually started, even though the production
+  // schema historically populated started_at at row creation. Recovery must use
+  // the moment we re-activate it, otherwise duration is measured from generation.
+  const recoveredStartedAt = new Date();
   const recovered = await db.examSessions.update(req.user.id, examId, {
     status: 'active',
     started_at: recoveredStartedAt,
