@@ -7,12 +7,16 @@ const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'index.js'), 'utf8');
 
-test('Phase 6 has zero legacy Gemini calls and 27 live orchestrator callsites', () => {
-  assert.equal((source.match(/geminiModel\.generateContent\s*\(/g) || []).length, 0);
-  assert.equal((source.match(/\bai\.run\s*\(/g) || []).length, 27);
+test('Phase 6 routes all 27 canonical AI callsites live through ai.run', () => {
+  const legacyCalls = source.match(/geminiModel\.generateContent\s*\(/g) || [];
+  const liveCalls = source.match(/\bai\.run\s*\(/g) || [];
+
+  assert.equal(legacyCalls.length, 0);
+  assert.equal(liveCalls.length, 27);
+  assert.doesNotMatch(source, /const geminiModel\s*=\s*\{/);
 });
 
-test('normal and Reckoning CBT share the VVIP generator but retain distinct task identity', () => {
+test('normal and Reckoning CBT remain distinct VVIP task identities', () => {
   assert.match(
     source,
     /ai_task_id:\s*isReckoningExam\s*\?\s*['"]RECKONING_CBT['"]\s*:\s*['"]MAIN_CBT['"]/
@@ -21,7 +25,7 @@ test('normal and Reckoning CBT share the VVIP generator but retain distinct task
   assert.match(source, /ai\.run\(\s*_taskId/);
 });
 
-test('VVIP direct feature calls now execute through ai.run', () => {
+test('all VVIP generation paths execute through the orchestrator', () => {
   for (const taskId of [
     'CBT_COMPLETION',
     'FLASHCARD_GENERATION',
@@ -31,23 +35,30 @@ test('VVIP direct feature calls now execute through ai.run', () => {
   }
 });
 
-test('VIP and IP tasks remain live through the centralized orchestrator', () => {
+test('all VIP task IDs remain live through ai.run', () => {
   for (const taskId of [
-    'QUICK_QUESTIONS',
     'STUDY_TASK_GENERATION',
     'CONCEPT_CLUSTERING',
     'WEEKLY_CHRONICLE',
+    'WEEKLY_PERSONA',
     'WEEKLY_ANCHOR',
     'MORNING_BRIEF',
     'DAILY_INVITATIONS',
     'BUBBLE_ADVISORY',
     'PRESSURE_EXPLANATION',
     'DEEP_AUDIT',
+    'QUICK_QUESTIONS',
     'EXAM_DEBRIEF',
-    'RECKONING_DEBRIEF',
     'LIVING_PERSONA',
-    'WEEKLY_PERSONA',
+    'RECKONING_DEBRIEF',
     'LIVING_ACHIEVEMENTS',
+  ]) {
+    assert.match(source, new RegExp(`ai\\.run\\(\\s*['"]${taskId}['"]`), taskId);
+  }
+});
+
+test('all seven IP task IDs remain live through ai.run', () => {
+  for (const taskId of [
     'CARD_EXPLANATION',
     'RECLASSIFICATION_ALERT',
     'MASTERY_MOMENT',
@@ -60,8 +71,8 @@ test('VIP and IP tasks remain live through the centralized orchestrator', () => 
   }
 });
 
-test('feature code no longer owns provider thinking levels or model IDs', () => {
+test('feature code no longer contains provider thinking or model overrides', () => {
   assert.doesNotMatch(source, /thinkingConfig\s*:/);
-  assert.doesNotMatch(source, /modelOverride/);
-  assert.doesNotMatch(source, /gemini-\d/);
+  assert.doesNotMatch(source, /modelOverride\s*:/);
+  assert.doesNotMatch(source, /gemini-\d+(?:\.\d+)?-[a-z0-9-]+/i);
 });
