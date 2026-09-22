@@ -16202,18 +16202,18 @@ setImmediate(async () => {
       }
     }
     } catch (generationErr) {
-      const _reckoningRecoverable =
-        _cbtOptions.ai_task_id === 'RECKONING_CBT' &&
-        (
-          isAIAvailabilityError(generationErr) ||
-          /could not be parsed|empty response/i.test(String(generationErr?.message || ''))
-        );
+      const _availabilityRecovery =
+        isAIAvailabilityError(generationErr) ||
+        /could not be parsed|empty response|no visible text/i.test(String(generationErr?.message || ''));
 
-      if (!_reckoningRecoverable) throw generationErr;
+      if (!_availabilityRecovery) throw generationErr;
 
+      // MAIN_CBT and Reckoning both get a deterministic availability fallback.
+      // Provider overload/quota/network failure must not strand the learner after
+      // the request has already been accepted as a background job.
       questions = generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount);
       console.warn(
-        `[KIWI CBT] Reckoning VVIP route unavailable (${generationErr.code || generationErr.message}); ` +
+        `[KIWI CBT] ${_cbtOptions.ai_task_id} AI route unavailable (${generationErr.code || generationErr.message}); ` +
         `using deterministic recovery exam with ${questions.length}/${_cbtCount} questions`
       );
     }
@@ -16222,15 +16222,20 @@ setImmediate(async () => {
     // Enforce the same MCQ invariant on AI output, completion output and
     // deterministic recovery output before deciding whether the exam is usable.
     // This never rewrites option text and never treats cross-question reuse as an error.
-    questions = filterInvalidCBTQuestions(questions, 'final integrity');
+    questions = filterInvalidCBTQuestions(questions || [], 'final integrity');
 
     // 60% minimum threshold — evaluated against the full requested count.
+    // If AI output is incomplete or invalid, both normal and Reckoning CBT get
+    // one deterministic source-card recovery before the job is allowed to fail.
     const _minAccept = Math.max(1, Math.floor(_cbtCount * 0.6));
-    if (questions.length < _minAccept && _cbtOptions.ai_task_id === 'RECKONING_CBT') {
-      const _fallbackQuestions = generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount);
+    if (questions.length < _minAccept) {
+      const _fallbackQuestions = filterInvalidCBTQuestions(
+        generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount),
+        'deterministic recovery'
+      );
       if (_fallbackQuestions.length >= _minAccept) {
         console.warn(
-          `[KIWI CBT] Reckoning AI output only produced ${questions.length}/${_cbtCount}; ` +
+          `[KIWI CBT] AI output only produced ${questions.length}/${_cbtCount}; ` +
           `replacing it with deterministic recovery exam (${_fallbackQuestions.length}/${_cbtCount})`
         );
         questions = _fallbackQuestions;
@@ -16238,11 +16243,14 @@ setImmediate(async () => {
     }
     if (questions.length < _minAccept) {
       await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
-      _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.' });
+      const _friendlyGenerationError =
+        'KIWI could not build enough valid questions from the selected cards. ' +
+        'Add more complete cards or reduce the question count, then try again.';
+      _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: _friendlyGenerationError });
       wsSend(_cbtUserId, 'job_failed', {
         job_id: cbtJobId,
         type: 'cbt_generation',
-        error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.',
+        error: _friendlyGenerationError,
       });
       return;
     }
@@ -16299,8 +16307,20 @@ setImmediate(async () => {
     wsSend(_cbtUserId, 'job_done', { job_id: cbtJobId, type: 'cbt_generation', result: readyExam, exam: readyExam });
   } catch (bgErr) {
     console.error('[KIWI] CBT background generation failed:', bgErr.message);
-    _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: bgErr.message || 'Exam generation failed' });
-    wsSend(_cbtUserId, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: bgErr.message || 'Exam generation failed' });
+    const _safeExamGenerationError = isAIAvailabilityError(bgErr)
+      ? 'AI generation is temporarily busy. KIWI could not complete this exam right now; please retry shortly.'
+      : 'KIWI could not finish generating this exam. Please retry.';
+    _jobStoreSet(cbtJobId, {
+      status: 'failed',
+      type: 'cbt_generation',
+      error: _safeExamGenerationError,
+      internal_error_code: bgErr?.code || null,
+    });
+    wsSend(_cbtUserId, 'job_failed', {
+      job_id: cbtJobId,
+      type: 'cbt_generation',
+      error: _safeExamGenerationError,
+    });
   }
 });
 } catch (e) {
