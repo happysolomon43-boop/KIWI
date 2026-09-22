@@ -171,6 +171,9 @@ function createAIOrchestrator({
     const candidates = resolvedRouter.resolveCandidates(taskId, {
       preferredModelId: affinityModelId,
     });
+    if (!affinityModelId && generationGroupId && task.affinityGroup && candidates[0]) {
+      setAffinity(task, generationGroupId, candidates[0].modelId);
+    }
     const featureGenerationConfig = validateFeatureGenerationConfig(
       request.generationConfig || {}
     );
@@ -205,6 +208,7 @@ function createAIOrchestrator({
     const attempts = [];
     const requestStarted = Date.now();
     let lastError = null;
+    let hadEligibleRoute = false;
 
     async function finishFailure(error, outcome = 'FAILED') {
       await sideEffect('telemetry finish failure', () => telemetry?.finishRequest(requestId, {
@@ -223,6 +227,7 @@ function createAIOrchestrator({
     for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
       const candidate = candidates[modelIndex];
       const slots = slotsForModel(candidate.modelId, { advance: true });
+      if (slots.length > 0) hadEligibleRoute = true;
       let skipRemainingSlotsForModel = false;
 
       for (const slot of slots) {
@@ -396,16 +401,24 @@ function createAIOrchestrator({
       if (skipRemainingSlotsForModel) continue;
     }
 
+    const finalCode = lastError?.code || (
+      hadEligibleRoute
+        ? AI_ERROR_CODES.UNKNOWN
+        : AI_ERROR_CODES.CAPACITY_EXHAUSTED
+    );
     const finalError = new AIError(
-      `All approved routes failed for AI task ${taskId}`,
+      hadEligibleRoute
+        ? `All approved routes failed for AI task ${taskId}`
+        : `No healthy project/model capacity is currently available for AI task ${taskId}`,
       {
-        code: lastError?.code || AI_ERROR_CODES.UNKNOWN,
+        code: finalCode,
         status: lastError?.status || null,
         retryable: false,
         scope: 'REQUEST',
         details: {
           attempts,
           lastErrorCode: lastError?.code || null,
+          hadEligibleRoute,
         },
         cause: lastError,
       }
