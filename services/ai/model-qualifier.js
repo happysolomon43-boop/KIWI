@@ -287,23 +287,15 @@ function createModelQualifier({
 
       if (transient) {
         // Put it back into DISCOVERED so a later discovery cycle can retry.
-        const current = lifecycle && model.id;
-        if (current) {
-          const existing = await lifecycle.discover({
-            ...model,
-            status: undefined,
-            metadata: {
-              ...(model.metadata || {}),
-              lastQualificationError: error?.code || 'UNKNOWN',
-            },
-          });
-          // discover() preserves current state; explicitly restore DISCOVERED
-          // through the catalog lifecycle on the next cycle.
-          if (existing?.status === 'QUALIFYING') {
-            // The next discovery upsert supplies DISCOVERED for retriable probes.
-            model.status = 'DISCOVERED';
-          }
-        }
+        await lifecycle.discover({
+          ...model,
+          status: 'DISCOVERED',
+          metadata: {
+            ...(model.metadata || {}),
+            lastQualificationError: error?.code || 'UNKNOWN',
+            lastQualificationAttemptAt: new Date().toISOString(),
+          },
+        });
       } else {
         await lifecycle.deny(model.id, reason);
       }
