@@ -162,3 +162,30 @@ test('manual suspension can be resumed to its previous lifecycle state', async (
   await lifecycle.resume('gemini-3.8-flash', 'removed from AI_MODEL_DENYLIST');
   assert.equal(catalog.get('gemini-3.8-flash').status, MODEL_STATUS.APPROVED);
 });
+
+
+test('automatic suspension can transition back to DISCOVERED for requalification', async () => {
+  const catalog = createModelCatalog();
+  catalog.upsert(autoModel());
+  const persisted = [];
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel(model) { persisted.push(model); } },
+    logger: { warn() {} },
+  });
+
+  await lifecycle.suspend('gemini-3.9-flash', 'automatic rollback after TIMEOUT');
+  assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.SUSPENDED);
+
+  await lifecycle.retryQualification(
+    'gemini-3.9-flash',
+    'stable model still advertised after cooldown'
+  );
+
+  const model = catalog.get('gemini-3.9-flash');
+  assert.equal(model.status, MODEL_STATUS.DISCOVERED);
+  assert.equal(model.suspendedAt, null);
+  assert.equal(model.metadata.suspendedReason, undefined);
+  assert.ok(model.metadata.requalificationRequestedAt);
+  assert.ok(persisted.some((entry) => entry.status === MODEL_STATUS.DISCOVERED));
+});
