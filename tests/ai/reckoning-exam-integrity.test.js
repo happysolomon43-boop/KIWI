@@ -46,13 +46,25 @@ test('final CBT integrity runs before minimum-count and Reckoning fallback decis
   assert.match(generation, /generateFallbackExamQuestions/);
 });
 
-test('ready exam sessions do not claim to have started', () => {
+test('ready Reckoning activation overwrites the legacy creation timestamp', () => {
   const createBlock = section(
     'examSessions: {',
     '// ── exam_questions'
   );
-  assert.match(createBlock, /const status = data\.status \|\| ['"]pending['"]/);
-  assert.match(createBlock, /started_at:\s*data\.started_at\s*\|\|\s*\(status === ['"]active['"] \? new Date\(\) : null\)/);
+  assert.match(createBlock, /started_at:\s*new Date\(\)/);
+  assert.match(createBlock, /status:\s*data\.status \|\| ['"]pending['"]/);
+
+  const start = section(
+    'async function startReckoningExam',
+    'const RECKONING_FAILSAFE_FAILURES'
+  );
+  assert.match(start, /exam\.status === ['"]ready['"] \? new Date\(\)/);
+  assert.match(start, /started_at:\s*startedAt/);
+});
+
+test('missing answer mappings are rejected instead of silently defaulting to A', () => {
+  assert.doesNotMatch(source, /const correctLetter = ans\.correct_answer \|\| ['"]A['"]/);
+  assert.match(source, /const correctLetter = String\(ans\.correct_answer \|\| ['"]['"]\)\.toUpperCase\(\)/);
 });
 
 test('starting a Reckoning activates the exact linked exam before in-progress state', () => {
