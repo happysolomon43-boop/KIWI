@@ -127,7 +127,7 @@ function createAIOrchestrator({
       requestedReasoning: task.reasoning,
       candidateModels: shadowPlan.candidates,
       legacyModel,
-      projectSlots: shadowPlan.projectSlots.filter((slot) => slot.enabled),
+      plannedProjectSlot: shadowPlan.plannedPrimaryProjectSlot,
     }));
 
     return shadowPlan;
