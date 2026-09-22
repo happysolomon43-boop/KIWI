@@ -76,6 +76,13 @@ function createModelDiscoveryManager({
     return String(env.AI_AUTO_PROMOTE ?? 'true').toLowerCase() !== 'false';
   }
 
+  function requalificationDelayMs() {
+    const fallback = 6 * 60 * 60 * 1000;
+    const parsed = Number(env.AI_MODEL_REQUALIFY_AFTER_MS);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.max(30 * 60 * 1000, Math.min(parsed, 7 * 24 * 60 * 60 * 1000));
+  }
+
   function highestApprovedRank(family) {
     const approved = catalog.list({
       family,
@@ -145,6 +152,7 @@ function createModelDiscoveryManager({
       .sort((a, b) => b.rank - a.rank);
 
     const discovered = [];
+    const requalified = [];
     const promoted = [];
     const skipped = [];
 
@@ -154,6 +162,11 @@ function createModelDiscoveryManager({
       let candidate = existing;
 
       if (existing) {
+        const firstDiscoveredAt =
+          existing.metadata?.discoveredAt ||
+          model.metadata?.discoveredAt ||
+          new Date().toISOString();
+
         candidate = catalog.upsert({
           ...existing,
           inputTokenLimit: model.inputTokenLimit || existing.inputTokenLimit,
@@ -161,17 +174,49 @@ function createModelDiscoveryManager({
           metadata: {
             ...(existing.metadata || {}),
             ...(model.metadata || {}),
+            discoveredAt: firstDiscoveredAt,
             lastSeenAt: new Date().toISOString(),
           },
         });
         await lifecycle.discover(candidate);
 
-        if (
-          candidate.status === MODEL_STATUS.APPROVED ||
-          candidate.status === MODEL_STATUS.SUSPENDED ||
-          candidate.status === MODEL_STATUS.DENIED
-        ) {
+        if (candidate.status === MODEL_STATUS.APPROVED) {
           continue;
+        }
+
+        if (candidate.status === MODEL_STATUS.DENIED) {
+          skipped.push({ modelId: model.id, reason: 'qualification denied' });
+          continue;
+        }
+
+        if (candidate.status === MODEL_STATUS.SUSPENDED) {
+          const manual = candidate.metadata?.suspendedReason === 'manual AI_MODEL_DENYLIST';
+          const autoPromoted = candidate.metadata?.autoPromoted === true;
+          const suspendedAt = new Date(
+            candidate.suspendedAt || candidate.metadata?.suspendedAt || 0
+          ).getTime();
+          const cooldownElapsed =
+            Number.isFinite(suspendedAt) &&
+            suspendedAt > 0 &&
+            (Date.now() - suspendedAt) >= requalificationDelayMs();
+
+          if (manual || !autoPromoted || !cooldownElapsed) {
+            skipped.push({
+              modelId: model.id,
+              reason: manual
+                ? 'manual denylist suspension'
+                : !autoPromoted
+                  ? 'suspended seeded model'
+                  : 'requalification cooldown',
+            });
+            continue;
+          }
+
+          candidate = await lifecycle.retryQualification(
+            model.id,
+            'stable model still advertised after suspension cooldown'
+          );
+          requalified.push(model.id);
         }
       } else {
         candidate = await lifecycle.discover({
@@ -210,6 +255,7 @@ function createModelDiscoveryManager({
       providerModels: providerModels.length,
       stableFlashModels: stable.length,
       discovered: Object.freeze(discovered),
+      requalified: Object.freeze(requalified),
       promoted: Object.freeze(promoted),
       skipped: Object.freeze(skipped),
     });
@@ -219,6 +265,7 @@ function createModelDiscoveryManager({
         providerModels: summary.providerModels,
         stableFlashModels: summary.stableFlashModels,
         discovered: summary.discovered,
+        requalified: summary.requalified,
         promoted: summary.promoted,
       });
     }
@@ -231,6 +278,7 @@ function createModelDiscoveryManager({
     fetchProviderModels,
     autoDiscoveryEnabled,
     autoPromoteEnabled,
+    requalificationDelayMs,
   });
 }
 
