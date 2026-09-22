@@ -40,7 +40,7 @@ function successRaw(text = 'ok') {
   };
 }
 
-test('Phase 6 has exactly five VVIP canonical tasks with the intended contracts', () => {
+test('Phase 6 VVIP canonical tasks include assessment integrity audit', () => {
   const vvip = Object.entries(AI_TASKS)
     .filter(([, config]) => config.class === AI_CLASSES.VVIP)
     .map(([id]) => id)
@@ -48,6 +48,7 @@ test('Phase 6 has exactly five VVIP canonical tasks with the intended contracts'
 
   assert.deepEqual(vvip, [
     'CBT_COMPLETION',
+    'CBT_QUESTION_AUDIT',
     'FLASHCARD_GENERATION',
     'IMPORT_IMAGE_EXTRACTION',
     'MAIN_CBT',
@@ -59,7 +60,7 @@ test('Phase 6 has exactly five VVIP canonical tasks with the intended contracts'
     assert.equal(AI_TASKS[id].degradationAllowed, false, id);
   }
 
-  for (const id of ['MAIN_CBT', 'RECKONING_CBT', 'CBT_COMPLETION', 'FLASHCARD_GENERATION']) {
+  for (const id of ['MAIN_CBT', 'RECKONING_CBT', 'CBT_COMPLETION', 'CBT_QUESTION_AUDIT', 'FLASHCARD_GENERATION']) {
     assert.equal(AI_TASKS[id].reasoning, REASONING_LEVELS.HIGH, id);
   }
   assert.equal(AI_TASKS.IMPORT_IMAGE_EXTRACTION.reasoning, REASONING_LEVELS.MEDIUM);
@@ -78,6 +79,7 @@ test('all VVIP tasks resolve only to the approved stable Flash VVIP chain', () =
     'MAIN_CBT',
     'RECKONING_CBT',
     'CBT_COMPLETION',
+    'CBT_QUESTION_AUDIT',
     'FLASHCARD_GENERATION',
     'IMPORT_IMAGE_EXTRACTION',
   ]) {
@@ -117,11 +119,9 @@ test('one VVIP request uses a bounded number of projects before falling to the n
 
   const result = await ai.run('MAIN_CBT', { content: 'exam' });
 
-  assert.deepEqual(calls, [
-    { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
-    { modelId: 'gemini-3.8-flash', apiKey: 'key-2' },
-    { modelId: 'gemini-3.7-flash', apiKey: 'key-1' },
-  ]);
+  assert.equal(calls.filter((call) => call.modelId === 'gemini-3.8-flash').length, 14);
+  assert.ok(calls.slice(0, 14).every((call) => call.modelId === 'gemini-3.8-flash'));
+  assert.equal(calls[14].modelId, 'gemini-3.7-flash');
   assert.equal(result.requestedModel, 'gemini-3.7-flash');
 });
 
@@ -154,7 +154,7 @@ test('CBT completion preserves generation affinity and the established scaled ou
 
   assert.match(body, /ai\.run\(\s*['"]CBT_COMPLETION['"]/);
   assert.match(body, /generationGroupId:\s*completionGroupId/);
-  assert.match(body, /Math\.min\(65536,\s*Math\.max\(16000,\s*needed\s*\*\s*900\)\)/);
+  assert.match(body, /Math\.min\(24000,\s*Math\.max\(6000,\s*needed\s*\*\s*700\)\)/);
 });
 
 test('flashcard generation and image extraction are fully live VVIP routes', () => {
@@ -169,7 +169,7 @@ test('flashcard generation and image extraction are fully live VVIP routes', () 
   assert.match(image, /mimeType/);
 });
 
-test('Reckoning recovery is limited to availability/parser failure and does not treat safety or bad requests as availability', () => {
+test('CBT recovery is limited to availability/parser failure and does not treat safety or bad requests as availability', () => {
   assert.equal(isAIAvailabilityError(new AIError('daily', { code: AI_ERROR_CODES.RATE_LIMIT_RPD })), true);
   assert.equal(isAIAvailabilityError(new AIError('timeout', { code: AI_ERROR_CODES.TIMEOUT })), true);
   assert.equal(isAIAvailabilityError(new AIError('safety', { code: AI_ERROR_CODES.SAFETY })), false);
@@ -179,15 +179,14 @@ test('Reckoning recovery is limited to availability/parser failure and does not 
     'const _cbtUserId',
     '// ── POST /api/exams/:id/forfeit'
   );
-  assert.match(generationRoute, /_cbtOptions\.ai_task_id\s*===\s*['"]RECKONING_CBT['"]/);
   assert.match(generationRoute, /isAIAvailabilityError\(generationErr\)/);
-  assert.match(generationRoute, /could not be parsed\|empty response/i);
+  assert.match(generationRoute, /could not be parsed\|empty response\|no visible text/i);
   assert.match(generationRoute, /generateFallbackExamQuestions/);
 });
 
 test('Phase 6 leaves no legacy provider routing in feature code', () => {
   assert.equal((source.match(/\bgeminiModel\.generateContent\s*\(/g) || []).length, 0);
-  assert.equal((source.match(/\bai\.run\s*\(/g) || []).length, 27);
+  assert.equal((source.match(/\bai\.run\s*\(/g) || []).length, 28);
   assert.doesNotMatch(source, /const geminiModel\s*=\s*\{/);
   assert.doesNotMatch(source, /generativelanguage\.googleapis\.com/);
   assert.doesNotMatch(source, /thinkingConfig\s*:/);

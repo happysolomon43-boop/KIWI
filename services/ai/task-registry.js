@@ -38,25 +38,27 @@ const RETRY_POLICIES = Object.freeze({
   IP_FAST: 'IP_FAST',
 });
 
-// Retry limits are intentionally bounded. A single learner action must never
-// fan out across every configured Gemini project for every fallback model.
-// Rate limits are project/model scoped, while provider 5xx errors are usually
-// model/service availability signals. These budgets keep fallback useful
-// without turning one request into a quota-burning retry storm.
+// Retry budgets distinguish project-slot quota failures from provider/model
+// failures. A 429 is project+model scoped and should rotate keys; a 5xx is
+// usually model/service scoped and should fall to the next model immediately.
+// This avoids the old 40+ request storm while still surviving exhausted keys.
 const RETRY_POLICY_CONFIG = Object.freeze({
   [RETRY_POLICIES.VVIP_GENERATION]: Object.freeze({
-    maxAttempts: 8,
+    maxAttempts: 32,
     maxAttemptsPerModel: 2,
+    maxQuotaAttemptsPerModel: 15,
     maxTransientAttemptsPerModel: 1,
   }),
   [RETRY_POLICIES.VIP_ANALYSIS]: Object.freeze({
-    maxAttempts: 8,
+    maxAttempts: 20,
     maxAttemptsPerModel: 2,
+    maxQuotaAttemptsPerModel: 10,
     maxTransientAttemptsPerModel: 1,
   }),
   [RETRY_POLICIES.IP_FAST]: Object.freeze({
-    maxAttempts: 4,
+    maxAttempts: 8,
     maxAttemptsPerModel: 2,
+    maxQuotaAttemptsPerModel: 4,
     maxTransientAttemptsPerModel: 1,
   }),
 });
@@ -102,6 +104,17 @@ const AI_TASKS = Object.freeze({
     timeoutMs: 180000,
     retryPolicy: RETRY_POLICIES.VVIP_GENERATION,
     affinityGroup: 'ASSESSMENT_GENERATION',
+  }),
+
+  CBT_QUESTION_AUDIT: task({
+    class: AI_CLASSES.VVIP,
+    reasoning: REASONING_LEVELS.HIGH,
+    modelPolicy: MODEL_POLICIES.TOP_STABLE_FLASH,
+    qualityFloor: QUALITY_FLOORS.FLASH,
+    capabilities: ['generateContent', 'thinking', 'structuredOutput'],
+    timeoutMs: 35000,
+    retryPolicy: RETRY_POLICIES.VVIP_GENERATION,
+    affinityGroup: 'ASSESSMENT_INTEGRITY',
   }),
 
   FLASHCARD_GENERATION: task({

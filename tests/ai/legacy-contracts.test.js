@@ -32,7 +32,7 @@ test('main and Reckoning CBT delegate model, key, timeout, and thinking policy t
   assert.match(body, /const _taskId\s*=\s*_opts\.ai_task_id\s*\|\|\s*['"]MAIN_CBT['"]/);
   assert.match(body, /ai\.run\(\s*_taskId/);
   assert.match(body, /generationGroupId:\s*_generationGroupId/);
-  assert.match(body, /Math\.min\(65536,\s*Math\.max\(24000,\s*count\s*\*\s*900\)\)/);
+  assert.match(body, /Math\.min\(48000,\s*Math\.max\(8000,\s*count\s*\*\s*700\)\)/);
   assert.match(body, /force_type/);
   assert.doesNotMatch(body, /thinkingConfig/);
   assert.doesNotMatch(body, /gemini-/i);
@@ -46,7 +46,7 @@ test('CBT completion is a VVIP orchestrator task with output scaling and generat
 
   assert.match(body, /ai\.run\(\s*['"]CBT_COMPLETION['"]/);
   assert.match(body, /generationGroupId:\s*completionGroupId/);
-  assert.match(body, /Math\.min\(65536,\s*Math\.max\(16000,\s*needed\s*\*\s*900\)\)/);
+  assert.match(body, /Math\.min\(24000,\s*Math\.max\(6000,\s*needed\s*\*\s*700\)\)/);
   assert.match(body, /Do NOT ask about any concept, fact, or topic already covered/);
   assert.doesNotMatch(body, /thinkingConfig/);
 });
@@ -93,9 +93,9 @@ test('custom CBT split-generation and completion safeguards remain present', () 
   assert.match(source, /\[KIWI CBT\] Ratio check:/);
 });
 
-test('Reckoning retains a deterministic emergency recovery path', () => {
+test('normal and Reckoning CBT retain deterministic availability recovery', () => {
   assert.match(source, /function generateFallbackExamQuestions/);
-  assert.match(source, /_cbtOptions\.ai_task_id\s*===\s*['"]RECKONING_CBT['"]/);
   assert.match(source, /isAIAvailabilityError\(generationErr\)/);
+  assert.match(source, /MAIN_CBT and Reckoning both get a deterministic availability fallback/);
   assert.match(source, /using deterministic recovery exam/);
 });

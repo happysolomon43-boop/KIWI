@@ -6326,7 +6326,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(_jf.job_id);
               _hideGenBanner();
               var _labels = { note_generation: 'Note generation', cbt_generation: 'Exam generation', exam_submit: 'Exam submission' };
-              if (typeof showToast === 'function') showToast('(' + (_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
+              if (typeof showToast === 'function') showToast((_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
+              _handleGenerationFailure(_jf.type, _jf.error);
               if (_jf.type === 'cbt_generation') {
                 if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
                   showReckoningOverlay(AppState.reckoning);
@@ -6599,15 +6600,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       function _updateGenBannerStage(stage) {
         var s = document.getElementById('kiwiGenBannerStage');
         if (s) s.textContent = stage || '';
-        if (stage === 'Pass 1 of 3') _updateExamGenProgress(1);
-        else if (stage === 'Pass 2 of 3') _updateExamGenProgress(2);
-        else if (stage === 'Pass 3 of 3') _updateExamGenProgress(3);
+        if (stage === 'Drafting questions') _updateExamGenProgress(1);
+        else if (stage === 'Validating coverage') _updateExamGenProgress(2);
+        else if (stage === 'Finalizing exam') _updateExamGenProgress(3);
       }
       function _hideGenBanner() {
         var b = document.getElementById('kiwiGenBanner');
         if (b) { b.classList.remove('active'); b.style.display = 'none'; }
         clearTimeout(window._genBannerTimeout);
         try { localStorage.removeItem('kiwi_gen_banner'); } catch(_) {}
+      }
+      function _handleGenerationFailure(type, rawError) {
+        _hideGenBanner();
+        var errorText = String(rawError || 'Generation failed. Please try again.');
+        if (type === 'note_generation') {
+          AppState.cardGenJob = null;
+          var screen = document.getElementById('cardGenScreen');
+          if (screen) {
+            screen.innerHTML =
+              '<div style="text-align:center;padding:40px 20px;max-width:520px;margin:auto;">' +
+                '<div style="margin:0 auto 16px;width:52px;height:52px;color:var(--red-bright);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 17h.01"/></svg></div>' +
+                '<div style="font-family:var(--font-display);font-size:24px;font-weight:750;color:var(--red-bright);margin-bottom:10px;">Card generation failed</div>' +
+                '<div style="font-size:var(--text-base);color:var(--text-2);line-height:1.6;margin-bottom:12px;">' + escapeHTML(errorText) + '</div>' +
+                '<div style="font-size:var(--text-sm);color:var(--text-3);">Returning to Import so you can retry or edit the source…</div>' +
+              '</div>';
+            setTimeout(function() {
+              if (AppState.currentPage === 'generating-cards') navigateTo('import');
+            }, 1600);
+          }
+        }
       }
       // Restore banner on page load if a generation was in progress
       (function() {
@@ -6622,10 +6643,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // FIX 6: Show generation banner when a background job starts polling
       function _pollJobFallback(jobId, token, type) {
         var _bannerLabels = { cbt_generation: 'Building your exam…', note_generation: 'Generating cards…' };
-        if (_bannerLabels[type]) _showGenBanner(_bannerLabels[type], type === 'cbt_generation' ? 'Pass 1 of 3' : '');
+        if (_bannerLabels[type]) _showGenBanner(_bannerLabels[type], type === 'cbt_generation' ? 'Drafting questions' : '');
         if (_pendingJobs.has(jobId)) return;
         var _pollStart = Date.now();
-        var _MAX_POLL_MS = (type === 'cbt_generation' ? 10 : 4) * 60 * 1000; // CBT: 10 min (3 passes), others: 4 min
+        var _MAX_POLL_MS = (type === 'cbt_generation' ? 7 : 4) * 60 * 1000;
         var _simulateWsMsg = async function(event, data) {
           if (_kiwiWS && _kiwiWS.readyState === 1) {
             _kiwiWS.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ event: event, data: data }) }));
@@ -6691,6 +6712,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               var _failPrefixes = { cbt_generation: 'Exam generation failed', note_generation: 'Note generation failed', exam_submit: 'Exam submission failed' };
               var _failPrefix = _failPrefixes[_jf2.type] || 'Task failed';
               showToast(_failPrefix + ': ' + (_jf2.error || 'Task failed'), 'error', 8000);
+              _handleGenerationFailure(_jf2.type, _jf2.error);
               if (_jf2.type === 'cbt_generation') {
                 if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
                   showReckoningOverlay(AppState.reckoning);
@@ -6724,11 +6746,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: _timeoutMsgs[type] || 'Request timed out. Please try again.' });
               return;
             }
-            // Update stage label for CBT generation based on time elapsed
             if (type === 'cbt_generation') {
-              if (_elapsed < 100000) _updateGenBannerStage('Pass 1 of 3');
-              else if (_elapsed < 220000) _updateGenBannerStage('Pass 2 of 3');
-              else _updateGenBannerStage('Pass 3 of 3');
+              if (_elapsed < 60000) _updateGenBannerStage('Drafting questions');
+              else if (_elapsed < 150000) _updateGenBannerStage('Validating coverage');
+              else _updateGenBannerStage('Finalizing exam');
             }
             const job = await apiRequest(`/jobs/${jobId}`);
             if (job.status === 'done') {
@@ -6999,9 +7020,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             // Prefer details (raw DB error) over the generic error label so callers
             // (e.g. the create-subject modal) can display the real failure reason.
             const _apiErr = new ApiError(response.status, err.details || err.error || err.message || `HTTP ${response.status}`, endpoint);
-            if (response.status === 500) {
-              // Show generic toast AND mark error so the caller's catch block
-              // knows not to show a second toast for the same failure.
+            if (response.status === 500 && options.silentError !== true) {
               showToast("Server error. Please try again shortly.", "error", 5000);
               _apiErr.alreadyReported = true;
             }
@@ -7014,17 +7033,16 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           if (err instanceof ApiError) throw err;
           if (err && err.code === "REQUEST_TIMEOUT") {
             const message = "KIWI's server is taking too long to respond. It may still be waking up — wait a moment, then try again.";
-            showToast(message, "warning", 8000);
+            if (options.silentError !== true) showToast(message, "warning", 8000);
             const timeoutError = new ApiError(0, message, endpoint);
             timeoutError.code = "REQUEST_TIMEOUT";
-            timeoutError.alreadyReported = true;
+            timeoutError.alreadyReported = options.silentError !== true;
             throw timeoutError;
           }
-          // Network error — show toast here and mark so callers don't double-toast
           const message = "KIWI could not reach its server. Check your connection and try again.";
-          showToast(message, "error", 6000);
+          if (options.silentError !== true) showToast(message, "error", 6000);
           const _netErr = new ApiError(0, message, endpoint);
-          _netErr.alreadyReported = true;
+          _netErr.alreadyReported = options.silentError !== true;
           throw _netErr;
         }
       }
@@ -7734,6 +7752,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // score only answers that were actually saved before the deadline.
       api.preMarkQuestion = async (examId, questionNumber, selectedOption) =>
         apiRequest('/exams/' + examId + '/pre-mark', { method: 'POST', body: { question_number: questionNumber, selected_option: selectedOption } }).catch(() => null);
+      api.flagExamQuestion = async (examId, questionNumber) =>
+        apiRequest('/exams/' + examId + '/flag-question', {
+          method: 'POST',
+          body: { question_number: questionNumber },
+          timeoutMs: 40000,
+        });
       // Progressive KS flush: drain _ksQueue for the user every N cards
       api.partialFlushKS = async () =>
         apiRequest('/study/partial-flush', { method: 'POST' }).catch(() => null);
@@ -7758,11 +7782,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       api.importFromPptx = async function(deckId, fileBase64, subjectHint) {
         return await apiRequest('/cards/import/pptx', { method: 'POST', body: { deck_id: deckId, pptx_base64: fileBase64, subject_hint: subjectHint || '' } });
       };
-      api.getBubbleTrajectory = async (id)   => apiRequest('/bubbles/' + id + '/trajectory');
-      api.getDailyContract  = async (id)     => apiRequest('/bubbles/' + id + '/contract');
-      api.getBubbleHistory  = async (id)     => apiRequest('/bubbles/' + id + '/history');
-      api.getBubbleClusters = async (id)     => apiRequest('/bubbles/' + id + '/clusters');
-      api.getBubbleAutopsy  = async (id)     => apiRequest('/bubbles/' + id + '/autopsy');
+      api.getBubbleTrajectory = async (id)   => apiRequest('/bubbles/' + id + '/trajectory', { silentError: true });
+      api.getDailyContract  = async (id)     => apiRequest('/bubbles/' + id + '/contract', { silentError: true });
+      api.getBubbleHistory  = async (id)     => apiRequest('/bubbles/' + id + '/history', { silentError: true });
+      api.getBubbleClusters = async (id)     => apiRequest('/bubbles/' + id + '/clusters', { silentError: true });
+      api.getBubbleAutopsy  = async (id)     => apiRequest('/bubbles/' + id + '/autopsy', { silentError: true });
       api.getBubbleAdvisory = async (id)     => apiRequest('/bubbles/' + id + '/advisory', { method: 'POST' });
       api.getLearningDebt   = async ()       => apiRequest('/bubbles/debt');
       api.checkBubbleOverlap = async (data)  => apiRequest('/bubbles/overlap-check', { method: 'POST', body: data });
@@ -8260,6 +8284,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const m = Math.floor(whole / 60);
         const s = whole % 60;
         return `${m}:${s.toString().padStart(2, "0")}`;
+      }
+
+      function timerIconSvg(size = 14) {
+        const s = Math.max(10, Number(size) || 14);
+        return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:inline-block;vertical-align:-2px;flex-shrink:0;"><circle cx="12" cy="13" r="8"/><path d="M9 2h6"/><path d="M12 5v2"/><path d="M12 13l3-2"/></svg>`;
       }
 
       // ── Format time ago ──
@@ -10029,12 +10058,27 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         AppState.dashboard = null;
       }
 
+      function _dashboardFingerprint(data) {
+        const d = data || {};
+        try {
+          return JSON.stringify({
+            overallKS: d.overallKS, subjectBreakdown: d.subjectBreakdown, streak: d.streak,
+            invitations: d.invitations, tasks: d.tasks, brainPreview: d.brainPreview,
+            weeklyAnchor: d.weeklyAnchor, morningBrief: d.morningBrief,
+            returnGreeting: d.returnGreeting, treeState: d.treeState,
+          });
+        } catch (_) { return String(Date.now()); }
+      }
+
       // ── Paint dashboard: renders data into main (called from cache or network path) ──
       function _paintDashboard(main, data, _dashStartPage) {
         if (AppState.currentPage !== _dashStartPage) return;
         AppState.dashboard = data;
         AppState.user = data.user || AppState.user;
         updateMobileBar(AppState.currentPage);
+        const _dashFingerprint = _dashboardFingerprint(data);
+        if (main.dataset.dashboardFingerprint === _dashFingerprint && main.querySelector('.ks-hero')) return;
+        main.dataset.dashboardFingerprint = _dashFingerprint;
           const {
             overallKS,
             subjectBreakdown,
@@ -10614,6 +10658,15 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         );
         const startTime = Number(clock?.startTime);
 
+        const restoredFlagged = new Set();
+        const restoredFlagAuditStatus = {};
+        questions.forEach((question) => {
+          if (question.flagged_by_student) {
+            restoredFlagged.add(question.id);
+            restoredFlagAuditStatus[question.id] = question.ai_audit_status || 'pending';
+          }
+        });
+
         AppState.tempExam = {
           examId: examData.id,
           questions,
@@ -10622,7 +10675,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               ? (firstUnansweredIndex >= 0 ? firstUnansweredIndex : Math.max(0, questions.length - 1))
               : 0,
           answers: options.resume === true ? restoredAnswers : {},
-          flagged: new Set(),
+          flagged: restoredFlagged,
+          flagAuditStatus: restoredFlagAuditStatus,
           startTime: Number.isFinite(startTime) ? startTime : Date.now(),
           timeLimit,
           totalTime: timeLimit,
@@ -10694,8 +10748,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
       function computeLiveSessionQuality(study) {
         if (!study) return {
-          score: 0, activeSeconds: 0, elapsedSeconds: 0, focusRatio: 0,
-          breakdown: { meaningful_work: 0, active_focus: 0, attention: 0, goal_progress: 0 },
+          score: 0, activeSeconds: 0, elapsedSeconds: 0, focusRatio: 0, paceEfficiency: 0,
+          breakdown: { meaningful_work: 0, active_focus: 0, attention: 0, pace_efficiency: 0, goal_progress: 0 },
         };
         const now = Date.now();
         const elapsedSeconds = Math.max(0, Math.round((now - (study.startTime || now)) / 1000));
@@ -10706,22 +10760,63 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           Math.round(((Number(tracking.idleMs) || 0) + openIdleMs) / 1000)
         );
         const activeSeconds = Math.max(0, Math.min(elapsedSeconds, elapsedSeconds - idleSeconds));
-        const uniqueCards = new Set((study.reviews || []).map((review) => review.cardId).filter(Boolean)).size;
+        const reviews = study.reviews || [];
+        const uniqueCards = new Set(reviews.map((review) => review.cardId).filter(Boolean)).size;
         const cardsReviewed = Number(study.cardsReviewed) || 0;
+        const responseTimes = reviews.map((review) => Number(review.responseTimeMs) || 0).filter((ms) => ms > 0);
+        const openCardMs = study.cardShownAt ? Math.max(0, now - study.cardShownAt) : 0;
+        if (openCardMs > 30000) responseTimes.push(Math.min(openCardMs, 120000));
+        const averageResponseMs = responseTimes.length
+          ? responseTimes.reduce((sum, ms) => sum + Math.min(ms, 120000), 0) / responseTimes.length : 0;
         const focusRatio = elapsedSeconds > 0 ? Math.max(0, Math.min(1, activeSeconds / elapsedSeconds)) : 0;
+        const paceEfficiency = averageResponseMs > 0
+          ? Math.max(0, Math.min(1, 1 - Math.max(0, averageResponseMs - 30000) / 90000)) : 0.65;
         const round2 = (value) => Math.round(Number(value) * 100) / 100;
         const breakdown = {
-          meaningful_work: round2(Math.min(uniqueCards / 20, 1) * 35),
-          active_focus: round2(Math.min(activeSeconds / 1500, 1) * 30),
-          attention: round2(focusRatio * 20),
-          goal_progress: round2(Math.min(cardsReviewed / 25, 1) * 15),
+          meaningful_work: round2(Math.min(uniqueCards / 20, 1) * 30),
+          active_focus: round2(Math.min(activeSeconds / 1500, 1) * 25),
+          attention: round2(focusRatio * 15),
+          pace_efficiency: round2(paceEfficiency * 20),
+          goal_progress: round2(Math.min(cardsReviewed / 25, 1) * 10),
         };
         let score = Math.round(Math.max(0, Math.min(
-          100,
-          breakdown.meaningful_work + breakdown.active_focus + breakdown.attention + breakdown.goal_progress
+          100, breakdown.meaningful_work + breakdown.active_focus + breakdown.attention +
+          breakdown.pace_efficiency + breakdown.goal_progress
         )));
         if (uniqueCards < 5 || activeSeconds < 300) score = Math.min(score, 39);
-        return { score, activeSeconds, elapsedSeconds, focusRatio, breakdown };
+        if (uniqueCards < 10 || activeSeconds < 600) score = Math.min(score, 59);
+        if (uniqueCards < 15 || activeSeconds < 900) score = Math.min(score, 74);
+        return { score, activeSeconds, elapsedSeconds, focusRatio, paceEfficiency: round2(paceEfficiency), breakdown };
+      }
+
+      function _tickCardElapsedTimer(study) {
+        if (!study || study._qqPauseStart) return;
+        const el = document.getElementById('cardElapsedTimer');
+        const arc = document.getElementById('cardTimerArc');
+        if (!el) return;
+        const seconds = Math.max(0, Math.floor((Date.now() - (study.cardShownAt || Date.now())) / 1000));
+        el.textContent = seconds < 60 ? seconds + 's' : Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+        el.style.color = seconds < 30 ? 'var(--text-2)' : seconds < 60 ? '#f59e0b' : 'var(--red-bright)';
+        if (arc) {
+          const circumference = 81.7;
+          arc.style.strokeDashoffset = String(circumference * (1 - Math.min(seconds / 60, 1)));
+          arc.style.stroke = seconds < 30 ? 'var(--green-bright)' : seconds < 60 ? '#f59e0b' : 'var(--red-bright)';
+        }
+        refreshFocusSeedPreview();
+      }
+
+      function _startCardElapsedTimer(study) {
+        if (!study) return;
+        if (study._cardTimerInterval) clearInterval(study._cardTimerInterval);
+        _tickCardElapsedTimer(study);
+        study._cardTimerInterval = setInterval(() => {
+          if (!document.getElementById('cardElapsedTimer')) {
+            clearInterval(study._cardTimerInterval);
+            study._cardTimerInterval = null;
+            return;
+          }
+          _tickCardElapsedTimer(study);
+        }, 1000);
       }
 
       function refreshFocusSeedPreview() {
@@ -11371,7 +11466,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 const hrs  = Math.round(msUntil / 3600000);
                 const days = Math.round(msUntil / 86400000);
                 const label = mins < 60 ? `${mins}m` : hrs < 24 ? `${hrs}h` : days < 7 ? `${days}d` : `${Math.round(days/7)}w`;
-                return `<div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);font-size:9px;font-family:var(--font-mono);color:var(--text-4);background:var(--bg-3);border:1px solid var(--border);border-radius:20px;padding:2px 8px;letter-spacing:0.5px;">&#x23F3; due in ${label}</div>`;
+                return `<div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);font-size:9px;font-family:var(--font-mono);color:var(--text-4);background:var(--bg-3);border:1px solid var(--border);border-radius:20px;padding:2px 8px;letter-spacing:0.5px;display:flex;align-items:center;gap:4px;">${timerIconSvg(11)} due in ${label}</div>`;
               })()}
               <button class="flashcard-ai-btn" id="aiExplainBtn" title="AI Explanation" onclick="_kiwiAiExplain(event)">&#x2726; Explain</button>
               <button id="quickQBtn" title="Quick Questions from this card" onclick="_kiwiQuickQ(event)" style="position:absolute;top:10px;right:48px;font-size:13px;background:rgba(82,183,136,0.08);border:1px solid rgba(82,183,136,0.2);border-radius:var(--r-sm);padding:3px 7px;cursor:pointer;color:var(--green-bright);z-index:2;line-height:1;">&#x26A1;</button>
@@ -11547,21 +11642,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             t.cardShownAt = (t.cardShownAt || Date.now()) + (Date.now() - t._qqPauseStart);
             t._qqPauseStart = null;
           }
-          if (!t._cardTimerInterval) {
-            t._cardTimerInterval = setInterval(function() {
-              var el  = document.getElementById('cardElapsedTimer');
-              var arc = document.getElementById('cardTimerArc');
-              if (!el) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; return; }
-              var s = Math.floor((Date.now() - (t.cardShownAt || Date.now())) / 1000);
-              el.textContent = s < 60 ? s + 's' : Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
-              el.style.color = s < 15 ? 'var(--text-2)' : s < 30 ? '#f59e0b' : 'var(--red-bright)';
-              if (arc) {
-                var circ = 81.7;
-                arc.style.strokeDashoffset = String(circ * (1 - Math.min(s/30,1)));
-                arc.style.stroke = s < 15 ? 'var(--green-bright)' : s < 30 ? '#f59e0b' : 'var(--red-bright)';
-              }
-            }, 1000);
-          }
+          if (!t._cardTimerInterval) _startCardElapsedTimer(t);
         };
 
         // ── Page Visibility: pause study card timer when tab is backgrounded ──
@@ -12115,29 +12196,15 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             await handleStudyResponse(rating);
           });
         });
-        // Per-card elapsed timer — resets on card change, continues through flip
+        // Per-card elapsed timer — card identity, not queue index, is authoritative.
         if (t._cardTimerInterval) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; }
-        if (t._cardTimerIndex !== t.currentIndex) {
+        const _liveTimerCard = t.queue[t.currentIndex];
+        const _liveTimerCardId = _liveTimerCard && _liveTimerCard.id ? String(_liveTimerCard.id) : 'idx:' + t.currentIndex;
+        if (t._cardTimerCardId !== _liveTimerCardId) {
           t.cardShownAt = Date.now();
-          t._cardTimerIndex = t.currentIndex;
+          t._cardTimerCardId = _liveTimerCardId;
         }
-        t._cardTimerInterval = setInterval(() => {
-          const el  = document.getElementById('cardElapsedTimer');
-          const arc = document.getElementById('cardTimerArc');
-          if (!el) { clearInterval(t._cardTimerInterval); t._cardTimerInterval = null; return; }
-          const s = Math.floor((Date.now() - (t.cardShownAt || Date.now())) / 1000);
-          el.textContent = s < 60 ? s + 's' : Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
-          // Update circular progress ring (circumference = 2πr ≈ 81.7 for r=13)
-          // Ring fills up over 30 seconds; beyond 30s it stays full with color warning
-          if (arc) {
-            const circ = 81.7;
-            const pct  = Math.min(s / 30, 1);
-            arc.style.strokeDashoffset = String(circ * (1 - pct));
-            arc.style.stroke = s < 15 ? 'var(--green-bright)' : s < 30 ? '#f59e0b' : 'var(--red-bright)';
-          }
-          // Color elapsed text to match ring
-          el.style.color = s < 15 ? 'var(--text-2)' : s < 30 ? '#f59e0b' : 'var(--red-bright)';
-        }, 1000);
+        _startCardElapsedTimer(t);
       }
 
       // ── Anki-style queue sort: due cards before new/unseen cards ──────────────
@@ -12277,7 +12344,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const _oldStage      = card.stage || card.level || 1;
         const _responseTimeMs = t.cardShownAt ? (Date.now() - t.cardShownAt) : null;
         // Update review inputs, then recompute the canonical quality preview.
-        t.reviews.push({ cardId: _reviewCardId, rating, timestamp: new Date().toISOString() });
+        t.reviews.push({
+          cardId: _reviewCardId,
+          rating,
+          responseTimeMs: Math.max(0, Number(_responseTimeMs) || 0),
+          timestamp: new Date().toISOString(),
+        });
         t.cardsReviewed++;
         refreshFocusSeedPreview();
         t.aiSummary = null;
@@ -12834,10 +12906,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             </div>
             <div class="card" style="max-width:620px;margin:0 auto 22px;text-align:left;">
               <div style="font-family:var(--font-display);font-weight:700;margin-bottom:14px;">Why the seed reached ${seed.label}</div>
-              ${component("Meaningful work", breakdown.meaningful_work, 35)}
-              ${component("Active focus", breakdown.active_focus, 30)}
-              ${component("Attention", breakdown.attention, 20)}
-              ${component("Goal progress", breakdown.goal_progress, 15)}
+              ${component("Meaningful work", breakdown.meaningful_work, 30)}
+              ${component("Active focus", breakdown.active_focus, 25)}
+              ${component("Attention", breakdown.attention, 15)}
+              ${component("Pace efficiency", breakdown.pace_efficiency, 20)}
+              ${component("Goal progress", breakdown.goal_progress, 10)}
             </div>
             ${fruiting ? `
               <div class="card" style="max-width:620px;margin:0 auto 22px;border-color:var(--gold);background:rgba(13,148,136,0.06);">
@@ -13218,7 +13291,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                     <svg style="width:40px;height:40px" viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="17" stroke="var(--green-bright)" stroke-width="2"/><circle cx="20" cy="20" r="5" fill="var(--green-bright)" opacity="0.7"/><line x1="20" y1="3" x2="20" y2="10" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/><line x1="20" y1="30" x2="20" y2="37" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="20" x2="10" y2="20" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/><line x1="30" y1="20" x2="37" y2="20" stroke="var(--green-bright)" stroke-width="2" stroke-linecap="round"/></svg>
                     <div style="font-size:var(--text-xl);font-weight:600;color:var(--green-bright);">Generating your exam…</div>
                     <div style="font-size:var(--text-base);color:var(--text-2);max-width:320px;">
-                      This takes 15–30 seconds. You can leave this page — we'll redirect you automatically when it's ready.
+                      Generation runs in the background. You can leave this page immediately — KIWI will notify and open the exam when it is ready.
                     </div>
                     <div class="loading-dots" style="margin-top:var(--space-3);"><span></span><span></span><span></span></div>
                     <button class="btn btn-ghost btn-sm" id="cancelExamGenBtn" style="margin-top:var(--space-4);font-size:var(--text-sm);color:var(--text-3);border-color:var(--border);" onclick="_stopWaitingForJob('${job.job_id}')">← Stop Waiting</button>
@@ -13229,15 +13302,15 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                       <div class="gen-progress-steps">
                         <div class="gen-progress-step active" id="examGenStep1">
                           <div class="gen-progress-step-dot"></div>
-                          <div class="gen-progress-step-lbl">Pass 1</div>
+                          <div class="gen-progress-step-lbl">Draft</div>
                         </div>
                         <div class="gen-progress-step" id="examGenStep2">
                           <div class="gen-progress-step-dot"></div>
-                          <div class="gen-progress-step-lbl">Pass 2</div>
+                          <div class="gen-progress-step-lbl">Validate</div>
                         </div>
                         <div class="gen-progress-step" id="examGenStep3">
                           <div class="gen-progress-step-dot"></div>
-                          <div class="gen-progress-step-lbl">Pass 3</div>
+                          <div class="gen-progress-step-lbl">Finalize</div>
                         </div>
                       </div>
                     </div>
@@ -13313,8 +13386,6 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           });
 
           // ── Retry Decks Section ───────────────────────────────────────────────
-          // Shows the last 5 retry decks created from wrong answers.
-          // Each entry has a "Study" button to start a session directly.
           (function() {
             var retryEl = document.getElementById('retryDecksSection');
             if (!retryEl) return;
@@ -13322,41 +13393,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               var decks = (data && data.decks) || [];
               if (!decks.length) { retryEl.innerHTML = ''; return; }
               retryEl.innerHTML =
-                '<div class="section-header" style="margin-bottom:10px;padding-bottom:0;">' +
-                  '<div>' +
-                    '<div class="section-title" style="font-size:var(--text-base);">🔄 Retry Decks</div>' +
-                    '<div class="section-sub" style="font-size:var(--text-xs);">Study your weak spots from past exams · max 5 saved</div>' +
-                  '</div>' +
-                '</div>' +
+                '<div class="section-header" style="margin-bottom:10px;padding-bottom:0;"><div>' +
+                '<div class="section-title" style="font-size:var(--text-base);">↻ Retry Decks</div>' +
+                '<div class="section-sub" style="font-size:var(--text-xs);">Study the exact weak questions saved from past exams · max 5 saved</div></div></div>' +
                 '<div style="display:flex;flex-direction:column;gap:8px;">' +
                 decks.map(function(deck) {
-                  var cardCount = parseInt(deck.card_count_live || deck.card_count || 0, 10);
-                  var dateStr = deck.created_at ? new Date(deck.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
-                  // Strip the "Retry — " prefix for a cleaner display title
+                  var cardIds = Array.isArray(deck.card_ids) ? deck.card_ids.filter(Boolean) : [];
+                  var cardCount = cardIds.length || parseInt(deck.card_count_live || deck.card_count || 0, 10);
+                  var dateStr = deck.created_at ? new Date(deck.created_at).toLocaleDateString(undefined, { month:'short', day:'numeric' }) : '—';
                   var title = (deck.name || '').replace(/^Retry — /, '');
                   return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--glass-bg);border:1px solid var(--border);border-radius:10px;gap:10px;">' +
-                    '<div style="min-width:0;flex:1;">' +
-                      '<div style="font-size:var(--text-sm);font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHTML(title) + '</div>' +
-                      '<div style="font-size:var(--text-xs);color:var(--text-3);">' + cardCount + ' cards &middot; ' + dateStr + '</div>' +
-                    '</div>' +
-                    '<button class="btn btn-primary btn-sm" style="flex-shrink:0;font-size:var(--text-xs);padding:6px 14px;" ' +
-                      'onclick="(async function(btn,deckId){' +
-                        'btn.disabled=true;btn.textContent=\'Starting…\';' +
-                        'try{' +
-                          'const r=await apiRequest(\'/study/start\',{method:\'POST\',body:{deck_id:deckId}});' +
-                          'const sid=r.sessionId||(r.session&&r.session.id)||null;' +
-                          'if(!sid){showToast(\'Could not start session\',\'error\');btn.disabled=false;btn.textContent=\'▶ Study\';return;}' +
-                          'AppState.tempStudy={sessionId:sid,queue:(r.cards||[]).map(function(c){return Object.assign({},c,{front:c.front_content||c.front||\'\',back:c.back_content||c.back||\'\'});}),currentIndex:0,flipped:false,startTime:getServerSessionStart(r),cardShownAt:Date.now(),reviews:[],cardsReviewed:0,seedHealth:0,aiSummary:null,stageTransitions:[],focusData:{tabAwayCount:0,idleSeconds:0},subjectId:r.subject_id||null,deckId:deckId};' +
-                          'if(typeof startFocusTracking==="function")startFocusTracking();' +
-                          'navigateTo(\'study\');' +
-                        '}catch(err){showToast((err&&err.error)||\'Failed to start session\',\'error\');btn.disabled=false;btn.textContent=\'▶ Study\';}' +
-                      '})(this,\'' + escapeHTML(deck.id) + '\')">' +
-                      '▶ Study' +
-                    '</button>' +
-                  '</div>';
-                }).join('') +
-                '</div>';
-            }).catch(function() { retryEl.innerHTML = ''; });
+                    '<div style="min-width:0;flex:1;"><div style="font-size:var(--text-sm);font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHTML(title) + '</div>' +
+                    '<div style="font-size:var(--text-xs);color:var(--text-3);">' + cardCount + ' cards &middot; ' + dateStr + '</div></div>' +
+                    '<button class="btn btn-primary btn-sm retry-deck-study-btn" data-retry-deck-id="' + escapeHTML(deck.id) + '" style="flex-shrink:0;font-size:var(--text-xs);padding:6px 14px;" ' + (cardIds.length ? '' : 'disabled') + '>▶ Study</button></div>';
+                }).join('') + '</div>';
+              retryEl.querySelectorAll('.retry-deck-study-btn').forEach(function(btn) {
+                btn.addEventListener('click', async function() {
+                  var deck = decks.find(function(d){ return String(d.id) === String(btn.dataset.retryDeckId); });
+                  var cardIds = deck && Array.isArray(deck.card_ids) ? deck.card_ids.filter(Boolean) : [];
+                  if (!deck || !deck.subject_id || !cardIds.length) { showToast('This retry deck has no studyable cards.','error'); return; }
+                  btn.disabled=true; btn.textContent='Starting…';
+                  try {
+                    await _openTargetedStudySession({subjectId:deck.subject_id,deckId:deck.id,cardIds:cardIds,sourceLabel:'Retry Deck'});
+                  } catch(err) {
+                    showToast(err?.message || 'Failed to start retry deck','error');
+                    btn.disabled=false; btn.textContent='▶ Study';
+                  }
+                });
+              });
+            }).catch(function(){ retryEl.innerHTML=''; });
           })();
 
         } catch (err) {
@@ -13364,6 +13429,28 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             navigateTo("exam-config"),
           );
         }
+      }
+
+      async function requestExamQuestionAudit(question) {
+        const exam = AppState.tempExam;
+        if (!exam || !question || !exam.examId || question.question_number == null) return;
+        exam.flagAuditStatus = exam.flagAuditStatus || {};
+        const status = exam.flagAuditStatus[question.id];
+        if (status === 'pending') { showToast('This question is already being reviewed.','info',2500); return; }
+        if (status === 'reviewed') { showToast('AI integrity review is complete. Any valid bonus will be applied when you submit.','info',4000); return; }
+        exam.flagged.add(question.id);
+        exam.flagAuditStatus[question.id] = 'pending';
+        renderExam();
+        showToast('Question sent for AI integrity review. Keep answering — the answer key stays hidden.','info',5000);
+        try {
+          await api.flagExamQuestion(exam.examId, question.question_number);
+          exam.flagAuditStatus[question.id] = 'reviewed';
+          showToast('Question review complete. Any justified bonus will be applied at submission.','success',4500);
+        } catch(err) {
+          exam.flagAuditStatus[question.id] = 'error';
+          showToast(err?.message || 'Question review failed. Tap the flag to retry.','error',6000);
+        }
+        if (AppState.currentPage === 'exam' && AppState.tempExam === exam) renderExam();
       }
 
       function renderExam() {
@@ -13428,7 +13515,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           <!-- F15 priority indicator is on study card, not exam card (see flashcard-scene) -->
           <div class="exam-q-meta">
             <span class="badge badge-blue">${escapeHTML(q.subjectName || "General")}</span>
-            ${isFlagged ? '<span class="badge badge-gold">Flagged</span>' : ""}
+            ${isFlagged ? '<span class="badge badge-gold">' + (e.flagAuditStatus?.[q.id] === 'pending' ? 'AI review queued' : e.flagAuditStatus?.[q.id] === 'error' ? 'Review retry needed' : 'AI reviewed') + '</span>' : ""}
           </div>
           <div class="exam-stem">${escapeHTML(stripClozeForExam(q.stem))}</div>
           <div class="exam-options" id="examOptions">
@@ -13525,11 +13612,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           });
           // Flag button
           const flagBtn = document.getElementById("flagBtn");
-          if (flagBtn) flagBtn.addEventListener("click", () => {
-            if (e.flagged.has(q.id)) e.flagged.delete(q.id);
-            else e.flagged.add(q.id);
-            renderExam();
-          });
+          if (flagBtn) flagBtn.addEventListener("click", () => requestExamQuestionAudit(q));
           // Navigation
           const _prevBtn = document.getElementById("prevQBtn");
           if (_prevBtn) _prevBtn.addEventListener("click", () => {
@@ -14918,7 +15001,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         <div class="card" id="brainDeferredReckoningCard" style="margin-bottom:20px;border-color:var(--teal);background:rgba(45,212,191,0.045);">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
             <div style="display:flex;align-items:center;gap:12px;min-width:0;">
-              <div style="font-size:30px;">&#x23F3;</div>
+              <div style="font-size:30px;color:var(--teal);display:flex;align-items:center;">${timerIconSvg(30)}</div>
               <div style="min-width:0;">
                 <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;color:var(--teal);">Reckoning deferred</div>
                 <div style="font-size:var(--text-base);color:var(--text-2);margin-top:2px;">
@@ -15080,7 +15163,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           const resumeReckoningBtn = document.getElementById("resumeReckoningBtn");
           if (resumeReckoningBtn && activeReckoningForPage) {
             resumeReckoningBtn.addEventListener("click", () => {
-              showReckoningOverlay(activeReckoningForPage, { force: true });
+              showReckoningOverlay(activeReckoningForPage, {
+                force: true,
+                mandatory: true,
+                forceLockoutOverlay: true,
+              });
             });
           }
           // FIX-12B (audit P7.5): wire brain pressure gauge rows -> getPressureExplanation
@@ -17195,11 +17282,14 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const main = document.getElementById("mainContent");
         renderLoadingState(main, "Loading marketplace...");
         try {
-          // Fetch both catalog and inventory
-          const [catalogData, inventoryData] = await Promise.all([
+          const [catalogData, inventoryData, libraryData] = await Promise.all([
             api.getMarketplaceCatalog(),
             api.getInventory(),
+            (AppState.subjects && AppState.subjects.length)
+              ? Promise.resolve(null)
+              : api.getLibrary().catch(() => null),
           ]);
+          if (libraryData) AppState.subjects = libraryData.subjects || libraryData || [];
           AppState.marketplace = catalogData;
           AppState.inventory = inventoryData;
           // Backend returns array directly; normalize to {items, seedlings}
@@ -17223,6 +17313,22 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             if (code.startsWith('rare_flora_')) return `Rare Flora — ${subjectNameById.get(code.slice('rare_flora_'.length)) || 'Subject'}`;
             if (code.startsWith('archive_expansion_')) return `Archive Expansion — ${subjectNameById.get(code.slice('archive_expansion_'.length)) || 'Subject'}`;
             return codeToName[code] || code.replace(/_/g, ' ') || 'Marketplace item';
+          };
+          const marketplaceRequirementText = (item) => {
+            const cond = item.gate1_condition || {};
+            const count = Number(cond.count) || Number(item.gate1_target) || 0;
+            switch (cond.type) {
+              case 'reckoning_survived': return `Complete and survive ${count || 1} Reckoning`;
+              case 'fruition_sessions': return `Complete ${count} Fruiting study sessions`;
+              case 'thriving_sessions_across_subjects': return `Complete ${count} Thriving-or-better sessions across at least ${Number(cond.min_subjects) || 3} subjects`;
+              case 'subject_ks_and_fruiting': return `For the selected subject: reach KS ${Number(cond.ks) || 100} and complete ${Number(cond.fruiting) || 15} Fruiting sessions`;
+              case 'fruition_sessions_in_subject': return `For the selected subject: complete ${count} Fruiting sessions`;
+              case 'sessions_after_midnight': return `Complete ${count} study sessions after midnight`;
+              case 'sessions_before_7am': return `Complete ${count} study sessions before 7:00 AM`;
+              case 'consecutive_days_no_wilt': return `Maintain ${count} consecutive qualifying study days without wilting`;
+              case 'archive_expansion_owned': return 'Complete one Archive Expansion';
+              default: return 'Complete the learning requirement shown below';
+            }
           };
           main.innerHTML = `
       <div class="page-wrap page-enter">
@@ -17312,6 +17418,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 <!-- Gate 1: Progress -->
                 <div class="item-gate">
                   <div class="gate-label">Gate 1: ${escapeHTML(gate1Label)}</div>
+                  <div style="font-size:var(--text-sm);color:var(--text-2);line-height:1.45;margin:5px 0 8px;"><strong style="color:var(--text);">Requirement:</strong> ${escapeHTML(marketplaceRequirementText(item))}</div>
                   <div class="gate-bar">
                     <div class="gate-fill" style="width:${gate1Progress}%"></div>
                   </div>
@@ -17361,16 +17468,18 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                     ? `<select class="subject-select" data-for-item="${item.item_code}" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;background:var(--bg-3,#1a1a2e);color:var(--text-1,#fff);border:1px solid var(--border-1,#333);font-size:var(--text-base);">${AppState.subjects.map(s => {
                         const alreadyApplied = scopedItem && scopedOwned.has(s.id);
                         const eligible = !scopedItem || !scopedEligibility[s.id] || scopedEligibility[s.id].met;
-                        const disabled = alreadyApplied || !eligible;
-                        const suffix = alreadyApplied ? ' — already applied' : !eligible ? ' — learning gate incomplete' : '';
+                        const disabled = alreadyApplied;
+                        const suffix = alreadyApplied ? ' — already applied' : !eligible ? ' — requirement incomplete' : ' — eligible';
                         const eligibility = scopedEligibility[s.id] || {};
-                        return `<option value="${s.id}" data-current="${Number(eligibility.current) || 0}" data-target="${Number(eligibility.target) || 0}" data-ks-current="${Number(eligibility.ks_current) || 0}" data-ks-target="${Number(eligibility.ks_target) || 0}" ${disabled ? 'disabled' : ''}>${escapeHTML(s.name)}${suffix}</option>`;
+                        return `<option value="${s.id}" data-current="${Number(eligibility.current) || 0}" data-target="${Number(eligibility.target) || 0}" data-ks-current="${Number(eligibility.ks_current) || 0}" data-ks-target="${Number(eligibility.ks_target) || 0}" data-met="${eligible ? 'true' : 'false'}" data-owned="${alreadyApplied ? 'true' : 'false'}" ${disabled ? 'disabled' : ''}>${escapeHTML(s.name)}${suffix}</option>`;
                       }).join('')}</select>`
                     : ''}
                   ${scopedItem ? '<div class="subject-gate-status" style="margin:-2px 0 9px;color:var(--text-3);font-size:var(--text-xs);line-height:1.45;"></div>' : ''}
                   <button class="btn btn-primary btn-sm"
                     data-item-code="${escapeHTML(item.item_code)}"
                     data-needs-subject="${needsSubject}"
+                    data-affordable="${canAfford ? 'true' : 'false'}"
+                    data-default-label="${isRepeatableService ? 'Run New Audit' : 'Purchase'}"
                     ${!canPurchase ? "disabled" : ""}>
                     ${isOwned ? "Owned" : canPurchase ? (isRepeatableService ? "Run New Audit" : "Purchase") : (scopedItem && !scopedHasAvailableSubject ? "No eligible subject" : "Locked")}
                   </button>
@@ -17447,11 +17556,23 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               const target = Number(option.dataset.target) || 0;
               const ksTarget = Number(option.dataset.ksTarget) || 0;
               const ksCurrent = Number(option.dataset.ksCurrent) || 0;
+              const requirementMet = option.dataset.met !== 'false';
+              const alreadyOwned = option.dataset.owned === 'true';
               status.textContent = ksTarget > 0
-                ? `Selected subject evidence: KS ${Math.round(ksCurrent)}/${Math.round(ksTarget)} · ${current}/${target} Fruiting sessions.`
+                ? `Selected subject requirement: KS ${Math.round(ksCurrent)}/${Math.round(ksTarget)} · Fruiting ${current}/${target} — ${requirementMet ? 'eligible' : 'not yet eligible'}.`
                 : target > 0
-                  ? `Selected subject evidence: ${current}/${target} Fruiting sessions.`
+                  ? `Selected subject requirement: Fruiting ${current}/${target} — ${requirementMet ? 'eligible' : 'not yet eligible'}.`
                   : 'This service will use the selected subject’s current cards and evidence.';
+              status.style.color = requirementMet ? 'var(--green-bright)' : 'var(--amber,#f59e0b)';
+              const button = select.parentElement?.querySelector('[data-item-code]');
+              if (button && button.dataset.needsSubject === 'true' && option.dataset.met) {
+                const affordable = button.dataset.affordable === 'true';
+                button.disabled = alreadyOwned || !requirementMet || !affordable;
+                button.textContent = alreadyOwned ? 'Already applied'
+                  : !requirementMet ? 'Requirement not met'
+                  : !affordable ? 'Not enough seedlings'
+                  : (button.dataset.defaultLabel || 'Purchase');
+              }
             };
             select.addEventListener('change', updateSubjectGateStatus);
             updateSubjectGateStatus();
@@ -19032,8 +19153,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
   <div style="font-family:var(--font-display);font-size:28px;font-weight:800;color:var(--text);margin-bottom:8px;">Generating Cards</div>
   ${job.subjectName ? `<div style="font-size:var(--text-base);color:var(--teal);margin-bottom:4px;font-family:var(--font-mono);">${escapeHTML(job.subjectName)}</div>` : ''}
   <div style="font-size:var(--text-base);color:var(--text-2);max-width:480px;margin:0 auto 32px;line-height:1.7;">
-    KIWI is reading your notes and building flashcards. This usually takes 30–90 seconds.<br>
-    You can navigate away — the banner at the top will notify you when cards are ready.
+    KIWI is reading your notes and building flashcards in the background.<br>
+    You can leave this page immediately — the status banner will notify you when the cards are ready.
   </div>
   <!-- Animated progress dots -->
   <div style="display:flex;gap:10px;justify-content:center;margin-bottom:40px;">
@@ -19606,18 +19727,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 showBubbleOnboardingPrompt(job.subject_id, job.deck_id);
               }
             } catch(err) {
-              _hideGenBanner();
-              var _gcScreen = document.getElementById('cardGenScreen');
-              if (_gcScreen) {
-                _gcScreen.innerHTML = '<div style="text-align:center;padding:40px 20px;">' +
-                  '<div style="font-size:64px;margin-bottom:16px;">&#x26A0;&#xFE0F;</div>' +
-                  '<div style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--red-bright);margin-bottom:12px;">Generation Failed</div>' +
-                  '<div style="font-size:var(--text-base);color:var(--text-2);margin-bottom:24px;">' + escapeHTML(err.message || 'Card generation failed. Please try again.') + '</div>' +
-                  '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">' +
-                  '<button class="btn btn-primary" onclick="navigateTo(\'import\')">Try Again</button>' +
-                  '<button class="btn btn-ghost" onclick="navigateTo(\'dashboard\')">Back to Dashboard</button>' +
-                  '</div></div>';
-              }
+              _handleGenerationFailure('note_generation', err?.message || 'Card generation failed. Please try again.');
             } finally {
               btn.disabled = false; btn.textContent = "Generate Cards with AI";
             }
@@ -19815,8 +19925,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 AppState.subjects = null;
                 setTimeout(function() { navigateTo('library'); }, 2500);
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'Extraction failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'Image extraction failed');
                 showToast(err.message || 'Image extraction failed', 'error');
               }
               _imageFile = null; _imageB64 = null; _imageMime = null;
@@ -19873,8 +19982,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'PDF import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'PDF import failed');
                 showToast(err.message || "PDF import failed", "error");
               }
             });
@@ -19925,8 +20033,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'DOCX import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'DOCX import failed');
                 showToast(err.message || "DOCX import failed", "error");
               }
             });
@@ -20005,8 +20112,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'TXT import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'TXT import failed');
                 showToast(err.message || "TXT import failed", "error");
               }
             });
@@ -20052,8 +20158,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'Markdown import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'Markdown import failed');
                 showToast(err.message || "Markdown import failed", "error");
               }
             });
@@ -20099,8 +20204,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   setTimeout(function() { navigateTo('library'); }, 2500);
                 }
               } catch(err) {
-                var statusEl = document.getElementById('cardGenStatus');
-                if (statusEl) { statusEl.textContent = 'PPTX import failed: ' + (err.message || 'Unknown error'); statusEl.style.color = 'var(--red)'; }
+                _handleGenerationFailure('note_generation', err?.message || 'PPTX import failed');
                 showToast(err.message || "PPTX import failed", "error");
               }
             });
@@ -22431,14 +22535,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               renderExam();
               return;
             }
-            // F to flag
+            // F requests an AI assessment-integrity review.
             if (e.key === "f" || e.key === "F") {
               const q = e_state.questions[e_state.currentIndex];
-              if (q) {
-                if (e_state.flagged.has(q.id)) e_state.flagged.delete(q.id);
-                else e_state.flagged.add(q.id);
-                renderExam();
-              }
+              if (q) requestExamQuestionAudit(q);
               return;
             }
             // Escape to exit

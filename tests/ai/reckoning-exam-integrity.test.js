@@ -39,7 +39,7 @@ test('final CBT integrity runs before minimum-count and Reckoning fallback decis
     '// ── Shared post-generation checks (both paths)',
     '// Log actual ratio for split path'
   );
-  const integrityIndex = generation.indexOf("filterInvalidCBTQuestions(questions, 'final integrity')");
+  const integrityIndex = generation.indexOf("filterInvalidCBTQuestions(questions || [], 'final integrity')");
   const minIndex = generation.indexOf('const _minAccept');
   assert.ok(integrityIndex >= 0);
   assert.ok(minIndex > integrityIndex);

@@ -2759,72 +2759,103 @@ const deckList = await db.decks.findBySubjectWithCards(userId, subjectId);
 const allCards = deckList.flatMap((d) => d.cards);
 const totalCards = allCards.length;
 if (totalCards === 0) return null;
+
 const stageCounts = [0, 0, 0, 0, 0, 0];
-allCards.forEach((c) => {
-const s = Math.min(5, Math.max(1, c.stage));
-stageCounts[s] = (stageCounts[s] || 0) + 1;
+allCards.forEach((card) => {
+  const stage = Math.min(5, Math.max(1, Number(card.stage) || 1));
+  stageCounts[stage] = (stageCounts[stage] || 0) + 1;
 });
-const cardIds = allCards.map((c) => c.id);
-const logs = await db.reviewLogs.findByCards(userId, cardIds);
-const totalReviews = logs.length;
+const stageScore = (
+  (
+    (stageCounts[1] || 0) * 0 +
+    (stageCounts[2] || 0) * 0.2 +
+    (stageCounts[3] || 0) * 0.4 +
+    (stageCounts[4] || 0) * 0.7 +
+    (stageCounts[5] || 0) * 1.0
+  ) / totalCards
+) * 100;
+
+// Lifetime averages made Health effectively immovable after enough history.
+// Weight the learner's most recent 120 reviews so Health can genuinely improve
+// or fall while still retaining the card-maturity signal.
+const cardIds = allCards.map((card) => card.id);
+const allLogs = await db.reviewLogs.findByCards(userId, cardIds);
+const totalReviews = allLogs.length;
+const recentLogs = [...allLogs]
+  .sort((a, b) => new Date(b.reviewed_at || b.created_at || 0) - new Date(a.reviewed_at || a.created_at || 0))
+  .slice(0, 120);
 const responseCounts = { again: 0, hard: 0, good: 0, easy: 0 };
-logs.forEach((l) => {
-responseCounts[l.response] = (responseCounts[l.response] || 0) + 1;
+let weightedRecall = 0;
+let weightTotal = 0;
+recentLogs.forEach((log, index) => {
+  const response = String(log.response || '').toLowerCase();
+  responseCounts[response] = (responseCounts[response] || 0) + 1;
+  const responseValue = response === 'easy' ? 1 : response === 'good' ? 0.8 : response === 'hard' ? 0.5 : 0;
+  const recencyWeight = Math.pow(0.985, index);
+  weightedRecall += responseValue * recencyWeight;
+  weightTotal += recencyWeight;
 });
-let srsQuality = 0;
-if (totalReviews > 0) {
-const weighted =
-(responseCounts.again || 0) * 0 +
-(responseCounts.hard || 0) * 0.5 +
-(responseCounts.good || 0) * 0.8 +
-(responseCounts.easy || 0) * 1.0;
-srsQuality = (weighted / totalReviews) * 100;
-}
-const stageScore = (((stageCounts[1] || 0) * 0 + (stageCounts[2] || 0) * 0.2 + (stageCounts[3] || 0) * 0.4 + (stageCounts[4] || 0) * 0.7 + (stageCounts[5] || 0) * 1.0) / totalCards) * 100; // F-03 FIX
-const existing = await db.subjectStats.get(userId, subjectId);
+const srsQuality = weightTotal > 0 ? (weightedRecall / weightTotal) * 100 : stageScore;
+
+const { rows: recentExamRows } = await query(
+  "SELECT score_pct FROM exam_sessions " +
+  "WHERE user_id = $1 AND subject_id = $2 AND status = 'completed' AND score_pct IS NOT NULL " +
+  "ORDER BY COALESCE(completed_at, created_at) DESC LIMIT 5",
+  [userId, subjectId]
+);
 let examPerf = srsQuality;
-if (existing?.average_exam_score != null) examPerf = parseFloat(existing.average_exam_score);
-else if (existing?.average_quiz_score != null) examPerf = parseFloat(existing.average_quiz_score);
-const thirtyDaysAgo = new Date();
-thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+if (recentExamRows.length > 0) {
+  let examWeighted = 0;
+  let examWeightTotal = 0;
+  recentExamRows.forEach((exam, index) => {
+    const weight = Math.pow(0.82, index);
+    examWeighted += Math.max(0, Math.min(100, Number(exam.score_pct) || 0)) * weight;
+    examWeightTotal += weight;
+  });
+  examPerf = examWeightTotal > 0 ? examWeighted / examWeightTotal : srsQuality;
+}
+
+const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000);
 const sessionList = await db.sessions.findBySubject(userId, subjectId, thirtyDaysAgo);
-const meaningfulSessionList = sessionList.filter(sessionIsMeaningful);
+const qualifyingSessions = sessionList.filter((session) => {
+  const active = Math.max(0, Number(session.active_seconds) || 0);
+  const unique = Math.max(0, Number(session.unique_cards_reviewed) || 0);
+  const reviews = Math.max(0, Number(session.cards_reviewed) || 0);
+  return session.meaningful_session === true || (active >= 60 && (unique >= 3 || reviews >= 5));
+});
 const uniqueDays = new Set(
-meaningfulSessionList.map((s) => new Date(s.started_at).toISOString().split('T')[0])
+  qualifyingSessions
+    .filter((session) => session.started_at)
+    .map((session) => new Date(session.started_at).toISOString().slice(0, 10))
 ).size;
-const consistency = (uniqueDays / 30) * 100;
+const consistency = Math.min(100, (uniqueDays / 12) * 100);
+
 const healthScore = srsQuality * 0.4 + examPerf * 0.3 + stageScore * 0.2 + consistency * 0.1;
+const recentReviewCount = recentLogs.length;
+const ratio = (name) => recentReviewCount > 0
+  ? parseFloat((((responseCounts[name] || 0) / recentReviewCount) * 100).toFixed(2))
+  : 0;
+const existing = await db.subjectStats.get(userId, subjectId);
+const latestStudy = qualifyingSessions
+  .filter((session) => session.started_at)
+  .sort((a, b) => new Date(b.started_at) - new Date(a.started_at))[0] || null;
+
 const sharedData = {
-health_score: Math.min(100, Math.max(0, parseFloat(healthScore.toFixed(2)))),
-total_cards: totalCards,
-stage_1_count: stageCounts[1] || 0,
-stage_2_count: stageCounts[2] || 0,
-stage_3_count: stageCounts[3] || 0,
-stage_4_count: stageCounts[4] || 0,
-stage_5_count: stageCounts[5] || 0,
-again_ratio:
-totalReviews > 0
-? parseFloat((((responseCounts.again || 0) / totalReviews) * 100).toFixed(2))
-: 0,
-hard_ratio:
-totalReviews > 0
-? parseFloat((((responseCounts.hard || 0) / totalReviews) * 100).toFixed(2))
-: 0,
-good_ratio:
-totalReviews > 0
-? parseFloat((((responseCounts.good || 0) / totalReviews) * 100).toFixed(2))
-: 0,
-easy_ratio:
-totalReviews > 0
-? parseFloat((((responseCounts.easy || 0) / totalReviews) * 100).toFixed(2))
-: 0,
-total_reviews: totalReviews,
-days_studied_last_30: uniqueDays,
-total_study_minutes: existing?.total_study_minutes || 0,
-last_studied_at:
-meaningfulSessionList.length > 0
-? meaningfulSessionList[meaningfulSessionList.length - 1].started_at
-: existing?.last_studied_at || null,
+  health_score: Math.min(100, Math.max(0, parseFloat(healthScore.toFixed(2)))),
+  total_cards: totalCards,
+  stage_1_count: stageCounts[1] || 0,
+  stage_2_count: stageCounts[2] || 0,
+  stage_3_count: stageCounts[3] || 0,
+  stage_4_count: stageCounts[4] || 0,
+  stage_5_count: stageCounts[5] || 0,
+  again_ratio: ratio('again'),
+  hard_ratio: ratio('hard'),
+  good_ratio: ratio('good'),
+  easy_ratio: ratio('easy'),
+  total_reviews: totalReviews,
+  days_studied_last_30: uniqueDays,
+  total_study_minutes: existing?.total_study_minutes || 0,
+  last_studied_at: latestStudy?.started_at || existing?.last_studied_at || null,
 };
 await db.subjectStats.upsert(userId, subjectId, sharedData);
 return healthScore;
@@ -5403,10 +5434,9 @@ const prompt = _basePrompt
   .replace('[NOTES]', notes)
   .replace('[COUNT]', count);
 
-// Scale output tokens: ~900 tokens per question (stem + 4 options + answer + explanation),
-// minimum 24000 to give ample room even for small exams.
-// This prevents MAX_TOKENS truncation which was causing partial generation.
-const scaledTokens = Math.min(65536, Math.max(24000, count * 900));
+// Allocate enough output for the requested exam without forcing every small exam
+// into a 24k-token generation. Oversized budgets materially increase latency.
+const scaledTokens = Math.min(48000, Math.max(8000, count * 700));
 const _theoryPct = customizeBalance && typeof _opts.theory_percent === 'number' ? _opts.theory_percent : 'auto';
 console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, difficulty=${difficultyLevel || 'off/default'}, theory=${_theoryPct}%, broad=${broadCoverage}, customBalance=${customizeBalance}, forceType=${forceType || 'none'}, route=${_taskId}, maxOutputTokens=${scaledTokens}`);
 const result = await ai.run(
@@ -5466,7 +5496,7 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
     'Generate exactly ' + needed + ' question(s) following all rules above.',
   ].join('\n');
 
-  const completionTokens = Math.min(65536, Math.max(16000, needed * 900));
+  const completionTokens = Math.min(24000, Math.max(6000, needed * 700));
   const completionGroupId = generationGroupId || null;
   const result = await ai.run(
     'CBT_COMPLETION',
@@ -5477,6 +5507,108 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
     { generationGroupId: completionGroupId }
   );
   return result.text;
+}
+
+function _parseCBTQuestionAudit(rawText) {
+  const cleaned = String(rawText || '').replace(/\`\`\`json|\`\`\`/gi, '').trim();
+  const first = cleaned.indexOf('{');
+  const last = cleaned.lastIndexOf('}');
+  if (first < 0 || last <= first) throw new Error('AI audit did not return JSON');
+  const parsed = JSON.parse(cleaned.slice(first, last + 1));
+  return {
+    question_valid: parsed.question_valid !== false,
+    answer_key_correct: parsed.answer_key_correct !== false,
+    ambiguous: parsed.ambiguous === true,
+    answerable_from_source: parsed.answerable_from_source !== false,
+    recommended_answer: /^[A-D]$/.test(String(parsed.recommended_answer || '').toUpperCase())
+      ? String(parsed.recommended_answer).toUpperCase()
+      : null,
+    reason: String(parsed.reason || '').slice(0, 1200),
+    confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
+  };
+}
+
+const _cbtQuestionAuditPromises = new Map();
+
+async function auditCBTQuestion(userId, exam, question) {
+  const key = userId + ':' + exam.id + ':' + question.id;
+  if (_cbtQuestionAuditPromises.has(key)) return _cbtQuestionAuditPromises.get(key);
+
+  const work = (async () => {
+    await db.examQuestions.update(userId, question.id, {
+      flagged_by_student: true,
+      flagged_at: question.flagged_at || new Date(),
+      ai_audit_status: 'pending',
+    });
+
+    try {
+      const sourceCard = question.card_id
+        ? await db.cards.findById(userId, question.card_id).catch(() => null)
+        : null;
+      const sourceContext = sourceCard
+        ? [
+            'SOURCE CARD FRONT: ' + String(sourceCard.front_content || sourceCard.front || ''),
+            'SOURCE CARD BACK: ' + String(sourceCard.back_content || sourceCard.back || ''),
+          ].join('\n')
+        : 'SOURCE CARD: unavailable. Judge using the question and options only.';
+
+      const prompt = [
+        'You are KIWI Assessment Integrity. Audit one multiple-choice question for correctness.',
+        'Do not grade the student and do not use the learner\'s selected option.',
+        'Determine whether the item itself is valid and whether its stored answer key is defensible.',
+        '',
+        'QUESTION: ' + String(question.stem || ''),
+        'A) ' + String(question.option_a || ''),
+        'B) ' + String(question.option_b || ''),
+        'C) ' + String(question.option_c || ''),
+        'D) ' + String(question.option_d || ''),
+        'STORED ANSWER KEY: ' + String(question.correct_answer || ''),
+        'STORED EXPLANATION: ' + String(question.explanation || ''),
+        sourceContext,
+        '',
+        'Return ONLY JSON with exactly these fields:',
+        '{"question_valid":true,"answer_key_correct":true,"ambiguous":false,"answerable_from_source":true,"recommended_answer":"A","reason":"short reason","confidence":0.0}',
+        '',
+        'Rules:',
+        '- question_valid=false for a malformed, internally contradictory, or materially misleading stem/options.',
+        '- answer_key_correct=false if another option is clearly more correct than the stored key.',
+        '- ambiguous=true if multiple options are reasonably correct under the supplied material.',
+        '- answerable_from_source=false if the source material does not support a defensible answer.',
+        '- Do not mark a question flawed merely because it is difficult.',
+      ].join('\n');
+
+      const result = await ai.run('CBT_QUESTION_AUDIT', {
+        content: prompt,
+        generationConfig: { maxOutputTokens: 1600 },
+      });
+      const audit = _parseCBTQuestionAudit(result.text);
+      const bonusAwarded =
+        audit.question_valid === false ||
+        audit.answer_key_correct === false ||
+        audit.ambiguous === true ||
+        audit.answerable_from_source === false;
+
+      await db.examQuestions.update(userId, question.id, {
+        ai_audit_status: 'reviewed',
+        ai_audit_result: audit,
+        ai_audit_reviewed_at: new Date(),
+        bonus_awarded: bonusAwarded,
+      });
+      return { status: 'reviewed', bonus_awarded: bonusAwarded, audit };
+    } catch (error) {
+      await db.examQuestions.update(userId, question.id, {
+        ai_audit_status: 'error',
+        ai_audit_result: { error: String(error.message || 'audit failed').slice(0, 500) },
+        ai_audit_reviewed_at: new Date(),
+      }).catch(() => null);
+      throw error;
+    } finally {
+      _cbtQuestionAuditPromises.delete(key);
+    }
+  })();
+
+  _cbtQuestionAuditPromises.set(key, work);
+  return work;
 }
 
 // B25: Fallback exam question generator (rule-based from card content)
@@ -8152,18 +8284,17 @@ pressureSources.exam_urgency = 5;
 pressureScore += 5;
 }
 }
-// 8. Each day DANGEROUS card not reviewed (+1 per day) — P3.1-B3 FIX.
-// Previously charged +1 per card total; spec says +1 per card per day unreviewed.
-// Capped at 10 per card to prevent runaway pressure from a single ancient card.
+// 8. DANGEROUS cards are a subject-level risk signal, not an endlessly
+// compounding per-card-per-day fine. Count the breadth of the problem plus a
+// bounded age component, capped at +10 for the whole subject.
 const dangerousCards = cardStates.filter((cs) => cs.state.state === CARD_STATES.DANGEROUS);
-let dangerousPressure = 0;
-for (const cs of dangerousCards) {
-const daysUnreviewed = Math.max(1, daysSince(cs.card?.last_reviewed_at || cs.card?.created_at || new Date()));
-dangerousPressure += Math.min(daysUnreviewed, 10);
-}
-if (dangerousPressure > 0) {
-pressureSources.dangerous = dangerousPressure;
-pressureScore += dangerousPressure;
+if (dangerousCards.length > 0) {
+  const averageDangerDays = dangerousCards.reduce((sum, cs) => {
+    return sum + Math.max(0, daysSince(cs.card?.last_reviewed_at || cs.card?.created_at || new Date()));
+  }, 0) / dangerousCards.length;
+  const dangerousPressure = Math.min(10, dangerousCards.length + Math.floor(averageDangerDays / 3));
+  pressureSources.dangerous = dangerousPressure;
+  pressureScore += dangerousPressure;
 }
 // 9. Ignored reclassification alert 3+ days (+2)
 if (existingPressure?.alert_ignored_at && daysSince(existingPressure.alert_ignored_at) >= 3) {
@@ -8186,33 +8317,43 @@ pressureScore += aiCrutchPressure;
 //   BEHIND=+3, CRITICAL=+5, RESCUE=+7, debt max=+5 [DESIGN: §15.1 table]
 try {
   const subjectBubbles = await db.masteryGoals.findBySubject(userId, subjectId);
+  let highestBubbleRisk = 0;
+  let highestBubbleKey = null;
+  let testDateGateRisk = 0;
+  let stallRisk = 0;
   for (const bubble of subjectBubbles) {
     if (bubble.status !== 'active') continue;
-    // Bubble trajectory states are mutually exclusive. RESCUE supersedes
-    // CRITICAL/BEHIND/DRIFTING instead of double-counting the same problem.
+    // Multiple goals in one subject describe the same underlying learning risk.
+    // Use the highest trajectory risk rather than charging every bubble.
+    let risk = 0;
+    let riskKey = null;
     if (bubble.rescue_active || bubble.phase === 'RESCUE') {
-      pressureSources.bubble_rescue = (pressureSources.bubble_rescue || 0) + 7;
-      pressureScore += 7;
+      risk = 7; riskKey = 'bubble_rescue';
     } else if (bubble.trajectory_status === 'CRITICAL') {
-      pressureSources.bubble_critical = (pressureSources.bubble_critical || 0) + 5;
-      pressureScore += 5;
+      risk = 5; riskKey = 'bubble_critical';
     } else if (bubble.trajectory_status === 'BEHIND') {
-      pressureSources.bubble_behind = (pressureSources.bubble_behind || 0) + 3;
-      pressureScore += 3;
+      risk = 3; riskKey = 'bubble_behind';
     } else if (bubble.trajectory_status === 'DRIFTING') {
-      pressureSources.bubble_drifting = (pressureSources.bubble_drifting || 0) + 1;
-      pressureScore += 1;
+      risk = 1; riskKey = 'bubble_drifting';
     }
-    // Source 14: Test Date gate failed (+3, one-time per bubble) [DESIGN: §15.1]
-    if (bubble.test_date_gate_failed && !pressureSources.test_date_gate) {
-      pressureSources.test_date_gate = 3;
-      pressureScore += 3;
+    if (risk > highestBubbleRisk) {
+      highestBubbleRisk = risk;
+      highestBubbleKey = riskKey;
     }
-    // Source 15: Stall detected and active (+2 per bubble) [DESIGN: §15.1]
-    if (bubble.stall_active) {
-      pressureSources.bubble_stall = (pressureSources.bubble_stall || 0) + 2;
-      pressureScore += 2;
-    }
+    if (bubble.test_date_gate_failed) testDateGateRisk = 3;
+    if (bubble.stall_active) stallRisk = 2;
+  }
+  if (highestBubbleRisk > 0 && highestBubbleKey) {
+    pressureSources[highestBubbleKey] = highestBubbleRisk;
+    pressureScore += highestBubbleRisk;
+  }
+  if (testDateGateRisk) {
+    pressureSources.test_date_gate = testDateGateRisk;
+    pressureScore += testDateGateRisk;
+  }
+  if (stallRisk) {
+    pressureSources.bubble_stall = stallRisk;
+    pressureScore += stallRisk;
   }
   // Source 16: Learning debt cards below Stage 3 (+1 per card, max +5) [DESIGN: §15.1, §10.4]
   // ⚠ CORRECTED from v1.0: max +5 (not +10) [DESIGN: §10.4]
@@ -8228,14 +8369,28 @@ try {
 } catch (e) {
   // Non-fatal — bubble pressure sources are best-effort
 }
-// Explicit event consequences are canonical pressure inputs until a resolving
-// event clears them. Recalculation must never make forfeits or failures vanish.
-for (const [key, value] of Object.entries(previousSources)) {
-  if (!key.startsWith('manual_')) continue;
-  const points = Math.max(0, Number(value) || 0);
-  if (!points) continue;
-  pressureSources[key] = points;
-  pressureScore += points;
+// Manual consequences are bounded and time-decaying. The old implementation
+// accumulated these forever, so normal learning could never reduce Pressure.
+// Timestamp-less legacy values are intentionally discarded on recalculation.
+const manualPressurePolicy = {
+  manual_exam_forfeit: { ttlMs: 7 * 86400000, cap: 20 },
+  manual_reckoning_failure: { ttlMs: 3 * 86400000, cap: 15 },
+  manual_reckoning_deferral: { ttlMs: 24 * 3600000, cap: 5 },
+  manual_invitation_avoidance: { ttlMs: 3 * 86400000, cap: 3 },
+};
+for (const [key, policy] of Object.entries(manualPressurePolicy)) {
+  const timestampKey = key + '_at';
+  const rawTimestamp = previousSources[timestampKey];
+  const timestampMs = rawTimestamp ? new Date(rawTimestamp).getTime() : NaN;
+  if (!Number.isFinite(timestampMs)) continue;
+  const ageMs = Math.max(0, Date.now() - timestampMs);
+  if (ageMs >= policy.ttlMs) continue;
+  const basePoints = Math.min(policy.cap, Math.max(0, Number(previousSources[key]) || 0));
+  if (!basePoints) continue;
+  const decayedPoints = Math.max(1, Math.ceil(basePoints * (1 - ageMs / policy.ttlMs)));
+  pressureSources[key] = decayedPoints;
+  pressureSources[timestampKey] = new Date(timestampMs).toISOString();
+  pressureScore += decayedPoints;
 }
 
 // A failsafe release must be meaningful. While pressure remains L4, keep a
@@ -8482,7 +8637,8 @@ pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5
 intervention_level: 'L4',
 sources: {
 ...deferralSources,
-manual_reckoning_deferral: (Number(deferralSources.manual_reckoning_deferral) || 0) + 5,
+manual_reckoning_deferral: 5,
+manual_reckoning_deferral_at: new Date().toISOString(),
 reckoning_deferral_attempt_id: reckoningId,
 },
 });
@@ -8793,7 +8949,8 @@ if (countedThisAttempt && currentSources.reckoning_failure_attempt_id !== attemp
     intervention_level: 'L4',
     sources: {
       ...currentSources,
-      manual_reckoning_failure: (Number(currentSources.manual_reckoning_failure) || 0) + 5,
+      manual_reckoning_failure: Math.min(15, (Number(currentSources.manual_reckoning_failure) || 0) + 5),
+      manual_reckoning_failure_at: new Date().toISOString(),
       reckoning_failure_attempt_id: attemptKey,
     },
   });
@@ -11614,7 +11771,8 @@ const history = historyDoc?.data || [];
             intervention_level: newInterventionLevel,
             sources: {
               ...(currentPressure.sources || {}),
-              manual_invitation_avoidance: (currentPressure.sources?.manual_invitation_avoidance || 0) + 1,
+              manual_invitation_avoidance: Math.min(3, (Number(currentPressure.sources?.manual_invitation_avoidance) || 0) + 1),
+              manual_invitation_avoidance_at: new Date().toISOString(),
             },
           });
           pressureApplied = true;
@@ -13718,7 +13876,7 @@ const subjects = await db.subjects.findManyWithDecks(req.user.id);
 const healthPromises = subjects.map(async (s) => {
 try {
 const h = await recalculateSubjectHealth(req.user.id, s.id);
-return { ...s, health_score: h ? Math.min(100, Math.max(0, h)) : 50 };
+return { ...s, health_score: h != null ? Math.min(100, Math.max(0, h)) : 50 };
 } catch (e) {
 return { ...s, health_score: 50 };
 }
@@ -15060,6 +15218,12 @@ if (!session_id || !response)
 return res.status(400).json({ error: 'session_id and response required' });
 const session = await db.sessions.findById(req.user.id, session_id);
 if (!session) return res.status(404).json({ error: 'Session not found' });
+if (session.finalized_at || session.session_completed || session.ended_at) {
+  return res.status(409).json({
+    error: 'This study session has already ended. Start a new session before reviewing more cards.',
+    code: 'SESSION_ENDED',
+  });
+}
 const card = await db.cards.findById(req.user.id, cardId);
 if (!card) return res.status(404).json({ error: 'Card not found' });
 const qualityMap = { again: 0, hard: 2, good: 3, easy: 5 };
@@ -15295,6 +15459,8 @@ studyRouter.post('/end', async (req, res) => {
     (async () => {
       try {
         if (subjectId) {
+          await recalculateSubjectHealth(req.user.id, subjectId)
+            .catch((e) => console.error('[KIWI] subject health refresh failed:', e.message));
           const pressure = await db.brainPressure.get(req.user.id, subjectId).catch(() => null);
           if (pressure && pressure.intervention_level === 'L4') {
             triggerReckoning(req.user.id, subjectId).catch((e) =>
@@ -15515,16 +15681,38 @@ res.status(500).json({ error: 'Failed to fetch session history', details: e.mess
 
 studyRouter.get('/review-heatmap', async (req, res) => {
 try {
-// Support ?days=N param; default 365 for full GitHub-style yearly view
-const days = Math.min(parseInt(req.query.days || '365', 10), 365);
+// Support ?days=N param; default 365 for full GitHub-style yearly view.
+const days = Math.max(1, Math.min(parseInt(req.query.days || '365', 10) || 365, 365));
 const sinceDate = new Date();
 sinceDate.setDate(sinceDate.getDate() - days);
-const logs = await db.reviewLogs.findByUser(req.user.id, sinceDate);
+
+// Review logs remain the detailed source, while daily_activity is the durable
+// day-level ledger used by streak/vitality. Merge with MAX (not sum) so a day
+// still appears if one pipeline was delayed without double-counting reviews.
+const [logs, activityResult] = await Promise.all([
+  db.reviewLogs.findByUser(req.user.id, sinceDate),
+  query(
+    "SELECT activity_date::text AS activity_date, cards_reviewed, meaningful_sessions, active_seconds " +
+    "FROM daily_activity WHERE user_id = $1 AND activity_date >= $2::date ORDER BY activity_date ASC",
+    [req.user.id, sinceDate.toISOString().slice(0, 10)]
+  ).catch(() => ({ rows: [] })),
+]);
 const heatmap = {};
 logs.forEach((l) => {
-const d = new Date(l.reviewed_at).toISOString().split('T')[0];
-heatmap[d] = (heatmap[d] || 0) + 1;
+  if (!l.reviewed_at) return;
+  const d = new Date(l.reviewed_at).toISOString().split('T')[0];
+  heatmap[d] = (heatmap[d] || 0) + 1;
 });
+for (const row of activityResult.rows || []) {
+  const d = String(row.activity_date || '').slice(0, 10);
+  if (!d) continue;
+  const ledgerCount = Math.max(
+    Number(row.cards_reviewed) || 0,
+    Number(row.meaningful_sessions) || 0,
+    Number(row.active_seconds) >= 60 ? 1 : 0
+  );
+  heatmap[d] = Math.max(heatmap[d] || 0, ledgerCount);
+}
 res.json(heatmap);
 } catch (e) {
 res.status(500).json({ error: 'Failed to generate heatmap' });
@@ -15960,62 +16148,45 @@ setImmediate(async () => {
       theoryQs.forEach(q => { q.question_type = 'Theory'; });
       calcQs.forEach(q   => { q.question_type = 'Calculation'; });
 
-      // ── Completion passes — theory side ──────────────────────────────────────
+      // ── One bounded completion wave, both sides in parallel ────────────────
+      // The former 2nd/3rd serial completion passes could turn a 2-call exam into
+      // six sequential model calls. One parallel repair wave preserves quality
+      // while keeping generation time predictable.
+      const completionTasks = [];
       if (theoryQs.length < theoryN) {
-        const tNeeded = theoryN - theoryQs.length;
-        console.log(`[KIWI CBT] Theory pass 1: ${theoryQs.length}/${theoryN} — completing ${tNeeded}`);
-        try {
-          const tCompText = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded, 'theory', _cbtOptions.difficulty_level, _cbtSessionId);
-          if (tCompText) {
-            const tCompQs = parseCBTResponse(tCompText, _cbtSessionId, _cbtCards);
-            tCompQs.forEach(q => { q.question_type = 'Theory'; });
-            theoryQs = [...theoryQs, ...tCompQs.slice(0, tNeeded)];
-          }
-        } catch (tCompErr) {
-          console.warn('[KIWI CBT] Theory completion pass 2 failed:', tCompErr.message);
-        }
-        if (theoryQs.length < theoryN) {
-          const tNeeded2 = theoryN - theoryQs.length;
-          console.log(`[KIWI CBT] Theory pass 2: ${theoryQs.length}/${theoryN} — completing ${tNeeded2}`);
-          try {
-            const tComp2Text = await generateCBTCompletionQuestions(_cbtNotes, theoryQs, tNeeded2, 'theory', _cbtOptions.difficulty_level, _cbtSessionId);
-            if (tComp2Text) {
-              const tComp2Qs = parseCBTResponse(tComp2Text, _cbtSessionId, _cbtCards);
-              tComp2Qs.forEach(q => { q.question_type = 'Theory'; });
-              theoryQs = [...theoryQs, ...tComp2Qs.slice(0, tNeeded2)];
-            }
-          } catch (tComp2Err) {
-            console.warn('[KIWI CBT] Theory completion pass 3 failed:', tComp2Err.message);
-          }
-        }
+        const needed = theoryN - theoryQs.length;
+        completionTasks.push(
+          generateCBTCompletionQuestions(
+            _cbtNotes, theoryQs, needed, 'theory',
+            _cbtOptions.difficulty_level, _cbtSessionId
+          ).then((text) => ({ kind: 'theory', needed, text }))
+        );
       }
-
-      // ── Completion passes — calc side ─────────────────────────────────────────
       if (calcQs.length < calcN) {
-        const cNeeded = calcN - calcQs.length;
-        console.log(`[KIWI CBT] Calc pass 1: ${calcQs.length}/${calcN} — completing ${cNeeded}`);
-        try {
-          const cCompText = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded, 'calculation', _cbtOptions.difficulty_level, _cbtSessionId);
-          if (cCompText) {
-            const cCompQs = parseCBTResponse(cCompText, _cbtSessionId, _cbtCards);
-            cCompQs.forEach(q => { q.question_type = 'Calculation'; });
-            calcQs = [...calcQs, ...cCompQs.slice(0, cNeeded)];
-          }
-        } catch (cCompErr) {
-          console.warn('[KIWI CBT] Calc completion pass 2 failed:', cCompErr.message);
-        }
-        if (calcQs.length < calcN) {
-          const cNeeded2 = calcN - calcQs.length;
-          console.log(`[KIWI CBT] Calc pass 2: ${calcQs.length}/${calcN} — completing ${cNeeded2}`);
-          try {
-            const cComp2Text = await generateCBTCompletionQuestions(_cbtNotes, calcQs, cNeeded2, 'calculation', _cbtOptions.difficulty_level, _cbtSessionId);
-            if (cComp2Text) {
-              const cComp2Qs = parseCBTResponse(cComp2Text, _cbtSessionId, _cbtCards);
-              cComp2Qs.forEach(q => { q.question_type = 'Calculation'; });
-              calcQs = [...calcQs, ...cComp2Qs.slice(0, cNeeded2)];
+        const needed = calcN - calcQs.length;
+        completionTasks.push(
+          generateCBTCompletionQuestions(
+            _cbtNotes, calcQs, needed, 'calculation',
+            _cbtOptions.difficulty_level, _cbtSessionId
+          ).then((text) => ({ kind: 'calculation', needed, text }))
+        );
+      }
+      if (completionTasks.length > 0) {
+        const repairs = await Promise.allSettled(completionTasks);
+        for (const repair of repairs) {
+          if (repair.status !== 'fulfilled' || !repair.value?.text) {
+            if (repair.status === 'rejected') {
+              console.warn('[KIWI CBT] Split completion wave failed:', repair.reason?.message || repair.reason);
             }
-          } catch (cComp2Err) {
-            console.warn('[KIWI CBT] Calc completion pass 3 failed:', cComp2Err.message);
+            continue;
+          }
+          const parsed = parseCBTResponse(repair.value.text, _cbtSessionId, _cbtCards);
+          if (repair.value.kind === 'theory') {
+            parsed.forEach((q) => { q.question_type = 'Theory'; });
+            theoryQs = [...theoryQs, ...parsed.slice(0, repair.value.needed)];
+          } else {
+            parsed.forEach((q) => { q.question_type = 'Calculation'; });
+            calcQs = [...calcQs, ...parsed.slice(0, repair.value.needed)];
           }
         }
       }
@@ -16049,35 +16220,22 @@ setImmediate(async () => {
         } catch (completionErr) {
           console.warn('[KIWI CBT] Completion prompt failed:', completionErr.message);
         }
-        if (questions.length < _cbtCount) {
-          const stillNeeded = _cbtCount - questions.length;
-          console.log('[KIWI CBT] After 2 passes: ' + questions.length + '/' + _cbtCount + ' — attempting 3rd pass for ' + stillNeeded + ' missing');
-          try {
-            const pass3Text = await generateCBTCompletionQuestions(_cbtNotes, questions, stillNeeded, null, _cbtOptions.difficulty_level, _cbtSessionId);
-            if (pass3Text) {
-              const pass3Qs = parseCBTResponse(pass3Text, _cbtSessionId, _cbtCards);
-              const offset3 = questions.length;
-              questions = [...questions, ...pass3Qs.slice(0, stillNeeded).map((q, i) => ({ ...q, question_number: offset3 + i + 1 }))];
-            }
-          } catch (pass3Err) {
-            console.warn('[KIWI CBT] 3rd pass failed:', pass3Err.message);
-          }
-        }
+
       }
     }
     } catch (generationErr) {
-      const _reckoningRecoverable =
-        _cbtOptions.ai_task_id === 'RECKONING_CBT' &&
-        (
-          isAIAvailabilityError(generationErr) ||
-          /could not be parsed|empty response/i.test(String(generationErr?.message || ''))
-        );
+      const _availabilityRecovery =
+        isAIAvailabilityError(generationErr) ||
+        /could not be parsed|empty response|no visible text/i.test(String(generationErr?.message || ''));
 
-      if (!_reckoningRecoverable) throw generationErr;
+      if (!_availabilityRecovery) throw generationErr;
 
+      // MAIN_CBT and Reckoning both get a deterministic availability fallback.
+      // Provider overload/quota/network failure must not strand the learner after
+      // the request has already been accepted as a background job.
       questions = generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount);
       console.warn(
-        `[KIWI CBT] Reckoning VVIP route unavailable (${generationErr.code || generationErr.message}); ` +
+        `[KIWI CBT] ${_cbtOptions.ai_task_id} AI route unavailable (${generationErr.code || generationErr.message}); ` +
         `using deterministic recovery exam with ${questions.length}/${_cbtCount} questions`
       );
     }
@@ -16086,15 +16244,20 @@ setImmediate(async () => {
     // Enforce the same MCQ invariant on AI output, completion output and
     // deterministic recovery output before deciding whether the exam is usable.
     // This never rewrites option text and never treats cross-question reuse as an error.
-    questions = filterInvalidCBTQuestions(questions, 'final integrity');
+    questions = filterInvalidCBTQuestions(questions || [], 'final integrity');
 
     // 60% minimum threshold — evaluated against the full requested count.
+    // If AI output is incomplete or invalid, both normal and Reckoning CBT get
+    // one deterministic source-card recovery before the job is allowed to fail.
     const _minAccept = Math.max(1, Math.floor(_cbtCount * 0.6));
-    if (questions.length < _minAccept && _cbtOptions.ai_task_id === 'RECKONING_CBT') {
-      const _fallbackQuestions = generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount);
+    if (questions.length < _minAccept) {
+      const _fallbackQuestions = filterInvalidCBTQuestions(
+        generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount),
+        'deterministic recovery'
+      );
       if (_fallbackQuestions.length >= _minAccept) {
         console.warn(
-          `[KIWI CBT] Reckoning AI output only produced ${questions.length}/${_cbtCount}; ` +
+          `[KIWI CBT] AI output only produced ${questions.length}/${_cbtCount}; ` +
           `replacing it with deterministic recovery exam (${_fallbackQuestions.length}/${_cbtCount})`
         );
         questions = _fallbackQuestions;
@@ -16102,11 +16265,14 @@ setImmediate(async () => {
     }
     if (questions.length < _minAccept) {
       await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
-      _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.' });
+      const _friendlyGenerationError =
+        'KIWI could not build enough valid questions from the selected cards. ' +
+        'Add more complete cards or reduce the question count, then try again.';
+      _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: _friendlyGenerationError });
       wsSend(_cbtUserId, 'job_failed', {
         job_id: cbtJobId,
         type: 'cbt_generation',
-        error: 'Exam generation failed: AI produced ' + questions.length + ' of the required ' + _cbtCount + ' questions. Please try again.',
+        error: _friendlyGenerationError,
       });
       return;
     }
@@ -16163,8 +16329,20 @@ setImmediate(async () => {
     wsSend(_cbtUserId, 'job_done', { job_id: cbtJobId, type: 'cbt_generation', result: readyExam, exam: readyExam });
   } catch (bgErr) {
     console.error('[KIWI] CBT background generation failed:', bgErr.message);
-    _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: bgErr.message || 'Exam generation failed' });
-    wsSend(_cbtUserId, 'job_failed', { job_id: cbtJobId, type: 'cbt_generation', error: bgErr.message || 'Exam generation failed' });
+    const _safeExamGenerationError = isAIAvailabilityError(bgErr)
+      ? 'AI generation is temporarily busy. KIWI could not complete this exam right now; please retry shortly.'
+      : 'KIWI could not finish generating this exam. Please retry.';
+    _jobStoreSet(cbtJobId, {
+      status: 'failed',
+      type: 'cbt_generation',
+      error: _safeExamGenerationError,
+      internal_error_code: bgErr?.code || null,
+    });
+    wsSend(_cbtUserId, 'job_failed', {
+      job_id: cbtJobId,
+      type: 'cbt_generation',
+      error: _safeExamGenerationError,
+    });
   }
 });
 } catch (e) {
@@ -16199,7 +16377,8 @@ try {
       intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
       sources: {
         ...(bp?.sources || {}),
-        manual_exam_forfeit: (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15,
+        manual_exam_forfeit: Math.min(20, (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15),
+        manual_exam_forfeit_at: new Date().toISOString(),
       },
     }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 
@@ -16302,7 +16481,8 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
         intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
         sources: {
           ...(bp?.sources || {}),
-          manual_exam_forfeit: (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15,
+          manual_exam_forfeit: Math.min(20, (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15),
+        manual_exam_forfeit_at: new Date().toISOString(),
         },
       }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 
@@ -16362,9 +16542,14 @@ res.status(500).json({ error: 'Failed to fetch exams' });
 examRouter.get('/retry-decks', async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT d.*, COUNT(c.id) AS card_count_live
+      `SELECT d.*,
+              COUNT(c.id) AS card_count_live,
+              COALESCE(
+                ARRAY_AGG(c.id ORDER BY c.created_at) FILTER (WHERE c.id IS NOT NULL),
+                ARRAY[]::text[]
+              ) AS card_ids
          FROM decks d
-         LEFT JOIN cards c ON c.deck_id = d.id AND c.user_id = d.user_id
+         LEFT JOIN cards c ON c.deck_id = d.id AND c.user_id = d.user_id AND COALESCE(c.archived, false) = false
         WHERE d.user_id = $1 AND d.name LIKE 'Retry — %'
         GROUP BY d.id
         ORDER BY d.created_at DESC
@@ -16381,19 +16566,37 @@ examRouter.get('/:id', async (req, res) => {
 try {
 const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
-// Normalize questions for frontend: add options[] array from option_a/b/c/d
+// Normalize questions for frontend without leaking the key during a live exam.
+// Completed/forfeited exams may reveal the key and audit outcome for review.
 if (exam.questions && Array.isArray(exam.questions)) {
-exam.questions = exam.questions.map((q) => ({
-...q,
-id: q.id || q.question_number || Math.random().toString(36).slice(2),
-options: [
-{ id: 'A', text: q.option_a || '' },
-{ id: 'B', text: q.option_b || '' },
-{ id: 'C', text: q.option_c || '' },
-{ id: 'D', text: q.option_d || '' },
-].filter((opt) => opt.text),
-correctAnswer: q.correct_answer || 'A',
-}));
+const revealAnswers = ['completed', 'forfeited'].includes(exam.status);
+exam.questions = exam.questions.map((q) => {
+  const {
+    correct_answer,
+    explanation,
+    ai_audit_result,
+    bonus_awarded,
+    ...safe
+  } = q;
+  const normalized = {
+    ...safe,
+    id: q.id || q.question_number || Math.random().toString(36).slice(2),
+    options: [
+      { id: 'A', text: q.option_a || '' },
+      { id: 'B', text: q.option_b || '' },
+      { id: 'C', text: q.option_c || '' },
+      { id: 'D', text: q.option_d || '' },
+    ].filter((opt) => opt.text),
+  };
+  if (revealAnswers) {
+    normalized.correct_answer = correct_answer || 'A';
+    normalized.correctAnswer = correct_answer || 'A';
+    normalized.explanation = explanation || '';
+    normalized.ai_audit_result = ai_audit_result || null;
+    normalized.bonus_awarded = bonus_awarded === true;
+  }
+  return normalized;
+});
 }
 res.json(exam);
 } catch (e) {
@@ -16483,6 +16686,39 @@ try {
 }
 });
 
+// A flag is a request for an integrity audit, not merely a client-side bookmark.
+// The audit never returns the answer key while the exam is active.
+examRouter.post('/:id/flag-question', async (req, res) => {
+try {
+  const { question_number } = req.body || {};
+  if (question_number == null) return res.status(400).json({ error: 'question_number is required' });
+  const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+  if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (exam.status !== 'active' || !exam.started_at) {
+    return res.status(409).json({ error: 'Only an active exam question can be flagged for review' });
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(exam.started_at).getTime()) / 1000));
+  const timeLimitSeconds = Math.max(1, Number(exam.time_limit_seconds) || 1800);
+  if (elapsedSeconds > timeLimitSeconds + 15) {
+    return res.status(409).json({ error: 'Exam time has expired', timed_out: true });
+  }
+  const question = exam.questions.find((item) => String(item.question_number) === String(question_number));
+  if (!question) return res.status(404).json({ error: 'Question not found' });
+
+  if (question.flagged_by_student && question.ai_audit_status === 'reviewed') {
+    return res.json({ ok: true, status: 'reviewed' });
+  }
+
+  await auditCBTQuestion(req.user.id, exam, question);
+  res.json({ ok: true, status: 'reviewed' });
+} catch (e) {
+  res.status(503).json({
+    error: 'Question review could not be completed yet. You can continue the exam and try the flag again.',
+    code: 'QUESTION_AUDIT_FAILED',
+  });
+}
+});
+
 examRouter.post('/:id/submit', async (req, res) => {
 try {
 const { answers: submittedAnswers, ended_early = false } = req.body;
@@ -16502,7 +16738,7 @@ if (so !== null && (typeof so !== 'string' || !/^[A-D]$/.test(so))) {
 return res.status(400).json({ error: 'selected_option must be a single letter A-D or null' });
 }
 }
-const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+let exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
 if (exam.status !== 'active' || !exam.started_at) {
   return res.status(409).json({ error: 'Exam must be started before it can be submitted' });
@@ -16520,6 +16756,19 @@ const answers = timedOut
       time_spent_seconds: question.time_spent_seconds || 0,
     }))
   : submittedAnswers;
+// Resolve any requested question-integrity audits before final scoring. This is
+// the only case where submission may wait on AI, and all flagged questions are
+// audited in parallel. The learner's original right/wrong state is never changed.
+const pendingFlagged = exam.questions.filter(
+  (question) => question.flagged_by_student && question.ai_audit_status !== 'reviewed'
+);
+if (pendingFlagged.length > 0) {
+  await Promise.allSettled(
+    pendingFlagged.map((question) => auditCBTQuestion(req.user.id, exam, question))
+  );
+  exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+}
+
 // PERF-FIX: preKsScore is only needed for the background ks_delta calculation.
 // Computing it here (3+ DB queries: decks + all cards + all card_states) was
 // the primary cause of "Exam submission timed out" — it sat on the critical
@@ -16533,16 +16782,20 @@ const _dbUpdatePromises = [];
 for (const q of exam.questions) {
 const answer = answers.find((a) => String(a.question_number ?? a.questionId) === String(q.question_number));
 const selectedOption = answer ? (answer.selected_option ?? answer.selectedOptionId) : null;
-const isCorrect = answer && selectedOption === q.correct_answer;
-// P3-FIX: stamp is_correct onto the in-memory question object so that
-// processExamVerification and applyExamSRSFeedback can read it when they
-// iterate exam.questions below. completedExam (from update()) has no questions.
+const isCorrect = Boolean(answer && selectedOption === q.correct_answer);
+const bonusAwarded = q.flagged_by_student === true && q.bonus_awarded === true;
+const awardedPoint = isCorrect || bonusAwarded;
+// Preserve raw correctness for SRS/KS learning signals. A bonus repairs a flawed
+// assessment item; it does not pretend the learner selected the stored key.
 q.is_correct = isCorrect;
-if (isCorrect) correct++;
+q.bonus_awarded = bonusAwarded;
+if (awardedPoint) correct++;
 questionResults.push({
 question_number: q.question_number,
 selected: selectedOption || null,
 correct: isCorrect,
+bonus_awarded: bonusAwarded,
+awarded_point: awardedPoint,
 correct_answer: q.correct_answer,
 });
 if (answer) {
@@ -16592,6 +16845,11 @@ duration_seconds: durationSec,
         explanation: q.explanation || '',
         selected_option: selected,
         is_correct: selected === q.correct_answer,
+        bonus_awarded: q.flagged_by_student === true && q.bonus_awarded === true,
+        awarded_point: (selected === q.correct_answer) || (q.flagged_by_student === true && q.bonus_awarded === true),
+        audit_reason: q.flagged_by_student === true && q.bonus_awarded === true
+          ? String(q.ai_audit_result?.reason || 'AI integrity review found the item flawed.')
+          : null,
       };
     });
     const submitJobId = randomUUID();
@@ -16967,6 +17225,11 @@ examRouter.get('/:id/review', async (req, res) => {
       explanation: q.explanation || '',
       selected_option: q.selected_option || null,
       is_correct: q.is_correct ?? (q.selected_option === q.correct_answer),
+      bonus_awarded: q.bonus_awarded === true,
+      awarded_point: (q.is_correct ?? (q.selected_option === q.correct_answer)) || q.bonus_awarded === true,
+      audit_reason: q.bonus_awarded === true
+        ? String(q.ai_audit_result?.reason || 'AI integrity review found the question flawed.')
+        : null,
     }));
 
     res.json({
@@ -19032,7 +19295,9 @@ try {
 // the meter showed nothing. Now we recalculate all subjects fresh on every Brain page
 // load, so pressure sources (GHOST, STUCK, AVOIDED, no_exam, etc.) are always current.
 // calculateSubjectPressure writes to brain_pressure, then findByUser reads the fresh docs.
-await calculateAllSubjectPressures(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message)); // non-fatal — fall through to stale data if it fails
+await calculateAllSubjectPressures(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+await ecosystemV2.refreshVitality(req.user.id)
+  .catch((e) => console.error('[KIWI] vitality refresh after pressure failed:', e.message));
 // Single JOIN instead of N+1 findById calls — also eliminates "Unknown Subject" for
 // orphaned brain_pressure rows (entries whose subject was deleted are filtered out).
 const { rows: rawPressures } = await query(
@@ -19668,6 +19933,17 @@ try {
 // Previously it was awaited later in the route, blocking the response by up to
 // 2 s on every dashboard load. Running it alongside other fetches means its
 // latency is hidden behind the other queries (which already take ~300-500ms).
+// Refresh derived ecosystem telemetry while the dashboard's other independent
+// reads are in flight. Vitality depends on pressure and on the rolling activity
+// window, so persisting it only at session-end makes the tree look frozen.
+const _freshTelemetryPromise = (async () => {
+  const pressureMap = await calculateAllSubjectPressures(req.user.id);
+  const vitality = await ecosystemV2.refreshVitality(req.user.id);
+  return { pressureMap, vitality };
+})().catch((e) => {
+  console.error('[KIWI] dashboard telemetry refresh failed:', e.message);
+  return null;
+});
 // Perf: fire biome in background immediately
 const _biomePromise = buildBiomeData(req.user.id).catch(() => ({}));
 const now = new Date();
@@ -19686,14 +19962,21 @@ return d.toISOString().split('T')[0];
 // again for EVERY subject — all data that Round 1 already fetches. We now derive
 // globalKS from stats.knowledge_score_global (persisted after every review) and
 // from the inline per-subject computation in Round 2 using already-loaded data.
-const [stats, subjects, allStates, allCards, pressures, activeReckoning] = await Promise.all([
+const [stats, subjects, allStates, allCards, storedPressures, activeReckoning, freshTelemetry] = await Promise.all([
 db.userStats.get(req.user.id),
 db.subjects.findManyWithDecks(req.user.id),
 db.cardStates.findByUser(req.user.id),
-db.cards.findAllForUser(req.user.id),              // Perf: was sequential
-db.brainPressure.findByUser(req.user.id),          // Perf: was sequential
-db.reckoningSessions.findActiveByUser(req.user.id), // Perf: was sequential
+db.cards.findAllForUser(req.user.id),
+db.brainPressure.findByUser(req.user.id),
+db.reckoningSessions.findActiveByUser(req.user.id),
+_freshTelemetryPromise,
 ]);
+const pressures = freshTelemetry?.pressureMap
+  ? Object.values(freshTelemetry.pressureMap)
+  : storedPressures;
+if (freshTelemetry?.vitality?.vitality != null && stats) {
+  stats.tree_health = freshTelemetry.vitality.vitality;
+}
 const dueCount = allCards.filter((c) => isCardDue(c, now)).length;
 const stateDist = {};
 for (const s of allStates) stateDist[s.state] = (stateDist[s.state] || 0) + 1;
@@ -19788,6 +20071,7 @@ rings: dashActiveMilestones.length,
 stageLabel: treeStageLabels[stats?.tree_stage || 1] || 'SEEDLING',
 milestones: dashActiveMilestones,
 };
+treeState.health = Math.max(0, Math.min(100, Math.round(stats?.tree_health ?? treeState.health ?? 100)));
 // Brain preview
 const brainPreview = {
 interventionCount: // P3.2-B1 FIX: L0 is the correct calm baseline.
@@ -20625,7 +20909,8 @@ cron.schedule('*/10 * * * *', async () => {
           intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
           sources: {
             ...(bp?.sources || {}),
-            manual_exam_forfeit: (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15,
+            manual_exam_forfeit: Math.min(20, (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15),
+        manual_exam_forfeit_at: new Date().toISOString(),
           },
         }).catch(() => {});
         wsSend(es.user_id, 'pressure_change', {
