@@ -9,12 +9,12 @@ const {
 
 function normalizeModelId(apiModel) {
   const raw = String(apiModel?.baseModelId || apiModel?.name || '').trim();
-  return raw.replace(/^models//, '');
+  return raw.replace(/^models\//, '');
 }
 
 function classifyStableFlash(apiModel) {
   const id = normalizeModelId(apiModel);
-  const match = id.match(/^gemini-(d+).(d+)(?:.(d+))?-(flash|flash-lite)$/i);
+  const match = id.match(/^gemini-(\d+)\.(\d+)(?:\.(\d+))?-(flash|flash-lite)$/i);
   if (!match) return null;
 
   const methods = Array.isArray(apiModel?.supportedGenerationMethods)
@@ -151,8 +151,6 @@ function createModelDiscoveryManager({
     for (const model of stable) {
       const existing = catalog.get(model.id);
 
-      // Refresh provider metadata/token limits for known models without
-      // overwriting their approved/suspended/denied lifecycle status.
       let candidate = existing;
 
       if (existing) {
@@ -168,9 +166,6 @@ function createModelDiscoveryManager({
         });
         await lifecycle.discover(candidate);
 
-        // Approved, suspended and denied models keep their lifecycle state.
-        // DISCOVERED models remain eligible for a later qualification retry
-        // after transient quota/network failures or after auto-promotion is enabled.
         if (
           candidate.status === MODEL_STATUS.APPROVED ||
           candidate.status === MODEL_STATUS.SUSPENDED ||
