@@ -259,11 +259,6 @@
       });
     });
 
-    root.addEventListener('pointerdown', (event) => {
-      if (!openRow) return;
-      if (event.target.closest('.bubble-swipe-row') === openRow) return;
-      closeRow(openRow);
-    });
   }
 
   async function renderBubbleHub() {
