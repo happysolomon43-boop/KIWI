@@ -7209,11 +7209,17 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         // filters can be an array of state strings (e.g. ['DANGEROUS','GHOST']) from the
         // study-page chip filters, or an object with cardLimit / cardIds for specific flows.
         const isStateFilterArray = Array.isArray(filters);
+        const requestedDeckId = !isStateFilterArray
+          ? (filters?.deckId || filters?.deck_id || null)
+          : null;
         const body = {
-          subject_id: subjectId,
-          include_all_decks_in_subject: true,
+          deck_id: requestedDeckId,
+          subject_id: subjectId || null,
+          // A deck-targeted session must remain inside that deck. Normal subject
+          // study still spans all decks in the subject.
+          include_all_decks_in_subject: !requestedDeckId && !!subjectId,
           card_limit: !isStateFilterArray ? (filters?.cardLimit || null) : null,
-          // FIX-B: Pass card_ids when launching review_specific_cards invitation
+          // Explicit card_ids are an exact targeted-review contract.
           card_ids: !isStateFilterArray ? (filters?.cardIds || null) : null,
           // State filter chips on the Study page — pass as card_state_filter
           card_state_filter: isStateFilterArray ? filters : null,
@@ -10464,6 +10470,62 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const raw = payload?.session?.started_at || payload?.started_at;
         const parsed = raw ? new Date(raw).getTime() : NaN;
         return Number.isFinite(parsed) ? parsed : Date.now();
+      }
+
+      async function _openTargetedStudySession(options) {
+        const subjectId = options?.subjectId || null;
+        const deckId = options?.deckId || null;
+        const cardIds = Array.isArray(options?.cardIds)
+          ? [...new Set(options.cardIds.filter(Boolean).map(String))]
+          : [];
+        if (!subjectId || cardIds.length === 0) {
+          throw new Error("This study group is missing subject or card metadata.");
+        }
+
+        const session = await api.startStudySession(subjectId, {
+          deckId: deckId,
+          cardIds: cardIds,
+        });
+        const sessionId = session.sessionId || (session.session && session.session.id) || null;
+        const queue = _sortQueueAnkiStyle((session.cards || []).map(function(card) {
+          return Object.assign({}, card, {
+            front: card.front || card.front_content || "",
+            back: card.back || card.back_content || ""
+          });
+        }));
+        if (!sessionId || queue.length === 0) {
+          throw new Error("KIWI could not build this targeted study session.");
+        }
+
+        AppState.tempStudy = {
+          sessionId: sessionId,
+          queue: queue,
+          _hasMore: !!session.has_more,
+          _totalCards: Number(session.total_cards) || queue.length,
+          _fetchingMore: false,
+          currentIndex: 0,
+          flipped: false,
+          startTime: getServerSessionStart(session),
+          cardShownAt: Date.now(),
+          reviews: [],
+          cardsReviewed: 0,
+          seedStatus: "alive",
+          seedHealth: 0,
+          aiSummary: null,
+          stageTransitions: [],
+          focusData: { tabAwayCount: 0, idleSeconds: 0 },
+          isReturnSession: session.is_first_return_session || false,
+          subjectId: session.subject_id || subjectId,
+          targetedDeckId: session.deck_id || deckId || null,
+          targetedSource: options?.sourceLabel || "Targeted review",
+          avoidedSuppressionsCount: 0,
+          _cardHistory: [],
+        };
+        startFocusTracking();
+        navigateTo("study");
+        const firstCard = AppState.tempStudy?.queue?.[0];
+        if (firstCard) api.prefetchSummary(firstCard.id);
+        return session;
       }
 
       async function startExamClock(examId, fallbackSeconds) {
@@ -16408,12 +16470,71 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           const heatmap         = heatmapData || {};
           const examHistory     = Array.isArray(examsData) ? examsData : (examsData.exams || examsData.sessions || []);
 
-          // Normalise troubleCards field names
+          // Normalise trouble-card identity and ownership. The dedicated endpoint
+          // historically exposed card_states.id (userId_cardId) and omitted subject
+          // metadata, while /progress had the canonical card id + subject. Merge the
+          // two responses by card id so a stale backend cannot produce dead Study links.
+          const aggregateTroubleByCardId = new Map(
+            (data.troubleCards || []).map(function(card) {
+              var id = card.card_id || card.cardId || card.id;
+              return [String(id || ""), card];
+            })
+          );
+          const subjectNameById = new Map(
+            (subjectBreakdown || []).map(function(subject) {
+              return [String(subject.id), subject.name || subject.subject_name || "Subject"];
+            })
+          );
           const normalisedTroubleCards = (troubleCards || []).map(function(c) {
-            return Object.assign({}, c, {
-              front: c.front || c.front_content || c.card_front || "",
-              back:  c.back  || c.back_content  || c.card_back  || ""
+            var canonicalId = c.card_id || c.cardId || null;
+            var fallback = aggregateTroubleByCardId.get(String(canonicalId || "")) || {};
+            canonicalId = canonicalId || fallback.card_id || fallback.cardId || fallback.id || c.id || null;
+            var subjectId = c.subject_id || c.subjectId || fallback.subject_id || fallback.subjectId || null;
+            var deckId = c.deck_id || c.deckId || fallback.deck_id || fallback.deckId || null;
+            return Object.assign({}, fallback, c, {
+              id: canonicalId,
+              card_id: canonicalId,
+              cardId: canonicalId,
+              subject_id: subjectId,
+              subjectId: subjectId,
+              subjectName: c.subject_name || c.subjectName || fallback.subject_name || fallback.subjectName || subjectNameById.get(String(subjectId || "")) || "Subject",
+              deck_id: deckId,
+              deckId: deckId,
+              deckName: c.deck_name || c.deckName || fallback.deck_name || fallback.deckName || "Deck",
+              front: c.front || c.front_content || c.card_front || fallback.front || fallback.card_front || "",
+              back:  c.back  || c.back_content  || c.card_back  || fallback.back  || fallback.card_back  || ""
             });
+          }).filter(function(card) { return !!card.id; });
+
+          // Deck is the unit of action for attention cards. Keep every flagged card
+          // visible, but a deck launch studies all STUCK cards in that deck together.
+          // If a deck has no STUCK cards, fall back to all flagged cards in that deck.
+          const troubleDeckGroupMap = new Map();
+          normalisedTroubleCards.forEach(function(card) {
+            var key = String(card.deckId || ("subject:" + (card.subjectId || "unassigned")));
+            if (!troubleDeckGroupMap.has(key)) {
+              troubleDeckGroupMap.set(key, {
+                key: key,
+                deckId: card.deckId || null,
+                deckName: card.deckName || "Deck",
+                subjectId: card.subjectId || null,
+                subjectName: card.subjectName || "Subject",
+                cards: []
+              });
+            }
+            troubleDeckGroupMap.get(key).cards.push(card);
+          });
+          const troubleDeckGroups = Array.from(troubleDeckGroupMap.values()).map(function(group) {
+            group.cards.sort(function(a, b) {
+              var rank = { STUCK: 0, DANGEROUS: 1, AVOIDED: 2, FRAGILE: 3, GHOST: 4 };
+              return (rank[a.state] ?? 9) - (rank[b.state] ?? 9);
+            });
+            group.stuckCards = group.cards.filter(function(card) { return card.state === "STUCK"; });
+            group.sessionCards = group.stuckCards.length > 0 ? group.stuckCards : group.cards;
+            return group;
+          }).sort(function(a, b) {
+            var subjectCmp = String(a.subjectName).localeCompare(String(b.subjectName));
+            return subjectCmp || String(a.deckName).localeCompare(String(b.deckName));
           });
 
           const band = getKSBand(Math.round(overallKS || 0));
@@ -16642,17 +16763,33 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           <div class="section-header">
             <div>
               <div class="section-title">Cards Needing Attention</div>
-              <div class="section-sub">${normalisedTroubleCards.length} cards flagged for review</div>
+              <div class="section-sub">${normalisedTroubleCards.length} cards · grouped into ${troubleDeckGroups.length} deck${troubleDeckGroups.length === 1 ? "" : "s"}</div>
             </div>
           </div>
           ${normalisedTroubleCards.length === 0
             ? '<div style="font-size:var(--text-base);color:var(--text-4);padding:16px 0;">All cards are healthy. Great work!</div>'
-            : '<div class="trouble-cards-list">' + normalisedTroubleCards.map(function(card) {
-                return '<div class="trouble-card" data-card-id="' + escapeHTML(card.id) + '" data-subject-id="' + escapeHTML(card.subjectId || card.subject_id || "") + '">' +
-                  '<span class="tc-state" style="background:' + (card.state === "STUCK" ? "var(--red-dim)" : card.state === "GHOST" ? "var(--purple-dim)" : card.state === "DANGEROUS" ? "var(--red-dim)" : card.state === "FRAGILE" ? "rgba(74,158,218,0.15)" : card.state === "AVOIDED" ? "var(--amber-dim)" : "var(--border)") + ';color:' + (card.state === "STUCK" ? "var(--red)" : card.state === "GHOST" ? "var(--purple)" : card.state === "DANGEROUS" ? "var(--red)" : card.state === "FRAGILE" ? "var(--blue-bright)" : card.state === "AVOIDED" ? "var(--amber)" : "var(--text-3)") + ';">' + escapeHTML(card.state || "FLAGGED") + '</span>' +
-                  '<span class="tc-front">' + escapeHTML((card.front || "").substring(0,60)) + ((card.front || "").length > 60 ? "..." : "") + '</span>' +
-                  '<span class="tc-action">' + (_reckoningGlobalLockActive() ? 'Reckoning &rarr;' : 'Study &rarr;') + '</span>' +
-                  '</div>';
+            : '<div class="trouble-deck-groups">' + troubleDeckGroups.map(function(group) {
+                var stuckCount = group.stuckCards.length;
+                var launchCount = group.sessionCards.length;
+                var encodedIds = encodeURIComponent(JSON.stringify(group.sessionCards.map(function(card) { return String(card.id); })));
+                var deckMeta = escapeHTML(group.subjectName) + ' · ' + stuckCount + ' stuck' +
+                  (group.cards.length !== stuckCount ? ' · ' + group.cards.length + ' attention' : '');
+                return '<section class="trouble-deck-group" data-deck-id="' + escapeHTML(group.deckId || "") + '" data-subject-id="' + escapeHTML(group.subjectId || "") + '" data-card-ids="' + encodedIds + '" data-deck-name="' + escapeHTML(group.deckName || "Deck") + '">' +
+                  '<button type="button" class="trouble-deck-launch">' +
+                    '<span class="trouble-deck-title-wrap">' +
+                      '<span class="trouble-deck-title">' + escapeHTML(group.deckName || "Deck") + '</span>' +
+                      '<span class="trouble-deck-meta">' + deckMeta + '</span>' +
+                    '</span>' +
+                    '<span class="trouble-deck-action">' + (_reckoningGlobalLockActive() ? 'Reckoning &rarr;' : ('Study ' + launchCount + ' ' + (stuckCount > 0 ? 'stuck' : 'flagged') + ' &rarr;')) + '</span>' +
+                  '</button>' +
+                  '<div class="trouble-cards-list">' + group.cards.map(function(card) {
+                    return '<div class="trouble-card" role="button" tabindex="0" data-card-id="' + escapeHTML(card.id) + '" data-state="' + escapeHTML(card.state || "") + '">' +
+                      '<span class="tc-state" style="background:' + (card.state === "STUCK" ? "var(--red-dim)" : card.state === "GHOST" ? "var(--purple-dim)" : card.state === "DANGEROUS" ? "var(--red-dim)" : card.state === "FRAGILE" ? "rgba(74,158,218,0.15)" : card.state === "AVOIDED" ? "var(--amber-dim)" : "var(--border)") + ';color:' + (card.state === "STUCK" ? "var(--red)" : card.state === "GHOST" ? "var(--purple)" : card.state === "DANGEROUS" ? "var(--red)" : card.state === "FRAGILE" ? "var(--blue-bright)" : card.state === "AVOIDED" ? "var(--amber)" : "var(--text-3)") + ';">' + escapeHTML(card.state || "FLAGGED") + '</span>' +
+                      '<span class="tc-front">' + escapeHTML((card.front || "").substring(0,80)) + ((card.front || "").length > 80 ? "..." : "") + '</span>' +
+                      '<span class="tc-action">' + (_reckoningGlobalLockActive() ? 'Reckoning &rarr;' : (stuckCount > 0 ? 'Study deck &rarr;' : 'Study group &rarr;')) + '</span>' +
+                    '</div>';
+                  }).join("") + '</div>' +
+                '</section>';
               }).join("") + '</div>'
           }
         </div>
@@ -16869,61 +17006,60 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             }
           })();
 
-          // Wire trouble card clicks -> exact-card focused session.
-          // During mandatory Reckoning, Study is intentionally locked; route the
-          // user to the required recovery surface instead of presenting a dead action.
-          document.querySelectorAll(".trouble-card").forEach(function(card) {
-            card.addEventListener("click", async function() {
-              var subjectId = card.dataset.subjectId;
-              var cardId = card.dataset.cardId;
-              if (!subjectId || !cardId) {
-                showToast("This card is missing study metadata. Refresh and try again.", "error");
-                return;
-              }
+          // Deck-grouped attention review. Clicking the deck header or any card
+          // in that deck launches one exact session containing every STUCK card
+          // in the group (or every flagged card when the deck has no STUCK cards).
+          async function launchTroubleDeckSession(trigger) {
+            var group = trigger.closest(".trouble-deck-group");
+            if (!group) return;
+            var subjectId = group.dataset.subjectId || null;
+            var deckId = group.dataset.deckId || null;
+            var deckName = group.dataset.deckName || "Deck";
+            var cardIds = [];
+            try {
+              cardIds = JSON.parse(decodeURIComponent(group.dataset.cardIds || "[]"));
+            } catch (_e) {}
 
-              if (_reckoningGlobalLockActive()) {
-                showReckoningOverlay(AppState.reckoning, { force: true, mandatory: true, forceLockoutOverlay: true });
-                return;
-              }
+            if (!subjectId || cardIds.length === 0) {
+              showToast("This deck is still missing study metadata. Refresh and try again.", "error", 6000);
+              return;
+            }
+            if (_reckoningGlobalLockActive()) {
+              showReckoningOverlay(AppState.reckoning, { force: true, mandatory: true, forceLockoutOverlay: true });
+              return;
+            }
 
-              try {
-                showToast("Starting focused review...", "info");
-                var session = await api.startStudySession(subjectId, { cardIds: [cardId] });
-                var queue = (session.cards || []).map(function(c) {
-                  return Object.assign({}, c, {
-                    front: c.front || c.front_content || "",
-                    back: c.back || c.back_content || ""
-                  });
-                });
-                if (!session.sessionId || queue.length === 0) {
-                  throw new Error("KIWI could not build a focused session for this card.");
-                }
-                if (!queue.some(function(c) { return String(c.id) === String(cardId); })) {
-                  throw new Error("The requested card was not included in the focused session.");
-                }
+            var launchButton = group.querySelector(".trouble-deck-launch");
+            if (launchButton) launchButton.disabled = true;
+            group.classList.add("is-launching");
+            try {
+              showToast("Starting " + cardIds.length + "-card review from " + deckName + "...", "info");
+              await _openTargetedStudySession({
+                subjectId: subjectId,
+                deckId: deckId || null,
+                cardIds: cardIds,
+                sourceLabel: "Stuck cards · " + deckName
+              });
+            } catch (err) {
+              group.classList.remove("is-launching");
+              if (launchButton) launchButton.disabled = false;
+              showToast(err.message || "Failed to start deck review", "error", 6000);
+            }
+          }
 
-                AppState.tempStudy = {
-                  sessionId: session.sessionId,
-                  queue: queue,
-                  currentIndex: 0,
-                  flipped: false,
-                  startTime: getServerSessionStart(session),
-                  cardShownAt: Date.now(),
-                  reviews: [],
-                  cardsReviewed: 0,
-                  seedStatus: "alive",
-                  seedHealth: 0,
-                  aiSummary: null,
-                  stageTransitions: [],
-                  focusData: { tabAwayCount: 0, idleSeconds: 0 },
-                  isReturnSession: session.is_first_return_session || false,
-                  subjectId: subjectId,
-                  _cardHistory: [],
-                };
-                startFocusTracking();
-                navigateTo("study");
-              } catch(err) {
-                showToast(err.message || "Failed to start focused review", "error", 6000);
+          document.querySelectorAll(".trouble-deck-launch").forEach(function(button) {
+            button.addEventListener("click", function() {
+              launchTroubleDeckSession(button);
+            });
+          });
+          document.querySelectorAll(".trouble-deck-group .trouble-card").forEach(function(card) {
+            card.addEventListener("click", function() {
+              launchTroubleDeckSession(card);
+            });
+            card.addEventListener("keydown", function(event) {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                launchTroubleDeckSession(card);
               }
             });
           });
