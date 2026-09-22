@@ -1631,6 +1631,28 @@ async addIsReckoning(userId, examSessionId, isReckoning) {
   return db.examSessions.update(userId, examSessionId, { is_reckoning: isReckoning });
 },
 },
+// PostgreSQL NUMERIC columns arrive through node-postgres as strings by default.
+// Normalize Mastery Goal rows at the data-access boundary so every Bubble
+// service consumes numbers consistently rather than repeatedly coercing fields.
+function _normalizeMasteryGoalRow(row) {
+  if (!row) return row;
+  const normalized = { ...row };
+  const numericFields = [
+    'current_ks',
+    'target_ks',
+    'required_ks_per_day',
+    'actual_ks_velocity',
+    'trajectory_gap',
+    'final_ks_at_deadline',
+  ];
+  for (const field of numericFields) {
+    if (normalized[field] == null || normalized[field] === '') continue;
+    const value = Number(normalized[field]);
+    if (Number.isFinite(value)) normalized[field] = value;
+  }
+  return normalized;
+}
+
 // ── mastery_goals (PB.1) — [DESIGN: §12.1, §12.2, §12.3] ──────────────────
 masteryGoals: {
 async create(userId, data) {
@@ -1718,7 +1740,7 @@ async findById(userId, goalId) {
     'SELECT * FROM mastery_goals WHERE id = $1 AND user_id = $2 LIMIT 1',
     [goalId, userId]
   );
-  return rows[0] || null;
+  return _normalizeMasteryGoalRow(rows[0] || null);
 },
 async findByUser(userId, statusFilter = null) {
   let sql = 'SELECT * FROM mastery_goals WHERE user_id = $1';
@@ -1726,7 +1748,7 @@ async findByUser(userId, statusFilter = null) {
   if (statusFilter) { sql += ` AND status = $${vals.length + 1}`; vals.push(statusFilter); }
   sql += ' ORDER BY created_at DESC';
   const { rows } = await query(sql, vals);
-  return rows;
+  return rows.map(_normalizeMasteryGoalRow);
 },
 async findActive(userId) {
   return this.findByUser(userId, 'active');
@@ -1736,7 +1758,7 @@ async findBySubject(userId, subjectId) {
     "SELECT * FROM mastery_goals WHERE user_id = $1 AND subject_id = $2 AND status = 'active'",
     [userId, subjectId]
   );
-  return rows;
+  return rows.map(_normalizeMasteryGoalRow);
 },
 async update(userId, goalId, data) {
   const payload = { ...data, updated_at: new Date() };
@@ -1747,7 +1769,7 @@ async update(userId, goalId, data) {
     'SELECT * FROM mastery_goals WHERE id = $1 AND user_id = $2 LIMIT 1',
     [goalId, userId]
   );
-  return rows[0] ? { id: goalId, ...rows[0] } : null;
+  return rows[0] ? _normalizeMasteryGoalRow({ id: goalId, ...rows[0] }) : null;
 },
 async archive(userId, goalId, finalStatus = 'archived') {
   return this.update(userId, goalId, {
@@ -1811,7 +1833,10 @@ async getClusters(goalId) {
     'SELECT * FROM concept_clusters WHERE goal_id = $1 ORDER BY identified_at ASC',
     [goalId]
   );
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    cluster_ks: Number(row.cluster_ks) || 0,
+  }));
 },
 async updateCluster(goalId, clusterId, data) {
   const payload = { ...data, last_ks_update: new Date(), updated_at: new Date() };
