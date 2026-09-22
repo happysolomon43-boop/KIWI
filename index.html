@@ -7700,6 +7700,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       api.updateBubble      = async (id, d)  => apiRequest('/bubbles/' + id, { method: 'PATCH', body: d });
       // ⚠ DELETE not POST /archive [DESIGN: §14 — DELETE /api/bubbles/:id soft archive]
       api.archiveBubble     = async (id)     => apiRequest('/bubbles/' + id, { method: 'DELETE' });
+      api.deleteBubblePermanently = async (id) =>
+        apiRequest('/bubbles/' + encodeURIComponent(id) + '?permanent=1', { method: 'DELETE' });
 
       // Issue-054: Delete card
       api.deleteCard = async (cardId) => apiRequest('/cards/' + cardId, { method: 'DELETE' });
@@ -15259,8 +15261,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         var bcMs       = toMs(trajectory.projected_best_case         || detail.projected_best_case);
         var cpMs       = toMs(trajectory.projected_completion_date   || detail.projected_completion_date);
         var mvMs       = toMs(trajectory.projected_minimum_viable    || detail.projected_minimum_viable);
-        var target     = trajectory.target_ks  || detail.target_ks  || 100;
-        var currentKS  = trajectory.current_ks || detail.current_ks || 0;
+        var target     = Number(trajectory.target_ks ?? detail.target_ks) || 100;
+        var currentKS  = Number(trajectory.current_ks ?? detail.current_ks) || 0;
 
         function toX(ms) {
           var frac = (ms - startMs) / Math.max(1, deadlineMs - startMs);
@@ -15413,8 +15415,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           : '';
         var velocityLine = tl.best_week_velocity != null
           ? '<div style="margin-top:4px;font-size:var(--text-xs);color:var(--text-3);">' +
-              'Best week: <strong style="color:var(--green-bright);">+' + (tl.best_week_velocity||0).toFixed(1) + ' KS/day</strong>' +
-              ' \u00b7 Worst: <strong style="color:var(--red-bright);">+' + (tl.worst_week_velocity||0).toFixed(1) + ' KS/day</strong></div>'
+              'Best week: <strong style="color:var(--green-bright);">+' + (Number(tl.best_week_velocity) || 0).toFixed(1) + ' KS/day</strong>' +
+              ' \u00b7 Worst: <strong style="color:var(--red-bright);">+' + (Number(tl.worst_week_velocity) || 0).toFixed(1) + ' KS/day</strong></div>'
           : '';
         var timelineContent = '<div>' + phaseTransHTML + '</div>' + stallLine + contractLine + velocityLine;
 
@@ -15423,13 +15425,14 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         var clusterPerfHTML = (ca.cluster_performance || []).length
           ? '<div style="margin-top:8px;">' +
               (ca.cluster_performance || []).map(function(c) {
-                var cc = (c.cluster_ks||0) >= 80 ? 'var(--green-bright)' :
-                         (c.cluster_ks||0) >= 50 ? 'var(--amber)'        : 'var(--red-bright)';
+                var clusterKs = Number(c.cluster_ks) || 0;
+                var cc = clusterKs >= 80 ? 'var(--green-bright)' :
+                         clusterKs >= 50 ? 'var(--amber)'        : 'var(--red-bright)';
                 return '<div style="display:flex;justify-content:space-between;font-size:var(--text-xs);' +
                   'padding:4px 0;border-bottom:1px solid var(--border);">' +
                   '<span style="color:var(--text-2);">' + escapeHTML(c.name||'') + '</span>' +
                   '<span style="color:' + cc + ';font-family:var(--font-mono);font-weight:700;">' +
-                    (c.cluster_ks||0).toFixed(0) + '</span></div>';
+                    clusterKs.toFixed(0) + '</span></div>';
               }).join('') + '</div>'
           : '';
         var debtLine = (ca.learning_debt_cards || []).length
@@ -15487,7 +15490,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         var n     = snapshots.length;
         var barW  = plotW / n;
         var maxKS = Math.max.apply(null,
-          snapshots.map(function(s) { return s.ks_at_event || 0; }).concat([1]));
+          snapshots.map(function(s) { return Number(s.ks_at_event) || 0; }).concat([1]));
 
         // Phase background colours [DESIGN: §2.1 phase colour intent]
         var PHASE_COLORS = {
@@ -15526,7 +15529,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
         // SVG: KS bars coloured by trajectory_status (existing behaviour preserved)
         var barRects = snapshots.map(function(s, i) {
-          var ks  = s.ks_at_event || 0;
+          var ks  = Number(s.ks_at_event) || 0;
           var bh  = Math.max(2, (ks / maxKS) * plotH);
           var by  = (PT + plotH - bh).toFixed(1);
           var bx  = (PL + i * barW + 1).toFixed(1);
@@ -15613,16 +15616,13 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                         tStatus === 'DRIFTING' ? 'var(--amber)'       :
                         tStatus === 'RESCUE'   ? 'var(--red-danger)'  : 'var(--green-bright)';
 
-          var fillPct    = Math.min(100, Math.max(0,
-            ((trajectory.current_ks || detail.current_ks || 0) /
-             (trajectory.target_ks  || detail.target_ks  || 100)) * 100
-          ));
-          var currentKS  = trajectory.current_ks  || detail.current_ks  || 0;
-          var targetKS   = trajectory.target_ks   || detail.target_ks   || 100;
-          var daysToExam = trajectory.days_remaining != null ? trajectory.days_remaining : 0;
-          var velocity   = trajectory.velocity    || detail.actual_ks_velocity || 0;
-          var required   = trajectory.required_ks_per_day || detail.required_ks_per_day || 0;
-          var gap        = trajectory.trajectory_gap       || detail.trajectory_gap       || 0;
+          var currentKS  = Number(trajectory.current_ks ?? detail.current_ks) || 0;
+          var targetKS   = Number(trajectory.target_ks ?? detail.target_ks) || 100;
+          var fillPct    = Math.min(100, Math.max(0, (currentKS / targetKS) * 100));
+          var daysToExam = Number(trajectory.days_remaining) || 0;
+          var velocity   = Number(trajectory.velocity ?? detail.actual_ks_velocity) || 0;
+          var required   = Number(trajectory.required_ks_per_day ?? detail.required_ks_per_day) || 0;
+          var gap        = Number(trajectory.trajectory_gap ?? detail.trajectory_gap) || 0;
 
           // [DESIGN: §3.3] Three projection lines
           function fmtDate(d) {
@@ -15651,7 +15651,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           var clusterHTML = '';
           if (clusters.length > 0) {
             var clusterCards = clusters.map(function(c) {
-              var ks      = c.cluster_ks || 0;
+              var ks      = Number(c.cluster_ks) || 0;
               var cColor  = ks >= 70 ? 'var(--green-bright)' :
                             ks >= 40 ? 'var(--amber)'        : 'var(--red-bright)';
               var cStatus = c.cluster_status ||
