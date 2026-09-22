@@ -3,9 +3,9 @@
 /**
  * KIWI AI task registry.
  *
- * Phase 1 intentionally contains no provider model IDs and does not alter
- * production routing. It defines the stable contract that the orchestrator
- * will consume in later phases.
+ * This is the production contract for every AI feature. Feature code supplies
+ * content and feature-specific output constraints; class, reasoning intent,
+ * model policy, quality floor, timeout and retry policy live here.
  */
 
 const AI_CLASSES = Object.freeze({
