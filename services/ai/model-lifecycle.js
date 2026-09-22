@@ -63,7 +63,7 @@ function createModelLifecycle({
     const existing = catalog.get(model.id);
     const merged = catalog.upsert({
       ...model,
-      status: existing?.status || MODEL_STATUS.DISCOVERED,
+      status: model.status || existing?.status || MODEL_STATUS.DISCOVERED,
       metadata: {
         ...(existing?.metadata || {}),
         ...(model.metadata || {}),
