@@ -16,13 +16,9 @@ function section(startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test('legacy Gemini inventory remains exactly 27 direct calls before migration', () => {
+test('legacy Gemini inventory has dropped to 20 direct calls after IP migration', () => {
   const calls = source.match(/geminiModel\.generateContent\s*\(/g) || [];
-  assert.equal(
-    calls.length,
-    27,
-    'Phase 1 inventory changed: update the canonical inventory before migrating'
-  );
+  assert.equal(calls.length, 20);
 });
 
 test('legacy Gemini transport remains centralized in one provider endpoint', () => {
@@ -68,14 +64,15 @@ test('flashcard generation preserves its current high-thinking generation contra
   assert.match(body, /maxOutputTokens:\s*15000/);
 });
 
-test('card explanation preserves the current fast minimal-thinking contract', () => {
+test('card explanation now delegates model and thinking policy to the orchestrator', () => {
   const body = section(
     'async function summarizeCard',
     'async function extractFromImage'
   );
 
-  assert.match(body, /thinkingLevel:\s*['"]minimal['"]/);
-  assert.match(body, /timeoutMs:\s*25000/);
+  assert.match(body, /ai\.run\(['"]CARD_EXPLANATION['"]/);
+  assert.doesNotMatch(body, /thinkingConfig/);
+  assert.doesNotMatch(body, /geminiModel\.generateContent/);
 });
 
 test('custom CBT split-generation and completion safeguards remain present', () => {

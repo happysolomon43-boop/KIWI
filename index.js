@@ -50,8 +50,8 @@ const pool = new Pool({
 // Thin query wrapper — pool.query returns { rows, rowCount }
 const query = (text, params) => pool.query(text, params);
 
-// Phase 3: build the new AI Orchestrator beside the legacy Gemini wrapper.
-// It remains observe-only until feature migration begins in later phases.
+// KIWI AI Orchestrator runtime. Phase 4 routes IP tasks live while remaining
+// VIP/VVIP legacy callers stay in shadow mode until their migration phases.
 const _aiRuntime = createAIRuntime({
   query,
   randomUUID,
@@ -59,6 +59,7 @@ const _aiRuntime = createAIRuntime({
   fetchImpl: globalThis.fetch,
   logger: console,
 });
+const ai = _aiRuntime.orchestrator;
 
 // Transaction helper
 async function withTransaction(fn) {
@@ -1924,8 +1925,8 @@ return JSON.parse(cleaned);
 } catch (e) { return null; }
 }
 
-// CEE-style raw fetch — returns SDK-compatible shape so all callers work unchanged
-// Model: gemini-3.1-flash-lite-preview (free, high usage) — no paid Pro model used
+// Legacy compatibility transport — retained only for AI tasks not yet migrated.
+// Its historical default model is retired and will disappear with the final legacy cleanup.
 const geminiModel = {
 async generateContent(content, generationConfig, { timeoutMs = 30000, modelOverride, taskId = null } = {}) {
   const _modelName = modelOverride || 'gemini-3.1-flash-lite-preview';
@@ -5637,16 +5638,9 @@ Rules:
 - If the answer is a process, name the key step or consequence that makes it memorable.
 - Never say "this card says" or "the answer is". Just explain the concept.
 - Maximum 2 sentences.`;
-// TIMEOUT-FIX: Pass timeoutMs directly to generateContent so the internal
-// AbortController actually cancels the in-flight HTTP request when it fires.
-// The old Promise.race approach left the fetch running for 30s after the 15s
-// race rejected — wasting a connection and causing cascading failures.
-// 25s gives gemini-3.1-flash-lite-preview plenty of headroom with thinkingLevel:'minimal'.
-const result = await geminiModel.generateContent(
-  prompt,
-  { thinkingConfig: { thinkingLevel: 'minimal' } },
-  { timeoutMs: 25000, taskId: 'CARD_EXPLANATION' });
-return result.response.text().trim();
+// Routing, timeout and thinking policy are owned by the centralized AI task registry.
+const result = await ai.run('CARD_EXPLANATION', { content: prompt });
+return result.text.trim();
 }
 
 async function extractFromImage(base64Image, mimeType) {
@@ -9227,8 +9221,8 @@ RULES
 - Tone: Authoritative but not punitive.
 OUTPUT
 Return only the 2-sentence alert text.`;
-    const aiResult = await geminiModel.generateContent(d3Prompt, { thinkingConfig: { thinkingLevel: 'minimal' } }, { taskId: 'RECLASSIFICATION_ALERT' });
-    alertText = aiResult.response.text().trim();
+    const aiResult = await ai.run('RECLASSIFICATION_ALERT', { content: d3Prompt });
+    alertText = aiResult.text.trim();
   } catch (_) {
     alertText = `Your exam score of ${scorePct}% contradicts the advanced stage of ` +
       `${reclassifiedCards.length} card(s) — their SRS progress was ahead of your ` +
@@ -9424,8 +9418,8 @@ Card front: ${front}
 Card back: ${back}
 
 Write exactly 1 sentence (maximum 20 words) of warm, specific acknowledgement that this concept is now part of their long-term memory. Reference the card content directly. No preamble. Just the sentence.`;
-const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } }, { taskId: 'MASTERY_MOMENT' });
-const mastery_moment = result.response.text().trim();
+const result = await ai.run('MASTERY_MOMENT', { content: prompt });
+const mastery_moment = result.text.trim();
 await db.cards.update(userId, cardId, { mastery_moment }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 return mastery_moment;
 }
@@ -9695,8 +9689,8 @@ Rules:
 - Keep it atmospheric and honest.
 Respond with only the description text.
 `;
-  const result = await geminiModel.generateContent(prompt, undefined, { taskId: 'ZONE_DESCRIPTION' });
-  const text = result.response.text().trim();
+  const result = await ai.run('ZONE_DESCRIPTION', { content: prompt });
+  const text = result.text.trim();
   await db.dailyRitualCache.set(userId, cacheType, todayStr, { data: text });
   return text;
 }
@@ -10479,9 +10473,8 @@ OUTPUT FORMAT (JSON only, no markdown)
 {"title": "...", "narrative": "..."}
 `;
   try {
-    const result = await geminiModel.generateContent(prompt, undefined, { taskId: 'HIDDEN_DISCOVERY' });
-    const raw = result.response
-      .text()
+    const result = await ai.run('HIDDEN_DISCOVERY', { content: prompt });
+    const raw = result.text
       .trim()
       .replace(/```json|```/g, '')
       .trim();
@@ -11736,8 +11729,8 @@ RULES
 OUTPUT
 Return only the greeting paragraph.
 `;
-  const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'minimal' } }, { taskId: 'RETURN_GREETING' });
-  const greeting = result.response.text().trim();
+  const result = await ai.run('RETURN_GREETING', { content: prompt });
+  const greeting = result.text.trim();
   const greetingPayload = { greeting, status: status.status, days_since: status.days_since };
   await db.dailyRitualCache
     .set(userId, 'return_greeting', greetingTodayStr, greetingPayload)
@@ -12863,8 +12856,8 @@ Return only the inscription.
 `;
   let artifact;
   try {
-    const result = await geminiModel.generateContent(prompt, { thinkingConfig: { thinkingLevel: 'high' } }, { taskId: 'CHRONICLE_ARTIFACT' });
-    artifact = result.response.text().trim();
+    const result = await ai.run('CHRONICLE_ARTIFACT', { content: prompt });
+    artifact = result.text.trim();
   } catch (e) {
     artifact = 'The forest remembers this week. Your path is recorded in the roots of time.';
   }
