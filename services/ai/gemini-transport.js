@@ -105,8 +105,62 @@ function createGeminiTransport({
     }
   }
 
+  async function listModels({
+    apiKey,
+    timeoutMs = 15000,
+    pageSize = 1000,
+  }) {
+    if (!apiKey) throw new Error('Gemini transport requires apiKey');
+
+    const models = [];
+    let pageToken = null;
+
+    do {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const params = new URLSearchParams({
+        key: apiKey,
+        pageSize: String(pageSize),
+      });
+      if (pageToken) params.set('pageToken', pageToken);
+      const url = `${endpointBase}/models?${params.toString()}`;
+
+      try {
+        const response = await fetchImpl(url, {
+          method: 'GET',
+          signal: controller.signal,
+        });
+        const body = await readResponseBody(response);
+        if (!response.ok) {
+          throw classifyGeminiHttpError({
+            status: response.status,
+            body,
+          });
+        }
+
+        models.push(...(Array.isArray(body?.models) ? body.models : []));
+        pageToken = body?.nextPageToken || null;
+      } catch (error) {
+        if (error instanceof AIError) throw error;
+        if (
+          error?.name === 'AbortError' ||
+          controller.signal.aborted ||
+          String(error?.message || '').toLowerCase().includes('aborted')
+        ) {
+          throw timeoutError(timeoutMs, error);
+        }
+        throw networkError(error);
+      } finally {
+        clearTimeout(timer);
+      }
+    } while (pageToken);
+
+    return models;
+  }
+
   return Object.freeze({
     generate,
+    listModels,
   });
 }
 

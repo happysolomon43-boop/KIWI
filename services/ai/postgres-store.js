@@ -58,6 +58,16 @@ function createPostgresAIStore({ query, randomUUID }) {
     }
   }
 
+
+  async function loadCatalogModels() {
+    const { rows } = await query(
+      `SELECT *
+       FROM ai_model_catalog
+       ORDER BY rank DESC, model_id ASC`
+    );
+    return rows;
+  }
+
   async function loadProjectModelStates() {
     const { rows } = await query(
       `SELECT *
@@ -103,6 +113,48 @@ function createPostgresAIStore({ query, randomUUID }) {
         state.lastSuccessAt || null,
         state.lastFailureAt || null,
       ]
+    );
+    return rows[0] || null;
+  }
+
+
+  async function recordModelQualification(record) {
+    const { rows } = await query(
+      `INSERT INTO ai_model_qualifications (
+         model_id, status, project_slot, qualification_version,
+         supported_thinking, capabilities, probe_count,
+         error_code, reason, metadata, started_at, completed_at
+       ) VALUES (
+         $1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10::jsonb,
+         COALESCE($11, now()),$12
+       )
+       RETURNING id`,
+      [
+        record.modelId,
+        record.status,
+        record.projectSlot || null,
+        Number(record.qualificationVersion) || 1,
+        json(record.supportedThinking || []),
+        json(record.capabilities || []),
+        Number(record.probeCount) || 0,
+        record.errorCode || null,
+        record.reason || null,
+        json(record.metadata || {}),
+        record.startedAt || null,
+        record.completedAt || null,
+      ]
+    );
+    return rows[0]?.id || null;
+  }
+
+  async function latestModelQualification(modelId) {
+    const { rows } = await query(
+      `SELECT *
+       FROM ai_model_qualifications
+       WHERE model_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [modelId]
     );
     return rows[0] || null;
   }
@@ -274,8 +326,11 @@ function createPostgresAIStore({ query, randomUUID }) {
   return Object.freeze({
     upsertCatalogModel,
     seedCatalog,
+    loadCatalogModels,
     loadProjectModelStates,
     upsertProjectModelState,
+    recordModelQualification,
+    latestModelQualification,
     createRequest,
     finishRequest,
     recordAttempt,

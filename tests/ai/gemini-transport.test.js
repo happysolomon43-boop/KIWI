@@ -115,3 +115,38 @@ test('transport converts aborted requests into timeout errors', async () => {
     (error) => error.code === AI_ERROR_CODES.TIMEOUT
   );
 });
+
+
+test('listModels paginates the Gemini models endpoint', async () => {
+  const calls = [];
+  const transport = createGeminiTransport({
+    endpointBase: 'https://example.test/v1beta',
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (calls.length === 1) {
+        return jsonResponse(200, {
+          models: [{ name: 'models/gemini-3.8-flash' }],
+          nextPageToken: 'next-page',
+        });
+      }
+      return jsonResponse(200, {
+        models: [{ name: 'models/gemini-3.9-flash' }],
+      });
+    },
+  });
+
+  const models = await transport.listModels({
+    apiKey: 'secret-key',
+    timeoutMs: 1000,
+    pageSize: 50,
+  });
+
+  assert.deepEqual(models.map((model) => model.name), [
+    'models/gemini-3.8-flash',
+    'models/gemini-3.9-flash',
+  ]);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0], /\/models\?/);
+  assert.match(calls[0], /pageSize=50/);
+  assert.match(calls[1], /pageToken=next-page/);
+});

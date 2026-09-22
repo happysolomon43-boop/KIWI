@@ -21,6 +21,7 @@ const { AIError, AI_ERROR_CODES } = require('./errors');
 function createModelRouter({
   registry = AI_TASKS,
   catalog = createModelCatalog(),
+  pins = {},
 } = {}) {
   function getTask(taskId) {
     const task = registry[taskId];
@@ -46,6 +47,18 @@ function createModelRouter({
     ));
   }
 
+
+  function pinAsCeiling(models, modelId) {
+    if (!modelId) return models;
+    const index = models.findIndex((model) => model.id === modelId);
+    if (index < 0) return models;
+
+    // A manual pin is an emergency ceiling, not just a preferred first hop.
+    // If 3.9 is suspect and VVIP is pinned to 3.8, fallbacks must continue
+    // downward to 3.7/3.6 rather than re-entering 3.9.
+    return models.slice(index);
+  }
+
   function applyPreferredModel(candidates, preferredModelId) {
     if (!preferredModelId) return candidates;
     const index = candidates.findIndex((entry) => entry.model.id === preferredModelId);
@@ -66,14 +79,20 @@ function createModelRouter({
 
     switch (task.modelPolicy) {
       case MODEL_POLICIES.TOP_STABLE_FLASH:
-        // Keep the strongest three approved stable Flash generations.
-        models = flash.slice(0, 3);
+        // Keep the strongest three approved stable Flash generations unless an
+        // emergency VVIP pin is configured.
+        models = pinAsCeiling(flash, pins.VVIP).slice(0, 3);
         break;
 
       case MODEL_POLICIES.VIP_STABLE_FLASH:
         // VIP starts one generation below the VVIP primary so it cannot consume
-        // the newest model's normal capacity. Keep three Flash generations.
-        models = flash.length > 1 ? flash.slice(1, 4) : flash.slice(0, 3);
+        // the newest model's normal capacity. An emergency VIP pin overrides
+        // only this starting point and still keeps bounded fallbacks.
+        if (pins.VIP) {
+          models = pinAsCeiling(flash, pins.VIP).slice(0, 3);
+        } else {
+          models = flash.length > 1 ? flash.slice(1, 4) : flash.slice(0, 3);
+        }
         if (
           task.degradationAllowed &&
           task.qualityFloor === QUALITY_FLOORS.FLASH_LITE
@@ -83,7 +102,7 @@ function createModelRouter({
         break;
 
       case MODEL_POLICIES.TOP_STABLE_FLASH_LITE:
-        models = lite.slice(0, 2);
+        models = pinAsCeiling(lite, pins.IP).slice(0, 2);
         break;
 
       default:

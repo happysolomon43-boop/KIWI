@@ -44,6 +44,7 @@ function createAIOrchestrator({
   projectPool = null,
   quotaManager = null,
   telemetry = null,
+  modelLifecycle = null,
   transport = null,
   normalizer = normalizeGeminiResponse,
   logger = console,
@@ -294,6 +295,9 @@ function createAIOrchestrator({
             slot.id,
             candidate.modelId
           ));
+          await sideEffect('model lifecycle success', () => modelLifecycle?.recordSuccess(
+            candidate.modelId
+          ));
 
           await sideEffect('telemetry success attempt', () => telemetry?.recordAttempt({
             requestId,
@@ -383,6 +387,20 @@ function createAIOrchestrator({
             });
           }
 
+          const lifecycleResult = await sideEffect(
+            'model lifecycle failure',
+            () => modelLifecycle?.recordFailure(candidate.modelId, aiError)
+          );
+
+          // A newly auto-promoted model may reveal an incompatibility that the
+          // synthetic qualification did not cover. If the lifecycle circuit
+          // breaker suspends it, fall through to the previous approved model
+          // instead of failing the learner's request.
+          if (lifecycleResult?.suspended && aiError.code !== AI_ERROR_CODES.SAFETY) {
+            skipRemainingSlotsForModel = true;
+            break;
+          }
+
           if (IMMEDIATE_FAILURE_CODES.has(aiError.code)) {
             await finishFailure(
               aiError,
@@ -399,9 +417,14 @@ function createAIOrchestrator({
 
           if (aiError.code === AI_ERROR_CODES.MODEL_NOT_FOUND) {
             // A model-level 404 should not burn the remaining project pool.
-            // Suspend it in the in-memory catalog immediately; Phase 7 adds
-            // automatic discovery/qualification to bring models back safely.
-            catalog.setStatus(candidate.modelId, MODEL_STATUS.SUSPENDED);
+            if (modelLifecycle) {
+              await sideEffect('model suspension', () => modelLifecycle.suspend(
+                candidate.modelId,
+                'provider returned MODEL_NOT_FOUND'
+              ));
+            } else {
+              catalog.setStatus(candidate.modelId, MODEL_STATUS.SUSPENDED);
+            }
             skipRemainingSlotsForModel = true;
             break;
           }
@@ -459,6 +482,7 @@ function createAIOrchestrator({
     projectPool: resolvedProjectPool,
     quotaManager,
     telemetry,
+    modelLifecycle,
     generationAffinity,
   });
 }
