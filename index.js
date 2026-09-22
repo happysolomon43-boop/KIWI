@@ -13051,6 +13051,24 @@ const _otpStore = new Map();
 async function reckoningLockout(req, res, next) {
 if (!req.user) return next();
 
+const baseUrl = String(req.baseUrl || '');
+const pathName = String(req.path || '');
+const method = String(req.method || '').toUpperCase();
+
+// Brain and the exact Settings backing endpoints are hard exemptions from the
+// global Reckoning lock. Evaluate them BEFORE touching Reckoning state so a
+// damaged/stale Reckoning row can never make the recovery surfaces unusable.
+const settingsAllowed =
+  (baseUrl === '/api' && (
+    pathName === '/settings' ||
+    pathName === '/settings/export' ||
+    pathName === '/settings/notifications'
+  )) ||
+  (baseUrl.endsWith('/study') && pathName === '/mode') ||
+  (baseUrl.endsWith('/marketplace') && pathName === '/inventory' && method === 'GET');
+
+if (baseUrl.endsWith('/brain') || settingsAllowed) return next();
+
 try {
   let active = await db.reckoningSessions.findActiveByUser(req.user.id);
   if (active) active = await reconcileActiveReckoning(req.user.id, active);
@@ -13062,28 +13080,6 @@ try {
     ? new Date(active.deferred_until).getTime()
     : 0;
   if (expiryMs > Date.now()) return next();
-
-  const baseUrl = String(req.baseUrl || '');
-  const pathName = String(req.path || '');
-  const method = String(req.method || '').toUpperCase();
-
-  // Brain and Settings remain available during a mandatory Reckoning.
-  // Keep the exact backing endpoints used by the Settings page functional.
-  const settingsAllowed =
-    (baseUrl === '/api' && (
-      pathName === '/settings' ||
-      pathName === '/settings/export' ||
-      pathName === '/settings/notifications'
-    )) ||
-    (baseUrl.endsWith('/study') && pathName === '/mode') ||
-    (baseUrl.endsWith('/marketplace') && pathName === '/inventory' && method === 'GET');
-
-  if (settingsAllowed) return next();
-
-  // The Brain is intentionally usable during lockdown. Its router only exposes
-  // pressure/credential reads plus Reckoning recovery actions; normal study,
-  // card, marketplace and CBT routes remain protected by their own routers.
-  if (baseUrl.endsWith('/brain')) return next();
 
   // Generation of the mandatory exam is allowed, but a normal CBT generation is not.
   if (
@@ -13131,7 +13127,7 @@ try {
   // Once a request has entered a protected feature router, inability to verify
   // lock state must never silently unlock the application.
   return res.status(503).json({
-    error: 'KIWI could not verify Reckoning state. Only Brain, Settings and Reckoning recovery should be used until verification succeeds.',
+    error: 'KIWI could not verify Reckoning state for this protected feature. Brain and Settings remain available while you retry.',
     code: 'RECKONING_STATE_UNAVAILABLE',
     retryable: true,
   });
@@ -21200,6 +21196,44 @@ async function runSchemaMigrations() {
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_penalty_ks_before numeric`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_penalty_ks_after numeric`,
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_claimed_at timestamptz`,
+    // Keep the Reckoning state machine synchronized with every terminal state.
+    // In particular, the sixth-failure circuit breaker must be allowed to persist
+    // failsafe_released or reconciliation will loop forever and lock the account.
+    `ALTER TABLE reckoning_sessions DROP CONSTRAINT IF EXISTS reckoning_sessions_state_machine_ck`,
+    `ALTER TABLE reckoning_sessions
+       ADD CONSTRAINT reckoning_sessions_state_machine_ck
+       CHECK (
+         (
+           status = 'triggered'
+           AND exam_session_id IS NULL
+           AND deferred_until IS NULL
+         )
+         OR (
+           status = 'deferred'
+           AND exam_session_id IS NULL
+           AND deferred_until IS NOT NULL
+           AND deferral_used = true
+         )
+         OR (
+           status = 'in_progress'
+           AND exam_session_id IS NOT NULL
+           AND deferred_until IS NULL
+         )
+         OR (
+           status = 'completed'
+           AND deferred_until IS NULL
+           AND completed_at IS NOT NULL
+           AND score_pct IS NOT NULL
+           AND score_pct >= 70
+         )
+         OR (
+           status = 'failsafe_released'
+           AND exam_session_id IS NULL
+           AND deferred_until IS NULL
+           AND completed_at IS NOT NULL
+           AND failsafe_released_at IS NOT NULL
+         )
+       )`,
     `ALTER TABLE card_states ADD COLUMN IF NOT EXISTS reckoning_penalty_factor numeric NOT NULL DEFAULT 1`,
     `ALTER TABLE card_states ADD COLUMN IF NOT EXISTS reckoning_penalty_applied_at timestamptz`,
     `ALTER TABLE card_states DROP CONSTRAINT IF EXISTS card_states_reckoning_penalty_factor_check`,
