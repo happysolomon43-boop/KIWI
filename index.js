@@ -21068,16 +21068,10 @@ async function runSchemaMigrations() {
     `ALTER TABLE reckoning_sessions ADD COLUMN IF NOT EXISTS failsafe_claimed_at timestamptz`,
     `ALTER TABLE card_states ADD COLUMN IF NOT EXISTS reckoning_penalty_factor numeric NOT NULL DEFAULT 1`,
     `ALTER TABLE card_states ADD COLUMN IF NOT EXISTS reckoning_penalty_applied_at timestamptz`,
-    `DO $ BEGIN
-       IF NOT EXISTS (
-         SELECT 1 FROM pg_constraint
-         WHERE conname = 'card_states_reckoning_penalty_factor_check'
-       ) THEN
-         ALTER TABLE card_states
-           ADD CONSTRAINT card_states_reckoning_penalty_factor_check
-           CHECK (reckoning_penalty_factor >= 0 AND reckoning_penalty_factor <= 1);
-       END IF;
-     END $`,
+    `ALTER TABLE card_states DROP CONSTRAINT IF EXISTS card_states_reckoning_penalty_factor_check`,
+    `ALTER TABLE card_states
+       ADD CONSTRAINT card_states_reckoning_penalty_factor_check
+       CHECK (reckoning_penalty_factor >= 0 AND reckoning_penalty_factor <= 1)`,
 
     // Legacy Bubble tables are unused by the current service. Keep them inaccessible
     // through PostgREST instead of leaving public-schema tables without RLS.
