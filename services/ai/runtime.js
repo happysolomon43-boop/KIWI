@@ -182,6 +182,75 @@ function createAIRuntime({
     return true;
   }
 
+  function retentionPolicy() {
+    return {
+      requestRetentionDays: parseRetentionDays(env.AI_REQUEST_RETENTION_DAYS, 30, 7, 180),
+      qualificationRetentionDays: parseRetentionDays(env.AI_QUALIFICATION_RETENTION_DAYS, 180, 30, 730),
+      rollupRetentionDays: parseRetentionDays(env.AI_ROLLUP_RETENTION_DAYS, 365, 90, 1825),
+    };
+  }
+
+  async function runRetentionCleanup() {
+    if (retentionRunning) return null;
+    retentionRunning = true;
+    operationalState.lastRetentionStartedAt = new Date().toISOString();
+
+    try {
+      const result = await store.cleanupOperationalHistory(retentionPolicy());
+      operationalState.lastRetentionSummary = result;
+      operationalState.lastRetentionError = null;
+
+      if (
+        typeof logger?.log === 'function' &&
+        (result.requestsDeleted > 0 ||
+         result.qualificationsDeleted > 0 ||
+         result.rollupsDeleted > 0)
+      ) {
+        logger.log('[KIWI AI] operational history cleanup complete', result);
+      }
+      return result;
+    } catch (error) {
+      operationalState.lastRetentionError = {
+        message: error?.message || String(error),
+      };
+      if (typeof logger?.warn === 'function') {
+        logger.warn('[KIWI AI] operational history cleanup failed', {
+          error: error?.message || String(error),
+        });
+      }
+      return null;
+    } finally {
+      operationalState.lastRetentionCompletedAt = new Date().toISOString();
+      retentionRunning = false;
+    }
+  }
+
+  function startRetentionScheduler() {
+    if (retentionTimer) return false;
+    const intervalMs = parseCleanupIntervalMs(env.AI_RETENTION_CLEANUP_INTERVAL_MS);
+
+    if (typeof timers.setImmediate === 'function') {
+      timers.setImmediate(() => {
+        runRetentionCleanup().catch(() => null);
+      });
+    }
+
+    if (typeof timers.setInterval === 'function') {
+      retentionTimer = timers.setInterval(() => {
+        runRetentionCleanup().catch(() => null);
+      }, intervalMs);
+      retentionTimer?.unref?.();
+    }
+    return true;
+  }
+
+  function stopRetentionScheduler() {
+    if (!retentionTimer) return false;
+    timers.clearInterval?.(retentionTimer);
+    retentionTimer = null;
+    return true;
+  }
+
   async function refreshSeedCatalogPreservingLifecycle() {
     for (const seed of DEFAULT_MODEL_CATALOG) {
       const existing = catalog.get(seed.id);
