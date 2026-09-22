@@ -220,3 +220,47 @@ test('planning is secret-free and supports generation affinity', () => {
   ]);
   assert.doesNotMatch(serialized, /key-1|key-2/);
 });
+
+
+test('generation-group affinity keeps completion passes at the fallback model ceiling', async () => {
+  const calls = [];
+  let mainRequest = true;
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, apiKey: args.apiKey });
+        if (mainRequest && args.modelId === 'gemini-3.8-flash') {
+          throw new AIError('daily exhausted', {
+            code: AI_ERROR_CODES.RATE_LIMIT_RPD,
+            status: 429,
+            retryable: true,
+            scope: 'MODEL_SLOT',
+          });
+        }
+        return { raw: successRaw(mainRequest ? 'main' : 'completion'), latencyMs: 10, httpStatus: 200 };
+      },
+    },
+  });
+
+  const main = await ai.run(
+    'MAIN_CBT',
+    { content: 'exam' },
+    { generationGroupId: 'exam-123:combined' }
+  );
+  assert.equal(main.requestedModel, 'gemini-3.7-flash');
+
+  mainRequest = false;
+  calls.length = 0;
+
+  const completion = await ai.run(
+    'CBT_COMPLETION',
+    { content: 'repair' },
+    { generationGroupId: 'exam-123:combined' }
+  );
+
+  assert.equal(completion.requestedModel, 'gemini-3.7-flash');
+  assert.equal(calls[0].modelId, 'gemini-3.7-flash');
+  assert.ok(calls.every((call) => call.modelId !== 'gemini-3.8-flash'));
+});
