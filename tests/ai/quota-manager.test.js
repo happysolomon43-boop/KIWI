@@ -126,3 +126,54 @@ test('quota limit extraction walks Gemini error detail objects', () => {
     500
   );
 });
+
+
+test('project/model 403 and 404 availability failures recover after cooldown', async () => {
+  let now = new Date('2026-09-22T20:00:00Z');
+  const manager = createQuotaManager({
+    clock: () => now,
+    modelUnavailableCooldownMs: 60000,
+  });
+
+  await manager.markFailure('p1', 'm1', new AIError('rollout 404', {
+    code: AI_ERROR_CODES.MODEL_NOT_FOUND,
+    status: 404,
+    retryable: true,
+    scope: 'MODEL_SLOT',
+  }));
+  assert.equal(manager.get('p1', 'm1').state, PROJECT_MODEL_STATES.MODEL_UNAVAILABLE);
+  assert.equal(manager.isEligible('p1', 'm1'), false);
+  assert.equal(manager.isEligible('p2', 'm1'), true);
+
+  await manager.markFailure('p1', 'm2', new AIError('permission 403', {
+    code: AI_ERROR_CODES.ACCESS_DENIED,
+    status: 403,
+    retryable: true,
+    scope: 'MODEL_SLOT',
+  }));
+  assert.equal(manager.get('p1', 'm2').state, PROJECT_MODEL_STATES.MODEL_UNAVAILABLE);
+  assert.equal(manager.isEligible('p1', 'm2'), false);
+
+  now = new Date('2026-09-22T20:01:01Z');
+  assert.equal(manager.isEligible('p1', 'm1'), true);
+  assert.equal(manager.isEligible('p1', 'm2'), true);
+});
+
+test('true credential failure remains distinct from temporary model availability', async () => {
+  let now = new Date('2026-09-22T20:00:00Z');
+  const manager = createQuotaManager({
+    clock: () => now,
+    modelUnavailableCooldownMs: 1000,
+  });
+
+  await manager.markFailure('p1', 'm1', new AIError('bad key', {
+    code: AI_ERROR_CODES.AUTH,
+    status: 401,
+    retryable: false,
+    scope: 'SLOT',
+  }));
+
+  assert.equal(manager.get('p1', 'm1').state, PROJECT_MODEL_STATES.KEY_INVALID);
+  now = new Date('2026-09-23T20:00:00Z');
+  assert.equal(manager.isEligible('p1', 'm1'), false);
+});
