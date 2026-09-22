@@ -47,7 +47,7 @@ test('VVIP emergency pin overrides newest-model starting point without removing 
 
   assert.deepEqual(
     router.resolveCandidates('MAIN_CBT').map((entry) => entry.modelId),
-    ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash']
+    ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash']
   );
 });
 
