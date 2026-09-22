@@ -15582,9 +15582,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           var CLOSED_STATUSES = ['completed', 'missed', 'partially_completed', 'archived'];
           var isClosedBubble = CLOSED_STATUSES.indexOf(detail.status) !== -1;
 
+          // Bubble detail is the core payload. Trajectory/contract/history/clusters
+          // are enhancements and must not make the entire panel unusable if one
+          // auxiliary endpoint is temporarily unavailable.
           var results = await Promise.all([
-            api.getBubbleTrajectory(bubbleId),
-            isClosedBubble ? Promise.resolve({}) : api.getDailyContract(bubbleId),
+            api.getBubbleTrajectory(bubbleId).catch(function() { return {}; }),
+            isClosedBubble ? Promise.resolve({}) : api.getDailyContract(bubbleId).catch(function() { return {}; }),
             api.getBubbleHistory(bubbleId).catch(function() { return []; }),
             api.getBubbleClusters(bubbleId).catch(function() { return []; }),
           ]);
@@ -16633,7 +16636,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 return '<div class="trouble-card" data-card-id="' + escapeHTML(card.id) + '" data-subject-id="' + escapeHTML(card.subjectId || card.subject_id || "") + '">' +
                   '<span class="tc-state" style="background:' + (card.state === "STUCK" ? "var(--red-dim)" : card.state === "GHOST" ? "var(--purple-dim)" : card.state === "DANGEROUS" ? "var(--red-dim)" : card.state === "FRAGILE" ? "rgba(74,158,218,0.15)" : card.state === "AVOIDED" ? "var(--amber-dim)" : "var(--border)") + ';color:' + (card.state === "STUCK" ? "var(--red)" : card.state === "GHOST" ? "var(--purple)" : card.state === "DANGEROUS" ? "var(--red)" : card.state === "FRAGILE" ? "var(--blue-bright)" : card.state === "AVOIDED" ? "var(--amber)" : "var(--text-3)") + ';">' + escapeHTML(card.state || "FLAGGED") + '</span>' +
                   '<span class="tc-front">' + escapeHTML((card.front || "").substring(0,60)) + ((card.front || "").length > 60 ? "..." : "") + '</span>' +
-                  '<span class="tc-action">Study &rarr;</span>' +
+                  '<span class="tc-action">' + (_reckoningGlobalLockActive() ? 'Reckoning &rarr;' : 'Study &rarr;') + '</span>' +
                   '</div>';
               }).join("") + '</div>'
           }
@@ -16851,32 +16854,62 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             }
           })();
 
-          // Wire trouble card clicks -> mini session
+          // Wire trouble card clicks -> exact-card focused session.
+          // During mandatory Reckoning, Study is intentionally locked; route the
+          // user to the required recovery surface instead of presenting a dead action.
           document.querySelectorAll(".trouble-card").forEach(function(card) {
             card.addEventListener("click", async function() {
               var subjectId = card.dataset.subjectId;
-              if (!subjectId) return;
+              var cardId = card.dataset.cardId;
+              if (!subjectId || !cardId) {
+                showToast("This card is missing study metadata. Refresh and try again.", "error");
+                return;
+              }
+
+              if (_reckoningGlobalLockActive()) {
+                showReckoningOverlay(AppState.reckoning, { force: true, mandatory: true, forceLockoutOverlay: true });
+                return;
+              }
+
               try {
                 showToast("Starting focused review...", "info");
-                var session = await api.startStudySession(subjectId, {
-                  cardIds: [card.dataset.cardId]
+                var session = await api.startStudySession(subjectId, { cardIds: [cardId] });
+                var queue = (session.cards || []).map(function(c) {
+                  return Object.assign({}, c, {
+                    front: c.front || c.front_content || "",
+                    back: c.back || c.back_content || ""
+                  });
                 });
-                var tSessionId = session.sessionId || (session.session && session.session.id) || null;
+                if (!session.sessionId || queue.length === 0) {
+                  throw new Error("KIWI could not build a focused session for this card.");
+                }
+                if (!queue.some(function(c) { return String(c.id) === String(cardId); })) {
+                  throw new Error("The requested card was not included in the focused session.");
+                }
+
                 AppState.tempStudy = {
-                  sessionId: tSessionId,
-                  queue: (session.cards || []).map(function(c) {
-                    return Object.assign({}, c, { front: c.front || c.front_content || "", back: c.back || c.back_content || "" });
-                  }),
-                  currentIndex: 0, flipped: false, startTime: getServerSessionStart(session), cardShownAt: Date.now(),
-                  reviews: [], cardsReviewed: 0, seedStatus: "alive", seedHealth: 0, // FIX P9.4-01
-                  aiSummary: null, stageTransitions: [], focusData: { tabAwayCount: 0, idleSeconds: 0 },
+                  sessionId: session.sessionId,
+                  queue: queue,
+                  currentIndex: 0,
+                  flipped: false,
+                  startTime: getServerSessionStart(session),
+                  cardShownAt: Date.now(),
+                  reviews: [],
+                  cardsReviewed: 0,
+                  seedStatus: "alive",
+                  seedHealth: 0,
+                  aiSummary: null,
+                  stageTransitions: [],
+                  focusData: { tabAwayCount: 0, idleSeconds: 0 },
                   isReturnSession: session.is_first_return_session || false,
                   subjectId: subjectId,
                   _cardHistory: [],
                 };
                 startFocusTracking();
                 navigateTo("study");
-              } catch(err) { showToast("Failed to start mini-session", "error"); }
+              } catch(err) {
+                showToast(err.message || "Failed to start focused review", "error", 6000);
+              }
             });
           });
 
