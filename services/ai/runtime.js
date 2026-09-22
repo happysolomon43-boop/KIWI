@@ -174,9 +174,20 @@ function createAIRuntime({
     }
 
     for (const modelId of denylist) {
-      if (catalog.get(modelId)) {
-        await modelLifecycle.suspend(modelId, 'manual AI_MODEL_DENYLIST');
+      const current = catalog.get(modelId);
+      if (!current) continue;
+
+      // Do not overwrite an automatic circuit-breaker suspension with a manual
+      // reason, otherwise removing the denylist could accidentally re-enable
+      // a model that was already unhealthy.
+      if (
+        current.status === 'SUSPENDED' &&
+        current.metadata?.suspendedReason !== 'manual AI_MODEL_DENYLIST'
+      ) {
+        continue;
       }
+
+      await modelLifecycle.suspend(modelId, 'manual AI_MODEL_DENYLIST');
     }
   }
 
