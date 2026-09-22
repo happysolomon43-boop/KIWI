@@ -179,6 +179,28 @@ function createModelLifecycle({
     return next;
   }
 
+  async function retryQualification(modelId, reason = 'scheduled requalification') {
+    const current = catalog.get(modelId);
+    if (!current || current.status !== MODEL_STATUS.SUSPENDED) return current;
+
+    const metadata = { ...(current.metadata || {}) };
+    delete metadata.suspendedReason;
+    delete metadata.suspendedAt;
+    delete metadata.preSuspendStatus;
+    metadata.requalificationRequestedAt = new Date().toISOString();
+    metadata.requalificationReason = reason;
+
+    const next = catalog.upsert({
+      ...current,
+      status: MODEL_STATUS.DISCOVERED,
+      suspendedAt: null,
+      metadata,
+    });
+    failures.delete(modelId);
+    await persist(next);
+    return next;
+  }
+
   function pruneFailures(modelId, now) {
     const recent = (failures.get(modelId) || []).filter(
       (entry) => now - entry.at <= failureWindowMs
@@ -245,6 +267,7 @@ function createModelLifecycle({
     deny,
     suspend,
     resume,
+    retryQualification,
     recordSuccess,
     recordFailure,
     reportValidationFailure,
