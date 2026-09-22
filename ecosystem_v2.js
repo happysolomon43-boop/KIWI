@@ -481,8 +481,9 @@ function createEcosystemV2(options) {
     const consistency = round2((activeDays / 7) * 100);
 
     const pressureResult = await client.query(
-      "SELECT AVG(LEAST(100, GREATEST(0, COALESCE(pressure_score,0))))::numeric AS score " +
-      "FROM brain_pressure WHERE user_id = $1",
+      "SELECT AVG(LEAST(100, GREATEST(0, COALESCE(bp.pressure_score,0))))::numeric AS score " +
+      "FROM brain_pressure bp JOIN subjects s ON s.id = bp.subject_id AND s.user_id = bp.user_id " +
+      "WHERE bp.user_id = $1",
       [userId]
     );
     const averagePressure = pressureResult.rows[0].score == null
