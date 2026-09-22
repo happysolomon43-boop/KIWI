@@ -253,7 +253,7 @@
 
         if (typeof showCustomConfirm === 'function') {
           showCustomConfirm('Delete exam goal?', message, performDelete);
-        } else {
+        } else if (window.confirm(message)) {
           performDelete();
         }
       });
@@ -311,6 +311,7 @@
               <div>
                 <div class="section-title">Active goals</div>
                 <div class="section-sub">${active.length ? active.length + ' active exam goal' + (active.length === 1 ? '' : 's') : 'No active exam goal yet.'}</div>
+                ${active.length && !gate.demo ? '<div class="bubble-swipe-hint">Swipe left on a goal to delete it.</div>' : ''}
               </div>
             </div>
             <div class="bubble-hub-grid">
