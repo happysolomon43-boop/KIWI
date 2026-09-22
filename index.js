@@ -7019,8 +7019,9 @@ function computeRequiredKSPerDay(goal, currentKS, now = new Date()) {
   if (!goal.exam_date) return 0;
   const examDate      = new Date(goal.exam_date);
   const daysRemaining = Math.max(1, Math.ceil((examDate - now) / 86400000));
-  const targetKS      = goal.target_ks || 100;
-  const ksNeeded      = Math.max(0, targetKS - currentKS);
+  const targetKS      = Number(goal.target_ks) || 100;
+  const current       = Number(currentKS) || 0;
+  const ksNeeded      = Math.max(0, targetKS - current);
   return parseFloat((ksNeeded / daysRemaining).toFixed(3));
 }
 
@@ -7106,14 +7107,16 @@ function computeTrajectoryStatus(goal, currentKS, now = new Date()) {
 
 function computeProjections(goal, currentKS, velocity, now = new Date()) {
   if (!goal.exam_date) return { bestCase: null, currentPace: null, minimumViable: null };
-  const targetKS      = goal.target_ks || 100;
-  const ksNeeded      = Math.max(0, targetKS - currentKS);
+  const targetKS      = Number(goal.target_ks) || 100;
+  const current       = Number(currentKS) || 0;
+  const pace          = Number(velocity) || 0;
+  const ksNeeded      = Math.max(0, targetKS - current);
   const examDate      = new Date(goal.exam_date);
   const daysRemaining = Math.max(1, Math.ceil((examDate - now) / 86400000));
   const minViableRate = ksNeeded / daysRemaining; // minimum pace to hit deadline
-  const bestCaseRate  = velocity * 1.15; // 115% of current pace [DESIGN: §3.3 "100% daily contract"]
+  const bestCaseRate  = pace * 1.15; // 115% of current pace [DESIGN: §3.3 "100% daily contract"]
   const bestCaseDays  = bestCaseRate > 0 ? Math.ceil(ksNeeded / bestCaseRate) : null;
-  const currentDays   = velocity > 0 ? Math.ceil(ksNeeded / velocity) : null;
+  const currentDays   = pace > 0 ? Math.ceil(ksNeeded / pace) : null;
   const addDays = (d, base) => {
     const r = new Date(base); r.setDate(r.getDate() + d); return r;
   };
@@ -7162,8 +7165,11 @@ async function generateDailyContract(userId, goalId) {
     }).catch((e) => console.error("[KIWI] silent catch:", e.message));
   }
 
-  const currentKS = goal.current_ks || 0;
-  const required  = computeRequiredKSPerDay(goal, currentKS);
+  // PostgreSQL NUMERIC values are returned by pg as strings. Normalize them
+  // once at the Bubble boundary so arithmetic never falls into string
+  // concatenation (e.g. "31" + 8.6) before calling toFixed().
+  const currentKS = Number(goal.current_ks) || 0;
+  const required  = Number(computeRequiredKSPerDay(goal, currentKS)) || 0;
   const phase     = goal.phase || BUBBLE_PHASES.SEEDING;
 
   const allStatesDocs  = await db.cardStates.findByUser(userId);
@@ -13067,11 +13073,11 @@ const settingsAllowed =
   (baseUrl.endsWith('/study') && pathName === '/mode') ||
   (baseUrl.endsWith('/marketplace') && pathName === '/inventory' && method === 'GET');
 
-const brainReadAllowed =
+const brainSurfaceAllowed =
   baseUrl.endsWith('/brain') ||
-  (baseUrl.endsWith('/bubbles') && method === 'GET');
+  (baseUrl.endsWith('/bubbles') && (method === 'GET' || method === 'DELETE'));
 
-if (brainReadAllowed || settingsAllowed) return next();
+if (brainSurfaceAllowed || settingsAllowed) return next();
 
 try {
   let active = await db.reckoningSessions.findActiveByUser(req.user.id);
@@ -17868,15 +17874,95 @@ bubbleRouter.patch('/:id', async (req, res) => {
   }
 });
 
-// ── DELETE /api/bubbles/:id — soft archive [DESIGN: §14] ─────────────────
-// ⚠ CORRECTED from v1.0: DELETE not POST /archive [DESIGN: §14]
+// ── DELETE /api/bubbles/:id — archive by default; permanent when requested ──
 bubbleRouter.delete('/:id', async (req, res) => {
   try {
-    const result = await closeMasteryGoal(req.user.id, req.params.id, 'archived');
-    if (!result) return res.status(404).json({ error: 'Bubble not found' });
-    res.json(result);
+    const permanent =
+      String(req.query?.permanent || '').toLowerCase() === 'true' ||
+      String(req.query?.permanent || '') === '1';
+
+    if (!permanent) {
+      const result = await closeMasteryGoal(req.user.id, req.params.id, 'archived');
+      if (!result) return res.status(404).json({ error: 'Bubble not found' });
+      return res.json(result);
+    }
+
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+
+    const affectedCardIds = Array.isArray(goal.card_ids) ? goal.card_ids.filter(Boolean) : [];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM goal_history WHERE goal_id = $1', [goal.id]);
+      await client.query('DELETE FROM concept_clusters WHERE goal_id = $1', [goal.id]);
+      await client.query(
+        'DELETE FROM bubble_sessions WHERE bubble_id = $1 AND user_id = $2',
+        [goal.id, req.user.id]
+      );
+      const deleted = await client.query(
+        'DELETE FROM mastery_goals WHERE id = $1 AND user_id = $2 RETURNING id',
+        [goal.id, req.user.id]
+      );
+      if (!deleted.rows[0]) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Bubble not found' });
+      }
+
+      if (affectedCardIds.length > 0) {
+        await client.query(
+          `WITH affected(card_id) AS (
+             SELECT UNNEST($2::text[])
+           ),
+           remaining AS (
+             SELECT
+               a.card_id,
+               COALESCE(
+                 jsonb_agg(mg.id ORDER BY mg.created_at) FILTER (WHERE mg.id IS NOT NULL),
+                 '[]'::jsonb
+               ) AS bubble_ids,
+               COUNT(mg.id) > 1 AS cross_bubble
+             FROM affected a
+             LEFT JOIN mastery_goals mg
+               ON mg.user_id = $1
+              AND mg.status = 'active'
+              AND COALESCE(mg.card_ids, '[]'::jsonb) ? a.card_id
+             GROUP BY a.card_id
+           )
+           UPDATE card_states cs
+              SET bubble_ids = remaining.bubble_ids,
+                  cross_bubble = remaining.cross_bubble,
+                  updated_at = NOW()
+             FROM remaining
+            WHERE cs.user_id = $1
+              AND cs.card_id = remaining.card_id`,
+          [req.user.id, affectedCardIds]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (deleteErr) {
+      await client.query('ROLLBACK').catch(() => null);
+      throw deleteErr;
+    } finally {
+      client.release();
+    }
+
+    // Refresh pressure after deletion so Bubble-derived pressure sources do not
+    // linger. This cannot remove an already-created Reckoning session.
+    if (goal.subject_id) {
+      await calculateSubjectPressure(req.user.id, goal.subject_id)
+        .catch((e) => console.error('[KIWI] Bubble delete pressure refresh failed:', e.message));
+    }
+
+    return res.json({
+      deleted: true,
+      id: goal.id,
+      cards_preserved: true,
+      study_history_preserved: true,
+    });
   } catch (e) {
-    res.status(500).json({ error: 'Failed to archive bubble', details: e.message });
+    res.status(500).json({ error: 'Failed to delete bubble', details: e.message });
   }
 });
 
@@ -17888,10 +17974,10 @@ bubbleRouter.get('/:id/trajectory', async (req, res) => {
     const now          = new Date();
     const examDate     = goal.exam_date ? new Date(goal.exam_date) : null;
     const daysRemaining = examDate ? Math.max(0, Math.ceil((examDate - now) / 86400000)) : 0;
-    const currentKS    = goal.current_ks || 0;
-    const velocity     = computeVelocityFromGoal(goal);
-    const required     = goal.required_ks_per_day || 0;
-    const targetKS     = goal.target_ks || 100;
+    const currentKS    = Number(goal.current_ks) || 0;
+    const velocity     = Number(computeVelocityFromGoal(goal)) || 0;
+    const required     = Number(goal.required_ks_per_day) || 0;
+    const targetKS     = Number(goal.target_ks) || 100;
     const projections  = computeProjections(goal, currentKS, velocity, now);
     res.json({
       days_remaining:         daysRemaining,
