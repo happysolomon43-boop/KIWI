@@ -226,3 +226,192 @@ test('auto promotion can be disabled while discovery stays active', async () => 
   assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.DISCOVERED);
   assert.ok(summary.skipped.some((item) => item.reason === 'auto promotion disabled'));
 });
+
+
+test('repeated discovery preserves the original discoveredAt timestamp', async () => {
+  const catalog = createModelCatalog();
+  const original = '2026-09-20T10:00:00.000Z';
+  catalog.upsert({
+    id: 'gemini-3.9-flash',
+    family: MODEL_FAMILIES.FLASH,
+    channel: MODEL_CHANNELS.STABLE,
+    status: MODEL_STATUS.DISCOVERED,
+    rank: 3009000,
+    supportedThinking: [],
+    capabilities: ['generateContent'],
+    inputTokenLimit: 1048576,
+    outputTokenLimit: 65536,
+    metadata: {
+      thinkingAdvertised: true,
+      discoveredAt: original,
+    },
+  });
+
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel() {}, async loadCatalogModels() { return []; } },
+    logger: { warn() {} },
+  });
+
+  const discovery = createModelDiscoveryManager({
+    transport: {
+      async listModels() {
+        return [{
+          baseModelId: 'gemini-3.9-flash',
+          inputTokenLimit: 1048576,
+          outputTokenLimit: 65536,
+          thinking: true,
+          supportedGenerationMethods: ['generateContent'],
+        }];
+      },
+    },
+    projectPool: {
+      orderedSlots() { return [{ id: 'p1', index: 1, apiKey: 'k1', enabled: true }]; },
+      snapshot() { return [{ id: 'p1', index: 1, envName: 'K1', enabled: true }]; },
+      disable() {},
+    },
+    catalog,
+    lifecycle,
+    qualifier: { async qualify() { return { status: 'INCONCLUSIVE' }; } },
+    logger: { log() {}, warn() {} },
+    env: {},
+    sampleSize: 1,
+  });
+
+  await discovery.discoverOnce();
+  assert.equal(catalog.get('gemini-3.9-flash').metadata.discoveredAt, original);
+  assert.ok(catalog.get('gemini-3.9-flash').metadata.lastSeenAt);
+});
+
+test('auto-promoted suspended models are requalified after the recovery cooldown', async () => {
+  const catalog = createModelCatalog();
+  catalog.upsert({
+    id: 'gemini-3.9-flash',
+    family: MODEL_FAMILIES.FLASH,
+    channel: MODEL_CHANNELS.STABLE,
+    status: MODEL_STATUS.SUSPENDED,
+    rank: 3009000,
+    supportedThinking: ['LOW', 'MEDIUM', 'HIGH'],
+    capabilities: ['generateContent', 'thinking', 'vision', 'structuredOutput', 'longOutput'],
+    inputTokenLimit: 1048576,
+    outputTokenLimit: 65536,
+    suspendedAt: new Date('2026-09-20T00:00:00Z'),
+    metadata: {
+      autoPromoted: true,
+      thinkingAdvertised: true,
+      discoveredAt: '2026-09-19T00:00:00Z',
+      suspendedAt: '2026-09-20T00:00:00Z',
+      suspendedReason: 'automatic rollback after TIMEOUT',
+      preSuspendStatus: MODEL_STATUS.APPROVED,
+    },
+  });
+
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel() {}, async loadCatalogModels() { return []; } },
+    logger: { warn() {} },
+  });
+
+  let qualifications = 0;
+  const discovery = createModelDiscoveryManager({
+    transport: {
+      async listModels() {
+        return [{
+          baseModelId: 'gemini-3.9-flash',
+          inputTokenLimit: 1048576,
+          outputTokenLimit: 65536,
+          thinking: true,
+          supportedGenerationMethods: ['generateContent'],
+        }];
+      },
+    },
+    projectPool: {
+      orderedSlots() { return [{ id: 'p1', index: 1, apiKey: 'k1', enabled: true }]; },
+      snapshot() { return [{ id: 'p1', index: 1, envName: 'K1', enabled: true }]; },
+      disable() {},
+    },
+    catalog,
+    lifecycle,
+    qualifier: {
+      async qualify(model) {
+        qualifications++;
+        await lifecycle.approve(model.id, {
+          supportedThinking: ['LOW', 'MEDIUM', 'HIGH'],
+          capabilities: ['generateContent', 'thinking', 'vision', 'structuredOutput', 'longOutput'],
+          qualification: { version: 1 },
+        });
+        return { status: 'PASSED' };
+      },
+    },
+    logger: { log() {}, warn() {} },
+    env: { AI_MODEL_REQUALIFY_AFTER_MS: String(30 * 60 * 1000) },
+    sampleSize: 1,
+  });
+
+  const summary = await discovery.discoverOnce();
+
+  assert.equal(qualifications, 1);
+  assert.deepEqual(summary.requalified, ['gemini-3.9-flash']);
+  assert.deepEqual(summary.promoted, ['gemini-3.9-flash']);
+  assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.APPROVED);
+});
+
+test('manual denylist suspensions are never auto-requalified', async () => {
+  const catalog = createModelCatalog();
+  catalog.upsert({
+    id: 'gemini-3.9-flash',
+    family: MODEL_FAMILIES.FLASH,
+    channel: MODEL_CHANNELS.STABLE,
+    status: MODEL_STATUS.SUSPENDED,
+    rank: 3009000,
+    supportedThinking: ['LOW', 'MEDIUM', 'HIGH'],
+    capabilities: ['generateContent', 'thinking', 'vision', 'structuredOutput', 'longOutput'],
+    inputTokenLimit: 1048576,
+    outputTokenLimit: 65536,
+    suspendedAt: new Date('2026-09-20T00:00:00Z'),
+    metadata: {
+      autoPromoted: true,
+      thinkingAdvertised: true,
+      suspendedAt: '2026-09-20T00:00:00Z',
+      suspendedReason: 'manual AI_MODEL_DENYLIST',
+    },
+  });
+
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel() {}, async loadCatalogModels() { return []; } },
+    logger: { warn() {} },
+  });
+
+  let qualifications = 0;
+  const discovery = createModelDiscoveryManager({
+    transport: {
+      async listModels() {
+        return [{
+          baseModelId: 'gemini-3.9-flash',
+          inputTokenLimit: 1048576,
+          outputTokenLimit: 65536,
+          thinking: true,
+          supportedGenerationMethods: ['generateContent'],
+        }];
+      },
+    },
+    projectPool: {
+      orderedSlots() { return [{ id: 'p1', index: 1, apiKey: 'k1', enabled: true }]; },
+      snapshot() { return [{ id: 'p1', index: 1, envName: 'K1', enabled: true }]; },
+      disable() {},
+    },
+    catalog,
+    lifecycle,
+    qualifier: { async qualify() { qualifications++; return { status: 'PASSED' }; } },
+    logger: { log() {}, warn() {} },
+    env: { AI_MODEL_REQUALIFY_AFTER_MS: String(30 * 60 * 1000) },
+    sampleSize: 1,
+  });
+
+  const summary = await discovery.discoverOnce();
+
+  assert.equal(qualifications, 0);
+  assert.deepEqual(summary.requalified, []);
+  assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.SUSPENDED);
+});
