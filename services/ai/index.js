@@ -9,6 +9,7 @@ const { normalizeGeminiResponse } = require('./response-normalizer');
 const { createQuotaManager } = require('./quota-manager');
 const { createTelemetry } = require('./telemetry');
 const { createPostgresAIStore } = require('./postgres-store');
+const { createAIRuntime } = require('./runtime');
 
 module.exports = {
   createAIOrchestrator,
@@ -20,4 +21,5 @@ module.exports = {
   createQuotaManager,
   createTelemetry,
   createPostgresAIStore,
+  createAIRuntime,
 };
