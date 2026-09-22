@@ -103,8 +103,14 @@ function createModelQualifier({
         // retrying it through another account cannot make it valid.
         if (error?.code === AI_ERROR_CODES.BAD_REQUEST) throw error;
 
-        // Model-wide absence should also stop slot rotation.
-        if (error?.code === AI_ERROR_CODES.MODEL_NOT_FOUND) throw error;
+        // Model rollout/access can differ across independent projects. Keep
+        // trying the same model on the remaining project slots for 403/404.
+        if (
+          error?.code === AI_ERROR_CODES.MODEL_NOT_FOUND ||
+          error?.code === AI_ERROR_CODES.ACCESS_DENIED
+        ) {
+          continue;
+        }
 
         if (!error?.retryable && error?.code !== AI_ERROR_CODES.AUTH) {
           throw error;
@@ -199,9 +205,8 @@ function createModelQualifier({
         });
       }
 
-      // Probe 2: determine whether MINIMAL exists. If it does, current Gemini
-      // families expose the contiguous MINIMAL/LOW/MEDIUM/HIGH set.
-      let supportedThinking;
+      // Probe 2: determine whether MINIMAL exists.
+      let supportsMinimal = false;
       probeCount += 1;
       try {
         await probeWithFallback(model.id, {
@@ -211,11 +216,11 @@ function createModelQualifier({
             thinkingConfig: { thinkingLevel: 'minimal' },
           },
         });
-        supportedThinking = ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'];
+        supportsMinimal = true;
       } catch (error) {
         if (error?.code !== AI_ERROR_CODES.BAD_REQUEST) throw error;
 
-        // Probe 3: models such as 3.8/3.7 reject MINIMAL but accept LOW.
+        // Models such as 3.8/3.7 reject MINIMAL but must accept LOW.
         probeCount += 1;
         await probeWithFallback(model.id, {
           content: 'Reply with exactly OK.',
@@ -224,8 +229,23 @@ function createModelQualifier({
             thinkingConfig: { thinkingLevel: 'low' },
           },
         });
-        supportedThinking = ['LOW', 'MEDIUM', 'HIGH'];
       }
+
+      // Future-model promotion must verify MEDIUM explicitly because many KIWI
+      // VIP tasks request MEDIUM reasoning. Do not infer support merely from
+      // LOW + HIGH being accepted.
+      probeCount += 1;
+      await probeWithFallback(model.id, {
+        content: 'Reply with exactly OK.',
+        generationConfig: {
+          maxOutputTokens: 128,
+          thinkingConfig: { thinkingLevel: 'medium' },
+        },
+      });
+
+      const supportedThinking = supportsMinimal
+        ? ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
+        : ['LOW', 'MEDIUM', 'HIGH'];
 
       const capabilities = qualificationCapabilities(model);
       const approved = await lifecycle.approve(model.id, {
@@ -273,6 +293,8 @@ function createModelQualifier({
       const transient = Boolean(
         error?.retryable ||
         [
+          AI_ERROR_CODES.MODEL_NOT_FOUND,
+          AI_ERROR_CODES.ACCESS_DENIED,
           AI_ERROR_CODES.RATE_LIMIT_RPD,
           AI_ERROR_CODES.RATE_LIMIT_RPM,
           AI_ERROR_CODES.RATE_LIMIT_TPM,
