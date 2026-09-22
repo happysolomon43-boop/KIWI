@@ -28,7 +28,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const cron = require('node-cron');
-// GoogleGenerativeAI SDK replaced with CEE-style raw fetch — see geminiModel below
+// Gemini provider transport is centralized in services/ai/gemini-transport.js
 // ── PostgreSQL (Supabase) — replaces Firebase Admin SDK ──────────────────────
 // Connection via DATABASE_URL env var; ssl required for Supabase
 const { Pool } = require('pg');
