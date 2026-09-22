@@ -17969,6 +17969,40 @@ bubbleRouter.delete('/:id', async (req, res) => {
         );
       }
 
+      // Recompute shared-card lists on every remaining active goal so deleting
+      // one overlapping goal cannot leave stale cross_bubble_card_ids behind.
+      await client.query(
+        `WITH active_card_counts AS (
+           SELECT elem.card_id, COUNT(*) AS goal_count
+           FROM mastery_goals mg
+           CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(mg.card_ids, '[]'::jsonb)) AS elem(card_id)
+           WHERE mg.user_id = $1 AND mg.status = 'active'
+           GROUP BY elem.card_id
+         ),
+         shared_by_goal AS (
+           SELECT
+             mg.id AS goal_id,
+             COALESCE(
+               jsonb_agg(elem.card_id ORDER BY elem.card_id)
+                 FILTER (WHERE counts.goal_count > 1),
+               '[]'::jsonb
+             ) AS shared_ids
+           FROM mastery_goals mg
+           LEFT JOIN LATERAL jsonb_array_elements_text(COALESCE(mg.card_ids, '[]'::jsonb)) AS elem(card_id)
+             ON TRUE
+           LEFT JOIN active_card_counts counts ON counts.card_id = elem.card_id
+           WHERE mg.user_id = $1 AND mg.status = 'active'
+           GROUP BY mg.id
+         )
+         UPDATE mastery_goals mg
+            SET cross_bubble_card_ids = shared_by_goal.shared_ids,
+                updated_at = NOW()
+           FROM shared_by_goal
+          WHERE mg.id = shared_by_goal.goal_id
+            AND mg.user_id = $1`,
+        [req.user.id]
+      );
+
       await client.query('COMMIT');
     } catch (deleteErr) {
       await client.query('ROLLBACK').catch(() => null);
