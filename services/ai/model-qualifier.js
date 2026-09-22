@@ -95,6 +95,9 @@ function createModelQualifier({
       } catch (error) {
         lastError = error;
         await quotaManager?.markFailure?.(slot.id, modelId, error).catch(() => null);
+        if (error?.code === AI_ERROR_CODES.AUTH) {
+          projectPool.disable(slot.id, 'AUTH');
+        }
 
         // 400 means the probe configuration is unsupported by the model itself;
         // retrying it through another account cannot make it valid.
