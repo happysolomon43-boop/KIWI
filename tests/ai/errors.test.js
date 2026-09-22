@@ -19,24 +19,42 @@ test('classifies bad requests as non-retryable request failures', () => {
   assert.equal(error.scope, 'REQUEST');
 });
 
-test('classifies auth failures as slot-scoped', () => {
-  const error = classifyGeminiHttpError({
+test('classifies true credential failures as slot-scoped', () => {
+  const unauthorized = classifyGeminiHttpError({
+    status: 401,
+    body: { error: { message: 'Unauthenticated' } },
+  });
+  const invalidKey = classifyGeminiHttpError({
     status: 403,
-    body: { error: { message: 'API key not authorized' } },
+    body: { error: { message: 'API key not valid. Please pass a valid API key.' } },
   });
 
-  assert.equal(error.code, AI_ERROR_CODES.AUTH);
-  assert.equal(error.scope, 'SLOT');
+  assert.equal(unauthorized.code, AI_ERROR_CODES.AUTH);
+  assert.equal(unauthorized.scope, 'SLOT');
+  assert.equal(invalidKey.code, AI_ERROR_CODES.AUTH);
+  assert.equal(invalidKey.scope, 'SLOT');
 });
 
-test('classifies model-not-found as model-scoped', () => {
+test('classifies project/model permission failures separately from bad credentials', () => {
+  const error = classifyGeminiHttpError({
+    status: 403,
+    body: { error: { message: 'Permission denied for this model in this project' } },
+  });
+
+  assert.equal(error.code, AI_ERROR_CODES.ACCESS_DENIED);
+  assert.equal(error.scope, 'MODEL_SLOT');
+  assert.equal(error.retryable, true);
+});
+
+test('classifies model-not-found as project/model availability during rollout', () => {
   const error = classifyGeminiHttpError({
     status: 404,
     body: { error: { message: 'Model not found' } },
   });
 
   assert.equal(error.code, AI_ERROR_CODES.MODEL_NOT_FOUND);
-  assert.equal(error.scope, 'MODEL');
+  assert.equal(error.scope, 'MODEL_SLOT');
+  assert.equal(error.retryable, true);
 });
 
 test('distinguishes Gemini daily, request-per-minute and token-per-minute quota errors', () => {
