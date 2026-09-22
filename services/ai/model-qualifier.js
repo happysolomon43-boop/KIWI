@@ -178,7 +178,7 @@ function createModelQualifier({
           }],
         },
         generationConfig: {
-          maxOutputTokens: 256,
+          maxOutputTokens: 1024,
           responseMimeType: 'application/json',
           thinkingConfig: { thinkingLevel: 'high' },
         },
@@ -207,7 +207,7 @@ function createModelQualifier({
         await probeWithFallback(model.id, {
           content: 'Reply with exactly OK.',
           generationConfig: {
-            maxOutputTokens: 32,
+            maxOutputTokens: 128,
             thinkingConfig: { thinkingLevel: 'minimal' },
           },
         });
@@ -220,7 +220,7 @@ function createModelQualifier({
         await probeWithFallback(model.id, {
           content: 'Reply with exactly OK.',
           generationConfig: {
-            maxOutputTokens: 32,
+            maxOutputTokens: 128,
             thinkingConfig: { thinkingLevel: 'low' },
           },
         });
