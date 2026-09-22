@@ -247,7 +247,7 @@ test('generation-group affinity keeps completion passes at the fallback model ce
   const main = await ai.run(
     'MAIN_CBT',
     { content: 'exam' },
-    { generationGroupId: 'exam-123:combined' }
+    { generationGroupId: 'exam-123' }
   );
   assert.equal(main.requestedModel, 'gemini-3.7-flash');
 
@@ -257,10 +257,44 @@ test('generation-group affinity keeps completion passes at the fallback model ce
   const completion = await ai.run(
     'CBT_COMPLETION',
     { content: 'repair' },
-    { generationGroupId: 'exam-123:combined' }
+    { generationGroupId: 'exam-123' }
   );
 
   assert.equal(completion.requestedModel, 'gemini-3.7-flash');
   assert.equal(calls[0].modelId, 'gemini-3.7-flash');
   assert.ok(calls.every((call) => call.modelId !== 'gemini-3.8-flash'));
+});
+
+
+test('parallel workflow successes cannot upgrade affinity after a fallback', async () => {
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        return { raw: successRaw(args.modelId), latencyMs: 1, httpStatus: 200 };
+      },
+    },
+  });
+
+  const task = ai.router.getTask('MAIN_CBT');
+  // Simulate two split-generation branches finishing out of order:
+  // one branch falls back to 3.7, then a slower 3.8 branch succeeds.
+  ai.generationAffinity.set('ASSESSMENT_GENERATION::exam-parallel', {
+    modelId: 'gemini-3.7-flash',
+    updatedAt: Date.now(),
+  });
+
+  const result = await ai.run(
+    'CBT_COMPLETION',
+    { content: 'repair' },
+    { generationGroupId: 'exam-parallel' }
+  );
+
+  assert.equal(task.affinityGroup, 'ASSESSMENT_GENERATION');
+  assert.equal(result.requestedModel, 'gemini-3.7-flash');
+  assert.equal(
+    ai.generationAffinity.get('ASSESSMENT_GENERATION::exam-parallel').modelId,
+    'gemini-3.7-flash'
+  );
 });
