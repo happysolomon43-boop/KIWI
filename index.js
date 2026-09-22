@@ -8183,18 +8183,17 @@ pressureSources.exam_urgency = 5;
 pressureScore += 5;
 }
 }
-// 8. Each day DANGEROUS card not reviewed (+1 per day) — P3.1-B3 FIX.
-// Previously charged +1 per card total; spec says +1 per card per day unreviewed.
-// Capped at 10 per card to prevent runaway pressure from a single ancient card.
+// 8. DANGEROUS cards are a subject-level risk signal, not an endlessly
+// compounding per-card-per-day fine. Count the breadth of the problem plus a
+// bounded age component, capped at +10 for the whole subject.
 const dangerousCards = cardStates.filter((cs) => cs.state.state === CARD_STATES.DANGEROUS);
-let dangerousPressure = 0;
-for (const cs of dangerousCards) {
-const daysUnreviewed = Math.max(1, daysSince(cs.card?.last_reviewed_at || cs.card?.created_at || new Date()));
-dangerousPressure += Math.min(daysUnreviewed, 10);
-}
-if (dangerousPressure > 0) {
-pressureSources.dangerous = dangerousPressure;
-pressureScore += dangerousPressure;
+if (dangerousCards.length > 0) {
+  const averageDangerDays = dangerousCards.reduce((sum, cs) => {
+    return sum + Math.max(0, daysSince(cs.card?.last_reviewed_at || cs.card?.created_at || new Date()));
+  }, 0) / dangerousCards.length;
+  const dangerousPressure = Math.min(10, dangerousCards.length + Math.floor(averageDangerDays / 3));
+  pressureSources.dangerous = dangerousPressure;
+  pressureScore += dangerousPressure;
 }
 // 9. Ignored reclassification alert 3+ days (+2)
 if (existingPressure?.alert_ignored_at && daysSince(existingPressure.alert_ignored_at) >= 3) {
@@ -8217,33 +8216,43 @@ pressureScore += aiCrutchPressure;
 //   BEHIND=+3, CRITICAL=+5, RESCUE=+7, debt max=+5 [DESIGN: §15.1 table]
 try {
   const subjectBubbles = await db.masteryGoals.findBySubject(userId, subjectId);
+  let highestBubbleRisk = 0;
+  let highestBubbleKey = null;
+  let testDateGateRisk = 0;
+  let stallRisk = 0;
   for (const bubble of subjectBubbles) {
     if (bubble.status !== 'active') continue;
-    // Bubble trajectory states are mutually exclusive. RESCUE supersedes
-    // CRITICAL/BEHIND/DRIFTING instead of double-counting the same problem.
+    // Multiple goals in one subject describe the same underlying learning risk.
+    // Use the highest trajectory risk rather than charging every bubble.
+    let risk = 0;
+    let riskKey = null;
     if (bubble.rescue_active || bubble.phase === 'RESCUE') {
-      pressureSources.bubble_rescue = (pressureSources.bubble_rescue || 0) + 7;
-      pressureScore += 7;
+      risk = 7; riskKey = 'bubble_rescue';
     } else if (bubble.trajectory_status === 'CRITICAL') {
-      pressureSources.bubble_critical = (pressureSources.bubble_critical || 0) + 5;
-      pressureScore += 5;
+      risk = 5; riskKey = 'bubble_critical';
     } else if (bubble.trajectory_status === 'BEHIND') {
-      pressureSources.bubble_behind = (pressureSources.bubble_behind || 0) + 3;
-      pressureScore += 3;
+      risk = 3; riskKey = 'bubble_behind';
     } else if (bubble.trajectory_status === 'DRIFTING') {
-      pressureSources.bubble_drifting = (pressureSources.bubble_drifting || 0) + 1;
-      pressureScore += 1;
+      risk = 1; riskKey = 'bubble_drifting';
     }
-    // Source 14: Test Date gate failed (+3, one-time per bubble) [DESIGN: §15.1]
-    if (bubble.test_date_gate_failed && !pressureSources.test_date_gate) {
-      pressureSources.test_date_gate = 3;
-      pressureScore += 3;
+    if (risk > highestBubbleRisk) {
+      highestBubbleRisk = risk;
+      highestBubbleKey = riskKey;
     }
-    // Source 15: Stall detected and active (+2 per bubble) [DESIGN: §15.1]
-    if (bubble.stall_active) {
-      pressureSources.bubble_stall = (pressureSources.bubble_stall || 0) + 2;
-      pressureScore += 2;
-    }
+    if (bubble.test_date_gate_failed) testDateGateRisk = 3;
+    if (bubble.stall_active) stallRisk = 2;
+  }
+  if (highestBubbleRisk > 0 && highestBubbleKey) {
+    pressureSources[highestBubbleKey] = highestBubbleRisk;
+    pressureScore += highestBubbleRisk;
+  }
+  if (testDateGateRisk) {
+    pressureSources.test_date_gate = testDateGateRisk;
+    pressureScore += testDateGateRisk;
+  }
+  if (stallRisk) {
+    pressureSources.bubble_stall = stallRisk;
+    pressureScore += stallRisk;
   }
   // Source 16: Learning debt cards below Stage 3 (+1 per card, max +5) [DESIGN: §15.1, §10.4]
   // ⚠ CORRECTED from v1.0: max +5 (not +10) [DESIGN: §10.4]
@@ -8259,14 +8268,28 @@ try {
 } catch (e) {
   // Non-fatal — bubble pressure sources are best-effort
 }
-// Explicit event consequences are canonical pressure inputs until a resolving
-// event clears them. Recalculation must never make forfeits or failures vanish.
-for (const [key, value] of Object.entries(previousSources)) {
-  if (!key.startsWith('manual_')) continue;
-  const points = Math.max(0, Number(value) || 0);
-  if (!points) continue;
-  pressureSources[key] = points;
-  pressureScore += points;
+// Manual consequences are bounded and time-decaying. The old implementation
+// accumulated these forever, so normal learning could never reduce Pressure.
+// Timestamp-less legacy values are intentionally discarded on recalculation.
+const manualPressurePolicy = {
+  manual_exam_forfeit: { ttlMs: 7 * 86400000, cap: 20 },
+  manual_reckoning_failure: { ttlMs: 3 * 86400000, cap: 15 },
+  manual_reckoning_deferral: { ttlMs: 24 * 3600000, cap: 5 },
+  manual_invitation_avoidance: { ttlMs: 3 * 86400000, cap: 3 },
+};
+for (const [key, policy] of Object.entries(manualPressurePolicy)) {
+  const timestampKey = key + '_at';
+  const rawTimestamp = previousSources[timestampKey];
+  const timestampMs = rawTimestamp ? new Date(rawTimestamp).getTime() : NaN;
+  if (!Number.isFinite(timestampMs)) continue;
+  const ageMs = Math.max(0, Date.now() - timestampMs);
+  if (ageMs >= policy.ttlMs) continue;
+  const basePoints = Math.min(policy.cap, Math.max(0, Number(previousSources[key]) || 0));
+  if (!basePoints) continue;
+  const decayedPoints = Math.max(1, Math.ceil(basePoints * (1 - ageMs / policy.ttlMs)));
+  pressureSources[key] = decayedPoints;
+  pressureSources[timestampKey] = new Date(timestampMs).toISOString();
+  pressureScore += decayedPoints;
 }
 
 // A failsafe release must be meaningful. While pressure remains L4, keep a
@@ -8513,7 +8536,8 @@ pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5
 intervention_level: 'L4',
 sources: {
 ...deferralSources,
-manual_reckoning_deferral: (Number(deferralSources.manual_reckoning_deferral) || 0) + 5,
+manual_reckoning_deferral: 5,
+manual_reckoning_deferral_at: new Date().toISOString(),
 reckoning_deferral_attempt_id: reckoningId,
 },
 });
@@ -8824,7 +8848,8 @@ if (countedThisAttempt && currentSources.reckoning_failure_attempt_id !== attemp
     intervention_level: 'L4',
     sources: {
       ...currentSources,
-      manual_reckoning_failure: (Number(currentSources.manual_reckoning_failure) || 0) + 5,
+      manual_reckoning_failure: Math.min(15, (Number(currentSources.manual_reckoning_failure) || 0) + 5),
+      manual_reckoning_failure_at: new Date().toISOString(),
       reckoning_failure_attempt_id: attemptKey,
     },
   });
@@ -11645,7 +11670,8 @@ const history = historyDoc?.data || [];
             intervention_level: newInterventionLevel,
             sources: {
               ...(currentPressure.sources || {}),
-              manual_invitation_avoidance: (currentPressure.sources?.manual_invitation_avoidance || 0) + 1,
+              manual_invitation_avoidance: Math.min(3, (Number(currentPressure.sources?.manual_invitation_avoidance) || 0) + 1),
+              manual_invitation_avoidance_at: new Date().toISOString(),
             },
           });
           pressureApplied = true;
@@ -16238,7 +16264,8 @@ try {
       intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
       sources: {
         ...(bp?.sources || {}),
-        manual_exam_forfeit: (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15,
+        manual_exam_forfeit: Math.min(20, (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15),
+        manual_exam_forfeit_at: new Date().toISOString(),
       },
     }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 
@@ -16341,7 +16368,8 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
         intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
         sources: {
           ...(bp?.sources || {}),
-          manual_exam_forfeit: (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15,
+          manual_exam_forfeit: Math.min(20, (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15),
+        manual_exam_forfeit_at: new Date().toISOString(),
         },
       }).catch((e) => console.error("[KIWI] silent catch:", e.message));
 
@@ -20664,7 +20692,8 @@ cron.schedule('*/10 * * * *', async () => {
           intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
           sources: {
             ...(bp?.sources || {}),
-            manual_exam_forfeit: (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15,
+            manual_exam_forfeit: Math.min(20, (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15),
+        manual_exam_forfeit_at: new Date().toISOString(),
           },
         }).catch(() => {});
         wsSend(es.user_id, 'pressure_change', {
