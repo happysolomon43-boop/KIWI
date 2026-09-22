@@ -146,3 +146,19 @@ test('task validation failures can roll back a newly promoted model', async () =
   );
   assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.SUSPENDED);
 });
+
+
+test('manual suspension can be resumed to its previous lifecycle state', async () => {
+  const catalog = createModelCatalog();
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel() {} },
+    logger: { warn() {} },
+  });
+
+  await lifecycle.suspend('gemini-3.8-flash', 'manual AI_MODEL_DENYLIST');
+  assert.equal(catalog.get('gemini-3.8-flash').status, MODEL_STATUS.SUSPENDED);
+
+  await lifecycle.resume('gemini-3.8-flash', 'removed from AI_MODEL_DENYLIST');
+  assert.equal(catalog.get('gemini-3.8-flash').status, MODEL_STATUS.APPROVED);
+});
