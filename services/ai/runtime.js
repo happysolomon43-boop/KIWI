@@ -304,6 +304,79 @@ function createAIRuntime({
     }
   }
 
+  function safePlan(taskId) {
+    try {
+      const plan = orchestrator.plan(taskId);
+      return {
+        primaryModel: plan.plannedPrimaryModel || null,
+        primaryProjectSlot: plan.plannedPrimaryProjectSlot || null,
+        candidates: plan.candidates.map((candidate) => candidate.modelId),
+      };
+    } catch (error) {
+      return {
+        primaryModel: null,
+        primaryProjectSlot: null,
+        candidates: [],
+        error: error?.code || error?.message || 'UNKNOWN',
+      };
+    }
+  }
+
+  function status() {
+    const slots = projectPool.snapshot();
+    const quotaRows = quotaManager.snapshot();
+    const catalogRows = catalog.list();
+
+    const catalogStates = catalogRows.reduce((acc, model) => {
+      acc[model.status] = (acc[model.status] || 0) + 1;
+      return acc;
+    }, {});
+
+    const quotaStates = quotaRows.reduce((acc, row) => {
+      acc[row.state] = (acc[row.state] || 0) + 1;
+      return acc;
+    }, {});
+
+    return Object.freeze({
+      projectSlots: Object.freeze({
+        total: slots.length,
+        enabled: slots.filter((slot) => slot.enabled).length,
+      }),
+      routes: Object.freeze({
+        VVIP: Object.freeze(safePlan('MAIN_CBT')),
+        VIP: Object.freeze(safePlan('DEEP_AUDIT')),
+        IP: Object.freeze(safePlan('CARD_EXPLANATION')),
+      }),
+      catalog: Object.freeze({
+        total: catalogRows.length,
+        states: Object.freeze({ ...catalogStates }),
+      }),
+      quota: Object.freeze({
+        trackedRoutes: quotaRows.length,
+        states: Object.freeze({ ...quotaStates }),
+      }),
+      discovery: Object.freeze({
+        enabled: discovery.autoDiscoveryEnabled(),
+        autoPromote: discovery.autoPromoteEnabled(),
+        running: discoveryRunning,
+        intervalMs: parseIntervalMs(env.AI_DISCOVERY_INTERVAL_MS),
+        lastStartedAt: operationalState.lastDiscoveryStartedAt,
+        lastCompletedAt: operationalState.lastDiscoveryCompletedAt,
+        lastSummary: operationalState.lastDiscoverySummary,
+        lastError: operationalState.lastDiscoveryError,
+      }),
+      retention: Object.freeze({
+        running: retentionRunning,
+        intervalMs: parseCleanupIntervalMs(env.AI_RETENTION_CLEANUP_INTERVAL_MS),
+        policy: Object.freeze(retentionPolicy()),
+        lastStartedAt: operationalState.lastRetentionStartedAt,
+        lastCompletedAt: operationalState.lastRetentionCompletedAt,
+        lastSummary: operationalState.lastRetentionSummary,
+        lastError: operationalState.lastRetentionError,
+      }),
+    });
+  }
+
   async function initialize() {
     // Load persisted discovered/promoted/suspended models before refreshing the
     // built-in seed metadata. This preserves lifecycle state across restarts.
@@ -314,6 +387,7 @@ function createAIRuntime({
 
     const state = await orchestrator.initialize();
     startDiscoveryScheduler();
+    startRetentionScheduler();
 
     if (typeof logger?.log === 'function') {
       logger.log(
@@ -327,6 +401,7 @@ function createAIRuntime({
       ...state,
       hydratedCatalogModels,
       discoveryScheduled: Boolean(discoveryTimer || discovery.autoDiscoveryEnabled()),
+      retentionScheduled: Boolean(retentionTimer),
     });
   }
 
@@ -345,9 +420,13 @@ function createAIRuntime({
     discovery,
     orchestrator,
     initialize,
+    status,
     runDiscoveryCycle,
     startDiscoveryScheduler,
     stopDiscoveryScheduler,
+    runRetentionCleanup,
+    startRetentionScheduler,
+    stopRetentionScheduler,
     reportValidationFailure,
   });
 }
