@@ -2759,72 +2759,103 @@ const deckList = await db.decks.findBySubjectWithCards(userId, subjectId);
 const allCards = deckList.flatMap((d) => d.cards);
 const totalCards = allCards.length;
 if (totalCards === 0) return null;
+
 const stageCounts = [0, 0, 0, 0, 0, 0];
-allCards.forEach((c) => {
-const s = Math.min(5, Math.max(1, c.stage));
-stageCounts[s] = (stageCounts[s] || 0) + 1;
+allCards.forEach((card) => {
+  const stage = Math.min(5, Math.max(1, Number(card.stage) || 1));
+  stageCounts[stage] = (stageCounts[stage] || 0) + 1;
 });
-const cardIds = allCards.map((c) => c.id);
-const logs = await db.reviewLogs.findByCards(userId, cardIds);
-const totalReviews = logs.length;
+const stageScore = (
+  (
+    (stageCounts[1] || 0) * 0 +
+    (stageCounts[2] || 0) * 0.2 +
+    (stageCounts[3] || 0) * 0.4 +
+    (stageCounts[4] || 0) * 0.7 +
+    (stageCounts[5] || 0) * 1.0
+  ) / totalCards
+) * 100;
+
+// Lifetime averages made Health effectively immovable after enough history.
+// Weight the learner's most recent 120 reviews so Health can genuinely improve
+// or fall while still retaining the card-maturity signal.
+const cardIds = allCards.map((card) => card.id);
+const allLogs = await db.reviewLogs.findByCards(userId, cardIds);
+const totalReviews = allLogs.length;
+const recentLogs = [...allLogs]
+  .sort((a, b) => new Date(b.reviewed_at || b.created_at || 0) - new Date(a.reviewed_at || a.created_at || 0))
+  .slice(0, 120);
 const responseCounts = { again: 0, hard: 0, good: 0, easy: 0 };
-logs.forEach((l) => {
-responseCounts[l.response] = (responseCounts[l.response] || 0) + 1;
+let weightedRecall = 0;
+let weightTotal = 0;
+recentLogs.forEach((log, index) => {
+  const response = String(log.response || '').toLowerCase();
+  responseCounts[response] = (responseCounts[response] || 0) + 1;
+  const responseValue = response === 'easy' ? 1 : response === 'good' ? 0.8 : response === 'hard' ? 0.5 : 0;
+  const recencyWeight = Math.pow(0.985, index);
+  weightedRecall += responseValue * recencyWeight;
+  weightTotal += recencyWeight;
 });
-let srsQuality = 0;
-if (totalReviews > 0) {
-const weighted =
-(responseCounts.again || 0) * 0 +
-(responseCounts.hard || 0) * 0.5 +
-(responseCounts.good || 0) * 0.8 +
-(responseCounts.easy || 0) * 1.0;
-srsQuality = (weighted / totalReviews) * 100;
-}
-const stageScore = (((stageCounts[1] || 0) * 0 + (stageCounts[2] || 0) * 0.2 + (stageCounts[3] || 0) * 0.4 + (stageCounts[4] || 0) * 0.7 + (stageCounts[5] || 0) * 1.0) / totalCards) * 100; // F-03 FIX
-const existing = await db.subjectStats.get(userId, subjectId);
+const srsQuality = weightTotal > 0 ? (weightedRecall / weightTotal) * 100 : stageScore;
+
+const { rows: recentExamRows } = await query(
+  "SELECT score_pct FROM exam_sessions " +
+  "WHERE user_id = $1 AND subject_id = $2 AND status = 'completed' AND score_pct IS NOT NULL " +
+  "ORDER BY COALESCE(completed_at, created_at) DESC LIMIT 5",
+  [userId, subjectId]
+);
 let examPerf = srsQuality;
-if (existing?.average_exam_score != null) examPerf = parseFloat(existing.average_exam_score);
-else if (existing?.average_quiz_score != null) examPerf = parseFloat(existing.average_quiz_score);
-const thirtyDaysAgo = new Date();
-thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+if (recentExamRows.length > 0) {
+  let examWeighted = 0;
+  let examWeightTotal = 0;
+  recentExamRows.forEach((exam, index) => {
+    const weight = Math.pow(0.82, index);
+    examWeighted += Math.max(0, Math.min(100, Number(exam.score_pct) || 0)) * weight;
+    examWeightTotal += weight;
+  });
+  examPerf = examWeightTotal > 0 ? examWeighted / examWeightTotal : srsQuality;
+}
+
+const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000);
 const sessionList = await db.sessions.findBySubject(userId, subjectId, thirtyDaysAgo);
-const meaningfulSessionList = sessionList.filter(sessionIsMeaningful);
+const qualifyingSessions = sessionList.filter((session) => {
+  const active = Math.max(0, Number(session.active_seconds) || 0);
+  const unique = Math.max(0, Number(session.unique_cards_reviewed) || 0);
+  const reviews = Math.max(0, Number(session.cards_reviewed) || 0);
+  return session.meaningful_session === true || (active >= 60 && (unique >= 3 || reviews >= 5));
+});
 const uniqueDays = new Set(
-meaningfulSessionList.map((s) => new Date(s.started_at).toISOString().split('T')[0])
+  qualifyingSessions
+    .filter((session) => session.started_at)
+    .map((session) => new Date(session.started_at).toISOString().slice(0, 10))
 ).size;
-const consistency = (uniqueDays / 30) * 100;
+const consistency = Math.min(100, (uniqueDays / 12) * 100);
+
 const healthScore = srsQuality * 0.4 + examPerf * 0.3 + stageScore * 0.2 + consistency * 0.1;
+const recentReviewCount = recentLogs.length;
+const ratio = (name) => recentReviewCount > 0
+  ? parseFloat((((responseCounts[name] || 0) / recentReviewCount) * 100).toFixed(2))
+  : 0;
+const existing = await db.subjectStats.get(userId, subjectId);
+const latestStudy = qualifyingSessions
+  .filter((session) => session.started_at)
+  .sort((a, b) => new Date(b.started_at) - new Date(a.started_at))[0] || null;
+
 const sharedData = {
-health_score: Math.min(100, Math.max(0, parseFloat(healthScore.toFixed(2)))),
-total_cards: totalCards,
-stage_1_count: stageCounts[1] || 0,
-stage_2_count: stageCounts[2] || 0,
-stage_3_count: stageCounts[3] || 0,
-stage_4_count: stageCounts[4] || 0,
-stage_5_count: stageCounts[5] || 0,
-again_ratio:
-totalReviews > 0
-? parseFloat((((responseCounts.again || 0) / totalReviews) * 100).toFixed(2))
-: 0,
-hard_ratio:
-totalReviews > 0
-? parseFloat((((responseCounts.hard || 0) / totalReviews) * 100).toFixed(2))
-: 0,
-good_ratio:
-totalReviews > 0
-? parseFloat((((responseCounts.good || 0) / totalReviews) * 100).toFixed(2))
-: 0,
-easy_ratio:
-totalReviews > 0
-? parseFloat((((responseCounts.easy || 0) / totalReviews) * 100).toFixed(2))
-: 0,
-total_reviews: totalReviews,
-days_studied_last_30: uniqueDays,
-total_study_minutes: existing?.total_study_minutes || 0,
-last_studied_at:
-meaningfulSessionList.length > 0
-? meaningfulSessionList[meaningfulSessionList.length - 1].started_at
-: existing?.last_studied_at || null,
+  health_score: Math.min(100, Math.max(0, parseFloat(healthScore.toFixed(2)))),
+  total_cards: totalCards,
+  stage_1_count: stageCounts[1] || 0,
+  stage_2_count: stageCounts[2] || 0,
+  stage_3_count: stageCounts[3] || 0,
+  stage_4_count: stageCounts[4] || 0,
+  stage_5_count: stageCounts[5] || 0,
+  again_ratio: ratio('again'),
+  hard_ratio: ratio('hard'),
+  good_ratio: ratio('good'),
+  easy_ratio: ratio('easy'),
+  total_reviews: totalReviews,
+  days_studied_last_30: uniqueDays,
+  total_study_minutes: existing?.total_study_minutes || 0,
+  last_studied_at: latestStudy?.started_at || existing?.last_studied_at || null,
 };
 await db.subjectStats.upsert(userId, subjectId, sharedData);
 return healthScore;
@@ -15060,6 +15091,12 @@ if (!session_id || !response)
 return res.status(400).json({ error: 'session_id and response required' });
 const session = await db.sessions.findById(req.user.id, session_id);
 if (!session) return res.status(404).json({ error: 'Session not found' });
+if (session.finalized_at || session.session_completed || session.ended_at) {
+  return res.status(409).json({
+    error: 'This study session has already ended. Start a new session before reviewing more cards.',
+    code: 'SESSION_ENDED',
+  });
+}
 const card = await db.cards.findById(req.user.id, cardId);
 if (!card) return res.status(404).json({ error: 'Card not found' });
 const qualityMap = { again: 0, hard: 2, good: 3, easy: 5 };
@@ -15295,6 +15332,8 @@ studyRouter.post('/end', async (req, res) => {
     (async () => {
       try {
         if (subjectId) {
+          await recalculateSubjectHealth(req.user.id, subjectId)
+            .catch((e) => console.error('[KIWI] subject health refresh failed:', e.message));
           const pressure = await db.brainPressure.get(req.user.id, subjectId).catch(() => null);
           if (pressure && pressure.intervention_level === 'L4') {
             triggerReckoning(req.user.id, subjectId).catch((e) =>
