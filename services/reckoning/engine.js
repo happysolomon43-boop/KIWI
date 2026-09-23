@@ -230,9 +230,7 @@ function createReckoningEngine(options = {}) {
 
   async function prepare(input = {}) {
     if (!preparation || typeof preparation.prepareAndStart !== 'function') {
-      throw new ReckoningContractError(
-        'Reckoning production preparation is not configured.'
-      );
+      return notImplemented('engine.prepare');
     }
     return preparation.prepareAndStart(input);
   }
