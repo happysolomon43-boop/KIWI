@@ -73,6 +73,21 @@ const reckoningShadow = createShadowIntelligence({
   logger: console,
 });
 
+const adaptiveSemanticReview = createAISemanticReviewer({
+  aiRun: (taskId, input, options) => ai.run(taskId, input, options),
+});
+const adaptiveQuestionValidator = createQuestionValidator({
+  semanticReview: adaptiveSemanticReview,
+});
+const adaptiveQuestionBank = createQuestionBank({
+  aiRun: (taskId, input, options) => ai.run(taskId, input, options),
+  validator: adaptiveQuestionValidator,
+});
+const adaptivePreparationService = createPreparationService({
+  questionBank: adaptiveQuestionBank,
+  randomUUID,
+});
+
 // Transaction helper
 async function withTransaction(fn) {
   const client = await pool.connect();
@@ -8654,6 +8669,15 @@ debrief_text: null,
 // P3.7-B1a FIX: store flagged card IDs so the exam generator can use
 // the correct pool instead of the standard stage >= 3 eligibility filter.
 flagged_card_ids: flaggedCards.map(c => c.id),
+// Delivery E: every newly-triggered Reckoning is V2-authoritative. Existing
+// pre-Delivery-E rows keep engine_version=1 and continue on the legacy path.
+engine_version: 2,
+engine_mode: 'LIVE',
+engine_phase: 'PREPARING',
+generation_status: 'not_started',
+generation_error: null,
+questions_used: 0,
+state_version: 0,
 });
 } catch (err) {
 // Database uniqueness is the final arbiter. Two concurrent pressure refreshes can
@@ -16180,6 +16204,13 @@ let activeReck = await db.reckoningSessions.findActiveByUser(req.user.id).catch(
 if (activeReck) activeReck = await reconcileActiveReckoning(req.user.id, activeReck).catch(() => activeReck);
 if (!activeReck) {
   return res.status(409).json({ error: 'No active Reckoning exists for this account.' });
+}
+if (Number(activeReck.engine_version || 1) === 2) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning must be started through the V2 Reckoning start route.',
+    code: 'RECKONING_V2_USE_START',
+    reckoning_id: activeReck.id,
+  });
 }
 if (activeReck.status === 'in_progress' && activeReck.exam_session_id) {
   return res.status(409).json({
