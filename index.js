@@ -8639,6 +8639,13 @@ pressure_score: pressureData.pressure_score,
 flagged_card_count: flaggedCards.length,
 question_count: questionCount,
 status: 'triggered',
+engine_version: 2,
+engine_mode: 'LIVE',
+engine_phase: 'PREPARING',
+generation_status: 'not_started',
+generation_error: null,
+questions_used: 0,
+state_version: 0,
 deferral_used: false,
 deferred_until: null,
 exam_session_id: null,
@@ -8663,22 +8670,9 @@ question_count: racedActive.question_count,
 recovered_race: true,
 };
 }
-// Delivery B shadow intelligence starts only after the legacy Reckoning has
-// been durably created and its authoritative question_count has been fixed.
-// Never await this work on the learner's trigger response.
-setImmediate(async () => {
-  const subjectExamDate = await getSubjectExamDate(userId, subjectId).catch(() => null);
-  await reckoningShadow.analyzeSafely({
-    reckoning,
-    userId,
-    subjectId,
-    cards: subjectCardsForReckoning,
-    states: _reckAllStates,
-    bubbleCardIds: _reckBubbleCardIds,
-    pressureScore: pressureData.pressure_score,
-    subjectExamDate,
-  });
-});
+// New Reckonings are prepared by the authoritative V2 engine only when the
+// learner presses Begin. Generation failure therefore leaves this row triggered
+// and retryable instead of creating an unusable in_progress lockout.
 
 return {
 reckoning_id: reckoning.id,
