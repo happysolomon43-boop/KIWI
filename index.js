@@ -39,6 +39,7 @@ const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
 const { createShadowIntelligence, createReckoningEngine, isAdaptiveReckoningQuestion } = require('./services/reckoning');
+const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
@@ -16038,47 +16039,18 @@ async function ensureExamKsBaseline(userId, exam) {
 }
 
 async function finalizeExamKsOutcome(userId, exam, scorePct, baselineOverride = null) {
-  if (!exam?.id || !exam?.subject_id) {
-    return { before: null, after: null, delta: null };
-  }
-
-  const before = _finiteKsNumber(baselineOverride) ?? _finiteKsNumber(exam.ks_before);
-  const persisted = await persistKnowledgeScore(userId, exam.subject_id).catch((err) => {
-    console.error('[KIWI] Failed to persist post-exam KS:', err.message);
-    return null;
+  return finalizeKsSnapshot({
+    userId,
+    exam,
+    scorePct,
+    baselineOverride,
+    persistScore: persistKnowledgeScore,
+    updateExam: (uid, examId, update) =>
+      db.examSessions.update(uid, examId, update),
+    emitChange: (uid, payload) =>
+      wsSend(uid, 'ks_change', payload),
+    logger: console,
   });
-  const after = _finiteKsNumber(persisted?.score);
-  let delta = before !== null && after !== null
-    ? parseFloat((after - before).toFixed(2))
-    : null;
-
-  // Integrity invariant: a zero-score exam cannot be represented as a positive
-  // KS contribution. If an unrelated state bug ever violates that invariant,
-  // preserve the actual after snapshot but never tell history that the exam
-  // awarded positive KS.
-  if (Number(scorePct) === 0 && delta !== null && delta > 0) {
-    console.error('[KIWI] KS integrity guard: zero-score exam produced positive delta', {
-      examId: exam.id, before, after, computedDelta: delta,
-    });
-    delta = 0;
-  }
-
-  const update = {
-    ks_after: after,
-    ks_delta: delta,
-    ks_processed_at: new Date(),
-  };
-  if (before !== null) update.ks_before = before;
-  await db.examSessions.update(userId, exam.id, update);
-
-  if (delta !== null && delta !== 0) {
-    wsSend(userId, 'ks_change', {
-      subject_id: exam.subject_id,
-      ks_delta: delta,
-      new_ks: after,
-    });
-  }
-  return { before, after, delta };
 }
 
 const examRouter = express.Router();
