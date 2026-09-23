@@ -63,14 +63,13 @@ test('Reckoning question indexes are partial and cannot reshape normal CBT rows'
   );
 });
 
-test('legacy backend does not read or write Reckoning V2 question metadata yet', () => {
+test('legacy backend is not wired to Reckoning V2 evidence linkage', () => {
+  // Generic names such as response_time_ms already exist elsewhere in KIWI,
+  // so the guard intentionally checks only V2-specific linkage identifiers.
   for (const identifier of [
     'reckoning_evidence_id',
     'reckoning_role',
-    'variant_index',
     'reckoning_blueprint',
-    'is_unlocked',
-    'response_time_ms',
     'evidence_effect',
   ]) {
     assert.doesNotMatch(
@@ -79,6 +78,17 @@ test('legacy backend does not read or write Reckoning V2 question metadata yet',
       `production index.js unexpectedly references V2 field: ${identifier}`
     );
   }
+
+  assert.doesNotMatch(
+    backend,
+    /createReckoningStore\s*\(/,
+    'production index.js unexpectedly instantiates the V2 persistence adapter'
+  );
+  assert.doesNotMatch(
+    backend,
+    /require\(['"]\.\/services\/reckoning(?:\/index)?['"]\)/,
+    'production index.js unexpectedly imports the Reckoning V2 subsystem'
+  );
 });
 
 test('existing student flag and AI audit columns are not redefined by V2 migration', () => {
