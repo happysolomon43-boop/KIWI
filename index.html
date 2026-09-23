@@ -14501,6 +14501,28 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         return false;
       }
 
+      function _adaptiveUtilityButtonsHtml() {
+        return '<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-bottom:14px;">' +
+          '<button class="btn btn-secondary btn-sm" id="adaptiveOpenBrainBtn" type="button">Brain</button>' +
+          '<button class="btn btn-secondary btn-sm" id="adaptiveOpenSettingsBtn" type="button">Settings</button>' +
+          '</div>';
+      }
+
+      function _bindAdaptiveUtilityButtons() {
+        document.getElementById("adaptiveOpenBrainBtn")?.addEventListener("click", () => {
+          _stopAdaptiveElapsedTimer();
+          _closeReckoningSurface();
+          _setReckoningLockdownUi(true);
+          navigateTo("brain", { fromReckoning: true });
+        });
+        document.getElementById("adaptiveOpenSettingsBtn")?.addEventListener("click", () => {
+          _stopAdaptiveElapsedTimer();
+          _closeReckoningSurface();
+          _setReckoningLockdownUi(true);
+          navigateTo("settings", { fromReckoning: true });
+        });
+      }
+
       function _adaptiveEvidenceCounts(state) {
         const e = state?.evidenceState || {};
         return {
@@ -14605,6 +14627,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         container.innerHTML = `
           <div class="reckoning-overlay" id="adaptiveReckoningReview" style="justify-content:flex-start;overflow:auto;padding:24px 16px;">
             <div style="width:min(760px,100%);margin:auto;padding:20px 0 36px;">
+              ${_adaptiveUtilityButtonsHtml()}
               <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px;">
                 <div>
                   <div style="font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:1.4px;text-transform:uppercase;color:var(--red-bright);">Reckoning · ${escapeHTML(role)}</div>
@@ -14631,8 +14654,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                       <div class="option-text">${escapeHTML(stripClozeForExam(opt.text || ""))}</div>
                     </button>`).join("")}
                 </div>
-                <button class="btn btn-primary btn-lg" id="adaptiveAnswerBtn" disabled style="width:100%;margin-top:20px;">Submit answer</button>
-                <div style="font-size:var(--text-xs);color:var(--text-4);text-align:center;margin-top:10px;">Answers are final. The next question is chosen by KIWI from server-side evidence.</div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;">
+                  <button class="btn btn-primary btn-lg" id="adaptiveAnswerBtn" disabled style="flex:1;min-width:180px;">Submit answer</button>
+                  <button class="btn btn-secondary" id="adaptiveFlagQuestionBtn" type="button">Flag for AI review</button>
+                </div>
+                <div style="font-size:var(--text-xs);color:var(--text-4);text-align:center;margin-top:10px;">Answers are final. The next question is chosen by KIWI from server-side evidence. A confirmed flawed question is invalidated and cannot hold recovery against you.</div>
               </div>
             </div>
           </div>`;
@@ -14640,6 +14666,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const stem = container.querySelector(".exam-stem");
         if (stem) renderMathContent(stem);
         container.querySelectorAll(".option-text").forEach((el) => renderMathContent(el));
+        _bindAdaptiveUtilityButtons();
         _startAdaptiveElapsedTimer(state);
 
         let selected = null;
@@ -14677,6 +14704,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             else _renderAdaptiveReckoningQuestion(state);
           }
         });
+
+        document.getElementById("adaptiveFlagQuestionBtn")?.addEventListener("click", async () => {
+          const button = document.getElementById("adaptiveFlagQuestionBtn");
+          if (button) {
+            button.disabled = true;
+            button.textContent = "Reviewing…";
+          }
+          try {
+            const audit = await api.flagExamQuestion(state.examSessionId, question.questionNumber);
+            if (audit?.defective) {
+              showToast("KIWI confirmed a flawed question. It will not count against your recovery.", "success", 7000);
+              if (audit.adaptive_state) {
+                await _openAdaptiveReckoningState(audit.adaptive_state);
+                return;
+              }
+              const refreshed = await api.getAdaptiveReckoningState(state.examSessionId);
+              await _openAdaptiveReckoningState(refreshed);
+              return;
+            }
+            if (button) button.textContent = "Reviewed";
+            showToast("AI integrity review found this question valid.", "info", 5000);
+          } catch (error) {
+            if (button) {
+              button.disabled = false;
+              button.textContent = "Flag for AI review";
+            }
+            showToast(error.message || "Question review is temporarily unavailable. You can continue.", "warning", 7000);
+          }
+        });
       }
 
       function _renderAdaptiveReckoningCheckpoint(state) {
@@ -14688,6 +14744,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         container.innerHTML = `
           <div class="reckoning-overlay" id="adaptiveReckoningCheckpoint" style="overflow:auto;padding:24px 16px;">
             <div class="reckoning-card" style="max-width:720px;text-align:left;">
+              ${_adaptiveUtilityButtonsHtml()}
               <div style="font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:1.3px;text-transform:uppercase;color:var(--gold);">Checkpoint · Block ${Number(state.currentBlock) || 1}</div>
               <div class="reckoning-title" style="text-align:left;margin-top:6px;">What KIWI sees so far</div>
               <div style="font-size:var(--text-base);color:var(--text-2);line-height:1.7;margin:12px 0 18px;">${escapeHTML(checkpoint.message || "KIWI has updated the evidence plan.")}</div>
@@ -14710,6 +14767,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             </div>
           </div>`;
         container.querySelectorAll(".reckoning-card").forEach((el) => renderMathContent(el));
+        _bindAdaptiveUtilityButtons();
         document.getElementById("adaptiveContinueBtn")?.addEventListener("click", async () => {
           const button = document.getElementById("adaptiveContinueBtn");
           if (button) {
@@ -14751,6 +14809,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         container.innerHTML = `
           <div class="reckoning-overlay" id="adaptiveReckoningFinal" style="overflow:auto;padding:24px 16px;">
             <div style="width:min(820px,100%);margin:auto;padding:20px 0 36px;">
+              ${survived ? "" : _adaptiveUtilityButtonsHtml()}
               <div class="card" style="padding:28px;border-color:${survived ? "rgba(82,183,136,.45)" : "rgba(224,82,82,.45)"};">
                 <div style="font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:1.4px;text-transform:uppercase;color:${survived ? "var(--green-bright)" : "var(--red-bright)"};">Reckoning complete</div>
                 <div style="font-family:var(--font-display);font-size:clamp(28px,7vw,42px);font-weight:800;margin:7px 0 8px;color:var(--text);">${survived ? "Recovery confirmed" : "Recovery incomplete"}</div>
@@ -14792,12 +14851,13 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             </div>
           </div>`;
 
+        if (!survived) _bindAdaptiveUtilityButtons();
         document.getElementById("adaptiveFinalReturnBtn")?.addEventListener("click", async () => {
           _closeReckoningSurface();
           AppState.adaptiveReckoning = null;
-          AppState.reckoning = null;
           AppState.brain = null;
           if (survived) {
+            AppState.reckoning = null;
             _setReckoningLockdownUi(false);
             navigateTo("brain");
             return;
