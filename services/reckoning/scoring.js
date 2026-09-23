@@ -19,7 +19,15 @@ function evidenceValue(row, scoring) {
   if (status !== EVIDENCE_STATUSES.RECOVERED) return 0;
 
   const diagnostic = field(row, 'diagnosticOutcome', 'diagnostic_outcome');
-  return diagnostic === 'CORRECT'
+  const challenge = field(row, 'challengeOutcome', 'challenge_outcome');
+  const discoveredByControl = Boolean(
+    field(row, 'discoveredByControl', 'discovered_by_control', false)
+  );
+  const cleanRecovery =
+    diagnostic === 'CORRECT' ||
+    (diagnostic == null && challenge == null && discoveredByControl === false);
+
+  return cleanRecovery
     ? scoring.recoveredCleanValue
     : scoring.recoveredRemediatedValue;
 }
