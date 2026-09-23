@@ -517,10 +517,13 @@ function createReckoningStore({
            correct_answers = $4,
            total_questions = $5,
            completed_at = COALESCE(completed_at, now()),
-           duration_seconds = COALESCE(
-             duration_seconds,
-             GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - started_at))))::integer
-           ),
+           duration_seconds = CASE
+             WHEN COALESCE(duration_seconds, 0) > 0 THEN duration_seconds
+             ELSE GREATEST(
+               0,
+               FLOOR(EXTRACT(EPOCH FROM (now() - COALESCE(started_at, now()))))
+             )::integer
+           END,
            timed_out = false,
            ended_early = false,
            updated_at = now()

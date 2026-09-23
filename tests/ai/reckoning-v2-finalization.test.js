@@ -188,11 +188,13 @@ function makeFinalizationStore() {
 test('Delivery D finalization is crash-retry safe and never reapplies card consequences', async () => {
   const store = makeFinalizationStore();
   let outcomeCalls = 0;
+  const outcomeEvidenceStates = [];
 
   const engine = createReckoningEngine({
     store,
-    outcomeHandler: async () => {
+    outcomeHandler: async ({ evidenceState }) => {
       outcomeCalls += 1;
+      outcomeEvidenceStates.push(evidenceState);
       if (outcomeCalls === 1) {
         throw new Error('simulated process boundary failure');
       }
@@ -228,6 +230,16 @@ test('Delivery D finalization is crash-retry safe and never reapplies card conse
   assert.equal(recovered.recovery.survived, true);
   assert.equal(store.session.engine_phase, 'COMPLETE');
   assert.equal(outcomeCalls, 2);
+  assert.deepEqual(
+    outcomeEvidenceStates.map((state) => ({
+      recovered: state.recovered,
+      unresolved: state.unresolved,
+    })),
+    [
+      { recovered: 3, unresolved: 0 },
+      { recovered: 3, unresolved: 0 },
+    ]
+  );
   assert.deepEqual(
     {
       cardWrites: store.metrics.cardWrites,

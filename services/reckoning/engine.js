@@ -420,6 +420,7 @@ function createReckoningEngine(options = {}) {
         questions,
         questionsUsed,
       });
+      const evidenceState = evidenceEngine.evaluate(evidence);
       const next = scheduler.chooseNext({
         evidence,
         questions,
@@ -494,6 +495,7 @@ function createReckoningEngine(options = {}) {
         evidence,
         questions,
         recovery,
+        evidenceState,
         learningEffects: effects,
         reason: recovery.survived
           ? 'RECOVERY_SUFFICIENT'
@@ -524,6 +526,7 @@ function createReckoningEngine(options = {}) {
       examSessionId,
       userId,
       recovery: prepared.recovery,
+      evidenceState: prepared.evidenceState,
       learningEffects: prepared.learningEffects,
       reason: prepared.reason,
     });
