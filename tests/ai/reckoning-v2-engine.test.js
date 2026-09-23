@@ -329,7 +329,8 @@ test('answer submission is one-way, idempotent, spaced and fully resumable from 
   assert.equal(resumed.currentQuestion.correctAnswer, undefined);
   assert.equal(resumed.currentQuestion.explanation, undefined);
   assert.equal(resumed.history.length, 1);
-  assert.equal(resumed.history[0].correctAnswer, 'A');
+  assert.equal(resumed.history[0].correctAnswer, undefined);
+  assert.equal(resumed.history[0].explanation, undefined);
 
   await engine.recordAnswer({
     examSessionId: 'exam-1',
