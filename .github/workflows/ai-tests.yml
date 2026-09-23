@@ -6,6 +6,10 @@ on:
       - 'services/ai/**'
       - 'tests/ai/**'
       - 'package.json'
+      - 'vercel.json'
+      - 'public/tree/**'
+      - 'scripts/build-web.js'
+      - 'scripts/sync-pixi-vendor.js'
       - '.github/workflows/ai-tests.yml'
   push:
     branches:
@@ -14,6 +18,10 @@ on:
       - 'services/ai/**'
       - 'tests/ai/**'
       - 'package.json'
+      - 'vercel.json'
+      - 'public/tree/**'
+      - 'scripts/build-web.js'
+      - 'scripts/sync-pixi-vendor.js'
       - '.github/workflows/ai-tests.yml'
 
 permissions:
