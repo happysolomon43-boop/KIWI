@@ -122,20 +122,6 @@ function routePolicyDecision(contract, route, state, flags, width) {
   };
 }
 
-function localBounds(mainContent) {
-  const width = Math.max(mainContent.clientWidth, mainContent.scrollWidth, 1);
-  const height = Math.max(mainContent.clientHeight, mainContent.scrollHeight, 1);
-
-  return {
-    left: 0,
-    top: 0,
-    right: width,
-    bottom: height,
-    width,
-    height,
-  };
-}
-
 function colorForVitality(vitality) {
   const v = Math.max(0, Math.min(100, Number(vitality) || 0)) / 100;
   if (v >= 0.72) return 0x557343;
@@ -178,6 +164,11 @@ export class VineExpansionController {
   constructor(options = {}) {
     this.mainContent =
       options.mainContent || document.getElementById('mainContent');
+    this.overlayRoot =
+      options.overlayRoot ||
+      document.getElementById('appContainer') ||
+      this.mainContent?.parentElement ||
+      document.body;
     this.routeProvider =
       options.routeProvider || (() => '');
     this.uiStateProvider =
@@ -197,6 +188,7 @@ export class VineExpansionController {
     this._mutationObserver = null;
     this._resizeObserver = null;
     this._onResize = null;
+    this._onScroll = null;
     this._raf = 0;
     this._lastRoute = null;
     this._lastFlags = null;
@@ -238,7 +230,7 @@ export class VineExpansionController {
   _createHost() {
     this.mainContent.classList.add('kiwi-vine-expansion-root');
 
-    const existing = this.mainContent.querySelector(
+    const existing = this.overlayRoot.querySelector(
       ':scope > .kiwi-vine-expansion-overlay'
     );
     if (existing) existing.remove();
@@ -247,15 +239,15 @@ export class VineExpansionController {
     host.className = 'kiwi-vine-expansion-overlay';
     host.setAttribute('aria-hidden', 'true');
     Object.assign(host.style, {
-      position: 'absolute',
+      position: 'fixed',
       left: '0',
       top: '0',
       pointerEvents: 'none',
-      overflow: 'visible',
-      zIndex: '0',
+      overflow: 'hidden',
+      zIndex: '1',
     });
 
-    this.mainContent.insertBefore(host, this.mainContent.firstChild);
+    this.overlayRoot.appendChild(host);
     this.host = host;
 
     const status = document.createElement('div');
@@ -263,7 +255,7 @@ export class VineExpansionController {
     status.setAttribute('aria-live', 'polite');
     status.setAttribute('aria-atomic', 'true');
     status.id = 'kiwiVineStatus';
-    this.mainContent.appendChild(status);
+    this.overlayRoot.appendChild(status);
     this._statusRegion = status;
 
     this._liftPageContent();
@@ -271,28 +263,24 @@ export class VineExpansionController {
   }
 
   _liftPageContent() {
-    for (const page of this.mainContent.querySelectorAll(
-      ':scope > .page-wrap'
-    )) {
-      if (getComputedStyle(page).position === 'static') {
-        page.style.position = 'relative';
-      }
-      if (page.style.zIndex !== '1') {
-        page.style.zIndex = '1';
-      }
+    if (getComputedStyle(this.mainContent).position === 'static') {
+      this.mainContent.style.position = 'relative';
+    }
+    if (this.mainContent.style.zIndex !== '2') {
+      this.mainContent.style.zIndex = '2';
     }
   }
 
   _syncHostSize() {
     if (!this.host) return;
     const width = Math.max(
-      this.mainContent.clientWidth,
-      this.mainContent.scrollWidth,
+      Number(window.innerWidth) || 0,
+      document.documentElement.clientWidth || 0,
       1
     );
     const height = Math.max(
-      this.mainContent.clientHeight,
-      this.mainContent.scrollHeight,
+      Number(window.innerHeight) || 0,
+      document.documentElement.clientHeight || 0,
       1
     );
     const nextWidth = width + 'px';
@@ -338,6 +326,16 @@ export class VineExpansionController {
     window.addEventListener('resize', this._onResize, {
       passive: true,
     });
+
+    this._onScroll = () => this.scheduleRefresh();
+    window.addEventListener('scroll', this._onScroll, {
+      passive: true,
+    });
+    this.mainContent.addEventListener(
+      'scroll',
+      this._onScroll,
+      { passive: true }
+    );
   }
 
   scheduleRefresh() {
@@ -414,11 +412,7 @@ export class VineExpansionController {
   }
 
   _rootReferenceRect() {
-    const rect = this.mainContent.getBoundingClientRect();
-    return {
-      left: rect.left - this.mainContent.scrollLeft,
-      top: rect.top - this.mainContent.scrollTop,
-    };
+    return { left: 0, top: 0 };
   }
 
   _relativeRect(element, rootRect) {
@@ -498,7 +492,14 @@ export class VineExpansionController {
 
   _makePlans(route, routeMap, state, profileName) {
     const rootRect = this._rootReferenceRect();
-    const bounds = localBounds(this.mainContent);
+    const bounds = {
+      left: 0,
+      top: 0,
+      right: Math.max(1, window.innerWidth),
+      bottom: Math.max(1, window.innerHeight),
+      width: Math.max(1, window.innerWidth),
+      height: Math.max(1, window.innerHeight),
+    };
     const forbiddenRects =
       this._forbiddenRects(routeMap, rootRect);
     const resolvedEnds = new Map();
@@ -846,6 +847,18 @@ export class VineExpansionController {
         this._onResize
       );
       this._onResize = null;
+    }
+
+    if (this._onScroll) {
+      window.removeEventListener(
+        'scroll',
+        this._onScroll
+      );
+      this.mainContent?.removeEventListener(
+        'scroll',
+        this._onScroll
+      );
+      this._onScroll = null;
     }
 
     if (this.renderer) {
