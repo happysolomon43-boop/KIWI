@@ -6,6 +6,7 @@ const {
   MODEL_STATUS,
   modelVersionRank,
 } = require('./model-catalog');
+const { AI_CLASSES } = require('./task-registry');
 
 function normalizeModelId(apiModel) {
   const raw = String(apiModel?.baseModelId || apiModel?.name || '').trim();
@@ -51,6 +52,7 @@ function createModelDiscoveryManager({
   catalog,
   lifecycle,
   qualifier,
+  trafficController = null,
   logger = console,
   env = process.env,
   sampleSize = 3,
@@ -98,11 +100,21 @@ function createModelDiscoveryManager({
     let lastError = null;
 
     for (const slot of slots) {
+      let trafficLease = null;
       try {
+        trafficLease = trafficController
+          ? await trafficController.acquire({
+              taskId: 'MODEL_DISCOVERY',
+              taskClass: AI_CLASSES.IP,
+              timeoutMs: 15000,
+            })
+          : null;
+
         const models = await transport.listModels({
           apiKey: slot.apiKey,
           timeoutMs: 15000,
         });
+        trafficController?.noteSuccess?.();
         successCount += 1;
         for (const model of models || []) {
           const id = normalizeModelId(model);
@@ -110,6 +122,9 @@ function createModelDiscoveryManager({
         }
       } catch (error) {
         lastError = error;
+        trafficController?.noteFailure?.(error, {
+          projectSlot: slot.id,
+        });
         if (error?.code === 'AUTH') {
           projectPool.disable(slot.id, 'AUTH');
         }
@@ -120,6 +135,8 @@ function createModelDiscoveryManager({
             status: error?.status || null,
           });
         }
+      } finally {
+        trafficLease?.release?.();
       }
     }
 

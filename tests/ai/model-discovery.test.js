@@ -226,3 +226,50 @@ test('auto promotion can be disabled while discovery stays active', async () => 
   assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.DISCOVERED);
   assert.ok(summary.skipped.some((item) => item.reason === 'auto promotion disabled'));
 });
+
+
+test('model discovery uses low-priority central AI traffic admission', async () => {
+  const catalog = createModelCatalog();
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel() {}, async loadCatalogModels() { return []; } },
+    logger: { warn() {} },
+  });
+  const admissions = [];
+  let releases = 0;
+  let successes = 0;
+  const trafficController = {
+    async acquire(request) {
+      admissions.push(request);
+      return { release() { releases += 1; } };
+    },
+    noteSuccess() { successes += 1; },
+    noteFailure() {},
+  };
+
+  const discovery = createModelDiscoveryManager({
+    transport: {
+      async listModels() { return []; },
+    },
+    projectPool: {
+      orderedSlots() { return [{ id: 'p1', index: 1, apiKey: 'k1', enabled: true }]; },
+      snapshot() { return [{ id: 'p1', index: 1, envName: 'K1', enabled: true }]; },
+      disable() {},
+    },
+    catalog,
+    lifecycle,
+    qualifier: { async qualify() { throw new Error('not expected'); } },
+    trafficController,
+    logger: { log() {}, warn() {} },
+    env: {},
+    sampleSize: 1,
+  });
+
+  const summary = await discovery.discoverOnce();
+  assert.equal(summary.providerModels, 0);
+  assert.equal(admissions.length, 1);
+  assert.equal(admissions[0].taskId, 'MODEL_DISCOVERY');
+  assert.equal(admissions[0].taskClass, 'IP');
+  assert.equal(releases, 1);
+  assert.equal(successes, 1);
+});

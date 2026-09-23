@@ -2,6 +2,7 @@
 
 const { normalizeGeminiResponse } = require('./response-normalizer');
 const { AIError, AI_ERROR_CODES } = require('./errors');
+const { AI_CLASSES } = require('./task-registry');
 
 const QUALIFICATION_VERSION = 1;
 
@@ -29,6 +30,7 @@ function createModelQualifier({
   transport,
   projectPool,
   quotaManager = null,
+  trafficController = null,
   lifecycle,
   store = null,
   logger = console,
@@ -77,7 +79,16 @@ function createModelQualifier({
     let lastError = null;
 
     for (const slot of slots) {
+      let trafficLease = null;
       try {
+        trafficLease = trafficController
+          ? await trafficController.acquire({
+              taskId: 'MODEL_QUALIFICATION',
+              taskClass: AI_CLASSES.IP,
+              timeoutMs,
+            })
+          : null;
+
         const result = await transport.generate({
           apiKey: slot.apiKey,
           modelId,
@@ -86,6 +97,7 @@ function createModelQualifier({
           timeoutMs,
         });
 
+        trafficController?.noteSuccess?.();
         await quotaManager?.markSuccess?.(slot.id, modelId);
 
         return {
@@ -94,6 +106,10 @@ function createModelQualifier({
         };
       } catch (error) {
         lastError = error;
+        trafficController?.noteFailure?.(error, {
+          modelId,
+          projectSlot: slot.id,
+        });
         await quotaManager?.markFailure?.(slot.id, modelId, error).catch(() => null);
         if (error?.code === AI_ERROR_CODES.AUTH) {
           projectPool.disable(slot.id, 'AUTH');
@@ -109,6 +125,8 @@ function createModelQualifier({
         if (!error?.retryable && error?.code !== AI_ERROR_CODES.AUTH) {
           throw error;
         }
+      } finally {
+        trafficLease?.release?.();
       }
     }
 

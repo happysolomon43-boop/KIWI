@@ -18,6 +18,7 @@ function createProviderHealth({
   failureEvidenceWindowMs = 30000,
   openCooldownMs = 20000,
   minDistinctFailureSlots = 2,
+  store = null,
 } = {}) {
   const models = new Map();
 
@@ -41,6 +42,7 @@ function createProviderHealth({
         lastHttpStatus: null,
         lastFailureAt: null,
         lastSuccessAt: null,
+        updatedAt: 0,
       };
       models.set(modelId, state);
     }
@@ -62,6 +64,7 @@ function createProviderHealth({
       state.state = CIRCUIT_STATES.HALF_OPEN;
       state.openUntil = 0;
       state.halfOpenProbeInFlight = false;
+      state.updatedAt = Math.max(state.updatedAt || 0, now);
     }
 
     return state;
@@ -103,7 +106,10 @@ function createProviderHealth({
       return Object.freeze({
         available: false,
         state: state.state,
-        retryAfterMs: Math.max(1000, Math.min(Number(openCooldownMs) || 20000, 120000)),
+        retryAfterMs: Math.max(
+          1000,
+          Math.min(Number(openCooldownMs) || 20000, 120000)
+        ),
         halfOpenProbe: false,
       });
     }
@@ -147,6 +153,7 @@ function createProviderHealth({
     state.lastErrorCode = error?.code || null;
     state.lastHttpStatus = error?.status ?? null;
     state.lastFailureAt = new Date(now);
+    state.updatedAt = now;
   }
 
   function recordFailure(modelId, slotId, error, {
@@ -194,6 +201,7 @@ function createProviderHealth({
     state.lastErrorCode = null;
     state.lastHttpStatus = 200;
     state.lastSuccessAt = new Date(now);
+    state.updatedAt = now;
     return snapshot(modelId);
   }
 
@@ -210,10 +218,113 @@ function createProviderHealth({
         lastHttpStatus: state.lastHttpStatus,
         lastFailureAt: state.lastFailureAt,
         lastSuccessAt: state.lastSuccessAt,
+        updatedAt: state.updatedAt ? new Date(state.updatedAt) : null,
       });
     }
 
     return Array.from(models.keys()).map((id) => snapshot(id));
+  }
+
+  function persistenceRecord(modelId) {
+    const state = refresh(ensure(modelId));
+    return {
+      modelId: state.modelId,
+      state: state.state,
+      openUntil: state.openUntil ? new Date(state.openUntil) : null,
+      failureSlots: Array.from(state.failuresBySlot.entries()).map(
+        ([slotId, failedAt]) => ({
+          slotId,
+          failedAt: new Date(failedAt).toISOString(),
+        })
+      ),
+      lastErrorCode: state.lastErrorCode,
+      lastHttpStatus: state.lastHttpStatus,
+      lastFailureAt: state.lastFailureAt,
+      lastSuccessAt: state.lastSuccessAt,
+    };
+  }
+
+  async function persist(modelId) {
+    if (!store?.upsertProviderModelHealth || !modelId) return null;
+    const row = await store.upsertProviderModelHealth(persistenceRecord(modelId));
+    const persistedAt = Date.parse(row?.updated_at || '');
+    if (Number.isFinite(persistedAt)) {
+      const state = ensure(modelId);
+      state.updatedAt = Math.max(state.updatedAt || 0, persistedAt);
+    }
+    return row;
+  }
+
+  function hydrateRow(row, { force = false } = {}) {
+    if (!row?.model_id) return false;
+
+    const state = ensure(row.model_id);
+    const rowUpdatedAt = Date.parse(row.updated_at || '');
+    if (
+      !force &&
+      Number.isFinite(rowUpdatedAt) &&
+      state.updatedAt &&
+      rowUpdatedAt <= state.updatedAt
+    ) {
+      return false;
+    }
+
+    state.state = Object.values(CIRCUIT_STATES).includes(row.state)
+      ? row.state
+      : CIRCUIT_STATES.CLOSED;
+    state.openUntil = row.open_until
+      ? new Date(row.open_until).getTime()
+      : 0;
+    state.failuresBySlot.clear();
+
+    const failures = Array.isArray(row.failure_slots) ? row.failure_slots : [];
+    for (const failure of failures) {
+      const slotId = String(failure?.slotId || '').trim();
+      const failedAt = Date.parse(failure?.failedAt || '');
+      if (!slotId || !Number.isFinite(failedAt)) continue;
+      state.failuresBySlot.set(slotId, failedAt);
+    }
+
+    state.halfOpenProbeInFlight = false;
+    state.lastErrorCode = row.last_error_code || null;
+    state.lastHttpStatus = row.last_http_status == null
+      ? null
+      : Number(row.last_http_status);
+    state.lastFailureAt = row.last_failure_at
+      ? new Date(row.last_failure_at)
+      : null;
+    state.lastSuccessAt = row.last_success_at
+      ? new Date(row.last_success_at)
+      : null;
+    state.updatedAt = Number.isFinite(rowUpdatedAt)
+      ? rowUpdatedAt
+      : Math.max(
+          state.lastFailureAt?.getTime?.() || 0,
+          state.lastSuccessAt?.getTime?.() || 0
+        );
+
+    refresh(state);
+    return true;
+  }
+
+  async function hydrate() {
+    if (!store?.loadProviderModelHealth) return 0;
+    const rows = await store.loadProviderModelHealth();
+    let count = 0;
+    for (const row of rows || []) {
+      if (hydrateRow(row, { force: true })) count += 1;
+    }
+    return count;
+  }
+
+  async function refreshFromStore() {
+    if (!store?.loadProviderModelHealth) return 0;
+    const rows = await store.loadProviderModelHealth();
+    let count = 0;
+    for (const row of rows || []) {
+      if (hydrateRow(row)) count += 1;
+    }
+    return count;
   }
 
   return Object.freeze({
@@ -223,6 +334,10 @@ function createProviderHealth({
     recordFailure,
     recordSuccess,
     snapshot,
+    persistenceRecord,
+    persist,
+    hydrate,
+    refreshFromStore,
   });
 }
 

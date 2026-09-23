@@ -155,3 +155,105 @@ test('quota errors do not count as provider-model outage evidence', () => {
   assert.equal(snapshot.state, CIRCUIT_STATES.CLOSED);
   assert.equal(snapshot.distinctFailureSlots, 0);
 });
+
+
+test('provider circuit state hydrates across restart and persists recovery', async () => {
+  let now = Date.parse('2026-09-23T20:00:00Z');
+  const writes = [];
+  const store = {
+    async loadProviderModelHealth() {
+      return [{
+        model_id: 'gemini-3.8-flash',
+        state: 'OPEN',
+        open_until: new Date(now + 20000).toISOString(),
+        failure_slots: [
+          { slotId: 'p1', failedAt: new Date(now - 1000).toISOString() },
+          { slotId: 'p2', failedAt: new Date(now - 500).toISOString() },
+        ],
+        last_error_code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+        last_http_status: 503,
+        last_failure_at: new Date(now - 500).toISOString(),
+        last_success_at: null,
+      }];
+    },
+    async upsertProviderModelHealth(record) {
+      writes.push(record);
+      return record;
+    },
+  };
+
+  const health = createProviderHealth({
+    clock: () => now,
+    store,
+    failureEvidenceWindowMs: 30000,
+    openCooldownMs: 20000,
+  });
+
+  assert.equal(await health.hydrate(), 1);
+  assert.equal(health.snapshot('gemini-3.8-flash').state, CIRCUIT_STATES.OPEN);
+  assert.equal(health.snapshot('gemini-3.8-flash').distinctFailureSlots, 2);
+  assert.equal(health.availability('gemini-3.8-flash').available, false);
+
+  now += 20001;
+  assert.equal(
+    health.availability('gemini-3.8-flash').state,
+    CIRCUIT_STATES.HALF_OPEN
+  );
+
+  health.recordSuccess('gemini-3.8-flash');
+  await health.persist('gemini-3.8-flash');
+
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].state, CIRCUIT_STATES.CLOSED);
+  assert.deepEqual(writes[0].failureSlots, []);
+  assert.equal(writes[0].lastHttpStatus, 200);
+});
+
+
+test('provider health refresh ignores stale database rows and accepts newer cross-instance state', async () => {
+  let now = Date.parse('2026-09-23T20:00:00Z');
+  let rows = [{
+    model_id: 'gemini-3.8-flash',
+    state: 'OPEN',
+    open_until: new Date(now + 20000).toISOString(),
+    failure_slots: [
+      { slotId: 'p1', failedAt: new Date(now - 1000).toISOString() },
+      { slotId: 'p2', failedAt: new Date(now - 500).toISOString() },
+    ],
+    last_error_code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    last_http_status: 503,
+    last_failure_at: new Date(now - 500).toISOString(),
+    last_success_at: null,
+    updated_at: new Date(now - 250).toISOString(),
+  }];
+
+  const health = createProviderHealth({
+    clock: () => now,
+    store: {
+      async loadProviderModelHealth() { return rows; },
+      async upsertProviderModelHealth(record) {
+        return { ...record, updated_at: new Date(now).toISOString() };
+      },
+    },
+  });
+
+  assert.equal(await health.hydrate(), 1);
+  health.recordSuccess('gemini-3.8-flash');
+  const locallyClosed = health.snapshot('gemini-3.8-flash');
+  assert.equal(locallyClosed.state, CIRCUIT_STATES.CLOSED);
+
+  // A stale OPEN row must not roll the runtime backward.
+  assert.equal(await health.refreshFromStore(), 0);
+  assert.equal(health.snapshot('gemini-3.8-flash').state, CIRCUIT_STATES.CLOSED);
+
+  now += 1000;
+  rows = [{
+    ...rows[0],
+    state: 'OPEN',
+    open_until: new Date(now + 20000).toISOString(),
+    updated_at: new Date(now + 1).toISOString(),
+  }];
+
+  assert.equal(await health.refreshFromStore(), 1);
+  assert.equal(health.snapshot('gemini-3.8-flash').state, CIRCUIT_STATES.OPEN);
+});

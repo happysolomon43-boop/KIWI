@@ -76,6 +76,48 @@ function createPostgresAIStore({ query, randomUUID }) {
     return rows;
   }
 
+  async function loadProviderModelHealth() {
+    const { rows } = await query(
+      `SELECT *
+       FROM ai_provider_model_health
+       ORDER BY model_id ASC`
+    );
+    return rows;
+  }
+
+  async function upsertProviderModelHealth(state) {
+    const { rows } = await query(
+      `INSERT INTO ai_provider_model_health (
+         model_id, state, open_until, failure_slots,
+         last_error_code, last_http_status,
+         last_failure_at, last_success_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4::jsonb,$5,$6,$7,$8,now()
+       )
+       ON CONFLICT (model_id) DO UPDATE SET
+         state = EXCLUDED.state,
+         open_until = EXCLUDED.open_until,
+         failure_slots = EXCLUDED.failure_slots,
+         last_error_code = EXCLUDED.last_error_code,
+         last_http_status = EXCLUDED.last_http_status,
+         last_failure_at = EXCLUDED.last_failure_at,
+         last_success_at = EXCLUDED.last_success_at,
+         updated_at = now()
+       RETURNING *`,
+      [
+        state.modelId,
+        state.state,
+        state.openUntil || null,
+        json(state.failureSlots || []),
+        state.lastErrorCode || null,
+        state.lastHttpStatus ?? null,
+        state.lastFailureAt || null,
+        state.lastSuccessAt || null,
+      ]
+    );
+    return rows[0] || null;
+  }
+
   async function upsertProjectModelState(state) {
     const { rows } = await query(
       `INSERT INTO ai_project_model_state (
@@ -218,7 +260,10 @@ function createPostgresAIStore({ query, randomUUID }) {
          total_tokens = $11,
          finish_reason = $12,
          error_code = $13,
-         completed_at = COALESCE($14, now())
+         completed_at = COALESCE($14, now()),
+         queue_wait_ms = $15,
+         admission_limit = $16,
+         congestion_level = $17
        WHERE id = $1`,
       [
         id,
@@ -235,6 +280,9 @@ function createPostgresAIStore({ query, randomUUID }) {
         record.finishReason || null,
         record.errorCode || null,
         record.completedAt || null,
+        Number(record.queueWaitMs) || 0,
+        record.admissionLimit == null ? null : Number(record.admissionLimit),
+        record.congestionLevel || null,
       ]
     );
   }
@@ -268,6 +316,84 @@ function createPostgresAIStore({ query, randomUUID }) {
         record.completedAt || null,
       ]
     );
+  }
+
+
+  async function recentOperationalSummary({
+    windowMinutes = 15,
+  } = {}) {
+    const minutes = Math.max(1, Math.min(Math.floor(Number(windowMinutes) || 15), 1440));
+
+    const [requestResult, taskResult, attemptResult] = await Promise.all([
+      query(
+        `SELECT
+           COUNT(*)::int AS requests,
+           COUNT(*) FILTER (WHERE outcome = 'SUCCESS')::int AS successes,
+           COUNT(*) FILTER (WHERE outcome = 'FAILED')::int AS failures,
+           COUNT(*) FILTER (WHERE outcome = 'BLOCKED')::int AS blocked,
+           COUNT(*) FILTER (WHERE outcome = 'PENDING')::int AS pending,
+           COUNT(*) FILTER (WHERE fallback_depth > 0)::int AS fallback_requests,
+           COALESCE(ROUND(AVG(latency_ms))::int, 0) AS average_latency_ms,
+           COALESCE(ROUND(AVG(queue_wait_ms))::int, 0) AS average_queue_wait_ms,
+           COALESCE(MAX(queue_wait_ms), 0)::int AS max_queue_wait_ms,
+           COALESCE(ROUND(AVG(admission_limit))::int, 0) AS average_admission_limit
+         FROM ai_requests
+         WHERE mode = 'LIVE'
+           AND started_at >= NOW() - ($1::integer * INTERVAL '1 minute')`,
+        [minutes]
+      ),
+      query(
+        `SELECT
+           task_id,
+           class,
+           COUNT(*)::int AS requests,
+           COUNT(*) FILTER (WHERE outcome = 'SUCCESS')::int AS successes,
+           COUNT(*) FILTER (WHERE outcome = 'FAILED')::int AS failures,
+           COUNT(*) FILTER (WHERE fallback_depth > 0)::int AS fallback_requests,
+           COALESCE(ROUND(AVG(queue_wait_ms))::int, 0) AS average_queue_wait_ms,
+           MAX(started_at) AS last_request_at
+         FROM ai_requests
+         WHERE mode = 'LIVE'
+           AND started_at >= NOW() - ($1::integer * INTERVAL '1 minute')
+         GROUP BY task_id, class
+         ORDER BY requests DESC, task_id ASC`,
+        [minutes]
+      ),
+      query(
+        `SELECT
+           model_id,
+           project_slot,
+           outcome,
+           error_code,
+           http_status,
+           COUNT(*)::int AS attempts,
+           MAX(created_at) AS last_seen_at
+         FROM ai_attempts
+         WHERE created_at >= NOW() - ($1::integer * INTERVAL '1 minute')
+         GROUP BY model_id, project_slot, outcome, error_code, http_status
+         ORDER BY attempts DESC, model_id ASC NULLS LAST, project_slot ASC NULLS LAST
+         LIMIT 250`,
+        [minutes]
+      ),
+    ]);
+
+    return Object.freeze({
+      windowMinutes: minutes,
+      requests: Object.freeze(requestResult?.rows?.[0] || {
+        requests: 0,
+        successes: 0,
+        failures: 0,
+        blocked: 0,
+        pending: 0,
+        fallback_requests: 0,
+        average_latency_ms: 0,
+        average_queue_wait_ms: 0,
+        max_queue_wait_ms: 0,
+        average_admission_limit: 0,
+      }),
+      tasks: Object.freeze([...(taskResult?.rows || [])]),
+      attempts: Object.freeze([...(attemptResult?.rows || [])]),
+    });
   }
 
 
@@ -374,11 +500,14 @@ function createPostgresAIStore({ query, randomUUID }) {
     loadCatalogModels,
     loadProjectModelStates,
     upsertProjectModelState,
+    loadProviderModelHealth,
+    upsertProviderModelHealth,
     recordModelQualification,
     latestModelQualification,
     createRequest,
     finishRequest,
     recordAttempt,
+    recentOperationalSummary,
     cleanupOperationalHistory,
     incrementDailyRollup,
   });
