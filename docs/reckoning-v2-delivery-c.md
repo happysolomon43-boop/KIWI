@@ -120,7 +120,7 @@ The first Delivery C recovery decision requires:
 - no unresolved Critical evidence;
 - recovery score >= 75;
 - raw accuracy >= 65%;
-- at least five answered questions.
+- enough distinct evidence units have been observed: five where available, or every eligible evidence unit when the subject contains fewer than five.
 
 A high percentage can therefore never hide an unresolved Critical concept.
 
