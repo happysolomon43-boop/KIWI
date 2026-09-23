@@ -112,6 +112,9 @@ export class VineExpansionRenderer {
     this.nodes = new Map();
     this.time = 0;
     this.reaction = null;
+    this._visibilityHandler = null;
+    this._motionQuery = null;
+    this._motionHandler = null;
   }
 
   async init() {
@@ -150,6 +153,67 @@ export class VineExpansionRenderer {
     this.host.appendChild(canvas);
 
     app.ticker.add((ticker) => this._tick(ticker));
+
+    this._visibilityHandler = () => {
+      if (!this.app || this.destroyed) return;
+      if (document.hidden) {
+        this.app.ticker.stop();
+      } else if (
+        [...this.nodes.values()].some(
+          (node) => node.container.visible
+        )
+      ) {
+        this.app.ticker.start();
+        this._render();
+      }
+    };
+    document.addEventListener(
+      'visibilitychange',
+      this._visibilityHandler,
+      { passive: true }
+    );
+
+    if (typeof window.matchMedia === 'function') {
+      this._motionQuery =
+        window.matchMedia(
+          '(prefers-reduced-motion: reduce)'
+        );
+      this._motionHandler = (event) => {
+        this.policy = Object.freeze({
+          ...this.policy,
+          reducedMotion: event.matches,
+          motionScale: event.matches ? 0 : 1,
+        });
+
+        if (event.matches) {
+          for (const node of this.nodes.values()) {
+            node.reveal = node.targetReveal;
+            node.container.position.set(0, 0);
+          }
+          this.reaction = null;
+        }
+
+        this._render();
+      };
+
+      if (
+        typeof this._motionQuery.addEventListener ===
+        'function'
+      ) {
+        this._motionQuery.addEventListener(
+          'change',
+          this._motionHandler
+        );
+      } else if (
+        typeof this._motionQuery.addListener ===
+        'function'
+      ) {
+        this._motionQuery.addListener(
+          this._motionHandler
+        );
+      }
+    }
+
     if (!document.hidden) app.ticker.start();
     return this;
   }
@@ -323,6 +387,36 @@ export class VineExpansionRenderer {
   async destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+
+    if (this._visibilityHandler) {
+      document.removeEventListener(
+        'visibilitychange',
+        this._visibilityHandler
+      );
+      this._visibilityHandler = null;
+    }
+
+    if (this._motionQuery && this._motionHandler) {
+      if (
+        typeof this._motionQuery.removeEventListener ===
+        'function'
+      ) {
+        this._motionQuery.removeEventListener(
+          'change',
+          this._motionHandler
+        );
+      } else if (
+        typeof this._motionQuery.removeListener ===
+        'function'
+      ) {
+        this._motionQuery.removeListener(
+          this._motionHandler
+        );
+      }
+    }
+    this._motionQuery = null;
+    this._motionHandler = null;
+
     if (this.app) {
       try {
         this.app.ticker.stop();
