@@ -8613,7 +8613,9 @@ try {
     flaggedCards = [...shuffle(bubbleCards), ...shuffle(nonBubbleCards)];
   }
 } catch (_e) { /* non-fatal — Reckoning proceeds with unweighted pool */ }
-const questionCount = Math.min(25, Math.max(5, flaggedCards.length));
+// V2 does not promise a fixed exam size. The persisted legacy-compatible
+// question_count remains 0 until a validated hidden bank is prepared.
+const questionCount = 0;
 let reckoning;
 try {
 reckoning = await db.reckoningSessions.create(userId, {
