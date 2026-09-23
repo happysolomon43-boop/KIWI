@@ -75,7 +75,12 @@ test('question bank creates explicit Diagnostic/Challenge/Confirmation families'
 
   assert.deepEqual(
     blueprints.map((item) => item.role),
-    ['DIAGNOSTIC', 'CHALLENGE', 'CONFIRMATION', 'DIAGNOSTIC', 'CHALLENGE', 'DIAGNOSTIC', 'CONTROL']
+    [
+      'DIAGNOSTIC', 'CHALLENGE', 'CONFIRMATION',
+      'DIAGNOSTIC', 'CHALLENGE',
+      'DIAGNOSTIC', 'CHALLENGE',
+      'CONTROL', 'CHALLENGE',
+    ]
   );
   assert.equal(blueprints[2].constraints.independentRetrieval, true);
   assert.equal(blueprints[1].constraints.changeScenario, true);
