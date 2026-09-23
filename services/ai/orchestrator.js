@@ -502,7 +502,10 @@ function createAIOrchestrator({
               });
 
           lastError = aiError;
-          resolvedTrafficController.noteFailure(aiError);
+          resolvedTrafficController.noteFailure(aiError, {
+            modelId: candidate.modelId,
+            projectSlot: slot.id,
+          });
           const isProjectSlotQuotaFailure = PROJECT_SLOT_QUOTA_CODES.has(aiError.code);
           const isProviderAvailabilityFailure = MODEL_AVAILABILITY_CODES.has(aiError.code);
           if (isProjectSlotQuotaFailure) modelQuotaAttemptCount += 1;
