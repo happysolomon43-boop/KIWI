@@ -16573,7 +16573,13 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             })
           );
           const normalisedTroubleCards = (troubleCards || []).map(function(c) {
-            var canonicalId = c.card_id || c.cardId || null;
+            // FIX: include c.id in the join key BEFORE the fallback lookup, not after.
+            // The dedicated trouble-cards endpoint historically only populated `id`
+            // (card_states.id, i.e. userId_cardId or the raw card id) and left
+            // card_id/cardId empty. Looking up the canonical /progress card (which
+            // carries subject_id) by card_id/cardId alone silently missed every
+            // such row, leaving subjectId null and breaking the "Study" click.
+            var canonicalId = c.card_id || c.cardId || c.id || null;
             var fallback = aggregateTroubleByCardId.get(String(canonicalId || "")) || {};
             canonicalId = canonicalId || fallback.card_id || fallback.cardId || fallback.id || c.id || null;
             var subjectId = c.subject_id || c.subjectId || fallback.subject_id || fallback.subjectId || null;

@@ -17363,7 +17363,37 @@ examRouter.post('/:id/create-retry-deck', async (req, res) => {
     const wrongQs = exam.questions.filter(q => !(q.is_correct ?? (q.selected_option === q.correct_answer)));
     if (wrongQs.length === 0) return res.status(400).json({ error: 'No wrong answers — perfect score! Nothing to retry.' });
 
-    const subjectId = exam.subject_id;
+    let subjectId = exam.subject_id || null;
+    // FIX: exam.subject_id is null for Reckoning exams (they pull flagged cards
+    // across multiple subjects, so no single subject_id is ever assigned at
+    // creation). db.decks.create() silently OMITS the subject_id column when it's
+    // null, so the retry deck was left with subject_id = NULL forever — and
+    // every future "Study" click on that retry deck fails the
+    // `!deck.subject_id` guard with no visible explanation. Infer the subject
+    // from the wrong-answer cards' own decks instead of leaving it null.
+    if (!subjectId) {
+      try {
+        const fallbackCardIds = [...new Set(wrongQs.map(q => q.card_id).filter(Boolean))];
+        const fallbackCards = fallbackCardIds.length
+          ? await db.cards.findByIds(req.user.id, fallbackCardIds)
+          : [];
+        const deckIds = [...new Set(fallbackCards.map(c => c.deck_id).filter(Boolean))];
+        if (deckIds.length > 0) {
+          const { rows: fallbackDecks } = await query(
+            'SELECT id, subject_id FROM decks WHERE user_id = $1 AND id = ANY($2::text[])',
+            [req.user.id, deckIds]
+          );
+          const subjectCounts = {};
+          for (const d of fallbackDecks) {
+            if (d.subject_id) subjectCounts[d.subject_id] = (subjectCounts[d.subject_id] || 0) + 1;
+          }
+          const bestSubject = Object.entries(subjectCounts).sort((a, b) => b[1] - a[1])[0];
+          if (bestSubject) subjectId = bestSubject[0];
+        }
+      } catch (e) {
+        console.error('[KIWI] Retry deck subject_id fallback failed (non-fatal):', e.message);
+      }
+    }
     const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     const retryDeck = await db.decks.create(req.user.id, {
       subject_id: subjectId,
