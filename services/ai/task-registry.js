@@ -47,19 +47,19 @@ const RETRY_POLICY_CONFIG = Object.freeze({
     maxAttempts: 32,
     maxAttemptsPerModel: 2,
     maxQuotaAttemptsPerModel: 15,
-    maxTransientAttemptsPerModel: 1,
+    maxTransientAttemptsPerModel: 2,
   }),
   [RETRY_POLICIES.VIP_ANALYSIS]: Object.freeze({
     maxAttempts: 20,
     maxAttemptsPerModel: 2,
     maxQuotaAttemptsPerModel: 10,
-    maxTransientAttemptsPerModel: 1,
+    maxTransientAttemptsPerModel: 2,
   }),
   [RETRY_POLICIES.IP_FAST]: Object.freeze({
     maxAttempts: 8,
     maxAttemptsPerModel: 2,
     maxQuotaAttemptsPerModel: 4,
-    maxTransientAttemptsPerModel: 1,
+    maxTransientAttemptsPerModel: 2,
   }),
 });
 
