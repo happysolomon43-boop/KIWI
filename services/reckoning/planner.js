@@ -17,7 +17,7 @@ function stableRiskSort(a, b) {
 function snapshotCard(card = {}) {
   const snapshot = {};
   for (const key of [
-    'id', 'front', 'back', 'question', 'answer', 'title', 'content',
+    'id', 'front', 'back', 'front_content', 'back_content', 'question', 'answer', 'title', 'content',
     'deck_id', 'subject_id', 'stage', 'verified', 'fsrs_stability',
     'fsrs_difficulty', 'next_review_at', 'last_reviewed_at',
   ]) {
