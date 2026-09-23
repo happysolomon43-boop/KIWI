@@ -20556,6 +20556,41 @@ res.status(500).json({ error: 'Failed to update settings', details: e.message })
 // GET /api/library — subject + deck overview for the library view
 // GET /api/dashboard — aggregated dashboard data
 
+// Phase 11: lightweight canonical renderer state for route-level vine continuity.
+// This avoids loading the full dashboard/biome just to decide whether a mature
+// organism may extend into Brain or Study setup.
+progressRouter.get('/tree-state', async (req, res) => {
+try {
+const [stats, subjectStats] = await Promise.all([
+db.userStats.get(req.user.id),
+db.subjectStats.findMany(req.user.id),
+]);
+const currentStreak = stats?.current_streak || 0;
+const earnedMilestones = stats?.streak_milestones_earned || [];
+const milestones = [...new Set([
+...earnedMilestones,
+...[7, 30, 100, 365].filter((m) => currentStreak >= m),
+])].sort((a, b) => a - b);
+const fruits = (subjectStats || []).reduce(
+(sum, row) => sum + (Number(row?.fruit_count) || 0),
+0
+);
+const treeState = buildTreeState({
+stage: stats?.tree_stage || 1,
+vitality: stats?.tree_health ?? 100,
+growthPoints: Number(stats?.growth_points) || 0,
+nextStage: ecosystemV2.nextTreeStage(stats || {}),
+knowledgeScore: Number(stats?.knowledge_score_global) || 0,
+fruits,
+milestones,
+streak: currentStreak,
+});
+res.json({ treeState });
+} catch (e) {
+res.status(500).json({ error: 'Failed to load tree state', details: e.message });
+}
+});
+
 progressRouter.get('/dashboard', async (req, res) => {
 try {
 // Refresh derived ecosystem telemetry while the dashboard's other independent

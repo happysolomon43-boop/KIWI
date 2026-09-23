@@ -728,6 +728,25 @@
         padding: 28px 32px;
         max-width: 1200px;
       }
+      .main-content.kiwi-vine-expansion-root > .page-wrap {
+        position: relative;
+        z-index: 1;
+      }
+      .kiwi-vine-expansion-overlay {
+        pointer-events: none !important;
+        user-select: none;
+      }
+      .sr-only {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        padding: 0 !important;
+        margin: -1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+      }
       /* ── Cards ── */
       .card {
         background: var(--glass-bg);
@@ -9123,18 +9142,110 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // fallback for unsupported devices or renderer initialization failures.
       window.KiwiTree = KiwiTree;
 
+      let _kiwiTreeStateChannelPromise = null;
+      let _kiwiVineSystem = null;
+      let _kiwiVineSystemPromise = null;
+      let _kiwiTreeStateCache = null;
+      let _kiwiTreeStateCacheAt = 0;
+
+      function _getKiwiTreeStateChannel() {
+        if (!_kiwiTreeStateChannelPromise) {
+          _kiwiTreeStateChannelPromise = import('/tree/tree-state-channel.mjs');
+        }
+        return _kiwiTreeStateChannelPromise;
+      }
+
+      async function _publishKiwiTreeState(state, source, options = {}) {
+        if (!state || typeof state !== 'object') return null;
+        const channel = await _getKiwiTreeStateChannel();
+        _kiwiTreeStateCache = state;
+        _kiwiTreeStateCacheAt = Date.now();
+        return channel.publishTreeState(state, {
+          source: source || 'app',
+          silent: options.silent === true,
+        });
+      }
+
+      async function _fetchCanonicalKiwiTreeState(options = {}) {
+        const force = options.force === true;
+        const now = Date.now();
+        if (
+          !force &&
+          _kiwiTreeStateCache &&
+          now - _kiwiTreeStateCacheAt < 20000
+        ) {
+          return _kiwiTreeStateCache;
+        }
+
+        const known =
+          AppState.dashboard?.treeState ||
+          AppState.biome?.globalTreeState ||
+          null;
+
+        if (AppState.isDemo || !authToken) {
+          if (known) {
+            _kiwiTreeStateCache = known;
+            _kiwiTreeStateCacheAt = now;
+          }
+          return known;
+        }
+
+        try {
+          const response = await apiRequest('/tree-state');
+          const state = response?.treeState || null;
+          if (state) {
+            _kiwiTreeStateCache = state;
+            _kiwiTreeStateCacheAt = Date.now();
+            return state;
+          }
+        } catch (error) {
+          if (!known && !_kiwiTreeStateCache) throw error;
+        }
+
+        return known || _kiwiTreeStateCache;
+      }
+
       async function mountKiwiLivingTree(container, options = {}) {
         const legacyFactory = (target, legacyOptions) =>
           new KiwiTree(target, legacyOptions);
 
         try {
           const gateway = await import('/tree/tree-renderer-gateway.mjs');
-          return await gateway.mountKiwiTreeRenderer({
+          const handle = await gateway.mountKiwiTreeRenderer({
             ...options,
             container,
             mode: options.mode || gateway.getDefaultTreeRendererMode(),
             legacyFactory,
           });
+
+          try {
+            const channel = await _getKiwiTreeStateChannel();
+            channel.publishTreeState(options.state, {
+              source: options.source || 'local-tree-mount',
+              silent: !channel.getCurrentTreeState(),
+            });
+
+            const unsubscribe = channel.subscribeTreeState((treeEvent) => {
+              if (!treeEvent?.state || !container.isConnected) return;
+              handle.updateState?.(treeEvent.state, true);
+              handle.playReactions?.(treeEvent.reactions || []);
+            }, {
+              emitCurrent: true,
+              emitRecentReactions: true,
+              consumeRecentReactions: true,
+              reactionTtlMs: 60000,
+            });
+
+            const originalDestroy = handle.destroy?.bind(handle);
+            handle.destroy = async () => {
+              unsubscribe();
+              if (originalDestroy) await originalDestroy();
+            };
+          } catch (stateError) {
+            console.warn('[KIWI] Tree-state channel unavailable:', stateError);
+          }
+
+          return handle;
         } catch (error) {
           console.warn('[KIWI] Pixi tree gateway unavailable; using SVG fallback.', error);
           container.innerHTML = '';
@@ -9148,11 +9259,96 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 instance.updateState(nextState, animate);
               }
             },
+            playReactions() {},
             async destroy() {
               container.innerHTML = '';
             },
           };
         }
+      }
+
+      async function ensureKiwiVineSystem() {
+        if (AppState.isDemo || !authToken) return null;
+        if (_kiwiVineSystem && !_kiwiVineSystem.destroyed) {
+          return _kiwiVineSystem;
+        }
+        if (_kiwiVineSystemPromise) return _kiwiVineSystemPromise;
+
+        _kiwiVineSystemPromise = (async () => {
+          const { createVineExpansionController } =
+            await import('/tree/vine-expansion-controller.mjs');
+
+          const controller = await createVineExpansionController({
+            mainContent: document.getElementById('mainContent'),
+            routeProvider: () => AppState.currentPage,
+            uiStateProvider: () => ({
+              reckoningActive:
+                typeof _reckoningGlobalLockActive === 'function'
+                  ? _reckoningGlobalLockActive()
+                  : !!AppState.reckoning,
+              tourActive:
+                typeof _tourActive !== 'undefined' && !!_tourActive,
+              activeStudySession:
+                AppState.currentPage === 'study' && !!AppState.tempStudy,
+            }),
+            stateProvider: ({ force } = {}) =>
+              _fetchCanonicalKiwiTreeState({ force }),
+          });
+
+          _kiwiVineSystem = controller;
+          window.KIWI_VINE_SYSTEM = controller;
+          return controller;
+        })()
+          .catch((error) => {
+            console.warn('[KIWI] Website vine system unavailable:', error);
+            return null;
+          })
+          .finally(() => {
+            _kiwiVineSystemPromise = null;
+          });
+
+        return _kiwiVineSystemPromise;
+      }
+
+      function _scheduleKiwiVineRefresh() {
+        if (_kiwiVineSystem && !_kiwiVineSystem.destroyed) {
+          _kiwiVineSystem.scheduleRefresh();
+          return;
+        }
+        if (authToken && !AppState.isDemo) {
+          ensureKiwiVineSystem().catch(() => {});
+        }
+      }
+
+      async function _invalidateKiwiTreeState(source) {
+        _kiwiTreeStateCache = null;
+        _kiwiTreeStateCacheAt = 0;
+        if (_kiwiVineSystem && !_kiwiVineSystem.destroyed) {
+          await _kiwiVineSystem.invalidateState(source || 'app-change');
+          return;
+        }
+        const state = await _fetchCanonicalKiwiTreeState({ force: true }).catch(() => null);
+        if (state) {
+          await _publishKiwiTreeState(state, source || 'app-change');
+        }
+      }
+
+      async function _destroyKiwiVineSystem() {
+        const controller = _kiwiVineSystem;
+        _kiwiVineSystem = null;
+        window.KIWI_VINE_SYSTEM = null;
+
+        if (controller && typeof controller.destroy === 'function') {
+          try { await controller.destroy(); } catch (_) {}
+        }
+
+        try {
+          const channel = await _getKiwiTreeStateChannel();
+          channel.resetTreeStateChannel();
+        } catch (_) {}
+
+        _kiwiTreeStateCache = null;
+        _kiwiTreeStateCacheAt = 0;
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -9266,6 +9462,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         }
         AppState._skipHistory = false;
         AppState.currentPage = page;
+        _scheduleKiwiVineRefresh();
         // Persist page so refresh restores the same view
         try { sessionStorage.setItem("kiwi_page", page); } catch (_) {}
         document.title = (ROUTES[page] ? ROUTES[page].title + " — " : "") + "KIWI";
@@ -9965,6 +10162,20 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         if (typeof _tourCleanup === 'function' && typeof _tourActive !== 'undefined' && _tourActive) {
           _tourCleanup();
         }
+        // Tear down all living-vine renderers before account state disappears.
+        Promise.resolve(_destroyKiwiVineSystem()).catch(() => {});
+        const _localTreeHandles = [
+          AppState.treeInstance,
+          AppState.biomeTreeInstance,
+        ].filter(Boolean);
+        _localTreeHandles.forEach((handle) => {
+          if (typeof handle.destroy === 'function') {
+            Promise.resolve(handle.destroy()).catch(() => {});
+          }
+        });
+        AppState.treeInstance = null;
+        AppState.biomeTreeInstance = null;
+
         // Tier 1 Fix #6: revoke refresh token server-side before clearing local state
         var _logoutRt = refreshToken || localStorage.getItem("kiwi_refresh_token");
         if (_logoutRt) { api.logout(_logoutRt).catch(function() {}); }
@@ -10406,6 +10617,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
     `;
           // Canonical living-vine renderer. PixiJS is primary; the gateway
           // automatically returns the legacy SVG renderer if Pixi cannot start.
+          if (treeState) {
+            _publishKiwiTreeState(treeState, 'dashboard', {
+              silent: !_kiwiTreeStateCache,
+            }).catch(() => {});
+          }
+
           const treeContainer = document.getElementById("dashboardTree");
           if (treeContainer && typeof KiwiTree === 'function') {
             const ts = treeState || {
@@ -10429,6 +10646,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               width: 300,
               height: 360,
               state: ts,
+              source: 'dashboard-local',
               interactive: true,
             }).then((handle) => {
               if (!treeContainer.isConnected) {
@@ -12979,6 +13197,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           AppState.biome = null;
           _bustDashboardCache();
           renderSessionEnd(result);
+          _invalidateKiwiTreeState('study-session-complete').catch(() => {});
           return true;
         } catch (error) {
           study._ending = false;
@@ -15361,6 +15580,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         }
       </div>
     `;
+          if (globalTreeState) {
+            _publishKiwiTreeState(globalTreeState, 'biome', {
+              silent: !_kiwiTreeStateCache,
+            }).catch(() => {});
+          }
+
           // Render the canonical living vine in the Biome. Keep the full
           // TreeState contract so continuous morphology, Vitality and fruit are available.
           const treeContainer = document.getElementById("biomeTree");
@@ -15375,6 +15600,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               width: 300,
               height: 360,
               state: globalTreeState,
+              source: 'biome-local',
               interactive: true,
             }).then((handle) => {
               if (!treeContainer.isConnected) {
@@ -23188,6 +23414,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           // Load initial data
           updateUserFooter();
           initKiwiWS(); // FIX Bug-5a: returning users (stored-token path) never got a WS connection
+          ensureKiwiVineSystem().catch(() => {});
           // Restore previous page on refresh. An in-progress Reckoning is
           // server-backed, so recover it instead of discarding the volatile
           // AppState.tempExam and leaving the user stranded.

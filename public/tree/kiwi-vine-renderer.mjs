@@ -47,6 +47,10 @@ export class KiwiVineRenderer {
     this._resizeObserver = null;
     this._clickHandler = null;
     this._interactionImpulse = 0;
+    this._reactionImpulse = 0;
+    this._reactionType = null;
+    this._reactionElapsed = 0;
+    this._reactionDuration = 0;
     this._lastLayoutKey = '';
 
     this._backdrop = null;
@@ -719,12 +723,59 @@ export class KiwiVineRenderer {
       );
     }
 
+    if (this._reactionImpulse > 0) {
+      this._reactionElapsed += deltaMS;
+      const duration = Math.max(1, this._reactionDuration || 900);
+      this._reactionImpulse = Math.max(
+        0,
+        1 - this._reactionElapsed / duration
+      );
+      if (this._reactionImpulse <= 0) {
+        this._reactionType = null;
+        this._reactionElapsed = 0;
+        this._reactionDuration = 0;
+      }
+    }
+
     this._animateLivingSystems(deltaMS, motionScale);
   }
 
   _animateLivingSystems(deltaMS, motionScale) {
     this._livingTime += deltaMS / 1000;
-    const interactionBoost = 1 + this._interactionImpulse * 1.8;
+    const reactionBoost =
+      this.runtime.motionScale <= 0
+        ? 0
+        : this._reactionImpulse;
+    const interactionBoost =
+      1 +
+      this._interactionImpulse * 1.8 +
+      reactionBoost * (
+        this._reactionType === 'milestone'
+          ? 1.55
+          : this._reactionType === 'growth'
+            ? 1.15
+            : this._reactionType === 'recovery'
+              ? 0.90
+              : 0.65
+      );
+
+    if (this._tips) {
+      const tipPulse =
+        this._reactionType === 'growth' ||
+        this._reactionType === 'milestone'
+          ? reactionBoost
+          : 0;
+      this._tips.alpha = 1 + tipPulse * 0.28;
+      this._tips.scale.set(1 + tipPulse * 0.055);
+    }
+
+    if (this._roots) {
+      const rootPulse =
+        this._reactionType === 'streak-root'
+          ? reactionBoost
+          : 0;
+      this._roots.alpha = 1 + rootPulse * 0.20;
+    }
 
     for (const node of this._leafNodes.values()) {
       if (!node.active || !node.container.visible) continue;
@@ -756,6 +807,66 @@ export class KiwiVineRenderer {
         motionScale *
         interactionBoost;
     }
+  }
+
+  playReactions(reactions) {
+    if (
+      this.destroyed ||
+      this.runtime.motionScale <= 0 ||
+      !Array.isArray(reactions) ||
+      reactions.length === 0
+    ) {
+      return;
+    }
+
+    const priority = {
+      milestone: 7,
+      'fruit-set': 6,
+      'streak-root': 5,
+      growth: 4,
+      bloom: 3,
+      recovery: 2,
+      'stress-settle': 1,
+    };
+
+    const strongest = reactions
+      .slice()
+      .sort((a, b) => {
+        const byPriority =
+          (priority[b.type] || 0) -
+          (priority[a.type] || 0);
+        if (byPriority !== 0) return byPriority;
+        return (Number(b.magnitude) || 0) -
+          (Number(a.magnitude) || 0);
+      })[0];
+
+    if (!strongest) return;
+
+    this._reactionType = strongest.type;
+    this._reactionImpulse = Math.max(
+      0.25,
+      Math.min(1, Number(strongest.magnitude) || 0.4)
+    );
+    this._reactionElapsed = 0;
+    this._reactionDuration =
+      strongest.type === 'milestone'
+        ? 1500
+        : strongest.type === 'streak-root'
+          ? 1200
+          : 900;
+
+    if (
+      strongest.type === 'growth' ||
+      strongest.type === 'recovery' ||
+      strongest.type === 'milestone'
+    ) {
+      this._interactionImpulse = Math.max(
+        this._interactionImpulse,
+        this._reactionImpulse * 0.55
+      );
+    }
+
+    this.runtime.resume();
   }
 
   updateState(nextState, animate = true) {

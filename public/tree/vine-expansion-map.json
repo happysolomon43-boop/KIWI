@@ -1,0 +1,500 @@
+{
+  "version": 2,
+  "viewportBreakpoints": {
+    "mobileMax": 768,
+    "tabletMax": 1024
+  },
+  "expansionMaturity": {
+    "localOnly": 0,
+    "firstEscape": 0.72,
+    "sectionReach": 0.8,
+    "contextualReach": 0.86,
+    "pageReach": 0.92,
+    "ecosystemReach": 0.97
+  },
+  "shellAnchors": {
+    "mainTopRight": {
+      "selector": "#mainContent .page-wrap",
+      "edge": "top-right",
+      "insetPx": 18,
+      "purpose": "route-entry"
+    },
+    "mainTopLeft": {
+      "selector": "#mainContent .page-wrap",
+      "edge": "top-left",
+      "insetPx": 18,
+      "purpose": "route-entry"
+    },
+    "mainRightRail": {
+      "selector": "#mainContent .page-wrap",
+      "edge": "right",
+      "ratio": 0.28,
+      "insetPx": 8,
+      "purpose": "decorative-rail"
+    },
+    "mainLeftRail": {
+      "selector": "#mainContent .page-wrap",
+      "edge": "left",
+      "ratio": 0.28,
+      "insetPx": 8,
+      "purpose": "decorative-rail"
+    }
+  },
+  "globalSuspendSelectors": [
+    "#reckoningOverlay",
+    "#examGeneratingScreen",
+    "#authOverlay.active",
+    "#bubblePanelOverlay",
+    "#_qqOverlay",
+    "#_qqGenOverlay",
+    ".modal-overlay",
+    "#kiwiTourExit.visible",
+    "body.kiwi-tour-active"
+  ],
+  "globalForbiddenSelectors": [
+    "#sidebar",
+    "#sidebarNav",
+    "#bottomNav",
+    ".mobile-bar",
+    "#toastContainer",
+    "#kiwiGenBanner",
+    "button",
+    "input",
+    "select",
+    "textarea",
+    "[role=\"dialog\"]",
+    "[aria-modal=\"true\"]"
+  ],
+  "externalVineStyle": {
+    "maxThicknessScale": 0.52,
+    "minThicknessScale": 0.24,
+    "leafScale": 0.76,
+    "leafSpacingPx": 58,
+    "flowerSpacingPx": 120,
+    "fruitAllowed": false,
+    "pointerEvents": "none",
+    "preferredZBand": "decorative-between-surface-and-content",
+    "motionScale": 0.55,
+    "maxScreenCoverageRatio": 0.14
+  },
+  "routeExpansionMap": {
+    "dashboard": {
+      "mode": "full",
+      "requiredSelectors": [
+        "#tree-card",
+        "#invitations-card",
+        ".dashboard-grid",
+        ".dashboard-right"
+      ],
+      "originSelector": "#tree-card",
+      "forbiddenSelectors": [
+        "#tree-card .tree-health-bar",
+        "#tree-card .section-header",
+        "#invitations-card .invitation-item",
+        "#invitations-card .invitation-dismiss",
+        ".ks-hero-subjects"
+      ],
+      "paths": [
+        {
+          "id": "dashboard-right-rail",
+          "order": 10,
+          "source": {
+            "kind": "local-socket",
+            "socketId": "exit-right-upper"
+          },
+          "minMaturity": 0.72,
+          "profiles": [
+            "desktop",
+            "tablet"
+          ],
+          "target": {
+            "selector": ".dashboard-right",
+            "edge": "right",
+            "insetPx": -10,
+            "ratio": 0.18,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 12
+          },
+          "corridor": "outer-gutter",
+          "leafBudget": 5,
+          "flowerBudget": 0,
+          "motionScale": 0.48
+        },
+        {
+          "id": "dashboard-streak-wrap",
+          "order": 20,
+          "source": {
+            "kind": "path-end",
+            "pathId": "dashboard-right-rail"
+          },
+          "minMaturity": 0.8,
+          "profiles": [
+            "desktop",
+            "tablet"
+          ],
+          "target": {
+            "selector": ".streak-widget",
+            "edge": "top-right",
+            "insetPx": 7,
+            "ratio": null,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 12
+          },
+          "corridor": "right-column-perimeter",
+          "leafBudget": 4,
+          "flowerBudget": 0,
+          "motionScale": 0.42
+        },
+        {
+          "id": "dashboard-invitations-reach",
+          "order": 30,
+          "source": {
+            "kind": "local-socket",
+            "socketId": "exit-left-upper"
+          },
+          "minMaturity": 0.84,
+          "profiles": [
+            "desktop"
+          ],
+          "target": {
+            "selector": "#invitations-card",
+            "edge": "top-right",
+            "insetPx": 10,
+            "ratio": null,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 14
+          },
+          "corridor": "column-gap",
+          "leafBudget": 5,
+          "flowerBudget": 1,
+          "motionScale": 0.44
+        },
+        {
+          "id": "dashboard-hero-reach",
+          "order": 40,
+          "source": {
+            "kind": "path-end",
+            "pathId": "dashboard-invitations-reach"
+          },
+          "minMaturity": 0.92,
+          "profiles": [
+            "desktop"
+          ],
+          "target": {
+            "selector": ".ks-hero",
+            "edge": "bottom-right",
+            "insetPx": 14,
+            "ratio": null,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 14
+          },
+          "corridor": "page-outer-perimeter",
+          "leafBudget": 4,
+          "flowerBudget": 1,
+          "motionScale": 0.38
+        },
+        {
+          "id": "dashboard-main-right-rail",
+          "order": 50,
+          "source": {
+            "kind": "local-socket",
+            "socketId": "exit-right-mid"
+          },
+          "minMaturity": 0.97,
+          "profiles": [
+            "desktop"
+          ],
+          "target": {
+            "selector": "#mainContent .page-wrap",
+            "edge": "right",
+            "insetPx": -6,
+            "ratio": 0.62,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 16
+          },
+          "corridor": "page-right-safe-rail",
+          "leafBudget": 6,
+          "flowerBudget": 1,
+          "motionScale": 0.34
+        }
+      ],
+      "localSceneSelector": "#dashboardTree"
+    },
+    "biome": {
+      "mode": "full",
+      "requiredSelectors": [
+        "#biomeTree",
+        "#biome-container"
+      ],
+      "originSelector": "#biomeTree",
+      "forbiddenSelectors": [
+        ".biome-zone .pressure-bar-wrap",
+        ".biome-zone .bubble-mini-indicator",
+        ".biome-zone .biome-tooltip",
+        ".biome-zone button"
+      ],
+      "paths": [
+        {
+          "id": "biome-grid-left",
+          "order": 10,
+          "source": {
+            "kind": "local-socket",
+            "socketId": "exit-left-mid"
+          },
+          "minMaturity": 0.76,
+          "profiles": [
+            "desktop",
+            "tablet"
+          ],
+          "target": {
+            "selector": "#biome-container",
+            "edge": "top-left",
+            "insetPx": 8,
+            "ratio": null,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 14
+          },
+          "corridor": "tree-card-to-grid-outer-left",
+          "leafBudget": 5,
+          "flowerBudget": 0,
+          "motionScale": 0.46
+        },
+        {
+          "id": "biome-grid-right",
+          "order": 20,
+          "source": {
+            "kind": "local-socket",
+            "socketId": "exit-right-mid"
+          },
+          "minMaturity": 0.76,
+          "profiles": [
+            "desktop",
+            "tablet"
+          ],
+          "target": {
+            "selector": "#biome-container",
+            "edge": "top-right",
+            "insetPx": 8,
+            "ratio": null,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 14
+          },
+          "corridor": "tree-card-to-grid-outer-right",
+          "leafBudget": 5,
+          "flowerBudget": 0,
+          "motionScale": 0.46
+        },
+        {
+          "id": "biome-zone-perimeter-left",
+          "order": 30,
+          "source": {
+            "kind": "path-end",
+            "pathId": "biome-grid-left"
+          },
+          "minMaturity": 0.88,
+          "profiles": [
+            "desktop"
+          ],
+          "target": {
+            "selector": ".biome-zone[data-zone-id]",
+            "edge": "top-left",
+            "insetPx": 7,
+            "ratio": null,
+            "targetMode": "outermost-per-column",
+            "maxTargets": 2,
+            "perimeterOnly": true,
+            "clearancePx": 16
+          },
+          "corridor": "grid-perimeter-only",
+          "leafBudget": 5,
+          "flowerBudget": 1,
+          "motionScale": 0.38
+        },
+        {
+          "id": "biome-zone-perimeter-right",
+          "order": 40,
+          "source": {
+            "kind": "path-end",
+            "pathId": "biome-grid-right"
+          },
+          "minMaturity": 0.88,
+          "profiles": [
+            "desktop"
+          ],
+          "target": {
+            "selector": ".biome-zone[data-zone-id]",
+            "edge": "top-right",
+            "insetPx": 7,
+            "ratio": null,
+            "targetMode": "outermost-per-column",
+            "maxTargets": 2,
+            "perimeterOnly": true,
+            "clearancePx": 16
+          },
+          "corridor": "grid-perimeter-only",
+          "leafBudget": 5,
+          "flowerBudget": 1,
+          "motionScale": 0.38
+        }
+      ],
+      "localSceneSelector": "#biomeTree"
+    },
+    "brain": {
+      "mode": "contextual",
+      "requiredSelectors": [
+        "#brain-gauges",
+        ".dashboard-grid"
+      ],
+      "originSelector": null,
+      "forbiddenSelectors": [
+        "#brainDeferredReckoningCard",
+        "#brainActiveReckoningCard",
+        ".brain-pressure-row",
+        ".pressure-exp-popover"
+      ],
+      "paths": [
+        {
+          "id": "brain-shell-to-gauges",
+          "order": 10,
+          "source": {
+            "kind": "shell-anchor",
+            "anchorId": "mainTopRight"
+          },
+          "minMaturity": 0.86,
+          "profiles": [
+            "desktop",
+            "tablet"
+          ],
+          "target": {
+            "selector": "#brain-gauges",
+            "edge": "top-right",
+            "insetPx": 8,
+            "ratio": null,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 14
+          },
+          "corridor": "page-right-safe-rail",
+          "leafBudget": 4,
+          "flowerBudget": 0,
+          "motionScale": 0.28
+        },
+        {
+          "id": "brain-left-card-perimeter",
+          "order": 20,
+          "source": {
+            "kind": "shell-anchor",
+            "anchorId": "mainTopLeft"
+          },
+          "minMaturity": 0.94,
+          "profiles": [
+            "desktop"
+          ],
+          "target": {
+            "selector": "#mainContent .dashboard-left > .card",
+            "edge": "top-left",
+            "insetPx": 8,
+            "ratio": null,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 14
+          },
+          "corridor": "page-left-safe-rail",
+          "leafBudget": 3,
+          "flowerBudget": 0,
+          "motionScale": 0.24
+        }
+      ],
+      "localSceneSelector": null
+    },
+    "study": {
+      "mode": "restrained",
+      "requiredSelectors": [
+        "#mainContent"
+      ],
+      "originSelector": null,
+      "suppressWhenSelectorsPresent": [
+        "#studyLayout",
+        "#studyArena",
+        "#_qqOverlay",
+        "#_qqGenOverlay"
+      ],
+      "forbiddenSelectors": [
+        "#studyArena",
+        "#studySubject",
+        "#stateFilters",
+        "#startStudyBtn",
+        ".study-header",
+        ".session-seed",
+        ".kiwi-prev-nav",
+        ".kiwi-resume-nav",
+        "#cardTimerWrap"
+      ],
+      "paths": [
+        {
+          "id": "study-setup-edge",
+          "order": 10,
+          "source": {
+            "kind": "shell-anchor",
+            "anchorId": "mainTopLeft"
+          },
+          "minMaturity": 0.92,
+          "profiles": [
+            "desktop"
+          ],
+          "target": {
+            "selector": "#studySubject",
+            "edge": "top-left",
+            "insetPx": -18,
+            "ratio": null,
+            "targetMode": "single",
+            "maxTargets": 1,
+            "perimeterOnly": true,
+            "clearancePx": 24
+          },
+          "corridor": "setup-card-outer-left-only",
+          "leafBudget": 2,
+          "flowerBudget": 0,
+          "motionScale": 0.16,
+          "resolveTargetAncestor": ".card"
+        }
+      ],
+      "localSceneSelector": null
+    }
+  },
+  "routePolicy": {
+    "dashboard": "mapped",
+    "biome": "mapped",
+    "brain": "mapped",
+    "study": "mapped",
+    "exam": "disabled",
+    "exam-config": "disabled",
+    "card-browser": "disabled",
+    "generating-cards": "disabled",
+    "settings": "disabled",
+    "admin": "disabled",
+    "landing": "disabled",
+    "onboarding": "disabled",
+    "library": "unmapped",
+    "chronicle": "unmapped",
+    "progress": "unmapped",
+    "community": "unmapped",
+    "marketplace": "unmapped"
+  }
+}
