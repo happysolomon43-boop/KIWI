@@ -80,9 +80,11 @@ The external Pixi canvas:
 - uses route content as its coordinate system,
 - cannot become a click or keyboard target.
 
-The controller sizes its host to the full scrollable `#mainContent` area rather than only the viewport.
+The external canvas is mounted at the stable `#appContainer` level rather than inside the route-owned `#mainContent`.
 
-This makes vines remain aligned with cards while the page scrolls.
+It uses viewport coordinates and recalculates from live DOM rectangles on window or main-content scroll. Route renderers may therefore replace `#mainContent.innerHTML` without deleting the spillover canvas.
+
+The main route surface remains in a higher stacking layer, so cards/content cover the vine while transparent gutters and edges still reveal it.
 
 ## DOM-aware routing
 
