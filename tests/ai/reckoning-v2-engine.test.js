@@ -302,7 +302,9 @@ test('answer submission is one-way, idempotent, spaced and fully resumable from 
   });
 
   assert.equal(first.duplicate, false);
-  assert.equal(first.feedback.isCorrect, true);
+  assert.equal(first.feedback.recorded, true);
+  assert.equal(first.feedback.isCorrect, undefined);
+  assert.equal(first.feedback.correctAnswer, undefined);
   assert.equal(first.questionsUsed, 1);
   assert.equal(first.currentQuestion.id, 'q2');
   assert.equal(first.evidence.find((item) => item.id === 'e1').status, 'PROVISIONAL');
@@ -329,7 +331,8 @@ test('answer submission is one-way, idempotent, spaced and fully resumable from 
   assert.equal(resumed.currentQuestion.correctAnswer, undefined);
   assert.equal(resumed.currentQuestion.explanation, undefined);
   assert.equal(resumed.history.length, 1);
-  assert.equal(resumed.history[0].correctAnswer, 'A');
+  assert.equal(resumed.history[0].correctAnswer, undefined);
+  assert.equal(resumed.history[0].explanation, undefined);
 
   await engine.recordAnswer({
     examSessionId: 'exam-1',

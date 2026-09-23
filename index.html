@@ -6277,6 +6277,17 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 }
                 await _activateAndOpenGeneratedExam(examData);
               }
+              if (type === 'reckoning_v2_start') {
+                _hideGenBanner();
+                if (!result || !result.examSessionId) {
+                  if (typeof showToast === 'function') {
+                    showToast('Reckoning preparation finished without a resumable state. Reloading from KIWI…', 'warning', 6000);
+                  }
+                  await _restoreActiveReckoningExam();
+                } else {
+                  await _openAdaptiveReckoningState(result, { announce: true });
+                }
+              }
               if (type === 'exam_submit') {
                 var r = result || {};
                 var debriefStr = r.debrief || '';
@@ -6325,9 +6336,16 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               var _jf = msg.data || {};
               if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(_jf.job_id);
               _hideGenBanner();
-              var _labels = { note_generation: 'Note generation', cbt_generation: 'Exam generation', exam_submit: 'Exam submission' };
+              var _labels = { note_generation: 'Note generation', cbt_generation: 'Exam generation', exam_submit: 'Exam submission', reckoning_v2_start: 'Reckoning preparation' };
               if (typeof showToast === 'function') showToast((_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
               _handleGenerationFailure(_jf.type, _jf.error);
+              if (_jf.type === 'reckoning_v2_start') {
+                if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
+                  AppState.reckoning.generation_status = 'error';
+                  AppState.reckoning.generation_error = _jf.error || 'Preparation failed';
+                  showReckoningOverlay(AppState.reckoning, { force: true, forceLockoutOverlay: true });
+                }
+              }
               if (_jf.type === 'cbt_generation') {
                 if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
                   showReckoningOverlay(AppState.reckoning);
@@ -6642,11 +6660,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       })();
       // FIX 6: Show generation banner when a background job starts polling
       function _pollJobFallback(jobId, token, type) {
-        var _bannerLabels = { cbt_generation: 'Building your exam…', note_generation: 'Generating cards…' };
+        var _bannerLabels = { cbt_generation: 'Building your exam…', note_generation: 'Generating cards…', reckoning_v2_start: 'Preparing The Reckoning…' };
         if (_bannerLabels[type]) _showGenBanner(_bannerLabels[type], type === 'cbt_generation' ? 'Drafting questions' : '');
         if (_pendingJobs.has(jobId)) return;
         var _pollStart = Date.now();
-        var _MAX_POLL_MS = (type === 'cbt_generation' ? 7 : 4) * 60 * 1000;
+        var _MAX_POLL_MS = (type === 'reckoning_v2_start' ? 10 : (type === 'cbt_generation' ? 7 : 4)) * 60 * 1000;
         var _simulateWsMsg = async function(event, data) {
           if (_kiwiWS && _kiwiWS.readyState === 1) {
             _kiwiWS.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ event: event, data: data }) }));
@@ -6667,6 +6685,14 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                   return;
                 }
                 await _activateAndOpenGeneratedExam(_examData);
+              }
+              if (_jType === 'reckoning_v2_start') {
+                var _adaptiveState = _jd.result || null;
+                if (_adaptiveState && _adaptiveState.examSessionId) {
+                  await _openAdaptiveReckoningState(_adaptiveState, { announce: true });
+                } else {
+                  await _restoreActiveReckoningExam();
+                }
               }
               if (_jType === 'note_generation') {
                 var _nr = _jd.result || {};
@@ -6709,10 +6735,17 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             } else if (event === 'job_failed') {
               var _jf2 = data || {};
               _hideGenBanner();
-              var _failPrefixes = { cbt_generation: 'Exam generation failed', note_generation: 'Note generation failed', exam_submit: 'Exam submission failed' };
+              var _failPrefixes = { cbt_generation: 'Exam generation failed', note_generation: 'Note generation failed', exam_submit: 'Exam submission failed', reckoning_v2_start: 'Reckoning preparation failed' };
               var _failPrefix = _failPrefixes[_jf2.type] || 'Task failed';
               showToast(_failPrefix + ': ' + (_jf2.error || 'Task failed'), 'error', 8000);
               _handleGenerationFailure(_jf2.type, _jf2.error);
+              if (_jf2.type === 'reckoning_v2_start') {
+                if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
+                  AppState.reckoning.generation_status = 'error';
+                  AppState.reckoning.generation_error = _jf2.error || 'Preparation failed';
+                  showReckoningOverlay(AppState.reckoning, { force: true, forceLockoutOverlay: true });
+                }
+              }
               if (_jf2.type === 'cbt_generation') {
                 if (AppState && AppState.reckoning && typeof showReckoningOverlay === 'function') {
                   showReckoningOverlay(AppState.reckoning);
@@ -6741,7 +6774,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               var _timeoutMsgs = {
                 cbt_generation: 'Exam generation timed out. The AI took too long. Please try again.',
                 note_generation: 'Card generation timed out. Please try with fewer notes or try again.',
-                exam_submit: 'Exam submission timed out. Please try again.'
+                exam_submit: 'Exam submission timed out. Please try again.',
+                reckoning_v2_start: 'Reckoning preparation timed out. Your Reckoning is still safe; press Begin to retry.'
               };
               _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: _timeoutMsgs[type] || 'Request timed out. Please try again.' });
               return;
@@ -6750,6 +6784,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               if (_elapsed < 60000) _updateGenBannerStage('Drafting questions');
               else if (_elapsed < 150000) _updateGenBannerStage('Validating coverage');
               else _updateGenBannerStage('Finalizing exam');
+            }
+            if (type === 'reckoning_v2_start') {
+              if (_elapsed < 90000) _updateGenBannerStage('Building evidence plan');
+              else if (_elapsed < 300000) _updateGenBannerStage('Generating and validating hidden variants');
+              else _updateGenBannerStage('Persisting the adaptive review');
             }
             const job = await apiRequest(`/jobs/${jobId}`);
             if (job.status === 'done') {
@@ -6843,6 +6882,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         },
         // Reckoning state
         reckoning: null,
+        adaptiveReckoning: null,
         // Mastery Bubbles (PB.1)
         bubbles: null,           // cached list from GET /api/bubbles
         activeBubble: null,      // current detail panel bubble
@@ -7597,6 +7637,31 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         // Also supports POST /reckoning/:id/defer with explicit ID
         return await apiRequest("/brain/reckoning/defer", { method: "POST" });
       };
+
+      api.startAdaptiveReckoning = async () =>
+        apiRequest("/brain/reckoning/start", {
+          method: "POST",
+          timeoutMs: 60000,
+        });
+      api.getAdaptiveReckoningState = async (examId) =>
+        apiRequest("/exams/" + encodeURIComponent(examId) + "/reckoning/state");
+      api.answerAdaptiveReckoning = async (examId, questionId, selectedOption, responseTimeMs) =>
+        apiRequest("/exams/" + encodeURIComponent(examId) + "/reckoning/answer", {
+          method: "POST",
+          body: {
+            question_id: questionId,
+            selected_option: selectedOption,
+            response_time_ms: Math.max(0, Number(responseTimeMs) || 0),
+          },
+        });
+      api.continueAdaptiveReckoning = async (examId) =>
+        apiRequest("/exams/" + encodeURIComponent(examId) + "/reckoning/continue", {
+          method: "POST",
+        });
+      api.finalizeAdaptiveReckoning = async (examId) =>
+        apiRequest("/exams/" + encodeURIComponent(examId) + "/reckoning/finalize", {
+          method: "POST",
+        });
 
       api.submitReckoning = async (examId, answers) => {
         // Backend: POST /brain/reckoning/submit — now added; delegates to exam submit + reckoning complete
@@ -10722,8 +10787,27 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             return false;
           }
 
-          // If generation failed before an exam was linked, the durable Reckoning
-          // still exists. Re-open its panel so Begin can safely retry generation.
+          const isAdaptiveV2 =
+            Number(active.engine_version || active.engineVersion || 1) === 2 ||
+            active.adaptive === true;
+
+          if (isAdaptiveV2) {
+            if (active.generation_status === "pending" && active.status !== "in_progress") {
+              _renderAdaptivePreparing(active);
+              _pollAdaptiveReckoningReadiness(active.id);
+              return true;
+            }
+            if (active.status !== "in_progress" || !active.exam_session_id) {
+              if (typeof showReckoningOverlay === "function") {
+                showReckoningOverlay(active, { force: true, forceLockoutOverlay: _isMandatoryReckoning(active) });
+              }
+              return false;
+            }
+            const state = await api.getAdaptiveReckoningState(active.exam_session_id);
+            return await _openAdaptiveReckoningState(state);
+          }
+
+          // Legacy rows keep the historical fixed-CBT resume path.
           if (active.status !== "in_progress" || !active.exam_session_id) {
             if (typeof showReckoningOverlay === "function") showReckoningOverlay(active);
             return false;
@@ -14336,6 +14420,495 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         return true;
       }
 
+      let _adaptiveElapsedTimer = null;
+      let _adaptiveQuestionOpenedAt = 0;
+      let _adaptiveQuestionOpenedId = null;
+      let _adaptivePreparationPollToken = 0;
+
+      function _stopAdaptiveElapsedTimer() {
+        if (_adaptiveElapsedTimer) {
+          clearInterval(_adaptiveElapsedTimer);
+          _adaptiveElapsedTimer = null;
+        }
+      }
+
+      function _formatAdaptiveElapsed(totalSeconds) {
+        const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        return h > 0
+          ? String(h) + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0")
+          : String(m) + ":" + String(s).padStart(2, "0");
+      }
+
+      function _adaptiveRoleLabel(role) {
+        const value = String(role || "Diagnostic").toLowerCase();
+        return value.charAt(0).toUpperCase() + value.slice(1);
+      }
+
+      function _renderAdaptivePreparing(reckoning) {
+        const container = document.getElementById("reckoningContainer");
+        if (!container) return;
+        _setReckoningLockdownUi(true);
+        container.innerHTML = `
+          <div class="reckoning-overlay" id="adaptiveReckoningPreparing">
+            <div class="reckoning-card" style="max-width:640px;">
+              ${_adaptiveUtilityButtonsHtml()}
+              <div style="width:48px;height:48px;margin:0 auto 18px;color:var(--red-bright);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%;animation:spin 1.7s linear infinite;"><circle cx="12" cy="12" r="9" stroke-dasharray="42 18"/></svg>
+              </div>
+              <div class="reckoning-title">Preparing The Reckoning</div>
+              <div class="reckoning-subject">${escapeHTML(reckoning?.subjectName || reckoning?.subject_name || "Subject")}</div>
+              <div style="font-size:var(--text-base);line-height:1.7;color:var(--text-2);margin:18px 0;">
+                KIWI is building the evidence plan and validating a hidden question bank before the lock can depend on it.
+                Nothing becomes an active review until the server has persisted a usable escape path.
+              </div>
+              <div class="loading-dots" style="margin:18px auto;"><span></span><span></span><span></span></div>
+              <div style="font-size:var(--text-xs);color:var(--text-4);">You can refresh safely. Preparation state lives on KIWI, not in this browser.</div>
+            </div>
+          </div>`;
+        _bindAdaptiveUtilityButtons();
+      }
+
+      async function _pollAdaptiveReckoningReadiness(reckoningId, timeoutMs = 10 * 60 * 1000) {
+        const token = ++_adaptivePreparationPollToken;
+        const started = Date.now();
+        while (token === _adaptivePreparationPollToken && Date.now() - started < timeoutMs) {
+          try {
+            const active = await apiRequest("/brain/reckoning/active");
+            if (!active || active.status === "none") return false;
+            AppState.reckoning = active;
+            if (
+              Number(active.engine_version || active.engineVersion || 1) === 2 &&
+              active.status === "in_progress" &&
+              active.exam_session_id
+            ) {
+              const state = await api.getAdaptiveReckoningState(active.exam_session_id);
+              await _openAdaptiveReckoningState(state, { announce: true });
+              return true;
+            }
+            if (active.generation_status === "error") {
+              showReckoningOverlay(active, { force: true, forceLockoutOverlay: true });
+              showToast(active.generation_error || "Reckoning preparation failed. Press Begin to retry.", "error", 8000);
+              return false;
+            }
+            if (reckoningId && active.id && String(active.id) !== String(reckoningId)) return false;
+          } catch (_) {}
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+        }
+        if (token === _adaptivePreparationPollToken) {
+          showToast("Reckoning preparation is taking longer than expected. You can refresh safely and resume.", "warning", 8000);
+        }
+        return false;
+      }
+
+      function _adaptiveUtilityButtonsHtml() {
+        return '<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-bottom:14px;">' +
+          '<button class="btn btn-secondary btn-sm" id="adaptiveOpenBrainBtn" type="button">Brain</button>' +
+          '<button class="btn btn-secondary btn-sm" id="adaptiveOpenSettingsBtn" type="button">Settings</button>' +
+          '</div>';
+      }
+
+      function _bindAdaptiveUtilityButtons() {
+        document.getElementById("adaptiveOpenBrainBtn")?.addEventListener("click", () => {
+          _stopAdaptiveElapsedTimer();
+          _closeReckoningSurface();
+          _setReckoningLockdownUi(true);
+          navigateTo("brain", { fromReckoning: true });
+        });
+        document.getElementById("adaptiveOpenSettingsBtn")?.addEventListener("click", () => {
+          _stopAdaptiveElapsedTimer();
+          _closeReckoningSurface();
+          _setReckoningLockdownUi(true);
+          navigateTo("settings", { fromReckoning: true });
+        });
+      }
+
+      function _adaptiveEvidenceCounts(state) {
+        const e = state?.evidenceState || {};
+        return {
+          recovered: Number(e.recovered) || 0,
+          unresolved: Number(e.unresolved) || 0,
+          provisional: Number(e.provisional) || 0,
+          critical: Number(e.criticalUnresolved) || 0,
+        };
+      }
+
+      function _startAdaptiveElapsedTimer(state) {
+        _stopAdaptiveElapsedTimer();
+        const baseElapsed = Math.max(0, Number(state?.elapsedSeconds) || 0);
+        const localStarted = Date.now();
+        const tick = () => {
+          const el = document.getElementById("adaptiveElapsedTime");
+          if (!el) {
+            _stopAdaptiveElapsedTimer();
+            return;
+          }
+          el.textContent = _formatAdaptiveElapsed(
+            baseElapsed + Math.floor((Date.now() - localStarted) / 1000)
+          );
+        };
+        tick();
+        _adaptiveElapsedTimer = setInterval(tick, 1000);
+      }
+
+      async function _resolveAdaptiveFinalState(state) {
+        if (
+          state &&
+          state.examSessionId &&
+          state.final &&
+          !state.finalReport &&
+          String(state.enginePhase || "") !== "COMPLETE"
+        ) {
+          try {
+            const finalized = await api.finalizeAdaptiveReckoning(state.examSessionId);
+            return { ...state, ...finalized };
+          } catch (error) {
+            showToast(error.message || "Finalizing Reckoning… retrying from saved state.", "warning", 6000);
+          }
+        }
+        return state;
+      }
+
+      async function _openAdaptiveReckoningState(rawState, options = {}) {
+        let state = await _resolveAdaptiveFinalState(rawState);
+        if (!state || !state.examSessionId) return false;
+
+        AppState.adaptiveReckoning = state;
+        AppState.reckoning = {
+          ...(AppState.reckoning || {}),
+          id: state.reckoningId || AppState.reckoning?.id,
+          status: state.enginePhase === "COMPLETE"
+            ? (state.finalReport?.reckoning?.status || "completed")
+            : "in_progress",
+          exam_session_id: state.examSessionId,
+          engine_version: 2,
+          engine_mode: state.engineMode || "LIVE",
+          engine_phase: state.enginePhase || "ACTIVE",
+        };
+        _adaptivePreparationPollToken += 1;
+        _lockExamPage(true);
+        _setReckoningLockdownUi(true);
+        _clearExamGenerationTransition();
+
+        if (options.announce && typeof showToast === "function") {
+          showToast("The Reckoning is ready.", "success", 3000);
+        }
+
+        const report = state.finalReport || null;
+        if (report) {
+          _renderAdaptiveReckoningFinal(state, report);
+          return true;
+        }
+        if (state.checkpointPending && state.checkpoint) {
+          _renderAdaptiveReckoningCheckpoint(state);
+          return true;
+        }
+        if (state.currentQuestion) {
+          _renderAdaptiveReckoningQuestion(state);
+          return true;
+        }
+        if (state.final) {
+          const finalized = await api.finalizeAdaptiveReckoning(state.examSessionId);
+          AppState.adaptiveReckoning = { ...state, ...finalized };
+          _renderAdaptiveReckoningFinal(
+            AppState.adaptiveReckoning,
+            finalized.finalReport || AppState.adaptiveReckoning.finalReport || {}
+          );
+          return true;
+        }
+
+        showToast("KIWI could not find the current Reckoning question. Reloading saved state…", "warning", 5000);
+        return false;
+      }
+
+      function _renderAdaptiveReckoningQuestion(state) {
+        const container = document.getElementById("reckoningContainer");
+        const question = state.currentQuestion;
+        if (!container || !question) return;
+
+        const counts = _adaptiveEvidenceCounts(state);
+        const role = _adaptiveRoleLabel(state.reviewRole || question.role);
+        const questionOrdinal = (Number(state.questionsUsed) || 0) + 1;
+        if (_adaptiveQuestionOpenedId !== question.id) {
+          _adaptiveQuestionOpenedId = question.id;
+          const unlocked = question.unlockedAt ? new Date(question.unlockedAt).getTime() : NaN;
+          _adaptiveQuestionOpenedAt = Number.isFinite(unlocked) ? unlocked : Date.now();
+        }
+
+        container.innerHTML = `
+          <div class="reckoning-overlay" id="adaptiveReckoningReview" style="justify-content:flex-start;overflow:auto;padding:24px 16px;">
+            <div style="width:min(760px,100%);margin:auto;padding:20px 0 36px;">
+              ${_adaptiveUtilityButtonsHtml()}
+              <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px;">
+                <div>
+                  <div style="font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:1.4px;text-transform:uppercase;color:var(--red-bright);">Reckoning · ${escapeHTML(role)}</div>
+                  <div style="font-family:var(--font-display);font-size:var(--text-2xl);font-weight:750;color:var(--text);margin-top:5px;">Question ${questionOrdinal}</div>
+                </div>
+                <div style="text-align:right;">
+                  <div style="font-size:var(--text-xs);color:var(--text-4);text-transform:uppercase;letter-spacing:1px;">Elapsed review</div>
+                  <div id="adaptiveElapsedTime" style="font-family:var(--font-mono);font-size:var(--text-xl);color:var(--teal);font-weight:700;">${_formatAdaptiveElapsed(state.elapsedSeconds)}</div>
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:18px;">
+                <div class="stat-card"><div class="stat-label">Recovered</div><div class="stat-value" style="color:var(--green-bright);">${counts.recovered}</div></div>
+                <div class="stat-card"><div class="stat-label">Unresolved</div><div class="stat-value" style="color:var(--red-bright);">${counts.unresolved}</div></div>
+                <div class="stat-card"><div class="stat-label">Recovery</div><div class="stat-value">${Math.round(Number(state.recovery?.recoveryScore) || 0)}%</div></div>
+              </div>
+
+              <div class="card" style="padding:24px;margin:0;">
+                <div class="exam-stem" style="font-size:clamp(18px,4vw,24px);line-height:1.55;font-weight:650;margin-bottom:22px;">${escapeHTML(question.stem || "")}</div>
+                <div id="adaptiveOptions" style="display:flex;flex-direction:column;gap:10px;">
+                  ${(question.options || []).map((opt) => `
+                    <button type="button" class="exam-option adaptive-reckoning-option" data-option="${escapeHTML(opt.id)}" style="width:100%;text-align:left;">
+                      <div class="option-letter">${escapeHTML(opt.id)}</div>
+                      <div class="option-text">${escapeHTML(stripClozeForExam(opt.text || ""))}</div>
+                    </button>`).join("")}
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;">
+                  <button class="btn btn-primary btn-lg" id="adaptiveAnswerBtn" disabled style="flex:1;min-width:180px;">Submit answer</button>
+                  <button class="btn btn-secondary" id="adaptiveFlagQuestionBtn" type="button">Flag for AI review</button>
+                </div>
+                <div style="font-size:var(--text-xs);color:var(--text-4);text-align:center;margin-top:10px;">Answers are final. The next question is chosen by KIWI from server-side evidence. A confirmed flawed question is invalidated and cannot hold recovery against you.</div>
+              </div>
+            </div>
+          </div>`;
+
+        const stem = container.querySelector(".exam-stem");
+        if (stem) renderMathContent(stem);
+        container.querySelectorAll(".option-text").forEach((el) => renderMathContent(el));
+        _bindAdaptiveUtilityButtons();
+        _startAdaptiveElapsedTimer(state);
+
+        let selected = null;
+        container.querySelectorAll(".adaptive-reckoning-option").forEach((button) => {
+          button.addEventListener("click", () => {
+            selected = button.dataset.option;
+            container.querySelectorAll(".adaptive-reckoning-option").forEach((item) => item.classList.remove("selected"));
+            button.classList.add("selected");
+            const submit = document.getElementById("adaptiveAnswerBtn");
+            if (submit) submit.disabled = false;
+          });
+        });
+
+        document.getElementById("adaptiveAnswerBtn")?.addEventListener("click", async () => {
+          if (!selected) return;
+          const submit = document.getElementById("adaptiveAnswerBtn");
+          if (submit) {
+            submit.disabled = true;
+            submit.textContent = "Saving…";
+          }
+          container.querySelectorAll(".adaptive-reckoning-option").forEach((item) => item.disabled = true);
+          const responseTimeMs = Math.max(0, Date.now() - (_adaptiveQuestionOpenedAt || Date.now()));
+          try {
+            const nextState = await api.answerAdaptiveReckoning(
+              state.examSessionId,
+              question.id,
+              selected,
+              responseTimeMs
+            );
+            await _openAdaptiveReckoningState(nextState);
+          } catch (error) {
+            showToast(error.message || "Answer could not be saved. Your previous state is still safe.", "error", 7000);
+            const fresh = await api.getAdaptiveReckoningState(state.examSessionId).catch(() => null);
+            if (fresh) await _openAdaptiveReckoningState(fresh);
+            else _renderAdaptiveReckoningQuestion(state);
+          }
+        });
+
+        document.getElementById("adaptiveFlagQuestionBtn")?.addEventListener("click", async () => {
+          const button = document.getElementById("adaptiveFlagQuestionBtn");
+          if (button) {
+            button.disabled = true;
+            button.textContent = "Reviewing…";
+          }
+          try {
+            const audit = await api.flagExamQuestion(state.examSessionId, question.questionNumber);
+            if (audit?.defective) {
+              showToast("KIWI confirmed a flawed question. It will not count against your recovery.", "success", 7000);
+              if (audit.adaptive_state) {
+                await _openAdaptiveReckoningState(audit.adaptive_state);
+                return;
+              }
+              const refreshed = await api.getAdaptiveReckoningState(state.examSessionId);
+              await _openAdaptiveReckoningState(refreshed);
+              return;
+            }
+            if (button) button.textContent = "Reviewed";
+            showToast("AI integrity review found this question valid.", "info", 5000);
+          } catch (error) {
+            if (button) {
+              button.disabled = false;
+              button.textContent = "Flag for AI review";
+            }
+            showToast(error.message || "Question review is temporarily unavailable. You can continue.", "warning", 7000);
+          }
+        });
+      }
+
+      function _renderAdaptiveReckoningCheckpoint(state) {
+        const container = document.getElementById("reckoningContainer");
+        const checkpoint = state.checkpoint || {};
+        if (!container) return;
+        _stopAdaptiveElapsedTimer();
+        const missed = Array.isArray(checkpoint.missed) ? checkpoint.missed : [];
+        container.innerHTML = `
+          <div class="reckoning-overlay" id="adaptiveReckoningCheckpoint" style="overflow:auto;padding:24px 16px;">
+            <div class="reckoning-card" style="max-width:720px;text-align:left;">
+              ${_adaptiveUtilityButtonsHtml()}
+              <div style="font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:1.3px;text-transform:uppercase;color:var(--gold);">Checkpoint · Block ${Number(state.currentBlock) || 1}</div>
+              <div class="reckoning-title" style="text-align:left;margin-top:6px;">What KIWI sees so far</div>
+              <div style="font-size:var(--text-base);color:var(--text-2);line-height:1.7;margin:12px 0 18px;">${escapeHTML(checkpoint.message || "KIWI has updated the evidence plan.")}</div>
+              <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:18px;">
+                <div class="stat-card"><div class="stat-label">Recovered</div><div class="stat-value" style="color:var(--green-bright);">${Number(checkpoint.recovered) || 0}</div></div>
+                <div class="stat-card"><div class="stat-label">Unresolved</div><div class="stat-value" style="color:var(--red-bright);">${Number(checkpoint.unresolved) || 0}</div></div>
+                <div class="stat-card"><div class="stat-label">Needs proof</div><div class="stat-value" style="color:var(--gold);">${(Number(checkpoint.provisional) || 0) + (Number(checkpoint.challengeRequired) || 0)}</div></div>
+              </div>
+              ${missed.length ? `
+                <div style="font-size:var(--text-sm);font-weight:700;color:var(--text);margin-bottom:8px;">Corrective review</div>
+                <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px;">
+                  ${missed.map((item) => `
+                    <div style="padding:12px 14px;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--r);">
+                      <div style="font-size:var(--text-sm);font-weight:650;color:var(--text);margin-bottom:5px;">${escapeHTML(item.stem || "Missed concept")}</div>
+                      <div style="font-size:var(--text-sm);line-height:1.6;color:var(--text-2);">${escapeHTML(item.explanation || "Review the distinction before the next block.")}</div>
+                    </div>`).join("")}
+                </div>` : ""}
+              <button class="btn btn-primary btn-lg" id="adaptiveContinueBtn" style="width:100%;">Continue adaptive review</button>
+              <div style="font-size:var(--text-xs);color:var(--text-4);text-align:center;margin-top:10px;">The checkpoint does not unlock KIWI. The Reckoning remains active until the evidence decision is complete.</div>
+            </div>
+          </div>`;
+        container.querySelectorAll(".reckoning-card").forEach((el) => renderMathContent(el));
+        _bindAdaptiveUtilityButtons();
+        document.getElementById("adaptiveContinueBtn")?.addEventListener("click", async () => {
+          const button = document.getElementById("adaptiveContinueBtn");
+          if (button) {
+            button.disabled = true;
+            button.textContent = "Continuing…";
+          }
+          try {
+            const next = await api.continueAdaptiveReckoning(state.examSessionId);
+            await _openAdaptiveReckoningState(next);
+          } catch (error) {
+            showToast(error.message || "Could not continue yet. Reloading saved state…", "error", 7000);
+            const fresh = await api.getAdaptiveReckoningState(state.examSessionId).catch(() => null);
+            if (fresh) await _openAdaptiveReckoningState(fresh);
+          }
+        });
+      }
+
+      function _renderAdaptiveReckoningFinal(state, report) {
+        const container = document.getElementById("reckoningContainer");
+        if (!container) return;
+        _stopAdaptiveElapsedTimer();
+        _unlockExamPage();
+        AppState.adaptiveReckoning = state;
+
+        const survived = report?.survived === true;
+        const outcomeStatus = String(report?.reckoning?.status || "");
+        const failsafeReleased =
+          outcomeStatus === "failsafe_released" ||
+          report?.reckoning?.failsafe_released === true;
+        const lockReleased = survived || failsafeReleased || outcomeStatus === "completed";
+        const recovered = Array.isArray(report?.recovered) ? report.recovered : [];
+        const unresolved = Array.isArray(report?.unresolved) ? report.unresolved : [];
+        const discovered = Array.isArray(report?.discoveredByControl) ? report.discoveredByControl : [];
+        const effects = Array.isArray(report?.learningEffects) ? report.learningEffects : [];
+        const ks = report?.knowledgeScore || {};
+        const effectLabel = (effect) => {
+          if (effect.type === "UNRESOLVED") return "Urgent review";
+          if (effect.type === "REMEDIATED_RECOVERED") return "Earlier follow-up";
+          if (effect.type === "CLEAN_RECOVERED") return "No artificial promotion";
+          return "Recorded";
+        };
+
+        _setReckoningLockdownUi(!lockReleased);
+        if (lockReleased) AppState.reckoning = null;
+        else if (report?.reckoning) {
+          AppState.reckoning = {
+            ...(AppState.reckoning || {}),
+            ...report.reckoning,
+            engine_version: 2,
+          };
+        }
+        container.innerHTML = `
+          <div class="reckoning-overlay" id="adaptiveReckoningFinal" style="overflow:auto;padding:24px 16px;">
+            <div style="width:min(820px,100%);margin:auto;padding:20px 0 36px;">
+              ${lockReleased ? "" : _adaptiveUtilityButtonsHtml()}
+              <div class="card" style="padding:28px;border-color:${lockReleased ? "rgba(82,183,136,.45)" : "rgba(224,82,82,.45)"};">
+                <div style="font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:1.4px;text-transform:uppercase;color:${lockReleased ? "var(--green-bright)" : "var(--red-bright)"};">Reckoning complete</div>
+                <div style="font-family:var(--font-display);font-size:clamp(28px,7vw,42px);font-weight:800;margin:7px 0 8px;color:var(--text);">${survived ? "Recovery confirmed" : failsafeReleased ? "Failsafe release applied" : "Recovery incomplete"}</div>
+                <div style="font-size:var(--text-base);line-height:1.7;color:var(--text-2);">${survived
+                  ? "KIWI has enough evidence to release the emergency state. Long-term mastery still requires future spaced evidence."
+                  : failsafeReleased
+                    ? "Recovery was not confirmed after the maximum failed attempts. The lockdown has been released by the failsafe and the subject Knowledge Score penalty has been applied."
+                    : "The review found knowledge that is still unsafe to trust. The surrounding Reckoning rules remain in force."}</div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0;">
+                <div class="stat-card"><div class="stat-label">Recovery score</div><div class="stat-value">${Math.round(Number(report?.recoveryScore) || 0)}%</div></div>
+                <div class="stat-card"><div class="stat-label">Raw accuracy</div><div class="stat-value">${Math.round(Number(report?.rawAccuracy) || 0)}%</div></div>
+                <div class="stat-card"><div class="stat-label">Critical unresolved</div><div class="stat-value" style="color:${Number(report?.unresolvedCriticalCount) ? "var(--red-bright)" : "var(--green-bright)"};">${Number(report?.unresolvedCriticalCount) || 0}</div></div>
+              </div>
+
+              <div class="card" style="padding:22px;margin-bottom:12px;">
+                <div class="section-title" style="font-size:var(--text-lg);margin-bottom:12px;">Recovered concepts</div>
+                ${recovered.length ? recovered.map((item) => `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--text-sm);color:var(--text-2);">✓ ${escapeHTML(item.conceptLabel || item.conceptKey || "Recovered concept")}</div>`).join("") : '<div style="color:var(--text-4);font-size:var(--text-sm);">No concepts reached recovered status.</div>'}
+              </div>
+
+              <div class="card" style="padding:22px;margin-bottom:12px;">
+                <div class="section-title" style="font-size:var(--text-lg);margin-bottom:12px;">Still unresolved</div>
+                ${unresolved.length ? unresolved.map((item) => `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--text-sm);color:var(--red-bright);">• ${escapeHTML(item.conceptLabel || item.conceptKey || "Unresolved concept")}</div>`).join("") : '<div style="color:var(--green-bright);font-size:var(--text-sm);">No unresolved concepts remain.</div>'}
+              </div>
+
+              ${discovered.length ? `
+              <div class="card" style="padding:22px;margin-bottom:12px;">
+                <div class="section-title" style="font-size:var(--text-lg);margin-bottom:12px;">Weaknesses discovered by control questions</div>
+                ${discovered.map((item) => `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--text-sm);color:var(--gold);">• ${escapeHTML(item.conceptLabel || item.conceptKey || "Unexpected weakness")}</div>`).join("")}
+              </div>` : ""}
+
+              <div class="card" style="padding:22px;margin-bottom:14px;">
+                <div class="section-title" style="font-size:var(--text-lg);margin-bottom:12px;">What KIWI changed next</div>
+                ${effects.length ? effects.map((effect) => {
+                  const when = effect.reviewAt ? new Date(effect.reviewAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+                  return `<div style="padding:9px 0;border-bottom:1px solid var(--border);font-size:var(--text-sm);color:var(--text-2);"><strong style="color:var(--text);">${escapeHTML(effectLabel(effect))}</strong>${when ? " · " + escapeHTML(when) : ""}${effect.verificationRevoked ? " · verification cleared" : ""}</div>`;
+                }).join("") : '<div style="font-size:var(--text-sm);color:var(--text-4);">No card scheduling changes were required.</div>'}
+                ${ks && ks.after != null ? `<div style="margin-top:12px;font-size:var(--text-sm);color:var(--text-2);">Knowledge Score: <strong style="color:var(--text);">${Number(ks.after).toFixed(1)}</strong>${ks.delta != null ? " (" + (Number(ks.delta) >= 0 ? "+" : "") + Number(ks.delta).toFixed(1) + ")" : ""}</div>` : ""}
+              </div>
+
+              <button class="btn btn-primary btn-lg" id="adaptiveFinalReturnBtn" style="width:100%;">${lockReleased ? "Return to Brain" : "Retry The Reckoning"}</button>
+            </div>
+          </div>`;
+
+        if (!lockReleased) _bindAdaptiveUtilityButtons();
+        document.getElementById("adaptiveFinalReturnBtn")?.addEventListener("click", async () => {
+          _closeReckoningSurface();
+          AppState.adaptiveReckoning = null;
+          AppState.brain = null;
+          if (lockReleased) {
+            AppState.reckoning = null;
+            _setReckoningLockdownUi(false);
+            navigateTo("brain");
+            return;
+          }
+          _setReckoningLockdownUi(true);
+          try {
+            const active = await apiRequest("/brain/reckoning/active");
+            if (active && active.id) {
+              AppState.reckoning = active;
+              showReckoningOverlay(active, {
+                force: true,
+                forceLockoutOverlay: true,
+                mandatory: _isMandatoryReckoning(active),
+              });
+              return;
+            }
+          } catch (_) {}
+          navigateTo("brain", { fromReckoning: true });
+        });
+      }
+
       function showReckoningOverlay(reckoning, options = {}) {
         const container = document.getElementById("reckoningContainer");
         if (!container || !reckoning) return;
@@ -14359,6 +14932,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         _reckoningOverlayRenderKey = stateKey;
 
         const isInProgress = reckoning.status === "in_progress" && !!reckoning.exam_session_id;
+        const isAdaptiveV2 =
+          Number(reckoning.engine_version || reckoning.engineVersion || 1) === 2 ||
+          reckoning.adaptive === true;
         const failureCount = Math.max(0, Number(reckoning.failure_count) || 0);
         const failsafeThreshold = Math.max(1, Number(reckoning.failsafe_threshold) || 6);
         const failsafeNoteHtml = isMandatory
@@ -14395,7 +14971,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         <div class="reckoning-subject">${escapeHTML(reckoning.subjectName || reckoning.subject_name || "Unknown Subject")}</div>
         <div class="reckoning-reason">
           <strong style="color:var(--text);">Reason:</strong> ${escapeHTML(reckoning.reason || "Pressure threshold exceeded")}<br>
-          <strong style="color:var(--text);">Required:</strong> ${escapeHTML(reckoning.requiredScore || "70")}% or higher to unlock<br>
+          <strong style="color:var(--text);">Required:</strong> ${isAdaptiveV2 ? "all Critical concepts recovered · recovery ≥ " + (reckoning.recoveryThreshold || 75) + "% · accuracy ≥ " + (reckoning.rawAccuracyThreshold || 65) + "%" : escapeHTML(reckoning.requiredScore || "70") + "% or higher to unlock"}<br>
           <strong style="color:var(--text);">Stakes:</strong> Failure increases pressure further
         </div>
         ${isMandatory ? `
@@ -14409,12 +14985,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             <div class="stat-value" style="color:var(--red-bright)">${Math.round(reckoning.pressure || 0)} pts</div>
           </div>
           <div class="stat-card">
-            <div class="stat-label">Required Score</div>
-            <div class="stat-value">${reckoning.requiredScore || 70}%</div>
+            <div class="stat-label">${isAdaptiveV2 ? "Recovery Target" : "Required Score"}</div>
+            <div class="stat-value">${isAdaptiveV2 ? (reckoning.recoveryThreshold || 75) : (reckoning.requiredScore || 70)}%</div>
           </div>
           <div class="stat-card">
-            <div class="stat-label">Streak Shields</div>
-            <div class="stat-value" style="color:var(--teal)">${reckoning.shields || 0}</div>
+            <div class="stat-label">${isAdaptiveV2 ? "Accuracy Floor" : "Streak Shields"}</div>
+            <div class="stat-value" style="color:var(--teal)">${isAdaptiveV2 ? (reckoning.rawAccuracyThreshold || 65) + "%" : (reckoning.shields || 0)}</div>
           </div>
         </div>
         ${
@@ -14498,31 +15074,38 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               if (!resumed) throw new Error("Saved Reckoning exam could not be resumed yet");
               return;
             }
-            // BUG1-FIX: generateExam returns a 202 job_id object, not a completed exam.
-            // Detect async path and show spinner; WS job_done handler will navigate to exam.
+            if (isAdaptiveV2) {
+              const response = await api.startAdaptiveReckoning();
+              AppState.reckoning = reckoning;
+              if (response && response.examSessionId) {
+                await _openAdaptiveReckoningState(response, { announce: true });
+                return;
+              }
+              _renderAdaptivePreparing(reckoning);
+              if (response && response.job_id) {
+                _pollJobFallback(response.job_id, authToken, "reckoning_v2_start");
+              } else {
+                _pollAdaptiveReckoningReadiness(reckoning.id);
+              }
+              return;
+            }
+
+            // Existing engine_version=1 rows preserve the fixed CBT generation path.
             const response = await api.generateExam(reckoning.subject_id || reckoning.subjectId, {
               isReckoning: true,
               reckoningId: reckoning.id,
             });
             if (response && response.job_id) {
-              // Async path: register polling fallback and show waiting UI
               _pollJobFallback(response.job_id, authToken, 'cbt_generation');
-              // Keep the Reckoning object while AI generation is pending. If the
-              // job/server/browser fails, this is the retry path instead of a dead lockout.
               AppState.reckoning = reckoning;
               container.innerHTML = `
                 <div class="reckoning-overlay" id="examGeneratingScreen" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-5);text-align:center;padding:var(--space-8);">
-                  <svg style="width:36px;height:36px" viewBox="0 0 24 24" fill="none" stroke="var(--red-bright)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
                   <div style="font-size:var(--text-xl);font-weight:600;color:var(--red-bright);">Preparing The Reckoning…</div>
-                  <div style="font-size:var(--text-base);color:var(--text-2);max-width:320px;">
-                    Assembling your flagged cards into an exam. You’ll be taken there automatically.
-                  </div>
+                  <div style="font-size:var(--text-base);color:var(--text-2);max-width:320px;">Preparing the saved legacy Reckoning exam.</div>
                   <div class="loading-dots" style="margin-top:var(--space-3);"><span></span><span></span><span></span></div>
                 </div>`;
-              showToast("Reckoning exam generating — you’ll be taken there automatically.", "info", 6000);
               return;
             }
-            // Legacy sync path (fallback if server returns full exam directly)
             const reckoningExamData = response.exam || response;
             const reckoningExamId = response.examId || reckoningExamData.id || null;
             await _activateAndOpenGeneratedExam({

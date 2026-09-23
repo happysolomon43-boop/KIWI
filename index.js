@@ -38,7 +38,7 @@ const { createEcosystemV2 } = require('./ecosystem_v2');
 const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
-const { createShadowIntelligence, createReckoningEngine, isAdaptiveReckoningQuestion } = require('./services/reckoning');
+const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 
 const pool = new Pool({
@@ -89,12 +89,73 @@ async function withTransaction(fn) {
   }
 }
 
-// Delivery C execution engine is intentionally dormant for legacy/shadow rows.
-// Its endpoints accept only explicit engine_version=2 PILOT/LIVE sessions.
+// Delivery E: V2 preparation and execution use the same centralized AI
+// orchestrator as the rest of KIWI. Gemini writes questions; KIWI owns the plan,
+// validation, evidence state, scheduling and outcome.
+const adaptiveSemanticReview = createAISemanticReviewer({
+  aiRun: (taskId, input, context) => ai.run(taskId, input, context),
+});
+const adaptiveQuestionValidator = createQuestionValidator({
+  semanticReview: adaptiveSemanticReview,
+});
+const adaptiveQuestionBank = createQuestionBank({
+  aiRun: (taskId, input, context) => ai.run(taskId, input, context),
+  validator: adaptiveQuestionValidator,
+});
+const adaptivePreparationService = createPreparationService({
+  questionBank: adaptiveQuestionBank,
+  randomUUID,
+});
+
+async function buildAdaptivePreparationInput({ session, userId }) {
+  const subjectId = session?.subject_id;
+  if (!subjectId) throw new Error('Reckoning subject is missing.');
+
+  const decks = await db.decks.findBySubject(userId, subjectId);
+  const deckIds = decks.map((deck) => deck.id);
+  if (!deckIds.length) throw new Error('This subject has no decks for Reckoning.');
+
+  const deckSet = new Set(deckIds);
+  const allCards = await db.cards.findAllForUser(userId);
+  const cards = allCards.filter((card) => {
+    if (!deckSet.has(card.deck_id)) return false;
+    const front = String(card.front_content || card.front || '').trim();
+    const back = String(card.back_content || card.back || '').trim();
+    return front.length >= 5 && back.length >= 5;
+  });
+  if (!cards.length) {
+    throw new Error('Reckoning needs complete study cards before it can start.');
+  }
+
+  const cardIds = cards.map((card) => card.id);
+  const states = await batchInitializeSeedlingStates(userId, cardIds);
+  const activeBubbles = await db.masteryGoals.findActive(userId).catch(() => []);
+  const bubbleCardIds = activeBubbles.flatMap((goal) => goal.card_ids || []);
+  const nowMs = Date.now();
+  const metricsByCardId = await reckoningShadow.loadMetrics(userId, cards, nowMs);
+  const subjectExamDate = await getSubjectExamDate(userId, subjectId).catch(() => null);
+  const examMs = subjectExamDate ? new Date(subjectExamDate).getTime() : NaN;
+  const daysToExam = Number.isFinite(examMs)
+    ? Math.floor((examMs - nowMs) / 86400000)
+    : null;
+
+  return {
+    cards,
+    states,
+    bubbleCardIds,
+    metricsByCardId,
+    deckIds,
+    context: { daysToExam },
+    now: new Date(nowMs),
+  };
+}
+
 const adaptiveReckoningEngine = createReckoningEngine({
   query,
   transaction: withTransaction,
   randomUUID,
+  preparationService: adaptivePreparationService,
+  preparationInputProvider: buildAdaptivePreparationInput,
   outcomeHandler: finalizeAdaptiveReckoningOutcome,
 });
 
@@ -8586,6 +8647,15 @@ debrief_text: null,
 // P3.7-B1a FIX: store flagged card IDs so the exam generator can use
 // the correct pool instead of the standard stage >= 3 eligibility filter.
 flagged_card_ids: flaggedCards.map(c => c.id),
+// Delivery E: every newly-triggered Reckoning is V2-authoritative. Existing
+// pre-Delivery-E rows keep engine_version=1 and continue on the legacy path.
+engine_version: 2,
+engine_mode: 'LIVE',
+engine_phase: 'PREPARING',
+generation_status: 'not_started',
+generation_error: null,
+questions_used: 0,
+state_version: 0,
 });
 } catch (err) {
 // Database uniqueness is the final arbiter. Two concurrent pressure refreshes can
@@ -8602,22 +8672,9 @@ question_count: racedActive.question_count,
 recovered_race: true,
 };
 }
-// Delivery B shadow intelligence starts only after the legacy Reckoning has
-// been durably created and its authoritative question_count has been fixed.
-// Never await this work on the learner's trigger response.
-setImmediate(async () => {
-  const subjectExamDate = await getSubjectExamDate(userId, subjectId).catch(() => null);
-  await reckoningShadow.analyzeSafely({
-    reckoning,
-    userId,
-    subjectId,
-    cards: subjectCardsForReckoning,
-    states: _reckAllStates,
-    bubbleCardIds: _reckBubbleCardIds,
-    pressureScore: pressureData.pressure_score,
-    subjectExamDate,
-  });
-});
+// New Reckonings are prepared by the authoritative V2 engine only when the
+// learner presses Begin. Generation failure therefore leaves this row triggered
+// and retryable instead of creating an unusable in_progress lockout.
 
 return {
 reckoning_id: reckoning.id,
@@ -16126,6 +16183,13 @@ if (activeReck) activeReck = await reconcileActiveReckoning(req.user.id, activeR
 if (!activeReck) {
   return res.status(409).json({ error: 'No active Reckoning exists for this account.' });
 }
+if (Number(activeReck.engine_version || 1) === 2) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning must be started through the V2 Reckoning start route.',
+    code: 'RECKONING_V2_USE_START',
+    reckoning_id: activeReck.id,
+  });
+}
 if (activeReck.status === 'in_progress' && activeReck.exam_session_id) {
   return res.status(409).json({
     error: 'A Reckoning exam is already in progress. Resume the existing exam instead of generating another one.',
@@ -16716,6 +16780,14 @@ examRouter.get('/:id/reckoning/state', async (req, res) => {
       examSessionId: req.params.id,
       userId: req.user.id,
     });
+    if (state.safetyExpired && state.enginePhase === 'ACTIVE') {
+      const finalResult = await adaptiveReckoningEngine.finalize({
+        examSessionId: req.params.id,
+        userId: req.user.id,
+        forceReason: 'SAFETY_EXPIRED',
+      });
+      return res.json(finalResult);
+    }
     res.json(state);
   } catch (error) {
     res.status(error.status || 500).json({
@@ -16740,6 +16812,19 @@ examRouter.post('/:id/reckoning/answer', async (req, res) => {
       });
     }
 
+    const currentState = await adaptiveReckoningEngine.getState({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    if (currentState.safetyExpired && currentState.enginePhase === 'ACTIVE') {
+      const finalResult = await adaptiveReckoningEngine.finalize({
+        examSessionId: req.params.id,
+        userId: req.user.id,
+        forceReason: 'SAFETY_EXPIRED',
+      });
+      return res.json(finalResult);
+    }
+
     const result = await adaptiveReckoningEngine.recordAnswer({
       examSessionId: req.params.id,
       userId: req.user.id,
@@ -16753,6 +16838,33 @@ examRouter.post('/:id/reckoning/answer', async (req, res) => {
     res.status(error.status || 500).json({
       error: error.message || 'Failed to record adaptive Reckoning answer',
       code: error.code || 'ERR_RECKONING_ANSWER',
+    });
+  }
+});
+
+examRouter.post('/:id/reckoning/continue', async (req, res) => {
+  try {
+    const state = await adaptiveReckoningEngine.getState({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    if (state.safetyExpired && state.enginePhase === 'ACTIVE') {
+      const finalResult = await adaptiveReckoningEngine.finalize({
+        examSessionId: req.params.id,
+        userId: req.user.id,
+        forceReason: 'SAFETY_EXPIRED',
+      });
+      return res.json(finalResult);
+    }
+    const result = await adaptiveReckoningEngine.continueCheckpoint({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to continue adaptive Reckoning',
+      code: error.code || 'ERR_RECKONING_CONTINUE',
     });
   }
 });
@@ -16801,6 +16913,15 @@ examRouter.get('/:id', async (req, res) => {
 try {
 const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (
+  exam.is_reckoning &&
+  (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
+) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning state must be loaded from the V2 state endpoint.',
+    code: 'RECKONING_V2_USE_STATE',
+  });
+}
 // Normalize questions for frontend without leaking the key during a live exam.
 // Completed/forfeited exams may reveal the key and audit outcome for review.
 if (exam.questions && Array.isArray(exam.questions)) {
@@ -16884,6 +17005,12 @@ req.params.id,
 parseInt(req.params.number)
 );
 if (!question) return res.status(404).json({ error: 'Question not found' });
+if (isAdaptiveReckoningQuestion(question)) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning questions are only exposed through the V2 state endpoint.',
+    code: 'RECKONING_V2_USE_STATE',
+  });
+}
 const { correct_answer, explanation, ...safeQuestion } = question;
 res.json(safeQuestion);
 } catch (e) {
@@ -16899,6 +17026,15 @@ try {
   }
   const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
   if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (
+    exam.is_reckoning &&
+    (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
+  ) {
+    return res.status(409).json({
+      error: 'Adaptive Reckoning answers must use the dedicated V2 answer endpoint.',
+      code: 'RECKONING_V2_USE_ADAPTIVE_ENDPOINT',
+    });
+  }
   if (exam.status !== 'active' || !exam.started_at) {
     return res.status(409).json({ error: 'Exam must be active before an answer can be saved' });
   }
@@ -16940,12 +17076,35 @@ try {
   const question = exam.questions.find((item) => String(item.question_number) === String(question_number));
   if (!question) return res.status(404).json({ error: 'Question not found' });
 
+  const adaptiveQuestion = isAdaptiveReckoningQuestion(question);
+  let auditResult = null;
+
   if (question.flagged_by_student && question.ai_audit_status === 'reviewed') {
-    return res.json({ ok: true, status: 'reviewed' });
+    auditResult = {
+      status: 'reviewed',
+      bonus_awarded: question.bonus_awarded === true,
+      audit: question.ai_audit_result || null,
+    };
+  } else {
+    auditResult = await auditCBTQuestion(req.user.id, exam, question);
   }
 
-  await auditCBTQuestion(req.user.id, exam, question);
-  res.json({ ok: true, status: 'reviewed' });
+  let adaptiveState = null;
+  if (adaptiveQuestion && auditResult?.bonus_awarded === true) {
+    adaptiveState = await adaptiveReckoningEngine.adjudicateDefectiveQuestion({
+      examSessionId: exam.id,
+      userId: req.user.id,
+      questionId: question.id,
+      audit: auditResult.audit || {},
+    });
+  }
+
+  res.json({
+    ok: true,
+    status: 'reviewed',
+    defective: auditResult?.bonus_awarded === true,
+    adaptive_state: adaptiveState,
+  });
 } catch (e) {
   res.status(503).json({
     error: 'Question review could not be completed yet. You can continue the exam and try the flag again.',
@@ -16975,6 +17134,15 @@ return res.status(400).json({ error: 'selected_option must be a single letter A-
 }
 let exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (
+  exam.is_reckoning &&
+  (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
+) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning cannot be submitted through the normal CBT endpoint.',
+    code: 'RECKONING_V2_USE_ADAPTIVE_ENDPOINT',
+  });
+}
 if (exam.status !== 'active' || !exam.started_at) {
   return res.status(409).json({ error: 'Exam must be started before it can be submitted' });
 }
@@ -19304,6 +19472,118 @@ res.status(500).json({ error: 'Failed to defer reckoning', details: e.message })
 }
 });
 
+brainRouter.post('/reckoning/start', async (req, res) => {
+  try {
+    let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+    if (active) {
+      active = await reconcileActiveReckoning(req.user.id, active)
+        .catch(() => active);
+    }
+    if (!active) {
+      return res.status(404).json({ error: 'No active Reckoning to start.' });
+    }
+    if (Number(active.engine_version || 1) !== 2) {
+      return res.status(409).json({
+        error: 'This is a legacy Reckoning and must resume through the legacy exam path.',
+        code: 'RECKONING_LEGACY_RESUME',
+        legacy: true,
+        exam_session_id: active.exam_session_id || null,
+      });
+    }
+
+    if (active.status === 'in_progress' && active.exam_session_id) {
+      const state = await adaptiveReckoningEngine.getState({
+        examSessionId: active.exam_session_id,
+        userId: req.user.id,
+      });
+      return res.json(state);
+    }
+
+    if (active.generation_status === 'pending') {
+      const updatedAt = active.updated_at
+        ? new Date(active.updated_at).getTime()
+        : NaN;
+      const staleAfterMs =
+        Math.max(
+          1,
+          Number(DELIVERY_E_RECKONING_CONFIG.preparation.claimStaleMinutes) || 5
+        ) * 60 * 1000;
+      const heartbeatIsFresh =
+        Number.isFinite(updatedAt) &&
+        Date.now() - updatedAt < staleAfterMs;
+
+      if (heartbeatIsFresh) {
+        return res.status(202).json({
+          status: 'preparing',
+          reckoning_id: active.id,
+          generation_status: 'pending',
+        });
+      }
+
+      console.warn('[KIWI] Reclaiming stale Reckoning V2 preparation', {
+        reckoningId: active.id,
+        userId: req.user.id,
+        updatedAt: active.updated_at || null,
+      });
+    }
+
+    const jobId = randomUUID();
+    const startUserId = req.user.id;
+    const reckoningId = active.id;
+    _jobStoreSet(jobId, {
+      status: 'pending',
+      type: 'reckoning_v2_start',
+      result: { reckoning_id: reckoningId },
+    });
+    res.status(202).json({
+      job_id: jobId,
+      status: 'preparing',
+      reckoning_id: reckoningId,
+      generation_status: active.generation_status || 'not_started',
+    });
+
+    setImmediate(async () => {
+      try {
+        const state = await adaptiveReckoningEngine.start({
+          reckoningId,
+          userId: startUserId,
+        });
+        _jobStoreSet(jobId, {
+          status: 'done',
+          type: 'reckoning_v2_start',
+          result: state,
+        });
+        wsSend(startUserId, 'job_done', {
+          job_id: jobId,
+          type: 'reckoning_v2_start',
+          result: state,
+        });
+      } catch (error) {
+        const message = isAIAvailabilityError(error)
+          ? 'AI generation is temporarily busy. Your Reckoning is still safe and can be retried.'
+          : String(error?.message || 'Reckoning preparation failed.');
+        _jobStoreSet(jobId, {
+          status: 'failed',
+          type: 'reckoning_v2_start',
+          error: message,
+        });
+        wsSend(startUserId, 'job_failed', {
+          job_id: jobId,
+          type: 'reckoning_v2_start',
+          error: message,
+        });
+      }
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      status: 'error',
+      error: error.message || 'Failed to start adaptive Reckoning',
+      code: error.code || 'ERR_RECKONING_START',
+    });
+  }
+});
+
+
 async function submitReckoningHandler(req, res) {
 try {
 const { examId, answers } = req.body;
@@ -19315,6 +19595,12 @@ if (!exam.is_reckoning) {
   return res.status(409).json({ error: 'This exam is not the active Reckoning exam.' });
 }
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (Number(active?.engine_version || 1) === 2) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning answers must use the V2 answer endpoint.',
+    code: 'RECKONING_V2_USE_ADAPTIVE_ENDPOINT',
+  });
+}
 if (!active || active.status !== 'in_progress' || String(active.exam_session_id) !== String(examId)) {
   return res.status(409).json({ error: 'This exam is not linked to the active Reckoning.' });
 }
@@ -19524,7 +19810,13 @@ res.json({
   subjectId: active.subject_id,
   subjectName: active.subject_name,
   reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
-  requiredScore: 70,
+  requiredScore: Number(active.engine_version || 1) === 2 ? null : 70,
+  recoveryThreshold: Number(active.engine_version || 1) === 2 ? 75 : null,
+  rawAccuracyThreshold: Number(active.engine_version || 1) === 2 ? 65 : null,
+  adaptive: Number(active.engine_version || 1) === 2,
+  engineVersion: Number(active.engine_version || 1),
+  engineMode: active.engine_mode || 'LEGACY',
+  generationStatus: active.generation_status || null,
   pressure: active.pressure_score || 0,
   shields: userStats?.streak_shields_held || 0,
   canDefer: !active.deferral_used,

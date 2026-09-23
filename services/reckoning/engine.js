@@ -9,6 +9,7 @@ const { createEvidenceEngine } = require('./evidence');
 const { createScheduler } = require('./scheduler');
 const { createScoringEngine } = require('./scoring');
 const { createLearningEffectsEngine } = require('./learning-effects');
+const { createPreparationService } = require('./preparation');
 const { createStateMachine } = require('./state-machine');
 
 function field(row, camel, snake, fallback = null) {
@@ -72,17 +73,27 @@ function sanitizeHistoryQuestion(question) {
     variantIndex: question.variant_index,
     stem: question.stem,
     selectedOption: question.selected_option,
-    isCorrect: question.is_correct === true,
+    answered: question.selected_option != null,
     responseTimeMs: Number(question.response_time_ms) || 0,
-    correctAnswer: question.correct_answer || null,
-    explanation: question.explanation || '',
-    evidenceEffect: question.evidence_effect || null,
   });
+}
+
+function evidenceConceptLabel(row) {
+  const snapshot = row?.source_snapshot || row?.sourceSnapshot || {};
+  return String(
+    snapshot.front_content ||
+    snapshot.front ||
+    snapshot.question ||
+    snapshot.title ||
+    row?.concept_key ||
+    'Study concept'
+  ).slice(0, 180);
 }
 
 function evidenceSummary(row) {
   return Object.freeze({
     id: row.id,
+    conceptLabel: evidenceConceptLabel(row),
     sourceCardId: row.source_card_id,
     conceptKey: row.concept_key,
     riskScore: Number(row.risk_score) || 0,
@@ -101,6 +112,95 @@ function evidenceSummary(row) {
   });
 }
 
+function buildCheckpoint(evidence, questions, blockSize) {
+  const answered = (questions || []).filter(
+    (question) => question.selected_option != null
+  );
+  const recent = answered.slice(-Math.max(1, Number(blockSize) || 5));
+  const missed = recent
+    .filter(
+      (question) =>
+        question.is_correct === false &&
+        question.bonus_awarded !== true &&
+        question.evidence_effect?.invalidated !== true
+    )
+    .map((question) => Object.freeze({
+      questionId: question.id,
+      role: question.reckoning_role,
+      stem: question.stem || '',
+      explanation: question.explanation || '',
+    }));
+
+  const summaries = (evidence || []).map(evidenceSummary);
+  return Object.freeze({
+    recovered: summaries.filter((item) => item.status === 'RECOVERED').length,
+    unresolved: summaries.filter((item) => item.status === 'UNRESOLVED').length,
+    provisional: summaries.filter((item) =>
+      ['PROVISIONAL','CONFIRMATION_REQUIRED'].includes(item.status)
+    ).length,
+    challengeRequired: summaries.filter(
+      (item) => item.status === 'CHALLENGE_REQUIRED'
+    ).length,
+    missed: Object.freeze(missed),
+  });
+}
+
+function buildFinalReport({
+  evidence = [],
+  recovery = {},
+  evidenceState = {},
+  learningEffects = {},
+  outcome = null,
+  reason = null,
+} = {}) {
+  const summaries = evidence.map(evidenceSummary);
+  const recovered = summaries.filter((item) => item.status === 'RECOVERED');
+  const unresolved = summaries.filter((item) =>
+    item.status === 'UNRESOLVED' ||
+    (
+      item.riskLevel === 'CRITICAL' &&
+      item.status !== 'RECOVERED' &&
+      item.status !== 'INVALIDATED'
+    )
+  );
+  const discovered = summaries.filter((item) => item.discoveredByControl);
+  const effects = Array.isArray(learningEffects?.applied)
+    ? learningEffects.applied.map((effect) => Object.freeze({
+        sourceCardId: effect.sourceCardId || null,
+        type: effect.type || null,
+        stageBefore: effect.stageBefore ?? null,
+        stageAfter: effect.stageAfter ?? null,
+        reviewAt: effect.reviewAt || effect.cardPatch?.nextReviewAt || null,
+        verificationRevoked: effect.verificationRevoked === true,
+      }))
+    : [];
+
+  return Object.freeze({
+    survived: recovery.survived === true,
+    stopReason: reason || null,
+    rawAccuracy: Number(recovery.rawAccuracy) || 0,
+    recoveryScore: Number(recovery.recoveryScore) || 0,
+    allCriticalRecovered: recovery.allCriticalRecovered === true,
+    unresolvedCriticalCount: Number(recovery.unresolvedCriticalCount) || 0,
+    recovered: Object.freeze(recovered),
+    unresolved: Object.freeze(unresolved),
+    discoveredByControl: Object.freeze(discovered),
+    evidenceState: Object.freeze({ ...(evidenceState || {}) }),
+    learningEffects: Object.freeze(effects),
+    consequenceSummary: Object.freeze({
+      ...(learningEffects?.summary || outcome?.consequence_summary || {}),
+    }),
+    knowledgeScore: outcome?.knowledge_score || null,
+    reckoning: outcome?.reckoning || null,
+  });
+}
+
+function isSafetyExpired(session, nowMs = Date.now()) {
+  if (!session?.safety_expires_at) return false;
+  const expires = new Date(session.safety_expires_at).getTime();
+  return Number.isFinite(expires) && expires <= nowMs;
+}
+
 function createReckoningEngine(options = {}) {
   const config = createReckoningConfig(options.config);
   const store = options.store || createReckoningStore({
@@ -115,6 +215,17 @@ function createReckoningEngine(options = {}) {
     options.learningEffectsEngine || createLearningEffectsEngine({ config });
   const stateMachine = options.stateMachine || createStateMachine();
   const outcomeHandler = options.outcomeHandler || null;
+  const preparationInputProvider = options.preparationInputProvider || null;
+  const preparationService =
+    options.preparationService ||
+    createPreparationService({
+      config,
+      questionBank: options.questionBank,
+      randomUUID: options.randomUUID,
+    });
+  const clock = options.clock || (() => new Date());
+  const setIntervalImpl = options.setIntervalImpl || setInterval;
+  const clearIntervalImpl = options.clearIntervalImpl || clearInterval;
 
   async function buildState(activeStore, {
     examSessionId,
@@ -150,12 +261,23 @@ function createReckoningEngine(options = {}) {
       .map(sanitizeHistoryQuestion);
 
     const phase = session.engine_phase || SESSION_PHASES.ACTIVE;
-    const blockSize = config.execution.blockSize;
-    const checkpointDue =
-      phase === SESSION_PHASES.ACTIVE &&
-      questionsUsed > 0 &&
-      questionsUsed % blockSize === 0 &&
-      Boolean(currentQuestion);
+    const checkpointPending = session.checkpoint_pending === true;
+    const reviewStartedAt = session.review_started_at
+      ? new Date(session.review_started_at).getTime()
+      : null;
+    const elapsedSeconds = Number.isFinite(reviewStartedAt)
+      ? Math.max(0, Math.floor((Date.now() - reviewStartedAt) / 1000))
+      : 0;
+    const checkpoint = checkpointPending
+      ? Object.freeze({
+          ...buildCheckpoint(evidence, questions, config.execution.blockSize),
+          criticalUnresolved: evidenceState.criticalUnresolved,
+          message:
+            evidenceState.criticalUnresolved > 0
+              ? `${evidenceState.recovered} concepts recovered. ${evidenceState.criticalUnresolved} Critical concept${evidenceState.criticalUnresolved === 1 ? '' : 's'} still need recovery.`
+              : `${evidenceState.recovered} concepts recovered. ${evidenceState.unresolved} unresolved.`,
+        })
+      : null;
 
     return Object.freeze({
       reckoningId: session.id,
@@ -170,12 +292,16 @@ function createReckoningEngine(options = {}) {
       currentBlock: Number(session.current_block) || 0,
       stateVersion: Number(session.state_version) || 0,
       safetyExpiresAt: session.safety_expires_at || null,
-      checkpointDue,
+      safetyExpired: isSafetyExpired(session),
+      elapsedSeconds,
+      checkpointPending,
+      checkpoint,
       currentQuestion: sanitizeCurrentQuestion(currentQuestion),
       history: Object.freeze(history),
       evidence: Object.freeze(evidence.map(evidenceSummary)),
       evidenceState,
       recovery: score,
+      finalReport: session.final_report || null,
       final:
         phase === SESSION_PHASES.FINALIZING ||
         phase === SESSION_PHASES.COMPLETE,
@@ -187,6 +313,233 @@ function createReckoningEngine(options = {}) {
       throw new ReckoningContractError('getState requires examSessionId and userId.');
     }
     return buildState(store, { examSessionId, userId });
+  }
+
+  async function prepare({ reckoningId, userId } = {}) {
+    if (!reckoningId || !userId) {
+      throw new ReckoningContractError('prepare requires reckoningId and userId.');
+    }
+    if (!preparationService || typeof preparationInputProvider !== 'function') {
+      const error = new ReckoningContractError(
+        'Adaptive Reckoning preparation is not configured.'
+      );
+      error.code = 'ERR_RECKONING_PREPARATION_UNAVAILABLE';
+      error.status = 503;
+      throw error;
+    }
+
+    const claimed = await store.claimPreparation(
+      reckoningId,
+      userId,
+      config.preparation.claimStaleMinutes
+    );
+    if (!claimed) {
+      const current = await store.getSession(reckoningId, userId);
+      if (
+        current &&
+        current.engine_version === 2 &&
+        ['PILOT', 'LIVE'].includes(String(current.engine_mode || '')) &&
+        current.status === 'in_progress' &&
+        current.exam_session_id
+      ) {
+        return buildState(store, {
+          examSessionId: current.exam_session_id,
+          userId,
+          session: current,
+        });
+      }
+      const error = new ReckoningContractError(
+        current?.generation_status === 'pending'
+          ? 'Reckoning preparation is already in progress.'
+          : 'Reckoning is not ready for adaptive preparation.'
+      );
+      error.code = current?.generation_status === 'pending'
+        ? 'ERR_RECKONING_PREPARING'
+        : 'ERR_RECKONING_PREPARE_STATE';
+      error.status = 409;
+      throw error;
+    }
+
+    let preparationHeartbeat = null;
+    try {
+      if (typeof store.touchPreparation === 'function') {
+        const heartbeatMs = Math.max(
+          5000,
+          Number(config.preparation.heartbeatSeconds || 45) * 1000
+        );
+        preparationHeartbeat = setIntervalImpl(() => {
+          Promise.resolve(store.touchPreparation(reckoningId, userId)).catch(() => null);
+        }, heartbeatMs);
+        if (preparationHeartbeat && typeof preparationHeartbeat.unref === 'function') {
+          preparationHeartbeat.unref();
+        }
+      }
+
+      const input = await preparationInputProvider({
+        session: claimed,
+        userId,
+      });
+      const prepared = await preparationService.prepare({
+        ...input,
+        context: {
+          ...(input?.context || {}),
+          subjectId: claimed.subject_id,
+          pressureScore: Number(claimed.pressure_score) || 0,
+        },
+        generationGroupId: claimed.id,
+      });
+
+      const activated = await store.withTransaction(async (txStore) => {
+        const locked = await txStore.getSession(claimed.id, userId, { forUpdate: true });
+        if (!locked || locked.exam_session_id || locked.status === 'completed') {
+          throw new ReckoningContractError(
+            'Reckoning changed while preparation was running.'
+          );
+        }
+
+        await txStore.clearPreparationEvidence(claimed.id, userId);
+        for (const evidence of prepared.plan.evidence) {
+          await txStore.createEvidence({
+            id: evidence.id,
+            reckoningId: claimed.id,
+            userId,
+            subjectId: claimed.subject_id,
+            sourceCardId: evidence.sourceCardId,
+            conceptKey: evidence.conceptKey,
+            sourceSnapshot: evidence.sourceSnapshot,
+            sourceHash: evidence.sourceHash,
+            originalCardState: evidence.originalCardState,
+            riskScore: evidence.riskScore,
+            riskLevel: evidence.riskLevel,
+            riskReasons: evidence.riskReasons,
+            isBubbleCritical: evidence.isBubbleCritical,
+            hasLearningDebt: evidence.hasLearningDebt,
+            discoveredByControl: false,
+            evidenceStatus: 'UNTESTED',
+            requiredConfirmations: evidence.requiredConfirmations,
+          });
+        }
+
+        const exam = await txStore.createExecutionExam(userId, {
+          subjectId: claimed.subject_id,
+          deckIds: input?.deckIds || [],
+          questionCount: prepared.questions.length,
+          safetyWindowSeconds: config.execution.safetyWindowMinutes * 60,
+        });
+        if (!exam) throw new ReckoningContractError('Failed to create adaptive Reckoning exam.');
+
+        const inserted = [];
+        for (const question of prepared.questions) {
+          inserted.push(await txStore.createPreparedQuestion(
+            userId,
+            exam.id,
+            question
+          ));
+        }
+        const firstQuestion =
+          inserted.find((row) => String(row.id) === String(prepared.firstQuestionId)) ||
+          inserted.find(
+            (row) => Number(row.question_number) === Number(prepared.firstQuestionNumber)
+          ) ||
+          inserted[0];
+        if (!firstQuestion) {
+          throw new ReckoningContractError('Adaptive Reckoning bank has no initial question.');
+        }
+        await txStore.unlockQuestion(userId, exam.id, firstQuestion.id);
+
+        const session = await txStore.activatePreparedSession(claimed.id, userId, {
+          examSessionId: exam.id,
+          currentQuestionId: firstQuestion.id,
+          questionCount: inserted.length,
+          softQuestionBudget: prepared.plan.softQuestionBudget,
+          hardQuestionCap: prepared.plan.hardQuestionCap,
+          plannerVersion: prepared.plan.plannerVersion,
+          configVersion: config.configVersion,
+          safetyWindowMinutes: config.execution.safetyWindowMinutes,
+        });
+        if (!session) {
+          throw new ReckoningContractError('Failed to activate prepared Reckoning session.');
+        }
+        return { exam, session };
+      });
+
+      return buildState(store, {
+        examSessionId: activated.exam.id,
+        userId,
+        session: activated.session,
+      });
+    } catch (error) {
+      await store.releasePreparationFailure(reckoningId, userId, error).catch(() => null);
+      throw error;
+    } finally {
+      if (preparationHeartbeat) clearIntervalImpl(preparationHeartbeat);
+    }
+  }
+
+  async function start({ reckoningId, userId } = {}) {
+    const session = await store.getSession(reckoningId, userId);
+    if (
+      session?.status === 'in_progress' &&
+      session.exam_session_id &&
+      adaptiveSessionAllowed(session)
+    ) {
+      return buildState(store, {
+        examSessionId: session.exam_session_id,
+        userId,
+        session,
+      });
+    }
+    try {
+      return await prepare({ reckoningId, userId });
+    } catch (error) {
+      if (error?.code === 'ERR_RECKONING_PREPARING') {
+        const currentSession = await store.getSession(reckoningId, userId);
+        return Object.freeze({
+          status: 'preparing',
+          reckoningId,
+          engineVersion: Number(currentSession?.engine_version) || 2,
+          engineMode: currentSession?.engine_mode || 'LIVE',
+          enginePhase: currentSession?.engine_phase || SESSION_PHASES.PREPARING,
+          generationStatus: currentSession?.generation_status || 'pending',
+        });
+      }
+      throw error;
+    }
+  }
+
+  async function continueCheckpoint({ examSessionId, userId } = {}) {
+    return store.withTransaction(async (txStore) => {
+      const session = requireAdaptiveSession(
+        await txStore.getSessionByExam(examSessionId, userId, { forUpdate: true })
+      );
+      if (isSafetyExpired(session)) {
+        const error = new ReckoningContractError(
+          'The Reckoning safety window has expired.'
+        );
+        error.code = 'RECKONING_SAFETY_EXPIRED';
+        error.status = 409;
+        throw error;
+      }
+      if (!session.checkpoint_pending || !session.checkpoint_next_question_id) {
+        return buildState(txStore, { examSessionId, userId, session });
+      }
+      const unlocked = await txStore.unlockQuestion(
+        userId,
+        examSessionId,
+        session.checkpoint_next_question_id
+      );
+      if (!unlocked) {
+        throw new ReckoningContractError('Checkpoint next question could not be unlocked.');
+      }
+      const updated = await txStore.saveSession(session.id, {
+        checkpointPending: false,
+        checkpointNextQuestionId: null,
+        currentQuestionId: session.checkpoint_next_question_id,
+        currentBlock: (Number(session.current_block) || 1) + 1,
+        stateVersion: (Number(session.state_version) || 0) + 1,
+      });
+      return buildState(txStore, { examSessionId, userId, session: updated });
+    });
   }
 
   async function recordAnswer({
@@ -210,6 +563,15 @@ function createReckoningEngine(options = {}) {
       const session = requireAdaptiveSession(
         await txStore.getSessionByExam(examSessionId, userId, { forUpdate: true })
       );
+
+      if (isSafetyExpired(session) && session.engine_phase === SESSION_PHASES.ACTIVE) {
+        const error = new ReckoningContractError(
+          'The Reckoning safety window has expired.'
+        );
+        error.code = 'RECKONING_SAFETY_EXPIRED';
+        error.status = 409;
+        throw error;
+      }
 
       if (![SESSION_PHASES.ACTIVE, SESSION_PHASES.FINALIZING].includes(session.engine_phase)) {
         const error = new ReckoningContractError(
@@ -322,26 +684,44 @@ function createReckoningEngine(options = {}) {
           ...baseSessionPatch,
           enginePhase: SESSION_PHASES.FINALIZING,
           currentQuestionId: null,
+          checkpointPending: false,
+          checkpointNextQuestionId: null,
           currentBlock: Math.ceil(answeredOrdinal / config.execution.blockSize),
         });
       } else {
-        const unlocked = await txStore.unlockQuestion(
-          userId,
-          examSessionId,
-          next.questionId
-        );
-        if (!unlocked) {
-          throw new ReckoningContractError(
-            'Scheduler selected a question that could not be unlocked.'
+        const checkpointPending =
+          answeredOrdinal > 0 &&
+          answeredOrdinal % config.execution.blockSize === 0;
+        if (checkpointPending) {
+          await txStore.saveSession(session.id, {
+            ...baseSessionPatch,
+            enginePhase: SESSION_PHASES.ACTIVE,
+            currentQuestionId: null,
+            checkpointPending: true,
+            checkpointNextQuestionId: next.questionId,
+            currentBlock: Math.ceil(answeredOrdinal / config.execution.blockSize),
+          });
+        } else {
+          const unlocked = await txStore.unlockQuestion(
+            userId,
+            examSessionId,
+            next.questionId
           );
+          if (!unlocked) {
+            throw new ReckoningContractError(
+              'Scheduler selected a question that could not be unlocked.'
+            );
+          }
+          await txStore.saveSession(session.id, {
+            ...baseSessionPatch,
+            enginePhase: SESSION_PHASES.ACTIVE,
+            currentQuestionId: next.questionId,
+            checkpointPending: false,
+            checkpointNextQuestionId: null,
+            currentBlock:
+              Math.floor(answeredOrdinal / config.execution.blockSize) + 1,
+          });
         }
-        await txStore.saveSession(session.id, {
-          ...baseSessionPatch,
-          enginePhase: SESSION_PHASES.ACTIVE,
-          currentQuestionId: next.questionId,
-          currentBlock:
-            Math.floor(answeredOrdinal / config.execution.blockSize) + 1,
-        });
       }
 
       const persistedSession = await txStore.getSessionByExam(
@@ -371,15 +751,373 @@ function createReckoningEngine(options = {}) {
           evidenceId: evidence.id,
           role: question.reckoning_role,
           selectedOption: selected,
-          isCorrect,
-          correctAnswer: isCorrect ? null : question.correct_answer,
-          explanation: isCorrect ? '' : (question.explanation || ''),
+          recorded: true,
         }),
       });
     });
   }
 
-  async function finalize({ examSessionId, userId } = {}) {
+  async function replayEvidenceAfterInvalidation(
+    txStore,
+    session,
+    evidenceId,
+    examSessionId
+  ) {
+    const evidence = await txStore.getEvidenceById(
+      evidenceId,
+      session.id,
+      { forUpdate: true }
+    );
+    if (!evidence) return null;
+
+    const questions = (await txStore.getExecutionQuestions(examSessionId))
+      .filter(
+        (question) =>
+          String(question.reckoning_evidence_id || '') === String(evidenceId)
+      )
+      .filter((question) => {
+        const invalidated =
+          question.bonus_awarded === true ||
+          question.evidence_effect?.invalidated === true;
+        return question.selected_option != null && !invalidated;
+      })
+      .sort((a, b) => {
+        const aTime = a.unlocked_at ? new Date(a.unlocked_at).getTime() : 0;
+        const bTime = b.unlocked_at ? new Date(b.unlocked_at).getTime() : 0;
+        if (aTime !== bTime) return aTime - bTime;
+        return Number(a.question_number) - Number(b.question_number);
+      });
+
+    const hasControl = (await txStore.getExecutionQuestions(examSessionId))
+      .some(
+        (question) =>
+          String(question.reckoning_evidence_id || '') === String(evidenceId) &&
+          question.reckoning_role === 'CONTROL'
+      );
+    const score = Number(evidence.risk_score) || 0;
+    const baseRiskLevel = hasControl
+      ? 'SUPPORTING'
+      : score >= config.risk.criticalThreshold
+        ? 'CRITICAL'
+        : score >= config.risk.highThreshold
+          ? 'HIGH'
+          : 'SUPPORTING';
+
+    let replay = {
+      id: evidence.id,
+      riskLevel: baseRiskLevel,
+      evidenceStatus: 'UNTESTED',
+      diagnosticOutcome: null,
+      challengeOutcome: null,
+      confirmationOutcome: null,
+      attemptCount: 0,
+      successfulDemonstrations: 0,
+      requiredConfirmations: baseRiskLevel === 'CRITICAL' ? 1 : 0,
+      questionsSeen: 0,
+      discoveredByControl: false,
+    };
+
+    let ordinal = 0;
+    for (const question of questions) {
+      const transition = evidenceEngine.record(replay, {
+        role: question.reckoning_role,
+        isCorrect: question.is_correct === true,
+        questionOrdinal: ++ordinal,
+      });
+      replay = { ...replay, ...transition.patch };
+    }
+
+    return txStore.saveEvidence(evidence.id, {
+      riskLevel: replay.riskLevel,
+      evidenceStatus: replay.evidenceStatus,
+      diagnosticOutcome: replay.diagnosticOutcome,
+      challengeOutcome: replay.challengeOutcome,
+      confirmationOutcome: replay.confirmationOutcome,
+      attemptCount: replay.attemptCount,
+      successfulDemonstrations: replay.successfulDemonstrations,
+      requiredConfirmations: replay.requiredConfirmations,
+      questionsSeen: replay.questionsSeen,
+      discoveredByControl: replay.discoveredByControl,
+      lastQuestionRole: replay.lastQuestionRole || null,
+      nextEligibleQuestion: replay.nextEligibleQuestion ?? null,
+      resolvedAt: replay.resolvedAt ?? null,
+    });
+  }
+
+  async function repairDefectiveQuestion({
+    examSessionId,
+    userId,
+    questionId,
+    audit = {},
+  } = {}) {
+    if (!examSessionId || !userId || !questionId) {
+      throw new ReckoningContractError(
+        'repairDefectiveQuestion requires examSessionId, userId and questionId.'
+      );
+    }
+
+    const session = requireAdaptiveSession(
+      await store.getSessionByExam(examSessionId, userId)
+    );
+    const question = await store.getQuestionForExecution(
+      userId,
+      examSessionId,
+      questionId
+    );
+    if (!question) {
+      throw new ReckoningContractError('Defective Reckoning question was not found.');
+    }
+    if (
+      question.selected_option != null ||
+      String(session.current_question_id || '') !== String(question.id)
+    ) {
+      const error = new ReckoningContractError(
+        'Only the current unanswered Reckoning question can be replaced.'
+      );
+      error.status = 409;
+      throw error;
+    }
+
+    let replacement = null;
+    try {
+      replacement = await preparationService.generateReplacement({
+        blueprint: question.reckoning_blueprint,
+        previousQuestion: {
+          stem: question.stem,
+          options: [
+            question.option_a,
+            question.option_b,
+            question.option_c,
+            question.option_d,
+          ],
+          correctAnswer: question.correct_answer,
+        },
+        generationGroupId: `reckoning-repair:${session.id}`,
+      });
+    } catch (_) {
+      replacement = null;
+    }
+
+    return store.withTransaction(async (txStore) => {
+      const lockedSession = requireAdaptiveSession(
+        await txStore.getSessionByExam(examSessionId, userId, { forUpdate: true })
+      );
+      const lockedQuestion = await txStore.getQuestionForExecution(
+        userId,
+        examSessionId,
+        questionId,
+        { forUpdate: true }
+      );
+      if (
+        !lockedQuestion ||
+        lockedQuestion.selected_option != null ||
+        String(lockedSession.current_question_id || '') !== String(questionId)
+      ) {
+        return buildState(txStore, {
+          examSessionId,
+          userId,
+          session: lockedSession,
+        });
+      }
+
+      await txStore.invalidateExecutionQuestion(
+        userId,
+        examSessionId,
+        questionId,
+        audit
+      );
+
+      if (replacement) {
+        const allQuestions = await txStore.getExecutionQuestions(examSessionId);
+        const nextNumber = allQuestions.reduce(
+          (max, row) => Math.max(max, Number(row.question_number) || 0),
+          0
+        ) + 1;
+        const created = await txStore.createPreparedQuestion(
+          userId,
+          examSessionId,
+          {
+            ...replacement,
+            questionNumber: nextNumber,
+            evidenceId: lockedQuestion.reckoning_evidence_id,
+            isUnlocked: true,
+            unlockedAt: clock(),
+          }
+        );
+        if (!created) {
+          throw new ReckoningContractError(
+            'Defective Reckoning question replacement could not be persisted.'
+          );
+        }
+        const updated = await txStore.saveSession(lockedSession.id, {
+          currentQuestionId: created.id,
+          stateVersion: (Number(lockedSession.state_version) || 0) + 1,
+        });
+        return buildState(txStore, {
+          examSessionId,
+          userId,
+          session: updated,
+        });
+      }
+
+      const evidence = await txStore.getEvidenceById(
+        lockedQuestion.reckoning_evidence_id,
+        lockedSession.id,
+        { forUpdate: true }
+      );
+      if (evidence) {
+        await txStore.saveEvidence(evidence.id, {
+          evidenceStatus: 'INVALIDATED',
+          resolvedAt: clock(),
+        });
+      }
+
+      const evidenceRows = await txStore.getEvidence(lockedSession.id);
+      const questions = await txStore.getExecutionQuestions(examSessionId);
+      const next = scheduler.chooseNext({
+        evidence: evidenceRows,
+        questions,
+        questionsUsed: Number(lockedSession.questions_used) || 0,
+        lastEvidenceId: evidence?.id || null,
+      });
+
+      if (next.type === 'QUESTION') {
+        const unlocked = await txStore.unlockQuestion(
+          userId,
+          examSessionId,
+          next.questionId
+        );
+        if (!unlocked) {
+          throw new ReckoningContractError(
+            'Reckoning could not continue after invalidating a defective item.'
+          );
+        }
+        const updated = await txStore.saveSession(lockedSession.id, {
+          currentQuestionId: next.questionId,
+          checkpointPending: false,
+          checkpointNextQuestionId: null,
+          stateVersion: (Number(lockedSession.state_version) || 0) + 1,
+        });
+        return buildState(txStore, {
+          examSessionId,
+          userId,
+          session: updated,
+        });
+      }
+
+      stateMachine.transition(SESSION_PHASES.ACTIVE, SESSION_PHASES.FINALIZING);
+      const updated = await txStore.saveSession(lockedSession.id, {
+        enginePhase: SESSION_PHASES.FINALIZING,
+        currentQuestionId: null,
+        checkpointPending: false,
+        checkpointNextQuestionId: null,
+        stateVersion: (Number(lockedSession.state_version) || 0) + 1,
+      });
+      return buildState(txStore, {
+        examSessionId,
+        userId,
+        session: updated,
+      });
+    });
+  }
+
+  async function adjudicateDefectiveQuestion({
+    examSessionId,
+    userId,
+    questionId,
+    audit = {},
+  } = {}) {
+    const session = requireAdaptiveSession(
+      await store.getSessionByExam(examSessionId, userId)
+    );
+    const question = await store.getQuestionForExecution(
+      userId,
+      examSessionId,
+      questionId
+    );
+    if (!question) {
+      throw new ReckoningContractError('Audited adaptive question was not found.');
+    }
+
+    if (
+      question.selected_option == null &&
+      String(session.current_question_id || '') === String(question.id)
+    ) {
+      return repairDefectiveQuestion({
+        examSessionId,
+        userId,
+        questionId,
+        audit,
+      });
+    }
+
+    return store.withTransaction(async (txStore) => {
+      const lockedSession = requireAdaptiveSession(
+        await txStore.getSessionByExam(examSessionId, userId, { forUpdate: true })
+      );
+      const lockedQuestion = await txStore.getQuestionForExecution(
+        userId,
+        examSessionId,
+        questionId,
+        { forUpdate: true }
+      );
+      if (!lockedQuestion) {
+        throw new ReckoningContractError('Audited adaptive question disappeared.');
+      }
+      if (lockedQuestion.evidence_effect?.invalidated === true) {
+        return buildState(txStore, {
+          examSessionId,
+          userId,
+          session: lockedSession,
+        });
+      }
+
+      const consumedBudget =
+        lockedQuestion.selected_option != null ? 1 : 0;
+
+      await txStore.invalidateExecutionQuestion(
+        userId,
+        examSessionId,
+        questionId,
+        audit
+      );
+      await replayEvidenceAfterInvalidation(
+        txStore,
+        lockedSession,
+        lockedQuestion.reckoning_evidence_id,
+        examSessionId
+      );
+
+      const evidenceRows = await txStore.getEvidence(lockedSession.id);
+      const questions = await txStore.getExecutionQuestions(examSessionId);
+      const adjustedQuestionsUsed = Math.max(
+        0,
+        (Number(lockedSession.questions_used) || 0) - consumedBudget
+      );
+      const recovery = scoring.calculateRecovery({
+        evidence: evidenceRows,
+        questions,
+        questionsUsed: adjustedQuestionsUsed,
+      });
+
+      await txStore.saveSession(lockedSession.id, {
+        questionsUsed: adjustedQuestionsUsed,
+        rawAccuracy: recovery.rawAccuracy,
+        recoveryScore: recovery.recoveryScore,
+        unresolvedCriticalCount: recovery.unresolvedCriticalCount,
+        stateVersion: (Number(lockedSession.state_version) || 0) + 1,
+      });
+
+      const refreshed = await txStore.getSessionByExam(examSessionId, userId);
+      return buildState(txStore, {
+        examSessionId,
+        userId,
+        session: refreshed,
+      });
+    });
+  }
+
+  async function finalize({ examSessionId, userId, forceReason = null } = {}) {
     if (!examSessionId || !userId) {
       throw new ReckoningContractError('finalize requires examSessionId and userId.');
     }
@@ -406,6 +1144,7 @@ function createReckoningEngine(options = {}) {
             questionsUsed: Number(session.questions_used) || 0,
           }),
           learningEffects: Object.freeze({ applied: [], skipped: [] }),
+          finalReport: session.final_report || null,
           reason: 'ALREADY_FINALIZED',
         });
       }
@@ -430,6 +1169,7 @@ function createReckoningEngine(options = {}) {
         Number(session.hard_question_cap) || config.planner.hardQuestionCap;
 
       const finalizable =
+        Boolean(forceReason) ||
         session.engine_phase === SESSION_PHASES.FINALIZING ||
         recovery.survived ||
         questionsUsed >= hardCap ||
@@ -482,6 +1222,8 @@ function createReckoningEngine(options = {}) {
       const persistedSession = await txStore.saveSession(session.id, {
         enginePhase: SESSION_PHASES.FINALIZING,
         currentQuestionId: null,
+        checkpointPending: false,
+        checkpointNextQuestionId: null,
         rawAccuracy: recovery.rawAccuracy,
         recoveryScore: recovery.recoveryScore,
         unresolvedCriticalCount: recovery.unresolvedCriticalCount,
@@ -499,9 +1241,11 @@ function createReckoningEngine(options = {}) {
         learningEffects: effects,
         reason: recovery.survived
           ? 'RECOVERY_SUFFICIENT'
-          : questionsUsed >= hardCap
-            ? 'HARD_CAP_REACHED'
-            : 'NO_PENDING_QUESTIONS',
+          : forceReason
+            ? String(forceReason)
+            : questionsUsed >= hardCap
+              ? 'HARD_CAP_REACHED'
+              : 'NO_PENDING_QUESTIONS',
       });
     });
 
@@ -534,6 +1278,7 @@ function createReckoningEngine(options = {}) {
           recovery: prepared.recovery,
           evidenceState: prepared.evidenceState,
           learningEffects: prepared.learningEffects,
+          finalReport: beforeOutcome.final_report || null,
           outcome: null,
         });
       }
@@ -551,6 +1296,15 @@ function createReckoningEngine(options = {}) {
         reason: prepared.reason,
       });
 
+      const finalReport = buildFinalReport({
+        evidence: prepared.evidence,
+        recovery: prepared.recovery,
+        evidenceState: prepared.evidenceState,
+        learningEffects: prepared.learningEffects,
+        outcome,
+        reason: prepared.reason,
+      });
+
       await store.withTransaction(async (txStore) => {
         const current = requireAdaptiveSession(
           await txStore.getSession(prepared.session.id, userId, { forUpdate: true })
@@ -563,10 +1317,17 @@ function createReckoningEngine(options = {}) {
           await txStore.saveSession(current.id, {
             enginePhase: SESSION_PHASES.COMPLETE,
             currentQuestionId: null,
+            checkpointPending: false,
+            checkpointNextQuestionId: null,
             rawAccuracy: prepared.recovery.rawAccuracy,
             recoveryScore: prepared.recovery.recoveryScore,
             unresolvedCriticalCount:
               prepared.recovery.unresolvedCriticalCount,
+            finalReport,
+            generationStatus:
+              outcome?.reckoning?.status === 'triggered'
+                ? 'not_started'
+                : 'ready',
             stateVersion: (Number(current.state_version) || 0) + 1,
           });
         }
@@ -579,6 +1340,7 @@ function createReckoningEngine(options = {}) {
         recovery: prepared.recovery,
         evidenceState: prepared.evidenceState,
         learningEffects: prepared.learningEffects,
+        finalReport,
         outcome,
       });
     };
@@ -598,16 +1360,20 @@ function createReckoningEngine(options = {}) {
         status: RECKONING_ENGINE.STATUS,
         enabled: config.enabled,
         behaviorAuthority: config.behaviorAuthority,
-        executionCore: true,
+        preparationVersion: config.preparationVersion,
         evidenceModelVersion: config.evidenceModelVersion,
         schedulerVersion: config.schedulerVersion,
         scoringVersion: config.scoringVersion,
         learningEffectsVersion: config.learningEffectsVersion,
+        checkpointExecution: true,
         consequenceFinalization: true,
       });
     },
-    prepare() { return notImplemented('engine.prepare'); },
-    start() { return notImplemented('engine.start'); },
+    prepare,
+    start,
+    continueCheckpoint,
+    repairDefectiveQuestion,
+    adjudicateDefectiveQuestion,
     recordAnswer,
     getState,
     finalize,
@@ -617,6 +1383,11 @@ function createReckoningEngine(options = {}) {
 }
 
 module.exports = {
+  field,
+  evidenceConceptLabel,
+  buildCheckpoint,
+  buildFinalReport,
+  isSafetyExpired,
   isAdaptiveReckoningQuestion,
   adaptiveSessionAllowed,
   sanitizeCurrentQuestion,

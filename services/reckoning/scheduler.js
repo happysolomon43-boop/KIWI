@@ -67,9 +67,16 @@ function createScheduler({ config = createReckoningConfig() } = {}) {
       });
     }
 
-    const unanswered = (questions || []).filter(
-      (question) => field(question, 'selectedOption', 'selected_option') == null
-    );
+    const unanswered = (questions || []).filter((question) => {
+      const effect = field(question, 'evidenceEffect', 'evidence_effect', null);
+      const invalidated =
+        question?.bonus_awarded === true ||
+        effect?.invalidated === true;
+      return (
+        field(question, 'selectedOption', 'selected_option') == null &&
+        !invalidated
+      );
+    });
     const byEvidence = new Map((evidence || []).map((row) => [String(row.id), row]));
     const rawCandidates = [];
 

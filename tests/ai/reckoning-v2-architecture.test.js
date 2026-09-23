@@ -7,9 +7,8 @@ const path = require('node:path');
 
 const reckoning = require('../../services/reckoning');
 
-test('Reckoning V2 Phase 1 exposes a stable backend facade', () => {
+test('Reckoning V2 final delivery exposes a LIVE backend facade', () => {
   const engine = reckoning.createReckoningEngine();
-
   for (const method of reckoning.ENGINE_METHODS) {
     assert.equal(typeof engine[method], 'function', `missing engine method: ${method}`);
   }
@@ -18,32 +17,25 @@ test('Reckoning V2 Phase 1 exposes a stable backend facade', () => {
   assert.equal(description.name, 'reckoning-v2');
   assert.equal(description.engineVersion, 2);
   assert.equal(description.architectureVersion, 1);
-  assert.equal(description.status, 'SCAFFOLD');
+  assert.equal(description.status, 'LIVE');
+  assert.equal(description.enabled, true);
+  assert.equal(description.behaviorAuthority, 'v2');
+  assert.equal(description.checkpointExecution, true);
+  assert.equal(description.consequenceFinalization, true);
 });
 
-test('Delivery D remains fail-closed for authority while consequence finalization is explicit', async () => {
+test('Delivery E activation is explicit and immutable in configuration', () => {
   const config = reckoning.createReckoningConfig({
-    enabled: true,
-    behaviorAuthority: 'v2',
+    enabled: false,
+    behaviorAuthority: 'legacy',
   });
 
-  assert.equal(config.enabled, false);
-  assert.equal(config.behaviorAuthority, 'legacy');
+  assert.equal(config.enabled, true);
+  assert.equal(config.behaviorAuthority, 'v2');
+  assert.equal(config.engineVersion, 2);
+  assert.equal(config.execution.hardQuestionCap ?? config.planner.hardQuestionCap, 30);
+  assert.equal(config.execution.safetyWindowMinutes, 45);
   assert.equal(Object.isFrozen(config), true);
-
-  const engine = reckoning.createReckoningEngine({ config });
-
-  for (const method of ['prepare', 'start']) {
-    assert.throws(
-      () => engine[method](),
-      (error) => error && error.code === 'ERR_RECKONING_V2_NOT_IMPLEMENTED'
-    );
-  }
-
-  await assert.rejects(
-    () => engine.getState({ examSessionId: 'exam-1', userId: 'user-1' }),
-    /requires a query function/
-  );
 });
 
 test('accepted Reckoning concepts are centralized and immutable', () => {
@@ -63,7 +55,7 @@ test('accepted Reckoning concepts are centralized and immutable', () => {
   assert.equal(Object.isFrozen(reckoning.RISK_LEVELS), true);
 });
 
-test('all Phase 1 component boundaries are importable without side effects', () => {
+test('all Reckoning component boundaries remain importable', () => {
   for (const factoryName of reckoning.COMPONENT_FACTORIES) {
     assert.equal(typeof reckoning[factoryName], 'function', `missing factory: ${factoryName}`);
     const component = reckoning[factoryName]();
@@ -72,39 +64,54 @@ test('all Phase 1 component boundaries are importable without side effects', () 
   }
 });
 
-test('Delivery D wires dormant finalization without activating current Reckoning authority', () => {
+test('Delivery E production wiring activates only newly-triggered V2 rows', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', '..', 'index.js'),
     'utf8'
   );
 
-  assert.match(source, /createShadowIntelligence/);
-  assert.match(source, /reckoningShadow\.analyzeSafely/);
-  assert.match(
-    source,
-    /const adaptiveReckoningEngine = createReckoningEngine\s*\(/
-  );
-  assert.match(source, /examRouter\.get\('\/:id\/reckoning\/state'/);
-  assert.match(source, /examRouter\.post\('\/:id\/reckoning\/answer'/);
-  assert.match(source, /examRouter\.post\('\/:id\/reckoning\/finalize'/);
+  assert.match(source, /const adaptiveReckoningEngine = createReckoningEngine\s*\(/);
+  assert.match(source, /preparationService:\s*adaptivePreparationService/);
+  assert.match(source, /preparationInputProvider:\s*buildAdaptivePreparationInput/);
   assert.match(source, /outcomeHandler:\s*finalizeAdaptiveReckoningOutcome/);
-  assert.match(source, /completion\.survived/);
-  assert.match(source, /finalizeKsSnapshot/);
-  assert.match(source, /evidenceState\?\.recovered/);
-  assert.match(source, /!isAdaptiveReckoningQuestion\(q\)/);
-  assert.match(
-    source,
-    /active\.engine_phase === 'FINALIZING'[\s\S]*active\.last_failure_exam_id/
-  );
+
+  for (const route of [
+    /brainRouter\.post\('\/reckoning\/start'/,
+    /examRouter\.get\('\/:id\/reckoning\/state'/,
+    /examRouter\.post\('\/:id\/reckoning\/answer'/,
+    /examRouter\.post\('\/:id\/reckoning\/continue'/,
+    /examRouter\.post\('\/:id\/reckoning\/finalize'/,
+  ]) {
+    assert.match(source, route);
+  }
 
   const triggerStart = source.indexOf('async function triggerReckoning');
   const triggerEnd = source.indexOf('async function deferReckoning', triggerStart);
   assert.ok(triggerStart >= 0 && triggerEnd > triggerStart);
   const trigger = source.slice(triggerStart, triggerEnd);
 
-  assert.match(trigger, /question_count:\s*questionCount/);
-  assert.match(trigger, /reckoningShadow\.analyzeSafely/);
-  assert.doesNotMatch(trigger, /engine_version\s*:/);
-  assert.doesNotMatch(trigger, /engine_mode\s*:\s*['"](?:PILOT|LIVE)['"]/);
-  assert.doesNotMatch(trigger, /adaptiveReckoningEngine/);
+  assert.match(trigger, /engine_version:\s*2/);
+  assert.match(trigger, /engine_mode:\s*['"]LIVE['"]/);
+  assert.match(trigger, /engine_phase:\s*['"]PREPARING['"]/);
+  assert.match(trigger, /generation_status:\s*['"]not_started['"]/);
+  assert.doesNotMatch(trigger, /adaptiveReckoningEngine\.start/);
+  assert.doesNotMatch(trigger, /reckoningShadow\.analyzeSafely/);
+  assert.doesNotMatch(trigger, /status:\s*['"]in_progress['"]/);
+});
+
+test('legacy Reckoning rows retain an explicit resume path', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'index.js'),
+    'utf8'
+  );
+  const marker = "brainRouter.post('/reckoning/start'";
+  const start = source.indexOf(marker);
+  const end = source.indexOf('async function submitReckoningHandler', start);
+  assert.ok(start >= 0 && end > start);
+  const route = source.slice(start, end);
+
+  assert.match(route, /Number\(active\.engine_version \|\| 1\) !== 2/);
+  assert.match(route, /RECKONING_LEGACY_RESUME/);
+  assert.match(route, /reckoning_v2_start/);
+  assert.match(route, /adaptiveReckoningEngine\.start/);
 });

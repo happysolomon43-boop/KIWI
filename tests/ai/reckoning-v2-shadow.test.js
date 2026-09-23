@@ -111,24 +111,17 @@ test('shadow runner persists evidence and marks SHADOW without changing engine_v
   assert.ok(evidenceWrites.some((call) => call.values.includes('card-1')));
 });
 
-test('production trigger runs shadow only after legacy question count and session creation are fixed', () => {
+test('Delivery E production trigger no longer uses shadow authority', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'index.js'), 'utf8');
   const start = source.indexOf('async function triggerReckoning');
   const end = source.indexOf('async function deferReckoning', start);
   assert.ok(start >= 0 && end > start);
   const block = source.slice(start, end);
 
-  const questionCount = block.indexOf('const questionCount = Math.min(25, Math.max(5, flaggedCards.length))');
-  const create = block.indexOf('reckoning = await db.reckoningSessions.create');
-  const shadow = block.indexOf('reckoningShadow.analyzeSafely');
-  const scheduled = block.indexOf('setImmediate(async () =>');
-
-  assert.ok(questionCount >= 0);
-  assert.ok(create > questionCount);
-  assert.ok(scheduled > create);
-  assert.ok(shadow > scheduled);
-  assert.match(block, /question_count:\s*questionCount/);
-  assert.doesNotMatch(block, /questionCount\s*=\s*.*shadow/i);
+  assert.match(block, /engine_version:\s*2/);
+  assert.match(block, /engine_mode:\s*['"]LIVE['"]/);
+  assert.doesNotMatch(block, /reckoningShadow\.analyzeSafely/);
+  assert.doesNotMatch(block, /engine_mode:\s*['"]SHADOW['"]/);
 });
 
 test('shadow failures are explicitly non-fatal', async () => {
