@@ -9220,19 +9220,19 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
           try {
             const channel = await _getKiwiTreeStateChannel();
-            const event = channel.publishTreeState(options.state, {
+            channel.publishTreeState(options.state, {
               source: options.source || 'local-tree-mount',
               silent: !channel.getCurrentTreeState(),
             });
-
-            if (event?.reactions?.length) {
-              handle.playReactions?.(event.reactions);
-            }
 
             const unsubscribe = channel.subscribeTreeState((treeEvent) => {
               if (!treeEvent?.state || !container.isConnected) return;
               handle.updateState?.(treeEvent.state, true);
               handle.playReactions?.(treeEvent.reactions || []);
+            }, {
+              emitCurrent: true,
+              emitRecentReactions: true,
+              reactionTtlMs: 60000,
             });
 
             const originalDestroy = handle.destroy?.bind(handle);
