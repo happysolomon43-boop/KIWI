@@ -126,8 +126,10 @@ function createShadowIntelligence({
       now: new Date(nowMs),
     });
 
+    const persistentEvidence = [...plan.evidence, ...plan.controls];
+
     await Promise.all(
-      plan.evidence.map((evidence) => store.upsertEvidence({
+      persistentEvidence.map((evidence) => store.upsertEvidence({
         reckoningId: reckoning.id,
         userId,
         subjectId,
