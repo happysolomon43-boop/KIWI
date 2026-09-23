@@ -1,6 +1,6 @@
 'use strict';
 
-const { createReckoningEngine, adaptiveSessionAllowed } = require('./engine');
+const { createReckoningEngine, adaptiveSessionAllowed, isAdaptiveReckoningQuestion } = require('./engine');
 const { createStateMachine } = require('./state-machine');
 const { createRiskEngine } = require('./risk-engine');
 const { createPlanner } = require('./planner');
@@ -21,6 +21,7 @@ const contracts = require('./contracts');
 module.exports = {
   createReckoningEngine,
   adaptiveSessionAllowed,
+  isAdaptiveReckoningQuestion,
   createStateMachine,
   createRiskEngine,
   createPlanner,
