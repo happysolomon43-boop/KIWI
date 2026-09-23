@@ -12908,19 +12908,21 @@ return false;
 }
 }
 
-async function purchaseItem(userId, itemCode, subjectId = null) {
+async function purchaseItem(userId, itemCode, subjectId = null, options = {}) {
 const item = await db.marketplaceItems.findByCode(itemCode);
 if (!item) return { error: 'Item not found' };
 if (['rare_flora', 'deep_audit', 'archive_expansion'].includes(itemCode) && !subjectId) {
 return { error: 'subject_id is required for this item' };
 }
 
-// P8.8: Block reckoning_buffer purchase during an active Reckoning (spec P8.8)
-if (itemCode === 'reckoning_buffer') {
+// General Marketplace purchases remain blocked during an active Reckoning. The
+// Brain has one deliberately scoped exception for the 24-hour Buffer product so
+// the recovery surface can offer the deferral without reopening Marketplace.
+if (itemCode === 'reckoning_buffer' && options.allowDuringReckoning !== true) {
 const activeReckoning = await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
 if (activeReckoning) {
 return {
-error: 'Cannot purchase Reckoning Buffer during an active Reckoning',
+error: 'Cannot purchase Reckoning Buffer from Marketplace during an active Reckoning',
 code: 'RECKONING_ACTIVE',
 };
 }
@@ -13061,6 +13063,41 @@ quantity: newQty,
 balance: spendResult.new_balance,
 };
 }
+async function getReckoningBufferState(userId) {
+await db.marketplaceItems.seed();
+const item = await db.marketplaceItems.findByCode('reckoning_buffer');
+if (!item) return null;
+const [owned, stats, gate] = await Promise.all([
+  db.userInventory.getItem(userId, 'reckoning_buffer').catch(() => null),
+  db.userStats.get(userId).catch(() => null),
+  checkGate1Progress(userId, item.gate1_condition).catch(() => ({
+    met: false,
+    current: 0,
+    target: item.gate1_condition?.count || 1,
+  })),
+]);
+const ownedQuantity = Math.max(0, Number(owned?.quantity) || 0);
+const seedlingCost = Math.max(0, Number(item.gate2_seedling_cost) || 0);
+const seedlingsBalance = Math.max(0, Number(stats?.seedlings_balance) || 0);
+const purchaseLimit = Number(item.purchase_limit) > 0 ? Number(item.purchase_limit) : null;
+const limitReached = purchaseLimit !== null && ownedQuantity >= purchaseLimit;
+return {
+  item_code: item.item_code,
+  name: item.name || 'Reckoning Buffer',
+  description: item.description || 'Defers an active Reckoning for 24 hours.',
+  defer_hours: 24,
+  owned_quantity: ownedQuantity,
+  seedling_cost: seedlingCost,
+  seedlings_balance: seedlingsBalance,
+  purchase_limit: purchaseLimit,
+  gate1_met: gate?.met === true,
+  gate1_current: Number(gate?.current) || 0,
+  gate1_target: Number(gate?.target) || Number(item.gate1_condition?.count) || 1,
+  limit_reached: limitReached,
+  purchasable: gate?.met === true && seedlingsBalance >= seedlingCost && !limitReached,
+};
+}
+
 // ── Deep Audit AI (E4) ───────────────────────────────────────────────────────
 
 async function generateDeepAudit(userId, subjectId) {
@@ -13180,6 +13217,12 @@ return { error: 'No active reckoning to buffer' };
 // could extend User B's Reckoning at User A's inventory cost.
 if (reckoning.user_id !== userId) {
 return { error: 'Not your reckoning' };
+}
+if (reckoning.generation_status === 'pending') {
+return {
+error: 'Reckoning preparation is already running. Wait for it to finish before deferring.',
+code: 'RECKONING_PREPARING',
+};
 }
 const newQty = buffer.quantity - 1;
 await db.userInventory.setItem(userId, 'reckoning_buffer', {
@@ -19539,7 +19582,8 @@ brainRouter.post('/reckoning/start', async (req, res) => {
       job_id: jobId,
       status: 'preparing',
       reckoning_id: reckoningId,
-      generation_status: active.generation_status || 'not_started',
+      generation_status: 'pending',
+      generation_error: null,
     });
 
     setImmediate(async () => {
@@ -19784,12 +19828,37 @@ if (!active) {
 return res.status(404).json({ error: 'No active reckoning to buffer' });
 }
 const result = await consumeReckoningBuffer(req.user.id, active.id);
-if (result?.error) return res.status(400).json(result);
+if (result?.error) return res.status(result.code === 'RECKONING_PREPARING' ? 409 : 400).json(result);
 res.json(result);
 } catch (e) {
 res.status(500).json({ error: 'Failed to use buffer', details: e.message });
 }
 });
+
+// Brain-scoped purchase exception for the 24-hour Reckoning Buffer. This does
+// not unlock Marketplace; it exposes only this one recovery product while the
+// Reckoning is still in a deferrable state.
+brainRouter.post('/reckoning/buffer/purchase', async (req, res) => {
+try {
+const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (!active) return res.status(404).json({ error: 'No active Reckoning.' });
+if (active.status === 'in_progress' || active.generation_status === 'pending') {
+return res.status(409).json({
+error: 'The Reckoning has already begun preparing or is in progress. The 24-hour Buffer can no longer be purchased for this attempt.',
+code: 'RECKONING_ALREADY_STARTED',
+});
+}
+const result = await purchaseItem(req.user.id, 'reckoning_buffer', null, {
+allowDuringReckoning: true,
+});
+if (result?.error) return res.status(400).json(result);
+const buffer = await getReckoningBufferState(req.user.id).catch(() => null);
+res.json({ ...result, buffer });
+} catch (e) {
+res.status(500).json({ error: 'Failed to purchase Reckoning Buffer', details: e.message });
+}
+});
+
 
 // GET /api/brain/reckoning/active — P9.7-03 FIX-WIRE:
 // Frontend renderBrain() has a proactive fallback that calls this endpoint when
@@ -19805,6 +19874,7 @@ const shouldAnnounce = await db.reckoningSessions
   .claimActivationAnnouncement(req.user.id, active.id)
   .catch(() => active.activation_announced_at == null);
 const userStats = await db.userStats.get(req.user.id).catch(() => null);
+const reckoningBuffer = await getReckoningBufferState(req.user.id).catch(() => null);
 res.json({
   ...active,
   subjectId: active.subject_id,
@@ -19825,6 +19895,7 @@ res.json({
   deferPenalty: 5,
   deferral_expires_at: active.deferred_until || null,
   should_announce: shouldAnnounce,
+  reckoningBuffer,
 });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch active reckoning', details: e.message });
@@ -19891,6 +19962,9 @@ activeReckoning = await db.reckoningSessions.findById(triggered.reckoning_id).ca
 const userStatsForBrain = activeReckoning
 ? await db.userStats.get(req.user.id).catch(() => null)
 : null;
+const reckoningBufferForBrain = activeReckoning
+? await getReckoningBufferState(req.user.id).catch(() => null)
+: null;
 const shouldAnnounceReckoning = activeReckoning
 ? await db.reckoningSessions.claimActivationAnnouncement(req.user.id, activeReckoning.id)
     .catch(() => activeReckoning.activation_announced_at == null)
@@ -19916,6 +19990,16 @@ status: activeReckoning.status,
 flagged_card_count: activeReckoning.flagged_card_count,
 question_count: activeReckoning.question_count,
 exam_session_id: activeReckoning.exam_session_id || null,
+generation_status: activeReckoning.generation_status || null,
+generationStatus: activeReckoning.generation_status || null,
+generation_error: activeReckoning.generation_error || null,
+generationError: activeReckoning.generation_error || null,
+engine_version: Number(activeReckoning.engine_version || 1),
+engineVersion: Number(activeReckoning.engine_version || 1),
+engine_mode: activeReckoning.engine_mode || 'LEGACY',
+engineMode: activeReckoning.engine_mode || 'LEGACY',
+engine_phase: activeReckoning.engine_phase || null,
+enginePhase: activeReckoning.engine_phase || null,
 // Both field names needed: overlay reads deferral_expires_at; legacy reads deferred_until
 deferred_until: activeReckoning.deferred_until || null,
 deferral_expires_at: activeReckoning.deferred_until || null,
@@ -19928,8 +20012,10 @@ can_defer: !activeReckoning.deferral_used,
 deferHours: 4,
 deferPenalty: 5,
 should_announce: shouldAnnounceReckoning,
+reckoningBuffer: reckoningBufferForBrain,
 }
 : null,
+reckoningBuffer: reckoningBufferForBrain,
 });
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch pressures', details: e.message });
