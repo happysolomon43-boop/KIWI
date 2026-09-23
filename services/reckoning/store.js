@@ -432,6 +432,7 @@ function createReckoningStore({
            recovery_score = NULL,
            unresolved_critical_count = 0,
            debrief_text = NULL,
+           final_report = NULL,
            completed_at = NULL,
            updated_at = now()
        WHERE id = $1
