@@ -155,27 +155,15 @@ function createLearningEffectsEngine({
   config = createReckoningConfig(),
   clock = () => new Date(),
 } = {}) {
-  function buildEffects({ evidence = [], cardsById = new Map(), statesByCardId = new Map() } = {}) {
+  function buildEffects({
+    evidence = [],
+    cardsById = new Map(),
+    statesByCardId = new Map(),
+  } = {}) {
     const now = clock();
     return Object.freeze(
       evidence.map((row) => {
-        const status = String(
-        field(row, 'evidenceStatus', 'evidence_status', EVIDENCE_STATUSES.UNTESTED)
-      );
-      if (![
-        EVIDENCE_STATUSES.RECOVERED,
-        EVIDENCE_STATUSES.UNRESOLVED,
-        EVIDENCE_STATUSES.INVALIDATED,
-      ].includes(status)) {
-        skipped.push(Object.freeze({
-          evidenceId: row.id,
-          sourceCardId: field(row, 'sourceCardId', 'source_card_id'),
-          reason: 'NON_TERMINAL_EVIDENCE',
-        }));
-        continue;
-      }
-
-      const cardId = field(row, 'sourceCardId', 'source_card_id');
+        const cardId = field(row, 'sourceCardId', 'source_card_id');
         return buildEffect(
           row,
           cardId ? cardsById.get(String(cardId)) || null : null,
@@ -208,6 +196,22 @@ function createLearningEffectsEngine({
           evidenceId: row.id,
           sourceCardId: field(row, 'sourceCardId', 'source_card_id'),
           reason: 'ALREADY_APPLIED',
+        }));
+        continue;
+      }
+
+      const status = String(
+        field(row, 'evidenceStatus', 'evidence_status', EVIDENCE_STATUSES.UNTESTED)
+      );
+      if (![
+        EVIDENCE_STATUSES.RECOVERED,
+        EVIDENCE_STATUSES.UNRESOLVED,
+        EVIDENCE_STATUSES.INVALIDATED,
+      ].includes(status)) {
+        skipped.push(Object.freeze({
+          evidenceId: row.id,
+          sourceCardId: field(row, 'sourceCardId', 'source_card_id'),
+          reason: 'NON_TERMINAL_EVIDENCE',
         }));
         continue;
       }
