@@ -42,6 +42,7 @@ function createProviderHealth({
         lastHttpStatus: null,
         lastFailureAt: null,
         lastSuccessAt: null,
+        updatedAt: 0,
       };
       models.set(modelId, state);
     }
@@ -63,6 +64,7 @@ function createProviderHealth({
       state.state = CIRCUIT_STATES.HALF_OPEN;
       state.openUntil = 0;
       state.halfOpenProbeInFlight = false;
+      state.updatedAt = Math.max(state.updatedAt || 0, now);
     }
 
     return state;
@@ -151,6 +153,7 @@ function createProviderHealth({
     state.lastErrorCode = error?.code || null;
     state.lastHttpStatus = error?.status ?? null;
     state.lastFailureAt = new Date(now);
+    state.updatedAt = now;
   }
 
   function recordFailure(modelId, slotId, error, {
@@ -198,6 +201,7 @@ function createProviderHealth({
     state.lastErrorCode = null;
     state.lastHttpStatus = 200;
     state.lastSuccessAt = new Date(now);
+    state.updatedAt = now;
     return snapshot(modelId);
   }
 
@@ -214,6 +218,7 @@ function createProviderHealth({
         lastHttpStatus: state.lastHttpStatus,
         lastFailureAt: state.lastFailureAt,
         lastSuccessAt: state.lastSuccessAt,
+        updatedAt: state.updatedAt ? new Date(state.updatedAt) : null,
       });
     }
 
@@ -241,13 +246,29 @@ function createProviderHealth({
 
   async function persist(modelId) {
     if (!store?.upsertProviderModelHealth || !modelId) return null;
-    return store.upsertProviderModelHealth(persistenceRecord(modelId));
+    const row = await store.upsertProviderModelHealth(persistenceRecord(modelId));
+    const persistedAt = Date.parse(row?.updated_at || '');
+    if (Number.isFinite(persistedAt)) {
+      const state = ensure(modelId);
+      state.updatedAt = Math.max(state.updatedAt || 0, persistedAt);
+    }
+    return row;
   }
 
-  function hydrateRow(row) {
+  function hydrateRow(row, { force = false } = {}) {
     if (!row?.model_id) return false;
 
     const state = ensure(row.model_id);
+    const rowUpdatedAt = Date.parse(row.updated_at || '');
+    if (
+      !force &&
+      Number.isFinite(rowUpdatedAt) &&
+      state.updatedAt &&
+      rowUpdatedAt <= state.updatedAt
+    ) {
+      return false;
+    }
+
     state.state = Object.values(CIRCUIT_STATES).includes(row.state)
       ? row.state
       : CIRCUIT_STATES.CLOSED;
@@ -275,12 +296,28 @@ function createProviderHealth({
     state.lastSuccessAt = row.last_success_at
       ? new Date(row.last_success_at)
       : null;
+    state.updatedAt = Number.isFinite(rowUpdatedAt)
+      ? rowUpdatedAt
+      : Math.max(
+          state.lastFailureAt?.getTime?.() || 0,
+          state.lastSuccessAt?.getTime?.() || 0
+        );
 
     refresh(state);
     return true;
   }
 
   async function hydrate() {
+    if (!store?.loadProviderModelHealth) return 0;
+    const rows = await store.loadProviderModelHealth();
+    let count = 0;
+    for (const row of rows || []) {
+      if (hydrateRow(row, { force: true })) count += 1;
+    }
+    return count;
+  }
+
+  async function refreshFromStore() {
     if (!store?.loadProviderModelHealth) return 0;
     const rows = await store.loadProviderModelHealth();
     let count = 0;
@@ -300,6 +337,7 @@ function createProviderHealth({
     persistenceRecord,
     persist,
     hydrate,
+    refreshFromStore,
   });
 }
 
