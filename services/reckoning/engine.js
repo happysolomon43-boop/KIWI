@@ -213,227 +213,17 @@ function createReckoningEngine(options = {}) {
   const scoring = options.scoringEngine || createScoringEngine({ config });
   const learningEffects =
     options.learningEffectsEngine || createLearningEffectsEngine({ config });
-  const preparation =
-    options.preparationService || createPreparationService({ config });
   const stateMachine = options.stateMachine || createStateMachine();
   const outcomeHandler = options.outcomeHandler || null;
   const preparationInputProvider = options.preparationInputProvider || null;
   const preparationService =
     options.preparationService ||
-    (options.questionBank
-      ? createPreparationService({
-          config,
-          questionBank: options.questionBank,
-          randomUUID: options.randomUUID,
-        })
-      : null);
-  const clock = options.clock || (() => new Date());
-
-  async function prepare(input = {}) {
-    return preparation.prepare({
-      cards: input.cards || [],
-      states: input.states || [],
-      bubbleCardIds: input.bubbleCardIds || [],
-      metricsByCardId: input.metricsByCardId || {},
-      context: input.context || {},
-      now: input.now || clock(),
-      generationGroupId: input.generationGroupId || null,
+    createPreparationService({
+      config,
+      questionBank: options.questionBank,
+      randomUUID: options.randomUUID,
     });
-  }
-
-  async function start({
-    reckoningId,
-    userId,
-    cards = [],
-    states = [],
-    bubbleCardIds = [],
-    metricsByCardId = {},
-    context = {},
-    deckIds = [],
-  } = {}) {
-    if (!reckoningId || !userId) {
-      throw new ReckoningContractError('start requires reckoningId and userId.');
-    }
-
-    const existing = requireAdaptiveSession(
-      await store.getSession(reckoningId, userId)
-    );
-    if (existing.status === 'in_progress' && existing.exam_session_id) {
-      return getState({
-        examSessionId: existing.exam_session_id,
-        userId,
-      });
-    }
-    if (existing.status === 'completed' || existing.status === 'failsafe_released') {
-      const error = new ReckoningContractError('This Reckoning is already resolved.');
-      error.status = 409;
-      throw error;
-    }
-
-    const deferredUntil = existing.deferred_until
-      ? new Date(existing.deferred_until).getTime()
-      : 0;
-    if (deferredUntil > Date.now()) {
-      const error = new ReckoningContractError(
-        'This Reckoning is still deferred. Wait for the cooldown to end.'
-      );
-      error.code = 'RECKONING_DEFERRED';
-      error.status = 409;
-      error.deferredUntil = existing.deferred_until;
-      throw error;
-    }
-
-    const claimed = await store.claimPreparation(
-      reckoningId,
-      userId,
-      config.preparation.claimStaleMinutes
-    );
-    if (!claimed) {
-      const fresh = requireAdaptiveSession(
-        await store.getSession(reckoningId, userId)
-      );
-      if (fresh.status === 'in_progress' && fresh.exam_session_id) {
-        return getState({ examSessionId: fresh.exam_session_id, userId });
-      }
-      const error = new ReckoningContractError(
-        fresh.generation_status === 'pending'
-          ? 'Reckoning preparation is already in progress.'
-          : 'Reckoning could not claim preparation state.'
-      );
-      error.code = fresh.generation_status === 'pending'
-        ? 'RECKONING_PREPARATION_IN_PROGRESS'
-        : 'RECKONING_PREPARATION_UNAVAILABLE';
-      error.status = fresh.generation_status === 'pending' ? 202 : 409;
-      throw error;
-    }
-
-    let prepared;
-    try {
-      prepared = await prepare({
-        cards,
-        states,
-        bubbleCardIds,
-        metricsByCardId,
-        context,
-        generationGroupId: `reckoning:${reckoningId}`,
-      });
-
-      return await store.withTransaction(async (txStore) => {
-        const locked = requireAdaptiveSession(
-          await txStore.getSession(reckoningId, userId, { forUpdate: true })
-        );
-        if (locked.status === 'in_progress' && locked.exam_session_id) {
-          return buildState(txStore, {
-            examSessionId: locked.exam_session_id,
-            userId,
-            session: locked,
-          });
-        }
-        if (
-          locked.generation_status !== 'pending' ||
-          locked.exam_session_id ||
-          !['triggered','deferred'].includes(locked.status)
-        ) {
-          throw new ReckoningContractError(
-            'Reckoning preparation state changed before activation.'
-          );
-        }
-
-        await txStore.clearPreparationEvidence(reckoningId, userId);
-
-        for (const evidence of prepared.plan.evidence) {
-          await txStore.createEvidence({
-            id: evidence.id,
-            reckoningId,
-            userId,
-            subjectId: context.subjectId || locked.subject_id || null,
-            sourceCardId: evidence.sourceCardId,
-            conceptKey: evidence.conceptKey,
-            sourceSnapshot: evidence.sourceSnapshot,
-            sourceHash: evidence.sourceHash,
-            originalCardState: evidence.originalCardState,
-            riskScore: evidence.riskScore,
-            riskLevel: evidence.riskLevel,
-            riskReasons: evidence.riskReasons,
-            isBubbleCritical: evidence.isBubbleCritical,
-            hasLearningDebt: evidence.hasLearningDebt,
-            discoveredByControl: false,
-            evidenceStatus: 'UNTESTED',
-            requiredConfirmations: evidence.requiredConfirmations,
-          });
-        }
-
-        const exam = await txStore.createExecutionExam(userId, {
-          subjectId: context.subjectId || locked.subject_id || null,
-          deckIds,
-          questionCount: prepared.questions.length,
-          safetyWindowSeconds: config.execution.safetyWindowMinutes * 60,
-        });
-        if (!exam) {
-          throw new ReckoningContractError(
-            'Reckoning V2 could not create its linked exam session.'
-          );
-        }
-
-        let firstQuestionId = null;
-        for (const question of prepared.questions) {
-          const created = await txStore.createPreparedQuestion(
-            userId,
-            exam.id,
-            {
-              ...question,
-              isUnlocked: question.id === prepared.firstQuestionId,
-              unlockedAt:
-                question.id === prepared.firstQuestionId ? clock() : null,
-            }
-          );
-          if (!created) {
-            throw new ReckoningContractError(
-              'Reckoning V2 could not persist its complete hidden question bank.'
-            );
-          }
-          if (question.id === prepared.firstQuestionId) {
-            firstQuestionId = created.id;
-          }
-        }
-        if (!firstQuestionId) {
-          throw new ReckoningContractError(
-            'Reckoning V2 did not persist an unlockable first question.'
-          );
-        }
-
-        const activated = await txStore.activatePreparedSession(
-          reckoningId,
-          userId,
-          {
-            examSessionId: exam.id,
-            currentQuestionId: firstQuestionId,
-            questionCount: prepared.questions.length,
-            softQuestionBudget: prepared.plan.softQuestionBudget,
-            hardQuestionCap: prepared.plan.hardQuestionCap,
-            plannerVersion: prepared.plan.plannerVersion,
-            configVersion: config.configVersion,
-            safetyWindowMinutes: config.execution.safetyWindowMinutes,
-          }
-        );
-        if (!activated) {
-          throw new ReckoningContractError(
-            'Reckoning V2 activation failed after bank preparation.'
-          );
-        }
-
-        return buildState(txStore, {
-          examSessionId: exam.id,
-          userId,
-          session: activated,
-        });
-      });
-    } catch (error) {
-      await store.releasePreparationFailure(reckoningId, userId, error)
-        .catch(() => null);
-      throw error;
-    }
-  }
+  const clock = options.clock || (() => new Date());
 
   async function buildState(activeStore, {
     examSessionId,
@@ -478,9 +268,7 @@ function createReckoningEngine(options = {}) {
       : 0;
     const checkpoint = checkpointPending
       ? Object.freeze({
-          recovered: evidenceState.recovered,
-          unresolved: evidenceState.unresolved,
-          provisional: evidenceState.provisional,
+          ...buildCheckpoint(evidence, questions, config.execution.blockSize),
           criticalUnresolved: evidenceState.criticalUnresolved,
           message:
             evidenceState.criticalUnresolved > 0
@@ -502,6 +290,7 @@ function createReckoningEngine(options = {}) {
       currentBlock: Number(session.current_block) || 0,
       stateVersion: Number(session.state_version) || 0,
       safetyExpiresAt: session.safety_expires_at || null,
+      safetyExpired: isSafetyExpired(session),
       elapsedSeconds,
       checkpointPending,
       checkpoint,
@@ -631,11 +420,11 @@ function createReckoningEngine(options = {}) {
             question
           ));
         }
-        const firstPreparedNumber = Number(
-          String(prepared.firstPreparedQuestionId || '').split(':')[1]
-        );
         const firstQuestion =
-          inserted.find((row) => Number(row.question_number) === firstPreparedNumber) ||
+          inserted.find((row) => String(row.id) === String(prepared.firstQuestionId)) ||
+          inserted.find(
+            (row) => Number(row.question_number) === Number(prepared.firstQuestionNumber)
+          ) ||
           inserted[0];
         if (!firstQuestion) {
           throw new ReckoningContractError('Adaptive Reckoning bank has no initial question.');
@@ -845,6 +634,8 @@ function createReckoningEngine(options = {}) {
           ...baseSessionPatch,
           enginePhase: SESSION_PHASES.FINALIZING,
           currentQuestionId: null,
+          checkpointPending: false,
+          checkpointNextQuestionId: null,
           currentBlock: Math.ceil(answeredOrdinal / config.execution.blockSize),
         });
       } else {
@@ -910,9 +701,7 @@ function createReckoningEngine(options = {}) {
           evidenceId: evidence.id,
           role: question.reckoning_role,
           selectedOption: selected,
-          isCorrect,
-          correctAnswer: isCorrect ? null : question.correct_answer,
-          explanation: isCorrect ? '' : (question.explanation || ''),
+          recorded: true,
         }),
       });
     });
