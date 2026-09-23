@@ -51,7 +51,7 @@ The build:
 5. verifies the local Pixi browser module exists,
 6. writes `kiwi-build.json` containing the pinned Pixi version.
 
-Vercel now builds `package.json` with `@vercel/static-build` and serves `dist/`.
+Vercel now uses the modern `buildCommand` / `outputDirectory` configuration: it runs `npm run build:web` and serves `dist/`.
 
 Filesystem assets take precedence over the SPA fallback to `index.html`.
 
