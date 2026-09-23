@@ -35,6 +35,7 @@ export class KiwiPixiRuntime {
     this._visibilityHandler = null;
     this._motionQuery = null;
     this._motionHandler = null;
+    this._disconnectObserver = null;
   }
 
   async init() {
@@ -173,6 +174,21 @@ export class KiwiPixiRuntime {
       this._intersectionObserver.observe(this.container);
     }
 
+    if (typeof MutationObserver === 'function' && document.body) {
+      this._disconnectObserver = new MutationObserver(() => {
+        if (this.destroyed || this.container?.isConnected) return;
+        queueMicrotask(() => {
+          if (!this.destroyed && !this.container?.isConnected) {
+            this.destroy().catch(() => {});
+          }
+        });
+      });
+      this._disconnectObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+    }
+
     if (typeof window.matchMedia === 'function') {
       this._motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
       this._motionHandler = (event) => {
@@ -231,6 +247,11 @@ export class KiwiPixiRuntime {
 
     this._motionQuery = null;
     this._motionHandler = null;
+
+    if (this._disconnectObserver) {
+      this._disconnectObserver.disconnect();
+      this._disconnectObserver = null;
+    }
 
     if (this.app) {
       try {
