@@ -8,6 +8,7 @@
     options: null,
     selected: null,
     submitting: false,
+    flagging: false,
   };
 
   function esc(value) {
@@ -121,6 +122,7 @@
     runtime.state = state;
     runtime.selected = null;
     runtime.submitting = false;
+    runtime.flagging = false;
     runtime.questionShownAt = Date.now();
 
     var container = host();
@@ -154,7 +156,11 @@
         esc(question.stem) +
       '</div>' +
       '<div style="display:flex;flex-direction:column;gap:10px;">' + options + '</div>' +
-      '<div style="margin-top:18px;display:flex;justify-content:flex-end;">' +
+      '<div id="reckoningV2AuditNotice" style="margin-top:14px;font-size:12px;line-height:1.5;color:var(--text-3,#839289);"></div>' +
+      '<div style="margin-top:18px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">' +
+        '<button type="button" id="reckoningV2Flag" class="btn btn-secondary">' +
+          'Review question integrity' +
+        '</button>' +
         '<button type="button" id="reckoningV2Submit" class="btn btn-primary" disabled>' +
           'Submit answer' +
         '</button>' +
@@ -187,11 +193,58 @@
 
     var submit = document.getElementById('reckoningV2Submit');
     if (submit) submit.addEventListener('click', submitCurrentAnswer);
+    var flag = document.getElementById('reckoningV2Flag');
+    if (flag) flag.addEventListener('click', flagCurrentQuestion);
     beginElapsedTimer();
   }
 
+  async function flagCurrentQuestion() {
+    if (runtime.flagging || runtime.submitting || !runtime.state) return;
+    var question = runtime.state.currentQuestion;
+    if (!question || !runtime.options.api || typeof runtime.options.api.flag !== 'function') return;
+
+    runtime.flagging = true;
+    var flag = document.getElementById('reckoningV2Flag');
+    var submit = document.getElementById('reckoningV2Submit');
+    var notice = document.getElementById('reckoningV2AuditNotice');
+    if (flag) {
+      flag.disabled = true;
+      flag.textContent = 'Reviewing integrity…';
+    }
+    if (submit) submit.disabled = true;
+
+    try {
+      var result = await runtime.options.api.flag(
+        runtime.state.examSessionId,
+        question.questionNumber
+      );
+      if (notice) {
+        notice.style.color = result && result.bonus_awarded
+          ? 'var(--gold,#d4a017)'
+          : 'var(--text-3,#839289)';
+        notice.textContent = result && result.bonus_awarded
+          ? 'KIWI found an integrity issue. This item will not count against your evidence, while your raw answer is still preserved.'
+          : 'KIWI reviewed the item and found no integrity issue.';
+      }
+      if (flag) {
+        flag.textContent = 'Integrity reviewed';
+        flag.disabled = true;
+      }
+      runtime.flagging = false;
+      if (submit) submit.disabled = !runtime.selected;
+    } catch (error) {
+      runtime.flagging = false;
+      if (flag) {
+        flag.disabled = false;
+        flag.textContent = 'Retry integrity review';
+      }
+      if (submit) submit.disabled = !runtime.selected;
+      notify(error && error.message ? error.message : 'Question review could not complete yet.', 'error');
+    }
+  }
+
   async function submitCurrentAnswer() {
-    if (runtime.submitting || !runtime.selected || !runtime.state) return;
+    if (runtime.submitting || runtime.flagging || !runtime.selected || !runtime.state) return;
     var question = runtime.state.currentQuestion;
     if (!question) return;
     runtime.submitting = true;
