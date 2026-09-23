@@ -6,6 +6,9 @@ const RISK_MODEL_VERSION = 1;
 const PLANNER_VERSION = 1;
 const BLUEPRINT_VERSION = 1;
 const VALIDATOR_VERSION = 1;
+const EVIDENCE_MODEL_VERSION = 1;
+const SCHEDULER_VERSION = 1;
+const SCORING_VERSION = 1;
 
 const RISK_BASE_BY_STATE = Object.freeze({
   DANGEROUS: 85,
@@ -38,7 +41,7 @@ const RISK_MODIFIERS = Object.freeze({
   recentAgainHardCap: 8,
 });
 
-const DELIVERY_B_RECKONING_CONFIG = Object.freeze({
+const DELIVERY_C_RECKONING_CONFIG = Object.freeze({
   engineVersion: RECKONING_ENGINE.ENGINE_VERSION,
   architectureVersion: RECKONING_ENGINE.ARCHITECTURE_VERSION,
   enabled: false,
@@ -47,7 +50,10 @@ const DELIVERY_B_RECKONING_CONFIG = Object.freeze({
   plannerVersion: PLANNER_VERSION,
   blueprintVersion: BLUEPRINT_VERSION,
   validatorVersion: VALIDATOR_VERSION,
-  configVersion: 1,
+  evidenceModelVersion: EVIDENCE_MODEL_VERSION,
+  schedulerVersion: SCHEDULER_VERSION,
+  scoringVersion: SCORING_VERSION,
+  configVersion: 2,
   risk: Object.freeze({
     baseByState: RISK_BASE_BY_STATE,
     modifiers: RISK_MODIFIERS,
@@ -64,6 +70,20 @@ const DELIVERY_B_RECKONING_CONFIG = Object.freeze({
     softQuestionCap: 24,
     hardQuestionCap: 30,
   }),
+  execution: Object.freeze({
+    blockSize: 5,
+    unrelatedSpacingQuestions: 2,
+    safetyWindowMinutes: 45,
+    controlCadence: 5,
+  }),
+  scoring: Object.freeze({
+    recoveryThreshold: 75,
+    rawAccuracyThreshold: 65,
+    minEvidenceUnits: 5,
+    recoveredCleanValue: 1.0,
+    recoveredRemediatedValue: 0.8,
+    provisionalValue: 0.5,
+  }),
   validation: Object.freeze({
     maxStemSimilarity: 0.82,
     minStemLength: 12,
@@ -78,33 +98,42 @@ const DELIVERY_B_RECKONING_CONFIG = Object.freeze({
   }),
 });
 
-const PHASE1_RECKONING_CONFIG = DELIVERY_B_RECKONING_CONFIG;
+const DELIVERY_B_RECKONING_CONFIG = DELIVERY_C_RECKONING_CONFIG;
+const PHASE1_RECKONING_CONFIG = DELIVERY_C_RECKONING_CONFIG;
 
 function createReckoningConfig(overrides = {}) {
   return Object.freeze({
-    ...DELIVERY_B_RECKONING_CONFIG,
+    ...DELIVERY_C_RECKONING_CONFIG,
     ...overrides,
     risk: Object.freeze({
-      ...DELIVERY_B_RECKONING_CONFIG.risk,
+      ...DELIVERY_C_RECKONING_CONFIG.risk,
       ...(overrides.risk || {}),
       baseByState: Object.freeze({
-        ...DELIVERY_B_RECKONING_CONFIG.risk.baseByState,
+        ...DELIVERY_C_RECKONING_CONFIG.risk.baseByState,
         ...(overrides.risk?.baseByState || {}),
       }),
       modifiers: Object.freeze({
-        ...DELIVERY_B_RECKONING_CONFIG.risk.modifiers,
+        ...DELIVERY_C_RECKONING_CONFIG.risk.modifiers,
         ...(overrides.risk?.modifiers || {}),
       }),
     }),
     planner: Object.freeze({
-      ...DELIVERY_B_RECKONING_CONFIG.planner,
+      ...DELIVERY_C_RECKONING_CONFIG.planner,
       ...(overrides.planner || {}),
     }),
+    execution: Object.freeze({
+      ...DELIVERY_C_RECKONING_CONFIG.execution,
+      ...(overrides.execution || {}),
+    }),
+    scoring: Object.freeze({
+      ...DELIVERY_C_RECKONING_CONFIG.scoring,
+      ...(overrides.scoring || {}),
+    }),
     validation: Object.freeze({
-      ...DELIVERY_B_RECKONING_CONFIG.validation,
+      ...DELIVERY_C_RECKONING_CONFIG.validation,
       ...(overrides.validation || {}),
     }),
-    // Delivery B is shadow-only. It cannot become assessment authority.
+    // Delivery C builds the execution core but does not activate it for legacy users.
     enabled: false,
     behaviorAuthority: 'legacy',
   });
@@ -115,8 +144,12 @@ module.exports = {
   PLANNER_VERSION,
   BLUEPRINT_VERSION,
   VALIDATOR_VERSION,
+  EVIDENCE_MODEL_VERSION,
+  SCHEDULER_VERSION,
+  SCORING_VERSION,
   RISK_BASE_BY_STATE,
   RISK_MODIFIERS,
+  DELIVERY_C_RECKONING_CONFIG,
   DELIVERY_B_RECKONING_CONFIG,
   PHASE1_RECKONING_CONFIG,
   createReckoningConfig,

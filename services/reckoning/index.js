@@ -1,6 +1,6 @@
 'use strict';
 
-const { createReckoningEngine } = require('./engine');
+const { createReckoningEngine, adaptiveSessionAllowed } = require('./engine');
 const { createStateMachine } = require('./state-machine');
 const { createRiskEngine } = require('./risk-engine');
 const { createPlanner } = require('./planner');
@@ -13,13 +13,14 @@ const { createShadowIntelligence } = require('./shadow');
 const { createScoringEngine } = require('./scoring');
 const { createLearningEffectsEngine } = require('./learning-effects');
 const { createReckoningStore } = require('./store');
-const { createReckoningConfig, PHASE1_RECKONING_CONFIG, DELIVERY_B_RECKONING_CONFIG } = require('./config');
+const { createReckoningConfig, PHASE1_RECKONING_CONFIG, DELIVERY_B_RECKONING_CONFIG, DELIVERY_C_RECKONING_CONFIG } = require('./config');
 const constants = require('./constants');
 const errors = require('./errors');
 const contracts = require('./contracts');
 
 module.exports = {
   createReckoningEngine,
+  adaptiveSessionAllowed,
   createStateMachine,
   createRiskEngine,
   createPlanner,
@@ -35,6 +36,7 @@ module.exports = {
   createReckoningConfig,
   PHASE1_RECKONING_CONFIG,
   DELIVERY_B_RECKONING_CONFIG,
+  DELIVERY_C_RECKONING_CONFIG,
   ...constants,
   ...errors,
   ...contracts,

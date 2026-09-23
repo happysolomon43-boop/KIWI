@@ -47,6 +47,7 @@ const EVIDENCE_FIELD_MAP = Object.freeze({
   questionsSeen: 'questions_seen',
   lastQuestionRole: 'last_question_role',
   confirmationNotBeforeQuestion: 'confirmation_not_before_question',
+  nextEligibleQuestion: 'next_eligible_question',
   resolvedAt: 'resolved_at',
   learningEffectAppliedAt: 'learning_effect_applied_at',
 });
@@ -236,6 +237,116 @@ function createReckoningStore({
     return rows?.[0] || null;
   }
 
+  async function getSessionByExam(examSessionId, userId, { forUpdate = false } = {}) {
+    requireQuery();
+    const suffix = forUpdate ? ' FOR UPDATE' : '';
+    const { rows } = await query(
+      `SELECT *
+       FROM reckoning_sessions
+       WHERE exam_session_id = $1 AND user_id = $2
+       LIMIT 1${suffix}`,
+      [examSessionId, userId]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function getEvidenceById(evidenceId, reckoningId, { forUpdate = false } = {}) {
+    requireQuery();
+    const suffix = forUpdate ? ' FOR UPDATE' : '';
+    const { rows } = await query(
+      `SELECT *
+       FROM reckoning_evidence
+       WHERE id = $1 AND reckoning_id = $2
+       LIMIT 1${suffix}`,
+      [evidenceId, reckoningId]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function getExecutionQuestions(examSessionId, { forUpdate = false } = {}) {
+    requireQuery();
+    const suffix = forUpdate ? ' FOR UPDATE' : '';
+    const { rows } = await query(
+      `SELECT *
+       FROM exam_questions
+       WHERE exam_session_id = $1
+         AND reckoning_evidence_id IS NOT NULL
+       ORDER BY question_number ASC, variant_index ASC NULLS FIRST, id ASC${suffix}`,
+      [examSessionId]
+    );
+    return rows || [];
+  }
+
+  async function getQuestionForExecution(
+    userId,
+    examSessionId,
+    questionId,
+    { forUpdate = false } = {}
+  ) {
+    requireQuery();
+    const suffix = forUpdate ? ' FOR UPDATE' : '';
+    const { rows } = await query(
+      `SELECT *
+       FROM exam_questions
+       WHERE id = $1
+         AND exam_session_id = $2
+         AND user_id = $3
+         AND reckoning_evidence_id IS NOT NULL
+       LIMIT 1${suffix}`,
+      [questionId, examSessionId, userId]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function saveQuestionAnswer(userId, examSessionId, questionId, {
+    selectedOption,
+    isCorrect,
+    responseTimeMs,
+    evidenceEffect,
+  }) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE exam_questions
+       SET selected_option = $4,
+           is_correct = $5,
+           response_time_ms = $6,
+           time_spent_seconds = GREATEST(0, FLOOR($6::numeric / 1000))::integer,
+           evidence_effect = $7::jsonb,
+           updated_at = now()
+       WHERE id = $1
+         AND exam_session_id = $2
+         AND user_id = $3
+       RETURNING *`,
+      [
+        questionId,
+        examSessionId,
+        userId,
+        selectedOption,
+        Boolean(isCorrect),
+        Math.max(0, Number(responseTimeMs) || 0),
+        json(evidenceEffect || {}),
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function unlockQuestion(userId, examSessionId, questionId) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE exam_questions
+       SET is_unlocked = true,
+           unlocked_at = COALESCE(unlocked_at, now()),
+           updated_at = now()
+       WHERE id = $1
+         AND exam_session_id = $2
+         AND user_id = $3
+         AND selected_option IS NULL
+       RETURNING *`,
+      [questionId, examSessionId, userId]
+    );
+    return rows?.[0] || null;
+  }
+
   async function saveSession(reckoningId, patch) {
     requireQuery();
     const statement = createPatchQuery({
@@ -270,17 +381,34 @@ function createReckoningStore({
         'Reckoning store requires a transaction function for transactional work.'
       );
     }
-    return transaction(work);
+
+    return transaction(async (client) => {
+      const transactionQuery =
+        client && typeof client.query === 'function'
+          ? client.query.bind(client)
+          : query;
+      const transactionStore = createReckoningStore({
+        query: transactionQuery,
+        randomUUID,
+      });
+      return work(transactionStore, client);
+    });
   }
 
   return Object.freeze({
     name: 'reckoning-postgres-store',
     getSession,
+    getSessionByExam,
     getEvidence,
+    getEvidenceById,
+    getExecutionQuestions,
+    getQuestionForExecution,
     createEvidence,
     upsertEvidence,
     saveSession,
     saveEvidence,
+    saveQuestionAnswer,
+    unlockQuestion,
     withTransaction,
   });
 }

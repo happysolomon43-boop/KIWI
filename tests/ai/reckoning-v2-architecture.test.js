@@ -21,7 +21,7 @@ test('Reckoning V2 Phase 1 exposes a stable backend facade', () => {
   assert.equal(description.status, 'SCAFFOLD');
 });
 
-test('Phase 1 is fail-closed and cannot become production authority', () => {
+test('Delivery C remains fail-closed for authority while execution core is explicit', async () => {
   const config = reckoning.createReckoningConfig({
     enabled: true,
     behaviorAuthority: 'v2',
@@ -33,12 +33,17 @@ test('Phase 1 is fail-closed and cannot become production authority', () => {
 
   const engine = reckoning.createReckoningEngine({ config });
 
-  for (const method of ['prepare', 'start', 'recordAnswer', 'getState', 'finalize']) {
+  for (const method of ['prepare', 'start']) {
     assert.throws(
       () => engine[method](),
       (error) => error && error.code === 'ERR_RECKONING_V2_NOT_IMPLEMENTED'
     );
   }
+
+  await assert.rejects(
+    () => engine.getState({ examSessionId: 'exam-1', userId: 'user-1' }),
+    /requires a query function/
+  );
 });
 
 test('accepted Reckoning concepts are centralized and immutable', () => {
@@ -67,7 +72,7 @@ test('all Phase 1 component boundaries are importable without side effects', () 
   }
 });
 
-test('Delivery B may wire shadow intelligence but not V2 assessment authority', () => {
+test('Delivery C wires dormant execution without activating current Reckoning authority', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', '..', 'index.js'),
     'utf8'
@@ -75,5 +80,21 @@ test('Delivery B may wire shadow intelligence but not V2 assessment authority', 
 
   assert.match(source, /createShadowIntelligence/);
   assert.match(source, /reckoningShadow\.analyzeSafely/);
-  assert.doesNotMatch(source, /createReckoningEngine\s*\(/);
+  assert.match(
+    source,
+    /const adaptiveReckoningEngine = createReckoningEngine\s*\(/
+  );
+  assert.match(source, /examRouter\.get\('\/:id\/reckoning\/state'/);
+  assert.match(source, /examRouter\.post\('\/:id\/reckoning\/answer'/);
+
+  const triggerStart = source.indexOf('async function triggerReckoning');
+  const triggerEnd = source.indexOf('async function deferReckoning', triggerStart);
+  assert.ok(triggerStart >= 0 && triggerEnd > triggerStart);
+  const trigger = source.slice(triggerStart, triggerEnd);
+
+  assert.match(trigger, /question_count:\s*questionCount/);
+  assert.match(trigger, /reckoningShadow\.analyzeSafely/);
+  assert.doesNotMatch(trigger, /engine_version\s*:/);
+  assert.doesNotMatch(trigger, /engine_mode\s*:\s*['"](?:PILOT|LIVE)['"]/);
+  assert.doesNotMatch(trigger, /adaptiveReckoningEngine/);
 });
