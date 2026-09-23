@@ -27,12 +27,17 @@ function mapLimit(items, limit, worker) {
   ).then(() => results);
 }
 
-function attachEvidenceIds(plan, randomUUID = crypto.randomUUID) {
+function attachEvidenceIds(plan, randomUUID = crypto.randomUUID, existingByCardId = new Map()) {
   const byCard = new Map();
   const materialize = (item) => {
     const key = String(item.sourceCardId);
     if (!byCard.has(key)) {
-      byCard.set(key, Object.freeze({ ...item, id: randomUUID() }));
+      const existing = existingByCardId.get(key);
+      byCard.set(key, Object.freeze({
+        ...item,
+        id: existing?.id || randomUUID(),
+        reusedEvidence: Boolean(existing?.id),
+      }));
     }
     return byCard.get(key);
   };
@@ -235,7 +240,13 @@ function createProductionPreparation({
       throw error;
     }
 
-    const livePlan = attachEvidenceIds(plan, randomUUID);
+    const existingEvidence = await store.getEvidence(reckoning.id);
+    const existingByCardId = new Map(
+      existingEvidence
+        .filter((row) => row.source_card_id)
+        .map((row) => [String(row.source_card_id), row])
+    );
+    const livePlan = attachEvidenceIds(plan, randomUUID, existingByCardId);
     let generated;
     try {
       generated = await generateQuestionFamily(livePlan, reckoning.id);
@@ -307,25 +318,57 @@ function createProductionPreparation({
         }
 
         for (const evidence of [...livePlan.evidence, ...livePlan.controls]) {
-          await txStore.createEvidence({
-            id: evidence.id,
-            reckoningId: locked.id,
-            userId,
-            subjectId,
-            sourceCardId: evidence.sourceCardId,
-            conceptKey: evidence.conceptKey,
-            sourceSnapshot: evidence.sourceSnapshot,
-            sourceHash: evidence.sourceHash,
-            originalCardState: evidence.originalCardState,
-            riskScore: evidence.riskScore,
-            riskLevel: evidence.riskLevel,
-            riskReasons: evidence.riskReasons,
-            isBubbleCritical: evidence.isBubbleCritical,
-            hasLearningDebt: evidence.hasLearningDebt,
-            discoveredByControl: false,
-            evidenceStatus: 'UNTESTED',
-            requiredConfirmations: evidence.requiredConfirmations,
-          });
+          const existing = existingByCardId.get(String(evidence.sourceCardId));
+          if (existing) {
+            // Reuse the same evidence identity across failed attempts. Terminal
+            // Recovered evidence is normally excluded by the planner caller; an
+            // explicitly selected prior row is reset for a new independent attempt.
+            // learning_effect_applied_at is deliberately NOT cleared, preventing
+            // repeated SRS punishment for the same Reckoning across retries.
+            await txStore.saveEvidence(existing.id, {
+              conceptKey: evidence.conceptKey,
+              sourceSnapshot: evidence.sourceSnapshot,
+              sourceHash: evidence.sourceHash,
+              originalCardState: evidence.originalCardState,
+              riskScore: evidence.riskScore,
+              riskLevel: evidence.riskLevel,
+              riskReasons: evidence.riskReasons,
+              isBubbleCritical: evidence.isBubbleCritical,
+              hasLearningDebt: evidence.hasLearningDebt,
+              discoveredByControl: false,
+              evidenceStatus: 'UNTESTED',
+              diagnosticOutcome: null,
+              challengeOutcome: null,
+              confirmationOutcome: null,
+              attemptCount: 0,
+              successfulDemonstrations: 0,
+              requiredConfirmations: evidence.requiredConfirmations,
+              questionsSeen: 0,
+              lastQuestionRole: null,
+              nextEligibleQuestion: null,
+              resolvedAt: null,
+            });
+          } else {
+            await txStore.createEvidence({
+              id: evidence.id,
+              reckoningId: locked.id,
+              userId,
+              subjectId,
+              sourceCardId: evidence.sourceCardId,
+              conceptKey: evidence.conceptKey,
+              sourceSnapshot: evidence.sourceSnapshot,
+              sourceHash: evidence.sourceHash,
+              originalCardState: evidence.originalCardState,
+              riskScore: evidence.riskScore,
+              riskLevel: evidence.riskLevel,
+              riskReasons: evidence.riskReasons,
+              isBubbleCritical: evidence.isBubbleCritical,
+              hasLearningDebt: evidence.hasLearningDebt,
+              discoveredByControl: false,
+              evidenceStatus: 'UNTESTED',
+              requiredConfirmations: evidence.requiredConfirmations,
+            });
+          }
         }
 
         await txStore.createExecutionExam({
