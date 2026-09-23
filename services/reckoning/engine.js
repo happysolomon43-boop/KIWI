@@ -1031,6 +1031,16 @@ function createReckoningEngine(options = {}) {
       if (!lockedQuestion) {
         throw new ReckoningContractError('Audited adaptive question disappeared.');
       }
+      if (lockedQuestion.evidence_effect?.invalidated === true) {
+        return buildState(txStore, {
+          examSessionId,
+          userId,
+          session: lockedSession,
+        });
+      }
+
+      const consumedBudget =
+        lockedQuestion.selected_option != null ? 1 : 0;
 
       await txStore.invalidateExecutionQuestion(
         userId,
@@ -1047,13 +1057,18 @@ function createReckoningEngine(options = {}) {
 
       const evidenceRows = await txStore.getEvidence(lockedSession.id);
       const questions = await txStore.getExecutionQuestions(examSessionId);
+      const adjustedQuestionsUsed = Math.max(
+        0,
+        (Number(lockedSession.questions_used) || 0) - consumedBudget
+      );
       const recovery = scoring.calculateRecovery({
         evidence: evidenceRows,
         questions,
-        questionsUsed: Number(lockedSession.questions_used) || 0,
+        questionsUsed: adjustedQuestionsUsed,
       });
 
       await txStore.saveSession(lockedSession.id, {
+        questionsUsed: adjustedQuestionsUsed,
         rawAccuracy: recovery.rawAccuracy,
         recoveryScore: recovery.recoveryScore,
         unresolvedCriticalCount: recovery.unresolvedCriticalCount,
