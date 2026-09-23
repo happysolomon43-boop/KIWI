@@ -44,7 +44,7 @@ export async function mountKiwiTreeRenderer(options = {}) {
 
   const mountLegacy = (reason = null) => {
     clearContainer(container);
-    container.dataset.kiwiRenderer = 'legacy-svg';
+    if (container.dataset) container.dataset.kiwiRenderer = 'legacy-svg';
     const instance = legacyFactory(container, legacyOptions);
 
     return {
@@ -58,7 +58,7 @@ export async function mountKiwiTreeRenderer(options = {}) {
       },
       async destroy() {
         clearContainer(container);
-        delete container.dataset.kiwiRenderer;
+        if (container.dataset) delete container.dataset.kiwiRenderer;
       },
     };
   };
