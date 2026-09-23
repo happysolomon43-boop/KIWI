@@ -10,10 +10,11 @@ const { createQuestionBank } = require('./question-bank');
 const { createQuestionValidator } = require('./validator');
 const { createAISemanticReviewer } = require('./semantic-review');
 const { createShadowIntelligence } = require('./shadow');
+const { createPreparationService } = require('./preparation');
 const { createScoringEngine } = require('./scoring');
 const { createLearningEffectsEngine } = require('./learning-effects');
 const { createReckoningStore } = require('./store');
-const { createReckoningConfig, PHASE1_RECKONING_CONFIG, DELIVERY_B_RECKONING_CONFIG, DELIVERY_C_RECKONING_CONFIG, DELIVERY_D_RECKONING_CONFIG } = require('./config');
+const { createReckoningConfig, PHASE1_RECKONING_CONFIG, DELIVERY_B_RECKONING_CONFIG, DELIVERY_C_RECKONING_CONFIG, DELIVERY_D_RECKONING_CONFIG, DELIVERY_E_RECKONING_CONFIG } = require('./config');
 const constants = require('./constants');
 const errors = require('./errors');
 const contracts = require('./contracts');
@@ -31,6 +32,7 @@ module.exports = {
   createQuestionValidator,
   createAISemanticReviewer,
   createShadowIntelligence,
+  createPreparationService,
   createScoringEngine,
   createLearningEffectsEngine,
   createReckoningStore,
@@ -39,6 +41,7 @@ module.exports = {
   DELIVERY_B_RECKONING_CONFIG,
   DELIVERY_C_RECKONING_CONFIG,
   DELIVERY_D_RECKONING_CONFIG,
+  DELIVERY_E_RECKONING_CONFIG,
   ...constants,
   ...errors,
   ...contracts,
