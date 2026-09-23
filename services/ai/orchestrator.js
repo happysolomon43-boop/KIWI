@@ -439,11 +439,18 @@ function createAIOrchestrator({
             slot.id,
             candidate.modelId
           ));
+          const providerBeforeSuccess = resolvedProviderHealth.snapshot(candidate.modelId);
           resolvedProviderHealth.recordSuccess(candidate.modelId);
           resolvedTrafficController.noteSuccess();
-          await sideEffect('provider health success persistence', () =>
-            resolvedProviderHealth.persist?.(candidate.modelId)
-          );
+          if (
+            providerBeforeSuccess.state !== 'CLOSED' ||
+            providerBeforeSuccess.distinctFailureSlots > 0 ||
+            providerBeforeSuccess.lastErrorCode
+          ) {
+            await sideEffect('provider health recovery persistence', () =>
+              resolvedProviderHealth.persist?.(candidate.modelId)
+            );
+          }
           await sideEffect('model lifecycle success', () => modelLifecycle?.recordSuccess(
             candidate.modelId
           ));
