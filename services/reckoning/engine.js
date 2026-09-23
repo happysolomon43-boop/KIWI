@@ -724,6 +724,93 @@ function createReckoningEngine(options = {}) {
     });
   }
 
+  async function replayEvidenceAfterInvalidation(
+    txStore,
+    session,
+    evidenceId,
+    examSessionId
+  ) {
+    const evidence = await txStore.getEvidenceById(
+      evidenceId,
+      session.id,
+      { forUpdate: true }
+    );
+    if (!evidence) return null;
+
+    const questions = (await txStore.getExecutionQuestions(examSessionId))
+      .filter(
+        (question) =>
+          String(question.reckoning_evidence_id || '') === String(evidenceId)
+      )
+      .filter((question) => {
+        const invalidated =
+          question.bonus_awarded === true ||
+          question.evidence_effect?.invalidated === true;
+        return question.selected_option != null && !invalidated;
+      })
+      .sort((a, b) => {
+        const aTime = a.unlocked_at ? new Date(a.unlocked_at).getTime() : 0;
+        const bTime = b.unlocked_at ? new Date(b.unlocked_at).getTime() : 0;
+        if (aTime !== bTime) return aTime - bTime;
+        return Number(a.question_number) - Number(b.question_number);
+      });
+
+    const hasControl = (await txStore.getExecutionQuestions(examSessionId))
+      .some(
+        (question) =>
+          String(question.reckoning_evidence_id || '') === String(evidenceId) &&
+          question.reckoning_role === 'CONTROL'
+      );
+    const score = Number(evidence.risk_score) || 0;
+    const baseRiskLevel = hasControl
+      ? 'SUPPORTING'
+      : score >= config.risk.criticalThreshold
+        ? 'CRITICAL'
+        : score >= config.risk.highThreshold
+          ? 'HIGH'
+          : 'SUPPORTING';
+
+    let replay = {
+      id: evidence.id,
+      riskLevel: baseRiskLevel,
+      evidenceStatus: 'UNTESTED',
+      diagnosticOutcome: null,
+      challengeOutcome: null,
+      confirmationOutcome: null,
+      attemptCount: 0,
+      successfulDemonstrations: 0,
+      requiredConfirmations: baseRiskLevel === 'CRITICAL' ? 1 : 0,
+      questionsSeen: 0,
+      discoveredByControl: false,
+    };
+
+    let ordinal = 0;
+    for (const question of questions) {
+      const transition = evidenceEngine.record(replay, {
+        role: question.reckoning_role,
+        isCorrect: question.is_correct === true,
+        questionOrdinal: ++ordinal,
+      });
+      replay = { ...replay, ...transition.patch };
+    }
+
+    return txStore.saveEvidence(evidence.id, {
+      riskLevel: replay.riskLevel,
+      evidenceStatus: replay.evidenceStatus,
+      diagnosticOutcome: replay.diagnosticOutcome,
+      challengeOutcome: replay.challengeOutcome,
+      confirmationOutcome: replay.confirmationOutcome,
+      attemptCount: replay.attemptCount,
+      successfulDemonstrations: replay.successfulDemonstrations,
+      requiredConfirmations: replay.requiredConfirmations,
+      questionsSeen: replay.questionsSeen,
+      discoveredByControl: replay.discoveredByControl,
+      lastQuestionRole: replay.lastQuestionRole || null,
+      nextEligibleQuestion: replay.nextEligibleQuestion ?? null,
+      resolvedAt: replay.resolvedAt ?? null,
+    });
+  }
+
   async function repairDefectiveQuestion({
     examSessionId,
     userId,
@@ -897,6 +984,87 @@ function createReckoningEngine(options = {}) {
         examSessionId,
         userId,
         session: updated,
+      });
+    });
+  }
+
+  async function adjudicateDefectiveQuestion({
+    examSessionId,
+    userId,
+    questionId,
+    audit = {},
+  } = {}) {
+    const session = requireAdaptiveSession(
+      await store.getSessionByExam(examSessionId, userId)
+    );
+    const question = await store.getQuestionForExecution(
+      userId,
+      examSessionId,
+      questionId
+    );
+    if (!question) {
+      throw new ReckoningContractError('Audited adaptive question was not found.');
+    }
+
+    if (
+      question.selected_option == null &&
+      String(session.current_question_id || '') === String(question.id)
+    ) {
+      return repairDefectiveQuestion({
+        examSessionId,
+        userId,
+        questionId,
+        audit,
+      });
+    }
+
+    return store.withTransaction(async (txStore) => {
+      const lockedSession = requireAdaptiveSession(
+        await txStore.getSessionByExam(examSessionId, userId, { forUpdate: true })
+      );
+      const lockedQuestion = await txStore.getQuestionForExecution(
+        userId,
+        examSessionId,
+        questionId,
+        { forUpdate: true }
+      );
+      if (!lockedQuestion) {
+        throw new ReckoningContractError('Audited adaptive question disappeared.');
+      }
+
+      await txStore.invalidateExecutionQuestion(
+        userId,
+        examSessionId,
+        questionId,
+        audit
+      );
+      await replayEvidenceAfterInvalidation(
+        txStore,
+        lockedSession,
+        lockedQuestion.reckoning_evidence_id,
+        examSessionId
+      );
+
+      const evidenceRows = await txStore.getEvidence(lockedSession.id);
+      const questions = await txStore.getExecutionQuestions(examSessionId);
+      const recovery = scoring.calculateRecovery({
+        evidence: evidenceRows,
+        questions,
+        questionsUsed: Number(lockedSession.questions_used) || 0,
+      });
+
+      await txStore.saveSession(lockedSession.id, {
+        rawAccuracy: recovery.rawAccuracy,
+        recoveryScore: recovery.recoveryScore,
+        unresolvedCriticalCount: recovery.unresolvedCriticalCount,
+        stateVersion: (Number(lockedSession.state_version) || 0) + 1,
+      });
+
+      const refreshed = await txStore.getSessionByExam(examSessionId, userId);
+      return buildState(txStore, {
+        examSessionId,
+        userId,
+        session: refreshed,
       });
     });
   }
@@ -1153,6 +1321,7 @@ function createReckoningEngine(options = {}) {
     start,
     continueCheckpoint,
     repairDefectiveQuestion,
+    adjudicateDefectiveQuestion,
     recordAnswer,
     getState,
     finalize,
