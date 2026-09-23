@@ -7,7 +7,7 @@ const {
 } = require('./vine-growth-model');
 
 const TREE_STAGE_LABELS = VINE_STAGE_LABELS;
-const TREE_STATE_SCHEMA_VERSION = 3;
+const TREE_STATE_SCHEMA_VERSION = 4;
 
 function firstDefined() {
   for (let i = 0; i < arguments.length; i += 1) {
@@ -97,15 +97,13 @@ function normalizeNextStage(value, currentGrowthPoints) {
  * - growthProgress: continuous 0..1 progress inside the current milestone span
  * - overallGrowthProgress: continuous biological maturity across the whole tree life
  * - vineStructure: canonical kiwifruit-vine physical-development values
- * - structuralGrowth: legacy tree-shaped compatibility aliases
  *
  * Current condition:
  * - vitality: reversible 0..100 ecosystem health
  * - vineHealth: canonical reversible vine/foliage presentation values
- * - visualHealth: legacy compatibility aliases
  *
- * The existing flat renderer fields remain for compatibility until the visual
- * renderer is replaced. In particular, health is an alias for vitality.
+ * Schema v4 is vine-native. Generic-tree renderer aliases were retired after
+ * the PixiJS rollout completed.
  */
 function buildTreeState(input) {
   const source = input && typeof input === 'object' ? input : {};
@@ -179,16 +177,12 @@ function buildTreeState(input) {
       pointsToNextStage: continuousGrowth.pointsToNextStage,
     },
     vineStructure: continuousGrowth.vineStructure,
-    // Deprecated compatibility alias for the current SVG renderer.
-    structuralGrowth: continuousGrowth.structuralGrowth,
 
     vitality,
     vitalityBreakdown: normalizeVitalityBreakdown(
       firstDefined(source.vitalityBreakdown, source.vitality_breakdown)
     ),
     vineHealth: continuousGrowth.vineHealth,
-    // Deprecated compatibility alias for pre-vine consumers.
-    visualHealth: continuousGrowth.visualHealth,
 
     knowledgeScore,
     leaves,
@@ -196,9 +190,6 @@ function buildTreeState(input) {
     rings,
     milestones,
     streak,
-
-    // Backwards-compatible alias consumed by the existing SVG KiwiTree.
-    health: vitality,
   };
 }
 
