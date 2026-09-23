@@ -57,17 +57,26 @@ function createScoringEngine({ config = createReckoningConfig() } = {}) {
       const selected = field(question, 'selectedOption', 'selected_option');
       return selected != null && selected !== '';
     });
-    const correct = answered.filter((question) => {
+    const rawCorrect = answered.filter(
+      (question) => field(question, 'isCorrect', 'is_correct', false) === true
+    ).length;
+    const awardedCorrect = answered.filter((question) => {
       const raw = field(question, 'isCorrect', 'is_correct', false);
       const bonus = field(question, 'bonusAwarded', 'bonus_awarded', false);
       return raw === true || bonus === true;
     }).length;
+    const bonusCount = answered.filter(
+      (question) => field(question, 'bonusAwarded', 'bonus_awarded', false) === true
+    ).length;
 
     const answeredCount = questionsUsed == null
       ? answered.length
       : Math.max(answered.length, Number(questionsUsed) || 0);
     const rawAccuracy = answered.length
-      ? Number(((correct / answered.length) * 100).toFixed(2))
+      ? Number(((rawCorrect / answered.length) * 100).toFixed(2))
+      : 0;
+    const adjustedAccuracy = answered.length
+      ? Number(((awardedCorrect / answered.length) * 100).toFixed(2))
       : 0;
     const recoveryScore = totalRiskWeight
       ? Number(((recoveredRiskWeight / totalRiskWeight) * 100).toFixed(2))
@@ -96,12 +105,14 @@ function createScoringEngine({ config = createReckoningConfig() } = {}) {
     const survived =
       allCriticalRecovered &&
       recoveryScore >= config.scoring.recoveryThreshold &&
-      rawAccuracy >= config.scoring.rawAccuracyThreshold &&
+      adjustedAccuracy >= config.scoring.rawAccuracyThreshold &&
       minimumEvidenceSatisfied;
 
     return Object.freeze({
       scoringVersion: config.scoringVersion,
       rawAccuracy,
+      adjustedAccuracy,
+      bonusCount,
       recoveryScore,
       totalRiskWeight: Number(totalRiskWeight.toFixed(2)),
       recoveredRiskWeight: Number(recoveredRiskWeight.toFixed(2)),
