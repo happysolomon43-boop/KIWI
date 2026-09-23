@@ -4,7 +4,7 @@ const RECKONING_ENGINE = Object.freeze({
   NAME: 'reckoning-v2',
   ENGINE_VERSION: 2,
   ARCHITECTURE_VERSION: 1,
-  STATUS: 'SCAFFOLD',
+  STATUS: 'LIVE',
 });
 
 const SESSION_PHASES = Object.freeze({
