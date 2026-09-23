@@ -38,7 +38,7 @@ const { createEcosystemV2 } = require('./ecosystem_v2');
 const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
-const { createShadowIntelligence, createReckoningEngine, isAdaptiveReckoningQuestion } = require('./services/reckoning');
+const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 
 const pool = new Pool({
@@ -89,12 +89,73 @@ async function withTransaction(fn) {
   }
 }
 
-// Delivery C execution engine is intentionally dormant for legacy/shadow rows.
-// Its endpoints accept only explicit engine_version=2 PILOT/LIVE sessions.
+// Delivery E: V2 preparation and execution use the same centralized AI
+// orchestrator as the rest of KIWI. Gemini writes questions; KIWI owns the plan,
+// validation, evidence state, scheduling and outcome.
+const adaptiveSemanticReview = createAISemanticReviewer({
+  aiRun: (taskId, input, context) => ai.run(taskId, input, context),
+});
+const adaptiveQuestionValidator = createQuestionValidator({
+  semanticReview: adaptiveSemanticReview,
+});
+const adaptiveQuestionBank = createQuestionBank({
+  aiRun: (taskId, input, context) => ai.run(taskId, input, context),
+  validator: adaptiveQuestionValidator,
+});
+const adaptivePreparationService = createPreparationService({
+  questionBank: adaptiveQuestionBank,
+  randomUUID,
+});
+
+async function buildAdaptivePreparationInput({ session, userId }) {
+  const subjectId = session?.subject_id;
+  if (!subjectId) throw new Error('Reckoning subject is missing.');
+
+  const decks = await db.decks.findBySubject(userId, subjectId);
+  const deckIds = decks.map((deck) => deck.id);
+  if (!deckIds.length) throw new Error('This subject has no decks for Reckoning.');
+
+  const deckSet = new Set(deckIds);
+  const allCards = await db.cards.findAllForUser(userId);
+  const cards = allCards.filter((card) => {
+    if (!deckSet.has(card.deck_id)) return false;
+    const front = String(card.front_content || card.front || '').trim();
+    const back = String(card.back_content || card.back || '').trim();
+    return front.length >= 5 && back.length >= 5;
+  });
+  if (!cards.length) {
+    throw new Error('Reckoning needs complete study cards before it can start.');
+  }
+
+  const cardIds = cards.map((card) => card.id);
+  const states = await batchInitializeSeedlingStates(userId, cardIds);
+  const activeBubbles = await db.masteryGoals.findActive(userId).catch(() => []);
+  const bubbleCardIds = activeBubbles.flatMap((goal) => goal.card_ids || []);
+  const nowMs = Date.now();
+  const metricsByCardId = await reckoningShadow.loadMetrics(userId, cards, nowMs);
+  const subjectExamDate = await getSubjectExamDate(userId, subjectId).catch(() => null);
+  const examMs = subjectExamDate ? new Date(subjectExamDate).getTime() : NaN;
+  const daysToExam = Number.isFinite(examMs)
+    ? Math.floor((examMs - nowMs) / 86400000)
+    : null;
+
+  return {
+    cards,
+    states,
+    bubbleCardIds,
+    metricsByCardId,
+    deckIds,
+    context: { daysToExam },
+    now: new Date(nowMs),
+  };
+}
+
 const adaptiveReckoningEngine = createReckoningEngine({
   query,
   transaction: withTransaction,
   randomUUID,
+  preparationService: adaptivePreparationService,
+  preparationInputProvider: buildAdaptivePreparationInput,
   outcomeHandler: finalizeAdaptiveReckoningOutcome,
 });
 
