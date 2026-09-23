@@ -40,7 +40,16 @@ function roleBlueprint(evidence, role, variantIndex, config) {
   });
 }
 
-function buildPrompt(blueprint, retryFeedback = null) {
+function buildPrompt(blueprint, retryFeedback = null, previousQuestion = null) {
+  const previousRule = previousQuestion
+    ? [
+        'PREVIOUS FAMILY QUESTION — your new question must not be a near-copy:',
+        JSON.stringify({
+          stem: previousQuestion.stem || '',
+          options: previousQuestion.options || [],
+        }),
+      ].join('\n')
+    : '';
   return [
     'You are writing exactly one KIWI Reckoning multiple-choice question.',
     'KIWI has already decided what to test. Do not change the assessment target.',
@@ -60,6 +69,7 @@ function buildPrompt(blueprint, retryFeedback = null) {
     blueprint.constraints.independentRetrieval
       ? 'This is a delayed confirmation: do not echo the challenge wording or explanation.'
       : '',
+    previousRule,
     retryFeedback
       ? `RETRY CORRECTION: The previous attempt failed validation (${retryFeedback}). Produce a genuinely new option set that fixes every listed issue.`
       : null,
@@ -136,7 +146,7 @@ function createQuestionBank({
     const result = await aiRun(
       'RECKONING_CBT',
       {
-        content: buildPrompt(blueprint, retryFeedback),
+        content: buildPrompt(blueprint, retryFeedback, previousQuestion),
         generationConfig: {
           responseMimeType: 'application/json',
           temperature: Math.min(0.55, 0.35 + Math.max(0, Number(attempt) - 1) * 0.08),
