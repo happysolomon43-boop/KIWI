@@ -38,7 +38,7 @@ const { createEcosystemV2 } = require('./ecosystem_v2');
 const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
-const { createShadowIntelligence } = require('./services/reckoning');
+const { createShadowIntelligence, createReckoningEngine } = require('./services/reckoning');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
@@ -87,6 +87,14 @@ async function withTransaction(fn) {
     client.release();
   }
 }
+
+// Delivery C execution engine is intentionally dormant for legacy/shadow rows.
+// Its endpoints accept only explicit engine_version=2 PILOT/LIVE sessions.
+const adaptiveReckoningEngine = createReckoningEngine({
+  query,
+  transaction: withTransaction,
+  randomUUID,
+});
 
 // Ecosystem V2 owns session quality, permanent growth, fruit, vitality, streaks,
 // and their idempotent reward ledger. Other services consume its committed result.
@@ -16577,6 +16585,63 @@ res.json(exams);
 } catch (e) {
 res.status(500).json({ error: 'Failed to fetch exams' });
 }
+});
+
+// ── Adaptive Reckoning V2 execution endpoints (Delivery C) ───────────────
+// These routes are dormant for legacy/shadow sessions. The engine itself
+// verifies engine_version=2 and engine_mode=PILOT/LIVE before returning state
+// or accepting an answer.
+examRouter.get('/:id/reckoning/state', async (req, res) => {
+  try {
+    const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+    if (!exam) return res.status(404).json({ error: 'Exam not found' });
+    if (!exam.is_reckoning) {
+      return res.status(409).json({ error: 'This exam is not a Reckoning' });
+    }
+
+    const state = await adaptiveReckoningEngine.getState({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    res.json(state);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to load adaptive Reckoning state',
+      code: error.code || 'ERR_RECKONING_STATE',
+    });
+  }
+});
+
+examRouter.post('/:id/reckoning/answer', async (req, res) => {
+  try {
+    const questionId = req.body?.question_id ?? req.body?.questionId;
+    const selectedOption = req.body?.selected_option ?? req.body?.selectedOption;
+    const responseTimeMs =
+      req.body?.response_time_ms ??
+      req.body?.responseTimeMs ??
+      0;
+
+    if (!questionId || !/^[A-D]$/i.test(String(selectedOption || ''))) {
+      return res.status(400).json({
+        error: 'question_id and selected_option A-D are required',
+      });
+    }
+
+    const result = await adaptiveReckoningEngine.recordAnswer({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+      questionId: String(questionId),
+      selectedOption: String(selectedOption).toUpperCase(),
+      responseTimeMs: Math.max(0, Number(responseTimeMs) || 0),
+    });
+
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to record adaptive Reckoning answer',
+      code: error.code || 'ERR_RECKONING_ANSWER',
+    });
+  }
 });
 
 // ── GET /exams/retry-decks — last 5 retry decks created from exam wrong answers ──
