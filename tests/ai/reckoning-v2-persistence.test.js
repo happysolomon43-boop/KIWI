@@ -179,3 +179,31 @@ test('Reckoning store serializes JSON evidence updates and rejects empty patches
     /No fields supplied for reckoning_evidence update/
   );
 });
+
+test('Delivery D outcome lock uses a transaction-scoped PostgreSQL advisory lock', async () => {
+  const calls = [];
+  const client = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [] };
+    },
+  };
+  const transaction = async (work) => work(client);
+
+  const store = createReckoningStore({
+    query: async () => ({ rows: [] }),
+    transaction,
+  });
+
+  let ran = false;
+  const result = await store.withOutcomeLock('reckoning-lock-1', async () => {
+    ran = true;
+    return 'done';
+  });
+
+  assert.equal(ran, true);
+  assert.equal(result, 'done');
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /pg_advisory_xact_lock/);
+  assert.deepEqual(calls[0].values, ['reckoning-v2-outcome:reckoning-lock-1']);
+});
