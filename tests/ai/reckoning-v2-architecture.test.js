@@ -21,7 +21,7 @@ test('Reckoning V2 Phase 1 exposes a stable backend facade', () => {
   assert.equal(description.status, 'SCAFFOLD');
 });
 
-test('Phase 1 is fail-closed and cannot become production authority', () => {
+test('Delivery C remains fail-closed for authority while execution core is explicit', async () => {
   const config = reckoning.createReckoningConfig({
     enabled: true,
     behaviorAuthority: 'v2',
@@ -33,12 +33,17 @@ test('Phase 1 is fail-closed and cannot become production authority', () => {
 
   const engine = reckoning.createReckoningEngine({ config });
 
-  for (const method of ['prepare', 'start', 'recordAnswer', 'getState', 'finalize']) {
+  for (const method of ['prepare', 'start']) {
     assert.throws(
       () => engine[method](),
       (error) => error && error.code === 'ERR_RECKONING_V2_NOT_IMPLEMENTED'
     );
   }
+
+  await assert.rejects(
+    () => engine.getState({ examSessionId: 'exam-1', userId: 'user-1' }),
+    /requires a query function/
+  );
 });
 
 test('accepted Reckoning concepts are centralized and immutable', () => {
