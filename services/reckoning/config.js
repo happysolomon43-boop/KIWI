@@ -10,6 +10,7 @@ const EVIDENCE_MODEL_VERSION = 1;
 const SCHEDULER_VERSION = 1;
 const SCORING_VERSION = 1;
 const LEARNING_EFFECTS_VERSION = 1;
+const PREPARATION_VERSION = 1;
 
 const RISK_BASE_BY_STATE = Object.freeze({
   DANGEROUS: 85,
@@ -42,11 +43,11 @@ const RISK_MODIFIERS = Object.freeze({
   recentAgainHardCap: 8,
 });
 
-const DELIVERY_D_RECKONING_CONFIG = Object.freeze({
+const DELIVERY_E_RECKONING_CONFIG = Object.freeze({
   engineVersion: RECKONING_ENGINE.ENGINE_VERSION,
   architectureVersion: RECKONING_ENGINE.ARCHITECTURE_VERSION,
-  enabled: false,
-  behaviorAuthority: 'legacy',
+  enabled: true,
+  behaviorAuthority: 'v2',
   riskModelVersion: RISK_MODEL_VERSION,
   plannerVersion: PLANNER_VERSION,
   blueprintVersion: BLUEPRINT_VERSION,
@@ -55,7 +56,8 @@ const DELIVERY_D_RECKONING_CONFIG = Object.freeze({
   schedulerVersion: SCHEDULER_VERSION,
   scoringVersion: SCORING_VERSION,
   learningEffectsVersion: LEARNING_EFFECTS_VERSION,
-  configVersion: 3,
+  preparationVersion: PREPARATION_VERSION,
+  configVersion: 4,
   risk: Object.freeze({
     baseByState: RISK_BASE_BY_STATE,
     modifiers: RISK_MODIFIERS,
@@ -91,6 +93,12 @@ const DELIVERY_D_RECKONING_CONFIG = Object.freeze({
     unresolvedReviewDays: 1,
     minimumStage: 1,
   }),
+  preparation: Object.freeze({
+    maxBankQuestions: 30,
+    familyConcurrency: 4,
+    generationAttemptsPerItem: 2,
+    claimStaleMinutes: 5,
+  }),
   validation: Object.freeze({
     maxStemSimilarity: 0.82,
     minStemLength: 12,
@@ -105,49 +113,55 @@ const DELIVERY_D_RECKONING_CONFIG = Object.freeze({
   }),
 });
 
-const DELIVERY_C_RECKONING_CONFIG = DELIVERY_D_RECKONING_CONFIG;
-const DELIVERY_B_RECKONING_CONFIG = DELIVERY_D_RECKONING_CONFIG;
-const PHASE1_RECKONING_CONFIG = DELIVERY_D_RECKONING_CONFIG;
+const DELIVERY_D_RECKONING_CONFIG = DELIVERY_E_RECKONING_CONFIG;
+const DELIVERY_C_RECKONING_CONFIG = DELIVERY_E_RECKONING_CONFIG;
+const DELIVERY_B_RECKONING_CONFIG = DELIVERY_E_RECKONING_CONFIG;
+const PHASE1_RECKONING_CONFIG = DELIVERY_E_RECKONING_CONFIG;
 
 function createReckoningConfig(overrides = {}) {
   return Object.freeze({
-    ...DELIVERY_D_RECKONING_CONFIG,
+    ...DELIVERY_E_RECKONING_CONFIG,
     ...overrides,
     risk: Object.freeze({
-      ...DELIVERY_D_RECKONING_CONFIG.risk,
+      ...DELIVERY_E_RECKONING_CONFIG.risk,
       ...(overrides.risk || {}),
       baseByState: Object.freeze({
-        ...DELIVERY_D_RECKONING_CONFIG.risk.baseByState,
+        ...DELIVERY_E_RECKONING_CONFIG.risk.baseByState,
         ...(overrides.risk?.baseByState || {}),
       }),
       modifiers: Object.freeze({
-        ...DELIVERY_D_RECKONING_CONFIG.risk.modifiers,
+        ...DELIVERY_E_RECKONING_CONFIG.risk.modifiers,
         ...(overrides.risk?.modifiers || {}),
       }),
     }),
     planner: Object.freeze({
-      ...DELIVERY_D_RECKONING_CONFIG.planner,
+      ...DELIVERY_E_RECKONING_CONFIG.planner,
       ...(overrides.planner || {}),
     }),
     execution: Object.freeze({
-      ...DELIVERY_D_RECKONING_CONFIG.execution,
+      ...DELIVERY_E_RECKONING_CONFIG.execution,
       ...(overrides.execution || {}),
     }),
     scoring: Object.freeze({
-      ...DELIVERY_D_RECKONING_CONFIG.scoring,
+      ...DELIVERY_E_RECKONING_CONFIG.scoring,
       ...(overrides.scoring || {}),
     }),
     learningEffects: Object.freeze({
-      ...DELIVERY_D_RECKONING_CONFIG.learningEffects,
+      ...DELIVERY_E_RECKONING_CONFIG.learningEffects,
       ...(overrides.learningEffects || {}),
     }),
+    preparation: Object.freeze({
+      ...DELIVERY_E_RECKONING_CONFIG.preparation,
+      ...(overrides.preparation || {}),
+    }),
     validation: Object.freeze({
-      ...DELIVERY_D_RECKONING_CONFIG.validation,
+      ...DELIVERY_E_RECKONING_CONFIG.validation,
       ...(overrides.validation || {}),
     }),
-    // Delivery D completes backend consequences but does not activate V2 for legacy users.
-    enabled: false,
-    behaviorAuthority: 'legacy',
+    // Delivery E is authoritative only for rows explicitly created as V2 LIVE/PILOT.
+    // Existing engine_version=1 LEGACY rows remain on the legacy path.
+    enabled: true,
+    behaviorAuthority: 'v2',
   });
 }
 
@@ -160,8 +174,10 @@ module.exports = {
   SCHEDULER_VERSION,
   SCORING_VERSION,
   LEARNING_EFFECTS_VERSION,
+  PREPARATION_VERSION,
   RISK_BASE_BY_STATE,
   RISK_MODIFIERS,
+  DELIVERY_E_RECKONING_CONFIG,
   DELIVERY_D_RECKONING_CONFIG,
   DELIVERY_C_RECKONING_CONFIG,
   DELIVERY_B_RECKONING_CONFIG,
