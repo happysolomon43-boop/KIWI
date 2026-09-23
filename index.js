@@ -38,6 +38,7 @@ const { createEcosystemV2 } = require('./ecosystem_v2');
 const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
+const { createShadowIntelligence } = require('./services/reckoning');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
@@ -61,6 +62,15 @@ const _aiRuntime = createAIRuntime({
   logger: console,
 });
 const ai = _aiRuntime.orchestrator;
+
+// Reckoning V2 Delivery B runs intelligence in SHADOW only. This object may
+// persist risk/evidence telemetry, but it has no authority over legacy
+// question count, access, scoring, lockout, or pass/fail behavior.
+const reckoningShadow = createShadowIntelligence({
+  query,
+  randomUUID,
+  logger: console,
+});
 
 // Transaction helper
 async function withTransaction(fn) {
@@ -8536,10 +8546,12 @@ pressure_score: pressureData.pressure_score,
 // Each group (bubble / non-bubble) is independently shuffled to preserve
 // within-group randomness. Non-fatal: if Bubble query fails, the unweighted
 // pool is used and Reckoning proceeds normally.
+let _reckBubbleCardIds = [];
 try {
   const activeBubbles = await db.masteryGoals.findActive(userId).catch(() => []);
   if (activeBubbles.length > 0) {
     const bubbleCardSet  = new Set(activeBubbles.flatMap((g) => g.card_ids || []));
+    _reckBubbleCardIds = [...bubbleCardSet];
     const bubbleCards    = flaggedCards.filter((c) =>  bubbleCardSet.has(c.id));
     const nonBubbleCards = flaggedCards.filter((c) => !bubbleCardSet.has(c.id));
     const shuffle = (arr) => arr.sort(() => 0.5 - Math.random());
@@ -8580,6 +8592,23 @@ question_count: racedActive.question_count,
 recovered_race: true,
 };
 }
+// Delivery B shadow intelligence starts only after the legacy Reckoning has
+// been durably created and its authoritative question_count has been fixed.
+// Never await this work on the learner's trigger response.
+setImmediate(async () => {
+  const subjectExamDate = await getSubjectExamDate(userId, subjectId).catch(() => null);
+  await reckoningShadow.analyzeSafely({
+    reckoning,
+    userId,
+    subjectId,
+    cards: subjectCardsForReckoning,
+    states: _reckAllStates,
+    bubbleCardIds: _reckBubbleCardIds,
+    pressureScore: pressureData.pressure_score,
+    subjectExamDate,
+  });
+});
+
 return {
 reckoning_id: reckoning.id,
 status: 'triggered',
