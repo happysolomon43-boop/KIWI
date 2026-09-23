@@ -57,7 +57,7 @@ const DELIVERY_E_RECKONING_CONFIG = Object.freeze({
   scoringVersion: SCORING_VERSION,
   learningEffectsVersion: LEARNING_EFFECTS_VERSION,
   preparationVersion: PREPARATION_VERSION,
-  configVersion: 4,
+  configVersion: 5,
   risk: Object.freeze({
     baseByState: RISK_BASE_BY_STATE,
     modifiers: RISK_MODIFIERS,
