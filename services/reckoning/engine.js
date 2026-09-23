@@ -518,48 +518,75 @@ function createReckoningEngine(options = {}) {
       throw error;
     }
 
-    // Card consequences and exam closure are already committed. The surrounding
-    // Reckoning/Pressure/KS completion remains idempotent and is intentionally
-    // executed after that transaction so retries can recover from process death.
-    const outcome = await outcomeHandler({
-      session: prepared.session,
-      examSessionId,
-      userId,
-      recovery: prepared.recovery,
-      evidenceState: prepared.evidenceState,
-      learningEffects: prepared.learningEffects,
-      reason: prepared.reason,
-    });
-
-    await store.withTransaction(async (txStore) => {
-      const current = requireAdaptiveSession(
-        await txStore.getSession(prepared.session.id, userId, { forUpdate: true })
+    const completeOutcome = async () => {
+      // A concurrent request may have completed after this request prepared its
+      // evidence transaction. Re-check only after obtaining the shared outcome
+      // mutex so external effects can execute at most once.
+      const beforeOutcome = requireAdaptiveSession(
+        await store.getSession(prepared.session.id, userId)
       );
-      if (current.engine_phase !== SESSION_PHASES.COMPLETE) {
-        stateMachine.transition(
-          SESSION_PHASES.FINALIZING,
-          SESSION_PHASES.COMPLETE
-        );
-        await txStore.saveSession(current.id, {
-          enginePhase: SESSION_PHASES.COMPLETE,
-          currentQuestionId: null,
-          rawAccuracy: prepared.recovery.rawAccuracy,
-          recoveryScore: prepared.recovery.recoveryScore,
-          unresolvedCriticalCount:
-            prepared.recovery.unresolvedCriticalCount,
-          stateVersion: (Number(current.state_version) || 0) + 1,
+      if (beforeOutcome.engine_phase === SESSION_PHASES.COMPLETE) {
+        return Object.freeze({
+          ready: true,
+          final: true,
+          alreadyFinalized: true,
+          reason: 'ALREADY_FINALIZED',
+          recovery: prepared.recovery,
+          evidenceState: prepared.evidenceState,
+          learningEffects: prepared.learningEffects,
+          outcome: null,
         });
       }
-    });
 
-    return Object.freeze({
-      ready: true,
-      final: true,
-      reason: prepared.reason,
-      recovery: prepared.recovery,
-      learningEffects: prepared.learningEffects,
-      outcome,
-    });
+      // Card consequences and exam closure are already durable. Keep the mutex
+      // through the idempotent Reckoning/Pressure/KS outcome and the final
+      // COMPLETE transition so two requests cannot both cross that boundary.
+      const outcome = await outcomeHandler({
+        session: prepared.session,
+        examSessionId,
+        userId,
+        recovery: prepared.recovery,
+        evidenceState: prepared.evidenceState,
+        learningEffects: prepared.learningEffects,
+        reason: prepared.reason,
+      });
+
+      await store.withTransaction(async (txStore) => {
+        const current = requireAdaptiveSession(
+          await txStore.getSession(prepared.session.id, userId, { forUpdate: true })
+        );
+        if (current.engine_phase !== SESSION_PHASES.COMPLETE) {
+          stateMachine.transition(
+            SESSION_PHASES.FINALIZING,
+            SESSION_PHASES.COMPLETE
+          );
+          await txStore.saveSession(current.id, {
+            enginePhase: SESSION_PHASES.COMPLETE,
+            currentQuestionId: null,
+            rawAccuracy: prepared.recovery.rawAccuracy,
+            recoveryScore: prepared.recovery.recoveryScore,
+            unresolvedCriticalCount:
+              prepared.recovery.unresolvedCriticalCount,
+            stateVersion: (Number(current.state_version) || 0) + 1,
+          });
+        }
+      });
+
+      return Object.freeze({
+        ready: true,
+        final: true,
+        reason: prepared.reason,
+        recovery: prepared.recovery,
+        evidenceState: prepared.evidenceState,
+        learningEffects: prepared.learningEffects,
+        outcome,
+      });
+    };
+
+    if (typeof store.withOutcomeLock === 'function') {
+      return store.withOutcomeLock(prepared.session.id, completeOutcome);
+    }
+    return completeOutcome();
   }
 
   const engine = {
