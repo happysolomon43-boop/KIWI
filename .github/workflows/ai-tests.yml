@@ -47,5 +47,8 @@ jobs:
       - name: Check backend syntax
         run: node --check index.js
 
+      - name: Check tree renderer module syntax
+        run: find public/tree -name '*.mjs' -print0 | xargs -0 -n1 node --check
+
       - name: Run AI architecture tests
         run: npm run test:ai
