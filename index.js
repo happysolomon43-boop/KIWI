@@ -8563,78 +8563,6 @@ return results;
 }
 // ── Reckoning State Machine ───────────────────────────────────────────────────
 
-async function buildAdaptiveReckoningPreparationInput({ session, userId }) {
-  const subjectId = session?.subject_id;
-  if (!subjectId) {
-    throw new Error('Adaptive Reckoning is missing a subject.');
-  }
-
-  const decks = await db.decks.findBySubject(userId, subjectId);
-  const deckIds = decks.map((deck) => deck.id);
-  if (deckIds.length === 0) {
-    throw new Error('This subject has no decks available for Reckoning.');
-  }
-
-  const deckIdSet = new Set(deckIds);
-  const [allCards, allStates] = await Promise.all([
-    db.cards.findAllForUser(userId),
-    db.cardStates.findByUser(userId),
-  ]);
-  const cards = allCards.filter((card) => {
-    if (!deckIdSet.has(card.deck_id)) return false;
-    const front = String(card.front_content || card.front || '').trim();
-    const back = String(card.back_content || card.back || '').trim();
-    return front.length >= 5 && back.length >= 5;
-  });
-  if (cards.length === 0) {
-    throw new Error(
-      'Reckoning cannot start until this subject contains meaningful study cards.'
-    );
-  }
-
-  const stateMap = new Map(allStates.map((row) => [String(row.card_id), row]));
-  for (const card of cards) {
-    if (!stateMap.has(String(card.id))) {
-      const initialized = await initializeCardState(userId, card.id);
-      if (initialized) stateMap.set(String(card.id), initialized);
-    }
-  }
-  const states = [...stateMap.values()].filter((row) =>
-    cards.some((card) => String(card.id) === String(row.card_id))
-  );
-
-  const activeBubbles = await db.masteryGoals.findActive(userId).catch(() => []);
-  const bubbleCardIds = [
-    ...new Set(activeBubbles.flatMap((goal) => goal.card_ids || []).map(String)),
-  ];
-
-  const nowMs = Date.now();
-  const metricsByCardId = await reckoningShadow.loadMetrics(
-    userId,
-    cards,
-    nowMs
-  );
-  const subjectExamDate = await getSubjectExamDate(userId, subjectId)
-    .catch(() => null);
-  const examMs = subjectExamDate ? new Date(subjectExamDate).getTime() : NaN;
-  const daysToExam = Number.isFinite(examMs)
-    ? Math.max(0, Math.floor((examMs - nowMs) / 86400000))
-    : null;
-
-  return {
-    cards,
-    states,
-    bubbleCardIds,
-    metricsByCardId,
-    deckIds,
-    context: {
-      subjectId,
-      pressureScore: Number(session.pressure_score) || 0,
-      daysToExam,
-    },
-  };
-}
-
 async function triggerReckoning(userId, subjectId) {
 const active = await db.reckoningSessions.findActiveByUser(userId);
 if (active) return { reckoning_id: active.id, status: active.status };
@@ -8726,13 +8654,6 @@ pressure_score: pressureData.pressure_score,
 flagged_card_count: flaggedCards.length,
 question_count: questionCount,
 status: 'triggered',
-engine_version: 2,
-engine_mode: 'LIVE',
-engine_phase: 'PREPARING',
-generation_status: 'not_started',
-generation_error: null,
-questions_used: 0,
-state_version: 0,
 deferral_used: false,
 deferred_until: null,
 exam_session_id: null,
@@ -19585,15 +19506,72 @@ brainRouter.post('/reckoning/start', async (req, res) => {
       });
     }
 
-    const state = await adaptiveReckoningEngine.start({
-      reckoningId: active.id,
-      userId: req.user.id,
+    if (active.status === 'in_progress' && active.exam_session_id) {
+      const state = await adaptiveReckoningEngine.getState({
+        examSessionId: active.exam_session_id,
+        userId: req.user.id,
+      });
+      return res.json(state);
+    }
+
+    if (active.generation_status === 'pending') {
+      return res.status(202).json({
+        status: 'preparing',
+        reckoning_id: active.id,
+        generation_status: 'pending',
+      });
+    }
+
+    const jobId = randomUUID();
+    const startUserId = req.user.id;
+    const reckoningId = active.id;
+    _jobStoreSet(jobId, {
+      status: 'pending',
+      type: 'reckoning_v2_start',
+      result: { reckoning_id: reckoningId },
     });
-    res.json(state);
+    res.status(202).json({
+      job_id: jobId,
+      status: 'preparing',
+      reckoning_id: reckoningId,
+      generation_status: active.generation_status || 'not_started',
+    });
+
+    setImmediate(async () => {
+      try {
+        const state = await adaptiveReckoningEngine.start({
+          reckoningId,
+          userId: startUserId,
+        });
+        _jobStoreSet(jobId, {
+          status: 'done',
+          type: 'reckoning_v2_start',
+          result: state,
+        });
+        wsSend(startUserId, 'job_done', {
+          job_id: jobId,
+          type: 'reckoning_v2_start',
+          result: state,
+        });
+      } catch (error) {
+        const message = isAIAvailabilityError(error)
+          ? 'AI generation is temporarily busy. Your Reckoning is still safe and can be retried.'
+          : String(error?.message || 'Reckoning preparation failed.');
+        _jobStoreSet(jobId, {
+          status: 'failed',
+          type: 'reckoning_v2_start',
+          error: message,
+        });
+        wsSend(startUserId, 'job_failed', {
+          job_id: jobId,
+          type: 'reckoning_v2_start',
+          error: message,
+        });
+      }
+    });
   } catch (error) {
-    const preparing = error.code === 'ERR_RECKONING_PREPARING';
-    res.status(preparing ? 202 : (error.status || 500)).json({
-      status: preparing ? 'preparing' : 'error',
+    res.status(error.status || 500).json({
+      status: 'error',
       error: error.message || 'Failed to start adaptive Reckoning',
       code: error.code || 'ERR_RECKONING_START',
     });
