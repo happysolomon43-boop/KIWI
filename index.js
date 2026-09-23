@@ -8920,6 +8920,7 @@ async function finalizeAdaptiveReckoningOutcome({
   examSessionId,
   userId,
   recovery,
+  evidenceState,
   learningEffects,
   reason,
 }) {
@@ -8928,7 +8929,13 @@ async function finalizeAdaptiveReckoningOutcome({
     .catch(() => null);
 
   let ks = { before: null, after: null, delta: null };
-  if (exam) {
+  if (exam?.ks_processed_at) {
+    ks = {
+      before: _finiteKsNumber(exam.ks_before),
+      after: _finiteKsNumber(exam.ks_after),
+      delta: _finiteKsNumber(exam.ks_delta),
+    };
+  } else if (exam) {
     ks = await finalizeExamKsOutcome(
       userId,
       exam,
@@ -8939,13 +8946,11 @@ async function finalizeAdaptiveReckoningOutcome({
     await persistKnowledgeScore(userId, session.subject_id).catch(() => null);
   }
 
-  const recoveredCount = (learningEffects?.applied || [])
-    .filter((effect) =>
-      effect.type === 'CLEAN_RECOVERED' ||
-      effect.type === 'REMEDIATED_RECOVERED'
-    ).length;
-  const unresolvedCount = (learningEffects?.applied || [])
-    .filter((effect) => effect.type === 'UNRESOLVED').length;
+  // This summary comes from persisted evidence, not from effects applied in the
+  // current request. On a crash retry, effects are correctly skipped as already
+  // applied, but the learner's recovered/unresolved result must remain identical.
+  const recoveredCount = Number(evidenceState?.recovered) || 0;
+  const unresolvedCount = Number(evidenceState?.unresolved) || 0;
 
   const debriefText =
     session.debrief_text ||
@@ -9145,6 +9150,24 @@ async function reconcileActiveReckoning(userId, active) {
 if (!active || active.user_id !== userId) return active || null;
 
 const storedFailureCount = Number(active.failure_count) || 0;
+
+// A failed adaptive outcome can legitimately clear exam_session_id while the
+// engine is still FINALIZING. Recover that exact persisted attempt before the
+// generic non-in-progress path returns the row to Brain.
+if (
+  Number(active.engine_version) === 2 &&
+  ['PILOT', 'LIVE'].includes(String(active.engine_mode || '')) &&
+  active.engine_phase === 'FINALIZING' &&
+  !active.exam_session_id &&
+  active.last_failure_exam_id
+) {
+  await adaptiveReckoningEngine.finalize({
+    examSessionId: active.last_failure_exam_id,
+    userId,
+  });
+  return await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
+}
+
 if (
   storedFailureCount >= RECKONING_FAILSAFE_FAILURES &&
   active.status !== 'in_progress'
