@@ -8563,6 +8563,78 @@ return results;
 }
 // ── Reckoning State Machine ───────────────────────────────────────────────────
 
+async function buildAdaptiveReckoningPreparationInput({ session, userId }) {
+  const subjectId = session?.subject_id;
+  if (!subjectId) {
+    throw new Error('Adaptive Reckoning is missing a subject.');
+  }
+
+  const decks = await db.decks.findBySubject(userId, subjectId);
+  const deckIds = decks.map((deck) => deck.id);
+  if (deckIds.length === 0) {
+    throw new Error('This subject has no decks available for Reckoning.');
+  }
+
+  const deckIdSet = new Set(deckIds);
+  const [allCards, allStates] = await Promise.all([
+    db.cards.findAllForUser(userId),
+    db.cardStates.findByUser(userId),
+  ]);
+  const cards = allCards.filter((card) => {
+    if (!deckIdSet.has(card.deck_id)) return false;
+    const front = String(card.front_content || card.front || '').trim();
+    const back = String(card.back_content || card.back || '').trim();
+    return front.length >= 5 && back.length >= 5;
+  });
+  if (cards.length === 0) {
+    throw new Error(
+      'Reckoning cannot start until this subject contains meaningful study cards.'
+    );
+  }
+
+  const stateMap = new Map(allStates.map((row) => [String(row.card_id), row]));
+  for (const card of cards) {
+    if (!stateMap.has(String(card.id))) {
+      const initialized = await initializeCardState(userId, card.id);
+      if (initialized) stateMap.set(String(card.id), initialized);
+    }
+  }
+  const states = [...stateMap.values()].filter((row) =>
+    cards.some((card) => String(card.id) === String(row.card_id))
+  );
+
+  const activeBubbles = await db.masteryGoals.findActive(userId).catch(() => []);
+  const bubbleCardIds = [
+    ...new Set(activeBubbles.flatMap((goal) => goal.card_ids || []).map(String)),
+  ];
+
+  const nowMs = Date.now();
+  const metricsByCardId = await reckoningShadow.loadMetrics(
+    userId,
+    cards,
+    nowMs
+  );
+  const subjectExamDate = await getSubjectExamDate(userId, subjectId)
+    .catch(() => null);
+  const examMs = subjectExamDate ? new Date(subjectExamDate).getTime() : NaN;
+  const daysToExam = Number.isFinite(examMs)
+    ? Math.max(0, Math.floor((examMs - nowMs) / 86400000))
+    : null;
+
+  return {
+    cards,
+    states,
+    bubbleCardIds,
+    metricsByCardId,
+    deckIds,
+    context: {
+      subjectId,
+      pressureScore: Number(session.pressure_score) || 0,
+      daysToExam,
+    },
+  };
+}
+
 async function triggerReckoning(userId, subjectId) {
 const active = await db.reckoningSessions.findActiveByUser(userId);
 if (active) return { reckoning_id: active.id, status: active.status };
@@ -19390,6 +19462,41 @@ res.status(500).json({ error: 'Failed to defer reckoning', details: e.message })
 }
 });
 
+brainRouter.post('/reckoning/start', async (req, res) => {
+  try {
+    let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+    if (active) {
+      active = await reconcileActiveReckoning(req.user.id, active)
+        .catch(() => active);
+    }
+    if (!active) {
+      return res.status(404).json({ error: 'No active Reckoning to start.' });
+    }
+    if (Number(active.engine_version || 1) !== 2) {
+      return res.status(409).json({
+        error: 'This is a legacy Reckoning and must resume through the legacy exam path.',
+        code: 'RECKONING_LEGACY_RESUME',
+        legacy: true,
+        exam_session_id: active.exam_session_id || null,
+      });
+    }
+
+    const state = await adaptiveReckoningEngine.start({
+      reckoningId: active.id,
+      userId: req.user.id,
+    });
+    res.json(state);
+  } catch (error) {
+    const preparing = error.code === 'ERR_RECKONING_PREPARING';
+    res.status(preparing ? 202 : (error.status || 500)).json({
+      status: preparing ? 'preparing' : 'error',
+      error: error.message || 'Failed to start adaptive Reckoning',
+      code: error.code || 'ERR_RECKONING_START',
+    });
+  }
+});
+
+
 async function submitReckoningHandler(req, res) {
 try {
 const { examId, answers } = req.body;
@@ -19401,6 +19508,12 @@ if (!exam.is_reckoning) {
   return res.status(409).json({ error: 'This exam is not the active Reckoning exam.' });
 }
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (Number(active?.engine_version || 1) === 2) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning answers must use the V2 answer endpoint.',
+    code: 'RECKONING_V2_USE_ADAPTIVE_ENDPOINT',
+  });
+}
 if (!active || active.status !== 'in_progress' || String(active.exam_session_id) !== String(examId)) {
   return res.status(409).json({ error: 'This exam is not linked to the active Reckoning.' });
 }
@@ -19610,7 +19723,13 @@ res.json({
   subjectId: active.subject_id,
   subjectName: active.subject_name,
   reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
-  requiredScore: 70,
+  requiredScore: Number(active.engine_version || 1) === 2 ? null : 70,
+  recoveryThreshold: Number(active.engine_version || 1) === 2 ? 75 : null,
+  rawAccuracyThreshold: Number(active.engine_version || 1) === 2 ? 65 : null,
+  adaptive: Number(active.engine_version || 1) === 2,
+  engineVersion: Number(active.engine_version || 1),
+  engineMode: active.engine_mode || 'LEGACY',
+  generationStatus: active.generation_status || null,
   pressure: active.pressure_score || 0,
   shields: userStats?.streak_shields_held || 0,
   canDefer: !active.deferral_used,
