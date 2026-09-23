@@ -47,6 +47,7 @@ const DELIVERY_B_RECKONING_CONFIG = Object.freeze({
   plannerVersion: PLANNER_VERSION,
   blueprintVersion: BLUEPRINT_VERSION,
   validatorVersion: VALIDATOR_VERSION,
+  configVersion: 1,
   risk: Object.freeze({
     baseByState: RISK_BASE_BY_STATE,
     modifiers: RISK_MODIFIERS,
