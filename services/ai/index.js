@@ -12,6 +12,8 @@ const { createPostgresAIStore } = require('./postgres-store');
 const { createModelLifecycle } = require('./model-lifecycle');
 const { createModelQualifier } = require('./model-qualifier');
 const { createModelDiscoveryManager } = require('./model-discovery');
+const { createProviderHealth } = require('./provider-health');
+const { createAITrafficController } = require('./traffic-controller');
 const { createAIRuntime } = require('./runtime');
 
 module.exports = {
@@ -27,5 +29,7 @@ module.exports = {
   createModelLifecycle,
   createModelQualifier,
   createModelDiscoveryManager,
+  createProviderHealth,
+  createAITrafficController,
   createAIRuntime,
 };
