@@ -355,7 +355,10 @@ function createAIOrchestrator({
       let modelTransientAttemptCount = 0;
 
       for (const slot of slots) {
-        if (attempts.length >= retryPolicy.maxAttempts) break modelLoop;
+        if (attempts.length >= retryPolicy.maxAttempts) {
+          resolvedProviderHealth.release(candidate.modelId);
+          break modelLoop;
+        }
 
         const attemptNumber = attempts.length + 1;
         const attemptStarted = Date.now();
@@ -588,6 +591,7 @@ function createAIOrchestrator({
             continue;
           }
 
+          resolvedProviderHealth.release(candidate.modelId);
           await finishFailure(aiError);
           throw aiError;
         }
