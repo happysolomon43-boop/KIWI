@@ -6,6 +6,7 @@ const { createModelRouter } = require('./model-router');
 const { createProjectPool } = require('./project-pool');
 const { createGeminiTransport } = require('./gemini-transport');
 const { normalizeGeminiResponse } = require('./response-normalizer');
+const { createTransientModelHealth } = require('./transient-model-health');
 const {
   AIError,
   AI_ERROR_CODES,
@@ -19,6 +20,7 @@ const IMMEDIATE_FAILURE_CODES = new Set([
 ]);
 
 const FAST_MODEL_FALLBACK_CODES = new Set([
+  AI_ERROR_CODES.PROVIDER_OVERLOADED,
   AI_ERROR_CODES.TRANSIENT,
   AI_ERROR_CODES.TIMEOUT,
   AI_ERROR_CODES.NETWORK,
@@ -35,7 +37,7 @@ const PROJECT_SLOT_QUOTA_CODES = new Set([
 const DEFAULT_RETRY_POLICY = Object.freeze({
   maxAttempts: 6,
   maxAttemptsPerModel: 2,
-  maxTransientAttemptsPerModel: 1,
+  maxTransientAttemptsPerModel: 2,
 });
 
 function validateFeatureGenerationConfig(generationConfig = {}) {
@@ -75,47 +77,40 @@ function createAIOrchestrator({
   const resolvedProjectPool = projectPool || createProjectPool({ env });
   const resolvedTransport = transport || createGeminiTransport();
 
-  // Provider 5xx overload is model/service scoped much more often than
-  // project-key scoped. Remember a short transient cooldown so concurrent AI
-  // features do not all re-hit the same overloaded model before falling back.
-  const modelTransientCooldowns = new Map();
-  const configuredTransientCooldownMs = Number(env?.AI_MODEL_TRANSIENT_COOLDOWN_MS);
-  const MODEL_TRANSIENT_COOLDOWN_MS = Number.isFinite(configuredTransientCooldownMs)
-    ? Math.max(5000, Math.min(configuredTransientCooldownMs, 120000))
-    : 20000;
-
-  function nowMs() {
-    const value = clock();
-    if (value instanceof Date) return value.getTime();
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : Date.now();
-  }
+  // Provider/model transients are separate from project+model quota health.
+  // A model-wide circuit opens only after failures are observed across multiple
+  // independent project slots. One bad 503 must not erase the rest of the pool.
+  const transientFailureSlots = Number(env?.AI_MODEL_TRANSIENT_FAILURE_SLOTS);
+  const transientFailureWindowMs = Number(env?.AI_MODEL_TRANSIENT_FAILURE_WINDOW_MS);
+  const transientCooldownMs = Number(env?.AI_MODEL_TRANSIENT_COOLDOWN_MS);
+  const transientModelHealth = createTransientModelHealth({
+    clock,
+    failureThreshold: Number.isFinite(transientFailureSlots)
+      ? Math.max(2, Math.min(transientFailureSlots, 5))
+      : 2,
+    failureWindowMs: Number.isFinite(transientFailureWindowMs)
+      ? Math.max(5000, Math.min(transientFailureWindowMs, 120000))
+      : 30000,
+    defaultCooldownMs: Number.isFinite(transientCooldownMs)
+      ? Math.max(5000, Math.min(transientCooldownMs, 120000))
+      : 20000,
+  });
+  const modelTransientCooldowns = transientModelHealth.cooldowns;
 
   function modelCooldownUntil(modelId) {
-    const until = Number(modelTransientCooldowns.get(modelId)) || 0;
-    if (!until) return null;
-    if (until <= nowMs()) {
-      modelTransientCooldowns.delete(modelId);
-      return null;
-    }
-    return until;
+    return transientModelHealth.cooldownUntil(modelId);
   }
 
   function isModelTemporarilyAvailable(modelId) {
-    return modelCooldownUntil(modelId) == null;
+    return transientModelHealth.isAvailable(modelId);
   }
 
-  function markModelTransientFailure(modelId, error) {
-    if (error?.code !== AI_ERROR_CODES.TRANSIENT) return;
-    const providerDelay = Number(error?.retryAfterMs);
-    const cooldownMs = Number.isFinite(providerDelay) && providerDelay > 0
-      ? Math.max(5000, Math.min(providerDelay, 120000))
-      : MODEL_TRANSIENT_COOLDOWN_MS;
-    modelTransientCooldowns.set(modelId, nowMs() + cooldownMs);
+  function markModelTransientFailure(modelId, slotId, error) {
+    return transientModelHealth.recordFailure(modelId, slotId, error);
   }
 
   function clearModelTransientFailure(modelId) {
-    modelTransientCooldowns.delete(modelId);
+    transientModelHealth.recordSuccess(modelId);
   }
 
   function retryPolicyFor(task) {
@@ -324,9 +319,54 @@ function createAIOrchestrator({
       }));
     }
 
+    if (candidates.length === 0) {
+      const persistentlyRoutable = routedCandidates.filter(
+        (candidate) => slotsForModel(candidate.modelId, { advance: false }).length > 0
+      );
+      const temporaryModels = routedCandidates
+        .map((candidate) => candidate.modelId)
+        .filter((modelId) => !isModelTemporarilyAvailable(modelId));
+      const cooldowns = temporaryModels
+        .map((modelId) => modelCooldownUntil(modelId))
+        .filter((until) => Number.isFinite(Number(until)));
+      const nextRetryAt = cooldowns.length ? Math.min(...cooldowns) : null;
+      const retryAfterMs = nextRetryAt
+        ? Math.max(0, nextRetryAt - Date.now())
+        : null;
+      const hasPersistentCapacity = persistentlyRoutable.length > 0;
+      const noCandidateError = new AIError(
+        hasPersistentCapacity
+          ? `Approved Gemini models are temporarily cooling down for AI task ${taskId}`
+          : `No healthy project/model capacity is currently available for AI task ${taskId}`,
+        {
+          code: hasPersistentCapacity
+            ? AI_ERROR_CODES.PROVIDER_OVERLOADED
+            : AI_ERROR_CODES.CAPACITY_EXHAUSTED,
+          retryable: hasPersistentCapacity,
+          scope: hasPersistentCapacity ? 'PROVIDER_MODEL' : 'REQUEST',
+          retryAfterMs,
+          details: {
+            attempts,
+            hadEligibleRoute: false,
+            hasPersistentCapacity,
+            retryPolicy: task.retryPolicy,
+            temporarilyUnavailableModels: temporaryModels,
+          },
+        }
+      );
+      await finishFailure(noCandidateError);
+      throw noCandidateError;
+    }
+
     modelLoop:
     for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
       const candidate = candidates[modelIndex];
+
+      // Another concurrent request may have opened the model circuit after this
+      // request planned its candidates. Respect the newer evidence before
+      // issuing another provider call.
+      if (!isModelTemporarilyAvailable(candidate.modelId)) continue;
+
       const slots = slotsForModel(candidate.modelId, { advance: true });
       if (slots.length > 0) hadEligibleRoute = true;
       let skipRemainingSlotsForModel = false;
@@ -538,11 +578,19 @@ function createAIOrchestrator({
 
             if (FAST_MODEL_FALLBACK_CODES.has(aiError.code)) {
               modelTransientAttemptCount += 1;
-              markModelTransientFailure(candidate.modelId, aiError);
+              const transientState = markModelTransientFailure(
+                candidate.modelId,
+                slot.id,
+                aiError
+              );
 
+              // Probe a second independent project slot before declaring the
+              // model unhealthy. A concurrent request can also provide the
+              // independent evidence that opens this circuit.
               if (
+                transientState?.opened ||
                 modelTransientAttemptCount >=
-                retryPolicy.maxTransientAttemptsPerModel
+                  retryPolicy.maxTransientAttemptsPerModel
               ) {
                 skipRemainingSlotsForModel = true;
                 break;
@@ -565,30 +613,53 @@ function createAIOrchestrator({
       if (skipRemainingSlotsForModel) continue;
     }
 
+    const temporarilyUnavailableModels = routedCandidates
+      .map((candidate) => candidate.modelId)
+      .filter((modelId) => !isModelTemporarilyAvailable(modelId));
+    const hasPersistentCapacity = routedCandidates.some(
+      (candidate) => slotsForModel(candidate.modelId, { advance: false }).length > 0
+    );
+    const onlyTransientCircuitsRemain =
+      !lastError &&
+      !hadEligibleRoute &&
+      hasPersistentCapacity &&
+      temporarilyUnavailableModels.length > 0;
     const finalCode = lastError?.code || (
-      hadEligibleRoute
-        ? AI_ERROR_CODES.UNKNOWN
-        : AI_ERROR_CODES.CAPACITY_EXHAUSTED
+      onlyTransientCircuitsRemain
+        ? AI_ERROR_CODES.PROVIDER_OVERLOADED
+        : hadEligibleRoute
+          ? AI_ERROR_CODES.UNKNOWN
+          : AI_ERROR_CODES.CAPACITY_EXHAUSTED
+    );
+    const finalRetryable = Boolean(
+      lastError?.retryable ||
+      finalCode === AI_ERROR_CODES.PROVIDER_OVERLOADED
     );
     const finalError = new AIError(
-      hadEligibleRoute
-        ? `All approved routes failed for AI task ${taskId}`
-        : `No healthy project/model capacity is currently available for AI task ${taskId}`,
+      finalCode === AI_ERROR_CODES.PROVIDER_OVERLOADED && !lastError
+        ? `Approved Gemini models are temporarily cooling down for AI task ${taskId}`
+        : hadEligibleRoute
+          ? `All approved routes failed for AI task ${taskId}`
+          : `No healthy project/model capacity is currently available for AI task ${taskId}`,
       {
         code: finalCode,
         status: lastError?.status || null,
-        retryable: false,
-        scope: 'REQUEST',
+        retryable: finalRetryable,
+        scope: lastError?.scope || (
+          finalCode === AI_ERROR_CODES.PROVIDER_OVERLOADED
+            ? 'PROVIDER_MODEL'
+            : 'REQUEST'
+        ),
+        retryAfterMs: lastError?.retryAfterMs || null,
         details: {
           attempts,
           lastErrorCode: lastError?.code || null,
           hadEligibleRoute,
+          hasPersistentCapacity,
           retryPolicy: task.retryPolicy,
           maxAttempts: retryPolicy.maxAttempts,
           maxQuotaAttemptsPerModel: retryPolicy.maxQuotaAttemptsPerModel || null,
-          temporarilyUnavailableModels: routedCandidates
-            .map((candidate) => candidate.modelId)
-            .filter((modelId) => !isModelTemporarilyAvailable(modelId)),
+          temporarilyUnavailableModels,
         },
         cause: lastError,
       }
@@ -611,6 +682,7 @@ function createAIOrchestrator({
     telemetry,
     modelLifecycle,
     generationAffinity,
+    transientModelHealth,
     modelTransientCooldowns,
   });
 }
