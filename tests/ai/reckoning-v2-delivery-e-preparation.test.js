@@ -329,7 +329,18 @@ test('activation persists the validated bank before the Reckoning becomes in_pro
 
 test('generation failure leaves preparation retryable and never opens a transaction', async () => {
   const order = [];
+  const failedSession = {
+    id: 'reckoning-fail',
+    user_id: 'user-fail',
+    subject_id: 'subject-fail',
+    engine_version: 2,
+    engine_mode: 'LIVE',
+    status: 'triggered',
+  };
   const store = {
+    async getSession() {
+      return failedSession;
+    },
     async claimPreparation() {
       return failedSession;
     },
