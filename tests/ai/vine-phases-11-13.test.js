@@ -561,7 +561,7 @@ test('Phase 13 still fails closed on mobile and high-focus routes', () => {
   assert.equal(mobile.reason, 'mobile-profile');
 });
 
-test('Phase 14 remains outside this delivery', () => {
+test('Phase 14 adaptation preserves the Phase 11-13 fail-closed contract', () => {
   const controller = fs.readFileSync(
     path.join(
       ROOT,
@@ -570,10 +570,26 @@ test('Phase 14 remains outside this delivery', () => {
     'utf8'
   );
 
-  // Phase 13 provides correctness/lifecycle behavior only. Dedicated adaptive
-  // offscreen batching/performance instrumentation belongs to Phase 14.
-  assert.doesNotMatch(
+  assert.match(
     controller,
-    /PerformanceObserver|requestIdleCallback|frameBudget/
+    /derivePixiRuntimePolicy/
   );
+  assert.match(
+    controller,
+    /_ensureRenderer/
+  );
+  assert.match(
+    controller,
+    /_scheduleRendererRelease/
+  );
+
+  const mobile =
+    expansionServer.getExpansionDecision({
+      route: 'dashboard',
+      overallGrowthProgress: 1,
+      viewportWidth: 390,
+    });
+
+  assert.equal(mobile.enabled, false);
+  assert.equal(mobile.reason, 'mobile-profile');
 });

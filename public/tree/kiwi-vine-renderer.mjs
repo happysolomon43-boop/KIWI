@@ -1,7 +1,7 @@
 import { Container, Graphics } from '/vendor/pixi/pixi.min.mjs';
 
 import { loadVineBlueprint } from './vine-blueprint-loader.mjs';
-import { profileNameForWidth } from './vine-geometry.mjs';
+import { deterministicUnit, profileNameForWidth } from './vine-geometry.mjs';
 import {
   interpolateVineRenderState,
   normalizeVineRenderState,
@@ -44,6 +44,7 @@ export class KiwiVineRenderer {
     this.destroyed = false;
     this.ready = false;
     this._removeTicker = null;
+    this._removeQualitySubscription = null;
     this._resizeObserver = null;
     this._clickHandler = null;
     this._interactionImpulse = 0;
@@ -87,6 +88,20 @@ export class KiwiVineRenderer {
     this._removeTicker = this.runtime.addTicker((ticker, motionScale) => {
       this._tick(ticker, motionScale);
     }, { motionAware: false });
+
+    this._removeQualitySubscription =
+      this.runtime.subscribeQuality(() => {
+        if (this.destroyed) return;
+        this._renderAll();
+        if (
+          !this.runtime.continuousMotion &&
+          !this.animatingState &&
+          this._interactionImpulse <= 0 &&
+          this._reactionImpulse <= 0
+        ) {
+          this._settleAndPause();
+        }
+      });
 
     this.ready = true;
     this.runtime.renderOnce();
@@ -137,6 +152,7 @@ export class KiwiVineRenderer {
     if (this.interactive) {
       this._clickHandler = () => {
         this._interactionImpulse = Math.min(1, this._interactionImpulse + 0.75);
+        this.runtime.resume();
         if (this.onShake) {
           try { this.onShake(); } catch (_) {}
         }
@@ -205,7 +221,26 @@ export class KiwiVineRenderer {
       plan,
       layout.profileName
     );
-    this._renderFoliage(layout, foliagePlan);
+
+    const foliageScale =
+      Math.max(0.35, Math.min(1, this.runtime.foliageScale));
+    const filteredFoliage =
+      foliageScale >= 0.999
+        ? foliagePlan
+        : {
+            ...foliagePlan,
+            leaves: foliagePlan.leaves.filter(
+              (leaf) =>
+                deterministicUnit(
+                  leaf.id + ':adaptive-quality'
+                ) <= foliageScale
+            ),
+          };
+
+    this._renderFoliage(
+      layout,
+      filteredFoliage
+    );
 
     const reproductivePlan = buildReproductivePlan(
       this.blueprint,
@@ -213,7 +248,29 @@ export class KiwiVineRenderer {
       plan,
       layout.profileName
     );
-    this._renderReproduction(layout, reproductivePlan);
+
+    const flowerScale =
+      Math.max(0.30, Math.min(1, this.runtime.flowerScale));
+    const filteredReproduction =
+      flowerScale >= 0.999
+        ? reproductivePlan
+        : {
+            ...reproductivePlan,
+            flowers:
+              reproductivePlan.flowers.filter(
+                (flower) =>
+                  deterministicUnit(
+                    flower.id +
+                      ':adaptive-quality'
+                  ) <= flowerScale
+              ),
+          };
+
+    // Earned fruit is intentionally never filtered by adaptive quality.
+    this._renderReproduction(
+      layout,
+      filteredReproduction
+    );
   }
 
   _createLeafNode(id, layerName) {
@@ -738,6 +795,63 @@ export class KiwiVineRenderer {
     }
 
     this._animateLivingSystems(deltaMS, motionScale);
+
+    if (
+      !this.runtime.continuousMotion &&
+      !this.animatingState &&
+      this._interactionImpulse <= 0.001 &&
+      this._reactionImpulse <= 0.001
+    ) {
+      this._settleAndPause();
+    }
+  }
+
+  _settleAndPause() {
+    for (const node of this._leafNodes.values()) {
+      if (node.active && node.container.visible) {
+        node.container.rotation = 0;
+      }
+    }
+    for (const node of this._flowerNodes.values()) {
+      if (node.active && node.container.visible) {
+        node.container.rotation = 0;
+      }
+    }
+    for (const node of this._fruitNodes.values()) {
+      if (node.active && node.container.visible) {
+        node.container.rotation = 0;
+      }
+    }
+    if (this._tips) {
+      this._tips.alpha = 1;
+      this._tips.scale.set(1);
+    }
+    if (this._roots) {
+      this._roots.alpha = 1;
+    }
+    this.runtime.renderOnce();
+    this.runtime.pause();
+  }
+
+  getPerformanceSnapshot() {
+    return Object.freeze({
+      runtime:
+        this.runtime?.getPerformanceSnapshot?.() ||
+        null,
+      objects: Object.freeze({
+        segments: this._segmentGraphics.size,
+        leaves: this._leafNodes.size,
+        flowers: this._flowerNodes.size,
+        fruitClusters: this._fruitNodes.size,
+      }),
+      animation: Object.freeze({
+        animatingState: this.animatingState,
+        reactionActive:
+          this._reactionImpulse > 0,
+        interactionActive:
+          this._interactionImpulse > 0,
+      }),
+    });
   }
 
   _animateLivingSystems(deltaMS, motionScale) {
@@ -911,6 +1025,11 @@ export class KiwiVineRenderer {
     if (this._removeTicker) {
       try { this._removeTicker(); } catch (_) {}
       this._removeTicker = null;
+    }
+
+    if (this._removeQualitySubscription) {
+      try { this._removeQualitySubscription(); } catch (_) {}
+      this._removeQualitySubscription = null;
     }
 
     if (this._resizeObserver) {

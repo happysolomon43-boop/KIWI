@@ -12,6 +12,10 @@ import {
   partialPolyline,
   pointAlongPolyline,
 } from './vine-expansion-plan.mjs';
+import {
+  FrameBudgetMonitor,
+  getQualityConfig,
+} from './adaptive-performance.mjs';
 
 function drawSmoothPath(graphics, points, style) {
   graphics.clear();
@@ -115,6 +119,8 @@ export class VineExpansionRenderer {
     this._visibilityHandler = null;
     this._motionQuery = null;
     this._motionHandler = null;
+    this._performanceMonitor = null;
+    this._baseMaxFPS = 45;
   }
 
   async init() {
@@ -122,7 +128,37 @@ export class VineExpansionRenderer {
       throw new Error('KIWI expansion renderer requires a connected host.');
     }
     const signals = readBrowserRuntimeSignals(window);
-    this.policy = derivePixiRuntimePolicy(signals);
+    const basePolicy = derivePixiRuntimePolicy(signals);
+    const externalTier =
+      basePolicy.qualityTier === 'high'
+        ? 'balanced'
+        : basePolicy.qualityTier;
+    const externalConfig =
+      getQualityConfig(externalTier);
+
+    this.policy = Object.freeze({
+      ...basePolicy,
+      qualityTier: externalTier,
+      qualityScale:
+        externalConfig.qualityScale,
+      foliageScale:
+        externalConfig.foliageScale,
+      flowerScale:
+        externalConfig.flowerScale,
+      motionScale:
+        basePolicy.reducedMotion
+          ? 0
+          : externalConfig.motionScale,
+      continuousMotion:
+        !basePolicy.reducedMotion &&
+        externalConfig.continuousMotion,
+      maxFPS: Math.min(
+        basePolicy.maxFPS,
+        externalConfig.maxFPS,
+        45
+      ),
+    });
+    this._baseMaxFPS = this.policy.maxFPS;
 
     const app = new Application();
     await app.init({
@@ -138,7 +174,17 @@ export class VineExpansionRenderer {
       textureGCActive: true,
     });
     this.app = app;
-    this.app.ticker.maxFPS = Math.min(this.policy.maxFPS, 45);
+    this.app.ticker.maxFPS = this.policy.maxFPS;
+
+    this._performanceMonitor =
+      new FrameBudgetMonitor({
+        initialTier:
+          this.policy.qualityTier,
+        ceilingTier:
+          this.policy.qualityTier,
+        onTierChange: (event) =>
+          this._applyQualityTier(event),
+      });
 
     const canvas = app.canvas;
     canvas.className = 'kiwi-vine-expansion-canvas';
@@ -179,10 +225,18 @@ export class VineExpansionRenderer {
           '(prefers-reduced-motion: reduce)'
         );
       this._motionHandler = (event) => {
+        const config = getQualityConfig(
+          this.policy.qualityTier
+        );
         this.policy = Object.freeze({
           ...this.policy,
           reducedMotion: event.matches,
-          motionScale: event.matches ? 0 : 1,
+          motionScale: event.matches
+            ? 0
+            : config.motionScale,
+          continuousMotion:
+            !event.matches &&
+            config.continuousMotion,
         });
 
         if (event.matches) {
@@ -290,7 +344,15 @@ export class VineExpansionRenderer {
       this.app.ticker.stop();
       return;
     }
-    const deltaMS = Math.min(50, Math.max(0, Number(ticker?.deltaMS) || 16.67));
+    const deltaMS = Math.min(
+      50,
+      Math.max(
+        0,
+        Number(ticker?.deltaMS) || 16.67
+      )
+    );
+
+    this._performanceMonitor?.sample(deltaMS);
     this.time += deltaMS / 1000;
 
     let activeAnimation = false;
@@ -318,10 +380,23 @@ export class VineExpansionRenderer {
 
     this._render();
 
-    const hasMotion = [...this.nodes.values()].some(
-      (node) => node.container.visible && (node.plan.motionScale || 0) > 0
-    );
-    if (!activeAnimation && (!hasMotion || this.policy.reducedMotion || document.hidden)) {
+    const hasMotion =
+      this.policy.continuousMotion &&
+      [...this.nodes.values()].some(
+        (node) =>
+          node.container.visible &&
+          (node.plan.motionScale || 0) > 0
+      );
+
+    if (
+      !activeAnimation &&
+      (
+        !hasMotion ||
+        this.policy.reducedMotion ||
+        document.hidden
+      )
+    ) {
+      this._settleStaticMotion();
       this.app.ticker.stop();
     }
   }
@@ -342,9 +417,12 @@ export class VineExpansionRenderer {
       const sway =
         this.policy.reducedMotion
           ? 0
-          : Math.sin(this.time * 0.70 + plan.phase) *
+          : Math.sin(
+              this.time * 0.70 + plan.phase
+            ) *
             0.55 *
-            (plan.motionScale || 0);
+            (plan.motionScale || 0) *
+            (this.policy.motionScale ?? 1);
 
       node.container.position.y = sway;
       node.container.alpha = Math.min(1, 0.88 + reactionBoost * 0.12);
@@ -386,6 +464,66 @@ export class VineExpansionRenderer {
     this.app.renderer.render(this.app.stage);
   }
 
+  _applyQualityTier(event) {
+    if (!event?.tier || !this.policy) {
+      return;
+    }
+
+    const config =
+      event.config ||
+      getQualityConfig(event.tier);
+    const maxFPS = Math.min(
+      this._baseMaxFPS,
+      config.maxFPS,
+      45
+    );
+
+    this.policy = Object.freeze({
+      ...this.policy,
+      qualityTier: event.tier,
+      qualityScale: config.qualityScale,
+      foliageScale: config.foliageScale,
+      flowerScale: config.flowerScale,
+      motionScale:
+        this.policy.reducedMotion
+          ? 0
+          : config.motionScale,
+      continuousMotion:
+        !this.policy.reducedMotion &&
+        config.continuousMotion,
+      maxFPS,
+    });
+
+    if (this.app) {
+      this.app.ticker.maxFPS = maxFPS;
+    }
+  }
+
+  _settleStaticMotion() {
+    for (const node of this.nodes.values()) {
+      if (node.container.visible) {
+        node.container.position.set(0, 0);
+      }
+    }
+    this._render();
+  }
+
+  getPerformanceSnapshot() {
+    return Object.freeze({
+      qualityTier:
+        this.policy?.qualityTier ||
+        'unknown',
+      maxFPS:
+        this.policy?.maxFPS || 0,
+      nodes: this.nodes.size,
+      continuousMotion:
+        this.policy?.continuousMotion !== false,
+      monitor:
+        this._performanceMonitor?.snapshot() ||
+        null,
+    });
+  }
+
   resize() {
     if (!this.app) return;
     if (typeof this.app.resize === 'function') this.app.resize();
@@ -424,6 +562,8 @@ export class VineExpansionRenderer {
     }
     this._motionQuery = null;
     this._motionHandler = null;
+
+    this._performanceMonitor = null;
 
     if (this.app) {
       try {

@@ -1,4 +1,9 @@
-export const PIXI_RUNTIME_POLICY_VERSION = 1;
+import {
+  deriveInitialQualityTier,
+  getQualityConfig,
+} from './adaptive-performance.mjs';
+
+export const PIXI_RUNTIME_POLICY_VERSION = 2;
 export const PIXI_VERSION = '8.21.0';
 
 export const PIXI_LAYER_ORDER = Object.freeze([
@@ -43,16 +48,31 @@ export function derivePixiRuntimePolicy(input = {}) {
     deviceMemory <= 4 ||
     hardwareConcurrency <= 4;
 
+  const qualityTier = deriveInitialQualityTier({
+    profile,
+    deviceMemory,
+    hardwareConcurrency,
+    saveData,
+    reducedMotion,
+    constrainedDevice,
+  });
+  const qualityConfig = getQualityConfig(qualityTier);
+
   let resolutionCap;
   if (saveData) resolutionCap = 1;
   else if (profile === 'mobile') resolutionCap = constrainedDevice ? 1.25 : 1.5;
   else if (profile === 'tablet') resolutionCap = constrainedDevice ? 1.5 : 1.75;
   else resolutionCap = constrainedDevice ? 1.5 : 2;
 
-  let maxFPS;
-  if (saveData) maxFPS = 30;
-  else if (profile === 'mobile') maxFPS = constrainedDevice ? 30 : 45;
-  else maxFPS = constrainedDevice ? 45 : 60;
+  let baseMaxFPS;
+  if (saveData) baseMaxFPS = 30;
+  else if (profile === 'mobile') baseMaxFPS = constrainedDevice ? 30 : 45;
+  else baseMaxFPS = constrainedDevice ? 45 : 60;
+
+  const maxFPS = Math.min(
+    baseMaxFPS,
+    qualityConfig.maxFPS
+  );
 
   return Object.freeze({
     version: PIXI_RUNTIME_POLICY_VERSION,
@@ -61,10 +81,22 @@ export function derivePixiRuntimePolicy(input = {}) {
     constrainedDevice,
     saveData,
     reducedMotion,
-    motionScale: reducedMotion ? 0 : 1,
+    qualityTier,
+    qualityScale: qualityConfig.qualityScale,
+    foliageScale: qualityConfig.foliageScale,
+    flowerScale: qualityConfig.flowerScale,
+    motionScale: reducedMotion
+      ? 0
+      : qualityConfig.motionScale,
+    continuousMotion:
+      !reducedMotion &&
+      qualityConfig.continuousMotion,
+    geometryRefreshMinMs:
+      qualityConfig.geometryRefreshMinMs,
     resolution: clamp(devicePixelRatio, 1, resolutionCap),
     resolutionCap,
     maxFPS,
+    frameBudgetMs: 1000 / maxFPS,
     antialias: profile === 'desktop' && !constrainedDevice,
     powerPreference: profile === 'desktop' && !saveData
       ? 'high-performance'

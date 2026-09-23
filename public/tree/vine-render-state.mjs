@@ -21,21 +21,20 @@ function vitalityFallback(vitality) {
   };
 }
 
-function structureFallback(source, maturity) {
-  const legacy = source.structuralGrowth || {};
+function structureFallback(_source, maturity) {
   const p = clamp01(maturity);
   return {
-    rootEstablishment: clamp01(finite(legacy.rootSpread, 0.08 + 0.92 * p)),
-    baseStemThickness: clamp01(finite(legacy.trunkThickness, 0.025 + 0.975 * p)),
-    woodyMaturity: clamp01(finite(legacy.barkMaturity, Math.max(0, (p - 0.18) / 0.82))),
-    mainStemReach: clamp01(finite(legacy.trunkHeight, p)),
-    cordonReach: clamp01(finite(legacy.branchDevelopment, Math.max(0, (p - 0.13) / 0.75))),
-    cordonThickness: clamp01(finite(legacy.trunkThickness, p * 0.9)),
-    lateralShootDevelopment: clamp01(finite(legacy.branchComplexity, Math.max(0, (p - 0.22) / 0.7))),
-    vineComplexity: clamp01(finite(legacy.branchComplexity, p)),
-    foliageCapacity: clamp01(finite(legacy.canopyCapacity, p)),
+    rootEstablishment: clamp01(0.08 + 0.92 * Math.pow(p, 0.60)),
+    baseStemThickness: clamp01(0.025 + 0.975 * Math.pow(p, 0.76)),
+    woodyMaturity: clamp01(Math.max(0, (p - 0.18) / 0.78)),
+    mainStemReach: clamp01(0.06 + 0.94 * (1 - Math.pow(1 - p, 1.75))),
+    cordonReach: clamp01(Math.max(0, (p - 0.13) / 0.75)),
+    cordonThickness: clamp01(0.02 + 0.98 * Math.max(0, (p - 0.17) / 0.83)),
+    lateralShootDevelopment: clamp01(Math.max(0, (p - 0.22) / 0.70)),
+    vineComplexity: clamp01(Math.max(0, (p - 0.18) / 0.82)),
+    foliageCapacity: clamp01(0.04 + 0.96 * Math.max(0, (p - 0.08) / 0.86)),
     floweringCapacity: clamp01(Math.max(0, (p - 0.48) / 0.32)),
-    fruitingCapacity: clamp01(finite(legacy.fruitingCapacity, Math.max(0, (p - 0.57) / 0.32))),
+    fruitingCapacity: clamp01(Math.max(0, (p - 0.57) / 0.32)),
   };
 }
 
@@ -50,11 +49,11 @@ export function normalizeVineRenderState(input = {}) {
   const vineHealth = {
     leafDensity: clamp01(finite(healthSource?.leafDensity, healthFallback.leafDensity)),
     leafRetention: clamp01(finite(healthSource?.leafRetention, healthFallback.leafRetention)),
-    leafDroop: clamp01(finite(healthSource?.leafDroop, input.visualHealth?.droop ?? healthFallback.leafDroop)),
-    leafSaturation: clamp01(finite(healthSource?.leafSaturation, input.visualHealth?.saturation ?? healthFallback.leafSaturation)),
-    movementStrength: clamp01(finite(healthSource?.movementStrength, input.visualHealth?.movementStrength ?? healthFallback.movementStrength)),
+    leafDroop: clamp01(finite(healthSource?.leafDroop, healthFallback.leafDroop)),
+    leafSaturation: clamp01(finite(healthSource?.leafSaturation, healthFallback.leafSaturation)),
+    movementStrength: clamp01(finite(healthSource?.movementStrength, healthFallback.movementStrength)),
     shootVigor: clamp01(finite(healthSource?.shootVigor, healthFallback.shootVigor)),
-    flowerVigor: clamp01(finite(healthSource?.flowerVigor, input.visualHealth?.bloomStrength ?? healthFallback.flowerVigor)),
+    flowerVigor: clamp01(finite(healthSource?.flowerVigor, healthFallback.flowerVigor)),
     stress: clamp01(finite(healthSource?.stress, healthFallback.stress)),
   };
 

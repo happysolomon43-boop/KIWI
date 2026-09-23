@@ -1,6 +1,6 @@
 'use strict';
 
-const VINE_GROWTH_MODEL_VERSION = 2;
+const VINE_GROWTH_MODEL_VERSION = 3;
 
 const VINE_GROWTH_THRESHOLDS = Object.freeze([
   Object.freeze({ stage: 1, growthPoints: 0, label: 'SEEDLING' }),
@@ -292,31 +292,6 @@ function computeVineHealth(vitality) {
   };
 }
 
-function toLegacyStructuralGrowth(vineStructure) {
-  return {
-    trunkHeight: vineStructure.mainStemReach,
-    trunkThickness: vineStructure.baseStemThickness,
-    rootSpread: vineStructure.rootEstablishment,
-    branchDevelopment: vineStructure.cordonReach,
-    branchComplexity: vineStructure.vineComplexity,
-    canopyCapacity: vineStructure.foliageCapacity,
-    barkMaturity: vineStructure.woodyMaturity,
-    fruitingCapacity: vineStructure.fruitingCapacity,
-  };
-}
-
-function toLegacyVisualHealth(vineHealth) {
-  return {
-    leafDensity: vineHealth.leafDensity,
-    leafRetention: vineHealth.leafRetention,
-    droop: vineHealth.leafDroop,
-    saturation: vineHealth.leafSaturation,
-    movementStrength: vineHealth.movementStrength,
-    bloomStrength: vineHealth.flowerVigor,
-    stress: vineHealth.stress,
-  };
-}
-
 function computeContinuousVineGrowth(input) {
   const source = input && typeof input === 'object' ? input : {};
   const position = computeGrowthPosition(source.growthPoints, source.stage);
@@ -331,10 +306,6 @@ function computeContinuousVineGrowth(input) {
     ...position,
     vineStructure,
     vineHealth,
-
-    // Compatibility aliases for the current pre-Pixi tree renderer contract.
-    structuralGrowth: toLegacyStructuralGrowth(vineStructure),
-    visualHealth: toLegacyVisualHealth(vineHealth),
   };
 }
 
@@ -349,6 +320,4 @@ module.exports = {
   computeVineStructure,
   computeVineHealth,
   computeContinuousVineGrowth,
-  toLegacyStructuralGrowth,
-  toLegacyVisualHealth,
 };

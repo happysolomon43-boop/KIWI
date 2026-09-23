@@ -16,7 +16,7 @@ const {
 } = require('../../services/vine-growth-model');
 
 test('vine model stays aligned with Ecosystem V2 growth thresholds', () => {
-  assert.equal(VINE_GROWTH_MODEL_VERSION, 2);
+  assert.equal(VINE_GROWTH_MODEL_VERSION, 3);
   assert.deepEqual(VINE_GROWTH_THRESHOLDS, ecosystem.TREE_GROWTH_THRESHOLDS);
 });
 
@@ -187,6 +187,19 @@ test('Vitality changes reversible vine health but never permanent structure', ()
     healthy.vineHealth.leafSaturation > critical.vineHealth.leafSaturation
   );
   assert.ok(healthy.vineHealth.shootVigor > critical.vineHealth.shootVigor);
+});
+
+test('continuous vine growth exposes only vine-native morphology and health', () => {
+  const result = computeContinuousVineGrowth({
+    growthPoints: 900,
+    stage: 5,
+    vitality: 80,
+  });
+
+  assert.ok(result.vineStructure);
+  assert.ok(result.vineHealth);
+  assert.equal(Object.hasOwn(result, 'structuralGrowth'), false);
+  assert.equal(Object.hasOwn(result, 'visualHealth'), false);
 });
 
 test('vine health outputs stay bounded and reversible', () => {
