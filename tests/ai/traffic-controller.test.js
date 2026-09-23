@@ -39,12 +39,13 @@ test('traffic controller enforces global concurrency and prioritizes VVIP over q
   assert.equal(controller.snapshot().queued, 0);
 });
 
-test('provider congestion automatically contracts admission concurrency', () => {
+test('provider congestion contracts admission progressively instead of collapsing on one signal', () => {
   const controller = createAITrafficController({
     env: {
       AI_GLOBAL_CONCURRENCY: '6',
       AI_CONGESTION_SIGNAL_WINDOW_MS: '30000',
     },
+    logger: { warn() {}, log() {} },
   });
 
   assert.equal(controller.snapshot().effectiveConcurrency, 6);
@@ -54,11 +55,24 @@ test('provider congestion automatically contracts admission concurrency', () => 
     code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
     status: 503,
     retryable: true,
-  }));
+  }), { modelId: 'm1', projectSlot: 'p1' });
+  assert.equal(controller.snapshot().effectiveConcurrency, 4);
+  assert.equal(controller.snapshot().congestionLevel, 'ELEVATED');
+
+  controller.noteFailure(new AIError('overloaded again', {
+    code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    status: 503,
+    retryable: true,
+  }), { modelId: 'm1', projectSlot: 'p2' });
   assert.equal(controller.snapshot().effectiveConcurrency, 2);
   assert.equal(controller.snapshot().congestionLevel, 'HIGH');
 
-  controller.noteFailure(new AIError('overloaded again', {
+  controller.noteFailure(new AIError('more overload', {
+    code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    status: 503,
+    retryable: true,
+  }));
+  controller.noteFailure(new AIError('provider severe', {
     code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
     status: 503,
     retryable: true,
@@ -67,7 +81,7 @@ test('provider congestion automatically contracts admission concurrency', () => 
   assert.equal(controller.snapshot().congestionLevel, 'SEVERE');
 });
 
-test('project rate limits apply lighter central backpressure than provider overload', () => {
+test('project rate limits remain route-scoped and do not globally throttle traffic', () => {
   const controller = createAITrafficController({
     env: { AI_GLOBAL_CONCURRENCY: '6' },
   });
@@ -79,9 +93,38 @@ test('project rate limits apply lighter central backpressure than provider overl
   }));
 
   const state = controller.snapshot();
-  assert.equal(state.congestionLevel, 'ELEVATED');
-  assert.equal(state.effectiveConcurrency, 4);
-  assert.equal(state.recentSignals.RATE_LIMIT_RPM, 1);
+  assert.equal(state.congestionLevel, 'NORMAL');
+  assert.equal(state.effectiveConcurrency, 6);
+  assert.equal(state.recentSignals.RATE_LIMIT_RPM, undefined);
+});
+
+test('provider congestion recovers automatically when the evidence window expires', () => {
+  let now = 1000;
+  const controller = createAITrafficController({
+    env: {
+      AI_GLOBAL_CONCURRENCY: '6',
+      AI_CONGESTION_SIGNAL_WINDOW_MS: '5000',
+    },
+    clock: () => now,
+    logger: { warn() {}, log() {} },
+  });
+
+  controller.noteFailure(new AIError('overloaded', {
+    code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    status: 503,
+    retryable: true,
+  }));
+  controller.noteFailure(new AIError('overloaded again', {
+    code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    status: 503,
+    retryable: true,
+  }));
+  assert.equal(controller.snapshot().effectiveConcurrency, 2);
+
+  now += 5001;
+  const recovered = controller.snapshot();
+  assert.equal(recovered.effectiveConcurrency, 6);
+  assert.equal(recovered.congestionLevel, 'NORMAL');
 });
 
 test('queue timeout returns a retryable orchestrator availability error', async () => {
@@ -159,4 +202,35 @@ test('full queue fails fast instead of growing without bounds', async () => {
   }
 
   assert.equal(controller.snapshot().rejectedOverflowTotal, 1);
+});
+
+
+test('traffic snapshot exposes queue pressure without request content', async () => {
+  let now = 1000;
+  const controller = createAITrafficController({
+    env: {
+      AI_GLOBAL_CONCURRENCY: '1',
+      AI_MAX_QUEUE_DEPTH: '10',
+    },
+    clock: () => now,
+  });
+
+  const first = await controller.acquire({ taskId: 'hold', taskClass: 'VVIP' });
+  const waiting = controller.acquire({ taskId: 'queued', taskClass: 'VIP' });
+  now += 125;
+
+  let state = controller.snapshot();
+  assert.equal(state.queued, 1);
+  assert.equal(state.oldestQueueAgeMs, 125);
+  assert.equal(state.maxObservedQueue, 1);
+
+  first.release();
+  const second = await waiting;
+  assert.equal(second.queueWaitMs, 125);
+  second.release();
+
+  state = controller.snapshot();
+  assert.equal(state.averageQueueWaitMs, 63);
+  assert.equal(state.maxQueueWaitMs, 125);
+  assert.doesNotMatch(JSON.stringify(state), /prompt|apiKey|study notes/i);
 });
