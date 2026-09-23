@@ -76,6 +76,48 @@ function createPostgresAIStore({ query, randomUUID }) {
     return rows;
   }
 
+  async function loadProviderModelHealth() {
+    const { rows } = await query(
+      `SELECT *
+       FROM ai_provider_model_health
+       ORDER BY model_id ASC`
+    );
+    return rows;
+  }
+
+  async function upsertProviderModelHealth(state) {
+    const { rows } = await query(
+      `INSERT INTO ai_provider_model_health (
+         model_id, state, open_until, failure_slots,
+         last_error_code, last_http_status,
+         last_failure_at, last_success_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4::jsonb,$5,$6,$7,$8,now()
+       )
+       ON CONFLICT (model_id) DO UPDATE SET
+         state = EXCLUDED.state,
+         open_until = EXCLUDED.open_until,
+         failure_slots = EXCLUDED.failure_slots,
+         last_error_code = EXCLUDED.last_error_code,
+         last_http_status = EXCLUDED.last_http_status,
+         last_failure_at = EXCLUDED.last_failure_at,
+         last_success_at = EXCLUDED.last_success_at,
+         updated_at = now()
+       RETURNING *`,
+      [
+        state.modelId,
+        state.state,
+        state.openUntil || null,
+        json(state.failureSlots || []),
+        state.lastErrorCode || null,
+        state.lastHttpStatus ?? null,
+        state.lastFailureAt || null,
+        state.lastSuccessAt || null,
+      ]
+    );
+    return rows[0] || null;
+  }
+
   async function upsertProjectModelState(state) {
     const { rows } = await query(
       `INSERT INTO ai_project_model_state (
@@ -218,7 +260,10 @@ function createPostgresAIStore({ query, randomUUID }) {
          total_tokens = $11,
          finish_reason = $12,
          error_code = $13,
-         completed_at = COALESCE($14, now())
+         completed_at = COALESCE($14, now()),
+         queue_wait_ms = $15,
+         admission_limit = $16,
+         congestion_level = $17
        WHERE id = $1`,
       [
         id,
@@ -235,6 +280,9 @@ function createPostgresAIStore({ query, randomUUID }) {
         record.finishReason || null,
         record.errorCode || null,
         record.completedAt || null,
+        Number(record.queueWaitMs) || 0,
+        record.admissionLimit == null ? null : Number(record.admissionLimit),
+        record.congestionLevel || null,
       ]
     );
   }
@@ -374,6 +422,8 @@ function createPostgresAIStore({ query, randomUUID }) {
     loadCatalogModels,
     loadProjectModelStates,
     upsertProjectModelState,
+    loadProviderModelHealth,
+    upsertProviderModelHealth,
     recordModelQualification,
     latestModelQualification,
     createRequest,
