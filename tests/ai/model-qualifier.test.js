@@ -188,3 +188,58 @@ test('transient qualification failures stay DISCOVERED for a later retry', async
   assert.equal(result.status, 'INCONCLUSIVE');
   assert.equal(catalog.get(model.id).status, MODEL_STATUS.DISCOVERED);
 });
+
+
+test('model qualification uses low-priority central AI traffic admission', async () => {
+  const catalog = createModelCatalog();
+  const model = candidateModel('gemini-4.0-flash');
+  catalog.upsert(model);
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel() {} },
+    logger: { warn() {} },
+  });
+
+  const admissions = [];
+  let releases = 0;
+  let successes = 0;
+  const trafficController = {
+    async acquire(request) {
+      admissions.push(request);
+      return { release() { releases += 1; } };
+    },
+    noteSuccess() { successes += 1; },
+    noteFailure() {},
+  };
+
+  const qualifier = createModelQualifier({
+    transport: {
+      async generate(args) {
+        const level = args.generationConfig.thinkingConfig.thinkingLevel;
+        return {
+          raw: okRaw(level === 'high' ? '{"ok":true}' : 'OK'),
+          latencyMs: 1,
+        };
+      },
+    },
+    projectPool: projectPool(),
+    quotaManager: {
+      isEligible() { return true; },
+      async markSuccess() {},
+      async markFailure() {},
+    },
+    trafficController,
+    lifecycle,
+    store: { async recordModelQualification() {} },
+    logger: { log() {}, warn() {} },
+    env: {},
+  });
+
+  const result = await qualifier.qualify(model);
+  assert.equal(result.status, 'PASSED');
+  assert.ok(admissions.length >= 2);
+  assert.ok(admissions.every((entry) => entry.taskId === 'MODEL_QUALIFICATION'));
+  assert.ok(admissions.every((entry) => entry.taskClass === 'IP'));
+  assert.equal(releases, admissions.length);
+  assert.equal(successes, admissions.length);
+});
