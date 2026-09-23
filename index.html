@@ -7625,6 +7625,13 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         });
       };
 
+      api.flagAdaptiveReckoningQuestion = async (examId, questionNumber) => {
+        return await apiRequest("/exams/" + encodeURIComponent(examId) + "/flag-question", {
+          method: "POST",
+          body: { question_number: questionNumber },
+        });
+      };
+
       api.getActiveReckoning = async () => {
         return await apiRequest("/brain/reckoning/active");
       };
@@ -14393,6 +14400,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             state: api.getAdaptiveReckoningState,
             answer: api.answerAdaptiveReckoning,
             finalize: api.finalizeAdaptiveReckoning,
+            flag: api.flagAdaptiveReckoningQuestion,
           },
           notify: (message, type) => showToast(message, type || "info"),
           onLock: () => {
