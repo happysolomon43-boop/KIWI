@@ -14454,6 +14454,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         container.innerHTML = `
           <div class="reckoning-overlay" id="adaptiveReckoningPreparing">
             <div class="reckoning-card" style="max-width:640px;">
+              ${_adaptiveUtilityButtonsHtml()}
               <div style="width:48px;height:48px;margin:0 auto 18px;color:var(--red-bright);">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%;animation:spin 1.7s linear infinite;"><circle cx="12" cy="12" r="9" stroke-dasharray="42 18"/></svg>
               </div>
@@ -14467,6 +14468,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               <div style="font-size:var(--text-xs);color:var(--text-4);">You can refresh safely. Preparation state lives on KIWI, not in this browser.</div>
             </div>
           </div>`;
+        _bindAdaptiveUtilityButtons();
       }
 
       async function _pollAdaptiveReckoningReadiness(reckoningId, timeoutMs = 10 * 60 * 1000) {
@@ -14574,6 +14576,17 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         if (!state || !state.examSessionId) return false;
 
         AppState.adaptiveReckoning = state;
+        AppState.reckoning = {
+          ...(AppState.reckoning || {}),
+          id: state.reckoningId || AppState.reckoning?.id,
+          status: state.enginePhase === "COMPLETE"
+            ? (state.finalReport?.reckoning?.status || "completed")
+            : "in_progress",
+          exam_session_id: state.examSessionId,
+          engine_version: 2,
+          engine_mode: state.engineMode || "LIVE",
+          engine_phase: state.enginePhase || "ACTIVE",
+        };
         _adaptivePreparationPollToken += 1;
         _lockExamPage(true);
         _setReckoningLockdownUi(true);
@@ -14793,6 +14806,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         AppState.adaptiveReckoning = state;
 
         const survived = report?.survived === true;
+        const outcomeStatus = String(report?.reckoning?.status || "");
+        const failsafeReleased =
+          outcomeStatus === "failsafe_released" ||
+          report?.reckoning?.failsafe_released === true;
+        const lockReleased = survived || failsafeReleased || outcomeStatus === "completed";
         const recovered = Array.isArray(report?.recovered) ? report.recovered : [];
         const unresolved = Array.isArray(report?.unresolved) ? report.unresolved : [];
         const discovered = Array.isArray(report?.discoveredByControl) ? report.discoveredByControl : [];
@@ -14805,15 +14823,27 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           return "Recorded";
         };
 
-        if (survived) _setReckoningLockdownUi(false);
+        _setReckoningLockdownUi(!lockReleased);
+        if (lockReleased) AppState.reckoning = null;
+        else if (report?.reckoning) {
+          AppState.reckoning = {
+            ...(AppState.reckoning || {}),
+            ...report.reckoning,
+            engine_version: 2,
+          };
+        }
         container.innerHTML = `
           <div class="reckoning-overlay" id="adaptiveReckoningFinal" style="overflow:auto;padding:24px 16px;">
             <div style="width:min(820px,100%);margin:auto;padding:20px 0 36px;">
-              ${survived ? "" : _adaptiveUtilityButtonsHtml()}
-              <div class="card" style="padding:28px;border-color:${survived ? "rgba(82,183,136,.45)" : "rgba(224,82,82,.45)"};">
-                <div style="font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:1.4px;text-transform:uppercase;color:${survived ? "var(--green-bright)" : "var(--red-bright)"};">Reckoning complete</div>
-                <div style="font-family:var(--font-display);font-size:clamp(28px,7vw,42px);font-weight:800;margin:7px 0 8px;color:var(--text);">${survived ? "Recovery confirmed" : "Recovery incomplete"}</div>
-                <div style="font-size:var(--text-base);line-height:1.7;color:var(--text-2);">${survived ? "KIWI has enough evidence to release the emergency state. Long-term mastery still requires future spaced evidence." : "The review found knowledge that is still unsafe to trust. The surrounding Reckoning rules remain in force."}</div>
+              ${lockReleased ? "" : _adaptiveUtilityButtonsHtml()}
+              <div class="card" style="padding:28px;border-color:${lockReleased ? "rgba(82,183,136,.45)" : "rgba(224,82,82,.45)"};">
+                <div style="font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:1.4px;text-transform:uppercase;color:${lockReleased ? "var(--green-bright)" : "var(--red-bright)"};">Reckoning complete</div>
+                <div style="font-family:var(--font-display);font-size:clamp(28px,7vw,42px);font-weight:800;margin:7px 0 8px;color:var(--text);">${survived ? "Recovery confirmed" : failsafeReleased ? "Failsafe release applied" : "Recovery incomplete"}</div>
+                <div style="font-size:var(--text-base);line-height:1.7;color:var(--text-2);">${survived
+                  ? "KIWI has enough evidence to release the emergency state. Long-term mastery still requires future spaced evidence."
+                  : failsafeReleased
+                    ? "Recovery was not confirmed after the maximum failed attempts. The lockdown has been released by the failsafe and the subject Knowledge Score penalty has been applied."
+                    : "The review found knowledge that is still unsafe to trust. The surrounding Reckoning rules remain in force."}</div>
               </div>
 
               <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0;">
@@ -14847,24 +14877,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 ${ks && ks.after != null ? `<div style="margin-top:12px;font-size:var(--text-sm);color:var(--text-2);">Knowledge Score: <strong style="color:var(--text);">${Number(ks.after).toFixed(1)}</strong>${ks.delta != null ? " (" + (Number(ks.delta) >= 0 ? "+" : "") + Number(ks.delta).toFixed(1) + ")" : ""}</div>` : ""}
               </div>
 
-              <button class="btn btn-primary btn-lg" id="adaptiveFinalReturnBtn" style="width:100%;">${survived ? "Return to Brain" : "Review next Reckoning step"}</button>
+              <button class="btn btn-primary btn-lg" id="adaptiveFinalReturnBtn" style="width:100%;">${lockReleased ? "Return to Brain" : "Retry The Reckoning"}</button>
             </div>
           </div>`;
 
-        if (!survived) _bindAdaptiveUtilityButtons();
+        if (!lockReleased) _bindAdaptiveUtilityButtons();
         document.getElementById("adaptiveFinalReturnBtn")?.addEventListener("click", async () => {
           _closeReckoningSurface();
           AppState.adaptiveReckoning = null;
           AppState.brain = null;
-          if (survived) {
+          if (lockReleased) {
             AppState.reckoning = null;
             _setReckoningLockdownUi(false);
             navigateTo("brain");
             return;
           }
           _setReckoningLockdownUi(true);
-          const restored = await _restoreActiveReckoningExam();
-          if (!restored) navigateTo("brain", { fromReckoning: true });
+          try {
+            const active = await apiRequest("/brain/reckoning/active");
+            if (active && active.id) {
+              AppState.reckoning = active;
+              showReckoningOverlay(active, {
+                force: true,
+                forceLockoutOverlay: true,
+                mandatory: _isMandatoryReckoning(active),
+              });
+              return;
+            }
+          } catch (_) {}
+          navigateTo("brain", { fromReckoning: true });
         });
       }
 
