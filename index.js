@@ -9018,7 +9018,7 @@ async function applyReckoningFailsafePenalty(userId, subjectId, reckoningId, fai
 function normalizeReckoningCompletion(scoreOrRecovery) {
   if (scoreOrRecovery && typeof scoreOrRecovery === 'object') {
     return {
-      scorePct: Number(scoreOrRecovery.rawAccuracy) || 0,
+      scorePct: Number(scoreOrRecovery.adjustedAccuracy ?? scoreOrRecovery.rawAccuracy) || 0,
       survived: scoreOrRecovery.survived === true,
       recoveryScore: Number(scoreOrRecovery.recoveryScore) || 0,
       unresolvedCriticalCount:
@@ -9054,7 +9054,7 @@ async function finalizeAdaptiveReckoningOutcome({
     ks = await finalizeExamKsOutcome(
       userId,
       exam,
-      recovery.rawAccuracy,
+      recovery.adjustedAccuracy ?? recovery.rawAccuracy,
       _finiteKsNumber(exam.ks_before)
     );
   } else {
@@ -17065,12 +17065,39 @@ try {
   const question = exam.questions.find((item) => String(item.question_number) === String(question_number));
   if (!question) return res.status(404).json({ error: 'Question not found' });
 
-  if (question.flagged_by_student && question.ai_audit_status === 'reviewed') {
-    return res.json({ ok: true, status: 'reviewed' });
+  if (isAdaptiveReckoningQuestion(question)) {
+    const adaptiveSession = await liveReckoningStore.getSessionByExam(
+      exam.id,
+      req.user.id
+    );
+    if (
+      !adaptiveSession ||
+      adaptiveSession.engine_phase !== 'ACTIVE' ||
+      String(adaptiveSession.current_question_id || '') !== String(question.id) ||
+      question.is_unlocked !== true ||
+      question.selected_option != null
+    ) {
+      return res.status(409).json({
+        error: 'Only the current unanswered adaptive Reckoning question can be reviewed.',
+        code: 'RECKONING_FLAG_CURRENT_ONLY',
+      });
+    }
   }
 
-  await auditCBTQuestion(req.user.id, exam, question);
-  res.json({ ok: true, status: 'reviewed' });
+  if (question.flagged_by_student && question.ai_audit_status === 'reviewed') {
+    return res.json({
+      ok: true,
+      status: 'reviewed',
+      bonus_awarded: question.bonus_awarded === true,
+    });
+  }
+
+  const auditResult = await auditCBTQuestion(req.user.id, exam, question);
+  res.json({
+    ok: true,
+    status: 'reviewed',
+    bonus_awarded: auditResult?.bonus_awarded === true,
+  });
 } catch (e) {
   res.status(503).json({
     error: 'Question review could not be completed yet. You can continue the exam and try the flag again.',
