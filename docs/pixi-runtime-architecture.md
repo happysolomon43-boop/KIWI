@@ -1,3 +1,5 @@
+> **Historical phase note:** This document records the Phase 7 runtime introduction. The final production renderer architecture is defined in `docs/vine-phases-14-15.md` and `docs/tree-state-architecture.md`; references below to the SVG renderer being authoritative are no longer current.
+
 # KIWI PixiJS Runtime Infrastructure — Phase 7
 
 ## Scope
