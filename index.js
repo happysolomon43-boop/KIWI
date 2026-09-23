@@ -17170,12 +17170,35 @@ try {
   const question = exam.questions.find((item) => String(item.question_number) === String(question_number));
   if (!question) return res.status(404).json({ error: 'Question not found' });
 
+  const adaptiveQuestion = isAdaptiveReckoningQuestion(question);
+  let auditResult = null;
+
   if (question.flagged_by_student && question.ai_audit_status === 'reviewed') {
-    return res.json({ ok: true, status: 'reviewed' });
+    auditResult = {
+      status: 'reviewed',
+      bonus_awarded: question.bonus_awarded === true,
+      audit: question.ai_audit_result || null,
+    };
+  } else {
+    auditResult = await auditCBTQuestion(req.user.id, exam, question);
   }
 
-  await auditCBTQuestion(req.user.id, exam, question);
-  res.json({ ok: true, status: 'reviewed' });
+  let adaptiveState = null;
+  if (adaptiveQuestion && auditResult?.bonus_awarded === true) {
+    adaptiveState = await adaptiveReckoningEngine.adjudicateDefectiveQuestion({
+      examSessionId: exam.id,
+      userId: req.user.id,
+      questionId: question.id,
+      audit: auditResult.audit || {},
+    });
+  }
+
+  res.json({
+    ok: true,
+    status: 'reviewed',
+    defective: auditResult?.bonus_awarded === true,
+    adaptive_state: adaptiveState,
+  });
 } catch (e) {
   res.status(503).json({
     error: 'Question review could not be completed yet. You can continue the exam and try the flag again.',
