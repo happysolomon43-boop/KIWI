@@ -219,14 +219,13 @@ test('web build preserves root assets and includes the local Pixi runtime', () =
   }
 });
 
-test('Vercel serves the generated dist directory with filesystem precedence', () => {
+test('Vercel uses the modern build command and dist output with filesystem precedence', () => {
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 
-  assert.equal(config.version, 2);
-  assert.equal(config.builds.length, 1);
-  assert.equal(config.builds[0].src, 'package.json');
-  assert.equal(config.builds[0].use, '@vercel/static-build');
-  assert.equal(config.builds[0].config.distDir, 'dist');
+  assert.equal(config.$schema, 'https://openapi.vercel.sh/vercel.json');
+  assert.equal(config.buildCommand, 'npm run build:web');
+  assert.equal(config.outputDirectory, 'dist');
+  assert.equal(Object.hasOwn(config, 'builds'), false);
   assert.deepEqual(config.routes[0], { handle: 'filesystem' });
   assert.deepEqual(config.routes[1], { src: '/(.*)', dest: '/index.html' });
 });
