@@ -16874,6 +16874,14 @@ examRouter.get('/:id/reckoning/state', async (req, res) => {
       examSessionId: req.params.id,
       userId: req.user.id,
     });
+    if (state.safetyExpired && state.enginePhase === 'ACTIVE') {
+      const finalResult = await adaptiveReckoningEngine.finalize({
+        examSessionId: req.params.id,
+        userId: req.user.id,
+        forceReason: 'SAFETY_EXPIRED',
+      });
+      return res.json(finalResult);
+    }
     res.json(state);
   } catch (error) {
     res.status(error.status || 500).json({
@@ -16898,6 +16906,19 @@ examRouter.post('/:id/reckoning/answer', async (req, res) => {
       });
     }
 
+    const currentState = await adaptiveReckoningEngine.getState({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    if (currentState.safetyExpired && currentState.enginePhase === 'ACTIVE') {
+      const finalResult = await adaptiveReckoningEngine.finalize({
+        examSessionId: req.params.id,
+        userId: req.user.id,
+        forceReason: 'SAFETY_EXPIRED',
+      });
+      return res.json(finalResult);
+    }
+
     const result = await adaptiveReckoningEngine.recordAnswer({
       examSessionId: req.params.id,
       userId: req.user.id,
@@ -16911,6 +16932,33 @@ examRouter.post('/:id/reckoning/answer', async (req, res) => {
     res.status(error.status || 500).json({
       error: error.message || 'Failed to record adaptive Reckoning answer',
       code: error.code || 'ERR_RECKONING_ANSWER',
+    });
+  }
+});
+
+examRouter.post('/:id/reckoning/continue', async (req, res) => {
+  try {
+    const state = await adaptiveReckoningEngine.getState({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    if (state.safetyExpired && state.enginePhase === 'ACTIVE') {
+      const finalResult = await adaptiveReckoningEngine.finalize({
+        examSessionId: req.params.id,
+        userId: req.user.id,
+        forceReason: 'SAFETY_EXPIRED',
+      });
+      return res.json(finalResult);
+    }
+    const result = await adaptiveReckoningEngine.continueCheckpoint({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to continue adaptive Reckoning',
+      code: error.code || 'ERR_RECKONING_CONTINUE',
     });
   }
 });
@@ -16959,6 +17007,15 @@ examRouter.get('/:id', async (req, res) => {
 try {
 const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (
+  exam.is_reckoning &&
+  (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
+) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning state must be loaded from the V2 state endpoint.',
+    code: 'RECKONING_V2_USE_STATE',
+  });
+}
 // Normalize questions for frontend without leaking the key during a live exam.
 // Completed/forfeited exams may reveal the key and audit outcome for review.
 if (exam.questions && Array.isArray(exam.questions)) {
@@ -17042,6 +17099,12 @@ req.params.id,
 parseInt(req.params.number)
 );
 if (!question) return res.status(404).json({ error: 'Question not found' });
+if (isAdaptiveReckoningQuestion(question)) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning questions are only exposed through the V2 state endpoint.',
+    code: 'RECKONING_V2_USE_STATE',
+  });
+}
 const { correct_answer, explanation, ...safeQuestion } = question;
 res.json(safeQuestion);
 } catch (e) {
@@ -17057,6 +17120,15 @@ try {
   }
   const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
   if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (
+    exam.is_reckoning &&
+    (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
+  ) {
+    return res.status(409).json({
+      error: 'Adaptive Reckoning answers must use the dedicated V2 answer endpoint.',
+      code: 'RECKONING_V2_USE_ADAPTIVE_ENDPOINT',
+    });
+  }
   if (exam.status !== 'active' || !exam.started_at) {
     return res.status(409).json({ error: 'Exam must be active before an answer can be saved' });
   }
@@ -17133,6 +17205,15 @@ return res.status(400).json({ error: 'selected_option must be a single letter A-
 }
 let exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (
+  exam.is_reckoning &&
+  (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
+) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning cannot be submitted through the normal CBT endpoint.',
+    code: 'RECKONING_V2_USE_ADAPTIVE_ENDPOINT',
+  });
+}
 if (exam.status !== 'active' || !exam.started_at) {
   return res.status(409).json({ error: 'Exam must be started before it can be submitted' });
 }
