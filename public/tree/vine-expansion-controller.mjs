@@ -936,6 +936,27 @@ export class VineExpansionController {
     });
   }
 
+  getPerformanceSnapshot() {
+    return Object.freeze({
+      rendererAllocated: !!this.renderer,
+      geometryPolicy: this._geometryPolicy
+        ? Object.freeze({
+            qualityTier: this._geometryPolicy.qualityTier,
+            geometryRefreshMinMs:
+              this._geometryPolicy.geometryRefreshMinMs,
+            maxFPS: this._geometryPolicy.maxFPS,
+            reducedMotion:
+              this._geometryPolicy.reducedMotion,
+            constrainedDevice:
+              this._geometryPolicy.constrainedDevice,
+          })
+        : null,
+      renderer:
+        this.renderer?.getPerformanceSnapshot?.() ||
+        null,
+    });
+  }
+
   async destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
