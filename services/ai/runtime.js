@@ -11,6 +11,8 @@ const { createTelemetry } = require('./telemetry');
 const { createModelLifecycle } = require('./model-lifecycle');
 const { createModelQualifier } = require('./model-qualifier');
 const { createModelDiscoveryManager } = require('./model-discovery');
+const { createProviderHealth } = require('./provider-health');
+const { createAITrafficController } = require('./traffic-controller');
 const { createAIOrchestrator } = require('./orchestrator');
 
 function parseIntervalMs(value, fallback = 15 * 60 * 1000) {
@@ -31,6 +33,12 @@ function parseRetentionDays(value, fallback, min, max) {
   return Math.max(min, Math.min(Math.floor(parsed), max));
 }
 
+function parseBoundedNumber(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(parsed, max));
+}
+
 function createAIRuntime({
   query,
   randomUUID,
@@ -49,6 +57,28 @@ function createAIRuntime({
   const quotaManager = createQuotaManager({ store });
   const telemetry = createTelemetry({ store, logger });
   const modelLifecycle = createModelLifecycle({ catalog, store, logger });
+  const providerHealth = createProviderHealth({
+    store,
+    failureEvidenceWindowMs: parseBoundedNumber(
+      env.AI_PROVIDER_FAILURE_EVIDENCE_WINDOW_MS,
+      30000,
+      5000,
+      300000
+    ),
+    openCooldownMs: parseBoundedNumber(
+      env.AI_MODEL_TRANSIENT_COOLDOWN_MS,
+      20000,
+      5000,
+      120000
+    ),
+    minDistinctFailureSlots: parseBoundedNumber(
+      env.AI_PROVIDER_FAILURE_EVIDENCE_SLOTS,
+      2,
+      1,
+      5
+    ),
+  });
+  const trafficController = createAITrafficController({ env });
   const router = createModelRouter({
     registry: AI_TASKS,
     catalog,
@@ -88,6 +118,10 @@ function createAIRuntime({
     quotaManager,
     telemetry,
     modelLifecycle,
+    providerHealth,
+    trafficController,
+    providerHealth,
+    trafficController,
     transport,
     logger,
     env,
@@ -326,6 +360,9 @@ function createAIRuntime({
     const slots = projectPool.snapshot();
     const quotaRows = quotaManager.snapshot();
     const catalogRows = catalog.list();
+    const providerRows = providerHealth.snapshot();
+    const trafficState = trafficController.snapshot();
+    const recentTelemetry = telemetry.snapshot();
 
     const catalogStates = catalogRows.reduce((acc, model) => {
       acc[model.status] = (acc[model.status] || 0) + 1;
@@ -333,6 +370,10 @@ function createAIRuntime({
     }, {});
 
     const quotaStates = quotaRows.reduce((acc, row) => {
+      acc[row.state] = (acc[row.state] || 0) + 1;
+      return acc;
+    }, {});
+    const providerStates = providerRows.reduce((acc, row) => {
       acc[row.state] = (acc[row.state] || 0) + 1;
       return acc;
     }, {});
@@ -355,6 +396,13 @@ function createAIRuntime({
         trackedRoutes: quotaRows.length,
         states: Object.freeze({ ...quotaStates }),
       }),
+      providerHealth: Object.freeze({
+        trackedModels: providerRows.length,
+        states: Object.freeze({ ...providerStates }),
+        models: Object.freeze(providerRows),
+      }),
+      traffic: trafficState,
+      telemetry: recentTelemetry,
       discovery: Object.freeze({
         enabled: discovery.autoDiscoveryEnabled(),
         autoPromote: discovery.autoPromoteEnabled(),
@@ -393,6 +441,7 @@ function createAIRuntime({
       logger.log(
         `[KIWI AI] orchestrator initialized: ${state.projectSlots} project slot(s), ` +
         `${state.hydratedProjectModelStates} persisted model-state record(s), ` +
+        `${state.hydratedProviderModelHealth} persisted provider-health record(s), ` +
         `${hydratedCatalogModels} persisted catalog model(s)`
       );
     }
@@ -435,5 +484,6 @@ module.exports = {
   parseIntervalMs,
   parseCleanupIntervalMs,
   parseRetentionDays,
+  parseBoundedNumber,
   createAIRuntime,
 };
