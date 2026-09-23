@@ -10,6 +10,7 @@ const { createScheduler } = require('./scheduler');
 const { createScoringEngine } = require('./scoring');
 const { createLearningEffectsEngine } = require('./learning-effects');
 const { createStateMachine } = require('./state-machine');
+const { buildDiagnosticReport } = require('./report');
 
 function field(row, camel, snake, fallback = null) {
   if (row?.[camel] !== undefined) return row[camel];
@@ -115,6 +116,7 @@ function createReckoningEngine(options = {}) {
     options.learningEffectsEngine || createLearningEffectsEngine({ config });
   const stateMachine = options.stateMachine || createStateMachine();
   const outcomeHandler = options.outcomeHandler || null;
+  const preparation = options.preparation || null;
 
   async function buildState(activeStore, {
     examSessionId,
@@ -156,6 +158,34 @@ function createReckoningEngine(options = {}) {
       questionsUsed > 0 &&
       questionsUsed % blockSize === 0 &&
       Boolean(currentQuestion);
+    const checkpoint = checkpointDue
+      ? Object.freeze({
+          recovered: evidenceState.recovered,
+          unresolved: evidenceState.unresolved,
+          provisional:
+            evidenceState.provisional +
+            evidenceState.challengeRequired +
+            evidenceState.confirmationRequired,
+          criticalRemaining: evidenceState.criticalUnresolved,
+          recentMisses: Object.freeze(
+            history
+              .filter((item) => item.isCorrect === false)
+              .slice(-3)
+              .map((item) => Object.freeze({
+                role: item.role,
+                stem: item.stem,
+                explanation: item.explanation,
+              }))
+          ),
+        })
+      : null;
+    const report = phase === SESSION_PHASES.COMPLETE || phase === SESSION_PHASES.FINALIZING
+      ? buildDiagnosticReport({
+          evidence,
+          recovery: score,
+          subjectName: session.subject_name || 'Subject',
+        })
+      : null;
 
     return Object.freeze({
       reckoningId: session.id,
@@ -171,22 +201,74 @@ function createReckoningEngine(options = {}) {
       stateVersion: Number(session.state_version) || 0,
       safetyExpiresAt: session.safety_expires_at || null,
       checkpointDue,
+      checkpoint,
       currentQuestion: sanitizeCurrentQuestion(currentQuestion),
       history: Object.freeze(history),
       evidence: Object.freeze(evidence.map(evidenceSummary)),
       evidenceState,
       recovery: score,
+      report,
       final:
         phase === SESSION_PHASES.FINALIZING ||
         phase === SESSION_PHASES.COMPLETE,
     });
   }
 
+  function isSafetyExpired(session, now = Date.now()) {
+    if (!session?.safety_expires_at) return false;
+    const expiresAt = new Date(session.safety_expires_at).getTime();
+    return Number.isFinite(expiresAt) && expiresAt <= Number(now);
+  }
+
+  async function prepare(input = {}) {
+    if (!preparation || typeof preparation.prepareAndStart !== 'function') {
+      throw new ReckoningContractError(
+        'Reckoning production preparation is not configured.'
+      );
+    }
+    return preparation.prepareAndStart(input);
+  }
+
+  async function start(input = {}) {
+    return prepare(input);
+  }
+
+  async function expire({ examSessionId, userId } = {}) {
+    if (!examSessionId || !userId) {
+      throw new ReckoningContractError('expire requires examSessionId and userId.');
+    }
+
+    const shouldFinalize = await store.withTransaction(async (txStore) => {
+      const session = requireAdaptiveSession(
+        await txStore.getSessionByExam(examSessionId, userId, { forUpdate: true })
+      );
+      if (session.engine_phase === SESSION_PHASES.COMPLETE) return false;
+      if (!isSafetyExpired(session)) return false;
+
+      await txStore.markNonterminalEvidenceUnresolved(session.id, new Date());
+      await txStore.saveSession(session.id, {
+        enginePhase: SESSION_PHASES.FINALIZING,
+        currentQuestionId: null,
+        stateVersion: (Number(session.state_version) || 0) + 1,
+      });
+      return true;
+    });
+
+    if (!shouldFinalize) {
+      return buildState(store, { examSessionId, userId });
+    }
+    return finalize({ examSessionId, userId });
+  }
+
   async function getState({ examSessionId, userId } = {}) {
     if (!examSessionId || !userId) {
       throw new ReckoningContractError('getState requires examSessionId and userId.');
     }
-    return buildState(store, { examSessionId, userId });
+    const session = await store.getSessionByExam(examSessionId, userId);
+    if (session && session.engine_phase === SESSION_PHASES.ACTIVE && isSafetyExpired(session)) {
+      return expire({ examSessionId, userId });
+    }
+    return buildState(store, { examSessionId, userId, session });
   }
 
   async function recordAnswer({
@@ -204,6 +286,11 @@ function createReckoningEngine(options = {}) {
     }
     if (!/^[A-D]$/.test(selected)) {
       throw new ReckoningContractError('selectedOption must be A, B, C or D.');
+    }
+
+    const preSession = await store.getSessionByExam(examSessionId, userId);
+    if (preSession && preSession.engine_phase === SESSION_PHASES.ACTIVE && isSafetyExpired(preSession)) {
+      return expire({ examSessionId, userId });
     }
 
     return store.withTransaction(async (txStore) => {
@@ -579,6 +666,12 @@ function createReckoningEngine(options = {}) {
         recovery: prepared.recovery,
         evidenceState: prepared.evidenceState,
         learningEffects: prepared.learningEffects,
+        report: buildDiagnosticReport({
+          evidence: prepared.evidence,
+          recovery: prepared.recovery,
+          learningEffects: prepared.learningEffects,
+          subjectName: prepared.session.subject_name || 'Subject',
+        }),
         outcome,
       });
     };
@@ -606,10 +699,11 @@ function createReckoningEngine(options = {}) {
         consequenceFinalization: true,
       });
     },
-    prepare() { return notImplemented('engine.prepare'); },
-    start() { return notImplemented('engine.start'); },
+    prepare,
+    start,
     recordAnswer,
     getState,
+    expire,
     finalize,
   };
 
