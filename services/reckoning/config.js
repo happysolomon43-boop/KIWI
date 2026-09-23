@@ -79,7 +79,7 @@ const DELIVERY_C_RECKONING_CONFIG = Object.freeze({
   scoring: Object.freeze({
     recoveryThreshold: 75,
     rawAccuracyThreshold: 65,
-    minAnsweredQuestions: 5,
+    minEvidenceUnits: 5,
     recoveredCleanValue: 1.0,
     recoveredRemediatedValue: 0.8,
     provisionalValue: 0.5,
