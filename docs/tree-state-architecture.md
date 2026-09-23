@@ -1,82 +1,37 @@
-# KIWI Tree State Audit and Canonical Contract
+# KIWI Living Vine State Architecture
 
-## Scope
+## Current production contract
 
-This audit covers the existing KIWI tree data path before the PixiJS renderer is introduced. The goal is to preserve ecosystem behavior, remove state-shape duplication, and give the future renderer one stable contract.
+This document describes the final renderer-facing architecture after the 15-phase KIWI living-vine migration.
 
-## Existing sources of truth
+The production flow is:
 
-The persistent ecosystem state lives in `user_stats`:
+`Ecosystem V2 → TreeState v4 → Vine growth model v3 → PixiJS local vine + mapped website spillover`
 
-- `growth_points` is permanent progression.
-- `tree_stage` is permanent maturity, stages 1 through 8.
-- `tree_health` is the persisted current Vitality value, 0 through 100.
-- `current_streak` is current streak context.
-- `streak_milestones_earned` preserves milestone history.
-
-Fruit is stored separately in subject-level statistics and is summed for the global tree. Global Knowledge Score is computed from card knowledge and is currently used as a canopy-density hint.
-
-## Growth is already permanent
-
-`ecosystem_v2.js` awards Growth Points from first-time card stage milestones. The current thresholds are:
-
-- Stage 1 — SEEDLING: 0
-- Stage 2 — SPROUT: 25
-- Stage 3 — SAPLING: 100
-- Stage 4 — YOUNG TREE: 300
-- Stage 5 — THRIVING: 700
-- Stage 6 — BLOOMING: 1200
-- Stage 7 — MATURE: 2000
-- Stage 8 — ANCIENT: 3000
-
-Tree stage updates use the maximum of the existing persisted stage and the stage earned from Growth Points, so the tree cannot shrink back to a younger maturity stage when current performance declines.
-
-## Vitality is reversible
-
-Vitality is recomputed from current ecosystem conditions and persisted into `tree_health`.
-
-The current formula is:
-
-- 40% memory condition from card states
-- 25% seven-day consistency
-- 20% calmness, which is the inverse of average Brain pressure
-- 15% recent session quality
-
-This distinction is important for PixiJS: maturity should control the permanent physical size/structure of the tree, while Vitality should control its current health and presentation.
-
-## Current renderer
-
-The browser currently uses the `KiwiTree` SVG class inside `index.html`. It procedurally draws roots, trunk, branches, leaf clusters, fruit, rings, glow and particles.
-
-The renderer consumes the legacy flat fields:
-
-`stage`, `health`, `leaves`, `fruits`, `rings`, and `milestones`.
-
-Stages 6–8 currently reuse the stage-5 base tree geometry and add canopy density/crown treatment. Leaf density is also influenced by global KS.
-
-## Audit findings
-
-The underlying ecosystem math is substantially more coherent than the rendering adapter layer.
-
-Before this change, Dashboard and Biome independently rebuilt their own tree payloads. They duplicated stage-label arrays, leaf-count derivation, fruit/ring wiring, fallback behavior and health normalization. This creates drift risk: a future fix can update one screen while leaving the other stale.
-
-Dashboard also started a full `buildBiomeData()` call only to obtain a tree-shaped object, then rebuilt/overrode parts of that object again after refreshing Vitality. That is unnecessary work and creates an avoidable race between a fresh Vitality refresh and the parallel biome read.
-
-The frontend also contains demo/fallback tree state shapes. These are compatibility fallbacks, not authoritative ecosystem state.
+The retired procedural SVG tree is not part of the production architecture.
 
 ## Canonical TreeState
 
-`services/tree-state.js` now owns the renderer-facing state contract.
+`services/tree-state.js` builds the only renderer-facing state contract.
 
-Canonical fields are:
+Current schema:
 
-- `schemaVersion`
+`TREE_STATE_SCHEMA_VERSION = 4`
+
+The canonical state exposes:
+
 - `stage`
 - `stageLabel`
 - `growthPoints`
 - `nextStage`
+- `growthProgress`
+- `overallGrowthProgress`
+- `postAncientGrowth`
+- `growthInterval`
+- `vineStructure`
 - `vitality`
 - `vitalityBreakdown`
+- `vineHealth`
 - `knowledgeScore`
 - `leaves`
 - `fruits`
@@ -84,47 +39,19 @@ Canonical fields are:
 - `milestones`
 - `streak`
 
-For compatibility with the existing SVG renderer, `health` remains as an alias of `vitality`. It is not a second source of truth.
+Generic renderer aliases are retired and are not emitted:
 
-The builder clamps malformed input, deduplicates milestones, normalizes next-stage data and derives the existing leaf-density hint consistently from global KS when no explicit leaf count is provided.
+- `structuralGrowth`
+- `visualHealth`
+- top-level `health`
 
-## Boundary for the PixiJS phase
+Database and older caller input may still provide `tree_health` or `health`; those are accepted only as input normalization and are emitted canonically as `vitality`.
 
-PixiJS should consume this TreeState and must not directly read database-shaped values such as `tree_health`, `tree_stage` or `growth_points`.
+## Permanent biological progression
 
-The renderer may derive visual presentation from the canonical state, but it should never mutate academic progression or redefine Vitality/Growth semantics.
+Growth Points define permanent maturity.
 
-
-## Continuous growth model
-
-Tree stages are now milestone labels, not visual replacement models.
-
-`services/vine-growth-model.js` now defines the canonical continuous biological growth contract. `services/tree-growth-model.js` remains only as a compatibility bridge for pre-vine consumers. Each milestone has a visual-maturity anchor:
-
-- Seedling: 0.00
-- Sprout: 0.12
-- Sapling: 0.26
-- Young Tree: 0.43
-- Thriving: 0.61
-- Blooming: 0.75
-- Mature: 0.89
-- Ancient: 1.00
-
-The anchors intentionally are not `growth_points / 3000`. KIWI's Growth Point intervals widen sharply at higher stages, so a raw linear mapping would compress the early tree into a tiny visual range. Instead, Growth Points determine progress inside the current milestone interval, and that interval is smoothly mapped between the two visual-maturity anchors.
-
-`growthProgress` is the raw 0..1 progress inside the current stage interval.
-
-`overallGrowthProgress` is the continuous 0..1 biological maturity used by the future renderer.
-
-A smootherstep interpolation is used at milestone boundaries, which has zero velocity at both ends of each interval. This means crossing 99 → 100 GP or 299 → 300 GP changes the stage label but does not create a geometry snap.
-
-At Ancient, `overallGrowthProgress` is 1.0. Growth beyond 3000 GP is represented by `postAncientGrowth`, an asymptotic 0..1 signal. This allows subtle long-term thickening and root expansion without inventing a ninth stage.
-
-## Permanent kiwifruit-vine morphology
-
-All structural values are normalized 0..1 and are deterministic functions of continuous maturity.
-
-The canonical `vineStructure` object describes a trained woody kiwifruit climber rather than a freestanding tree:
+The permanent morphology object is `vineStructure`:
 
 - `rootEstablishment`
 - `baseStemThickness`
@@ -138,26 +65,13 @@ The canonical `vineStructure` object describes a trained woody kiwifruit climber
 - `floweringCapacity`
 - `fruitingCapacity`
 
-The model establishes roots and the vertical leader first. Once the leader reaches its support, horizontal cordons extend and thicken. Lateral shoots then multiply along those permanent arms, increasing the usable foliage network. Flowering and fruiting capacity arrive later than the basic woody framework.
+Vitality never participates in permanent structural calculations.
 
-No Vitality value participates in these equations. A low-Vitality Ancient vine remains structurally Ancient.
+At the same Growth Points, a low-Vitality and high-Vitality vine have the same permanent woody structure.
 
-For compatibility with the current SVG renderer, `structuralGrowth` is still emitted as an exact legacy mapping:
+## Reversible biological condition
 
-- `trunkHeight` → `mainStemReach`
-- `trunkThickness` → `baseStemThickness`
-- `rootSpread` → `rootEstablishment`
-- `branchDevelopment` → `cordonReach`
-- `branchComplexity` → `vineComplexity`
-- `canopyCapacity` → `foliageCapacity`
-- `barkMaturity` → `woodyMaturity`
-- `fruitingCapacity` → `fruitingCapacity`
-
-These aliases are transitional and are not the contract the future PixiJS renderer should use.
-
-## Reversible vine health
-
-Vitality is normalized to 0..1 and converted into the canonical `vineHealth` object:
+`vineHealth` describes current reversible condition:
 
 - `leafDensity`
 - `leafRetention`
@@ -168,32 +82,123 @@ Vitality is normalized to 0..1 and converted into the canonical `vineHealth` obj
 - `flowerVigor`
 - `stress`
 
-These values affect only current presentation. They can recover upward or fall downward as the ecosystem changes.
+These values may rise or fall as Vitality changes.
 
-The legacy `visualHealth` object remains as a compatibility mapping, with `droop`, `saturation`, and `bloomStrength` pointing to the corresponding vine-health values.
+They may change foliage, bloom and motion, but may not:
 
-A renderer must never use `vineHealth` to shrink the woody base, retract permanent cordons, reduce Growth Points, or move the vine to a younger stage.
+- reduce Growth Points,
+- retract permanent cordons,
+- shrink mature wood,
+- lower the earned stage.
 
-## TreeState schema v3
+## Continuous growth model
 
-The canonical TreeState schema is now version 3 and the growth model is version 2.
+The canonical model is:
 
-Canonical renderer-facing growth fields are:
+`services/vine-growth-model.js`
 
-- `growthModelVersion`
-- `growthProgress`
-- `overallGrowthProgress`
-- `postAncientGrowth`
-- `growthInterval`
-- `vineStructure`
-- `vineHealth`
+Current version:
 
-Compatibility fields remain:
+`VINE_GROWTH_MODEL_VERSION = 3`
 
-- `structuralGrowth`
-- `visualHealth`
-- `health` as an alias of `vitality`
+The obsolete `services/tree-growth-model.js` compatibility bridge has been removed.
 
-The future PixiJS renderer must consume `vineStructure` and `vineHealth`, not the legacy generic-tree aliases.
+The eight product milestones remain:
 
-The current SVG renderer does not consume the new vine morphology fields yet. This phase changes the biological contract only; it does not install PixiJS or alter visible rendering.
+- Seedling
+- Sprout
+- Sapling
+- Young Tree
+- Thriving
+- Blooming
+- Mature
+- Ancient
+
+They are milestone labels, not separate visual models.
+
+Continuous maturity interpolates between visual maturity anchors, so crossing a stage boundary does not replace the organism.
+
+## Renderer inputs
+
+The browser renderer consumes canonical TreeState only.
+
+It does not read database-shaped fields such as:
+
+- `tree_health`
+- `tree_stage`
+- `growth_points`
+
+directly.
+
+Local rendering is handled by the PixiJS living-vine renderer.
+
+Website spillover consumes the same state through the shared browser TreeState channel.
+
+## Shared blueprint
+
+The local organism blueprint is stored in:
+
+`public/tree/vine-blueprint.json`
+
+The backend wrapper:
+
+`services/vine-visual-blueprint.js`
+
+reads that same data.
+
+This keeps backend tests and browser geometry on one topology.
+
+## Website expansion state
+
+The website expansion contract is stored in:
+
+`public/tree/vine-expansion-map.json`
+
+The backend wrapper:
+
+`services/vine-expansion-map.js`
+
+reads the same contract.
+
+Mapped external growth remains fail-closed and is disabled on high-focus routes.
+
+## Performance contract
+
+The Pixi runtime derives an initial device quality tier and may adapt downward or recover upward within the device's original ceiling.
+
+Performance adaptation may change only presentation:
+
+- foliage count,
+- flower density,
+- idle motion,
+- external decoration density,
+- ticker FPS,
+- geometry refresh cadence.
+
+It may never change academic state or permanent biological state.
+
+## Failure behavior
+
+PixiJS is the sole production living-vine renderer.
+
+If Pixi initialization fails, the renderer gateway mounts a lightweight static accessible fallback.
+
+That fallback:
+
+- is not SVG,
+- is not a second biological renderer,
+- does not reintroduce generic-tree anatomy,
+- does not mutate ecosystem state.
+
+## Invariants
+
+The following are permanent architectural rules:
+
+1. Growth Points create permanent structure.
+2. Vitality changes condition, never age.
+3. The same canonical TreeState drives every visual surface.
+4. Primary vine topology is deterministic.
+5. External vines may not intercept interface input.
+6. High-focus routes remain vine-free where defined.
+7. Renderer quality adaptation is presentation-only.
+8. Generic-tree renderer aliases are retired.
