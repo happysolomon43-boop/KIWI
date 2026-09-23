@@ -20,7 +20,7 @@ test('Reckoning V2 final delivery exposes a LIVE backend facade', () => {
   assert.equal(description.status, 'LIVE');
   assert.equal(description.enabled, true);
   assert.equal(description.behaviorAuthority, 'v2');
-  assert.equal(description.executionCore, true);
+  assert.equal(description.checkpointExecution, true);
   assert.equal(description.consequenceFinalization, true);
 });
 
