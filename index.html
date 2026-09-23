@@ -8498,649 +8498,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
-      // SECTION 5: KIWI TREE ENGINE (Enhanced from V2)
-
+      // SECTION 5: KIWI LIVING VINE RENDERER
+      // PixiJS is the sole production organism renderer. A lightweight DOM
+      // fallback is used only if the renderer modules themselves cannot load.
       // ═══════════════════════════════════════════════════════════════════════════
 
-      class KiwiTree {
-        constructor(container, opts = {}) {
-          this.container = container;
-          this.width = opts.width || 340;
-          this.height = opts.height || 400;
-          this.state = opts.state || {
-            stage: 1, health: 100, leaves: 12,
-            fruits: 0, rings: 0, milestones: [],
-          };
-          this.theme = opts.theme || {
-            sky: "transparent", trunk: "#6B4226",
-            leaf1: "#5a8a1e", leaf2: "#78b82a",
-            leaf3: "#a0d43a", fruit: "#14b8a6",
-            root: "#8B5E3C", ring: "#a06830",
-          };
-          this.interactive = opts.interactive !== false;
-          this.onShake = opts.onShake || null;
-          this.animating = false;
-          // Unique prefix to avoid gradient ID collisions across multiple tree instances
-          this._uid = "kt" + Math.random().toString(36).slice(2, 7);
-          this._init();
-        }
 
-        _init() {
-          this.container.innerHTML = "";
-          this.svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-          this.svg.setAttribute("viewBox", `0 0 ${this.width} ${this.height}`);
-          this.svg.style.cssText = "width:100%;display:block;overflow:visible;";
-          if (this.interactive) {
-            this.svg.style.cursor = "pointer";
-            this.svg.addEventListener("click", () => this._shake());
-          }
-          this.container.appendChild(this.svg);
-          this._draw();
-        }
-
-        updateState(newState, animate = true) {
-          const oldState = { ...this.state };
-          this.state = { ...this.state, ...newState };
-          if (animate && this._shouldAnimateTransition(oldState, this.state)) {
-            this._animateTransition(oldState, this.state);
-          } else { this._draw(); }
-        }
-
-        _shouldAnimateTransition(oldState, newState) {
-          return (
-            oldState.stage !== newState.stage ||
-            Math.abs(oldState.health - newState.health) > 10 ||
-            oldState.rings !== newState.rings
-          );
-        }
-
-        _animateTransition(oldState, newState) {
-          if (this.animating) { this._draw(); return; }
-          this.animating = true;
-          const steps = 30; let current = 0;
-          const animate = () => {
-            current++;
-            const p = 1 - Math.pow(1 - current / steps, 3);
-            this.state = {
-              stage: oldState.stage + (newState.stage - oldState.stage) * p,
-              health: oldState.health + (newState.health - oldState.health) * p,
-              leaves: newState.leaves,
-              fruits: oldState.fruits + Math.round((newState.fruits - oldState.fruits) * p),
-              rings: newState.rings, milestones: newState.milestones,
-            };
-            this._draw();
-            if (current < steps) { requestAnimationFrame(animate); }
-            else { this.state = newState; this.animating = false; this._draw(); }
-          };
-          requestAnimationFrame(animate);
-        }
-
-        _shake() {
-          this.svg.style.transition = "none";
-          this.svg.style.transform = "rotate(2.5deg) scale(1.02)";
-          setTimeout(() => {
-            this.svg.style.transition = "transform 0.18s cubic-bezier(.34,1.56,.64,1)";
-            this.svg.style.transform = "rotate(-2deg) scale(1.01)";
-          }, 90);
-          setTimeout(() => {
-            this.svg.style.transform = "rotate(0deg) scale(1)";
-          }, 260);
-          if (this.onShake) this.onShake();
-        }
-
-        // ── Deterministic hash (FNV-1a) ──────────────────────────────────────
-        _h(s) {
-          let h = 2166136261;
-          for (let i = 0; i < s.length; i++) {
-            h ^= s.charCodeAt(i);
-            h = Math.imul(h, 16777619) >>> 0;
-          }
-          return h;
-        }
-
-        // ── SVG element factory ────────────────────────────────────────────
-        _el(tag, attrs, inner = "") {
-          const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
-          for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
-          if (inner) e.innerHTML = inner;
-          return e;
-        }
-
-        // ── Main draw ──────────────────────────────────────────────────────
-        _draw() {
-          this.svg.innerHTML = "";
-          const { stage, health, leaves, fruits, rings } = this.state;
-          const W = this.width, H = this.height;
-          const maturityStage = Math.max(1, Math.min(8, Math.floor(stage)));
-          const st  = Math.min(5, maturityStage);
-          const leafBoost = Math.max(0, maturityStage - 5) * 4 + Math.min(8, Math.floor((Number(leaves) || 0) / 12));
-          const hp  = Math.max(0, Math.min(100, health));
-          const sc  = W / 340;  // scale factor
-          const cx  = W / 2;
-          const groundY = H - Math.round(H * 0.07);
-          const u   = this._uid;
-
-          // ── DEFS ────────────────────────────────────────────────────────
-          const defs = this._el("defs", {});
-
-          // Three leaf gradient tiers: shadow/mid/highlight
-          const leafPalettes = [
-            ["#0d2618", "#1a4731", "#2d6a4f"],   // deep shadow (back layer)
-            ["#1a4731", "#40916c", "#74c69d"],    // mid green
-            ["#2d6a4f", "#74c69d", "#a0d43a"],   // bright highlight (front layer)
-          ];
-          leafPalettes.forEach(([a, b, c], i) => {
-            defs.appendChild(this._el("radialGradient",
-              { id: `${u}lG${i}`, cx: "30%", cy: "25%", r: "75%", gradientUnits: "objectBoundingBox" },
-              `<stop offset="0%" stop-color="${c}"/>
-               <stop offset="50%" stop-color="${b}"/>
-               <stop offset="100%" stop-color="${a}"/>`
-            ));
-          });
-
-          // Trunk gradient (horizontal, for 3D cylinder feel)
-          defs.appendChild(this._el("linearGradient",
-            { id: `${u}tG`, x1: "0%", y1: "0%", x2: "100%", y2: "0%" },
-            `<stop offset="0%"   stop-color="#100a04"/>
-             <stop offset="20%"  stop-color="#3d2a1a"/>
-             <stop offset="48%"  stop-color="#7a5030"/>
-             <stop offset="72%"  stop-color="#5a3820"/>
-             <stop offset="100%" stop-color="#1c1208"/>`
-          ));
-
-          // Branch gradient (slightly lighter than trunk)
-          defs.appendChild(this._el("linearGradient",
-            { id: `${u}bG`, x1: "0%", y1: "0%", x2: "100%", y2: "0%" },
-            `<stop offset="0%"   stop-color="#2a1c10"/>
-             <stop offset="50%"  stop-color="#5a3820"/>
-             <stop offset="100%" stop-color="#2a1c10"/>`
-          ));
-
-          // Root gradient (fades into ground)
-          defs.appendChild(this._el("linearGradient",
-            { id: `${u}rG`, x1: "0%", y1: "0%", x2: "0%", y2: "100%",
-              gradientUnits: "userSpaceOnUse",
-              y1: groundY - 20, y2: groundY + 8 },
-            `<stop offset="0%" stop-color="#5a3820"/>
-             <stop offset="100%" stop-color="#1a0e08" stop-opacity="0.2"/>`
-          ));
-
-          // Fruit gradient (teal-gold kiwi look)
-          defs.appendChild(this._el("radialGradient",
-            { id: `${u}fG`, cx: "32%", cy: "28%", r: "68%", gradientUnits: "objectBoundingBox" },
-            `<stop offset="0%"   stop-color="#d4f5a0"/>
-             <stop offset="35%"  stop-color="#74c69d"/>
-             <stop offset="80%"  stop-color="#14b8a6"/>
-             <stop offset="100%" stop-color="#0a6060"/>`
-          ));
-
-          // Ground glow gradient
-          defs.appendChild(this._el("radialGradient",
-            { id: `${u}gG`, cx: "50%", cy: "50%", r: "50%", gradientUnits: "objectBoundingBox" },
-            `<stop offset="0%"   stop-color="#52b788" stop-opacity="${Math.min(0.18, 0.06 + st * 0.025)}"/>
-             <stop offset="100%" stop-color="#52b788" stop-opacity="0"/>`
-          ));
-
-          // Canopy ambient glow gradient
-          defs.appendChild(this._el("radialGradient",
-            { id: `${u}cG`, cx: "50%", cy: "55%", r: "50%", gradientUnits: "objectBoundingBox" },
-            `<stop offset="0%"   stop-color="#40916c" stop-opacity="${Math.min(0.14, 0.04 + st * 0.018)}"/>
-             <stop offset="100%" stop-color="#40916c" stop-opacity="0"/>`
-          ));
-
-          // Fruit glow filter (double-blur + merge for luminous look)
-          defs.appendChild(this._el("filter",
-            { id: `${u}gF`, x: "-80%", y: "-80%", width: "260%", height: "260%" },
-            `<feGaussianBlur in="SourceGraphic" stdDeviation="2.8" result="b1"/>
-             <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b2"/>
-             <feMerge>
-               <feMergeNode in="b2"/>
-               <feMergeNode in="b1"/>
-               <feMergeNode in="SourceGraphic"/>
-             </feMerge>`
-          ));
-
-          // Soft canopy glow filter
-          defs.appendChild(this._el("filter",
-            { id: `${u}cF`, x: "-40%", y: "-40%", width: "180%", height: "180%" },
-            `<feGaussianBlur in="SourceGraphic" stdDeviation="8" result="b"/>
-             <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>`
-          ));
-
-          // Leaf drop-shadow filter
-          defs.appendChild(this._el("filter",
-            { id: `${u}ds`, x: "-20%", y: "-20%", width: "140%", height: "140%" },
-            `<feDropShadow dx="0" dy="1.5" stdDeviation="1.8" flood-color="#050e0b" flood-opacity="0.6"/>`
-          ));
-
-          // Bark texture pattern
-          const barkPat = this._el("pattern",
-            { id: `${u}bk`, x: "0", y: "0", width: "8", height: "20",
-              patternUnits: "userSpaceOnUse" }
-          );
-          barkPat.innerHTML = `
-            <line x1="3" y1="0" x2="2" y2="20" stroke="#0d0804" stroke-width="0.5" opacity="0.35"/>
-            <line x1="7" y1="0" x2="6" y2="20" stroke="#0d0804" stroke-width="0.3" opacity="0.2"/>
-          `;
-          defs.appendChild(barkPat);
-
-          this.svg.appendChild(defs);
-
-          // ── ATMOSPHERE (radial glow behind canopy) ────────────────────
-          if (st >= 3) {
-            const atmoH = H * 0.72;
-            const atmoY = groundY - H * 0.5;
-            const atmo = this._el("ellipse", {
-              cx, cy: atmoY,
-              rx: W * 0.58, ry: atmoH * 0.6,
-              fill: `url(#${u}cG)`,
-            });
-            this.svg.appendChild(atmo);
-          }
-
-          // ── GROUND SHADOW ─────────────────────────────────────────────
-          this.svg.appendChild(this._el("ellipse", {
-            cx, cy: groundY + 5,
-            rx: (22 + st * 14) * sc, ry: (6 + st * 1.5) * sc,
-            fill: `url(#${u}gG)`,
-          }));
-
-          // ── SEEDLING (stage 1) ────────────────────────────────────────
-          if (st === 1) {
-            this._drawSeedling(cx, groundY, hp, u, sc);
-            return;
-          }
-
-          // ── ROOTS ─────────────────────────────────────────────────────
-          this._drawRoots(cx, groundY, st, sc, u);
-
-          // ── TRUNK ─────────────────────────────────────────────────────
-          const trunkTopY = this._drawTrunk(cx, groundY, st, hp, sc, W, H, u);
-
-          // ── GROWTH RINGS on trunk ──────────────────────────────────────
-          if (rings > 0) {
-            this._drawRings(cx, groundY, trunkTopY, st, rings, sc, u);
-          }
-
-          // ── BRANCHES + LEAVES ──────────────────────────────────────────
-          const branchTips = this._drawBranches(cx, trunkTopY, st, hp, sc, u, leafBoost);
-
-          // Mature stages keep stable geometry, then gain visible canopy density and crown rings.
-          if (maturityStage >= 6) {
-            for (let crown = 0; crown < maturityStage - 5; crown++) {
-              this.svg.appendChild(this._el("ellipse", {
-                cx,
-                cy: trunkTopY - (38 + crown * 8) * sc,
-                rx: (70 + crown * 12) * sc,
-                ry: (42 + crown * 7) * sc,
-                fill: "none",
-                stroke: crown === 2 ? "#d4f5a0" : "#74c69d",
-                "stroke-width": (0.7 + crown * 0.25) * sc,
-                opacity: 0.16 + crown * 0.05,
-              }));
-            }
-          }
-
-          // ── FRUITS ───────────────────────────────────────────────────
-          if (st >= 3 && fruits > 0) {
-            this._drawFruits(branchTips, fruits, st, sc, u);
-          }
-
-          // ── AMBIENT PARTICLES ──────────────────────────────────────────
-          if (st >= 2) {
-            this._drawParticles(W, H, groundY, maturityStage, sc, u);
-          }
-        }
-
-        // ── Seedling ────────────────────────────────────────────────────
-        _drawSeedling(cx, groundY, health, u, sc) {
-          const stemH = 30 * sc;
-          // Soil mound
-          this.svg.appendChild(this._el("ellipse", {
-            cx, cy: groundY, rx: 12 * sc, ry: 4 * sc,
-            fill: "#1a0e08", opacity: "0.5",
-          }));
-          // Stem
-          this.svg.appendChild(this._el("path", {
-            d: `M${cx},${groundY} Q${cx + 2 * sc},${groundY - stemH * 0.5} ${cx},${groundY - stemH}`,
-            stroke: "#40916c", "stroke-width": 1.5 * sc,
-            fill: "none", "stroke-linecap": "round",
-          }));
-          // Two cotyledon leaves
-          [[-1, 0.65], [1, 0.45]].forEach(([dir, pos]) => {
-            const lx = cx + dir * 9 * sc;
-            const ly = groundY - stemH * pos;
-            this.svg.appendChild(this._el("ellipse", {
-              cx: lx, cy: ly, rx: 6 * sc, ry: 3.5 * sc,
-              fill: "#52b788", opacity: health > 60 ? "0.9" : "0.5",
-              transform: `rotate(${dir * -30},${lx},${ly})`,
-              filter: `url(#${u}ds)`,
-            }));
-          });
-          // Tiny particle
-          this.svg.appendChild(this._el("circle", {
-            cx: cx + 4 * sc, cy: groundY - stemH - 4 * sc,
-            r: 1.2 * sc, fill: "#74c69d", opacity: "0.6",
-            filter: `url(#${u}gF)`,
-          }));
-        }
-
-        // ── Visible surface roots ───────────────────────────────────────
-        _drawRoots(cx, groundY, stage, sc, u) {
-          const rootDefs = [
-            [1, 0.8, 0.2], [-1, 0.7, 0.18], [1, 1.4, 0.14],
-            [-1, 1.3, 0.12], [0.4, 0.5, 0.1],
-          ];
-          const maxRoots = Math.min(stage + 1, rootDefs.length);
-          for (let i = 0; i < maxRoots; i++) {
-            const [dir, spread, w] = rootDefs[i];
-            const rx2 = cx + dir * (25 + stage * 8) * spread * sc;
-            const ry2 = groundY + 5 * sc;
-            const cpx = cx + dir * (10 + stage * 4) * sc;
-            const cpy = groundY - 8 * sc;
-            this.svg.appendChild(this._el("path", {
-              d: `M${cx},${groundY - 4 * sc} Q${cpx},${cpy} ${rx2},${ry2}`,
-              stroke: `url(#${u}rG)`,
-              "stroke-width": (w * (3 + stage * 0.4)) * sc,
-              fill: "none", "stroke-linecap": "round",
-              opacity: 0.75,
-            }));
-          }
-        }
-
-        // ── Trunk (Bezier path + bark texture) ─────────────────────────
-        _drawTrunk(cx, groundY, stage, health, sc, W, H, u) {
-          // Stage-indexed trunk heights (340px canvas reference)
-          const ths = [0, 48, 85, 125, 170, 220];
-          const trunkH = ths[stage] * sc;
-          const trunkTopY = groundY - trunkH;
-          const baseW = (11 + stage * 3.8) * sc;
-          const topW  = (3.5 + stage * 1.6) * sc;
-          // Organic lean when unhealthy
-          const lean = health < 50 ? -5 * sc : 0;
-          const cpX  = cx + lean;
-          const cpY  = groundY - trunkH * 0.45;
-
-          // Left & right edge control points for Bezier trunk outline
-          const bL  = cx - baseW;
-          const bR  = cx + baseW;
-          const tL  = cx + lean - topW;
-          const tR  = cx + lean + topW;
-
-          // Filled trunk shape (two Bezier edges + top/bottom joins)
-          const trunkPath = `
-            M ${bL} ${groundY}
-            Q ${cpX - topW * 0.9} ${cpY} ${tL} ${trunkTopY}
-            L ${tR} ${trunkTopY}
-            Q ${cpX + topW * 0.9} ${cpY} ${bR} ${groundY}
-            Z
-          `;
-
-          // Shadow trunk (slight offset, darker)
-          this.svg.appendChild(this._el("path", {
-            d: trunkPath,
-            fill: "#0a0603", opacity: "0.35",
-            transform: `translate(${2 * sc}, ${2 * sc})`,
-          }));
-
-          // Main trunk fill
-          this.svg.appendChild(this._el("path", {
-            d: trunkPath, fill: `url(#${u}tG)`,
-          }));
-
-          // Bark texture overlay (clipped to trunk shape)
-          this.svg.appendChild(this._el("path", {
-            d: trunkPath,
-            fill: `url(#${u}bk)`, opacity: "0.45",
-          }));
-
-          // Highlight stripe (left-center specular)
-          const hiPath = `
-            M ${bL + baseW * 0.35} ${groundY - trunkH * 0.05}
-            Q ${cx + lean - topW * 1.1} ${cpY}
-            ${tL + topW * 0.4} ${trunkTopY + topW * 0.5}
-          `;
-          this.svg.appendChild(this._el("path", {
-            d: hiPath,
-            stroke: "#a06030", "stroke-width": topW * 0.9,
-            fill: "none", opacity: "0.13",
-            "stroke-linecap": "round",
-          }));
-
-          return trunkTopY;
-        }
-
-        // ── Growth rings (subtle horizontal lines on trunk) ─────────────
-        _drawRings(cx, groundY, trunkTopY, stage, rings, sc, u) {
-          const trunkH = groundY - trunkTopY;
-          const count = Math.min(rings, 4);
-          for (let i = 0; i < count; i++) {
-            const t = (i + 1) / (count + 1);
-            const ry = groundY - trunkH * t;
-            const rw = ((11 + stage * 3.8) * sc) * (1 - t * 0.6);
-            const ring = this._el("ellipse", {
-              cx, cy: ry, rx: rw * 0.8, ry: 2 * sc,
-              fill: "none", stroke: "#a06830",
-              "stroke-width": 0.8, opacity: "0.3",
-            });
-            this.svg.appendChild(ring);
-          }
-        }
-
-        // ── Recursive Bezier branch ─────────────────────────────────────
-        _branch(x1, y1, angleDeg, len, w, depth, maxDepth, sc, u) {
-          const rad = angleDeg * Math.PI / 180;
-          const x2 = x1 + Math.sin(rad) * len;
-          const y2 = y1 - Math.cos(rad) * len;
-          // Organic curve via perpendicular offset
-          const perpRad = rad + Math.PI / 2;
-          const curveAmt = (this._h("cv" + depth + Math.round(angleDeg * 10) + u) % 18 - 9) * 0.012 * len;
-          const cpX = (x1 + x2) / 2 + Math.cos(perpRad) * curveAmt;
-          const cpY = (y1 + y2) / 2 + Math.sin(perpRad) * curveAmt;
-
-          // Twig darkens as it gets thinner
-          const branchStroke = depth <= 1 ? `url(#${u}tG)` : depth <= 2 ? `url(#${u}bG)` : "#3d2a1a";
-
-          this.svg.appendChild(this._el("path", {
-            d: `M${x1},${y1} Q${cpX},${cpY} ${x2},${y2}`,
-            stroke: branchStroke,
-            "stroke-width": Math.max(0.5, w),
-            fill: "none", "stroke-linecap": "round",
-          }));
-
-          if (depth >= maxDepth) return [{ x: x2, y: y2 }];
-
-          // Fill fork junction — oversized disc fully seals the seam between parent and child branches
-          const junctionFill = depth <= 1 ? `url(#${u}tG)` : depth <= 2 ? `url(#${u}bG)` : "#4a3020";
-          const junctionR = Math.max(w * 1.65, 2.6);
-          this.svg.appendChild(this._el("circle", {
-            cx: x2, cy: y2, r: junctionR,
-            fill: junctionFill,
-          }));
-          // Soft inner cap — tightens the colour match at the seam centre
-          this.svg.appendChild(this._el("circle", {
-            cx: x2, cy: y2, r: Math.max(w * 0.9, 1.4),
-            fill: depth <= 1 ? "#6b4226" : "#4a3020",
-            opacity: "0.6",
-          }));
-
-          const spreadL = 25 + (this._h("sL" + depth + Math.round(angleDeg) + u) % 13);
-          const spreadR = 25 + (this._h("sR" + depth + Math.round(angleDeg) + u) % 13);
-          const tL = this._branch(x2, y2, angleDeg - spreadL, len * 0.68, w * 0.65, depth + 1, maxDepth, sc, u);
-          const tR = this._branch(x2, y2, angleDeg + spreadR, len * 0.68, w * 0.65, depth + 1, maxDepth, sc, u);
-          return [...tL, ...tR];
-        }
-
-        // ── Full branch crown + leaves ──────────────────────────────────
-        _drawBranches(cx, trunkTopY, stage, health, sc, u, leafBoost = 0) {
-          const maxD  = stage <= 2 ? 1 : stage === 3 ? 2 : stage === 4 ? 3 : 4;
-          const rootL = (54 + stage * 12) * sc;
-          const rootW = (3.0 + stage * 0.8) * sc;
-          const lean  = health < 50 ? 9 : 0;
-
-          // Trunk-top junction cap: fully seals the trunk → primary branch split
-          // Drawn BEFORE branches so branches render on top of it
-          const capR = rootW * 1.9;
-          this.svg.appendChild(this._el("ellipse", {
-            cx, cy: trunkTopY, rx: capR * 1.35, ry: capR * 0.95,
-            fill: `url(#${u}tG)`,
-          }));
-          // Inner reinforcement disc — tightens colour at the very centre of the fork
-          this.svg.appendChild(this._el("circle", {
-            cx, cy: trunkTopY, r: rootW * 1.1,
-            fill: "#6b4226", opacity: "0.55",
-          }));
-
-          const tipsL = this._branch(cx, trunkTopY, -35 + lean, rootL, rootW, 1, maxD, sc, u);
-          const tipsR = this._branch(cx, trunkTopY,  35 - lean, rootL, rootW, 1, maxD, sc, u);
-          // Centre branch (stage ≥ 3): fills the canopy void and restores the missing upward branch.
-          // Slightly shorter + narrower than primaries so it reads as a natural mid-growth shoot.
-          const tipsC = stage >= 3
-            ? this._branch(cx, trunkTopY, lean * 0.4 - 2, rootL * 0.86, rootW * 0.80, 1, Math.min(maxD, 3), sc, u)
-            : [];
-          const allTips = [...tipsL, ...tipsC, ...tipsR];
-
-          const perTip = Math.max(11, Math.round(42 / allTips.length) + 8 + leafBoost);
-
-          // Layer 0: dark background leaves (depth/shadow)
-          allTips.forEach((tip, i) => this._drawLeafCluster(tip.x, tip.y, perTip, i, stage, health, 0, sc, u));
-          // Layer 1: bright midground leaves
-          allTips.forEach((tip, i) => this._drawLeafCluster(tip.x, tip.y, Math.round(perTip * 0.65), i, stage, health, 1, sc, u));
-          // Layer 2: highlight leaves (fewest, most vivid)
-          if (stage >= 3) {
-            allTips.forEach((tip, i) => this._drawLeafCluster(tip.x, tip.y, Math.round(perTip * 0.3), i, stage, health, 2, sc, u));
-          }
-
-          return allTips;
-        }
-
-        // ── Leaf cluster (layered ellipse leaves with veins) ───────────
-        _drawLeafCluster(tx, ty, count, idx, stage, health, layer, sc, u) {
-          const r    = (20 + stage * 5.5) * (layer === 0 ? 1.3 : layer === 1 ? 1.0 : 0.68) * sc;
-          const sz   = (7.5 + stage * 1.4) * (layer === 0 ? 1.1 : layer === 1 ? 0.9 : 0.75) * sc;
-          const op   = health < 30 ? 0.28 : health < 60 ? 0.6 : (layer === 0 ? 0.72 : layer === 1 ? 0.88 : 0.95);
-          const droop = health < 40 ? 25 : health < 65 ? 9 : 0;
-          const gradIdx = layer; // 0=dark, 1=mid, 2=bright
-
-          for (let i = 0; i < count; i++) {
-            const seed = `L${u}${layer}_${idx}_${i}`;
-            const ang  = (this._h(seed + "a") / 2147483647) * Math.PI * 2;
-            const dst  = this._h(seed + "d") % r;
-            const lx   = tx + Math.cos(ang) * dst;
-            const ly   = ty + Math.sin(ang) * dst * 0.72 - 5 * sc;
-            const lw   = sz + (this._h(seed + "w") % (4 * sc + 1));
-            const lh   = lw * 0.5;
-            const rot  = (this._h(seed + "r") % 130) - 65 + droop;
-
-            const leafAttrs = {
-              cx: lx, cy: ly, rx: lw, ry: lh,
-              fill: `url(#${u}lG${gradIdx})`,
-              opacity: op,
-              transform: `rotate(${rot},${lx},${ly})`,
-            };
-            if (layer === 0) leafAttrs.filter = `url(#${u}ds)`;
-            this.svg.appendChild(this._el("ellipse", leafAttrs));
-
-            // Midrib vein on bright (layer 2) leaves only
-            if (layer === 2 && lw > 7 * sc) {
-              this.svg.appendChild(this._el("line", {
-                x1: lx - lw * 0.72, y1: ly,
-                x2: lx + lw * 0.72, y2: ly,
-                stroke: "#c8e87a", "stroke-width": 0.45,
-                opacity: 0.28,
-                transform: `rotate(${rot},${lx},${ly})`,
-                "stroke-linecap": "round",
-              }));
-            }
-          }
-        }
-
-        // ── Fruits (glowing teal kiwi fruits) ──────────────────────────
-        _drawFruits(tips, count, stage, sc, u) {
-          const cap = Math.min(count, 12);
-          const fr  = (5.5 + stage * 0.6) * sc;
-          // Spread fruits evenly across all tips — stride prevents same-tip clustering
-          const stride = Math.max(1, Math.floor(tips.length / Math.max(cap, 1)));
-          for (let i = 0; i < cap; i++) {
-            const tip = tips[(i * stride + Math.floor(i / tips.length)) % tips.length];
-            const ang = (this._h("fA" + i + u) / 2147483647) * Math.PI * 2;
-            const scatter = Math.round((14 + stage * 3.2) * sc);
-            const d   = this._h("fD" + i + u) % scatter;
-            const fx  = tip.x + Math.cos(ang) * d;
-            const fy  = tip.y + Math.sin(ang) * d * 0.7 - 3 * sc;
-
-            // Outer aura ring (atmospheric halo)
-            this.svg.appendChild(this._el("circle", {
-              cx: fx, cy: fy, r: fr * 2.8,
-              fill: "#14b8a6", opacity: "0.055",
-            }));
-            // Mid glow ring
-            this.svg.appendChild(this._el("circle", {
-              cx: fx, cy: fy, r: fr * 1.7,
-              fill: "#14b8a6", opacity: "0.1",
-            }));
-            // Fruit body with gradient
-            this.svg.appendChild(this._el("circle", {
-              cx: fx, cy: fy, r: fr,
-              fill: `url(#${u}fG)`,
-              filter: `url(#${u}gF)`,
-            }));
-            // Specular highlight
-            this.svg.appendChild(this._el("circle", {
-              cx: fx - fr * 0.28, cy: fy - fr * 0.28,
-              r: fr * 0.32,
-              fill: "#d4f5e0", opacity: "0.55",
-            }));
-            // Stem
-            this.svg.appendChild(this._el("path", {
-              d: `M${fx},${fy - fr} Q${fx + fr * 0.4},${fy - fr * 1.6} ${fx + fr * 0.2},${fy - fr * 2.2}`,
-              stroke: "#3d2a1a", "stroke-width": 0.9 * sc,
-              fill: "none", "stroke-linecap": "round",
-            }));
-          }
-          // "+N more" label
-          if (count > 12 && tips.length > 0) {
-            const t = tips[0];
-            this.svg.appendChild(this._el("text", {
-              x: t.x + 14 * sc, y: t.y - 10 * sc,
-              fill: "#a0d43a", "font-size": 8 * sc, opacity: "0.8",
-            })).textContent = "+" + (count - 12);
-          }
-        }
-
-        // ── Ambient firefly particles ───────────────────────────────────
-        _drawParticles(W, H, groundY, stage, sc, u) {
-          const count = stage * 3;
-          const colors = ["#74c69d", "#52b788", "#2dd4bf", "#a0d43a", "#c8e87a"];
-          for (let i = 0; i < count; i++) {
-            const px = (this._h("pX" + i + u) % (W - 20)) + 10;
-            const py = groundY - (this._h("pY" + i + u) % Math.round(H * 0.75));
-            const pr = (0.7 + (this._h("pR" + i + u) % 4) * 0.35) * sc;
-            const pc = colors[this._h("pC" + i + u) % colors.length];
-            const po = 0.15 + (this._h("pO" + i + u) % 6) * 0.06;
-            this.svg.appendChild(this._el("circle", {
-              cx: px, cy: py, r: pr,
-              fill: pc, opacity: po,
-              filter: `url(#${u}gF)`,
-            }));
-          }
-        }
-
-        // ── Legacy shim (keep external callers safe) ───────────────────
-        _drawLeaves(x, y, count, stage, health) {
-          this._drawLeafCluster(x, y, count, 99, stage, health, 1, this.width / 340, this._uid);
-        }
-
-        // Legacy shim
-        _trunkHeight(stage, health) {
-          const ths = [0, 48, 85, 125, 170, 220];
-          return (ths[Math.max(1, Math.min(5, stage))] || 80) * (this.width / 340);
-        }
-      }
-
-      // PixiJS living-vine gateway. The legacy SVG class remains a guaranteed
-      // fallback for unsupported devices or renderer initialization failures.
-      window.KiwiTree = KiwiTree;
 
       let _kiwiTreeStateChannelPromise = null;
       let _kiwiVineSystem = null;
@@ -9205,65 +8568,96 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         return known || _kiwiTreeStateCache;
       }
 
-      async function mountKiwiLivingTree(container, options = {}) {
-        const legacyFactory = (target, legacyOptions) =>
-          new KiwiTree(target, legacyOptions);
+      function mountInlineKiwiFallback(container, state, reason) {
+        container.innerHTML = '';
+        container.dataset.kiwiRenderer = 'static-fallback';
+        const fallback = document.createElement('div');
+        fallback.setAttribute('role', 'img');
+        fallback.setAttribute(
+          'aria-label',
+          `KIWI living vine fallback. ${state?.stageLabel || 'Growing'} maturity, ${Math.round(Number(state?.vitality ?? state?.health ?? 100))}% Vitality.`
+        );
+        fallback.style.cssText = [
+          'width:100%',
+          'height:100%',
+          'min-height:180px',
+          'display:grid',
+          'place-items:center',
+          'font-size:clamp(54px,22vw,110px)',
+          'pointer-events:none',
+          'filter:drop-shadow(0 10px 18px rgba(21,54,38,.18))'
+        ].join(';');
+        fallback.textContent = '🌿';
+        container.appendChild(fallback);
 
+        return {
+          mode: 'static-fallback',
+          instance: null,
+          runtime: null,
+          fallbackReason: reason,
+          updateState(nextState) {
+            state = { ...(state || {}), ...(nextState || {}) };
+            fallback.setAttribute(
+              'aria-label',
+              `KIWI living vine fallback. ${state?.stageLabel || 'Growing'} maturity, ${Math.round(Number(state?.vitality ?? state?.health ?? 100))}% Vitality.`
+            );
+          },
+          playReactions() {},
+          getPerformanceSnapshot() {
+            return { mode: 'static-fallback', reason };
+          },
+          async destroy() {
+            container.innerHTML = '';
+            delete container.dataset.kiwiRenderer;
+          },
+        };
+      }
+
+      async function mountKiwiLivingTree(container, options = {}) {
         try {
           const gateway = await import('/tree/tree-renderer-gateway.mjs');
           const handle = await gateway.mountKiwiTreeRenderer({
             ...options,
             container,
-            mode: options.mode || gateway.getDefaultTreeRendererMode(),
-            legacyFactory,
           });
 
-          try {
-            const channel = await _getKiwiTreeStateChannel();
-            channel.publishTreeState(options.state, {
-              source: options.source || 'local-tree-mount',
-              silent: !channel.getCurrentTreeState(),
-            });
+          if (options.publishState !== false) {
+            try {
+              const channel = await _getKiwiTreeStateChannel();
+              channel.publishTreeState(options.state, {
+                source: options.source || 'local-tree-mount',
+                silent: !channel.getCurrentTreeState(),
+              });
 
-            const unsubscribe = channel.subscribeTreeState((treeEvent) => {
-              if (!treeEvent?.state || !container.isConnected) return;
-              handle.updateState?.(treeEvent.state, true);
-              handle.playReactions?.(treeEvent.reactions || []);
-            }, {
-              emitCurrent: true,
-              emitRecentReactions: true,
-              consumeRecentReactions: true,
-              reactionTtlMs: 60000,
-            });
+              const unsubscribe = channel.subscribeTreeState((treeEvent) => {
+                if (!treeEvent?.state || !container.isConnected) return;
+                handle.updateState?.(treeEvent.state, true);
+                handle.playReactions?.(treeEvent.reactions || []);
+              }, {
+                emitCurrent: true,
+                emitRecentReactions: true,
+                consumeRecentReactions: true,
+                reactionTtlMs: 60000,
+              });
 
-            const originalDestroy = handle.destroy?.bind(handle);
-            handle.destroy = async () => {
-              unsubscribe();
-              if (originalDestroy) await originalDestroy();
-            };
-          } catch (stateError) {
-            console.warn('[KIWI] Tree-state channel unavailable:', stateError);
+              const originalDestroy = handle.destroy?.bind(handle);
+              handle.destroy = async () => {
+                unsubscribe();
+                if (originalDestroy) await originalDestroy();
+              };
+            } catch (stateError) {
+              console.warn('[KIWI] Tree-state channel unavailable:', stateError);
+            }
           }
 
           return handle;
         } catch (error) {
-          console.warn('[KIWI] Pixi tree gateway unavailable; using SVG fallback.', error);
-          container.innerHTML = '';
-          const instance = legacyFactory(container, options);
-          return {
-            mode: 'legacy',
-            instance,
-            fallbackReason: error instanceof Error ? error.message : String(error),
-            updateState(nextState, animate = true) {
-              if (typeof instance.updateState === 'function') {
-                instance.updateState(nextState, animate);
-              }
-            },
-            playReactions() {},
-            async destroy() {
-              container.innerHTML = '';
-            },
-          };
+          console.warn('[KIWI] Living vine modules unavailable; using static fallback.', error);
+          return mountInlineKiwiFallback(
+            container,
+            options.state,
+            error instanceof Error ? error.message : String(error)
+          );
         }
       }
 
@@ -9851,15 +9245,54 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       </div>
     </div>
   `;
-        // Landing tree
+        // Landing living-vine preview. It is intentionally isolated from
+        // the authenticated TreeState channel so demo state cannot create reactions.
         const landingTree = document.getElementById("landingTree");
-        if (landingTree && typeof KiwiTree === 'function') {
-          try { new KiwiTree(landingTree, {
-            width: 200,
-            height: 240,
-            state: { stage: 4, health: 90, leaves: 24, fruits: 3, rings: 1, milestones: [7, 30] },
+        if (landingTree) {
+          mountKiwiLivingTree(landingTree, {
+            width: 300,
+            height: 300,
+            publishState: false,
+            source: 'landing-demo',
             interactive: false,
-          }); } catch(_) {}
+            state: {
+              schemaVersion: 4,
+              growthModelVersion: 2,
+              stage: 6,
+              stageLabel: 'BLOOMING',
+              growthPoints: 1550,
+              overallGrowthProgress: 0.80,
+              postAncientGrowth: 0,
+              vitality: 92,
+              vineStructure: {
+                rootEstablishment: 0.82,
+                baseStemThickness: 0.70,
+                woodyMaturity: 0.69,
+                mainStemReach: 0.93,
+                cordonReach: 0.86,
+                cordonThickness: 0.61,
+                lateralShootDevelopment: 0.71,
+                vineComplexity: 0.66,
+                foliageCapacity: 0.84,
+                floweringCapacity: 0.65,
+                fruitingCapacity: 0.52,
+              },
+              vineHealth: {
+                leafDensity: 0.96,
+                leafRetention: 0.97,
+                leafDroop: 0.04,
+                leafSaturation: 0.94,
+                movementStrength: 0.94,
+                shootVigor: 0.92,
+                flowerVigor: 0.72,
+                stress: 0.08,
+              },
+              fruits: 5,
+              rings: 2,
+              milestones: [7, 30],
+              streak: 30,
+            },
+          }).catch(() => {});
         }
         document.getElementById("landingStart").addEventListener("click", () => openAuth('register'));
         document.getElementById("landingLogin").addEventListener("click", () => openAuth('login'));
@@ -10624,7 +10057,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           }
 
           const treeContainer = document.getElementById("dashboardTree");
-          if (treeContainer && typeof KiwiTree === 'function') {
+          if (treeContainer) {
             const ts = treeState || {
               stage: 1,
               health: 50,
@@ -10655,7 +10088,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               }
               AppState.treeInstance = handle;
               if (handle.mode === 'legacy' && handle.fallbackReason) {
-                console.warn('[KIWI] Living vine fell back to SVG:', handle.fallbackReason);
+                console.warn('[KIWI] Living vine used fallback:', handle.fallbackReason);
               }
             }).catch((_treeErr) => {
               treeContainer.innerHTML = '<div style="height:200px;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:48px;">🌱</div>';
@@ -15589,7 +15022,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           // Render the canonical living vine in the Biome. Keep the full
           // TreeState contract so continuous morphology, Vitality and fruit are available.
           const treeContainer = document.getElementById("biomeTree");
-          if (treeContainer && globalTreeState && typeof KiwiTree === 'function') {
+          if (treeContainer && globalTreeState) {
             const previousBiomeTree = AppState.biomeTreeInstance;
             AppState.biomeTreeInstance = null;
             if (previousBiomeTree && typeof previousBiomeTree.destroy === 'function') {
@@ -15609,7 +15042,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               }
               AppState.biomeTreeInstance = handle;
               if (handle.mode === 'legacy' && handle.fallbackReason) {
-                console.warn('[KIWI] Biome living vine fell back to SVG:', handle.fallbackReason);
+                console.warn('[KIWI] Biome living vine used fallback:', handle.fallbackReason);
               }
             }).catch((_biomeTreeErr) => {
               treeContainer.innerHTML = '<div style="height:200px;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:48px;">🌿</div>';
