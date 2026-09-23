@@ -98,6 +98,7 @@ const DELIVERY_E_RECKONING_CONFIG = Object.freeze({
     familyConcurrency: 4,
     generationAttemptsPerItem: 2,
     claimStaleMinutes: 5,
+    heartbeatSeconds: 45,
   }),
   validation: Object.freeze({
     maxStemSimilarity: 0.82,
