@@ -8631,6 +8631,23 @@ debrief_text: null,
 // P3.7-B1a FIX: store flagged card IDs so the exam generator can use
 // the correct pool instead of the standard stage >= 3 eligibility filter.
 flagged_card_ids: flaggedCards.map(c => c.id),
+// Delivery E: new Reckonings enter the completed V2 production pipeline.
+// Existing rows created before this deployment remain on their original engine.
+engine_version: 2,
+engine_mode: 'LIVE',
+engine_phase: 'PREPARING',
+questions_used: 0,
+hard_question_cap: liveReckoningConfig.planner.hardQuestionCap,
+recovery_score: 0,
+raw_accuracy: 0,
+unresolved_critical_count: 0,
+current_block: 0,
+current_question_id: null,
+state_version: 0,
+generation_status: 'pending',
+generation_error: null,
+planner_version: liveReckoningConfig.plannerVersion,
+config_version: liveReckoningConfig.configVersion,
 });
 } catch (err) {
 // Database uniqueness is the final arbiter. Two concurrent pressure refreshes can
@@ -8647,29 +8664,87 @@ question_count: racedActive.question_count,
 recovered_race: true,
 };
 }
-// Delivery B shadow intelligence starts only after the legacy Reckoning has
-// been durably created and its authoritative question_count has been fixed.
-// Never await this work on the learner's trigger response.
-setImmediate(async () => {
-  const subjectExamDate = await getSubjectExamDate(userId, subjectId).catch(() => null);
-  await reckoningShadow.analyzeSafely({
-    reckoning,
-    userId,
-    subjectId,
-    cards: subjectCardsForReckoning,
-    states: _reckAllStates,
-    bubbleCardIds: _reckBubbleCardIds,
-    pressureScore: pressureData.pressure_score,
-    subjectExamDate,
-  });
-});
-
+// V2 LIVE preparation is deliberately NOT started here. Triggering must remain
+// cheap and retriable. The user enters generation only by pressing Begin
+// Reckoning; activation happens after a valid bank exists.
 return {
 reckoning_id: reckoning.id,
 status: 'triggered',
 flagged_card_count: flaggedCards.length,
 question_count,
+engine_version: 2,
+engine_mode: 'LIVE',
 };
+}
+
+async function buildLiveReckoningPlanForSession(userId, reckoning) {
+  if (!reckoning?.subject_id) throw new Error('Reckoning subject is missing');
+
+  const decks = await db.decks.findBySubject(userId, reckoning.subject_id);
+  const deckIds = decks.map((deck) => deck.id);
+  const deckIdSet = new Set(deckIds);
+  const [allCards, allStates, existingEvidence, activeBubbles, subjectExamDate] =
+    await Promise.all([
+      db.cards.findAllForUser(userId),
+      db.cardStates.findByUser(userId),
+      liveReckoningStore.getEvidence(reckoning.id),
+      db.masteryGoals.findActive(userId).catch(() => []),
+      getSubjectExamDate(userId, reckoning.subject_id).catch(() => null),
+    ]);
+
+  const subjectCards = allCards.filter((card) => deckIdSet.has(card.deck_id));
+  if (!subjectCards.length) {
+    const error = new Error('Reckoning cannot start until this subject contains study cards.');
+    error.code = 'RECKONING_NO_CARDS';
+    throw error;
+  }
+
+  // A failed V2 attempt keeps already-Recovered evidence. The next attempt
+  // concentrates on what remains uncertain instead of repeatedly retesting
+  // knowledge the learner already repaired.
+  const recoveredCardIds = new Set(
+    existingEvidence
+      .filter((row) => row.evidence_status === 'RECOVERED' && row.source_card_id)
+      .map((row) => String(row.source_card_id))
+  );
+  let candidateCards = subjectCards.filter(
+    (card) => !recoveredCardIds.has(String(card.id))
+  );
+  // Rare case: every prior evidence unit recovered but the attempt still missed
+  // another global threshold. Retest the subject rather than creating no remedy.
+  if (!candidateCards.length) candidateCards = subjectCards;
+
+  const bubbleCardIds = [
+    ...new Set(activeBubbles.flatMap((goal) => goal.card_ids || []).map(String)),
+  ];
+  const nowMs = Date.now();
+  const metricsByCardId = await reckoningShadow.loadMetrics(
+    userId,
+    candidateCards,
+    nowMs
+  );
+  const daysToExam = subjectExamDate
+    ? daysBetween(new Date(nowMs), subjectExamDate)
+    : null;
+
+  const plan = liveReckoningPlanner.buildPlan({
+    cards: candidateCards,
+    states: allStates,
+    bubbleCardIds,
+    metricsByCardId,
+    context: {
+      subjectId: reckoning.subject_id,
+      pressureScore: Number(reckoning.pressure_score) || 0,
+      daysToExam,
+    },
+    now: new Date(nowMs),
+  });
+
+  if (!(plan.evidence.length || plan.controls.length)) {
+    throw new Error('KIWI could not build a valid Reckoning evidence plan.');
+  }
+
+  return { plan, deckIds };
 }
 
 async function deferReckoning(reckoningId, expectedUserId = null) {
