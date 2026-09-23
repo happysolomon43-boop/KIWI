@@ -242,6 +242,159 @@ function createReckoningStore({
     return rows?.[0] || null;
   }
 
+  async function claimGeneration(reckoningId, userId) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE reckoning_sessions
+       SET generation_status = 'generating',
+           generation_error = NULL,
+           engine_version = 2,
+           engine_mode = 'LIVE',
+           engine_phase = 'PREPARING',
+           updated_at = now()
+       WHERE id = $1
+         AND user_id = $2
+         AND status IN ('triggered','deferred')
+         AND (
+           generation_status IS NULL
+           OR generation_status IN ('pending','failed')
+           OR updated_at < now() - interval '3 minutes'
+         )
+       RETURNING *`,
+      [reckoningId, userId]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function markGenerationFailure(reckoningId, message) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE reckoning_sessions
+       SET generation_status = 'failed',
+           generation_error = $2,
+           engine_phase = 'PREPARING',
+           updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [reckoningId, String(message || 'Question generation failed').slice(0, 1800)]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function createExecutionExam({
+    id,
+    userId,
+    subjectId,
+    deckIds = [],
+    questionCount,
+    safetyWindowSeconds,
+    startedAt,
+    ksBefore = null,
+  }) {
+    requireQuery();
+    const { rows } = await query(
+      `INSERT INTO exam_sessions (
+         id, user_id, subject_id, deck_ids, question_count, card_range,
+         time_limit_seconds, is_reckoning, status, started_at,
+         total_questions, ks_before, created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4::jsonb,$5,'reckoning-v2',$6,true,'active',$7,$5,$8,now(),now()
+       )
+       RETURNING *`,
+      [
+        id,
+        userId,
+        subjectId,
+        json(deckIds || []),
+        Math.max(1, Number(questionCount) || 1),
+        Math.max(60, Number(safetyWindowSeconds) || 2700),
+        startedAt || new Date(),
+        ksBefore,
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function createExecutionQuestion(record) {
+    requireQuery();
+    const { rows } = await query(
+      `INSERT INTO exam_questions (
+         id, user_id, exam_session_id, card_id, question_number,
+         cognitive_level, difficulty, question_type, stem,
+         option_a, option_b, option_c, option_d, correct_answer, explanation,
+         reckoning_evidence_id, reckoning_role, variant_index,
+         reckoning_blueprint, is_unlocked, unlocked_at,
+         response_time_ms, evidence_effect, created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,
+         $10,$11,$12,$13,$14,$15,
+         $16,$17,$18,$19::jsonb,$20,$21,$22,$23::jsonb,now(),now()
+       )
+       RETURNING *`,
+      [
+        record.id,
+        record.user_id,
+        record.exam_session_id,
+        record.card_id || null,
+        record.question_number,
+        record.cognitive_level || null,
+        record.difficulty || null,
+        record.question_type || 'mcq',
+        record.stem,
+        record.option_a,
+        record.option_b,
+        record.option_c,
+        record.option_d,
+        record.correct_answer,
+        record.explanation || '',
+        record.reckoning_evidence_id,
+        record.reckoning_role,
+        Number(record.variant_index) || 0,
+        json(record.reckoning_blueprint || {}),
+        Boolean(record.is_unlocked),
+        record.unlocked_at || null,
+        record.response_time_ms ?? null,
+        json(record.evidence_effect || null),
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function activateReckoningRow(reckoningId, examSessionId) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE reckoning_sessions
+       SET status = 'in_progress',
+           exam_session_id = $2,
+           deferred_until = NULL,
+           score_pct = NULL,
+           debrief_text = NULL,
+           completed_at = NULL,
+           updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [reckoningId, examSessionId]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function markNonterminalEvidenceUnresolved(reckoningId, resolvedAt = new Date()) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE reckoning_evidence
+       SET evidence_status = 'UNRESOLVED',
+           resolved_at = COALESCE(resolved_at, $2),
+           updated_at = now()
+       WHERE reckoning_id = $1
+         AND evidence_status IN (
+           'UNTESTED','PROVISIONAL','CHALLENGE_REQUIRED','CONFIRMATION_REQUIRED'
+         )
+       RETURNING *`,
+      [reckoningId, resolvedAt]
+    );
+    return rows || [];
+  }
+
   async function getSessionByExam(examSessionId, userId, { forUpdate = false } = {}) {
     requireQuery();
     const suffix = forUpdate ? ' FOR UPDATE' : '';
@@ -621,6 +774,8 @@ function createReckoningStore({
     name: 'reckoning-postgres-store',
     getSession,
     getSessionByExam,
+    claimGeneration,
+    markGenerationFailure,
     getEvidence,
     getEvidenceById,
     getExecutionQuestions,
@@ -629,6 +784,10 @@ function createReckoningStore({
     getCardStateForLearningEffect,
     createEvidence,
     upsertEvidence,
+    createExecutionExam,
+    createExecutionQuestion,
+    activateReckoningRow,
+    markNonterminalEvidenceUnresolved,
     saveSession,
     saveEvidence,
     saveQuestionAnswer,
