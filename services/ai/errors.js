@@ -11,6 +11,7 @@ const AI_ERROR_CODES = Object.freeze({
   RATE_LIMIT_UNKNOWN: 'RATE_LIMIT_UNKNOWN',
   TIMEOUT: 'TIMEOUT',
   TRANSIENT: 'TRANSIENT',
+  PROVIDER_OVERLOADED: 'PROVIDER_OVERLOADED',
   NETWORK: 'NETWORK',
   SAFETY: 'SAFETY',
   EMPTY_RESPONSE: 'EMPTY_RESPONSE',
@@ -217,12 +218,23 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
     });
   }
 
+  if (status === 503) {
+    return new AIError(message, {
+      code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+      status,
+      retryable: true,
+      scope: 'PROVIDER_MODEL',
+      details: body,
+      retryAfterMs,
+    });
+  }
+
   if (status >= 500 && status <= 599) {
     return new AIError(message, {
       code: AI_ERROR_CODES.TRANSIENT,
       status,
       retryable: true,
-      scope: 'ATTEMPT',
+      scope: 'PROVIDER_MODEL',
       details: body,
       retryAfterMs,
     });
@@ -269,6 +281,7 @@ const AVAILABILITY_ERROR_CODES = new Set([
   AI_ERROR_CODES.RATE_LIMIT_UNKNOWN,
   AI_ERROR_CODES.TIMEOUT,
   AI_ERROR_CODES.TRANSIENT,
+  AI_ERROR_CODES.PROVIDER_OVERLOADED,
   AI_ERROR_CODES.NETWORK,
   AI_ERROR_CODES.EMPTY_RESPONSE,
   AI_ERROR_CODES.CAPACITY_EXHAUSTED,
