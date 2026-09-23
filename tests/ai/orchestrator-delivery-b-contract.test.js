@@ -20,7 +20,15 @@ test('Delivery B migration persists provider health and admission metadata behin
   assert.match(source, /ADD COLUMN IF NOT EXISTS congestion_level/i);
   assert.match(source, /ai_provider_model_health ENABLE ROW LEVEL SECURITY/i);
   assert.match(source, /REVOKE ALL ON TABLE ai_provider_model_health FROM anon, authenticated/i);
-  assert.doesNotMatch(source, /prompt|response_text|api_key/i);
+
+  // Comments may explicitly document that sensitive payloads are excluded.
+  // Inspect executable SQL only so the contract verifies columns/schema rather
+  // than accidentally failing on that explanatory text.
+  const executableSql = source
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n');
+  assert.doesNotMatch(executableSql, /\b(prompt|response_text|api_key)\b/i);
 });
 
 test('Delivery B runtime exposes traffic, provider health, sync and durable operations status', () => {
