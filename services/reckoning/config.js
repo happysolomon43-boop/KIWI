@@ -168,6 +168,18 @@ function createLiveReckoningConfig(overrides = {}) {
     ...createReckoningConfig(overrides),
     ...DELIVERY_E_RECKONING_CONFIG,
     ...overrides,
+    risk: Object.freeze({
+      ...DELIVERY_E_RECKONING_CONFIG.risk,
+      ...(overrides.risk || {}),
+      baseByState: Object.freeze({
+        ...DELIVERY_E_RECKONING_CONFIG.risk.baseByState,
+        ...(overrides.risk?.baseByState || {}),
+      }),
+      modifiers: Object.freeze({
+        ...DELIVERY_E_RECKONING_CONFIG.risk.modifiers,
+        ...(overrides.risk?.modifiers || {}),
+      }),
+    }),
     planner: Object.freeze({
       ...DELIVERY_E_RECKONING_CONFIG.planner,
       ...(overrides.planner || {}),
