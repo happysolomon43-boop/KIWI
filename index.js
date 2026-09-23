@@ -19412,6 +19412,93 @@ brainRouter.use(reckoningLockout);
 // These mirror the /reckoning/ routes under /brain/reckoning/ for frontend compat.
 // Note: frontend accesses these via brainRouter which is mounted at /api/brain
 
+brainRouter.post('/reckoning/start', async (req, res) => {
+try {
+  const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+  if (!active) return res.status(404).json({ error: 'No active Reckoning to start' });
+
+  if (
+    Number(active.engine_version || 1) !== 2 ||
+    !['PILOT', 'LIVE'].includes(String(active.engine_mode || ''))
+  ) {
+    return res.status(409).json({
+      error: 'This Reckoning uses the legacy exam flow.',
+      code: 'RECKONING_LEGACY_FLOW',
+    });
+  }
+
+  if (active.status === 'in_progress' && active.exam_session_id) {
+    const state = await adaptiveReckoningEngine.getState({
+      examSessionId: active.exam_session_id,
+      userId: req.user.id,
+    });
+    return res.json({
+      status: 'in_progress',
+      exam_session_id: active.exam_session_id,
+      state,
+      resumed: true,
+    });
+  }
+
+  const deferredUntil = active.deferred_until
+    ? new Date(active.deferred_until).getTime()
+    : 0;
+  if (deferredUntil > Date.now()) {
+    return res.status(409).json({
+      error: 'This Reckoning is still deferred.',
+      code: 'RECKONING_DEFERRED',
+      deferred_until: active.deferred_until,
+    });
+  }
+
+  const { plan, deckIds } = await buildLiveReckoningPlanForSession(
+    req.user.id,
+    active
+  );
+
+  invalidateKSCache(req.user.id, active.subject_id);
+  const ksSnapshot = await computeKnowledgeScore(
+    req.user.id,
+    active.subject_id
+  ).catch(() => null);
+  const ksBefore = _finiteKsNumber(ksSnapshot?.score);
+
+  const started = await adaptiveReckoningEngine.start({
+    reckoning: active,
+    userId: req.user.id,
+    subjectId: active.subject_id,
+    plan,
+    deckIds,
+    ksBefore,
+  });
+
+  const state = await adaptiveReckoningEngine.getState({
+    examSessionId: started.examSessionId,
+    userId: req.user.id,
+  });
+
+  res.json({
+    status: 'in_progress',
+    exam_session_id: started.examSessionId,
+    generated_questions: started.generatedQuestions || null,
+    evidence_units: started.evidenceUnits || null,
+    resumed: started.alreadyStarted === true,
+    state,
+  });
+} catch (e) {
+  const status = Number(e.status) || (
+    e.code === 'ERR_RECKONING_PREPARING' || e.code === 'RECKONING_DEFERRED'
+      ? 409
+      : 503
+  );
+  res.status(status).json({
+    error: e.message || 'Failed to prepare Reckoning',
+    code: e.code || 'ERR_RECKONING_PREPARE',
+    deferred_until: e.deferredUntil || null,
+  });
+}
+});
+
 brainRouter.post('/reckoning/defer', async (req, res) => {
 try {
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
@@ -19437,6 +19524,15 @@ if (!exam.is_reckoning) {
 const active = await db.reckoningSessions.findActiveByUser(req.user.id);
 if (!active || active.status !== 'in_progress' || String(active.exam_session_id) !== String(examId)) {
   return res.status(409).json({ error: 'This exam is not linked to the active Reckoning.' });
+}
+if (
+  Number(active.engine_version || 1) === 2 &&
+  ['PILOT', 'LIVE'].includes(String(active.engine_mode || ''))
+) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning answers must be submitted one question at a time.',
+    code: 'RECKONING_USE_ADAPTIVE_ANSWER',
+  });
 }
 
 // Recovery for the historical split-brain state: older generation flows could
@@ -19644,7 +19740,12 @@ res.json({
   subjectId: active.subject_id,
   subjectName: active.subject_name,
   reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
-  requiredScore: 70,
+  adaptive: Number(active.engine_version || 1) === 2 &&
+    ['PILOT', 'LIVE'].includes(String(active.engine_mode || '')),
+  requiredScore: Number(active.engine_version || 1) === 2 ? null : 70,
+  requiredRecovery: Number(active.engine_version || 1) === 2
+    ? liveReckoningConfig.scoring.recoveryThreshold
+    : null,
   pressure: active.pressure_score || 0,
   shields: userStats?.streak_shields_held || 0,
   canDefer: !active.deferral_used,
