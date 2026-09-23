@@ -23,6 +23,9 @@ const SESSION_FIELD_MAP = Object.freeze({
   generationError: 'generation_error',
   plannerVersion: 'planner_version',
   configVersion: 'config_version',
+  checkpointPending: 'checkpoint_pending',
+  checkpointNextQuestionId: 'checkpoint_next_question_id',
+  finalReport: 'final_report',
 });
 
 const EVIDENCE_FIELD_MAP = Object.freeze({
@@ -53,6 +56,7 @@ const EVIDENCE_FIELD_MAP = Object.freeze({
 });
 
 const JSON_EVIDENCE_FIELDS = new Set(['sourceSnapshot', 'riskReasons']);
+const JSON_SESSION_FIELDS = new Set(['finalReport']);
 
 function json(value) {
   return JSON.stringify(value == null ? null : value);
@@ -239,6 +243,246 @@ function createReckoningStore({
       ]
     );
 
+    return rows?.[0] || null;
+  }
+
+  async function claimPreparation(reckoningId, userId, staleMinutes = 5) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE reckoning_sessions
+       SET generation_status = 'pending',
+           generation_error = NULL,
+           engine_phase = 'PREPARING',
+           updated_at = now()
+       WHERE id = $1
+         AND user_id = $2
+         AND engine_version = 2
+         AND engine_mode IN ('PILOT','LIVE')
+         AND status IN ('triggered','deferred')
+         AND exam_session_id IS NULL
+         AND (deferred_until IS NULL OR deferred_until <= now())
+         AND (
+           generation_status IN ('not_started','error','partial')
+           OR (
+             generation_status = 'pending'
+             AND updated_at < now() - ($3::text || ' minutes')::interval
+           )
+         )
+       RETURNING *`,
+      [reckoningId, userId, Math.max(1, Number(staleMinutes) || 5)]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function releasePreparationFailure(reckoningId, userId, error) {
+    requireQuery();
+    const message = String(error?.message || error || 'Reckoning preparation failed').slice(0, 1500);
+    const { rows } = await query(
+      `UPDATE reckoning_sessions
+       SET generation_status = 'error',
+           generation_error = $3,
+           engine_phase = 'PREPARING',
+           updated_at = now()
+       WHERE id = $1
+         AND user_id = $2
+         AND engine_version = 2
+         AND exam_session_id IS NULL
+       RETURNING *`,
+      [reckoningId, userId, message]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function clearPreparationEvidence(reckoningId, userId) {
+    requireQuery();
+    const { rows: sessions } = await query(
+      `SELECT id
+       FROM reckoning_sessions
+       WHERE id = $1
+         AND user_id = $2
+         AND exam_session_id IS NULL
+         AND questions_used = 0
+       LIMIT 1`,
+      [reckoningId, userId]
+    );
+    if (!sessions?.[0]) {
+      throw new ReckoningContractError(
+        'Preparation artifacts can only be cleared before a Reckoning exam is linked.'
+      );
+    }
+    await query(
+      'DELETE FROM reckoning_evidence WHERE reckoning_id = $1 AND user_id = $2',
+      [reckoningId, userId]
+    );
+    return true;
+  }
+
+  async function createExecutionExam(userId, {
+    id = randomUUID(),
+    subjectId,
+    deckIds = [],
+    questionCount = 0,
+    safetyWindowSeconds = 2700,
+  } = {}) {
+    requireQuery();
+    const { rows } = await query(
+      `INSERT INTO exam_sessions (
+         id, user_id, subject_id, deck_ids, question_count, card_range,
+         time_limit_seconds, is_reckoning, status, started_at, created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4::jsonb,$5,'all',$6,true,'active',now(),now(),now()
+       )
+       RETURNING *`,
+      [
+        id,
+        userId,
+        subjectId || null,
+        json(deckIds || []),
+        Math.max(0, Number(questionCount) || 0),
+        Math.max(60, Number(safetyWindowSeconds) || 2700),
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function createPreparedQuestion(userId, examSessionId, record = {}) {
+    requireQuery();
+    const id = record.id || randomUUID();
+    const options = Array.isArray(record.options) ? record.options : [];
+    const { rows } = await query(
+      `INSERT INTO exam_questions (
+         id, user_id, exam_session_id, card_id, question_number,
+         cognitive_level, difficulty, question_type, stem,
+         option_a, option_b, option_c, option_d, correct_answer, explanation,
+         reckoning_evidence_id, reckoning_role, variant_index,
+         reckoning_blueprint, is_unlocked, unlocked_at, created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,
+         $10,$11,$12,$13,$14,$15,
+         $16,$17,$18,$19::jsonb,$20,$21,now(),now()
+       )
+       RETURNING *`,
+      [
+        id,
+        userId,
+        examSessionId,
+        record.cardId || null,
+        Number(record.questionNumber) || null,
+        record.cognitiveLevel || null,
+        record.difficulty || null,
+        record.questionType || 'Reckoning',
+        record.stem || '',
+        options[0] || '',
+        options[1] || '',
+        options[2] || '',
+        options[3] || '',
+        record.correctAnswer || null,
+        record.explanation || '',
+        record.evidenceId || null,
+        record.role || null,
+        Number(record.variantIndex) || 0,
+        json(record.blueprint || {}),
+        Boolean(record.isUnlocked),
+        record.isUnlocked ? (record.unlockedAt || new Date()) : null,
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function activatePreparedSession(reckoningId, userId, {
+    examSessionId,
+    currentQuestionId,
+    questionCount,
+    softQuestionBudget,
+    hardQuestionCap,
+    plannerVersion,
+    configVersion,
+    safetyWindowMinutes = 45,
+  } = {}) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE reckoning_sessions
+       SET status = 'in_progress',
+           exam_session_id = $3,
+           deferred_until = NULL,
+           engine_version = 2,
+           engine_mode = CASE
+             WHEN engine_mode = 'PILOT' THEN 'PILOT'
+             ELSE 'LIVE'
+           END,
+           engine_phase = 'ACTIVE',
+           generation_status = 'ready',
+           generation_error = NULL,
+           question_count = $4,
+           questions_used = 0,
+           soft_question_budget = $5,
+           hard_question_cap = $6,
+           current_block = 1,
+           current_question_id = $7,
+           checkpoint_pending = false,
+           checkpoint_next_question_id = NULL,
+           prepared_at = now(),
+           review_started_at = now(),
+           safety_expires_at = now() + ($8::text || ' minutes')::interval,
+           planner_version = $9,
+           config_version = $10,
+           state_version = state_version + 1,
+           score_pct = NULL,
+           raw_accuracy = NULL,
+           recovery_score = NULL,
+           unresolved_critical_count = 0,
+           debrief_text = NULL,
+           completed_at = NULL,
+           updated_at = now()
+       WHERE id = $1
+         AND user_id = $2
+         AND engine_version = 2
+         AND engine_mode IN ('PILOT','LIVE')
+         AND generation_status = 'pending'
+         AND status IN ('triggered','deferred')
+         AND exam_session_id IS NULL
+         AND (deferred_until IS NULL OR deferred_until <= now())
+       RETURNING *`,
+      [
+        reckoningId,
+        userId,
+        examSessionId,
+        Math.max(1, Number(questionCount) || 1),
+        Math.max(1, Number(softQuestionBudget) || 1),
+        Math.max(1, Number(hardQuestionCap) || 30),
+        currentQuestionId,
+        Math.max(1, Number(safetyWindowMinutes) || 45),
+        Number(plannerVersion) || 1,
+        Number(configVersion) || 1,
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function invalidateExecutionQuestion(
+    userId,
+    examSessionId,
+    questionId,
+    audit = {}
+  ) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE exam_questions
+       SET is_unlocked = false,
+           evidence_effect = COALESCE(evidence_effect, '{}'::jsonb)
+             || $4::jsonb,
+           updated_at = now()
+       WHERE id = $1
+         AND exam_session_id = $2
+         AND user_id = $3
+       RETURNING *`,
+      [
+        questionId,
+        examSessionId,
+        userId,
+        json({ invalidated: true, audit }),
+      ]
+    );
     return rows?.[0] || null;
   }
 
@@ -547,6 +791,7 @@ function createReckoningStore({
       id: reckoningId,
       patch,
       fieldMap: SESSION_FIELD_MAP,
+      jsonFields: JSON_SESSION_FIELDS,
     });
     const { rows } = await query(statement.sql, statement.values);
     return rows?.[0] || null;
@@ -620,6 +865,13 @@ function createReckoningStore({
   return Object.freeze({
     name: 'reckoning-postgres-store',
     getSession,
+    claimPreparation,
+    releasePreparationFailure,
+    clearPreparationEvidence,
+    createExecutionExam,
+    createPreparedQuestion,
+    activatePreparedSession,
+    invalidateExecutionQuestion,
     getSessionByExam,
     getEvidence,
     getEvidenceById,
@@ -644,6 +896,7 @@ function createReckoningStore({
 module.exports = {
   SESSION_FIELD_MAP,
   EVIDENCE_FIELD_MAP,
+  JSON_SESSION_FIELDS,
   createPatchQuery,
   createReckoningStore,
 };
