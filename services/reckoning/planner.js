@@ -82,9 +82,20 @@ function createPlanner({
       })
       .sort(stableRiskSort);
 
-    const critical = candidates.filter((item) => item.riskLevel === RISK_LEVELS.CRITICAL);
-    const high = candidates.filter((item) => item.riskLevel === RISK_LEVELS.HIGH);
+    const allCritical = candidates.filter((item) => item.riskLevel === RISK_LEVELS.CRITICAL);
+    const allHigh = candidates.filter((item) => item.riskLevel === RISK_LEVELS.HIGH);
     const healthy = candidates.filter((item) => item.riskLevel === RISK_LEVELS.SUPPORTING);
+
+    // A single Reckoning has a hard question ceiling. Bound the evidence profile
+    // before generation so hidden variants cannot explode AI cost or create an
+    // impossible session whose required evidence exceeds the ceiling.
+    const maxEvidenceUnits = Math.max(
+      plannerConfig.minEvidenceUnits,
+      Number(plannerConfig.maxEvidenceUnits) || 10
+    );
+    const critical = allCritical.slice(0, maxEvidenceUnits);
+    const remainingForHigh = Math.max(0, maxEvidenceUnits - critical.length);
+    const high = allHigh.slice(0, remainingForHigh);
 
     const weak = [...critical, ...high];
     const selected = [...weak];
@@ -147,6 +158,8 @@ function createPlanner({
       hardQuestionCap: plannerConfig.hardQuestionCap,
       counts: Object.freeze({
         totalCards: candidates.length,
+        totalCriticalCandidates: allCritical.length,
+        totalHighCandidates: allHigh.length,
         critical: critical.length,
         high: high.length,
         supporting: supporting.length,
