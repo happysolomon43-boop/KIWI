@@ -9,17 +9,23 @@ const {
   labelForStage,
 } = require('../../services/tree-state');
 
-test('TreeState defaults are safe and renderer-compatible', () => {
+test('TreeState v3 defaults are safe and renderer-compatible', () => {
   const state = buildTreeState();
 
-  assert.equal(state.schemaVersion, 2);
-  assert.equal(state.growthModelVersion, 1);
+  assert.equal(state.schemaVersion, 3);
+  assert.equal(state.growthModelVersion, 2);
   assert.equal(state.stage, 1);
   assert.equal(state.stageLabel, 'SEEDLING');
   assert.equal(state.growthPoints, 0);
   assert.equal(state.growthProgress, 0);
   assert.equal(state.overallGrowthProgress, 0);
   assert.equal(state.postAncientGrowth, 0);
+
+  assert.ok(state.vineStructure);
+  assert.ok(state.vineHealth);
+  assert.ok(state.structuralGrowth);
+  assert.ok(state.visualHealth);
+
   assert.equal(state.vitality, 100);
   assert.equal(state.health, 100);
   assert.equal(state.knowledgeScore, 0);
@@ -28,6 +34,7 @@ test('TreeState defaults are safe and renderer-compatible', () => {
   assert.equal(state.rings, 0);
   assert.deepEqual(state.milestones, []);
   assert.equal(state.streak, 0);
+
   assert.deepEqual(state.nextStage, {
     next_stage: 2,
     next_stage_label: 'SPROUT',
@@ -35,6 +42,7 @@ test('TreeState defaults are safe and renderer-compatible', () => {
     target_growth_points: 25,
     growth_points_needed: 25,
   });
+
   assert.deepEqual(state.growthInterval, {
     currentStageStart: 0,
     nextStageStart: 25,
@@ -44,7 +52,70 @@ test('TreeState defaults are safe and renderer-compatible', () => {
   });
 });
 
-test('TreeState clamps maturity and vitality while preserving permanent progression inputs', () => {
+test('canonical TreeState exposes vine anatomy rather than generic tree anatomy', () => {
+  const state = buildTreeState({
+    stage: 5,
+    growthPoints: 900,
+    vitality: 80,
+  });
+
+  assert.deepEqual(Object.keys(state.vineStructure), [
+    'rootEstablishment',
+    'baseStemThickness',
+    'woodyMaturity',
+    'mainStemReach',
+    'cordonReach',
+    'cordonThickness',
+    'lateralShootDevelopment',
+    'vineComplexity',
+    'foliageCapacity',
+    'floweringCapacity',
+    'fruitingCapacity',
+  ]);
+
+  for (const genericTreeKey of [
+    'trunkHeight',
+    'trunkThickness',
+    'rootSpread',
+    'branchDevelopment',
+    'branchComplexity',
+    'canopyCapacity',
+    'barkMaturity',
+  ]) {
+    assert.equal(Object.hasOwn(state.vineStructure, genericTreeKey), false);
+  }
+});
+
+test('TreeState retains exact legacy morphology aliases for the current SVG renderer', () => {
+  const state = buildTreeState({
+    stage: 5,
+    growthPoints: 900,
+    vitality: 72,
+  });
+
+  assert.deepEqual(state.structuralGrowth, {
+    trunkHeight: state.vineStructure.mainStemReach,
+    trunkThickness: state.vineStructure.baseStemThickness,
+    rootSpread: state.vineStructure.rootEstablishment,
+    branchDevelopment: state.vineStructure.cordonReach,
+    branchComplexity: state.vineStructure.vineComplexity,
+    canopyCapacity: state.vineStructure.foliageCapacity,
+    barkMaturity: state.vineStructure.woodyMaturity,
+    fruitingCapacity: state.vineStructure.fruitingCapacity,
+  });
+
+  assert.deepEqual(state.visualHealth, {
+    leafDensity: state.vineHealth.leafDensity,
+    leafRetention: state.vineHealth.leafRetention,
+    droop: state.vineHealth.leafDroop,
+    saturation: state.vineHealth.leafSaturation,
+    movementStrength: state.vineHealth.movementStrength,
+    bloomStrength: state.vineHealth.flowerVigor,
+    stress: state.vineHealth.stress,
+  });
+});
+
+test('TreeState clamps maturity and vitality while preserving permanent progression', () => {
   const state = buildTreeState({
     stage: 99,
     health: -20,
@@ -69,7 +140,7 @@ test('TreeState clamps maturity and vitality while preserving permanent progress
   assert.equal(state.nextStage, null);
 });
 
-test('TreeState derives canopy density from global KS only when no explicit leaf hint is supplied', () => {
+test('TreeState derives foliage hint from global KS only when no explicit leaf hint exists', () => {
   assert.equal(buildTreeState({ knowledgeScore: 42 }).leaves, 21);
   assert.equal(buildTreeState({ knowledgeScore: 0 }).leaves, 4);
   assert.equal(buildTreeState({ knowledgeScore: 100 }).leaves, 50);
@@ -133,7 +204,7 @@ test('TreeState accepts database snake_case inputs and keeps health as a vitalit
   });
 });
 
-test('Growth Points can advance a stale persisted stage but can never visually de-age it', () => {
+test('Growth Points advance stale persisted stage but can never visually de-age the vine', () => {
   const advanced = buildTreeState({ stage: 1, growthPoints: 320 });
   assert.equal(advanced.stage, 4);
   assert.equal(advanced.stageLabel, 'YOUNG TREE');
@@ -144,21 +215,25 @@ test('Growth Points can advance a stale persisted stage but can never visually d
   assert.equal(protectedStage.growthProgress, 0);
 });
 
-test('Vitality changes visual condition without changing permanent structure', () => {
+test('Vitality changes current vine health without changing permanent woody structure', () => {
   const healthy = buildTreeState({ growthPoints: 900, vitality: 95 });
   const critical = buildTreeState({ growthPoints: 900, vitality: 10 });
 
   assert.equal(healthy.stage, critical.stage);
   assert.equal(healthy.overallGrowthProgress, critical.overallGrowthProgress);
+  assert.deepEqual(healthy.vineStructure, critical.vineStructure);
   assert.deepEqual(healthy.structuralGrowth, critical.structuralGrowth);
 
-  assert.notDeepEqual(healthy.visualHealth, critical.visualHealth);
-  assert.ok(healthy.visualHealth.leafDensity > critical.visualHealth.leafDensity);
-  assert.ok(healthy.visualHealth.droop < critical.visualHealth.droop);
-  assert.ok(healthy.visualHealth.saturation > critical.visualHealth.saturation);
+  assert.notDeepEqual(healthy.vineHealth, critical.vineHealth);
+  assert.ok(healthy.vineHealth.leafDensity > critical.vineHealth.leafDensity);
+  assert.ok(healthy.vineHealth.leafDroop < critical.vineHealth.leafDroop);
+  assert.ok(
+    healthy.vineHealth.leafSaturation > critical.vineHealth.leafSaturation
+  );
+  assert.ok(healthy.vineHealth.shootVigor > critical.vineHealth.shootVigor);
 });
 
-test('Tree stage labels stay aligned with the eight-stage ecosystem', () => {
+test('Tree stage labels stay aligned with the existing eight-stage product language', () => {
   const expected = [
     '',
     'SEEDLING',
