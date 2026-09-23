@@ -707,7 +707,7 @@ function createReckoningEngine(options = {}) {
     });
   }
 
-  async function finalize({ examSessionId, userId } = {}) {
+  async function finalize({ examSessionId, userId, forceReason = null } = {}) {
     if (!examSessionId || !userId) {
       throw new ReckoningContractError('finalize requires examSessionId and userId.');
     }
@@ -734,6 +734,7 @@ function createReckoningEngine(options = {}) {
             questionsUsed: Number(session.questions_used) || 0,
           }),
           learningEffects: Object.freeze({ applied: [], skipped: [] }),
+          finalReport: session.final_report || null,
           reason: 'ALREADY_FINALIZED',
         });
       }
@@ -758,6 +759,7 @@ function createReckoningEngine(options = {}) {
         Number(session.hard_question_cap) || config.planner.hardQuestionCap;
 
       const finalizable =
+        Boolean(forceReason) ||
         session.engine_phase === SESSION_PHASES.FINALIZING ||
         recovery.survived ||
         questionsUsed >= hardCap ||
@@ -807,31 +809,6 @@ function createReckoningEngine(options = {}) {
         );
       }
 
-      const finalReport = {
-        survived: recovery.survived,
-        rawAccuracy: recovery.rawAccuracy,
-        recoveryScore: recovery.recoveryScore,
-        recovered: evidenceState.recovered,
-        unresolved: evidenceState.unresolved,
-        criticalUnresolved: evidenceState.criticalUnresolved,
-        discoveredWeaknesses: evidence
-          .filter((row) => row.discovered_by_control === true)
-          .map((row) => ({
-            sourceCardId: row.source_card_id,
-            conceptKey: row.concept_key,
-            status: row.evidence_status,
-          })),
-        concepts: evidence.map((row) => ({
-          sourceCardId: row.source_card_id,
-          conceptKey: row.concept_key,
-          riskLevel: row.risk_level,
-          status: row.evidence_status,
-          diagnosticOutcome: row.diagnostic_outcome,
-          challengeOutcome: row.challenge_outcome,
-          confirmationOutcome: row.confirmation_outcome,
-          learningEffectApplied: Boolean(row.learning_effect_applied_at),
-        })),
-      };
       const persistedSession = await txStore.saveSession(session.id, {
         enginePhase: SESSION_PHASES.FINALIZING,
         currentQuestionId: null,
@@ -840,7 +817,6 @@ function createReckoningEngine(options = {}) {
         rawAccuracy: recovery.rawAccuracy,
         recoveryScore: recovery.recoveryScore,
         unresolvedCriticalCount: recovery.unresolvedCriticalCount,
-        finalReport,
         stateVersion: (Number(session.state_version) || 0) + 1,
       });
 
@@ -855,9 +831,11 @@ function createReckoningEngine(options = {}) {
         learningEffects: effects,
         reason: recovery.survived
           ? 'RECOVERY_SUFFICIENT'
-          : questionsUsed >= hardCap
-            ? 'HARD_CAP_REACHED'
-            : 'NO_PENDING_QUESTIONS',
+          : forceReason
+            ? String(forceReason)
+            : questionsUsed >= hardCap
+              ? 'HARD_CAP_REACHED'
+              : 'NO_PENDING_QUESTIONS',
       });
     });
 
@@ -890,6 +868,7 @@ function createReckoningEngine(options = {}) {
           recovery: prepared.recovery,
           evidenceState: prepared.evidenceState,
           learningEffects: prepared.learningEffects,
+          finalReport: beforeOutcome.final_report || null,
           outcome: null,
         });
       }
@@ -907,6 +886,15 @@ function createReckoningEngine(options = {}) {
         reason: prepared.reason,
       });
 
+      const finalReport = buildFinalReport({
+        evidence: prepared.evidence,
+        recovery: prepared.recovery,
+        evidenceState: prepared.evidenceState,
+        learningEffects: prepared.learningEffects,
+        outcome,
+        reason: prepared.reason,
+      });
+
       await store.withTransaction(async (txStore) => {
         const current = requireAdaptiveSession(
           await txStore.getSession(prepared.session.id, userId, { forUpdate: true })
@@ -919,10 +907,13 @@ function createReckoningEngine(options = {}) {
           await txStore.saveSession(current.id, {
             enginePhase: SESSION_PHASES.COMPLETE,
             currentQuestionId: null,
+            checkpointPending: false,
+            checkpointNextQuestionId: null,
             rawAccuracy: prepared.recovery.rawAccuracy,
             recoveryScore: prepared.recovery.recoveryScore,
             unresolvedCriticalCount:
               prepared.recovery.unresolvedCriticalCount,
+            finalReport,
             stateVersion: (Number(current.state_version) || 0) + 1,
           });
         }
@@ -935,6 +926,7 @@ function createReckoningEngine(options = {}) {
         recovery: prepared.recovery,
         evidenceState: prepared.evidenceState,
         learningEffects: prepared.learningEffects,
+        finalReport,
         outcome,
       });
     };
@@ -944,3 +936,45 @@ function createReckoningEngine(options = {}) {
     }
     return completeOutcome();
   }
+
+  const engine = {
+    describe() {
+      return Object.freeze({
+        name: RECKONING_ENGINE.NAME,
+        engineVersion: config.engineVersion,
+        architectureVersion: config.architectureVersion,
+        status: RECKONING_ENGINE.STATUS,
+        enabled: config.enabled,
+        behaviorAuthority: config.behaviorAuthority,
+        preparationVersion: config.preparationVersion,
+        evidenceModelVersion: config.evidenceModelVersion,
+        schedulerVersion: config.schedulerVersion,
+        scoringVersion: config.scoringVersion,
+        learningEffectsVersion: config.learningEffectsVersion,
+        checkpointExecution: true,
+        consequenceFinalization: true,
+      });
+    },
+    prepare,
+    start,
+    continueCheckpoint,
+    recordAnswer,
+    getState,
+    finalize,
+  };
+
+  return Object.freeze(assertEngineContract(engine));
+}
+
+module.exports = {
+  field,
+  evidenceConceptLabel,
+  buildCheckpoint,
+  buildFinalReport,
+  isSafetyExpired,
+  isAdaptiveReckoningQuestion,
+  adaptiveSessionAllowed,
+  sanitizeCurrentQuestion,
+  sanitizeHistoryQuestion,
+  createReckoningEngine,
+};
