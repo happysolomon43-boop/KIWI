@@ -38,7 +38,20 @@ const { createEcosystemV2 } = require('./ecosystem_v2');
 const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
-const { createShadowIntelligence, createReckoningEngine, isAdaptiveReckoningQuestion } = require('./services/reckoning');
+const {
+  createShadowIntelligence,
+  createReckoningEngine,
+  isAdaptiveReckoningQuestion,
+  createLiveReckoningConfig,
+  createRiskEngine,
+  createPlanner,
+  createScheduler,
+  createQuestionValidator,
+  createQuestionBank,
+  createAISemanticReviewer,
+  createProductionPreparation,
+  createReckoningStore,
+} = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 
 const pool = new Pool({
@@ -64,9 +77,8 @@ const _aiRuntime = createAIRuntime({
 });
 const ai = _aiRuntime.orchestrator;
 
-// Reckoning V2 Delivery B runs intelligence in SHADOW only. This object may
-// persist risk/evidence telemetry, but it has no authority over legacy
-// question count, access, scoring, lockout, or pass/fail behavior.
+// Legacy shadow intelligence remains available only for historical/diagnostic
+// compatibility. New Reckonings use the explicit LIVE configuration below.
 const reckoningShadow = createShadowIntelligence({
   query,
   randomUUID,
@@ -89,12 +101,45 @@ async function withTransaction(fn) {
   }
 }
 
-// Delivery C execution engine is intentionally dormant for legacy/shadow rows.
-// Its endpoints accept only explicit engine_version=2 PILOT/LIVE sessions.
-const adaptiveReckoningEngine = createReckoningEngine({
+// Delivery E: the completed V2 stack is now authoritative for newly-triggered
+// Reckonings. Already-existing legacy rows remain legacy until they finish.
+const liveReckoningConfig = createLiveReckoningConfig();
+const liveReckoningRisk = createRiskEngine({ config: liveReckoningConfig });
+const liveReckoningPlanner = createPlanner({
+  config: liveReckoningConfig,
+  riskEngine: liveReckoningRisk,
+});
+const liveReckoningScheduler = createScheduler({ config: liveReckoningConfig });
+const liveReckoningStore = createReckoningStore({
   query,
   transaction: withTransaction,
   randomUUID,
+});
+const liveSemanticReview = createAISemanticReviewer({
+  aiRun: (...args) => ai.run(...args),
+});
+const liveQuestionValidator = createQuestionValidator({
+  config: liveReckoningConfig,
+  semanticReview: liveSemanticReview,
+});
+const liveQuestionBank = createQuestionBank({
+  config: liveReckoningConfig,
+  validator: liveQuestionValidator,
+  aiRun: (...args) => ai.run(...args),
+});
+const liveReckoningPreparation = createProductionPreparation({
+  config: liveReckoningConfig,
+  store: liveReckoningStore,
+  questionBank: liveQuestionBank,
+  scheduler: liveReckoningScheduler,
+  randomUUID,
+  generationConcurrency: 6,
+  generationAttempts: 3,
+});
+const adaptiveReckoningEngine = createReckoningEngine({
+  config: liveReckoningConfig,
+  store: liveReckoningStore,
+  preparation: liveReckoningPreparation,
   outcomeHandler: finalizeAdaptiveReckoningOutcome,
 });
 
