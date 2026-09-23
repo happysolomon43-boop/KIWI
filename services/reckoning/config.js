@@ -68,6 +68,7 @@ const DELIVERY_D_RECKONING_CONFIG = Object.freeze({
     maxControls: 4,
     minEvidenceUnits: 5,
     maxSupportingUnits: 6,
+    maxEvidenceUnits: 10,
     minQuestionBudget: 5,
     softQuestionCap: 24,
     hardQuestionCap: 30,
@@ -151,6 +152,47 @@ function createReckoningConfig(overrides = {}) {
   });
 }
 
+const DELIVERY_E_RECKONING_CONFIG = Object.freeze({
+  ...DELIVERY_D_RECKONING_CONFIG,
+  enabled: true,
+  behaviorAuthority: 'v2',
+  configVersion: 4,
+  planner: Object.freeze({
+    ...DELIVERY_D_RECKONING_CONFIG.planner,
+    maxEvidenceUnits: 10,
+  }),
+});
+
+function createLiveReckoningConfig(overrides = {}) {
+  return Object.freeze({
+    ...createReckoningConfig(overrides),
+    ...DELIVERY_E_RECKONING_CONFIG,
+    ...overrides,
+    planner: Object.freeze({
+      ...DELIVERY_E_RECKONING_CONFIG.planner,
+      ...(overrides.planner || {}),
+    }),
+    execution: Object.freeze({
+      ...DELIVERY_E_RECKONING_CONFIG.execution,
+      ...(overrides.execution || {}),
+    }),
+    scoring: Object.freeze({
+      ...DELIVERY_E_RECKONING_CONFIG.scoring,
+      ...(overrides.scoring || {}),
+    }),
+    learningEffects: Object.freeze({
+      ...DELIVERY_E_RECKONING_CONFIG.learningEffects,
+      ...(overrides.learningEffects || {}),
+    }),
+    validation: Object.freeze({
+      ...DELIVERY_E_RECKONING_CONFIG.validation,
+      ...(overrides.validation || {}),
+    }),
+    enabled: true,
+    behaviorAuthority: 'v2',
+  });
+}
+
 module.exports = {
   RISK_MODEL_VERSION,
   PLANNER_VERSION,
@@ -163,8 +205,10 @@ module.exports = {
   RISK_BASE_BY_STATE,
   RISK_MODIFIERS,
   DELIVERY_D_RECKONING_CONFIG,
+  DELIVERY_E_RECKONING_CONFIG,
   DELIVERY_C_RECKONING_CONFIG,
   DELIVERY_B_RECKONING_CONFIG,
   PHASE1_RECKONING_CONFIG,
   createReckoningConfig,
+  createLiveReckoningConfig,
 };
