@@ -6446,7 +6446,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const _hasLiveStudy = _studyPageLocked && !!(AppState && AppState.tempStudy);
         if (_examPageLocked || _hasLiveStudy) {
           var msg = _examPageLocked
-            ? 'You have an active exam. Leaving will forfeit it.'
+            ? (_examIsReckoning
+                ? 'Your Reckoning progress is saved on KIWI. You can return and resume the exact server-saved question.'
+                : 'You have an active exam. Leaving will forfeit it.')
             : 'You have an active study session. Your latest saved snapshot can be resumed.';
           e.preventDefault();
           e.returnValue = msg;
@@ -7596,6 +7598,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         // Backend: POST /brain/reckoning/defer (now added; auto-resolves active reckoning ID)
         // Also supports POST /reckoning/:id/defer with explicit ID
         return await apiRequest("/brain/reckoning/defer", { method: "POST" });
+      };
+
+      api.startAdaptiveReckoning = async () => {
+        return await apiRequest("/brain/reckoning/start", { method: "POST" });
+      };
+
+      api.getAdaptiveReckoningState = async (examId) => {
+        return await apiRequest("/exams/" + encodeURIComponent(examId) + "/reckoning/state");
+      };
+
+      api.answerAdaptiveReckoning = async (examId, questionId, selectedOption, responseTimeMs) => {
+        return await apiRequest("/exams/" + encodeURIComponent(examId) + "/reckoning/answer", {
+          method: "POST",
+          body: {
+            question_id: questionId,
+            selected_option: selectedOption,
+            response_time_ms: responseTimeMs,
+          },
+        });
+      };
+
+      api.finalizeAdaptiveReckoning = async (examId) => {
+        return await apiRequest("/exams/" + encodeURIComponent(examId) + "/reckoning/finalize", {
+          method: "POST",
+        });
+      };
+
+      api.getActiveReckoning = async () => {
+        return await apiRequest("/brain/reckoning/active");
       };
 
       api.submitReckoning = async (examId, answers) => {
@@ -14336,6 +14367,66 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         return true;
       }
 
+      async function _openAdaptiveReckoning(initialState, examId) {
+        if (!window.KiwiReckoningV2) {
+          throw new Error("Adaptive Reckoning client is not loaded");
+        }
+        const state = initialState || await api.getAdaptiveReckoningState(examId);
+        const resolvedExamId = examId || state?.examSessionId;
+        if (!state || !resolvedExamId) {
+          throw new Error("Saved adaptive Reckoning state is unavailable");
+        }
+
+        AppState.tempExam = {
+          examId: resolvedExamId,
+          isReckoning: true,
+          adaptiveReckoning: true,
+        };
+        _lockExamPage(true);
+        _setReckoningLockdownUi(true);
+
+        return window.KiwiReckoningV2.open({
+          hostId: "reckoningContainer",
+          initialState: state,
+          examSessionId: resolvedExamId,
+          api: {
+            state: api.getAdaptiveReckoningState,
+            answer: api.answerAdaptiveReckoning,
+            finalize: api.finalizeAdaptiveReckoning,
+          },
+          notify: (message, type) => showToast(message, type || "info"),
+          onLock: () => {
+            _lockExamPage(true);
+            _setReckoningLockdownUi(true);
+          },
+          onDone: async () => {
+            _unlockExamPage();
+            AppState.tempExam = null;
+            try {
+              const active = await api.getActiveReckoning();
+              if (!active || active.status === "none" || active.status === "completed" || active.status === "failsafe_released") {
+                AppState.reckoning = null;
+                _setReckoningLockdownUi(false);
+                _closeReckoningSurface();
+                navigateTo("brain", { fromReckoning: true });
+                return;
+              }
+              AppState.reckoning = active;
+              _closeReckoningSurface();
+              _setReckoningLockdownUi(true);
+              showReckoningOverlay(active, {
+                force: true,
+                mandatory: true,
+                forceLockoutOverlay: true,
+              });
+            } catch (_e) {
+              _closeReckoningSurface();
+              navigateTo("brain", { fromReckoning: true });
+            }
+          },
+        });
+      }
+
       function showReckoningOverlay(reckoning, options = {}) {
         const container = document.getElementById("reckoningContainer");
         if (!container || !reckoning) return;
@@ -14359,6 +14450,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         _reckoningOverlayRenderKey = stateKey;
 
         const isInProgress = reckoning.status === "in_progress" && !!reckoning.exam_session_id;
+        const isAdaptive = reckoning.adaptive === true ||
+          (Number(reckoning.engine_version || 1) === 2 &&
+           ["PILOT", "LIVE"].includes(String(reckoning.engine_mode || "")));
         const failureCount = Math.max(0, Number(reckoning.failure_count) || 0);
         const failsafeThreshold = Math.max(1, Number(reckoning.failsafe_threshold) || 6);
         const failsafeNoteHtml = isMandatory
@@ -14395,7 +14489,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         <div class="reckoning-subject">${escapeHTML(reckoning.subjectName || reckoning.subject_name || "Unknown Subject")}</div>
         <div class="reckoning-reason">
           <strong style="color:var(--text);">Reason:</strong> ${escapeHTML(reckoning.reason || "Pressure threshold exceeded")}<br>
-          <strong style="color:var(--text);">Required:</strong> ${escapeHTML(reckoning.requiredScore || "70")}% or higher to unlock<br>
+          <strong style="color:var(--text);">Required:</strong> ${isAdaptive
+            ? "Recover every critical concept and reach the evidence-recovery gate"
+            : escapeHTML(reckoning.requiredScore || "70") + "% or higher to unlock"}<br>
           <strong style="color:var(--text);">Stakes:</strong> Failure increases pressure further
         </div>
         ${isMandatory ? `
@@ -14409,8 +14505,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             <div class="stat-value" style="color:var(--red-bright)">${Math.round(reckoning.pressure || 0)} pts</div>
           </div>
           <div class="stat-card">
-            <div class="stat-label">Required Score</div>
-            <div class="stat-value">${reckoning.requiredScore || 70}%</div>
+            <div class="stat-label">${isAdaptive ? "Recovery Gate" : "Required Score"}</div>
+            <div class="stat-value">${isAdaptive
+              ? (reckoning.requiredRecovery || 75) + "% + all Critical"
+              : (reckoning.requiredScore || 70) + "%"}</div>
           </div>
           <div class="stat-card">
             <div class="stat-label">Streak Shields</div>
@@ -14493,13 +14591,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             _startBtn.textContent = isInProgress ? "Resuming…" : "Starting…";
           }
           try {
+            if (isAdaptive) {
+              if (isInProgress) {
+                const state = await api.getAdaptiveReckoningState(reckoning.exam_session_id);
+                await _openAdaptiveReckoning(state, reckoning.exam_session_id);
+                return;
+              }
+
+              container.innerHTML = `
+                <div class="reckoning-overlay" id="examGeneratingScreen" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-5);text-align:center;padding:var(--space-8);">
+                  <svg style="width:40px;height:40px" viewBox="0 0 24 24" fill="none" stroke="var(--red-bright)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>
+                  <div style="font-size:var(--text-xl);font-weight:650;color:var(--red-bright);">Preparing diagnostic evidence…</div>
+                  <div style="font-size:var(--text-base);color:var(--text-2);max-width:390px;line-height:1.6;">
+                    KIWI is building and validating independent Diagnostic, Challenge, Control, and Confirmation questions from your own material. The lock activates only after the bank is usable.
+                  </div>
+                  <div class="loading-dots" style="margin-top:var(--space-3);"><span></span><span></span><span></span></div>
+                </div>`;
+
+              const started = await api.startAdaptiveReckoning();
+              await _openAdaptiveReckoning(started.state, started.exam_session_id);
+              return;
+            }
+
             if (isInProgress) {
               const resumed = await _restoreActiveReckoningExam();
               if (!resumed) throw new Error("Saved Reckoning exam could not be resumed yet");
               return;
             }
-            // BUG1-FIX: generateExam returns a 202 job_id object, not a completed exam.
-            // Detect async path and show spinner; WS job_done handler will navigate to exam.
+            // Legacy Reckoning generation path remains unchanged for sessions
+            // created before the V2 production activation.
             const response = await api.generateExam(reckoning.subject_id || reckoning.subjectId, {
               isReckoning: true,
               reckoningId: reckoning.id,
@@ -14532,7 +14652,27 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               is_reckoning: true,
             });
           } catch (err) {
-            showToast("Failed to start Reckoning exam", "error");
+            showToast(
+              isAdaptive
+                ? (err?.message || "KIWI could not build a valid Reckoning yet. You can retry safely.")
+                : "Failed to start Reckoning exam",
+              "error",
+              7000
+            );
+            if (isAdaptive) {
+              try {
+                const fresh = await api.getActiveReckoning();
+                if (fresh && fresh.status !== "none") {
+                  AppState.reckoning = fresh;
+                  showReckoningOverlay(fresh, {
+                    force: true,
+                    mandatory: true,
+                    forceLockoutOverlay: true,
+                  });
+                  return;
+                }
+              } catch (_e) {}
+            }
             const _sb = document.getElementById("startReckoningBtn");
             if (_sb) {
               _sb.disabled = false;
@@ -23570,5 +23710,5 @@ window.addEventListener('scroll', _tourScheduleReposition, { passive: true, capt
 </script>
 <script src="/kiwi_product_v3.js"></script>
 <script src="/kiwi_bubbles_v1.js"></script>
-</body>
+<script src="/reckoning-v2.js?v=20260923e" defer></script>\n</body>
 </html>
