@@ -105,7 +105,7 @@ export function interpolateVineRenderState(fromInput, toInput, progress) {
     vitality: mix(from.vitality, to.vitality),
     vineStructure,
     vineHealth,
-    fruits: Math.round(mix(from.fruits, to.fruits)),
+    fruits: mix(from.fruits, to.fruits),
     rings: Math.round(mix(from.rings, to.rings)),
   };
 }
