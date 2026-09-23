@@ -99,7 +99,7 @@ The renderer may derive visual presentation from the canonical state, but it sho
 
 Tree stages are now milestone labels, not visual replacement models.
 
-`services/tree-growth-model.js` defines the continuous biological growth contract. Each milestone has a visual-maturity anchor:
+`services/vine-growth-model.js` now defines the canonical continuous biological growth contract. `services/tree-growth-model.js` remains only as a compatibility bridge for pre-vine consumers. Each milestone has a visual-maturity anchor:
 
 - Seedling: 0.00
 - Sprout: 0.12
@@ -120,53 +120,80 @@ A smootherstep interpolation is used at milestone boundaries, which has zero vel
 
 At Ancient, `overallGrowthProgress` is 1.0. Growth beyond 3000 GP is represented by `postAncientGrowth`, an asymptotic 0..1 signal. This allows subtle long-term thickening and root expansion without inventing a ninth stage.
 
-## Permanent structural morphology
+## Permanent kiwifruit-vine morphology
 
 All structural values are normalized 0..1 and are deterministic functions of continuous maturity.
 
-The canonical `structuralGrowth` object contains:
+The canonical `vineStructure` object describes a trained woody kiwifruit climber rather than a freestanding tree:
 
-- `trunkHeight`
-- `trunkThickness`
-- `rootSpread`
-- `branchDevelopment`
-- `branchComplexity`
-- `canopyCapacity`
-- `barkMaturity`
+- `rootEstablishment`
+- `baseStemThickness`
+- `woodyMaturity`
+- `mainStemReach`
+- `cordonReach`
+- `cordonThickness`
+- `lateralShootDevelopment`
+- `vineComplexity`
+- `foliageCapacity`
+- `floweringCapacity`
 - `fruitingCapacity`
 
-The equations deliberately grow different structures at different rates. Roots and trunk thickness establish earlier, branch complexity and bark maturity develop later, and fruiting capacity appears only after substantial maturity.
+The model establishes roots and the vertical leader first. Once the leader reaches its support, horizontal cordons extend and thicken. Lateral shoots then multiply along those permanent arms, increasing the usable foliage network. Flowering and fruiting capacity arrive later than the basic woody framework.
 
-No Vitality value participates in these equations. A low-Vitality Ancient tree remains structurally Ancient.
+No Vitality value participates in these equations. A low-Vitality Ancient vine remains structurally Ancient.
 
-## Reversible visual health
+For compatibility with the current SVG renderer, `structuralGrowth` is still emitted as an exact legacy mapping:
 
-Vitality is normalized to 0..1 and converted into a `visualHealth` object:
+- `trunkHeight` → `mainStemReach`
+- `trunkThickness` → `baseStemThickness`
+- `rootSpread` → `rootEstablishment`
+- `branchDevelopment` → `cordonReach`
+- `branchComplexity` → `vineComplexity`
+- `canopyCapacity` → `foliageCapacity`
+- `barkMaturity` → `woodyMaturity`
+- `fruitingCapacity` → `fruitingCapacity`
+
+These aliases are transitional and are not the contract the future PixiJS renderer should use.
+
+## Reversible vine health
+
+Vitality is normalized to 0..1 and converted into the canonical `vineHealth` object:
 
 - `leafDensity`
 - `leafRetention`
-- `droop`
-- `saturation`
+- `leafDroop`
+- `leafSaturation`
 - `movementStrength`
-- `bloomStrength`
+- `shootVigor`
+- `flowerVigor`
 - `stress`
 
 These values affect only current presentation. They can recover upward or fall downward as the ecosystem changes.
 
-A renderer must never use `visualHealth` to shrink the trunk, delete permanent branches, reduce Growth Points, or move the tree to a younger stage.
+The legacy `visualHealth` object remains as a compatibility mapping, with `droop`, `saturation`, and `bloomStrength` pointing to the corresponding vine-health values.
 
-## TreeState schema v2
+A renderer must never use `vineHealth` to shrink the woody base, retract permanent cordons, reduce Growth Points, or move the vine to a younger stage.
 
-The canonical TreeState schema is now version 2. In addition to the previous compatibility fields it exposes:
+## TreeState schema v3
+
+The canonical TreeState schema is now version 3 and the growth model is version 2.
+
+Canonical renderer-facing growth fields are:
 
 - `growthModelVersion`
 - `growthProgress`
 - `overallGrowthProgress`
 - `postAncientGrowth`
 - `growthInterval`
+- `vineStructure`
+- `vineHealth`
+
+Compatibility fields remain:
+
 - `structuralGrowth`
 - `visualHealth`
+- `health` as an alias of `vitality`
 
-The legacy `health` field remains an alias of `vitality` so the existing SVG tree can continue to render unchanged until the renderer migration begins.
+The future PixiJS renderer must consume `vineStructure` and `vineHealth`, not the legacy generic-tree aliases.
 
-The current SVG renderer does not consume the new morphology fields yet. This change only defines and exposes the continuous growth model.
+The current SVG renderer does not consume the new vine morphology fields yet. This phase changes the biological contract only; it does not install PixiJS or alter visible rendering.
