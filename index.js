@@ -8929,14 +8929,8 @@ async function finalizeAdaptiveReckoningOutcome({
     .findByIdWithQuestions(userId, examSessionId)
     .catch(() => null);
 
-  let ks = { before: null, after: null, delta: null };
-  if (exam?.ks_processed_at) {
-    ks = {
-      before: _finiteKsNumber(exam.ks_before),
-      after: _finiteKsNumber(exam.ks_after),
-      delta: _finiteKsNumber(exam.ks_delta),
-    };
-  } else if (exam) {
+  let ks = { before: null, after: null, delta: null, replayed: false };
+  if (exam) {
     ks = await finalizeExamKsOutcome(
       userId,
       exam,
