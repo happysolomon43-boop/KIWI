@@ -3,12 +3,13 @@
 const { MODEL_STATUS } = require('./model-catalog');
 const { AI_ERROR_CODES } = require('./errors');
 
+// Lifecycle suspension is for model incompatibility, not temporary provider
+// availability. Provider overload, timeouts and transport failures are handled
+// by the orchestrator's short-lived provider-health circuit instead.
 const CIRCUIT_BREAKER_CODES = new Set([
   AI_ERROR_CODES.BAD_REQUEST,
   AI_ERROR_CODES.MODEL_NOT_FOUND,
   AI_ERROR_CODES.EMPTY_RESPONSE,
-  AI_ERROR_CODES.TRANSIENT,
-  AI_ERROR_CODES.TIMEOUT,
 ]);
 
 function rowToModel(row) {

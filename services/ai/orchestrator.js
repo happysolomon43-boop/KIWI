@@ -6,6 +6,7 @@ const { createModelRouter } = require('./model-router');
 const { createProjectPool } = require('./project-pool');
 const { createGeminiTransport } = require('./gemini-transport');
 const { normalizeGeminiResponse } = require('./response-normalizer');
+const { createProviderHealth, MODEL_AVAILABILITY_CODES } = require('./provider-health');
 const {
   AIError,
   AI_ERROR_CODES,
@@ -19,6 +20,7 @@ const IMMEDIATE_FAILURE_CODES = new Set([
 ]);
 
 const FAST_MODEL_FALLBACK_CODES = new Set([
+  AI_ERROR_CODES.PROVIDER_OVERLOADED,
   AI_ERROR_CODES.TRANSIENT,
   AI_ERROR_CODES.TIMEOUT,
   AI_ERROR_CODES.NETWORK,
@@ -65,6 +67,7 @@ function createAIOrchestrator({
   quotaManager = null,
   telemetry = null,
   modelLifecycle = null,
+  providerHealth = null,
   transport = null,
   normalizer = normalizeGeminiResponse,
   logger = console,
@@ -75,14 +78,11 @@ function createAIOrchestrator({
   const resolvedProjectPool = projectPool || createProjectPool({ env });
   const resolvedTransport = transport || createGeminiTransport();
 
-  // Provider 5xx overload is model/service scoped much more often than
-  // project-key scoped. Remember a short transient cooldown so concurrent AI
-  // features do not all re-hit the same overloaded model before falling back.
-  const modelTransientCooldowns = new Map();
-  const configuredTransientCooldownMs = Number(env?.AI_MODEL_TRANSIENT_COOLDOWN_MS);
-  const MODEL_TRANSIENT_COOLDOWN_MS = Number.isFinite(configuredTransientCooldownMs)
-    ? Math.max(5000, Math.min(configuredTransientCooldownMs, 120000))
-    : 20000;
+  function boundedEnvNumber(name, fallback, min, max) {
+    const parsed = Number(env?.[name]);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(parsed, max));
+  }
 
   function nowMs() {
     const value = clock();
@@ -91,32 +91,30 @@ function createAIOrchestrator({
     return Number.isFinite(numeric) ? numeric : Date.now();
   }
 
-  function modelCooldownUntil(modelId) {
-    const until = Number(modelTransientCooldowns.get(modelId)) || 0;
-    if (!until) return null;
-    if (until <= nowMs()) {
-      modelTransientCooldowns.delete(modelId);
-      return null;
-    }
-    return until;
-  }
-
-  function isModelTemporarilyAvailable(modelId) {
-    return modelCooldownUntil(modelId) == null;
-  }
-
-  function markModelTransientFailure(modelId, error) {
-    if (error?.code !== AI_ERROR_CODES.TRANSIENT) return;
-    const providerDelay = Number(error?.retryAfterMs);
-    const cooldownMs = Number.isFinite(providerDelay) && providerDelay > 0
-      ? Math.max(5000, Math.min(providerDelay, 120000))
-      : MODEL_TRANSIENT_COOLDOWN_MS;
-    modelTransientCooldowns.set(modelId, nowMs() + cooldownMs);
-  }
-
-  function clearModelTransientFailure(modelId) {
-    modelTransientCooldowns.delete(modelId);
-  }
+  // Provider/model availability is intentionally separate from persistent
+  // project+model quota state. A single 503 does not quarantine a model; the
+  // circuit opens only after independent project slots corroborate the outage.
+  const resolvedProviderHealth = providerHealth || createProviderHealth({
+    clock,
+    failureEvidenceWindowMs: boundedEnvNumber(
+      'AI_PROVIDER_FAILURE_EVIDENCE_WINDOW_MS',
+      30000,
+      5000,
+      300000
+    ),
+    openCooldownMs: boundedEnvNumber(
+      'AI_MODEL_TRANSIENT_COOLDOWN_MS',
+      20000,
+      5000,
+      120000
+    ),
+    minDistinctFailureSlots: boundedEnvNumber(
+      'AI_PROVIDER_FAILURE_EVIDENCE_SLOTS',
+      2,
+      1,
+      5
+    ),
+  });
 
   function retryPolicyFor(task) {
     return RETRY_POLICY_CONFIG[task?.retryPolicy] || DEFAULT_RETRY_POLICY;
@@ -209,10 +207,10 @@ function createAIOrchestrator({
   function plan(taskId, { preferredModelId = null } = {}) {
     const candidates = resolvedRouter.resolveCandidates(taskId, { preferredModelId });
     const routedCandidates = candidates.map((candidate) => {
-      const cooldownUntil = modelCooldownUntil(candidate.modelId);
-      const eligibleSlots = cooldownUntil
-        ? []
-        : slotsForModel(candidate.modelId, { advance: false });
+      const providerAvailability = resolvedProviderHealth.availability(candidate.modelId);
+      const eligibleSlots = providerAvailability.available
+        ? slotsForModel(candidate.modelId, { advance: false })
+        : [];
       return Object.freeze({
         modelId: candidate.modelId,
         class: candidate.class,
@@ -220,10 +218,13 @@ function createAIOrchestrator({
         resolvedReasoning: candidate.resolvedReasoning,
         timeoutMs: candidate.timeoutMs,
         qualityFloor: candidate.qualityFloor,
-        temporarilyUnavailable: Boolean(cooldownUntil),
-        transientCooldownUntil: cooldownUntil
-          ? new Date(cooldownUntil).toISOString()
-          : null,
+        temporarilyUnavailable: !providerAvailability.available,
+        providerCircuitState: providerAvailability.state,
+        providerRetryAfterMs: providerAvailability.retryAfterMs,
+        transientCooldownUntil:
+          !providerAvailability.available && providerAvailability.retryAfterMs
+            ? new Date(nowMs() + providerAvailability.retryAfterMs).toISOString()
+            : null,
         eligibleProjectSlots: Object.freeze(eligibleSlots.map((slot) => slot.id)),
       });
     });
@@ -267,11 +268,16 @@ function createAIOrchestrator({
     const routedCandidates = resolvedRouter.resolveCandidates(taskId, {
       preferredModelId: affinityModelId,
     });
-    const candidates = routedCandidates.filter(
-      (candidate) => isModelTemporarilyAvailable(candidate.modelId)
+    const firstAvailableCandidate = routedCandidates.find(
+      (candidate) => resolvedProviderHealth.availability(candidate.modelId).available
     );
-    if (!affinityModelId && generationGroupId && task.affinityGroup && candidates[0]) {
-      setAffinity(task, generationGroupId, candidates[0].modelId);
+    if (
+      !affinityModelId &&
+      generationGroupId &&
+      task.affinityGroup &&
+      firstAvailableCandidate
+    ) {
+      setAffinity(task, generationGroupId, firstAvailableCandidate.modelId);
     }
     const featureGenerationConfig = validateFeatureGenerationConfig(
       request.generationConfig || {}
@@ -309,6 +315,7 @@ function createAIOrchestrator({
     const requestStarted = Date.now();
     let lastError = null;
     let hadEligibleRoute = false;
+    const providerBlockedModels = [];
 
     async function finishFailure(error, outcome = 'FAILED') {
       await sideEffect('telemetry finish failure', () => telemetry?.finishRequest(requestId, {
@@ -325,17 +332,33 @@ function createAIOrchestrator({
     }
 
     modelLoop:
-    for (let modelIndex = 0; modelIndex < candidates.length; modelIndex++) {
-      const candidate = candidates[modelIndex];
+    for (let modelIndex = 0; modelIndex < routedCandidates.length; modelIndex++) {
+      const candidate = routedCandidates[modelIndex];
       const slots = slotsForModel(candidate.modelId, { advance: true });
       if (slots.length > 0) hadEligibleRoute = true;
+      if (slots.length === 0) continue;
+      if (attempts.length >= retryPolicy.maxAttempts) break modelLoop;
+
+      const providerLease = resolvedProviderHealth.acquire(candidate.modelId);
+      if (!providerLease.available) {
+        providerBlockedModels.push(Object.freeze({
+          modelId: candidate.modelId,
+          state: providerLease.state,
+          retryAfterMs: providerLease.retryAfterMs,
+        }));
+        continue;
+      }
+
       let skipRemainingSlotsForModel = false;
       let modelAttemptCount = 0;
       let modelQuotaAttemptCount = 0;
       let modelTransientAttemptCount = 0;
 
       for (const slot of slots) {
-        if (attempts.length >= retryPolicy.maxAttempts) break modelLoop;
+        if (attempts.length >= retryPolicy.maxAttempts) {
+          resolvedProviderHealth.release(candidate.modelId);
+          break modelLoop;
+        }
 
         const attemptNumber = attempts.length + 1;
         const attemptStarted = Date.now();
@@ -380,7 +403,7 @@ function createAIOrchestrator({
             slot.id,
             candidate.modelId
           ));
-          clearModelTransientFailure(candidate.modelId);
+          resolvedProviderHealth.recordSuccess(candidate.modelId);
           await sideEffect('model lifecycle success', () => modelLifecycle?.recordSuccess(
             candidate.modelId
           ));
@@ -437,8 +460,18 @@ function createAIOrchestrator({
 
           lastError = aiError;
           const isProjectSlotQuotaFailure = PROJECT_SLOT_QUOTA_CODES.has(aiError.code);
+          const isProviderAvailabilityFailure = MODEL_AVAILABILITY_CODES.has(aiError.code);
           if (isProjectSlotQuotaFailure) modelQuotaAttemptCount += 1;
           else modelAttemptCount += 1;
+
+          const providerState = isProviderAvailabilityFailure
+            ? resolvedProviderHealth.recordFailure(
+                candidate.modelId,
+                slot.id,
+                aiError,
+                { totalEligibleSlots: slots.length }
+              )
+            : null;
 
           attempts.push(Object.freeze({
             modelId: candidate.modelId,
@@ -492,6 +525,7 @@ function createAIOrchestrator({
           }
 
           if (IMMEDIATE_FAILURE_CODES.has(aiError.code)) {
+            resolvedProviderHealth.release(candidate.modelId);
             await finishFailure(
               aiError,
               aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED'
@@ -538,11 +572,11 @@ function createAIOrchestrator({
 
             if (FAST_MODEL_FALLBACK_CODES.has(aiError.code)) {
               modelTransientAttemptCount += 1;
-              markModelTransientFailure(candidate.modelId, aiError);
 
               if (
+                providerState?.state === 'OPEN' ||
                 modelTransientAttemptCount >=
-                retryPolicy.maxTransientAttemptsPerModel
+                  retryPolicy.maxTransientAttemptsPerModel
               ) {
                 skipRemainingSlotsForModel = true;
                 break;
@@ -557,38 +591,60 @@ function createAIOrchestrator({
             continue;
           }
 
+          resolvedProviderHealth.release(candidate.modelId);
           await finishFailure(aiError);
           throw aiError;
         }
       }
 
+      resolvedProviderHealth.release(candidate.modelId);
       if (skipRemainingSlotsForModel) continue;
     }
 
+    const blockedOnlyByProviderHealth =
+      attempts.length === 0 &&
+      hadEligibleRoute &&
+      providerBlockedModels.length > 0;
+    const providerRetryAfterMs = providerBlockedModels
+      .map((entry) => Number(entry.retryAfterMs))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => a - b)[0] || null;
+
     const finalCode = lastError?.code || (
-      hadEligibleRoute
-        ? AI_ERROR_CODES.UNKNOWN
-        : AI_ERROR_CODES.CAPACITY_EXHAUSTED
+      blockedOnlyByProviderHealth
+        ? AI_ERROR_CODES.PROVIDER_OVERLOADED
+        : hadEligibleRoute
+          ? AI_ERROR_CODES.UNKNOWN
+          : AI_ERROR_CODES.CAPACITY_EXHAUSTED
     );
+    const finalMessage = lastError
+      ? `All approved routes failed for AI task ${taskId}`
+      : blockedOnlyByProviderHealth
+        ? `Approved models are temporarily unavailable for AI task ${taskId}`
+        : `No healthy project/model capacity is currently available for AI task ${taskId}`;
     const finalError = new AIError(
-      hadEligibleRoute
-        ? `All approved routes failed for AI task ${taskId}`
-        : `No healthy project/model capacity is currently available for AI task ${taskId}`,
+      finalMessage,
       {
         code: finalCode,
-        status: lastError?.status || null,
-        retryable: false,
-        scope: 'REQUEST',
+        status: lastError?.status || (
+          blockedOnlyByProviderHealth ? 503 : null
+        ),
+        retryable: lastError
+          ? Boolean(lastError.retryable)
+          : blockedOnlyByProviderHealth,
+        retryAfterMs: lastError?.retryAfterMs || providerRetryAfterMs,
+        scope: blockedOnlyByProviderHealth ? 'PROVIDER' : 'REQUEST',
         details: {
           attempts,
           lastErrorCode: lastError?.code || null,
           hadEligibleRoute,
+          blockedOnlyByProviderHealth,
+          providerBlockedModels,
           retryPolicy: task.retryPolicy,
           maxAttempts: retryPolicy.maxAttempts,
           maxQuotaAttemptsPerModel: retryPolicy.maxQuotaAttemptsPerModel || null,
-          temporarilyUnavailableModels: routedCandidates
-            .map((candidate) => candidate.modelId)
-            .filter((modelId) => !isModelTemporarilyAvailable(modelId)),
+          maxTransientAttemptsPerModel: retryPolicy.maxTransientAttemptsPerModel || null,
+          temporarilyUnavailableModels: providerBlockedModels.map((entry) => entry.modelId),
         },
         cause: lastError,
       }
@@ -610,8 +666,8 @@ function createAIOrchestrator({
     quotaManager,
     telemetry,
     modelLifecycle,
+    providerHealth: resolvedProviderHealth,
     generationAffinity,
-    modelTransientCooldowns,
   });
 }
 

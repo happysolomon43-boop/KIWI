@@ -39,27 +39,29 @@ const RETRY_POLICIES = Object.freeze({
 });
 
 // Retry budgets distinguish project-slot quota failures from provider/model
-// failures. A 429 is project+model scoped and should rotate keys; a 5xx is
-// usually model/service scoped and should fall to the next model immediately.
-// This avoids the old 40+ request storm while still surviving exhausted keys.
+// failures. A 429 is project+model scoped and should rotate keys. Provider 5xx
+// failures require evidence from more than one independent project slot before
+// a model circuit opens; this prevents one unlucky request from hiding a healthy
+// model while still bounding provider-overload probes.
+// This avoids request storms while still surviving exhausted or flaky routes.
 const RETRY_POLICY_CONFIG = Object.freeze({
   [RETRY_POLICIES.VVIP_GENERATION]: Object.freeze({
     maxAttempts: 32,
     maxAttemptsPerModel: 2,
     maxQuotaAttemptsPerModel: 15,
-    maxTransientAttemptsPerModel: 1,
+    maxTransientAttemptsPerModel: 2,
   }),
   [RETRY_POLICIES.VIP_ANALYSIS]: Object.freeze({
     maxAttempts: 20,
     maxAttemptsPerModel: 2,
     maxQuotaAttemptsPerModel: 10,
-    maxTransientAttemptsPerModel: 1,
+    maxTransientAttemptsPerModel: 2,
   }),
   [RETRY_POLICIES.IP_FAST]: Object.freeze({
     maxAttempts: 8,
     maxAttemptsPerModel: 2,
     maxQuotaAttemptsPerModel: 4,
-    maxTransientAttemptsPerModel: 1,
+    maxTransientAttemptsPerModel: 2,
   }),
 });
 

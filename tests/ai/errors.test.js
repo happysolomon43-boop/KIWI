@@ -67,14 +67,26 @@ test('distinguishes Gemini daily, request-per-minute and token-per-minute quota 
   assert.equal(rpd.retryable, true);
 });
 
-test('classifies server errors as transient', () => {
+test('classifies 503 service-unavailable as provider overload', () => {
   const error = classifyGeminiHttpError({
     status: 503,
     body: { error: { message: 'Service unavailable' } },
   });
 
+  assert.equal(error.code, AI_ERROR_CODES.PROVIDER_OVERLOADED);
+  assert.equal(error.retryable, true);
+  assert.equal(error.scope, 'PROVIDER_MODEL');
+});
+
+test('keeps other 5xx failures as transient provider-model failures', () => {
+  const error = classifyGeminiHttpError({
+    status: 502,
+    body: { error: { message: 'Bad gateway' } },
+  });
+
   assert.equal(error.code, AI_ERROR_CODES.TRANSIENT);
   assert.equal(error.retryable, true);
+  assert.equal(error.scope, 'PROVIDER_MODEL');
 });
 
 
