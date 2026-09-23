@@ -347,6 +347,7 @@ test('tree-state channel replays only recent reactions that still match current 
     {
       emitCurrent: true,
       emitRecentReactions: true,
+      consumeRecentReactions: true,
       reactionTtlMs: 60000,
     }
   );
@@ -365,6 +366,24 @@ test('tree-state channel replays only recent reactions that still match current 
   );
 
   unsubscribe();
+
+  let secondReplay = null;
+  const unsubscribeSecond = channel.subscribeTreeState(
+    (event) => {
+      secondReplay = event;
+    },
+    {
+      emitCurrent: true,
+      emitRecentReactions: true,
+      consumeRecentReactions: true,
+      reactionTtlMs: 60000,
+    }
+  );
+  assert.ok(secondReplay);
+  assert.equal(secondReplay.source, 'current');
+  assert.deepEqual(secondReplay.reactions, []);
+
+  unsubscribeSecond();
   channel.resetTreeStateChannel();
 });
 
@@ -442,8 +461,15 @@ test('app shell wires state publishing, route spillover, study invalidation and 
     source,
     /pointer-events: none !important/
   );
+  const controller = fs.readFileSync(
+    path.join(
+      ROOT,
+      'public/tree/vine-expansion-controller.mjs'
+    ),
+    'utf8'
+  );
   assert.match(
-    source,
+    controller,
     /aria-live', 'polite'/
   );
 });
