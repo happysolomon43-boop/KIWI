@@ -287,6 +287,23 @@ function createReckoningStore({
     return rows?.[0] || null;
   }
 
+  async function touchPreparation(reckoningId, userId) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE reckoning_sessions
+       SET updated_at = now()
+       WHERE id = $1
+         AND user_id = $2
+         AND engine_version = 2
+         AND engine_mode IN ('PILOT','LIVE')
+         AND generation_status = 'pending'
+         AND exam_session_id IS NULL
+       RETURNING id, updated_at`,
+      [reckoningId, userId]
+    );
+    return rows?.[0] || null;
+  }
+
   async function releasePreparationFailure(reckoningId, userId, error) {
     requireQuery();
     const message = String(error?.message || error || 'Reckoning preparation failed').slice(0, 1500);
@@ -880,6 +897,7 @@ function createReckoningStore({
     name: 'reckoning-postgres-store',
     getSession,
     claimPreparation,
+    touchPreparation,
     releasePreparationFailure,
     clearPreparationEvidence,
     createExecutionExam,
