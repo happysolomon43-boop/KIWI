@@ -558,3 +558,94 @@ test('capacity exhausted is reserved for genuinely unavailable project-model rou
   );
   assert.equal(calls, 0);
 });
+
+
+test('orchestrator records traffic admission metadata and releases the lease on success', async () => {
+  let releases = 0;
+  let successSignals = 0;
+  const finishes = [];
+  const trafficController = {
+    async acquire() {
+      return {
+        queueWaitMs: 27,
+        admissionLimit: 2,
+        congestionLevel: 'HIGH',
+        release() { releases += 1; },
+      };
+    },
+    noteSuccess() { successSignals += 1; },
+    noteFailure() {},
+    snapshot() {
+      return { effectiveConcurrency: 2, congestionLevel: 'HIGH' };
+    },
+  };
+  const telemetry = {
+    async beginRequest() { return 'req-traffic-success'; },
+    async recordAttempt() {},
+    async finishRequest(_id, record) { finishes.push(record); },
+  };
+
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    trafficController,
+    telemetry,
+    transport: {
+      async generate() {
+        return { raw: successRaw('traffic-ok'), latencyMs: 5, httpStatus: 200 };
+      },
+    },
+  });
+
+  const result = await ai.run('MAIN_CBT', { content: 'exam' });
+  assert.equal(result.text, 'traffic-ok');
+  assert.equal(releases, 1);
+  assert.equal(successSignals, 1);
+  assert.equal(finishes.length, 1);
+  assert.equal(finishes[0].queueWaitMs, 27);
+  assert.equal(finishes[0].admissionLimit, 2);
+  assert.equal(finishes[0].congestionLevel, 'HIGH');
+});
+
+test('orchestrator releases traffic capacity after terminal AI failure', async () => {
+  let releases = 0;
+  let failureSignals = 0;
+  const trafficController = {
+    async acquire() {
+      return {
+        queueWaitMs: 0,
+        admissionLimit: 1,
+        congestionLevel: 'NORMAL',
+        release() { releases += 1; },
+      };
+    },
+    noteSuccess() {},
+    noteFailure() { failureSignals += 1; },
+    snapshot() {
+      return { effectiveConcurrency: 1, congestionLevel: 'NORMAL' };
+    },
+  };
+
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    trafficController,
+    transport: {
+      async generate() {
+        throw new AIError('invalid request', {
+          code: AI_ERROR_CODES.BAD_REQUEST,
+          status: 400,
+          retryable: false,
+          scope: 'REQUEST',
+        });
+      },
+    },
+  });
+
+  await assert.rejects(
+    ai.run('MAIN_CBT', { content: 'exam' }),
+    (error) => error.code === AI_ERROR_CODES.BAD_REQUEST
+  );
+  assert.equal(releases, 1);
+  assert.equal(failureSignals, 1);
+});
