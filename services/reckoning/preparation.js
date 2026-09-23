@@ -254,12 +254,13 @@ function createPreparationService({
     );
 
     const generated = generatedFamilies.flat();
-    const questions = generated.map((item, index) =>
-      toQuestionRecord(item, index + 1)
-    );
+    const questions = generated.map((item, index) => Object.freeze({
+      ...toQuestionRecord(item, index + 1),
+      id: randomUUID(),
+    }));
 
     const schedulerQuestions = questions.map((question) => ({
-      id: `prepared:${question.questionNumber}`,
+      id: question.id,
       evidenceId: question.evidenceId,
       role: question.role,
       variantIndex: question.variantIndex,
@@ -281,8 +282,9 @@ function createPreparationService({
       preparationVersion: config.preparationVersion,
       plan,
       questions: Object.freeze(questions),
-      firstQuestionNumber: first.nextOrdinal,
-      firstPreparedQuestionId: first.questionId,
+      firstQuestionId: first.questionId,
+      firstQuestionNumber:
+        questions.find((question) => question.id === first.questionId)?.questionNumber || 1,
       firstEvidenceId: first.evidenceId,
       generatedAt: now,
     });
