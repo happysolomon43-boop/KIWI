@@ -89,7 +89,7 @@ test('Delivery D wires dormant finalization without activating current Reckoning
   assert.match(source, /examRouter\.post\('\/:id\/reckoning\/finalize'/);
   assert.match(source, /outcomeHandler:\s*finalizeAdaptiveReckoningOutcome/);
   assert.match(source, /completion\.survived/);
-  assert.match(source, /!q\.reckoning_evidence_id/);
+  assert.match(source, /!isAdaptiveReckoningQuestion\(q\)/);
 
   const triggerStart = source.indexOf('async function triggerReckoning');
   const triggerEnd = source.indexOf('async function deferReckoning', triggerStart);
