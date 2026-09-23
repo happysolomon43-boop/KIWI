@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'services/ai/**'
+      - 'services/reckoning/**'
+      - 'index.js'
       - 'tests/ai/**'
       - 'package.json'
       - 'vercel.json'
@@ -16,6 +18,8 @@ on:
       - main
     paths:
       - 'services/ai/**'
+      - 'services/reckoning/**'
+      - 'index.js'
       - 'tests/ai/**'
       - 'package.json'
       - 'vercel.json'

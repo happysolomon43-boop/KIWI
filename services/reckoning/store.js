@@ -95,7 +95,11 @@ function createReckoningStore({
     }
   }
 
-  async function getSession(reckoningId, userId = null) {
+  async function getSession(
+    reckoningId,
+    userId = null,
+    { forUpdate = false } = {}
+  ) {
     requireQuery();
     const params = [reckoningId];
     let sql = 'SELECT * FROM reckoning_sessions WHERE id = $1';
@@ -106,6 +110,7 @@ function createReckoningStore({
     }
 
     sql += ' LIMIT 1';
+    if (forUpdate) sql += ' FOR UPDATE';
     const { rows } = await query(sql, params);
     return rows?.[0] || null;
   }
@@ -243,7 +248,15 @@ function createReckoningStore({
     const { rows } = await query(
       `SELECT *
        FROM reckoning_sessions
-       WHERE exam_session_id = $1 AND user_id = $2
+       WHERE user_id = $2
+         AND (
+           exam_session_id = $1
+           OR (
+             engine_version = 2
+             AND engine_phase IN ('FINALIZING','COMPLETE')
+             AND last_failure_exam_id = $1
+           )
+         )
        LIMIT 1${suffix}`,
       [examSessionId, userId]
     );
@@ -347,6 +360,183 @@ function createReckoningStore({
     return rows?.[0] || null;
   }
 
+  async function getCardForLearningEffect(
+    userId,
+    cardId,
+    { forUpdate = false } = {}
+  ) {
+    requireQuery();
+    const suffix = forUpdate ? ' FOR UPDATE' : '';
+    const { rows } = await query(
+      `SELECT *
+       FROM cards
+       WHERE id = $1 AND user_id = $2
+       LIMIT 1${suffix}`,
+      [cardId, userId]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function getCardStateForLearningEffect(
+    userId,
+    cardId,
+    { forUpdate = false } = {}
+  ) {
+    requireQuery();
+    const suffix = forUpdate ? ' FOR UPDATE' : '';
+    const { rows } = await query(
+      `SELECT *
+       FROM card_states
+       WHERE user_id = $1 AND card_id = $2
+       LIMIT 1${suffix}`,
+      [userId, cardId]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function saveCardLearningEffect(userId, cardId, patch = {}) {
+    requireQuery();
+    const fieldMap = {
+      stage: 'stage',
+      intervalDays: 'interval_days',
+      repetitionCount: 'repetition_count',
+      nextReviewAt: 'next_review_at',
+    };
+    const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+    if (!entries.length) return getCardForLearningEffect(userId, cardId);
+
+    const values = [cardId, userId];
+    const assignments = entries.map(([key, value]) => {
+      const column = fieldMap[key];
+      if (!column) {
+        throw new ReckoningContractError(`Unsupported cards learning-effect field: ${key}`);
+      }
+      values.push(value);
+      return `${column} = ${values.length}`;
+    });
+
+    const { rows } = await query(
+      `UPDATE cards
+       SET ${assignments.join(', ')}, updated_at = now()
+       WHERE id = $1 AND user_id = $2
+       RETURNING *`,
+      values
+    );
+    return rows?.[0] || null;
+  }
+
+  async function saveCardStateLearningEffect({
+    userId,
+    card,
+    evidence,
+    patch = {},
+  } = {}) {
+    requireQuery();
+    if (!userId || !card?.id) {
+      throw new ReckoningContractError(
+        'saveCardStateLearningEffect requires userId and card.'
+      );
+    }
+
+    const current = await getCardStateForLearningEffect(userId, card.id);
+    const state = patch.state ?? current?.state ?? 'GROWING';
+    const stage = Number(patch.stage ?? current?.stage ?? card.stage) || 1;
+    const verified = patch.verified ?? current?.verified ?? false;
+    const verifiedAt = patch.verifiedAt !== undefined
+      ? patch.verifiedAt
+      : current?.verified_at ?? null;
+    const lastEvaluatedAt = patch.lastEvaluatedAt ?? new Date();
+
+    if (current) {
+      const { rows } = await query(
+        `UPDATE card_states
+         SET state = $3,
+             stage = $4,
+             verified = $5,
+             verified_at = $6,
+             last_evaluated_at = $7,
+             updated_at = now()
+         WHERE user_id = $1 AND card_id = $2
+         RETURNING *`,
+        [
+          userId,
+          card.id,
+          state,
+          stage,
+          Boolean(verified),
+          verifiedAt,
+          lastEvaluatedAt,
+        ]
+      );
+      return rows?.[0] || null;
+    }
+
+    const id = `${userId}_${card.id}`;
+    const { rows } = await query(
+      `INSERT INTO card_states (
+         id, user_id, card_id, state, stage, deck_id, subject_id,
+         verified, verified_at, last_evaluated_at, bubble_ids,
+         learning_debt, cross_bubble, created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'[]'::jsonb,false,false,now(),now()
+       )
+       ON CONFLICT (id) DO UPDATE SET
+         state = EXCLUDED.state,
+         stage = EXCLUDED.stage,
+         verified = EXCLUDED.verified,
+         verified_at = EXCLUDED.verified_at,
+         last_evaluated_at = EXCLUDED.last_evaluated_at,
+         updated_at = now()
+       RETURNING *`,
+      [
+        id,
+        userId,
+        card.id,
+        state,
+        stage,
+        card.deck_id || null,
+        evidence?.subject_id || null,
+        Boolean(verified),
+        verifiedAt,
+        lastEvaluatedAt,
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function completeExecutionExam(userId, examSessionId, {
+    rawAccuracy,
+    answeredCount,
+    correctCount,
+  } = {}) {
+    requireQuery();
+    const { rows } = await query(
+      `UPDATE exam_sessions
+       SET status = 'completed',
+           score_pct = $3,
+           correct_answers = $4,
+           total_questions = $5,
+           completed_at = COALESCE(completed_at, now()),
+           duration_seconds = COALESCE(
+             duration_seconds,
+             GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - started_at))))::integer
+           ),
+           timed_out = false,
+           ended_early = false,
+           updated_at = now()
+       WHERE id = $1 AND user_id = $2
+       RETURNING *`,
+      [
+        examSessionId,
+        userId,
+        Number(rawAccuracy) || 0,
+        Math.max(0, Number(correctCount) || 0),
+        Math.max(0, Number(answeredCount) || 0),
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
   async function saveSession(reckoningId, patch) {
     requireQuery();
     const statement = createPatchQuery({
@@ -403,11 +593,16 @@ function createReckoningStore({
     getEvidenceById,
     getExecutionQuestions,
     getQuestionForExecution,
+    getCardForLearningEffect,
+    getCardStateForLearningEffect,
     createEvidence,
     upsertEvidence,
     saveSession,
     saveEvidence,
     saveQuestionAnswer,
+    saveCardLearningEffect,
+    saveCardStateLearningEffect,
+    completeExecutionExam,
     unlockQuestion,
     withTransaction,
   });
