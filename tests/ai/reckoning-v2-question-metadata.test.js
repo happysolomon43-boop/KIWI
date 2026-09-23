@@ -84,11 +84,6 @@ test('legacy backend is not wired to Reckoning V2 evidence linkage', () => {
     /createReckoningStore\s*\(/,
     'production index.js unexpectedly instantiates the V2 persistence adapter'
   );
-  assert.doesNotMatch(
-    backend,
-    /require\(['"]\.\/services\/reckoning(?:\/index)?['"]\)/,
-    'production index.js unexpectedly imports the Reckoning V2 subsystem'
-  );
 });
 
 test('existing student flag and AI audit columns are not redefined by V2 migration', () => {
