@@ -18,6 +18,7 @@ function createProviderHealth({
   failureEvidenceWindowMs = 30000,
   openCooldownMs = 20000,
   minDistinctFailureSlots = 2,
+  store = null,
 } = {}) {
   const models = new Map();
 
@@ -103,7 +104,10 @@ function createProviderHealth({
       return Object.freeze({
         available: false,
         state: state.state,
-        retryAfterMs: Math.max(1000, Math.min(Number(openCooldownMs) || 20000, 120000)),
+        retryAfterMs: Math.max(
+          1000,
+          Math.min(Number(openCooldownMs) || 20000, 120000)
+        ),
         halfOpenProbe: false,
       });
     }
@@ -216,6 +220,76 @@ function createProviderHealth({
     return Array.from(models.keys()).map((id) => snapshot(id));
   }
 
+  function persistenceRecord(modelId) {
+    const state = refresh(ensure(modelId));
+    return {
+      modelId: state.modelId,
+      state: state.state,
+      openUntil: state.openUntil ? new Date(state.openUntil) : null,
+      failureSlots: Array.from(state.failuresBySlot.entries()).map(
+        ([slotId, failedAt]) => ({
+          slotId,
+          failedAt: new Date(failedAt).toISOString(),
+        })
+      ),
+      lastErrorCode: state.lastErrorCode,
+      lastHttpStatus: state.lastHttpStatus,
+      lastFailureAt: state.lastFailureAt,
+      lastSuccessAt: state.lastSuccessAt,
+    };
+  }
+
+  async function persist(modelId) {
+    if (!store?.upsertProviderModelHealth || !modelId) return null;
+    return store.upsertProviderModelHealth(persistenceRecord(modelId));
+  }
+
+  function hydrateRow(row) {
+    if (!row?.model_id) return false;
+
+    const state = ensure(row.model_id);
+    state.state = Object.values(CIRCUIT_STATES).includes(row.state)
+      ? row.state
+      : CIRCUIT_STATES.CLOSED;
+    state.openUntil = row.open_until
+      ? new Date(row.open_until).getTime()
+      : 0;
+    state.failuresBySlot.clear();
+
+    const failures = Array.isArray(row.failure_slots) ? row.failure_slots : [];
+    for (const failure of failures) {
+      const slotId = String(failure?.slotId || '').trim();
+      const failedAt = Date.parse(failure?.failedAt || '');
+      if (!slotId || !Number.isFinite(failedAt)) continue;
+      state.failuresBySlot.set(slotId, failedAt);
+    }
+
+    state.halfOpenProbeInFlight = false;
+    state.lastErrorCode = row.last_error_code || null;
+    state.lastHttpStatus = row.last_http_status == null
+      ? null
+      : Number(row.last_http_status);
+    state.lastFailureAt = row.last_failure_at
+      ? new Date(row.last_failure_at)
+      : null;
+    state.lastSuccessAt = row.last_success_at
+      ? new Date(row.last_success_at)
+      : null;
+
+    refresh(state);
+    return true;
+  }
+
+  async function hydrate() {
+    if (!store?.loadProviderModelHealth) return 0;
+    const rows = await store.loadProviderModelHealth();
+    let count = 0;
+    for (const row of rows || []) {
+      if (hydrateRow(row)) count += 1;
+    }
+    return count;
+  }
+
   return Object.freeze({
     availability,
     acquire,
@@ -223,6 +297,9 @@ function createProviderHealth({
     recordFailure,
     recordSuccess,
     snapshot,
+    persistenceRecord,
+    persist,
+    hydrate,
   });
 }
 
