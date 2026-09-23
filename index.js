@@ -38,7 +38,7 @@ const { createEcosystemV2 } = require('./ecosystem_v2');
 const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
-const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion } = require('./services/reckoning');
+const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 
 const pool = new Pool({
@@ -19500,10 +19500,30 @@ brainRouter.post('/reckoning/start', async (req, res) => {
     }
 
     if (active.generation_status === 'pending') {
-      return res.status(202).json({
-        status: 'preparing',
-        reckoning_id: active.id,
-        generation_status: 'pending',
+      const updatedAt = active.updated_at
+        ? new Date(active.updated_at).getTime()
+        : NaN;
+      const staleAfterMs =
+        Math.max(
+          1,
+          Number(DELIVERY_E_RECKONING_CONFIG.preparation.claimStaleMinutes) || 5
+        ) * 60 * 1000;
+      const heartbeatIsFresh =
+        Number.isFinite(updatedAt) &&
+        Date.now() - updatedAt < staleAfterMs;
+
+      if (heartbeatIsFresh) {
+        return res.status(202).json({
+          status: 'preparing',
+          reckoning_id: active.id,
+          generation_status: 'pending',
+        });
+      }
+
+      console.warn('[KIWI] Reclaiming stale Reckoning V2 preparation', {
+        reckoningId: active.id,
+        userId: req.user.id,
+        updatedAt: active.updated_at || null,
       });
     }
 
