@@ -182,6 +182,12 @@ function createQuotaManager({
     return count;
   }
 
+  // Project/model quota health is persisted, so periodically re-hydrating also
+  // lets future multi-instance deployments converge on the same route view.
+  async function refresh() {
+    return hydrate();
+  }
+
   function get(projectSlot, modelId) {
     const cacheKey = key(projectSlot, modelId);
     let state = cache.get(cacheKey);
@@ -354,6 +360,8 @@ function createQuotaManager({
         cooldownUntil: state.cooldownUntil,
         lastErrorCode: state.lastErrorCode,
         lastHttpStatus: state.lastHttpStatus,
+        lastSuccessAt: state.lastSuccessAt,
+        lastFailureAt: state.lastFailureAt,
       });
     }
     return rows;
@@ -361,6 +369,7 @@ function createQuotaManager({
 
   return Object.freeze({
     hydrate,
+    refresh,
     get,
     isEligible,
     filterEligibleSlots,
