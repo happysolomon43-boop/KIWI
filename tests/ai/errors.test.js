@@ -67,14 +67,21 @@ test('distinguishes Gemini daily, request-per-minute and token-per-minute quota 
   assert.equal(rpd.retryable, true);
 });
 
-test('classifies server errors as transient', () => {
-  const error = classifyGeminiHttpError({
+test('classifies provider overload separately from generic server transients', () => {
+  const overloaded = classifyGeminiHttpError({
     status: 503,
     body: { error: { message: 'Service unavailable' } },
   });
+  const transient = classifyGeminiHttpError({
+    status: 500,
+    body: { error: { message: 'Internal error' } },
+  });
 
-  assert.equal(error.code, AI_ERROR_CODES.TRANSIENT);
-  assert.equal(error.retryable, true);
+  assert.equal(overloaded.code, AI_ERROR_CODES.PROVIDER_OVERLOADED);
+  assert.equal(overloaded.retryable, true);
+  assert.equal(overloaded.scope, 'PROVIDER_MODEL');
+  assert.equal(transient.code, AI_ERROR_CODES.TRANSIENT);
+  assert.equal(transient.retryable, true);
 });
 
 
