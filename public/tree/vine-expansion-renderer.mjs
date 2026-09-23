@@ -264,7 +264,9 @@ export class VineExpansionRenderer {
     }
 
     this._render();
-    this.app.ticker.start();
+    if (!document.hidden) {
+      this.app.ticker.start();
+    }
   }
 
   playReactions(reactions) {
@@ -277,11 +279,17 @@ export class VineExpansionRenderer {
       elapsed: 0,
       duration: strongest.type === 'milestone' ? 1500 : 900,
     };
-    this.app?.ticker.start();
+    if (!document.hidden) {
+      this.app?.ticker.start();
+    }
   }
 
   _tick(ticker) {
     if (this.destroyed || !this.app) return;
+    if (document.hidden) {
+      this.app.ticker.stop();
+      return;
+    }
     const deltaMS = Math.min(50, Math.max(0, Number(ticker?.deltaMS) || 16.67));
     this.time += deltaMS / 1000;
 
