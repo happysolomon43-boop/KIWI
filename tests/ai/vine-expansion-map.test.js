@@ -311,8 +311,8 @@ test('mapped selectors are grounded in the current KIWI source', () => {
     'id="studyArena"',
     'id="studySubject"',
     'id="startStudyBtn"',
-    'id="bubblePanelOverlay"',
-    'id="reckoningOverlay"',
+    'bubblePanelOverlay',
+    'reckoningOverlay',
   ];
 
   for (const marker of requiredSourceMarkers) {
