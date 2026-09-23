@@ -224,6 +224,8 @@ function createReckoningEngine(options = {}) {
       randomUUID: options.randomUUID,
     });
   const clock = options.clock || (() => new Date());
+  const setIntervalImpl = options.setIntervalImpl || setInterval;
+  const clearIntervalImpl = options.clearIntervalImpl || clearInterval;
 
   async function buildState(activeStore, {
     examSessionId,
@@ -358,7 +360,21 @@ function createReckoningEngine(options = {}) {
       throw error;
     }
 
+    let preparationHeartbeat = null;
     try {
+      if (typeof store.touchPreparation === 'function') {
+        const heartbeatMs = Math.max(
+          5000,
+          Number(config.preparation.heartbeatSeconds || 45) * 1000
+        );
+        preparationHeartbeat = setIntervalImpl(() => {
+          Promise.resolve(store.touchPreparation(reckoningId, userId)).catch(() => null);
+        }, heartbeatMs);
+        if (preparationHeartbeat && typeof preparationHeartbeat.unref === 'function') {
+          preparationHeartbeat.unref();
+        }
+      }
+
       const input = await preparationInputProvider({
         session: claimed,
         userId,
@@ -455,6 +471,8 @@ function createReckoningEngine(options = {}) {
     } catch (error) {
       await store.releasePreparationFailure(reckoningId, userId, error).catch(() => null);
       throw error;
+    } finally {
+      if (preparationHeartbeat) clearIntervalImpl(preparationHeartbeat);
     }
   }
 
@@ -471,7 +489,22 @@ function createReckoningEngine(options = {}) {
         session,
       });
     }
-    return prepare({ reckoningId, userId });
+    try {
+      return await prepare({ reckoningId, userId });
+    } catch (error) {
+      if (error?.code === 'ERR_RECKONING_PREPARING') {
+        const current = await store.getSession(reckoningId, userId);
+        return Object.freeze({
+          status: 'preparing',
+          reckoningId,
+          engineVersion: Number(current?.engine_version) || 2,
+          engineMode: current?.engine_mode || 'LIVE',
+          enginePhase: current?.engine_phase || SESSION_PHASES.PREPARING,
+          generationStatus: current?.generation_status || 'pending',
+        });
+      }
+      throw error;
+    }
   }
 
   async function continueCheckpoint({ examSessionId, userId } = {}) {
@@ -1098,266 +1131,3 @@ function createReckoningEngine(options = {}) {
         const [evidence, questions] = await Promise.all([
           txStore.getEvidence(session.id),
           txStore.getExecutionQuestions(examSessionId),
-        ]);
-        return Object.freeze({
-          ready: true,
-          alreadyFinalized: true,
-          session,
-          evidence,
-          questions,
-          recovery: scoring.calculateRecovery({
-            evidence,
-            questions,
-            questionsUsed: Number(session.questions_used) || 0,
-          }),
-          learningEffects: Object.freeze({ applied: [], skipped: [] }),
-          finalReport: session.final_report || null,
-          reason: 'ALREADY_FINALIZED',
-        });
-      }
-
-      const [evidence, questions] = await Promise.all([
-        txStore.getEvidence(session.id),
-        txStore.getExecutionQuestions(examSessionId),
-      ]);
-      const questionsUsed = Number(session.questions_used) || 0;
-      const recovery = scoring.calculateRecovery({
-        evidence,
-        questions,
-        questionsUsed,
-      });
-      const evidenceState = evidenceEngine.evaluate(evidence);
-      const next = scheduler.chooseNext({
-        evidence,
-        questions,
-        questionsUsed,
-      });
-      const hardCap =
-        Number(session.hard_question_cap) || config.planner.hardQuestionCap;
-
-      const finalizable =
-        Boolean(forceReason) ||
-        session.engine_phase === SESSION_PHASES.FINALIZING ||
-        recovery.survived ||
-        questionsUsed >= hardCap ||
-        next.type === 'COMPLETE';
-
-      if (!finalizable) {
-        return Object.freeze({
-          ready: false,
-          recovery,
-          reason: 'MORE_EVIDENCE_REQUIRED',
-        });
-      }
-
-      if (session.engine_phase === SESSION_PHASES.ACTIVE) {
-        stateMachine.transition(
-          SESSION_PHASES.ACTIVE,
-          SESSION_PHASES.FINALIZING
-        );
-      }
-
-      const effects = await learningEffects.applyOnce({
-        reckoningId: session.id,
-        userId,
-        evidence,
-        store: txStore,
-      });
-
-      const answeredQuestions = questions.filter(
-        (question) => question.selected_option != null
-      );
-      const correctCount = answeredQuestions.filter(
-        (question) => question.is_correct === true
-      ).length;
-
-      const completedExam = await txStore.completeExecutionExam(
-        userId,
-        examSessionId,
-        {
-          rawAccuracy: recovery.rawAccuracy,
-          answeredCount: answeredQuestions.length,
-          correctCount,
-        }
-      );
-      if (!completedExam) {
-        throw new ReckoningContractError(
-          'Adaptive Reckoning exam could not be closed during finalization.'
-        );
-      }
-
-      const persistedSession = await txStore.saveSession(session.id, {
-        enginePhase: SESSION_PHASES.FINALIZING,
-        currentQuestionId: null,
-        checkpointPending: false,
-        checkpointNextQuestionId: null,
-        rawAccuracy: recovery.rawAccuracy,
-        recoveryScore: recovery.recoveryScore,
-        unresolvedCriticalCount: recovery.unresolvedCriticalCount,
-        stateVersion: (Number(session.state_version) || 0) + 1,
-      });
-
-      return Object.freeze({
-        ready: true,
-        alreadyFinalized: false,
-        session: persistedSession || session,
-        evidence,
-        questions,
-        recovery,
-        evidenceState,
-        learningEffects: effects,
-        reason: recovery.survived
-          ? 'RECOVERY_SUFFICIENT'
-          : forceReason
-            ? String(forceReason)
-            : questionsUsed >= hardCap
-              ? 'HARD_CAP_REACHED'
-              : 'NO_PENDING_QUESTIONS',
-      });
-    });
-
-    if (!prepared.ready || prepared.alreadyFinalized) {
-      return prepared;
-    }
-
-    if (typeof outcomeHandler !== 'function') {
-      const error = new ReckoningContractError(
-        'Adaptive Reckoning finalization requires an outcome handler.'
-      );
-      error.code = 'ERR_RECKONING_OUTCOME_HANDLER_REQUIRED';
-      error.status = 503;
-      throw error;
-    }
-
-    const completeOutcome = async () => {
-      // A concurrent request may have completed after this request prepared its
-      // evidence transaction. Re-check only after obtaining the shared outcome
-      // mutex so external effects can execute at most once.
-      const beforeOutcome = requireAdaptiveSession(
-        await store.getSession(prepared.session.id, userId)
-      );
-      if (beforeOutcome.engine_phase === SESSION_PHASES.COMPLETE) {
-        return Object.freeze({
-          ready: true,
-          final: true,
-          alreadyFinalized: true,
-          reason: 'ALREADY_FINALIZED',
-          recovery: prepared.recovery,
-          evidenceState: prepared.evidenceState,
-          learningEffects: prepared.learningEffects,
-          finalReport: beforeOutcome.final_report || null,
-          outcome: null,
-        });
-      }
-
-      // Card consequences and exam closure are already durable. Keep the mutex
-      // through the idempotent Reckoning/Pressure/KS outcome and the final
-      // COMPLETE transition so two requests cannot both cross that boundary.
-      const outcome = await outcomeHandler({
-        session: prepared.session,
-        examSessionId,
-        userId,
-        recovery: prepared.recovery,
-        evidenceState: prepared.evidenceState,
-        learningEffects: prepared.learningEffects,
-        reason: prepared.reason,
-      });
-
-      const finalReport = buildFinalReport({
-        evidence: prepared.evidence,
-        recovery: prepared.recovery,
-        evidenceState: prepared.evidenceState,
-        learningEffects: prepared.learningEffects,
-        outcome,
-        reason: prepared.reason,
-      });
-
-      await store.withTransaction(async (txStore) => {
-        const current = requireAdaptiveSession(
-          await txStore.getSession(prepared.session.id, userId, { forUpdate: true })
-        );
-        if (current.engine_phase !== SESSION_PHASES.COMPLETE) {
-          stateMachine.transition(
-            SESSION_PHASES.FINALIZING,
-            SESSION_PHASES.COMPLETE
-          );
-          await txStore.saveSession(current.id, {
-            enginePhase: SESSION_PHASES.COMPLETE,
-            currentQuestionId: null,
-            checkpointPending: false,
-            checkpointNextQuestionId: null,
-            rawAccuracy: prepared.recovery.rawAccuracy,
-            recoveryScore: prepared.recovery.recoveryScore,
-            unresolvedCriticalCount:
-              prepared.recovery.unresolvedCriticalCount,
-            finalReport,
-            generationStatus:
-              outcome?.reckoning?.status === 'triggered'
-                ? 'not_started'
-                : 'ready',
-            stateVersion: (Number(current.state_version) || 0) + 1,
-          });
-        }
-      });
-
-      return Object.freeze({
-        ready: true,
-        final: true,
-        reason: prepared.reason,
-        recovery: prepared.recovery,
-        evidenceState: prepared.evidenceState,
-        learningEffects: prepared.learningEffects,
-        finalReport,
-        outcome,
-      });
-    };
-
-    if (typeof store.withOutcomeLock === 'function') {
-      return store.withOutcomeLock(prepared.session.id, completeOutcome);
-    }
-    return completeOutcome();
-  }
-
-  const engine = {
-    describe() {
-      return Object.freeze({
-        name: RECKONING_ENGINE.NAME,
-        engineVersion: config.engineVersion,
-        architectureVersion: config.architectureVersion,
-        status: RECKONING_ENGINE.STATUS,
-        enabled: config.enabled,
-        behaviorAuthority: config.behaviorAuthority,
-        preparationVersion: config.preparationVersion,
-        evidenceModelVersion: config.evidenceModelVersion,
-        schedulerVersion: config.schedulerVersion,
-        scoringVersion: config.scoringVersion,
-        learningEffectsVersion: config.learningEffectsVersion,
-        checkpointExecution: true,
-        consequenceFinalization: true,
-      });
-    },
-    prepare,
-    start,
-    continueCheckpoint,
-    repairDefectiveQuestion,
-    adjudicateDefectiveQuestion,
-    recordAnswer,
-    getState,
-    finalize,
-  };
-
-  return Object.freeze(assertEngineContract(engine));
-}
-
-module.exports = {
-  field,
-  evidenceConceptLabel,
-  buildCheckpoint,
-  buildFinalReport,
-  isSafetyExpired,
-  isAdaptiveReckoningQuestion,
-  adaptiveSessionAllowed,
-  sanitizeCurrentQuestion,
-  sanitizeHistoryQuestion,
-  createReckoningEngine,
-};
