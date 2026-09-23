@@ -174,3 +174,17 @@ test('semantic validation fails closed when no semantic reviewer is configured',
   assert.equal(result.reviewed, false);
   assert.ok(result.issues.includes('semantic_review_unavailable'));
 });
+
+test('retry prompt explicitly corrects duplicate-option validation failures', () => {
+  const bank = createQuestionBank();
+  const blueprint = bank.buildBlueprints({
+    critical: [evidence()],
+    high: [],
+    supporting: [],
+    controls: [],
+  })[0];
+  const prompt = bank.buildPrompt(blueprint, 'duplicate_option');
+  assert.match(prompt, /RETRY CORRECTION/);
+  assert.match(prompt, /duplicate_option/);
+  assert.match(prompt, /distinct after lowercasing/i);
+});

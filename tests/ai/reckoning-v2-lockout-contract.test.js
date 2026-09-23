@@ -85,3 +85,20 @@ test('locked response advertises the approved recovery surfaces and failsafe sta
   assert.match(block, /failure_count:\s*Number\(active\.failure_count\) \|\| 0/);
   assert.match(block, /failsafe_threshold:\s*RECKONING_FAILSAFE_FAILURES/);
 });
+
+
+test('Brain exposes only a scoped Reckoning Buffer purchase exception', () => {
+  assert.match(source, /brainRouter\.post\(['"]\/reckoning\/buffer\/purchase['"]/);
+  assert.match(source, /allowDuringReckoning:\s*true/);
+  assert.match(source, /itemCode === 'reckoning_buffer' && options\.allowDuringReckoning !== true/);
+  assert.match(source, /defer_hours:\s*24/);
+});
+
+test('adaptive start immediately reports pending generation to close duplicate Begin window', () => {
+  const start = source.indexOf("brainRouter.post('/reckoning/start'");
+  assert.ok(start >= 0);
+  const end = source.indexOf('async function submitReckoningHandler', start);
+  const block = source.slice(start, end);
+  assert.match(block, /generation_status:\s*'pending'/);
+  assert.match(block, /generation_error:\s*null/);
+});

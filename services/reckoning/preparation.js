@@ -176,15 +176,26 @@ function createPreparationService({
 } = {}) {
   async function generateWithRetry(blueprint, options = {}) {
     let lastError = null;
+    let retryFeedback = null;
     const attempts = Math.max(
       1,
       Number(config.preparation.generationAttemptsPerItem) || 1
     );
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
-        return await questionBank.generate(blueprint, options);
+        return await questionBank.generate(blueprint, {
+          ...options,
+          attempt,
+          retryFeedback,
+        });
       } catch (error) {
         lastError = error;
+        const issues = Array.isArray(error?.validationIssues)
+          ? error.validationIssues.filter(Boolean)
+          : [];
+        retryFeedback = issues.length
+          ? issues.join(', ')
+          : String(error?.message || 'generation failed').slice(0, 240);
       }
     }
     throw lastError || new ReckoningContractError(

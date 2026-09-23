@@ -40,7 +40,16 @@ function roleBlueprint(evidence, role, variantIndex, config) {
   });
 }
 
-function buildPrompt(blueprint) {
+function buildPrompt(blueprint, retryFeedback = null, previousQuestion = null) {
+  const previousRule = previousQuestion
+    ? [
+        'PREVIOUS FAMILY QUESTION — your new question must not be a near-copy:',
+        JSON.stringify({
+          stem: previousQuestion.stem || '',
+          options: previousQuestion.options || [],
+        }),
+      ].join('\n')
+    : '';
   return [
     'You are writing exactly one KIWI Reckoning multiple-choice question.',
     'KIWI has already decided what to test. Do not change the assessment target.',
@@ -50,6 +59,8 @@ function buildPrompt(blueprint) {
     'Use only the supplied source material.',
     'Return JSON only with keys: stem, options, correctAnswer, explanation.',
     'options must be an array of exactly four distinct strings.',
+    'All four options must remain distinct after lowercasing, trimming whitespace, and removing punctuation.',
+    'Never repeat an answer choice, paraphrase the same choice twice, or use a trivially reformatted duplicate.',
     'correctAnswer must be one of A, B, C, D.',
     'There must be exactly one defensible best answer.',
     blueprint.constraints.changeScenario
@@ -58,6 +69,10 @@ function buildPrompt(blueprint) {
     blueprint.constraints.independentRetrieval
       ? 'This is a delayed confirmation: do not echo the challenge wording or explanation.'
       : '',
+    previousRule,
+    retryFeedback
+      ? `RETRY CORRECTION: The previous attempt failed validation (${retryFeedback}). Produce a genuinely new option set that fixes every listed issue.`
+      : null,
     'SOURCE MATERIAL:',
     JSON.stringify(blueprint.sourceSnapshot || {}),
   ].filter(Boolean).join('\n');
@@ -121,6 +136,8 @@ function createQuestionBank({
     previousQuestion = null,
     requireSemanticReview = true,
     generationGroupId = null,
+    retryFeedback = null,
+    attempt = 1,
   } = {}) {
     if (typeof aiRun !== 'function') {
       throw new ReckoningContractError('Question generation requires the centralized AI runner.');
@@ -129,10 +146,10 @@ function createQuestionBank({
     const result = await aiRun(
       'RECKONING_CBT',
       {
-        content: buildPrompt(blueprint),
+        content: buildPrompt(blueprint, retryFeedback, previousQuestion),
         generationConfig: {
           responseMimeType: 'application/json',
-          temperature: 0.35,
+          temperature: Math.min(0.55, 0.35 + Math.max(0, Number(attempt) - 1) * 0.08),
         },
       },
       { generationGroupId }
@@ -144,9 +161,12 @@ function createQuestionBank({
       previousQuestion,
     });
     if (!structure.valid) {
-      throw new ReckoningContractError(
+      const error = new ReckoningContractError(
         `Generated Reckoning question failed structural validation: ${structure.issues.join(', ')}`
       );
+      error.code = 'ERR_RECKONING_QUESTION_STRUCTURE';
+      error.validationIssues = [...structure.issues];
+      throw error;
     }
 
     let semantics = null;
@@ -157,9 +177,12 @@ function createQuestionBank({
         previousQuestion,
       });
       if (!semantics.valid) {
-        throw new ReckoningContractError(
+        const error = new ReckoningContractError(
           `Generated Reckoning question failed semantic validation: ${semantics.issues.join(', ')}`
         );
+        error.code = 'ERR_RECKONING_QUESTION_SEMANTICS';
+        error.validationIssues = [...semantics.issues];
+        throw error;
       }
     }
 

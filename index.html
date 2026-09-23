@@ -7726,6 +7726,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         // FIX Issue-4: was self-recursive; now makes the actual backend call
         return await apiRequest("/brain/reckoning/use-buffer", { method: "POST" });
       };
+      api.purchaseReckoningBuffer = async () =>
+        apiRequest("/brain/reckoning/buffer/purchase", { method: "POST" });
 
       // ── Progress endpoints ──
 
@@ -9152,7 +9154,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       function _reckoningRouteAllowed(page) {
         if (!_reckoningGlobalLockActive()) return true;
         if (page === "settings" || page === "brain") return true;
-        if (page === "exam" && AppState.tempExam && AppState.tempExam.isReckoning) return true;
+        if (
+          page === "exam" &&
+          ((AppState.tempExam && AppState.tempExam.isReckoning) ||
+            (AppState.adaptiveReckoning && AppState.adaptiveReckoning.examSessionId))
+        ) return true;
         return false;
       }
 
@@ -13544,6 +13550,30 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           clearInterval(AppState.tempExam._timerInterval);
           AppState.tempExam._timerInterval = null;
         }
+
+        const adaptive = AppState.adaptiveReckoning;
+        if (adaptive && adaptive.examSessionId) {
+          try {
+            if (adaptive.finalReport) _renderAdaptiveReckoningFinal(adaptive, adaptive.finalReport);
+            else if (adaptive.checkpointPending && adaptive.checkpoint) _renderAdaptiveReckoningCheckpoint(adaptive);
+            else if (adaptive.currentQuestion) _renderAdaptiveReckoningQuestion(adaptive);
+            else if (adaptive.final) {
+              renderLoadingState(main, "Finalizing The Reckoning...");
+              api.finalizeAdaptiveReckoning(adaptive.examSessionId)
+                .then((state) => _openAdaptiveReckoningState({ ...adaptive, ...state }))
+                .catch((error) => showToast(error.message || "Could not finalize The Reckoning yet.", "error", 7000));
+            } else {
+              renderLoadingState(main, "Restoring The Reckoning...");
+              api.getAdaptiveReckoningState(adaptive.examSessionId)
+                .then((state) => _openAdaptiveReckoningState(state))
+                .catch((error) => showToast(error.message || "Could not restore The Reckoning yet.", "error", 7000));
+            }
+          } catch (error) {
+            console.error("[KIWI] Adaptive Reckoning exam render failed:", error);
+            renderErrorState(main, "The Reckoning could not be rendered. Your saved state is still safe.", () => _restoreActiveReckoningExam());
+          }
+          return;
+        }
         try {
           const e = AppState.tempExam;
           if (!e || !e.questions || e.questions.length === 0) {
@@ -14425,6 +14455,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       let _adaptiveQuestionOpenedId = null;
       let _adaptivePreparationPollToken = 0;
 
+      function _adaptiveReckoningHost() {
+        return AppState.currentPage === "exam"
+          ? document.getElementById("mainContent")
+          : document.getElementById("reckoningContainer");
+      }
+
       function _stopAdaptiveElapsedTimer() {
         if (_adaptiveElapsedTimer) {
           clearInterval(_adaptiveElapsedTimer);
@@ -14593,7 +14629,12 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         _clearExamGenerationTransition();
 
         if (options.announce && typeof showToast === "function") {
-          showToast("The Reckoning is ready.", "success", 3000);
+          showToast("The Reckoning is ready. Taking you to the exam…", "success", 3000);
+        }
+
+        if (AppState.currentPage !== "exam" && typeof navigateTo === "function") {
+          _origNavigateTo ? _origNavigateTo("exam") : navigateTo("exam");
+          return true;
         }
 
         const report = state.finalReport || null;
@@ -14624,7 +14665,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       }
 
       function _renderAdaptiveReckoningQuestion(state) {
-        const container = document.getElementById("reckoningContainer");
+        const container = _adaptiveReckoningHost();
         const question = state.currentQuestion;
         if (!container || !question) return;
 
@@ -14749,7 +14790,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       }
 
       function _renderAdaptiveReckoningCheckpoint(state) {
-        const container = document.getElementById("reckoningContainer");
+        const container = _adaptiveReckoningHost();
         const checkpoint = state.checkpoint || {};
         if (!container) return;
         _stopAdaptiveElapsedTimer();
@@ -14799,7 +14840,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       }
 
       function _renderAdaptiveReckoningFinal(state, report) {
-        const container = document.getElementById("reckoningContainer");
+        const container = _adaptiveReckoningHost();
         if (!container) return;
         _stopAdaptiveElapsedTimer();
         _unlockExamPage();
@@ -15032,9 +15073,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             return hasBuffer
               ? `
           <button class="btn btn-ghost" id="useBufferBtn" style="width:100%;border:1px solid var(--gold);color:var(--gold);">
-            &#x1F6E1; Use Reckoning Buffer
+            &#x1F6E1; Use 24h Reckoning Buffer
           </button>
-          <div style="font-size:var(--text-xs);color:var(--text-3);text-align:center;">Buffer absorbs this Reckoning — expended on use</div>
+          <div style="font-size:var(--text-xs);color:var(--text-3);text-align:center;">Defers this Reckoning for 24 hours — one Buffer is consumed.</div>
             `
               : "";
           })()}
@@ -15076,6 +15117,10 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             }
             if (isAdaptiveV2) {
               const response = await api.startAdaptiveReckoning();
+              reckoning.generation_status = response?.generation_status || "pending";
+              reckoning.generationStatus = reckoning.generation_status;
+              reckoning.generation_error = null;
+              reckoning.generationError = null;
               AppState.reckoning = reckoning;
               if (response && response.examSessionId) {
                 await _openAdaptiveReckoningState(response, { announce: true });
@@ -15160,7 +15205,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             // FIX Issue-4b / P9.4-08: replaced native confirm() with showCustomConfirm
             showCustomConfirm(
               "Use Reckoning Buffer?",
-              "It will be expended. This cannot be undone.",
+              "This defers The Reckoning for 24 hours and consumes one Buffer. Continue?",
               async () => {
                 try {
                   await api.useReckoningBuffer();
@@ -15174,7 +15219,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                     invArr2[bufIdx].quantity = Math.max(0, (invArr2[bufIdx].quantity || 1) - 1);
                     AppState.inventory = invArr2;
                   }
-                  showToast("Reckoning Buffer used. Lockout lifted.", "success");
+                  showToast("Reckoning deferred for 24 hours.", "success");
                   navigateTo("dashboard");
                 } catch (err) {
                   showToast("Failed to use Buffer", "error");
@@ -15572,6 +15617,47 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               }
             } catch (_e) {}
           }
+          const brainReckoningForControls = activeReckoningForPage || deferredReckoningForPage;
+          const brainGenerationStatus = String(brainReckoningForControls?.generation_status || brainReckoningForControls?.generationStatus || "").toLowerCase();
+          const brainGenerationError = brainReckoningForControls?.generation_error || brainReckoningForControls?.generationError || null;
+          const brainPreparationFailed = brainGenerationStatus === "error" || !!brainGenerationError;
+          const brainPreparing = brainGenerationStatus === "pending" && !brainPreparationFailed;
+          const brainInProgress = brainReckoningForControls?.status === "in_progress" && !!brainReckoningForControls?.exam_session_id;
+          const brainOpenDisabled = !!activeReckoningForPage && brainPreparing;
+          const brainOpenLabel = brainInProgress ? "Return to Reckoning" : brainPreparationFailed ? "Retry Reckoning" : brainPreparing ? "Preparing Reckoning…" : "Open Reckoning";
+          const reckoningBufferForBrain = data.reckoningBuffer || brainReckoningForControls?.reckoningBuffer || null;
+          const bufferOwned = Math.max(0, Number(reckoningBufferForBrain?.owned_quantity) || 0);
+          const bufferCanAct = !!brainReckoningForControls && !brainPreparing && !brainInProgress;
+          const bufferCanUse = bufferCanAct && bufferOwned > 0;
+          const bufferCanBuy = bufferCanAct && bufferOwned <= 0 && reckoningBufferForBrain?.purchasable === true;
+          const bufferUnavailableReason = !reckoningBufferForBrain
+            ? "Buffer availability is temporarily unavailable."
+            : brainPreparing
+              ? "Preparation has already started; wait for it to finish or fail before deferring."
+              : brainInProgress
+                ? "The exam is already in progress, so this attempt can no longer be deferred."
+                : reckoningBufferForBrain.gate1_met !== true
+                  ? `Unlocks after surviving ${Number(reckoningBufferForBrain.gate1_target) || 1} Reckoning.`
+                  : Number(reckoningBufferForBrain.seedlings_balance) < Number(reckoningBufferForBrain.seedling_cost)
+                    ? "Not enough Seedlings to buy a Buffer."
+                    : reckoningBufferForBrain.limit_reached
+                      ? "Reckoning Buffer purchase limit reached."
+                      : "";
+          const brainBufferCardHtml = brainReckoningForControls && reckoningBufferForBrain ? `
+        <div class="card" id="brainReckoningBufferCard" style="margin-bottom:20px;border-color:var(--gold);background:rgba(234,179,8,0.045);">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:220px;">
+              <div style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;color:var(--gold);">&#x1F6E1; 24h Reckoning Buffer</div>
+              <div style="font-size:var(--text-sm);color:var(--text-2);line-height:1.6;margin-top:5px;">Defers the active Reckoning for 24 hours. The rest of Marketplace remains locked.</div>
+              <div style="font-size:var(--text-xs);color:var(--text-3);margin-top:7px;">Owned: ${bufferOwned} · Cost: ${Number(reckoningBufferForBrain.seedling_cost) || 0} Seedlings · Balance: ${Number(reckoningBufferForBrain.seedlings_balance) || 0}</div>
+              ${bufferUnavailableReason && !bufferCanUse && !bufferCanBuy ? `<div style="font-size:var(--text-xs);color:var(--text-4);margin-top:6px;">${escapeHTML(bufferUnavailableReason)}</div>` : ""}
+            </div>
+            ${bufferOwned > 0
+              ? `<button class="btn btn-secondary btn-sm" id="brainUseReckoningBufferBtn" ${bufferCanUse ? "" : "disabled"}>Use 24h Deferral</button>`
+              : `<button class="btn btn-secondary btn-sm" id="brainBuyReckoningBufferBtn" ${bufferCanBuy ? "" : "disabled"}>Buy for ${Number(reckoningBufferForBrain.seedling_cost) || 0} Seedlings</button>`}
+          </div>
+        </div>` : "";
+
           main.innerHTML = `
       <div class="page-wrap page-enter">
         <div class="section-header">
@@ -15615,10 +15701,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 </div>
               </div>
             </div>
-            <button class="btn btn-primary btn-sm" id="resumeReckoningBtn">Open Reckoning</button>
+            <button class="btn btn-primary btn-sm" id="resumeReckoningBtn" ${brainOpenDisabled ? "disabled aria-disabled=\"true\"" : ""}>${brainOpenLabel}</button>
           </div>
         </div>
         ` : ""}
+        ${brainBufferCardHtml}
         <!-- Highest Pressure Alert -->
         ${
           (highestPressure || 0) >= 15
@@ -15745,12 +15832,74 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 
           const resumeReckoningBtn = document.getElementById("resumeReckoningBtn");
           if (resumeReckoningBtn && activeReckoningForPage) {
-            resumeReckoningBtn.addEventListener("click", () => {
+            resumeReckoningBtn.addEventListener("click", async () => {
+              if (brainPreparing) return;
+              if (brainInProgress) {
+                resumeReckoningBtn.disabled = true;
+                resumeReckoningBtn.textContent = "Returning…";
+                const resumed = await _restoreActiveReckoningExam();
+                if (!resumed) {
+                  resumeReckoningBtn.disabled = false;
+                  resumeReckoningBtn.textContent = "Return to Reckoning";
+                  showToast("Saved Reckoning state is not ready yet. Please retry.", "warning", 5000);
+                }
+                return;
+              }
               showReckoningOverlay(activeReckoningForPage, {
                 force: true,
                 mandatory: true,
                 forceLockoutOverlay: true,
               });
+            });
+          }
+
+          const brainUseBufferBtn = document.getElementById("brainUseReckoningBufferBtn");
+          if (brainUseBufferBtn && bufferCanUse) {
+            brainUseBufferBtn.addEventListener("click", async () => {
+              brainUseBufferBtn.disabled = true;
+              brainUseBufferBtn.textContent = "Deferring…";
+              try {
+                const result = await api.useReckoningBuffer();
+                const deferredUntil = result?.deferred_until || new Date(Date.now() + 24 * 3600000).toISOString();
+                const deferred = {
+                  ...brainReckoningForControls,
+                  ...result,
+                  status: "deferred",
+                  deferred_until: deferredUntil,
+                  deferral_expires_at: deferredUntil,
+                  canDefer: false,
+                  can_defer: false,
+                };
+                AppState.reckoning = null;
+                AppState.brain = null;
+                _setReckoningLockdownUi(false);
+                _scheduleDeferredReckoningWakeup(deferred);
+                showToast("Reckoning deferred for 24 hours.", "success", 5000);
+                await renderBrain();
+              } catch (error) {
+                brainUseBufferBtn.disabled = false;
+                brainUseBufferBtn.textContent = "Use 24h Deferral";
+                showToast(error.message || "Could not use the Reckoning Buffer.", "error", 7000);
+              }
+            });
+          }
+
+          const brainBuyBufferBtn = document.getElementById("brainBuyReckoningBufferBtn");
+          if (brainBuyBufferBtn && bufferCanBuy) {
+            brainBuyBufferBtn.addEventListener("click", async () => {
+              brainBuyBufferBtn.disabled = true;
+              brainBuyBufferBtn.textContent = "Buying…";
+              try {
+                await api.purchaseReckoningBuffer();
+                AppState.brain = null;
+                AppState.inventory = null;
+                showToast("24h Reckoning Buffer purchased. You can use it now.", "success", 5000);
+                await renderBrain();
+              } catch (error) {
+                brainBuyBufferBtn.disabled = false;
+                brainBuyBufferBtn.textContent = "Buy Buffer";
+                showToast(error.message || "Could not purchase the Reckoning Buffer.", "error", 7000);
+              }
             });
           }
           // FIX-12B (audit P7.5): wire brain pressure gauge rows -> getPressureExplanation

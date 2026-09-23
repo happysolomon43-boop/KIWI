@@ -90,15 +90,19 @@ test('preparation retries only the failed generated item', async () => {
   ];
 
   const attempts = new Map();
+  const retryCalls = [];
   const questionBank = {
     buildBlueprints() {
       return blueprints;
     },
-    async generate(blueprint) {
+    async generate(blueprint, options = {}) {
+      retryCalls.push({ blueprintId: blueprint.id, ...options });
       const count = (attempts.get(blueprint.id) || 0) + 1;
       attempts.set(blueprint.id, count);
       if (blueprint.id === 'bp-challenge' && count === 1) {
-        throw new Error('one bad generated variant');
+        const error = new Error('one bad generated variant');
+        error.validationIssues = ['duplicate_option'];
+        throw error;
       }
       return {
         blueprint,
@@ -137,6 +141,10 @@ test('preparation retries only the failed generated item', async () => {
   assert.equal(attempts.get('bp-diag'), 1);
   assert.equal(attempts.get('bp-challenge'), 2);
   assert.equal(attempts.get('bp-confirm'), 1);
+  const challengeRetry = retryCalls.find(
+    (call) => call.blueprintId === 'bp-challenge' && call.attempt === 2
+  );
+  assert.equal(challengeRetry.retryFeedback, 'duplicate_option');
 });
 
 test('activation persists the validated bank before the Reckoning becomes in_progress', async () => {
