@@ -94,6 +94,7 @@ const adaptiveReckoningEngine = createReckoningEngine({
   query,
   transaction: withTransaction,
   randomUUID,
+  outcomeHandler: finalizeAdaptiveReckoningOutcome,
 });
 
 // Ecosystem V2 owns session quality, permanent growth, fruit, vitality, streaks,
@@ -6722,7 +6723,7 @@ if (allExamSessions.length > 0 && db.examQuestions.findBySession) {
   );
   for (const questions of questionSets) {
     for (const q of (questions || [])) {
-      if (q.card_id === card.id) {
+      if (q.card_id === card.id && !q.reckoning_evidence_id) {
         examLogs.push({ card_id: card.id, is_correct: q.is_correct === true });
       }
     }
@@ -6796,7 +6797,7 @@ if (allExamSessions.length > 0 && db.examQuestions.findBySession) {
   );
   for (const questions of questionSets) {
     for (const q of (questions || [])) {
-      if (q.card_id === card.id) {
+      if (q.card_id === card.id && !q.reckoning_evidence_id) {
         examLogs.push({ card_id: card.id, is_correct: q.is_correct === true });
       }
     }
@@ -8893,13 +8894,98 @@ async function applyReckoningFailsafePenalty(userId, subjectId, reckoningId, fai
   }
 }
 
-async function completeReckoning(reckoningId, scorePct, debriefText) {
+function normalizeReckoningCompletion(scoreOrRecovery) {
+  if (scoreOrRecovery && typeof scoreOrRecovery === 'object') {
+    return {
+      scorePct: Number(scoreOrRecovery.rawAccuracy) || 0,
+      survived: scoreOrRecovery.survived === true,
+      recoveryScore: Number(scoreOrRecovery.recoveryScore) || 0,
+      unresolvedCriticalCount:
+        Number(scoreOrRecovery.unresolvedCriticalCount) || 0,
+      adaptive: true,
+    };
+  }
+  const scorePct = Number(scoreOrRecovery) || 0;
+  return {
+    scorePct,
+    survived: scorePct >= 70,
+    recoveryScore: null,
+    unresolvedCriticalCount: null,
+    adaptive: false,
+  };
+}
+
+async function finalizeAdaptiveReckoningOutcome({
+  session,
+  examSessionId,
+  userId,
+  recovery,
+  learningEffects,
+  reason,
+}) {
+  const exam = await db.examSessions
+    .findByIdWithQuestions(userId, examSessionId)
+    .catch(() => null);
+
+  let ks = { before: null, after: null, delta: null };
+  if (exam) {
+    ks = await finalizeExamKsOutcome(
+      userId,
+      exam,
+      recovery.rawAccuracy,
+      _finiteKsNumber(exam.ks_before)
+    );
+  } else {
+    await persistKnowledgeScore(userId, session.subject_id).catch(() => null);
+  }
+
+  const recoveredCount = (learningEffects?.applied || [])
+    .filter((effect) =>
+      effect.type === 'CLEAN_RECOVERED' ||
+      effect.type === 'REMEDIATED_RECOVERED'
+    ).length;
+  const unresolvedCount = (learningEffects?.applied || [])
+    .filter((effect) => effect.type === 'UNRESOLVED').length;
+
+  const debriefText =
+    session.debrief_text ||
+    `Recovery evidence: ${recovery.recoveryScore}% · ${recoveredCount} recovered · ${unresolvedCount} unresolved.`;
+
+  const reckoning = await completeReckoning(
+    session.id,
+    recovery,
+    debriefText
+  );
+
+  await ecosystemV2.refreshVitality(userId)
+    .catch((error) =>
+      console.error('[KIWI] adaptive Reckoning vitality refresh failed:', error.message)
+    );
+
+  return {
+    reckoning,
+    knowledge_score: ks,
+    recovery,
+    consequence_summary: {
+      recovered: recoveredCount,
+      unresolved: unresolvedCount,
+      stop_reason: reason,
+    },
+  };
+}
+
+async function completeReckoning(reckoningId, scoreOrRecovery, debriefText) {
 const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
 if (!reckoning) return null;
 const subjectId = reckoning.subject_id;
 const userId = reckoning.user_id;
-const attemptKey = reckoning.exam_session_id || reckoning.id;
-const survived = parseFloat(scorePct) >= 70;
+const completion = normalizeReckoningCompletion(scoreOrRecovery);
+const scorePct = completion.scorePct;
+const survived = completion.survived;
+const attemptKey =
+  reckoning.exam_session_id ||
+  reckoning.last_failure_exam_id ||
+  reckoning.id;
 
 let failureCount = Number(reckoning.failure_count) || 0;
 let countedThisAttempt = false;
@@ -8952,6 +9038,11 @@ if (survived) {
     completed_at: new Date(),
     exam_session_id: reckoning.exam_session_id,
     deferred_until: null,
+    ...(completion.adaptive ? {
+      raw_accuracy: scorePct,
+      recovery_score: completion.recoveryScore,
+      unresolved_critical_count: completion.unresolvedCriticalCount,
+    } : {}),
   });
 
   await awardSeedlings(
@@ -9020,6 +9111,11 @@ await db.reckoningSessions.update(reckoningId, {
   completed_at: new Date(),
   exam_session_id: null,
   deferred_until: null,
+  ...(completion.adaptive ? {
+    raw_accuracy: scorePct,
+    recovery_score: completion.recoveryScore,
+    unresolved_critical_count: completion.unresolvedCriticalCount,
+  } : {}),
 });
 
 return {
@@ -9067,7 +9163,10 @@ if (
 // this same Reckoning era. If the user already crossed the six-failure circuit
 // breaker, release the stale lockdown immediately and apply the one-time KS
 // consequence rather than making them fail six more times after the upgrade.
-if ((Number(active.failure_count) || 0) < RECKONING_FAILSAFE_FAILURES) {
+if (
+  Number(active.engine_version || 1) < 2 &&
+  (Number(active.failure_count) || 0) < RECKONING_FAILSAFE_FAILURES
+) {
   const { rows: legacyFailures } = await query(
     `SELECT id
      FROM exam_sessions
@@ -9177,6 +9276,18 @@ return { ...active, status: 'triggered', exam_session_id: null, deferred_until: 
 }
 
 if (exam.status === 'completed') {
+if (
+  Number(active.engine_version) === 2 &&
+  ['PILOT', 'LIVE'].includes(String(active.engine_mode || '')) &&
+  active.engine_phase === 'FINALIZING'
+) {
+  await adaptiveReckoningEngine.finalize({
+    examSessionId: examId,
+    userId,
+  });
+  return await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
+}
+
 let recoveredScore = Number(exam.score_pct);
 if (!Number.isFinite(recoveredScore)) {
 const total = Array.isArray(exam.questions) ? exam.questions.length : 0;
@@ -13304,9 +13415,22 @@ try {
 
   // Once generated, only the exact server-linked Reckoning exam may be read,
   // started, pre-marked or resumed. Past/normal exams stay locked.
-  if (baseUrl.endsWith('/exams') && active.exam_session_id) {
+  if (baseUrl.endsWith('/exams')) {
     const firstSegment = pathName.split('/').filter(Boolean)[0] || '';
-    if (String(firstSegment) === String(active.exam_session_id)) return next();
+    const linkedExamIds = [active.exam_session_id];
+    if (
+      Number(active.engine_version) === 2 &&
+      ['FINALIZING', 'COMPLETE'].includes(String(active.engine_phase || ''))
+    ) {
+      linkedExamIds.push(active.last_failure_exam_id);
+    }
+    if (
+      linkedExamIds
+        .filter(Boolean)
+        .some((id) => String(firstSegment) === String(id))
+    ) {
+      return next();
+    }
   }
 
   const userStats = await db.userStats.get(req.user.id).catch(() => null);
@@ -16640,6 +16764,21 @@ examRouter.post('/:id/reckoning/answer', async (req, res) => {
     res.status(error.status || 500).json({
       error: error.message || 'Failed to record adaptive Reckoning answer',
       code: error.code || 'ERR_RECKONING_ANSWER',
+    });
+  }
+});
+
+examRouter.post('/:id/reckoning/finalize', async (req, res) => {
+  try {
+    const result = await adaptiveReckoningEngine.finalize({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to finalize adaptive Reckoning',
+      code: error.code || 'ERR_RECKONING_FINALIZE',
     });
   }
 });
