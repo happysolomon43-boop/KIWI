@@ -7,6 +7,7 @@ const { createProjectPool } = require('./project-pool');
 const { createGeminiTransport } = require('./gemini-transport');
 const { normalizeGeminiResponse } = require('./response-normalizer');
 const { createQuotaManager } = require('./quota-manager');
+const { createTransientModelHealth } = require('./transient-model-health');
 const { createTelemetry } = require('./telemetry');
 const { createPostgresAIStore } = require('./postgres-store');
 const { createModelLifecycle } = require('./model-lifecycle');
@@ -22,6 +23,7 @@ module.exports = {
   createGeminiTransport,
   normalizeGeminiResponse,
   createQuotaManager,
+  createTransientModelHealth,
   createTelemetry,
   createPostgresAIStore,
   createModelLifecycle,
