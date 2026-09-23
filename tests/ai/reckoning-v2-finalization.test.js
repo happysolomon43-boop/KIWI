@@ -107,6 +107,7 @@ function makeFinalizationStore() {
     examCompletions: 0,
     outcomeLocks: 0,
   };
+  let transactionQueue = Promise.resolve();
   let outcomeQueue = Promise.resolve();
 
   const api = {
@@ -117,7 +118,15 @@ function makeFinalizationStore() {
     states,
     metrics,
     async withTransaction(work) {
-      return work(api);
+      const previous = transactionQueue;
+      let release;
+      transactionQueue = new Promise((resolve) => { release = resolve; });
+      await previous;
+      try {
+        return await work(api);
+      } finally {
+        release();
+      }
     },
     async withOutcomeLock(_reckoningId, work) {
       metrics.outcomeLocks += 1;
