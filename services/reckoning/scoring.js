@@ -73,8 +73,25 @@ function createScoringEngine({ config = createReckoningConfig() } = {}) {
       ? Number(((recoveredRiskWeight / totalRiskWeight) * 100).toFixed(2))
       : 0;
 
+    const eligibleEvidence = evidence.filter(
+      (row) =>
+        String(field(row, 'evidenceStatus', 'evidence_status', EVIDENCE_STATUSES.UNTESTED)) !==
+        EVIDENCE_STATUSES.INVALIDATED
+    );
+    const observedEvidenceCount = eligibleEvidence.filter((row) => {
+      const status = String(
+        field(row, 'evidenceStatus', 'evidence_status', EVIDENCE_STATUSES.UNTESTED)
+      );
+      const questionsSeen = Number(field(row, 'questionsSeen', 'questions_seen', 0)) || 0;
+      return status !== EVIDENCE_STATUSES.UNTESTED || questionsSeen > 0;
+    }).length;
+    const requiredEvidenceCount = Math.min(
+      config.scoring.minEvidenceUnits,
+      eligibleEvidence.length
+    );
     const minimumEvidenceSatisfied =
-      answeredCount >= config.scoring.minAnsweredQuestions;
+      requiredEvidenceCount > 0 &&
+      observedEvidenceCount >= requiredEvidenceCount;
     const allCriticalRecovered = unresolvedCriticalCount === 0;
     const survived =
       allCriticalRecovered &&
@@ -91,12 +108,14 @@ function createScoringEngine({ config = createReckoningConfig() } = {}) {
       unresolvedCriticalCount,
       allCriticalRecovered,
       answeredCount,
+      observedEvidenceCount,
+      requiredEvidenceCount,
       minimumEvidenceSatisfied,
       survived,
       thresholds: Object.freeze({
         recoveryScore: config.scoring.recoveryThreshold,
         rawAccuracy: config.scoring.rawAccuracyThreshold,
-        minimumAnswered: config.scoring.minAnsweredQuestions,
+        minimumEvidenceUnits: config.scoring.minEvidenceUnits,
       }),
     });
   }
