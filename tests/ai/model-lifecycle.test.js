@@ -79,7 +79,7 @@ test('quota failures do not trip the model circuit breaker', async () => {
   assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.APPROVED);
 });
 
-test('repeated provider failures automatically roll back an auto-promoted model', async () => {
+test('provider transients do not permanently roll back an auto-promoted model', async () => {
   const catalog = createModelCatalog();
   catalog.upsert(autoModel());
   const persisted = [];
@@ -90,22 +90,48 @@ test('repeated provider failures automatically roll back an auto-promoted model'
     failureThreshold: 3,
   });
 
-  for (let i = 0; i < 2; i++) {
-    const result = await lifecycle.recordFailure('gemini-3.9-flash', new AIError('timeout', {
-      code: AI_ERROR_CODES.TIMEOUT,
+  for (const code of [
+    AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    AI_ERROR_CODES.TIMEOUT,
+    AI_ERROR_CODES.TRANSIENT,
+    AI_ERROR_CODES.PROVIDER_OVERLOADED,
+  ]) {
+    const result = await lifecycle.recordFailure('gemini-3.9-flash', new AIError('temporary provider issue', {
+      code,
       retryable: true,
     }));
     assert.equal(result.suspended, false);
   }
 
-  const final = await lifecycle.recordFailure('gemini-3.9-flash', new AIError('timeout', {
-    code: AI_ERROR_CODES.TIMEOUT,
+  assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.APPROVED);
+  assert.equal(persisted.some((model) => model.status === MODEL_STATUS.SUSPENDED), false);
+});
+
+test('repeated empty responses can still roll back an incompatible auto-promoted model', async () => {
+  const catalog = createModelCatalog();
+  catalog.upsert(autoModel());
+  const lifecycle = createModelLifecycle({
+    catalog,
+    store: { async upsertCatalogModel() {} },
+    logger: { warn() {} },
+    failureThreshold: 3,
+  });
+
+  for (let i = 0; i < 2; i++) {
+    const result = await lifecycle.recordFailure('gemini-3.9-flash', new AIError('empty', {
+      code: AI_ERROR_CODES.EMPTY_RESPONSE,
+      retryable: true,
+    }));
+    assert.equal(result.suspended, false);
+  }
+
+  const final = await lifecycle.recordFailure('gemini-3.9-flash', new AIError('empty', {
+    code: AI_ERROR_CODES.EMPTY_RESPONSE,
     retryable: true,
   }));
 
   assert.equal(final.suspended, true);
   assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.SUSPENDED);
-  assert.ok(persisted.some((model) => model.status === MODEL_STATUS.SUSPENDED));
 });
 
 test('BAD_REQUEST immediately rolls back an auto-promoted model', async () => {
