@@ -7,6 +7,7 @@ const { createProjectPool } = require('./project-pool');
 const { createGeminiTransport } = require('./gemini-transport');
 const { normalizeGeminiResponse } = require('./response-normalizer');
 const { createProviderHealth, MODEL_AVAILABILITY_CODES } = require('./provider-health');
+const { createAITrafficController } = require('./traffic-controller');
 const {
   AIError,
   AI_ERROR_CODES,
@@ -68,6 +69,7 @@ function createAIOrchestrator({
   telemetry = null,
   modelLifecycle = null,
   providerHealth = null,
+  trafficController = null,
   transport = null,
   normalizer = normalizeGeminiResponse,
   logger = console,
@@ -114,6 +116,10 @@ function createAIOrchestrator({
       1,
       5
     ),
+  });
+  const resolvedTrafficController = trafficController || createAITrafficController({
+    env,
+    clock,
   });
 
   function retryPolicyFor(task) {
@@ -187,10 +193,14 @@ function createAIOrchestrator({
     const hydrated = quotaManager
       ? await sideEffect('quota hydration', () => quotaManager.hydrate())
       : 0;
+    const hydratedProviderHealth = resolvedProviderHealth?.hydrate
+      ? await sideEffect('provider health hydration', () => resolvedProviderHealth.hydrate())
+      : 0;
 
     return Object.freeze({
       projectSlots: resolvedProjectPool.enabledCount(),
       hydratedProjectModelStates: Number(hydrated) || 0,
+      hydratedProviderModelHealth: Number(hydratedProviderHealth) || 0,
     });
   }
 
@@ -316,6 +326,10 @@ function createAIOrchestrator({
     let lastError = null;
     let hadEligibleRoute = false;
     const providerBlockedModels = [];
+    let trafficLease = null;
+    let queueWaitMs = 0;
+    let admissionLimit = null;
+    let congestionLevel = null;
 
     async function finishFailure(error, outcome = 'FAILED') {
       await sideEffect('telemetry finish failure', () => telemetry?.finishRequest(requestId, {
@@ -328,9 +342,31 @@ function createAIOrchestrator({
         latencyMs: Date.now() - requestStarted,
         usage: {},
         errorCode: error?.code || AI_ERROR_CODES.UNKNOWN,
+        queueWaitMs,
+        admissionLimit,
+        congestionLevel,
       }));
     }
 
+    try {
+      trafficLease = await resolvedTrafficController.acquire({
+        taskId,
+        taskClass: task.class,
+        timeoutMs: task.timeoutMs,
+      });
+      queueWaitMs = Number(trafficLease?.queueWaitMs) || 0;
+      admissionLimit = trafficLease?.admissionLimit ?? null;
+      congestionLevel = trafficLease?.congestionLevel || null;
+    } catch (error) {
+      queueWaitMs = Number(error?.details?.queueWaitMs) || 0;
+      const trafficState = resolvedTrafficController.snapshot();
+      admissionLimit = trafficState.effectiveConcurrency;
+      congestionLevel = trafficState.congestionLevel;
+      await finishFailure(error);
+      throw error;
+    }
+
+    try {
     modelLoop:
     for (let modelIndex = 0; modelIndex < routedCandidates.length; modelIndex++) {
       const candidate = routedCandidates[modelIndex];
@@ -404,6 +440,10 @@ function createAIOrchestrator({
             candidate.modelId
           ));
           resolvedProviderHealth.recordSuccess(candidate.modelId);
+          resolvedTrafficController.noteSuccess();
+          await sideEffect('provider health success persistence', () =>
+            resolvedProviderHealth.persist?.(candidate.modelId)
+          );
           await sideEffect('model lifecycle success', () => modelLifecycle?.recordSuccess(
             candidate.modelId
           ));
@@ -438,6 +478,9 @@ function createAIOrchestrator({
             latencyMs: Date.now() - requestStarted,
             usage: normalized.usage,
             finishReason: normalized.finishReason,
+            queueWaitMs,
+            admissionLimit,
+            congestionLevel,
           }));
 
           return Object.freeze({
@@ -459,6 +502,7 @@ function createAIOrchestrator({
               });
 
           lastError = aiError;
+          resolvedTrafficController.noteFailure(aiError);
           const isProjectSlotQuotaFailure = PROJECT_SLOT_QUOTA_CODES.has(aiError.code);
           const isProviderAvailabilityFailure = MODEL_AVAILABILITY_CODES.has(aiError.code);
           if (isProjectSlotQuotaFailure) modelQuotaAttemptCount += 1;
@@ -472,6 +516,11 @@ function createAIOrchestrator({
                 { totalEligibleSlots: slots.length }
               )
             : null;
+          if (isProviderAvailabilityFailure) {
+            await sideEffect('provider health failure persistence', () =>
+              resolvedProviderHealth.persist?.(candidate.modelId)
+            );
+          }
 
           attempts.push(Object.freeze({
             modelId: candidate.modelId,
@@ -652,6 +701,9 @@ function createAIOrchestrator({
 
     await finishFailure(finalError);
     throw finalError;
+    } finally {
+      trafficLease?.release?.();
+    }
   }
 
   return Object.freeze({
@@ -667,6 +719,7 @@ function createAIOrchestrator({
     telemetry,
     modelLifecycle,
     providerHealth: resolvedProviderHealth,
+    trafficController: resolvedTrafficController,
     generationAffinity,
   });
 }
