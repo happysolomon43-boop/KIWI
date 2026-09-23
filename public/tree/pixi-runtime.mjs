@@ -9,6 +9,10 @@ import {
   readBrowserRuntimeSignals,
   shouldRunTicker,
 } from './runtime-policy.mjs';
+import {
+  FrameBudgetMonitor,
+  getQualityConfig,
+} from './adaptive-performance.mjs';
 
 function createLayer(name) {
   const layer = new Container();
@@ -19,8 +23,14 @@ function createLayer(name) {
 export class KiwiPixiRuntime {
   constructor(options = {}) {
     this.container = options.container || null;
-    this.onFailure = typeof options.onFailure === 'function' ? options.onFailure : null;
-    this.onReady = typeof options.onReady === 'function' ? options.onReady : null;
+    this.onFailure =
+      typeof options.onFailure === 'function'
+        ? options.onFailure
+        : null;
+    this.onReady =
+      typeof options.onReady === 'function'
+        ? options.onReady
+        : null;
     this.policyOverrides = options.policy || null;
 
     this.app = null;
@@ -31,6 +41,11 @@ export class KiwiPixiRuntime {
     this.intersectionKnown = false;
     this.intersecting = true;
 
+    this._baseMaxFPS = 60;
+    this._performanceMonitor = null;
+    this._performanceTicker = null;
+    this._qualitySubscribers = new Set();
+
     this._intersectionObserver = null;
     this._visibilityHandler = null;
     this._motionQuery = null;
@@ -40,22 +55,33 @@ export class KiwiPixiRuntime {
 
   async init() {
     if (this.destroyed) {
-      throw new Error('Cannot initialize a destroyed KIWI Pixi runtime.');
+      throw new Error(
+        'Cannot initialize a destroyed KIWI Pixi runtime.'
+      );
     }
-    if (!this.container || typeof this.container.appendChild !== 'function') {
-      throw new Error('KIWI Pixi runtime requires a valid container element.');
+    if (
+      !this.container ||
+      typeof this.container.appendChild !== 'function'
+    ) {
+      throw new Error(
+        'KIWI Pixi runtime requires a valid container element.'
+      );
     }
     if (!this.container.isConnected) {
-      throw new Error('KIWI Pixi runtime container must be connected to the document.');
+      throw new Error(
+        'KIWI Pixi runtime container must be connected to the document.'
+      );
     }
     if (this.app) return this;
 
     try {
-      const signals = readBrowserRuntimeSignals(window);
+      const signals =
+        readBrowserRuntimeSignals(window);
       this.policy = Object.freeze({
         ...derivePixiRuntimePolicy(signals),
         ...(this.policyOverrides || {}),
       });
+      this._baseMaxFPS = this.policy.maxFPS;
 
       const app = new Application();
 
@@ -74,6 +100,34 @@ export class KiwiPixiRuntime {
 
       this.app = app;
       this.app.ticker.maxFPS = this.policy.maxFPS;
+
+      this._performanceMonitor =
+        new FrameBudgetMonitor({
+          initialTier:
+            this.policy.qualityTier || 'balanced',
+          ceilingTier:
+            this.policy.qualityTier || 'balanced',
+          onTierChange: (event) =>
+            this._applyQualityTier(event),
+        });
+      this._performanceTicker = (ticker) => {
+        if (
+          this.destroyed ||
+          document.hidden ||
+          (
+            this.intersectionKnown &&
+            !this.intersecting
+          )
+        ) {
+          return;
+        }
+        this._performanceMonitor?.sample(
+          ticker?.deltaMS
+        );
+      };
+      this.app.ticker.add(
+        this._performanceTicker
+      );
 
       const canvas = app.canvas;
       canvas.className = 'kiwi-pixi-canvas';
@@ -112,21 +166,78 @@ export class KiwiPixiRuntime {
 
   getLayer(name) {
     if (!this.layers || !this.layers[name]) {
-      throw new Error('Unknown or unavailable KIWI Pixi layer: ' + name);
+      throw new Error(
+        'Unknown or unavailable KIWI Pixi layer: ' +
+          name
+      );
     }
     return this.layers[name];
   }
 
   get motionScale() {
-    return this.policy?.reducedMotion ? 0 : (this.policy?.motionScale ?? 1);
+    return this.policy?.reducedMotion
+      ? 0
+      : (this.policy?.motionScale ?? 1);
+  }
+
+  get qualityScale() {
+    return this.policy?.qualityScale ?? 1;
+  }
+
+  get foliageScale() {
+    return this.policy?.foliageScale ?? 1;
+  }
+
+  get flowerScale() {
+    return this.policy?.flowerScale ?? 1;
+  }
+
+  get continuousMotion() {
+    return this.policy?.continuousMotion !== false;
+  }
+
+  subscribeQuality(callback, options = {}) {
+    if (typeof callback !== 'function') {
+      return () => {};
+    }
+
+    this._qualitySubscribers.add(callback);
+
+    if (options.emitCurrent === true && this.policy) {
+      try {
+        callback({
+          tier: this.policy.qualityTier,
+          config: getQualityConfig(
+            this.policy.qualityTier
+          ),
+          reason: 'current',
+        });
+      } catch (_) {}
+    }
+
+    return () => {
+      this._qualitySubscribers.delete(callback);
+    };
   }
 
   addTicker(callback, options = {}) {
-    if (!this.app || typeof callback !== 'function') return () => {};
+    if (
+      !this.app ||
+      typeof callback !== 'function'
+    ) {
+      return () => {};
+    }
 
-    const motionAware = options.motionAware !== false;
+    const motionAware =
+      options.motionAware !== false;
+
     const wrapped = (ticker) => {
-      if (motionAware && this.motionScale <= 0) return;
+      if (
+        motionAware &&
+        this.motionScale <= 0
+      ) {
+        return;
+      }
       callback(ticker, this.motionScale);
     };
 
@@ -134,8 +245,60 @@ export class KiwiPixiRuntime {
     this._syncTicker();
 
     return () => {
-      if (this.app) this.app.ticker.remove(wrapped);
+      if (this.app) {
+        this.app.ticker.remove(wrapped);
+      }
     };
+  }
+
+  _applyQualityTier(event) {
+    if (!event?.tier || !this.policy) return;
+
+    const config =
+      event.config ||
+      getQualityConfig(event.tier);
+    const reducedMotion =
+      this.policy.reducedMotion === true;
+    const maxFPS = Math.min(
+      this._baseMaxFPS,
+      config.maxFPS
+    );
+
+    this.policy = Object.freeze({
+      ...this.policy,
+      qualityTier: event.tier,
+      qualityScale: config.qualityScale,
+      foliageScale: config.foliageScale,
+      flowerScale: config.flowerScale,
+      motionScale: reducedMotion
+        ? 0
+        : config.motionScale,
+      continuousMotion:
+        !reducedMotion &&
+        config.continuousMotion,
+      geometryRefreshMinMs:
+        config.geometryRefreshMinMs,
+      maxFPS,
+      frameBudgetMs: 1000 / maxFPS,
+    });
+
+    if (this.app) {
+      this.app.ticker.maxFPS = maxFPS;
+    }
+
+    for (
+      const subscriber of
+      [...this._qualitySubscribers]
+    ) {
+      try {
+        subscriber({
+          ...event,
+          config,
+        });
+      } catch (_) {}
+    }
+
+    this.renderOnce();
   }
 
   renderOnce() {
@@ -145,7 +308,9 @@ export class KiwiPixiRuntime {
 
   resize() {
     if (!this.app || this.destroyed) return;
-    if (typeof this.app.resize === 'function') this.app.resize();
+    if (typeof this.app.resize === 'function') {
+      this.app.resize();
+    }
   }
 
   pause() {
@@ -156,54 +321,146 @@ export class KiwiPixiRuntime {
     this._syncTicker();
   }
 
+  getPerformanceSnapshot() {
+    return Object.freeze({
+      qualityTier:
+        this.policy?.qualityTier || 'unknown',
+      maxFPS: this.policy?.maxFPS || 0,
+      resolution:
+        this.policy?.resolution || 1,
+      continuousMotion:
+        this.policy?.continuousMotion !== false,
+      monitor:
+        this._performanceMonitor?.snapshot() ||
+        null,
+    });
+  }
+
   _installLifecycleObservers() {
-    this._visibilityHandler = () => this._syncTicker();
-    document.addEventListener('visibilitychange', this._visibilityHandler, { passive: true });
+    this._visibilityHandler = () =>
+      this._syncTicker();
+
+    document.addEventListener(
+      'visibilitychange',
+      this._visibilityHandler,
+      { passive: true }
+    );
 
     if (typeof IntersectionObserver === 'function') {
-      this._intersectionObserver = new IntersectionObserver(
-        (entries) => {
-          const entry = entries[entries.length - 1];
-          if (!entry) return;
-          this.intersectionKnown = true;
-          this.intersecting = entry.isIntersecting && entry.intersectionRatio > 0;
-          this._syncTicker();
-        },
-        { root: null, threshold: [0, 0.01] }
-      );
-      this._intersectionObserver.observe(this.container);
-    }
-
-    if (typeof MutationObserver === 'function' && document.body) {
-      this._disconnectObserver = new MutationObserver(() => {
-        if (this.destroyed || this.container?.isConnected) return;
-        queueMicrotask(() => {
-          if (!this.destroyed && !this.container?.isConnected) {
-            this.destroy().catch(() => {});
+      this._intersectionObserver =
+        new IntersectionObserver(
+          (entries) => {
+            const entry =
+              entries[entries.length - 1];
+            if (!entry) return;
+            this.intersectionKnown = true;
+            this.intersecting =
+              entry.isIntersecting &&
+              entry.intersectionRatio > 0;
+            this._syncTicker();
+          },
+          {
+            root: null,
+            threshold: [0, 0.01],
           }
-        });
-      });
-      this._disconnectObserver.observe(document.body, {
-        childList: true,
-        subtree: true,
-      });
+        );
+
+      this._intersectionObserver.observe(
+        this.container
+      );
     }
 
-    if (typeof window.matchMedia === 'function') {
-      this._motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (
+      typeof MutationObserver === 'function' &&
+      document.body
+    ) {
+      this._disconnectObserver =
+        new MutationObserver(() => {
+          if (
+            this.destroyed ||
+            this.container?.isConnected
+          ) {
+            return;
+          }
+
+          queueMicrotask(() => {
+            if (
+              !this.destroyed &&
+              !this.container?.isConnected
+            ) {
+              this.destroy().catch(() => {});
+            }
+          });
+        });
+
+      this._disconnectObserver.observe(
+        document.body,
+        {
+          childList: true,
+          subtree: true,
+        }
+      );
+    }
+
+    if (
+      typeof window.matchMedia === 'function'
+    ) {
+      this._motionQuery =
+        window.matchMedia(
+          '(prefers-reduced-motion: reduce)'
+        );
+
       this._motionHandler = (event) => {
+        const config = getQualityConfig(
+          this.policy?.qualityTier ||
+          'balanced'
+        );
         this.policy = Object.freeze({
           ...this.policy,
           reducedMotion: event.matches,
-          motionScale: event.matches ? 0 : 1,
+          motionScale: event.matches
+            ? 0
+            : config.motionScale,
+          continuousMotion:
+            !event.matches &&
+            config.continuousMotion,
         });
+
+        for (
+          const subscriber of
+          [...this._qualitySubscribers]
+        ) {
+          try {
+            subscriber({
+              tier: this.policy.qualityTier,
+              config,
+              reason:
+                event.matches
+                  ? 'reduced-motion-enabled'
+                  : 'reduced-motion-disabled',
+            });
+          } catch (_) {}
+        }
+
         this.renderOnce();
+        this._syncTicker();
       };
 
-      if (typeof this._motionQuery.addEventListener === 'function') {
-        this._motionQuery.addEventListener('change', this._motionHandler);
-      } else if (typeof this._motionQuery.addListener === 'function') {
-        this._motionQuery.addListener(this._motionHandler);
+      if (
+        typeof this._motionQuery
+          .addEventListener === 'function'
+      ) {
+        this._motionQuery.addEventListener(
+          'change',
+          this._motionHandler
+        );
+      } else if (
+        typeof this._motionQuery
+          .addListener === 'function'
+      ) {
+        this._motionQuery.addListener(
+          this._motionHandler
+        );
       }
     }
   }
@@ -214,7 +471,8 @@ export class KiwiPixiRuntime {
     const run = shouldRunTicker({
       destroyed: this.destroyed,
       documentHidden: document.hidden,
-      intersectionKnown: this.intersectionKnown,
+      intersectionKnown:
+        this.intersectionKnown,
       intersecting: this.intersecting,
     });
 
@@ -224,6 +482,7 @@ export class KiwiPixiRuntime {
 
   async destroy() {
     if (this.destroyed) return;
+
     this.destroyed = true;
     this.ready = false;
 
@@ -233,15 +492,32 @@ export class KiwiPixiRuntime {
     }
 
     if (this._visibilityHandler) {
-      document.removeEventListener('visibilitychange', this._visibilityHandler);
+      document.removeEventListener(
+        'visibilitychange',
+        this._visibilityHandler
+      );
       this._visibilityHandler = null;
     }
 
-    if (this._motionQuery && this._motionHandler) {
-      if (typeof this._motionQuery.removeEventListener === 'function') {
-        this._motionQuery.removeEventListener('change', this._motionHandler);
-      } else if (typeof this._motionQuery.removeListener === 'function') {
-        this._motionQuery.removeListener(this._motionHandler);
+    if (
+      this._motionQuery &&
+      this._motionHandler
+    ) {
+      if (
+        typeof this._motionQuery
+          .removeEventListener === 'function'
+      ) {
+        this._motionQuery.removeEventListener(
+          'change',
+          this._motionHandler
+        );
+      } else if (
+        typeof this._motionQuery
+          .removeListener === 'function'
+      ) {
+        this._motionQuery.removeListener(
+          this._motionHandler
+        );
       }
     }
 
@@ -253,10 +529,29 @@ export class KiwiPixiRuntime {
       this._disconnectObserver = null;
     }
 
+    this._qualitySubscribers.clear();
+
+    if (
+      this.app &&
+      this._performanceTicker
+    ) {
+      try {
+        this.app.ticker.remove(
+          this._performanceTicker
+        );
+      } catch (_) {}
+    }
+    this._performanceTicker = null;
+    this._performanceMonitor = null;
+
     if (this.app) {
       try {
         this.app.ticker.stop();
-        this.app.destroy(true, { children: true, texture: false, textureSource: false });
+        this.app.destroy(true, {
+          children: true,
+          texture: false,
+          textureSource: false,
+        });
       } catch (_) {}
       this.app = null;
     }
@@ -265,8 +560,11 @@ export class KiwiPixiRuntime {
   }
 }
 
-export async function createKiwiPixiRuntime(options) {
-  const runtime = new KiwiPixiRuntime(options);
+export async function createKiwiPixiRuntime(
+  options
+) {
+  const runtime =
+    new KiwiPixiRuntime(options);
   await runtime.init();
   return runtime;
 }
