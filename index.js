@@ -13583,7 +13583,12 @@ try {
       subjectId: active.subject_id,
       subjectName: active.subject_name,
       reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
-      requiredScore: 70,
+      adaptive: Number(active.engine_version || 1) === 2 &&
+        ['PILOT', 'LIVE'].includes(String(active.engine_mode || '')),
+      requiredScore: Number(active.engine_version || 1) === 2 ? null : 70,
+      requiredRecovery: Number(active.engine_version || 1) === 2
+        ? liveReckoningConfig.scoring.recoveryThreshold
+        : null,
       pressure: active.pressure_score || 0,
       shields: userStats?.streak_shields_held || 0,
       canDefer: active.status === 'triggered' && !active.deferral_used,
@@ -19845,6 +19850,19 @@ status: activeReckoning.status,
 flagged_card_count: activeReckoning.flagged_card_count,
 question_count: activeReckoning.question_count,
 exam_session_id: activeReckoning.exam_session_id || null,
+engine_version: Number(activeReckoning.engine_version || 1),
+engine_mode: activeReckoning.engine_mode || 'LEGACY',
+engine_phase: activeReckoning.engine_phase || null,
+generation_status: activeReckoning.generation_status || null,
+generation_error: activeReckoning.generation_error || null,
+adaptive: Number(activeReckoning.engine_version || 1) === 2 &&
+  ['PILOT', 'LIVE'].includes(String(activeReckoning.engine_mode || '')),
+requiredScore: Number(activeReckoning.engine_version || 1) === 2 ? null : 70,
+requiredRecovery: Number(activeReckoning.engine_version || 1) === 2
+  ? liveReckoningConfig.scoring.recoveryThreshold
+  : null,
+failure_count: Number(activeReckoning.failure_count) || 0,
+failsafe_threshold: RECKONING_FAILSAFE_FAILURES,
 // Both field names needed: overlay reads deferral_expires_at; legacy reads deferred_until
 deferred_until: activeReckoning.deferred_until || null,
 deferral_expires_at: activeReckoning.deferred_until || null,
