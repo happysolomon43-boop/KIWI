@@ -129,3 +129,27 @@ test('V2 Begin returns through the dedicated start path before legacy CBT genera
   assert.ok(legacyGenerate > adaptiveStart);
   assert.match(overlay.slice(adaptiveStart, legacyGenerate), /return;/);
 });
+
+
+test('adaptive Reckoning routes ready state onto the exam page', () => {
+  const open = functionSlice('_openAdaptiveReckoningState', '_renderAdaptiveReckoningQuestion');
+  assert.match(open, /AppState\.currentPage !== "exam"/);
+  assert.match(open, /_origNavigateTo\("exam"\)/);
+
+  const exam = functionSlice('renderExam', 'renderExamResults');
+  assert.match(exam, /AppState\.adaptiveReckoning/);
+  assert.match(exam, /_renderAdaptiveReckoningQuestion/);
+  assert.match(html, /AppState\.adaptiveReckoning && AppState\.adaptiveReckoning\.examSessionId/);
+});
+
+test('Brain Reckoning action follows preparation lifecycle and exposes the 24-hour Buffer', () => {
+  const brain = functionSlice('renderBrain');
+  assert.match(brain, /generation_status/);
+  assert.match(brain, /Preparing Reckoning/);
+  assert.match(brain, /Retry Reckoning/);
+  assert.match(brain, /Return to Reckoning/);
+  assert.match(brain, /24h Reckoning Buffer/);
+  assert.match(brain, /brainUseReckoningBufferBtn/);
+  assert.match(brain, /brainBuyReckoningBufferBtn/);
+  assert.match(html, /\/brain\/reckoning\/buffer\/purchase/);
+});
