@@ -1,3 +1,5 @@
+> **Historical phase note:** This document records Phases 8–10. The later Phase 15 cutover retired the SVG fallback and moved all living-vine mounts, including the landing preview, to the PixiJS gateway. See `docs/vine-phases-14-15.md`.
+
 # KIWI Living Vine Renderer — Phases 8–10
 
 ## Scope
