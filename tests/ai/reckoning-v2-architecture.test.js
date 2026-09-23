@@ -72,7 +72,7 @@ test('all Phase 1 component boundaries are importable without side effects', () 
   }
 });
 
-test('Delivery B may wire shadow intelligence but not V2 assessment authority', () => {
+test('Delivery C wires dormant execution without activating current Reckoning authority', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', '..', 'index.js'),
     'utf8'
@@ -80,5 +80,21 @@ test('Delivery B may wire shadow intelligence but not V2 assessment authority', 
 
   assert.match(source, /createShadowIntelligence/);
   assert.match(source, /reckoningShadow\.analyzeSafely/);
-  assert.doesNotMatch(source, /createReckoningEngine\s*\(/);
+  assert.match(
+    source,
+    /const adaptiveReckoningEngine = createReckoningEngine\s*\(/
+  );
+  assert.match(source, /examRouter\.get\('\/:id\/reckoning\/state'/);
+  assert.match(source, /examRouter\.post\('\/:id\/reckoning\/answer'/);
+
+  const triggerStart = source.indexOf('async function triggerReckoning');
+  const triggerEnd = source.indexOf('async function deferReckoning', triggerStart);
+  assert.ok(triggerStart >= 0 && triggerEnd > triggerStart);
+  const trigger = source.slice(triggerStart, triggerEnd);
+
+  assert.match(trigger, /question_count:\s*questionCount/);
+  assert.match(trigger, /reckoningShadow\.analyzeSafely/);
+  assert.doesNotMatch(trigger, /engine_version\s*:/);
+  assert.doesNotMatch(trigger, /engine_mode\s*:\s*['"](?:PILOT|LIVE)['"]/);
+  assert.doesNotMatch(trigger, /adaptiveReckoningEngine/);
 });
