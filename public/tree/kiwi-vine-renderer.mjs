@@ -1,4 +1,4 @@
-import { Graphics } from '/vendor/pixi/pixi.min.mjs';
+import { Container, Graphics } from '/vendor/pixi/pixi.min.mjs';
 
 import { loadVineBlueprint } from './vine-blueprint-loader.mjs';
 import { profileNameForWidth } from './vine-geometry.mjs';
@@ -7,6 +7,7 @@ import {
   normalizeVineRenderState,
 } from './vine-render-state.mjs';
 import { buildStructurePlan } from './vine-structure-plan.mjs';
+import { buildFoliagePlan } from './vine-foliage-plan.mjs';
 
 function easeInOutCubic(t) {
   const p = Math.min(1, Math.max(0, Number(t) || 0));
@@ -53,6 +54,8 @@ export class KiwiVineRenderer {
     this._roots = null;
     this._tips = null;
     this._segmentGraphics = new Map();
+    this._leafNodes = new Map();
+    this._livingTime = 0;
   }
 
   async init() {
@@ -188,8 +191,117 @@ export class KiwiVineRenderer {
     this.runtime.renderOnce();
   }
 
-  // Phase 9 and 10 extend this hook without changing the permanent structure path.
-  _renderAdditionalSystems(_layout, _plan) {}
+  _renderAdditionalSystems(layout, plan) {
+    const foliagePlan = buildFoliagePlan(
+      this.blueprint,
+      this.currentState,
+      plan,
+      layout.profileName
+    );
+    this._renderFoliage(layout, foliagePlan);
+  }
+
+  _createLeafNode(id, layerName) {
+    const container = new Container();
+    container.label = id;
+
+    const petiole = new Graphics();
+    const leaf = new Graphics();
+
+    // Broad cordate kiwi leaf: pointed tip, rounded shoulders, shallow basal notch.
+    leaf
+      .moveTo(0, -14)
+      .bezierCurveTo(10, -10, 15, -1, 11, 8)
+      .bezierCurveTo(7, 14, 2.5, 11, 0, 7)
+      .bezierCurveTo(-2.5, 11, -7, 14, -11, 8)
+      .bezierCurveTo(-15, -1, -10, -10, 0, -14)
+      .closePath()
+      .fill({ color: 0xffffff, alpha: 1 });
+
+    // Main vein and a restrained pair of secondary veins.
+    leaf
+      .moveTo(0, 7)
+      .lineTo(0, -11)
+      .stroke({ color: 0xffffff, width: 0.9, alpha: 0.42, cap: 'round' })
+      .moveTo(0, -1)
+      .lineTo(6.5, -5)
+      .stroke({ color: 0xffffff, width: 0.55, alpha: 0.24, cap: 'round' })
+      .moveTo(0, 1)
+      .lineTo(-6.2, -3)
+      .stroke({ color: 0xffffff, width: 0.55, alpha: 0.22, cap: 'round' });
+
+    container.addChild(petiole);
+    container.addChild(leaf);
+    this.runtime.getLayer(layerName).addChild(container);
+
+    const node = {
+      id,
+      layerName,
+      container,
+      petiole,
+      leaf,
+      phase: 0,
+      speed: 0,
+      sway: 0,
+      movementStrength: 0,
+      baseLeafRotation: 0,
+      active: false,
+    };
+    this._leafNodes.set(id, node);
+    return node;
+  }
+
+  _renderFoliage(layout, foliagePlan) {
+    const activeIds = new Set();
+
+    for (const item of foliagePlan.leaves) {
+      activeIds.add(item.id);
+      let node = this._leafNodes.get(item.id);
+      if (!node) node = this._createLeafNode(item.id, item.layer);
+
+      const attach = layout.point(item.attach);
+      const center = layout.point(item.center);
+      const dx = center.x - attach.x;
+      const dy = center.y - attach.y;
+      const halfSize = Math.max(5.5, item.size * layout.unit);
+      const leafScale = (halfSize / 14) * item.scale;
+
+      node.container.visible = true;
+      node.container.renderable = true;
+      node.container.position.set(attach.x, attach.y);
+      node.container.alpha = item.alpha;
+
+      node.petiole
+        .clear()
+        .moveTo(0, 0)
+        .lineTo(dx, dy)
+        .stroke({
+          color: 0x587144,
+          width: Math.max(0.75, halfSize * 0.075),
+          alpha: Math.min(0.74, item.alpha * 0.82),
+          cap: 'round',
+        });
+
+      node.leaf.position.set(dx, dy);
+      node.leaf.scale.set(leafScale * item.aspect, leafScale);
+      node.leaf.rotation = item.rotation;
+      node.leaf.tint = item.color;
+
+      node.phase = item.phase;
+      node.speed = item.speed;
+      node.sway = item.sway;
+      node.movementStrength = item.movementStrength;
+      node.baseLeafRotation = item.rotation;
+      node.active = true;
+    }
+
+    for (const [id, node] of this._leafNodes) {
+      if (activeIds.has(id)) continue;
+      node.active = false;
+      node.container.visible = false;
+      node.container.renderable = false;
+    }
+  }
 
   _renderBackdrop(layout, plan) {
     const base = layout.point({ x: 0.5, y: 0.88 });
@@ -403,8 +515,21 @@ export class KiwiVineRenderer {
     this._animateLivingSystems(deltaMS, motionScale);
   }
 
-  // Phase 9/10 use the existing ticker for leaf and reproductive motion.
-  _animateLivingSystems(_deltaMS, _motionScale) {}
+  _animateLivingSystems(deltaMS, motionScale) {
+    this._livingTime += deltaMS / 1000;
+    const interactionBoost = 1 + this._interactionImpulse * 1.8;
+
+    for (const node of this._leafNodes.values()) {
+      if (!node.active || !node.container.visible) continue;
+      const sway =
+        Math.sin(this._livingTime * node.speed * Math.PI * 2 + node.phase) *
+        node.sway *
+        node.movementStrength *
+        motionScale *
+        interactionBoost;
+      node.container.rotation = sway;
+    }
+  }
 
   updateState(nextState, animate = true) {
     if (this.destroyed) return;
@@ -461,6 +586,7 @@ export class KiwiVineRenderer {
     }
 
     this._segmentGraphics.clear();
+    this._leafNodes.clear();
 
     if (this.container) {
       delete this.container.dataset.kiwiRenderer;
