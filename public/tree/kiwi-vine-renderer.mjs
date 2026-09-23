@@ -8,6 +8,7 @@ import {
 } from './vine-render-state.mjs';
 import { buildStructurePlan } from './vine-structure-plan.mjs';
 import { buildFoliagePlan } from './vine-foliage-plan.mjs';
+import { buildReproductivePlan } from './vine-reproductive-plan.mjs';
 
 function easeInOutCubic(t) {
   const p = Math.min(1, Math.max(0, Number(t) || 0));
@@ -55,6 +56,8 @@ export class KiwiVineRenderer {
     this._tips = null;
     this._segmentGraphics = new Map();
     this._leafNodes = new Map();
+    this._flowerNodes = new Map();
+    this._fruitNodes = new Map();
     this._livingTime = 0;
   }
 
@@ -199,6 +202,14 @@ export class KiwiVineRenderer {
       layout.profileName
     );
     this._renderFoliage(layout, foliagePlan);
+
+    const reproductivePlan = buildReproductivePlan(
+      this.blueprint,
+      this.currentState,
+      plan,
+      layout.profileName
+    );
+    this._renderReproduction(layout, reproductivePlan);
   }
 
   _createLeafNode(id, layerName) {
@@ -297,6 +308,202 @@ export class KiwiVineRenderer {
 
     for (const [id, node] of this._leafNodes) {
       if (activeIds.has(id)) continue;
+      node.active = false;
+      node.container.visible = false;
+      node.container.renderable = false;
+    }
+  }
+
+  _createFlowerNode(id) {
+    const container = new Container();
+    container.label = id;
+
+    const stem = new Graphics();
+    const bloom = new Graphics();
+
+    for (let i = 0; i < 5; i += 1) {
+      const angle = -Math.PI / 2 + (Math.PI * 2 * i) / 5;
+      const px = Math.cos(angle) * 3.1;
+      const py = Math.sin(angle) * 3.1;
+      bloom
+        .ellipse(px, py, 2.5, 3.4)
+        .fill({ color: 0xf4efd9, alpha: 0.95 });
+    }
+    bloom
+      .circle(0, 0, 2.15)
+      .fill({ color: 0xd8b64d, alpha: 0.98 })
+      .circle(-0.7, -0.6, 0.45)
+      .fill({ color: 0xfff7c8, alpha: 0.82 });
+
+    container.addChild(stem);
+    container.addChild(bloom);
+    this.runtime.getLayer('flowers').addChild(container);
+
+    const node = {
+      id,
+      container,
+      stem,
+      bloom,
+      phase: 0,
+      movementStrength: 0,
+      baseRotation: 0,
+      active: false,
+    };
+    this._flowerNodes.set(id, node);
+    return node;
+  }
+
+  _createFruitNode(id) {
+    const container = new Container();
+    container.label = id;
+
+    const stem = new Graphics();
+    const fruit = new Graphics();
+    container.addChild(stem);
+    container.addChild(fruit);
+    this.runtime.getLayer('fruit').addChild(container);
+
+    const node = {
+      id,
+      container,
+      stem,
+      fruit,
+      phase: 0,
+      sway: 0,
+      movementStrength: 0,
+      active: false,
+    };
+    this._fruitNodes.set(id, node);
+    return node;
+  }
+
+  _renderReproduction(layout, reproductivePlan) {
+    const activeFlowerIds = new Set();
+
+    for (const item of reproductivePlan.flowers) {
+      activeFlowerIds.add(item.id);
+      let node = this._flowerNodes.get(item.id);
+      if (!node) node = this._createFlowerNode(item.id);
+
+      const attach = layout.point(item.attach);
+      const center = layout.point(item.center);
+      const dx = center.x - attach.x;
+      const dy = center.y - attach.y;
+      const size = Math.max(3.6, item.size * layout.unit);
+      const scale = (size / 7) * item.scale;
+
+      node.container.visible = true;
+      node.container.renderable = true;
+      node.container.position.set(attach.x, attach.y);
+      node.container.alpha = item.alpha;
+
+      node.stem
+        .clear()
+        .moveTo(0, 0)
+        .lineTo(dx, dy)
+        .stroke({
+          color: 0x607746,
+          width: Math.max(0.65, size * 0.12),
+          alpha: 0.66,
+          cap: 'round',
+        });
+
+      node.bloom.position.set(dx, dy);
+      node.bloom.scale.set(scale);
+      node.bloom.rotation = item.baseRotation;
+
+      node.phase = item.phase;
+      node.movementStrength = item.movementStrength;
+      node.baseRotation = item.baseRotation;
+      node.active = true;
+    }
+
+    for (const [id, node] of this._flowerNodes) {
+      if (activeFlowerIds.has(id)) continue;
+      node.active = false;
+      node.container.visible = false;
+      node.container.renderable = false;
+    }
+
+    const activeFruitIds = new Set();
+
+    for (const item of reproductivePlan.fruits) {
+      activeFruitIds.add(item.id);
+      let node = this._fruitNodes.get(item.id);
+      if (!node) node = this._createFruitNode(item.id);
+
+      const attach = layout.point(item.attach);
+      const stemLength = Math.max(7, item.stemLength * layout.scaleY);
+      const fruitHalfWidth = Math.max(3.4, item.size * layout.unit);
+      const fruitHalfHeight = fruitHalfWidth * 1.30;
+      const spread = Math.max(3.2, item.spread * layout.scaleX);
+
+      node.container.visible = true;
+      node.container.renderable = true;
+      node.container.position.set(attach.x, attach.y);
+      node.container.alpha = item.alpha;
+      node.container.scale.set(item.scale);
+
+      node.stem
+        .clear()
+        .moveTo(0, 0)
+        .bezierCurveTo(
+          0,
+          stemLength * 0.34,
+          spread * 0.08,
+          stemLength * 0.70,
+          0,
+          stemLength
+        )
+        .stroke({
+          color: 0x5b7040,
+          width: Math.max(0.85, fruitHalfWidth * 0.14),
+          alpha: 0.84,
+          cap: 'round',
+        });
+
+      node.fruit.clear();
+      const clusterSize = Math.max(1, Math.min(3, item.clusterSize || 1));
+      for (let i = 0; i < clusterSize; i += 1) {
+        const offsetX =
+          clusterSize === 1
+            ? 0
+            : (i - (clusterSize - 1) / 2) * spread;
+        const offsetY =
+          stemLength +
+          (i % 2) * fruitHalfHeight * 0.28;
+
+        node.fruit
+          .ellipse(
+            offsetX,
+            offsetY + fruitHalfHeight * 0.46,
+            fruitHalfWidth,
+            fruitHalfHeight
+          )
+          .fill({ color: 0x8b6a3f, alpha: 0.98 })
+          .ellipse(
+            offsetX - fruitHalfWidth * 0.28,
+            offsetY + fruitHalfHeight * 0.12,
+            fruitHalfWidth * 0.26,
+            fruitHalfHeight * 0.40
+          )
+          .fill({ color: 0xb79a66, alpha: 0.27 })
+          .circle(
+            offsetX + fruitHalfWidth * 0.24,
+            offsetY + fruitHalfHeight * 0.54,
+            Math.max(0.45, fruitHalfWidth * 0.10)
+          )
+          .fill({ color: 0x5b4229, alpha: 0.48 });
+      }
+
+      node.phase = item.phase;
+      node.sway = item.sway;
+      node.movementStrength = item.movementStrength;
+      node.active = true;
+    }
+
+    for (const [id, node] of this._fruitNodes) {
+      if (activeFruitIds.has(id)) continue;
       node.active = false;
       node.container.visible = false;
       node.container.renderable = false;
@@ -529,6 +736,26 @@ export class KiwiVineRenderer {
         interactionBoost;
       node.container.rotation = sway;
     }
+
+    for (const node of this._flowerNodes.values()) {
+      if (!node.active || !node.container.visible) continue;
+      node.container.rotation =
+        Math.sin(this._livingTime * 1.45 + node.phase) *
+        0.018 *
+        node.movementStrength *
+        motionScale *
+        interactionBoost;
+    }
+
+    for (const node of this._fruitNodes.values()) {
+      if (!node.active || !node.container.visible) continue;
+      node.container.rotation =
+        Math.sin(this._livingTime * 1.10 + node.phase) *
+        node.sway *
+        node.movementStrength *
+        motionScale *
+        interactionBoost;
+    }
   }
 
   updateState(nextState, animate = true) {
@@ -587,6 +814,8 @@ export class KiwiVineRenderer {
 
     this._segmentGraphics.clear();
     this._leafNodes.clear();
+    this._flowerNodes.clear();
+    this._fruitNodes.clear();
 
     if (this.container) {
       delete this.container.dataset.kiwiRenderer;
