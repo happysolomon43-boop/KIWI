@@ -39,6 +39,26 @@ test('one failing slot is evidence but does not open a multi-slot model circuit'
   assert.equal(health.availability('gemini-3.8-flash').available, true);
 });
 
+
+test('repeated failures from the same slot do not impersonate independent model evidence', () => {
+  const health = createProviderHealth({
+    minDistinctFailureSlots: 2,
+  });
+
+  for (let i = 0; i < 5; i++) {
+    health.recordFailure(
+      'gemini-3.8-flash',
+      'p1',
+      overloaded(),
+      { totalEligibleSlots: 14 }
+    );
+  }
+
+  const snapshot = health.snapshot('gemini-3.8-flash');
+  assert.equal(snapshot.state, CIRCUIT_STATES.CLOSED);
+  assert.equal(snapshot.distinctFailureSlots, 1);
+});
+
 test('independent slot failures open the circuit and cooldown becomes half-open', () => {
   let now = 1000;
   const health = createProviderHealth({
