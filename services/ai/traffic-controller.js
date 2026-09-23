@@ -17,14 +17,13 @@ const CLASS_WEIGHTS = Object.freeze({
 });
 
 const CONGESTION_SIGNAL_WEIGHTS = Object.freeze({
-  [AI_ERROR_CODES.PROVIDER_OVERLOADED]: 3,
-  [AI_ERROR_CODES.TRANSIENT]: 2,
+  // Project/model quota failures are deliberately excluded. Delivery A keeps
+  // 429 health route-scoped; global backpressure reacts only to provider or
+  // transport instability that can affect concurrent work across the pool.
+  [AI_ERROR_CODES.PROVIDER_OVERLOADED]: 2,
+  [AI_ERROR_CODES.TRANSIENT]: 1,
   [AI_ERROR_CODES.TIMEOUT]: 1,
   [AI_ERROR_CODES.NETWORK]: 1,
-  [AI_ERROR_CODES.RATE_LIMIT_RPM]: 1,
-  [AI_ERROR_CODES.RATE_LIMIT_TPM]: 1,
-  [AI_ERROR_CODES.RATE_LIMIT_RPD]: 1,
-  [AI_ERROR_CODES.RATE_LIMIT_UNKNOWN]: 1,
 });
 
 function boundedNumber(value, fallback, min, max) {
@@ -40,6 +39,7 @@ function createAITrafficController({
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
   },
+  logger = console,
 } = {}) {
   const baseConcurrency = Math.floor(
     boundedNumber(env.AI_GLOBAL_CONCURRENCY, 6, 1, 32)
@@ -104,6 +104,10 @@ function createAITrafficController({
   let rejectedOverflowTotal = 0;
   let timedOutTotal = 0;
   let providerSignalsTotal = 0;
+  let totalQueueWaitMs = 0;
+  let maxQueueWaitMs = 0;
+  let maxObservedQueue = 0;
+  let lastCongestionChangeAt = null;
 
   function nowMs() {
     const value = clock();
@@ -124,16 +128,16 @@ function createAITrafficController({
   }
 
   function congestionLevelFromScore(score) {
-    if (score >= 6) return CONGESTION_LEVELS.SEVERE;
-    if (score >= 3) return CONGESTION_LEVELS.HIGH;
-    if (score >= 1) return CONGESTION_LEVELS.ELEVATED;
+    if (score >= 8) return CONGESTION_LEVELS.SEVERE;
+    if (score >= 4) return CONGESTION_LEVELS.HIGH;
+    if (score >= 2) return CONGESTION_LEVELS.ELEVATED;
     return CONGESTION_LEVELS.NORMAL;
   }
 
   function effectiveConcurrencyFromScore(score) {
-    if (score >= 6) return 1;
-    if (score >= 3) return Math.max(1, Math.min(baseConcurrency, 2));
-    if (score >= 1) {
+    if (score >= 8) return 1;
+    if (score >= 4) return Math.max(1, Math.min(baseConcurrency, 2));
+    if (score >= 2) {
       return Math.max(1, Math.ceil(baseConcurrency * 0.66));
     }
     return baseConcurrency;
@@ -203,12 +207,16 @@ function createAITrafficController({
       admittedTotal += 1;
       peakActive = Math.max(peakActive, active);
 
+      const queueWaitMs = Math.max(0, admittedAt - item.enqueuedAt);
+      totalQueueWaitMs += queueWaitMs;
+      maxQueueWaitMs = Math.max(maxQueueWaitMs, queueWaitMs);
+
       let released = false;
       const lease = Object.freeze({
         id: item.id,
         taskId: item.taskId,
         taskClass: item.taskClass,
-        queueWaitMs: Math.max(0, admittedAt - item.enqueuedAt),
+        queueWaitMs,
         admittedAt: new Date(admittedAt),
         admissionLimit: state.effectiveConcurrency,
         congestionLevel: state.level,
@@ -312,22 +320,41 @@ function createAITrafficController({
       item.timer?.unref?.();
 
       queues.get(taskClass).push(item);
+      maxObservedQueue = Math.max(maxObservedQueue, queueDepth());
       drain();
     });
   }
 
-  function noteFailure(error) {
+  function noteFailure(error, context = {}) {
     const weight = Number(CONGESTION_SIGNAL_WEIGHTS[error?.code]) || 0;
     if (weight <= 0) return snapshot();
 
+    const before = congestionState();
     congestionSignals.push({
       at: nowMs(),
       weight,
       code: error.code,
       status: error.status ?? null,
+      modelId: context.modelId || null,
+      projectSlot: context.projectSlot || null,
     });
     providerSignalsTotal += 1;
     pruneSignals();
+    const after = congestionState();
+
+    if (after.effectiveConcurrency !== before.effectiveConcurrency) {
+      lastCongestionChangeAt = new Date(nowMs());
+      if (typeof logger?.warn === 'function') {
+        logger.warn('[KIWI AI] adaptive backpressure changed concurrency', {
+          from: before.effectiveConcurrency,
+          to: after.effectiveConcurrency,
+          level: after.level,
+          score: after.score,
+          code: error.code,
+        });
+      }
+    }
+
     drain();
     return snapshot();
   }
@@ -336,7 +363,12 @@ function createAITrafficController({
     // Recovery is deliberately time-based instead of instantly erasing outage
     // evidence. This prevents concurrency from flapping back to full speed
     // after one lucky success while the provider is still unstable.
+    const before = congestionState();
     pruneSignals();
+    const after = congestionState();
+    if (after.effectiveConcurrency !== before.effectiveConcurrency) {
+      lastCongestionChangeAt = new Date(nowMs());
+    }
     drain();
     return snapshot();
   }
@@ -348,9 +380,17 @@ function createAITrafficController({
       signalCounts[signal.code] = (signalCounts[signal.code] || 0) + 1;
     }
 
+    const now = nowMs();
+    const oldestQueuedAt = [...queues.values()]
+      .flat()
+      .reduce((oldest, item) => (
+        oldest == null || item.enqueuedAt < oldest ? item.enqueuedAt : oldest
+      ), null);
+
     return Object.freeze({
       baseConcurrency,
       effectiveConcurrency: congestion.effectiveConcurrency,
+      degraded: congestion.effectiveConcurrency < baseConcurrency,
       congestionLevel: congestion.level,
       congestionScore: congestion.score,
       signalWindowMs,
@@ -368,6 +408,14 @@ function createAITrafficController({
       rejectedOverflowTotal,
       providerSignalsTotal,
       recentSignals: Object.freeze(signalCounts),
+      lastCongestionChangeAt,
+      oldestQueueAgeMs: oldestQueuedAt == null ? 0 : Math.max(0, now - oldestQueuedAt),
+      totalQueueWaitMs,
+      maxQueueWaitMs,
+      averageQueueWaitMs: admittedTotal > 0
+        ? Math.round(totalQueueWaitMs / admittedTotal)
+        : 0,
+      maxObservedQueue,
     });
   }
 
