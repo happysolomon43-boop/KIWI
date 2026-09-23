@@ -7,6 +7,7 @@ const { createPlanner } = require('./planner');
 const { createQuestionBank } = require('./question-bank');
 const { createScheduler } = require('./scheduler');
 const { ReckoningContractError } = require('./errors');
+const { isAIAvailabilityError } = require('../ai/errors');
 
 const ANSWER_KEYS = Object.freeze(['A', 'B', 'C', 'D']);
 
@@ -35,8 +36,6 @@ function fitPlanToBank(plan, {
   };
   let remaining = Math.max(1, Number(maxBankQuestions) || 30);
 
-  // Reserve one healthy control when possible. Breadth is part of the diagnostic,
-  // not optional decoration; however Critical weaknesses always have priority.
   const reserveControl =
     (plan.controls || []).length > 0 && remaining >= 7
       ? withEvidenceId(plan.controls[0], randomUUID)
@@ -64,8 +63,6 @@ function fitPlanToBank(plan, {
 
   if (reserveControl) selected.controls.push(reserveControl);
 
-  // If the risk-heavy plan was tiny, use remaining healthy controls/supporting
-  // evidence until the configured minimum evidence breadth is reached.
   const usedIds = new Set(
     [...selected.critical, ...selected.high, ...selected.supporting, ...selected.controls]
       .map((item) => String(item.sourceCardId))
@@ -167,12 +164,196 @@ async function mapWithConcurrency(items, limit, mapper) {
   return results;
 }
 
+function resolveFamilyConcurrency(snapshot, config) {
+  const maxConcurrency = Math.max(
+    1,
+    Number(config?.preparation?.familyConcurrency) || 1
+  );
+  if (!snapshot || typeof snapshot !== 'object') return maxConcurrency;
+
+  const level = String(snapshot.congestionLevel || 'NORMAL').toUpperCase();
+  if (level === 'SEVERE') {
+    return Math.min(
+      maxConcurrency,
+      Math.max(1, Number(config?.preparation?.severeFamilyConcurrency) || 1)
+    );
+  }
+  if (level === 'HIGH') {
+    return Math.min(
+      maxConcurrency,
+      Math.max(1, Number(config?.preparation?.highFamilyConcurrency) || 1)
+    );
+  }
+  if (level === 'ELEVATED') {
+    return Math.min(
+      maxConcurrency,
+      Math.max(1, Number(config?.preparation?.elevatedFamilyConcurrency) || 2)
+    );
+  }
+
+  if ((Number(snapshot.queued) || 0) > 0) return 1;
+
+  const effective = Math.max(
+    1,
+    Number(snapshot.effectiveConcurrency) || maxConcurrency
+  );
+  const active = Math.max(0, Number(snapshot.active) || 0);
+  const immediatelyAvailable = Math.max(1, effective - active);
+  return Math.max(1, Math.min(maxConcurrency, immediatelyAvailable));
+}
+
+async function mapWithAdaptiveConcurrency(items, {
+  config,
+  getConcurrencyState = null,
+  shouldStop = null,
+} = {}, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  let active = 0;
+
+  if (!items.length) return results;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    function finishIfDone() {
+      if (settled) return true;
+      if (
+        active === 0 &&
+        (
+          cursor >= items.length ||
+          (typeof shouldStop === 'function' && shouldStop())
+        )
+      ) {
+        settled = true;
+        resolve(results);
+        return true;
+      }
+      return false;
+    }
+
+    function schedule() {
+      if (settled || finishIfDone()) return;
+
+      const snapshot =
+        typeof getConcurrencyState === 'function'
+          ? getConcurrencyState()
+          : null;
+      const limit = resolveFamilyConcurrency(snapshot, config);
+
+      while (
+        !settled &&
+        cursor < items.length &&
+        active < limit &&
+        !(typeof shouldStop === 'function' && shouldStop())
+      ) {
+        const index = cursor++;
+        active += 1;
+
+        Promise.resolve(mapper(items[index], index))
+          .then((value) => {
+            results[index] = value;
+          })
+          .catch((error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          })
+          .finally(() => {
+            active = Math.max(0, active - 1);
+            if (!settled) schedule();
+          });
+      }
+
+      finishIfDone();
+    }
+
+    schedule();
+  });
+}
+
+function familyMetadata(blueprints = []) {
+  const familyOrder = [];
+  const familyIndexById = new Map();
+  const itemIndexByBlueprint = new Map();
+  const itemCounterByFamily = new Map();
+
+  for (const blueprint of blueprints) {
+    const evidenceId = String(blueprint.evidenceId || '');
+    if (!familyIndexById.has(evidenceId)) {
+      familyIndexById.set(evidenceId, familyOrder.length);
+      familyOrder.push(evidenceId);
+      itemCounterByFamily.set(evidenceId, 0);
+    }
+    const itemIndex = itemCounterByFamily.get(evidenceId) || 0;
+    itemIndexByBlueprint.set(String(blueprint.id), itemIndex);
+    itemCounterByFamily.set(evidenceId, itemIndex + 1);
+  }
+
+  return {
+    familyOrder: Object.freeze(familyOrder),
+    familyIndexById,
+    itemIndexByBlueprint,
+  };
+}
+
+function persistedQuestion(item) {
+  if (!item) return null;
+  return (
+    item.generatedQuestion ||
+    item.generated_question ||
+    item.question ||
+    null
+  );
+}
+
+function persistedBlueprintId(item) {
+  return String(item?.blueprintId || item?.blueprint_id || '');
+}
+
+function persistedStatus(item) {
+  return String(item?.status || '').toUpperCase();
+}
+
+function createPartialPreparationError({
+  failures,
+  readyCount,
+  totalCount,
+} = {}) {
+  const first = failures?.[0]?.error || null;
+  const message =
+    first?.message ||
+    `Reckoning preparation paused after saving ${readyCount}/${totalCount} validated questions.`;
+  const error = new ReckoningContractError(message);
+  error.code = isAIAvailabilityError(first)
+    ? (first.code || 'ERR_RECKONING_PREPARATION_AVAILABILITY')
+    : 'ERR_RECKONING_PREPARATION_PARTIAL';
+  error.status = first?.status || 503;
+  error.retryable = first?.retryable !== false;
+  error.cause = first || null;
+  error.preparationProgress = Object.freeze({
+    readyCount,
+    totalCount,
+    remainingCount: Math.max(0, totalCount - readyCount),
+    failures: Object.freeze(
+      (failures || []).map((failure) => Object.freeze({
+        blueprintId: failure.blueprint?.id || null,
+        evidenceId: failure.blueprint?.evidenceId || null,
+        code: failure.error?.code || null,
+        message: String(failure.error?.message || 'generation failed').slice(0, 500),
+      }))
+    ),
+  });
+  return error;
+}
+
 function createPreparationService({
   config = createReckoningConfig(),
   planner = createPlanner({ config }),
   questionBank = createQuestionBank({ config }),
   scheduler = createScheduler({ config }),
   randomUUID = crypto.randomUUID,
+  getConcurrencyState = null,
 } = {}) {
   async function generateWithRetry(blueprint, options = {}) {
     let lastError = null;
@@ -183,13 +364,18 @@ function createPreparationService({
     );
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
-        return await questionBank.generate(blueprint, {
+        const generated = await questionBank.generate(blueprint, {
           ...options,
           attempt,
           retryFeedback,
         });
+        return Object.freeze({
+          ...generated,
+          generationAttempts: attempt,
+        });
       } catch (error) {
         lastError = error;
+        error.generationAttempts = attempt;
         const issues = Array.isArray(error?.validationIssues)
           ? error.validationIssues.filter(Boolean)
           : [];
@@ -203,12 +389,13 @@ function createPreparationService({
     );
   }
 
-  async function prepare({
+  function buildManifest({
     cards = [],
     states = [],
     bubbleCardIds = [],
     metricsByCardId = {},
     context = {},
+    deckIds = [],
     now = new Date(),
     generationGroupId = null,
   } = {}) {
@@ -228,47 +415,184 @@ function createPreparationService({
 
     const blueprints = questionBank.buildBlueprints(plan);
     if (!blueprints.length) {
-      throw new ReckoningContractError('Reckoning V2 produced an empty question blueprint bank.');
+      throw new ReckoningContractError(
+        'Reckoning V2 produced an empty question blueprint bank.'
+      );
     }
     if (blueprints.length > config.preparation.maxBankQuestions) {
-      throw new ReckoningContractError('Reckoning V2 question bank exceeded its configured cap.');
+      throw new ReckoningContractError(
+        'Reckoning V2 question bank exceeded its configured cap.'
+      );
     }
 
-    const familyOrder = [];
-    const families = new Map();
-    for (const blueprint of blueprints) {
-      if (!families.has(blueprint.evidenceId)) {
-        families.set(blueprint.evidenceId, []);
-        familyOrder.push(blueprint.evidenceId);
-      }
-      families.get(blueprint.evidenceId).push(blueprint);
-    }
+    const { familyOrder } = familyMetadata(blueprints);
 
-    const generatedFamilies = await mapWithConcurrency(
+    return Object.freeze({
+      preparationVersion: config.preparationVersion,
+      configVersion: config.configVersion,
+      generationGroupId: generationGroupId || randomUUID(),
+      plan,
+      blueprints: Object.freeze([...blueprints]),
       familyOrder,
-      config.preparation.familyConcurrency,
+      deckIds: Object.freeze([...(deckIds || [])]),
+      totalCount: blueprints.length,
+      createdAt: now,
+    });
+  }
+
+  async function prepare({
+    cards = [],
+    states = [],
+    bubbleCardIds = [],
+    metricsByCardId = {},
+    context = {},
+    deckIds = [],
+    now = new Date(),
+    generationGroupId = null,
+    manifest = null,
+    preparedItems = [],
+    onQuestionReady = null,
+    onQuestionFailure = null,
+  } = {}) {
+    const resolvedManifest = manifest || buildManifest({
+      cards,
+      states,
+      bubbleCardIds,
+      metricsByCardId,
+      context,
+      deckIds,
+      now,
+      generationGroupId,
+    });
+
+    const plan = resolvedManifest.plan;
+    const blueprints = [...(resolvedManifest.blueprints || [])];
+    const generationGroup =
+      resolvedManifest.generationGroupId ||
+      resolvedManifest.generation_group_id ||
+      generationGroupId;
+
+    if (!plan || !blueprints.length) {
+      throw new ReckoningContractError(
+        'Reckoning resumable preparation manifest is incomplete.'
+      );
+    }
+
+    const { familyOrder, familyIndexById, itemIndexByBlueprint } =
+      familyMetadata(blueprints);
+    const blueprintIndex = new Map(
+      blueprints.map((blueprint, index) => [String(blueprint.id), index])
+    );
+
+    const readyByBlueprint = new Map();
+    for (const item of preparedItems || []) {
+      if (persistedStatus(item) !== 'READY') continue;
+      const question = persistedQuestion(item);
+      const blueprintId = persistedBlueprintId(item);
+      if (!question || !blueprintIndex.has(blueprintId)) continue;
+      readyByBlueprint.set(blueprintId, Object.freeze({
+        ...question,
+        blueprint:
+          question.blueprint ||
+          blueprints[blueprintIndex.get(blueprintId)],
+      }));
+    }
+
+    const families = new Map();
+    for (const evidenceId of familyOrder) families.set(evidenceId, []);
+    for (const blueprint of blueprints) {
+      const evidenceId = String(blueprint.evidenceId || '');
+      if (!families.has(evidenceId)) families.set(evidenceId, []);
+      families.get(evidenceId).push(blueprint);
+    }
+
+    let stopNewFamilies = false;
+    const failures = [];
+
+    await mapWithAdaptiveConcurrency(
+      familyOrder,
+      {
+        config,
+        getConcurrencyState,
+        shouldStop: () => stopNewFamilies,
+      },
       async (evidenceId) => {
         const family = families.get(evidenceId) || [];
-        const generated = [];
         let previousQuestion = null;
+
         for (const blueprint of family) {
-          const item = await generateWithRetry(blueprint, {
-            previousQuestion,
-            requireSemanticReview: true,
-            generationGroupId,
-          });
-          generated.push(item);
-          previousQuestion = item.question;
+          const blueprintId = String(blueprint.id);
+          const existing = readyByBlueprint.get(blueprintId);
+          if (existing) {
+            previousQuestion = existing;
+            continue;
+          }
+
+          try {
+            const generated = await generateWithRetry(blueprint, {
+              previousQuestion,
+              requireSemanticReview: true,
+              generationGroupId: generationGroup,
+            });
+            const globalIndex = blueprintIndex.get(blueprintId);
+            const record = Object.freeze({
+              ...toQuestionRecord(generated, globalIndex + 1),
+              id: randomUUID(),
+            });
+
+            if (typeof onQuestionReady === 'function') {
+              await onQuestionReady({
+                blueprint,
+                question: record,
+                generationAttempts: generated.generationAttempts || 1,
+                familyIndex: familyIndexById.get(String(blueprint.evidenceId)) || 0,
+                itemIndex: itemIndexByBlueprint.get(blueprintId) || 0,
+              });
+            }
+
+            readyByBlueprint.set(blueprintId, record);
+            previousQuestion = record;
+          } catch (error) {
+            const failure = { blueprint, error };
+            failures.push(failure);
+
+            if (typeof onQuestionFailure === 'function') {
+              await onQuestionFailure({
+                blueprint,
+                error,
+                generationAttempts: error?.generationAttempts || 1,
+                familyIndex: familyIndexById.get(String(blueprint.evidenceId)) || 0,
+                itemIndex: itemIndexByBlueprint.get(blueprintId) || 0,
+              }).catch(() => null);
+            }
+
+            if (isAIAvailabilityError(error)) {
+              stopNewFamilies = true;
+            }
+            break;
+          }
         }
-        return generated;
       }
     );
 
-    const generated = generatedFamilies.flat();
-    const questions = generated.map((item, index) => Object.freeze({
-      ...toQuestionRecord(item, index + 1),
-      id: randomUUID(),
-    }));
+    const readyCount = readyByBlueprint.size;
+    if (readyCount !== blueprints.length || failures.length > 0) {
+      throw createPartialPreparationError({
+        failures,
+        readyCount,
+        totalCount: blueprints.length,
+      });
+    }
+
+    const questions = blueprints.map((blueprint) => {
+      const record = readyByBlueprint.get(String(blueprint.id));
+      if (!record) {
+        throw new ReckoningContractError(
+          `Prepared Reckoning question missing for blueprint ${blueprint.id}.`
+        );
+      }
+      return record;
+    });
 
     const schedulerQuestions = questions.map((question) => ({
       id: question.id,
@@ -291,8 +615,14 @@ function createPreparationService({
 
     return Object.freeze({
       preparationVersion: config.preparationVersion,
+      manifest: resolvedManifest,
       plan,
       questions: Object.freeze(questions),
+      readyCount,
+      reusedCount: Math.max(
+        0,
+        (preparedItems || []).filter((item) => persistedStatus(item) === 'READY').length
+      ),
       firstQuestionId: first.questionId,
       firstQuestionNumber:
         questions.find((question) => question.id === first.questionId)?.questionNumber || 1,
@@ -307,7 +637,9 @@ function createPreparationService({
     generationGroupId = null,
   } = {}) {
     if (!blueprint) {
-      throw new ReckoningContractError('Replacement generation requires a blueprint.');
+      throw new ReckoningContractError(
+        'Replacement generation requires a blueprint.'
+      );
     }
     const nextVariant = Math.max(0, Number(blueprint.variantIndex) || 0) + 100;
     const replacementBlueprint = Object.freeze({
@@ -327,8 +659,11 @@ function createPreparationService({
     name: 'reckoning-preparation-service',
     version: config.preparationVersion,
     fitPlanToBank,
+    buildManifest,
     prepare,
     generateReplacement,
+    resolveFamilyConcurrency: (snapshot) =>
+      resolveFamilyConcurrency(snapshot, config),
   });
 }
 
@@ -337,5 +672,9 @@ module.exports = {
   fitPlanToBank,
   toQuestionRecord,
   mapWithConcurrency,
+  resolveFamilyConcurrency,
+  mapWithAdaptiveConcurrency,
+  familyMetadata,
+  createPartialPreparationError,
   createPreparationService,
 };
