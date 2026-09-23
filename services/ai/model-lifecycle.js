@@ -7,8 +7,6 @@ const CIRCUIT_BREAKER_CODES = new Set([
   AI_ERROR_CODES.BAD_REQUEST,
   AI_ERROR_CODES.MODEL_NOT_FOUND,
   AI_ERROR_CODES.EMPTY_RESPONSE,
-  AI_ERROR_CODES.TRANSIENT,
-  AI_ERROR_CODES.TIMEOUT,
 ]);
 
 function rowToModel(row) {
@@ -195,6 +193,10 @@ function createModelLifecycle({
 
   async function recordFailure(modelId, error) {
     if (!isAutoPromoted(modelId)) return { suspended: false };
+
+    // Short-lived provider overload, timeout and network failures are runtime
+    // health signals, not evidence that an auto-promoted model is incompatible.
+    // The orchestrator's transient circuit handles those separately.
     if (!CIRCUIT_BREAKER_CODES.has(error?.code)) return { suspended: false };
 
     if (
