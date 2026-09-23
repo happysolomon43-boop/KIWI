@@ -18258,6 +18258,25 @@ adminRouter.post('/diag/pressure', async (req, res) => {
 //  ADMIN — SYSTEM HEALTH CHECK
 // ════════════════════════════════════════════════════════════════════════════
 
+// Secret-free AI operations snapshot. This combines live admission/circuit state
+// with durable recent request/attempt aggregates; prompts, API keys and model
+// response bodies are never part of the report.
+adminRouter.get('/ai/status', async (req, res) => {
+  try {
+    const requestedWindow = Number(req.query?.window_minutes);
+    const windowMinutes = Number.isFinite(requestedWindow)
+      ? Math.max(1, Math.min(Math.floor(requestedWindow), 1440))
+      : 15;
+    const report = await _aiRuntime.operationalReport({ windowMinutes });
+    res.json(report);
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to build AI operational status',
+      details: error?.message || String(error),
+    });
+  }
+});
+
 adminRouter.get('/health', async (req, res) => {
   const checks = [];
   const t0 = Date.now();
@@ -18383,6 +18402,23 @@ adminRouter.get('/health', async (req, res) => {
         `last 5m: provider-overload=${recentProviderOverload}, rate-limit=${recentRateLimits}, ` +
         `fallbacks=${aiStatus.telemetry?.fallbackRequests || 0}, ` +
         `avg queue=${aiStatus.telemetry?.averageQueueWaitMs || 0}ms`,
+    });
+
+    checks.push({
+      id: 'ai_health_sync',
+      label: 'AI persisted health synchronization',
+      status: aiStatus.healthSync?.lastError ? 'warn' : 'pass',
+      value:
+        `interval=${Math.round((aiStatus.healthSync?.intervalMs || 0) / 1000)}s` +
+        (aiStatus.healthSync?.lastCompletedAt
+          ? ` | last completed ${aiStatus.healthSync.lastCompletedAt}`
+          : '') +
+        (aiStatus.healthSync?.lastSummary
+          ? ` | quota rows=${aiStatus.healthSync.lastSummary.quotaRows}, provider rows=${aiStatus.healthSync.lastSummary.providerRows}`
+          : '') +
+        (aiStatus.healthSync?.lastError
+          ? ` | last error: ${aiStatus.healthSync.lastError.message}`
+          : ''),
     });
 
     checks.push({
