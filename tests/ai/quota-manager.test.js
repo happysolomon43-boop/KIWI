@@ -182,3 +182,46 @@ test('eligible slot ordering favors recently successful routes', async () => {
 
   assert.deepEqual(ordered.map((slot) => slot.id), ['p2', 'p1']);
 });
+
+
+test('refresh reconciles persisted quota state for another runtime instance', async () => {
+  let persistedRows = [{
+    project_slot: 'p1',
+    model_id: 'gemini-3.8-flash',
+    state: 'READY',
+    quota_day: '2026-09-23',
+    attempts_today: 1,
+    successes_today: 1,
+    last_http_status: 200,
+  }];
+
+  const manager = createQuotaManager({
+    clock: () => new Date('2026-09-23T20:00:00Z'),
+    store: {
+      async loadProjectModelStates() { return persistedRows; },
+      async upsertProjectModelState() {},
+    },
+  });
+
+  await manager.hydrate();
+  assert.equal(manager.isEligible('p1', 'gemini-3.8-flash'), true);
+
+  persistedRows = [{
+    project_slot: 'p1',
+    model_id: 'gemini-3.8-flash',
+    state: 'EXHAUSTED_RPD',
+    quota_day: '2026-09-23',
+    attempts_today: 20,
+    successes_today: 19,
+    last_error_code: AI_ERROR_CODES.RATE_LIMIT_RPD,
+    last_http_status: 429,
+    last_failure_at: '2026-09-23T19:59:59Z',
+  }];
+
+  assert.equal(await manager.refresh(), 1);
+  assert.equal(manager.isEligible('p1', 'gemini-3.8-flash'), false);
+  assert.equal(
+    manager.get('p1', 'gemini-3.8-flash').state,
+    PROJECT_MODEL_STATES.EXHAUSTED_RPD
+  );
+});
