@@ -145,7 +145,7 @@ export class KiwiVineRenderer {
     const screen = this.runtime.app.screen;
     const width = Math.max(1, Number(screen.width) || this.container.clientWidth || this.widthHint);
     const height = Math.max(1, Number(screen.height) || this.container.clientHeight || this.heightHint);
-    const profileName = this.runtime.policy?.profile || profileNameForWidth(globalThis.innerWidth);
+    const profileName = profileNameForWidth(globalThis.innerWidth);
     const profile =
       this.blueprint.compositionProfiles?.[profileName] ||
       this.blueprint.compositionProfiles?.desktop ||
