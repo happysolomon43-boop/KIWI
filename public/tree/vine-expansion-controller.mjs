@@ -277,7 +277,9 @@ export class VineExpansionController {
       if (getComputedStyle(page).position === 'static') {
         page.style.position = 'relative';
       }
-      page.style.zIndex = '1';
+      if (page.style.zIndex !== '1') {
+        page.style.zIndex = '1';
+      }
     }
   }
 
@@ -293,8 +295,14 @@ export class VineExpansionController {
       this.mainContent.scrollHeight,
       1
     );
-    this.host.style.width = width + 'px';
-    this.host.style.height = height + 'px';
+    const nextWidth = width + 'px';
+    const nextHeight = height + 'px';
+    if (this.host.style.width !== nextWidth) {
+      this.host.style.width = nextWidth;
+    }
+    if (this.host.style.height !== nextHeight) {
+      this.host.style.height = nextHeight;
+    }
   }
 
   _installObservers() {
@@ -772,6 +780,25 @@ export class VineExpansionController {
       !this._statusRegion ||
       !event ||
       !Array.isArray(event.reactions)
+    ) {
+      return;
+    }
+
+    const route = String(this.routeProvider() || '');
+    const routeMap =
+      this.contract?.routeExpansionMap?.[route] || null;
+    const policy =
+      this.contract?.routePolicy?.[route] || 'disabled';
+    const flags = this.contract
+      ? this._flags(routeMap)
+      : {};
+
+    if (
+      policy !== 'mapped' ||
+      flags.overlayActive ||
+      flags.reckoningActive ||
+      flags.tourActive ||
+      (route === 'study' && flags.activeStudySession)
     ) {
       return;
     }
