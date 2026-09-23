@@ -105,7 +105,9 @@ function makeFinalizationStore() {
     cardWrites: 0,
     stateWrites: 0,
     examCompletions: 0,
+    outcomeLocks: 0,
   };
+  let outcomeQueue = Promise.resolve();
 
   const api = {
     session,
@@ -116,6 +118,18 @@ function makeFinalizationStore() {
     metrics,
     async withTransaction(work) {
       return work(api);
+    },
+    async withOutcomeLock(_reckoningId, work) {
+      metrics.outcomeLocks += 1;
+      const previous = outcomeQueue;
+      let release;
+      outcomeQueue = new Promise((resolve) => { release = resolve; });
+      await previous;
+      try {
+        return await work();
+      } finally {
+        release();
+      }
     },
     async getSessionByExam(examSessionId, userId) {
       if (
@@ -283,4 +297,41 @@ test('Delivery D closes the adaptive exam from persisted answered questions', as
     answeredCount: 5,
     correctCount: 4,
   });
+});
+
+test('concurrent Delivery D finalizers execute external outcome effects exactly once', async () => {
+  const store = makeFinalizationStore();
+  let outcomeCalls = 0;
+
+  const engine = createReckoningEngine({
+    store,
+    outcomeHandler: async () => {
+      outcomeCalls += 1;
+      await Promise.resolve();
+      return { sequence: outcomeCalls };
+    },
+  });
+
+  const [first, second] = await Promise.all([
+    engine.finalize({
+      examSessionId: 'exam-d',
+      userId: 'user-d',
+    }),
+    engine.finalize({
+      examSessionId: 'exam-d',
+      userId: 'user-d',
+    }),
+  ]);
+
+  assert.equal(outcomeCalls, 1);
+  assert.equal(store.session.engine_phase, 'COMPLETE');
+  assert.equal(store.metrics.cardWrites, 1);
+  assert.equal(store.metrics.stateWrites, 1);
+  assert.ok(store.metrics.outcomeLocks >= 2);
+  assert.equal(
+    [first, second].filter((result) => result.alreadyFinalized === true).length,
+    1
+  );
+  assert.ok(first.final);
+  assert.ok(second.final);
 });
