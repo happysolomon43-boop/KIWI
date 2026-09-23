@@ -565,6 +565,35 @@ function createReckoningStore({
     return rows?.[0] || null;
   }
 
+  async function withOutcomeLock(reckoningId, work) {
+    if (!reckoningId || typeof work !== 'function') {
+      throw new ReckoningContractError(
+        'withOutcomeLock requires reckoningId and a function.'
+      );
+    }
+    if (typeof transaction !== 'function') {
+      throw new ReckoningContractError(
+        'Reckoning store requires a transaction function for outcome locking.'
+      );
+    }
+
+    // The lock is transaction-scoped, so normal completion, thrown errors and
+    // process/connection loss all release it automatically. It intentionally
+    // spans outcome work that uses other pooled connections.
+    return transaction(async (client) => {
+      if (!client || typeof client.query !== 'function') {
+        throw new ReckoningContractError(
+          'Outcome lock requires a transactional PostgreSQL client.'
+        );
+      }
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))',
+        [`reckoning-v2-outcome:${reckoningId}`]
+      );
+      return work();
+    });
+  }
+
   async function withTransaction(work) {
     if (typeof work !== 'function') {
       throw new ReckoningContractError('withTransaction requires a function.');
@@ -607,6 +636,7 @@ function createReckoningStore({
     saveCardStateLearningEffect,
     completeExecutionExam,
     unlockQuestion,
+    withOutcomeLock,
     withTransaction,
   });
 }
