@@ -17,6 +17,10 @@ function field(row, camel, snake, fallback = null) {
   return fallback;
 }
 
+function isAdaptiveReckoningQuestion(question) {
+  return Boolean(question?.reckoning_evidence_id);
+}
+
 function adaptiveSessionAllowed(session) {
   const version = Number(field(session, 'engineVersion', 'engine_version', 1)) || 1;
   const mode = String(field(session, 'engineMode', 'engine_mode', 'LEGACY'));
@@ -583,6 +587,7 @@ function createReckoningEngine(options = {}) {
 }
 
 module.exports = {
+  isAdaptiveReckoningQuestion,
   adaptiveSessionAllowed,
   sanitizeCurrentQuestion,
   sanitizeHistoryQuestion,
