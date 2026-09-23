@@ -9257,7 +9257,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             interactive: false,
             state: {
               schemaVersion: 4,
-              growthModelVersion: 2,
+              growthModelVersion: 3,
               stage: 6,
               stageLabel: 'BLOOMING',
               growthPoints: 1550,
@@ -9957,9 +9957,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               <div class="tree-health-bar">
                 <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">Vitality</span>
                 <div class="tree-health-track">
-                  <div class="tree-health-fill" style="width:${Math.max(0,Math.min(100,treeState.health||0))}%;background:${(treeState.health||0) > 60 ? "var(--green-bright)" : (treeState.health||0) > 30 ? "var(--gold)" : "var(--red-bright)"}"></div>
+                  <div class="tree-health-fill" style="width:${Math.max(0,Math.min(100,treeState.vitality||0))}%;background:${(treeState.vitality||0) > 60 ? "var(--green-bright)" : (treeState.vitality||0) > 30 ? "var(--gold)" : "var(--red-bright)"}"></div>
                 </div>
-                <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">${Math.max(0,Math.min(100,treeState.health||0))}%</span>
+                <span style="font-size:var(--text-xs);color:var(--text-4);font-family:var(--font-mono);">${Math.max(0,Math.min(100,treeState.vitality||0))}%</span>
               </div>
               `
                   : ""
