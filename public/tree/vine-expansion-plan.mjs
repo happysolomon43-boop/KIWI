@@ -153,21 +153,75 @@ export function pathIntersectsRects(points, rects, padding = 0) {
   return false;
 }
 
-export function fallbackPerimeterPath(source, target, bounds, forbiddenRects, clearance = 14) {
-  const leftX = bounds.left + 4;
-  const rightX = bounds.right - 4;
-  const left = [source, { x: leftX, y: source.y }, { x: leftX, y: target.y }, target];
-  const right = [source, { x: rightX, y: source.y }, { x: rightX, y: target.y }, target];
+export function fallbackPerimeterPath(
+  source,
+  target,
+  bounds,
+  forbiddenRects,
+  clearance = 14
+) {
+  const inset = 4;
+  const leftX = bounds.left + inset;
+  const rightX = bounds.right - inset;
+  const topY = bounds.top + inset;
+  const bottomY = bounds.bottom - inset;
 
-  const leftHits = forbiddenRects.reduce(
-    (sum, rect) => sum + (pathIntersectsRects(left, [rect], clearance) ? 1 : 0),
-    0
+  const candidates = [
+    [
+      source,
+      { x: leftX, y: source.y },
+      { x: leftX, y: target.y },
+      target,
+    ],
+    [
+      source,
+      { x: rightX, y: source.y },
+      { x: rightX, y: target.y },
+      target,
+    ],
+    [
+      source,
+      { x: source.x, y: topY },
+      { x: target.x, y: topY },
+      target,
+    ],
+    [
+      source,
+      { x: source.x, y: bottomY },
+      { x: target.x, y: bottomY },
+      target,
+    ],
+  ];
+
+  const scored = candidates.map((points) => {
+    const hits = forbiddenRects.reduce(
+      (sum, rect) =>
+        sum +
+        (
+          pathIntersectsRects(
+            points,
+            [rect],
+            clearance
+          )
+            ? 1
+            : 0
+        ),
+      0
+    );
+    return {
+      points,
+      hits,
+      length: polylineLength(points),
+    };
+  });
+
+  scored.sort(
+    (a, b) =>
+      a.hits - b.hits ||
+      a.length - b.length
   );
-  const rightHits = forbiddenRects.reduce(
-    (sum, rect) => sum + (pathIntersectsRects(right, [rect], clearance) ? 1 : 0),
-    0
-  );
-  return leftHits <= rightHits ? left : right;
+
+  return scored[0].points;
 }
 
 export function polylineLength(points) {
