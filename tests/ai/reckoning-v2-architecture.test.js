@@ -67,12 +67,13 @@ test('all Phase 1 component boundaries are importable without side effects', () 
   }
 });
 
-test('Phase 1 does not wire Reckoning V2 into production index.js', () => {
+test('Delivery B may wire shadow intelligence but not V2 assessment authority', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', '..', 'index.js'),
     'utf8'
   );
 
-  assert.doesNotMatch(source, /require\(['"]\.\/services\/reckoning(?:\/index)?['"]\)/);
+  assert.match(source, /createShadowIntelligence/);
+  assert.match(source, /reckoningShadow\.analyzeSafely/);
   assert.doesNotMatch(source, /createReckoningEngine\s*\(/);
 });
