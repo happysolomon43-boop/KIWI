@@ -103,7 +103,12 @@ function evidenceSummary(row) {
 }
 
 function createReckoningEngine(options = {}) {
-  const config = createReckoningConfig(options.config);
+  const suppliedConfig = options.config;
+  const config =
+    suppliedConfig?.enabled === true &&
+    suppliedConfig?.behaviorAuthority === 'v2'
+      ? suppliedConfig
+      : createReckoningConfig(suppliedConfig);
   const store = options.store || createReckoningStore({
     query: options.query,
     transaction: options.transaction,
