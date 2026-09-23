@@ -23,7 +23,7 @@ const {
 } = require('../../services/vine-expansion-map');
 
 test('expansion map has stable version and matches KIWI responsive breakpoints', () => {
-  assert.equal(VINE_EXPANSION_MAP_VERSION, 1);
+  assert.equal(VINE_EXPANSION_MAP_VERSION, 2);
   assert.deepEqual(VIEWPORT_BREAKPOINTS, {
     mobileMax: 768,
     tabletMax: 1024,
@@ -106,7 +106,7 @@ test('all mapped paths are perimeter-safe and external vines cannot intercept UI
   }
 });
 
-test('mobile never receives website spillover in Phase 6', () => {
+test('mobile never receives website spillover in the current expansion contract', () => {
   for (const route of Object.keys(ROUTE_EXPANSION_MAP)) {
     const decision = getExpansionDecision({
       route,
