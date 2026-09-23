@@ -10048,8 +10048,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         </div>
       </div>
     `;
-          // Canonical living-vine renderer. PixiJS is primary; the gateway
-          // automatically returns the legacy SVG renderer if Pixi cannot start.
+          // Canonical living-vine renderer. PixiJS is the sole production renderer;
+          // the gateway returns a lightweight static fallback if Pixi cannot start.
           if (treeState) {
             _publishKiwiTreeState(treeState, 'dashboard', {
               silent: !_kiwiTreeStateCache,
@@ -10060,7 +10060,6 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           if (treeContainer) {
             const ts = treeState || {
               stage: 1,
-              health: 50,
               vitality: 50,
               leaves: 8,
               fruits: 0,
@@ -10087,11 +10086,15 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 return;
               }
               AppState.treeInstance = handle;
-              if (handle.mode === 'legacy' && handle.fallbackReason) {
-                console.warn('[KIWI] Living vine used fallback:', handle.fallbackReason);
+              if (handle.mode === 'static-fallback' && handle.fallbackReason) {
+                console.warn('[KIWI] Living vine used static fallback:', handle.fallbackReason);
               }
             }).catch((_treeErr) => {
-              treeContainer.innerHTML = '<div style="height:200px;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:48px;">🌱</div>';
+              mountInlineKiwiFallback(
+                treeContainer,
+                ts,
+                _treeErr instanceof Error ? _treeErr.message : String(_treeErr)
+              );
             });
           }
           // ── Load mini 12-week heatmap on dashboard ────────────────────────
@@ -15041,11 +15044,17 @@ body.kiwi-tour-active { overscroll-behavior: none; }
                 return;
               }
               AppState.biomeTreeInstance = handle;
-              if (handle.mode === 'legacy' && handle.fallbackReason) {
-                console.warn('[KIWI] Biome living vine used fallback:', handle.fallbackReason);
+              if (handle.mode === 'static-fallback' && handle.fallbackReason) {
+                console.warn('[KIWI] Biome living vine used static fallback:', handle.fallbackReason);
               }
             }).catch((_biomeTreeErr) => {
-              treeContainer.innerHTML = '<div style="height:200px;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:48px;">🌿</div>';
+              mountInlineKiwiFallback(
+                treeContainer,
+                globalTreeState,
+                _biomeTreeErr instanceof Error
+                  ? _biomeTreeErr.message
+                  : String(_biomeTreeErr)
+              );
             });
           }
           // PB.22: Attach Mastery Bubble indicators to each Biome zone tile [DESIGN: §17.3]
