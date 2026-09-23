@@ -479,6 +479,14 @@ function createReckoningEngine(options = {}) {
       const session = requireAdaptiveSession(
         await txStore.getSessionByExam(examSessionId, userId, { forUpdate: true })
       );
+      if (isSafetyExpired(session)) {
+        const error = new ReckoningContractError(
+          'The Reckoning safety window has expired.'
+        );
+        error.code = 'RECKONING_SAFETY_EXPIRED';
+        error.status = 409;
+        throw error;
+      }
       if (!session.checkpoint_pending || !session.checkpoint_next_question_id) {
         return buildState(txStore, { examSessionId, userId, session });
       }
@@ -522,6 +530,15 @@ function createReckoningEngine(options = {}) {
       const session = requireAdaptiveSession(
         await txStore.getSessionByExam(examSessionId, userId, { forUpdate: true })
       );
+
+      if (isSafetyExpired(session) && session.engine_phase === SESSION_PHASES.ACTIVE) {
+        const error = new ReckoningContractError(
+          'The Reckoning safety window has expired.'
+        );
+        error.code = 'RECKONING_SAFETY_EXPIRED';
+        error.status = 409;
+        throw error;
+      }
 
       if (![SESSION_PHASES.ACTIVE, SESSION_PHASES.FINALIZING].includes(session.engine_phase)) {
         const error = new ReckoningContractError(
@@ -703,6 +720,183 @@ function createReckoningEngine(options = {}) {
           selectedOption: selected,
           recorded: true,
         }),
+      });
+    });
+  }
+
+  async function repairDefectiveQuestion({
+    examSessionId,
+    userId,
+    questionId,
+    audit = {},
+  } = {}) {
+    if (!examSessionId || !userId || !questionId) {
+      throw new ReckoningContractError(
+        'repairDefectiveQuestion requires examSessionId, userId and questionId.'
+      );
+    }
+
+    const session = requireAdaptiveSession(
+      await store.getSessionByExam(examSessionId, userId)
+    );
+    const question = await store.getQuestionForExecution(
+      userId,
+      examSessionId,
+      questionId
+    );
+    if (!question) {
+      throw new ReckoningContractError('Defective Reckoning question was not found.');
+    }
+    if (
+      question.selected_option != null ||
+      String(session.current_question_id || '') !== String(question.id)
+    ) {
+      const error = new ReckoningContractError(
+        'Only the current unanswered Reckoning question can be replaced.'
+      );
+      error.status = 409;
+      throw error;
+    }
+
+    let replacement = null;
+    try {
+      replacement = await preparationService.generateReplacement({
+        blueprint: question.reckoning_blueprint,
+        previousQuestion: {
+          stem: question.stem,
+          options: [
+            question.option_a,
+            question.option_b,
+            question.option_c,
+            question.option_d,
+          ],
+          correctAnswer: question.correct_answer,
+        },
+        generationGroupId: `reckoning-repair:${session.id}`,
+      });
+    } catch (_) {
+      replacement = null;
+    }
+
+    return store.withTransaction(async (txStore) => {
+      const lockedSession = requireAdaptiveSession(
+        await txStore.getSessionByExam(examSessionId, userId, { forUpdate: true })
+      );
+      const lockedQuestion = await txStore.getQuestionForExecution(
+        userId,
+        examSessionId,
+        questionId,
+        { forUpdate: true }
+      );
+      if (
+        !lockedQuestion ||
+        lockedQuestion.selected_option != null ||
+        String(lockedSession.current_question_id || '') !== String(questionId)
+      ) {
+        return buildState(txStore, {
+          examSessionId,
+          userId,
+          session: lockedSession,
+        });
+      }
+
+      await txStore.invalidateExecutionQuestion(
+        userId,
+        examSessionId,
+        questionId,
+        audit
+      );
+
+      if (replacement) {
+        const allQuestions = await txStore.getExecutionQuestions(examSessionId);
+        const nextNumber = allQuestions.reduce(
+          (max, row) => Math.max(max, Number(row.question_number) || 0),
+          0
+        ) + 1;
+        const created = await txStore.createPreparedQuestion(
+          userId,
+          examSessionId,
+          {
+            ...replacement,
+            questionNumber: nextNumber,
+            evidenceId: lockedQuestion.reckoning_evidence_id,
+            isUnlocked: true,
+            unlockedAt: clock(),
+          }
+        );
+        if (!created) {
+          throw new ReckoningContractError(
+            'Defective Reckoning question replacement could not be persisted.'
+          );
+        }
+        const updated = await txStore.saveSession(lockedSession.id, {
+          currentQuestionId: created.id,
+          stateVersion: (Number(lockedSession.state_version) || 0) + 1,
+        });
+        return buildState(txStore, {
+          examSessionId,
+          userId,
+          session: updated,
+        });
+      }
+
+      const evidence = await txStore.getEvidenceById(
+        lockedQuestion.reckoning_evidence_id,
+        lockedSession.id,
+        { forUpdate: true }
+      );
+      if (evidence) {
+        await txStore.saveEvidence(evidence.id, {
+          evidenceStatus: 'INVALIDATED',
+          resolvedAt: clock(),
+        });
+      }
+
+      const evidenceRows = await txStore.getEvidence(lockedSession.id);
+      const questions = await txStore.getExecutionQuestions(examSessionId);
+      const next = scheduler.chooseNext({
+        evidence: evidenceRows,
+        questions,
+        questionsUsed: Number(lockedSession.questions_used) || 0,
+        lastEvidenceId: evidence?.id || null,
+      });
+
+      if (next.type === 'QUESTION') {
+        const unlocked = await txStore.unlockQuestion(
+          userId,
+          examSessionId,
+          next.questionId
+        );
+        if (!unlocked) {
+          throw new ReckoningContractError(
+            'Reckoning could not continue after invalidating a defective item.'
+          );
+        }
+        const updated = await txStore.saveSession(lockedSession.id, {
+          currentQuestionId: next.questionId,
+          checkpointPending: false,
+          checkpointNextQuestionId: null,
+          stateVersion: (Number(lockedSession.state_version) || 0) + 1,
+        });
+        return buildState(txStore, {
+          examSessionId,
+          userId,
+          session: updated,
+        });
+      }
+
+      stateMachine.transition(SESSION_PHASES.ACTIVE, SESSION_PHASES.FINALIZING);
+      const updated = await txStore.saveSession(lockedSession.id, {
+        enginePhase: SESSION_PHASES.FINALIZING,
+        currentQuestionId: null,
+        checkpointPending: false,
+        checkpointNextQuestionId: null,
+        stateVersion: (Number(lockedSession.state_version) || 0) + 1,
+      });
+      return buildState(txStore, {
+        examSessionId,
+        userId,
+        session: updated,
       });
     });
   }
@@ -958,6 +1152,7 @@ function createReckoningEngine(options = {}) {
     prepare,
     start,
     continueCheckpoint,
+    repairDefectiveQuestion,
     recordAnswer,
     getState,
     finalize,
