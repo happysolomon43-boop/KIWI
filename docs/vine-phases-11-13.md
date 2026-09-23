@@ -1,3 +1,5 @@
+> **Historical phase note:** This document records Phases 11–13. Phase 14 performance hardening and Phase 15 final Pixi cutover are documented in `docs/vine-phases-14-15.md`.
+
 # KIWI Living Vine — Phases 11–13
 
 ## Scope
