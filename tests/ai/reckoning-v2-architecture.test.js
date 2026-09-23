@@ -21,7 +21,7 @@ test('Reckoning V2 Phase 1 exposes a stable backend facade', () => {
   assert.equal(description.status, 'SCAFFOLD');
 });
 
-test('Delivery C remains fail-closed for authority while execution core is explicit', async () => {
+test('Delivery D remains fail-closed for authority while consequence finalization is explicit', async () => {
   const config = reckoning.createReckoningConfig({
     enabled: true,
     behaviorAuthority: 'v2',
@@ -72,7 +72,7 @@ test('all Phase 1 component boundaries are importable without side effects', () 
   }
 });
 
-test('Delivery C wires dormant execution without activating current Reckoning authority', () => {
+test('Delivery D wires dormant finalization without activating current Reckoning authority', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '..', '..', 'index.js'),
     'utf8'
@@ -86,6 +86,10 @@ test('Delivery C wires dormant execution without activating current Reckoning au
   );
   assert.match(source, /examRouter\.get\('\/:id\/reckoning\/state'/);
   assert.match(source, /examRouter\.post\('\/:id\/reckoning\/answer'/);
+  assert.match(source, /examRouter\.post\('\/:id\/reckoning\/finalize'/);
+  assert.match(source, /outcomeHandler:\s*finalizeAdaptiveReckoningOutcome/);
+  assert.match(source, /completion\.survived/);
+  assert.match(source, /!q\.reckoning_evidence_id/);
 
   const triggerStart = source.indexOf('async function triggerReckoning');
   const triggerEnd = source.indexOf('async function deferReckoning', triggerStart);
