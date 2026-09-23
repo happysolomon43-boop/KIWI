@@ -38,7 +38,7 @@ const { createEcosystemV2 } = require('./ecosystem_v2');
 const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
-const { createShadowIntelligence, createReckoningEngine } = require('./services/reckoning');
+const { createShadowIntelligence, createReckoningEngine, isAdaptiveReckoningQuestion } = require('./services/reckoning');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
@@ -6723,7 +6723,7 @@ if (allExamSessions.length > 0 && db.examQuestions.findBySession) {
   );
   for (const questions of questionSets) {
     for (const q of (questions || [])) {
-      if (q.card_id === card.id && !q.reckoning_evidence_id) {
+      if (q.card_id === card.id && !isAdaptiveReckoningQuestion(q)) {
         examLogs.push({ card_id: card.id, is_correct: q.is_correct === true });
       }
     }
@@ -6797,7 +6797,7 @@ if (allExamSessions.length > 0 && db.examQuestions.findBySession) {
   );
   for (const questions of questionSets) {
     for (const q of (questions || [])) {
-      if (q.card_id === card.id && !q.reckoning_evidence_id) {
+      if (q.card_id === card.id && !isAdaptiveReckoningQuestion(q)) {
         examLogs.push({ card_id: card.id, is_correct: q.is_correct === true });
       }
     }
@@ -13415,22 +13415,22 @@ try {
 
   // Once generated, only the exact server-linked Reckoning exam may be read,
   // started, pre-marked or resumed. Past/normal exams stay locked.
-  if (baseUrl.endsWith('/exams')) {
+  if (baseUrl.endsWith('/exams') && active.exam_session_id) {
     const firstSegment = pathName.split('/').filter(Boolean)[0] || '';
-    const linkedExamIds = [active.exam_session_id];
-    if (
-      Number(active.engine_version) === 2 &&
-      ['FINALIZING', 'COMPLETE'].includes(String(active.engine_phase || ''))
-    ) {
-      linkedExamIds.push(active.last_failure_exam_id);
-    }
-    if (
-      linkedExamIds
-        .filter(Boolean)
-        .some((id) => String(firstSegment) === String(id))
-    ) {
-      return next();
-    }
+    if (String(firstSegment) === String(active.exam_session_id)) return next();
+  }
+
+  // Delivery D recovery exception: after a failed adaptive outcome the normal
+  // retry path clears exam_session_id, but a process retry may still need to
+  // finish the exact completed V2 exam recorded as last_failure_exam_id.
+  if (
+    baseUrl.endsWith('/exams') &&
+    Number(active.engine_version) === 2 &&
+    ['FINALIZING', 'COMPLETE'].includes(String(active.engine_phase || '')) &&
+    active.last_failure_exam_id
+  ) {
+    const firstSegment = pathName.split('/').filter(Boolean)[0] || '';
+    if (String(firstSegment) === String(active.last_failure_exam_id)) return next();
   }
 
   const userStats = await db.userStats.get(req.user.id).catch(() => null);
