@@ -78,6 +78,13 @@ export function subscribeTreeState(subscriber, options = {}) {
       source: recent.length ? 'recent-reaction' : 'current',
       at: now,
     });
+
+    if (
+      recent.length &&
+      options.consumeRecentReactions === true
+    ) {
+      lastReactionEvent = null;
+    }
   }
 
   return () => subscribers.delete(subscriber);
