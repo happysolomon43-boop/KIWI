@@ -73,21 +73,6 @@ const reckoningShadow = createShadowIntelligence({
   logger: console,
 });
 
-const adaptiveSemanticReview = createAISemanticReviewer({
-  aiRun: (taskId, input, options) => ai.run(taskId, input, options),
-});
-const adaptiveQuestionValidator = createQuestionValidator({
-  semanticReview: adaptiveSemanticReview,
-});
-const adaptiveQuestionBank = createQuestionBank({
-  aiRun: (taskId, input, options) => ai.run(taskId, input, options),
-  validator: adaptiveQuestionValidator,
-});
-const adaptivePreparationService = createPreparationService({
-  questionBank: adaptiveQuestionBank,
-  randomUUID,
-});
-
 // Transaction helper
 async function withTransaction(fn) {
   const client = await pool.connect();
