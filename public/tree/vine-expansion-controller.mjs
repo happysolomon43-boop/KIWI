@@ -13,6 +13,10 @@ import {
 } from './vine-expansion-plan.mjs';
 import { createVineExpansionRenderer } from './vine-expansion-renderer.mjs';
 import {
+  derivePixiRuntimePolicy,
+  readBrowserRuntimeSignals,
+} from './runtime-policy.mjs';
+import {
   getCurrentTreeState,
   publishTreeState,
   subscribeTreeState,
@@ -190,6 +194,10 @@ export class VineExpansionController {
     this._onResize = null;
     this._onScroll = null;
     this._raf = 0;
+    this._refreshTimer = null;
+    this._rendererReleaseTimer = null;
+    this._lastRefreshAt = 0;
+    this._geometryPolicy = null;
     this._lastRoute = null;
     this._lastFlags = null;
     this._stateRefreshInFlight = null;
@@ -206,10 +214,12 @@ export class VineExpansionController {
       loadVineBlueprint(),
     ]);
 
+    this._geometryPolicy =
+      derivePixiRuntimePolicy(
+        readBrowserRuntimeSignals(window)
+      );
+
     this._createHost();
-    this.renderer = await createVineExpansionRenderer({
-      host: this.host,
-    });
     this._installObservers();
 
     this._unsubscribeState = subscribeTreeState(
@@ -338,18 +348,119 @@ export class VineExpansionController {
     );
   }
 
-  scheduleRefresh() {
-    if (this.destroyed || this._raf) return;
+  scheduleRefresh(options = {}) {
+    if (
+      this.destroyed ||
+      this._raf ||
+      this._refreshTimer
+    ) {
+      return;
+    }
 
-    this._raf = requestAnimationFrame(() => {
-      this._raf = 0;
-      this.refresh().catch((error) => {
-        console.warn(
-          '[KIWI] Vine expansion refresh failed:',
-          error
-        );
+    const now =
+      typeof performance !== 'undefined'
+        ? performance.now()
+        : Date.now();
+    const minInterval =
+      options.immediate === true
+        ? 0
+        : Math.max(
+            16,
+            Number(
+              this._geometryPolicy
+                ?.geometryRefreshMinMs
+            ) || 48
+          );
+    const elapsed =
+      now - this._lastRefreshAt;
+    const wait = Math.max(
+      0,
+      minInterval - elapsed
+    );
+
+    const queueFrame = () => {
+      this._refreshTimer = null;
+      if (this.destroyed || this._raf) return;
+
+      this._raf = requestAnimationFrame(() => {
+        this._raf = 0;
+        this._lastRefreshAt =
+          typeof performance !== 'undefined'
+            ? performance.now()
+            : Date.now();
+
+        this.refresh().catch((error) => {
+          console.warn(
+            '[KIWI] Vine expansion refresh failed:',
+            error
+          );
+        });
       });
-    });
+    };
+
+    if (wait > 0) {
+      this._refreshTimer = setTimeout(
+        queueFrame,
+        wait
+      );
+    } else {
+      queueFrame();
+    }
+  }
+
+  async _ensureRenderer() {
+    if (
+      this.renderer &&
+      !this.renderer.destroyed
+    ) {
+      return this.renderer;
+    }
+
+    this._cancelRendererRelease();
+
+    this.renderer =
+      await createVineExpansionRenderer({
+        host: this.host,
+      });
+
+    return this.renderer;
+  }
+
+  _cancelRendererRelease() {
+    if (this._rendererReleaseTimer) {
+      clearTimeout(
+        this._rendererReleaseTimer
+      );
+      this._rendererReleaseTimer = null;
+    }
+  }
+
+  _scheduleRendererRelease() {
+    if (
+      !this.renderer ||
+      this._rendererReleaseTimer
+    ) {
+      return;
+    }
+
+    this._rendererReleaseTimer =
+      setTimeout(async () => {
+        this._rendererReleaseTimer = null;
+        const renderer = this.renderer;
+        this.renderer = null;
+
+        if (renderer) {
+          try {
+            await renderer.destroy();
+          } catch (_) {}
+        }
+      }, 20000);
+  }
+
+  _clearRenderer() {
+    if (!this.renderer) return;
+    this.renderer.setPaths([]);
+    this._scheduleRendererRelease();
   }
 
   async invalidateState(source = 'manual') {
@@ -706,7 +817,7 @@ export class VineExpansionController {
   }
 
   async refresh() {
-    if (this.destroyed || !this.renderer) return;
+    if (this.destroyed) return;
 
     this._syncHostSize();
 
@@ -751,7 +862,7 @@ export class VineExpansionController {
     );
 
     if (!decision.enabled || !routeMap) {
-      this.renderer.setPaths([]);
+      this._clearRenderer();
       return;
     }
 
@@ -762,7 +873,7 @@ export class VineExpansionController {
       );
 
     if (missingRequired) {
-      this.renderer.setPaths([]);
+      this._clearRenderer();
       return;
     }
 
@@ -773,7 +884,15 @@ export class VineExpansionController {
       decision.profile
     );
 
-    this.renderer.setPaths(plans);
+    if (plans.length === 0) {
+      this._clearRenderer();
+      return;
+    }
+
+    const renderer =
+      await this._ensureRenderer();
+    this._cancelRendererRelease();
+    renderer.setPaths(plans);
   }
 
   _announceReactions(event) {
@@ -825,6 +944,13 @@ export class VineExpansionController {
       cancelAnimationFrame(this._raf);
       this._raf = 0;
     }
+
+    if (this._refreshTimer) {
+      clearTimeout(this._refreshTimer);
+      this._refreshTimer = null;
+    }
+
+    this._cancelRendererRelease();
 
     if (this._unsubscribeState) {
       this._unsubscribeState();
