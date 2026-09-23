@@ -8,10 +8,12 @@ const { createScheduler } = require('./scheduler');
 const { createEvidenceEngine } = require('./evidence');
 const { createQuestionBank } = require('./question-bank');
 const { createQuestionValidator } = require('./validator');
+const { createAISemanticReviewer } = require('./semantic-review');
+const { createShadowIntelligence } = require('./shadow');
 const { createScoringEngine } = require('./scoring');
 const { createLearningEffectsEngine } = require('./learning-effects');
 const { createReckoningStore } = require('./store');
-const { createReckoningConfig, PHASE1_RECKONING_CONFIG } = require('./config');
+const { createReckoningConfig, PHASE1_RECKONING_CONFIG, DELIVERY_B_RECKONING_CONFIG } = require('./config');
 const constants = require('./constants');
 const errors = require('./errors');
 const contracts = require('./contracts');
@@ -25,11 +27,14 @@ module.exports = {
   createEvidenceEngine,
   createQuestionBank,
   createQuestionValidator,
+  createAISemanticReviewer,
+  createShadowIntelligence,
   createScoringEngine,
   createLearningEffectsEngine,
   createReckoningStore,
   createReckoningConfig,
   PHASE1_RECKONING_CONFIG,
+  DELIVERY_B_RECKONING_CONFIG,
   ...constants,
   ...errors,
   ...contracts,

@@ -42,7 +42,7 @@ Phase 3 does not redefine them. Later Reckoning adjudication will consume their 
 
 ## Production wiring
 
-The root backend still has no references to Reckoning V2 question metadata. No adaptive unlocking, scheduling, answering, or recovery logic is active.
+Delivery B may import the Reckoning shadow-intelligence facade, but the root backend still has no references to Reckoning V2 question metadata. No adaptive unlocking, scheduling, answering, or recovery logic is active.
 
 ## Phase 3 exit condition
 
