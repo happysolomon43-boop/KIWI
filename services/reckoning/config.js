@@ -96,7 +96,7 @@ const DELIVERY_E_RECKONING_CONFIG = Object.freeze({
   preparation: Object.freeze({
     maxBankQuestions: 30,
     familyConcurrency: 4,
-    generationAttemptsPerItem: 2,
+    generationAttemptsPerItem: 3,
     claimStaleMinutes: 5,
     heartbeatSeconds: 45,
   }),
