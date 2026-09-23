@@ -173,6 +173,69 @@ function createReckoningStore({
     return rows?.[0] || null;
   }
 
+  async function upsertEvidence(record) {
+    requireQuery();
+    if (!record?.reckoningId || !record?.userId || !record?.sourceCardId) {
+      throw new ReckoningContractError(
+        'Shadow evidence requires reckoningId, userId and sourceCardId.'
+      );
+    }
+    if (!record?.conceptKey || !record?.riskLevel) {
+      throw new ReckoningContractError('Shadow evidence requires conceptKey and riskLevel.');
+    }
+
+    const id = record.id || randomUUID();
+    const { rows } = await query(
+      `INSERT INTO reckoning_evidence (
+         id, reckoning_id, user_id, subject_id, source_card_id, concept_key,
+         source_snapshot, source_hash, original_card_state,
+         risk_score, risk_level, risk_reasons,
+         is_bubble_critical, has_learning_debt, discovered_by_control,
+         evidence_status, required_confirmations, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12::jsonb,
+         $13,$14,$15,$16,$17,now()
+       )
+       ON CONFLICT (reckoning_id, source_card_id)
+       WHERE source_card_id IS NOT NULL
+       DO UPDATE SET
+         concept_key = EXCLUDED.concept_key,
+         source_snapshot = EXCLUDED.source_snapshot,
+         source_hash = EXCLUDED.source_hash,
+         original_card_state = EXCLUDED.original_card_state,
+         risk_score = EXCLUDED.risk_score,
+         risk_level = EXCLUDED.risk_level,
+         risk_reasons = EXCLUDED.risk_reasons,
+         is_bubble_critical = EXCLUDED.is_bubble_critical,
+         has_learning_debt = EXCLUDED.has_learning_debt,
+         discovered_by_control = EXCLUDED.discovered_by_control,
+         required_confirmations = EXCLUDED.required_confirmations,
+         updated_at = now()
+       RETURNING *`,
+      [
+        id,
+        record.reckoningId,
+        record.userId,
+        record.subjectId || null,
+        record.sourceCardId,
+        record.conceptKey,
+        json(record.sourceSnapshot || {}),
+        record.sourceHash || null,
+        record.originalCardState || null,
+        Number(record.riskScore) || 0,
+        record.riskLevel,
+        json(record.riskReasons || []),
+        Boolean(record.isBubbleCritical),
+        Boolean(record.hasLearningDebt),
+        Boolean(record.discoveredByControl),
+        record.evidenceStatus || 'UNTESTED',
+        Number(record.requiredConfirmations) || 0,
+      ]
+    );
+
+    return rows?.[0] || null;
+  }
+
   async function saveSession(reckoningId, patch) {
     requireQuery();
     const statement = createPatchQuery({
@@ -215,6 +278,7 @@ function createReckoningStore({
     getSession,
     getEvidence,
     createEvidence,
+    upsertEvidence,
     saveSession,
     saveEvidence,
     withTransaction,
