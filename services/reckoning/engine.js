@@ -1291,6 +1291,10 @@ function createReckoningEngine(options = {}) {
             unresolvedCriticalCount:
               prepared.recovery.unresolvedCriticalCount,
             finalReport,
+            generationStatus:
+              outcome?.reckoning?.status === 'triggered'
+                ? 'not_started'
+                : 'ready',
             stateVersion: (Number(current.state_version) || 0) + 1,
           });
         }
