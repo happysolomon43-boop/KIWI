@@ -301,23 +301,59 @@ test('parallel workflow successes cannot upgrade affinity after a fallback', asy
 });
 
 
-test('transient provider overload fast-falls to the next model and opens a short model cooldown', async () => {
+test('single provider overload probes another project before degrading the model', async () => {
+  const calls = [];
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, apiKey: args.apiKey });
+        if (args.modelId === 'gemini-3.8-flash' && args.apiKey === 'key-1') {
+          throw new AIError('provider overloaded', {
+            code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+            status: 503,
+            retryable: true,
+            scope: 'PROVIDER_MODEL',
+          });
+        }
+        return { raw: successRaw('healthy sibling project'), latencyMs: 10, httpStatus: 200 };
+      },
+    },
+  });
+
+  const result = await ai.run('MAIN_CBT', { content: 'exam' });
+
+  assert.equal(result.requestedModel, 'gemini-3.8-flash');
+  assert.equal(result.projectSlot, 'p2');
+  assert.deepEqual(calls, [
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-2' },
+  ]);
+  assert.equal(ai.transientModelHealth.cooldownUntil('gemini-3.8-flash'), null);
+});
+
+test('independent provider overloads open a short model circuit and recover automatically', async () => {
   const calls = [];
   let now = Date.parse('2026-09-22T18:44:00Z');
+  let overload38 = true;
   const ai = createAIOrchestrator({
     projectPool: pool(),
     logger: quietLogger,
     clock: () => now,
-    env: { AI_MODEL_TRANSIENT_COOLDOWN_MS: '20000' },
+    env: {
+      AI_MODEL_TRANSIENT_FAILURE_SLOTS: '2',
+      AI_MODEL_TRANSIENT_COOLDOWN_MS: '20000',
+    },
     transport: {
       async generate(args) {
         calls.push({ modelId: args.modelId, apiKey: args.apiKey });
-        if (args.modelId === 'gemini-3.8-flash') {
-          throw new AIError('overloaded', {
-            code: AI_ERROR_CODES.TRANSIENT,
+        if (overload38 && args.modelId === 'gemini-3.8-flash') {
+          throw new AIError('provider overloaded', {
+            code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
             status: 503,
             retryable: true,
-            scope: 'ATTEMPT',
+            scope: 'PROVIDER_MODEL',
           });
         }
         return { raw: successRaw('fallback-fast'), latencyMs: 10, httpStatus: 200 };
@@ -327,21 +363,98 @@ test('transient provider overload fast-falls to the next model and opens a short
 
   const first = await ai.run('MAIN_CBT', { content: 'exam' });
   assert.equal(first.requestedModel, 'gemini-3.7-flash');
-  assert.deepEqual(calls, [
+  assert.deepEqual(calls.slice(0, 3), [
     { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-2' },
     { modelId: 'gemini-3.7-flash', apiKey: 'key-1' },
   ]);
+  assert.ok(ai.transientModelHealth.cooldownUntil('gemini-3.8-flash'));
 
   calls.length = 0;
   const second = await ai.run('MAIN_CBT', { content: 'exam 2' });
   assert.equal(second.requestedModel, 'gemini-3.7-flash');
-  assert.equal(calls[0].modelId, 'gemini-3.7-flash');
   assert.ok(calls.every((call) => call.modelId !== 'gemini-3.8-flash'));
 
   now += 20001;
+  overload38 = false;
   calls.length = 0;
-  await ai.run('MAIN_CBT', { content: 'exam 3' });
+  const third = await ai.run('MAIN_CBT', { content: 'exam 3' });
+  assert.equal(third.requestedModel, 'gemini-3.8-flash');
   assert.equal(calls[0].modelId, 'gemini-3.8-flash');
+});
+
+test('open transient circuits report provider overload instead of false capacity exhaustion', async () => {
+  let providerCalls = 0;
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    transport: {
+      async generate() {
+        providerCalls += 1;
+        return { raw: successRaw('not expected'), latencyMs: 1, httpStatus: 200 };
+      },
+    },
+  });
+
+  const overload = new AIError('provider overloaded', {
+    code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    status: 503,
+    retryable: true,
+    scope: 'PROVIDER_MODEL',
+  });
+  for (const modelId of [
+    'gemini-3.8-flash',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+  ]) {
+    ai.transientModelHealth.recordFailure(modelId, 'p1', overload);
+    ai.transientModelHealth.recordFailure(modelId, 'p2', overload);
+  }
+
+  await assert.rejects(
+    ai.run('MAIN_CBT', { content: 'exam' }),
+    (error) => {
+      assert.equal(error.code, AI_ERROR_CODES.PROVIDER_OVERLOADED);
+      assert.equal(error.retryable, true);
+      assert.equal(error.details.hasPersistentCapacity, true);
+      assert.equal(error.details.attempts.length, 0);
+      return true;
+    }
+  );
+
+  assert.equal(providerCalls, 0);
+});
+
+test('capacity exhausted is reserved for genuinely unroutable project-model capacity', async () => {
+  let providerCalls = 0;
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    quotaManager: {
+      filterEligibleSlots() { return []; },
+      async markSuccess() {},
+      async markFailure() {},
+    },
+    logger: quietLogger,
+    transport: {
+      async generate() {
+        providerCalls += 1;
+        return { raw: successRaw('not expected'), latencyMs: 1, httpStatus: 200 };
+      },
+    },
+  });
+
+  await assert.rejects(
+    ai.run('MAIN_CBT', { content: 'exam' }),
+    (error) => {
+      assert.equal(error.code, AI_ERROR_CODES.CAPACITY_EXHAUSTED);
+      assert.equal(error.details.hasPersistentCapacity, false);
+      assert.equal(error.details.attempts.length, 0);
+      return true;
+    }
+  );
+
+  assert.equal(providerCalls, 0);
 });
 
 test('VVIP quota rotation is bounded across a large project pool', async () => {
@@ -421,7 +534,7 @@ test('quota failures rotate beyond two project keys before degrading the model',
   ]);
 });
 
-test('provider 503 falls to the next model instead of burning project keys', async () => {
+test('provider overload uses a bounded sibling-slot probe before model fallback', async () => {
   const threeSlots = createProjectPool({
     slots: [
       { id: 'p1', index: 1, envName: 'K1', apiKey: 'key-1' },
@@ -438,10 +551,10 @@ test('provider 503 falls to the next model instead of burning project keys', asy
         calls.push({ modelId: args.modelId, apiKey: args.apiKey });
         if (args.modelId === 'gemini-3.8-flash') {
           throw new AIError('provider overloaded', {
-            code: AI_ERROR_CODES.TRANSIENT,
+            code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
             status: 503,
             retryable: true,
-            scope: 'ATTEMPT',
+            scope: 'PROVIDER_MODEL',
           });
         }
         return { raw: successRaw('fallback model'), latencyMs: 5, httpStatus: 200 };
@@ -451,6 +564,11 @@ test('provider 503 falls to the next model instead of burning project keys', asy
 
   const result = await ai.run('MAIN_CBT', { content: 'exam' });
   assert.equal(result.requestedModel, 'gemini-3.7-flash');
-  assert.equal(calls.filter((call) => call.modelId === 'gemini-3.8-flash').length, 1);
-  assert.equal(calls[1].modelId, 'gemini-3.7-flash');
+  assert.equal(calls.filter((call) => call.modelId === 'gemini-3.8-flash').length, 2);
+  assert.deepEqual(calls.slice(0, 3), [
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-1' },
+    { modelId: 'gemini-3.8-flash', apiKey: 'key-2' },
+    { modelId: 'gemini-3.7-flash', apiKey: 'key-1' },
+  ]);
 });
+
