@@ -258,6 +258,7 @@ function createReckoningStore({
          AND (
            generation_status IS NULL
            OR generation_status IN ('pending','failed')
+           OR engine_phase = 'COMPLETE'
            OR updated_at < now() - interval '3 minutes'
          )
        RETURNING *`,
