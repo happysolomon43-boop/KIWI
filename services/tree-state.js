@@ -1,12 +1,13 @@
 'use strict';
 
 const {
-  TREE_GROWTH_MODEL_VERSION,
-  TREE_STAGE_LABELS,
-  computeContinuousTreeGrowth,
-} = require('./tree-growth-model');
+  VINE_GROWTH_MODEL_VERSION,
+  VINE_STAGE_LABELS,
+  computeContinuousVineGrowth,
+} = require('./vine-growth-model');
 
-const TREE_STATE_SCHEMA_VERSION = 2;
+const TREE_STAGE_LABELS = VINE_STAGE_LABELS;
+const TREE_STATE_SCHEMA_VERSION = 3;
 
 function firstDefined() {
   for (let i = 0; i < arguments.length; i += 1) {
@@ -95,11 +96,13 @@ function normalizeNextStage(value, currentGrowthPoints) {
  * - growthPoints: permanent progression
  * - growthProgress: continuous 0..1 progress inside the current milestone span
  * - overallGrowthProgress: continuous biological maturity across the whole tree life
- * - structuralGrowth: deterministic physical-development values
+ * - vineStructure: canonical kiwifruit-vine physical-development values
+ * - structuralGrowth: legacy tree-shaped compatibility aliases
  *
  * Current condition:
  * - vitality: reversible 0..100 ecosystem health
- * - visualHealth: deterministic reversible presentation values
+ * - vineHealth: canonical reversible vine/foliage presentation values
+ * - visualHealth: legacy compatibility aliases
  *
  * The existing flat renderer fields remain for compatibility until the visual
  * renderer is replaced. In particular, health is an alias for vitality.
@@ -121,7 +124,7 @@ function buildTreeState(input) {
     firstDefined(source.stage, source.tree_stage, 1)
   );
 
-  const continuousGrowth = computeContinuousTreeGrowth({
+  const continuousGrowth = computeContinuousVineGrowth({
     growthPoints,
     stage: requestedStage,
     vitality,
@@ -158,7 +161,7 @@ function buildTreeState(input) {
 
   return {
     schemaVersion: TREE_STATE_SCHEMA_VERSION,
-    growthModelVersion: TREE_GROWTH_MODEL_VERSION,
+    growthModelVersion: VINE_GROWTH_MODEL_VERSION,
 
     stage,
     stageLabel: labelForStage(stage),
@@ -175,12 +178,16 @@ function buildTreeState(input) {
       pointsInStage: continuousGrowth.pointsInStage,
       pointsToNextStage: continuousGrowth.pointsToNextStage,
     },
+    vineStructure: continuousGrowth.vineStructure,
+    // Deprecated compatibility alias for the current SVG renderer.
     structuralGrowth: continuousGrowth.structuralGrowth,
 
     vitality,
     vitalityBreakdown: normalizeVitalityBreakdown(
       firstDefined(source.vitalityBreakdown, source.vitality_breakdown)
     ),
+    vineHealth: continuousGrowth.vineHealth,
+    // Deprecated compatibility alias for pre-vine consumers.
     visualHealth: continuousGrowth.visualHealth,
 
     knowledgeScore,
