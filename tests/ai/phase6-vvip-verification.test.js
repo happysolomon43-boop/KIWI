@@ -186,7 +186,9 @@ test('CBT recovery is limited to availability/parser failure and does not treat 
 
 test('Phase 6 leaves no legacy provider routing in feature code', () => {
   assert.equal((source.match(/\bgeminiModel\.generateContent\s*\(/g) || []).length, 0);
-  assert.equal((source.match(/\bai\.run\s*\(/g) || []).length, 28);
+  assert.equal((source.match(/\bai\.run\s*\(/g) || []).length, 30);
+  assert.match(source, /createQuestionBank\([\s\S]*aiRun:\s*\(taskId, input, context\)\s*=>\s*ai\.run/);
+  assert.match(source, /createAISemanticReviewer\([\s\S]*aiRun:\s*\(taskId, input, context\)\s*=>\s*ai\.run/);
   assert.doesNotMatch(source, /const geminiModel\s*=\s*\{/);
   assert.doesNotMatch(source, /generativelanguage\.googleapis\.com/);
   assert.doesNotMatch(source, /thinkingConfig\s*:/);
