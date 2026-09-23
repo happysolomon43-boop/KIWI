@@ -56,6 +56,7 @@ export async function mountKiwiTreeRenderer(options = {}) {
           instance.updateState(nextState, animate);
         }
       },
+      playReactions() {},
       async destroy() {
         clearContainer(container);
         if (container.dataset) delete container.dataset.kiwiRenderer;
@@ -103,6 +104,11 @@ export async function mountKiwiTreeRenderer(options = {}) {
       fallbackReason: null,
       updateState(nextState, animate = true) {
         renderer.updateState(nextState, animate);
+      },
+      playReactions(reactions) {
+        if (typeof renderer.playReactions === 'function') {
+          renderer.playReactions(reactions);
+        }
       },
       async destroy() {
         await renderer.destroy({ destroyRuntime: true });
