@@ -159,7 +159,23 @@ function createLearningEffectsEngine({
     const now = clock();
     return Object.freeze(
       evidence.map((row) => {
-        const cardId = field(row, 'sourceCardId', 'source_card_id');
+        const status = String(
+        field(row, 'evidenceStatus', 'evidence_status', EVIDENCE_STATUSES.UNTESTED)
+      );
+      if (![
+        EVIDENCE_STATUSES.RECOVERED,
+        EVIDENCE_STATUSES.UNRESOLVED,
+        EVIDENCE_STATUSES.INVALIDATED,
+      ].includes(status)) {
+        skipped.push(Object.freeze({
+          evidenceId: row.id,
+          sourceCardId: field(row, 'sourceCardId', 'source_card_id'),
+          reason: 'NON_TERMINAL_EVIDENCE',
+        }));
+        continue;
+      }
+
+      const cardId = field(row, 'sourceCardId', 'source_card_id');
         return buildEffect(
           row,
           cardId ? cardsById.get(String(cardId)) || null : null,
