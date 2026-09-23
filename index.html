@@ -9119,6 +9119,42 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         }
       }
 
+      // PixiJS living-vine gateway. The legacy SVG class remains a guaranteed
+      // fallback for unsupported devices or renderer initialization failures.
+      window.KiwiTree = KiwiTree;
+
+      async function mountKiwiLivingTree(container, options = {}) {
+        const legacyFactory = (target, legacyOptions) =>
+          new KiwiTree(target, legacyOptions);
+
+        try {
+          const gateway = await import('/tree/tree-renderer-gateway.mjs');
+          return await gateway.mountKiwiTreeRenderer({
+            ...options,
+            container,
+            mode: options.mode || gateway.getDefaultTreeRendererMode(),
+            legacyFactory,
+          });
+        } catch (error) {
+          console.warn('[KIWI] Pixi tree gateway unavailable; using SVG fallback.', error);
+          container.innerHTML = '';
+          const instance = legacyFactory(container, options);
+          return {
+            mode: 'legacy',
+            instance,
+            fallbackReason: error instanceof Error ? error.message : String(error),
+            updateState(nextState, animate = true) {
+              if (typeof instance.updateState === 'function') {
+                instance.updateState(nextState, animate);
+              }
+            },
+            async destroy() {
+              container.innerHTML = '';
+            },
+          };
+        }
+      }
+
       // ═══════════════════════════════════════════════════════════════════════════
       // SECTION 6: ROUTER & NAVIGATION
 
@@ -10368,36 +10404,44 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         </div>
       </div>
     `;
-          // F23: KiwiTree with real backend data; robust fallback if treeState absent
+          // Canonical living-vine renderer. PixiJS is primary; the gateway
+          // automatically returns the legacy SVG renderer if Pixi cannot start.
           const treeContainer = document.getElementById("dashboardTree");
           if (treeContainer && typeof KiwiTree === 'function') {
             const ts = treeState || {
               stage: 1,
               health: 50,
+              vitality: 50,
               leaves: 8,
               fruits: 0,
               rings: 0,
               milestones: [],
               stageLabel: "SEEDLING",
             };
-            try {
-              AppState.treeInstance = new KiwiTree(treeContainer, {
-                width: 300,
-                height: 360,
-                state: {
-                  stage: ts.stage !== undefined ? ts.stage : 1,
-                  health: ts.health !== undefined ? ts.health : 50,
-                  leaves: ts.leaves !== undefined ? ts.leaves : 8,
-                  fruits: ts.fruits !== undefined ? ts.fruits : 0,
-                  rings: ts.rings !== undefined ? ts.rings : 0,
-                  milestones: ts.milestones !== undefined ? ts.milestones : [],
-                },
-                interactive: true,
-              });
-            } catch (_treeErr) {
-              // SVG-FIX: KiwiTree render failure must never propagate — show placeholder
-              treeContainer.innerHTML = '<div style="height:200px;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:48px;">🌱</div>';
+
+            const previousTree = AppState.treeInstance;
+            AppState.treeInstance = null;
+            if (previousTree && typeof previousTree.destroy === 'function') {
+              Promise.resolve(previousTree.destroy()).catch(() => {});
             }
+
+            mountKiwiLivingTree(treeContainer, {
+              width: 300,
+              height: 360,
+              state: ts,
+              interactive: true,
+            }).then((handle) => {
+              if (!treeContainer.isConnected) {
+                Promise.resolve(handle.destroy()).catch(() => {});
+                return;
+              }
+              AppState.treeInstance = handle;
+              if (handle.mode === 'legacy' && handle.fallbackReason) {
+                console.warn('[KIWI] Living vine fell back to SVG:', handle.fallbackReason);
+              }
+            }).catch((_treeErr) => {
+              treeContainer.innerHTML = '<div style="height:200px;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:48px;">🌱</div>';
+            });
           }
           // ── Load mini 12-week heatmap on dashboard ────────────────────────
           (function() {
@@ -15317,24 +15361,33 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         }
       </div>
     `;
-          // Render central KiwiTree
+          // Render the canonical living vine in the Biome. Keep the full
+          // TreeState contract so continuous morphology, Vitality and fruit are available.
           const treeContainer = document.getElementById("biomeTree");
           if (treeContainer && globalTreeState && typeof KiwiTree === 'function') {
-            try { new KiwiTree(treeContainer, {
+            const previousBiomeTree = AppState.biomeTreeInstance;
+            AppState.biomeTreeInstance = null;
+            if (previousBiomeTree && typeof previousBiomeTree.destroy === 'function') {
+              Promise.resolve(previousBiomeTree.destroy()).catch(() => {});
+            }
+
+            mountKiwiLivingTree(treeContainer, {
               width: 300,
               height: 360,
-              state: {
-                stage: globalTreeState.stage || 1,
-                health: globalTreeState.health ?? 100,
-                leaves: globalTreeState.leaves || 12,
-                fruits: globalTreeState.fruits || 0,
-                rings: globalTreeState.rings || 0,
-                milestones: globalTreeState.milestones || [],
-              },
+              state: globalTreeState,
               interactive: true,
-            }); } catch (_biomeTreeErr) {
+            }).then((handle) => {
+              if (!treeContainer.isConnected) {
+                Promise.resolve(handle.destroy()).catch(() => {});
+                return;
+              }
+              AppState.biomeTreeInstance = handle;
+              if (handle.mode === 'legacy' && handle.fallbackReason) {
+                console.warn('[KIWI] Biome living vine fell back to SVG:', handle.fallbackReason);
+              }
+            }).catch((_biomeTreeErr) => {
               treeContainer.innerHTML = '<div style="height:200px;display:flex;align-items:center;justify-content:center;opacity:0.3;font-size:48px;">🌿</div>';
-            }
+            });
           }
           // PB.22: Attach Mastery Bubble indicators to each Biome zone tile [DESIGN: §17.3]
           // Mini widget: same state logic as dashboard widget, positioned top-right of zone.

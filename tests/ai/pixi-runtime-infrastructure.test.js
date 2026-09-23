@@ -104,13 +104,13 @@ test('ticker pauses when hidden, offscreen, or destroyed', async () => {
   assert.equal(shouldRunTicker({ destroyed: true }), false);
 });
 
-test('renderer gateway defaults to legacy and rejects unknown modes safely', async () => {
+test('renderer gateway defaults to Pixi after Phase 8 and still rejects unknown modes safely', async () => {
   const {
     getDefaultTreeRendererMode,
     normalizeTreeRendererMode,
   } = await importModule('public/tree/tree-renderer-gateway.mjs');
 
-  assert.equal(getDefaultTreeRendererMode(), 'legacy');
+  assert.equal(getDefaultTreeRendererMode(), 'pixi');
   assert.equal(normalizeTreeRendererMode('legacy'), 'legacy');
   assert.equal(normalizeTreeRendererMode('PIXI'), 'pixi');
   assert.equal(normalizeTreeRendererMode('future-renderer'), 'legacy');
@@ -244,4 +244,5 @@ test('Pixi runtime imports only the locally vendored browser module', () => {
   assert.match(source, /visibilitychange/);
   assert.match(source, /prefers-reduced-motion/);
   assert.match(source, /pointerEvents: 'none'/);
+  assert.match(source, /MutationObserver/);
 });

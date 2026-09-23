@@ -1,0 +1,664 @@
+{
+  "version": 1,
+  "depthLayers": {
+    "BACKDROP": 0,
+    "REAR_FOLIAGE": 10,
+    "TRELLIS_REAR": 20,
+    "WOODY_VINE": 30,
+    "FOLIAGE": 40,
+    "FLOWERS": 50,
+    "FRUIT": 60,
+    "FOREGROUND_FOLIAGE": 70,
+    "AMBIENT": 80
+  },
+  "trellis": {
+    "style": "warm-minimal-wood",
+    "bounds": {
+      "x": 0.09,
+      "y": 0.16,
+      "width": 0.82,
+      "height": 0.68
+    },
+    "members": [
+      {
+        "id": "post-left",
+        "role": "post",
+        "from": {
+          "x": 0.15,
+          "y": 0.22
+        },
+        "to": {
+          "x": 0.15,
+          "y": 0.84
+        },
+        "thickness": 0.026,
+        "depth": 20
+      },
+      {
+        "id": "post-center",
+        "role": "post",
+        "from": {
+          "x": 0.5,
+          "y": 0.22
+        },
+        "to": {
+          "x": 0.5,
+          "y": 0.84
+        },
+        "thickness": 0.024,
+        "depth": 20
+      },
+      {
+        "id": "post-right",
+        "role": "post",
+        "from": {
+          "x": 0.85,
+          "y": 0.22
+        },
+        "to": {
+          "x": 0.85,
+          "y": 0.84
+        },
+        "thickness": 0.026,
+        "depth": 20
+      },
+      {
+        "id": "beam-top",
+        "role": "beam",
+        "from": {
+          "x": 0.1,
+          "y": 0.23
+        },
+        "to": {
+          "x": 0.9,
+          "y": 0.23
+        },
+        "thickness": 0.03,
+        "depth": 20
+      },
+      {
+        "id": "beam-cordon",
+        "role": "beam",
+        "from": {
+          "x": 0.12,
+          "y": 0.34
+        },
+        "to": {
+          "x": 0.88,
+          "y": 0.34
+        },
+        "thickness": 0.018,
+        "depth": 20
+      },
+      {
+        "id": "brace-left",
+        "role": "brace",
+        "from": {
+          "x": 0.15,
+          "y": 0.38
+        },
+        "to": {
+          "x": 0.3,
+          "y": 0.23
+        },
+        "thickness": 0.014,
+        "depth": 20
+      },
+      {
+        "id": "brace-right",
+        "role": "brace",
+        "from": {
+          "x": 0.85,
+          "y": 0.38
+        },
+        "to": {
+          "x": 0.7,
+          "y": 0.23
+        },
+        "thickness": 0.014,
+        "depth": 20
+      }
+    ]
+  },
+  "vineSegments": [
+    {
+      "id": "leader-main",
+      "parentId": null,
+      "kind": "leader",
+      "unlockAt": 0,
+      "completeAt": 0.24,
+      "from": {
+        "x": 0.5,
+        "y": 0.88
+      },
+      "c1": {
+        "x": 0.47,
+        "y": 0.72
+      },
+      "c2": {
+        "x": 0.54,
+        "y": 0.5
+      },
+      "to": {
+        "x": 0.5,
+        "y": 0.32
+      },
+      "thicknessRole": "base-to-leader"
+    },
+    {
+      "id": "cordon-left",
+      "parentId": "leader-main",
+      "kind": "cordon",
+      "unlockAt": 0.16,
+      "completeAt": 0.62,
+      "from": {
+        "x": 0.5,
+        "y": 0.32
+      },
+      "c1": {
+        "x": 0.42,
+        "y": 0.29
+      },
+      "c2": {
+        "x": 0.28,
+        "y": 0.31
+      },
+      "to": {
+        "x": 0.13,
+        "y": 0.3
+      },
+      "thicknessRole": "cordon"
+    },
+    {
+      "id": "cordon-right",
+      "parentId": "leader-main",
+      "kind": "cordon",
+      "unlockAt": 0.16,
+      "completeAt": 0.62,
+      "from": {
+        "x": 0.5,
+        "y": 0.32
+      },
+      "c1": {
+        "x": 0.58,
+        "y": 0.29
+      },
+      "c2": {
+        "x": 0.72,
+        "y": 0.31
+      },
+      "to": {
+        "x": 0.87,
+        "y": 0.3
+      },
+      "thicknessRole": "cordon"
+    },
+    {
+      "id": "lateral-l1",
+      "parentId": "cordon-left",
+      "kind": "lateral",
+      "unlockAt": 0.28,
+      "completeAt": 0.48,
+      "from": {
+        "x": 0.42,
+        "y": 0.31
+      },
+      "c1": {
+        "x": 0.39,
+        "y": 0.4
+      },
+      "c2": {
+        "x": 0.35,
+        "y": 0.48
+      },
+      "to": {
+        "x": 0.31,
+        "y": 0.55
+      },
+      "thicknessRole": "lateral"
+    },
+    {
+      "id": "lateral-l2",
+      "parentId": "cordon-left",
+      "kind": "lateral",
+      "unlockAt": 0.34,
+      "completeAt": 0.56,
+      "from": {
+        "x": 0.32,
+        "y": 0.3
+      },
+      "c1": {
+        "x": 0.28,
+        "y": 0.38
+      },
+      "c2": {
+        "x": 0.22,
+        "y": 0.48
+      },
+      "to": {
+        "x": 0.18,
+        "y": 0.61
+      },
+      "thicknessRole": "lateral"
+    },
+    {
+      "id": "lateral-l3",
+      "parentId": "cordon-left",
+      "kind": "lateral",
+      "unlockAt": 0.42,
+      "completeAt": 0.66,
+      "from": {
+        "x": 0.24,
+        "y": 0.3
+      },
+      "c1": {
+        "x": 0.2,
+        "y": 0.25
+      },
+      "c2": {
+        "x": 0.16,
+        "y": 0.21
+      },
+      "to": {
+        "x": 0.12,
+        "y": 0.18
+      },
+      "thicknessRole": "lateral"
+    },
+    {
+      "id": "lateral-l4",
+      "parentId": "cordon-left",
+      "kind": "lateral",
+      "unlockAt": 0.55,
+      "completeAt": 0.78,
+      "from": {
+        "x": 0.16,
+        "y": 0.3
+      },
+      "c1": {
+        "x": 0.11,
+        "y": 0.38
+      },
+      "c2": {
+        "x": 0.08,
+        "y": 0.48
+      },
+      "to": {
+        "x": 0.08,
+        "y": 0.58
+      },
+      "thicknessRole": "lateral"
+    },
+    {
+      "id": "lateral-r1",
+      "parentId": "cordon-right",
+      "kind": "lateral",
+      "unlockAt": 0.28,
+      "completeAt": 0.48,
+      "from": {
+        "x": 0.58,
+        "y": 0.31
+      },
+      "c1": {
+        "x": 0.61,
+        "y": 0.4
+      },
+      "c2": {
+        "x": 0.65,
+        "y": 0.48
+      },
+      "to": {
+        "x": 0.69,
+        "y": 0.55
+      },
+      "thicknessRole": "lateral"
+    },
+    {
+      "id": "lateral-r2",
+      "parentId": "cordon-right",
+      "kind": "lateral",
+      "unlockAt": 0.34,
+      "completeAt": 0.56,
+      "from": {
+        "x": 0.68,
+        "y": 0.3
+      },
+      "c1": {
+        "x": 0.72,
+        "y": 0.38
+      },
+      "c2": {
+        "x": 0.78,
+        "y": 0.48
+      },
+      "to": {
+        "x": 0.82,
+        "y": 0.61
+      },
+      "thicknessRole": "lateral"
+    },
+    {
+      "id": "lateral-r3",
+      "parentId": "cordon-right",
+      "kind": "lateral",
+      "unlockAt": 0.42,
+      "completeAt": 0.66,
+      "from": {
+        "x": 0.76,
+        "y": 0.3
+      },
+      "c1": {
+        "x": 0.8,
+        "y": 0.25
+      },
+      "c2": {
+        "x": 0.84,
+        "y": 0.21
+      },
+      "to": {
+        "x": 0.88,
+        "y": 0.18
+      },
+      "thicknessRole": "lateral"
+    },
+    {
+      "id": "lateral-r4",
+      "parentId": "cordon-right",
+      "kind": "lateral",
+      "unlockAt": 0.55,
+      "completeAt": 0.78,
+      "from": {
+        "x": 0.84,
+        "y": 0.3
+      },
+      "c1": {
+        "x": 0.89,
+        "y": 0.38
+      },
+      "c2": {
+        "x": 0.92,
+        "y": 0.48
+      },
+      "to": {
+        "x": 0.92,
+        "y": 0.58
+      },
+      "thicknessRole": "lateral"
+    },
+    {
+      "id": "secondary-lower-left",
+      "parentId": "leader-main",
+      "kind": "secondary",
+      "unlockAt": 0.5,
+      "completeAt": 0.82,
+      "from": {
+        "x": 0.49,
+        "y": 0.48
+      },
+      "c1": {
+        "x": 0.43,
+        "y": 0.52
+      },
+      "c2": {
+        "x": 0.37,
+        "y": 0.6
+      },
+      "to": {
+        "x": 0.32,
+        "y": 0.7
+      },
+      "thicknessRole": "secondary"
+    },
+    {
+      "id": "secondary-lower-right",
+      "parentId": "leader-main",
+      "kind": "secondary",
+      "unlockAt": 0.5,
+      "completeAt": 0.82,
+      "from": {
+        "x": 0.51,
+        "y": 0.48
+      },
+      "c1": {
+        "x": 0.57,
+        "y": 0.52
+      },
+      "c2": {
+        "x": 0.63,
+        "y": 0.6
+      },
+      "to": {
+        "x": 0.68,
+        "y": 0.7
+      },
+      "thicknessRole": "secondary"
+    }
+  ],
+  "foliageZones": [
+    {
+      "id": "crown-left",
+      "segments": [
+        "cordon-left",
+        "lateral-l1",
+        "lateral-l2",
+        "lateral-l3"
+      ],
+      "bounds": {
+        "x": 0.1,
+        "y": 0.16,
+        "width": 0.4,
+        "height": 0.46
+      },
+      "densityWeight": 1,
+      "depthBias": "mixed"
+    },
+    {
+      "id": "crown-right",
+      "segments": [
+        "cordon-right",
+        "lateral-r1",
+        "lateral-r2",
+        "lateral-r3"
+      ],
+      "bounds": {
+        "x": 0.5,
+        "y": 0.16,
+        "width": 0.4,
+        "height": 0.46
+      },
+      "densityWeight": 1,
+      "depthBias": "mixed"
+    },
+    {
+      "id": "lower-center",
+      "segments": [
+        "leader-main",
+        "secondary-lower-left",
+        "secondary-lower-right"
+      ],
+      "bounds": {
+        "x": 0.28,
+        "y": 0.42,
+        "width": 0.44,
+        "height": 0.34
+      },
+      "densityWeight": 0.72,
+      "depthBias": "front"
+    }
+  ],
+  "reproductiveZones": [
+    {
+      "id": "fruit-left-inner",
+      "segmentId": "lateral-l1",
+      "tRange": [
+        0.44,
+        0.82
+      ],
+      "flowerUnlockAt": 0.54,
+      "fruitUnlockAt": 0.63,
+      "maxVisibleClusters": 3
+    },
+    {
+      "id": "fruit-left-outer",
+      "segmentId": "lateral-l2",
+      "tRange": [
+        0.34,
+        0.76
+      ],
+      "flowerUnlockAt": 0.6,
+      "fruitUnlockAt": 0.69,
+      "maxVisibleClusters": 2
+    },
+    {
+      "id": "fruit-right-inner",
+      "segmentId": "lateral-r1",
+      "tRange": [
+        0.44,
+        0.82
+      ],
+      "flowerUnlockAt": 0.54,
+      "fruitUnlockAt": 0.63,
+      "maxVisibleClusters": 3
+    },
+    {
+      "id": "fruit-right-outer",
+      "segmentId": "lateral-r2",
+      "tRange": [
+        0.34,
+        0.76
+      ],
+      "flowerUnlockAt": 0.6,
+      "fruitUnlockAt": 0.69,
+      "maxVisibleClusters": 2
+    },
+    {
+      "id": "fruit-center-left",
+      "segmentId": "secondary-lower-left",
+      "tRange": [
+        0.42,
+        0.78
+      ],
+      "flowerUnlockAt": 0.68,
+      "fruitUnlockAt": 0.76,
+      "maxVisibleClusters": 2
+    },
+    {
+      "id": "fruit-center-right",
+      "segmentId": "secondary-lower-right",
+      "tRange": [
+        0.42,
+        0.78
+      ],
+      "flowerUnlockAt": 0.68,
+      "fruitUnlockAt": 0.76,
+      "maxVisibleClusters": 2
+    }
+  ],
+  "localExitSockets": [
+    {
+      "id": "exit-left-upper",
+      "sourceSegmentId": "lateral-l3",
+      "point": {
+        "x": 0.08,
+        "y": 0.19
+      },
+      "direction": {
+        "x": -1,
+        "y": -0.08
+      },
+      "minimumMaturity": 0.72
+    },
+    {
+      "id": "exit-right-upper",
+      "sourceSegmentId": "lateral-r3",
+      "point": {
+        "x": 0.92,
+        "y": 0.19
+      },
+      "direction": {
+        "x": 1,
+        "y": -0.08
+      },
+      "minimumMaturity": 0.72
+    },
+    {
+      "id": "exit-left-mid",
+      "sourceSegmentId": "lateral-l4",
+      "point": {
+        "x": 0.07,
+        "y": 0.55
+      },
+      "direction": {
+        "x": -1,
+        "y": 0.12
+      },
+      "minimumMaturity": 0.82
+    },
+    {
+      "id": "exit-right-mid",
+      "sourceSegmentId": "lateral-r4",
+      "point": {
+        "x": 0.93,
+        "y": 0.55
+      },
+      "direction": {
+        "x": 1,
+        "y": 0.12
+      },
+      "minimumMaturity": 0.82
+    }
+  ],
+  "compositionProfiles": {
+    "desktop": {
+      "visibleSegmentKinds": [
+        "leader",
+        "cordon",
+        "lateral",
+        "secondary"
+      ],
+      "maxFoliageScale": 1,
+      "maxVisibleFruitClusters": 12,
+      "allowExitSockets": true,
+      "safeMargin": 0.055
+    },
+    "tablet": {
+      "visibleSegmentKinds": [
+        "leader",
+        "cordon",
+        "lateral",
+        "secondary"
+      ],
+      "maxFoliageScale": 0.88,
+      "maxVisibleFruitClusters": 9,
+      "allowExitSockets": true,
+      "safeMargin": 0.07
+    },
+    "mobile": {
+      "visibleSegmentKinds": [
+        "leader",
+        "cordon",
+        "lateral",
+        "secondary"
+      ],
+      "suppressSegments": [
+        "lateral-l4",
+        "lateral-r4"
+      ],
+      "maxFoliageScale": 0.72,
+      "maxVisibleFruitClusters": 6,
+      "allowExitSockets": false,
+      "safeMargin": 0.09
+    }
+  },
+  "artDirection": {
+    "silhouette": "wide-trained-vine-with-open-center",
+    "trellisPresence": "architectural-but-subordinate",
+    "woodCharacter": "warm-rounded-minimal-not-rustic",
+    "vineCharacter": "woody-twining-organic-controlled",
+    "foliageCharacter": "broad-kiwi-leaves-layered-not-bushy",
+    "fruitCharacter": "small-hanging-clusters-never-scattered",
+    "motionCharacter": "slow-breathing-sway-with-local-tip-motion",
+    "lightingCharacter": "soft-ambient-with-subtle-depth-not-glow-heavy",
+    "rule": "structure-first-foliage-second-fruit-last"
+  }
+}
