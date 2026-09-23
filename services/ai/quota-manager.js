@@ -58,6 +58,12 @@ function extractObservedQuotaLimit(details) {
   return found;
 }
 
+function timestampMs(value) {
+  if (value == null) return 0;
+  const parsed = value instanceof Date ? value.getTime() : Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function createQuotaManager({
   store = null,
   clock = () => new Date(),
@@ -85,6 +91,7 @@ function createQuotaManager({
       lastHttpStatus: null,
       lastSuccessAt: null,
       lastFailureAt: null,
+      updatedAt: 0,
     };
   }
 
@@ -102,6 +109,7 @@ function createQuotaManager({
       lastHttpStatus: row.last_http_status == null ? null : Number(row.last_http_status),
       lastSuccessAt: row.last_success_at ? new Date(row.last_success_at) : null,
       lastFailureAt: row.last_failure_at ? new Date(row.last_failure_at) : null,
+      updatedAt: timestampMs(row.updated_at),
     };
   }
 
@@ -143,16 +151,39 @@ function createQuotaManager({
   }
 
   async function persist(state) {
-    if (!store?.upsertProjectModelState) return;
-    await store.upsertProjectModelState(state);
+    if (!store?.upsertProjectModelState) return null;
+    const row = await store.upsertProjectModelState(state);
+    const persistedAt = timestampMs(row?.updated_at);
+    if (persistedAt) {
+      state.updatedAt = Math.max(Number(state.updatedAt) || 0, persistedAt);
+    }
+    return row;
   }
 
-  async function hydrate() {
+  async function reconcileFromStore({ force = false } = {}) {
     if (!store?.loadProjectModelStates) return 0;
     const rows = await store.loadProjectModelStates();
     let count = 0;
+
     for (const row of rows || []) {
       const state = fromRow(row);
+      const cacheKey = key(state.projectSlot, state.modelId);
+      const existing = cache.get(cacheKey);
+
+      // During the periodic Delivery B convergence cycle, never let a database
+      // snapshot that predates a local in-flight route update roll the runtime
+      // backward. Startup hydration is forceful because no request should have
+      // mutated route health before initialization completes.
+      if (
+        !force &&
+        existing &&
+        state.updatedAt &&
+        existing.updatedAt &&
+        state.updatedAt <= existing.updatedAt
+      ) {
+        continue;
+      }
+
       let changed = normalize(state);
       const now = clock();
 
@@ -175,17 +206,25 @@ function createQuotaManager({
         }
       }
 
-      cache.set(key(state.projectSlot, state.modelId), state);
+      cache.set(cacheKey, state);
       count++;
-      if (changed) await persist(state);
+      if (changed) {
+        state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
+        await persist(state);
+      }
     }
     return count;
   }
 
-  // Project/model quota health is persisted, so periodically re-hydrating also
-  // lets future multi-instance deployments converge on the same route view.
+  async function hydrate() {
+    return reconcileFromStore({ force: true });
+  }
+
+  // Project/model quota health is persisted, so periodic refresh lets future
+  // multi-instance deployments converge without stale reads undoing a fresher
+  // local route transition.
   async function refresh() {
-    return hydrate();
+    return reconcileFromStore({ force: false });
   }
 
   function get(projectSlot, modelId) {
@@ -254,6 +293,7 @@ function createQuotaManager({
   async function markSuccess(projectSlot, modelId) {
     const now = clock();
     const state = get(projectSlot, modelId);
+    state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
     state.state = PROJECT_MODEL_STATES.READY;
     state.quotaDay = pacificDayKey(now);
     state.attemptsToday += 1;
@@ -269,6 +309,7 @@ function createQuotaManager({
   async function markFailure(projectSlot, modelId, error) {
     const now = clock();
     const state = get(projectSlot, modelId);
+    state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
     state.quotaDay = pacificDayKey(now);
     state.attemptsToday += 1;
     state.lastErrorCode = error?.code || AI_ERROR_CODES.UNKNOWN;
@@ -328,7 +369,9 @@ function createQuotaManager({
   }
 
   async function disable(projectSlot, modelId) {
+    const now = clock();
     const state = get(projectSlot, modelId);
+    state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
     state.state = PROJECT_MODEL_STATES.DISABLED;
     state.cooldownUntil = null;
     await persist(state);
@@ -336,7 +379,9 @@ function createQuotaManager({
   }
 
   async function enable(projectSlot, modelId) {
+    const now = clock();
     const state = get(projectSlot, modelId);
+    state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
     state.state = PROJECT_MODEL_STATES.READY;
     state.cooldownUntil = null;
     state.lastErrorCode = null;
@@ -362,6 +407,7 @@ function createQuotaManager({
         lastHttpStatus: state.lastHttpStatus,
         lastSuccessAt: state.lastSuccessAt,
         lastFailureAt: state.lastFailureAt,
+        updatedAt: state.updatedAt ? new Date(state.updatedAt) : null,
       });
     }
     return rows;
@@ -387,5 +433,6 @@ module.exports = {
   PROJECT_MODEL_STATES,
   pacificDayKey,
   extractObservedQuotaLimit,
+  timestampMs,
   createQuotaManager,
 };

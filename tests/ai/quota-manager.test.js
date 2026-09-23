@@ -225,3 +225,75 @@ test('refresh reconciles persisted quota state for another runtime instance', as
     PROJECT_MODEL_STATES.EXHAUSTED_RPD
   );
 });
+
+
+test('refresh never overwrites a fresher local quota transition with a stale database snapshot', async () => {
+  let now = new Date('2026-09-23T20:00:00Z');
+  let persistedRows = [{
+    project_slot: 'p1',
+    model_id: 'gemini-3.8-flash',
+    state: 'READY',
+    quota_day: '2026-09-23',
+    attempts_today: 1,
+    successes_today: 1,
+    last_http_status: 200,
+    updated_at: '2026-09-23T19:59:00Z',
+  }];
+
+  const store = {
+    async loadProjectModelStates() {
+      return persistedRows;
+    },
+    async upsertProjectModelState() {
+      return { updated_at: now.toISOString() };
+    },
+  };
+
+  const manager = createQuotaManager({
+    clock: () => now,
+    store,
+  });
+
+  await manager.hydrate();
+  assert.equal(manager.isEligible('p1', 'gemini-3.8-flash'), true);
+
+  now = new Date('2026-09-23T20:00:10Z');
+  await manager.markFailure(
+    'p1',
+    'gemini-3.8-flash',
+    new AIError('daily quota exhausted', {
+      code: AI_ERROR_CODES.RATE_LIMIT_RPD,
+      status: 429,
+      retryable: true,
+    })
+  );
+  assert.equal(
+    manager.get('p1', 'gemini-3.8-flash').state,
+    PROJECT_MODEL_STATES.EXHAUSTED_RPD
+  );
+
+  // Simulate a refresh that read the older READY row while the local write was
+  // in flight. The local EXHAUSTED_RPD transition must remain authoritative.
+  assert.equal(await manager.refresh(), 0);
+  assert.equal(
+    manager.get('p1', 'gemini-3.8-flash').state,
+    PROJECT_MODEL_STATES.EXHAUSTED_RPD
+  );
+
+  // A genuinely newer row from another runtime must still converge locally.
+  persistedRows = [{
+    project_slot: 'p1',
+    model_id: 'gemini-3.8-flash',
+    state: 'READY',
+    quota_day: '2026-09-23',
+    attempts_today: 21,
+    successes_today: 20,
+    last_http_status: 200,
+    last_success_at: '2026-09-23T20:00:20Z',
+    updated_at: '2026-09-23T20:00:20Z',
+  }];
+
+  assert.equal(await manager.refresh(), 1);
+  assert.equal(manager.isEligible('p1', 'gemini-3.8-flash'), true);
+  assert.equal(manager.get('p1', 'gemini-3.8-flash').attemptsToday, 21);
+});
