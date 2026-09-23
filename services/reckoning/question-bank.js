@@ -102,13 +102,16 @@ function createQuestionBank({
 
     for (const evidence of plan.supporting || []) {
       blueprints.push(roleBlueprint(evidence, QUESTION_ROLES.DIAGNOSTIC, 0, config));
+      blueprints.push(roleBlueprint(evidence, QUESTION_ROLES.CHALLENGE, 1, config));
     }
 
     for (const evidence of plan.controls || []) {
-      blueprints.push(roleBlueprint({
+      const controlEvidence = {
         ...evidence,
         riskLevel: RISK_LEVELS.SUPPORTING,
-      }, QUESTION_ROLES.CONTROL, 0, config));
+      };
+      blueprints.push(roleBlueprint(controlEvidence, QUESTION_ROLES.CONTROL, 0, config));
+      blueprints.push(roleBlueprint(controlEvidence, QUESTION_ROLES.CHALLENGE, 1, config));
     }
 
     return Object.freeze(blueprints);
