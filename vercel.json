@@ -1,14 +1,16 @@
 {
   "version": 2,
   "builds": [
-    { "src": "index.html", "use": "@vercel/static" },
-    { "src": "public/**", "use": "@vercel/static" }
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
   ],
   "routes": [
-    { "src": "/kiwi_product_v3.css", "dest": "/public/kiwi_product_v3.css" },
-    { "src": "/kiwi_product_v3.js", "dest": "/public/kiwi_product_v3.js" },
-    { "src": "/kiwi_bubbles_v1.css", "dest": "/public/kiwi_bubbles_v1.css" },
-    { "src": "/kiwi_bubbles_v1.js", "dest": "/public/kiwi_bubbles_v1.js" },
+    { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
