@@ -106,7 +106,7 @@ const adaptivePreparationService = createPreparationService({
   questionBank: adaptiveQuestionBank,
   randomUUID,
   // Reckoning family generation follows the orchestrator's live backpressure
-  // signal. Individual AI calls are still admitted centrally by ai.run().
+  // signal. Individual AI calls still pass through central orchestrator admission.
   getConcurrencyState: () => _aiRuntime.trafficController.snapshot(),
 });
 
