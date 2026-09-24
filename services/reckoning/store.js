@@ -313,15 +313,14 @@ function createReckoningStore({
   async function refreshPreparationProgress(reckoningId, userId, lastError = undefined) {
     requireQuery();
     const params = [reckoningId, userId];
-    let errorSql = '';
     if (lastError !== undefined) {
       params.push(
         lastError == null
           ? null
           : String(lastError?.message || lastError).slice(0, 1500)
       );
-      errorSql = ', last_error = $3';
     }
+    const errorSql = '';
     const { rows } = await query(
       `UPDATE reckoning_preparation_manifests manifest
        SET ready_count = progress.ready_count,
@@ -331,6 +330,10 @@ function createReckoningStore({
              ELSE 'BUILDING'
            END
            ${errorSql},
+           last_error = CASE
+             WHEN progress.ready_count >= manifest.total_count THEN NULL
+             ELSE ${lastError !== undefined ? '$3' : 'manifest.last_error'}
+           END,
            completed_at = CASE
              WHEN progress.ready_count >= manifest.total_count
                THEN COALESCE(manifest.completed_at, now())
@@ -398,7 +401,7 @@ function createReckoningStore({
         Math.max(1, Number(generationAttempts) || 1),
       ]
     );
-    await refreshPreparationProgress(reckoningId, userId, null);
+    await refreshPreparationProgress(reckoningId, userId);
     return rows?.[0] || null;
   }
 
