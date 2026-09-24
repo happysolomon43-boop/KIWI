@@ -10,7 +10,7 @@ const EVIDENCE_MODEL_VERSION = 1;
 const SCHEDULER_VERSION = 1;
 const SCORING_VERSION = 1;
 const LEARNING_EFFECTS_VERSION = 1;
-const PREPARATION_VERSION = 1;
+const PREPARATION_VERSION = 2;
 
 const RISK_BASE_BY_STATE = Object.freeze({
   DANGEROUS: 85,
@@ -57,7 +57,7 @@ const DELIVERY_E_RECKONING_CONFIG = Object.freeze({
   scoringVersion: SCORING_VERSION,
   learningEffectsVersion: LEARNING_EFFECTS_VERSION,
   preparationVersion: PREPARATION_VERSION,
-  configVersion: 5,
+  configVersion: 6,
   risk: Object.freeze({
     baseByState: RISK_BASE_BY_STATE,
     modifiers: RISK_MODIFIERS,
@@ -96,6 +96,9 @@ const DELIVERY_E_RECKONING_CONFIG = Object.freeze({
   preparation: Object.freeze({
     maxBankQuestions: 30,
     familyConcurrency: 4,
+    elevatedFamilyConcurrency: 2,
+    highFamilyConcurrency: 1,
+    severeFamilyConcurrency: 1,
     generationAttemptsPerItem: 3,
     claimStaleMinutes: 5,
     heartbeatSeconds: 45,

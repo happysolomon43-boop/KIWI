@@ -246,6 +246,244 @@ function createReckoningStore({
     return rows?.[0] || null;
   }
 
+  async function getPreparationManifest(
+    reckoningId,
+    userId,
+    { forUpdate = false } = {}
+  ) {
+    requireQuery();
+    let sql = `SELECT *
+               FROM reckoning_preparation_manifests
+               WHERE reckoning_id = $1 AND user_id = $2
+               LIMIT 1`;
+    if (forUpdate) sql += ' FOR UPDATE';
+    const { rows } = await query(sql, [reckoningId, userId]);
+    return rows?.[0] || null;
+  }
+
+  async function createPreparationManifest(record = {}) {
+    requireQuery();
+    if (!record.reckoningId || !record.userId) {
+      throw new ReckoningContractError(
+        'Preparation manifest requires reckoningId and userId.'
+      );
+    }
+    const totalCount = Math.max(1, Number(record.totalCount) || 0);
+    const { rows } = await query(
+      `INSERT INTO reckoning_preparation_manifests (
+         reckoning_id, user_id, preparation_version, config_version,
+         generation_group_id, plan, blueprints, family_order, deck_ids,
+         total_count, ready_count, status, last_error,
+         created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,
+         $10,0,'BUILDING',NULL,now(),now()
+       )
+       ON CONFLICT (reckoning_id) DO NOTHING
+       RETURNING *`,
+      [
+        record.reckoningId,
+        record.userId,
+        Math.max(1, Number(record.preparationVersion) || 1),
+        Math.max(1, Number(record.configVersion) || 1),
+        record.generationGroupId || record.reckoningId,
+        json(record.plan || {}),
+        json(record.blueprints || []),
+        json(record.familyOrder || []),
+        json(record.deckIds || []),
+        totalCount,
+      ]
+    );
+    if (rows?.[0]) return rows[0];
+    return getPreparationManifest(record.reckoningId, record.userId);
+  }
+
+  async function getPreparationItems(reckoningId, userId) {
+    requireQuery();
+    const { rows } = await query(
+      `SELECT *
+       FROM reckoning_preparation_items
+       WHERE reckoning_id = $1 AND user_id = $2
+       ORDER BY family_index ASC, item_index ASC, created_at ASC, id ASC`,
+      [reckoningId, userId]
+    );
+    return rows || [];
+  }
+
+  async function refreshPreparationProgress(reckoningId, userId, lastError = undefined) {
+    requireQuery();
+    const params = [reckoningId, userId];
+    if (lastError !== undefined) {
+      params.push(
+        lastError == null
+          ? null
+          : String(lastError?.message || lastError).slice(0, 1500)
+      );
+    }
+    const errorSql = '';
+    const { rows } = await query(
+      `UPDATE reckoning_preparation_manifests manifest
+       SET ready_count = progress.ready_count,
+           status = CASE
+             WHEN progress.ready_count >= manifest.total_count THEN 'READY'
+             WHEN progress.ready_count > 0 THEN 'PARTIAL'
+             ELSE 'BUILDING'
+           END
+           ${errorSql},
+           last_error = CASE
+             WHEN progress.ready_count >= manifest.total_count THEN NULL
+             ELSE ${lastError !== undefined ? '$3' : 'manifest.last_error'}
+           END,
+           completed_at = CASE
+             WHEN progress.ready_count >= manifest.total_count
+               THEN COALESCE(manifest.completed_at, now())
+             ELSE NULL
+           END,
+           updated_at = now()
+       FROM (
+         SELECT COUNT(*) FILTER (WHERE status = 'READY')::integer AS ready_count
+         FROM reckoning_preparation_items
+         WHERE reckoning_id = $1 AND user_id = $2
+       ) progress
+       WHERE manifest.reckoning_id = $1
+         AND manifest.user_id = $2
+       RETURNING manifest.*`,
+      params
+    );
+    return rows?.[0] || null;
+  }
+
+  async function savePreparationItemReady(reckoningId, userId, {
+    blueprint,
+    question,
+    generationAttempts = 1,
+    familyIndex = 0,
+    itemIndex = 0,
+  } = {}) {
+    requireQuery();
+    if (!blueprint?.id || !blueprint?.evidenceId || !question) {
+      throw new ReckoningContractError(
+        'Prepared question persistence requires blueprint and question data.'
+      );
+    }
+    const id = randomUUID();
+    const { rows } = await query(
+      `INSERT INTO reckoning_preparation_items (
+         id, reckoning_id, user_id, blueprint_id, evidence_id,
+         family_index, item_index, status, generated_question,
+         attempt_count, validation_issues, last_error, ready_at,
+         created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,'READY',$8::jsonb,
+         $9,'[]'::jsonb,NULL,now(),now(),now()
+       )
+       ON CONFLICT (reckoning_id, blueprint_id)
+       DO UPDATE SET
+         status = 'READY',
+         generated_question = EXCLUDED.generated_question,
+         attempt_count = reckoning_preparation_items.attempt_count + EXCLUDED.attempt_count,
+         validation_issues = '[]'::jsonb,
+         last_error = NULL,
+         ready_at = COALESCE(reckoning_preparation_items.ready_at, now()),
+         family_index = EXCLUDED.family_index,
+         item_index = EXCLUDED.item_index,
+         updated_at = now()
+       RETURNING *`,
+      [
+        id,
+        reckoningId,
+        userId,
+        String(blueprint.id),
+        String(blueprint.evidenceId),
+        Math.max(0, Number(familyIndex) || 0),
+        Math.max(0, Number(itemIndex) || 0),
+        json(question),
+        Math.max(1, Number(generationAttempts) || 1),
+      ]
+    );
+    await refreshPreparationProgress(reckoningId, userId);
+    return rows?.[0] || null;
+  }
+
+  async function savePreparationItemFailure(reckoningId, userId, {
+    blueprint,
+    error,
+    generationAttempts = 1,
+    familyIndex = 0,
+    itemIndex = 0,
+  } = {}) {
+    requireQuery();
+    if (!blueprint?.id || !blueprint?.evidenceId) {
+      throw new ReckoningContractError(
+        'Preparation failure persistence requires blueprint metadata.'
+      );
+    }
+    const id = randomUUID();
+    const message = String(
+      error?.message || error || 'Reckoning question generation failed'
+    ).slice(0, 1500);
+    const issues = Array.isArray(error?.validationIssues)
+      ? error.validationIssues.filter(Boolean).slice(0, 25)
+      : [];
+    const { rows } = await query(
+      `INSERT INTO reckoning_preparation_items (
+         id, reckoning_id, user_id, blueprint_id, evidence_id,
+         family_index, item_index, status, generated_question,
+         attempt_count, validation_issues, last_error, ready_at,
+         created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,'ERROR',NULL,
+         $8,$9::jsonb,$10,NULL,now(),now()
+       )
+       ON CONFLICT (reckoning_id, blueprint_id)
+       DO UPDATE SET
+         status = CASE
+           WHEN reckoning_preparation_items.status = 'READY' THEN 'READY'
+           ELSE 'ERROR'
+         END,
+         generated_question = reckoning_preparation_items.generated_question,
+         attempt_count = reckoning_preparation_items.attempt_count + EXCLUDED.attempt_count,
+         validation_issues = CASE
+           WHEN reckoning_preparation_items.status = 'READY'
+             THEN reckoning_preparation_items.validation_issues
+           ELSE EXCLUDED.validation_issues
+         END,
+         last_error = CASE
+           WHEN reckoning_preparation_items.status = 'READY'
+             THEN reckoning_preparation_items.last_error
+           ELSE EXCLUDED.last_error
+         END,
+         family_index = EXCLUDED.family_index,
+         item_index = EXCLUDED.item_index,
+         updated_at = now()
+       RETURNING *`,
+      [
+        id,
+        reckoningId,
+        userId,
+        String(blueprint.id),
+        String(blueprint.evidenceId),
+        Math.max(0, Number(familyIndex) || 0),
+        Math.max(0, Number(itemIndex) || 0),
+        Math.max(1, Number(generationAttempts) || 1),
+        json(issues),
+        message,
+      ]
+    );
+    await refreshPreparationProgress(reckoningId, userId, message);
+    return rows?.[0] || null;
+  }
+
+  async function clearPreparationArtifacts(reckoningId, userId) {
+    requireQuery();
+    const { rowCount } = await query(
+      `DELETE FROM reckoning_preparation_manifests
+       WHERE reckoning_id = $1 AND user_id = $2`,
+      [reckoningId, userId]
+    );
+    return Number(rowCount) > 0;
+  }
+
   async function claimPreparation(reckoningId, userId, staleMinutes = 5) {
     requireQuery();
     const { rows } = await query(
@@ -896,6 +1134,13 @@ function createReckoningStore({
   return Object.freeze({
     name: 'reckoning-postgres-store',
     getSession,
+    getPreparationManifest,
+    createPreparationManifest,
+    getPreparationItems,
+    refreshPreparationProgress,
+    savePreparationItemReady,
+    savePreparationItemFailure,
+    clearPreparationArtifacts,
     claimPreparation,
     touchPreparation,
     releasePreparationFailure,

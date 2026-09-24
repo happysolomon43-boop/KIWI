@@ -375,19 +375,107 @@ function createReckoningEngine(options = {}) {
         }
       }
 
-      const input = await preparationInputProvider({
-        session: claimed,
-        userId,
-      });
-      const prepared = await preparationService.prepare({
-        ...input,
-        context: {
-          ...(input?.context || {}),
-          subjectId: claimed.subject_id,
-          pressureScore: Number(claimed.pressure_score) || 0,
-        },
-        generationGroupId: claimed.id,
-      });
+      const resumablePreparationSupported =
+        typeof preparationService.buildManifest === 'function' &&
+        typeof store.getPreparationManifest === 'function' &&
+        typeof store.createPreparationManifest === 'function' &&
+        typeof store.getPreparationItems === 'function' &&
+        typeof store.savePreparationItemReady === 'function' &&
+        typeof store.savePreparationItemFailure === 'function';
+
+      let manifest = null;
+      let prepared = null;
+
+      if (resumablePreparationSupported) {
+        let manifestRow = await store.getPreparationManifest(claimed.id, userId);
+
+        const manifestIsCompatible =
+          manifestRow &&
+          Number(manifestRow.preparation_version) === Number(config.preparationVersion) &&
+          Number(manifestRow.config_version) === Number(config.configVersion);
+
+        if (manifestRow && !manifestIsCompatible) {
+          await store.clearPreparationArtifacts?.(claimed.id, userId);
+          manifestRow = null;
+        }
+
+        if (!manifestRow) {
+          const input = await preparationInputProvider({
+            session: claimed,
+            userId,
+          });
+          const builtManifest = preparationService.buildManifest({
+            ...input,
+            context: {
+              ...(input?.context || {}),
+              subjectId: claimed.subject_id,
+              pressureScore: Number(claimed.pressure_score) || 0,
+            },
+            generationGroupId: claimed.id,
+          });
+
+          manifestRow = await store.createPreparationManifest({
+            reckoningId: claimed.id,
+            userId,
+            preparationVersion: builtManifest.preparationVersion,
+            configVersion: builtManifest.configVersion,
+            generationGroupId: builtManifest.generationGroupId,
+            plan: builtManifest.plan,
+            blueprints: builtManifest.blueprints,
+            familyOrder: builtManifest.familyOrder,
+            deckIds: builtManifest.deckIds,
+            totalCount: builtManifest.totalCount,
+          });
+          if (!manifestRow) {
+            throw new ReckoningContractError(
+              'Failed to persist Reckoning preparation manifest.'
+            );
+          }
+        }
+
+        manifest = Object.freeze({
+          preparationVersion: Number(manifestRow.preparation_version),
+          configVersion: Number(manifestRow.config_version),
+          generationGroupId: manifestRow.generation_group_id,
+          plan: manifestRow.plan || {},
+          blueprints: Object.freeze([...(manifestRow.blueprints || [])]),
+          familyOrder: Object.freeze([...(manifestRow.family_order || [])]),
+          deckIds: Object.freeze([...(manifestRow.deck_ids || [])]),
+          totalCount: Number(manifestRow.total_count) || 0,
+          createdAt: manifestRow.created_at || null,
+        });
+        const preparedItems = await store.getPreparationItems(claimed.id, userId);
+
+        prepared = await preparationService.prepare({
+          manifest,
+          preparedItems,
+          generationGroupId: manifest.generationGroupId,
+          onQuestionReady: (item) =>
+            store.savePreparationItemReady(claimed.id, userId, item),
+          onQuestionFailure: (item) =>
+            store.savePreparationItemFailure(claimed.id, userId, item),
+        });
+      } else {
+        // Compatibility path for isolated unit-test doubles and legacy injected
+        // preparation services. Production uses the durable manifest path above.
+        const input = await preparationInputProvider({
+          session: claimed,
+          userId,
+        });
+        manifest = Object.freeze({
+          deckIds: Object.freeze([...(input?.deckIds || [])]),
+          generationGroupId: claimed.id,
+        });
+        prepared = await preparationService.prepare({
+          ...input,
+          context: {
+            ...(input?.context || {}),
+            subjectId: claimed.subject_id,
+            pressureScore: Number(claimed.pressure_score) || 0,
+          },
+          generationGroupId: claimed.id,
+        });
+      }
 
       const activated = await store.withTransaction(async (txStore) => {
         const locked = await txStore.getSession(claimed.id, userId, { forUpdate: true });
@@ -422,7 +510,7 @@ function createReckoningEngine(options = {}) {
 
         const exam = await txStore.createExecutionExam(userId, {
           subjectId: claimed.subject_id,
-          deckIds: input?.deckIds || [],
+          deckIds: prepared.manifest?.deckIds || manifest.deckIds || [],
           questionCount: prepared.questions.length,
           safetyWindowSeconds: config.execution.safetyWindowMinutes * 60,
         });
@@ -459,6 +547,13 @@ function createReckoningEngine(options = {}) {
         });
         if (!session) {
           throw new ReckoningContractError('Failed to activate prepared Reckoning session.');
+        }
+
+        // The exam/questions are now the canonical durable bank. Deleting the
+        // temporary preparation artifacts in this same transaction guarantees
+        // either full activation or a fully resumable pre-activation state.
+        if (typeof txStore.clearPreparationArtifacts === 'function') {
+          await txStore.clearPreparationArtifacts(claimed.id, userId);
         }
         return { exam, session };
       });
