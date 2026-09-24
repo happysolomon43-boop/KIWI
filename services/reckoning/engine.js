@@ -375,18 +375,84 @@ function createReckoningEngine(options = {}) {
         }
       }
 
-      const input = await preparationInputProvider({
-        session: claimed,
-        userId,
+      let manifestRow = typeof store.getPreparationManifest === 'function'
+        ? await store.getPreparationManifest(claimed.id, userId)
+        : null;
+
+      const manifestIsCompatible =
+        manifestRow &&
+        Number(manifestRow.preparation_version) === Number(config.preparationVersion) &&
+        Number(manifestRow.config_version) === Number(config.configVersion);
+
+      if (manifestRow && !manifestIsCompatible) {
+        await store.clearPreparationArtifacts?.(claimed.id, userId);
+        manifestRow = null;
+      }
+
+      if (!manifestRow) {
+        const input = await preparationInputProvider({
+          session: claimed,
+          userId,
+        });
+        if (typeof preparationService.buildManifest !== 'function') {
+          throw new ReckoningContractError(
+            'Resumable Reckoning preparation requires manifest support.'
+          );
+        }
+        const manifest = preparationService.buildManifest({
+          ...input,
+          context: {
+            ...(input?.context || {}),
+            subjectId: claimed.subject_id,
+            pressureScore: Number(claimed.pressure_score) || 0,
+          },
+          generationGroupId: claimed.id,
+        });
+
+        manifestRow = await store.createPreparationManifest({
+          reckoningId: claimed.id,
+          userId,
+          preparationVersion: manifest.preparationVersion,
+          configVersion: manifest.configVersion,
+          generationGroupId: manifest.generationGroupId,
+          plan: manifest.plan,
+          blueprints: manifest.blueprints,
+          familyOrder: manifest.familyOrder,
+          deckIds: manifest.deckIds,
+          totalCount: manifest.totalCount,
+        });
+        if (!manifestRow) {
+          throw new ReckoningContractError(
+            'Failed to persist Reckoning preparation manifest.'
+          );
+        }
+      }
+
+      const manifest = Object.freeze({
+        preparationVersion: Number(manifestRow.preparation_version),
+        configVersion: Number(manifestRow.config_version),
+        generationGroupId: manifestRow.generation_group_id,
+        plan: manifestRow.plan || {},
+        blueprints: Object.freeze([...(manifestRow.blueprints || [])]),
+        familyOrder: Object.freeze([...(manifestRow.family_order || [])]),
+        deckIds: Object.freeze([...(manifestRow.deck_ids || [])]),
+        totalCount: Number(manifestRow.total_count) || 0,
+        createdAt: manifestRow.created_at || null,
       });
+      const preparedItems = typeof store.getPreparationItems === 'function'
+        ? await store.getPreparationItems(claimed.id, userId)
+        : [];
+
       const prepared = await preparationService.prepare({
-        ...input,
-        context: {
-          ...(input?.context || {}),
-          subjectId: claimed.subject_id,
-          pressureScore: Number(claimed.pressure_score) || 0,
-        },
-        generationGroupId: claimed.id,
+        manifest,
+        preparedItems,
+        generationGroupId: manifest.generationGroupId,
+        onQuestionReady: typeof store.savePreparationItemReady === 'function'
+          ? (item) => store.savePreparationItemReady(claimed.id, userId, item)
+          : null,
+        onQuestionFailure: typeof store.savePreparationItemFailure === 'function'
+          ? (item) => store.savePreparationItemFailure(claimed.id, userId, item)
+          : null,
       });
 
       const activated = await store.withTransaction(async (txStore) => {
@@ -422,7 +488,7 @@ function createReckoningEngine(options = {}) {
 
         const exam = await txStore.createExecutionExam(userId, {
           subjectId: claimed.subject_id,
-          deckIds: input?.deckIds || [],
+          deckIds: prepared.manifest?.deckIds || manifest.deckIds || [],
           questionCount: prepared.questions.length,
           safetyWindowSeconds: config.execution.safetyWindowMinutes * 60,
         });
@@ -459,6 +525,13 @@ function createReckoningEngine(options = {}) {
         });
         if (!session) {
           throw new ReckoningContractError('Failed to activate prepared Reckoning session.');
+        }
+
+        // The exam/questions are now the canonical durable bank. Deleting the
+        // temporary preparation artifacts in this same transaction guarantees
+        // either full activation or a fully resumable pre-activation state.
+        if (typeof txStore.clearPreparationArtifacts === 'function') {
+          await txStore.clearPreparationArtifacts(claimed.id, userId);
         }
         return { exam, session };
       });
