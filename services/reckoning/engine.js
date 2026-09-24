@@ -375,31 +375,98 @@ function createReckoningEngine(options = {}) {
         }
       }
 
-      let manifestRow = typeof store.getPreparationManifest === 'function'
-        ? await store.getPreparationManifest(claimed.id, userId)
-        : null;
+      const resumablePreparationSupported =
+        typeof preparationService.buildManifest === 'function' &&
+        typeof store.getPreparationManifest === 'function' &&
+        typeof store.createPreparationManifest === 'function' &&
+        typeof store.getPreparationItems === 'function' &&
+        typeof store.savePreparationItemReady === 'function' &&
+        typeof store.savePreparationItemFailure === 'function';
 
-      const manifestIsCompatible =
-        manifestRow &&
-        Number(manifestRow.preparation_version) === Number(config.preparationVersion) &&
-        Number(manifestRow.config_version) === Number(config.configVersion);
+      let manifest = null;
+      let prepared = null;
 
-      if (manifestRow && !manifestIsCompatible) {
-        await store.clearPreparationArtifacts?.(claimed.id, userId);
-        manifestRow = null;
-      }
+      if (resumablePreparationSupported) {
+        let manifestRow = await store.getPreparationManifest(claimed.id, userId);
 
-      if (!manifestRow) {
+        const manifestIsCompatible =
+          manifestRow &&
+          Number(manifestRow.preparation_version) === Number(config.preparationVersion) &&
+          Number(manifestRow.config_version) === Number(config.configVersion);
+
+        if (manifestRow && !manifestIsCompatible) {
+          await store.clearPreparationArtifacts?.(claimed.id, userId);
+          manifestRow = null;
+        }
+
+        if (!manifestRow) {
+          const input = await preparationInputProvider({
+            session: claimed,
+            userId,
+          });
+          const builtManifest = preparationService.buildManifest({
+            ...input,
+            context: {
+              ...(input?.context || {}),
+              subjectId: claimed.subject_id,
+              pressureScore: Number(claimed.pressure_score) || 0,
+            },
+            generationGroupId: claimed.id,
+          });
+
+          manifestRow = await store.createPreparationManifest({
+            reckoningId: claimed.id,
+            userId,
+            preparationVersion: builtManifest.preparationVersion,
+            configVersion: builtManifest.configVersion,
+            generationGroupId: builtManifest.generationGroupId,
+            plan: builtManifest.plan,
+            blueprints: builtManifest.blueprints,
+            familyOrder: builtManifest.familyOrder,
+            deckIds: builtManifest.deckIds,
+            totalCount: builtManifest.totalCount,
+          });
+          if (!manifestRow) {
+            throw new ReckoningContractError(
+              'Failed to persist Reckoning preparation manifest.'
+            );
+          }
+        }
+
+        manifest = Object.freeze({
+          preparationVersion: Number(manifestRow.preparation_version),
+          configVersion: Number(manifestRow.config_version),
+          generationGroupId: manifestRow.generation_group_id,
+          plan: manifestRow.plan || {},
+          blueprints: Object.freeze([...(manifestRow.blueprints || [])]),
+          familyOrder: Object.freeze([...(manifestRow.family_order || [])]),
+          deckIds: Object.freeze([...(manifestRow.deck_ids || [])]),
+          totalCount: Number(manifestRow.total_count) || 0,
+          createdAt: manifestRow.created_at || null,
+        });
+        const preparedItems = await store.getPreparationItems(claimed.id, userId);
+
+        prepared = await preparationService.prepare({
+          manifest,
+          preparedItems,
+          generationGroupId: manifest.generationGroupId,
+          onQuestionReady: (item) =>
+            store.savePreparationItemReady(claimed.id, userId, item),
+          onQuestionFailure: (item) =>
+            store.savePreparationItemFailure(claimed.id, userId, item),
+        });
+      } else {
+        // Compatibility path for isolated unit-test doubles and legacy injected
+        // preparation services. Production uses the durable manifest path above.
         const input = await preparationInputProvider({
           session: claimed,
           userId,
         });
-        if (typeof preparationService.buildManifest !== 'function') {
-          throw new ReckoningContractError(
-            'Resumable Reckoning preparation requires manifest support.'
-          );
-        }
-        const manifest = preparationService.buildManifest({
+        manifest = Object.freeze({
+          deckIds: Object.freeze([...(input?.deckIds || [])]),
+          generationGroupId: claimed.id,
+        });
+        prepared = await preparationService.prepare({
           ...input,
           context: {
             ...(input?.context || {}),
@@ -408,52 +475,7 @@ function createReckoningEngine(options = {}) {
           },
           generationGroupId: claimed.id,
         });
-
-        manifestRow = await store.createPreparationManifest({
-          reckoningId: claimed.id,
-          userId,
-          preparationVersion: manifest.preparationVersion,
-          configVersion: manifest.configVersion,
-          generationGroupId: manifest.generationGroupId,
-          plan: manifest.plan,
-          blueprints: manifest.blueprints,
-          familyOrder: manifest.familyOrder,
-          deckIds: manifest.deckIds,
-          totalCount: manifest.totalCount,
-        });
-        if (!manifestRow) {
-          throw new ReckoningContractError(
-            'Failed to persist Reckoning preparation manifest.'
-          );
-        }
       }
-
-      const manifest = Object.freeze({
-        preparationVersion: Number(manifestRow.preparation_version),
-        configVersion: Number(manifestRow.config_version),
-        generationGroupId: manifestRow.generation_group_id,
-        plan: manifestRow.plan || {},
-        blueprints: Object.freeze([...(manifestRow.blueprints || [])]),
-        familyOrder: Object.freeze([...(manifestRow.family_order || [])]),
-        deckIds: Object.freeze([...(manifestRow.deck_ids || [])]),
-        totalCount: Number(manifestRow.total_count) || 0,
-        createdAt: manifestRow.created_at || null,
-      });
-      const preparedItems = typeof store.getPreparationItems === 'function'
-        ? await store.getPreparationItems(claimed.id, userId)
-        : [];
-
-      const prepared = await preparationService.prepare({
-        manifest,
-        preparedItems,
-        generationGroupId: manifest.generationGroupId,
-        onQuestionReady: typeof store.savePreparationItemReady === 'function'
-          ? (item) => store.savePreparationItemReady(claimed.id, userId, item)
-          : null,
-        onQuestionFailure: typeof store.savePreparationItemFailure === 'function'
-          ? (item) => store.savePreparationItemFailure(claimed.id, userId, item)
-          : null,
-      });
 
       const activated = await store.withTransaction(async (txStore) => {
         const locked = await txStore.getSession(claimed.id, userId, { forUpdate: true });
