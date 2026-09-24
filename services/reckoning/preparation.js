@@ -321,9 +321,12 @@ function createPartialPreparationError({
   totalCount,
 } = {}) {
   const first = failures?.[0]?.error || null;
-  const message =
+  const baseMessage =
     first?.message ||
-    `Reckoning preparation paused after saving ${readyCount}/${totalCount} validated questions.`;
+    'Reckoning question generation paused before the bank was complete.';
+  const message =
+    `${baseMessage} ${readyCount}/${totalCount} validated question${readyCount === 1 ? '' : 's'} ` +
+    `${readyCount === 1 ? 'is' : 'are'} saved and will be reused on retry.`;
   const error = new ReckoningContractError(message);
   error.code = isAIAvailabilityError(first)
     ? (first.code || 'ERR_RECKONING_PREPARATION_AVAILABILITY')
