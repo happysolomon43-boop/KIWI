@@ -13,7 +13,8 @@
     "build:web": "node scripts/build-web.js",
     "test:teaching": "node --test tests/teaching/unit/*.test.js",
     "test:teaching:integration": "node --test tests/teaching/integration/*.test.js",
-    "verify:teaching:d01": "node scripts/verify-teaching-d01-foundation.js"
+    "verify:teaching:d01": "node scripts/verify-teaching-d01-foundation.js",
+    "verify:teaching:d02": "node scripts/verify-teaching-d02-runtime.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
