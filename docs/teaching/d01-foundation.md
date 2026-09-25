@@ -16,7 +16,7 @@ D01 establishes structure only. Academic behavior belongs to later deliveries.
 - TCH-0025–0026: `teaching/events/` defines dispatcher/event names/contracts without implementing D02 durable runtime.
 - TCH-0027: `teaching/events/idempotency.js` defines replay-safe handler/store interfaces; the included memory store is test/dev only.
 - TCH-0028: `teaching/events/audit.js` defines structured audit events without D04 persistence.
-- TCH-0029 and TCH-0675: flags default off and are evaluated server-side.
+- TCH-0029 and TCH-0675: superseded by the 2026-09-25 Class-E Feature Availability Amendment; Teaching uses no generic runtime feature toggles or development-user allowlists. Implemented/accepted capabilities are available normally, while unimplemented capabilities remain absent until their owning delivery.
 - TCH-0030: `teaching/config/` owns Teaching environment/config parsing; provider/model settings are opaque and remain owned by KIWI AI routing.
 - TCH-0031: `teaching/security/secret-audit.js` plus D01 tests fail on source credentials/provider SDK imports in Teaching code.
 - TCH-0032: `teaching/security/privileged-operations.js` defines browser-trust prohibition for grading finalization, package locking, formal request decisions and schedule-authority updates.
