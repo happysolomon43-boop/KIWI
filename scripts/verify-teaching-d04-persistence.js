@@ -61,8 +61,9 @@ check(/original_free_form_text/i.test(sql) && /teaching_student_course_intake_ex
 check(/teaching_academic_audit_immutable/i.test(sql), 'academic audit log must be immutable');
 check(/CREATE ROLE teaching_domain_service NOLOGIN/i.test(sql), 'trusted domain service role must be explicit');
 check(/CREATE ROLE teaching_protected_service NOLOGIN/i.test(sql), 'protected preparation service role must be explicit');
-check(/REVOKE ALL ON SCHEMA teaching_protected FROM PUBLIC\\s*,\\s*anon\\s*,\\s*authenticated/i.test(sql), 'protected schema must be hidden from browser roles');
-check(/REVOKE ALL ON TABLE teaching_protected\\.prepared_artifact_payloads FROM PUBLIC\\s*,\\s*anon\\s*,\\s*authenticated\\s*,\\s*teaching_domain_service/i.test(sql), 'ordinary Teaching domain role must not read protected payloads');
+check(tightSql.includes('REVOKEALLONSCHEMAteaching_protectedFROMPUBLIC,anon,authenticated;'), 'protected schema must be hidden from browser roles');
+check(tightSql.includes('REVOKEALLONTABLEteaching_protected.prepared_artifact_payloadsFROMPUBLIC,anon,authenticated,service_role,teaching_domain_service,teaching_protected_service;'), 'protected payload table must clear inherited/default grants before explicit grants');
+check(tightSql.includes('GRANTSELECT,INSERTONTABLEteaching_protected.prepared_artifact_payloadsTOservice_role,teaching_protected_service;'), 'protected payload access must be limited to the protected service boundary');
 check(!/GRANT\s+(?:ALL|INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,120}\sTO\s+(?:anon|authenticated)/i.test(sql), 'D04 must not grant browser DML on Teaching persistence');
 check(!/GRANT\s+DELETE[\s\S]{0,140}\sTO\s+(?:service_role|teaching_domain_service)/i.test(sql), 'D04 least-privilege service roles must not receive academic DELETE');
 check(/REVOKE ALL ON TABLE public\.%I FROM PUBLIC,anon,authenticated,service_role,teaching_domain_service/.test(sql), 'D04 must clear inherited/default public-table privileges before selective grants');
