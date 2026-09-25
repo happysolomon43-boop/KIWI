@@ -52,6 +52,9 @@ jobs:
       - name: Verify D02 runtime foundation
         run: npm run verify:teaching:d02
 
+      - name: Verify D03 control foundation
+        run: npm run verify:teaching:d03
+
       - name: Check backend syntax
         run: node --check index.js
 
