@@ -454,10 +454,17 @@ function createAIOrchestrator({
           continue;
         }
 
-        const budgetClaim = await resolvedOperationBudget.claim({
-          operationId,
-          taskClass: task.class,
-        });
+        let budgetClaim;
+        try {
+          budgetClaim = await resolvedOperationBudget.claim({
+            operationId,
+            taskClass: task.class,
+          });
+        } catch (budgetStoreError) {
+          await sideEffect('route lease release', () => routeLease.release());
+          resolvedProviderHealth.release(candidate.modelId);
+          throw budgetStoreError;
+        }
         if (!budgetClaim.allowed) {
           await sideEffect('route lease release', () => routeLease.release());
           resolvedProviderHealth.release(candidate.modelId);
