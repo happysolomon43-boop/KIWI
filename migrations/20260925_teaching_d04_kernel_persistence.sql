@@ -345,7 +345,9 @@ CREATE TABLE teaching_preparation.artifact_versions (
   created_by_capability_id text NOT NULL, prompt_family_ref text, schema_version text NOT NULL,
   artifact_digest text NOT NULL, protected_content_class text NOT NULL CHECK (length(btrim(protected_content_class))>0),
   validity_state text NOT NULL DEFAULT 'CURRENT' CHECK (validity_state IN ('CURRENT','PARTIALLY_STALE','STALE','SUPERSEDED','RETIRED_CONTAMINATED')),
-  concise_rationale text, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(workspace_id,version_no)
+  concise_rationale text, created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(workspace_id,version_no),
+  UNIQUE(artifact_version_id,student_id,protected_content_class)
 );
 
 ALTER TABLE teaching_preparation.workspaces
@@ -426,11 +428,14 @@ CREATE TABLE teaching_preparation.finding_evidence_rule_refs (
 );
 
 CREATE TABLE teaching_protected.prepared_artifact_payloads (
-  artifact_version_id text PRIMARY KEY REFERENCES teaching_preparation.artifact_versions(artifact_version_id) ON DELETE CASCADE,
+  artifact_version_id text PRIMARY KEY,
   student_id text NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   protected_content_class text NOT NULL CHECK (length(btrim(protected_content_class))>0),
   payload_schema_version text NOT NULL, payload jsonb NOT NULL, payload_digest text NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(artifact_version_id,student_id,protected_content_class)
+    REFERENCES teaching_preparation.artifact_versions(artifact_version_id,student_id,protected_content_class)
+    ON DELETE CASCADE
 );
 
 CREATE INDEX teaching_preparation_workspace_target_idx
