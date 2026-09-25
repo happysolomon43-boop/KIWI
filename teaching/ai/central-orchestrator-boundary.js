@@ -33,12 +33,17 @@ function createCentralAIExecutionBoundary({
     taskId,
     request = {},
     responsibilityKey,
+    capabilityId = null,
     intelligenceClass,
     authorityLevel,
     authoritativeOwner = null,
     correlationId = null,
     causationId = null,
     promptTemplateVersion = null,
+    promptFamilyId = null,
+    promptFamilyVersion = null,
+    constitutionVersion = null,
+    outputSchemaId = null,
     outputSchemaVersion = null,
     schemaValidator = null,
     domainValidator = null,
@@ -64,19 +69,21 @@ function createCentralAIExecutionBoundary({
           correlationId,
           causationId,
           responsibilityKey,
+          capabilityId,
           intelligenceClass: klass,
           authorityLevel: authority,
           centralTaskId: taskId,
           promptTemplateVersion,
+          promptFamilyId,
+          promptFamilyVersion,
+          constitutionVersion,
+          outputSchemaId,
           outputSchemaVersion,
           authoritativeOwner,
         })
       : null;
 
     try {
-      // No provider/model identifier, retry policy, thinking configuration or
-      // fallback route is accepted from Teaching feature code. Central KIWI AI
-      // orchestration owns those decisions.
       const centralResult = await aiRun(taskId, request, {});
 
       const validated = await validateModelOutput({
