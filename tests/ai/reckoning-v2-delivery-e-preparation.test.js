@@ -8,6 +8,7 @@ const {
   fitPlanToBank,
 } = require('../../services/reckoning/preparation');
 const { createReckoningEngine } = require('../../services/reckoning');
+const { AIError, AI_ERROR_CODES } = require('../../services/ai/errors');
 
 function evidence(sourceCardId, riskLevel, riskScore) {
   return {
@@ -380,4 +381,54 @@ test('generation failure leaves preparation retryable and never opens a transact
   );
 
   assert.deepEqual(order, ['released']);
+});
+
+test('provider availability failure bypasses Reckoning content-validation retries', async () => {
+  let calls = 0;
+  const blueprint = {
+    id: 'bp-availability',
+    evidenceId: 'evidence-availability',
+    sourceCardId: 'card-availability',
+    role: 'DIAGNOSTIC',
+    variantIndex: 0,
+    cognitiveLevel: 'APPLICATION',
+    riskLevel: 'CRITICAL',
+    sourceSnapshot: { front_content: 'Question', back_content: 'Answer' },
+  };
+
+  const service = createPreparationService({
+    questionBank: {
+      buildBlueprints() { return [blueprint]; },
+      async generate() {
+        calls += 1;
+        throw new AIError('temporary request throttle', {
+          code: AI_ERROR_CODES.RATE_LIMIT_RPM,
+          status: 429,
+          retryable: true,
+          scope: 'MODEL_SLOT',
+        });
+      },
+    },
+  });
+
+  await assert.rejects(
+    service.prepare({
+      manifest: {
+        generationGroupId: 'reckoning-availability',
+        plan: {
+          evidence: [{ id: 'evidence-availability' }],
+          softQuestionBudget: 5,
+          hardQuestionCap: 30,
+        },
+        blueprints: [blueprint],
+        familyOrder: ['evidence-availability'],
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, AI_ERROR_CODES.RATE_LIMIT_RPM);
+      return true;
+    }
+  );
+
+  assert.equal(calls, 1);
 });
