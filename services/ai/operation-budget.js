@@ -26,7 +26,11 @@ const AVAILABILITY_FAILURE_CODES = new Set([
 
 const DEFAULT_OPERATION_LIMITS = Object.freeze({
   [AI_CLASSES.VVIP]: Object.freeze({
-    maxProviderAttempts: 64,
+    // Reckoning can legitimately prepare up to 30 questions and each item may
+    // use up to 3 content-validation attempts after successful provider calls.
+    // Keep that quality envelope intact; availability failures are bounded by
+    // the much tighter counters below.
+    maxProviderAttempts: 96,
     maxAvailabilityFailures: 24,
     maxShortRateLimitFailures: 12,
     maxProviderOverloadFailures: 12,
