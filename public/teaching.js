@@ -206,27 +206,35 @@ function renderTeachingUnavailable({ signedIn, message } = {}) {
   const main = document.getElementById('teachingApp');
   if (!main) return;
 
-  main.innerHTML = `
-    <section style="min-height:62vh;display:grid;place-items:center;padding:24px 0;">
-      <div style="width:min(520px,100%);text-align:center;">
-        <div style="font-size:18px;font-weight:800;letter-spacing:-0.02em;margin-bottom:10px;">
-          KIWI Teaching is not available for this account yet
-        </div>
-        <div style="font-size:14px;line-height:1.65;color:var(--teaching-muted);margin-bottom:20px;">
-          ${message || (signedIn
-            ? 'Teaching is currently limited to approved development and test users.'
-            : 'Sign in to KIWI first, then open Teaching from the KIWI dashboard.')}
-        </div>
-        <button id="teachingUnavailableBack" class="teaching-menu-action" type="button" style="width:auto;margin:0 auto;">
-          <span>Back to KIWI</span>
-        </button>
-      </div>
-    </section>
-  `;
+  const section = document.createElement('section');
+  section.style.cssText = 'min-height:62vh;display:grid;place-items:center;padding:24px 0;';
 
-  document.getElementById('teachingUnavailableBack')?.addEventListener('click', () => {
+  const card = document.createElement('div');
+  card.style.cssText = 'width:min(520px,100%);text-align:center;';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:18px;font-weight:800;letter-spacing:-0.02em;margin-bottom:10px;';
+  title.textContent = 'KIWI Teaching is not available for this account yet';
+
+  const detail = document.createElement('div');
+  detail.style.cssText = 'font-size:14px;line-height:1.65;color:var(--teaching-muted);margin-bottom:20px;';
+  detail.textContent = message || (signedIn
+    ? 'Teaching is currently limited to approved development and test users.'
+    : 'Sign in to KIWI first, then open Teaching from the KIWI dashboard.');
+
+  const back = document.createElement('button');
+  back.id = 'teachingUnavailableBack';
+  back.className = 'teaching-menu-action';
+  back.type = 'button';
+  back.style.cssText = 'width:auto;margin:0 auto;';
+  back.textContent = 'Back to KIWI';
+  back.addEventListener('click', () => {
     window.location.assign(KIWI_PATH);
   });
+
+  card.append(title, detail, back);
+  section.appendChild(card);
+  main.replaceChildren(section);
 }
 
 async function bootstrapTeachingAccess() {
