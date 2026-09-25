@@ -8,6 +8,8 @@ const { createGeminiTransport } = require('./gemini-transport');
 const { normalizeGeminiResponse } = require('./response-normalizer');
 const { createProviderHealth, MODEL_AVAILABILITY_CODES } = require('./provider-health');
 const { createAITrafficController } = require('./traffic-controller');
+const { createRouteScheduler } = require('./route-scheduler');
+const { createOperationBudget } = require('./operation-budget');
 const {
   AIError,
   AI_ERROR_CODES,
@@ -28,10 +30,13 @@ const FAST_MODEL_FALLBACK_CODES = new Set([
   AI_ERROR_CODES.EMPTY_RESPONSE,
 ]);
 
-const PROJECT_SLOT_QUOTA_CODES = new Set([
+const DAILY_QUOTA_CODES = new Set([
+  AI_ERROR_CODES.RATE_LIMIT_RPD,
+]);
+
+const SHORT_RATE_LIMIT_CODES = new Set([
   AI_ERROR_CODES.RATE_LIMIT_RPM,
   AI_ERROR_CODES.RATE_LIMIT_TPM,
-  AI_ERROR_CODES.RATE_LIMIT_RPD,
   AI_ERROR_CODES.RATE_LIMIT_UNKNOWN,
 ]);
 
@@ -70,6 +75,8 @@ function createAIOrchestrator({
   modelLifecycle = null,
   providerHealth = null,
   trafficController = null,
+  routeScheduler = null,
+  operationBudget = null,
   transport = null,
   normalizer = normalizeGeminiResponse,
   logger = console,
@@ -121,6 +128,15 @@ function createAIOrchestrator({
     env,
     clock,
   });
+  const resolvedRouteScheduler = routeScheduler || createRouteScheduler({
+    env,
+    clock,
+  });
+  const resolvedOperationBudget = operationBudget || createOperationBudget({
+    env,
+    clock,
+  });
+  let operationSequence = 0;
 
   function retryPolicyFor(task) {
     return RETRY_POLICY_CONFIG[task?.retryPolicy] || DEFAULT_RETRY_POLICY;
@@ -209,9 +225,15 @@ function createAIOrchestrator({
       ? resolvedProjectPool.orderedSlots(modelId)
       : resolvedProjectPool.peekOrderedSlots(modelId);
 
-    return quotaManager
+    const quotaEligible = quotaManager
       ? quotaManager.filterEligibleSlots(modelId, ordered)
       : ordered;
+
+    return resolvedRouteScheduler.orderSlots(
+      modelId,
+      quotaEligible,
+      quotaManager
+    );
   }
 
   function plan(taskId, { preferredModelId = null } = {}) {
@@ -323,9 +345,13 @@ function createAIOrchestrator({
 
     const attempts = [];
     const requestStarted = Date.now();
+    const operationId = generationGroupId && task.affinityGroup
+      ? `${task.affinityGroup}::${generationGroupId}`
+      : requestId || `request::${taskId}::${nowMs()}::${++operationSequence}`;
     let lastError = null;
     let hadEligibleRoute = false;
     const providerBlockedModels = [];
+    const routeBlockedRoutes = [];
     let trafficLease = null;
     let queueWaitMs = 0;
     let admissionLimit = null;
@@ -352,6 +378,7 @@ function createAIOrchestrator({
       trafficLease = await resolvedTrafficController.acquire({
         taskId,
         taskClass: task.class,
+        executionLane: task.executionLane,
         timeoutMs: task.timeoutMs,
       });
       queueWaitMs = Number(trafficLease?.queueWaitMs) || 0;
@@ -387,7 +414,8 @@ function createAIOrchestrator({
 
       let skipRemainingSlotsForModel = false;
       let modelAttemptCount = 0;
-      let modelQuotaAttemptCount = 0;
+      let modelDailyQuotaAttemptCount = 0;
+      let modelShortRateLimitAttemptCount = 0;
       let modelTransientAttemptCount = 0;
 
       for (const slot of slots) {
@@ -396,8 +424,68 @@ function createAIOrchestrator({
           break modelLoop;
         }
 
+        // Requests that entered while a model was healthy must re-check the
+        // circuit before each additional provider attempt. A half-open lease
+        // is exempt because this request owns the single recovery probe.
+        if (!providerLease.halfOpenProbe) {
+          const liveProviderAvailability =
+            resolvedProviderHealth.availability(candidate.modelId);
+          if (!liveProviderAvailability.available) {
+            providerBlockedModels.push(Object.freeze({
+              modelId: candidate.modelId,
+              state: liveProviderAvailability.state,
+              retryAfterMs: liveProviderAvailability.retryAfterMs,
+            }));
+            skipRemainingSlotsForModel = true;
+            break;
+          }
+        }
+
+        const routeLease = await resolvedRouteScheduler.acquire(
+          candidate.modelId,
+          slot
+        );
+        if (!routeLease.available) {
+          routeBlockedRoutes.push(Object.freeze({
+            modelId: candidate.modelId,
+            slotId: slot.id,
+            reason: routeLease.reason,
+          }));
+          continue;
+        }
+
+        const budgetClaim = await resolvedOperationBudget.claim({
+          operationId,
+          taskClass: task.class,
+        });
+        if (!budgetClaim.allowed) {
+          await sideEffect('route lease release', () => routeLease.release());
+          resolvedProviderHealth.release(candidate.modelId);
+          const budgetError = new AIError(
+            `AI operation budget exhausted for task ${taskId}`,
+            {
+              code: AI_ERROR_CODES.OPERATION_BUDGET_EXHAUSTED,
+              retryable: false,
+              scope: 'OPERATION',
+              details: {
+                operationId,
+                taskId,
+                retryAuthority: 'ORCHESTRATOR',
+                limits: budgetClaim.limits,
+                state: budgetClaim.state,
+              },
+            }
+          );
+          await finishFailure(budgetError);
+          throw budgetError;
+        }
+
         const attemptNumber = attempts.length + 1;
         const attemptStarted = Date.now();
+        const operationAttemptNumber = budgetClaim.attemptNumber;
+        const routeStateBefore = quotaManager?.get
+          ? quotaManager.get(slot.id, candidate.modelId).state
+          : 'READY';
         const generationConfig = {
           ...featureGenerationConfig,
           ...candidate.thinkingGenerationConfig,
@@ -439,6 +527,12 @@ function createAIOrchestrator({
             slot.id,
             candidate.modelId
           ));
+          await sideEffect('route scheduler success', () =>
+            resolvedRouteScheduler.recordSuccess(candidate.modelId, slot.id)
+          );
+          await sideEffect('operation budget success', () =>
+            resolvedOperationBudget.recordOutcome(operationId)
+          );
           const providerBeforeSuccess = resolvedProviderHealth.snapshot(candidate.modelId);
           resolvedProviderHealth.recordSuccess(candidate.modelId);
           resolvedTrafficController.noteSuccess();
@@ -467,10 +561,17 @@ function createAIOrchestrator({
             outputTokens: normalized.usage.outputTokens,
             thoughtTokens: normalized.usage.thoughtTokens,
             totalTokens: normalized.usage.totalTokens,
+            routeStateBefore,
+            routeStateAfter: quotaManager?.get
+              ? quotaManager.get(slot.id, candidate.modelId).state
+              : 'READY',
+            operationId,
+            operationAttemptNumber,
             startedAt: new Date(attemptStarted),
             completedAt: new Date(),
           }));
 
+          await sideEffect('route lease release', () => routeLease.release());
           setAffinity(task, generationGroupId, candidate.modelId);
 
           await sideEffect('telemetry finish success', () => telemetry?.finishRequest(requestId, {
@@ -513,9 +614,11 @@ function createAIOrchestrator({
             modelId: candidate.modelId,
             projectSlot: slot.id,
           });
-          const isProjectSlotQuotaFailure = PROJECT_SLOT_QUOTA_CODES.has(aiError.code);
+          const isDailyQuotaFailure = DAILY_QUOTA_CODES.has(aiError.code);
+          const isShortRateLimitFailure = SHORT_RATE_LIMIT_CODES.has(aiError.code);
           const isProviderAvailabilityFailure = MODEL_AVAILABILITY_CODES.has(aiError.code);
-          if (isProjectSlotQuotaFailure) modelQuotaAttemptCount += 1;
+          if (isDailyQuotaFailure) modelDailyQuotaAttemptCount += 1;
+          else if (isShortRateLimitFailure) modelShortRateLimitAttemptCount += 1;
           else modelAttemptCount += 1;
 
           const providerState = isProviderAvailabilityFailure
@@ -544,6 +647,17 @@ function createAIOrchestrator({
             candidate.modelId,
             aiError
           ));
+          await sideEffect('route scheduler failure', () =>
+            resolvedRouteScheduler.recordFailure(candidate.modelId, slot.id, aiError)
+          );
+          await sideEffect('operation budget failure', () =>
+            resolvedOperationBudget.recordOutcome(operationId, aiError)
+          );
+
+          const providerEvidence = aiError.providerEvidence || {};
+          const routeStateAfter = quotaManager?.get
+            ? quotaManager.get(slot.id, candidate.modelId).state
+            : routeStateBefore;
 
           await sideEffect('telemetry failed attempt', () => telemetry?.recordAttempt({
             requestId,
@@ -553,10 +667,24 @@ function createAIOrchestrator({
             outcome: aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED',
             errorCode: aiError.code,
             httpStatus: aiError.status,
+            providerErrorCode: providerEvidence.providerErrorCode || null,
+            providerStatus: providerEvidence.providerStatus || null,
+            quotaDimension: providerEvidence.quotaDimension || null,
+            quotaMetric: providerEvidence.quotaMetric || null,
+            quotaLimitName: providerEvidence.quotaLimitName || null,
+            quotaLimitValue: providerEvidence.quotaLimitValue ?? null,
+            retryAfterMs: aiError.retryAfterMs,
+            classificationSource: providerEvidence.classificationSource || null,
+            routeStateBefore,
+            routeStateAfter,
+            operationId,
+            operationAttemptNumber,
             latencyMs: Date.now() - attemptStarted,
             startedAt: new Date(attemptStarted),
             completedAt: new Date(),
           }));
+
+          await sideEffect('route lease release', () => routeLease.release());
 
           if (typeof logger?.warn === 'function') {
             logger.warn('[KIWI AI] attempt failed', {
@@ -616,12 +744,28 @@ function createAIOrchestrator({
             aiError.retryable ||
             aiError.code === AI_ERROR_CODES.EMPTY_RESPONSE
           ) {
-            if (isProjectSlotQuotaFailure) {
-              // Quota is tied to this project+model route. Keep the same model
-              // and rotate to another healthy key before degrading model quality.
+            if (isDailyQuotaFailure) {
+              // A confirmed daily quota failure is route-specific. It is safe
+              // to continue through independent projects for this model.
               if (
-                modelQuotaAttemptCount >=
-                (retryPolicy.maxQuotaAttemptsPerModel || retryPolicy.maxAttemptsPerModel)
+                modelDailyQuotaAttemptCount >=
+                (retryPolicy.maxDailyQuotaAttemptsPerModel ||
+                 retryPolicy.maxQuotaAttemptsPerModel ||
+                 retryPolicy.maxAttemptsPerModel)
+              ) {
+                skipRemainingSlotsForModel = true;
+                break;
+              }
+              continue;
+            }
+
+            if (isShortRateLimitFailure) {
+              // RPM/TPM/unknown 429s are intentionally different from RPD:
+              // pace and probe only a few independent routes rather than
+              // sweeping the whole project pool in milliseconds.
+              if (
+                modelShortRateLimitAttemptCount >=
+                (retryPolicy.maxShortRateLimitAttemptsPerModel || 2)
               ) {
                 skipRemainingSlotsForModel = true;
                 break;
@@ -663,7 +807,12 @@ function createAIOrchestrator({
     const blockedOnlyByProviderHealth =
       attempts.length === 0 &&
       hadEligibleRoute &&
-      providerBlockedModels.length > 0;
+      providerBlockedModels.length > 0 &&
+      routeBlockedRoutes.length === 0;
+    const blockedOnlyByRouteContention =
+      attempts.length === 0 &&
+      hadEligibleRoute &&
+      routeBlockedRoutes.length > 0;
     const providerRetryAfterMs = providerBlockedModels
       .map((entry) => Number(entry.retryAfterMs))
       .filter((value) => Number.isFinite(value) && value > 0)
@@ -672,35 +821,56 @@ function createAIOrchestrator({
     const finalCode = lastError?.code || (
       blockedOnlyByProviderHealth
         ? AI_ERROR_CODES.PROVIDER_OVERLOADED
-        : hadEligibleRoute
-          ? AI_ERROR_CODES.UNKNOWN
-          : AI_ERROR_CODES.CAPACITY_EXHAUSTED
+        : blockedOnlyByRouteContention
+          ? AI_ERROR_CODES.ORCHESTRATOR_BUSY
+          : hadEligibleRoute
+            ? AI_ERROR_CODES.UNKNOWN
+            : AI_ERROR_CODES.CAPACITY_EXHAUSTED
     );
     const finalMessage = lastError
       ? `All approved routes failed for AI task ${taskId}`
       : blockedOnlyByProviderHealth
         ? `Approved models are temporarily unavailable for AI task ${taskId}`
-        : `No healthy project/model capacity is currently available for AI task ${taskId}`;
+        : blockedOnlyByRouteContention
+          ? `Healthy AI routes are temporarily busy for task ${taskId}`
+          : `No healthy project/model capacity is currently available for AI task ${taskId}`;
     const finalError = new AIError(
       finalMessage,
       {
         code: finalCode,
         status: lastError?.status || (
-          blockedOnlyByProviderHealth ? 503 : null
+          blockedOnlyByProviderHealth || blockedOnlyByRouteContention ? 503 : null
         ),
         retryable: lastError
           ? Boolean(lastError.retryable)
-          : blockedOnlyByProviderHealth,
-        retryAfterMs: lastError?.retryAfterMs || providerRetryAfterMs,
-        scope: blockedOnlyByProviderHealth ? 'PROVIDER' : 'REQUEST',
+          : (blockedOnlyByProviderHealth || blockedOnlyByRouteContention),
+        retryAfterMs: lastError?.retryAfterMs ||
+          providerRetryAfterMs ||
+          (blockedOnlyByRouteContention ? 100 : null),
+        scope: blockedOnlyByProviderHealth
+          ? 'PROVIDER'
+          : blockedOnlyByRouteContention
+            ? 'ORCHESTRATOR'
+            : 'REQUEST',
         details: {
           attempts,
           lastErrorCode: lastError?.code || null,
           hadEligibleRoute,
           blockedOnlyByProviderHealth,
+          blockedOnlyByRouteContention,
           providerBlockedModels,
+          routeBlockedRoutes,
+          operationId,
+          retryAuthority: 'ORCHESTRATOR',
+          providerAttemptsExhausted: attempts.length >= retryPolicy.maxAttempts,
           retryPolicy: task.retryPolicy,
           maxAttempts: retryPolicy.maxAttempts,
+          maxDailyQuotaAttemptsPerModel:
+            retryPolicy.maxDailyQuotaAttemptsPerModel ||
+            retryPolicy.maxQuotaAttemptsPerModel ||
+            null,
+          maxShortRateLimitAttemptsPerModel:
+            retryPolicy.maxShortRateLimitAttemptsPerModel || null,
           maxQuotaAttemptsPerModel: retryPolicy.maxQuotaAttemptsPerModel || null,
           maxTransientAttemptsPerModel: retryPolicy.maxTransientAttemptsPerModel || null,
           temporarilyUnavailableModels: providerBlockedModels.map((entry) => entry.modelId),
@@ -730,6 +900,8 @@ function createAIOrchestrator({
     modelLifecycle,
     providerHealth: resolvedProviderHealth,
     trafficController: resolvedTrafficController,
+    routeScheduler: resolvedRouteScheduler,
+    operationBudget: resolvedOperationBudget,
     generationAffinity,
   });
 }
