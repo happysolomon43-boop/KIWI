@@ -379,6 +379,14 @@ function createPreparationService({
       } catch (error) {
         lastError = error;
         error.generationAttempts = attempt;
+
+        // Provider availability recovery belongs exclusively to the AI
+        // orchestrator. The per-item loop is reserved for successful-provider
+        // responses that fail Reckoning content validation.
+        if (isAIAvailabilityError(error)) {
+          throw error;
+        }
+
         const issues = Array.isArray(error?.validationIssues)
           ? error.validationIssues.filter(Boolean)
           : [];
