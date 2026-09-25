@@ -1,0 +1,74 @@
+name: Teaching D02 Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'teaching/**'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'package.json'
+      - 'migrations/20260925_teaching_d02_runtime_primitives.sql'
+      - 'tests/teaching/**'
+      - 'docs/teaching/d02-runtime-primitives.md'
+      - 'docs/teaching/security/d02-threat-model.md'
+      - 'docs/teaching/accessibility/d02-baseline.md'
+      - 'scripts/verify-teaching-d02-runtime.js'
+      - '.github/workflows/teaching-d02-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'teaching/**'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'package.json'
+      - 'migrations/20260925_teaching_d02_runtime_primitives.sql'
+      - 'tests/teaching/**'
+      - 'docs/teaching/d02-runtime-primitives.md'
+      - 'docs/teaching/security/d02-threat-model.md'
+      - 'docs/teaching/accessibility/d02-baseline.md'
+      - 'scripts/verify-teaching-d02-runtime.js'
+      - '.github/workflows/teaching-d02-runtime.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-d02:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Verify D01 remains intact
+        run: npm run verify:teaching:d01
+
+      - name: Verify D02 runtime foundation
+        run: npm run verify:teaching:d02
+
+      - name: Check backend syntax
+        run: node --check index.js
+
+      - name: Check Teaching server modules
+        run: find teaching -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Run Teaching unit tests
+        run: npm run test:teaching
+
+      - name: Run full KIWI regression suite
+        run: npm test
+
+      - name: Verify web build
+        run: npm run build:web
+
+      - name: Run non-production Supabase integration scaffold
+        env:
+          TEACHING_TEST_DATABASE_URL: ${{ secrets.TEACHING_TEST_DATABASE_URL }}
+          TEACHING_TEST_PROJECT_REF: ${{ secrets.TEACHING_TEST_PROJECT_REF }}
+        run: npm run test:teaching:integration
