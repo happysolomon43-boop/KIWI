@@ -1,43 +1,225 @@
-// KIWI Teaching app entry + KIWI dashboard switch.
-// The Teaching document is deliberately independent of KIWI's normal app shell.
+// KIWI Teaching app entry + KIWI dashboard bridge.
+// Teaching has its own shell while remaining connected to KIWI's shared backend/core.
 
 const TEACHING_PATH = '/teaching.html';
+const KIWI_PATH = '/';
+
+const teachingNavigationItems = new Map();
 
 function isTeachingDocument() {
   return document.documentElement?.dataset?.app === 'kiwi-teaching'
     || document.body?.dataset?.app === 'kiwi-teaching';
 }
 
-function setSettingsOpen(open) {
-  const panel = document.getElementById('teachingSettingsPanel');
-  const backdrop = document.getElementById('teachingSettingsBackdrop');
-  const trigger = document.getElementById('teachingSettingsButton');
+function syncOverlayState() {
+  const menuOpen = document.getElementById('teachingMenuPanel')?.dataset?.open === 'true';
+  const settingsOpen = document.getElementById('teachingSettingsPanel')?.dataset?.open === 'true';
+  const overlay = document.getElementById('teachingOverlay');
 
-  if (!panel || !backdrop || !trigger) return;
+  const anyOpen = Boolean(menuOpen || settingsOpen);
+  document.body.dataset.overlayOpen = anyOpen ? 'true' : 'false';
+
+  if (overlay) {
+    overlay.dataset.open = anyOpen ? 'true' : 'false';
+    overlay.setAttribute(
+      'aria-label',
+      settingsOpen ? 'Close Teaching settings' : 'Close Teaching menu'
+    );
+  }
+}
+
+function setMenuOpen(open, { restoreFocus = true } = {}) {
+  const panel = document.getElementById('teachingMenuPanel');
+  const trigger = document.getElementById('teachingMenuButton');
+
+  if (!panel || !trigger) return;
 
   panel.dataset.open = open ? 'true' : 'false';
   panel.setAttribute('aria-hidden', open ? 'false' : 'true');
-  backdrop.dataset.open = open ? 'true' : 'false';
   trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
 
+  syncOverlayState();
+
   if (open) {
-    document.getElementById('teachingSettingsClose')?.focus();
-  } else {
+    document.getElementById('teachingMenuClose')?.focus();
+  } else if (restoreFocus) {
     trigger.focus();
   }
 }
 
+function setSettingsOpen(open) {
+  const panel = document.getElementById('teachingSettingsPanel');
+
+  if (!panel) return;
+
+  panel.dataset.open = open ? 'true' : 'false';
+  panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+
+  syncOverlayState();
+
+  if (open) {
+    document.getElementById('teachingSettingsClose')?.focus();
+  }
+}
+
+function closeActiveOverlay() {
+  const settingsOpen = document.getElementById('teachingSettingsPanel')?.dataset?.open === 'true';
+
+  if (settingsOpen) {
+    setSettingsOpen(false);
+    return;
+  }
+
+  setMenuOpen(false);
+}
+
+function requestSwitchToKiwi() {
+  const dialog = document.getElementById('teachingConfirmDialog');
+
+  setMenuOpen(false, { restoreFocus: false });
+
+  if (dialog && typeof dialog.showModal === 'function') {
+    dialog.showModal();
+    document.getElementById('teachingConfirmCancel')?.focus();
+    return;
+  }
+
+  if (window.confirm('Switch to KIWI?\n\nYou are leaving KIWI Teaching and returning to the KIWI study app.')) {
+    window.location.assign(KIWI_PATH);
+  }
+}
+
+function suppressVercelToolbar() {
+  const removeToolbar = () => {
+    document
+      .querySelectorAll('vercel-live-feedback, [data-vercel-feedback]')
+      .forEach((node) => node.remove());
+  };
+
+  removeToolbar();
+
+  const observer = new MutationObserver(removeToolbar);
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+}
+
+function renderTeachingNavigation() {
+  const shell = document.getElementById('teachingDockShell');
+  const dock = document.getElementById('teachingDock');
+  const template = document.getElementById('teachingDockItemTemplate');
+
+  if (!shell || !dock || !(template instanceof HTMLTemplateElement)) return;
+
+  dock.replaceChildren();
+
+  for (const item of teachingNavigationItems.values()) {
+    const fragment = template.content.cloneNode(true);
+    const control = fragment.querySelector('.teaching-dock__item');
+    const icon = fragment.querySelector('.teaching-dock__icon');
+    const label = fragment.querySelector('.teaching-dock__label');
+
+    if (!control || !icon || !label) continue;
+
+    control.dataset.navId = item.id;
+    control.setAttribute('aria-label', item.label);
+    icon.textContent = item.icon || '';
+    label.textContent = item.label;
+
+    control.addEventListener('click', () => {
+      if (typeof item.onSelect === 'function') {
+        item.onSelect();
+        return;
+      }
+
+      if (item.href) {
+        window.location.assign(item.href);
+      }
+    });
+
+    dock.appendChild(fragment);
+  }
+
+  shell.hidden = teachingNavigationItems.size === 0;
+}
+
+function registerTeachingNavigationItem(item) {
+  if (!item || typeof item.id !== 'string' || !item.id.trim()) {
+    throw new TypeError('Teaching navigation items require a stable string id.');
+  }
+
+  if (typeof item.label !== 'string' || !item.label.trim()) {
+    throw new TypeError('Teaching navigation items require a visible label.');
+  }
+
+  teachingNavigationItems.set(item.id, {
+    id: item.id,
+    label: item.label,
+    icon: typeof item.icon === 'string' ? item.icon : '',
+    href: typeof item.href === 'string' ? item.href : null,
+    onSelect: typeof item.onSelect === 'function' ? item.onSelect : null,
+  });
+
+  renderTeachingNavigation();
+
+  return () => unregisterTeachingNavigationItem(item.id);
+}
+
+function unregisterTeachingNavigationItem(id) {
+  teachingNavigationItems.delete(id);
+  renderTeachingNavigation();
+}
+
 function initTeachingDocument() {
+  suppressVercelToolbar();
+  renderTeachingNavigation();
+
+  const menuButton = document.getElementById('teachingMenuButton');
+  const menuClose = document.getElementById('teachingMenuClose');
+  const overlay = document.getElementById('teachingOverlay');
   const settingsButton = document.getElementById('teachingSettingsButton');
   const settingsClose = document.getElementById('teachingSettingsClose');
-  const settingsBackdrop = document.getElementById('teachingSettingsBackdrop');
+  const switchButton = document.getElementById('teachingSwitchToKiwiButton');
+  const confirmDialog = document.getElementById('teachingConfirmDialog');
+  const confirmCancel = document.getElementById('teachingConfirmCancel');
+  const confirmAccept = document.getElementById('teachingConfirmAccept');
 
-  settingsButton?.addEventListener('click', () => setSettingsOpen(true));
-  settingsClose?.addEventListener('click', () => setSettingsOpen(false));
-  settingsBackdrop?.addEventListener('click', () => setSettingsOpen(false));
+  menuButton?.addEventListener('click', () => setMenuOpen(true));
+  menuClose?.addEventListener('click', () => setMenuOpen(false));
+  overlay?.addEventListener('click', closeActiveOverlay);
+
+  settingsButton?.addEventListener('click', () => {
+    setMenuOpen(false, { restoreFocus: false });
+    setSettingsOpen(true);
+  });
+
+  settingsClose?.addEventListener('click', () => {
+    setSettingsOpen(false);
+    document.getElementById('teachingMenuButton')?.focus();
+  });
+
+  switchButton?.addEventListener('click', requestSwitchToKiwi);
+
+  confirmCancel?.addEventListener('click', () => {
+    confirmDialog?.close();
+    document.getElementById('teachingMenuButton')?.focus();
+  });
+
+  confirmAccept?.addEventListener('click', () => {
+    confirmDialog?.close();
+    window.location.assign(KIWI_PATH);
+  });
+
+  confirmDialog?.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    confirmDialog.close();
+  });
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') setSettingsOpen(false);
+    if (event.key === 'Escape' && !confirmDialog?.open) {
+      closeActiveOverlay();
+    }
   });
 }
 
@@ -120,8 +302,6 @@ function ensureDashboardTeachingSwitch() {
     return;
   }
 
-  // Intentionally append after the Dashboard content: Teaching is a mode/app switch,
-  // not a primary Dashboard action.
   pageWrap.appendChild(createTeachingSwitch());
 }
 
@@ -137,6 +317,13 @@ function initKiwiDashboardBridge() {
 
   observer.observe(main, { childList: true, subtree: true });
 }
+
+window.KIWITeachingNavigation = Object.freeze({
+  register: registerTeachingNavigationItem,
+  unregister: unregisterTeachingNavigationItem,
+  render: renderTeachingNavigation,
+  ids: () => Array.from(teachingNavigationItems.keys()),
+});
 
 function init() {
   if (isTeachingDocument()) {
