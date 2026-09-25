@@ -49,6 +49,7 @@ check(/current_authoritative_input_bundle_ref/i.test(sql), 'PPL workspace must b
 check(/component_dependencies/i.test(sql), 'PPL must support component-level dependency invalidation');
 check(/review_findings/i.test(sql) && /recurrence_guard_key/i.test(sql), 'PPL must persist structured review findings');
 check(/protected_content_class/i.test(sql), 'PPL storage must carry explicit protection classification');
+check(/FOREIGN KEY\(artifact_version_id,student_id,protected_content_class\)[\s\S]*REFERENCES teaching_preparation\.artifact_versions\(artifact_version_id,student_id,protected_content_class\)/i.test(sql), 'protected payload ownership/protection class must be bound to artifact metadata');
 check(!/(chain[_ -]?of[_ -]?thought|reasoning_trace|hidden_reasoning)/i.test(sql), 'D04 persistence must not store hidden chain-of-thought');
 
 for (const status of ['found_at','mapped_at','planned_at','taught_at','validated_prior_knowledge_at','instructionally_complete_at','assessed_at','excluded_at']) {
