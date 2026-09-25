@@ -47,7 +47,7 @@ BEGIN
       );
     END IF;
 
-    REVOKE DELETE, TRUNCATE ON TABLE public.%I FROM teaching_domain_service;
+    EXECUTE format('REVOKE DELETE, TRUNCATE ON TABLE public.%I FROM teaching_domain_service', rel);
   END LOOP;
 END $$;
 
