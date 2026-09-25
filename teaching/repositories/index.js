@@ -1,5 +1,7 @@
 'use strict';
 
+const { createTeachingKernelPersistence } = require('./kernel-persistence');
+
 function requireMethod(value, name) {
   if (!value || typeof value[name] !== 'function') {
     throw new TypeError(`Teaching repository dependency requires ${name}().`);
@@ -23,4 +25,7 @@ function createTeachingRepositories({ subjectReader, notificationInterface }) {
   });
 }
 
-module.exports = { createTeachingRepositories };
+module.exports = {
+  createTeachingRepositories,
+  createTeachingKernelPersistence,
+};
