@@ -71,10 +71,11 @@ const ai = _aiRuntime.orchestrator;
 
 // KIWI Teaching D02 runtime foundation. This is operational event/validation
 // infrastructure only; it owns no academic-domain truth.
+const teachingAIRun = ai.run.bind(ai);
 const teachingRuntimePlatform = createTeachingRuntimePlatform({
   query,
   randomUUID,
-  aiRun: (taskId, request, context) => ai.run(taskId, request, context),
+  aiRun: teachingAIRun,
   env: process.env,
   logger: console,
 });
