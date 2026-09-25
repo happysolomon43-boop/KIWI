@@ -1,4 +1,8 @@
-import { kiwiApiRequest, hasKiwiSession } from '/kiwi-api-client.js';
+const { kiwiApiRequest, hasKiwiSession } = window.KIWI_API_CLIENT || {};
+
+if (typeof kiwiApiRequest !== 'function' || typeof hasKiwiSession !== 'function') {
+  throw new Error('KIWI shared API client must load before Teaching.');
+}
 
 // KIWI Teaching app entry + KIWI dashboard bridge.
 // Teaching has its own shell while remaining connected to KIWI's shared backend/core.
