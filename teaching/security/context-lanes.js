@@ -1,10 +1,110 @@
 'use strict';
-const UNTRUSTED_DATA=Symbol('KIWI_TEACHING_UNTRUSTED_DATA');
-const UNTRUSTED_KINDS=Object.freeze(['subject_text','uploaded_material','student_response','source_passage','retrieved_academic_content']);
-const FORMAL_MARKING_PROHIBITED_CONTEXT=Object.freeze(['attendance','teacherPersonality','reputation','previousGpa','unrelatedMarks','behavioralHistory']);
-function freezeValue(value){if(value&&typeof value==='object'){if(Array.isArray(value))return Object.freeze(value.map(freezeValue));const out={};for(const [key,item] of Object.entries(value))out[key]=freezeValue(item);return Object.freeze(out)}return value}
-function asUntrustedData({kind,data,provenance=null}={}){if(!UNTRUSTED_KINDS.includes(kind))throw new TypeError(`Unsupported untrusted Teaching content kind: ${kind}`);const wrapped={trust:'untrusted_data',kind,data:freezeValue(data),provenance:provenance==null?null:freezeValue(provenance)};Object.defineProperty(wrapped,UNTRUSTED_DATA,{value:true,enumerable:false});return Object.freeze(wrapped)}
-function isUntrustedData(value){return Boolean(value&&value[UNTRUSTED_DATA]===true&&value.trust==='untrusted_data')}
-function buildSeparatedContextLanes({trustedAuthoritativeState={},permissionConstraints={},provenanceLinkedAcademicContent=[],untrustedContent=[]}={}){if(!Array.isArray(provenanceLinkedAcademicContent))throw new TypeError('provenanceLinkedAcademicContent must be an array.');if(!Array.isArray(untrustedContent)||untrustedContent.some((item)=>!isUntrustedData(item)))throw new TypeError('Every untrustedContent entry must be created with asUntrustedData().');return Object.freeze({trustedAuthoritativeState:freezeValue(trustedAuthoritativeState),permissionConstraints:freezeValue(permissionConstraints),provenanceLinkedAcademicContent:Object.freeze(provenanceLinkedAcademicContent.map(freezeValue)),untrustedContent:Object.freeze([...untrustedContent])})}
-function assertFormalMarkingContextMinimized(context,{approvedExceptions=[]}={}){const exceptionSet=new Set(approvedExceptions);const trusted=context?.trustedAuthoritativeState||{};const constraints=context?.permissionConstraints||{};for(const field of FORMAL_MARKING_PROHIBITED_CONTEXT){if(exceptionSet.has(field))continue;if(Object.prototype.hasOwnProperty.call(trusted,field)||Object.prototype.hasOwnProperty.call(constraints,field)){const error=new Error(`Formal marking context contains prohibited field: ${field}`);error.code='TEACHING_CONTEXT_MINIMIZATION_VIOLATION';throw error}}return true}
-module.exports={UNTRUSTED_KINDS,FORMAL_MARKING_PROHIBITED_CONTEXT,asUntrustedData,isUntrustedData,buildSeparatedContextLanes,assertFormalMarkingContextMinimized};
+
+const UNTRUSTED_DATA = Symbol('KIWI_TEACHING_UNTRUSTED_DATA');
+
+const UNTRUSTED_KINDS = Object.freeze([
+  'subject_text',
+  'uploaded_material',
+  'student_response',
+  'source_passage',
+  'retrieved_academic_content',
+]);
+
+const FORMAL_MARKING_PROHIBITED_CONTEXT = Object.freeze([
+  'attendance',
+  'teacherPersonality',
+  'reputation',
+  'previousGpa',
+  'unrelatedMarks',
+  'behavioralHistory',
+]);
+
+function freezeValue(value) {
+  if (value && typeof value === 'object') {
+    if (Array.isArray(value)) return Object.freeze(value.map(freezeValue));
+    const out = {};
+    for (const [key, item] of Object.entries(value)) out[key] = freezeValue(item);
+    return Object.freeze(out);
+  }
+  return value;
+}
+
+function asUntrustedData({
+  kind,
+  data,
+  provenance = null,
+} = {}) {
+  if (!UNTRUSTED_KINDS.includes(kind)) {
+    throw new TypeError(`Unsupported untrusted Teaching content kind: ${kind}`);
+  }
+
+  const wrapped = {
+    trust: 'untrusted_data',
+    kind,
+    data: freezeValue(data),
+    provenance: provenance == null ? null : freezeValue(provenance),
+  };
+  Object.defineProperty(wrapped, UNTRUSTED_DATA, {
+    value: true,
+    enumerable: false,
+  });
+  return Object.freeze(wrapped);
+}
+
+function isUntrustedData(value) {
+  return Boolean(value && value[UNTRUSTED_DATA] === true && value.trust === 'untrusted_data');
+}
+
+function buildSeparatedContextLanes({
+  trustedAuthoritativeState = {},
+  permissionConstraints = {},
+  provenanceLinkedAcademicContent = [],
+  untrustedContent = [],
+} = {}) {
+  if (!Array.isArray(provenanceLinkedAcademicContent)) {
+    throw new TypeError('provenanceLinkedAcademicContent must be an array.');
+  }
+  if (!Array.isArray(untrustedContent) || untrustedContent.some((item) => !isUntrustedData(item))) {
+    throw new TypeError('Every untrustedContent entry must be created with asUntrustedData().');
+  }
+
+  return Object.freeze({
+    trustedAuthoritativeState: freezeValue(trustedAuthoritativeState),
+    permissionConstraints: freezeValue(permissionConstraints),
+    provenanceLinkedAcademicContent: Object.freeze(
+      provenanceLinkedAcademicContent.map(freezeValue)
+    ),
+    untrustedContent: Object.freeze([...untrustedContent]),
+  });
+}
+
+function assertFormalMarkingContextMinimized(context, {
+  approvedExceptions = [],
+} = {}) {
+  const exceptionSet = new Set(approvedExceptions);
+  const trusted = context?.trustedAuthoritativeState || {};
+  const constraints = context?.permissionConstraints || {};
+
+  for (const field of FORMAL_MARKING_PROHIBITED_CONTEXT) {
+    if (exceptionSet.has(field)) continue;
+    if (
+      Object.prototype.hasOwnProperty.call(trusted, field) ||
+      Object.prototype.hasOwnProperty.call(constraints, field)
+    ) {
+      const error = new Error(`Formal marking context contains prohibited field: ${field}`);
+      error.code = 'TEACHING_CONTEXT_MINIMIZATION_VIOLATION';
+      throw error;
+    }
+  }
+
+  return true;
+}
+
+module.exports = {
+  UNTRUSTED_KINDS,
+  FORMAL_MARKING_PROHIBITED_CONTEXT,
+  asUntrustedData,
+  isUntrustedData,
+  buildSeparatedContextLanes,
+  assertFormalMarkingContextMinimized,
+};
