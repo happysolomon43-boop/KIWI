@@ -114,14 +114,19 @@ check(Boolean(packageJson.scripts?.['verify:teaching:d02']), 'package.json missi
 check(Boolean(packageJson.scripts?.['test:teaching']), 'package.json missing Teaching unit tests');
 check(Boolean(packageJson.scripts?.['test:teaching:integration']), 'package.json missing Teaching integration tests');
 
+const d03CapabilityRegistryPresent = fs.existsSync(path.join(root, 'teaching', 'capability-registry'));
+const d03PromptRuntimePresent = fs.existsSync(path.join(root, 'teaching', 'prompt-runtime'));
 check(
-  !fs.existsSync(path.join(root, 'teaching', 'capability-registry')),
-  'D02 must not pull D03 Capability Registry runtime forward'
+  d03CapabilityRegistryPresent === d03PromptRuntimePresent,
+  'Post-D02 repository must not contain a partial D03 control foundation'
 );
-check(
-  !fs.existsSync(path.join(root, 'teaching', 'prompt-runtime')),
-  'D02 must not pull D03 prompt runtime forward'
-);
+if (d03CapabilityRegistryPresent && d03PromptRuntimePresent) {
+  check(
+    Boolean(packageJson.scripts?.['verify:teaching:d03']) &&
+      fs.existsSync(path.join(root, 'scripts', 'verify-teaching-d03-control.js')),
+    'D03 surfaces may follow D02 only when the D03 control-foundation verifier is registered'
+  );
+}
 
 if (!process.exitCode) {
   console.log('[D02] PASS: authoritative runtime/event/validation primitives are structurally complete.');
