@@ -40,10 +40,12 @@ const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
 const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
-const { createTeachingRouter } = require('./teaching-backend');
+const { createTeachingRouter } = require('./teaching-backend');\nconst { requireRuntimeSecret, optionalRuntimeSecret } = require('./services/runtime-secrets');
+
+const DATABASE_URL = requireRuntimeSecret(process.env, 'DATABASE_URL');
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
+  connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false },
   max: 15, // Balanced for Supabase session-mode — headroom for concurrent requests
   min: 2,  // Keep warm connections ready
@@ -13370,11 +13372,7 @@ entry.count += 1;
 return false;
 }
 // ── authMiddleware ──────────────────────────────────────────────────────────
-const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET;
-if (!JWT_SECRET) {
-  console.error('[KIWI] FATAL: JWT_SECRET (or SESSION_SECRET) environment variable is not set. Server cannot start safely.');
-  process.exit(1);
-}
+const JWT_SECRET = requireRuntimeSecret(process.env, 'JWT_SECRET', ['SESSION_SECRET']);
 const ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY || '15m';
 const REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '30d';
 
@@ -13461,13 +13459,13 @@ return res.status(401).json({ error: 'Invalid or expired access token' });
 
 // Admin master token — allows hidden admin panel access without requiring role=admin in DB.
 // Set ADMIN_MASTER_TOKEN env var to override. Default is NOT exposed to users.
-const ADMIN_MASTER_TOKEN = process.env.ADMIN_MASTER_TOKEN || 'kiwi-admin-1969';
+const ADMIN_MASTER_TOKEN = optionalRuntimeSecret(process.env, 'ADMIN_MASTER_TOKEN');
 
 // requireAdminAccess — accepts either:
 //   (a) X-Admin-Token header matching ADMIN_MASTER_TOKEN (hidden panel auth)
 //   (b) authenticated user with role='admin' (DB-level admin)
 function requireAdminAccess(req, res, next) {
-  if (req.headers['x-admin-token'] === ADMIN_MASTER_TOKEN) {
+  if (ADMIN_MASTER_TOKEN && req.headers['x-admin-token'] === ADMIN_MASTER_TOKEN) {
     req.user = req.user || { id: 'admin', role: 'admin', name: 'KIWI Admin' };
     return next();
   }
@@ -21265,7 +21263,12 @@ tourRouter.put('/state', async (req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/tour', tourRouter);
-app.use('/api/teaching', createTeachingRouter({ authenticate, reckoningLockout }));
+app.use('/api/teaching', createTeachingRouter({
+  authenticate,
+  reckoningLockout,
+  env: process.env,
+  subjectSource: db.subjects,
+}));
 
 app.use('/api/subjects', subjectRouter);
 
@@ -23083,7 +23086,7 @@ console.log(`[KIWI] ✅ Startup seeding complete (non-fatal errors may appear ab
         const _url = new URL(req.url, 'http://localhost');
         const _tok = _url.searchParams.get('token');
         if (!_tok) { ws.close(4001, 'Unauthorized'); return; }
-        const _dec = jwt.verify(_tok, process.env.JWT_SECRET || 'kiwi-secret');
+        const _dec = jwt.verify(_tok, JWT_SECRET);
         _wsUserId = String(_dec.id || _dec.userId || _dec.sub || '');
         if (!_wsUserId) { ws.close(4001, 'Unauthorized'); return; }
         if (!_wsClients.has(_wsUserId)) _wsClients.set(_wsUserId, new Set());
