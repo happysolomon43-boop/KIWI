@@ -66,3 +66,36 @@ test('operation budget resets after its TTL rather than poisoning a future opera
   now += 60001;
   assert.equal((await budget.claim({ operationId: 'op-expire', taskClass: 'IP' })).allowed, true);
 });
+
+
+test('default VVIP budget preserves the full 30-question content-validation envelope', async () => {
+  const budget = createOperationBudget();
+  const limits = budget.limitsFor('VVIP');
+
+  assert.equal(limits.maxProviderAttempts, 96);
+
+  for (let attempt = 1; attempt <= 90; attempt++) {
+    const claim = await budget.claim({
+      operationId: 'reckoning-quality-envelope',
+      taskClass: 'VVIP',
+    });
+    assert.equal(claim.allowed, true, `attempt ${attempt}`);
+    await budget.recordOutcome('reckoning-quality-envelope');
+  }
+
+  for (let attempt = 91; attempt <= 96; attempt++) {
+    const claim = await budget.claim({
+      operationId: 'reckoning-quality-envelope',
+      taskClass: 'VVIP',
+    });
+    assert.equal(claim.allowed, true, `attempt ${attempt}`);
+    await budget.recordOutcome('reckoning-quality-envelope');
+  }
+
+  const blocked = await budget.claim({
+    operationId: 'reckoning-quality-envelope',
+    taskClass: 'VVIP',
+  });
+  assert.equal(blocked.allowed, false);
+  assert.equal(blocked.state.providerAttempts, 96);
+});
