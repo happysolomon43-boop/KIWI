@@ -181,6 +181,7 @@ test('Teaching source tree contains no secret fallback or provider SDK import fi
     path.join(root, 'teaching'),
     path.join(root, 'teaching-backend.js'),
     path.join(root, 'public', 'teaching.js'),
+    path.join(root, 'index.js'),
   ];
 
   const findings = [];
