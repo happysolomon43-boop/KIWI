@@ -72,6 +72,27 @@ test('v1.3 prompt baseline is exact, frozen and covers all 147 model-eligible ca
   );
 });
 
+test('runtime/build-time prompt text must match the exact manifested family SHA', () => {
+  const capability = firstModelCapability();
+  const family = catalog.getPromptFamily(capability.prompt_family_id);
+  assert.throws(
+    () => catalog.assertManifestedPromptText({
+      familyId: family.id,
+      version: family.version,
+      promptText: 'unmanifested replacement prompt',
+    }),
+    (error) => error.code === 'TEACHING_UNMANIFESTED_PROMPT_TEXT_REJECTED'
+  );
+  assert.throws(
+    () => catalog.assertManifestedPromptText({
+      familyId: family.id,
+      version: '999',
+      promptText: 'anything',
+    }),
+    (error) => error.code === 'TEACHING_PROMPT_VERSION_UNMANIFESTED'
+  );
+});
+
 test('all 169 capabilities have immutable D03 contracts and model prompts cannot raise authority or owner', () => {
   assert.deepEqual(contracts.completeness, { modelBacked: 147, deterministic: 22, total: 169 });
   for (const capability of registry.listCapabilities()) {

@@ -83,6 +83,27 @@ function assertPromptArtifactIdentity({ familyId, version, promptFile, promptSha
   return true;
 }
 
+function assertManifestedPromptText({ familyId, version, promptText } = {}) {
+  const family = getPromptFamily(familyId);
+  if (String(version || '') !== family.version) {
+    const error = new Error(`${family.id} prompt text version must be exactly v${family.version}.`);
+    error.code = 'TEACHING_PROMPT_VERSION_UNMANIFESTED';
+    throw error;
+  }
+  if (typeof promptText !== 'string' || !promptText.length) {
+    const error = new Error(`${family.id} prompt text is required for runtime/build-time identity validation.`);
+    error.code = 'TEACHING_PROMPT_TEXT_REQUIRED';
+    throw error;
+  }
+  const actualSha256 = sha256(Buffer.from(promptText, 'utf8'));
+  if (actualSha256 !== family.promptSha256) {
+    const error = new Error(`${family.id} prompt text does not match the manifest-frozen SHA-256.`);
+    error.code = 'TEACHING_UNMANIFESTED_PROMPT_TEXT_REJECTED';
+    throw error;
+  }
+  return true;
+}
+
 function createFrozenPromptBinding(familyId, expectedVersion = null) {
   const family = getPromptFamily(familyId);
   if (expectedVersion != null && String(expectedVersion) !== family.version) {
@@ -151,5 +172,6 @@ module.exports = {
   createFrozenPromptBinding,
   assertFrozenPromptBinding,
   assertPromptArtifactIdentity,
+  assertManifestedPromptText,
   promptCatalogStatus,
 };

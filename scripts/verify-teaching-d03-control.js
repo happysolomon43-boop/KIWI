@@ -61,6 +61,17 @@ check(
   'Prompt-family capability census must total 147'
 );
 
+const promptCatalogCode = fs.readFileSync(
+  path.join(root, 'teaching/prompt-runtime/prompt-catalog.js'),
+  'utf8'
+);
+check(
+  /function assertManifestedPromptText/.test(promptCatalogCode) &&
+    /TEACHING_UNMANIFESTED_PROMPT_TEXT_REJECTED/.test(promptCatalogCode) &&
+    /sha256\(Buffer\.from\(promptText, 'utf8'\)\)/.test(promptCatalogCode),
+  'D03 must reject unmanifested prompt text by exact family SHA-256'
+);
+
 const routeControl = fs.readFileSync(
   path.join(root, 'teaching/prompt-runtime/route-control.js'),
   'utf8'
