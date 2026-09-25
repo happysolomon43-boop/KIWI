@@ -40,6 +40,7 @@ const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
 const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
+const { createTeachingRouter } = require('./teaching-backend');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres.nqdwifqskxkblgdgeutn:20ADEKOLa07@aws-1-eu-central-2.pooler.supabase.com:6543/postgres',
@@ -21264,6 +21265,7 @@ tourRouter.put('/state', async (req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/tour', tourRouter);
+app.use('/api/teaching', createTeachingRouter({ authenticate, reckoningLockout }));
 
 app.use('/api/subjects', subjectRouter);
 
