@@ -32,7 +32,7 @@ const expectedPublicTables = [
   'teaching_course_coverage','teaching_assessment_eligibility','teaching_academic_audit_log',
 ];
 for (const table of expectedPublicTables) {
-  check(new RegExp(`CREATE TABLE public\\\\.${table}\\\\b`, 'i').test(sql), `missing public D04 table: ${table}`);
+  check(sql.includes(`CREATE TABLE public.${table} (`), `missing public D04 table: ${table}`);
 }
 for (const table of [
   'workspaces','authoritative_input_bundles','input_bundle_dependencies','artifact_versions',
@@ -60,8 +60,8 @@ check(/original_free_form_text/i.test(sql) && /teaching_student_course_intake_ex
 check(/teaching_academic_audit_immutable/i.test(sql), 'academic audit log must be immutable');
 check(/CREATE ROLE teaching_domain_service NOLOGIN/i.test(sql), 'trusted domain service role must be explicit');
 check(/CREATE ROLE teaching_protected_service NOLOGIN/i.test(sql), 'protected preparation service role must be explicit');
-check(/REVOKE ALL ON SCHEMA teaching_protected FROM PUBLIC, anon, authenticated/i.test(sql), 'protected schema must be hidden from browser roles');
-check(/REVOKE ALL ON TABLE teaching_protected\.prepared_artifact_payloads FROM PUBLIC, anon, authenticated, teaching_domain_service/i.test(sql), 'ordinary Teaching domain role must not read protected payloads');
+check(/REVOKE ALL ON SCHEMA teaching_protected FROM PUBLIC\\s*,\\s*anon\\s*,\\s*authenticated/i.test(sql), 'protected schema must be hidden from browser roles');
+check(/REVOKE ALL ON TABLE teaching_protected\\.prepared_artifact_payloads FROM PUBLIC\\s*,\\s*anon\\s*,\\s*authenticated\\s*,\\s*teaching_domain_service/i.test(sql), 'ordinary Teaching domain role must not read protected payloads');
 check(!/GRANT\s+(?:ALL|INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,120}\sTO\s+(?:anon|authenticated)/i.test(sql), 'D04 must not grant browser DML on Teaching persistence');
 check(!/GRANT\s+DELETE[\s\S]{0,140}\sTO\s+(?:service_role|teaching_domain_service)/i.test(sql), 'D04 least-privilege service roles must not receive academic DELETE');
 
