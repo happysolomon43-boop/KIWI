@@ -121,6 +121,8 @@ test('Teaching dashboard switch is not hidden behind runtime feature availabilit
   assert.doesNotMatch(js, /TEACHING_NOT_ENABLED/);
   assert.doesNotMatch(js, /status\?\.available/);
   assert.doesNotMatch(js, /getTeachingStatus/);
+  assert.match(js, /function isTeachingDocument\(\)/);
+  assert.match(js, /document\.getElementById\('teachingApp'\)/);
   assert.match(js, /function ensureDashboardTeachingSwitch\(\)/);
 });
 
