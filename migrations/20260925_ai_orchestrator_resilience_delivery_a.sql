@@ -71,3 +71,23 @@ CREATE INDEX IF NOT EXISTS idx_ai_route_runtime_ready
 ALTER TABLE ai_route_runtime ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE ai_route_runtime FROM anon, authenticated;
 GRANT ALL ON TABLE ai_route_runtime TO service_role;
+
+CREATE TABLE IF NOT EXISTS ai_operation_budget (
+  operation_id                 text PRIMARY KEY,
+  task_class                   text NOT NULL,
+  provider_attempts            integer NOT NULL DEFAULT 0 CHECK (provider_attempts >= 0),
+  successes                    integer NOT NULL DEFAULT 0 CHECK (successes >= 0),
+  availability_failures        integer NOT NULL DEFAULT 0 CHECK (availability_failures >= 0),
+  short_rate_limit_failures    integer NOT NULL DEFAULT 0 CHECK (short_rate_limit_failures >= 0),
+  provider_overload_failures   integer NOT NULL DEFAULT 0 CHECK (provider_overload_failures >= 0),
+  expires_at                   timestamptz NOT NULL,
+  created_at                   timestamptz NOT NULL DEFAULT now(),
+  updated_at                   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_operation_budget_expiry
+  ON ai_operation_budget (expires_at);
+
+ALTER TABLE ai_operation_budget ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE ai_operation_budget FROM anon, authenticated;
+GRANT ALL ON TABLE ai_operation_budget TO service_role;
