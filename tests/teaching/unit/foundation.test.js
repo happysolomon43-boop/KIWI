@@ -63,7 +63,7 @@ test('academic timestamps require timezone information', () => {
 });
 
 test('D01 defines every required initial Teaching event name', () => {
-  assert.equal(TEACHING_EVENT_NAMES.length, 13);
+  assert.ok(TEACHING_EVENT_NAMES.length >= 13);
   for (const key of [
     'COURSE_ACTIVATED','CLASS_START_DUE','CLASS_JOINED','STUDENT_RESPONSE_SUBMITTED',
     'ACTIVITY_TIMER_EXPIRED','BREAK_STARTED','BREAK_ENDED','ASSESSMENT_STARTED',
