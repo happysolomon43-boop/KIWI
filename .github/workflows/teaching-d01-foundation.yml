@@ -45,7 +45,7 @@ jobs:
         with:
           node-version: 22
 
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
 
       - name: Verify D01 foundation
         run: npm run verify:teaching:d01
