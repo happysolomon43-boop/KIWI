@@ -21,7 +21,7 @@ const required = [
 for (const file of required) check(fs.existsSync(path.join(root, file)), `missing D04 artifact: ${file}`);
 
 const sql = fs.readFileSync(migrationPath, 'utf8');
-const tightSql = sql.replace(/\\s+/g, '');
+const tightSql = sql.replace(/\s+/g, '');
 const expectedPublicTables = [
   'teaching_semesters','teaching_courses','teaching_course_plans','teaching_topics',
   'teaching_subtopics','teaching_learning_units','teaching_learning_unit_dependencies',
