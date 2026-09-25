@@ -36,6 +36,11 @@ function createTelemetry({
       outcome: record.outcome || null,
       errorCode: record.errorCode || null,
       httpStatus: record.httpStatus ?? null,
+      providerErrorCode: record.providerErrorCode || null,
+      quotaDimension: record.quotaDimension || null,
+      classificationSource: record.classificationSource || null,
+      retryAfterMs: record.retryAfterMs == null ? null : Number(record.retryAfterMs),
+      operationId: record.operationId || null,
       latencyMs: Number(record.latencyMs) || 0,
     });
     pruneMemory(now);
@@ -224,6 +229,8 @@ function createTelemetry({
     const errorsByCode = {};
     const httpStatuses = {};
     const attemptsByModel = {};
+    const quotaDimensions = {};
+    const classificationSources = {};
     let successfulAttempts = 0;
     let failedAttempts = 0;
 
@@ -239,6 +246,14 @@ function createTelemetry({
       }
       if (attempt.modelId) {
         attemptsByModel[attempt.modelId] = (attemptsByModel[attempt.modelId] || 0) + 1;
+      }
+      if (attempt.quotaDimension) {
+        quotaDimensions[attempt.quotaDimension] =
+          (quotaDimensions[attempt.quotaDimension] || 0) + 1;
+      }
+      if (attempt.classificationSource) {
+        classificationSources[attempt.classificationSource] =
+          (classificationSources[attempt.classificationSource] || 0) + 1;
       }
     }
 
