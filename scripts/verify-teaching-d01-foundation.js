@@ -80,7 +80,7 @@ check(
 
 const teachingJs = fs.readFileSync(path.join(root, 'public', 'teaching.js'), 'utf8');
 check(
-  teachingJs.includes("from '/kiwi-api-client.js'"),
+  teachingJs.includes('window.KIWI_API_CLIENT'),
   'Teaching frontend must use the shared KIWI API client'
 );
 check(
