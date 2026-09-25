@@ -60,3 +60,24 @@ A retained local file bearing the Authority Spec name does not match the v1.1 fr
 This entry does not amend the design. Any delivery needing details unique to the exact Authority Spec body must resolve the canonical v1.1 artifact before implementation.
 
 Migration impact: none.
+
+## DEC-D01-006 — Remove generic Teaching feature-availability toggles
+
+Date: 2026-09-25  
+Status: ACCEPTED PRODUCT AMENDMENT  
+Change class: Class E  
+TCH: TCH-0029, TCH-0675
+
+Teaching is a normal authenticated KIWI application surface. Present and future Teaching capabilities are not controlled by generic runtime feature on/off flags or development-user allowlists.
+
+A capability that is not yet implemented/accepted remains absent until its owning delivery. Once implemented and valid under its governing academic/runtime contracts, it is available normally.
+
+This decision does not weaken authentication, authoritative academic gates, server privilege boundaries, D30 AI qualification, D31 release readiness, or any other safety/quality prerequisite. Those are contract/qualification gates rather than product feature toggles.
+
+Paired versioned amendments:
+- `KIWI_Teaching_Master_Implementation_Backlog_Amendment-9.6.md`
+- `KIWI_Teaching_Delivery_Task_Map_Amendment_v1.6.json`
+- `KIWI_Teaching_Feature_Availability_Amendment_v1.0.md`
+
+Migration impact: none.
+
