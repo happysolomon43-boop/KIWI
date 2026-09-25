@@ -14,6 +14,12 @@ const AI_CLASSES = Object.freeze({
   IP: 'IP',
 });
 
+const AI_EXECUTION_LANES = Object.freeze({
+  CRITICAL: 'CRITICAL',
+  INTERACTIVE: 'INTERACTIVE',
+  BACKGROUND: 'BACKGROUND',
+});
+
 const REASONING_LEVELS = Object.freeze({
   MINIMAL: 'MINIMAL',
   LOW: 'LOW',
@@ -38,36 +44,43 @@ const RETRY_POLICIES = Object.freeze({
   IP_FAST: 'IP_FAST',
 });
 
-// Retry budgets distinguish project-slot quota failures from provider/model
-// failures. A 429 is project+model scoped and should rotate keys. Provider 5xx
-// failures require evidence from more than one independent project slot before
-// a model circuit opens; this prevents one unlucky request from hiding a healthy
-// model while still bounding provider-overload probes.
-// This avoids request storms while still surviving exhausted or flaky routes.
+// Retry budgets are failure-class specific. Daily quota can safely rotate
+// through independent project/model routes, while short-window 429s are paced
+// and tightly bounded so a temporary throttle cannot sweep the entire pool.
 const RETRY_POLICY_CONFIG = Object.freeze({
   [RETRY_POLICIES.VVIP_GENERATION]: Object.freeze({
-    maxAttempts: 32,
+    maxAttempts: 20,
     maxAttemptsPerModel: 2,
-    maxQuotaAttemptsPerModel: 15,
+    maxDailyQuotaAttemptsPerModel: 15,
+    maxShortRateLimitAttemptsPerModel: 3,
+    maxQuotaAttemptsPerModel: 15, // compatibility alias: daily quota only
     maxTransientAttemptsPerModel: 2,
   }),
   [RETRY_POLICIES.VIP_ANALYSIS]: Object.freeze({
-    maxAttempts: 20,
+    maxAttempts: 14,
     maxAttemptsPerModel: 2,
+    maxDailyQuotaAttemptsPerModel: 10,
+    maxShortRateLimitAttemptsPerModel: 3,
     maxQuotaAttemptsPerModel: 10,
     maxTransientAttemptsPerModel: 2,
   }),
   [RETRY_POLICIES.IP_FAST]: Object.freeze({
     maxAttempts: 8,
     maxAttemptsPerModel: 2,
+    maxDailyQuotaAttemptsPerModel: 4,
+    maxShortRateLimitAttemptsPerModel: 2,
     maxQuotaAttemptsPerModel: 4,
     maxTransientAttemptsPerModel: 2,
   }),
 });
 
 function task(config) {
+  const defaultLane = config.class === AI_CLASSES.VVIP
+    ? AI_EXECUTION_LANES.CRITICAL
+    : AI_EXECUTION_LANES.INTERACTIVE;
   return Object.freeze({
     degradationAllowed: false,
+    executionLane: config.executionLane || defaultLane,
     capabilities: Object.freeze([...(config.capabilities || [])]),
     ...config,
   });
@@ -153,6 +166,7 @@ const AI_TASKS = Object.freeze({
 
   STUDY_TASK_GENERATION: task({
     class: AI_CLASSES.VIP,
+    executionLane: AI_EXECUTION_LANES.BACKGROUND,
     reasoning: REASONING_LEVELS.MEDIUM,
     modelPolicy: MODEL_POLICIES.VIP_STABLE_FLASH,
     qualityFloor: QUALITY_FLOORS.FLASH_LITE,
@@ -195,6 +209,7 @@ const AI_TASKS = Object.freeze({
 
   MORNING_BRIEF: task({
     class: AI_CLASSES.VIP,
+    executionLane: AI_EXECUTION_LANES.BACKGROUND,
     reasoning: REASONING_LEVELS.LOW,
     modelPolicy: MODEL_POLICIES.VIP_STABLE_FLASH,
     qualityFloor: QUALITY_FLOORS.FLASH_LITE,
@@ -382,6 +397,7 @@ const CANONICAL_AI_TASK_IDS = Object.freeze(Object.keys(AI_TASKS));
 function validateTaskRegistry(registry = AI_TASKS) {
   const errors = [];
   const classValues = new Set(Object.values(AI_CLASSES));
+  const laneValues = new Set(Object.values(AI_EXECUTION_LANES));
   const reasoningValues = new Set(Object.values(REASONING_LEVELS));
   const floorValues = new Set(Object.values(QUALITY_FLOORS));
   const policyValues = new Set(Object.values(MODEL_POLICIES));
@@ -390,6 +406,7 @@ function validateTaskRegistry(registry = AI_TASKS) {
   for (const [taskId, config] of Object.entries(registry)) {
     if (!/^[A-Z0-9_]+$/.test(taskId)) errors.push(`${taskId}: task ID must be UPPER_SNAKE_CASE`);
     if (!classValues.has(config.class)) errors.push(`${taskId}: invalid class`);
+    if (!laneValues.has(config.executionLane)) errors.push(`${taskId}: invalid execution lane`);
     if (!reasoningValues.has(config.reasoning)) errors.push(`${taskId}: invalid reasoning level`);
     if (!floorValues.has(config.qualityFloor)) errors.push(`${taskId}: invalid quality floor`);
     if (!policyValues.has(config.modelPolicy)) errors.push(`${taskId}: invalid model policy`);
@@ -413,6 +430,7 @@ function validateTaskRegistry(registry = AI_TASKS) {
 
 module.exports = {
   AI_CLASSES,
+  AI_EXECUTION_LANES,
   REASONING_LEVELS,
   QUALITY_FLOORS,
   MODEL_POLICIES,
