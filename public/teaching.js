@@ -356,13 +356,30 @@ function ensureDashboardTeachingSwitch() {
 
   if (!dashboardGrid || !pageWrap) return;
 
+  const dashboardHero = pageWrap.querySelector('.ks-hero');
   const existing = pageWrap.querySelector('#kiwiTeachingSwitch');
+
+  // Keep the Teaching mode switch in the dashboard's primary visible region.
+  // The previous implementation appended it after the entire dashboard grid,
+  // which made the control effectively undiscoverable on long/mobile dashboards.
   if (existing) {
-    if (existing !== pageWrap.lastElementChild) pageWrap.appendChild(existing);
+    if (dashboardHero) {
+      if (dashboardHero.nextElementSibling !== existing) {
+        dashboardHero.insertAdjacentElement('afterend', existing);
+      }
+    } else if (dashboardGrid.previousElementSibling !== existing) {
+      pageWrap.insertBefore(existing, dashboardGrid);
+    }
     return;
   }
 
-  pageWrap.appendChild(createTeachingSwitch());
+  const teachingSwitch = createTeachingSwitch();
+
+  if (dashboardHero) {
+    dashboardHero.insertAdjacentElement('afterend', teachingSwitch);
+  } else {
+    pageWrap.insertBefore(teachingSwitch, dashboardGrid);
+  }
 }
 
 function initKiwiDashboardBridge() {
