@@ -105,14 +105,12 @@ test('Teaching suppresses Vercel live-feedback toolbar injection', () => {
   assert.match(js, /new MutationObserver\(removeToolbar\)/);
 });
 
-test('Teaching switch is mounted in the dashboard primary visible region and redirects to teaching.html', () => {
-  const js = read(teachingJsPath);
+test('Teaching switch is rendered natively by the KIWI dashboard and links to teaching.html', () => {
+  const index = read(indexHtmlPath);
 
-  assert.match(js, /const dashboardHero = pageWrap\.querySelector\('\.ks-hero'\)/);
-  assert.match(js, /dashboardHero\.insertAdjacentElement\('afterend', teachingSwitch\)/);
-  assert.match(js, /pageWrap\.insertBefore\(teachingSwitch, dashboardGrid\)/);
-  assert.match(js, /Switch to KIWI Teaching\?/);
-  assert.match(js, /const TEACHING_PATH = '\/teaching\.html'/);
+  assert.match(index, /id="kiwiTeachingSwitch"/);
+  assert.match(index, /href="\/teaching\.html"/);
+  assert.match(index, />Switch to KIWI Teaching</);
 });
 
 test('Teaching dashboard switch is not hidden behind runtime feature availability gates', () => {
