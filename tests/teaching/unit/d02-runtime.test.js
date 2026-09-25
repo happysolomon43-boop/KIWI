@@ -84,6 +84,18 @@ test('D02 event contract separates scheduled system time from authenticated comm
   );
 });
 
+test('D02 defines distinct due-event types for authoritative time transitions', () => {
+  for (const key of [
+    'CLASS_START_DUE',
+    'BREAK_END_DUE',
+    'ASSESSMENT_EXPIRY_DUE',
+    'CLASS_END_DUE',
+    'REQUEST_EFFECTIVE_DUE',
+  ]) {
+    assert.ok(TEACHING_EVENTS[key], `missing due-event type: ${key}`);
+  }
+});
+
 test('D02 event payload is bounded routing metadata, not a content store', () => {
   assert.throws(
     () => validateTeachingEvent(dueEvent({
