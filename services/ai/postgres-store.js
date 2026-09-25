@@ -275,6 +275,119 @@ function createPostgresAIStore({ query, randomUUID }) {
     return rows;
   }
 
+  async function claimOperationAttempt({
+    operationId,
+    taskClass,
+    maxProviderAttempts,
+    maxAvailabilityFailures,
+    maxShortRateLimitFailures,
+    maxProviderOverloadFailures,
+    ttlMs = 30 * 60 * 1000,
+  }) {
+    const expiresAt = new Date(Date.now() + Math.max(
+      60000,
+      Math.min(Number(ttlMs) || 30 * 60 * 1000, 6 * 60 * 60 * 1000)
+    ));
+
+    const { rows } = await query(
+      `INSERT INTO ai_operation_budget (
+         operation_id, task_class, provider_attempts, successes,
+         availability_failures, short_rate_limit_failures,
+         provider_overload_failures, expires_at, updated_at
+       ) VALUES ($1,$2,1,0,0,0,0,$3,now())
+       ON CONFLICT (operation_id) DO UPDATE SET
+         task_class = CASE
+           WHEN ai_operation_budget.expires_at <= now() THEN EXCLUDED.task_class
+           ELSE ai_operation_budget.task_class
+         END,
+         provider_attempts = CASE
+           WHEN ai_operation_budget.expires_at <= now() THEN 1
+           ELSE ai_operation_budget.provider_attempts + 1
+         END,
+         successes = CASE
+           WHEN ai_operation_budget.expires_at <= now() THEN 0
+           ELSE ai_operation_budget.successes
+         END,
+         availability_failures = CASE
+           WHEN ai_operation_budget.expires_at <= now() THEN 0
+           ELSE ai_operation_budget.availability_failures
+         END,
+         short_rate_limit_failures = CASE
+           WHEN ai_operation_budget.expires_at <= now() THEN 0
+           ELSE ai_operation_budget.short_rate_limit_failures
+         END,
+         provider_overload_failures = CASE
+           WHEN ai_operation_budget.expires_at <= now() THEN 0
+           ELSE ai_operation_budget.provider_overload_failures
+         END,
+         expires_at = CASE
+           WHEN ai_operation_budget.expires_at <= now() THEN EXCLUDED.expires_at
+           ELSE GREATEST(ai_operation_budget.expires_at, EXCLUDED.expires_at)
+         END,
+         updated_at = now()
+       WHERE ai_operation_budget.expires_at <= now()
+          OR (
+            ai_operation_budget.provider_attempts < $4
+            AND ai_operation_budget.availability_failures < $5
+            AND ai_operation_budget.short_rate_limit_failures < $6
+            AND ai_operation_budget.provider_overload_failures < $7
+          )
+       RETURNING *`,
+      [
+        operationId,
+        taskClass,
+        expiresAt,
+        Math.max(1, Number(maxProviderAttempts) || 1),
+        Math.max(1, Number(maxAvailabilityFailures) || 1),
+        Math.max(1, Number(maxShortRateLimitFailures) || 1),
+        Math.max(1, Number(maxProviderOverloadFailures) || 1),
+      ]
+    );
+
+    return rows[0] || null;
+  }
+
+  async function recordOperationAttemptOutcome({
+    operationId,
+    success = false,
+    availabilityFailure = false,
+    shortRateLimitFailure = false,
+    providerOverloadFailure = false,
+  }) {
+    const { rows } = await query(
+      `UPDATE ai_operation_budget SET
+         successes = successes + CASE WHEN $2::boolean THEN 1 ELSE 0 END,
+         availability_failures = availability_failures
+           + CASE WHEN $3::boolean THEN 1 ELSE 0 END,
+         short_rate_limit_failures = short_rate_limit_failures
+           + CASE WHEN $4::boolean THEN 1 ELSE 0 END,
+         provider_overload_failures = provider_overload_failures
+           + CASE WHEN $5::boolean THEN 1 ELSE 0 END,
+         updated_at = now()
+       WHERE operation_id = $1
+       RETURNING *`,
+      [
+        operationId,
+        Boolean(success),
+        Boolean(availabilityFailure),
+        Boolean(shortRateLimitFailure),
+        Boolean(providerOverloadFailure),
+      ]
+    );
+    return rows[0] || null;
+  }
+
+  async function loadOperationBudgets() {
+    const { rows } = await query(
+      `SELECT *
+       FROM ai_operation_budget
+       WHERE expires_at > now()
+       ORDER BY updated_at DESC
+       LIMIT 500`
+    );
+    return rows;
+  }
+
   async function recordModelQualification(record) {
     const { rows } = await query(
       `INSERT INTO ai_model_qualifications (
@@ -637,6 +750,9 @@ function createPostgresAIStore({ query, randomUUID }) {
     releaseRouteRuntimeLease,
     recordRouteRuntimeOutcome,
     loadRouteRuntimeStates,
+    claimOperationAttempt,
+    recordOperationAttemptOutcome,
+    loadOperationBudgets,
     loadProviderModelHealth,
     upsertProviderModelHealth,
     recordModelQualification,
