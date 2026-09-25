@@ -181,3 +181,27 @@ Delivery B remains responsible for:
 - full-system production stress validation.
 
 **Delivery A must be production-validated before Delivery B begins.**
+
+
+## 14. Production validation
+
+Delivery A was merged to `main` as:
+
+`ca6a33e0012df7b354c3f2f38ba0d3c256415927`
+
+Post-merge verification:
+
+- GitHub `ai-tests`: **PASS** on the merge commit.
+- GitHub Teaching D04 verifier: **PASS** on the merge commit.
+- Supabase migration `20260925222637 ai_orchestrator_resilience_delivery_a`: **APPLIED**.
+- Supabase schema/grants: **VERIFIED**; the new runtime tables have RLS enabled, browser roles have no DML grants, and `service_role` has backend DML authority.
+- Live SQL route primitive: duplicate one-in-flight route lease correctly denied.
+- Live SQL operation-budget primitive: claims stop at the configured ceiling.
+- Render deploy `dep-darfe4u7bikc739aejag`: **LIVE** on the merge commit.
+- Render startup: schema initialization, AI orchestrator initialization, model discovery, WebSocket startup and server bind completed without post-deploy error/critical logs.
+- Render self-health: `/api/health` self-ping returned **HTTP 200** at 2026-09-25T22:37:04Z.
+- Vercel production deployment `dpl_Bz3xXeN81VWJKV7KJi82SXULdg9x`: **READY** for the same merge commit.
+
+At the time of this handoff verification there had been **zero natural AI provider attempts after the new Render instance became live**, so no production learner request was manufactured merely to populate the new telemetry fields. The telemetry persistence path is covered by the Delivery A tests and production schema verification; its first real post-deploy row remains dependent on natural AI traffic.
+
+This limitation does not invalidate the rollout gate: the runtime is live, the migration is compatible, the orchestrator initializes cleanly, health checks pass, and no learner workflow was used as an artificial smoke test.
