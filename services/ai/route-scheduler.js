@@ -113,10 +113,7 @@ function createRouteScheduler({
           score: quotaScore(quotaManager, slot.id, modelId),
         };
       })
-      .filter((entry) => (
-        entry.quotaEligible &&
-        entry.route.inFlight < maxInFlightPerRoute
-      ))
+      .filter((entry) => entry.quotaEligible)
       .sort((a, b) => (
         a.route.inFlight - b.route.inFlight ||
         b.score - a.score ||
