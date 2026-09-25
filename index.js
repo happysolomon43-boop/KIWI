@@ -41,6 +41,7 @@ const { isAIAvailabilityError } = require('./services/ai/errors');
 const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 const { createTeachingRouter } = require('./teaching-backend');
+const { createTeachingRuntimePlatform } = require('./teaching/runtime');
 const { requireRuntimeSecret, optionalRuntimeSecret } = require('./services/runtime-secrets');
 
 const DATABASE_URL = requireRuntimeSecret(process.env, 'DATABASE_URL', ['KIWI_DATABASE_URL']);
@@ -67,6 +68,16 @@ const _aiRuntime = createAIRuntime({
   logger: console,
 });
 const ai = _aiRuntime.orchestrator;
+
+// KIWI Teaching D02 runtime foundation. This is operational event/validation
+// infrastructure only; it owns no academic-domain truth.
+const teachingRuntimePlatform = createTeachingRuntimePlatform({
+  query,
+  randomUUID,
+  aiRun: (taskId, request, context) => ai.run(taskId, request, context),
+  env: process.env,
+  logger: console,
+});
 
 // Reckoning V2 Delivery B runs intelligence in SHADOW only. This object may
 // persist risk/evidence telemetry, but it has no authority over legacy
@@ -22760,6 +22771,20 @@ try {
   await _aiRuntime.initialize();
 } catch (e) {
   console.error('[KIWI AI] Orchestrator persistent-state initialization failed; continuing with in-memory routing:', e.message);
+}
+
+try {
+  await teachingRuntimePlatform.initialize();
+  teachingRuntimePlatform.start();
+  console.log('[KIWI Teaching] D02 durable runtime initialized and server-time worker started.');
+} catch (e) {
+  // Fail closed: never substitute an in-memory/browser academic-time owner.
+  // No D02 academic feature depends on the worker yet, so the wider KIWI app
+  // may remain available while operators repair the runtime persistence layer.
+  console.error(
+    '[KIWI Teaching] D02 durable runtime unavailable; Teaching due-event execution remains fail-closed:',
+    e.message
+  );
 }
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }
