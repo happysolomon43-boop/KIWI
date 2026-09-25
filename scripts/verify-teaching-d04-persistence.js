@@ -65,6 +65,7 @@ check(/REVOKE ALL ON SCHEMA teaching_protected FROM PUBLIC\\s*,\\s*anon\\s*,\\s*
 check(/REVOKE ALL ON TABLE teaching_protected\\.prepared_artifact_payloads FROM PUBLIC\\s*,\\s*anon\\s*,\\s*authenticated\\s*,\\s*teaching_domain_service/i.test(sql), 'ordinary Teaching domain role must not read protected payloads');
 check(!/GRANT\s+(?:ALL|INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,120}\sTO\s+(?:anon|authenticated)/i.test(sql), 'D04 must not grant browser DML on Teaching persistence');
 check(!/GRANT\s+DELETE[\s\S]{0,140}\sTO\s+(?:service_role|teaching_domain_service)/i.test(sql), 'D04 least-privilege service roles must not receive academic DELETE');
+check(/REVOKE ALL ON TABLE public\.%I FROM PUBLIC,anon,authenticated,service_role,teaching_domain_service/.test(sql), 'D04 must clear inherited/default public-table privileges before selective grants');
 
 const contract = fs.readFileSync(path.join(root, 'teaching/security/d04-persistence-contract.js'), 'utf8');
 for (const operation of ['grading.finalize','assessment.package.lock','attendance.authoritative.record','request.formal.decide','schedule.authority.update']) {
