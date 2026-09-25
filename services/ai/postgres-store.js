@@ -162,6 +162,119 @@ function createPostgresAIStore({ query, randomUUID }) {
   }
 
 
+  async function acquireRouteRuntimeLease({
+    projectSlot,
+    modelId,
+    leaseMs = 190000,
+    maxInFlight = 1,
+  }) {
+    const durationMs = Math.max(5000, Math.min(Number(leaseMs) || 190000, 10 * 60 * 1000));
+    const limit = Math.max(1, Math.min(Number(maxInFlight) || 1, 8));
+    const leaseUntil = new Date(Date.now() + durationMs);
+
+    const { rows } = await query(
+      `INSERT INTO ai_route_runtime (
+         project_slot, model_id, in_flight, lease_expires_at,
+         last_selected_at, updated_at
+       ) VALUES ($1,$2,1,$3,now(),now())
+       ON CONFLICT (project_slot, model_id) DO UPDATE SET
+         in_flight = CASE
+           WHEN ai_route_runtime.lease_expires_at IS NULL
+             OR ai_route_runtime.lease_expires_at <= now()
+           THEN 1
+           ELSE ai_route_runtime.in_flight + 1
+         END,
+         lease_expires_at = CASE
+           WHEN ai_route_runtime.lease_expires_at IS NULL
+             OR ai_route_runtime.lease_expires_at <= now()
+           THEN EXCLUDED.lease_expires_at
+           ELSE GREATEST(ai_route_runtime.lease_expires_at, EXCLUDED.lease_expires_at)
+         END,
+         last_selected_at = now(),
+         updated_at = now()
+       WHERE ai_route_runtime.lease_expires_at IS NULL
+          OR ai_route_runtime.lease_expires_at <= now()
+          OR ai_route_runtime.in_flight < $4
+       RETURNING *`,
+      [projectSlot, modelId, leaseUntil, limit]
+    );
+
+    return rows[0] || null;
+  }
+
+  async function releaseRouteRuntimeLease(projectSlot, modelId) {
+    const { rows } = await query(
+      `UPDATE ai_route_runtime SET
+         in_flight = GREATEST(0, in_flight - 1),
+         lease_expires_at = CASE
+           WHEN in_flight <= 1 THEN NULL
+           ELSE lease_expires_at
+         END,
+         updated_at = now()
+       WHERE project_slot = $1 AND model_id = $2
+       RETURNING *`,
+      [projectSlot, modelId]
+    );
+    return rows[0] || null;
+  }
+
+  async function recordRouteRuntimeOutcome({
+    projectSlot,
+    modelId,
+    success = false,
+    errorCode = null,
+    nextEligibleAt = null,
+    shortRateLimitStreak = 0,
+  }) {
+    const { rows } = await query(
+      `INSERT INTO ai_route_runtime (
+         project_slot, model_id, in_flight, next_eligible_at,
+         short_rate_limit_streak, last_success_at, last_failure_at,
+         last_error_code, updated_at
+       ) VALUES (
+         $1,$2,0,$3,$4,
+         CASE WHEN $5::boolean THEN now() ELSE NULL END,
+         CASE WHEN $5::boolean THEN NULL ELSE now() END,
+         $6,now()
+       )
+       ON CONFLICT (project_slot, model_id) DO UPDATE SET
+         next_eligible_at = EXCLUDED.next_eligible_at,
+         short_rate_limit_streak = EXCLUDED.short_rate_limit_streak,
+         last_success_at = CASE
+           WHEN $5::boolean THEN now()
+           ELSE ai_route_runtime.last_success_at
+         END,
+         last_failure_at = CASE
+           WHEN $5::boolean THEN ai_route_runtime.last_failure_at
+           ELSE now()
+         END,
+         last_error_code = CASE
+           WHEN $5::boolean THEN NULL
+           ELSE EXCLUDED.last_error_code
+         END,
+         updated_at = now()
+       RETURNING *`,
+      [
+        projectSlot,
+        modelId,
+        nextEligibleAt || null,
+        Math.max(0, Number(shortRateLimitStreak) || 0),
+        Boolean(success),
+        errorCode || null,
+      ]
+    );
+    return rows[0] || null;
+  }
+
+  async function loadRouteRuntimeStates() {
+    const { rows } = await query(
+      `SELECT *
+       FROM ai_route_runtime
+       ORDER BY model_id ASC, project_slot ASC`
+    );
+    return rows;
+  }
+
   async function recordModelQualification(record) {
     const { rows } = await query(
       `INSERT INTO ai_model_qualifications (
@@ -520,6 +633,10 @@ function createPostgresAIStore({ query, randomUUID }) {
     loadCatalogModels,
     loadProjectModelStates,
     upsertProjectModelState,
+    acquireRouteRuntimeLease,
+    releaseRouteRuntimeLease,
+    recordRouteRuntimeOutcome,
+    loadRouteRuntimeStates,
     loadProviderModelHealth,
     upsertProviderModelHealth,
     recordModelQualification,
