@@ -68,3 +68,6 @@ All KIWI-caused runtime/model failure paths are non-punitive.
 The runtime worker is initialized by the KIWI backend from the normal server-side PostgreSQL connection. If the D02 operational schema is unavailable, the worker remains stopped and reports a fail-closed initialization error; it never falls back to in-memory academic timing.
 
 No browser tab is required for event execution.
+
+
+<!-- post-merge CI validation branch: do not merge -->
