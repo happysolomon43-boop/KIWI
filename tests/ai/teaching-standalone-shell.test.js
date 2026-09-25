@@ -123,7 +123,7 @@ test('Teaching switch is dashboard-owned, bottom-positioned, and requires confir
   assert.match(index, /function requestKiwiTeachingSwitch\(\)/);
   assert.match(index, /Switch to KIWI Teaching\?/);
   assert.match(index, /You are leaving the KIWI study app and opening KIWI Teaching\. Continue\?/);
-  assert.match(index, /window\.location\.assign\("\/teaching\.html"\)/);
+  assert.match(index, /window\.location\.replace\("\/teaching\.html"\)/);
 });
 
 test('Teaching dashboard switch is not hidden behind runtime feature availability gates', () => {
@@ -140,6 +140,24 @@ test('Teaching dashboard switch is not hidden behind runtime feature availabilit
   assert.doesNotMatch(js, /function initKiwiDashboardBridge\(\)/);
 });
 
-test('Teaching frontend entry has valid JavaScript syntax', () => {
+test('Teaching shared API client and frontend entry have valid JavaScript syntax', () => {
+  const sharedApiClientPath = path.join(root, 'public', 'kiwi-api-client.js');
+  const sharedApiClient = read(sharedApiClientPath);
+
+  assert.doesNotMatch(sharedApiClient, /\\n/);
+  execFileSync(process.execPath, ['--check', sharedApiClientPath], { stdio: 'pipe' });
   execFileSync(process.execPath, ['--check', teachingJsPath], { stdio: 'pipe' });
+});
+
+test('Teaching owns browser Back and dashboard entry does not leave a dashboard history entry', () => {
+  const js = read(teachingJsPath);
+  const index = read(indexHtmlPath);
+
+  assert.match(index, /window\.location\.replace\("\/teaching\.html"\)/);
+  assert.match(js, /function installTeachingHistoryGuard\(\)/);
+  assert.match(js, /window\.history\.replaceState\(marker/);
+  assert.match(js, /window\.history\.pushState\(marker/);
+  assert.match(js, /window\.addEventListener\('popstate'/);
+  assert.match(js, /installTeachingHistoryGuard\(\)/);
+  assert.match(js, /window\.location\.assign\(KIWI_PATH\)/);
 });

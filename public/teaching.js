@@ -92,6 +92,21 @@ function requestSwitchToKiwi() {
   }
 }
 
+function installTeachingHistoryGuard() {
+  const marker = { kiwiTeaching: true };
+
+  // Teaching is an explicit application mode. Browser/phone Back must not
+  // silently switch the student back to the normal KIWI app; that transition
+  // is owned by the confirmed "Switch to KIWI" action.
+  window.history.replaceState(marker, '', window.location.href);
+  window.history.pushState(marker, '', window.location.href);
+
+  window.addEventListener('popstate', () => {
+    closeActiveOverlay();
+    window.history.pushState(marker, '', window.location.href);
+  });
+}
+
 function suppressVercelToolbar() {
   const removeToolbar = () => {
     document
@@ -229,6 +244,7 @@ async function verifyTeachingSession() {
 function initTeachingDocument() {
   suppressVercelToolbar();
   renderTeachingNavigation();
+  installTeachingHistoryGuard();
 
   const menuButton = document.getElementById('teachingMenuButton');
   const menuClose = document.getElementById('teachingMenuClose');

@@ -1,4 +1,7 @@
-(function initKiwiApiClient(global) {\n'use strict';\n\nconst config = global.KIWI_RUNTIME_CONFIG;
+(function initKiwiApiClient(global) {
+'use strict';
+
+const config = global.KIWI_RUNTIME_CONFIG;
 
 if (!config || !config.apiBaseUrl) {
   throw new Error('KIWI runtime configuration must load before the shared API client.');
