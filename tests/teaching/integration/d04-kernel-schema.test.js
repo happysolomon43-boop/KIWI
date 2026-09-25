@@ -107,6 +107,55 @@ test('D04 schema, RLS and protected preparation boundaries exist', { skip: skipR
          and not c.relrowsecurity
     `);
     assert.deepEqual(rlsOff, []);
+
+    const { rows: serviceRoles } = await pool.query(`
+      select rolname, rolcanlogin, rolbypassrls
+        from pg_roles
+       where rolname in ('teaching_domain_service','teaching_protected_service')
+       order by rolname
+    `);
+    assert.deepEqual(serviceRoles, [
+      { rolname: 'teaching_domain_service', rolcanlogin: false, rolbypassrls: false },
+      { rolname: 'teaching_protected_service', rolcanlogin: false, rolbypassrls: false },
+    ]);
+
+    const { rows: roleMemberships } = await pool.query(`
+      select granted.rolname as granted_role, member.rolname as member_role
+        from pg_auth_members m
+        join pg_roles granted on granted.oid=m.roleid
+        join pg_roles member on member.oid=m.member
+       where granted.rolname in ('teaching_domain_service','teaching_protected_service')
+         and member.rolname='service_role'
+       order by granted.rolname
+    `);
+    assert.deepEqual(roleMemberships, [
+      { granted_role: 'teaching_domain_service', member_role: 'service_role' },
+      { granted_role: 'teaching_protected_service', member_role: 'service_role' },
+    ]);
+
+    const { rows: servicePolicyCounts } = await pool.query(`
+      select schemaname, cmd, count(*)::int as count
+        from pg_policies
+       where (schemaname='public' and tablename like 'teaching_%'
+              and 'teaching_domain_service'=any(roles))
+          or (schemaname='teaching_preparation'
+              and ('teaching_domain_service'=any(roles) or 'teaching_protected_service'=any(roles)))
+          or (schemaname='teaching_protected'
+              and 'teaching_protected_service'=any(roles))
+       group by schemaname, cmd
+       order by schemaname, cmd
+    `);
+    assert.deepEqual(servicePolicyCounts, [
+      { schemaname: 'public', cmd: 'INSERT', count: 24 },
+      { schemaname: 'public', cmd: 'SELECT', count: 24 },
+      { schemaname: 'public', cmd: 'UPDATE', count: 17 },
+      { schemaname: 'teaching_preparation', cmd: 'INSERT', count: 22 },
+      { schemaname: 'teaching_preparation', cmd: 'SELECT', count: 22 },
+      { schemaname: 'teaching_preparation', cmd: 'UPDATE', count: 10 },
+      { schemaname: 'teaching_protected', cmd: 'INSERT', count: 1 },
+      { schemaname: 'teaching_protected', cmd: 'SELECT', count: 1 },
+    ]);
+
   } finally {
     await pool.end();
   }
