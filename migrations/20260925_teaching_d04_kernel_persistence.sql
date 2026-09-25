@@ -473,7 +473,7 @@ BEGIN
     'teaching_assessment_eligibility','teaching_academic_audit_log'
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', rel);
-    EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC,anon,authenticated', rel);
+    EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC,anon,authenticated,service_role,teaching_domain_service', rel);
     EXECUTE format('GRANT SELECT ON TABLE public.%I TO authenticated,service_role,teaching_domain_service', rel);
     EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING ((select auth.uid())::text=student_id)', rel||'_student_select', rel);
   END LOOP;
@@ -504,7 +504,7 @@ BEGIN
     'review_findings','finding_component_refs','finding_evidence_rule_refs'
   ] LOOP
     EXECUTE format('ALTER TABLE teaching_preparation.%I ENABLE ROW LEVEL SECURITY', rel);
-    EXECUTE format('REVOKE ALL ON TABLE teaching_preparation.%I FROM PUBLIC,anon,authenticated', rel);
+    EXECUTE format('REVOKE ALL ON TABLE teaching_preparation.%I FROM PUBLIC,anon,authenticated,service_role,teaching_domain_service,teaching_protected_service', rel);
     EXECUTE format('GRANT SELECT ON TABLE teaching_preparation.%I TO service_role,teaching_domain_service,teaching_protected_service', rel);
   END LOOP;
 END $$;
@@ -522,7 +522,7 @@ GRANT INSERT ON
 TO service_role,teaching_domain_service,teaching_protected_service;
 
 ALTER TABLE teaching_protected.prepared_artifact_payloads ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE teaching_protected.prepared_artifact_payloads FROM PUBLIC,anon,authenticated,teaching_domain_service;
+REVOKE ALL ON TABLE teaching_protected.prepared_artifact_payloads FROM PUBLIC,anon,authenticated,service_role,teaching_domain_service,teaching_protected_service;
 GRANT SELECT,INSERT ON TABLE teaching_protected.prepared_artifact_payloads TO service_role,teaching_protected_service;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA teaching_preparation REVOKE ALL ON TABLES FROM PUBLIC,anon,authenticated;
