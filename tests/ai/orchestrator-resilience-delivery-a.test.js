@@ -186,3 +186,75 @@ test('failed-attempt telemetry carries sanitized provider evidence and route sta
   assert.equal(failed.operationAttemptNumber, 1);
   assert.doesNotMatch(JSON.stringify(failed), /key-1|prompt|study notes/i);
 });
+
+
+test('concurrent follower cannot create a parallel model confirmation probe wave', async () => {
+  let owner38Calls = 0;
+  let releaseConfirmation;
+  let markConfirmationStarted;
+  const confirmationStarted = new Promise((resolve) => {
+    markConfirmationStarted = resolve;
+  });
+  const confirmationGate = new Promise((resolve) => {
+    releaseConfirmation = resolve;
+  });
+  const calls = [];
+
+  const ai = createAIOrchestrator({
+    projectPool: pool(4),
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        const content = String(args.content || '');
+        calls.push({ content, modelId: args.modelId });
+
+        if (content === 'probe-owner' && args.modelId === 'gemini-3.8-flash') {
+          owner38Calls += 1;
+          if (owner38Calls === 1) {
+            throw new AIError('first overload signal', {
+              code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+              status: 503,
+              retryable: true,
+              scope: 'PROVIDER_MODEL',
+            });
+          }
+
+          markConfirmationStarted();
+          await confirmationGate;
+          throw new AIError('confirmed overload', {
+            code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+            status: 503,
+            retryable: true,
+            scope: 'PROVIDER_MODEL',
+          });
+        }
+
+        return {
+          raw: successRaw(content || 'ok'),
+          latencyMs: 1,
+          httpStatus: 200,
+        };
+      },
+    },
+  });
+
+  const owner = ai.run('MAIN_CBT', { content: 'probe-owner' });
+  await confirmationStarted;
+
+  const follower = await ai.run('MAIN_CBT', { content: 'probe-follower' });
+  assert.equal(follower.text, 'probe-follower');
+  assert.equal(follower.requestedModel, 'gemini-3.7-flash');
+  assert.equal(
+    calls.filter(
+      (call) =>
+        call.content === 'probe-follower' &&
+        call.modelId === 'gemini-3.8-flash'
+    ).length,
+    0
+  );
+
+  releaseConfirmation();
+  const ownerResult = await owner;
+  assert.equal(ownerResult.requestedModel, 'gemini-3.7-flash');
+  assert.equal(owner38Calls, 2);
+});
