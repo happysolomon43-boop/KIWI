@@ -24,7 +24,7 @@ Prepared artifact payload bodies are physically isolated in `teaching_protected.
 
 All public D04 Teaching tables enable RLS. Authenticated browser roles may only SELECT rows whose `student_id` matches `auth.uid()`; they receive no INSERT/UPDATE/DELETE/TRUNCATE privilege. Trusted mutations use server/service boundaries.
 
-Two NOLOGIN group roles are created: `teaching_domain_service` for ordinary trusted Teaching persistence and `teaching_protected_service` for protected preparation. Existing Supabase `service_role` is granted membership; no credential or parallel authentication system is created.
+Two NOLOGIN group roles are created: `teaching_domain_service` for ordinary trusted Teaching persistence and `teaching_protected_service` for protected preparation. Existing Supabase `service_role` receives the required trusted grants directly; the NOLOGIN roles create explicit privilege boundaries without changing any login credential or creating a parallel authentication system.
 
 Service principals receive no academic DELETE/TRUNCATE grant. Historical Student Responses, Evidence Events, Intake originals/extractions, Learning Unit lineage, PPL input/dependency/lineage refs and protected payload versions are immutable; corrections create new versions/events rather than rewrite history. The academic audit log is append-only.
 
