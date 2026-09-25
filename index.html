@@ -9867,16 +9867,6 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             </div>
           </div>
         </div>
-        <a
-          id="kiwiTeachingSwitch"
-          href="/teaching.html"
-          class="btn btn-primary"
-          aria-label="Switch to KIWI Teaching"
-          style="width:100%;min-height:52px;margin:18px 0 16px;display:flex;align-items:center;justify-content:center;gap:10px;border-radius:16px;font-weight:800;letter-spacing:-0.01em;text-decoration:none;box-sizing:border-box;"
-        >
-          <span>Switch to KIWI Teaching</span>
-          <span aria-hidden="true" style="font-size:18px;line-height:1;">&rarr;</span>
-        </a>
         ${
           returnGreeting
             ? `
@@ -10057,6 +10047,18 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             }
           </div>
         </div>
+        <button
+          id="kiwiTeachingSwitch"
+          data-dashboard-owned="true"
+          type="button"
+          class="btn btn-primary"
+          aria-label="Switch to KIWI Teaching"
+          onclick="requestKiwiTeachingSwitch()"
+          style="width:100%;min-height:52px;margin:24px 0 4px;display:flex;align-items:center;justify-content:center;gap:10px;border-radius:16px;font-weight:800;letter-spacing:-0.01em;"
+        >
+          <span>Switch to KIWI Teaching</span>
+          <span aria-hidden="true" style="font-size:18px;line-height:1;">&rarr;</span>
+        </button>
       </div>
     `;
           // Canonical living-vine renderer. PixiJS is the sole production renderer;
@@ -12570,6 +12572,14 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             createBtn.textContent = "Create Subject";
           }
         });
+      }
+
+      function requestKiwiTeachingSwitch() {
+        showCustomConfirm(
+          "Switch to KIWI Teaching?",
+          "You are leaving the KIWI study app and opening KIWI Teaching. Continue?",
+          () => window.location.assign("/teaching.html")
+        );
       }
 
             function showCustomConfirm(title, message, onConfirm) {
@@ -24035,6 +24045,5 @@ window.addEventListener('scroll', _tourScheduleReposition, { passive: true, capt
 </script>
 <script src="/kiwi_product_v3.js"></script>
 <script src="/kiwi_bubbles_v1.js"></script>
-<script type="module" src="/teaching.js"></script>
 </body>
 </html>

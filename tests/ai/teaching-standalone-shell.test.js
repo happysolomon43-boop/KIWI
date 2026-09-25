@@ -27,7 +27,7 @@ test('Teaching uses a standalone document instead of rendering inside the KIWI s
   assert.doesNotMatch(js, /renderTeachingPage/);
   assert.doesNotMatch(js, /main\.innerHTML/);
 
-  assert.match(index, /src="\/teaching\.js"/);
+  assert.doesNotMatch(index, /src="\/teaching\.js"/);
   assert.doesNotMatch(index, /teaching-frontend\.js/);
 });
 
@@ -105,12 +105,25 @@ test('Teaching suppresses Vercel live-feedback toolbar injection', () => {
   assert.match(js, /new MutationObserver\(removeToolbar\)/);
 });
 
-test('Teaching switch is rendered natively by the KIWI dashboard and links to teaching.html', () => {
+test('Teaching switch is dashboard-owned, bottom-positioned, and requires confirmation', () => {
   const index = read(indexHtmlPath);
+  const paintStart = index.indexOf('function _paintDashboard');
+  const dashboardGrid = index.indexOf('<div class="dashboard-grid">', paintStart);
+  const brainPreview = index.indexOf('id="brain-preview-card"', dashboardGrid);
+  const switchPosition = index.indexOf('id="kiwiTeachingSwitch"', dashboardGrid);
+  const rendererMarker = index.indexOf('// Canonical living-vine renderer.', dashboardGrid);
 
-  assert.match(index, /id="kiwiTeachingSwitch"/);
-  assert.match(index, /href="\/teaching\.html"/);
-  assert.match(index, />Switch to KIWI Teaching</);
+  assert.ok(paintStart >= 0);
+  assert.ok(dashboardGrid > paintStart);
+  assert.ok(brainPreview > dashboardGrid);
+  assert.ok(switchPosition > brainPreview);
+  assert.ok(rendererMarker > switchPosition);
+  assert.match(index, /data-dashboard-owned="true"/);
+  assert.match(index, /onclick="requestKiwiTeachingSwitch\(\)"/);
+  assert.match(index, /function requestKiwiTeachingSwitch\(\)/);
+  assert.match(index, /Switch to KIWI Teaching\?/);
+  assert.match(index, /You are leaving the KIWI study app and opening KIWI Teaching\. Continue\?/);
+  assert.match(index, /window\.location\.assign\("\/teaching\.html"\)/);
 });
 
 test('Teaching dashboard switch is not hidden behind runtime feature availability gates', () => {
@@ -123,7 +136,8 @@ test('Teaching dashboard switch is not hidden behind runtime feature availabilit
   assert.doesNotMatch(js, /getTeachingStatus/);
   assert.match(js, /function isTeachingDocument\(\)/);
   assert.match(js, /document\.getElementById\('teachingApp'\)/);
-  assert.match(js, /function ensureDashboardTeachingSwitch\(\)/);
+  assert.doesNotMatch(js, /function ensureDashboardTeachingSwitch\(\)/);
+  assert.doesNotMatch(js, /function initKiwiDashboardBridge\(\)/);
 });
 
 test('Teaching frontend entry has valid JavaScript syntax', () => {

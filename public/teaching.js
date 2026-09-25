@@ -7,7 +7,6 @@ if (typeof kiwiApiRequest !== 'function' || typeof hasKiwiSession !== 'function'
 // KIWI Teaching app entry + KIWI dashboard bridge.
 // Teaching has its own shell while remaining connected to KIWI's shared backend/core.
 
-const TEACHING_PATH = '/teaching.html';
 const KIWI_PATH = '/';
 const teachingNavigationItems = new Map();
 
@@ -285,122 +284,6 @@ function initTeachingDocument() {
   verifyTeachingSession().catch(() => {});
 }
 
-function switchToTeaching() {
-  window.location.assign(TEACHING_PATH);
-}
-
-function requestTeachingSwitch() {
-  const title = 'Switch to KIWI Teaching?';
-  const message = 'You are leaving the KIWI study app and opening KIWI Teaching. Continue?';
-
-  if (typeof window.showCustomConfirm === 'function') {
-    window.showCustomConfirm(title, message, switchToTeaching);
-    return;
-  }
-
-  if (window.confirm(`${title}\n\n${message}`)) {
-    switchToTeaching();
-  }
-}
-
-function createTeachingSwitch() {
-  const wrap = document.createElement('section');
-  wrap.id = 'kiwiTeachingSwitch';
-  wrap.setAttribute('aria-label', 'KIWI Teaching');
-  wrap.style.cssText = [
-    'margin:24px 0 4px',
-    'padding:0',
-    'display:flex',
-    'justify-content:stretch',
-  ].join(';');
-
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'btn btn-primary';
-  button.setAttribute('aria-label', 'Switch to KIWI Teaching');
-  button.style.cssText = [
-    'width:100%',
-    'min-height:52px',
-    'display:flex',
-    'align-items:center',
-    'justify-content:center',
-    'gap:10px',
-    'border-radius:16px',
-    'font-weight:800',
-    'letter-spacing:-0.01em',
-  ].join(';');
-
-  const label = document.createElement('span');
-  label.textContent = 'Switch to KIWI Teaching';
-
-  const arrow = document.createElement('span');
-  arrow.setAttribute('aria-hidden', 'true');
-  arrow.textContent = '→';
-  arrow.style.cssText = 'font-size:18px;line-height:1;';
-
-  button.append(label, arrow);
-  button.addEventListener('click', requestTeachingSwitch);
-  wrap.appendChild(button);
-
-  return wrap;
-}
-
-function ensureDashboardTeachingSwitch() {
-  if (isTeachingDocument()) return;
-
-  const main = document.getElementById('mainContent');
-  if (!main) return;
-
-  const dashboardGrid = main.querySelector('.dashboard-grid');
-  const pageWrap = dashboardGrid?.closest('.page-wrap');
-
-  if (!dashboardGrid || !pageWrap) return;
-
-  const dashboardHero = pageWrap.querySelector('.ks-hero');
-  const existing = pageWrap.querySelector('#kiwiTeachingSwitch');
-
-  // Keep the Teaching mode switch in the dashboard's primary visible region.
-  // The previous implementation appended it after the entire dashboard grid,
-  // which made the control effectively undiscoverable on long/mobile dashboards.
-  if (existing) {
-    if (dashboardHero) {
-      if (dashboardHero.nextElementSibling !== existing) {
-        dashboardHero.insertAdjacentElement('afterend', existing);
-      }
-    } else if (dashboardGrid.previousElementSibling !== existing) {
-      pageWrap.insertBefore(existing, dashboardGrid);
-    }
-    return;
-  }
-
-  const teachingSwitch = createTeachingSwitch();
-
-  if (dashboardHero) {
-    dashboardHero.insertAdjacentElement('afterend', teachingSwitch);
-  } else {
-    pageWrap.insertBefore(teachingSwitch, dashboardGrid);
-  }
-}
-
-function initKiwiDashboardBridge() {
-  ensureDashboardTeachingSwitch();
-
-  const main = document.getElementById('mainContent');
-  if (!main) return;
-
-  let scheduled = false;
-  const observer = new MutationObserver(() => {
-    if (scheduled) return;
-    scheduled = true;
-    queueMicrotask(() => {
-      scheduled = false;
-      ensureDashboardTeachingSwitch();
-    });
-  });
-
-  observer.observe(main, { childList: true, subtree: true });
-}
-
 window.KIWITeachingNavigation = Object.freeze({
   register: registerTeachingNavigationItem,
   unregister: unregisterTeachingNavigationItem,
@@ -409,12 +292,8 @@ window.KIWITeachingNavigation = Object.freeze({
 });
 
 function init() {
-  if (isTeachingDocument()) {
-    initTeachingDocument();
-    return;
-  }
-
-  initKiwiDashboardBridge();
+  if (!isTeachingDocument()) return;
+  initTeachingDocument();
 }
 
 if (document.readyState === 'loading') {
