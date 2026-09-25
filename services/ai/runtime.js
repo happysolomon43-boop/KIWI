@@ -13,6 +13,8 @@ const { createModelQualifier } = require('./model-qualifier');
 const { createModelDiscoveryManager } = require('./model-discovery');
 const { createProviderHealth } = require('./provider-health');
 const { createAITrafficController } = require('./traffic-controller');
+const { createRouteScheduler } = require('./route-scheduler');
+const { createOperationBudget } = require('./operation-budget');
 const { createAIOrchestrator } = require('./orchestrator');
 
 function parseIntervalMs(value, fallback = 15 * 60 * 1000) {
@@ -85,6 +87,8 @@ function createAIRuntime({
     ),
   });
   const trafficController = createAITrafficController({ env, logger });
+  const routeScheduler = createRouteScheduler({ store, env });
+  const operationBudget = createOperationBudget({ store, env });
   const router = createModelRouter({
     registry: AI_TASKS,
     catalog,
@@ -128,6 +132,8 @@ function createAIRuntime({
     modelLifecycle,
     providerHealth,
     trafficController,
+    routeScheduler,
+    operationBudget,
     transport,
     logger,
     env,
@@ -471,6 +477,8 @@ function createAIRuntime({
         models: Object.freeze(providerRows),
       }),
       traffic: trafficState,
+      routeScheduler: routeScheduler.snapshot(),
+      operationBudget: operationBudget.snapshot(),
       telemetry: recentTelemetry,
       discovery: Object.freeze({
         enabled: discovery.autoDiscoveryEnabled(),
@@ -572,6 +580,8 @@ function createAIRuntime({
     modelLifecycle,
     providerHealth,
     trafficController,
+    routeScheduler,
+    operationBudget,
     qualifier,
     discovery,
     orchestrator,
