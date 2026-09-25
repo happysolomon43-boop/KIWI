@@ -417,6 +417,7 @@ function createAIOrchestrator({
       let modelDailyQuotaAttemptCount = 0;
       let modelShortRateLimitAttemptCount = 0;
       let modelTransientAttemptCount = 0;
+      let ownsConfirmationProbe = false;
 
       for (const slot of slots) {
         if (attempts.length >= retryPolicy.maxAttempts) {
@@ -427,7 +428,7 @@ function createAIOrchestrator({
         // Requests that entered while a model was healthy must re-check the
         // circuit before each additional provider attempt. A half-open lease
         // is exempt because this request owns the single recovery probe.
-        if (!providerLease.halfOpenProbe) {
+        if (!providerLease.halfOpenProbe && !ownsConfirmationProbe) {
           const liveProviderAvailability =
             resolvedProviderHealth.availability(candidate.modelId);
           if (!liveProviderAvailability.available) {
@@ -462,11 +463,19 @@ function createAIOrchestrator({
           });
         } catch (budgetStoreError) {
           await sideEffect('route lease release', () => routeLease.release());
+          if (ownsConfirmationProbe) {
+            resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
+            ownsConfirmationProbe = false;
+          }
           resolvedProviderHealth.release(candidate.modelId);
           throw budgetStoreError;
         }
         if (!budgetClaim.allowed) {
           await sideEffect('route lease release', () => routeLease.release());
+          if (ownsConfirmationProbe) {
+            resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
+            ownsConfirmationProbe = false;
+          }
           resolvedProviderHealth.release(candidate.modelId);
           const budgetError = new AIError(
             `AI operation budget exhausted for task ${taskId}`,
@@ -642,6 +651,17 @@ function createAIOrchestrator({
             );
           }
 
+          if (
+            ownsConfirmationProbe &&
+            (
+              !isProviderAvailabilityFailure ||
+              providerState?.state === 'OPEN'
+            )
+          ) {
+            resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
+            ownsConfirmationProbe = false;
+          }
+
           attempts.push(Object.freeze({
             modelId: candidate.modelId,
             slotId: slot.id,
@@ -719,6 +739,10 @@ function createAIOrchestrator({
           }
 
           if (IMMEDIATE_FAILURE_CODES.has(aiError.code)) {
+            if (ownsConfirmationProbe) {
+              resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
+              ownsConfirmationProbe = false;
+            }
             resolvedProviderHealth.release(candidate.modelId);
             await finishFailure(
               aiError,
@@ -791,6 +815,25 @@ function createAIOrchestrator({
                 skipRemainingSlotsForModel = true;
                 break;
               }
+
+              if (
+                isProviderAvailabilityFailure &&
+                providerState?.state === 'CLOSED' &&
+                providerState?.distinctFailureSlots === 1 &&
+                !ownsConfirmationProbe
+              ) {
+                ownsConfirmationProbe = Boolean(
+                  resolvedProviderHealth.beginConfirmationProbe?.(
+                    candidate.modelId
+                  )
+                );
+                if (!ownsConfirmationProbe) {
+                  // Another logical request owns the single independent
+                  // confirmation probe. Do not create a parallel probe wave.
+                  skipRemainingSlotsForModel = true;
+                  break;
+                }
+              }
             }
 
             if (modelAttemptCount >= retryPolicy.maxAttemptsPerModel) {
@@ -801,12 +844,20 @@ function createAIOrchestrator({
             continue;
           }
 
+          if (ownsConfirmationProbe) {
+            resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
+            ownsConfirmationProbe = false;
+          }
           resolvedProviderHealth.release(candidate.modelId);
           await finishFailure(aiError);
           throw aiError;
         }
       }
 
+      if (ownsConfirmationProbe) {
+        resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
+        ownsConfirmationProbe = false;
+      }
       resolvedProviderHealth.release(candidate.modelId);
       if (skipRemainingSlotsForModel) continue;
     }
