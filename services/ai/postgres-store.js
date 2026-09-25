@@ -123,10 +123,10 @@ function createPostgresAIStore({ query, randomUUID }) {
       `INSERT INTO ai_project_model_state (
          project_slot, model_id, state, quota_day,
          attempts_today, successes_today, observed_quota_limit,
-         cooldown_until, last_error_code, last_http_status,
-         last_success_at, last_failure_at, updated_at
+         observed_quota_dimension, cooldown_until, last_error_code,
+         last_http_status, last_success_at, last_failure_at, updated_at
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now()
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now()
        )
        ON CONFLICT (project_slot, model_id) DO UPDATE SET
          state = EXCLUDED.state,
@@ -134,6 +134,7 @@ function createPostgresAIStore({ query, randomUUID }) {
          attempts_today = EXCLUDED.attempts_today,
          successes_today = EXCLUDED.successes_today,
          observed_quota_limit = EXCLUDED.observed_quota_limit,
+         observed_quota_dimension = EXCLUDED.observed_quota_dimension,
          cooldown_until = EXCLUDED.cooldown_until,
          last_error_code = EXCLUDED.last_error_code,
          last_http_status = EXCLUDED.last_http_status,
@@ -149,6 +150,7 @@ function createPostgresAIStore({ query, randomUUID }) {
         Number(state.attemptsToday) || 0,
         Number(state.successesToday) || 0,
         state.observedQuotaLimit ?? null,
+        state.observedQuotaDimension || null,
         state.cooldownUntil || null,
         state.lastErrorCode || null,
         state.lastHttpStatus ?? null,
@@ -293,10 +295,16 @@ function createPostgresAIStore({ query, randomUUID }) {
          request_id, attempt_number, model_id, project_slot,
          outcome, error_code, http_status, finish_reason, latency_ms,
          input_tokens, output_tokens, thought_tokens, total_tokens,
+         provider_error_code, provider_status, quota_dimension,
+         quota_metric, quota_limit_name, quota_limit_value,
+         retry_after_ms, classification_source,
+         route_state_before, route_state_after,
+         operation_id, operation_attempt_number,
          started_at, completed_at
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-         COALESCE($14, now()),COALESCE($15, now())
+         $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,
+         COALESCE($26, now()),COALESCE($27, now())
        )`,
       [
         record.requestId,
@@ -312,6 +320,18 @@ function createPostgresAIStore({ query, randomUUID }) {
         Number(record.outputTokens) || 0,
         Number(record.thoughtTokens) || 0,
         Number(record.totalTokens) || 0,
+        record.providerErrorCode || null,
+        record.providerStatus || null,
+        record.quotaDimension || null,
+        record.quotaMetric || null,
+        record.quotaLimitName || null,
+        record.quotaLimitValue == null ? null : Number(record.quotaLimitValue),
+        record.retryAfterMs == null ? null : Number(record.retryAfterMs),
+        record.classificationSource || null,
+        record.routeStateBefore || null,
+        record.routeStateAfter || null,
+        record.operationId || null,
+        record.operationAttemptNumber == null ? null : Number(record.operationAttemptNumber),
         record.startedAt || null,
         record.completedAt || null,
       ]
