@@ -21,6 +21,7 @@ const required = [
 for (const file of required) check(fs.existsSync(path.join(root, file)), `missing D04 artifact: ${file}`);
 
 const sql = fs.readFileSync(migrationPath, 'utf8');
+const tightSql = sql.replace(/\\s+/g, '');
 const expectedPublicTables = [
   'teaching_semesters','teaching_courses','teaching_course_plans','teaching_topics',
   'teaching_subtopics','teaching_learning_units','teaching_learning_unit_dependencies',
@@ -39,7 +40,7 @@ for (const table of [
   'artifact_components','component_dependencies','artifact_lineage','workspace_candidates',
   'review_findings','finding_component_refs','finding_evidence_rule_refs',
 ]) {
-  check(new RegExp(`CREATE TABLE teaching_preparation\\\\.${table}\\\\b`, 'i').test(sql),
+  check(sql.includes(`CREATE TABLE teaching_preparation.${table} (`),
     `missing PPL D04 table: teaching_preparation.${table}`);
 }
 check(/CREATE TABLE teaching_protected\.prepared_artifact_payloads\b/i.test(sql), 'missing protected prepared-artifact payload store');
