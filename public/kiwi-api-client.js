@@ -1,4 +1,4 @@
-const config = window.KIWI_RUNTIME_CONFIG;
+(function initKiwiApiClient(global) {\n'use strict';\n\nconst config = global.KIWI_RUNTIME_CONFIG;
 
 if (!config || !config.apiBaseUrl) {
   throw new Error('KIWI runtime configuration must load before the shared API client.');
@@ -15,12 +15,12 @@ const PUBLIC_AUTH_401 = new Set([
 ]);
 
 function token(name) {
-  return window.localStorage.getItem(name) || null;
+  return global.localStorage.getItem(name) || null;
 }
 
 function setToken(name, value) {
-  if (value) window.localStorage.setItem(name, value);
-  else window.localStorage.removeItem(name);
+  if (value) global.localStorage.setItem(name, value);
+  else global.localStorage.removeItem(name);
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
@@ -30,12 +30,12 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
   const forwardAbort = () => controller.abort();
   externalSignal?.addEventListener('abort', forwardAbort, { once: true });
 
-  const timer = window.setTimeout(() => controller.abort(), Math.max(1_000, Number(timeoutMs) || DEFAULT_TIMEOUT_MS));
+  const timer = global.setTimeout(() => controller.abort(), Math.max(1_000, Number(timeoutMs) || DEFAULT_TIMEOUT_MS));
 
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
-    window.clearTimeout(timer);
+    global.clearTimeout(timer);
     externalSignal?.removeEventListener('abort', forwardAbort);
   }
 }
@@ -79,7 +79,7 @@ async function parseResponse(response, endpoint) {
   throw error;
 }
 
-export async function kiwiApiRequest(endpoint, options = {}) {
+async function kiwiApiRequest(endpoint, options = {}) {
   if (typeof endpoint !== 'string' || !endpoint.startsWith('/')) {
     throw new TypeError('KIWI API endpoint must start with /.');
   }
@@ -117,6 +117,13 @@ export async function kiwiApiRequest(endpoint, options = {}) {
   return parseResponse(response, endpoint);
 }
 
-export function hasKiwiSession() {
+function hasKiwiSession() {
   return Boolean(token('kiwi_auth_token') || token('kiwi_refresh_token'));
 }
+
+
+global.KIWI_API_CLIENT = Object.freeze({
+  kiwiApiRequest,
+  hasKiwiSession,
+});
+})(window);
