@@ -1,0 +1,41 @@
+{
+  "delivery": "D03",
+  "implementation_source_resolution": "USER_AUTHORIZED_AVAILABLE_VERSION_SUBSTITUTION",
+  "capability_registry": {
+    "version": "1.1",
+    "sha256": "a68e19eff631d43d4ab31ddd15b46298dc4ffb48dc2006758e85f712200c4ef4"
+  },
+  "authority_spec": {
+    "version": "1.2_PPL",
+    "sha256": "3d0bf8503df58c2126692119353d5c6eb29d157b8891de18ffaade1dd1f3e0ec"
+  },
+  "orchestrator_event_runtime": {
+    "version": "1.1",
+    "sha256": "f3f7b806e5e5f69bf7be52de2db6f12b17b39edc9f1910ebbc9520b1e591798d"
+  },
+  "ppl_standard": {
+    "version": "1.0",
+    "sha256": "6299a0378c7f409128eaca623193f56677eabe952b2c2d92368a8f883d7606f3"
+  },
+  "prompt_manifest": {
+    "version": "1.3",
+    "sha256": "4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce"
+  },
+  "prompt_pack": {
+    "version": "1.3",
+    "sha256": "173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae"
+  },
+  "blueprint": {
+    "version": "11.5",
+    "sha256": "01fc144a33fa2ce839a7505e67922d723539664a72d957cf282dc498a7d72158"
+  },
+  "backlog": {
+    "version": "9.5",
+    "sha256": "4d296dd650ca7ffc55607d4d31e355e8afa49c476c577d42bf9cd665f4460092"
+  },
+  "task_map": {
+    "version": "1.5",
+    "sha256": "9bd1efae6160248c39c2bde73f942b040cef6f2a71d8c2c4c65bd67f0500a1db"
+  },
+  "note": "D03 intentionally uses the mounted Authority v1.2_PPL and Phase-15 Prompt Manifest/Pack v1.3 per explicit implementation instruction. This does not qualify any Teaching AI route; D30 remains mandatory."
+}
