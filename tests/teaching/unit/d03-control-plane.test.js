@@ -82,12 +82,11 @@ test('all 169 capabilities have immutable D03 contracts and model prompts cannot
     assert.equal(contract.authoritativeOwnerBoundary, capability.authoritative_owner_boundary);
   }
 
-  const capability = firstModelCapability();
+  const capability = registry.listCapabilities().find((item) => item.authority_ceiling !== 'T0' && item.authority_ceiling !== 'T4');
+  assert.ok(capability, 'expected at least one model-backed capability below T4');
   assert.throws(
     () => registry.assertCapabilityBinding(capability.id, { authorityLevel: 'T4' }),
-    (error) => capability.authority_ceiling === 'T4'
-      ? false
-      : error.code === 'TEACHING_CAPABILITY_AUTHORITY_ESCALATION'
+    (error) => error.code === 'TEACHING_CAPABILITY_AUTHORITY_ESCALATION'
   );
   assert.throws(
     () => registry.assertCapabilityBinding(capability.id, { authoritativeOwnerBoundary: 'forged_owner' }),
