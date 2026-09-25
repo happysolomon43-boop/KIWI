@@ -43,7 +43,7 @@ const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 const { createTeachingRouter } = require('./teaching-backend');
 const { requireRuntimeSecret, optionalRuntimeSecret } = require('./services/runtime-secrets');
 
-const DATABASE_URL = requireRuntimeSecret(process.env, 'DATABASE_URL');
+const DATABASE_URL = requireRuntimeSecret(process.env, 'DATABASE_URL', ['KIWI_DATABASE_URL']);
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
