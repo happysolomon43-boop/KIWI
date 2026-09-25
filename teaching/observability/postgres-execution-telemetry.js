@@ -5,6 +5,45 @@ const {
   assertAuthorityLevel,
 } = require('../ai/contracts');
 
+function optional(value) {
+  const normalized = String(value || '').trim();
+  return normalized || null;
+}
+
+function buildPromptBindingVersion({
+  promptTemplateVersion = null,
+  promptFamilyId = null,
+  promptFamilyVersion = null,
+  constitutionVersion = null,
+} = {}) {
+  const explicit = optional(promptTemplateVersion);
+  if (explicit) return explicit;
+
+  const familyId = optional(promptFamilyId);
+  const familyVersion = optional(promptFamilyVersion);
+  const constitution = optional(constitutionVersion);
+  if (!familyId && !familyVersion && !constitution) return null;
+  if (!familyId || !familyVersion || !constitution) {
+    throw new TypeError(
+      'Teaching D03 prompt telemetry requires promptFamilyId, promptFamilyVersion and constitutionVersion together.'
+    );
+  }
+  return `family:${familyId}@${familyVersion};constitution:${constitution}`;
+}
+
+function buildOutputSchemaBindingVersion({
+  outputSchemaVersion = null,
+  outputSchemaId = null,
+} = {}) {
+  const version = optional(outputSchemaVersion);
+  const schemaId = optional(outputSchemaId);
+  if (!schemaId) return version;
+  if (!version) {
+    throw new TypeError('Teaching D03 output schema telemetry requires outputSchemaVersion with outputSchemaId.');
+  }
+  return `${schemaId}@${version}`;
+}
+
 function createPostgresTeachingExecutionTelemetry({
   query,
   randomUUID,
@@ -33,15 +72,21 @@ function createPostgresTeachingExecutionTelemetry({
     correlationId = null,
     causationId = null,
     responsibilityKey,
+    capabilityId = null,
     intelligenceClass,
     authorityLevel,
     centralTaskId,
     promptTemplateVersion = null,
+    promptFamilyId = null,
+    promptFamilyVersion = null,
+    constitutionVersion = null,
+    outputSchemaId = null,
     outputSchemaVersion = null,
     authoritativeOwner = null,
   } = {}) {
-    if (typeof responsibilityKey !== 'string' || !responsibilityKey.trim()) {
-      throw new TypeError('Teaching AI execution requires responsibilityKey.');
+    const responsibility = optional(capabilityId) || optional(responsibilityKey);
+    if (!responsibility) {
+      throw new TypeError('Teaching AI execution requires responsibilityKey or canonical capabilityId.');
     }
     if (typeof centralTaskId !== 'string' || !centralTaskId.trim()) {
       throw new TypeError('Teaching AI execution requires centralTaskId.');
@@ -50,6 +95,16 @@ function createPostgresTeachingExecutionTelemetry({
     const id = executionId || randomUUID();
     const klass = assertIntelligenceClass(intelligenceClass);
     const authority = assertAuthorityLevel(authorityLevel);
+    const promptBindingVersion = buildPromptBindingVersion({
+      promptTemplateVersion,
+      promptFamilyId,
+      promptFamilyVersion,
+      constitutionVersion,
+    });
+    const schemaBindingVersion = buildOutputSchemaBindingVersion({
+      outputSchemaId,
+      outputSchemaVersion,
+    });
 
     await query(
       `INSERT INTO teaching_runtime.ai_execution_audit (
@@ -62,12 +117,12 @@ function createPostgresTeachingExecutionTelemetry({
         id,
         correlationId,
         causationId,
-        responsibilityKey.trim(),
+        responsibility,
         klass,
         authority,
         centralTaskId.trim(),
-        promptTemplateVersion,
-        outputSchemaVersion,
+        promptBindingVersion,
+        schemaBindingVersion,
         authoritativeOwner,
       ]
     );
@@ -129,5 +184,7 @@ function createPostgresTeachingExecutionTelemetry({
 }
 
 module.exports = {
+  buildPromptBindingVersion,
+  buildOutputSchemaBindingVersion,
   createPostgresTeachingExecutionTelemetry,
 };
