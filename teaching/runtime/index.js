@@ -4,6 +4,7 @@ const { createPostgresTeachingEventStore } = require('./postgres-event-store');
 const { createDurableTeachingEventRuntime } = require('./durable-event-runtime');
 const { createPostgresTeachingExecutionTelemetry } = require('../observability/postgres-execution-telemetry');
 const { createCentralAIExecutionBoundary } = require('../ai/central-orchestrator-boundary');
+const { createTeachingPromptControlPlane } = require('../prompt-runtime');
 
 function parseBounded(value, fallback, min, max) {
   const parsed = Number(value);
@@ -26,6 +27,7 @@ function createTeachingRuntimePlatform({
 
   const eventStore = createPostgresTeachingEventStore({ query, randomUUID });
   const executionTelemetry = createPostgresTeachingExecutionTelemetry({ query, randomUUID });
+  const promptControl = createTeachingPromptControlPlane();
   const workerId = `teaching-runtime:${randomUUID()}`;
   const eventRuntime = createDurableTeachingEventRuntime({
     store: eventStore,
@@ -49,6 +51,7 @@ function createTeachingRuntimePlatform({
 
   async function initialize() {
     try {
+      promptControl.assertReady();
       await eventStore.assertReady();
       await executionTelemetry.assertReady();
       ready = true;
@@ -82,6 +85,7 @@ function createTeachingRuntimePlatform({
       ready,
       lastInitializationError,
       events: eventRuntime.status(),
+      controlPlane: promptControl.status(),
     });
   }
 
@@ -90,6 +94,7 @@ function createTeachingRuntimePlatform({
     eventRuntime,
     executionTelemetry,
     aiBoundary,
+    promptControl,
     initialize,
     start,
     stop,

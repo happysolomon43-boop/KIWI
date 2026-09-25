@@ -1,41 +1,29 @@
-name: Teaching D02 Runtime
+name: Teaching D03 Control Foundation
 
 on:
   pull_request:
     paths:
       - 'teaching/**'
-      - 'teaching-backend.js'
-      - 'index.js'
       - 'package.json'
-      - 'migrations/20260925_teaching_d02_runtime_primitives.sql'
       - 'tests/teaching/**'
-      - 'docs/teaching/d02-runtime-primitives.md'
-      - 'docs/teaching/security/d02-threat-model.md'
-      - 'docs/teaching/accessibility/d02-baseline.md'
-      - 'scripts/verify-teaching-d02-runtime.js'
-      - '.github/workflows/teaching-d02-runtime.yml'
+      - 'scripts/verify-teaching-d03-control.js'
+      - '.github/workflows/teaching-d03-control.yml'
   push:
     branches: [main]
     paths:
       - 'teaching/**'
-      - 'teaching-backend.js'
-      - 'index.js'
       - 'package.json'
-      - 'migrations/20260925_teaching_d02_runtime_primitives.sql'
       - 'tests/teaching/**'
-      - 'docs/teaching/d02-runtime-primitives.md'
-      - 'docs/teaching/security/d02-threat-model.md'
-      - 'docs/teaching/accessibility/d02-baseline.md'
-      - 'scripts/verify-teaching-d02-runtime.js'
-      - '.github/workflows/teaching-d02-runtime.yml'
+      - 'scripts/verify-teaching-d03-control.js'
+      - '.github/workflows/teaching-d03-control.yml'
 
 permissions:
   contents: read
 
 jobs:
-  verify-d02:
+  verify-d03:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +37,7 @@ jobs:
       - name: Verify D01 remains intact
         run: npm run verify:teaching:d01
 
-      - name: Verify D02 runtime foundation
+      - name: Verify D02 remains intact
         run: npm run verify:teaching:d02
 
       - name: Verify D03 control foundation
