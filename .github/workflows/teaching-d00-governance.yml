@@ -1,0 +1,37 @@
+name: Teaching D00 Governance
+
+on:
+  pull_request:
+    paths:
+      - 'docs/teaching/governance/**'
+      - 'scripts/verify-teaching-d00-governance.js'
+      - '.github/workflows/teaching-d00-governance.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/teaching/governance/**'
+      - 'scripts/verify-teaching-d00-governance.js'
+      - '.github/workflows/teaching-d00-governance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-d00:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify D00 canonical governance
+        run: node scripts/verify-teaching-d00-governance.js
+
+      - name: Run existing KIWI regression tests
+        run: npm test
