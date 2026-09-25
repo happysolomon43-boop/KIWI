@@ -105,10 +105,12 @@ test('Teaching suppresses Vercel live-feedback toolbar injection', () => {
   assert.match(js, /new MutationObserver\(removeToolbar\)/);
 });
 
-test('Teaching switch is appended as a dashboard mode switch and redirects to teaching.html', () => {
+test('Teaching switch is mounted in the dashboard primary visible region and redirects to teaching.html', () => {
   const js = read(teachingJsPath);
 
-  assert.match(js, /pageWrap\.appendChild\(createTeachingSwitch\(\)\)/);
+  assert.match(js, /const dashboardHero = pageWrap\.querySelector\('\.ks-hero'\)/);
+  assert.match(js, /dashboardHero\.insertAdjacentElement\('afterend', teachingSwitch\)/);
+  assert.match(js, /pageWrap\.insertBefore\(teachingSwitch, dashboardGrid\)/);
   assert.match(js, /Switch to KIWI Teaching\?/);
   assert.match(js, /const TEACHING_PATH = '\/teaching\.html'/);
 });
