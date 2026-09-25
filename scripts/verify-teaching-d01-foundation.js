@@ -18,7 +18,6 @@ const required = [
   'teaching/README.md',
   'teaching/index.js',
   'teaching/config/index.js',
-  'teaching/config/feature-flags.js',
   'teaching/domain/ids.js',
   'teaching/domain/time.js',
   'teaching/events/names.js',
@@ -41,6 +40,9 @@ const required = [
   'tests/teaching/unit/foundation.test.js',
   'tests/teaching/unit/backend-router.test.js',
   'tests/teaching/integration/supabase-foundation.test.js',
+  'docs/teaching/change-control/KIWI_Teaching_Feature_Availability_Amendment_v1.0.md',
+  'docs/teaching/change-control/KIWI_Teaching_Master_Implementation_Backlog_Amendment-9.6.md',
+  'docs/teaching/change-control/KIWI_Teaching_Delivery_Task_Map_Amendment_v1.6.json',
 ];
 
 const moduleFolders = [
@@ -87,6 +89,47 @@ check(
   !/gemini|openai|anthropic|vertex|bedrock/i.test(teachingJs),
   'Teaching frontend must not contain provider-specific routing assumptions'
 );
+
+
+const noToggleSources = [
+  path.join(root, 'teaching'),
+  path.join(root, 'teaching-backend.js'),
+  path.join(root, 'public', 'teaching.js'),
+];
+
+const forbiddenToggleTokens = [
+  'TEACHING_ENABLED',
+  'TEACHING_DEV_USER_IDS',
+  'TEACHING_HIGH_STAKES_MARKING_ENABLED',
+  'TEACHING_IMPROMPTU_TESTS_ENABLED',
+  'TEACHING_RESITS_ENABLED',
+  'TEACHING_EXTERNAL_INTEGRATIONS_ENABLED',
+  'TEACHING_NOT_ENABLED',
+  'featureFlags',
+];
+
+function scanTextFiles(target, results = []) {
+  const stat = fs.statSync(target);
+  if (stat.isDirectory()) {
+    for (const child of fs.readdirSync(target)) {
+      scanTextFiles(path.join(target, child), results);
+    }
+    return results;
+  }
+  if (/\.(?:js|mjs|cjs)$/.test(target)) {
+    results.push([target, fs.readFileSync(target, 'utf8')]);
+  }
+  return results;
+}
+
+for (const [sourcePath, sourceText] of noToggleSources.flatMap((target) => scanTextFiles(target))) {
+  for (const token of forbiddenToggleTokens) {
+    check(
+      !sourceText.includes(token),
+      `Teaching runtime must not reintroduce feature-availability toggle token ${token} in ${path.relative(root, sourcePath)}`
+    );
+  }
+}
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 check(Boolean(packageJson.scripts?.['test:teaching']), 'package.json missing test:teaching');

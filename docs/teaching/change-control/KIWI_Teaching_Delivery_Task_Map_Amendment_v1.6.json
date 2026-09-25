@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "base_file": "KIWI_Teaching_Delivery_Task_Map_v1.5.json",
+  "version": "1.6-amendment",
+  "date": "2026-09-25",
+  "change_class": "E",
+  "delivery_id": "D01",
+  "task_count_unchanged": true,
+  "amended_tasks": [
+    {
+      "id": "TCH-0029",
+      "label": "CORE",
+      "delivery_id": "D01",
+      "description": "Establish Teaching availability as a normal authenticated KIWI application surface. Do not gate Teaching or ordinary Teaching capabilities by development-user allowlists or generic runtime feature on/off flags. Unimplemented capabilities remain absent until their owning delivery implements and accepts them."
+    },
+    {
+      "id": "TCH-0675",
+      "label": "CORE",
+      "delivery_id": "D01",
+      "description": "Enforce a no-generic-feature-toggle product rule for Teaching. High-stakes marking, impromptu tests, resits, external integrations, and future Teaching capabilities become available through their owning implementation/qualification/authority contracts rather than independent enable/disable feature flags."
+    }
+  ]
+}

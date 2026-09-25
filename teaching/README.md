@@ -17,3 +17,5 @@ D01 establishes boundaries only. It intentionally does **not** implement Course 
 - `teaching/modules/` reserves the canonical domain package boundaries.
 
 The UI must not own academic truth. AI/controller code must not issue ad-hoc SQL. Provider/model SDK calls are forbidden in Teaching feature/domain code; model execution remains owned by the central KIWI AI Orchestrator.
+
+Teaching does not use generic feature-availability toggles or per-user development allowlists. Implemented/accepted capabilities are exposed normally; incomplete capabilities remain absent until their owning delivery is complete. Academic/runtime qualification gates remain mandatory and are not feature toggles.

@@ -1,7 +1,5 @@
 'use strict';
 
-const { createFeatureFlags } = require('./feature-flags');
-
 function parsePositiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -14,15 +12,12 @@ function optionalString(value) {
 }
 
 function createTeachingConfig(env = process.env) {
-  const featureFlags = createFeatureFlags(env);
-
   return Object.freeze({
     environment: optionalString(env.NODE_ENV) || 'development',
-    featureFlags,
     ai: Object.freeze({
       routingOwner: 'kiwi-ai-orchestrator',
-      // D01 only establishes an opaque configuration seam. D03 owns actual
-      // route manifests and qualification; domain code must not interpret these.
+      // Provider/model settings remain opaque central-orchestrator configuration.
+      // They are not Teaching feature-availability toggles.
       providerSetting: optionalString(env.TEACHING_AI_PROVIDER),
       modelSetting: optionalString(env.TEACHING_AI_MODEL),
       timeoutMs: parsePositiveInteger(env.TEACHING_AI_TIMEOUT_MS, 45_000, { min: 1_000, max: 300_000 }),
@@ -31,21 +26,7 @@ function createTeachingConfig(env = process.env) {
   });
 }
 
-function publicTeachingConfig(config, user) {
-  const flags = config.featureFlags.flags;
-  return Object.freeze({
-    available: config.featureFlags.teachingAvailableFor(user),
-    flags: Object.freeze({
-      highStakesMarking: flags.highStakesMarking,
-      impromptuTests: flags.impromptuTests,
-      resits: flags.resits,
-      externalIntegrations: flags.externalIntegrations,
-    }),
-  });
-}
-
 module.exports = {
   createTeachingConfig,
-  publicTeachingConfig,
   parsePositiveInteger,
 };

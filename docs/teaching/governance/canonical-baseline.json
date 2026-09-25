@@ -146,5 +146,26 @@
     "TCH-0751",
     "TCH-0752",
     "TCH-0871"
+  ],
+  "implementation_amendments": [
+    {
+      "id": "AMEND-2026-09-25-FEATURE-AVAILABILITY",
+      "date": "2026-09-25",
+      "change_class": "E",
+      "decision_file": "docs/teaching/change-control/KIWI_Teaching_Feature_Availability_Amendment_v1.0.md",
+      "backlog_amendment": {
+        "file": "docs/teaching/change-control/KIWI_Teaching_Master_Implementation_Backlog_Amendment-9.6.md",
+        "version": "9.6-amendment"
+      },
+      "delivery_task_map_amendment": {
+        "file": "docs/teaching/change-control/KIWI_Teaching_Delivery_Task_Map_Amendment_v1.6.json",
+        "version": "1.6-amendment"
+      },
+      "affected_task_ids": [
+        "TCH-0029",
+        "TCH-0675"
+      ],
+      "effect": "Teaching uses no generic runtime feature-availability toggles or development-user allowlists."
+    }
   ]
 }

@@ -32,29 +32,20 @@ function createTeachingRouter({
   });
   const router = express.Router();
 
-  // Authentication is shared with KIWI. Feature availability is deliberately
-  // reported before feature-gating so the main KIWI shell can decide whether
-  // to show the Teaching switch without exposing incomplete feature behavior.
+  // Teaching is a normal authenticated KIWI application surface.
+  // D01's former per-account/feature availability gate was removed by the
+  // 2026-09-25 Class-E feature-availability amendment.
   router.use(authenticate);
 
   router.get('/status', (req, res) => {
     res.json(foundation.service.statusForUser(req.user));
   });
 
-  // Reckoning remains a platform-level lock. D01 does not invent a parallel
-  // Teaching escape path around existing KIWI authority.
+  // Reckoning remains a platform-level lock. This is an authority rule, not
+  // a Teaching feature toggle.
   if (typeof reckoningLockout === 'function') {
     router.use(reckoningLockout);
   }
-
-  router.use((req, res, next) => {
-    try {
-      foundation.service.assertAvailable(req.user);
-      next();
-    } catch (error) {
-      sendError(res, error, 'KIWI Teaching is unavailable.');
-    }
-  });
 
   // D01 exposes read-only foundation seams only. No Teaching academic mutation
   // endpoint exists in this delivery.

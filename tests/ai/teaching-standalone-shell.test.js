@@ -113,6 +113,17 @@ test('Teaching switch is appended as a dashboard mode switch and redirects to te
   assert.match(js, /const TEACHING_PATH = '\/teaching\.html'/);
 });
 
+test('Teaching dashboard switch is not hidden behind runtime feature availability gates', () => {
+  const js = read(teachingJsPath);
+
+  assert.doesNotMatch(js, /TEACHING_ENABLED/);
+  assert.doesNotMatch(js, /TEACHING_DEV_USER_IDS/);
+  assert.doesNotMatch(js, /TEACHING_NOT_ENABLED/);
+  assert.doesNotMatch(js, /status\?\.available/);
+  assert.doesNotMatch(js, /getTeachingStatus/);
+  assert.match(js, /function ensureDashboardTeachingSwitch\(\)/);
+});
+
 test('Teaching frontend entry has valid JavaScript syntax', () => {
   execFileSync(process.execPath, ['--check', teachingJsPath], { stdio: 'pipe' });
 });
