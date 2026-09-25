@@ -11,6 +11,14 @@ const TEACHING_PATH = '/teaching.html';
 const KIWI_PATH = '/';
 const teachingNavigationItems = new Map();
 
+function isTeachingDocument() {
+  // The Teaching entry script is intentionally shared by both the main KIWI
+  // dashboard and the standalone Teaching shell. Detect the shell from the DOM
+  // rather than the URL so static hosting/rewrite differences cannot break the
+  // dashboard bridge.
+  return Boolean(document.getElementById('teachingApp'));
+}
+
 function syncOverlayState() {
   const menuOpen = document.getElementById('teachingMenuPanel')?.dataset?.open === 'true';
   const settingsOpen = document.getElementById('teachingSettingsPanel')?.dataset?.open === 'true';
