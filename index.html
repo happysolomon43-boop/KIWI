@@ -5984,6 +5984,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
 </style>
   <link rel="stylesheet" href="/kiwi_product_v3.css">
   <link rel="stylesheet" href="/kiwi_bubbles_v1.css">
+      <script src="/kiwi-runtime-config.js"></script>
+    <script src="/kiwi-api-client.js"></script>
   </head>
   <body>
   <!-- Persistent AI generation indicator (Fix 6) — lives outside mainContent so it survives navigation -->
@@ -6217,7 +6219,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // Absolute Render URL required for cross-origin deployment (GitHub Pages → Render).
       // and local single-origin dev serves both from the same port.
       const _isLocalDev = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-      const API_BASE_URL = _isLocalDev ? "http://localhost:8080/api" : "https://kiwi-741i.onrender.com/api";
+      const API_BASE_URL = window.KIWI_RUNTIME_CONFIG.apiBaseUrl;
 
       // ── AUTHENTICATION STATE ──
       let authToken = localStorage.getItem("kiwi_auth_token") || null;
@@ -6228,8 +6230,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         if (_kiwiWS && (_kiwiWS.readyState === 0 || _kiwiWS.readyState === 1)) return;
         var tok = authToken || localStorage.getItem('kiwi_auth_token');
         if (!tok) return;
-        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        var url   = proto + '//' + 'kiwi-741i.onrender.com' + '/ws?token=' + encodeURIComponent(tok);
+        var url = window.KIWI_RUNTIME_CONFIG.webSocketBaseUrl + '/ws?token=' + encodeURIComponent(tok);
         try {
           _kiwiWS = new WebSocket(url);
         } catch(e) { return; }

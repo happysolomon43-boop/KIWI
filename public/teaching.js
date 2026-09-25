@@ -1,14 +1,45 @@
+const { kiwiApiRequest, hasKiwiSession } = window.KIWI_API_CLIENT || {};
+
+if (typeof kiwiApiRequest !== 'function' || typeof hasKiwiSession !== 'function') {
+  throw new Error('KIWI shared API client must load before Teaching.');
+}
+
 // KIWI Teaching app entry + KIWI dashboard bridge.
 // Teaching has its own shell while remaining connected to KIWI's shared backend/core.
 
 const TEACHING_PATH = '/teaching.html';
 const KIWI_PATH = '/';
+const TEACHING_STATUS_TTL_MS = 15_000;
 
 const teachingNavigationItems = new Map();
+let teachingStatusCache = null;
+let teachingStatusCacheAt = 0;
+let teachingStatusPromise = null;
 
 function isTeachingDocument() {
   return document.documentElement?.dataset?.app === 'kiwi-teaching'
     || document.body?.dataset?.app === 'kiwi-teaching';
+}
+
+async function getTeachingStatus({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && teachingStatusCache && now - teachingStatusCacheAt < TEACHING_STATUS_TTL_MS) {
+    return teachingStatusCache;
+  }
+
+  if (!force && teachingStatusPromise) return teachingStatusPromise;
+
+  teachingStatusPromise = kiwiApiRequest('/teaching/status')
+    .then((status) => {
+      teachingStatusCache = status;
+      teachingStatusCacheAt = Date.now();
+      return status;
+    })
+    .finally(() => {
+      teachingStatusPromise = null;
+    });
+
+  return teachingStatusPromise;
 }
 
 function syncOverlayState() {
@@ -171,6 +202,65 @@ function unregisterTeachingNavigationItem(id) {
   renderTeachingNavigation();
 }
 
+function renderTeachingUnavailable({ signedIn, message } = {}) {
+  const main = document.getElementById('teachingApp');
+  if (!main) return;
+
+  const section = document.createElement('section');
+  section.style.cssText = 'min-height:62vh;display:grid;place-items:center;padding:24px 0;';
+
+  const card = document.createElement('div');
+  card.style.cssText = 'width:min(520px,100%);text-align:center;';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:18px;font-weight:800;letter-spacing:-0.02em;margin-bottom:10px;';
+  title.textContent = 'KIWI Teaching is not available for this account yet';
+
+  const detail = document.createElement('div');
+  detail.style.cssText = 'font-size:14px;line-height:1.65;color:var(--teaching-muted);margin-bottom:20px;';
+  detail.textContent = message || (signedIn
+    ? 'Teaching is currently limited to approved development and test users.'
+    : 'Sign in to KIWI first, then open Teaching from the KIWI dashboard.');
+
+  const back = document.createElement('button');
+  back.id = 'teachingUnavailableBack';
+  back.className = 'teaching-menu-action';
+  back.type = 'button';
+  back.style.cssText = 'width:auto;margin:0 auto;';
+  back.textContent = 'Back to KIWI';
+  back.addEventListener('click', () => {
+    window.location.assign(KIWI_PATH);
+  });
+
+  card.append(title, detail, back);
+  section.appendChild(card);
+  main.replaceChildren(section);
+}
+
+async function bootstrapTeachingAccess() {
+  if (!hasKiwiSession()) {
+    renderTeachingUnavailable({ signedIn: false });
+    return false;
+  }
+
+  try {
+    const status = await getTeachingStatus({ force: true });
+    if (!status?.available) {
+      renderTeachingUnavailable({ signedIn: true });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    renderTeachingUnavailable({
+      signedIn: true,
+      message: error?.status === 401
+        ? 'Your KIWI session has expired. Return to KIWI and sign in again.'
+        : 'KIWI could not verify Teaching access. Return to KIWI and try again.',
+    });
+    return false;
+  }
+}
+
 function initTeachingDocument() {
   suppressVercelToolbar();
   renderTeachingNavigation();
@@ -221,6 +311,8 @@ function initTeachingDocument() {
       closeActiveOverlay();
     }
   });
+
+  bootstrapTeachingAccess().catch(() => {});
 }
 
 function switchToTeaching() {
@@ -283,7 +375,7 @@ function createTeachingSwitch() {
   return wrap;
 }
 
-function ensureDashboardTeachingSwitch() {
+async function ensureDashboardTeachingSwitch() {
   if (isTeachingDocument()) return;
 
   const main = document.getElementById('mainContent');
@@ -294,11 +386,25 @@ function ensureDashboardTeachingSwitch() {
 
   if (!dashboardGrid || !pageWrap) return;
 
+  let status;
+  try {
+    status = await getTeachingStatus();
+  } catch (_) {
+    pageWrap.querySelector('#kiwiTeachingSwitch')?.remove();
+    return;
+  }
+
+  // The page may have changed while the network request was in flight.
+  if (!main.querySelector('.dashboard-grid') || !pageWrap.isConnected) return;
+
   const existing = pageWrap.querySelector('#kiwiTeachingSwitch');
+  if (!status?.available) {
+    existing?.remove();
+    return;
+  }
+
   if (existing) {
-    if (existing !== pageWrap.lastElementChild) {
-      pageWrap.appendChild(existing);
-    }
+    if (existing !== pageWrap.lastElementChild) pageWrap.appendChild(existing);
     return;
   }
 
@@ -306,13 +412,19 @@ function ensureDashboardTeachingSwitch() {
 }
 
 function initKiwiDashboardBridge() {
-  ensureDashboardTeachingSwitch();
+  ensureDashboardTeachingSwitch().catch(() => {});
 
   const main = document.getElementById('mainContent');
   if (!main) return;
 
+  let scheduled = false;
   const observer = new MutationObserver(() => {
-    ensureDashboardTeachingSwitch();
+    if (scheduled) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      ensureDashboardTeachingSwitch().catch(() => {});
+    });
   });
 
   observer.observe(main, { childList: true, subtree: true });

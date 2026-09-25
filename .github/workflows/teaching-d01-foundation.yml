@@ -1,0 +1,69 @@
+name: Teaching D01 Foundation
+
+on:
+  pull_request:
+    paths:
+      - 'teaching/**'
+      - 'teaching-backend.js'
+      - 'public/teaching.html'
+      - 'public/teaching.js'
+      - 'public/kiwi-runtime-config.js'
+      - 'public/kiwi-api-client.js'
+      - 'services/runtime-secrets.js'
+      - 'index.js'
+      - 'index.html'
+      - 'package.json'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d01-foundation.js'
+      - '.github/workflows/teaching-d01-foundation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'teaching/**'
+      - 'teaching-backend.js'
+      - 'public/teaching.html'
+      - 'public/teaching.js'
+      - 'public/kiwi-runtime-config.js'
+      - 'public/kiwi-api-client.js'
+      - 'services/runtime-secrets.js'
+      - 'index.js'
+      - 'index.html'
+      - 'package.json'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d01-foundation.js'
+      - '.github/workflows/teaching-d01-foundation.yml'
+
+jobs:
+  verify-d01:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Verify D01 foundation
+        run: npm run verify:teaching:d01
+
+      - name: Check backend syntax
+        run: node --check index.js
+
+      - name: Run Teaching unit tests
+        run: npm run test:teaching
+
+      - name: Run existing KIWI regression suite
+        run: npm test
+
+      - name: Verify web build
+        run: npm run build:web
+
+      - name: Run non-production Supabase integration scaffold
+        env:
+          TEACHING_TEST_DATABASE_URL: ${{ secrets.TEACHING_TEST_DATABASE_URL }}
+          TEACHING_TEST_PROJECT_REF: ${{ secrets.TEACHING_TEST_PROJECT_REF }}
+        run: npm run test:teaching:integration
