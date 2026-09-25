@@ -5,7 +5,9 @@ const assert = require('node:assert/strict');
 
 const {
   AI_ERROR_CODES,
+  QUOTA_DIMENSIONS,
   classifyGeminiHttpError,
+  extractProviderEvidence,
   extractRetryDelayMs,
 } = require('../../services/ai/errors');
 
@@ -121,4 +123,76 @@ test('Retry-After response header is honored when present', () => {
   });
 
   assert.equal(error.retryAfterMs, 7000);
+});
+
+
+test('structured Gemini quota evidence is retained without prompt or key material', () => {
+  const body = {
+    error: {
+      status: 'RESOURCE_EXHAUSTED',
+      message: 'Quota exceeded',
+      details: [{
+        '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+        quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+        quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier',
+        quotaValue: '20',
+      }],
+    },
+  };
+
+  const evidence = extractProviderEvidence(body);
+  assert.equal(evidence.providerStatus, 'RESOURCE_EXHAUSTED');
+  assert.equal(evidence.quotaDimension, QUOTA_DIMENSIONS.RPD);
+  assert.equal(evidence.quotaLimitValue, 20);
+  assert.equal(
+    evidence.quotaLimitName,
+    'GenerateRequestsPerDayPerProjectPerModel-FreeTier'
+  );
+  assert.equal(evidence.classificationSource, 'STRUCTURED_QUOTA');
+});
+
+test('machine-readable short-window provider codes never become daily exhaustion without daily evidence', () => {
+  const error = classifyGeminiHttpError({
+    status: 429,
+    body: {
+      error: {
+        code: 'rate_limit_exceeded',
+        message: 'Please retry later',
+      },
+    },
+  });
+
+  assert.equal(error.code, AI_ERROR_CODES.RATE_LIMIT_UNKNOWN);
+  assert.equal(error.providerEvidence.quotaDimension, QUOTA_DIMENSIONS.UNKNOWN);
+  assert.equal(error.providerEvidence.classificationSource, 'PROVIDER_CODE');
+});
+
+test('machine-readable quota_exceeded is treated as confirmed daily exhaustion', () => {
+  const error = classifyGeminiHttpError({
+    status: 429,
+    body: {
+      error: {
+        code: 'quota_exceeded',
+        message: 'Daily quota exhausted',
+      },
+    },
+  });
+
+  assert.equal(error.code, AI_ERROR_CODES.RATE_LIMIT_RPD);
+  assert.equal(error.providerEvidence.quotaDimension, QUOTA_DIMENSIONS.RPD);
+});
+
+test('generic daily wording does not quarantine a route as RPD', () => {
+  const error = classifyGeminiHttpError({
+    status: 429,
+    body: {
+      error: {
+        status: 'RESOURCE_EXHAUSTED',
+        message: 'Temporary limit reached during daily processing',
+      },
+    },
+  });
+
+  assert.equal(error.code, AI_ERROR_CODES.RATE_LIMIT_UNKNOWN);
+  assert.equal(error.providerEvidence.quotaDimension, QUOTA_DIMENSIONS.UNKNOWN);
 });

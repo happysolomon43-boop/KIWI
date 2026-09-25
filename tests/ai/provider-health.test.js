@@ -257,3 +257,30 @@ test('provider health refresh ignores stale database rows and accepts newer cros
   assert.equal(await health.refreshFromStore(), 1);
   assert.equal(health.snapshot('gemini-3.8-flash').state, CIRCUIT_STATES.OPEN);
 });
+
+
+test('first provider failure permits exactly one confirmation probe owner', () => {
+  const health = createProviderHealth({
+    minDistinctFailureSlots: 2,
+  });
+
+  const afterOne = health.recordFailure(
+    'gemini-3.8-flash',
+    'p1',
+    overloaded(),
+    { totalEligibleSlots: 14 }
+  );
+  assert.equal(afterOne.state, CIRCUIT_STATES.CLOSED);
+  assert.equal(afterOne.distinctFailureSlots, 1);
+
+  assert.equal(health.beginConfirmationProbe('gemini-3.8-flash'), true);
+  assert.equal(
+    health.snapshot('gemini-3.8-flash').confirmationProbeInFlight,
+    true
+  );
+  assert.equal(health.availability('gemini-3.8-flash').available, false);
+  assert.equal(health.beginConfirmationProbe('gemini-3.8-flash'), false);
+
+  health.endConfirmationProbe('gemini-3.8-flash');
+  assert.equal(health.availability('gemini-3.8-flash').available, true);
+});

@@ -86,6 +86,7 @@ function createQuotaManager({
       attemptsToday: 0,
       successesToday: 0,
       observedQuotaLimit: null,
+      observedQuotaDimension: null,
       cooldownUntil: null,
       lastErrorCode: null,
       lastHttpStatus: null,
@@ -104,6 +105,7 @@ function createQuotaManager({
       attemptsToday: Number(row.attempts_today) || 0,
       successesToday: Number(row.successes_today) || 0,
       observedQuotaLimit: row.observed_quota_limit == null ? null : Number(row.observed_quota_limit),
+      observedQuotaDimension: row.observed_quota_dimension || null,
       cooldownUntil: row.cooldown_until ? new Date(row.cooldown_until) : null,
       lastErrorCode: row.last_error_code || null,
       lastHttpStatus: row.last_http_status == null ? null : Number(row.last_http_status),
@@ -122,6 +124,7 @@ function createQuotaManager({
       state.attemptsToday = 0;
       state.successesToday = 0;
       state.observedQuotaLimit = null;
+      state.observedQuotaDimension = null;
 
       if (
         state.state === PROJECT_MODEL_STATES.EXHAUSTED_RPD ||
@@ -316,8 +319,19 @@ function createQuotaManager({
     state.lastHttpStatus = error?.status ?? null;
     state.lastFailureAt = now;
 
-    const observed = extractObservedQuotaLimit(error?.details);
-    if (observed != null) state.observedQuotaLimit = observed;
+    const evidence = error?.providerEvidence || null;
+    const observed = evidence?.quotaLimitValue == null
+      ? extractObservedQuotaLimit(error?.details)
+      : Number(evidence.quotaLimitValue);
+    if (observed != null && Number.isFinite(observed)) {
+      state.observedQuotaLimit = observed;
+      state.observedQuotaDimension = evidence?.quotaDimension || (
+        error?.code === AI_ERROR_CODES.RATE_LIMIT_RPD ? 'RPD' :
+        error?.code === AI_ERROR_CODES.RATE_LIMIT_RPM ? 'RPM' :
+        error?.code === AI_ERROR_CODES.RATE_LIMIT_TPM ? 'TPM' :
+        'UNKNOWN'
+      );
+    }
 
     switch (error?.code) {
       case AI_ERROR_CODES.RATE_LIMIT_RPD:
@@ -402,6 +416,7 @@ function createQuotaManager({
         attemptsToday: state.attemptsToday,
         successesToday: state.successesToday,
         observedQuotaLimit: state.observedQuotaLimit,
+        observedQuotaDimension: state.observedQuotaDimension,
         cooldownUntil: state.cooldownUntil,
         lastErrorCode: state.lastErrorCode,
         lastHttpStatus: state.lastHttpStatus,

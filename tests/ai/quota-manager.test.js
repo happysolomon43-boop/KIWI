@@ -42,6 +42,7 @@ test('daily RPD exhaustion resets automatically on the next Pacific quota day', 
 
   assert.equal(manager.get('p1', 'gemini-3.8-flash').state, PROJECT_MODEL_STATES.EXHAUSTED_RPD);
   assert.equal(manager.get('p1', 'gemini-3.8-flash').observedQuotaLimit, 20);
+  assert.equal(manager.get('p1', 'gemini-3.8-flash').observedQuotaDimension, 'RPD');
   assert.equal(manager.isEligible('p1', 'gemini-3.8-flash'), false);
 
   now = new Date('2026-09-23T08:01:00Z');
@@ -296,4 +297,25 @@ test('refresh never overwrites a fresher local quota transition with a stale dat
   assert.equal(await manager.refresh(), 1);
   assert.equal(manager.isEligible('p1', 'gemini-3.8-flash'), true);
   assert.equal(manager.get('p1', 'gemini-3.8-flash').attemptsToday, 21);
+});
+
+
+test('provider evidence preserves the quota dimension paired with an observed limit', async () => {
+  const manager = createQuotaManager();
+
+  await manager.markFailure('p-evidence', 'm-evidence', new AIError('rpm', {
+    code: AI_ERROR_CODES.RATE_LIMIT_RPM,
+    status: 429,
+    retryable: true,
+    providerEvidence: {
+      quotaDimension: 'RPM',
+      quotaLimitValue: 20,
+      quotaMetric: 'requests',
+    },
+  }));
+
+  const state = manager.get('p-evidence', 'm-evidence');
+  assert.equal(state.observedQuotaLimit, 20);
+  assert.equal(state.observedQuotaDimension, 'RPM');
+  assert.equal(state.state, PROJECT_MODEL_STATES.COOLDOWN_RPM);
 });

@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createAITrafficController } = require('../../services/ai/traffic-controller');
+const { AI_EXECUTION_LANES } = require('../../services/ai/task-registry');
 const { AIError, AI_ERROR_CODES } = require('../../services/ai/errors');
 
 test('traffic controller enforces global concurrency and prioritizes VVIP over queued lower classes', async () => {
@@ -233,4 +234,49 @@ test('traffic snapshot exposes queue pressure without request content', async ()
   assert.equal(state.averageQueueWaitMs, 63);
   assert.equal(state.maxQueueWaitMs, 125);
   assert.doesNotMatch(JSON.stringify(state), /prompt|apiKey|study notes/i);
+});
+
+
+test('background work cannot occupy the capacity reserved for a newly arriving critical request', async () => {
+  const controller = createAITrafficController({
+    env: {
+      AI_GLOBAL_CONCURRENCY: '2',
+      AI_BACKGROUND_CONCURRENCY: '1',
+      AI_MAX_QUEUE_DEPTH: '10',
+    },
+  });
+
+  const backgroundOne = await controller.acquire({
+    taskId: 'background-1',
+    taskClass: 'VIP',
+    executionLane: AI_EXECUTION_LANES.BACKGROUND,
+  });
+  const backgroundTwoPromise = controller.acquire({
+    taskId: 'background-2',
+    taskClass: 'VIP',
+    executionLane: AI_EXECUTION_LANES.BACKGROUND,
+  });
+
+  assert.equal(controller.snapshot().activeByLane.BACKGROUND, 1);
+  assert.equal(controller.snapshot().queuedByLane.BACKGROUND, 1);
+
+  const critical = await controller.acquire({
+    taskId: 'critical',
+    taskClass: 'VVIP',
+    executionLane: AI_EXECUTION_LANES.CRITICAL,
+  });
+
+  assert.equal(critical.taskId, 'critical');
+  assert.equal(controller.snapshot().activeByLane.CRITICAL, 1);
+  assert.equal(controller.snapshot().activeByLane.BACKGROUND, 1);
+
+  critical.release();
+  assert.equal(controller.snapshot().queuedByLane.BACKGROUND, 1);
+
+  backgroundOne.release();
+  const backgroundTwo = await backgroundTwoPromise;
+  assert.equal(backgroundTwo.taskId, 'background-2');
+  backgroundTwo.release();
+
+  assert.equal(controller.snapshot().active, 0);
 });

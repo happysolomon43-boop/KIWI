@@ -380,7 +380,7 @@ test('independent provider 503s open a short model circuit and half-open recover
   assert.equal(ai.providerHealth.snapshot('gemini-3.8-flash').state, 'CLOSED');
 });
 
-test('VVIP quota rotation is bounded across a large project pool', async () => {
+test('VVIP short-window throttling is paced and cannot sweep the large project pool', async () => {
   const manySlots = createProjectPool({
     slots: Array.from({ length: 15 }, (_, index) => ({
       id: `p${index + 1}`,
@@ -410,14 +410,15 @@ test('VVIP quota rotation is bounded across a large project pool', async () => {
   await assert.rejects(
     ai.run('MAIN_CBT', { content: 'exam' }),
     (error) => {
-      assert.equal(error.details.maxAttempts, 32);
-      assert.equal(error.details.maxQuotaAttemptsPerModel, 15);
-      assert.equal(error.details.attempts.length, 32);
+      assert.equal(error.details.maxAttempts, 20);
+      assert.equal(error.details.maxDailyQuotaAttemptsPerModel, 15);
+      assert.equal(error.details.maxShortRateLimitAttemptsPerModel, 3);
+      assert.equal(error.details.attempts.length, 12);
       return true;
     }
   );
 
-  assert.equal(calls, 32);
+  assert.equal(calls, 12);
 });
 
 test('quota failures rotate beyond two project keys before degrading the model', async () => {

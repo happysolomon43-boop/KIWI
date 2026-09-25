@@ -38,6 +38,7 @@ function createProviderHealth({
         openUntil: 0,
         failuresBySlot: new Map(),
         halfOpenProbeInFlight: false,
+        confirmationProbeInFlight: false,
         lastErrorCode: null,
         lastHttpStatus: null,
         lastFailureAt: null,
@@ -114,11 +115,26 @@ function createProviderHealth({
       });
     }
 
+    if (
+      state.state === CIRCUIT_STATES.CLOSED &&
+      state.failuresBySlot.size > 0 &&
+      state.confirmationProbeInFlight
+    ) {
+      return Object.freeze({
+        available: false,
+        state: state.state,
+        retryAfterMs: 1000,
+        halfOpenProbe: false,
+        confirmationProbe: false,
+      });
+    }
+
     return Object.freeze({
       available: true,
       state: state.state,
       retryAfterMs: 0,
       halfOpenProbe: state.state === CIRCUIT_STATES.HALF_OPEN,
+      confirmationProbe: false,
     });
   }
 
@@ -138,6 +154,28 @@ function createProviderHealth({
     return availabilityState;
   }
 
+  function beginConfirmationProbe(modelId) {
+    const state = refresh(ensure(modelId));
+
+    if (
+      state.state !== CIRCUIT_STATES.CLOSED ||
+      state.failuresBySlot.size === 0 ||
+      state.confirmationProbeInFlight
+    ) {
+      return false;
+    }
+
+    state.confirmationProbeInFlight = true;
+    state.updatedAt = Math.max(state.updatedAt || 0, nowMs());
+    return true;
+  }
+
+  function endConfirmationProbe(modelId) {
+    const state = ensure(modelId);
+    state.confirmationProbeInFlight = false;
+    return true;
+  }
+
   function release(modelId) {
     const state = ensure(modelId);
     if (state.state === CIRCUIT_STATES.HALF_OPEN) {
@@ -150,6 +188,7 @@ function createProviderHealth({
     state.state = CIRCUIT_STATES.OPEN;
     state.openUntil = now + retryDelay(error);
     state.halfOpenProbeInFlight = false;
+    state.confirmationProbeInFlight = false;
     state.lastErrorCode = error?.code || null;
     state.lastHttpStatus = error?.status ?? null;
     state.lastFailureAt = new Date(now);
@@ -198,6 +237,7 @@ function createProviderHealth({
     state.openUntil = 0;
     state.failuresBySlot.clear();
     state.halfOpenProbeInFlight = false;
+    state.confirmationProbeInFlight = false;
     state.lastErrorCode = null;
     state.lastHttpStatus = 200;
     state.lastSuccessAt = new Date(now);
@@ -214,6 +254,7 @@ function createProviderHealth({
         openUntil: state.openUntil ? new Date(state.openUntil) : null,
         distinctFailureSlots: state.failuresBySlot.size,
         halfOpenProbeInFlight: state.halfOpenProbeInFlight,
+        confirmationProbeInFlight: state.confirmationProbeInFlight,
         lastErrorCode: state.lastErrorCode,
         lastHttpStatus: state.lastHttpStatus,
         lastFailureAt: state.lastFailureAt,
@@ -286,6 +327,7 @@ function createProviderHealth({
     }
 
     state.halfOpenProbeInFlight = false;
+    state.confirmationProbeInFlight = false;
     state.lastErrorCode = row.last_error_code || null;
     state.lastHttpStatus = row.last_http_status == null
       ? null
@@ -330,6 +372,8 @@ function createProviderHealth({
   return Object.freeze({
     availability,
     acquire,
+    beginConfirmationProbe,
+    endConfirmationProbe,
     release,
     recordFailure,
     recordSuccess,

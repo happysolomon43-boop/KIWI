@@ -18,6 +18,7 @@ const AI_ERROR_CODES = Object.freeze({
   SAFETY: 'SAFETY',
   EMPTY_RESPONSE: 'EMPTY_RESPONSE',
   CAPACITY_EXHAUSTED: 'CAPACITY_EXHAUSTED',
+  OPERATION_BUDGET_EXHAUSTED: 'OPERATION_BUDGET_EXHAUSTED',
   UNKNOWN: 'UNKNOWN',
 });
 
@@ -30,6 +31,7 @@ class AIError extends Error {
     provider = 'gemini',
     details = null,
     retryAfterMs = null,
+    providerEvidence = null,
     cause = null,
   } = {}) {
     super(message);
@@ -43,6 +45,9 @@ class AIError extends Error {
     this.retryAfterMs = Number.isFinite(Number(retryAfterMs))
       ? Math.max(0, Number(retryAfterMs))
       : null;
+    this.providerEvidence = providerEvidence
+      ? Object.freeze({ ...providerEvidence })
+      : null;
     if (cause) this.cause = cause;
   }
 }
@@ -53,38 +58,173 @@ function _safeString(value) {
   try { return JSON.stringify(value); } catch (_) { return String(value); }
 }
 
-function _quotaCode(body) {
-  const text = _safeString(body).toLowerCase();
+const QUOTA_DIMENSIONS = Object.freeze({
+  RPM: 'RPM',
+  TPM: 'TPM',
+  RPD: 'RPD',
+  UNKNOWN: 'UNKNOWN',
+});
+
+function _firstFiniteNumber(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function _dimensionFromText(value) {
+  const text = _safeString(value).toLowerCase();
+  if (!text) return null;
 
   if (
+    /requests?\s*per\s*day/.test(text) ||
     text.includes('requestsperday') ||
     text.includes('requests_per_day') ||
     text.includes('perdayperprojectpermodel') ||
-    text.includes('per day') ||
-    text.includes('daily')
+    /\brpd\b/.test(text) ||
+    text.includes('daily request quota')
   ) {
-    return AI_ERROR_CODES.RATE_LIMIT_RPD;
+    return QUOTA_DIMENSIONS.RPD;
   }
 
   if (
+    /tokens?\s*per\s*minute/.test(text) ||
     text.includes('tokensperminute') ||
     text.includes('tokens_per_minute') ||
-    text.includes('token per minute') ||
-    text.includes('tpm')
+    /\btpm\b/.test(text)
   ) {
-    return AI_ERROR_CODES.RATE_LIMIT_TPM;
+    return QUOTA_DIMENSIONS.TPM;
   }
 
   if (
+    /requests?\s*per\s*minute/.test(text) ||
     text.includes('requestsperminute') ||
     text.includes('requests_per_minute') ||
-    text.includes('request per minute') ||
-    text.includes('rpm')
+    /\brpm\b/.test(text)
   ) {
-    return AI_ERROR_CODES.RATE_LIMIT_RPM;
+    return QUOTA_DIMENSIONS.RPM;
   }
 
-  return AI_ERROR_CODES.RATE_LIMIT_UNKNOWN;
+  return null;
+}
+
+function extractProviderEvidence(body, headers = null) {
+  const error = body && typeof body === 'object' ? (body.error || body) : null;
+  const rawCode = error?.code;
+  const providerErrorCode =
+    typeof rawCode === 'string'
+      ? rawCode.toLowerCase()
+      : null;
+  const providerStatus =
+    typeof error?.status === 'string'
+      ? error.status
+      : null;
+
+  let quotaMetric = null;
+  let quotaLimitName = null;
+  let quotaLimitValue = null;
+  let errorInfoReason = null;
+  let structuredDimension = null;
+
+  function walk(value) {
+    if (value == null) return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    if (typeof value !== 'object') return;
+
+    for (const [key, item] of Object.entries(value)) {
+      const lower = key.toLowerCase();
+
+      if (!quotaMetric && (lower === 'quotametric' || lower === 'quota_metric')) {
+        quotaMetric = item == null ? null : String(item);
+      } else if (
+        !quotaLimitName &&
+        (lower === 'quotaid' || lower === 'quotalimit' || lower === 'quota_limit')
+      ) {
+        quotaLimitName = item == null ? null : String(item);
+      } else if (
+        quotaLimitValue == null &&
+        (lower === 'quotavalue' || lower === 'quotalimitvalue' || lower === 'quota_limit_value')
+      ) {
+        quotaLimitValue = _firstFiniteNumber(item);
+      } else if (!errorInfoReason && lower === 'reason' && typeof item === 'string') {
+        errorInfoReason = item;
+      }
+
+      if (!structuredDimension) {
+        structuredDimension = _dimensionFromText(
+          lower === 'description' || lower.includes('quota') ? item : null
+        ) || structuredDimension;
+      }
+
+      walk(item);
+    }
+  }
+
+  walk(error?.details || []);
+
+  structuredDimension =
+    _dimensionFromText(quotaLimitName) ||
+    _dimensionFromText(quotaMetric) ||
+    structuredDimension;
+
+  let quotaDimension = null;
+  let classificationSource = null;
+
+  // The newer Gemini error contract exposes machine-readable 429 codes.
+  // quota_exceeded is specifically daily quota; rate_limit_exceeded and
+  // too_many_requests are short-window throttles but do not by themselves
+  // distinguish request-rate from token-rate.
+  if (providerErrorCode === 'quota_exceeded') {
+    quotaDimension = QUOTA_DIMENSIONS.RPD;
+    classificationSource = 'PROVIDER_CODE';
+  } else if (
+    providerErrorCode === 'rate_limit_exceeded' ||
+    providerErrorCode === 'too_many_requests'
+  ) {
+    quotaDimension = structuredDimension || QUOTA_DIMENSIONS.UNKNOWN;
+    classificationSource = structuredDimension
+      ? 'STRUCTURED_QUOTA'
+      : 'PROVIDER_CODE';
+  } else if (structuredDimension) {
+    quotaDimension = structuredDimension;
+    classificationSource = 'STRUCTURED_QUOTA';
+  } else {
+    // GenerateContent commonly returns RESOURCE_EXHAUSTED plus google.rpc
+    // details. Only if those details are absent do we use the human message,
+    // and even then the match must name a quota dimension explicitly.
+    const messageDimension = _dimensionFromText(error?.message || body);
+    if (messageDimension) {
+      quotaDimension = messageDimension;
+      classificationSource = 'MESSAGE_HEURISTIC';
+    }
+  }
+
+  return Object.freeze({
+    providerErrorCode,
+    providerStatus,
+    errorInfoReason,
+    quotaDimension: quotaDimension || QUOTA_DIMENSIONS.UNKNOWN,
+    quotaMetric,
+    quotaLimitName,
+    quotaLimitValue,
+    retryAfterMs: extractRetryDelayMs(body, headers),
+    classificationSource: classificationSource || 'UNCLASSIFIED',
+  });
+}
+
+function _quotaCodeFromEvidence(evidence) {
+  switch (evidence?.quotaDimension) {
+    case QUOTA_DIMENSIONS.RPD:
+      return AI_ERROR_CODES.RATE_LIMIT_RPD;
+    case QUOTA_DIMENSIONS.RPM:
+      return AI_ERROR_CODES.RATE_LIMIT_RPM;
+    case QUOTA_DIMENSIONS.TPM:
+      return AI_ERROR_CODES.RATE_LIMIT_TPM;
+    default:
+      return AI_ERROR_CODES.RATE_LIMIT_UNKNOWN;
+  }
 }
 
 function extractProviderMessage(body, fallback = 'Gemini request failed') {
@@ -167,7 +307,8 @@ function extractRetryDelayMs(body, headers = null) {
 
 function classifyGeminiHttpError({ status, body, headers = null }) {
   const message = extractProviderMessage(body, `Gemini HTTP ${status}`);
-  const retryAfterMs = extractRetryDelayMs(body, headers);
+  const providerEvidence = extractProviderEvidence(body, headers);
+  const retryAfterMs = providerEvidence.retryAfterMs;
 
   if (status === 400 || status === 422) {
     return new AIError(message, {
@@ -211,12 +352,13 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
 
   if (status === 429) {
     return new AIError(message, {
-      code: _quotaCode(body),
+      code: _quotaCodeFromEvidence(providerEvidence),
       status,
       retryable: true,
       scope: 'MODEL_SLOT',
       details: body,
       retryAfterMs,
+      providerEvidence,
     });
   }
 
@@ -228,6 +370,7 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
       scope: 'PROVIDER_MODEL',
       details: body,
       retryAfterMs,
+      providerEvidence,
     });
   }
 
@@ -239,6 +382,7 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
       scope: 'PROVIDER_MODEL',
       details: body,
       retryAfterMs,
+      providerEvidence,
     });
   }
 
@@ -289,6 +433,7 @@ const AVAILABILITY_ERROR_CODES = new Set([
   AI_ERROR_CODES.NETWORK,
   AI_ERROR_CODES.EMPTY_RESPONSE,
   AI_ERROR_CODES.CAPACITY_EXHAUSTED,
+  AI_ERROR_CODES.OPERATION_BUDGET_EXHAUSTED,
 ]);
 
 function isAIAvailabilityError(error) {
@@ -307,7 +452,9 @@ function safetyError(details = null) {
 module.exports = {
   AI_ERROR_CODES,
   AIError,
+  QUOTA_DIMENSIONS,
   classifyGeminiHttpError,
+  extractProviderEvidence,
   extractProviderMessage,
   extractRetryDelayMs,
   timeoutError,

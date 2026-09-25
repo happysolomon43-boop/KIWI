@@ -1,6 +1,6 @@
 'use strict';
 
-const { AI_CLASSES } = require('./task-registry');
+const { AI_CLASSES, AI_EXECUTION_LANES } = require('./task-registry');
 const { AIError, AI_ERROR_CODES } = require('./errors');
 
 const CONGESTION_LEVELS = Object.freeze({
@@ -15,6 +15,12 @@ const CLASS_WEIGHTS = Object.freeze({
   [AI_CLASSES.VIP]: 2,
   [AI_CLASSES.IP]: 1,
 });
+
+const LANE_PRIORITY = Object.freeze([
+  AI_EXECUTION_LANES.CRITICAL,
+  AI_EXECUTION_LANES.INTERACTIVE,
+  AI_EXECUTION_LANES.BACKGROUND,
+]);
 
 const CONGESTION_SIGNAL_WEIGHTS = Object.freeze({
   // Project/model quota failures are deliberately excluded. Delivery A keeps
@@ -46,6 +52,14 @@ function createAITrafficController({
   );
   const maxQueue = Math.floor(
     boundedNumber(env.AI_MAX_QUEUE_DEPTH, 96, 4, 1000)
+  );
+  const backgroundConcurrency = Math.floor(
+    boundedNumber(
+      env.AI_BACKGROUND_CONCURRENCY,
+      Math.max(1, Math.min(2, baseConcurrency - 1 || 1)),
+      1,
+      Math.max(1, baseConcurrency)
+    )
   );
   const signalWindowMs = boundedNumber(
     env.AI_CONGESTION_SIGNAL_WINDOW_MS,
@@ -86,6 +100,15 @@ function createAITrafficController({
   );
   const timedOutByClass = Object.fromEntries(
     Object.values(AI_CLASSES).map((taskClass) => [taskClass, 0])
+  );
+  const activeByLane = Object.fromEntries(
+    Object.values(AI_EXECUTION_LANES).map((lane) => [lane, 0])
+  );
+  const admittedByLane = Object.fromEntries(
+    Object.values(AI_EXECUTION_LANES).map((lane) => [lane, 0])
+  );
+  const timedOutByLane = Object.fromEntries(
+    Object.values(AI_EXECUTION_LANES).map((lane) => [lane, 0])
   );
 
   const weightedSchedule = [];
@@ -161,6 +184,16 @@ function createAITrafficController({
     );
   }
 
+  function queuedByLane() {
+    const counts = Object.fromEntries(
+      Object.values(AI_EXECUTION_LANES).map((lane) => [lane, 0])
+    );
+    for (const queue of queues.values()) {
+      for (const item of queue) counts[item.executionLane] += 1;
+    }
+    return counts;
+  }
+
   function queueDepth() {
     let total = 0;
     for (const queue of queues.values()) total += queue.length;
@@ -170,14 +203,24 @@ function createAITrafficController({
   function nextQueuedItem() {
     if (queueDepth() === 0) return null;
 
-    for (let step = 0; step < weightedSchedule.length; step++) {
-      const index = (scheduleCursor + step) % weightedSchedule.length;
-      const taskClass = weightedSchedule[index];
-      const queue = queues.get(taskClass);
-      if (!queue.length) continue;
+    for (const lane of LANE_PRIORITY) {
+      if (
+        lane === AI_EXECUTION_LANES.BACKGROUND &&
+        activeByLane[AI_EXECUTION_LANES.BACKGROUND] >= backgroundConcurrency
+      ) {
+        continue;
+      }
 
-      scheduleCursor = (index + 1) % weightedSchedule.length;
-      return queue.shift();
+      for (let step = 0; step < weightedSchedule.length; step++) {
+        const index = (scheduleCursor + step) % weightedSchedule.length;
+        const taskClass = weightedSchedule[index];
+        const queue = queues.get(taskClass);
+        const itemIndex = queue.findIndex((item) => item.executionLane === lane);
+        if (itemIndex < 0) continue;
+
+        scheduleCursor = (index + 1) % weightedSchedule.length;
+        return queue.splice(itemIndex, 1)[0];
+      }
     }
 
     return null;
@@ -203,7 +246,9 @@ function createAITrafficController({
       const admittedAt = nowMs();
       active += 1;
       activeByClass[item.taskClass] += 1;
+      activeByLane[item.executionLane] += 1;
       admittedByClass[item.taskClass] += 1;
+      admittedByLane[item.executionLane] += 1;
       admittedTotal += 1;
       peakActive = Math.max(peakActive, active);
 
@@ -216,6 +261,7 @@ function createAITrafficController({
         id: item.id,
         taskId: item.taskId,
         taskClass: item.taskClass,
+        executionLane: item.executionLane,
         queueWaitMs,
         admittedAt: new Date(admittedAt),
         admissionLimit: state.effectiveConcurrency,
@@ -228,6 +274,10 @@ function createAITrafficController({
           activeByClass[item.taskClass] = Math.max(
             0,
             activeByClass[item.taskClass] - 1
+          );
+          activeByLane[item.executionLane] = Math.max(
+            0,
+            activeByLane[item.executionLane] - 1
           );
           drain();
           return true;
@@ -249,11 +299,28 @@ function createAITrafficController({
   function acquire({
     taskId = null,
     taskClass,
+    executionLane = null,
     timeoutMs = null,
   } = {}) {
+    const resolvedLane = executionLane || (
+      taskClass === AI_CLASSES.VVIP
+        ? AI_EXECUTION_LANES.CRITICAL
+        : AI_EXECUTION_LANES.INTERACTIVE
+    );
     if (!queues.has(taskClass)) {
       return Promise.reject(new AIError(
         `Unknown AI traffic class: ${taskClass || 'missing'}`,
+        {
+          code: AI_ERROR_CODES.CONFIG,
+          retryable: false,
+          scope: 'ORCHESTRATOR',
+        }
+      ));
+    }
+
+    if (!Object.values(AI_EXECUTION_LANES).includes(resolvedLane)) {
+      return Promise.reject(new AIError(
+        `Unknown AI execution lane: ${resolvedLane || 'missing'}`,
         {
           code: AI_ERROR_CODES.CONFIG,
           retryable: false,
@@ -276,6 +343,7 @@ function createAITrafficController({
             maxQueue,
             queued: queueDepth(),
             taskClass,
+            executionLane: resolvedLane,
           },
         }
       ));
@@ -287,6 +355,7 @@ function createAITrafficController({
         id: `ai-admission-${++sequence}`,
         taskId,
         taskClass,
+        executionLane: resolvedLane,
         enqueuedAt,
         resolve,
         reject,
@@ -298,6 +367,7 @@ function createAITrafficController({
         if (!removeQueuedItem(item)) return;
         timedOutTotal += 1;
         timedOutByClass[taskClass] += 1;
+        timedOutByLane[resolvedLane] += 1;
 
         reject(new AIError(
           'KIWI AI request waited too long for execution capacity',
@@ -310,6 +380,7 @@ function createAITrafficController({
             details: {
               taskId,
               taskClass,
+              executionLane: resolvedLane,
               queueWaitMs: Math.max(0, nowMs() - enqueuedAt),
               congestion: congestionState(),
             },
@@ -389,6 +460,7 @@ function createAITrafficController({
 
     return Object.freeze({
       baseConcurrency,
+      backgroundConcurrency,
       effectiveConcurrency: congestion.effectiveConcurrency,
       degraded: congestion.effectiveConcurrency < baseConcurrency,
       congestionLevel: congestion.level,
@@ -397,14 +469,18 @@ function createAITrafficController({
       active,
       peakActive,
       activeByClass: Object.freeze({ ...activeByClass }),
+      activeByLane: Object.freeze({ ...activeByLane }),
       queued: queueDepth(),
       queuedByClass: Object.freeze(queuedByClass()),
+      queuedByLane: Object.freeze(queuedByLane()),
       maxQueue,
       queueTimeoutMsByClass,
       admittedTotal,
       admittedByClass: Object.freeze({ ...admittedByClass }),
+      admittedByLane: Object.freeze({ ...admittedByLane }),
       timedOutTotal,
       timedOutByClass: Object.freeze({ ...timedOutByClass }),
+      timedOutByLane: Object.freeze({ ...timedOutByLane }),
       rejectedOverflowTotal,
       providerSignalsTotal,
       recentSignals: Object.freeze(signalCounts),
@@ -430,6 +506,7 @@ function createAITrafficController({
 module.exports = {
   CONGESTION_LEVELS,
   CLASS_WEIGHTS,
+  LANE_PRIORITY,
   CONGESTION_SIGNAL_WEIGHTS,
   createAITrafficController,
 };
