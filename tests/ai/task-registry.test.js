@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   AI_CLASSES,
+  AI_EXECUTION_LANES,
   AI_TASKS,
   CANONICAL_AI_TASK_IDS,
   QUALITY_FLOORS,
@@ -74,4 +75,28 @@ test('IP presentation tasks use the Flash-Lite quality floor', () => {
   for (const [taskId, task] of ipTasks) {
     assert.equal(task.qualityFloor, QUALITY_FLOORS.FLASH_LITE, taskId);
   }
+});
+
+
+test('critical assessment stays critical while confirmed scheduled generation is background', () => {
+  for (const taskId of ['MAIN_CBT', 'RECKONING_CBT', 'CBT_COMPLETION']) {
+    assert.equal(
+      AI_TASKS[taskId].executionLane,
+      AI_EXECUTION_LANES.CRITICAL,
+      taskId
+    );
+  }
+
+  assert.equal(
+    AI_TASKS.MORNING_BRIEF.executionLane,
+    AI_EXECUTION_LANES.BACKGROUND
+  );
+  assert.equal(
+    AI_TASKS.STUDY_TASK_GENERATION.executionLane,
+    AI_EXECUTION_LANES.BACKGROUND
+  );
+  assert.equal(
+    AI_TASKS.DAILY_INVITATIONS.executionLane,
+    AI_EXECUTION_LANES.INTERACTIVE
+  );
 });
