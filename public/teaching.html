@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en" data-app="kiwi-teaching">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#03110d" />
+  <title>KIWI Teaching</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --teaching-bg: #03110d;
+      --teaching-surface: rgba(8, 31, 24, 0.78);
+      --teaching-surface-strong: rgba(10, 38, 29, 0.96);
+      --teaching-border: rgba(116, 229, 180, 0.14);
+      --teaching-border-strong: rgba(116, 229, 180, 0.28);
+      --teaching-text: #edf8f3;
+      --teaching-muted: #7ea294;
+      --teaching-accent: #62d9a5;
+      --teaching-accent-soft: rgba(98, 217, 165, 0.12);
+      --teaching-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-top: env(safe-area-inset-top, 0px);
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      min-height: 100%;
+      margin: 0;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(48, 151, 108, 0.08), transparent 28rem),
+        radial-gradient(circle at 82% 66%, rgba(21, 105, 77, 0.06), transparent 32rem),
+        var(--teaching-bg);
+      color: var(--teaching-text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      min-height: 100dvh;
+      overflow-x: hidden;
+    }
+
+    button,
+    a {
+      font: inherit;
+    }
+
+    .teaching-app {
+      min-height: 100dvh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding-top: var(--safe-top);
+    }
+
+    .teaching-topbar {
+      min-height: 74px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 14px clamp(18px, 4vw, 42px);
+      border-bottom: 1px solid var(--teaching-border);
+      background: rgba(3, 17, 13, 0.86);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .teaching-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 13px;
+      min-width: 0;
+      text-decoration: none;
+      color: inherit;
+      user-select: none;
+    }
+
+    .teaching-brand__kiwi {
+      font-size: clamp(18px, 2.8vw, 24px);
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: 0.17em;
+    }
+
+    .teaching-brand__divider {
+      width: 1px;
+      height: 27px;
+      background: linear-gradient(
+        to bottom,
+        transparent,
+        rgba(98, 217, 165, 0.64),
+        transparent
+      );
+      flex: 0 0 auto;
+    }
+
+    .teaching-brand__name {
+      font-size: clamp(16px, 2.4vw, 22px);
+      line-height: 1;
+      font-weight: 610;
+      letter-spacing: -0.025em;
+      color: #cde8dc;
+    }
+
+    .teaching-topbar__actions {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .teaching-icon-button,
+    .teaching-return {
+      min-height: 42px;
+      border-radius: 13px;
+      border: 1px solid var(--teaching-border);
+      background: rgba(7, 27, 21, 0.76);
+      color: #bcd9cc;
+      transition:
+        border-color 160ms ease,
+        background 160ms ease,
+        color 160ms ease,
+        transform 160ms ease;
+    }
+
+    .teaching-icon-button {
+      width: 42px;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .teaching-icon-button svg,
+    .teaching-return svg {
+      width: 19px;
+      height: 19px;
+      stroke: currentColor;
+    }
+
+    .teaching-return {
+      padding: 0 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .teaching-icon-button:hover,
+    .teaching-return:hover,
+    .teaching-icon-button:focus-visible,
+    .teaching-return:focus-visible {
+      outline: none;
+      border-color: var(--teaching-border-strong);
+      background: var(--teaching-accent-soft);
+      color: var(--teaching-text);
+    }
+
+    .teaching-icon-button:active,
+    .teaching-return:active {
+      transform: translateY(1px);
+    }
+
+    .teaching-stage {
+      width: min(1320px, 100%);
+      min-height: 0;
+      margin: 0 auto;
+      padding:
+        clamp(22px, 5vw, 58px)
+        clamp(18px, 4vw, 42px)
+        calc(112px + var(--safe-bottom));
+    }
+
+    .teaching-stage:empty::before {
+      content: "";
+      display: block;
+      min-height: 54vh;
+    }
+
+    .teaching-dock-shell {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 18;
+      pointer-events: none;
+      padding:
+        0
+        clamp(14px, 3vw, 34px)
+        calc(10px + var(--safe-bottom));
+    }
+
+    .teaching-dock {
+      pointer-events: auto;
+      width: min(620px, 100%);
+      min-height: 70px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      align-items: center;
+      gap: clamp(7px, 1.8vw, 13px);
+      padding: 10px 12px;
+      border: 1px solid var(--teaching-border);
+      border-radius: 23px;
+      background: rgba(4, 20, 15, 0.9);
+      box-shadow: var(--teaching-shadow);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .teaching-dock__slot {
+      min-width: 0;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 15px;
+      border: 1px solid rgba(116, 229, 180, 0.08);
+      background: rgba(116, 229, 180, 0.025);
+    }
+
+    .teaching-dock__placeholder {
+      width: 30%;
+      min-width: 18px;
+      max-width: 28px;
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(126, 162, 148, 0.18);
+    }
+
+    .teaching-settings-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      border: 0;
+      padding: 0;
+      background: rgba(0, 0, 0, 0.46);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+
+    .teaching-settings-backdrop[data-open="true"] {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .teaching-settings-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 41;
+      width: min(360px, 88vw);
+      height: 100dvh;
+      padding:
+        calc(18px + var(--safe-top))
+        18px
+        calc(18px + var(--safe-bottom));
+      border-left: 1px solid var(--teaching-border);
+      background: var(--teaching-surface-strong);
+      box-shadow: -24px 0 60px rgba(0, 0, 0, 0.32);
+      transform: translateX(101%);
+      transition: transform 210ms ease;
+    }
+
+    .teaching-settings-panel[data-open="true"] {
+      transform: translateX(0);
+    }
+
+    .teaching-settings-panel__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .teaching-settings-panel h2 {
+      margin: 0;
+      font-size: 17px;
+      letter-spacing: -0.015em;
+    }
+
+    .teaching-settings-panel__empty {
+      margin-top: 34px;
+      border-top: 1px solid var(--teaching-border);
+      padding-top: 18px;
+      color: var(--teaching-muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 640px) {
+      .teaching-topbar {
+        min-height: 66px;
+        gap: 12px;
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .teaching-brand {
+        gap: 9px;
+      }
+
+      .teaching-brand__kiwi {
+        font-size: 17px;
+      }
+
+      .teaching-brand__name {
+        font-size: 16px;
+      }
+
+      .teaching-brand__divider {
+        height: 23px;
+      }
+
+      .teaching-return {
+        width: 42px;
+        padding: 0;
+        justify-content: center;
+      }
+
+      .teaching-return span {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .teaching-stage {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .teaching-dock-shell {
+        padding-left: 10px;
+        padding-right: 10px;
+      }
+
+      .teaching-dock {
+        border-radius: 20px;
+        gap: 7px;
+        padding-left: 9px;
+        padding-right: 9px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+  </style>
+</head>
+<body data-app="kiwi-teaching">
+  <div class="teaching-app">
+    <header class="teaching-topbar">
+      <a class="teaching-brand" href="/teaching.html" aria-label="KIWI Teaching home">
+        <span class="teaching-brand__kiwi">KIWI</span>
+        <span class="teaching-brand__divider" aria-hidden="true"></span>
+        <span class="teaching-brand__name">Teaching</span>
+      </a>
+
+      <div class="teaching-topbar__actions">
+        <button
+          id="teachingSettingsButton"
+          class="teaching-icon-button"
+          type="button"
+          aria-label="Teaching settings"
+          aria-controls="teachingSettingsPanel"
+          aria-expanded="false"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" aria-hidden="true">
+            <path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z"/>
+            <path d="M19.2 13.4a7.6 7.6 0 0 0 .05-2.8l2-1.55-2-3.46-2.48 1a8.2 8.2 0 0 0-2.42-1.4L14 2.55h-4l-.35 2.64a8.2 8.2 0 0 0-2.42 1.4l-2.48-1-2 3.46 2 1.55a7.6 7.6 0 0 0 .05 2.8l-2.05 1.6 2 3.45 2.54-1.02a8 8 0 0 0 2.32 1.34L10 21.45h4l.38-2.68a8 8 0 0 0 2.32-1.34l2.54 1.02 2-3.45-2.04-1.6Z"/>
+          </svg>
+        </button>
+
+        <a class="teaching-return" href="/" aria-label="Back to KIWI">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" aria-hidden="true">
+            <path d="m15 18-6-6 6-6"/>
+          </svg>
+          <span>Back to KIWI</span>
+        </a>
+      </div>
+    </header>
+
+    <main id="teachingApp" class="teaching-stage" aria-label="KIWI Teaching workspace"></main>
+
+    <div class="teaching-dock-shell" aria-hidden="true">
+      <nav class="teaching-dock">
+        <div class="teaching-dock__slot"><span class="teaching-dock__placeholder"></span></div>
+        <div class="teaching-dock__slot"><span class="teaching-dock__placeholder"></span></div>
+        <div class="teaching-dock__slot"><span class="teaching-dock__placeholder"></span></div>
+        <div class="teaching-dock__slot"><span class="teaching-dock__placeholder"></span></div>
+        <div class="teaching-dock__slot"><span class="teaching-dock__placeholder"></span></div>
+      </nav>
+    </div>
+  </div>
+
+  <button
+    id="teachingSettingsBackdrop"
+    class="teaching-settings-backdrop"
+    type="button"
+    aria-label="Close Teaching settings"
+  ></button>
+
+  <aside
+    id="teachingSettingsPanel"
+    class="teaching-settings-panel"
+    aria-label="Teaching settings"
+    aria-hidden="true"
+  >
+    <div class="teaching-settings-panel__header">
+      <h2>Settings</h2>
+      <button
+        id="teachingSettingsClose"
+        class="teaching-icon-button"
+        type="button"
+        aria-label="Close Teaching settings"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="teaching-settings-panel__empty">
+      Teaching-specific settings will live here as the app is built.
+    </div>
+  </aside>
+
+  <script type="module" src="/teaching.js"></script>
+</body>
+</html>
