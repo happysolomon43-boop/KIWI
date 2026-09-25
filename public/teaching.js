@@ -4,17 +4,13 @@ if (typeof kiwiApiRequest !== 'function' || typeof hasKiwiSession !== 'function'
   throw new Error('KIWI shared API client must load before Teaching.');
 }
 
-// KIWI Teaching app entry + KIWI dashboard bridge.
-// Teaching has its own shell while remaining connected to KIWI's shared backend/core.
+// KIWI Teaching standalone app entry.
+// The normal KIWI dashboard owns only the mode-switch control; this module owns the Teaching shell.
 
 const KIWI_PATH = '/';
 const teachingNavigationItems = new Map();
 
 function isTeachingDocument() {
-  // The Teaching entry script is intentionally shared by both the main KIWI
-  // dashboard and the standalone Teaching shell. Detect the shell from the DOM
-  // rather than the URL so static hosting/rewrite differences cannot break the
-  // dashboard bridge.
   return Boolean(document.getElementById('teachingApp'));
 }
 
