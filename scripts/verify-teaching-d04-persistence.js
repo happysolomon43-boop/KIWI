@@ -8,8 +8,10 @@ function fail(message) { console.error('[D04] FAIL:', message); process.exitCode
 function check(condition, message) { if (!condition) fail(message); }
 
 const migrationPath = path.join(root, 'migrations', '20260925_teaching_d04_kernel_persistence.sql');
+const serviceRoleMigrationPath = path.join(root, 'migrations', '20260925_teaching_d04_service_role_rls_hardening.sql');
 const required = [
   'migrations/20260925_teaching_d04_kernel_persistence.sql',
+  'migrations/20260925_teaching_d04_service_role_rls_hardening.sql',
   'teaching/security/d04-persistence-contract.js',
   'teaching/repositories/kernel-persistence.js',
   'tests/teaching/unit/d04-persistence-contract.test.js',
@@ -21,6 +23,7 @@ const required = [
 for (const file of required) check(fs.existsSync(path.join(root, file)), `missing D04 artifact: ${file}`);
 
 const sql = fs.readFileSync(migrationPath, 'utf8');
+const serviceRoleSql = fs.readFileSync(serviceRoleMigrationPath, 'utf8');
 const tightSql = sql.replace(/\s+/g, '');
 const expectedPublicTables = [
   'teaching_semesters','teaching_courses','teaching_course_plans','teaching_topics',
@@ -68,6 +71,16 @@ check(tightSql.includes('GRANTSELECT,INSERTONTABLEteaching_protected.prepared_ar
 check(!/GRANT\s+(?:ALL|INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,120}\sTO\s+(?:anon|authenticated)/i.test(sql), 'D04 must not grant browser DML on Teaching persistence');
 check(!/GRANT\s+DELETE[\s\S]{0,140}\sTO\s+(?:service_role|teaching_domain_service)/i.test(sql), 'D04 least-privilege service roles must not receive academic DELETE');
 check(/REVOKE ALL ON TABLE public\.%I FROM PUBLIC,anon,authenticated,service_role,teaching_domain_service/.test(sql), 'D04 must clear inherited/default public-table privileges before selective grants');
+check(/ALTER ROLE teaching_domain_service NOLOGIN NOBYPASSRLS/i.test(serviceRoleSql), 'domain service role must remain NOLOGIN/NOBYPASSRLS');
+check(/ALTER ROLE teaching_protected_service NOLOGIN NOBYPASSRLS/i.test(serviceRoleSql), 'protected service role must remain NOLOGIN/NOBYPASSRLS');
+check(/REVOKE teaching_domain_service, teaching_protected_service FROM anon, authenticated/i.test(serviceRoleSql), 'browser roles must not inherit trusted Teaching service roles');
+check(/GRANT teaching_domain_service, teaching_protected_service TO service_role/i.test(serviceRoleSql), 'Supabase service_role must be able to assume the narrower D04 service roles');
+for (const clause of ['FOR SELECT TO teaching_domain_service', 'FOR INSERT TO teaching_domain_service', 'FOR UPDATE TO teaching_domain_service']) {
+  check(serviceRoleSql.includes(clause), `D04 service-role RLS migration missing ${clause}`);
+}
+check(/FOR SELECT TO teaching_protected_service USING \(true\)/i.test(serviceRoleSql), 'protected service role requires explicit RLS SELECT policy');
+check(/FOR INSERT TO teaching_protected_service WITH CHECK \(true\)/i.test(serviceRoleSql), 'protected service role requires explicit RLS INSERT policy');
+check(!/GRANT\s+(?:DELETE|TRUNCATE)[\s\S]{0,160}\sTO\s+(?:teaching_domain_service|teaching_protected_service)/i.test(serviceRoleSql), 'D04 service-role hardening must not add DELETE/TRUNCATE grants');
 
 const contract = fs.readFileSync(path.join(root, 'teaching/security/d04-persistence-contract.js'), 'utf8');
 for (const operation of ['grading.finalize','assessment.package.lock','attendance.authoritative.record','request.formal.decide','schedule.authority.update']) {
@@ -86,4 +99,4 @@ check(Boolean(packageJson.scripts?.['test:teaching:integration']), 'Teaching int
 const migrationFiles = fs.readdirSync(path.join(root, 'migrations')).filter((name) => /teaching_d0[5-9]|teaching_d1\d|teaching_d2\d|teaching_d3\d/i.test(name));
 check(migrationFiles.length === 0, `D04 must not pull future Teaching migrations forward: ${migrationFiles.join(', ')}`);
 
-if (!process.exitCode) console.log('[D04] PASS: kernel persistence, RLS, audit, coverage/eligibility and PPL storage contracts are structurally complete.');
+if (!process.exitCode) console.log('[D04] PASS: kernel persistence, RLS/service-role boundaries, audit, coverage/eligibility and PPL storage contracts are structurally complete.');
