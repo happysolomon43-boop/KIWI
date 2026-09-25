@@ -6,7 +6,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createTeachingConfig } = require('../../../teaching/config');
-const { createFeatureFlags } = require('../../../teaching/config/feature-flags');
 const ids = require('../../../teaching/domain/ids');
 const time = require('../../../teaching/domain/time');
 const { TEACHING_EVENTS, TEACHING_EVENT_NAMES } = require('../../../teaching/events/names');
@@ -26,18 +25,18 @@ const {
 const { auditSourceText } = require('../../../teaching/security/secret-audit');
 const { modules } = require('../../../teaching/modules');
 
-test('D01 feature flags fail closed and support an explicit development user allowlist', () => {
-  const closed = createFeatureFlags({});
-  assert.equal(closed.flags.teaching, false);
-  assert.equal(closed.flags.highStakesMarking, false);
-  assert.equal(closed.flags.impromptuTests, false);
-  assert.equal(closed.flags.resits, false);
-  assert.equal(closed.flags.externalIntegrations, false);
-  assert.equal(closed.teachingAvailableFor({ id: 'dev-1' }), false);
+test('Teaching configuration has no runtime feature-availability toggle layer', () => {
+  const config = createTeachingConfig({
+    TEACHING_ENABLED: 'false',
+    TEACHING_DEV_USER_IDS: 'dev-1',
+    TEACHING_HIGH_STAKES_MARKING_ENABLED: 'false',
+    TEACHING_IMPROMPTU_TESTS_ENABLED: 'false',
+    TEACHING_RESITS_ENABLED: 'false',
+    TEACHING_EXTERNAL_INTEGRATIONS_ENABLED: 'false',
+  });
 
-  const allowlisted = createFeatureFlags({ TEACHING_DEV_USER_IDS: 'dev-1, dev-2' });
-  assert.equal(allowlisted.teachingAvailableFor({ id: 'dev-1' }), true);
-  assert.equal(allowlisted.teachingAvailableFor({ id: 'other' }), false);
+  assert.equal(Object.hasOwn(config, 'featureFlags'), false);
+  assert.equal(Object.hasOwn(config, 'flags'), false);
 });
 
 test('Teaching config exposes an opaque AI routing seam without provider defaults', () => {
