@@ -40,7 +40,8 @@ const { createAIRuntime } = require('./services/ai/runtime');
 const { isAIAvailabilityError } = require('./services/ai/errors');
 const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
-const { createTeachingRouter } = require('./teaching-backend');\nconst { requireRuntimeSecret, optionalRuntimeSecret } = require('./services/runtime-secrets');
+const { createTeachingRouter } = require('./teaching-backend');
+const { requireRuntimeSecret, optionalRuntimeSecret } = require('./services/runtime-secrets');
 
 const DATABASE_URL = requireRuntimeSecret(process.env, 'DATABASE_URL');
 
