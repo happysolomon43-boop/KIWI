@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "delivery": "D00",
+  "status": "CANONICAL_BASELINE_PINNED",
+  "frozen_at": "2026-09-25",
+  "implementation_start_commit": "3641391d4c9077ad0740cf6e5693b2644d31a0df",
+  "canonical": {
+    "blueprint": {
+      "file": "KIWI_Teaching_System_Blueprint-11.5.md",
+      "version": "11.5",
+      "sha256": "01fc144a33fa2ce839a7505e67922d723539664a72d957cf282dc498a7d72158"
+    },
+    "backlog": {
+      "file": "KIWI_Teaching_Master_Implementation_Backlog-9.5.md",
+      "version": "9.5",
+      "sha256": "4d296dd650ca7ffc55607d4d31e355e8afa49c476c577d42bf9cd665f4460092"
+    },
+    "capability_registry": {
+      "file": "KIWI_Teaching_Capability_Registry_v1.1.md",
+      "version": "1.1",
+      "sha256": "a68e19eff631d43d4ab31ddd15b46298dc4ffb48dc2006758e85f712200c4ef4"
+    },
+    "authority_spec": {
+      "file": "KIWI_Teaching_Intelligence_Inventory_Authority_Spec_Phases_4-6_v1.1.md",
+      "version": "1.1",
+      "sha256": "32ed4f149edc9531e6d5a3e0c81478f7025c9c16b32857b87707f4e609c40b87"
+    },
+    "orchestrator_event_runtime": {
+      "file": "KIWI_Teaching_Orchestrator_Event_Runtime_Spec_Phases_7-8_v1.1.md",
+      "version": "1.1",
+      "sha256": "f3f7b806e5e5f69bf7be52de2db6f12b17b39edc9f1910ebbc9520b1e591798d"
+    },
+    "ppl_standard": {
+      "file": "KIWI_Teaching_Progressive_Preparation_Lifecycle_Standard_v1.0.md",
+      "version": "1.0",
+      "sha256": "6299a0378c7f409128eaca623193f56677eabe952b2c2d92368a8f883d7606f3"
+    },
+    "original_t0_ppl_review": {
+      "file": "KIWI_Teaching_Original_18_T0_PPL_Review_v1.0.md",
+      "version": "1.0",
+      "sha256": "45ef30f653a9269ac3866507754cc308314cca62ff0439f0f7795f273d942ee2"
+    },
+    "prompt_manifest_json": {
+      "file": "KIWI_Teaching_Phase15_Final_Prompt_Manifest_v1.2.json",
+      "version": "1.2",
+      "sha256": "36c23557f7c9f4e7b8f7b6f7c787942c969f28175ba22f3f0e6a01aab5d1b49b"
+    },
+    "prompt_pack": {
+      "file": "KIWI_Teaching_Phase15_All_19_Prompt_Families_FINAL_DESIGN_FROZEN_v1.2.md",
+      "version": "1.2",
+      "sha256": "053682150f7ae831739b45a9e05097415cb6f05e00a0ac65e52b966420259d03"
+    },
+    "phase16_evaluation": {
+      "file": "KIWI_Teaching_Phase16_Evaluation_Adversarial_Spec_v1.4_FINAL.md",
+      "version": "1.4",
+      "sha256": "3aca52f4751ddd6e01eae23f6344f96aa3947ff95007ebb8bb566e7e6b258ae6"
+    },
+    "ppl_empirical_qualification": {
+      "file": "KIWI_Teaching_PPL_Empirical_Qualification_Spec_v1.0.md",
+      "version": "1.0",
+      "sha256": "8db357081fc37e57c0110080e50df72d7eed29934e0c50eba5609658e12cc2f9"
+    },
+    "delivery_roadmap": {
+      "file": "KIWI_Teaching_Phase19_Delivery_Roadmap_Overlay_v1.4_FINAL.md",
+      "version": "1.4",
+      "sha256": "ca21c8e3da2a1ffeeb46a5e807ac7f0f8254f499260308184fd1b71752b68bb0"
+    },
+    "delivery_task_map": {
+      "file": "KIWI_Teaching_Delivery_Task_Map_v1.5.json",
+      "version": "1.5",
+      "sha256": "9bd1efae6160248c39c2bde73f942b040cef6f2a71d8c2c4c65bd67f0500a1db"
+    },
+    "capability_traceability": {
+      "file": "KIWI_Teaching_Capability_Traceability_Matrix_v1.1.json",
+      "version": "1.1",
+      "sha256": "79c901df0e18e1b370242bb9b94415be9dacaca27bf67e63ead44d7decec4aca"
+    },
+    "critical_invariants": {
+      "file": "KIWI_Teaching_Critical_Invariant_Trace_Map_v1.1.md",
+      "version": "1.1",
+      "sha256": "799b6d405cf7b43e395e46cfbf4183b55e7269702dec97204b235b6b4d314e6d"
+    },
+    "implementation_context": {
+      "file": "KIWI_Teaching_Implementation_Context_Pack_v1.7.md",
+      "version": "1.7",
+      "sha256": "e2d666b785c51b06a5824e02d07f2ecc21ec52aebde74c387873c6365b1ac68d"
+    },
+    "final_freeze": {
+      "file": "KIWI_Teaching_Phase22_Final_Implementation_Freeze_v1.3.md",
+      "version": "1.3",
+      "sha256": "3ae10e85afc1a83c5bb7c60e4f98352540c2c56444b83b6843a461b8731dbbbd"
+    },
+    "d00_launch_packet": {
+      "file": "KIWI_Teaching_D00_Launch_Packet_v1.3.md",
+      "version": "1.3",
+      "sha256": "aec6d00d31d0df956c729a5c01bb08eed82979c1e7a9193e8a6b95a7128322af"
+    }
+  },
+  "counts": {
+    "permanent_tasks": 902,
+    "deliveries": 32,
+    "capabilities": 169,
+    "model_eligible_capabilities": 147,
+    "t0_promptless_capabilities": 22,
+    "prompt_families": 19
+  },
+  "ppl_t0_capabilities": [
+    "teaching.preparation.workspace_state_transition",
+    "teaching.preparation.materiality_staleness_reconciliation",
+    "teaching.preparation.finalization_readiness_gate",
+    "teaching.preparation.protected_content_isolation"
+  ],
+  "route_postures": [
+    "economy_maintenance",
+    "bounded_interpretive",
+    "strong_design",
+    "independent_validation",
+    "final_reconciliation"
+  ],
+  "route_qualification": "UNQUALIFIED_UNTIL_D30",
+  "production_release": "NOT_AUTHORIZED_UNTIL_D31",
+  "d00_task_ids": [
+    "TCH-0001",
+    "TCH-0002",
+    "TCH-0003",
+    "TCH-0004",
+    "TCH-0005",
+    "TCH-0006",
+    "TCH-0007",
+    "TCH-0008",
+    "TCH-0009",
+    "TCH-0010",
+    "TCH-0011",
+    "TCH-0012",
+    "TCH-0013",
+    "TCH-0014",
+    "TCH-0015",
+    "TCH-0670",
+    "TCH-0671",
+    "TCH-0672",
+    "TCH-0673",
+    "TCH-0674",
+    "TCH-0744",
+    "TCH-0749",
+    "TCH-0750",
+    "TCH-0751",
+    "TCH-0752",
+    "TCH-0871"
+  ]
+}
