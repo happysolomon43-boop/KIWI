@@ -884,3 +884,76 @@ test('auto recovery is limited to transient availability and never waits on dail
     4250
   );
 });
+
+
+test('Reckoning preparation forwards claim budget identity without persisting it in the manifest', async () => {
+  const evidence = sourceEvidence('budget-scope', 'HIGH', 70);
+  const blueprint = {
+    id: 'bp-budget-scope',
+    evidenceId: evidence.id,
+    sourceCardId: evidence.sourceCardId,
+    role: 'DIAGNOSTIC',
+    variantIndex: 0,
+    cognitiveLevel: 'APPLICATION',
+    riskLevel: 'HIGH',
+    sourceSnapshot: evidence.sourceSnapshot,
+  };
+  const calls = [];
+
+  const service = createPreparationService({
+    planner: {
+      buildPlan() {
+        return {
+          plannerVersion: 1,
+          critical: [],
+          high: [evidence],
+          supporting: [],
+          controls: [],
+          evidence: [evidence],
+          softQuestionBudget: 5,
+          hardQuestionCap: 30,
+          counts: {},
+        };
+      },
+    },
+    questionBank: {
+      buildBlueprints() { return [blueprint]; },
+      async generate(current, options) {
+        calls.push({
+          generationGroupId: options.generationGroupId,
+          operationBudgetId: options.operationBudgetId,
+        });
+        return generated(current, 'budget-scope');
+      },
+    },
+    scheduler: {
+      chooseNext({ questions }) {
+        return {
+          type: 'QUESTION',
+          questionId: questions[0].id,
+          evidenceId: evidence.id,
+        };
+      },
+    },
+    randomUUID: () => 'budget-question',
+  });
+
+  const manifest = service.buildManifest({
+    generationGroupId: 'reckoning-stable-id',
+  });
+
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(manifest, 'operationBudgetId'),
+    false
+  );
+
+  await service.prepare({
+    manifest,
+    operationBudgetId: 'reckoning:stable:claim:fresh-claim',
+  });
+
+  assert.deepEqual(calls, [{
+    generationGroupId: 'reckoning-stable-id',
+    operationBudgetId: 'reckoning:stable:claim:fresh-claim',
+  }]);
+});
