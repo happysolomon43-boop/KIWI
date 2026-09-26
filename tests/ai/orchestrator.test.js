@@ -650,3 +650,106 @@ test('orchestrator releases traffic capacity after terminal AI failure', async (
   assert.equal(releases, 1);
   assert.equal(failureSignals, 1);
 });
+
+
+test('stored generation affinity can reopen recovered higher Flash models without upgrading stored affinity', async () => {
+  const calls = [];
+  const generationGroupId = 'reckoning-affinity-recovery';
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, apiKey: args.apiKey });
+        if (args.modelId === 'gemini-3.5-flash') {
+          throw new AIError('affinity model temporarily overloaded', {
+            code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+            status: 503,
+            retryable: true,
+            scope: 'PROVIDER_MODEL',
+          });
+        }
+        if (args.modelId === 'gemini-3.8-flash') {
+          return {
+            raw: successRaw('recovered-on-higher-flash'),
+            latencyMs: 5,
+            httpStatus: 200,
+          };
+        }
+        throw new Error('unexpected model ' + args.modelId);
+      },
+    },
+  });
+
+  ai.generationAffinity.set(
+    `ASSESSMENT_GENERATION::${generationGroupId}`,
+    {
+      modelId: 'gemini-3.5-flash',
+      updatedAt: Date.now(),
+    }
+  );
+
+  const result = await ai.run(
+    'RECKONING_CBT',
+    { content: 'continue reckoning' },
+    {
+      generationGroupId,
+      operationBudgetId: 'fresh-claim',
+    }
+  );
+
+  assert.equal(result.requestedModel, 'gemini-3.8-flash');
+  assert.ok(calls.some((call) => call.modelId === 'gemini-3.5-flash'));
+  assert.ok(calls.some((call) => call.modelId === 'gemini-3.8-flash'));
+  assert.equal(
+    ai.generationAffinity.get(
+      `ASSESSMENT_GENERATION::${generationGroupId}`
+    ).modelId,
+    'gemini-3.5-flash'
+  );
+});
+
+test('explicit preferred model remains a hard ceiling and does not reopen higher models', async () => {
+  const calls = [];
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push(args.modelId);
+        if (args.modelId === 'gemini-3.5-flash') {
+          throw new AIError('explicitly preferred model overloaded', {
+            code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+            status: 503,
+            retryable: true,
+            scope: 'PROVIDER_MODEL',
+          });
+        }
+        return {
+          raw: successRaw('should-not-upgrade'),
+          latencyMs: 5,
+          httpStatus: 200,
+        };
+      },
+    },
+  });
+
+  await assert.rejects(
+    ai.run(
+      'RECKONING_CBT',
+      { content: 'manual ceiling' },
+      {
+        preferredModelId: 'gemini-3.5-flash',
+        generationGroupId: 'explicit-ceiling',
+        operationBudgetId: 'explicit-ceiling-claim',
+      }
+    ),
+    (error) => {
+      assert.equal(error.code, AI_ERROR_CODES.PROVIDER_OVERLOADED);
+      return true;
+    }
+  );
+
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every((modelId) => modelId === 'gemini-3.5-flash'));
+});
