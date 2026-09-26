@@ -7061,7 +7061,7 @@ async function computeKnowledgeScore(userId, subjectId = null, cachedStates = nu
 // KS-CACHE: Skip cache only when caller provides fresh cachedStates
 if (!cachedStates) {
   const cached = getCachedKS(userId, subjectId);
-  if (cached?.data) return cached.data;
+  if (cached) return cached;
 }
 let allCards = [];
 if (subjectId) {
@@ -7112,7 +7112,7 @@ return result;
 async function computeGlobalKnowledgeScore(userId, precomputedSubjectScores = null) {
 // KS-CACHE: Check global cache first
 const cached = getCachedKS(userId, null);
-if (cached?.data) return cached.data;
+if (cached) return cached;
 const subjects = await db.subjects.findManyWithDecks(userId);
 if (subjects.length === 0) {
   const empty = { score: 0, band: '🌱 Seed', totalCards: 0 };
