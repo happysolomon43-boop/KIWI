@@ -359,6 +359,7 @@ function createReckoningStore({
     generationAttempts = 1,
     familyIndex = 0,
     itemIndex = 0,
+    claimId = null,
   } = {}) {
     requireQuery();
     if (!blueprint?.id || !blueprint?.evidenceId || !question) {
@@ -373,10 +374,22 @@ function createReckoningStore({
          family_index, item_index, status, generated_question,
          attempt_count, validation_issues, last_error, ready_at,
          created_at, updated_at
-       ) VALUES (
+       )
+       SELECT
          $1,$2,$3,$4,$5,$6,$7,'READY',$8::jsonb,
          $9,'[]'::jsonb,NULL,now(),now(),now()
-       )
+       FROM reckoning_sessions rs
+       WHERE rs.id = $2
+         AND rs.user_id = $3
+         AND (
+           $10::text IS NULL
+           OR (
+             rs.generation_status = 'pending'
+             AND rs.exam_session_id IS NULL
+             AND rs.preparation_claim_id = $10
+             AND rs.preparation_claim_expires_at > now()
+           )
+         )
        ON CONFLICT (reckoning_id, blueprint_id)
        DO UPDATE SET
          status = 'READY',
@@ -399,9 +412,12 @@ function createReckoningStore({
         Math.max(0, Number(itemIndex) || 0),
         json(question),
         Math.max(1, Number(generationAttempts) || 1),
+        claimId || null,
       ]
     );
-    await refreshPreparationProgress(reckoningId, userId);
+    if (rows?.[0]) {
+      await refreshPreparationProgress(reckoningId, userId);
+    }
     return rows?.[0] || null;
   }
 
@@ -411,6 +427,7 @@ function createReckoningStore({
     generationAttempts = 1,
     familyIndex = 0,
     itemIndex = 0,
+    claimId = null,
   } = {}) {
     requireQuery();
     if (!blueprint?.id || !blueprint?.evidenceId) {
@@ -431,10 +448,22 @@ function createReckoningStore({
          family_index, item_index, status, generated_question,
          attempt_count, validation_issues, last_error, ready_at,
          created_at, updated_at
-       ) VALUES (
+       )
+       SELECT
          $1,$2,$3,$4,$5,$6,$7,'ERROR',NULL,
          $8,$9::jsonb,$10,NULL,now(),now()
-       )
+       FROM reckoning_sessions rs
+       WHERE rs.id = $2
+         AND rs.user_id = $3
+         AND (
+           $11::text IS NULL
+           OR (
+             rs.generation_status = 'pending'
+             AND rs.exam_session_id IS NULL
+             AND rs.preparation_claim_id = $11
+             AND rs.preparation_claim_expires_at > now()
+           )
+         )
        ON CONFLICT (reckoning_id, blueprint_id)
        DO UPDATE SET
          status = CASE
@@ -468,9 +497,12 @@ function createReckoningStore({
         Math.max(1, Number(generationAttempts) || 1),
         json(issues),
         message,
+        claimId || null,
       ]
     );
-    await refreshPreparationProgress(reckoningId, userId, message);
+    if (rows?.[0]) {
+      await refreshPreparationProgress(reckoningId, userId, message);
+    }
     return rows?.[0] || null;
   }
 
