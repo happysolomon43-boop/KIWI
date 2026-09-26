@@ -294,6 +294,7 @@ function createAIOrchestrator({
   async function run(taskId, request = {}, {
     preferredModelId = null,
     generationGroupId = null,
+    operationBudgetId = null,
   } = {}) {
     const task = resolvedRouter.getTask(taskId);
     const affinityModelId = preferredModelId || getAffinity(task, generationGroupId);
@@ -345,9 +346,11 @@ function createAIOrchestrator({
 
     const attempts = [];
     const requestStarted = Date.now();
-    const operationId = generationGroupId && task.affinityGroup
-      ? `${task.affinityGroup}::${generationGroupId}`
-      : requestId || `request::${taskId}::${nowMs()}::${++operationSequence}`;
+    const operationId = operationBudgetId
+      ? `${task.affinityGroup || taskId}::budget::${operationBudgetId}`
+      : generationGroupId && task.affinityGroup
+        ? `${task.affinityGroup}::${generationGroupId}`
+        : requestId || `request::${taskId}::${nowMs()}::${++operationSequence}`;
     let lastError = null;
     let hadEligibleRoute = false;
     const providerBlockedModels = [];
