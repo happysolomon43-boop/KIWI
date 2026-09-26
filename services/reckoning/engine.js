@@ -308,6 +308,8 @@ function createReckoningEngine(options = {}) {
   const sleepImpl = options.sleepImpl || ((ms) =>
     new Promise((resolve) => setTimeout(resolve, ms))
   );
+  const logger = options.logger || console;
+  const backgroundPreparations = new Map();
   const durablePreparationWorker =
     options.durablePreparationWorker ||
     createDurablePreparationWorker({
@@ -910,6 +912,51 @@ function createReckoningEngine(options = {}) {
       }
       throw error;
     }
+  }
+
+  async function resumePendingPreparations({ limit = 2 } = {}) {
+    if (typeof store.listRecoverablePreparations !== 'function') {
+      return Object.freeze({ supported: false, candidates: 0, launched: 0 });
+    }
+
+    const candidates = await store.listRecoverablePreparations(limit);
+    let launched = 0;
+
+    for (const row of candidates) {
+      const reckoningId = row?.id;
+      const userId = row?.user_id || row?.userId;
+      if (!reckoningId || !userId) continue;
+
+      const key = `${reckoningId}::${userId}`;
+      if (backgroundPreparations.has(key)) continue;
+
+      const job = Promise.resolve()
+        .then(() => start({ reckoningId, userId }))
+        .catch((error) => {
+          if (error?.code === 'ERR_RECKONING_PREPARING') return null;
+          if (typeof logger?.warn === 'function') {
+            logger.warn('[KIWI RECKONING] durable preparation recovery failed', {
+              reckoningId,
+              code: error?.code || null,
+              message: String(error?.message || error).slice(0, 500),
+            });
+          }
+          return null;
+        })
+        .finally(() => {
+          backgroundPreparations.delete(key);
+        });
+
+      backgroundPreparations.set(key, job);
+      launched += 1;
+    }
+
+    return Object.freeze({
+      supported: true,
+      candidates: candidates.length,
+      launched,
+      active: backgroundPreparations.size,
+    });
   }
 
   async function continueCheckpoint({ examSessionId, userId } = {}) {
@@ -1776,6 +1823,7 @@ function createReckoningEngine(options = {}) {
     },
     prepare,
     start,
+    resumePendingPreparations,
     continueCheckpoint,
     repairDefectiveQuestion,
     adjudicateDefectiveQuestion,
