@@ -297,10 +297,44 @@ function createAIOrchestrator({
     operationBudgetId = null,
   } = {}) {
     const task = resolvedRouter.getTask(taskId);
-    const affinityModelId = preferredModelId || getAffinity(task, generationGroupId);
-    const routedCandidates = resolvedRouter.resolveCandidates(taskId, {
+    const explicitPreferredModelId = preferredModelId || null;
+    const storedAffinityModelId = explicitPreferredModelId
+      ? null
+      : getAffinity(task, generationGroupId);
+    const affinityModelId = explicitPreferredModelId || storedAffinityModelId;
+
+    const affinityCandidates = resolvedRouter.resolveCandidates(taskId, {
       preferredModelId: affinityModelId,
     });
+
+    let routedCandidates = affinityCandidates;
+
+    if (storedAffinityModelId) {
+      const unrestrictedCandidates = resolvedRouter.resolveCandidates(taskId);
+      const affinityIds = new Set(
+        affinityCandidates.map((candidate) => candidate.modelId)
+      );
+      const affinityModel = catalog.get(storedAffinityModelId);
+      const emergencyRecoveryCandidates = unrestrictedCandidates.filter((candidate) => {
+        if (affinityIds.has(candidate.modelId)) return false;
+        const candidateModel = catalog.get(candidate.modelId);
+        if (!affinityModel || !candidateModel) return false;
+
+        // Stored generation affinity preserves consistency by preferring the
+        // current/lower model chain. It must not become a permanent trap when
+        // that affinity model is temporarily unavailable. Higher approved
+        // models are appended only as emergency recovery candidates.
+        return candidateModel.rank > affinityModel.rank;
+      });
+
+      if (emergencyRecoveryCandidates.length > 0) {
+        routedCandidates = Object.freeze([
+          ...affinityCandidates,
+          ...emergencyRecoveryCandidates,
+        ]);
+      }
+    }
+
     const firstAvailableCandidate = routedCandidates.find(
       (candidate) => resolvedProviderHealth.availability(candidate.modelId).available
     );
