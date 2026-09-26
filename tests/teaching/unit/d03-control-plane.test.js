@@ -156,17 +156,21 @@ test('every model-backed capability can compose its exact frozen family body wit
       outputSchema: {
         id: 'd03.test',
         version: '1',
-        uncertainty_states: ['REVIEW_NEEDED'],
+        uncertainty_states: ['INSUFFICIENT_EVIDENCE', 'UNRESOLVED_CONFLICT', 'REVIEW_NEEDED'],
         review_needed_field: 'reviewNeeded',
         state_bearing_fields: [],
         student_facing_field: null,
         declared_fields: ['reviewNeeded'],
+        validate: async (value) => ({ ok: true, value }),
       },
       stateReference: {
         aggregate_type: 'd03-test',
         aggregate_id: capability.id,
         state_version: '1',
         precondition_token: 'd03-test',
+      },
+      audit: {
+        correlation_id: `d03-body-runtime:${capability.id}`,
       },
     });
     const body = catalog.getPromptBody(family.id, family.version);
