@@ -120,23 +120,55 @@ const adaptiveQuestionBank = createQuestionBank({
 });
 function getReckoningGenerationConcurrencyState() {
   const traffic = _aiRuntime.trafficController.snapshot();
-  const routeScheduler = _aiRuntime.routeScheduler.snapshot();
+  const rawRouteScheduler = _aiRuntime.routeScheduler.snapshot();
+  const plan = _aiRuntime.orchestrator.plan('RECKONING_CBT');
+
+  // Only pressure on routes that RECKONING_CBT is actually allowed to use may
+  // reduce Reckoning family fan-out. Background/Lite traffic must not make an
+  // otherwise healthy Flash Reckoning unnecessarily serialize itself.
+  const eligibleRouteKeys = new Set();
+  const eligibleModelIds = new Set();
+  for (const candidate of plan.candidates || []) {
+    const slots = candidate.eligibleProjectSlots || [];
+    if (!slots.length) continue;
+    eligibleModelIds.add(candidate.modelId);
+    for (const slotId of slots) {
+      eligibleRouteKeys.add(`${slotId}::${candidate.modelId}`);
+    }
+  }
+
+  const eligibleRoutes = (rawRouteScheduler.routes || []).filter(
+    (route) => eligibleRouteKeys.has(`${route.projectSlot}::${route.modelId}`)
+  );
+  const eligibleModels = (rawRouteScheduler.models || []).filter(
+    (model) => eligibleModelIds.has(model.modelId)
+  );
   const maxInFlightPerRoute = Math.max(
     1,
-    Number(routeScheduler.maxInFlightPerRoute) || 1
+    Number(rawRouteScheduler.maxInFlightPerRoute) || 1
   );
-  const busyRouteCount = (routeScheduler.routes || []).filter(
+  const busyRouteCount = eligibleRoutes.filter(
     (route) => (Number(route.inFlight) || 0) >= maxInFlightPerRoute
   ).length;
-  const pacedModelCount = (routeScheduler.models || []).filter(
+  const pacedModelCount = eligibleModels.filter(
     (model) => (Number(model.waitMs) || 0) > 0
   ).length;
+
+  const routeScheduler = Object.freeze({
+    ...rawRouteScheduler,
+    routes: Object.freeze(eligibleRoutes),
+    models: Object.freeze(eligibleModels),
+    eligibleRouteCount: eligibleRouteKeys.size,
+    eligibleModelCount: eligibleModelIds.size,
+  });
 
   return Object.freeze({
     ...traffic,
     routeScheduler,
     busyRouteCount,
     pacedModelCount,
+    eligibleRouteCount: eligibleRouteKeys.size,
+    eligibleModelCount: eligibleModelIds.size,
   });
 }
 
