@@ -12,8 +12,8 @@ This correction extracts all 19 exact family files from the accepted v1.3 combin
 
 **Change boundaries:** zero prompt wording changes; zero family reassignment; zero authority or owner changes; zero route qualification; zero provider/model decisions in Teaching; zero D06 work. D30 still owns empirical qualification, and D31 production authorization remains held. The accepted D03 closure used an encoded bundle. This storage refinement replaces that bundle with individual auditable files while preserving the exact bytes and runtime contract.
 
-**Verification:** D01–D05 verifiers passed; 19/19 body hashes verified; full unit regression 485 passed, 0 failed, 0 skipped; non-production Supabase integration guard suite 4 passed, 4 skipped; web build passed. The D05 transport regression proves exact family bytes reach a mocked central provider transport and remain absent from the durable envelope. These results are local reconciled-branch evidence; CI and deployment evidence must be appended after merge.
+**Verification:** D01–D05 verifiers passed; 19/19 body hashes verified; full unit regression 485 passed, 0 failed, 0 skipped; non-production Supabase integration guard suite 4 passed, 4 skipped; web build passed. The D05 transport regression proves exact family bytes reach a mocked central provider transport and remain absent from the durable envelope. Branch CI: D01–D05 workflows all succeeded for `51020c4e3f718d1688d1a438481e4f4ee247e83f`. Render deploy `dep-das248bncjis73e510m0` reached LIVE and logged 19/19 frozen prompt verification, D05 worker startup and HTTP health 200. Vercel status on the merge SHA was success. The direct-file correction leaves routes UNQUALIFIED.
 
 **Individual family hashes:** The authoritative values are the `prompt_sha256` entries in `teaching/prompt-runtime/frozen/prompt-family-catalog.v1.3.part-00` through `part-03`, and each is checked against the corresponding file by the D03 verifier and tests. No duplicate list is maintained here.
 
-**Correction merge SHA:** pending merge.
+**Correction merge SHA:** `86541360f85495e35320eb05e97793647a29995a` (PR #105).
