@@ -1235,9 +1235,9 @@ test('transient recovery window resets after newly validated progress', async ()
     userId: claimed.user_id,
   });
 
-  // Two 950ms waits exceed one 1s window in aggregate. Recovery succeeds only
+  // Two 900ms waits exceed one 1s window in aggregate. Recovery succeeds only
   // because q2 became READY between outages and reset the no-progress window.
-  assert.deepEqual(sleeps, [950, 950]);
+  assert.deepEqual(sleeps, [900, 900]);
   assert.equal(prepareCall, 3);
   assert.equal(items.filter((item) => item.status === 'READY').length, 3);
   assert.equal(state.enginePhase, 'ACTIVE');
