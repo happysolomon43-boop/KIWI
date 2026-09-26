@@ -34,10 +34,20 @@ function createCapabilityContextAssembler({
     throw new TypeError('Teaching context assembly requires a capability-scoped authorizeContextRef().');
   }
 
-  async function guard(ref, contextKind, accessPurpose, accessContext) {
-    if (!ref.protection_class || typeof protectedContentGuard !== 'function') return;
+  async function guard(ref, authorization, contextKind, accessPurpose, accessContext) {
+    const protectionClass = String(
+      authorization?.protectionClass || authorization?.protection_class || ref.protection_class || ''
+    ).trim();
+    if (!protectionClass) return;
+    if (typeof protectedContentGuard !== 'function') {
+      const error = new Error(
+        `Protected Teaching context reference ${ref.ref} cannot be loaded without the deterministic protected-content guard.`
+      );
+      error.code = 'TEACHING_D05_PROTECTED_CONTEXT_GUARD_REQUIRED';
+      throw error;
+    }
     await protectedContentGuard({
-      protectionClass: ref.protection_class,
+      protectionClass,
       contextKind,
       accessPurpose,
       authorization: accessContext,
@@ -46,11 +56,13 @@ function createCapabilityContextAssembler({
 
   async function authorize(capability, lane, ref, contextSpec) {
     const result = await authorizeContextRef({ capability, lane, ref, contextSpec });
-    if (result !== true) {
+    const allowed = result === true || (result && typeof result === 'object' && result.allowed === true);
+    if (!allowed) {
       const error = new Error(`Context reference ${ref.ref} is not authorized for ${capability.id} (${lane}).`);
       error.code = 'TEACHING_D05_CONTEXT_REFERENCE_NOT_AUTHORIZED';
       throw error;
     }
+    return result === true ? Object.freeze({ allowed: true }) : Object.freeze({ ...result });
   }
 
   async function assemble({ capability, contextSpec = {}, accessContext = {} } = {}) {
@@ -64,8 +76,8 @@ function createCapabilityContextAssembler({
 
     const authoritativeState = {};
     for (const ref of authoritativeRefs) {
-      await authorize(capability, 'trustedAuthoritativeState', ref, contextSpec);
-      await guard(ref, contextKind, accessPurpose, accessContext);
+      const authorization = await authorize(capability, 'trustedAuthoritativeState', ref, contextSpec);
+      await guard(ref, authorization, contextKind, accessPurpose, accessContext);
       authoritativeState[ref.ref] = await readAuthoritative(ref, capability);
     }
 
@@ -77,15 +89,15 @@ function createCapabilityContextAssembler({
 
     const provenanceLinkedAcademicContent = [];
     for (const ref of provenanceRefs) {
-      await authorize(capability, 'provenanceLinkedAcademicContent', ref, contextSpec);
-      await guard(ref, contextKind, accessPurpose, accessContext);
+      const authorization = await authorize(capability, 'provenanceLinkedAcademicContent', ref, contextSpec);
+      await guard(ref, authorization, contextKind, accessPurpose, accessContext);
       provenanceLinkedAcademicContent.push(await readProvenance(ref, capability));
     }
 
     const untrustedContent = [];
     for (const ref of untrustedRefs) {
-      await authorize(capability, 'untrustedContent', ref, contextSpec);
-      await guard(ref, contextKind, accessPurpose, accessContext);
+      const authorization = await authorize(capability, 'untrustedContent', ref, contextSpec);
+      await guard(ref, authorization, contextKind, accessPurpose, accessContext);
       const item = await readUntrusted(ref, capability);
       if (!item || typeof item !== 'object' || Array.isArray(item)) {
         throw new TypeError('Untrusted context reader must return {kind,data,provenance}.');
