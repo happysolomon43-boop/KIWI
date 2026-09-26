@@ -11,7 +11,7 @@ const EXPECTED_MANIFEST_SHA256 = '4276531b4fad9cab683dc9b829f857715ec561dd548aeb
 const EXPECTED_PACK_SHA256 = '173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae';
 const EXPECTED_COMPRESSED_SHA256 = 'cda3c9959aade4ee187827708096cb89942d10b209bcefdfeae36b37115ba4ff';
 const EXPECTED_DECOMPRESSED_SHA256 = 'ee68f82a48efb038134371cb33aa34e60986a177661be401d2386c54596d2fd1';
-const BUNDLE_PART_COUNT = 12;
+const BUNDLE_PART_COUNT = 34;
 
 let cached = null;
 
@@ -30,7 +30,7 @@ function partPath(index) {
     __dirname,
     'frozen',
     'prompt-bodies.v1.3',
-    `promptbundle-${String(index).padStart(2, '0')}.b64`
+    `chunk-${String(index).padStart(3, '0')}.b64`
   );
 }
 
