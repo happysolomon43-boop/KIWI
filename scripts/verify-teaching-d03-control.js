@@ -29,6 +29,8 @@ const required = [
   'teaching/prompt-runtime/frozen/prompt-family-catalog.v1.3.part-02',
   'teaching/prompt-runtime/frozen/prompt-family-catalog.v1.3.part-03',
   'teaching/prompt-runtime/constitution.js',
+  'teaching/prompt-runtime/prompt-body-store.js',
+  'teaching/prompt-runtime/prompt-composer.js',
   'teaching/prompt-runtime/prompt-catalog.js',
   'teaching/prompt-runtime/route-control.js',
   'teaching/prompt-runtime/preparation.js',
@@ -40,6 +42,11 @@ const required = [
 
 for (const file of required) {
   check(fs.existsSync(path.join(root, file)), `missing D03 artifact: ${file}`);
+}
+
+for (let index = 0; index < 34; index += 1) {
+  const chunk = `teaching/prompt-runtime/frozen/prompt-bodies.v1.3/chunk-${String(index).padStart(3, '0')}.b64`;
+  check(fs.existsSync(path.join(root, chunk)), `missing frozen Teaching prompt-body chunk: ${chunk}`);
 }
 
 const manifest = JSON.parse(Buffer.concat([0,1,2,3].map((index) =>
@@ -60,6 +67,30 @@ check(
   manifest.families.reduce((sum, family) => sum + family.capability_count, 0) === 147,
   'Prompt-family capability census must total 147'
 );
+
+const promptBodyStore = require(path.join(root, 'teaching', 'prompt-runtime', 'prompt-body-store.js'));
+const promptCatalog = require(path.join(root, 'teaching', 'prompt-runtime', 'prompt-catalog.js'));
+check(promptBodyStore.assertPromptBodyBundleReady() === true, 'Frozen Teaching prompt-body bundle must validate at verifier runtime');
+const promptBodyStatus = promptBodyStore.promptBodyBundleStatus();
+check(promptBodyStatus.familyCount === 19, 'Frozen Teaching prompt-body bundle must contain exactly 19 families');
+check(promptBodyStatus.promptBodiesRuntimeAvailable === true, 'Frozen Teaching prompt bodies must be runtime available');
+check(
+  promptBodyStatus.compressedSha256 === 'cda3c9959aade4ee187827708096cb89942d10b209bcefdfeae36b37115ba4ff',
+  'Frozen Teaching prompt-body compressed bundle hash drifted'
+);
+check(
+  promptBodyStatus.payloadSha256 === 'ee68f82a48efb038134371cb33aa34e60986a177661be401d2386c54596d2fd1',
+  'Frozen Teaching prompt-body payload hash drifted'
+);
+for (const family of promptCatalog.listPromptFamilies()) {
+  const body = promptCatalog.getPromptBody(family.id, family.version);
+  check(body.promptFile === family.promptFile, `${family.id} prompt-body filename drifted`);
+  check(body.promptSha256 === family.promptSha256, `${family.id} prompt-body manifest hash drifted`);
+  check(
+    crypto.createHash('sha256').update(Buffer.from(body.promptText, 'utf8')).digest('hex') === family.promptSha256,
+    `${family.id} prompt-body bytes do not match the manifest-frozen SHA-256`
+  );
+}
 
 const promptCatalogCode = fs.readFileSync(
   path.join(root, 'teaching/prompt-runtime/prompt-catalog.js'),
@@ -86,6 +117,8 @@ check(/allowedFallbackRoutes:\s*Object\.freeze\(\[\]\)/.test(routeControl), 'D03
 const codeFiles = [
   'teaching/capability-registry/index.js',
   'teaching/prompt-runtime/constitution.js',
+  'teaching/prompt-runtime/prompt-body-store.js',
+  'teaching/prompt-runtime/prompt-composer.js',
   'teaching/prompt-runtime/prompt-catalog.js',
   'teaching/prompt-runtime/route-control.js',
   'teaching/prompt-runtime/preparation.js',
@@ -120,6 +153,18 @@ for (const requiredToken of [
 const runtime = fs.readFileSync(path.join(root, 'teaching/runtime/index.js'), 'utf8');
 check(runtime.includes("require('../prompt-runtime')"), 'Teaching runtime must compose the D03 prompt control plane');
 check(runtime.includes('promptControl.assertReady()'), 'Teaching runtime must verify D03 control-plane readiness');
+const promptRuntimeIndex = fs.readFileSync(path.join(root, 'teaching/prompt-runtime/index.js'), 'utf8');
+check(
+  promptRuntimeIndex.includes('composeModelContent: composeTeachingModelContent'),
+  'D03 prompt control plane must expose frozen prompt-body composition'
+);
+const d05Adapter = fs.readFileSync(path.join(root, 'teaching/orchestrator/ai-adapter.js'), 'utf8');
+check(
+  /content:\s*modelContent/.test(d05Adapter) &&
+    /promptControl\.composeModelContent/.test(d05Adapter),
+  'D05 adapter must deliver composed Teaching prompt content to the central KIWI AI Orchestrator'
+);
+
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 check(Boolean(packageJson.scripts?.['verify:teaching:d03']), 'package.json missing verify:teaching:d03');
@@ -133,5 +178,5 @@ if (fs.existsSync(migrationsDir)) {
 }
 
 if (!process.exitCode) {
-  console.log('[D03] PASS: Capability Registry, prompt runtime and route-control foundation are structurally complete and production-held.');
+  console.log('[D03] PASS: Capability Registry, exact frozen prompt bodies, structural composition and route-control foundation are complete and production-held.');
 }

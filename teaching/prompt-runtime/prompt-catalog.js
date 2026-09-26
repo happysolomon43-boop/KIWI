@@ -3,6 +3,11 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const {
+  getFrozenPromptBodyRecord,
+  assertPromptBodyBundleReady,
+  promptBodyBundleStatus,
+} = require('./prompt-body-store');
 
 const EXPECTED_MANIFEST_SHA256 = '4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce';
 const EXPECTED_PACK_SHA256 = '173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae';
@@ -69,6 +74,34 @@ function getPromptFamily(familyId) {
   return family;
 }
 
+function getPromptBody(familyId, expectedVersion = null) {
+  const family = getPromptFamily(familyId);
+  if (expectedVersion != null && String(expectedVersion) !== family.version) {
+    const error = new Error(`${family.id} is frozen at v${family.version}; requested v${expectedVersion} is not manifested.`);
+    error.code = 'TEACHING_PROMPT_VERSION_UNMANIFESTED';
+    throw error;
+  }
+
+  const body = getFrozenPromptBodyRecord(family.id);
+  if (
+    body.familyId !== family.id ||
+    body.version !== family.version ||
+    body.promptFile !== family.promptFile ||
+    body.promptSha256 !== family.promptSha256
+  ) {
+    const error = new Error(`${family.id} frozen prompt-body metadata does not match the manifest catalog.`);
+    error.code = 'TEACHING_PROMPT_BODY_CATALOG_MISMATCH';
+    throw error;
+  }
+
+  assertManifestedPromptText({
+    familyId: family.id,
+    version: family.version,
+    promptText: body.promptText,
+  });
+  return body;
+}
+
 function assertPromptArtifactIdentity({ familyId, version, promptFile, promptSha256 } = {}) {
   const family = getPromptFamily(familyId);
   if (
@@ -112,6 +145,7 @@ function createFrozenPromptBinding(familyId, expectedVersion = null) {
     throw error;
   }
 
+  const body = getPromptBody(family.id, family.version);
   const binding = {
     familyId: family.id,
     familyName: family.name,
@@ -119,11 +153,13 @@ function createFrozenPromptBinding(familyId, expectedVersion = null) {
     criticality: family.criticality,
     promptSourceFile: family.promptFile,
     promptSourceSha256: family.promptSha256,
+    promptBodyByteLength: body.byteLength,
     combinedPackFile: manifest.combined_prompt_pack?.file || null,
     combinedPackSha256: EXPECTED_PACK_SHA256,
     manifestVersion: manifest.manifest_version,
     manifestSha256: EXPECTED_MANIFEST_SHA256,
-    promptBodyEmbedded: false,
+    promptBodyEmbedded: true,
+    promptBodyRuntimeAvailable: true,
   };
   Object.defineProperty(binding, FROZEN_PROMPT_BINDING, { value: true, enumerable: false, writable: false });
   return Object.freeze(binding);
@@ -150,6 +186,7 @@ function listPromptFamilies() {
 }
 
 function promptCatalogStatus() {
+  const bodyStatus = promptBodyBundleStatus();
   return Object.freeze({
     manifestVersion: manifest.manifest_version,
     manifestSha256: EXPECTED_MANIFEST_SHA256,
@@ -158,7 +195,11 @@ function promptCatalogStatus() {
     familyCount: familyById.size,
     modelEligibleCapabilityCount: manifest.model_eligible_capability_count,
     closureStatus: manifest.closure_status,
-    promptBodiesEmbedded: false,
+    promptBodiesEmbedded: true,
+    promptBodiesRuntimeAvailable: bodyStatus.promptBodiesRuntimeAvailable,
+    promptBodyFamilyCount: bodyStatus.familyCount,
+    promptBodyBundleSha256: bodyStatus.compressedSha256,
+    promptBodyPayloadSha256: bodyStatus.payloadSha256,
     qualificationPending: true,
   });
 }
@@ -168,10 +209,13 @@ module.exports = {
   EXPECTED_PACK_SHA256,
   ASSESSMENT_FAMILY_BOUNDARIES,
   getPromptFamily,
+  getPromptBody,
   listPromptFamilies,
   createFrozenPromptBinding,
   assertFrozenPromptBinding,
   assertPromptArtifactIdentity,
   assertManifestedPromptText,
+  assertPromptBodyBundleReady,
+  promptBodyBundleStatus,
   promptCatalogStatus,
 };

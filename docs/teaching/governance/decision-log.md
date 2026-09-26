@@ -81,3 +81,19 @@ Paired versioned amendments:
 
 Migration impact: none.
 
+
+
+## DEC-D03-007 — Close frozen prompt-body runtime integration gap
+
+Date: 2026-09-26  
+Status: IMPLEMENTATION DEFECT CORRECTION  
+TCH impact: D03 prompt-runtime acceptance; no TCH reassignment
+
+The D03 runtime already hash-locked Prompt Manifest/Pack v1.3, capability-to-family mappings, the Teaching Constitution, structural contracts and route-control posture, but did not package/load the actual frozen prompt-family prose into the model request. That gap is corrected by a hash-locked 19-family runtime prompt-body bundle and deterministic prompt composer.
+
+The correction preserves the exact manifest/family hashes, changes no frozen prompt prose, changes no authority owner, keeps all 22 T0 capabilities promptless, keeps every Teaching AI route UNQUALIFIED, and does not replace D30 empirical qualification.
+
+Versioned implementation record:
+- `docs/teaching/change-control/KIWI_Teaching_D03_Prompt_Body_Runtime_Closure_v1.0.md`
+
+Migration impact: none.
