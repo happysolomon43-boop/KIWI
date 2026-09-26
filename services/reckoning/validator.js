@@ -133,6 +133,8 @@ function createQuestionValidator({
       blueprint: context.blueprint || null,
       sourceSnapshot: context.sourceSnapshot || context.blueprint?.sourceSnapshot || null,
       previousQuestion: context.previousQuestion || null,
+      generationGroupId: context.generationGroupId || null,
+      operationBudgetId: context.operationBudgetId || null,
     });
 
     const issues = Array.isArray(result?.issues) ? result.issues.map(String) : [];
