@@ -156,9 +156,15 @@ test('AI semantic reviewer uses CBT_QUESTION_AUDIT rather than bypassing the orc
     },
     blueprint: { role: 'DIAGNOSTIC' },
     sourceSnapshot: { front_content: 'Source', back_content: 'Answer' },
+    generationGroupId: 'reckoning-audit-group',
+    operationBudgetId: 'reckoning:claim:audit-1',
   });
 
   assert.equal(calls[0][0], 'CBT_QUESTION_AUDIT');
+  assert.deepEqual(calls[0][2], {
+    generationGroupId: 'reckoning-audit-group',
+    operationBudgetId: 'reckoning:claim:audit-1',
+  });
   assert.equal(result.valid, true);
 });
 
@@ -187,4 +193,56 @@ test('retry prompt explicitly corrects duplicate-option validation failures', ()
   assert.match(prompt, /RETRY CORRECTION/);
   assert.match(prompt, /duplicate_option/);
   assert.match(prompt, /distinct after lowercasing/i);
+});
+
+
+test('question bank forwards generation and claim context through validator into semantic review', async () => {
+  const semanticCalls = [];
+  const validator = createQuestionValidator({
+    semanticReview: async (context) => {
+      semanticCalls.push(context);
+      return {
+        valid: true,
+        grounded: true,
+        singleBestAnswer: true,
+        variantDistinct: true,
+        issues: [],
+      };
+    },
+  });
+
+  const bank = createQuestionBank({
+    validator,
+    aiRun: async () => ({
+      text: JSON.stringify({
+        stem: 'Which process is supported by the supplied source?',
+        options: ['Oxidative phosphorylation', 'Diffusion', 'Osmosis', 'Fermentation'],
+        correctAnswer: 'A',
+        explanation: 'The source supports oxidative phosphorylation.',
+      }),
+      modelId: 'gemini-test',
+    }),
+  });
+
+  const blueprint = bank.buildBlueprints({
+    critical: [evidence()],
+    high: [],
+    supporting: [],
+    controls: [],
+  })[0];
+
+  await bank.generate(blueprint, {
+    generationGroupId: 'reckoning-context-group',
+    operationBudgetId: 'reckoning:claim:context-1',
+  });
+
+  assert.equal(semanticCalls.length, 1);
+  assert.equal(
+    semanticCalls[0].generationGroupId,
+    'reckoning-context-group'
+  );
+  assert.equal(
+    semanticCalls[0].operationBudgetId,
+    'reckoning:claim:context-1'
+  );
 });
