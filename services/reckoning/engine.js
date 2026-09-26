@@ -11,6 +11,7 @@ const { createScheduler } = require('./scheduler');
 const { createScoringEngine } = require('./scoring');
 const { createLearningEffectsEngine } = require('./learning-effects');
 const { createPreparationService } = require('./preparation');
+const { createDurablePreparationWorker } = require('./durable-preparation-worker');
 const { createStateMachine } = require('./state-machine');
 const { AI_ERROR_CODES } = require('../ai/errors');
 
@@ -307,6 +308,17 @@ function createReckoningEngine(options = {}) {
   const sleepImpl = options.sleepImpl || ((ms) =>
     new Promise((resolve) => setTimeout(resolve, ms))
   );
+  const durablePreparationWorker =
+    options.durablePreparationWorker ||
+    createDurablePreparationWorker({
+      config,
+      preparationService,
+      randomUUID,
+      clock,
+      sleepImpl,
+      getConcurrencyState: options.getConcurrencyState || null,
+      random: options.random || Math.random,
+    });
 
   function nowMs() {
     const value = clock();
@@ -557,10 +569,31 @@ function createReckoningEngine(options = {}) {
           totalCount: Number(manifestRow.total_count) || 0,
           createdAt: manifestRow.created_at || null,
         });
-        const recoveryWindowMs = Math.max(
-          0,
-          Number(config.preparation.availabilityRecoveryWindowSeconds || 0) * 1000
-        );
+        const durablePreparationSupported =
+          typeof preparationService.generateCandidateWithRetry === 'function' &&
+          typeof preparationService.auditCandidate === 'function' &&
+          typeof store.ensurePreparationWorkItems === 'function' &&
+          typeof store.claimPreparationWorkItem === 'function' &&
+          typeof store.savePreparationItemCandidate === 'function' &&
+          typeof store.savePreparationWorkItemReady === 'function' &&
+          typeof store.schedulePreparationItemRetry === 'function' &&
+          typeof store.savePreparationItemAuditRejection === 'function' &&
+          typeof store.savePreparationItemTerminal === 'function';
+
+        if (durablePreparationSupported) {
+          prepared = await durablePreparationWorker.run({
+            store,
+            reckoningId: claimed.id,
+            userId,
+            claimId,
+            manifest,
+            shouldAbort: () => preparationClaimLost,
+          });
+        } else {
+          const recoveryWindowMs = Math.max(
+            0,
+            Number(config.preparation.availabilityRecoveryWindowSeconds || 0) * 1000
+          );
         const maxRecoveryRounds = Math.max(
           0,
           Number(config.preparation.availabilityRecoveryMaxRounds) || 0
@@ -709,6 +742,7 @@ function createReckoningEngine(options = {}) {
             // Loop back through the durable item store. READY questions are
             // reused and only unfinished/ERROR blueprints are regenerated.
           }
+        }
         }
       } else {
         // Compatibility path for isolated unit-test doubles and legacy injected
