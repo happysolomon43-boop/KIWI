@@ -376,7 +376,7 @@ function createReckoningStore({
     return ensured;
   }
 
-  async function claimPreparationWorkItem(
+  async function leasePreparationWorkItem(
     reckoningId,
     userId,
     blueprintId,
@@ -1725,7 +1725,7 @@ function createReckoningStore({
     createPreparationManifest,
     getPreparationItems,
     ensurePreparationWorkItems,
-    claimPreparationWorkItem,
+    leasePreparationWorkItem,
     savePreparationItemCandidate,
     savePreparationWorkItemReady,
     schedulePreparationItemRetry,
