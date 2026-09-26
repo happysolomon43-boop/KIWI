@@ -2,7 +2,7 @@
 
 const {
   getPromptBody,
-  createFrozenPromptBinding,
+  assertFrozenPromptBinding,
 } = require('./prompt-catalog');
 
 function fail(message, code = 'TEACHING_PROMPT_COMPOSITION_INVALID') {
@@ -64,41 +64,10 @@ function composeTeachingModelContent({
     fail('Teaching prompt composition requires a structural prompt invocation.');
   }
 
-  const canonicalBinding = createFrozenPromptBinding(
+  assertFrozenPromptBinding(invocation.prompt.frozen_binding);
+  const body = getPromptBody(
     invocation.prompt.family_id,
     invocation.prompt.family_version
-  );
-  const suppliedBinding = invocation.prompt.frozen_binding;
-  for (const [field, expected] of [
-    ['familyId', canonicalBinding.familyId],
-    ['familyVersion', canonicalBinding.familyVersion],
-    ['promptSourceFile', canonicalBinding.promptSourceFile],
-    ['promptSourceSha256', canonicalBinding.promptSourceSha256],
-    ['manifestVersion', canonicalBinding.manifestVersion],
-    ['manifestSha256', canonicalBinding.manifestSha256],
-    ['combinedPackSha256', canonicalBinding.combinedPackSha256],
-  ]) {
-    if (suppliedBinding?.[field] !== expected) {
-      fail(
-        `Teaching structural invocation prompt binding drifted at ${field}.`,
-        'TEACHING_UNMANIFESTED_PROMPT_REJECTED'
-      );
-    }
-  }
-  if (
-    invocation.prompt.manifest_version !== canonicalBinding.manifestVersion ||
-    invocation.prompt.manifest_sha256 !== canonicalBinding.manifestSha256 ||
-    invocation.prompt.combined_pack_sha256 !== canonicalBinding.combinedPackSha256
-  ) {
-    fail(
-      'Teaching structural invocation prompt manifest/pack identity drifted.',
-      'TEACHING_UNMANIFESTED_PROMPT_REJECTED'
-    );
-  }
-
-  const body = getPromptBody(
-    canonicalBinding.familyId,
-    canonicalBinding.familyVersion
   );
   const runtimeContract = serializablePromptContract(invocation);
   const boundedAcademicInput = assertAcademicInput(academicInput);
@@ -109,13 +78,9 @@ function composeTeachingModelContent({
   // design-frozen family core.
   return [
     '<KIWI_TEACHING_FROZEN_PROMPT>',
-    `family_id: ${body.familyId}`,
-    `family_version: ${body.version}`,
-    `prompt_file: ${body.promptFile}`,
-    `prompt_sha256: ${body.promptSha256}`,
-    '',
-    body.promptText,
-    '</KIWI_TEACHING_FROZEN_PROMPT>',
+    // The file already ends in a newline. Append the closing marker without
+    // inserting or removing a byte within the frozen region.
+    body.promptText + '</KIWI_TEACHING_FROZEN_PROMPT>',
     '',
     '<KIWI_TEACHING_RUNTIME_CONTRACT_JSON>',
     JSON.stringify(runtimeContract),

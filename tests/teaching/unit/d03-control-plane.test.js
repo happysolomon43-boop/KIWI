@@ -66,7 +66,7 @@ test('v1.3 prompt baseline is exact, frozen and covers all 147 model-eligible ca
   const family = catalog.getPromptFamily(capability.prompt_family_id);
   const binding = catalog.createFrozenPromptBinding(family.id, family.version);
   assert.equal(binding.familyId, family.id);
-  assert.equal(binding.promptBodyEmbedded, true);
+  assert.equal(binding.promptBodyEmbedded, false);
   assert.equal(binding.promptBodyRuntimeAvailable, true);
   const body = catalog.getPromptBody(family.id, family.version);
   assert.equal(body.promptSha256, family.promptSha256);
@@ -102,8 +102,8 @@ test('runtime/build-time prompt text must match the exact manifested family SHA'
 });
 
 test('all 19 frozen prompt bodies are runtime-loadable and byte-identical to their manifested SHA', () => {
-  assert.equal(catalog.assertPromptBodyBundleReady(), true);
-  const bodyStatus = catalog.promptBodyBundleStatus();
+  assert.equal(require('../../../teaching/prompt-runtime/prompt-body-store').assertPromptBodyStoreReady(), true);
+  const bodyStatus = require('../../../teaching/prompt-runtime/prompt-body-store').promptBodyStoreStatus();
   assert.equal(bodyStatus.familyCount, 19);
   assert.equal(bodyStatus.promptBodiesRuntimeAvailable, true);
   assert.equal(bodyStatus.manifestSha256, '4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce');
@@ -174,7 +174,7 @@ test('every model-backed capability can compose its exact frozen family body wit
       },
     });
     const body = catalog.getPromptBody(family.id, family.version);
-    const content = plane.composeModelContent({
+    const content = require('../../../teaching/prompt-runtime/prompt-composer').composeTeachingModelContent({
       invocation,
       academicInput: { source_text: 'untrusted task data' },
     });
@@ -275,7 +275,7 @@ test('D03 reuses D02 audit columns for version bindings and exposes a production
   assert.equal(status.delivery, 'D03');
   assert.equal(status.capabilityCounts.total, 169);
   assert.equal(status.promptBodiesRuntimeAvailable, true);
-  assert.equal(status.promptBodyFamilyCount, 19);
+  assert.equal(status.promptFamilyCount, 19);
   assert.equal(status.routeQualification, 'UNQUALIFIED');
   assert.equal(status.productionModelExecutionAuthorized, false);
 });
