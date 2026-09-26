@@ -685,7 +685,6 @@ function createReckoningEngine(options = {}) {
         manifest = Object.freeze({
           deckIds: Object.freeze([...(input?.deckIds || [])]),
           generationGroupId: claimed.id,
-          operationBudgetId: `reckoning:${claimed.id}:claim:${claimId}`,
         });
         prepared = await preparationService.prepare({
           ...input,
@@ -695,6 +694,7 @@ function createReckoningEngine(options = {}) {
             pressureScore: Number(claimed.pressure_score) || 0,
           },
           generationGroupId: claimed.id,
+          operationBudgetId: `reckoning:${claimed.id}:claim:${claimId}`,
         });
       }
 
