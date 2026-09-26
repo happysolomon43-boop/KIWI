@@ -1,9 +1,11 @@
 # KIWI Teaching — D03 Prompt-Body Runtime Closure v1.0
 
 **Date:** 2026-09-26  
-**Status:** IMPLEMENTATION DEFECT CORRECTION — ACCEPTANCE CLOSURE PENDING CI/MERGE  
+**Status:** ACCEPTED IMPLEMENTATION DEFECT CORRECTION (Class A local realization)  
 **Owning delivery:** D03 — Capability Registry, Prompt Runtime & Route-Control Foundation  
-**Baseline corrected:** D03 runtime as inherited by accepted D05 `962d6f83f0b1f706606e772ab68d4964430732e9`
+**Baseline corrected:** D03 runtime as inherited by accepted D05 `962d6f83f0b1f706606e772ab68d4964430732e9`  
+**Accepted correction merge:** `c109888ef5d6e4ff53b3cd96a1213d13f186752e`  
+**Pull request:** #104
 
 ## Problem
 
@@ -94,6 +96,31 @@ The correction is accepted only when automated verification proves:
 - all routes remain UNQUALIFIED;
 - D01–D05 predecessor verifiers still pass;
 - Teaching regression tests and full KIWI tests pass.
+
+## Acceptance evidence
+
+The correction was accepted after merge to `main` on `c109888ef5d6e4ff53b3cd96a1213d13f186752e`.
+
+Accepted-main verification:
+
+- D01 verifier: PASS
+- D02 verifier: PASS
+- D03 verifier: PASS
+- D04 verifier: PASS
+- D05 verifier: PASS
+- Teaching unit tests: 75/75 passed, 0 failed, 0 skipped
+- Full KIWI regression tests: 481/481 passed, 0 failed, 0 skipped
+- Web build: PASS
+- Non-production Supabase integration suite: 8 discovered, 4 passed, 0 failed, 4 skipped because no non-production Supabase project/branch is configured
+
+Deployment verification:
+
+- Vercel production: READY on `c109888ef5d6e4ff53b3cd96a1213d13f186752e`
+- Render backend: LIVE on `c109888ef5d6e4ff53b3cd96a1213d13f186752e`
+- Render startup reached `[KIWI Teaching] D05 runtime initialized; due-event and durable outbox workers started.`, which occurs only after Teaching prompt-control `assertReady()` validates the frozen prompt-body bundle
+- Supabase migration head remained unchanged at `20260926180811_teaching_d05_orchestration_service_rls`; this correction requires no database migration
+
+The four skipped database integration bodies are expected skips and are not represented as passing tests.
 
 ## Deployment / persistence impact
 

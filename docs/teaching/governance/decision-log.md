@@ -97,3 +97,25 @@ Versioned implementation record:
 - `docs/teaching/change-control/KIWI_Teaching_D03_Prompt_Body_Runtime_Closure_v1.0.md`
 
 Migration impact: none.
+
+
+## COR-D03-008 — Accept prompt-body runtime closure
+
+Date: 2026-09-26  
+Status: ACCEPTED  
+Change class: Class A local realization / implementation-defect correction  
+Supersedes/clarifies: DEC-D03-007 acceptance state  
+TCH impact: D03 prompt-runtime acceptance; no TCH reassignment
+
+The D03 prompt-body runtime gap recorded in DEC-D03-007 is closed on accepted merge `c109888ef5d6e4ff53b3cd96a1213d13f186752e` (PR #104).
+
+The exact Phase-15 v1.3 frozen prompt-family bodies are now packaged in the Teaching runtime, hash-verified against the accepted manifest/family identities, composed without rewriting the frozen family core, and supplied through the existing central KIWI AI Orchestrator `request.content` path.
+
+This correction changes no frozen prompt prose, capability identity, authority ceiling, authoritative owner, route qualification or provider/model ownership. All 22 T0 capabilities remain promptless and all Teaching AI routes remain UNQUALIFIED pending D30.
+
+Accepted-main verification: D01-D05 verifiers pass; Teaching tests 75/75; full KIWI tests 481/481; web build passes. Vercel is READY and Render is LIVE on the accepted correction commit. No database migration is required.
+
+Versioned closure record:
+- `docs/teaching/change-control/KIWI_Teaching_D03_Prompt_Body_Runtime_Closure_v1.0.md`
+
+Migration impact: none.
