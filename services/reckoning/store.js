@@ -310,6 +310,406 @@ function createReckoningStore({
     return rows || [];
   }
 
+  async function ensurePreparationWorkItems(
+    reckoningId,
+    userId,
+    items = [],
+    claimId = null
+  ) {
+    requireQuery();
+    let ensured = 0;
+
+    for (const item of items || []) {
+      if (!item?.blueprintId || !item?.evidenceId) continue;
+      const id = randomUUID();
+      const { rows } = await query(
+        `INSERT INTO reckoning_preparation_items (
+           id, reckoning_id, user_id, blueprint_id, evidence_id,
+           family_index, item_index, status, generated_question,
+           attempt_count, validation_issues, last_error, ready_at,
+           work_state, candidate_question, retry_phase, retry_epoch,
+           content_revision_count, next_attempt_at, lease_token,
+           lease_expires_at, last_error_code, created_at, updated_at
+         )
+         SELECT
+           $1,$2,$3,$4,$5,$6,$7,'PENDING',NULL,
+           0,'[]'::jsonb,NULL,NULL,
+           'NEEDS_GENERATION',NULL,'GENERATE',0,
+           0,now(),NULL,NULL,NULL,now(),now()
+         FROM reckoning_sessions rs
+         WHERE rs.id = $2
+           AND rs.user_id = $3
+           AND rs.generation_status = 'pending'
+           AND rs.exam_session_id IS NULL
+           AND ($8::text IS NULL OR (
+             rs.preparation_claim_id = $8
+             AND rs.preparation_claim_expires_at > now()
+           ))
+         ON CONFLICT (reckoning_id, blueprint_id)
+         DO UPDATE SET
+           evidence_id = EXCLUDED.evidence_id,
+           family_index = EXCLUDED.family_index,
+           item_index = EXCLUDED.item_index,
+           work_state = CASE
+             WHEN reckoning_preparation_items.status = 'READY'
+               THEN 'READY'
+             WHEN reckoning_preparation_items.work_state = 'TERMINAL_ERROR'
+               THEN 'TERMINAL_ERROR'
+             ELSE reckoning_preparation_items.work_state
+           END,
+           updated_at = now()
+         RETURNING id`,
+        [
+          id,
+          reckoningId,
+          userId,
+          String(item.blueprintId),
+          String(item.evidenceId),
+          Math.max(0, Number(item.familyIndex) || 0),
+          Math.max(0, Number(item.itemIndex) || 0),
+          claimId || null,
+        ]
+      );
+      if (rows?.[0]) ensured += 1;
+    }
+
+    return ensured;
+  }
+
+  async function claimPreparationWorkItem(
+    reckoningId,
+    userId,
+    blueprintId,
+    {
+      claimId,
+      leaseToken = randomUUID(),
+      leaseSeconds = 240,
+    } = {}
+  ) {
+    requireQuery();
+    if (!claimId || !blueprintId) return null;
+    const seconds = Math.max(30, Math.min(Number(leaseSeconds) || 240, 900));
+
+    const { rows } = await query(
+      `UPDATE reckoning_preparation_items item
+       SET lease_token = $5,
+           lease_expires_at = now() + ($6::text || ' seconds')::interval,
+           work_state = CASE
+             WHEN item.candidate_question IS NOT NULL
+                  AND COALESCE(item.retry_phase, 'AUDIT') = 'AUDIT'
+               THEN 'AUDITING'
+             ELSE 'GENERATING'
+           END,
+           updated_at = now()
+       FROM reckoning_sessions rs
+       WHERE item.reckoning_id = $1
+         AND item.user_id = $2
+         AND item.blueprint_id = $3
+         AND item.status <> 'READY'
+         AND item.work_state <> 'TERMINAL_ERROR'
+         AND (item.next_attempt_at IS NULL OR item.next_attempt_at <= now())
+         AND (item.lease_expires_at IS NULL OR item.lease_expires_at <= now())
+         AND rs.id = item.reckoning_id
+         AND rs.user_id = item.user_id
+         AND rs.generation_status = 'pending'
+         AND rs.exam_session_id IS NULL
+         AND rs.preparation_claim_id = $4
+         AND rs.preparation_claim_expires_at > now()
+       RETURNING item.*`,
+      [
+        reckoningId,
+        userId,
+        String(blueprintId),
+        claimId,
+        leaseToken,
+        seconds,
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function savePreparationItemCandidate(
+    reckoningId,
+    userId,
+    {
+      blueprint,
+      candidate,
+      generationAttempts = 1,
+      claimId,
+      leaseToken,
+    } = {}
+  ) {
+    requireQuery();
+    if (!blueprint?.id || !candidate || !claimId || !leaseToken) return null;
+
+    const { rows } = await query(
+      `UPDATE reckoning_preparation_items item
+       SET status = 'PENDING',
+           work_state = 'NEEDS_AUDIT',
+           candidate_question = $6::jsonb,
+           retry_phase = 'AUDIT',
+           next_attempt_at = now(),
+           attempt_count = item.attempt_count + $7,
+           validation_issues = '[]'::jsonb,
+           last_error = NULL,
+           last_error_code = NULL,
+           lease_token = NULL,
+           lease_expires_at = NULL,
+           updated_at = now()
+       FROM reckoning_sessions rs
+       WHERE item.reckoning_id = $1
+         AND item.user_id = $2
+         AND item.blueprint_id = $3
+         AND item.lease_token = $4
+         AND rs.id = item.reckoning_id
+         AND rs.user_id = item.user_id
+         AND rs.generation_status = 'pending'
+         AND rs.exam_session_id IS NULL
+         AND rs.preparation_claim_id = $5
+         AND rs.preparation_claim_expires_at > now()
+       RETURNING item.*`,
+      [
+        reckoningId,
+        userId,
+        String(blueprint.id),
+        leaseToken,
+        claimId,
+        json(candidate),
+        Math.max(1, Number(generationAttempts) || 1),
+      ]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function schedulePreparationItemRetry(
+    reckoningId,
+    userId,
+    {
+      blueprintId,
+      phase = 'GENERATE',
+      error,
+      nextAttemptAt,
+      claimId,
+      leaseToken,
+    } = {}
+  ) {
+    requireQuery();
+    if (!blueprintId || !claimId || !leaseToken) return null;
+    const resolvedPhase = String(phase).toUpperCase() === 'AUDIT'
+      ? 'AUDIT'
+      : 'GENERATE';
+    const message = String(
+      error?.message || error || 'Temporary AI availability failure'
+    ).slice(0, 1500);
+    const code = String(error?.code || 'UNKNOWN').slice(0, 120);
+
+    const { rows } = await query(
+      `UPDATE reckoning_preparation_items item
+       SET status = 'PENDING',
+           work_state = 'RETRY_WAIT',
+           retry_phase = $6,
+           retry_epoch = item.retry_epoch + 1,
+           next_attempt_at = $7,
+           candidate_question = CASE
+             WHEN $6 = 'AUDIT' THEN item.candidate_question
+             ELSE NULL
+           END,
+           last_error = $8,
+           last_error_code = $9,
+           lease_token = NULL,
+           lease_expires_at = NULL,
+           updated_at = now()
+       FROM reckoning_sessions rs
+       WHERE item.reckoning_id = $1
+         AND item.user_id = $2
+         AND item.blueprint_id = $3
+         AND item.lease_token = $4
+         AND rs.id = item.reckoning_id
+         AND rs.user_id = item.user_id
+         AND rs.generation_status = 'pending'
+         AND rs.exam_session_id IS NULL
+         AND rs.preparation_claim_id = $5
+         AND rs.preparation_claim_expires_at > now()
+       RETURNING item.*`,
+      [
+        reckoningId,
+        userId,
+        String(blueprintId),
+        leaseToken,
+        claimId,
+        resolvedPhase,
+        nextAttemptAt || new Date(),
+        message,
+        code,
+      ]
+    );
+    if (rows?.[0]) {
+      await refreshPreparationProgress(reckoningId, userId, message);
+    }
+    return rows?.[0] || null;
+  }
+
+  async function savePreparationItemAuditRejection(
+    reckoningId,
+    userId,
+    {
+      blueprintId,
+      error,
+      maxRevisions = 3,
+      claimId,
+      leaseToken,
+    } = {}
+  ) {
+    requireQuery();
+    if (!blueprintId || !claimId || !leaseToken) return null;
+    const message = String(
+      error?.message || error || 'Question failed independent semantic audit'
+    ).slice(0, 1500);
+    const issues = Array.isArray(error?.validationIssues)
+      ? error.validationIssues.filter(Boolean).slice(0, 25)
+      : [];
+    const maxAllowed = Math.max(1, Number(maxRevisions) || 3);
+
+    const { rows } = await query(
+      `UPDATE reckoning_preparation_items item
+       SET content_revision_count = item.content_revision_count + 1,
+           status = CASE
+             WHEN item.content_revision_count + 1 >= $8 THEN 'ERROR'
+             ELSE 'PENDING'
+           END,
+           work_state = CASE
+             WHEN item.content_revision_count + 1 >= $8
+               THEN 'TERMINAL_ERROR'
+             ELSE 'NEEDS_GENERATION'
+           END,
+           retry_phase = CASE
+             WHEN item.content_revision_count + 1 >= $8 THEN NULL
+             ELSE 'GENERATE'
+           END,
+           candidate_question = NULL,
+           next_attempt_at = CASE
+             WHEN item.content_revision_count + 1 >= $8 THEN NULL
+             ELSE now()
+           END,
+           validation_issues = $6::jsonb,
+           last_error = $7,
+           last_error_code = 'ERR_RECKONING_QUESTION_SEMANTICS',
+           lease_token = NULL,
+           lease_expires_at = NULL,
+           updated_at = now()
+       FROM reckoning_sessions rs
+       WHERE item.reckoning_id = $1
+         AND item.user_id = $2
+         AND item.blueprint_id = $3
+         AND item.lease_token = $4
+         AND rs.id = item.reckoning_id
+         AND rs.user_id = item.user_id
+         AND rs.generation_status = 'pending'
+         AND rs.exam_session_id IS NULL
+         AND rs.preparation_claim_id = $5
+         AND rs.preparation_claim_expires_at > now()
+       RETURNING item.*`,
+      [
+        reckoningId,
+        userId,
+        String(blueprintId),
+        leaseToken,
+        claimId,
+        json(issues),
+        message,
+        maxAllowed,
+      ]
+    );
+    if (rows?.[0]) {
+      await refreshPreparationProgress(reckoningId, userId, message);
+    }
+    return rows?.[0] || null;
+  }
+
+  async function savePreparationItemTerminal(
+    reckoningId,
+    userId,
+    {
+      blueprintId,
+      error,
+      claimId,
+      leaseToken,
+    } = {}
+  ) {
+    requireQuery();
+    if (!blueprintId || !claimId || !leaseToken) return null;
+    const message = String(
+      error?.message || error || 'Non-recoverable Reckoning preparation failure'
+    ).slice(0, 1500);
+    const code = String(error?.code || 'ERR_RECKONING_PREPARATION_ITEM').slice(0, 120);
+
+    const { rows } = await query(
+      `UPDATE reckoning_preparation_items item
+       SET status = 'ERROR',
+           work_state = 'TERMINAL_ERROR',
+           retry_phase = NULL,
+           next_attempt_at = NULL,
+           last_error = $6,
+           last_error_code = $7,
+           lease_token = NULL,
+           lease_expires_at = NULL,
+           updated_at = now()
+       FROM reckoning_sessions rs
+       WHERE item.reckoning_id = $1
+         AND item.user_id = $2
+         AND item.blueprint_id = $3
+         AND item.lease_token = $4
+         AND rs.id = item.reckoning_id
+         AND rs.user_id = item.user_id
+         AND rs.generation_status = 'pending'
+         AND rs.exam_session_id IS NULL
+         AND rs.preparation_claim_id = $5
+         AND rs.preparation_claim_expires_at > now()
+       RETURNING item.*`,
+      [
+        reckoningId,
+        userId,
+        String(blueprintId),
+        leaseToken,
+        claimId,
+        message,
+        code,
+      ]
+    );
+    if (rows?.[0]) {
+      await refreshPreparationProgress(reckoningId, userId, message);
+    }
+    return rows?.[0] || null;
+  }
+
+  async function listRecoverablePreparations(limit = 4) {
+    requireQuery();
+    const bounded = Math.max(1, Math.min(Number(limit) || 4, 20));
+    const { rows } = await query(
+      `SELECT id, user_id, generation_status, updated_at
+       FROM reckoning_sessions
+       WHERE engine_version = 2
+         AND engine_mode IN ('PILOT','LIVE')
+         AND status IN ('triggered','deferred')
+         AND exam_session_id IS NULL
+         AND (deferred_until IS NULL OR deferred_until <= now())
+         AND (
+           generation_status IN ('not_started','error','partial')
+           OR (
+             generation_status = 'pending'
+             AND (
+               preparation_claim_expires_at IS NULL
+               OR preparation_claim_expires_at <= now()
+             )
+           )
+         )
+       ORDER BY updated_at ASC
+       LIMIT $1`,
+      [bounded]
+    );
+    return rows || [];
+  }
+
   async function refreshPreparationProgress(reckoningId, userId, lastError = undefined) {
     requireQuery();
     const params = [reckoningId, userId];
@@ -373,11 +773,14 @@ function createReckoningStore({
          id, reckoning_id, user_id, blueprint_id, evidence_id,
          family_index, item_index, status, generated_question,
          attempt_count, validation_issues, last_error, ready_at,
-         created_at, updated_at
+         work_state, candidate_question, retry_phase, retry_epoch,
+         content_revision_count, next_attempt_at, lease_token,
+         lease_expires_at, last_error_code, created_at, updated_at
        )
        SELECT
          $1,$2,$3,$4,$5,$6,$7,'READY',$8::jsonb,
-         $9,'[]'::jsonb,NULL,now(),now(),now()
+         $9,'[]'::jsonb,NULL,now(),
+         'READY',NULL,NULL,0,0,NULL,NULL,NULL,NULL,now(),now()
        FROM reckoning_sessions rs
        WHERE rs.id = $2
          AND rs.user_id = $3
@@ -393,7 +796,14 @@ function createReckoningStore({
        ON CONFLICT (reckoning_id, blueprint_id)
        DO UPDATE SET
          status = 'READY',
+         work_state = 'READY',
          generated_question = EXCLUDED.generated_question,
+         candidate_question = NULL,
+         retry_phase = NULL,
+         next_attempt_at = NULL,
+         lease_token = NULL,
+         lease_expires_at = NULL,
+         last_error_code = NULL,
          attempt_count = reckoning_preparation_items.attempt_count + EXCLUDED.attempt_count,
          validation_issues = '[]'::jsonb,
          last_error = NULL,
@@ -1249,6 +1659,13 @@ function createReckoningStore({
     getPreparationManifest,
     createPreparationManifest,
     getPreparationItems,
+    ensurePreparationWorkItems,
+    claimPreparationWorkItem,
+    savePreparationItemCandidate,
+    schedulePreparationItemRetry,
+    savePreparationItemAuditRejection,
+    savePreparationItemTerminal,
+    listRecoverablePreparations,
     refreshPreparationProgress,
     savePreparationItemReady,
     savePreparationItemFailure,
