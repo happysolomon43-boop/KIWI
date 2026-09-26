@@ -18495,9 +18495,9 @@ adminRouter.get('/health', async (req, res) => {
   const CRON_MANIFEST = [
     { schedule: '* * * * *',     label: 'KS recompute batch drain (every 1 min)' },
     { schedule: '*/10 * * * *',  label: 'Abandoned exam auto-forfeit (every 10 min)' },
-    { schedule: '0 3 * * *',     label: 'Nightly card-state audit (03:00 UTC)' },
-    { schedule: '0 8 * * *',     label: 'Morning brief pre-generation (08:00 UTC)' },
-    { schedule: '0 11 * * *',    label: 'Daily pressure pipeline flush (11:00 UTC)' },
+    { schedule: '0 3 * * *',     label: 'Nightly maintenance + active-user ritual/task preparation (03:00 UTC)' },
+    { schedule: '0 8 * * *',     label: 'Morning login reminder dispatch (08:00 UTC)' },
+    { schedule: '0 11 * * *',    label: 'Mid-morning login reminder dispatch (11:00 UTC)' },
     { schedule: '0 14 * * *',    label: 'Daily ritual reminder dispatch (14:00 UTC)' },
     { schedule: '0 0 * * 1',     label: 'Weekly Chronicle + Anchor generation (Mon 00:00 UTC)' },
   ];
@@ -21730,33 +21730,46 @@ console.log(`[KIWI CRON] Pressure recalculated for ${allUsers.length} users`);
 } catch (e) {
 console.error('[KIWI CRON] Daily pressure cron failed:', e.message);
 }
-// 3. Pre-generate morning brief cache for all active users
+// 3. Pre-generate Morning Brief only for recently active learners.
+// Delivery B keeps this as an optional latency optimization because the frontend
+// can now hydrate on demand. It must never synthesize content for dormant users.
 try {
+let generated = 0;
+let skipped = 0;
 for (const user of allUsers) {
-if (user.is_guest) continue; // skip guests
-// H-6 FIX: Skip users inactive for 14+ days — conserves Gemini quota
-if (user.last_login_at && daysSince(user.last_login_at) > 14) continue;
+if (user.is_guest || (user.last_login_at && daysSince(user.last_login_at) > 14)) {
+skipped++;
+continue;
+}
 try {
 await getMorningBrief(user.id);
+generated++;
 } catch (e) {
 console.error(`[KIWI CRON] Morning brief failed for ${user.id}:`, e.message);
 }
 }
-console.log(`[KIWI CRON] Morning briefs pre-generated for ${allUsers.length} users`);
+console.log(`[KIWI CRON] Morning briefs prepared: ${generated}; skipped inactive/guest: ${skipped}`);
 } catch (e) {
 console.error('[KIWI CRON] Morning brief cron failed:', e.message);
 }
-// 4. Pre-generate tasks for all active users
+// 4. Pre-generate study tasks only for the same recently active population.
+// Users can still explicitly refresh tasks through /api/tasks/refresh.
 try {
+let generated = 0;
+let skipped = 0;
 for (const user of allUsers) {
-if (user.is_guest) continue;
+if (user.is_guest || (user.last_login_at && daysSince(user.last_login_at) > 14)) {
+skipped++;
+continue;
+}
 try {
 await generateTasksForUser(user.id);
+generated++;
 } catch (e) {
 console.error(`[KIWI CRON] Task gen failed for ${user.id}:`, e.message);
 }
 }
-console.log(`[KIWI CRON] Tasks generated for ${allUsers.length} users`);
+console.log(`[KIWI CRON] Study tasks prepared: ${generated}; skipped inactive/guest: ${skipped}`);
 } catch (e) {
 console.error('[KIWI CRON] Daily task gen cron failed:', e.message);
 }
