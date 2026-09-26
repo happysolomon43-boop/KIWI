@@ -28,6 +28,8 @@ function createAISemanticReviewer({ aiRun } = {}) {
     blueprint,
     sourceSnapshot,
     previousQuestion = null,
+    generationGroupId = null,
+    operationBudgetId = null,
   }) {
     const prompt = [
       'Audit one KIWI Reckoning question for assessment integrity.',
@@ -45,13 +47,20 @@ function createAISemanticReviewer({ aiRun } = {}) {
       JSON.stringify(previousQuestion || null),
     ].join('\n');
 
-    const result = await aiRun('CBT_QUESTION_AUDIT', {
-      content: prompt,
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.1,
+    const result = await aiRun(
+      'CBT_QUESTION_AUDIT',
+      {
+        content: prompt,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        },
       },
-    });
+      {
+        generationGroupId,
+        operationBudgetId,
+      }
+    );
 
     const parsed = parseReview(result?.text);
     return {
