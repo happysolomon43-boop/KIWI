@@ -490,11 +490,26 @@ function createReckoningEngine(options = {}) {
             if (!(await stillOwnPreparation())) {
               throw preparationClaimLostError();
             }
-            return store.savePreparationItemReady(claimed.id, userId, item);
+            const saved = await store.savePreparationItemReady(
+              claimed.id,
+              userId,
+              { ...item, claimId }
+            );
+            if (!saved) {
+              preparationClaimLost = true;
+              throw preparationClaimLostError();
+            }
+            return saved;
           },
           onQuestionFailure: async (item) => {
             if (!(await stillOwnPreparation())) return null;
-            return store.savePreparationItemFailure(claimed.id, userId, item);
+            const saved = await store.savePreparationItemFailure(
+              claimed.id,
+              userId,
+              { ...item, claimId }
+            );
+            if (!saved) preparationClaimLost = true;
+            return saved;
           },
         });
       } else {
