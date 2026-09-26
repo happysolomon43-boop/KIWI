@@ -16,29 +16,21 @@ function compareStateSnapshot(expected, current) {
       reasons.push(`STATE_${field.toUpperCase()}_CHANGED`);
     }
   }
-  if (
-    expected.precondition_token != null &&
-    String(expected.precondition_token) !== String(current.precondition_token ?? '')
-  ) {
+  if (expected.precondition_token != null && String(expected.precondition_token) !== String(current.precondition_token ?? '')) {
     reasons.push('STATE_PRECONDITION_TOKEN_CHANGED');
   }
   return Object.freeze({ stale: reasons.length > 0, reasons: Object.freeze(reasons) });
 }
 
 function comparePreconditions(expected = {}, current = {}) {
-  if (stable(expected) === stable(current)) {
-    return Object.freeze({ stale: false, reasons: Object.freeze([]) });
-  }
+  if (stable(expected) === stable(current)) return Object.freeze({ stale: false, reasons: Object.freeze([]) });
   return Object.freeze({ stale: true, reasons: Object.freeze(['AUTHORITATIVE_PRECONDITIONS_CHANGED']) });
 }
 
 function revalidateAuthoritativeState({ expectedState, currentState, expectedPreconditions = {}, currentPreconditions = {} } = {}) {
   const state = compareStateSnapshot(expectedState, currentState);
   const preconditions = comparePreconditions(expectedPreconditions, currentPreconditions);
-  return Object.freeze({
-    stale: state.stale || preconditions.stale,
-    reasons: Object.freeze([...state.reasons, ...preconditions.reasons]),
-  });
+  return Object.freeze({ stale: state.stale || preconditions.stale, reasons: Object.freeze([...state.reasons, ...preconditions.reasons]) });
 }
 
 function assertFreshAuthoritativeState(input) {
@@ -52,9 +44,4 @@ function assertFreshAuthoritativeState(input) {
   return true;
 }
 
-module.exports = {
-  compareStateSnapshot,
-  comparePreconditions,
-  revalidateAuthoritativeState,
-  assertFreshAuthoritativeState,
-};
+module.exports = { compareStateSnapshot, comparePreconditions, revalidateAuthoritativeState, assertFreshAuthoritativeState };

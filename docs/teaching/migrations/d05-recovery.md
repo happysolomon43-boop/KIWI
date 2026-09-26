@@ -1,9 +1,26 @@
-# Teaching D05 migration recovery
+# Teaching D05 Recovery — Orchestrator & Durable Event Runtime
 
-D05 adds only operational orchestration/audit and transactional publication state in `teaching_runtime`. It does not move Course, Scheduler, Assessment, Gradebook, SKM, Attendance, Request, Progression, Teacher Identity, or Preparation artifact truth out of their existing owners.
+D05 adds operational coordination/audit state. D04/domain tables remain academic/PPL truth.
 
-Before recovery, stop D05 orchestration and event-outbox workers. Do not drop D02 `due_events`, `event_attempts`, or `ai_execution_audit`, and do not alter D04 public/preparation/protected academic state.
+## Preferred recovery
 
-A controlled rollback may drop `teaching_runtime.orchestration_executions` and `teaching_runtime.event_outbox` after queued publication records have either been safely published or deliberately exported for recovery. Revoke the D05 `teaching_domain_service` SELECT/INSERT grants and policies on `event_outbox` and `due_events` if the D05 runtime is fully removed.
+Use forward repair. Do not delete or rewrite D04 academic history to recover an orchestration failure.
 
-Never recover by exposing `teaching_runtime`, `teaching_preparation`, or `teaching_protected` to browser roles; never grant browser authoritative mutation; and never discard an outbox event whose corresponding authoritative mutation already committed without first reconstructing/re-publishing that event through the recovery path.
+1. Stop the D05 orchestration and outbox workers.
+2. Keep the D02 durable due-event worker stopped if a runtime contract is being repaired.
+3. Preserve `teaching_runtime.orchestration_executions` and `teaching_runtime.event_outbox` until replay/forensic state is understood.
+4. Repair code/schema forward.
+5. Reconcile claimed/retryable rows and restart workers.
+6. Revalidate authoritative state before replaying any model-backed result.
+
+## Emergency schema rollback before D05 state matters
+
+Only after workers are stopped and a backup/export exists:
+
+- revoke the D05 `teaching_domain_service` policies/grants on `teaching_runtime.event_outbox` and D02 `due_events`;
+- drop `teaching_runtime.event_outbox`;
+- drop `teaching_runtime.orchestration_executions`.
+
+Do not drop `teaching_runtime.due_events`, D04 kernel tables, `teaching_preparation`, or `teaching_protected` as part of D05 rollback.
+
+Never recover by enabling browser writes, granting `BYPASSRLS`, exposing protected preparation payloads, or accepting stale AI output.

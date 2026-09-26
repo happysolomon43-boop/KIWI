@@ -151,11 +151,6 @@ function evaluateWorkspaceTransition({
   });
 }
 
-/**
- * Pure deterministic reconciliation. `completionCapturedVersions` is used for
- * stale/late AI completion rejection. `changedDependencyRefs` is used for
- * materiality and dependency-selective artifact invalidation.
- */
 function reconcileMaterialityAndStaleness({
   completionCapturedVersions = null,
   currentVersions = {},
@@ -244,17 +239,9 @@ function assertProtectedContentIsolation({
 }
 
 function requireRepository(repository) {
-  const methods = [
-    'getWorkspaceSnapshot',
-    'getMaterialitySnapshot',
-    'applyWorkspaceTransition',
-    'applyMaterialityDecision',
-    'auditNoop',
-  ];
+  const methods = ['getWorkspaceSnapshot','getMaterialitySnapshot','applyWorkspaceTransition','applyMaterialityDecision','auditNoop'];
   for (const method of methods) {
-    if (typeof repository?.[method] !== 'function') {
-      throw new TypeError(`Preparation T0 runtime requires repository.${method}().`);
-    }
+    if (typeof repository?.[method] !== 'function') throw new TypeError(`Preparation T0 runtime requires repository.${method}().`);
   }
 }
 
@@ -265,184 +252,59 @@ function createPreparationT0Handlers({
   finalizationCheckProvider,
 } = {}) {
   requireRepository(repository);
-  if (typeof currentVersionReader !== 'function') {
-    throw new TypeError('Preparation T0 runtime requires currentVersionReader().');
-  }
-  if (typeof transitionGateEvaluator !== 'function') {
-    throw new TypeError('Preparation T0 runtime requires transitionGateEvaluator().');
-  }
-  if (typeof finalizationCheckProvider !== 'function') {
-    throw new TypeError('Preparation T0 runtime requires finalizationCheckProvider().');
-  }
+  if (typeof currentVersionReader !== 'function') throw new TypeError('Preparation T0 runtime requires currentVersionReader().');
+  if (typeof transitionGateEvaluator !== 'function') throw new TypeError('Preparation T0 runtime requires transitionGateEvaluator().');
+  if (typeof finalizationCheckProvider !== 'function') throw new TypeError('Preparation T0 runtime requires finalizationCheckProvider().');
 
   async function currentFinalizationReadiness(workspaceId) {
     const snapshot = await repository.getFinalizationSnapshot(workspaceId);
     if (!snapshot?.workspace) fail(`Preparation Workspace not found: ${workspaceId}`, 'TEACHING_PPL_WORKSPACE_NOT_FOUND');
-
     const versions = [];
     for (const dependency of snapshot.dependencies || []) {
       const current = await currentVersionReader(dependency, snapshot);
-      versions.push(Object.freeze({
-        id: dependency.aggregate_ref,
-        expected: dependency.version_ref,
-        current,
-      }));
+      versions.push(Object.freeze({ id: dependency.aggregate_ref, expected: dependency.version_ref, current }));
     }
     const external = await finalizationCheckProvider(snapshot);
     if (!external || typeof external !== 'object' || Array.isArray(external)) {
       fail('Finalization check provider returned no deterministic check bundle.', 'TEACHING_PPL_FINALIZATION_CHECKS_MISSING');
     }
-
-    const openFindings = (snapshot.findings || [])
-      .filter((finding) => String(finding.status || '').toUpperCase() === 'OPEN')
-      .map((finding) => Object.freeze({
-        id: finding.finding_id || finding.id,
-        status: finding.status,
-        blocksFinalization: true,
-      }));
-    const protectionChecks = [
-      ...(external.protectionChecks || []),
-      Object.freeze({
-        id: 'artifact_not_contaminated',
-        passed: snapshot.artifact == null || snapshot.artifact.validity_state !== 'RETIRED_CONTAMINATED',
-        reason: 'PROTECTED_ARTIFACT_CONTAMINATED',
-      }),
-    ];
-
+    const openFindings = (snapshot.findings || []).filter((finding) => String(finding.status || '').toUpperCase() === 'OPEN').map((finding) => Object.freeze({id:finding.finding_id||finding.id,status:finding.status,blocksFinalization:true}));
+    const protectionChecks = [...(external.protectionChecks || []),Object.freeze({id:'artifact_not_contaminated',passed:snapshot.artifact==null||snapshot.artifact.validity_state!=='RETIRED_CONTAMINATED',reason:'PROTECTED_ARTIFACT_CONTAMINATED'})];
     const baseValidations = [
-      Object.freeze({
-        id: 'current_authoritative_input_bundle_present',
-        passed: Boolean(snapshot.workspace.current_authoritative_input_bundle_ref && snapshot.bundle),
-        reason: 'CURRENT_AUTHORITATIVE_INPUT_BUNDLE_MISSING',
-      }),
-      Object.freeze({
-        id: 'current_artifact_present',
-        passed: Boolean(snapshot.workspace.current_artifact_version_ref && snapshot.artifact),
-        reason: 'CURRENT_PREPARED_ARTIFACT_MISSING',
-      }),
-      Object.freeze({
-        id: 'artifact_current',
-        passed: snapshot.artifact?.validity_state === 'CURRENT',
-        reason: 'CURRENT_PREPARED_ARTIFACT_NOT_CURRENT',
-      }),
+      Object.freeze({id:'current_authoritative_input_bundle_present',passed:Boolean(snapshot.workspace.current_authoritative_input_bundle_ref&&snapshot.bundle),reason:'CURRENT_AUTHORITATIVE_INPUT_BUNDLE_MISSING'}),
+      Object.freeze({id:'current_artifact_present',passed:Boolean(snapshot.workspace.current_artifact_version_ref&&snapshot.artifact),reason:'CURRENT_PREPARED_ARTIFACT_MISSING'}),
+      Object.freeze({id:'artifact_current',passed:snapshot.artifact?.validity_state==='CURRENT',reason:'CURRENT_PREPARED_ARTIFACT_NOT_CURRENT'}),
     ];
-
-    return evaluateFinalizationReadiness({
-      versions,
-      requiredValidations: [...baseValidations, ...(external.requiredValidations || [])],
-      openFindings,
-      protectionChecks,
-      policyChecks: external.policyChecks || [],
-      feasibilityChecks: external.feasibilityChecks || [],
-      ownerPreconditions: external.ownerPreconditions || [],
-      deadlineAt: snapshot.workspace.finalization_or_freeze_at,
-    });
+    return evaluateFinalizationReadiness({versions,requiredValidations:[...baseValidations,...(external.requiredValidations||[])],openFindings,protectionChecks,policyChecks:external.policyChecks||[],feasibilityChecks:external.feasibilityChecks||[],ownerPreconditions:external.ownerPreconditions||[],deadlineAt:snapshot.workspace.finalization_or_freeze_at});
   }
 
   return Object.freeze({
     [PPL_T0_CAPABILITIES.WORKSPACE_STATE_TRANSITION]: async ({ input }) => {
-      const workspaceId = String(input?.workspaceId || '').trim();
-      if (!workspaceId) throw new TypeError('workspaceId is required.');
-      const snapshot = await repository.getWorkspaceSnapshot(workspaceId);
-      if (!snapshot?.workspace) fail(`Preparation Workspace not found: ${workspaceId}`, 'TEACHING_PPL_WORKSPACE_NOT_FOUND');
-      const workspace = snapshot.workspace;
-      const nextLifecycle = input.nextLifecycle == null ? workspace.lifecycle_state : input.nextLifecycle;
-      const nextMaturity = input.nextMaturity == null ? workspace.maturity_stage : input.nextMaturity;
-      const needsFinalizationGate =
-        normalizeMaturity(nextMaturity) === 'PRE_LOCK_READY' ||
-        ['FINALIZED','HANDED_OFF'].includes(normalizeLifecycle(nextLifecycle));
-      const finalizationReadiness = needsFinalizationGate
-        ? await currentFinalizationReadiness(workspaceId)
-        : null;
-      const gateResults = await transitionGateEvaluator({ workspace: snapshot, input });
-      const decision = evaluateWorkspaceTransition({
-        currentLifecycle: workspace.lifecycle_state,
-        currentMaturity: workspace.maturity_stage,
-        nextLifecycle,
-        nextMaturity,
-        gateResults,
-        routePosture: input.routePosture,
-        finalizationReadiness,
-      });
-      const committed = await repository.applyWorkspaceTransition({
-        workspaceId,
-        expectedStateVersion: workspace.state_version,
-        decision,
-        correlationId: input.correlationId || null,
-        causationId: input.causationId || null,
-        reason: input.reason || null,
-      });
-      return Object.freeze({ ...committed, authoritativeMutationPerformed: true });
+      const workspaceId=String(input?.workspaceId||'').trim();if(!workspaceId)throw new TypeError('workspaceId is required.');
+      const snapshot=await repository.getWorkspaceSnapshot(workspaceId);if(!snapshot?.workspace)fail(`Preparation Workspace not found: ${workspaceId}`,'TEACHING_PPL_WORKSPACE_NOT_FOUND');
+      const workspace=snapshot.workspace;
+      const nextLifecycle=input.nextLifecycle==null?workspace.lifecycle_state:input.nextLifecycle;
+      const nextMaturity=input.nextMaturity==null?workspace.maturity_stage:input.nextMaturity;
+      const needsFinalizationGate=normalizeMaturity(nextMaturity)==='PRE_LOCK_READY'||['FINALIZED','HANDED_OFF'].includes(normalizeLifecycle(nextLifecycle));
+      const finalizationReadiness=needsFinalizationGate?await currentFinalizationReadiness(workspaceId):null;
+      const gateResults=await transitionGateEvaluator({workspace:snapshot,input});
+      const decision=evaluateWorkspaceTransition({currentLifecycle:workspace.lifecycle_state,currentMaturity:workspace.maturity_stage,nextLifecycle,nextMaturity,gateResults,routePosture:input.routePosture,finalizationReadiness});
+      const committed=await repository.applyWorkspaceTransition({workspaceId,expectedStateVersion:workspace.state_version,decision,correlationId:input.correlationId||null,causationId:input.causationId||null,reason:input.reason||null});
+      return Object.freeze({...committed,authoritativeMutationPerformed:true});
     },
-
     [PPL_T0_CAPABILITIES.MATERIALITY_STALENESS_RECONCILIATION]: async ({ input }) => {
-      const workspaceId = String(input?.workspaceId || '').trim();
-      if (!workspaceId) throw new TypeError('workspaceId is required.');
-      const snapshot = await repository.getMaterialitySnapshot(workspaceId);
-      if (!snapshot?.workspace) fail(`Preparation Workspace not found: ${workspaceId}`, 'TEACHING_PPL_WORKSPACE_NOT_FOUND');
-
-      const currentVersions = {};
-      const changedRefs = new Set((input.changedDependencyRefs || []).map(String));
-      for (const dependency of snapshot.dependencies || []) {
-        const current = await currentVersionReader(dependency, snapshot);
-        currentVersions[dependency.aggregate_ref] = current;
-        if (String(current ?? '') !== String(dependency.version_ref ?? '')) {
-          changedRefs.add(String(dependency.aggregate_ref));
-        }
-      }
-
-      const decision = reconcileMaterialityAndStaleness({
-        completionCapturedVersions: input.completionCapturedVersions || null,
-        currentVersions,
-        changedDependencyRefs: [...changedRefs],
-        componentDependencies: snapshot.componentDependencies || [],
-      });
-
-      if (decision.stale || !decision.material) {
-        await repository.auditNoop({
-          workspaceId,
-          action: decision.stale ? 'preparation.stale_result.reject' : 'preparation.materiality.noop',
-          reason: decision.disposition,
-          correlationId: input.correlationId || null,
-          causationId: input.causationId || null,
-          safeMetadata: {
-            changed_versions: decision.changedVersions,
-            changed_dependency_refs: [...changedRefs].sort(),
-          },
-        });
-        return decision;
-      }
-
-      const committed = await repository.applyMaterialityDecision({
-        workspaceId,
-        artifactVersionId: snapshot.workspace.current_artifact_version_ref,
-        expectedStateVersion: snapshot.workspace.state_version,
-        decision,
-        correlationId: input.correlationId || null,
-        causationId: input.causationId || null,
-      });
-      return Object.freeze({ ...committed, authoritativeMutationPerformed: true });
+      const workspaceId=String(input?.workspaceId||'').trim();if(!workspaceId)throw new TypeError('workspaceId is required.');
+      const snapshot=await repository.getMaterialitySnapshot(workspaceId);if(!snapshot?.workspace)fail(`Preparation Workspace not found: ${workspaceId}`,'TEACHING_PPL_WORKSPACE_NOT_FOUND');
+      const currentVersions={};const changedRefs=new Set((input.changedDependencyRefs||[]).map(String));
+      for(const dependency of snapshot.dependencies||[]){const current=await currentVersionReader(dependency,snapshot);currentVersions[dependency.aggregate_ref]=current;if(String(current??'')!==String(dependency.version_ref??''))changedRefs.add(String(dependency.aggregate_ref));}
+      const decision=reconcileMaterialityAndStaleness({completionCapturedVersions:input.completionCapturedVersions||null,currentVersions,changedDependencyRefs:[...changedRefs],componentDependencies:snapshot.componentDependencies||[]});
+      if(decision.stale||!decision.material){await repository.auditNoop({workspaceId,action:decision.stale?'preparation.stale_result.reject':'preparation.materiality.noop',reason:decision.disposition,correlationId:input.correlationId||null,causationId:input.causationId||null,safeMetadata:{changed_versions:decision.changedVersions,changed_dependency_refs:[...changedRefs].sort()}});return decision;}
+      const committed=await repository.applyMaterialityDecision({workspaceId,artifactVersionId:snapshot.workspace.current_artifact_version_ref,expectedStateVersion:snapshot.workspace.state_version,decision,correlationId:input.correlationId||null,causationId:input.causationId||null});
+      return Object.freeze({...committed,authoritativeMutationPerformed:true});
     },
-
-    [PPL_T0_CAPABILITIES.FINALIZATION_READINESS_GATE]: async ({ input }) => {
-      const workspaceId = String(input?.workspaceId || '').trim();
-      if (!workspaceId) throw new TypeError('workspaceId is required.');
-      return currentFinalizationReadiness(workspaceId);
-    },
-
-    [PPL_T0_CAPABILITIES.PROTECTED_CONTENT_ISOLATION]: async ({ input }) => ({
-      allowed: assertProtectedContentIsolation(input),
-    }),
+    [PPL_T0_CAPABILITIES.FINALIZATION_READINESS_GATE]: async ({ input }) => {const workspaceId=String(input?.workspaceId||'').trim();if(!workspaceId)throw new TypeError('workspaceId is required.');return currentFinalizationReadiness(workspaceId);},
+    [PPL_T0_CAPABILITIES.PROTECTED_CONTENT_ISOLATION]: async ({ input }) => ({allowed:assertProtectedContentIsolation(input)}),
   });
 }
 
-module.exports = {
-  PPL_T0_CAPABILITIES,
-  LIFECYCLE,
-  MATURITY,
-  evaluateWorkspaceTransition,
-  reconcileMaterialityAndStaleness,
-  evaluateFinalizationReadiness,
-  assertProtectedContentIsolation,
-  createPreparationT0Handlers,
-};
+module.exports = {PPL_T0_CAPABILITIES,LIFECYCLE,MATURITY,evaluateWorkspaceTransition,reconcileMaterialityAndStaleness,evaluateFinalizationReadiness,assertProtectedContentIsolation,createPreparationT0Handlers};
