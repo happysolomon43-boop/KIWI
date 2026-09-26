@@ -612,6 +612,7 @@ test('transient provider outage auto-recovers inside the same durable Reckoning 
   let releaseFailures = 0;
   let touchCount = 0;
   const sleepCalls = [];
+  const recoveryBudgetIds = [];
   const items = [];
   const evidenceRows = [];
   const questionRows = [];
@@ -748,8 +749,15 @@ test('transient provider outage auto-recovers inside the same durable Reckoning 
     buildManifest() {
       throw new Error('manifest should not rebuild');
     },
-    async prepare({ manifest, preparedItems, onQuestionReady, onQuestionFailure }) {
+    async prepare({
+      manifest,
+      preparedItems,
+      operationBudgetId,
+      onQuestionReady,
+      onQuestionFailure,
+    }) {
       prepareCalls += 1;
+      recoveryBudgetIds.push(operationBudgetId);
 
       if (providerBusy) {
         assert.equal(
@@ -829,6 +837,7 @@ test('transient provider outage auto-recovers inside the same durable Reckoning 
     },
     setIntervalImpl: () => ({ unref() {} }),
     clearIntervalImpl: () => {},
+    randomUUID: () => 'claim-auto',
   });
 
   const state = await engine.start({
@@ -837,6 +846,10 @@ test('transient provider outage auto-recovers inside the same durable Reckoning 
   });
 
   assert.equal(prepareCalls, 2);
+  assert.deepEqual(recoveryBudgetIds, [
+    'reckoning:reckoning-auto-recover:claim:claim-auto',
+    'reckoning:reckoning-auto-recover:claim:claim-auto',
+  ]);
   assert.deepEqual(sleepCalls, [2250]);
   assert.ok(touchCount >= 1);
   assert.equal(releaseFailures, 0);
