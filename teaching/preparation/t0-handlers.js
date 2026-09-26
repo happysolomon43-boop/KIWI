@@ -21,9 +21,19 @@ const ALLOWED_LIFECYCLE_TRANSITIONS = Object.freeze({
   SUPERSEDED: Object.freeze(['SUPERSEDED']),
   CANCELLED: Object.freeze(['CANCELLED']),
 });
+const ALLOWED_MATURITY_TRANSITIONS = Object.freeze({
+  SKELETON: Object.freeze(['SKELETON','STRUCTURED']),
+  STRUCTURED: Object.freeze(['STRUCTURED','CANDIDATE']),
+  CANDIDATE: Object.freeze(['CANDIDATE','PRE_LOCK_READY']),
+  PRE_LOCK_READY: Object.freeze(['PRE_LOCK_READY']),
+});
 
 const ORDINARY_PROTECTED_CONTEXTS = Object.freeze(new Set([
   'teacher','lesson','homework','practice','broad_retrieval','student','student_facing','classroom',
+]));
+const ALLOWED_PROTECTED_CONTEXTS = Object.freeze(new Set([
+  'protected_preparation','assessment_preparation','independent_validation',
+  'final_reconciliation','assessment_owner_lock','protected_repair',
 ]));
 const ALLOWED_PROTECTED_PURPOSES = Object.freeze(new Set([
   'preparation','independent_validation','final_reconciliation','assessment_owner_lock','protected_repair',
@@ -123,6 +133,12 @@ function evaluateWorkspaceTransition({
   if (MATURITY.indexOf(nextM) < MATURITY.indexOf(currentM)) {
     fail(`PPL maturity cannot move backwards ${currentM} -> ${nextM}.`, 'TEACHING_PPL_MATURITY_REGRESSION_FORBIDDEN');
   }
+  if (!ALLOWED_MATURITY_TRANSITIONS[currentM].includes(nextM)) {
+    fail(
+      `Illegal PPL maturity transition ${currentM} -> ${nextM}; maturity must advance through the canonical gates.`,
+      'TEACHING_PPL_MATURITY_TRANSITION_FORBIDDEN'
+    );
+  }
 
   const checks = normalizeChecks(gateResults,'gateResults');
   if (nextL !== currentL || nextM !== currentM) {
@@ -156,6 +172,7 @@ function reconcileMaterialityAndStaleness({
   currentVersions = {},
   changedDependencyRefs = [],
   componentDependencies = [],
+  allComponentIds = [],
 } = {}) {
   if (completionCapturedVersions && typeof completionCapturedVersions === 'object') {
     const versionKeys = new Set([
@@ -188,13 +205,35 @@ function reconcileMaterialityAndStaleness({
   }
 
   const componentIds = new Set();
-  const allComponents = new Set();
+  const mappedChangedRefs = new Set();
+  const allComponents = new Set((allComponentIds || []).map(String).filter(Boolean));
   for (const edge of componentDependencies || []) {
     const componentId = String(edge.componentId || '').trim();
     const dependencyRef = String(edge.dependencyRef || '').trim();
     if (!componentId || !dependencyRef) continue;
     allComponents.add(componentId);
-    if (changed.has(dependencyRef) || changed.has('*')) componentIds.add(componentId);
+    if (changed.has(dependencyRef) || changed.has('*')) {
+      componentIds.add(componentId);
+      mappedChangedRefs.add(dependencyRef);
+    }
+  }
+
+  // A material trigger cannot be downgraded to NON_MATERIAL merely because
+  // the dependency/component map is incomplete. If D04 lineage cannot prove
+  // selective invalidation is safe, fail closed by invalidating the whole
+  // current artifact rather than trusting potentially stale preparation.
+  const hasUnmappedChange = changed.has('*') ||
+    [...changed].some((ref) => !mappedChangedRefs.has(ref));
+  if (hasUnmappedChange) {
+    return Object.freeze({
+      disposition: 'MATERIAL_FULL_INVALIDATION',
+      stale: false,
+      material: true,
+      changedVersions: Object.freeze([]),
+      invalidatedComponentIds: Object.freeze([...allComponents].sort()),
+      fullArtifactInvalidation: true,
+      artifactValidity: 'STALE',
+    });
   }
 
   if (componentIds.size === 0) {
@@ -204,6 +243,7 @@ function reconcileMaterialityAndStaleness({
       material: false,
       changedVersions: Object.freeze([]),
       invalidatedComponentIds: Object.freeze([]),
+      fullArtifactInvalidation: false,
     });
   }
 
@@ -213,6 +253,7 @@ function reconcileMaterialityAndStaleness({
     material: true,
     changedVersions: Object.freeze([]),
     invalidatedComponentIds: Object.freeze([...componentIds].sort()),
+    fullArtifactInvalidation: componentIds.size === allComponents.size,
     artifactValidity: componentIds.size === allComponents.size ? 'STALE' : 'PARTIALLY_STALE',
   });
 }
@@ -231,6 +272,12 @@ function assertProtectedContentIsolation({
   if (ORDINARY_PROTECTED_CONTEXTS.has(context)) {
     fail(`Protected preparation content cannot enter ${context} context.`, 'TEACHING_PPL_PROTECTED_CONTEXT_DENIED');
   }
+  if (!ALLOWED_PROTECTED_CONTEXTS.has(context)) {
+    fail(
+      `Protected preparation content requires an explicitly authorized protected context: ${context || 'missing'}.`,
+      'TEACHING_PPL_PROTECTED_CONTEXT_DENIED'
+    );
+  }
   if (!ALLOWED_PROTECTED_PURPOSES.has(purpose)) {
     fail(`Protected preparation access purpose is not authorized: ${purpose}`, 'TEACHING_PPL_PROTECTED_PURPOSE_DENIED');
   }
@@ -239,7 +286,7 @@ function assertProtectedContentIsolation({
 }
 
 function requireRepository(repository) {
-  const methods = ['getWorkspaceSnapshot','getMaterialitySnapshot','applyWorkspaceTransition','applyMaterialityDecision','auditNoop'];
+  const methods = ['getWorkspaceSnapshot','getFinalizationSnapshot','getMaterialitySnapshot','applyWorkspaceTransition','applyMaterialityDecision','auditNoop'];
   for (const method of methods) {
     if (typeof repository?.[method] !== 'function') throw new TypeError(`Preparation T0 runtime requires repository.${method}().`);
   }
@@ -297,7 +344,7 @@ function createPreparationT0Handlers({
       const snapshot=await repository.getMaterialitySnapshot(workspaceId);if(!snapshot?.workspace)fail(`Preparation Workspace not found: ${workspaceId}`,'TEACHING_PPL_WORKSPACE_NOT_FOUND');
       const currentVersions={};const changedRefs=new Set((input.changedDependencyRefs||[]).map(String));
       for(const dependency of snapshot.dependencies||[]){const current=await currentVersionReader(dependency,snapshot);currentVersions[dependency.aggregate_ref]=current;if(String(current??'')!==String(dependency.version_ref??''))changedRefs.add(String(dependency.aggregate_ref));}
-      const decision=reconcileMaterialityAndStaleness({completionCapturedVersions:input.completionCapturedVersions||null,currentVersions,changedDependencyRefs:[...changedRefs],componentDependencies:snapshot.componentDependencies||[]});
+      const decision=reconcileMaterialityAndStaleness({completionCapturedVersions:input.completionCapturedVersions||null,currentVersions,changedDependencyRefs:[...changedRefs],componentDependencies:snapshot.componentDependencies||[],allComponentIds:snapshot.componentIds||[]});
       if(decision.stale||!decision.material){await repository.auditNoop({workspaceId,action:decision.stale?'preparation.stale_result.reject':'preparation.materiality.noop',reason:decision.disposition,correlationId:input.correlationId||null,causationId:input.causationId||null,safeMetadata:{changed_versions:decision.changedVersions,changed_dependency_refs:[...changedRefs].sort()}});return decision;}
       const committed=await repository.applyMaterialityDecision({workspaceId,artifactVersionId:snapshot.workspace.current_artifact_version_ref,expectedStateVersion:snapshot.workspace.state_version,decision,correlationId:input.correlationId||null,causationId:input.causationId||null});
       return Object.freeze({...committed,authoritativeMutationPerformed:true});
