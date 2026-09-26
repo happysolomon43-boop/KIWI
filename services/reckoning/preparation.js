@@ -315,6 +315,16 @@ function persistedStatus(item) {
   return String(item?.status || '').toUpperCase();
 }
 
+function createPreparationClaimLostError() {
+  const error = new ReckoningContractError(
+    'Reckoning preparation ownership changed while generation was running.'
+  );
+  error.code = 'ERR_RECKONING_PREPARATION_CLAIM_LOST';
+  error.status = 409;
+  error.retryable = true;
+  return error;
+}
+
 function createPartialPreparationError({
   failures,
   readyCount,
@@ -464,6 +474,7 @@ function createPreparationService({
     preparedItems = [],
     onQuestionReady = null,
     onQuestionFailure = null,
+    shouldAbort = null,
   } = {}) {
     const resolvedManifest = manifest || buildManifest({
       cards,
@@ -525,13 +536,22 @@ function createPreparationService({
       {
         config,
         getConcurrencyState,
-        shouldStop: () => stopNewFamilies,
+        shouldStop: () =>
+          stopNewFamilies ||
+          (typeof shouldAbort === 'function' && shouldAbort()),
       },
       async (evidenceId) => {
+        if (typeof shouldAbort === 'function' && shouldAbort()) {
+          throw createPreparationClaimLostError();
+        }
+
         const family = families.get(evidenceId) || [];
         let previousQuestion = null;
 
         for (const blueprint of family) {
+          if (typeof shouldAbort === 'function' && shouldAbort()) {
+            throw createPreparationClaimLostError();
+          }
           const blueprintId = String(blueprint.id);
           const existing = readyByBlueprint.get(blueprintId);
           if (existing) {
@@ -550,6 +570,10 @@ function createPreparationService({
               ...toQuestionRecord(generated, globalIndex + 1),
               id: randomUUID(),
             });
+
+            if (typeof shouldAbort === 'function' && shouldAbort()) {
+              throw createPreparationClaimLostError();
+            }
 
             if (typeof onQuestionReady === 'function') {
               await onQuestionReady({
@@ -686,6 +710,7 @@ module.exports = {
   resolveFamilyConcurrency,
   mapWithAdaptiveConcurrency,
   familyMetadata,
+  createPreparationClaimLostError,
   createPartialPreparationError,
   createPreparationService,
 };
