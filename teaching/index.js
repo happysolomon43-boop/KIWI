@@ -7,6 +7,9 @@ const { createKiwiNotificationInterface } = require('./integrations/kiwi-notific
 const { createTeachingRepositories } = require('./repositories');
 const { createTeachingService } = require('./services/teaching-service');
 const { modules } = require('./modules');
+const orchestrator = require('./orchestrator');
+const preparation = require('./preparation');
+const runtime = require('./runtime');
 
 function createTeachingFoundation({
   env = process.env,
@@ -42,4 +45,9 @@ function createTeachingFoundation({
   });
 }
 
-module.exports = { createTeachingFoundation };
+module.exports = {
+  createTeachingFoundation,
+  orchestrator,
+  preparation,
+  runtime,
+};

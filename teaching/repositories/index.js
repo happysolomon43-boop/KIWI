@@ -1,6 +1,7 @@
 'use strict';
 
 const { createTeachingKernelPersistence } = require('./kernel-persistence');
+const { createPreparationRuntimeRepository } = require('./preparation-runtime');
 
 function requireMethod(value, name) {
   if (!value || typeof value[name] !== 'function') {
@@ -28,4 +29,5 @@ function createTeachingRepositories({ subjectReader, notificationInterface }) {
 module.exports = {
   createTeachingRepositories,
   createTeachingKernelPersistence,
+  createPreparationRuntimeRepository,
 };
