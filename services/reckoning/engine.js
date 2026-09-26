@@ -576,6 +576,7 @@ function createReckoningEngine(options = {}) {
               manifest,
               preparedItems,
               generationGroupId: manifest.generationGroupId,
+              operationBudgetId: `reckoning:${claimed.id}:claim:${claimId}`,
               shouldAbort: () => preparationClaimLost,
               onQuestionReady: async (item) => {
                 if (!(await stillOwnPreparation())) {
@@ -693,6 +694,7 @@ function createReckoningEngine(options = {}) {
             pressureScore: Number(claimed.pressure_score) || 0,
           },
           generationGroupId: claimed.id,
+          operationBudgetId: `reckoning:${claimed.id}:claim:${claimId}`,
         });
       }
 

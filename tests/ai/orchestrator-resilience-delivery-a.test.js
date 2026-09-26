@@ -258,3 +258,71 @@ test('concurrent follower cannot create a parallel model confirmation probe wave
   assert.equal(ownerResult.requestedModel, 'gemini-3.7-flash');
   assert.equal(owner38Calls, 2);
 });
+
+
+test('operationBudgetId separates a new preparation claim from an exhausted generation-group budget', async () => {
+  let providerCalls = 0;
+  const operationBudget = createOperationBudget({
+    env: {
+      AI_VVIP_OPERATION_MAX_PROVIDER_ATTEMPTS: '1',
+      AI_VVIP_OPERATION_MAX_AVAILABILITY_FAILURES: '10',
+      AI_VVIP_OPERATION_MAX_SHORT_RATE_FAILURES: '10',
+      AI_VVIP_OPERATION_MAX_PROVIDER_OVERLOAD_FAILURES: '10',
+    },
+  });
+
+  const ai = createAIOrchestrator({
+    projectPool: pool(2),
+    operationBudget,
+    logger: quietLogger,
+    transport: {
+      async generate() {
+        providerCalls += 1;
+        return {
+          raw: successRaw('ok-' + providerCalls),
+          latencyMs: 1,
+          httpStatus: 200,
+        };
+      },
+    },
+  });
+
+  const generationGroupId = 'same-reckoning';
+
+  const first = await ai.run(
+    'MAIN_CBT',
+    { content: 'claim one' },
+    {
+      generationGroupId,
+      operationBudgetId: 'claim-1',
+    }
+  );
+  assert.equal(first.text, 'ok-1');
+
+  await assert.rejects(
+    ai.run(
+      'CBT_COMPLETION',
+      { content: 'same claim' },
+      {
+        generationGroupId,
+        operationBudgetId: 'claim-1',
+      }
+    ),
+    (error) => {
+      assert.equal(error.code, AI_ERROR_CODES.OPERATION_BUDGET_EXHAUSTED);
+      return true;
+    }
+  );
+
+  const secondClaim = await ai.run(
+    'CBT_COMPLETION',
+    { content: 'new claim' },
+    {
+      generationGroupId,
+      operationBudgetId: 'claim-2',
+    }
+  );
+
+  assert.equal(secondClaim.text, 'ok-2');
+  assert.equal(providerCalls, 2);
+});
