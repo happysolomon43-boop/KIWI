@@ -96,7 +96,33 @@ check(Boolean(packageJson.scripts?.['verify:teaching:d04']), 'package.json missi
 check(Boolean(packageJson.scripts?.['test:teaching']), 'Teaching unit test command must remain registered');
 check(Boolean(packageJson.scripts?.['test:teaching:integration']), 'Teaching integration test command must remain registered');
 
-const migrationFiles = fs.readdirSync(path.join(root, 'migrations')).filter((name) => /teaching_d0[5-9]|teaching_d1\d|teaching_d2\d|teaching_d3\d/i.test(name));
-check(migrationFiles.length === 0, `D04 must not pull future Teaching migrations forward: ${migrationFiles.join(', ')}`);
+// D04 owns exactly its two migration files. Later accepted deliveries are
+// expected to add later Teaching migrations; their mere presence must not make
+// the predecessor verifier permanently fail. Preserve the original D04 scope
+// guard by checking that D05 runtime artifacts were not absorbed into D04-owned
+// migrations.
+const d04OwnedMigrationFiles = fs.readdirSync(path.join(root, 'migrations'))
+  .filter((name) => /teaching_d04/i.test(name))
+  .sort();
+check(
+  JSON.stringify(d04OwnedMigrationFiles) === JSON.stringify([
+    '20260925_teaching_d04_kernel_persistence.sql',
+    '20260925_teaching_d04_service_role_rls_hardening.sql',
+  ]),
+  `unexpected D04-owned migration set: ${d04OwnedMigrationFiles.join(', ')}`
+);
+for (const futureArtifact of [
+  'teaching_runtime.orchestration_executions',
+  'teaching_runtime.event_outbox',
+  'teaching.preparation.workspace_state_transition',
+  'teaching.preparation.materiality_staleness_reconciliation',
+  'teaching.preparation.finalization_readiness_gate',
+  'teaching.preparation.protected_content_isolation',
+]) {
+  check(
+    !sql.includes(futureArtifact) && !serviceRoleSql.includes(futureArtifact),
+    `D04-owned migrations must not absorb later-delivery artifact: ${futureArtifact}`
+  );
+}
 
 if (!process.exitCode) console.log('[D04] PASS: kernel persistence, RLS/service-role boundaries, audit, coverage/eligibility and PPL storage contracts are structurally complete.');
