@@ -776,6 +776,9 @@ function createReckoningStore({
            debrief_text = NULL,
            final_report = NULL,
            completed_at = NULL,
+           preparation_claim_id = NULL,
+           preparation_claim_expires_at = NULL,
+           preparation_heartbeat_at = NULL,
            updated_at = now()
        WHERE id = $1
          AND user_id = $2
@@ -785,6 +788,8 @@ function createReckoningStore({
          AND status IN ('triggered','deferred')
          AND exam_session_id IS NULL
          AND (deferred_until IS NULL OR deferred_until <= now())
+         AND ($11::text IS NULL OR preparation_claim_id = $11)
+         AND ($11::text IS NULL OR preparation_claim_expires_at > now())
        RETURNING *`,
       [
         reckoningId,
