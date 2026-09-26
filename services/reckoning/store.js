@@ -751,6 +751,13 @@ function createReckoningStore({
          AND status IN ('triggered','deferred')
          AND exam_session_id IS NULL
          AND (deferred_until IS NULL OR deferred_until <= now())
+         AND NOT EXISTS (
+           SELECT 1
+           FROM reckoning_preparation_items terminal_item
+           WHERE terminal_item.reckoning_id = reckoning_sessions.id
+             AND terminal_item.user_id = reckoning_sessions.user_id
+             AND terminal_item.work_state = 'TERMINAL_ERROR'
+         )
          AND (
            generation_status IN ('not_started','error','partial')
            OR (
