@@ -230,7 +230,45 @@ const adaptiveReckoningEngine = createReckoningEngine({
   preparationService: adaptivePreparationService,
   preparationInputProvider: buildAdaptivePreparationInput,
   outcomeHandler: finalizeAdaptiveReckoningOutcome,
+  getConcurrencyState: getReckoningGenerationConcurrencyState,
+  logger: console,
 });
+
+function _runReckoningPreparationRecoverySweep() {
+  if (
+    !adaptiveReckoningEngine ||
+    typeof adaptiveReckoningEngine.resumePendingPreparations !== 'function'
+  ) {
+    return;
+  }
+  Promise.resolve(
+    adaptiveReckoningEngine.resumePendingPreparations({ limit: 2 })
+  )
+    .then((result) => {
+      if (result?.launched > 0) {
+        console.log('[KIWI RECKONING] durable recovery sweep launched', result);
+      }
+    })
+    .catch((error) => {
+      console.warn(
+        '[KIWI RECKONING] durable recovery sweep failed:',
+        String(error?.message || error).slice(0, 500)
+      );
+    });
+}
+
+// Start after normal boot/schema warm-up, then periodically reclaim only stale
+// PREPARING work. Active preparation claims are excluded by the store query.
+const _reckoningRecoveryFirstTimer = setTimeout(
+  _runReckoningPreparationRecoverySweep,
+  60000
+);
+_reckoningRecoveryFirstTimer.unref?.();
+const _reckoningRecoveryInterval = setInterval(
+  _runReckoningPreparationRecoverySweep,
+  30000
+);
+_reckoningRecoveryInterval.unref?.();
 
 // Ecosystem V2 owns session quality, permanent growth, fruit, vitality, streaks,
 // and their idempotent reward ledger. Other services consume its committed result.
