@@ -484,8 +484,15 @@ function createReckoningStore({
     return Number(rowCount) > 0;
   }
 
-  async function claimPreparation(reckoningId, userId, staleMinutes = 5) {
+  async function claimPreparation(
+    reckoningId,
+    userId,
+    staleMinutes = 5,
+    claimId = null
+  ) {
     requireQuery();
+    const resolvedClaimId = claimId || randomUUID();
+    const leaseMinutes = Math.max(1, Number(staleMinutes) || 5);
     const { rows } = await query(
       `UPDATE reckoning_sessions
        SET generation_status = 'pending',
@@ -503,6 +510,10 @@ function createReckoningStore({
            prepared_at = NULL,
            review_started_at = NULL,
            safety_expires_at = NULL,
+           preparation_claim_id = $4,
+           preparation_heartbeat_at = now(),
+           preparation_claim_expires_at =
+             now() + ($3::text || ' minutes')::interval,
            state_version = state_version + 1,
            updated_at = now()
        WHERE id = $1
@@ -516,47 +527,109 @@ function createReckoningStore({
            generation_status IN ('not_started','error','partial')
            OR (
              generation_status = 'pending'
-             AND updated_at < now() - ($3::text || ' minutes')::interval
+             AND (
+               preparation_claim_expires_at <= now()
+               OR (
+                 preparation_claim_expires_at IS NULL
+                 AND updated_at < now() - ($3::text || ' minutes')::interval
+               )
+             )
            )
          )
        RETURNING *`,
-      [reckoningId, userId, Math.max(1, Number(staleMinutes) || 5)]
+      [reckoningId, userId, leaseMinutes, resolvedClaimId]
     );
     return rows?.[0] || null;
   }
 
-  async function touchPreparation(reckoningId, userId) {
+  async function touchPreparation(
+    reckoningId,
+    userId,
+    claimId = null,
+    leaseMinutes = 5
+  ) {
     requireQuery();
+    const params = [
+      reckoningId,
+      userId,
+      Math.max(1, Number(leaseMinutes) || 5),
+    ];
+    let claimSql = '';
+    if (claimId) {
+      params.push(claimId);
+      claimSql = ' AND preparation_claim_id = $4';
+    }
     const { rows } = await query(
       `UPDATE reckoning_sessions
-       SET updated_at = now()
+       SET preparation_heartbeat_at = now(),
+           preparation_claim_expires_at =
+             now() + ($3::text || ' minutes')::interval,
+           updated_at = now()
        WHERE id = $1
          AND user_id = $2
          AND engine_version = 2
          AND engine_mode IN ('PILOT','LIVE')
          AND generation_status = 'pending'
          AND exam_session_id IS NULL
-       RETURNING id, updated_at`,
-      [reckoningId, userId]
+         ${claimSql}
+       RETURNING id, updated_at, preparation_claim_id,
+                 preparation_heartbeat_at, preparation_claim_expires_at`,
+      params
     );
     return rows?.[0] || null;
   }
 
-  async function releasePreparationFailure(reckoningId, userId, error) {
+  async function ownsPreparationClaim(reckoningId, userId, claimId) {
     requireQuery();
-    const message = String(error?.message || error || 'Reckoning preparation failed').slice(0, 1500);
+    if (!claimId) return false;
+    const { rows } = await query(
+      `SELECT 1
+       FROM reckoning_sessions
+       WHERE id = $1
+         AND user_id = $2
+         AND engine_version = 2
+         AND generation_status = 'pending'
+         AND exam_session_id IS NULL
+         AND preparation_claim_id = $3
+         AND preparation_claim_expires_at > now()
+       LIMIT 1`,
+      [reckoningId, userId, claimId]
+    );
+    return Boolean(rows?.[0]);
+  }
+
+  async function releasePreparationFailure(
+    reckoningId,
+    userId,
+    error,
+    claimId = null
+  ) {
+    requireQuery();
+    const message = String(
+      error?.message || error || 'Reckoning preparation failed'
+    ).slice(0, 1500);
+    const params = [reckoningId, userId, message];
+    let claimSql = '';
+    if (claimId) {
+      params.push(claimId);
+      claimSql = ' AND preparation_claim_id = $4';
+    }
     const { rows } = await query(
       `UPDATE reckoning_sessions
        SET generation_status = 'error',
            generation_error = $3,
            engine_phase = 'PREPARING',
+           preparation_claim_id = NULL,
+           preparation_claim_expires_at = NULL,
+           preparation_heartbeat_at = NULL,
            updated_at = now()
        WHERE id = $1
          AND user_id = $2
          AND engine_version = 2
          AND exam_session_id IS NULL
+         ${claimSql}
        RETURNING *`,
-      [reckoningId, userId, message]
+      params
     );
     return rows?.[0] || null;
   }
@@ -666,6 +739,7 @@ function createReckoningStore({
     plannerVersion,
     configVersion,
     safetyWindowMinutes = 45,
+    claimId = null,
   } = {}) {
     requireQuery();
     const { rows } = await query(
@@ -723,6 +797,7 @@ function createReckoningStore({
         Math.max(1, Number(safetyWindowMinutes) || 45),
         Number(plannerVersion) || 1,
         Number(configVersion) || 1,
+        claimId || null,
       ]
     );
     return rows?.[0] || null;
@@ -1143,6 +1218,7 @@ function createReckoningStore({
     clearPreparationArtifacts,
     claimPreparation,
     touchPreparation,
+    ownsPreparationClaim,
     releasePreparationFailure,
     clearPreparationEvidence,
     createExecutionExam,
