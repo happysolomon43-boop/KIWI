@@ -10,6 +10,10 @@ const {
   resolveFamilyConcurrency,
 } = require('../../services/reckoning/preparation');
 const { createReckoningEngine } = require('../../services/reckoning');
+const {
+  isAutoRecoverablePreparationError,
+  preparationRecoveryDelayMs,
+} = require('../../services/reckoning/engine');
 const { AIError, AI_ERROR_CODES } = require('../../services/ai/errors');
 
 function sourceEvidence(id, riskLevel = 'HIGH', riskScore = 70) {
@@ -542,4 +546,341 @@ test('engine resumes a compatible manifest without rebuilding source inputs and 
   assert.ok(order.indexOf('activate') < order.indexOf('clear-artifacts'));
   assert.ok(order.indexOf('clear-artifacts') < order.indexOf('tx-commit'));
   assert.ok(order.includes('create-exam:deck-persisted'));
+});
+
+
+test('transient provider outage auto-recovers inside the same durable Reckoning preparation claim', async () => {
+  const evidence = sourceEvidence('auto-recover', 'HIGH', 70);
+  const blueprints = [
+    {
+      id: 'bp-auto-1',
+      evidenceId: evidence.id,
+      sourceCardId: evidence.sourceCardId,
+      role: 'DIAGNOSTIC',
+      variantIndex: 0,
+    },
+    {
+      id: 'bp-auto-2',
+      evidenceId: evidence.id,
+      sourceCardId: evidence.sourceCardId,
+      role: 'CHALLENGE',
+      variantIndex: 1,
+    },
+  ];
+  const q1 = {
+    id: 'q-auto-1',
+    cardId: evidence.sourceCardId,
+    questionNumber: 1,
+    cognitiveLevel: 'APPLICATION',
+    difficulty: 'Medium',
+    questionType: 'Reckoning',
+    stem: 'Saved first question?',
+    options: ['A', 'B', 'C', 'D'],
+    correctAnswer: 'A',
+    explanation: 'one',
+    evidenceId: evidence.id,
+    role: 'DIAGNOSTIC',
+    variantIndex: 0,
+    blueprint: blueprints[0],
+  };
+  const q2 = {
+    ...q1,
+    id: 'q-auto-2',
+    questionNumber: 2,
+    stem: 'Recovered second question?',
+    role: 'CHALLENGE',
+    variantIndex: 1,
+    blueprint: blueprints[1],
+  };
+  const claimed = {
+    id: 'reckoning-auto-recover',
+    user_id: 'user-auto-recover',
+    subject_id: 'subject-auto-recover',
+    pressure_score: 33,
+    status: 'triggered',
+    engine_version: 2,
+    engine_mode: 'LIVE',
+    engine_phase: 'PREPARING',
+    generation_status: 'pending',
+    state_version: 0,
+  };
+
+  let active = null;
+  let fakeNow = Date.parse('2026-09-26T08:21:40Z');
+  let prepareCalls = 0;
+  let providerBusy = true;
+  let releaseFailures = 0;
+  let touchCount = 0;
+  const sleepCalls = [];
+  const items = [];
+  const evidenceRows = [];
+  const questionRows = [];
+
+  function upsertItem(item) {
+    const blueprintId = String(item.blueprint.id);
+    const existing = items.find((row) => row.blueprint_id === blueprintId);
+    const row = existing || { blueprint_id: blueprintId };
+    row.status = item.question ? 'READY' : 'ERROR';
+    row.generated_question = item.question || null;
+    if (!existing) items.push(row);
+    return row;
+  }
+
+  const store = {
+    async claimPreparation() { return claimed; },
+    async touchPreparation() {
+      touchCount += 1;
+      return { id: claimed.id, preparation_claim_id: 'claim-auto' };
+    },
+    async getPreparationManifest() {
+      return {
+        reckoning_id: claimed.id,
+        user_id: claimed.user_id,
+        preparation_version: 2,
+        config_version: 6,
+        generation_group_id: claimed.id,
+        plan: {
+          plannerVersion: 1,
+          softQuestionBudget: 5,
+          hardQuestionCap: 30,
+          evidence: [evidence],
+        },
+        blueprints,
+        family_order: [evidence.id],
+        deck_ids: ['deck-auto'],
+        total_count: 2,
+      };
+    },
+    async createPreparationManifest() {
+      throw new Error('compatible manifest must be reused');
+    },
+    async getPreparationItems() {
+      return items.map((row) => ({ ...row }));
+    },
+    async savePreparationItemReady(_reckoningId, _userId, item) {
+      return upsertItem(item);
+    },
+    async savePreparationItemFailure(_reckoningId, _userId, item) {
+      return upsertItem(item);
+    },
+    async releasePreparationFailure() {
+      releaseFailures += 1;
+    },
+    async getSession() {
+      return active || claimed;
+    },
+    async withTransaction(work) {
+      return work(store);
+    },
+    async clearPreparationEvidence() {},
+    async createEvidence(record) {
+      const row = {
+        id: record.id,
+        reckoning_id: claimed.id,
+        source_card_id: record.sourceCardId,
+        concept_key: record.conceptKey,
+        source_snapshot: record.sourceSnapshot,
+        risk_score: record.riskScore,
+        risk_level: record.riskLevel,
+        evidence_status: 'UNTESTED',
+        required_confirmations: record.requiredConfirmations,
+        attempt_count: 0,
+        successful_demonstrations: 0,
+        questions_seen: 0,
+      };
+      evidenceRows.push(row);
+      return row;
+    },
+    async createExecutionExam() {
+      return { id: 'exam-auto-recover' };
+    },
+    async createPreparedQuestion(_userId, examId, question) {
+      const row = {
+        id: question.id,
+        exam_session_id: examId,
+        question_number: question.questionNumber,
+        reckoning_evidence_id: question.evidenceId,
+        reckoning_role: question.role,
+        variant_index: question.variantIndex,
+        stem: question.stem,
+        option_a: question.options[0],
+        option_b: question.options[1],
+        option_c: question.options[2],
+        option_d: question.options[3],
+        correct_answer: question.correctAnswer,
+        explanation: question.explanation,
+        selected_option: null,
+        is_unlocked: false,
+      };
+      questionRows.push(row);
+      return row;
+    },
+    async unlockQuestion(_userId, _examId, questionId) {
+      const row = questionRows.find((question) => question.id === questionId);
+      row.is_unlocked = true;
+      row.unlocked_at = new Date(fakeNow);
+      return row;
+    },
+    async activatePreparedSession(_reckoningId, _userId, input) {
+      active = {
+        ...claimed,
+        status: 'in_progress',
+        exam_session_id: input.examSessionId,
+        current_question_id: input.currentQuestionId,
+        engine_phase: 'ACTIVE',
+        generation_status: 'ready',
+        soft_question_budget: input.softQuestionBudget,
+        hard_question_cap: input.hardQuestionCap,
+        current_block: 1,
+        questions_used: 0,
+        state_version: 1,
+        review_started_at: new Date(fakeNow),
+        safety_expires_at: new Date(fakeNow + 45 * 60 * 1000),
+      };
+      return active;
+    },
+    async clearPreparationArtifacts() {},
+    async getEvidence() { return evidenceRows; },
+    async getExecutionQuestions() { return questionRows; },
+  };
+
+  const preparationService = {
+    buildManifest() {
+      throw new Error('manifest should not rebuild');
+    },
+    async prepare({ manifest, preparedItems, onQuestionReady, onQuestionFailure }) {
+      prepareCalls += 1;
+
+      if (providerBusy) {
+        assert.equal(
+          preparedItems.some((item) => item.status === 'READY'),
+          false
+        );
+        await onQuestionReady({
+          blueprint: blueprints[0],
+          question: q1,
+          generationAttempts: 1,
+          familyIndex: 0,
+          itemIndex: 0,
+        });
+        const outage = new AIError('Gemini provider overloaded', {
+          code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+          status: 503,
+          retryable: true,
+          scope: 'PROVIDER_MODEL',
+          retryAfterMs: 2000,
+        });
+        await onQuestionFailure({
+          blueprint: blueprints[1],
+          error: outage,
+          generationAttempts: 1,
+          familyIndex: 0,
+          itemIndex: 1,
+        });
+        throw outage;
+      }
+
+      assert.equal(
+        preparedItems.some(
+          (item) =>
+            item.blueprint_id === blueprints[0].id &&
+            item.status === 'READY' &&
+            item.generated_question?.id === q1.id
+        ),
+        true
+      );
+      await onQuestionReady({
+        blueprint: blueprints[1],
+        question: q2,
+        generationAttempts: 1,
+        familyIndex: 0,
+        itemIndex: 1,
+      });
+      return {
+        manifest,
+        plan: manifest.plan,
+        questions: [q1, q2],
+        firstQuestionId: q1.id,
+        firstQuestionNumber: 1,
+      };
+    },
+  };
+
+  const engine = createReckoningEngine({
+    store,
+    preparationService,
+    preparationInputProvider: async () => {
+      throw new Error('source input must not reload');
+    },
+    config: {
+      preparation: {
+        availabilityRecoveryWindowSeconds: 30,
+        availabilityRecoveryMaxRounds: 3,
+        availabilityRecoveryMinDelayMs: 100,
+        availabilityRecoveryMaxDelayMs: 5000,
+        heartbeatSeconds: 9999,
+      },
+    },
+    clock: () => new Date(fakeNow),
+    sleepImpl: async (ms) => {
+      sleepCalls.push(ms);
+      fakeNow += ms;
+      providerBusy = false;
+    },
+    setIntervalImpl: () => ({ unref() {} }),
+    clearIntervalImpl: () => {},
+  });
+
+  const state = await engine.start({
+    reckoningId: claimed.id,
+    userId: claimed.user_id,
+  });
+
+  assert.equal(prepareCalls, 2);
+  assert.deepEqual(sleepCalls, [2250]);
+  assert.ok(touchCount >= 1);
+  assert.equal(releaseFailures, 0);
+  assert.equal(items.filter((item) => item.status === 'READY').length, 2);
+  assert.equal(state.enginePhase, 'ACTIVE');
+  assert.equal(state.examSessionId, 'exam-auto-recover');
+});
+
+test('auto recovery is limited to transient availability and never waits on daily quota or exhausted operation budget', () => {
+  const transient = new AIError('overloaded', {
+    code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    status: 503,
+    retryable: true,
+  });
+  const daily = new AIError('daily quota', {
+    code: AI_ERROR_CODES.RATE_LIMIT_RPD,
+    status: 429,
+    retryable: true,
+  });
+  const budget = new AIError('budget exhausted', {
+    code: AI_ERROR_CODES.OPERATION_BUDGET_EXHAUSTED,
+    retryable: false,
+  });
+
+  assert.equal(isAutoRecoverablePreparationError(transient), true);
+  assert.equal(isAutoRecoverablePreparationError(daily), false);
+  assert.equal(isAutoRecoverablePreparationError(budget), false);
+
+  const nested = new Error('partial');
+  nested.retryable = true;
+  nested.code = AI_ERROR_CODES.PROVIDER_OVERLOADED;
+  nested.cause = new AIError('provider', {
+    code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    retryable: true,
+    retryAfterMs: 4000,
+  });
+
+  assert.equal(
+    preparationRecoveryDelayMs(nested, 0, {
+      preparation: {
+        availabilityRecoveryMinDelayMs: 1000,
+        availabilityRecoveryMaxDelayMs: 20000,
+      },
+    }),
+    4250
+  );
 });
