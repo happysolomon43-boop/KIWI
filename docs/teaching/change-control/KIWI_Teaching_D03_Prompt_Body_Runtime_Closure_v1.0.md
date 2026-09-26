@@ -108,17 +108,20 @@ Accepted-main verification:
 - D03 verifier: PASS
 - D04 verifier: PASS
 - D05 verifier: PASS
-- Teaching unit tests: 75/75 passed, 0 failed, 0 skipped
-- Full KIWI regression tests: 481/481 passed, 0 failed, 0 skipped
+- Accepted-main D00–D05 GitHub workflows: PASS
+- Teaching unit tests: 76/76 passed, 0 failed, 0 skipped
+- Full KIWI regression tests: 482/482 passed, 0 failed, 0 skipped
 - Web build: PASS
 - Non-production Supabase integration suite: 8 discovered, 4 passed, 0 failed, 4 skipped because no non-production Supabase project/branch is configured
 
 Deployment verification:
 
 - Vercel production: READY on `c109888ef5d6e4ff53b3cd96a1213d13f186752e`
+- Vercel production deployment: `dpl_BqAZUg43HnPeiRf45xEDtgimc41d`
 - Render backend: LIVE on `c109888ef5d6e4ff53b3cd96a1213d13f186752e`
+- Render deployment: `dep-das21qrncjis73e4uj10`
 - Render startup reached `[KIWI Teaching] D05 runtime initialized; due-event and durable outbox workers started.`, which occurs only after Teaching prompt-control `assertReady()` validates the frozen prompt-body bundle
-- Supabase migration head remained unchanged at `20260926180811_teaching_d05_orchestration_service_rls`; this correction requires no database migration
+- Supabase migration head was independently re-verified as `20260926180811_teaching_d05_orchestration_service_rls`; this correction requires no database migration
 
 The four skipped database integration bodies are expected skips and are not represented as passing tests.
 
