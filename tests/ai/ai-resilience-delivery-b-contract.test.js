@@ -108,6 +108,38 @@ test('route-level pressure lowers Reckoning family concurrency before new provid
       models: [],
     },
   }, config), 1);
+
+  // Two touched routes being busy must not look like 100% route saturation
+  // when Reckoning still has a much larger eligible Flash route pool.
+  assert.equal(resolveFamilyConcurrency({
+    congestionLevel: 'NORMAL',
+    effectiveConcurrency: 6,
+    active: 0,
+    queued: 0,
+    busyRouteCount: 2,
+    eligibleRouteCount: 60,
+    routeScheduler: {
+      maxInFlightPerRoute: 1,
+      eligibleRouteCount: 60,
+      routes: [route(1), route(1)],
+      models: [],
+    },
+  }, config), 4);
+});
+
+test('Reckoning concurrency telemetry is scoped to RECKONING_CBT eligible routes only', () => {
+  const source = read('index.js');
+  const start = source.indexOf('function getReckoningGenerationConcurrencyState()');
+  const end = source.indexOf('const adaptivePreparationService', start);
+  assert.ok(start >= 0 && end > start);
+  const block = source.slice(start, end);
+
+  assert.match(block, /orchestrator\.plan\(['"]RECKONING_CBT['"]\)/);
+  assert.match(block, /eligibleRouteKeys/);
+  assert.match(block, /eligibleModelIds/);
+  assert.match(block, /eligibleRouteKeys\.has/);
+  assert.match(block, /eligibleModelIds\.has/);
+  assert.match(block, /eligibleRouteCount:\s*eligibleRouteKeys\.size/);
 });
 
 test('a worker that loses its preparation claim cannot persist another question or activate', async () => {
@@ -307,6 +339,12 @@ test('dashboard ritual hydration is asynchronous, single-flight and preserves hy
   assert.match(render, /_hydrateMissingDashboardRituals/);
   assert.doesNotMatch(render, /await\s+api\.getMorningBrief\(/);
   assert.doesNotMatch(render, /await\s+api\.getWeeklyAnchor\(/);
+
+  const backend = read('index.js');
+  const dashboardBrief = /const morningBrief = morningCache \? morningCache\.data : null;[\s\S]{0,300}/
+    .exec(backend)?.[0] || '';
+  assert.ok(dashboardBrief);
+  assert.doesNotMatch(dashboardBrief, /getMorningBrief\(req\.user\.id\)/);
 });
 
 test('Morning Brief and Study Task background generation are Lite-first without downgrading assessment quality', () => {
@@ -342,7 +380,7 @@ test('nightly AI synthesis skips dormant and guest accounts for both background 
   const cron = source.slice(cronStart, cronStart + 9000);
 
   const inactivityRule =
-    /user\.is_guest \|\| \(user\.last_login_at && daysSince\(user\.last_login_at\) > 14\)/g;
+    /user\.is_guest \|\|\s*!user\.last_login_at \|\|\s*daysSince\(user\.last_login_at\) > 14/g;
   const matches = cron.match(inactivityRule) || [];
   assert.equal(matches.length, 2);
   assert.match(cron, /Morning briefs prepared: \$\{generated\}; skipped inactive\/guest:/);
