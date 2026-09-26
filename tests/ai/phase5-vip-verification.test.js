@@ -65,11 +65,23 @@ test('VIP reasoning, quality floors, and degradation permissions still match the
   }
 });
 
-test('non-degradable VIP tasks stay on Flash while degradable VIP tasks append Lite only after Flash', () => {
+test('VIP routing preserves Flash quality except the two explicitly approved Lite-first background jobs', () => {
   const router = createModelRouter();
+  const liteFirstBackground = new Set([
+    'MORNING_BRIEF',
+    'STUDY_TASK_GENERATION',
+  ]);
 
   for (const [taskId, expected] of Object.entries(VIP_EXPECTED)) {
     const models = router.resolveCandidates(taskId).map((entry) => entry.modelId);
+
+    if (liteFirstBackground.has(taskId)) {
+      assert.deepEqual(models, [
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
+      ], `${taskId} approved Lite-first background chain`);
+      continue;
+    }
 
     assert.deepEqual(models.slice(0, 3), [
       'gemini-3.7-flash',

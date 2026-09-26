@@ -7241,15 +7241,21 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       // ── Daily Ritual endpoints ──
 
       api.getMorningBrief = async () => {
-        // BUG #5 FIX: spec requires POST /ritual/morning-brief, not GET
-        return await apiRequest("/ritual/morning-brief", { method: "POST", body: {} });
+        // The ritual endpoint returns an envelope; the UI contract is the brief text.
+        const data = await apiRequest("/ritual/morning-brief", { method: "POST", body: {} });
+        return data && typeof data === "object"
+          ? (data.brief || null)
+          : (typeof data === "string" ? data : null);
       };
 
       api.getDailyInvitations = async () => {
-        return await apiRequest("/ritual/invitations", {
+        const data = await apiRequest("/ritual/invitations", {
           method: "POST",
           body: { local_date: todayStr(), timezone_offset_minutes: new Date().getTimezoneOffset() },
         });
+        return Array.isArray(data)
+          ? data
+          : (Array.isArray(data?.invitations) ? data.invitations : []);
       };
 
       api.dismissInvitation = async (invitationIndex, invitationType) => {
@@ -9810,6 +9816,119 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         AppState.dashboard = null;
       }
 
+      const _DASH_RITUAL_RETRY_COOLDOWN_MS = 60 * 1000;
+      const _dashboardRitualHydration = {
+        morningBrief: { promise: null, lastAttemptAt: 0 },
+        weeklyAnchor: { promise: null, lastAttemptAt: 0 },
+      };
+
+      function _ensureCurrentRitualDate() {
+        const today = todayStr();
+        if (AppState.ritualCache.ritualDate !== today) {
+          AppState.ritualCache.morningBrief = null;
+          AppState.ritualCache.invitations = null;
+          AppState.ritualCache.weeklyAnchor = null;
+          AppState.ritualCache.ritualDate = today;
+          _dashboardRitualHydration.morningBrief.lastAttemptAt = 0;
+          _dashboardRitualHydration.weeklyAnchor.lastAttemptAt = 0;
+        }
+        return today;
+      }
+
+      function _withHydratedDashboardRituals(data) {
+        _ensureCurrentRitualDate();
+        const source = data || {};
+        const merged = {
+          ...source,
+          morningBrief:
+            source.morningBrief ||
+            AppState.ritualCache.morningBrief ||
+            null,
+          weeklyAnchor:
+            source.weeklyAnchor ||
+            AppState.ritualCache.weeklyAnchor ||
+            null,
+        };
+        if (source.morningBrief) {
+          AppState.ritualCache.morningBrief = source.morningBrief;
+        }
+        if (source.weeklyAnchor) {
+          AppState.ritualCache.weeklyAnchor = source.weeklyAnchor;
+        }
+        return merged;
+      }
+
+      function _commitHydratedDashboardRitual(key, value, _dashStartPage) {
+        if (!value) return;
+        _ensureCurrentRitualDate();
+        AppState.ritualCache[key] = value;
+
+        const current = AppState.dashboard || {};
+        const next = {
+          ...current,
+          [key]: current[key] || value,
+        };
+        AppState.dashboard = next;
+        _saveDashboardCache(next);
+
+        if (AppState.currentPage !== _dashStartPage) return;
+        const main = document.getElementById("mainContent");
+        if (main) _paintDashboard(main, next, _dashStartPage);
+      }
+
+      function _hydrateDashboardRitual(key, loader, _dashStartPage) {
+        _ensureCurrentRitualDate();
+        if (AppState.dashboard?.[key] || AppState.ritualCache[key]) {
+          return Promise.resolve(AppState.dashboard?.[key] || AppState.ritualCache[key]);
+        }
+
+        const state = _dashboardRitualHydration[key];
+        if (!state) return Promise.resolve(null);
+        if (state.promise) return state.promise;
+
+        const now = Date.now();
+        if (
+          state.lastAttemptAt &&
+          now - state.lastAttemptAt < _DASH_RITUAL_RETRY_COOLDOWN_MS
+        ) {
+          return Promise.resolve(null);
+        }
+
+        state.lastAttemptAt = now;
+        state.promise = Promise.resolve()
+          .then(loader)
+          .then((value) => {
+            if (value) _commitHydratedDashboardRitual(key, value, _dashStartPage);
+            return value || null;
+          })
+          .catch(() => null)
+          .finally(() => {
+            state.promise = null;
+          });
+        return state.promise;
+      }
+
+      function _hydrateMissingDashboardRituals(data, _dashStartPage) {
+        const merged = _withHydratedDashboardRituals(data);
+        AppState.dashboard = merged;
+
+        if (!merged.morningBrief) {
+          _hydrateDashboardRitual(
+            "morningBrief",
+            () => api.getMorningBrief(),
+            _dashStartPage,
+          );
+        }
+        if (!merged.weeklyAnchor) {
+          _hydrateDashboardRitual(
+            "weeklyAnchor",
+            () => api.getWeeklyAnchor(),
+            _dashStartPage,
+          );
+        }
+        return merged;
+      }
+
       function _dashboardFingerprint(data) {
         const d = data || {};
         try {
@@ -10246,14 +10365,24 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const _cached = _loadDashboardCache();
 
         if (_cached) {
-          // Instant render from cache — no loading screen
-          _paintDashboard(main, _cached, _dashStartPage);
+          // Instant render from cache — no loading screen. Missing ritual pieces
+          // hydrate independently and never block the dashboard.
+          const cachedData = _hydrateMissingDashboardRituals(
+            _withHydratedDashboardRituals(_cached),
+            _dashStartPage,
+          );
+          _paintDashboard(main, cachedData, _dashStartPage);
 
-          // Background revalidation: silently fetch fresh data and repaint if changed
+          // Background revalidation: preserve any ritual content that may have
+          // completed while /dashboard was in flight.
           api.getDashboard().then(freshData => {
             if (AppState.currentPage !== _dashStartPage) return;
-            _saveDashboardCache(freshData);
-            _paintDashboard(main, freshData, _dashStartPage);
+            const mergedFresh = _hydrateMissingDashboardRituals(
+              _withHydratedDashboardRituals(freshData),
+              _dashStartPage,
+            );
+            _saveDashboardCache(mergedFresh);
+            _paintDashboard(main, mergedFresh, _dashStartPage);
           }).catch(() => {}); // silent fail — stale data is acceptable
 
           return;
@@ -10265,12 +10394,19 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         // than a blank screen while we fetch fresh data.
         const _stale = _loadDashboardCacheStale();
         if (_stale) {
-          _paintDashboard(main, _stale, _dashStartPage);
+          const staleData = _hydrateMissingDashboardRituals(
+            _withHydratedDashboardRituals(_stale),
+            _dashStartPage,
+          );
+          _paintDashboard(main, staleData, _dashStartPage);
         } else {
           renderDashboardSkeleton(main);
         }
         try {
-          const data = await api.getDashboard();
+          const data = _hydrateMissingDashboardRituals(
+            _withHydratedDashboardRituals(await api.getDashboard()),
+            _dashStartPage,
+          );
           _saveDashboardCache(data);
           _paintDashboard(main, data, _dashStartPage);
         } catch (err) {

@@ -7,6 +7,7 @@ const {
   AI_CLASSES,
   AI_EXECUTION_LANES,
   AI_TASKS,
+  MODEL_POLICIES,
   CANONICAL_AI_TASK_IDS,
   QUALITY_FLOORS,
   REASONING_LEVELS,
@@ -94,6 +95,14 @@ test('critical assessment stays critical while confirmed scheduled generation is
   assert.equal(
     AI_TASKS.STUDY_TASK_GENERATION.executionLane,
     AI_EXECUTION_LANES.BACKGROUND
+  );
+  assert.equal(
+    AI_TASKS.MORNING_BRIEF.modelPolicy,
+    MODEL_POLICIES.TOP_STABLE_FLASH_LITE
+  );
+  assert.equal(
+    AI_TASKS.STUDY_TASK_GENERATION.modelPolicy,
+    MODEL_POLICIES.TOP_STABLE_FLASH_LITE
   );
   assert.equal(
     AI_TASKS.DAILY_INVITATIONS.executionLane,

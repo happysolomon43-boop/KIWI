@@ -359,6 +359,7 @@ function createReckoningStore({
     generationAttempts = 1,
     familyIndex = 0,
     itemIndex = 0,
+    claimId = null,
   } = {}) {
     requireQuery();
     if (!blueprint?.id || !blueprint?.evidenceId || !question) {
@@ -373,10 +374,22 @@ function createReckoningStore({
          family_index, item_index, status, generated_question,
          attempt_count, validation_issues, last_error, ready_at,
          created_at, updated_at
-       ) VALUES (
+       )
+       SELECT
          $1,$2,$3,$4,$5,$6,$7,'READY',$8::jsonb,
          $9,'[]'::jsonb,NULL,now(),now(),now()
-       )
+       FROM reckoning_sessions rs
+       WHERE rs.id = $2
+         AND rs.user_id = $3
+         AND (
+           $10::text IS NULL
+           OR (
+             rs.generation_status = 'pending'
+             AND rs.exam_session_id IS NULL
+             AND rs.preparation_claim_id = $10
+             AND rs.preparation_claim_expires_at > now()
+           )
+         )
        ON CONFLICT (reckoning_id, blueprint_id)
        DO UPDATE SET
          status = 'READY',
@@ -399,9 +412,12 @@ function createReckoningStore({
         Math.max(0, Number(itemIndex) || 0),
         json(question),
         Math.max(1, Number(generationAttempts) || 1),
+        claimId || null,
       ]
     );
-    await refreshPreparationProgress(reckoningId, userId);
+    if (rows?.[0]) {
+      await refreshPreparationProgress(reckoningId, userId);
+    }
     return rows?.[0] || null;
   }
 
@@ -411,6 +427,7 @@ function createReckoningStore({
     generationAttempts = 1,
     familyIndex = 0,
     itemIndex = 0,
+    claimId = null,
   } = {}) {
     requireQuery();
     if (!blueprint?.id || !blueprint?.evidenceId) {
@@ -431,10 +448,22 @@ function createReckoningStore({
          family_index, item_index, status, generated_question,
          attempt_count, validation_issues, last_error, ready_at,
          created_at, updated_at
-       ) VALUES (
+       )
+       SELECT
          $1,$2,$3,$4,$5,$6,$7,'ERROR',NULL,
          $8,$9::jsonb,$10,NULL,now(),now()
-       )
+       FROM reckoning_sessions rs
+       WHERE rs.id = $2
+         AND rs.user_id = $3
+         AND (
+           $11::text IS NULL
+           OR (
+             rs.generation_status = 'pending'
+             AND rs.exam_session_id IS NULL
+             AND rs.preparation_claim_id = $11
+             AND rs.preparation_claim_expires_at > now()
+           )
+         )
        ON CONFLICT (reckoning_id, blueprint_id)
        DO UPDATE SET
          status = CASE
@@ -468,9 +497,12 @@ function createReckoningStore({
         Math.max(1, Number(generationAttempts) || 1),
         json(issues),
         message,
+        claimId || null,
       ]
     );
-    await refreshPreparationProgress(reckoningId, userId, message);
+    if (rows?.[0]) {
+      await refreshPreparationProgress(reckoningId, userId, message);
+    }
     return rows?.[0] || null;
   }
 
@@ -484,8 +516,15 @@ function createReckoningStore({
     return Number(rowCount) > 0;
   }
 
-  async function claimPreparation(reckoningId, userId, staleMinutes = 5) {
+  async function claimPreparation(
+    reckoningId,
+    userId,
+    staleMinutes = 5,
+    claimId = null
+  ) {
     requireQuery();
+    const resolvedClaimId = claimId || randomUUID();
+    const leaseMinutes = Math.max(1, Number(staleMinutes) || 5);
     const { rows } = await query(
       `UPDATE reckoning_sessions
        SET generation_status = 'pending',
@@ -503,6 +542,10 @@ function createReckoningStore({
            prepared_at = NULL,
            review_started_at = NULL,
            safety_expires_at = NULL,
+           preparation_claim_id = $4,
+           preparation_heartbeat_at = now(),
+           preparation_claim_expires_at =
+             now() + ($3::text || ' minutes')::interval,
            state_version = state_version + 1,
            updated_at = now()
        WHERE id = $1
@@ -516,47 +559,109 @@ function createReckoningStore({
            generation_status IN ('not_started','error','partial')
            OR (
              generation_status = 'pending'
-             AND updated_at < now() - ($3::text || ' minutes')::interval
+             AND (
+               preparation_claim_expires_at <= now()
+               OR (
+                 preparation_claim_expires_at IS NULL
+                 AND updated_at < now() - ($3::text || ' minutes')::interval
+               )
+             )
            )
          )
        RETURNING *`,
-      [reckoningId, userId, Math.max(1, Number(staleMinutes) || 5)]
+      [reckoningId, userId, leaseMinutes, resolvedClaimId]
     );
     return rows?.[0] || null;
   }
 
-  async function touchPreparation(reckoningId, userId) {
+  async function touchPreparation(
+    reckoningId,
+    userId,
+    claimId = null,
+    leaseMinutes = 5
+  ) {
     requireQuery();
+    const params = [
+      reckoningId,
+      userId,
+      Math.max(1, Number(leaseMinutes) || 5),
+    ];
+    let claimSql = '';
+    if (claimId) {
+      params.push(claimId);
+      claimSql = ' AND preparation_claim_id = $4';
+    }
     const { rows } = await query(
       `UPDATE reckoning_sessions
-       SET updated_at = now()
+       SET preparation_heartbeat_at = now(),
+           preparation_claim_expires_at =
+             now() + ($3::text || ' minutes')::interval,
+           updated_at = now()
        WHERE id = $1
          AND user_id = $2
          AND engine_version = 2
          AND engine_mode IN ('PILOT','LIVE')
          AND generation_status = 'pending'
          AND exam_session_id IS NULL
-       RETURNING id, updated_at`,
-      [reckoningId, userId]
+         ${claimSql}
+       RETURNING id, updated_at, preparation_claim_id,
+                 preparation_heartbeat_at, preparation_claim_expires_at`,
+      params
     );
     return rows?.[0] || null;
   }
 
-  async function releasePreparationFailure(reckoningId, userId, error) {
+  async function ownsPreparationClaim(reckoningId, userId, claimId) {
     requireQuery();
-    const message = String(error?.message || error || 'Reckoning preparation failed').slice(0, 1500);
+    if (!claimId) return false;
+    const { rows } = await query(
+      `SELECT 1
+       FROM reckoning_sessions
+       WHERE id = $1
+         AND user_id = $2
+         AND engine_version = 2
+         AND generation_status = 'pending'
+         AND exam_session_id IS NULL
+         AND preparation_claim_id = $3
+         AND preparation_claim_expires_at > now()
+       LIMIT 1`,
+      [reckoningId, userId, claimId]
+    );
+    return Boolean(rows?.[0]);
+  }
+
+  async function releasePreparationFailure(
+    reckoningId,
+    userId,
+    error,
+    claimId = null
+  ) {
+    requireQuery();
+    const message = String(
+      error?.message || error || 'Reckoning preparation failed'
+    ).slice(0, 1500);
+    const params = [reckoningId, userId, message];
+    let claimSql = '';
+    if (claimId) {
+      params.push(claimId);
+      claimSql = ' AND preparation_claim_id = $4';
+    }
     const { rows } = await query(
       `UPDATE reckoning_sessions
        SET generation_status = 'error',
            generation_error = $3,
            engine_phase = 'PREPARING',
+           preparation_claim_id = NULL,
+           preparation_claim_expires_at = NULL,
+           preparation_heartbeat_at = NULL,
            updated_at = now()
        WHERE id = $1
          AND user_id = $2
          AND engine_version = 2
          AND exam_session_id IS NULL
+         ${claimSql}
        RETURNING *`,
-      [reckoningId, userId, message]
+      params
     );
     return rows?.[0] || null;
   }
@@ -666,6 +771,7 @@ function createReckoningStore({
     plannerVersion,
     configVersion,
     safetyWindowMinutes = 45,
+    claimId = null,
   } = {}) {
     requireQuery();
     const { rows } = await query(
@@ -702,6 +808,9 @@ function createReckoningStore({
            debrief_text = NULL,
            final_report = NULL,
            completed_at = NULL,
+           preparation_claim_id = NULL,
+           preparation_claim_expires_at = NULL,
+           preparation_heartbeat_at = NULL,
            updated_at = now()
        WHERE id = $1
          AND user_id = $2
@@ -711,6 +820,8 @@ function createReckoningStore({
          AND status IN ('triggered','deferred')
          AND exam_session_id IS NULL
          AND (deferred_until IS NULL OR deferred_until <= now())
+         AND ($11::text IS NULL OR preparation_claim_id = $11)
+         AND ($11::text IS NULL OR preparation_claim_expires_at > now())
        RETURNING *`,
       [
         reckoningId,
@@ -723,6 +834,7 @@ function createReckoningStore({
         Math.max(1, Number(safetyWindowMinutes) || 45),
         Number(plannerVersion) || 1,
         Number(configVersion) || 1,
+        claimId || null,
       ]
     );
     return rows?.[0] || null;
@@ -1143,6 +1255,7 @@ function createReckoningStore({
     clearPreparationArtifacts,
     claimPreparation,
     touchPreparation,
+    ownsPreparationClaim,
     releasePreparationFailure,
     clearPreparationEvidence,
     createExecutionExam,

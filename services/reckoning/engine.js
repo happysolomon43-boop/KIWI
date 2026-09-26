@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { RECKONING_ENGINE, SESSION_PHASES } = require('./constants');
 const { createReckoningConfig } = require('./config');
 const { notImplemented, ReckoningContractError } = require('./errors');
@@ -195,6 +196,16 @@ function buildFinalReport({
   });
 }
 
+function preparationClaimLostError() {
+  const error = new ReckoningContractError(
+    'Reckoning preparation ownership changed while generation was running.'
+  );
+  error.code = 'ERR_RECKONING_PREPARATION_CLAIM_LOST';
+  error.status = 409;
+  error.retryable = true;
+  return error;
+}
+
 function isSafetyExpired(session, nowMs = Date.now()) {
   if (!session?.safety_expires_at) return false;
   const expires = new Date(session.safety_expires_at).getTime();
@@ -203,10 +214,11 @@ function isSafetyExpired(session, nowMs = Date.now()) {
 
 function createReckoningEngine(options = {}) {
   const config = createReckoningConfig(options.config);
+  const randomUUID = options.randomUUID || crypto.randomUUID;
   const store = options.store || createReckoningStore({
     query: options.query,
     transaction: options.transaction,
-    randomUUID: options.randomUUID,
+    randomUUID,
   });
   const evidenceEngine = options.evidenceEngine || createEvidenceEngine({ config });
   const scheduler = options.scheduler || createScheduler({ config });
@@ -221,7 +233,7 @@ function createReckoningEngine(options = {}) {
     createPreparationService({
       config,
       questionBank: options.questionBank,
-      randomUUID: options.randomUUID,
+      randomUUID,
     });
   const clock = options.clock || (() => new Date());
   const setIntervalImpl = options.setIntervalImpl || setInterval;
@@ -328,10 +340,12 @@ function createReckoningEngine(options = {}) {
       throw error;
     }
 
+    const claimId = randomUUID();
     const claimed = await store.claimPreparation(
       reckoningId,
       userId,
-      config.preparation.claimStaleMinutes
+      config.preparation.claimStaleMinutes,
+      claimId
     );
     if (!claimed) {
       const current = await store.getSession(reckoningId, userId);
@@ -361,6 +375,18 @@ function createReckoningEngine(options = {}) {
     }
 
     let preparationHeartbeat = null;
+    let preparationClaimLost = false;
+    const enforcePreparationClaim =
+      typeof store.ownsPreparationClaim === 'function';
+
+    async function stillOwnPreparation() {
+      if (preparationClaimLost) return false;
+      if (!enforcePreparationClaim) return true;
+      const owns = await store.ownsPreparationClaim(reckoningId, userId, claimId);
+      if (!owns) preparationClaimLost = true;
+      return owns;
+    }
+
     try {
       if (typeof store.touchPreparation === 'function') {
         const heartbeatMs = Math.max(
@@ -368,7 +394,18 @@ function createReckoningEngine(options = {}) {
           Number(config.preparation.heartbeatSeconds || 45) * 1000
         );
         preparationHeartbeat = setIntervalImpl(() => {
-          Promise.resolve(store.touchPreparation(reckoningId, userId)).catch(() => null);
+          Promise.resolve(
+            store.touchPreparation(
+              reckoningId,
+              userId,
+              claimId,
+              config.preparation.claimStaleMinutes
+            )
+          )
+            .then((heartbeat) => {
+              if (!heartbeat) preparationClaimLost = true;
+            })
+            .catch(() => null);
         }, heartbeatMs);
         if (preparationHeartbeat && typeof preparationHeartbeat.unref === 'function') {
           preparationHeartbeat.unref();
@@ -450,10 +487,32 @@ function createReckoningEngine(options = {}) {
           manifest,
           preparedItems,
           generationGroupId: manifest.generationGroupId,
-          onQuestionReady: (item) =>
-            store.savePreparationItemReady(claimed.id, userId, item),
-          onQuestionFailure: (item) =>
-            store.savePreparationItemFailure(claimed.id, userId, item),
+          shouldAbort: () => preparationClaimLost,
+          onQuestionReady: async (item) => {
+            if (!(await stillOwnPreparation())) {
+              throw preparationClaimLostError();
+            }
+            const saved = await store.savePreparationItemReady(
+              claimed.id,
+              userId,
+              { ...item, claimId }
+            );
+            if (!saved) {
+              preparationClaimLost = true;
+              throw preparationClaimLostError();
+            }
+            return saved;
+          },
+          onQuestionFailure: async (item) => {
+            if (!(await stillOwnPreparation())) return null;
+            const saved = await store.savePreparationItemFailure(
+              claimed.id,
+              userId,
+              { ...item, claimId }
+            );
+            if (!saved) preparationClaimLost = true;
+            return saved;
+          },
         });
       } else {
         // Compatibility path for isolated unit-test doubles and legacy injected
@@ -477,12 +536,26 @@ function createReckoningEngine(options = {}) {
         });
       }
 
+      if (!(await stillOwnPreparation())) {
+        throw preparationClaimLostError();
+      }
+
       const activated = await store.withTransaction(async (txStore) => {
         const locked = await txStore.getSession(claimed.id, userId, { forUpdate: true });
         if (!locked || locked.exam_session_id || locked.status === 'completed') {
           throw new ReckoningContractError(
             'Reckoning changed while preparation was running.'
           );
+        }
+        if (
+          enforcePreparationClaim &&
+          (
+            String(locked.preparation_claim_id || '') !== String(claimId) ||
+            !locked.preparation_claim_expires_at ||
+            new Date(locked.preparation_claim_expires_at).getTime() <= Date.now()
+          )
+        ) {
+          throw preparationClaimLostError();
         }
 
         await txStore.clearPreparationEvidence(claimed.id, userId);
@@ -544,6 +617,7 @@ function createReckoningEngine(options = {}) {
           plannerVersion: prepared.plan.plannerVersion,
           configVersion: config.configVersion,
           safetyWindowMinutes: config.execution.safetyWindowMinutes,
+          claimId,
         });
         if (!session) {
           throw new ReckoningContractError('Failed to activate prepared Reckoning session.');
@@ -564,7 +638,12 @@ function createReckoningEngine(options = {}) {
         session: activated.session,
       });
     } catch (error) {
-      await store.releasePreparationFailure(reckoningId, userId, error).catch(() => null);
+      await store.releasePreparationFailure(
+        reckoningId,
+        userId,
+        error,
+        claimId
+      ).catch(() => null);
       throw error;
     } finally {
       if (preparationHeartbeat) clearIntervalImpl(preparationHeartbeat);

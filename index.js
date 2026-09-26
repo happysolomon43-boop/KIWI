@@ -118,12 +118,66 @@ const adaptiveQuestionBank = createQuestionBank({
   aiRun: (taskId, input, context) => ai.run(taskId, input, context),
   validator: adaptiveQuestionValidator,
 });
+function getReckoningGenerationConcurrencyState() {
+  const traffic = _aiRuntime.trafficController.snapshot();
+  const rawRouteScheduler = _aiRuntime.routeScheduler.snapshot();
+  const plan = _aiRuntime.orchestrator.plan('RECKONING_CBT');
+
+  // Only pressure on routes that RECKONING_CBT is actually allowed to use may
+  // reduce Reckoning family fan-out. Background/Lite traffic must not make an
+  // otherwise healthy Flash Reckoning unnecessarily serialize itself.
+  const eligibleRouteKeys = new Set();
+  const eligibleModelIds = new Set();
+  for (const candidate of plan.candidates || []) {
+    const slots = candidate.eligibleProjectSlots || [];
+    if (!slots.length) continue;
+    eligibleModelIds.add(candidate.modelId);
+    for (const slotId of slots) {
+      eligibleRouteKeys.add(`${slotId}::${candidate.modelId}`);
+    }
+  }
+
+  const eligibleRoutes = (rawRouteScheduler.routes || []).filter(
+    (route) => eligibleRouteKeys.has(`${route.projectSlot}::${route.modelId}`)
+  );
+  const eligibleModels = (rawRouteScheduler.models || []).filter(
+    (model) => eligibleModelIds.has(model.modelId)
+  );
+  const maxInFlightPerRoute = Math.max(
+    1,
+    Number(rawRouteScheduler.maxInFlightPerRoute) || 1
+  );
+  const busyRouteCount = eligibleRoutes.filter(
+    (route) => (Number(route.inFlight) || 0) >= maxInFlightPerRoute
+  ).length;
+  const pacedModelCount = eligibleModels.filter(
+    (model) => (Number(model.waitMs) || 0) > 0
+  ).length;
+
+  const routeScheduler = Object.freeze({
+    ...rawRouteScheduler,
+    routes: Object.freeze(eligibleRoutes),
+    models: Object.freeze(eligibleModels),
+    eligibleRouteCount: eligibleRouteKeys.size,
+    eligibleModelCount: eligibleModelIds.size,
+  });
+
+  return Object.freeze({
+    ...traffic,
+    routeScheduler,
+    busyRouteCount,
+    pacedModelCount,
+    eligibleRouteCount: eligibleRouteKeys.size,
+    eligibleModelCount: eligibleModelIds.size,
+  });
+}
+
 const adaptivePreparationService = createPreparationService({
   questionBank: adaptiveQuestionBank,
   randomUUID,
-  // Reckoning family generation follows the orchestrator's live backpressure
-  // signal. Individual AI calls still pass through central orchestrator admission.
-  getConcurrencyState: () => _aiRuntime.trafficController.snapshot(),
+  // Reckoning family generation now reacts to both global admission pressure
+  // and Delivery A's route-level pacing/leases.
+  getConcurrencyState: getReckoningGenerationConcurrencyState,
 });
 
 async function buildAdaptivePreparationInput({ session, userId }) {
@@ -10066,7 +10120,7 @@ Respond with only the description text.
 `;
   const result = await ai.run('ZONE_DESCRIPTION', { content: prompt });
   const text = result.text.trim();
-  await db.dailyRitualCache.set(userId, cacheType, todayStr, { data: text });
+  await db.dailyRitualCache.set(userId, cacheType, todayStr, text);
   return text;
 }
 
@@ -11354,7 +11408,7 @@ weekStart.setHours(0, 0, 0, 0);
 const weekStr = weekStart.toISOString().split('T')[0];
 // P6.7 FIX: Return cached anchor if it exists for this week
 const cached = await db.dailyRitualCache.get(userId, 'weekly_anchor', weekStr).catch(() => null);
-if (cached) return cached;
+if (cached?.data) return cached.data;
 // P6.7 FIX: Gather spec-required inputs for C2 AI call
 const subjects = await db.subjects.findManyWithDecks(userId).catch(() => []);
 const pressures = await db.brainPressure.findByUser(userId).catch(() => []);
@@ -11385,7 +11439,7 @@ const highPressureSubject = highestPressure
 const prevAnchorCache = await db.dailyRitualCache
 .get(userId, 'weekly_anchor', 'prev')
 .catch(() => null);
-const prevAnchorText = prevAnchorCache?.anchor_text || null;
+const prevAnchorText = prevAnchorCache?.data?.anchor_text || null;
 // This week's chronicle
 const latestChronicle = await db.chronicleEntries.findLatest(userId).catch(() => null);
 // P6.7 FIX: Gemini C2 call
@@ -11452,7 +11506,7 @@ const subjects = await db.subjects.findManyWithDecks(userId);
 // New user with no subjects yet — return a welcome prompt instead of AI-generated brief
 if (!subjects || subjects.length === 0) {
   const welcomeBrief = "Welcome to KIWI! Start by creating your first subject and adding flashcards — your personalised daily briefing will appear here once you begin studying.";
-  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, { data: welcomeBrief }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, welcomeBrief).catch((e) => console.error("[KIWI] silent catch:", e.message));
   return welcomeBrief;
 }
 const now = new Date();
@@ -11597,7 +11651,7 @@ Return only the 3 sentences.
 `;
   const result = await ai.run('MORNING_BRIEF', { content: prompt });
   const brief = result.text.trim();
-  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, { data: brief });
+  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, brief);
   return brief;
 }
 // ── Daily Invitations (A2) ─────────────────────────────────────────────────
@@ -11664,7 +11718,7 @@ const cached = await db.dailyRitualCache.get(userId, 'daily_invitations', todayS
 // and stable IDs are available immediately after this release.
 if (cached && Array.isArray(cached.data) && cached.data.every((item) => item?.completion && item?.id)) {
 const enriched = await enrichInvitationCompletion(userId, cached.data, todayStr, safeTimezoneOffset);
-await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: enriched }).catch(() => {});
+await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, enriched).catch(() => {});
 return enriched;
 }
 const subjects = await db.subjects.findManyWithDecks(userId);
@@ -11954,7 +12008,7 @@ RULES
     };
   });
   const enrichedInvitations = await enrichInvitationCompletion(userId, normalizedInvitations, todayStr, safeTimezoneOffset);
-  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: enrichedInvitations });
+  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, enrichedInvitations);
   return enrichedInvitations;
 }
 
@@ -11974,7 +12028,7 @@ return { error: 'Invalid invitation index' };
 }
 const invitation = invitations[invitationIndex];
 invitation.dismissed = true;
-await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: invitations });
+await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, invitations);
 
 // P7.3 FIX: Cross-day dismissal history tracking.
 // Spec: if same action_type dismissed 5+ times in 2 weeks for same subject → +1 pressure on that subject.
@@ -12037,7 +12091,7 @@ const history = historyDoc?.data || [];
     }
 
     // Persist pruned history
-    await db.dailyRitualCache.set(userId, 'dismissal_history', 'persistent', { data: pruned });
+    await db.dailyRitualCache.set(userId, 'dismissal_history', 'persistent', pruned);
 
 } catch (e) {
 console.error('[KIWI] Dismissal history update failed:', e.message);
@@ -12441,7 +12495,7 @@ const todayStr = new Date().toISOString().split('T')[0];
 const cacheKey = `pressure_${subjectId}`;
 const cached = await db.dailyRitualCache.get(userId, cacheKey, todayStr).catch(() => null);
 // F5-1-P: return sources from cache alongside explanation text
-if (cached?.data) return { explanation: cached.data, sources: cached.sources || {} };
+if (cached?.data?.explanation) return cached.data;
 // H-8 FIX: Pre-translate raw source keys into plain language before injecting into prompt.
 // The prompt forbids state labels (GHOST, STUCK etc.) but JSON.stringify leaks them as keys.
 // F5-1-P: added 7 bubble source keys [DESIGN: §15.1] so AI prompt describes them correctly
@@ -12506,7 +12560,7 @@ Return only the explanation text.
   // P7.5 FIX: Persist to cache so subsequent taps today serve instantly
   // F5-1-P: also persist sources so cached responses can render labelled chips [DESIGN: §15.1]
   await db.dailyRitualCache.set(userId, cacheKey, todayStr, {
-    data: explanation,
+    explanation,
     sources: pressure.sources || {},
   }).catch((e) => console.error("[KIWI] silent catch:", e.message));
   return { explanation, sources: pressure.sources || {} };
@@ -18473,9 +18527,9 @@ adminRouter.get('/health', async (req, res) => {
   const CRON_MANIFEST = [
     { schedule: '* * * * *',     label: 'KS recompute batch drain (every 1 min)' },
     { schedule: '*/10 * * * *',  label: 'Abandoned exam auto-forfeit (every 10 min)' },
-    { schedule: '0 3 * * *',     label: 'Nightly card-state audit (03:00 UTC)' },
-    { schedule: '0 8 * * *',     label: 'Morning brief pre-generation (08:00 UTC)' },
-    { schedule: '0 11 * * *',    label: 'Daily pressure pipeline flush (11:00 UTC)' },
+    { schedule: '0 3 * * *',     label: 'Nightly maintenance + active-user ritual/task preparation (03:00 UTC)' },
+    { schedule: '0 8 * * *',     label: 'Morning login reminder dispatch (08:00 UTC)' },
+    { schedule: '0 11 * * *',    label: 'Mid-morning login reminder dispatch (11:00 UTC)' },
     { schedule: '0 14 * * *',    label: 'Daily ritual reminder dispatch (14:00 UTC)' },
     { schedule: '0 0 * * 1',     label: 'Weekly Chronicle + Anchor generation (Mon 00:00 UTC)' },
   ];
@@ -19457,7 +19511,7 @@ short_interactions: completedInteractions.length - sessions.length,
 },
 generated_at: now.toISOString(),
 };
-await db.dailyRitualCache.set(userId, 'living_persona', personaCacheKey, { data: profile }).catch(() => {});
+await db.dailyRitualCache.set(userId, 'living_persona', personaCacheKey, profile).catch(() => {});
 await db.userPersona.create(userId, {
 persona_code: `living_${weekKey}`,
 persona_label: String(profile.name || 'Living Persona').slice(0, 120),
@@ -19630,6 +19684,9 @@ brainRouter.post('/reckoning/start', async (req, res) => {
     }
 
     if (active.generation_status === 'pending') {
+      const leaseExpiry = active.preparation_claim_expires_at
+        ? new Date(active.preparation_claim_expires_at).getTime()
+        : NaN;
       const updatedAt = active.updated_at
         ? new Date(active.updated_at).getTime()
         : NaN;
@@ -19638,11 +19695,15 @@ brainRouter.post('/reckoning/start', async (req, res) => {
           1,
           Number(DELIVERY_E_RECKONING_CONFIG.preparation.claimStaleMinutes) || 5
         ) * 60 * 1000;
-      const heartbeatIsFresh =
+      const explicitLeaseFresh =
+        Number.isFinite(leaseExpiry) &&
+        leaseExpiry > Date.now();
+      const legacyHeartbeatFresh =
+        !Number.isFinite(leaseExpiry) &&
         Number.isFinite(updatedAt) &&
         Date.now() - updatedAt < staleAfterMs;
 
-      if (heartbeatIsFresh) {
+      if (explicitLeaseFresh || legacyHeartbeatFresh) {
         return res.status(202).json({
           status: 'preparing',
           reckoning_id: active.id,
@@ -19653,6 +19714,9 @@ brainRouter.post('/reckoning/start', async (req, res) => {
       console.warn('[KIWI] Reclaiming stale Reckoning V2 preparation', {
         reckoningId: active.id,
         userId: req.user.id,
+        claimId: active.preparation_claim_id || null,
+        claimExpiresAt: active.preparation_claim_expires_at || null,
+        heartbeatAt: active.preparation_heartbeat_at || null,
         updatedAt: active.updated_at || null,
       });
     }
@@ -20362,7 +20426,7 @@ usedMetrics.add(candidate.metric);
 }
 
 if (sessions.length >= 3) {
-await db.dailyRitualCache.set(userId, 'living_achievements', achievementCacheKey, { data: personalized }).catch(() => {});
+await db.dailyRitualCache.set(userId, 'living_achievements', achievementCacheKey, personalized).catch(() => {});
 }
 
 personalized = personalized.map((a) => {
@@ -20822,15 +20886,14 @@ returnGreeting = cachedRG.data.greeting;
 getReturnGreeting(req.user.id).catch(() => {}); // generate in background
 }
 }
-// PERF FIX: Never block dashboard on Gemini calls.
-// morning brief, invitations, and return greeting can each take 5-10s.
-// Return null if not cached — the client fetches them lazily via /ritual endpoints.
-// Generate in background so next load hits cache.
+// Never block the dashboard on Morning Brief generation. Delivery B gives
+// the frontend a single-flight lazy fetch for this exact miss. Do not also
+// fire-and-forget generation here or the dashboard request and ritual request
+// can race and spend two provider calls for the same user/day.
 const morningBrief = morningCache ? morningCache.data : null;
-if (!morningCache) getMorningBrief(req.user.id).catch(() => {});
 // Weekly anchor — anchorCache already resolved in Round 2
-const weeklyAnchor = anchorCache
-? anchorCache.anchor_text || anchorCache.message || null
+const weeklyAnchor = anchorCache?.data
+? anchorCache.data.anchor_text || anchorCache.data.message || null
 : null;
 // Invitations — return empty on miss, generate in background
 const invitations = invitationsCache ? invitationsCache.data : null;
@@ -21698,33 +21761,54 @@ console.log(`[KIWI CRON] Pressure recalculated for ${allUsers.length} users`);
 } catch (e) {
 console.error('[KIWI CRON] Daily pressure cron failed:', e.message);
 }
-// 3. Pre-generate morning brief cache for all active users
+// 3. Pre-generate Morning Brief only for recently active learners.
+// Delivery B keeps this as an optional latency optimization because the frontend
+// can now hydrate on demand. It must never synthesize content for dormant users.
 try {
+let generated = 0;
+let skipped = 0;
 for (const user of allUsers) {
-if (user.is_guest) continue; // skip guests
-// H-6 FIX: Skip users inactive for 14+ days — conserves Gemini quota
-if (user.last_login_at && daysSince(user.last_login_at) > 14) continue;
+if (
+user.is_guest ||
+!user.last_login_at ||
+daysSince(user.last_login_at) > 14
+) {
+skipped++;
+continue;
+}
 try {
 await getMorningBrief(user.id);
+generated++;
 } catch (e) {
 console.error(`[KIWI CRON] Morning brief failed for ${user.id}:`, e.message);
 }
 }
-console.log(`[KIWI CRON] Morning briefs pre-generated for ${allUsers.length} users`);
+console.log(`[KIWI CRON] Morning briefs prepared: ${generated}; skipped inactive/guest: ${skipped}`);
 } catch (e) {
 console.error('[KIWI CRON] Morning brief cron failed:', e.message);
 }
-// 4. Pre-generate tasks for all active users
+// 4. Pre-generate study tasks only for the same recently active population.
+// Users can still explicitly refresh tasks through /api/tasks/refresh.
 try {
+let generated = 0;
+let skipped = 0;
 for (const user of allUsers) {
-if (user.is_guest) continue;
+if (
+user.is_guest ||
+!user.last_login_at ||
+daysSince(user.last_login_at) > 14
+) {
+skipped++;
+continue;
+}
 try {
 await generateTasksForUser(user.id);
+generated++;
 } catch (e) {
 console.error(`[KIWI CRON] Task gen failed for ${user.id}:`, e.message);
 }
 }
-console.log(`[KIWI CRON] Tasks generated for ${allUsers.length} users`);
+console.log(`[KIWI CRON] Study tasks prepared: ${generated}; skipped inactive/guest: ${skipped}`);
 } catch (e) {
 console.error('[KIWI CRON] Daily task gen cron failed:', e.message);
 }

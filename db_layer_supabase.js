@@ -1261,18 +1261,38 @@ async create(userId, data) {
 // ── daily_ritual_cache ──────────────────────────────────────────────────────
 dailyRitualCache: {
 async get(userId, type, dateStr) {
-  // Fix #4: deterministic id eliminates 3-field WHERE scan
   const docId = `${userId}_${type}_${dateStr}`;
-  const { rows } = await query('SELECT * FROM daily_ritual_cache WHERE id = $1', [docId]);
-  return rows[0] ? { id: docId, ...rows[0] } : null;
+  const { rows } = await query(
+    'SELECT id, user_id, type, date, data, updated_at FROM daily_ritual_cache WHERE id = $1 LIMIT 1',
+    [docId]
+  );
+  return rows[0] || null;
 },
 async set(userId, type, dateStr, data) {
-  // Fix #5: deterministic id + ON CONFLICT eliminates read-then-write (2 ops → 1)
+  // Canonical contract: feature-specific payload belongs wholly inside data JSONB.
+  // Never spread ritual fields into physical SQL columns.
   const docId = `${userId}_${type}_${dateStr}`;
-  const payload = { id: docId, user_id: userId, type, date: dateStr, ...data, updated_at: new Date() };
-  const q = _buildUpsert('daily_ritual_cache', ['id'], payload);
-  await query(q.text, q.values);
-  return { id: docId, ...payload };
+  const serialized = JSON.stringify(data === undefined ? null : data);
+  const { rows } = await query(
+    `INSERT INTO daily_ritual_cache (
+       id, user_id, type, date, data, updated_at
+     ) VALUES ($1,$2,$3,$4,$5::jsonb,now())
+     ON CONFLICT (id) DO UPDATE SET
+       user_id = EXCLUDED.user_id,
+       type = EXCLUDED.type,
+       date = EXCLUDED.date,
+       data = EXCLUDED.data,
+       updated_at = now()
+     RETURNING id, user_id, type, date, data, updated_at`,
+    [docId, userId, type, dateStr, serialized]
+  );
+  return rows[0] || {
+    id: docId,
+    user_id: userId,
+    type,
+    date: dateStr,
+    data,
+  };
 },
 },
 // ── seedling_transactions ───────────────────────────────────────────────────
