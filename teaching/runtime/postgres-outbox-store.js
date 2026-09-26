@@ -1,5 +1,6 @@
 'use strict';
 
+const { isDeepStrictEqual } = require('node:util');
 const { validateTeachingEvent } = require('../events/contracts');
 const { EVENT_CATEGORIES } = require('./constants');
 
@@ -58,7 +59,23 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
       [event.idempotencyKey]
     );
     const row = existing.rows?.[0];
-    if (!row || row.event_type !== event.eventType || row.aggregate_id !== event.aggregateId) {
+    const fields = ['eventId', 'schemaVersion', 'eventType', 'eventCategory', 'triggerType',
+      'source', 'origin', 'actorId', 'aggregateType', 'aggregateId', 'aggregateVersion',
+      'occurredAt', 'effectiveAt', 'correlationId', 'causationId', 'idempotencyKey',
+      'payload', 'auditRefs', 'provenanceRefs'];
+    const matches = row && fields.every((field) => {
+      const column = field.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      let actual = row[column];
+      let expected = event[field];
+      if (field === 'occurredAt' || field === 'effectiveAt') {
+        actual = actual == null ? null : new Date(actual).getTime();
+        expected = expected == null ? null : new Date(expected).getTime();
+      } else if (field === 'aggregateVersion' || field === 'schemaVersion') {
+        actual = actual == null ? null : Number(actual);
+      }
+      return isDeepStrictEqual(actual, expected);
+    });
+    if (!matches) {
       const error = new Error('Teaching outbox idempotency key is bound to a different event.');
       error.code = 'TEACHING_D05_EVENT_IDEMPOTENCY_CONFLICT';
       throw error;
