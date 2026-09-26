@@ -64,6 +64,7 @@ for (const fn of [
 ]) assert(typeof fn === 'function', 'D05 runtime/orchestrator export is missing.');
 
 const migration = read('migrations/20260926_teaching_d05_orchestrator_runtime.sql');
+const servicePolicyMigration = read('migrations/20260926_teaching_d05_orchestration_service_rls.sql');
 for (const fragment of [
   'teaching_runtime.orchestration_executions',
   'teaching_runtime.event_outbox',
@@ -71,6 +72,12 @@ for (const fragment of [
   'REVOKE DELETE,TRUNCATE',
   'teaching_domain_service',
 ]) assert(migration.includes(fragment), `D05 migration missing: ${fragment}`);
+for (const fragment of [
+  'teaching_orchestration_service_select',
+  'teaching_orchestration_service_insert',
+  'teaching_orchestration_service_update',
+  'REVOKE DELETE, TRUNCATE',
+]) assert(servicePolicyMigration.includes(fragment), `D05 service-role RLS hardening missing: ${fragment}`);
 
 const d05JsFiles = [
   'teaching/orchestrator/ai-adapter.js','teaching/orchestrator/teaching-orchestrator.js',
