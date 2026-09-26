@@ -7061,7 +7061,7 @@ async function computeKnowledgeScore(userId, subjectId = null, cachedStates = nu
 // KS-CACHE: Skip cache only when caller provides fresh cachedStates
 if (!cachedStates) {
   const cached = getCachedKS(userId, subjectId);
-  if (cached) return cached;
+  if (cached?.data) return cached.data;
 }
 let allCards = [];
 if (subjectId) {
@@ -7112,7 +7112,7 @@ return result;
 async function computeGlobalKnowledgeScore(userId, precomputedSubjectScores = null) {
 // KS-CACHE: Check global cache first
 const cached = getCachedKS(userId, null);
-if (cached) return cached;
+if (cached?.data) return cached.data;
 const subjects = await db.subjects.findManyWithDecks(userId);
 if (subjects.length === 0) {
   const empty = { score: 0, band: '🌱 Seed', totalCards: 0 };
@@ -10088,7 +10088,7 @@ Respond with only the description text.
 `;
   const result = await ai.run('ZONE_DESCRIPTION', { content: prompt });
   const text = result.text.trim();
-  await db.dailyRitualCache.set(userId, cacheType, todayStr, { data: text });
+  await db.dailyRitualCache.set(userId, cacheType, todayStr, text);
   return text;
 }
 
@@ -11376,7 +11376,7 @@ weekStart.setHours(0, 0, 0, 0);
 const weekStr = weekStart.toISOString().split('T')[0];
 // P6.7 FIX: Return cached anchor if it exists for this week
 const cached = await db.dailyRitualCache.get(userId, 'weekly_anchor', weekStr).catch(() => null);
-if (cached) return cached;
+if (cached?.data) return cached.data;
 // P6.7 FIX: Gather spec-required inputs for C2 AI call
 const subjects = await db.subjects.findManyWithDecks(userId).catch(() => []);
 const pressures = await db.brainPressure.findByUser(userId).catch(() => []);
@@ -11407,7 +11407,7 @@ const highPressureSubject = highestPressure
 const prevAnchorCache = await db.dailyRitualCache
 .get(userId, 'weekly_anchor', 'prev')
 .catch(() => null);
-const prevAnchorText = prevAnchorCache?.anchor_text || null;
+const prevAnchorText = prevAnchorCache?.data?.anchor_text || null;
 // This week's chronicle
 const latestChronicle = await db.chronicleEntries.findLatest(userId).catch(() => null);
 // P6.7 FIX: Gemini C2 call
@@ -11474,7 +11474,7 @@ const subjects = await db.subjects.findManyWithDecks(userId);
 // New user with no subjects yet — return a welcome prompt instead of AI-generated brief
 if (!subjects || subjects.length === 0) {
   const welcomeBrief = "Welcome to KIWI! Start by creating your first subject and adding flashcards — your personalised daily briefing will appear here once you begin studying.";
-  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, { data: welcomeBrief }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, welcomeBrief).catch((e) => console.error("[KIWI] silent catch:", e.message));
   return welcomeBrief;
 }
 const now = new Date();
@@ -11619,7 +11619,7 @@ Return only the 3 sentences.
 `;
   const result = await ai.run('MORNING_BRIEF', { content: prompt });
   const brief = result.text.trim();
-  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, { data: brief });
+  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, brief);
   return brief;
 }
 // ── Daily Invitations (A2) ─────────────────────────────────────────────────
@@ -11686,7 +11686,7 @@ const cached = await db.dailyRitualCache.get(userId, 'daily_invitations', todayS
 // and stable IDs are available immediately after this release.
 if (cached && Array.isArray(cached.data) && cached.data.every((item) => item?.completion && item?.id)) {
 const enriched = await enrichInvitationCompletion(userId, cached.data, todayStr, safeTimezoneOffset);
-await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: enriched }).catch(() => {});
+await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, enriched).catch(() => {});
 return enriched;
 }
 const subjects = await db.subjects.findManyWithDecks(userId);
@@ -11976,7 +11976,7 @@ RULES
     };
   });
   const enrichedInvitations = await enrichInvitationCompletion(userId, normalizedInvitations, todayStr, safeTimezoneOffset);
-  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: enrichedInvitations });
+  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, enrichedInvitations);
   return enrichedInvitations;
 }
 
@@ -11996,7 +11996,7 @@ return { error: 'Invalid invitation index' };
 }
 const invitation = invitations[invitationIndex];
 invitation.dismissed = true;
-await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, { data: invitations });
+await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, invitations);
 
 // P7.3 FIX: Cross-day dismissal history tracking.
 // Spec: if same action_type dismissed 5+ times in 2 weeks for same subject → +1 pressure on that subject.
@@ -12059,7 +12059,7 @@ const history = historyDoc?.data || [];
     }
 
     // Persist pruned history
-    await db.dailyRitualCache.set(userId, 'dismissal_history', 'persistent', { data: pruned });
+    await db.dailyRitualCache.set(userId, 'dismissal_history', 'persistent', pruned);
 
 } catch (e) {
 console.error('[KIWI] Dismissal history update failed:', e.message);
@@ -12463,7 +12463,7 @@ const todayStr = new Date().toISOString().split('T')[0];
 const cacheKey = `pressure_${subjectId}`;
 const cached = await db.dailyRitualCache.get(userId, cacheKey, todayStr).catch(() => null);
 // F5-1-P: return sources from cache alongside explanation text
-if (cached?.data) return { explanation: cached.data, sources: cached.sources || {} };
+if (cached?.data?.explanation) return cached.data;
 // H-8 FIX: Pre-translate raw source keys into plain language before injecting into prompt.
 // The prompt forbids state labels (GHOST, STUCK etc.) but JSON.stringify leaks them as keys.
 // F5-1-P: added 7 bubble source keys [DESIGN: §15.1] so AI prompt describes them correctly
@@ -12528,7 +12528,7 @@ Return only the explanation text.
   // P7.5 FIX: Persist to cache so subsequent taps today serve instantly
   // F5-1-P: also persist sources so cached responses can render labelled chips [DESIGN: §15.1]
   await db.dailyRitualCache.set(userId, cacheKey, todayStr, {
-    data: explanation,
+    explanation,
     sources: pressure.sources || {},
   }).catch((e) => console.error("[KIWI] silent catch:", e.message));
   return { explanation, sources: pressure.sources || {} };
@@ -19479,7 +19479,7 @@ short_interactions: completedInteractions.length - sessions.length,
 },
 generated_at: now.toISOString(),
 };
-await db.dailyRitualCache.set(userId, 'living_persona', personaCacheKey, { data: profile }).catch(() => {});
+await db.dailyRitualCache.set(userId, 'living_persona', personaCacheKey, profile).catch(() => {});
 await db.userPersona.create(userId, {
 persona_code: `living_${weekKey}`,
 persona_label: String(profile.name || 'Living Persona').slice(0, 120),
@@ -20394,7 +20394,7 @@ usedMetrics.add(candidate.metric);
 }
 
 if (sessions.length >= 3) {
-await db.dailyRitualCache.set(userId, 'living_achievements', achievementCacheKey, { data: personalized }).catch(() => {});
+await db.dailyRitualCache.set(userId, 'living_achievements', achievementCacheKey, personalized).catch(() => {});
 }
 
 personalized = personalized.map((a) => {
@@ -20861,8 +20861,8 @@ getReturnGreeting(req.user.id).catch(() => {}); // generate in background
 const morningBrief = morningCache ? morningCache.data : null;
 if (!morningCache) getMorningBrief(req.user.id).catch(() => {});
 // Weekly anchor — anchorCache already resolved in Round 2
-const weeklyAnchor = anchorCache
-? anchorCache.anchor_text || anchorCache.message || null
+const weeklyAnchor = anchorCache?.data
+? anchorCache.data.anchor_text || anchorCache.data.message || null
 : null;
 // Invitations — return empty on miss, generate in background
 const invitations = invitationsCache ? invitationsCache.data : null;
