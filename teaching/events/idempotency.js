@@ -2,8 +2,24 @@
 
 function createInMemoryIdempotencyStore() {
   const completed = new Map();
+  const pending = new Map();
 
   return {
+    // Atomic within this process. Durable/multi-process consumers must supply
+    // a store whose runOnce operation claims ownership transactionally.
+    async runOnce(key, operation) {
+      if (completed.has(key)) return { replay: true, result: completed.get(key).result };
+      if (pending.has(key)) return { replay: true, result: await pending.get(key) };
+      const task = Promise.resolve().then(operation);
+      pending.set(key, task);
+      try {
+        const result = await task;
+        completed.set(key, { result });
+        return { replay: false, result };
+      } finally {
+        pending.delete(key);
+      }
+    },
     async get(key) {
       return completed.get(String(key)) || null;
     },
@@ -12,14 +28,15 @@ function createInMemoryIdempotencyStore() {
       return value;
     },
     async clear() {
+      if (pending.size) throw new Error('Cannot clear an idempotency store with pending operations.');
       completed.clear();
     },
   };
 }
 
 function createIdempotentHandler({ store, handler }) {
-  if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') {
-    throw new TypeError('Idempotency handler requires a get/put store.');
+  if (!store || typeof store.runOnce !== 'function') {
+    throw new TypeError('Idempotency handler requires an atomic runOnce store.');
   }
   if (typeof handler !== 'function') {
     throw new TypeError('Idempotency handler requires a handler function.');
@@ -30,14 +47,7 @@ function createIdempotentHandler({ store, handler }) {
       throw new TypeError('Idempotency key is required.');
     }
 
-    const prior = await store.get(key);
-    if (prior) {
-      return { replay: true, result: prior.result };
-    }
-
-    const result = await handler(input);
-    await store.put(key, { result });
-    return { replay: false, result };
+    return store.runOnce(key, () => handler(input));
   };
 }
 

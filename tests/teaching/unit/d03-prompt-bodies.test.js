@@ -57,6 +57,7 @@ test('composition keeps exact frozen bytes separate from untrusted academic data
     outputSchema: { id: 'test', version: '1', uncertainty_states: ['INSUFFICIENT_EVIDENCE', 'UNRESOLVED_CONFLICT', 'REVIEW_NEEDED'],
       review_needed_field: 'reviewNeeded', state_bearing_fields: [], student_facing_field: null, declared_fields: [], validate: async value => ({ ok: true, value }) },
     audit: { correlation_id: 'test' } });
+  assert.throws(() => composeTeachingModelContent({ invocation, academicInput: { text: 'x'.repeat(65536) } }), { code: 'TEACHING_ACADEMIC_INPUT_INVALID' });
   const sentinel = 'STUDENT_DATA_SENTINEL';
   const content = composeTeachingModelContent({ invocation, academicInput: { student: sentinel } });
   const body = content.split('<KIWI_TEACHING_FROZEN_PROMPT>\n')[1].split('</KIWI_TEACHING_FROZEN_PROMPT>')[0];
