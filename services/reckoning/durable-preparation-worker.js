@@ -573,7 +573,7 @@ function createDurablePreparationWorker({
           const index = cursor++;
           const { blueprint } = candidates[index];
           const leaseToken = randomUUID();
-          const claimed = await store.claimPreparationWorkItem(
+          const claimed = await store.leasePreparationWorkItem(
             reckoningId,
             userId,
             blueprint.id,
