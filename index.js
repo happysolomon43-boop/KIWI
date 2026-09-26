@@ -20886,12 +20886,11 @@ returnGreeting = cachedRG.data.greeting;
 getReturnGreeting(req.user.id).catch(() => {}); // generate in background
 }
 }
-// PERF FIX: Never block dashboard on Gemini calls.
-// morning brief, invitations, and return greeting can each take 5-10s.
-// Return null if not cached — the client fetches them lazily via /ritual endpoints.
-// Generate in background so next load hits cache.
+// Never block the dashboard on Morning Brief generation. Delivery B gives
+// the frontend a single-flight lazy fetch for this exact miss. Do not also
+// fire-and-forget generation here or the dashboard request and ritual request
+// can race and spend two provider calls for the same user/day.
 const morningBrief = morningCache ? morningCache.data : null;
-if (!morningCache) getMorningBrief(req.user.id).catch(() => {});
 // Weekly anchor — anchorCache already resolved in Round 2
 const weeklyAnchor = anchorCache?.data
 ? anchorCache.data.anchor_text || anchorCache.data.message || null
@@ -21769,7 +21768,11 @@ try {
 let generated = 0;
 let skipped = 0;
 for (const user of allUsers) {
-if (user.is_guest || (user.last_login_at && daysSince(user.last_login_at) > 14)) {
+if (
+user.is_guest ||
+!user.last_login_at ||
+daysSince(user.last_login_at) > 14
+) {
 skipped++;
 continue;
 }
@@ -21790,7 +21793,11 @@ try {
 let generated = 0;
 let skipped = 0;
 for (const user of allUsers) {
-if (user.is_guest || (user.last_login_at && daysSince(user.last_login_at) > 14)) {
+if (
+user.is_guest ||
+!user.last_login_at ||
+daysSince(user.last_login_at) > 14
+) {
 skipped++;
 continue;
 }
