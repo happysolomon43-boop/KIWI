@@ -522,6 +522,7 @@ function createPreparationService({
     deckIds = [],
     now = new Date(),
     generationGroupId = null,
+    operationBudgetId = null,
     manifest = null,
     preparedItems = [],
     onQuestionReady = null,
@@ -616,6 +617,7 @@ function createPreparationService({
               previousQuestion,
               requireSemanticReview: true,
               generationGroupId: generationGroup,
+              operationBudgetId,
             });
             const globalIndex = blueprintIndex.get(blueprintId);
             const record = Object.freeze({
