@@ -61,6 +61,8 @@ D05 adds a transactional `teaching_runtime.event_outbox` for academically signif
 
 `teaching_runtime.orchestration_executions` persists replay/idempotency, capability, authority, state-version, validation, stale-rejection and safe audit metadata. Prompt bodies, model raw responses, protected payloads and hidden chain-of-thought are not stored there.
 
+The follow-up D05 service-policy hardening migration adds explicit `service_role` SELECT/INSERT/UPDATE RLS policies on `orchestration_executions`. This does not broaden browser access or add DELETE/TRUNCATE; it makes the private service-only RLS posture explicit and removes the D05-specific no-policy advisor finding.
+
 Per-aggregate correctness is based on aggregate/state versions, preconditions, owner transactions and reconciliation; D05 never assumes one global event order. Existing D02 catch-up dispositions remain `ACTIONABLE`, `ALREADY_SATISFIED`, `SUPERSEDED`, and `FAIRNESS_RECOVERY_REQUIRED`.
 
 The Orchestrator performs authoritative reads before model work, holds no authoritative DB transaction across the central AI call, then re-reads/revalidates state before any owner handoff.
