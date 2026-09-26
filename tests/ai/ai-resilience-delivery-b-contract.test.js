@@ -130,6 +130,9 @@ test('a worker that loses its preparation claim cannot persist another question 
   const releases = [];
 
   const store = {
+    async getSession() {
+      return claimed;
+    },
     async claimPreparation(_reckoningId, _userId, _stale, claimId) {
       assert.equal(claimId, 'claim-1');
       return { ...claimed, preparation_claim_id: claimId };
@@ -253,7 +256,9 @@ test('Daily Ritual persistence uses one JSONB payload contract and never spreads
   const db = read('db_layer_supabase.js');
   const start = db.indexOf('dailyRitualCache: {');
   assert.ok(start >= 0);
-  const block = db.slice(start, start + 3000);
+  const end = db.indexOf('// ── seedling_transactions', start);
+  assert.ok(end > start);
+  const block = db.slice(start, end);
 
   assert.match(block, /INSERT INTO daily_ritual_cache[\s\S]*\bdata\b/i);
   assert.match(block, /\$5::jsonb/i);
