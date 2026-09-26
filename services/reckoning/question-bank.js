@@ -136,6 +136,7 @@ function createQuestionBank({
     previousQuestion = null,
     requireSemanticReview = true,
     generationGroupId = null,
+    operationBudgetId = null,
     retryFeedback = null,
     attempt = 1,
   } = {}) {
@@ -152,7 +153,7 @@ function createQuestionBank({
           temperature: Math.min(0.55, 0.35 + Math.max(0, Number(attempt) - 1) * 0.08),
         },
       },
-      { generationGroupId }
+      { generationGroupId, operationBudgetId }
     );
 
     const question = parseJsonQuestion(result?.text);
