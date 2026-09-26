@@ -91,7 +91,7 @@ function fakeStore(initial = {}) {
     async ensurePreparationWorkItems() { return 1; },
     async ownsPreparationClaim() { return true; },
     async getPreparationItems() { return [{ ...state.item }]; },
-    async claimPreparationWorkItem(_rid, _uid, _bid, { leaseToken }) {
+    async leasePreparationWorkItem(_rid, _uid, _bid, { leaseToken }) {
       const now = Date.now();
       const next = state.item.next_attempt_at
         ? new Date(state.item.next_attempt_at).getTime()
