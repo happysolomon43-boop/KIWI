@@ -376,10 +376,12 @@ function createReckoningEngine(options = {}) {
 
     let preparationHeartbeat = null;
     let preparationClaimLost = false;
+    const enforcePreparationClaim =
+      typeof store.ownsPreparationClaim === 'function';
 
     async function stillOwnPreparation() {
       if (preparationClaimLost) return false;
-      if (typeof store.ownsPreparationClaim !== 'function') return true;
+      if (!enforcePreparationClaim) return true;
       const owns = await store.ownsPreparationClaim(reckoningId, userId, claimId);
       if (!owns) preparationClaimLost = true;
       return owns;
@@ -546,9 +548,12 @@ function createReckoningEngine(options = {}) {
           );
         }
         if (
-          String(locked.preparation_claim_id || '') !== String(claimId) ||
-          !locked.preparation_claim_expires_at ||
-          new Date(locked.preparation_claim_expires_at).getTime() <= Date.now()
+          enforcePreparationClaim &&
+          (
+            String(locked.preparation_claim_id || '') !== String(claimId) ||
+            !locked.preparation_claim_expires_at ||
+            new Date(locked.preparation_claim_expires_at).getTime() <= Date.now()
+          )
         ) {
           throw preparationClaimLostError();
         }
