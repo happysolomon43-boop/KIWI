@@ -631,6 +631,7 @@ function createReckoningStore({
     const { rows } = await query(
       `UPDATE reckoning_preparation_items item
        SET content_revision_count = item.content_revision_count + 1,
+           retry_epoch = item.retry_epoch + 1,
            status = CASE
              WHEN item.content_revision_count + 1 >= $8 THEN 'ERROR'
              ELSE 'PENDING'
