@@ -41,7 +41,8 @@ const { isAIAvailabilityError } = require('./services/ai/errors');
 const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 const { createTeachingRouter } = require('./teaching-backend');
-const { createTeachingRuntimePlatform } = require('./teaching/runtime');
+const { createTeachingD05RuntimePlatform } = require('./teaching/runtime');
+const { createTeachingEventSubscriberRegistry } = require('./teaching/events/dispatcher');
 const { requireRuntimeSecret, optionalRuntimeSecret } = require('./services/runtime-secrets');
 
 const DATABASE_URL = requireRuntimeSecret(process.env, 'DATABASE_URL', ['KIWI_DATABASE_URL']);
@@ -69,13 +70,17 @@ const _aiRuntime = createAIRuntime({
 });
 const ai = _aiRuntime.orchestrator;
 
-// KIWI Teaching D02 runtime foundation. This is operational event/validation
-// infrastructure only; it owns no academic-domain truth.
+// KIWI Teaching D05 runtime platform. This composes the accepted D02
+// authoritative due-event runtime with D05 orchestration persistence and the
+// durable committed-domain event outbox. It owns no academic-domain truth.
 const teachingAIRun = ai.run.bind(ai);
-const teachingRuntimePlatform = createTeachingRuntimePlatform({
+const teachingPublishedEvents = createTeachingEventSubscriberRegistry();
+const teachingRuntimePlatform = createTeachingD05RuntimePlatform({
   query,
+  withTransaction,
   randomUUID,
   aiRun: teachingAIRun,
+  eventPublisher: (event) => teachingPublishedEvents.publish(event),
   env: process.env,
   logger: console,
 });
@@ -22899,13 +22904,13 @@ try {
 try {
   await teachingRuntimePlatform.initialize();
   teachingRuntimePlatform.start();
-  console.log('[KIWI Teaching] D02 durable runtime initialized and server-time worker started.');
+  console.log('[KIWI Teaching] D05 runtime initialized; due-event and durable outbox workers started.');
 } catch (e) {
-  // Fail closed: never substitute an in-memory/browser academic-time owner.
-  // No D02 academic feature depends on the worker yet, so the wider KIWI app
-  // may remain available while operators repair the runtime persistence layer.
+  // Fail closed: never substitute an in-memory/browser academic-time or event
+  // owner. Until domain subscribers exist, an unexpected outbox event also
+  // remains durable/retryable rather than being marked published to nowhere.
   console.error(
-    '[KIWI Teaching] D02 durable runtime unavailable; Teaching due-event execution remains fail-closed:',
+    '[KIWI Teaching] D05 runtime unavailable; Teaching due/outbox execution remains fail-closed:',
     e.message
   );
 }
