@@ -283,6 +283,56 @@ test('D05 context assembly authorizes references before retrieval', async () => 
   assert.equal(reads, 0);
 });
 
+test('D05 model adapter sends the exact frozen family prompt body as central AI content', async () => {
+  let observedRequest = null;
+  const adapter = modelAdapter(async (_taskId, request) => {
+    observedRequest = request;
+    return { structured: { classification: 'x', reviewNeeded: false } };
+  });
+  const envelope = createExecutionEnvelope({
+    executionId: 'execution-prompt-content',
+    trigger: { type: 'committed_domain_event', ref: 'event-prompt-content', source: 'domain' },
+    capabilityId: T2,
+    stateReference: freshSnapshot.stateReference,
+    resultContract: { output_schema_id: 'test', output_schema_version: '1', validator_ids: [] },
+    correlationId: 'corr-prompt-content',
+  });
+  const invocation = adapter.prepare({
+    envelope,
+    taskMode: 'test_prompt_content',
+    directive: directiveFor(T2),
+    contextLanes: buildSeparatedContextLanes({
+      trustedAuthoritativeState: {},
+      permissionConstraints: {},
+      provenanceLinkedAcademicContent: [],
+      untrustedContent: [],
+    }),
+    outputSchema: schemaDescriptor(),
+  });
+
+  const promptControl = createTeachingPromptControlPlane();
+  const family = promptControl.listPromptFamilies().find(
+    (item) => item.id === invocation.prompt.family_id
+  );
+
+  await adapter.execute({
+    invocation,
+    academicInput: { bounded: true, source_text: 'task data only' },
+    schemaValidator: async (value) => ({ ok: true, value: value.structured || value }),
+    domainValidator: async () => true,
+    provenanceValidator: async () => true,
+  });
+
+  assert.ok(observedRequest);
+  assert.equal(typeof observedRequest.content, 'string');
+  assert.ok(observedRequest.content.includes('<KIWI_TEACHING_FROZEN_PROMPT>'));
+  assert.ok(observedRequest.content.includes(`family_id: ${family.id}`));
+  assert.ok(observedRequest.content.includes(`prompt_sha256: ${family.promptSha256}`));
+  assert.ok(observedRequest.content.includes('<KIWI_TEACHING_RUNTIME_CONTRACT_JSON>'));
+  assert.ok(observedRequest.content.includes('<KIWI_TEACHING_ACADEMIC_INPUT_DATA_JSON>'));
+  assert.ok(observedRequest.content.includes('task data only'));
+});
+
 test('D05 model adapter requires provenance validation for T2-T4', async () => {
   const adapter = modelAdapter(async () => ({ structured: { classification: 'x' } }));
   const envelope = createExecutionEnvelope({
