@@ -39,7 +39,10 @@ function createPostgresTeachingEventStore({ query, randomUUID } = {}) {
     return true;
   }
 
-  async function enqueue(input) {
+  async function enqueueUsing(queryFn, input) {
+    if (typeof queryFn !== 'function') {
+      throw new TypeError('Durable due-event enqueue requires a transaction-scoped query function.');
+    }
     const event = validateTeachingEvent(input);
     if (!event.dueAt) {
       throw new TypeError('Durable due events require dueAt.');
@@ -74,7 +77,7 @@ function createPostgresTeachingEventStore({ query, randomUUID } = {}) {
       JSON.stringify(event.provenanceRefs),
     ];
 
-    const inserted = await query(
+    const inserted = await queryFn(
       `INSERT INTO teaching_runtime.due_events (
          event_id, schema_version, event_type, event_category, trigger_type,
          source, origin, actor_id, aggregate_type, aggregate_id, aggregate_version,
@@ -93,7 +96,7 @@ function createPostgresTeachingEventStore({ query, randomUUID } = {}) {
       return Object.freeze({ inserted: true, event: inserted.rows[0] });
     }
 
-    const existing = await query(
+    const existing = await queryFn(
       `SELECT * FROM teaching_runtime.due_events WHERE idempotency_key = $1 LIMIT 1`,
       [event.idempotencyKey]
     );
@@ -116,6 +119,11 @@ function createPostgresTeachingEventStore({ query, randomUUID } = {}) {
     }
 
     return Object.freeze({ inserted: false, event: row });
+  }
+
+
+  async function enqueue(input) {
+    return enqueueUsing(query, input);
   }
 
   async function releaseExpiredClaims(now = new Date()) {
@@ -303,6 +311,7 @@ function createPostgresTeachingEventStore({ query, randomUUID } = {}) {
 
   return Object.freeze({
     assertReady,
+    enqueueUsing,
     enqueue,
     releaseExpiredClaims,
     claimDue,
