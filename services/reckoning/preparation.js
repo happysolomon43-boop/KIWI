@@ -462,6 +462,52 @@ function createPreparationService({
     );
   }
 
+  async function generateCandidateWithRetry(blueprint, options = {}) {
+    let lastError = null;
+    let retryFeedback = null;
+    const attempts = Math.max(
+      1,
+      Number(config.preparation.generationAttemptsPerItem) || 1
+    );
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const generated = await questionBank.generateCandidate(blueprint, {
+          ...options,
+          attempt,
+          retryFeedback,
+        });
+        return Object.freeze({
+          ...generated,
+          generationAttempts: attempt,
+        });
+      } catch (error) {
+        lastError = error;
+        error.generationAttempts = attempt;
+        if (isAIAvailabilityError(error)) throw error;
+
+        const issues = Array.isArray(error?.validationIssues)
+          ? error.validationIssues.filter(Boolean)
+          : [];
+        retryFeedback = issues.length
+          ? issues.join(', ')
+          : String(error?.message || 'generation failed').slice(0, 240);
+      }
+    }
+
+    throw lastError || new ReckoningContractError(
+      `Question candidate generation failed for blueprint ${blueprint.id}.`
+    );
+  }
+
+  async function auditCandidate(blueprint, candidateQuestion, options = {}) {
+    return questionBank.auditCandidate(
+      blueprint,
+      candidateQuestion,
+      options
+    );
+  }
+
   function buildManifest({
     cards = [],
     states = [],
@@ -749,6 +795,8 @@ function createPreparationService({
     version: config.preparationVersion,
     fitPlanToBank,
     buildManifest,
+    generateCandidateWithRetry,
+    auditCandidate,
     prepare,
     generateReplacement,
     resolveFamilyConcurrency: (snapshot) =>
