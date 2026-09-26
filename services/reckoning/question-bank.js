@@ -132,9 +132,8 @@ function createQuestionBank({
     return Object.freeze(blueprints);
   }
 
-  async function generate(blueprint, {
+  async function generateCandidate(blueprint, {
     previousQuestion = null,
-    requireSemanticReview = true,
     generationGroupId = null,
     operationBudgetId = null,
     retryFeedback = null,
@@ -170,35 +169,69 @@ function createQuestionBank({
       throw error;
     }
 
-    let semantics = null;
-    if (requireSemanticReview) {
-      semantics = await validator.validateSemantics(question, {
-        blueprint,
-        sourceSnapshot: blueprint.sourceSnapshot,
-        previousQuestion,
-        generationGroupId,
-        operationBudgetId,
-      });
-      if (!semantics.valid) {
-        const error = new ReckoningContractError(
-          `Generated Reckoning question failed semantic validation: ${semantics.issues.join(', ')}`
-        );
-        error.code = 'ERR_RECKONING_QUESTION_SEMANTICS';
-        error.validationIssues = [...semantics.issues];
-        throw error;
-      }
-    }
-
     return Object.freeze({
       blueprint,
       question: structure.normalized,
       structure,
-      semantics,
       ai: Object.freeze({
         modelId: result?.modelId || null,
         projectSlot: result?.projectSlot || result?.slotId || null,
         attempts: result?.attempts || null,
       }),
+    });
+  }
+
+  async function auditCandidate(blueprint, question, {
+    previousQuestion = null,
+    generationGroupId = null,
+    operationBudgetId = null,
+  } = {}) {
+    const semantics = await validator.validateSemantics(question, {
+      blueprint,
+      sourceSnapshot: blueprint?.sourceSnapshot,
+      previousQuestion,
+      generationGroupId,
+      operationBudgetId,
+    });
+    if (!semantics.valid) {
+      const error = new ReckoningContractError(
+        `Generated Reckoning question failed semantic validation: ${semantics.issues.join(', ')}`
+      );
+      error.code = 'ERR_RECKONING_QUESTION_SEMANTICS';
+      error.validationIssues = [...semantics.issues];
+      throw error;
+    }
+    return semantics;
+  }
+
+  async function generate(blueprint, {
+    previousQuestion = null,
+    requireSemanticReview = true,
+    generationGroupId = null,
+    operationBudgetId = null,
+    retryFeedback = null,
+    attempt = 1,
+  } = {}) {
+    const candidate = await generateCandidate(blueprint, {
+      previousQuestion,
+      generationGroupId,
+      operationBudgetId,
+      retryFeedback,
+      attempt,
+    });
+
+    let semantics = null;
+    if (requireSemanticReview) {
+      semantics = await auditCandidate(blueprint, candidate.question, {
+        previousQuestion,
+        generationGroupId,
+        operationBudgetId,
+      });
+    }
+
+    return Object.freeze({
+      ...candidate,
+      semantics,
     });
   }
 
@@ -208,6 +241,8 @@ function createQuestionBank({
     roles: QUESTION_ROLES,
     buildBlueprints,
     buildPrompt,
+    generateCandidate,
+    auditCandidate,
     generate,
   });
 }

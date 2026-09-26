@@ -11,6 +11,7 @@ const { createScheduler } = require('./scheduler');
 const { createScoringEngine } = require('./scoring');
 const { createLearningEffectsEngine } = require('./learning-effects');
 const { createPreparationService } = require('./preparation');
+const { createDurablePreparationWorker } = require('./durable-preparation-worker');
 const { createStateMachine } = require('./state-machine');
 const { AI_ERROR_CODES } = require('../ai/errors');
 
@@ -307,6 +308,19 @@ function createReckoningEngine(options = {}) {
   const sleepImpl = options.sleepImpl || ((ms) =>
     new Promise((resolve) => setTimeout(resolve, ms))
   );
+  const logger = options.logger || console;
+  const backgroundPreparations = new Map();
+  const durablePreparationWorker =
+    options.durablePreparationWorker ||
+    createDurablePreparationWorker({
+      config,
+      preparationService,
+      randomUUID,
+      clock,
+      sleepImpl,
+      getConcurrencyState: options.getConcurrencyState || null,
+      random: options.random || Math.random,
+    });
 
   function nowMs() {
     const value = clock();
@@ -557,10 +571,31 @@ function createReckoningEngine(options = {}) {
           totalCount: Number(manifestRow.total_count) || 0,
           createdAt: manifestRow.created_at || null,
         });
-        const recoveryWindowMs = Math.max(
-          0,
-          Number(config.preparation.availabilityRecoveryWindowSeconds || 0) * 1000
-        );
+        const durablePreparationSupported =
+          typeof preparationService.generateCandidateWithRetry === 'function' &&
+          typeof preparationService.auditCandidate === 'function' &&
+          typeof store.ensurePreparationWorkItems === 'function' &&
+          typeof store.leasePreparationWorkItem === 'function' &&
+          typeof store.savePreparationItemCandidate === 'function' &&
+          typeof store.savePreparationWorkItemReady === 'function' &&
+          typeof store.schedulePreparationItemRetry === 'function' &&
+          typeof store.savePreparationItemAuditRejection === 'function' &&
+          typeof store.savePreparationItemTerminal === 'function';
+
+        if (durablePreparationSupported) {
+          prepared = await durablePreparationWorker.run({
+            store,
+            reckoningId: claimed.id,
+            userId,
+            claimId,
+            manifest,
+            shouldAbort: () => preparationClaimLost,
+          });
+        } else {
+          const recoveryWindowMs = Math.max(
+            0,
+            Number(config.preparation.availabilityRecoveryWindowSeconds || 0) * 1000
+          );
         const maxRecoveryRounds = Math.max(
           0,
           Number(config.preparation.availabilityRecoveryMaxRounds) || 0
@@ -709,6 +744,7 @@ function createReckoningEngine(options = {}) {
             // Loop back through the durable item store. READY questions are
             // reused and only unfinished/ERROR blueprints are regenerated.
           }
+        }
         }
       } else {
         // Compatibility path for isolated unit-test doubles and legacy injected
@@ -876,6 +912,51 @@ function createReckoningEngine(options = {}) {
       }
       throw error;
     }
+  }
+
+  async function resumePendingPreparations({ limit = 2 } = {}) {
+    if (typeof store.listRecoverablePreparations !== 'function') {
+      return Object.freeze({ supported: false, candidates: 0, launched: 0 });
+    }
+
+    const candidates = await store.listRecoverablePreparations(limit);
+    let launched = 0;
+
+    for (const row of candidates) {
+      const reckoningId = row?.id;
+      const userId = row?.user_id || row?.userId;
+      if (!reckoningId || !userId) continue;
+
+      const key = `${reckoningId}::${userId}`;
+      if (backgroundPreparations.has(key)) continue;
+
+      const job = Promise.resolve()
+        .then(() => start({ reckoningId, userId }))
+        .catch((error) => {
+          if (error?.code === 'ERR_RECKONING_PREPARING') return null;
+          if (typeof logger?.warn === 'function') {
+            logger.warn('[KIWI RECKONING] durable preparation recovery failed', {
+              reckoningId,
+              code: error?.code || null,
+              message: String(error?.message || error).slice(0, 500),
+            });
+          }
+          return null;
+        })
+        .finally(() => {
+          backgroundPreparations.delete(key);
+        });
+
+      backgroundPreparations.set(key, job);
+      launched += 1;
+    }
+
+    return Object.freeze({
+      supported: true,
+      candidates: candidates.length,
+      launched,
+      active: backgroundPreparations.size,
+    });
   }
 
   async function continueCheckpoint({ examSessionId, userId } = {}) {
@@ -1742,6 +1823,7 @@ function createReckoningEngine(options = {}) {
     },
     prepare,
     start,
+    resumePendingPreparations,
     continueCheckpoint,
     repairDefectiveQuestion,
     adjudicateDefectiveQuestion,

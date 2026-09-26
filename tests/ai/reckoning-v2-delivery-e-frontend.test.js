@@ -153,3 +153,47 @@ test('Brain Reckoning action follows preparation lifecycle and exposes the 24-ho
   assert.match(brain, /brainBuyReckoningBufferBtn/);
   assert.match(html, /\/brain\/reckoning\/buffer\/purchase/);
 });
+
+
+test('durable Reckoning preparation stays attached beyond transport timeout and reconciles server state', () => {
+  const poll = functionSlice(
+    '_pollAdaptiveReckoningReadiness',
+    '_adaptiveUtilityButtonsHtml'
+  );
+  assert.match(
+    poll,
+    /_pollAdaptiveReckoningReadiness\(reckoningId, timeoutMs = null\)/
+  );
+  assert.match(poll, /while \(token === _adaptivePreparationPollToken\)/);
+  assert.match(poll, /elapsed < 10 \* 60 \* 1000 \? 3000 : 10000/);
+  assert.match(
+    poll,
+    /still preparing The Reckoning in the background/
+  );
+  assert.doesNotMatch(
+    poll,
+    /Date\.now\(\) - started < timeoutMs/
+  );
+
+  const htmlBlock = html.slice(
+    html.indexOf('function _pollJobFallback'),
+    html.indexOf('function _stopWaitingForJob')
+  );
+  assert.match(
+    htmlBlock,
+    /type === 'reckoning_v2_start'[\s\S]*_recoverDurableReckoningUiFromServer/
+  );
+  assert.doesNotMatch(
+    htmlBlock,
+    /reckoning_v2_start:\s*'Reckoning preparation timed out[^']*press Begin to retry/
+  );
+
+  assert.match(
+    html,
+    /async function _recoverDurableReckoningUiFromServer/
+  );
+  assert.match(
+    html,
+    /_jf\.type === 'reckoning_v2_start'[\s\S]*_recoverDurableReckoningUiFromServer/
+  );
+});
