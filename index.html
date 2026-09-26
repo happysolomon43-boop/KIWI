@@ -6355,6 +6355,13 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             if (msg.event === 'job_failed') {
               var _jf = msg.data || {};
               if (typeof _pendingJobs !== 'undefined') _pendingJobs.delete(_jf.job_id);
+
+              if (_jf.type === 'reckoning_v2_start') {
+                var _durableReckoningStillAlive =
+                  await _recoverDurableReckoningUiFromServer(_jf.error);
+                if (_durableReckoningStillAlive) return;
+              }
+
               _hideGenBanner();
               var _labels = { note_generation: 'Note generation', cbt_generation: 'Exam generation', exam_submit: 'Exam submission', reckoning_v2_start: 'Reckoning preparation' };
               if (typeof showToast === 'function') showToast((_labels[_jf.type] || 'Task') + ' failed: ' + (_jf.error || 'unknown error'), 'error', 8000);
@@ -6754,6 +6761,13 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               }
             } else if (event === 'job_failed') {
               var _jf2 = data || {};
+
+              if (_jf2.type === 'reckoning_v2_start') {
+                var _durableFallbackStillAlive =
+                  await _recoverDurableReckoningUiFromServer(_jf2.error);
+                if (_durableFallbackStillAlive) return;
+              }
+
               _hideGenBanner();
               var _failPrefixes = { cbt_generation: 'Exam generation failed', note_generation: 'Note generation failed', exam_submit: 'Exam submission failed', reckoning_v2_start: 'Reckoning preparation failed' };
               var _failPrefix = _failPrefixes[_jf2.type] || 'Task failed';
@@ -6791,11 +6805,24 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             if (_elapsed > _MAX_POLL_MS) {
               clearInterval(iv);
               _pendingJobs.delete(jobId);
+
+              if (type === 'reckoning_v2_start') {
+                _hideGenBanner();
+                var _reconciled = await _recoverDurableReckoningUiFromServer(
+                  'Background job transport polling exceeded ten minutes.'
+                );
+                if (!_reconciled) {
+                  _pollAdaptiveReckoningReadiness(
+                    AppState && AppState.reckoning ? AppState.reckoning.id : null
+                  );
+                }
+                return;
+              }
+
               var _timeoutMsgs = {
                 cbt_generation: 'Exam generation timed out. The AI took too long. Please try again.',
                 note_generation: 'Card generation timed out. Please try with fewer notes or try again.',
-                exam_submit: 'Exam submission timed out. Please try again.',
-                reckoning_v2_start: 'Reckoning preparation timed out. Your Reckoning is still safe; press Begin to retry.'
+                exam_submit: 'Exam submission timed out. Please try again.'
               };
               _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: _timeoutMsgs[type] || 'Request timed out. Please try again.' });
               return;
@@ -6821,6 +6848,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             } else if (job.status === 'failed') {
               clearInterval(iv);
               _pendingJobs.delete(jobId);
+              if (type === 'reckoning_v2_start') {
+                var _jobFailureRecovered =
+                  await _recoverDurableReckoningUiFromServer(job.error);
+                if (_jobFailureRecovered) return;
+              }
               _simulateWsMsg('job_failed', { job_id: jobId, type: type, error: job.error || 'unknown error' });
             }
           } catch (_) {}
@@ -14363,10 +14395,54 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         _bindAdaptiveUtilityButtons();
       }
 
-      async function _pollAdaptiveReckoningReadiness(reckoningId, timeoutMs = 10 * 60 * 1000) {
+      async function _recoverDurableReckoningUiFromServer(fallbackError = null) {
+        try {
+          const active = await apiRequest("/brain/reckoning/active");
+          if (!active || active.status === "none") return false;
+
+          const isAdaptiveV2 =
+            Number(active.engine_version || active.engineVersion || 1) === 2 ||
+            active.adaptive === true;
+          if (!isAdaptiveV2) return false;
+
+          AppState.reckoning = active;
+
+          if (active.status === "in_progress" && active.exam_session_id) {
+            const state = await api.getAdaptiveReckoningState(active.exam_session_id);
+            await _openAdaptiveReckoningState(state, { announce: true });
+            return true;
+          }
+
+          if (active.generation_status === "pending") {
+            _hideGenBanner();
+            _renderAdaptivePreparing(active);
+            _pollAdaptiveReckoningReadiness(active.id);
+            return true;
+          }
+
+          if (active.generation_status === "error") {
+            return false;
+          }
+        } catch (error) {
+          console.warn(
+            "[KIWI] Durable Reckoning state reconciliation unavailable:",
+            error?.message || fallbackError || error
+          );
+        }
+        return false;
+      }
+
+      async function _pollAdaptiveReckoningReadiness(reckoningId, timeoutMs = null) {
         const token = ++_adaptivePreparationPollToken;
         const started = Date.now();
-        while (token === _adaptivePreparationPollToken && Date.now() - started < timeoutMs) {
+        let longWaitNoticeShown = false;
+
+        while (token === _adaptivePreparationPollToken) {
+          const elapsed = Date.now() - started;
+          if (Number.isFinite(Number(timeoutMs)) && elapsed >= Number(timeoutMs)) {
+            break;
+          }
+
           try {
             const active = await apiRequest("/brain/reckoning/active");
             if (!active || active.status === "none") return false;
@@ -14382,15 +14458,35 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             }
             if (active.generation_status === "error") {
               showReckoningOverlay(active, { force: true, forceLockoutOverlay: true });
-              showToast(active.generation_error || "Reckoning preparation failed. Press Begin to retry.", "error", 8000);
+              showToast(
+                active.generation_error || "Reckoning preparation stopped on a non-recoverable error.",
+                "error",
+                8000
+              );
               return false;
             }
             if (reckoningId && active.id && String(active.id) !== String(reckoningId)) return false;
           } catch (_) {}
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+
+          if (!longWaitNoticeShown && elapsed >= 10 * 60 * 1000) {
+            longWaitNoticeShown = true;
+            showToast(
+              "KIWI is still preparing The Reckoning in the background. You can refresh safely; it will continue automatically.",
+              "info",
+              8000
+            );
+          }
+
+          const pollDelay = elapsed < 10 * 60 * 1000 ? 3000 : 10000;
+          await new Promise((resolve) => setTimeout(resolve, pollDelay));
         }
-        if (token === _adaptivePreparationPollToken) {
-          showToast("Reckoning preparation is taking longer than expected. You can refresh safely and resume.", "warning", 8000);
+
+        if (token === _adaptivePreparationPollToken && timeoutMs != null) {
+          showToast(
+            "Reckoning preparation is still safe on KIWI. Refreshing will reconnect to the same preparation.",
+            "warning",
+            8000
+          );
         }
         return false;
       }
