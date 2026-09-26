@@ -481,6 +481,64 @@ function createReckoningStore({
     return rows?.[0] || null;
   }
 
+  async function savePreparationWorkItemReady(
+    reckoningId,
+    userId,
+    {
+      blueprint,
+      question,
+      generationAttempts = 0,
+      claimId,
+      leaseToken,
+    } = {}
+  ) {
+    requireQuery();
+    if (!blueprint?.id || !question || !claimId || !leaseToken) return null;
+
+    const { rows } = await query(
+      `UPDATE reckoning_preparation_items item
+       SET status = 'READY',
+           work_state = 'READY',
+           generated_question = $6::jsonb,
+           candidate_question = NULL,
+           retry_phase = NULL,
+           next_attempt_at = NULL,
+           attempt_count = item.attempt_count + $7,
+           validation_issues = '[]'::jsonb,
+           last_error = NULL,
+           last_error_code = NULL,
+           ready_at = COALESCE(item.ready_at, now()),
+           lease_token = NULL,
+           lease_expires_at = NULL,
+           updated_at = now()
+       FROM reckoning_sessions rs
+       WHERE item.reckoning_id = $1
+         AND item.user_id = $2
+         AND item.blueprint_id = $3
+         AND item.lease_token = $4
+         AND rs.id = item.reckoning_id
+         AND rs.user_id = item.user_id
+         AND rs.generation_status = 'pending'
+         AND rs.exam_session_id IS NULL
+         AND rs.preparation_claim_id = $5
+         AND rs.preparation_claim_expires_at > now()
+       RETURNING item.*`,
+      [
+        reckoningId,
+        userId,
+        String(blueprint.id),
+        leaseToken,
+        claimId,
+        json(question),
+        Math.max(0, Number(generationAttempts) || 0),
+      ]
+    );
+    if (rows?.[0]) {
+      await refreshPreparationProgress(reckoningId, userId);
+    }
+    return rows?.[0] || null;
+  }
+
   async function schedulePreparationItemRetry(
     reckoningId,
     userId,
@@ -1662,6 +1720,7 @@ function createReckoningStore({
     ensurePreparationWorkItems,
     claimPreparationWorkItem,
     savePreparationItemCandidate,
+    savePreparationWorkItemReady,
     schedulePreparationItemRetry,
     savePreparationItemAuditRejection,
     savePreparationItemTerminal,
