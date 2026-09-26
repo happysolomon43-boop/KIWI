@@ -23,6 +23,7 @@ const {
 } = require('../../../teaching/orchestrator/composition');
 const { createTransactionalTeachingMutation } = require('../../../teaching/runtime/transactional-mutation');
 const { TEACHING_EVENTS } = require('../../../teaching/events/names');
+const { createTeachingEventSubscriberRegistry } = require('../../../teaching/events/dispatcher');
 const {
   evaluateWorkspaceTransition,
   reconcileMaterialityAndStaleness,
@@ -764,4 +765,83 @@ test('D05 scheduled due-event publication can share the authoritative owner tran
     `DUE:${TEACHING_EVENTS.CLASS_START_DUE}`,
     'COMMIT',
   ]);
+});
+
+
+test('D05 durable published-event registry fails closed when no subscriber exists', async () => {
+  const registry = createTeachingEventSubscriberRegistry();
+  const event = {
+    eventId: 'evt-publish-1',
+    schemaVersion: 1,
+    eventType: TEACHING_EVENTS.COURSE_ACTIVATED,
+    eventCategory: 'committed_domain_event',
+    triggerType: 'committed_domain_event',
+    source: 'course',
+    origin: 'course',
+    aggregateType: 'course',
+    aggregateId: 'course-1',
+    aggregateVersion: 1,
+    occurredAt: '2026-09-26T18:00:00Z',
+    correlationId: 'corr-publish-1',
+    causationId: null,
+    idempotencyKey: 'course-1:activated:1',
+    payload: {},
+    auditRefs: [],
+    provenanceRefs: [],
+  };
+
+  await assert.rejects(
+    () => registry.publish(event),
+    (error) => error.code === 'TEACHING_PUBLISHED_EVENT_HANDLER_MISSING'
+  );
+});
+
+test('D05 durable published-event registry delivers only to explicitly registered subscribers', async () => {
+  const registry = createTeachingEventSubscriberRegistry();
+  const seen = [];
+
+  registry.register(TEACHING_EVENTS.COURSE_ACTIVATED, {
+    subscriberId: 'course-projection',
+    handle: async (event) => {
+      seen.push(`course:${event.aggregateId}`);
+      return { ok: true };
+    },
+  });
+  registry.register(TEACHING_EVENTS.COURSE_ACTIVATED, {
+    subscriberId: 'course-audit',
+    handle: async (event) => {
+      seen.push(`audit:${event.eventId}`);
+      return { ok: true };
+    },
+  });
+
+  const result = await registry.publish({
+    eventId: 'evt-publish-2',
+    schemaVersion: 1,
+    eventType: TEACHING_EVENTS.COURSE_ACTIVATED,
+    eventCategory: 'committed_domain_event',
+    triggerType: 'committed_domain_event',
+    source: 'course',
+    origin: 'course',
+    aggregateType: 'course',
+    aggregateId: 'course-2',
+    aggregateVersion: 1,
+    occurredAt: '2026-09-26T18:00:00Z',
+    correlationId: 'corr-publish-2',
+    causationId: null,
+    idempotencyKey: 'course-2:activated:1',
+    payload: {},
+    auditRefs: [],
+    provenanceRefs: [],
+  });
+
+  assert.deepEqual(seen, ['course:course-2', 'audit:evt-publish-2']);
+  assert.equal(result.length, 2);
+  assert.deepEqual(
+    registry.status(),
+    [{
+      eventType: TEACHING_EVENTS.COURSE_ACTIVATED,
+      subscriberIds: ['course-audit', 'course-projection'],
+    }]
+  );
 });

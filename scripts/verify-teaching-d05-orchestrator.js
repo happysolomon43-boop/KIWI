@@ -88,6 +88,16 @@ for (const file of d05JsFiles) {
   assert(!/(google-generativeai|@google\/generative-ai|openai|anthropic|gemini)/i.test(content), `${file} must not call/import a provider directly.`);
 }
 
+
+const serverEntry = read('index.js');
+for (const fragment of [
+  "createTeachingD05RuntimePlatform",
+  "createTeachingEventSubscriberRegistry",
+  "eventPublisher: (event) => teachingPublishedEvents.publish(event)",
+  "D05 runtime initialized; due-event and durable outbox workers started",
+]) assert(serverEntry.includes(fragment), `Production server must wire D05 runtime fragment: ${fragment}`);
+assert(!serverEntry.includes("const { createTeachingRuntimePlatform } = require('./teaching/runtime');"), 'Production server must not remain pinned to the D02-only runtime constructor after D05.');
+
 const combined = [
   read('teaching/orchestrator/contracts.js'),
   read('teaching/runtime/postgres-orchestration-store.js'),

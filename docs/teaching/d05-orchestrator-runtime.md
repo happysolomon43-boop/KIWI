@@ -117,6 +117,8 @@ Preparation Profiles decide which optional/review stages are justified; there is
 
 `createTeachingD05RuntimePlatform()` composes D02 runtime + D03 prompt control + D05 orchestration persistence + D04 preparation persistence + outbox delivery. It reuses the central AI execution boundary. It does not select a provider/model.
 
+Production `index.js` now boots `createTeachingD05RuntimePlatform()` rather than the D02-only constructor. It starts both the D02 due-event worker and the D05 durable event-outbox worker. Outbox delivery goes through a fail-closed `createTeachingEventSubscriberRegistry()`; an event with no registered owner/subscriber remains durable and retryable instead of being silently marked published.
+
 D05 does not add a Teaching web mutation endpoint. Future domain deliveries will expose only their own authenticated owner surfaces.
 
 ## Recovery
