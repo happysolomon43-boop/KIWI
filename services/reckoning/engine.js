@@ -12,6 +12,72 @@ const { createScoringEngine } = require('./scoring');
 const { createLearningEffectsEngine } = require('./learning-effects');
 const { createPreparationService } = require('./preparation');
 const { createStateMachine } = require('./state-machine');
+const { AI_ERROR_CODES } = require('../ai/errors');
+
+const AUTO_RECOVERABLE_PREPARATION_CODES = new Set([
+  AI_ERROR_CODES.RATE_LIMIT_RPM,
+  AI_ERROR_CODES.RATE_LIMIT_TPM,
+  AI_ERROR_CODES.RATE_LIMIT_UNKNOWN,
+  AI_ERROR_CODES.TIMEOUT,
+  AI_ERROR_CODES.TRANSIENT,
+  AI_ERROR_CODES.PROVIDER_OVERLOADED,
+  AI_ERROR_CODES.ORCHESTRATOR_BUSY,
+  AI_ERROR_CODES.QUEUE_TIMEOUT,
+  AI_ERROR_CODES.NETWORK,
+  AI_ERROR_CODES.EMPTY_RESPONSE,
+]);
+
+function isAutoRecoverablePreparationError(error) {
+  if (!error || error.retryable === false) return false;
+  const code = error.code || error.cause?.code || null;
+  return AUTO_RECOVERABLE_PREPARATION_CODES.has(code);
+}
+
+function collectRetryAfterMs(error) {
+  const values = [];
+  const seen = new Set();
+  let current = error;
+  let depth = 0;
+
+  while (current && depth < 5 && !seen.has(current)) {
+    seen.add(current);
+    const direct = Number(current.retryAfterMs);
+    if (Number.isFinite(direct) && direct > 0) values.push(direct);
+
+    const blocked = current.details?.providerBlockedModels;
+    if (Array.isArray(blocked)) {
+      for (const entry of blocked) {
+        const value = Number(entry?.retryAfterMs);
+        if (Number.isFinite(value) && value > 0) values.push(value);
+      }
+    }
+
+    current = current.cause;
+    depth += 1;
+  }
+
+  if (!values.length) return null;
+  return values.sort((a, b) => a - b)[0];
+}
+
+function preparationRecoveryDelayMs(error, round, config) {
+  const minDelay = Math.max(
+    250,
+    Number(config?.preparation?.availabilityRecoveryMinDelayMs) || 1000
+  );
+  const maxDelay = Math.max(
+    minDelay,
+    Number(config?.preparation?.availabilityRecoveryMaxDelayMs) || 20000
+  );
+  const providerDelay = collectRetryAfterMs(error);
+
+  if (Number.isFinite(providerDelay) && providerDelay > 0) {
+    return Math.min(maxDelay, Math.max(minDelay, providerDelay + 250));
+  }
+
+  const exponential = minDelay * (2 ** Math.max(0, Number(round) || 0));
+  return Math.min(maxDelay, exponential);
+}
 
 function field(row, camel, snake, fallback = null) {
   if (row?.[camel] !== undefined) return row[camel];
@@ -238,6 +304,16 @@ function createReckoningEngine(options = {}) {
   const clock = options.clock || (() => new Date());
   const setIntervalImpl = options.setIntervalImpl || setInterval;
   const clearIntervalImpl = options.clearIntervalImpl || clearInterval;
+  const sleepImpl = options.sleepImpl || ((ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms))
+  );
+
+  function nowMs() {
+    const value = clock();
+    if (value instanceof Date) return value.getTime();
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : Date.now();
+  }
 
   async function buildState(activeStore, {
     examSessionId,
@@ -481,39 +557,123 @@ function createReckoningEngine(options = {}) {
           totalCount: Number(manifestRow.total_count) || 0,
           createdAt: manifestRow.created_at || null,
         });
-        const preparedItems = await store.getPreparationItems(claimed.id, userId);
+        const recoveryWindowMs = Math.max(
+          0,
+          Number(config.preparation.availabilityRecoveryWindowSeconds || 0) * 1000
+        );
+        const maxRecoveryRounds = Math.max(
+          0,
+          Number(config.preparation.availabilityRecoveryMaxRounds) || 0
+        );
+        let availabilityRecoveryStartedAt = null;
+        let availabilityRecoveryRound = 0;
 
-        prepared = await preparationService.prepare({
-          manifest,
-          preparedItems,
-          generationGroupId: manifest.generationGroupId,
-          shouldAbort: () => preparationClaimLost,
-          onQuestionReady: async (item) => {
+        while (true) {
+          const preparedItems = await store.getPreparationItems(claimed.id, userId);
+
+          try {
+            prepared = await preparationService.prepare({
+              manifest,
+              preparedItems,
+              generationGroupId: manifest.generationGroupId,
+              shouldAbort: () => preparationClaimLost,
+              onQuestionReady: async (item) => {
+                if (!(await stillOwnPreparation())) {
+                  throw preparationClaimLostError();
+                }
+                const saved = await store.savePreparationItemReady(
+                  claimed.id,
+                  userId,
+                  { ...item, claimId }
+                );
+                if (!saved) {
+                  preparationClaimLost = true;
+                  throw preparationClaimLostError();
+                }
+                return saved;
+              },
+              onQuestionFailure: async (item) => {
+                if (!(await stillOwnPreparation())) return null;
+                const saved = await store.savePreparationItemFailure(
+                  claimed.id,
+                  userId,
+                  { ...item, claimId }
+                );
+                if (!saved) preparationClaimLost = true;
+                return saved;
+              },
+            });
+            break;
+          } catch (error) {
+            if (!isAutoRecoverablePreparationError(error)) throw error;
             if (!(await stillOwnPreparation())) {
               throw preparationClaimLostError();
             }
-            const saved = await store.savePreparationItemReady(
-              claimed.id,
-              userId,
-              { ...item, claimId }
+
+            const currentTime = nowMs();
+            if (availabilityRecoveryStartedAt == null) {
+              availabilityRecoveryStartedAt = currentTime;
+            }
+            const elapsedMs = Math.max(
+              0,
+              currentTime - availabilityRecoveryStartedAt
             );
-            if (!saved) {
-              preparationClaimLost = true;
+            const recoveryWindowRemainingMs = Math.max(
+              0,
+              recoveryWindowMs - elapsedMs
+            );
+
+            if (
+              recoveryWindowMs <= 0 ||
+              availabilityRecoveryRound >= maxRecoveryRounds ||
+              recoveryWindowRemainingMs <= 0
+            ) {
+              error.reckoningRecovery = Object.freeze({
+                autoRecoveryExhausted: true,
+                recoveryRounds: availabilityRecoveryRound,
+                elapsedMs,
+                recoveryWindowMs,
+              });
+              throw error;
+            }
+
+            const desiredDelayMs = preparationRecoveryDelayMs(
+              error,
+              availabilityRecoveryRound,
+              config
+            );
+            const delayMs = Math.max(
+              1,
+              Math.min(desiredDelayMs, recoveryWindowRemainingMs)
+            );
+
+            // Keep the durable ownership lease alive while the provider/model
+            // circuit cools down. This keeps the job in PREPARING rather than
+            // converting a short outage into a learner-visible terminal error.
+            if (typeof store.touchPreparation === 'function') {
+              const heartbeat = await store.touchPreparation(
+                reckoningId,
+                userId,
+                claimId,
+                config.preparation.claimStaleMinutes
+              );
+              if (!heartbeat && enforcePreparationClaim) {
+                preparationClaimLost = true;
+                throw preparationClaimLostError();
+              }
+            }
+
+            availabilityRecoveryRound += 1;
+            await sleepImpl(delayMs);
+
+            if (!(await stillOwnPreparation())) {
               throw preparationClaimLostError();
             }
-            return saved;
-          },
-          onQuestionFailure: async (item) => {
-            if (!(await stillOwnPreparation())) return null;
-            const saved = await store.savePreparationItemFailure(
-              claimed.id,
-              userId,
-              { ...item, claimId }
-            );
-            if (!saved) preparationClaimLost = true;
-            return saved;
-          },
-        });
+
+            // Loop back through the durable item store. READY questions are
+            // reused and only unfinished/ERROR blueprints are regenerated.
+          }
+        }
       } else {
         // Compatibility path for isolated unit-test doubles and legacy injected
         // preparation services. Production uses the durable manifest path above.
@@ -1557,6 +1717,10 @@ function createReckoningEngine(options = {}) {
 }
 
 module.exports = {
+  AUTO_RECOVERABLE_PREPARATION_CODES,
+  isAutoRecoverablePreparationError,
+  collectRetryAfterMs,
+  preparationRecoveryDelayMs,
   field,
   evidenceConceptLabel,
   buildCheckpoint,
