@@ -73,6 +73,9 @@ function fail(message, code = 'TEACHING_PROMPT_CONTRACT_INVALID') {
 
 function freezeDeep(value) {
   if (value && typeof value === 'object') {
+    // Preserve the catalog's non-enumerable provenance brand on an already
+    // immutable frozen binding when assembling an invocation.
+    if (Object.isFrozen(value)) return value;
     if (Array.isArray(value)) return Object.freeze(value.map(freezeDeep));
     const result = {};
     for (const [key, item] of Object.entries(value)) result[key] = freezeDeep(item);

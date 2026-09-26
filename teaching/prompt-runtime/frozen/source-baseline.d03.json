@@ -37,15 +37,11 @@
     "version": "1.5",
     "sha256": "9bd1efae6160248c39c2bde73f942b040cef6f2a71d8c2c4c65bd67f0500a1db"
   },
-  "note": "D03 intentionally uses the mounted Authority v1.2_PPL and Phase-15 Prompt Manifest/Pack v1.3 per explicit implementation instruction. The D03 prompt-body runtime closure packages the exact manifest-verified 19 family bodies without rewriting them. This does not qualify any Teaching AI route; D30 remains mandatory.",
+  "note": "D03 uses the manifest-verified v1.3 prompt bodies as 19 individual immutable files. A subsequent corrective storage refinement replaces the encoded bundle without changing prompt bytes or qualifying routes.",
   "runtime_prompt_body_bundle": {
-    "format": "brotli_json_base64_chunks",
-    "bundle_version": "1.0",
+    "format": "individual_utf8_files",
     "family_count": 19,
-    "base64_length": 138576,
-    "chunk_count": 34,
-    "compressed_sha256": "cda3c9959aade4ee187827708096cb89942d10b209bcefdfeae36b37115ba4ff",
-    "decompressed_payload_sha256": "ee68f82a48efb038134371cb33aa34e60986a177661be401d2386c54596d2fd1",
+    "directory": "teaching/prompt-runtime/frozen/v1.3",
     "source_prompt_pack_sha256": "173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae"
   }
 }

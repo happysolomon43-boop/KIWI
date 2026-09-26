@@ -56,6 +56,7 @@ function createTeachingRuntimePlatform({
       await executionTelemetry.assertReady();
       ready = true;
       lastInitializationError = null;
+      logger?.info?.('[KIWI Teaching] Frozen prompt runtime verified: 19/19 families, manifest v1.3');
       return true;
     } catch (error) {
       ready = false;

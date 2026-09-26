@@ -11,15 +11,13 @@ const {
 const {
   TEACHING_CONSTITUTION,
 } = require('./constitution');
+const { assertPromptBodyStoreReady } = require('./prompt-body-store');
 const {
   promptCatalogStatus,
   listPromptFamilies,
   createFrozenPromptBinding,
-  assertPromptBodyBundleReady,
+  getPromptBody,
 } = require('./prompt-catalog');
-const {
-  composeTeachingModelContent,
-} = require('./prompt-composer');
 const {
   ROUTE_MANIFEST_VERSION,
   ROUTE_MANIFEST,
@@ -44,14 +42,9 @@ const {
 function createTeachingPromptControlPlane() {
   function assertReady() {
     const registry = assertRegistryIntegrity();
-    assertPromptBodyBundleReady();
+    assertPromptBodyStoreReady();
     const prompts = promptCatalogStatus();
-    if (
-      prompts.familyCount !== 19 ||
-      prompts.modelEligibleCapabilityCount !== 147 ||
-      prompts.promptBodyFamilyCount !== 19 ||
-      prompts.promptBodiesRuntimeAvailable !== true
-    ) {
+    if (prompts.familyCount !== 19 || prompts.modelEligibleCapabilityCount !== 147) {
       const error = new Error('Teaching D03 prompt catalog census is invalid.');
       error.code = 'TEACHING_D03_PROMPT_CATALOG_INVALID';
       throw error;
@@ -79,8 +72,7 @@ function createTeachingPromptControlPlane() {
       promptPackSha256: prompts.combinedPackSha256,
       promptFamilyCount: prompts.familyCount,
       promptBodiesRuntimeAvailable: prompts.promptBodiesRuntimeAvailable,
-      promptBodyFamilyCount: prompts.promptBodyFamilyCount,
-      promptBodyBundleSha256: prompts.promptBodyBundleSha256,
+      promptBodiesVerified: prompts.promptBodiesVerified,
       routeManifestVersion: ROUTE_MANIFEST_VERSION,
       routeQualification: 'UNQUALIFIED',
       productionModelExecutionAuthorized: false,
@@ -96,8 +88,8 @@ function createTeachingPromptControlPlane() {
     listPromptFamilies,
     getCapabilityContract,
     createFrozenPromptBinding,
+    getPromptBody,
     createInvocation: createStructuralPromptInvocation,
-    composeModelContent: composeTeachingModelContent,
     resolveRouteControl,
     assertRouteQualified,
     validatePreparationMetadata,

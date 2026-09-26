@@ -1,4 +1,5 @@
 'use strict';
+const { composeTeachingModelContent } = require('../prompt-runtime/prompt-composer');
 
 const { authorityAtLeast } = require('../ai/contracts');
 
@@ -8,12 +9,8 @@ function createTeachingAIAdapter({
   resolveCentralTaskId = null,
   assertRouteExecutable = null,
 } = {}) {
-  if (
-    !promptControl ||
-    typeof promptControl.createInvocation !== 'function' ||
-    typeof promptControl.composeModelContent !== 'function'
-  ) {
-    throw new TypeError('Teaching AI adapter requires the D03 prompt control plane with frozen prompt-body composition.');
+  if (!promptControl || typeof promptControl.createInvocation !== 'function') {
+    throw new TypeError('Teaching AI adapter requires the D03 prompt control plane.');
   }
   if (!aiBoundary || typeof aiBoundary.execute !== 'function') {
     throw new TypeError('Teaching AI adapter requires the D02 central AI execution boundary.');
@@ -78,12 +75,6 @@ function createTeachingAIAdapter({
       throw error;
     }
 
-    const boundedAcademicInput = Object.freeze({ ...academicInput });
-    const modelContent = promptControl.composeModelContent({
-      invocation,
-      academicInput: boundedAcademicInput,
-    });
-
     const effectiveChecks = [...deterministicChecks];
     if (typeof provenanceValidator === 'function') {
       effectiveChecks.push(Object.freeze({
@@ -101,9 +92,7 @@ function createTeachingAIAdapter({
     return aiBoundary.execute({
       taskId: String(taskId).trim(),
       request: Object.freeze({
-        content: modelContent,
-        teachingInvocation: invocation,
-        academicInput: boundedAcademicInput,
+        content: composeTeachingModelContent({ invocation, academicInput }),
       }),
       responsibilityKey: invocation.capability.id,
       capabilityId: invocation.capability.id,
