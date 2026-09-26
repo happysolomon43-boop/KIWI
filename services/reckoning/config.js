@@ -106,6 +106,12 @@ const DELIVERY_E_RECKONING_CONFIG = Object.freeze({
     availabilityRecoveryMaxRounds: 8,
     availabilityRecoveryMinDelayMs: 1000,
     availabilityRecoveryMaxDelayMs: 20000,
+    durableWorkerConcurrency: 2,
+    durableWorkerPollMaxMs: 20000,
+    durableItemLeaseSeconds: 240,
+    durableRetryBaseMs: 5000,
+    durableRetryMaxMs: 300000,
+    semanticRegenerationAttempts: 3,
   }),
   validation: Object.freeze({
     maxStemSimilarity: 0.82,
