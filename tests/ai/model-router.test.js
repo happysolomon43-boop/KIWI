@@ -40,9 +40,21 @@ test('VIP starts one stable Flash generation below VVIP primary', () => {
   ]);
 });
 
-test('degradable VIP tasks append Flash-Lite fallbacks after Flash models', () => {
+test('confirmed background tasks with a Flash-Lite floor stay Lite-first', () => {
   const router = createModelRouter();
-  const ids = router.resolveCandidates('MORNING_BRIEF').map((entry) => entry.modelId);
+
+  for (const taskId of ['MORNING_BRIEF', 'STUDY_TASK_GENERATION']) {
+    const ids = router.resolveCandidates(taskId).map((entry) => entry.modelId);
+    assert.deepEqual(ids, [
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+    ], taskId);
+  }
+});
+
+test('interactive degradable VIP tasks still preserve their Flash-first policy', () => {
+  const router = createModelRouter();
+  const ids = router.resolveCandidates('DAILY_INVITATIONS').map((entry) => entry.modelId);
 
   assert.deepEqual(ids, [
     'gemini-3.7-flash',
