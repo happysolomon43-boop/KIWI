@@ -214,8 +214,14 @@ function resolveFamilyConcurrency(snapshot, config) {
         (route) => (Number(route.inFlight) || 0) >= maxRouteInFlight
       ).length
   );
-  const routeBusyRatio = routeRows.length > 0
-    ? busyRouteCount / routeRows.length
+  const eligibleRouteCount = Math.max(
+    routeRows.length,
+    Number(snapshot.eligibleRouteCount) ||
+      Number(routeScheduler.eligibleRouteCount) ||
+      0
+  );
+  const routeBusyRatio = eligibleRouteCount > 0
+    ? busyRouteCount / eligibleRouteCount
     : 0;
   const criticalQueued = Math.max(
     0,
