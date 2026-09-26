@@ -103,6 +103,20 @@ test('D05 runtime schema preserves RLS and narrow service boundaries', { skip: s
       { tablename: 'event_outbox', cmd: 'SELECT' },
     ]);
 
+    const { rows: orchestrationServicePolicies } = await pool.query(`
+      select cmd
+        from pg_policies
+       where schemaname='teaching_runtime'
+         and tablename='orchestration_executions'
+         and 'service_role'=any(roles)
+       order by cmd
+    `);
+    assert.deepEqual(orchestrationServicePolicies, [
+      { cmd: 'INSERT' },
+      { cmd: 'SELECT' },
+      { cmd: 'UPDATE' },
+    ]);
+
     const { rows: protectedLeak } = await pool.query(`
       select grantee,privilege_type
         from information_schema.role_table_grants
