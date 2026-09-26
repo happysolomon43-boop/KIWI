@@ -18,6 +18,7 @@ Use forward repair. Do not delete or rewrite D04 academic history to recover an 
 Only after workers are stopped and a backup/export exists:
 
 - revoke the D05 `teaching_domain_service` policies/grants on `teaching_runtime.event_outbox` and D02 `due_events`;
+- drop the `teaching_orchestration_service_*` RLS policies if rolling back the D05 service-policy hardening;
 - drop `teaching_runtime.event_outbox`;
 - drop `teaching_runtime.orchestration_executions`.
 
