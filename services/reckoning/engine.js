@@ -576,6 +576,7 @@ function createReckoningEngine(options = {}) {
               manifest,
               preparedItems,
               generationGroupId: manifest.generationGroupId,
+              operationBudgetId: `reckoning:${claimed.id}:claim:${claimId}`,
               shouldAbort: () => preparationClaimLost,
               onQuestionReady: async (item) => {
                 if (!(await stillOwnPreparation())) {
@@ -684,6 +685,7 @@ function createReckoningEngine(options = {}) {
         manifest = Object.freeze({
           deckIds: Object.freeze([...(input?.deckIds || [])]),
           generationGroupId: claimed.id,
+          operationBudgetId: `reckoning:${claimed.id}:claim:${claimId}`,
         });
         prepared = await preparationService.prepare({
           ...input,
