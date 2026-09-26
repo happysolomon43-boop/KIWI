@@ -567,9 +567,19 @@ function createReckoningEngine(options = {}) {
         );
         let availabilityRecoveryStartedAt = null;
         let availabilityRecoveryRound = 0;
+        let lastObservedReadyCount = null;
 
         while (true) {
           const preparedItems = await store.getPreparationItems(claimed.id, userId);
+          const readyCountBeforeAttempt = preparedItems.filter(
+            (item) => item?.status === 'READY'
+          ).length;
+          if (
+            lastObservedReadyCount == null ||
+            readyCountBeforeAttempt > lastObservedReadyCount
+          ) {
+            lastObservedReadyCount = readyCountBeforeAttempt;
+          }
 
           try {
             prepared = await preparationService.prepare({
@@ -612,9 +622,31 @@ function createReckoningEngine(options = {}) {
             }
 
             const currentTime = nowMs();
-            if (availabilityRecoveryStartedAt == null) {
+            const refreshedItems = await store.getPreparationItems(
+              claimed.id,
+              userId
+            );
+            const readyCountAfterAttempt = refreshedItems.filter(
+              (item) => item?.status === 'READY'
+            ).length;
+            const madePreparationProgress =
+              readyCountAfterAttempt > readyCountBeforeAttempt ||
+              (
+                lastObservedReadyCount != null &&
+                readyCountAfterAttempt > lastObservedReadyCount
+              );
+
+            if (madePreparationProgress) {
+              // A newly persisted validated question means the system is still
+              // making forward progress. Start a fresh transient-outage episode
+              // from this point instead of aging the very first 503 forever.
+              availabilityRecoveryStartedAt = currentTime;
+              availabilityRecoveryRound = 0;
+              lastObservedReadyCount = readyCountAfterAttempt;
+            } else if (availabilityRecoveryStartedAt == null) {
               availabilityRecoveryStartedAt = currentTime;
             }
+
             const elapsedMs = Math.max(
               0,
               currentTime - availabilityRecoveryStartedAt
@@ -634,6 +666,9 @@ function createReckoningEngine(options = {}) {
                 recoveryRounds: availabilityRecoveryRound,
                 elapsedMs,
                 recoveryWindowMs,
+                readyCountBeforeAttempt,
+                readyCountAfterAttempt,
+                madePreparationProgress,
               });
               throw error;
             }
