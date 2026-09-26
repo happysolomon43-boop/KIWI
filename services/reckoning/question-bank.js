@@ -176,6 +176,8 @@ function createQuestionBank({
         blueprint,
         sourceSnapshot: blueprint.sourceSnapshot,
         previousQuestion,
+        generationGroupId,
+        operationBudgetId,
       });
       if (!semantics.valid) {
         const error = new ReckoningContractError(
