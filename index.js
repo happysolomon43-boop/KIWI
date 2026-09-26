@@ -118,12 +118,34 @@ const adaptiveQuestionBank = createQuestionBank({
   aiRun: (taskId, input, context) => ai.run(taskId, input, context),
   validator: adaptiveQuestionValidator,
 });
+function getReckoningGenerationConcurrencyState() {
+  const traffic = _aiRuntime.trafficController.snapshot();
+  const routeScheduler = _aiRuntime.routeScheduler.snapshot();
+  const maxInFlightPerRoute = Math.max(
+    1,
+    Number(routeScheduler.maxInFlightPerRoute) || 1
+  );
+  const busyRouteCount = (routeScheduler.routes || []).filter(
+    (route) => (Number(route.inFlight) || 0) >= maxInFlightPerRoute
+  ).length;
+  const pacedModelCount = (routeScheduler.models || []).filter(
+    (model) => (Number(model.waitMs) || 0) > 0
+  ).length;
+
+  return Object.freeze({
+    ...traffic,
+    routeScheduler,
+    busyRouteCount,
+    pacedModelCount,
+  });
+}
+
 const adaptivePreparationService = createPreparationService({
   questionBank: adaptiveQuestionBank,
   randomUUID,
-  // Reckoning family generation follows the orchestrator's live backpressure
-  // signal. Individual AI calls still pass through central orchestrator admission.
-  getConcurrencyState: () => _aiRuntime.trafficController.snapshot(),
+  // Reckoning family generation now reacts to both global admission pressure
+  // and Delivery A's route-level pacing/leases.
+  getConcurrencyState: getReckoningGenerationConcurrencyState,
 });
 
 async function buildAdaptivePreparationInput({ session, userId }) {
@@ -19630,6 +19652,9 @@ brainRouter.post('/reckoning/start', async (req, res) => {
     }
 
     if (active.generation_status === 'pending') {
+      const leaseExpiry = active.preparation_claim_expires_at
+        ? new Date(active.preparation_claim_expires_at).getTime()
+        : NaN;
       const updatedAt = active.updated_at
         ? new Date(active.updated_at).getTime()
         : NaN;
@@ -19638,11 +19663,15 @@ brainRouter.post('/reckoning/start', async (req, res) => {
           1,
           Number(DELIVERY_E_RECKONING_CONFIG.preparation.claimStaleMinutes) || 5
         ) * 60 * 1000;
-      const heartbeatIsFresh =
+      const explicitLeaseFresh =
+        Number.isFinite(leaseExpiry) &&
+        leaseExpiry > Date.now();
+      const legacyHeartbeatFresh =
+        !Number.isFinite(leaseExpiry) &&
         Number.isFinite(updatedAt) &&
         Date.now() - updatedAt < staleAfterMs;
 
-      if (heartbeatIsFresh) {
+      if (explicitLeaseFresh || legacyHeartbeatFresh) {
         return res.status(202).json({
           status: 'preparing',
           reckoning_id: active.id,
@@ -19653,6 +19682,9 @@ brainRouter.post('/reckoning/start', async (req, res) => {
       console.warn('[KIWI] Reclaiming stale Reckoning V2 preparation', {
         reckoningId: active.id,
         userId: req.user.id,
+        claimId: active.preparation_claim_id || null,
+        claimExpiresAt: active.preparation_claim_expires_at || null,
+        heartbeatAt: active.preparation_heartbeat_at || null,
         updatedAt: active.updated_at || null,
       });
     }
