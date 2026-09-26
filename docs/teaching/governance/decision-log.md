@@ -97,3 +97,26 @@ Versioned implementation record:
 - `docs/teaching/change-control/KIWI_Teaching_D03_Prompt_Body_Runtime_Closure_v1.0.md`
 
 Migration impact: none.
+
+
+## COR-D03-001 — Complete exact frozen prompt-body runtime import
+
+Date: 2026-09-26  
+Status: CLASS A IMPLEMENTATION DEFECT CORRECTED  
+Change class: Class A — implementation defect/local realization  
+Affected accepted delivery: D03, with D05 execution-adapter integration hardening  
+TCH impact: TCH-0795, TCH-0796, TCH-0798, TCH-0799, TCH-0802, TCH-0804, TCH-0807, TCH-0808, TCH-0812, TCH-0816; no task reassignment
+
+Post-D05 verification found that the accepted D03 runtime had correctly registered the user-authorized Prompt Manifest/Pack v1.3 family identities, versions, source filenames and SHA-256 values, but had not made the exact frozen prompt-family prose runtime-resolvable. The D05 adapter consequently supplied Teaching invocation metadata to the central KIWI AI boundary without a composed `request.content` payload.
+
+The correction imports the exact 19 manifest-frozen prompt bodies without rewriting them, stores them in a hash-locked runtime bundle, revalidates the compressed bundle, decompressed payload and every individual family SHA-256, exposes body resolution through the D03 prompt control plane, composes the unmodified family body with the structural Teaching contract and bounded academic-input data, and sends that content through the existing D05 adapter to KIWI's central AI Orchestrator.
+
+This correction does not change a frozen TPF prompt, family boundary, capability authority ceiling, authoritative owner, output contract, route qualification, provider/model routing, PPL semantics, task scope, delivery assignment, or academic state/schema. All 22 T0 capabilities remain promptless. All Teaching AI/PPL routes remain UNQUALIFIED pending D30 and production release remains held to D31.
+
+Source identities retained:
+- Prompt Manifest v1.3 SHA-256: `4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce`
+- Combined Prompt Pack v1.3 SHA-256: `173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae`
+- Runtime compressed body-bundle SHA-256: `cda3c9959aade4ee187827708096cb89942d10b209bcefdfeae36b37115ba4ff`
+- Runtime decompressed body-payload SHA-256: `ee68f82a48efb038134371cb33aa34e60986a177661be401d2386c54596d2fd1`
+
+Migration impact: none.
