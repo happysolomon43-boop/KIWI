@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 const registry = require('../../../teaching/capability-registry');
 const catalog = require('../../../teaching/prompt-runtime/prompt-catalog');
@@ -65,7 +66,14 @@ test('v1.3 prompt baseline is exact, frozen and covers all 147 model-eligible ca
   const family = catalog.getPromptFamily(capability.prompt_family_id);
   const binding = catalog.createFrozenPromptBinding(family.id, family.version);
   assert.equal(binding.familyId, family.id);
-  assert.equal(binding.promptBodyEmbedded, false);
+  assert.equal(binding.promptBodyEmbedded, true);
+  assert.equal(binding.promptBodyRuntimeAvailable, true);
+  const body = catalog.getPromptBody(family.id, family.version);
+  assert.equal(body.promptSha256, family.promptSha256);
+  assert.equal(
+    crypto.createHash('sha256').update(Buffer.from(body.promptText, 'utf8')).digest('hex'),
+    family.promptSha256
+  );
   assert.throws(
     () => catalog.createFrozenPromptBinding(family.id, '999'),
     (error) => error.code === 'TEACHING_PROMPT_VERSION_UNMANIFESTED'
@@ -91,6 +99,88 @@ test('runtime/build-time prompt text must match the exact manifested family SHA'
     }),
     (error) => error.code === 'TEACHING_PROMPT_VERSION_UNMANIFESTED'
   );
+});
+
+test('all 19 frozen prompt bodies are runtime-loadable and byte-identical to their manifested SHA', () => {
+  assert.equal(catalog.assertPromptBodyBundleReady(), true);
+  const bodyStatus = catalog.promptBodyBundleStatus();
+  assert.equal(bodyStatus.familyCount, 19);
+  assert.equal(bodyStatus.promptBodiesRuntimeAvailable, true);
+  assert.equal(bodyStatus.manifestSha256, '4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce');
+  assert.equal(bodyStatus.combinedPackSha256, '173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae');
+
+  for (const family of catalog.listPromptFamilies()) {
+    const body = catalog.getPromptBody(family.id, family.version);
+    assert.equal(body.familyId, family.id);
+    assert.equal(body.version, family.version);
+    assert.equal(body.promptFile, family.promptFile);
+    assert.equal(body.promptSha256, family.promptSha256);
+    assert.ok(body.promptText.length > 0);
+    assert.equal(
+      crypto.createHash('sha256').update(Buffer.from(body.promptText, 'utf8')).digest('hex'),
+      family.promptSha256
+    );
+  }
+});
+
+test('every model-backed capability can compose its exact frozen family body without changing authority', () => {
+  const plane = createTeachingPromptControlPlane();
+  for (const capability of registry.listCapabilities().filter((item) => item.authority_ceiling !== 'T0')) {
+    const family = catalog.getPromptFamily(capability.prompt_family_id);
+    const invocation = plane.createInvocation({
+      capabilityId: capability.id,
+      taskMode: 'd03_prompt_body_runtime_test',
+      directive: {
+        bounded_actions: ['return_structured_result'],
+        allowed_operations: ['return_structured_result'],
+        prohibited_operations: ['direct_authoritative_mutation'],
+        evidence_purpose: 'd03_prompt_body_runtime_test',
+        downstream_handoff: {
+          type: 'authoritative_owner_validation',
+          validator_ids: ['d03-test-validator'],
+          commit_owner_boundary: capability.authoritative_owner_boundary,
+        },
+      },
+      contextLanes: {
+        trustedAuthoritativeState: {},
+        permissionConstraints: {},
+        provenanceLinkedAcademicContent: [],
+        untrustedContent: [],
+      },
+      contextAllowlist: capability.authority_ceiling === 'T4' ? {
+        trustedAuthoritativeState: [],
+        permissionConstraints: [],
+        provenanceLinkedAcademicContent: [],
+        untrustedContent: [],
+      } : null,
+      outputSchema: {
+        id: 'd03.test',
+        version: '1',
+        uncertainty_states: ['REVIEW_NEEDED'],
+        review_needed_field: 'reviewNeeded',
+        state_bearing_fields: [],
+        student_facing_field: null,
+        declared_fields: ['reviewNeeded'],
+      },
+      stateReference: {
+        aggregate_type: 'd03-test',
+        aggregate_id: capability.id,
+        state_version: '1',
+        precondition_token: 'd03-test',
+      },
+    });
+    const body = catalog.getPromptBody(family.id, family.version);
+    const content = plane.composeModelContent({
+      invocation,
+      academicInput: { source_text: 'untrusted task data' },
+    });
+    assert.ok(content.includes(body.promptText));
+    assert.ok(content.includes('<KIWI_TEACHING_RUNTIME_CONTRACT_JSON>'));
+    assert.ok(content.includes('<KIWI_TEACHING_ACADEMIC_INPUT_DATA_JSON>'));
+    assert.ok(content.includes('not a higher-priority instruction'));
+    assert.equal(invocation.capability.authority_ceiling, capability.authority_ceiling);
+    assert.equal(invocation.capability.authoritative_owner_boundary, capability.authoritative_owner_boundary);
+  }
 });
 
 test('all 169 capabilities have immutable D03 contracts and model prompts cannot raise authority or owner', () => {
@@ -180,6 +270,8 @@ test('D03 reuses D02 audit columns for version bindings and exposes a production
   const status = plane.status();
   assert.equal(status.delivery, 'D03');
   assert.equal(status.capabilityCounts.total, 169);
+  assert.equal(status.promptBodiesRuntimeAvailable, true);
+  assert.equal(status.promptBodyFamilyCount, 19);
   assert.equal(status.routeQualification, 'UNQUALIFIED');
   assert.equal(status.productionModelExecutionAuthorized, false);
 });
