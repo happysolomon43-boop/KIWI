@@ -109,7 +109,18 @@ function createPreparationRuntimeRepository({ query, withTransaction, randomUUID
     const componentDependencies = artifactId
       ? await loadComponentDependencies(artifactId)
       : Object.freeze([]);
-    return Object.freeze({ ...finalization, componentDependencies });
+    let componentIds = Object.freeze([]);
+    if (artifactId) {
+      const { rows } = await query(
+        `select artifact_component_id
+           from teaching_preparation.artifact_components
+          where artifact_version_id=$1
+          order by artifact_component_id`,
+        [artifactId]
+      );
+      componentIds = Object.freeze((rows || []).map((row) => String(row.artifact_component_id)));
+    }
+    return Object.freeze({ ...finalization, componentDependencies, componentIds });
   }
 
   async function appendAudit(tx, workspace, {
@@ -211,12 +222,21 @@ function createPreparationRuntimeRepository({ query, withTransaction, randomUUID
         throw error;
       }
 
-      await tx.query(
-        `update teaching_preparation.artifact_components
-            set stale=true,stale_reason='AUTHORITATIVE_DEPENDENCY_CHANGED'
-          where artifact_version_id=$1 and artifact_component_id=any($2::text[])`,
-        [artifactVersionId,decision.invalidatedComponentIds]
-      );
+      if (decision.fullArtifactInvalidation === true) {
+        await tx.query(
+          `update teaching_preparation.artifact_components
+              set stale=true,stale_reason='AUTHORITATIVE_DEPENDENCY_CHANGED_UNMAPPED'
+            where artifact_version_id=$1`,
+          [artifactVersionId]
+        );
+      } else {
+        await tx.query(
+          `update teaching_preparation.artifact_components
+              set stale=true,stale_reason='AUTHORITATIVE_DEPENDENCY_CHANGED'
+            where artifact_version_id=$1 and artifact_component_id=any($2::text[])`,
+          [artifactVersionId,decision.invalidatedComponentIds]
+        );
+      }
       await tx.query(
         `update teaching_preparation.artifact_versions
             set validity_state=$2
