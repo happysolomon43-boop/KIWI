@@ -123,7 +123,11 @@ function createTeachingD05RuntimePlatform({
     maxAttempts: parseBounded(env.TEACHING_OUTBOX_MAX_ATTEMPTS, 8, 1, 20),
     retryBaseMs: parseBounded(env.TEACHING_OUTBOX_RETRY_BASE_MS, 5_000, 1_000, 300_000),
   });
-  const transactionalMutation = createTransactionalTeachingMutation({ withTransaction, outboxStore });
+  const transactionalMutation = createTransactionalTeachingMutation({
+    withTransaction,
+    outboxStore,
+    dueEventStore: base.eventStore,
+  });
   let ready = false;
   let lastInitializationError = null;
 
