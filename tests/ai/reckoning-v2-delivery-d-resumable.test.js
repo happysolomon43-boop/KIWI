@@ -970,3 +970,275 @@ test('Reckoning preparation forwards claim budget identity without persisting it
     operationBudgetId: 'reckoning:stable:claim:fresh-claim',
   }]);
 });
+
+
+test('transient recovery window resets after newly validated progress', async () => {
+  const evidence = sourceEvidence('progress-reset', 'HIGH', 70);
+  const blueprints = [0, 1, 2].map((variantIndex) => ({
+    id: 'bp-progress-' + variantIndex,
+    evidenceId: evidence.id,
+    sourceCardId: evidence.sourceCardId,
+    role: variantIndex === 0 ? 'DIAGNOSTIC' : 'CHALLENGE',
+    variantIndex,
+  }));
+  const questions = blueprints.map((blueprint, index) => ({
+    id: 'q-progress-' + index,
+    cardId: evidence.sourceCardId,
+    questionNumber: index + 1,
+    cognitiveLevel: 'APPLICATION',
+    difficulty: 'Medium',
+    questionType: 'Reckoning',
+    stem: 'Progress question ' + index,
+    options: ['A', 'B', 'C', 'D'],
+    correctAnswer: 'A',
+    explanation: 'Grounded',
+    evidenceId: evidence.id,
+    role: blueprint.role,
+    variantIndex: blueprint.variantIndex,
+    blueprint,
+  }));
+
+  const claimed = {
+    id: 'reckoning-progress-reset',
+    user_id: 'user-progress-reset',
+    subject_id: 'subject-progress-reset',
+    pressure_score: 33,
+    status: 'triggered',
+    engine_version: 2,
+    engine_mode: 'LIVE',
+    engine_phase: 'PREPARING',
+    generation_status: 'pending',
+    state_version: 0,
+  };
+
+  let fakeNow = 1000;
+  let prepareCall = 0;
+  let active = null;
+  const items = [];
+  const questionRows = [];
+  const evidenceRows = [];
+  const sleeps = [];
+
+  function saveItem(item) {
+    const id = item.blueprint.id;
+    let row = items.find((entry) => entry.blueprint_id === id);
+    if (!row) {
+      row = { blueprint_id: id };
+      items.push(row);
+    }
+    row.status = item.question ? 'READY' : 'ERROR';
+    row.generated_question = item.question || null;
+    return row;
+  }
+
+  const store = {
+    async claimPreparation() { return claimed; },
+    async touchPreparation() {
+      return { id: claimed.id, preparation_claim_id: 'claim-progress' };
+    },
+    async getPreparationManifest() {
+      return {
+        reckoning_id: claimed.id,
+        user_id: claimed.user_id,
+        preparation_version: 2,
+        config_version: 6,
+        generation_group_id: claimed.id,
+        plan: {
+          plannerVersion: 1,
+          softQuestionBudget: 5,
+          hardQuestionCap: 30,
+          evidence: [evidence],
+        },
+        blueprints,
+        family_order: [evidence.id],
+        deck_ids: ['deck-progress'],
+        total_count: 3,
+      };
+    },
+    async createPreparationManifest() {
+      throw new Error('manifest should be reused');
+    },
+    async getPreparationItems() {
+      return items.map((row) => ({ ...row }));
+    },
+    async savePreparationItemReady(_rid, _uid, item) {
+      return saveItem(item);
+    },
+    async savePreparationItemFailure(_rid, _uid, item) {
+      return saveItem(item);
+    },
+    async releasePreparationFailure() {
+      throw new Error('recovery should complete rather than release failure');
+    },
+    async getSession() { return active || claimed; },
+    async withTransaction(work) { return work(store); },
+    async clearPreparationEvidence() {},
+    async createEvidence(record) {
+      const row = {
+        id: record.id,
+        reckoning_id: claimed.id,
+        source_card_id: record.sourceCardId,
+        concept_key: record.conceptKey,
+        source_snapshot: record.sourceSnapshot,
+        risk_score: record.riskScore,
+        risk_level: record.riskLevel,
+        evidence_status: 'UNTESTED',
+        required_confirmations: record.requiredConfirmations,
+        attempt_count: 0,
+        successful_demonstrations: 0,
+        questions_seen: 0,
+      };
+      evidenceRows.push(row);
+      return row;
+    },
+    async createExecutionExam() { return { id: 'exam-progress-reset' }; },
+    async createPreparedQuestion(_uid, examId, question) {
+      const row = {
+        id: question.id,
+        exam_session_id: examId,
+        question_number: question.questionNumber,
+        reckoning_evidence_id: question.evidenceId,
+        reckoning_role: question.role,
+        variant_index: question.variantIndex,
+        stem: question.stem,
+        option_a: question.options[0],
+        option_b: question.options[1],
+        option_c: question.options[2],
+        option_d: question.options[3],
+        correct_answer: question.correctAnswer,
+        explanation: question.explanation,
+        selected_option: null,
+        is_unlocked: false,
+      };
+      questionRows.push(row);
+      return row;
+    },
+    async unlockQuestion(_uid, _examId, questionId) {
+      const row = questionRows.find((entry) => entry.id === questionId);
+      row.is_unlocked = true;
+      return row;
+    },
+    async activatePreparedSession(_rid, _uid, input) {
+      active = {
+        ...claimed,
+        status: 'in_progress',
+        exam_session_id: input.examSessionId,
+        current_question_id: input.currentQuestionId,
+        engine_phase: 'ACTIVE',
+        generation_status: 'ready',
+        soft_question_budget: input.softQuestionBudget,
+        hard_question_cap: input.hardQuestionCap,
+        state_version: 1,
+      };
+      return active;
+    },
+    async clearPreparationArtifacts() {},
+    async getEvidence() { return evidenceRows; },
+    async getExecutionQuestions() { return questionRows; },
+  };
+
+  const outage = () => new AIError('temporary provider outage', {
+    code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+    status: 503,
+    retryable: true,
+    scope: 'PROVIDER_MODEL',
+    retryAfterMs: 700,
+  });
+
+  const preparationService = {
+    buildManifest() {
+      throw new Error('manifest should not rebuild');
+    },
+    async prepare({ manifest, preparedItems, onQuestionReady, onQuestionFailure }) {
+      prepareCall += 1;
+
+      if (prepareCall === 1) {
+        await onQuestionReady({
+          blueprint: blueprints[0],
+          question: questions[0],
+          generationAttempts: 1,
+        });
+        const error = outage();
+        await onQuestionFailure({
+          blueprint: blueprints[1],
+          error,
+          generationAttempts: 1,
+        });
+        throw error;
+      }
+
+      if (prepareCall === 2) {
+        assert.ok(preparedItems.some(
+          (item) => item.blueprint_id === blueprints[0].id && item.status === 'READY'
+        ));
+        await onQuestionReady({
+          blueprint: blueprints[1],
+          question: questions[1],
+          generationAttempts: 1,
+        });
+        const error = outage();
+        await onQuestionFailure({
+          blueprint: blueprints[2],
+          error,
+          generationAttempts: 1,
+        });
+        throw error;
+      }
+
+      assert.ok(preparedItems.some(
+        (item) => item.blueprint_id === blueprints[1].id && item.status === 'READY'
+      ));
+      await onQuestionReady({
+        blueprint: blueprints[2],
+        question: questions[2],
+        generationAttempts: 1,
+      });
+
+      return {
+        manifest,
+        plan: manifest.plan,
+        questions,
+        firstQuestionId: questions[0].id,
+        firstQuestionNumber: 1,
+      };
+    },
+  };
+
+  const engine = createReckoningEngine({
+    store,
+    preparationService,
+    preparationInputProvider: async () => {
+      throw new Error('source input must not reload');
+    },
+    config: {
+      preparation: {
+        availabilityRecoveryWindowSeconds: 1,
+        availabilityRecoveryMaxRounds: 3,
+        availabilityRecoveryMinDelayMs: 100,
+        availabilityRecoveryMaxDelayMs: 900,
+        heartbeatSeconds: 9999,
+        claimStaleMinutes: 5,
+      },
+    },
+    clock: () => new Date(fakeNow),
+    sleepImpl: async (ms) => {
+      sleeps.push(ms);
+      fakeNow += ms;
+    },
+    setIntervalImpl: () => ({ unref() {} }),
+    clearIntervalImpl: () => {},
+    randomUUID: () => 'claim-progress',
+  });
+
+  const state = await engine.start({
+    reckoningId: claimed.id,
+    userId: claimed.user_id,
+  });
+
+  // Two 950ms waits exceed one 1s window in aggregate. Recovery succeeds only
+  // because q2 became READY between outages and reset the no-progress window.
+  assert.deepEqual(sleeps, [950, 950]);
+  assert.equal(prepareCall, 3);
+  assert.equal(items.filter((item) => item.status === 'READY').length, 3);
+  assert.equal(state.enginePhase, 'ACTIVE');
+});
