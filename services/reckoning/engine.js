@@ -575,7 +575,7 @@ function createReckoningEngine(options = {}) {
           typeof preparationService.generateCandidateWithRetry === 'function' &&
           typeof preparationService.auditCandidate === 'function' &&
           typeof store.ensurePreparationWorkItems === 'function' &&
-          typeof store.claimPreparationWorkItem === 'function' &&
+          typeof store.leasePreparationWorkItem === 'function' &&
           typeof store.savePreparationItemCandidate === 'function' &&
           typeof store.savePreparationWorkItemReady === 'function' &&
           typeof store.schedulePreparationItemRetry === 'function' &&
