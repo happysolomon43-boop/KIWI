@@ -15,7 +15,11 @@ const {
   promptCatalogStatus,
   listPromptFamilies,
   createFrozenPromptBinding,
+  assertPromptBodyBundleReady,
 } = require('./prompt-catalog');
+const {
+  composeTeachingModelContent,
+} = require('./prompt-composer');
 const {
   ROUTE_MANIFEST_VERSION,
   ROUTE_MANIFEST,
@@ -40,8 +44,14 @@ const {
 function createTeachingPromptControlPlane() {
   function assertReady() {
     const registry = assertRegistryIntegrity();
+    assertPromptBodyBundleReady();
     const prompts = promptCatalogStatus();
-    if (prompts.familyCount !== 19 || prompts.modelEligibleCapabilityCount !== 147) {
+    if (
+      prompts.familyCount !== 19 ||
+      prompts.modelEligibleCapabilityCount !== 147 ||
+      prompts.promptBodyFamilyCount !== 19 ||
+      prompts.promptBodiesRuntimeAvailable !== true
+    ) {
       const error = new Error('Teaching D03 prompt catalog census is invalid.');
       error.code = 'TEACHING_D03_PROMPT_CATALOG_INVALID';
       throw error;
@@ -68,6 +78,9 @@ function createTeachingPromptControlPlane() {
       promptManifestSha256: prompts.manifestSha256,
       promptPackSha256: prompts.combinedPackSha256,
       promptFamilyCount: prompts.familyCount,
+      promptBodiesRuntimeAvailable: prompts.promptBodiesRuntimeAvailable,
+      promptBodyFamilyCount: prompts.promptBodyFamilyCount,
+      promptBodyBundleSha256: prompts.promptBodyBundleSha256,
       routeManifestVersion: ROUTE_MANIFEST_VERSION,
       routeQualification: 'UNQUALIFIED',
       productionModelExecutionAuthorized: false,
@@ -84,6 +97,7 @@ function createTeachingPromptControlPlane() {
     getCapabilityContract,
     createFrozenPromptBinding,
     createInvocation: createStructuralPromptInvocation,
+    composeModelContent: composeTeachingModelContent,
     resolveRouteControl,
     assertRouteQualified,
     validatePreparationMetadata,
