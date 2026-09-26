@@ -615,3 +615,153 @@ test('PPL workflow is explicit/profile-driven and preserves last valid artifact 
   assert.equal(result.completed, false);
   assert.deepEqual(result.lastValidArtifact, { version: 1 });
 });
+
+
+test('D05 protected context references fail closed when deterministic guard is absent', async () => {
+  let reads = 0;
+  const assembler = createCapabilityContextAssembler({
+    readers: {
+      authoritative: async () => { reads += 1; return { secret: true }; },
+      permissions: async () => ({}),
+      provenance: async () => ({}),
+      untrusted: async () => ({ kind: 'source_passage', data: 'x' }),
+    },
+    authorizeContextRef: async () => ({
+      allowed: true,
+      protectionClass: 'FORMAL_ASSESSMENT_SECRET',
+    }),
+  });
+
+  await assert.rejects(
+    () => assembler.assemble({
+      capability: registry.getCapability(T3),
+      contextSpec: {
+        context_kind: 'protected_preparation',
+        access_purpose: 'preparation',
+        authoritative_refs: [{ ref: 'protected-artifact' }],
+      },
+      accessContext: {
+        trustBoundary: 'server',
+        protectedPreparationAuthorized: true,
+      },
+    }),
+    (error) => error.code === 'TEACHING_D05_PROTECTED_CONTEXT_GUARD_REQUIRED'
+  );
+  assert.equal(reads, 0);
+});
+
+test('PPL maturity cannot skip canonical deterministic gates', () => {
+  assert.throws(
+    () => evaluateWorkspaceTransition({
+      currentLifecycle: 'ACTIVE',
+      currentMaturity: 'SKELETON',
+      nextMaturity: 'CANDIDATE',
+      gateResults: [{ id: 'candidate-check', passed: true }],
+    }),
+    (error) => error.code === 'TEACHING_PPL_MATURITY_TRANSITION_FORBIDDEN'
+  );
+});
+
+test('PPL materiality fails closed to full invalidation when changed dependency cannot be mapped safely', () => {
+  const result = reconcileMaterialityAndStaleness({
+    completionCapturedVersions: { workspace: 4 },
+    currentVersions: { workspace: 4 },
+    changedDependencyRefs: ['new-policy:v2'],
+    componentDependencies: [
+      { componentId: 'a', dependencyRef: 'coverage:v2' },
+      { componentId: 'b', dependencyRef: 'timing:v1' },
+    ],
+    allComponentIds: ['a', 'b', 'c'],
+  });
+  assert.equal(result.disposition, 'MATERIAL_FULL_INVALIDATION');
+  assert.equal(result.material, true);
+  assert.equal(result.fullArtifactInvalidation, true);
+  assert.equal(result.artifactValidity, 'STALE');
+  assert.deepEqual(result.invalidatedComponentIds, ['a', 'b', 'c']);
+});
+
+test('PPL protected-content isolation rejects invented non-protected context names', () => {
+  assert.throws(
+    () => assertProtectedContentIsolation({
+      protectionClass: 'FORMAL_ASSESSMENT_SECRET',
+      contextKind: 'generic_orchestration',
+      accessPurpose: 'preparation',
+      authorization: { trustBoundary: 'server', protectedPreparationAuthorized: true },
+    }),
+    (error) => error.code === 'TEACHING_PPL_PROTECTED_CONTEXT_DENIED'
+  );
+});
+
+test('PPL same-version distinct facts do not collide on one idempotency key', () => {
+  const common = {
+    eventType: TEACHING_EVENTS.PREPARATION_FINDING_RESOLVED,
+    workspaceId: 'ws-identity',
+    workspaceVersion: 9,
+    occurredAt: '2026-09-26T11:00:00Z',
+    correlationId: 'corr-identity',
+  };
+  const first = buildPreparationEvent({
+    ...common,
+    eventId: 'finding-event-1',
+    payload: { finding_ref: 'finding-1' },
+  });
+  const second = buildPreparationEvent({
+    ...common,
+    eventId: 'finding-event-2',
+    payload: { finding_ref: 'finding-2' },
+  });
+  assert.notEqual(first.idempotencyKey, second.idempotencyKey);
+});
+
+test('D05 scheduled due-event publication can share the authoritative owner transaction', async () => {
+  const order = [];
+  const tx = { query: async () => ({ rows: [] }) };
+  const mutation = createTransactionalTeachingMutation({
+    withTransaction: async (fn) => {
+      order.push('BEGIN');
+      const result = await fn(tx);
+      order.push('COMMIT');
+      return result;
+    },
+    outboxStore: {
+      async appendUsing() {
+        throw new Error('scheduled event must not use outbox');
+      },
+    },
+    dueEventStore: {
+      async enqueueUsing(queryFn, event) {
+        assert.equal(typeof queryFn, 'function');
+        order.push(`DUE:${event.eventType}`);
+        return { inserted: true };
+      },
+    },
+  });
+
+  await mutation.mutateAndPublish({
+    mutate: async () => {
+      order.push('MUTATE');
+      return { version: 12 };
+    },
+    buildEvent: async (result) => ({
+      eventId: 'class-due-12',
+      eventType: TEACHING_EVENTS.CLASS_START_DUE,
+      eventCategory: 'scheduled_due_event',
+      triggerType: 'system_time',
+      source: 'scheduler',
+      aggregateType: 'class',
+      aggregateId: 'class-12',
+      aggregateVersion: result.version,
+      occurredAt: '2026-09-26T11:00:00Z',
+      dueAt: '2026-09-27T11:00:00Z',
+      idempotencyKey: 'class-12:start:12',
+      payload: {},
+    }),
+  });
+
+  assert.deepEqual(order, [
+    'BEGIN',
+    'MUTATE',
+    `DUE:${TEACHING_EVENTS.CLASS_START_DUE}`,
+    'COMMIT',
+  ]);
+});
