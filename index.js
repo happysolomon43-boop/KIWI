@@ -641,6 +641,17 @@ async findManyWithDecks(userId) {
     };
   });
 },
+async getCorpusForUser(userId, subjectId) {
+  const { rows: subjectRows } = await query('SELECT * FROM subjects WHERE id = $1 AND user_id = $2 LIMIT 1', [subjectId, userId]);
+  const subject = subjectRows[0];
+  if (!subject) return null;
+  const { rows: decks } = await query('SELECT * FROM decks WHERE user_id = $1 AND subject_id = $2 ORDER BY created_at ASC,id ASC', [userId, subjectId]);
+  const deckIds = decks.map((deck) => deck.id);
+  const { rows: cards } = deckIds.length
+    ? await query('SELECT * FROM cards WHERE user_id = $1 AND deck_id = ANY($2::text[]) ORDER BY created_at ASC,id ASC', [userId, deckIds])
+    : { rows: [] };
+  return { subject, decks, cards };
+},
 async create(userId, data) {
   const id = randomUUID();
   // Use an explicit column list so the query never references columns that
@@ -21382,12 +21393,19 @@ tourRouter.put('/state', async (req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/tour', tourRouter);
-app.use('/api/teaching', createTeachingRouter({
+const teachingRouter = createTeachingRouter({
   authenticate,
   reckoningLockout,
   env: process.env,
   subjectSource: db.subjects,
-}));
+  query,
+  withTransaction,
+  randomUUID,
+  // D30 has not qualified Teaching model routes. D07 intelligence remains
+  // wired through its Teaching-Orchestrator contract and therefore held.
+  d07Intelligence: null,
+});
+app.use('/api/teaching', teachingRouter);
 
 app.use('/api/subjects', subjectRouter);
 
@@ -22913,6 +22931,12 @@ try {
     '[KIWI Teaching] D05 runtime unavailable; Teaching due/outbox execution remains fail-closed:',
     e.message
   );
+}
+try {
+  await teachingRouter.assertD07Ready();
+  console.log('[KIWI Teaching] D07 Course Intake runtime verified; authoritative schema is ready.');
+} catch (e) {
+  console.error('[KIWI Teaching] D07 Course Intake runtime unavailable; Course setup remains fail-closed:', e.message);
 }
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }

@@ -18,7 +18,8 @@
     "verify:teaching:d03": "node scripts/verify-teaching-d03-control.js",
     "verify:teaching:d04": "node scripts/verify-teaching-d04-persistence.js",
     "verify:teaching:d05": "node scripts/verify-teaching-d05-orchestrator.js",
-    "verify:teaching:d06": "node scripts/verify-teaching-d06-decisions.js"
+    "verify:teaching:d06": "node scripts/verify-teaching-d06-decisions.js",
+    "verify:teaching:d07": "node scripts/verify-teaching-d07-course-intake.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -1,0 +1,27 @@
+name: Teaching D07 Course Intake
+on:
+  pull_request:
+    paths: ['teaching/**','migrations/**','public/teaching.*','docs/teaching/**','tests/teaching/**','scripts/verify-teaching-d07-course-intake.js','teaching-backend.js','index.js','db_layer_supabase.js','package.json','.github/workflows/teaching-d07-course-intake.yml']
+  push:
+    branches: [main]
+    paths: ['teaching/**','migrations/**','public/teaching.*','docs/teaching/**','tests/teaching/**','scripts/verify-teaching-d07-course-intake.js','teaching-backend.js','index.js','db_layer_supabase.js','package.json','.github/workflows/teaching-d07-course-intake.yml']
+permissions: { contents: read }
+jobs:
+  verify-d07:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --no-audit --no-fund
+      - run: for d in d01 d02 d03 d04 d05 d06 d07; do npm run verify:teaching:$d; done
+      - run: find teaching -name '*.js' -print0 | xargs -0 -n1 node --check
+      - run: npm run test:teaching
+      - run: npm test
+      - run: npm run build:web
+      - name: Non-production Supabase integration
+        env:
+          TEACHING_TEST_DATABASE_URL: ${{ secrets.TEACHING_TEST_DATABASE_URL }}
+          TEACHING_TEST_PROJECT_REF: ${{ secrets.TEACHING_TEST_PROJECT_REF }}
+        run: npm run test:teaching:integration

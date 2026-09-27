@@ -91,3 +91,35 @@ test('any authenticated KIWI user can read scoped Subjects and existing Exam int
     assert.equal(exam.configurationRoute, 'exam-config');
   });
 });
+
+test('D07 authenticated Course setup routes preserve service ownership and route results', async () => {
+  const calls = [];
+  const d07Service = {
+    async listCourses(user) { calls.push(['list', user.id]); return []; },
+    async createCourse(user, body) { calls.push(['create', user.id, body.subjectId]); return { course_id: 'course-1', lifecycle_state: 'DRAFT' }; },
+    async getSetup(user, id) { calls.push(['setup', user.id, id]); return { course: { course_id: id } }; },
+    async submitIntake(user, id, body) { calls.push(['intake', user.id, id, body.originalFreeFormText]); return { extractionStatus: 'ROUTE_HELD_UNTIL_D30' }; },
+    async editPreferences(user, id, body) { calls.push(['preferences', user.id, id, body.example_first]); return { ok: true }; },
+    async runAudit(user, id) { calls.push(['audit', user.id, id]); return { curriculum_audit_id: 'a1' }; },
+    async planDiagnostic(user, id) { calls.push(['diagnostic', user.id, id]); return { requirement_state: 'NOT_REQUIRED' }; },
+    async decideVpk(user, id) { calls.push(['vpk', user.id, id]); return { decision_status: 'NOT_VALIDATED' }; },
+  };
+  const app = express(); app.use(express.json());
+  app.use('/api/teaching', createTeachingRouter({
+    authenticate(req,res,next){ if(!req.headers.authorization)return res.sendStatus(401); req.user={id:'user-a'};next(); },
+    reckoningLockout(req,res,next){next();}, env:{NODE_ENV:'test'},
+    subjectSource:{async findManyWithDecks(){return[];}}, d07Service,
+  }));
+  const server=http.createServer(app);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try { const base=`http://127.0.0.1:${server.address().port}/api/teaching`; const headers={Authorization:'Bearer x','Content-Type':'application/json'};
+    assert.equal((await fetch(`${base}/courses`,{headers})).status,200);
+    assert.equal((await fetch(`${base}/courses`,{method:'POST',headers,body:JSON.stringify({subjectId:'s1'})})).status,201);
+    assert.equal((await fetch(`${base}/courses/course-1/setup`,{headers})).status,200);
+    assert.equal((await fetch(`${base}/courses/course-1/intake`,{method:'POST',headers,body:JSON.stringify({originalFreeFormText:'hello'})})).status,201);
+    assert.equal((await fetch(`${base}/courses/course-1/interaction-preferences`,{method:'PATCH',headers,body:JSON.stringify({example_first:true})})).status,200);
+    assert.equal((await fetch(`${base}/courses/course-1/curriculum-audit`,{method:'POST',headers,body:'{}'})).status,201);
+    assert.equal((await fetch(`${base}/courses/course-1/diagnostic-plan`,{method:'POST',headers,body:'{}'})).status,201);
+    assert.equal((await fetch(`${base}/courses/course-1/validated-prior-knowledge`,{method:'POST',headers,body:'{}'})).status,201);
+    assert.deepEqual(calls.map(x=>x[0]),['list','create','setup','intake','preferences','audit','diagnostic','vpk']);
+  } finally { await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve())); }
+});
