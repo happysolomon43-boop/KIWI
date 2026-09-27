@@ -1,0 +1,537 @@
+{
+  "schema_version": 1,
+  "registry_id": "KIWI_TEACHING_D06_DECISION_REGISTRY",
+  "version": "1.0.0",
+  "delivery": "D06",
+  "title": "Academic/Product Decision Gate Closure",
+  "effective_date": "2026-09-27",
+  "status": "ACCEPTED_WHEN_D06_MERGES",
+  "scope": {
+    "task_count": 27,
+    "task_ids": [
+      "TCH-0071","TCH-0072","TCH-0073","TCH-0074","TCH-0075","TCH-0076","TCH-0077",
+      "TCH-0078","TCH-0079","TCH-0080","TCH-0081","TCH-0082","TCH-0083","TCH-0084",
+      "TCH-0085","TCH-0086","TCH-0087","TCH-0088","TCH-0089","TCH-0090","TCH-0091",
+      "TCH-0092","TCH-0093","TCH-0691","TCH-0692","TCH-0693","TCH-0694"
+    ]
+  },
+  "governance": {
+    "precedence": [
+      "platform_security_and_authoritative_domain_rules",
+      "canonical_teaching_architecture_and_invariants",
+      "this_versioned_policy_registry",
+      "course_or_institution_policy_where_explicitly_allowed",
+      "presentation_preferences"
+    ],
+    "supersession": "A decision may change only through a later versioned decision/change-control record. Silent reinterpretation is prohibited.",
+    "no_parallel_truth": true,
+    "no_direct_cross_system_writes": true,
+    "teaching_ai_routes": "UNQUALIFIED_UNTIL_D30",
+    "production_release": "NOT_AUTHORIZED_UNTIL_D31"
+  },
+  "decisions": {
+    "TCH-0071": {
+      "decision_id": "D06-GRADE-SCALE-001",
+      "status": "CONFIGURED",
+      "owner": "Gradebook",
+      "policy_version": "grade-scale.v1",
+      "decision": {
+        "default_scale": "KIWI_PERCENTAGE_100_V1",
+        "percentage_range": {"min": 0, "max": 100},
+        "default_letter_grade": null,
+        "default_grade_point": null,
+        "semester_gpa_enabled_without_grade_point_policy": false,
+        "institutional_or_course_policy_may_override": true
+      },
+      "rationale": "A neutral 0-100 percentage is the only KIWI fallback. Letter grades, grade points and GPA require an explicit configured scale instead of a culturally arbitrary hidden default.",
+      "downstream_deliveries": ["D20","D21"],
+      "invariants": ["INV-TRUTH-01"],
+      "sources": ["Blueprint §§267-279, 513", "D05→D06 handoff TCH-0071"]
+    },
+    "TCH-0072": {
+      "decision_id": "D06-TERMINAL-MINIMUM-001",
+      "status": "DECIDED",
+      "owner": "Gradebook/Progression policy",
+      "policy_version": "terminal-minimum.v1",
+      "decision": {
+        "global_default_minimum": null,
+        "meaning": "NO_GLOBAL_TERMINAL_MINIMUM",
+        "course_or_institution_policy_may_configure": true,
+        "retroactive_creation_after_assessment": false
+      },
+      "rationale": "The Blueprint explicitly leaves the numeric threshold to Course/academic policy; KIWI therefore does not invent one globally.",
+      "downstream_deliveries": ["D20","D21"],
+      "invariants": ["INV-TRUTH-01"],
+      "sources": ["Blueprint §514", "D05→D06 handoff TCH-0072"]
+    },
+    "TCH-0073": {
+      "decision_id": "D06-TOPIC-EVIDENCE-001",
+      "status": "CONFIGURED",
+      "owner": "Gradebook",
+      "policy_version": "topic-evidence-sufficiency.v1",
+      "decision": {
+        "minimum_grade_contributing_events": 3,
+        "minimum_distinct_assessment_contexts": 2,
+        "minimum_separate_academic_occasions": 2,
+        "controlled_independent_evidence_required": true,
+        "insufficient_state": "PROVISIONAL_INSUFFICIENT_EVIDENCE",
+        "single_small_item_can_finalize_major_topic": false,
+        "course_policy_override_allowed": true,
+        "override_must_be_versioned_and_academically_justified": true
+      },
+      "rationale": "Final Topic scores require repeated, diverse and at least partly controlled evidence; thin evidence remains provisional rather than becoming false precision.",
+      "downstream_deliveries": ["D20"],
+      "invariants": ["INV-TRUTH-01","INV-MARK-01"],
+      "sources": ["Blueprint §§200-208, 515", "D05→D06 handoff TCH-0073"]
+    },
+    "TCH-0074": {
+      "decision_id": "D06-SKM-ALGORITHM-001",
+      "status": "CONFIGURED",
+      "owner": "Student Knowledge Model",
+      "policy_version": "skm-evidence-state-machine.v1",
+      "decision": {
+        "algorithm": "EVIDENCE_QUALITY_STATE_MACHINE_V1",
+        "durable_states": ["UNSEEN","INTRODUCED","ASSISTED","EMERGING","INDEPENDENT","SECURE","TRANSFERABLE"],
+        "overlays": ["FRAGILE","BLOCKED","REGRESSED"],
+        "rules": {
+          "INTRODUCED": "authoritative instruction exposure exists",
+          "ASSISTED": "successful performance exists only with material support",
+          "EMERGING": "at least one independent success exists but evidence is inconsistent or thin",
+          "INDEPENDENT": "at least two successful independent opportunities exist with no unresolved material contradiction",
+          "SECURE": "INDEPENDENT plus successful delayed independent retrieval",
+          "TRANSFERABLE": "independent success on a legitimate varied/integrated application required by the construct",
+          "FRAGILE": "new contrary evidence raises uncertainty after prior competence",
+          "REGRESSED": "repeated substantive independent contrary evidence shows loss of previously demonstrated capability",
+          "BLOCKED": "authoritative planning determines normal progression unsafe after materially different remediation attempts or prerequisite failure"
+        },
+        "time_alone_may_reduce_certainty_but_not_decree_knowledge_loss": true,
+        "gradebook_marks_are_not_direct_state_assignments": true,
+        "student_facing_raw_probability_or_weight": false
+      },
+      "rationale": "The initial SKM uses transparent evidence-quality transitions rather than fabricated probabilistic precision. It remains multidimensional, evidential and separate from official marks.",
+      "downstream_deliveries": ["D12","D13"],
+      "invariants": ["INV-TRUTH-01"],
+      "sources": ["Blueprint §§112-129, 516", "D05→D06 handoff TCH-0074"]
+    },
+    "TCH-0075": {
+      "decision_id": "D06-SCHEDULER-HEADROOM-001",
+      "status": "CONFIGURED",
+      "owner": "Scheduler/Calendar",
+      "policy_version": "recovery-headroom.v1",
+      "decision": {
+        "target_headroom_ratio": 0.20,
+        "minimum_headroom_ratio": 0.15,
+        "core_work_capacity_ceiling_at_target": 0.80,
+        "hard_constraints_can_be_violated": false,
+        "required_content_can_be_deleted_to_fit": false,
+        "below_minimum_behavior": "SURFACE_SCHEDULE_AT_RISK_OR_INFEASIBLE",
+        "course_policy_override_allowed": true,
+        "override_must_preserve_hard_constraints_and_required_scope": true
+      },
+      "rationale": "The Blueprint's 15-20% recovery principle becomes a deterministic 20% target with a 15% minimum. Pressure is surfaced rather than hidden by deleting curriculum or breaking constraints.",
+      "downstream_deliveries": ["D09"],
+      "invariants": ["INV-EVENT-01","INV-COVERAGE-01","INV-FAIL-01"],
+      "sources": ["Blueprint §§136-145, 517", "TPF-10 scheduling contract", "D05→D06 handoff TCH-0075"]
+    },
+    "TCH-0076": {
+      "decision_id": "D06-LATENESS-001",
+      "status": "CONFIGURED",
+      "owner": "Attendance Ledger/Scheduler",
+      "policy_version": "lateness.v1",
+      "decision": {
+        "authoritative_clock": "SERVER",
+        "grace_rule": "MIN_5_MINUTES_OR_10_PERCENT_OF_SCHEDULED_DURATION",
+        "grace_formula": "min(5 minutes, ceil(0.10 * scheduled_class_minutes))",
+        "late_after_grace": true,
+        "material_lateness_ratio": 0.25,
+        "absence_inferred_from_lateness_alone": false,
+        "approved_or_system_caused_delay_penalty": false,
+        "course_policy_override_allowed": true
+      },
+      "rationale": "A duration-aware grace rule avoids treating a 30-minute and a 3-hour class identically while server time remains authoritative and absence stays a separate attendance decision.",
+      "downstream_deliveries": ["D09","D15"],
+      "invariants": ["INV-EVENT-01","INV-FAIL-01"],
+      "sources": ["Blueprint §§157-176, 518", "D02/D05 server-time contract", "D05→D06 handoff TCH-0076"]
+    },
+    "TCH-0077": {
+      "decision_id": "D06-ATTENDANCE-CONCERN-001",
+      "status": "CONFIGURED",
+      "owner": "Attendance Ledger",
+      "policy_version": "attendance-concern.v1",
+      "decision": {
+        "attendance_concern_first_release": true,
+        "default_trigger": {
+          "behavior_relevant_incidents": 3,
+          "rolling_obligations": 6,
+          "counted_incidents": ["LATE","MATERIAL_LATENESS","UNEXCUSED_ABSENCE","STUDENT_CAUSED_PARTIAL_ATTENDANCE"]
+        },
+        "consequences": ["TIMETABLE_REVIEW_REQUIRED","LEARNING_RECOVERY_REVIEW_IF_CONTENT_MISSED"],
+        "subject_mark_reduction": false,
+        "attendance_probation_first_release": false,
+        "attendance_probation_disposition": "DEFERRED_UNTIL_D15_BEHAVIOR_POLICY"
+      },
+      "rationale": "The first release uses Attendance Concern as a support/escalation state but does not ship Attendance Probation before its stronger consequences are deliberately specified.",
+      "downstream_deliveries": ["D15"],
+      "invariants": ["INV-TRUTH-01","INV-FAIL-01","INV-CONTEXT-01"],
+      "sources": ["Blueprint §§171-176, 519", "D05→D06 handoff TCH-0077"]
+    },
+    "TCH-0078": {
+      "decision_id": "D06-CORRECTION-RECOVERY-001",
+      "status": "DECIDED",
+      "owner": "Gradebook/Work",
+      "policy_version": "coursework-correction.v1",
+      "decision": {
+        "default_mark_recovery": "NONE",
+        "correction_may_create_learning_evidence": true,
+        "original_attempt_and_mark_preserved": true,
+        "course_policy_may_enable_recovery": true,
+        "recovery_policy_must_exist_before_assignment_is_graded": true,
+        "retroactive_recovery_rule_creation": false,
+        "formal_tests_midterm_final_implicitly_recoverable_by_correction": false
+      },
+      "rationale": "Corrections are useful learning evidence by default but do not silently rewrite marks. Any mark recovery must be an explicit pre-existing Course policy with preserved lineage.",
+      "downstream_deliveries": ["D16","D20"],
+      "invariants": ["INV-TRUTH-01","INV-MARK-01"],
+      "sources": ["Blueprint §§177-195, 520", "D05→D06 handoff TCH-0078"]
+    },
+    "TCH-0079": {
+      "decision_id": "D06-IMPROMPTU-BUDGET-001",
+      "status": "CONFIGURED",
+      "owner": "Assessment/Scheduler",
+      "policy_version": "impromptu-budget.v1",
+      "decision": {
+        "maximum_graded_impromptu_per_completed_classes": {"count": 1, "window": 3},
+        "consecutive_scheduled_classes_allowed": false,
+        "maximum_class_time_ratio": 0.20,
+        "default_course_grade_weight_cap": 0.10,
+        "eligible_content_only": true,
+        "academic_trigger_required": true,
+        "package_must_be_ready_and_validated_before_class": true,
+        "student_specific_weakness_targeting_for_extra_surprise_weight": false,
+        "external_policy_override_allowed": true
+      },
+      "rationale": "Impromptu assessment remains genuinely unannounced to the student but is predictable and bounded for the system, with eligible scope, validated package, class-time containment and anti-targeting protections.",
+      "downstream_deliveries": ["D17","D19"],
+      "invariants": ["INV-ELIG-01","INV-ASSESS-LOCK-01","INV-VALIDATE-01","INV-PPL-03"],
+      "sources": ["Blueprint §§154-168, 204-228, 521", "TPF-12 assessment contract", "D05→D06 handoff TCH-0079"]
+    },
+    "TCH-0080": {
+      "decision_id": "D06-HIGH-STAKES-MODERATION-001",
+      "status": "DECIDED",
+      "owner": "Gradebook/Assessment moderation",
+      "policy_version": "high-stakes-moderation.v1",
+      "decision": {
+        "mid_semester_constructed_response_requires_independent_moderation": true,
+        "final_exam_constructed_response_requires_independent_moderation": true,
+        "other_assessment_may_be_designated_high_stakes_by_policy": true,
+        "blind_first_pass_required": true,
+        "generator_or_initial_marker_cannot_be_sole_moderator": true,
+        "unresolved_material_disagreement_behavior": "REVIEW_NEEDED_NO_FINALIZATION",
+        "deterministic_totals_and_gradebook_commit_remain_owner_controlled": true
+      },
+      "rationale": "High-stakes subjective judgment receives an independent blind-first moderation pass; unresolved disagreement blocks finalization rather than being averaged away.",
+      "downstream_deliveries": ["D20"],
+      "invariants": ["INV-VALIDATE-01","INV-MARK-01"],
+      "sources": ["Blueprint §§245-249, 522", "TPF-15/TPF-16 frozen family separation", "D05→D06 handoff TCH-0080"]
+    },
+    "TCH-0081": {
+      "decision_id": "D06-INTEGRITY-VERIFICATION-001",
+      "status": "DECIDED",
+      "owner": "Assessment/Academic Integrity policy",
+      "policy_version": "integrity-verification.v1",
+      "decision": {
+        "signal_or_model_output_can_directly_prove_misconduct": false,
+        "initial_state_on_material_concern": "VERIFICATION_REQUIRED",
+        "verification_methods": ["TARGETED_CONTROLLED_REDEMONSTRATION","PROVENANCE_AND_ATTEMPT_REVIEW","RULE_COMPLIANCE_REVIEW"],
+        "uncertain_state": "REVIEW_NEEDED",
+        "automatic_zero_or_failure_from_signal": false,
+        "student_consequence_requires_authoritative_decision": true,
+        "pseudo_precise_cheating_probability_exposed": false
+      },
+      "rationale": "KIWI verifies capability and rule compliance instead of claiming to read intent. Signals trigger proportionate verification, not punishment.",
+      "downstream_deliveries": ["D16","D17","D20"],
+      "invariants": ["INV-FAIL-01","INV-CONTEXT-01"],
+      "sources": ["Blueprint §§177-195, 523", "TPF-11 integrity contract", "D05→D06 handoff TCH-0081"]
+    },
+    "TCH-0082": {
+      "decision_id": "D06-ACCOMMODATIONS-001",
+      "status": "CONFIGURED",
+      "owner": "Assessment/Accessibility policy",
+      "policy_version": "accommodations.v1",
+      "decision": {
+        "student_may_self_set_construct_neutral_access_preferences": true,
+        "student_may_self_approve_academic_standard_or_time_changes": false,
+        "academic_accommodation_requires_trusted_authorized_record": true,
+        "authority_precedence": ["INSTITUTION_OR_AUTHORIZED_SUPPORT","COURSE_SCOPED_APPROVED_ACCOMMODATION","ASSESSMENT_INSTANCE_DERIVATION"],
+        "initial_fields": [
+          "scope","effective_from","effective_until","extra_time_multiplier","display_and_text_scaling",
+          "assistive_technology","interaction_or_input_format","approved_breaks","allowed_resources",
+          "provenance","authorizing_actor_or_source","version"
+        ],
+        "teacher_personality_may_override": false
+      },
+      "rationale": "Construct-neutral access preferences can be user controlled, while changes to timing/resources/assessment conditions require a trusted approved record with provenance and scope.",
+      "downstream_deliveries": ["D17","D18","D24"],
+      "invariants": ["INV-CONTEXT-01"],
+      "sources": ["Blueprint §§235, 524", "TPF-01 accommodation handoff boundary", "D05→D06 handoff TCH-0082"]
+    },
+    "TCH-0083": {
+      "decision_id": "D06-ACTIVE-COURSE-CANCELLATION-001",
+      "status": "DECIDED",
+      "owner": "Course lifecycle/Request",
+      "policy_version": "course-cancellation.v1",
+      "decision": {
+        "formal_request_required": true,
+        "effective_time_authoritative": true,
+        "base_lifecycle_path": ["ACTIVE_OR_PAUSED","TEACHING_ENDED","FINALIZING","INCOMPLETE"],
+        "cancellation_record": "IMMUTABLE_CANCELLATION_CLOSURE_REASON",
+        "future_classes_and_unopened_work": "SUPERSEDE_OR_CANCEL_FROM_EFFECTIVE_TIME",
+        "historical_marks_attempts_attendance_and_audit": "PRESERVE",
+        "default_final_course_result": null,
+        "default_gpa_contribution": false,
+        "may_archive_unresolved_incomplete_only_with_explicit_administrative_closure": true,
+        "must_not_be_rewritten_as_completed_or_fail": true
+      },
+      "rationale": "Cancellation uses the existing canonical Course lifecycle instead of inventing a second base state: it ends teaching, preserves history and resolves as Incomplete unless later legitimately finalized.",
+      "downstream_deliveries": ["D10","D21"],
+      "invariants": ["INV-TRUTH-01","INV-EVENT-01"],
+      "sources": ["Blueprint §§49-52, 485, 525", "D05→D06 handoff TCH-0083"]
+    },
+    "TCH-0084": {
+      "decision_id": "D06-RETENTION-001",
+      "status": "EXPLICITLY_DEFERRED",
+      "owner": "Privacy/Operations with academic owners",
+      "policy_version": "retention-boundary.v1",
+      "decision": {
+        "deferred_part": "EXACT_RETENTION_PERIODS_AND_DESTRUCTIVE_DELETION_SCHEDULES",
+        "interim_contract": {
+          "teaching_specific_automatic_destructive_deletion_authorized": false,
+          "current_kiwi_account_policy_remains_outer_boundary": true,
+          "academic_and_audit_lineage_must_not_be_silently_erased": true,
+          "protected_preparation_must_remain_isolated_and_minimized": true,
+          "runtime_telemetry_must_not_store_hidden_chain_of_thought": true,
+          "account_deletion_requires_category_aware_policy_application": true
+        },
+        "categories_requiring_final_retention_mapping": [
+          "ACADEMIC_AUDIT","OFFICIAL_MARKS_AND_OUTCOMES","STUDENT_RESPONSES","COURSE_PLAN_AND_COVERAGE",
+          "STUDENT_INTAKE","PPL_COORDINATION_METADATA","PROTECTED_PREPARATION_PAYLOADS",
+          "ORCHESTRATION_TELEMETRY","EVENT_AND_OUTBOX_HISTORY","GENERATED_LESSON_AND_BOARD_CONTENT"
+        ]
+      },
+      "defer_prerequisite": "D28 privacy/retention hardening must map exact periods, deletion triggers, holds and anonymization to the then-current KIWI account/privacy policy before destructive automation ships.",
+      "blocked_until_resolved": ["TEACHING_SPECIFIC_AUTOMATED_DESTRUCTIVE_RETENTION_JOB"],
+      "downstream_deliveries": ["D28","D31"],
+      "invariants": ["INV-FAIL-01","INV-PPL-03"],
+      "sources": ["Blueprint §526", "D04 persistence/protected-storage contracts", "D05→D06 handoff TCH-0084"]
+    },
+    "TCH-0085": {
+      "decision_id": "D06-VOICE-AVATAR-001",
+      "status": "EXPLICITLY_DEFERRED",
+      "owner": "Teaching product/UI",
+      "policy_version": "voice-avatar-scope.v1",
+      "decision": {
+        "voice_in_first_production_release": false,
+        "teacher_avatar_in_first_production_release": false,
+        "core_teaching_may_depend_on_voice_or_avatar": false
+      },
+      "defer_prerequisite": "A post-release delivery must define accessibility, privacy, latency, cost and fallback contracts before voice/avatar activation.",
+      "blocked_until_resolved": ["VOICE_RUNTIME","TEACHER_AVATAR_RUNTIME"],
+      "downstream_deliveries": ["POST_D31"],
+      "invariants": [],
+      "sources": ["Blueprint §527", "D00 release scope", "D05→D06 handoff TCH-0085"]
+    },
+    "TCH-0086": {
+      "decision_id": "D06-RESPONSE-RENDERERS-001",
+      "status": "DECIDED",
+      "owner": "Assessment Shell/Response Layer",
+      "policy_version": "response-renderers.v1",
+      "decision": {
+        "first_release": [
+          "MCQ","SHORT_CONSTRUCTED_TEXT","EXTENDED_TEXT_OR_ESSAY","MULTI_PART",
+          "NUMERIC_WITH_UNIT","MATHEMATICAL_WORKING_AND_FINAL","SOURCE_SUPPORTED_CONSTRUCTED_RESPONSE"
+        ],
+        "not_first_release": ["CODE_EXECUTION_RESPONSE","FREEFORM_VISUAL_OR_DIAGRAM_RESPONSE"],
+        "code_first_release_behavior": "SCHEMA_EXTENSION_ONLY_NO_EXECUTION_RENDERER",
+        "visual_first_release_behavior": "RESERVED_EXTENSION_POINT",
+        "locked_package_controls_response_form": true
+      },
+      "rationale": "The first release covers the response forms required for broad academic validity while deferring executable-code and freeform-visual interaction until their security/accessibility/runtime contracts are mature.",
+      "downstream_deliveries": ["D18"],
+      "invariants": ["INV-ASSESS-LOCK-01"],
+      "sources": ["Blueprint §§228-235, 528", "D18 task scope", "D05→D06 handoff TCH-0086"]
+    },
+    "TCH-0087": {
+      "decision_id": "D06-GLOBAL-EXAMS-DESTINATION-001",
+      "status": "DECIDED",
+      "owner": "Teaching product surface / shared KIWI Exam renderer",
+      "policy_version": "exam-destination.v1",
+      "decision": {
+        "reuse_existing_exam_cbt_renderer_technology": true,
+        "teaching_formal_assessments_appear_as_separate_global_exam_records_in_first_release": false,
+        "student_entry_surface": "TEACHING",
+        "authoritative_assessment_truth_owner": "TEACHING_ASSESSMENT_DOMAIN",
+        "duplicate_exam_truth_store_allowed": false
+      },
+      "rationale": "Teaching reuses the shared renderer but keeps discovery/launch inside Teaching for the first release, avoiding a duplicate global Exams truth universe.",
+      "downstream_deliveries": ["D18","D23","D27"],
+      "invariants": ["INV-TRUTH-01"],
+      "sources": ["Blueprint §529", "teaching/integrations/kiwi-exam-interface.js", "D05→D06 handoff TCH-0087"]
+    },
+    "TCH-0088": {
+      "decision_id": "D06-KS-CONTRACT-001",
+      "status": "EXPLICITLY_DEFERRED",
+      "owner": "Teaching + Knowledge Score integration",
+      "policy_version": "ks-integration-hold.v1",
+      "decision": {"write_integration_authorized": false, "read_integration_authorized_by_this_gate": false},
+      "defer_prerequisite": "D27 must define and approve the exact Teaching→KS evidence contract, identity mapping, authority, event ownership, idempotency, replay, conflict, privacy, versioning and deletion semantics before any write.",
+      "blocked_until_resolved": ["TEACHING_TO_KS_WRITE"],
+      "downstream_deliveries": ["D27"],
+      "invariants": ["INV-TRUTH-01"],
+      "sources": ["Blueprint §530", "Backlog TCH-0088", "D05→D06 handoff TCH-0088"]
+    },
+    "TCH-0089": {
+      "decision_id": "D06-MASTERY-BUBBLES-CONTRACT-001",
+      "status": "EXPLICITLY_DEFERRED",
+      "owner": "Teaching + Mastery Bubbles integration",
+      "policy_version": "mastery-integration-hold.v1",
+      "decision": {"write_integration_authorized": false, "read_integration_authorized_by_this_gate": false},
+      "defer_prerequisite": "D27 must define the exact bidirectional contract and conflict/identity/authority rules before integration.",
+      "blocked_until_resolved": ["TEACHING_MASTERY_BUBBLES_WRITE"],
+      "downstream_deliveries": ["D27"],
+      "invariants": ["INV-TRUTH-01"],
+      "sources": ["Blueprint §531", "Backlog TCH-0089", "D05→D06 handoff TCH-0089"]
+    },
+    "TCH-0090": {
+      "decision_id": "D06-FSRS-CONTRACT-001",
+      "status": "EXPLICITLY_DEFERRED",
+      "owner": "Teaching + FSRS/cards integration",
+      "policy_version": "fsrs-integration-hold.v1",
+      "decision": {"write_integration_authorized": false, "read_integration_authorized_by_this_gate": false},
+      "defer_prerequisite": "D27 must define card identity, scheduling authority, evidence semantics, replay and conflict rules before any cross-system write.",
+      "blocked_until_resolved": ["TEACHING_FSRS_CARD_WRITE"],
+      "downstream_deliveries": ["D27"],
+      "invariants": ["INV-TRUTH-01"],
+      "sources": ["Blueprint §532", "Backlog TCH-0090", "D05→D06 handoff TCH-0090"]
+    },
+    "TCH-0091": {
+      "decision_id": "D06-BRAIN-CONTRACT-001",
+      "status": "EXPLICITLY_DEFERRED",
+      "owner": "Teaching + Brain integration",
+      "policy_version": "brain-integration-hold.v1",
+      "decision": {"write_integration_authorized": false, "read_integration_authorized_by_this_gate": false},
+      "defer_prerequisite": "D27 must define the exact Brain read/write contract, authority, identity mapping, privacy, replay and conflict policy before synchronization.",
+      "blocked_until_resolved": ["TEACHING_BRAIN_WRITE"],
+      "downstream_deliveries": ["D27"],
+      "invariants": ["INV-TRUTH-01"],
+      "sources": ["Blueprint §533", "Backlog TCH-0091", "D05→D06 handoff TCH-0091"]
+    },
+    "TCH-0092": {
+      "decision_id": "D06-BIOME-CONTRACT-001",
+      "status": "EXPLICITLY_DEFERRED",
+      "owner": "Teaching + Biome integration",
+      "policy_version": "biome-integration-hold.v1",
+      "decision": {"write_integration_authorized": false, "read_integration_authorized_by_this_gate": false},
+      "defer_prerequisite": "D27 must define the exact Biome read/write contract, authority, identity mapping, privacy, replay and conflict policy before synchronization.",
+      "blocked_until_resolved": ["TEACHING_BIOME_WRITE"],
+      "downstream_deliveries": ["D27"],
+      "invariants": ["INV-TRUTH-01"],
+      "sources": ["Blueprint §534", "Backlog TCH-0092", "D05→D06 handoff TCH-0092"]
+    },
+    "TCH-0093": {
+      "decision_id": "D06-VISUAL-DESIGN-CLOSURE-001",
+      "status": "EXPLICITLY_DEFERRED",
+      "owner": "Teaching UI/Design",
+      "policy_version": "visual-design-closure.v1",
+      "decision": {
+        "final_visual_system_frozen_now": false,
+        "required_anchor_validation": ["TODAY","COURSE_OVERVIEW","LIVE_CLASSROOM","ASSESSMENT_SHELL","WORK","RECORD"],
+        "required_evidence": ["RESPONSIVE","KEYBOARD","SEMANTIC_STRUCTURE","VISIBLE_FOCUS","TEXT_SCALING","NON_COLOR_ONLY_STATUS","ACADEMIC_CONTEXT_PRESERVATION"]
+      },
+      "defer_prerequisite": "D24 may freeze the final visual system only after representative anchor screens are implemented/validated against accessibility and responsive requirements.",
+      "blocked_until_resolved": ["FINAL_VISUAL_DESIGN_SYSTEM_FREEZE"],
+      "downstream_deliveries": ["D23","D24"],
+      "invariants": [],
+      "sources": ["Blueprint §535", "D05→D06 handoff TCH-0093"]
+    },
+    "TCH-0691": {
+      "decision_id": "D06-SOURCE-MEANINGFULNESS-001",
+      "status": "DECIDED",
+      "owner": "Curriculum/Coverage",
+      "policy_version": "source-meaningfulness.v1",
+      "decision": {
+        "classes": {
+          "ACADEMICALLY_MEANINGFUL": "Conveys a required concept, skill, definition, process, reasoning pattern, evidence/source use, example class or other learning content inside approved scope.",
+          "DUPLICATE": "Substantively repeats another inventoried item and must point to the retained canonical item.",
+          "ADMINISTRATIVE": "Logistics, navigation, metadata or policy text that is not itself academic content.",
+          "FORMATTING_ONLY": "Layout or presentation artifact with no independent academic meaning.",
+          "OBSOLETE": "Superseded or no longer valid content with explicit reason and replacement/version provenance where available.",
+          "OUTSIDE_APPROVED_COURSE_SCOPE": "Academically meaningful content that is outside the approved Course scope and therefore remains inventoried with explicit scope authority/reason."
+        },
+        "silent_drop_allowed": false,
+        "exclusion_requires_reason_and_provenance": true,
+        "ai_classification_directly_authoritative": false
+      },
+      "rationale": "Every source item is inventoried and either mapped or explicitly classified; meaningful content cannot disappear because a model summarized it away.",
+      "downstream_deliveries": ["D07","D08"],
+      "invariants": ["INV-COVERAGE-01"],
+      "sources": ["Blueprint §§53-60, 131-134", "D05→D06 handoff TCH-0691"]
+    },
+    "TCH-0692": {
+      "decision_id": "D06-VALIDATED-PRIOR-KNOWLEDGE-001",
+      "status": "CONFIGURED",
+      "owner": "Evidence/SKM with deterministic validation policy",
+      "policy_version": "validated-prior-knowledge.v1",
+      "decision": {
+        "student_intake_self_report_is_evidence": false,
+        "minimum_independent_verification_opportunities": 2,
+        "distinct_probe_or_criterion_evidence_required": true,
+        "varied_or_uncued_probe_required_when_construct_supports_it": true,
+        "critical_criteria_must_all_pass": true,
+        "unresolved_material_contradiction_allowed": false,
+        "external_evidence_allowed_only_with_explicit_verifier_and_provenance": true,
+        "course_context_override_allowed": true,
+        "override_must_be_versioned_and_criterion_based": true
+      },
+      "rationale": "Prior knowledge is validated by repeated independent criterion-aligned evidence, not confidence, intake text or one lucky item.",
+      "downstream_deliveries": ["D07","D08","D17"],
+      "invariants": ["INV-INTAKE-01","INV-ELIG-01","INV-TRUTH-01"],
+      "sources": ["Blueprint §§112-129, 132, 356-358", "Capability Registry validated_prior_knowledge_interpretation", "D05→D06 handoff TCH-0692"]
+    },
+    "TCH-0693": {
+      "decision_id": "D06-INCOMPLETE-REQUIRED-CONTENT-001",
+      "status": "DECIDED",
+      "owner": "Course lifecycle/Progression",
+      "policy_version": "incomplete-required-content.v1",
+      "decision": {
+        "planned_end_date_implies_completion": false,
+        "unresolved_required_content_behavior": ["TEACHING_ENDED","FINALIZING","INCOMPLETE"],
+        "unresolved_required_content_may_be_completed_without_teaching_or_vpk": false,
+        "incomplete_is_fail": false,
+        "incomplete_may_reenter_finalizing_when_resolved": true,
+        "administrative_archive_preserves_incomplete_history": true
+      },
+      "rationale": "A date ending does not certify academic completion. Required content must be Taught or Validated Prior Knowledge before completion can be validly certified.",
+      "downstream_deliveries": ["D08","D10","D21"],
+      "invariants": ["INV-COVERAGE-01","INV-TRUTH-01"],
+      "sources": ["Blueprint §§49, 485", "D05→D06 handoff TCH-0693"]
+    },
+    "TCH-0694": {
+      "decision_id": "D06-ASSESSMENT-ELIGIBILITY-EXCEPTIONS-001",
+      "status": "DECIDED",
+      "owner": "Assessment Eligibility Ledger",
+      "policy_version": "assessment-eligibility-exceptions.v1",
+      "decision": {
+        "first_release_graded_exceptions": [],
+        "graded_content_must_be": ["TAUGHT","VALIDATED_PRIOR_KNOWLEDGE"],
+        "explicit_prerequisite_must_be_validated_before_graded_use": true,
+        "ungraded_diagnostic_may_probe_untaught_or_unvalidated_prerequisite": true,
+        "raw_subject_scope_never_implies_eligibility": true,
+        "future_exception_requires_versioned_change_control": true
+      },
+      "rationale": "The first release closes the loophole entirely: graded scope is taught or validated. A prerequisite label alone is not permission to grade unverified content; Diagnostics remain the explicit non-graded exception.",
+      "downstream_deliveries": ["D07","D17"],
+      "invariants": ["INV-ELIG-01","INV-PPL-02"],
+      "sources": ["Blueprint §§204, 259-260", "D05→D06 handoff TCH-0694"]
+    }
+  }
+}
