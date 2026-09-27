@@ -119,3 +119,35 @@ Versioned closure record:
 - `docs/teaching/change-control/KIWI_Teaching_D03_Prompt_Body_Runtime_Closure_v1.0.md`
 
 Migration impact: none.
+
+
+## DEC-D06-009 — Close Academic/Product Decision Gates
+
+Date: 2026-09-27  
+Status: IMPLEMENTED PENDING D06 ACCEPTANCE  
+TCH: TCH-0071–TCH-0093, TCH-0691–TCH-0694
+
+D06 closes all 27 canonical open-decision gates through the versioned machine-readable registry at `teaching/policy/d06-decision-registry.json`.
+
+Each gate is explicitly `DECIDED`, `CONFIGURED`, or `EXPLICITLY_DEFERRED`. The registry is policy/configuration only: authoritative domain owners remain unchanged and later deliveries perform runtime enforcement.
+
+Key cross-delivery holds are explicit:
+
+- no global terminal-assessment minimum is invented;
+- SKM remains evidence-derived and separate from Gradebook;
+- Scheduler/Attendance remain server-time authorities;
+- high-stakes moderation remains independent;
+- integrity signals cannot directly prove misconduct or create automatic academic penalty;
+- exact Teaching retention periods remain deferred to D28;
+- voice/avatar remain post-release;
+- KS, Mastery Bubbles, FSRS/cards, Brain and Biome writes remain blocked until D27 contracts exist;
+- first-release graded Assessment Eligibility has no exception beyond Taught or Validated Prior Knowledge;
+- all Teaching AI routes remain UNQUALIFIED until D30 and release remains blocked until D31.
+
+Source-resolution record:
+- `docs/teaching/change-control/KIWI_Teaching_D06_Source_Resolution_v1.0.md`
+
+Decision architecture:
+- `docs/teaching/d06-academic-product-decision-gates.md`
+
+Migration impact: none. D06 deliberately adds no database policy table or parallel truth store.
