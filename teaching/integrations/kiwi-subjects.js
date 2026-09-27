@@ -16,9 +16,21 @@ function createKiwiSubjectReader({ subjects }) {
     return subjectsForUser.find((subject) => String(subject.id) === String(subjectId)) || null;
   }
 
+  async function getCorpusForUser(userId, subjectId) {
+    if (!userId || !subjectId) throw new TypeError('userId and subjectId are required.');
+    if (typeof subjects.getCorpusForUser === 'function') {
+      const corpus = await subjects.getCorpusForUser(String(userId), String(subjectId));
+      if (!corpus || String(corpus.subject?.user_id) !== String(userId)) return null;
+      return corpus;
+    }
+    const subject = await getForUser(userId, subjectId);
+    return subject ? Object.freeze({ subject, decks: Object.freeze(subject.decks || []), cards: Object.freeze([]) }) : null;
+  }
+
   return Object.freeze({
     listForUser,
     getForUser,
+    getCorpusForUser,
   });
 }
 

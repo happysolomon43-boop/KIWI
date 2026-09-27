@@ -288,6 +288,17 @@ async findManyWithDecks(userId) {
     };
   });
 },
+async getCorpusForUser(userId, subjectId) {
+  const { rows: subjectRows } = await query('SELECT * FROM subjects WHERE id = $1 AND user_id = $2 LIMIT 1', [subjectId, userId]);
+  const subject = subjectRows[0];
+  if (!subject) return null;
+  const { rows: decks } = await query('SELECT * FROM decks WHERE user_id = $1 AND subject_id = $2 ORDER BY created_at ASC,id ASC', [userId, subjectId]);
+  const deckIds = decks.map((deck) => deck.id);
+  const { rows: cards } = deckIds.length
+    ? await query('SELECT * FROM cards WHERE user_id = $1 AND deck_id = ANY($2::text[]) ORDER BY created_at ASC,id ASC', [userId, deckIds])
+    : { rows: [] };
+  return { subject, decks, cards };
+},
 async create(userId, data) {
   const id = randomUUID();
   const payload = { ...data, id, user_id: userId, created_at: new Date(), updated_at: new Date() };

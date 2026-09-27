@@ -2,6 +2,7 @@
 
 const { createTeachingKernelPersistence } = require('./kernel-persistence');
 const { createPreparationRuntimeRepository } = require('./preparation-runtime');
+const { createD07CourseIntakeRepository } = require('./d07-course-intake');
 
 function requireMethod(value, name) {
   if (!value || typeof value[name] !== 'function') {
@@ -12,12 +13,14 @@ function requireMethod(value, name) {
 function createTeachingRepositories({ subjectReader, notificationInterface }) {
   requireMethod(subjectReader, 'listForUser');
   requireMethod(subjectReader, 'getForUser');
+  requireMethod(subjectReader, 'getCorpusForUser');
   requireMethod(notificationInterface, 'send');
 
   return Object.freeze({
     subjects: Object.freeze({
       listForUser: (userId) => subjectReader.listForUser(userId),
       getForUser: (userId, subjectId) => subjectReader.getForUser(userId, subjectId),
+      getCorpusForUser: (userId, subjectId) => subjectReader.getCorpusForUser(userId, subjectId),
     }),
     notifications: Object.freeze({
       send: (event) => notificationInterface.send(event),
@@ -30,4 +33,5 @@ module.exports = {
   createTeachingRepositories,
   createTeachingKernelPersistence,
   createPreparationRuntimeRepository,
+  createD07CourseIntakeRepository,
 };
