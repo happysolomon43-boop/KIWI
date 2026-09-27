@@ -9,6 +9,8 @@ if (typeof kiwiApiRequest !== 'function' || typeof hasKiwiSession !== 'function'
 
 const KIWI_PATH = '/';
 const teachingNavigationItems = new Map();
+let activeTeachingView = 'overview';
+let teachingWorkspace = { subjects: [], courses: [] };
 
 function isTeachingDocument() {
   return Boolean(document.getElementById('teachingApp'));
@@ -228,40 +230,324 @@ function el(tag, className, text) {
   if (text != null) node.textContent = text;
   return node;
 }
-function splitSignals(value) { return String(value || '').split(',').map(x => x.trim()).filter(Boolean).slice(0, 50); }
-function showSetupMessage(container, message, kind = 'status') { container.replaceChildren(); const box = el('div', 'teaching-message', message); box.dataset.kind = kind; container.append(box); }
-async function renderTeachingHome() {
-  const main = document.getElementById('teachingApp'); if (!main) return;
-  const page = el('section', 'teaching-setup');
-  page.append(el('div', 'teaching-setup__eyebrow', 'Course setup'));
-  page.append(el('h1', '', 'Build your first real course.'));
-  page.append(el('p', 'teaching-setup__lead', 'Choose one of your existing KIWI Subjects, then tell your teacher what may help. Your comments guide planning and diagnostic attention; they never count as proof of knowledge.'));
-  const progress = el('ol', 'teaching-progress');
-  for (const [n,label] of [['1','Subject & intake'],['2','Curriculum audit'],['3','Targeted diagnostic']]) { const item=el('li','',`${n}. ${label}`); item.dataset.active=n==='1'?'true':'false'; progress.append(item); }
-  page.append(progress);
-  const existing = el('div','teaching-course-list'); page.append(existing);
-  const card=el('form','teaching-card'); card.noValidate=true;
-  card.append(el('h2','','Subject and Student Course Intake'));
-  card.append(el('p','','Only the selected KIWI Subject is authoritative. Any added context remains separately sourced and reviewed.'));
-  const subjectField=el('div','teaching-field'), subjectLabel=el('label','','KIWI Subject'); subjectLabel.htmlFor='teachingSubject';
-  const select=el('select'); select.id='teachingSubject'; select.required=true; subjectField.append(subjectLabel,select); card.append(subjectField);
-  const free=el('div','teaching-field'), freeLabel=el('label','','Anything your teacher should know before this Course begins?'); freeLabel.htmlFor='teachingIntakeText';
-  const textarea=el('textarea'); textarea.id='teachingIntakeText'; textarea.maxLength=16384; textarea.placeholder='For example: I learn better from examples, graphs are difficult for me, or I have studied vectors before.'; free.append(freeLabel,textarea,el('small','', 'Optional. Self-report shapes planning; evidence verifies knowledge.')); card.append(free);
-  const grid=el('div','teaching-grid');
-  const controls=[['Preferences','teachingPreferences','example first, slower explanations'],['Difficult areas','teachingDifficult','graphs, trigonometry'],['Prior experience','teachingPrior','vectors, algebra'],['Known strengths','teachingStrengths','mental arithmetic'],['Goals','teachingGoals','prepare for WAEC'],['Important deadlines','teachingDeadlines','exam in November']];
-  for(const [label,id,placeholder] of controls){const f=el('div','teaching-field'),l=el('label','',label);l.htmlFor=id;const input=el('input');input.id=id;input.placeholder=placeholder;f.append(l,input);grid.append(f);}card.append(grid);
-  const submit=el('button','teaching-submit','Create Draft Course');submit.type='submit';card.append(submit);const message=el('div');message.setAttribute('role','status');message.setAttribute('aria-live','polite');card.append(message);page.append(card);main.replaceChildren(page);
-  try {
-    const [subjects,courses]=await Promise.all([kiwiApiRequest('/teaching/subjects'),kiwiApiRequest('/teaching/courses')]);
-    select.append(new Option(subjects.length?'Select a Subject':'Create a KIWI Subject first',''));
-    for(const subject of subjects)select.append(new Option(`${subject.name} · ${subject.total_cards||0} cards`,subject.id));
-    if(courses.length){existing.append(el('div','teaching-setup__eyebrow','Draft and existing Courses'));for(const course of courses)existing.append(el('div','teaching-course-chip',`${course.title} · ${course.lifecycle_state} · ${course.source_item_count} source items`));}
-    submit.disabled=!subjects.length;
-  } catch(error){showSetupMessage(message,error.message,'error');submit.disabled=true;}
-  card.addEventListener('submit',async event=>{event.preventDefault();if(!select.value)return showSetupMessage(message,'Choose an existing KIWI Subject.','error');submit.disabled=true;showSetupMessage(message,'Creating the Draft and preserving its source inventory…');try{const course=await kiwiApiRequest('/teaching/courses',{method:'POST',body:{subjectId:select.value}});const result=await kiwiApiRequest(`/teaching/courses/${course.course_id}/intake`,{method:'POST',body:{originalFreeFormText:textarea.value,learningPreferences:splitSignals(document.getElementById('teachingPreferences').value),difficultAreas:splitSignals(document.getElementById('teachingDifficult').value),priorExperience:splitSignals(document.getElementById('teachingPrior').value),knownStrengths:splitSignals(document.getElementById('teachingStrengths').value),goals:splitSignals(document.getElementById('teachingGoals').value),importantDeadlines:splitSignals(document.getElementById('teachingDeadlines').value)}});showSetupMessage(message,result.extractionStatus==='ROUTE_HELD_UNTIL_D30'?'Draft saved. Your original Intake is preserved. AI interpretation remains held until Teaching routes complete D30 qualification.':'Draft and Intake saved. Planning signals were validated.');existing.append(el('div','teaching-course-chip',`${course.title} · DRAFT`));
-      const diagnosticCard=el('section','teaching-card');diagnosticCard.style.marginTop='18px';diagnosticCard.append(el('div','teaching-setup__eyebrow','Setup stage 3'),el('h2','','Targeted prerequisite diagnostic'),el('p','','KIWI checks only prior knowledge that materially affects this Course. This is non-graded and your Intake alone cannot validate knowledge.'));
-      const check=el('button','teaching-submit','Check whether a Diagnostic is needed');check.type='button';const diagnosticMessage=el('div');diagnosticMessage.setAttribute('role','status');diagnosticMessage.setAttribute('aria-live','polite');diagnosticCard.append(check,diagnosticMessage);page.append(diagnosticCard);
-      check.addEventListener('click',async()=>{check.disabled=true;try{const plan=await kiwiApiRequest(`/teaching/courses/${course.course_id}/diagnostic-plan`,{method:'POST',body:{intakeSignals:{academic_self_report:{prior_exposure:splitSignals(document.getElementById('teachingPrior').value),weaknesses:splitSignals(document.getElementById('teachingDifficult').value)},diagnostic_targets:[]}}});showSetupMessage(diagnosticMessage,plan.requirement_state==='NOT_REQUIRED'?'No material uncertainty needs a placement Diagnostic. You can continue without one.':'A focused, non-graded Diagnostic is ready.');}catch(error){showSetupMessage(diagnosticMessage,error.code==='TEACHING_ROUTE_UNQUALIFIED'?'A targeted Diagnostic is indicated, but Teaching AI execution remains held until D30 qualification.':error.message,'error');}finally{check.disabled=false;}});}catch(error){showSetupMessage(message,error.message,'error');}finally{submit.disabled=false;}});
+
+function splitSignals(value) {
+  return String(value || '')
+    .split(',')
+    .map((signal) => signal.trim())
+    .filter(Boolean)
+    .slice(0, 50);
+}
+
+function showSetupMessage(container, message, kind = 'status') {
+  container.replaceChildren();
+  const box = el('div', 'teaching-message', message);
+  box.dataset.kind = kind;
+  container.append(box);
+}
+
+function menuIcon(kind) {
+  const paths = kind === 'intake'
+    ? '<path d="M7 3h10v4H7zM5 5H3v16h18V5h-2M7 12h10M7 16h7"/>'
+    : '<path d="M4 11 12 4l8 7v9H4zM9 20v-6h6v6"/>';
+  return `<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" aria-hidden="true">${paths}</svg>`;
+}
+
+function renderSectionMenu() {
+  const nav = document.getElementById('teachingMenuFuture');
+  if (!nav) return;
+
+  const items = [
+    { id: 'overview', title: 'Overview', description: 'Courses and next steps', icon: 'overview' },
+    { id: 'intake', title: 'Course Intake', description: 'Create a course draft', icon: 'intake' },
+  ];
+
+  nav.replaceChildren();
+  for (const item of items) {
+    const button = el('button', 'teaching-menu-link');
+    button.type = 'button';
+    button.dataset.view = item.id;
+    button.dataset.active = activeTeachingView === item.id ? 'true' : 'false';
+
+    const icon = el('span', 'teaching-menu-link__icon');
+    icon.innerHTML = menuIcon(item.icon);
+    const copy = el('span', 'teaching-menu-link__copy');
+    copy.append(
+      el('span', 'teaching-menu-link__title', item.title),
+      el('span', 'teaching-menu-link__description', item.description)
+    );
+    button.append(icon, copy, el('span', 'teaching-menu-link__arrow', '›'));
+    button.addEventListener('click', () => navigateTeaching(item.id));
+    nav.append(button);
+  }
+}
+
+function navigateTeaching(view) {
+  activeTeachingView = view === 'intake' ? 'intake' : 'overview';
+  setMenuOpen(false, { restoreFocus: false });
+  renderSectionMenu();
+  renderActiveTeachingView();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function renderCourseCards(container) {
+  container.replaceChildren();
+  if (!teachingWorkspace.courses.length) {
+    container.append(el('div', 'teaching-empty', 'No Teaching courses yet. Start with Course Intake to connect an existing KIWI Subject and create your first draft.'));
+    return;
+  }
+
+  for (const course of teachingWorkspace.courses) {
+    const card = el('article', 'teaching-course-card');
+    card.append(
+      el('span', 'teaching-course-card__state', course.lifecycle_state || 'Draft'),
+      el('h3', '', course.title || 'Untitled course'),
+      el('p', '', `${course.source_item_count || 0} preserved source item${course.source_item_count === 1 ? '' : 's'}`)
+    );
+    container.append(card);
+  }
+}
+
+function renderTeachingOverview() {
+  const main = document.getElementById('teachingApp');
+  if (!main) return;
+
+  const page = el('section', 'teaching-view');
+  const hero = el('div', 'teaching-hero');
+  hero.append(
+    el('div', 'teaching-kicker', 'Your teaching workspace'),
+    el('h1', 'teaching-title', 'Learn with a course built around what you actually know.'),
+    el('p', 'teaching-lead', 'Start from a KIWI Subject, share useful context, and let Teaching preserve the difference between what you report and what evidence can verify.')
+  );
+  const actions = el('div', 'teaching-hero__actions');
+  const start = el('button', 'teaching-button teaching-button--primary', teachingWorkspace.courses.length ? 'Create another course' : 'Start Course Intake');
+  start.type = 'button';
+  start.addEventListener('click', () => navigateTeaching('intake'));
+  actions.append(start);
+  hero.append(actions);
+  page.append(hero);
+
+  const section = el('section', 'teaching-section');
+  const head = el('div', 'teaching-section__head');
+  const heading = el('div');
+  heading.append(el('div', 'teaching-kicker', 'Courses'), el('h2', '', 'Your course space'));
+  head.append(heading);
+  const grid = el('div', 'teaching-course-grid');
+  renderCourseCards(grid);
+  section.append(head, grid);
+  page.append(section);
+  main.replaceChildren(page);
+}
+
+function addField(container, { label, id, placeholder, textarea = false, help = '' }) {
+  const field = el('div', 'teaching-field');
+  const labelNode = el('label', '', label);
+  labelNode.htmlFor = id;
+  const input = el(textarea ? 'textarea' : 'input');
+  input.id = id;
+  input.placeholder = placeholder;
+  if (textarea) input.maxLength = 16384;
+  field.append(labelNode, input);
+  if (help) field.append(el('small', '', help));
+  container.append(field);
+  return input;
+}
+
+function renderIntakeSuccess(course, extractionStatus, intakeSignals) {
+  const main = document.getElementById('teachingApp');
+  if (!main) return;
+  const page = el('section', 'teaching-view teaching-success');
+  page.append(
+    el('div', 'teaching-success__mark', '✓'),
+    el('div', 'teaching-kicker', 'Draft course created'),
+    el('h2', '', course.title || 'Your course is ready for its next step'),
+    el('p', '', extractionStatus === 'ROUTE_HELD_UNTIL_D30'
+      ? 'Your original Intake is preserved. AI interpretation remains safely held until Teaching routes complete qualification.'
+      : 'Your Intake and its planning signals were saved without treating self-report as academic evidence.')
+  );
+  const home = el('button', 'teaching-button teaching-button--primary', 'Back to overview');
+  home.type = 'button';
+  home.addEventListener('click', () => navigateTeaching('overview'));
+  const readiness = el('button', 'teaching-button', 'Check the next course step');
+  readiness.type = 'button';
+  const message = el('div');
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  readiness.addEventListener('click', async () => {
+    readiness.disabled = true;
+    try {
+      const plan = await kiwiApiRequest(`/teaching/courses/${course.course_id}/diagnostic-plan`, {
+        method: 'POST',
+        body: {
+          intakeSignals: {
+            academic_self_report: {
+              prior_exposure: intakeSignals.priorExperience,
+              weaknesses: intakeSignals.difficultAreas,
+            },
+            diagnostic_targets: [],
+          },
+        },
+      });
+      showSetupMessage(message, plan.requirement_state === 'NOT_REQUIRED'
+        ? 'No material uncertainty needs a placement Diagnostic.'
+        : 'A focused, non-graded Diagnostic is the next course step.');
+    } catch (error) {
+      showSetupMessage(message, error.code === 'TEACHING_ROUTE_UNQUALIFIED'
+        ? 'Course readiness is preserved, but Teaching AI execution remains held until D30 qualification.'
+        : error.message, 'error');
+    } finally {
+      readiness.disabled = false;
+    }
+  });
+  const actions = el('div', 'teaching-hero__actions');
+  actions.style.justifyContent = 'center';
+  actions.append(home, readiness);
+  page.append(actions, message);
+  main.replaceChildren(page);
+}
+
+function renderCourseIntake() {
+  const main = document.getElementById('teachingApp');
+  if (!main) return;
+
+  const page = el('section', 'teaching-view');
+  const header = el('header', 'teaching-intake-header');
+  header.append(
+    el('div', 'teaching-kicker', 'Course Intake'),
+    el('h1', 'teaching-title', 'Give your course the right starting point.'),
+    el('p', 'teaching-lead', 'Choose an existing KIWI Subject and share the context that will help Teaching plan responsibly.')
+  );
+  page.append(header);
+
+  const steps = el('ol', 'teaching-stepbar');
+  for (const [number, label] of [['01', 'Choose a subject'], ['02', 'Share your context'], ['03', 'Create the draft']]) {
+    const step = el('li', 'teaching-step');
+    step.dataset.active = number === '01' ? 'true' : 'false';
+    step.append(el('span', 'teaching-step__number', number), el('span', '', label));
+    steps.append(step);
+  }
+  page.append(steps);
+
+  const layout = el('div', 'teaching-intake-layout');
+  const aside = el('aside', 'teaching-intake-aside');
+  aside.append(
+    el('div', 'teaching-kicker', 'A clean handoff'),
+    el('h2', '', 'Context helps. Evidence decides.'),
+    el('p', '', 'Your Intake can shape planning and highlight where to pay attention. It cannot prove mastery or lower the standard of evidence.')
+  );
+  const assurance = el('div', 'teaching-assurance');
+  for (const copy of ['Uses one authoritative KIWI Subject', 'Preserves your original wording', 'Keeps self-report separate from evidence']) {
+    const item = el('div', 'teaching-assurance__item');
+    item.append(el('span', 'teaching-assurance__mark', '✓'), el('span', '', copy));
+    assurance.append(item);
+  }
+  aside.append(assurance);
+
+  const form = el('form', 'teaching-form');
+  form.noValidate = true;
+  const subjectSection = el('section', 'teaching-form__section');
+  subjectSection.append(
+    el('h2', '', 'Connect a KIWI Subject'),
+    el('p', '', 'The selected Subject is the course’s authoritative source inventory.')
+  );
+  const subjectField = el('div', 'teaching-field');
+  const subjectLabel = el('label', '', 'KIWI Subject');
+  subjectLabel.htmlFor = 'teachingSubject';
+  const select = el('select');
+  select.id = 'teachingSubject';
+  select.required = true;
+  select.append(new Option(teachingWorkspace.subjects.length ? 'Select a Subject' : 'Create a KIWI Subject first', ''));
+  for (const subject of teachingWorkspace.subjects) {
+    select.append(new Option(`${subject.name} · ${subject.total_cards || 0} cards`, subject.id));
+  }
+  subjectField.append(subjectLabel, select, el('small', '', 'Need a new Subject? Create it in the KIWI study app first.'));
+  subjectSection.append(subjectField);
+
+  const contextSection = el('section', 'teaching-form__section');
+  contextSection.append(
+    el('h2', '', 'Tell Teaching about your starting point'),
+    el('p', '', 'Everything here is optional. Use commas to separate short items.')
+  );
+  const textarea = addField(contextSection, {
+    label: 'Anything your teacher should know before this course begins?',
+    id: 'teachingIntakeText',
+    placeholder: 'For example: I learn better from worked examples, graphs are difficult for me, or I have studied vectors before.',
+    textarea: true,
+    help: 'Your own words are preserved exactly as source context.',
+  });
+  const grid = el('div', 'teaching-grid');
+  const fields = [
+    ['Learning preferences', 'teachingPreferences', 'worked examples, slower explanations'],
+    ['Difficult areas', 'teachingDifficult', 'graphs, trigonometry'],
+    ['Prior experience', 'teachingPrior', 'vectors, algebra'],
+    ['Known strengths', 'teachingStrengths', 'mental arithmetic'],
+    ['Goals', 'teachingGoals', 'prepare for WAEC'],
+    ['Important deadlines', 'teachingDeadlines', 'exam in November'],
+  ];
+  for (const [label, id, placeholder] of fields) addField(grid, { label, id, placeholder });
+  contextSection.append(grid);
+
+  const footer = el('footer', 'teaching-form__footer');
+  const submit = el('button', 'teaching-submit', 'Create Draft Course');
+  submit.type = 'submit';
+  submit.disabled = !teachingWorkspace.subjects.length;
+  const message = el('div');
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  footer.append(submit, message);
+  form.append(subjectSection, contextSection, footer);
+  layout.append(aside, form);
+  page.append(layout);
+  main.replaceChildren(page);
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!select.value) {
+      showSetupMessage(message, 'Choose an existing KIWI Subject.', 'error');
+      select.focus();
+      return;
+    }
+
+    submit.disabled = true;
+    showSetupMessage(message, 'Creating the draft and preserving its source inventory…');
+    try {
+      const course = await kiwiApiRequest('/teaching/courses', {
+        method: 'POST',
+        body: { subjectId: select.value },
+      });
+      const intakeSignals = {
+        originalFreeFormText: textarea.value,
+        learningPreferences: splitSignals(document.getElementById('teachingPreferences').value),
+        difficultAreas: splitSignals(document.getElementById('teachingDifficult').value),
+        priorExperience: splitSignals(document.getElementById('teachingPrior').value),
+        knownStrengths: splitSignals(document.getElementById('teachingStrengths').value),
+        goals: splitSignals(document.getElementById('teachingGoals').value),
+        importantDeadlines: splitSignals(document.getElementById('teachingDeadlines').value),
+      };
+      const result = await kiwiApiRequest(`/teaching/courses/${course.course_id}/intake`, {
+        method: 'POST',
+        body: intakeSignals,
+      });
+      teachingWorkspace.courses.push(course);
+      renderIntakeSuccess(course, result.extractionStatus, intakeSignals);
+    } catch (error) {
+      showSetupMessage(message, error.message, 'error');
+      submit.disabled = false;
+    }
+  });
+}
+
+function renderActiveTeachingView() {
+  if (activeTeachingView === 'intake') renderCourseIntake();
+  else renderTeachingOverview();
+}
+
+async function loadTeachingWorkspace() {
+  const [subjects, courses] = await Promise.all([
+    kiwiApiRequest('/teaching/subjects'),
+    kiwiApiRequest('/teaching/courses'),
+  ]);
+  teachingWorkspace = { subjects, courses };
 }
 
 async function verifyTeachingSession() {
@@ -272,7 +558,9 @@ async function verifyTeachingSession() {
 
   try {
     await kiwiApiRequest('/teaching/status');
-    await renderTeachingHome();
+    await loadTeachingWorkspace();
+    renderSectionMenu();
+    renderActiveTeachingView();
     return true;
   } catch (error) {
     renderTeachingSessionProblem(
@@ -290,6 +578,7 @@ function initTeachingDocument() {
   installTeachingHistoryGuard();
 
   const menuButton = document.getElementById('teachingMenuButton');
+  const brand = document.querySelector('.teaching-brand');
   const menuClose = document.getElementById('teachingMenuClose');
   const overlay = document.getElementById('teachingOverlay');
   const settingsButton = document.getElementById('teachingSettingsButton');
@@ -300,6 +589,10 @@ function initTeachingDocument() {
   const confirmAccept = document.getElementById('teachingConfirmAccept');
 
   menuButton?.addEventListener('click', () => setMenuOpen(true));
+  brand?.addEventListener('click', (event) => {
+    event.preventDefault();
+    navigateTeaching('overview');
+  });
   menuClose?.addEventListener('click', () => setMenuOpen(false));
   overlay?.addEventListener('click', closeActiveOverlay);
 

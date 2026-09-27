@@ -65,6 +65,22 @@ test('Teaching has a dedicated broad menu with Settings and Switch to KIWI at th
   assert.match(html, />Switch to KIWI</);
 });
 
+test('Teaching uses the KIWI visual language and exposes Course Intake as navigation', () => {
+  const html = read(teachingHtmlPath);
+  const js = read(teachingJsPath);
+
+  assert.match(html, /family=Syne/);
+  assert.match(html, /family=DM\+Sans/);
+  assert.match(html, /family=JetBrains\+Mono/);
+  assert.match(html, /--font-display: "Syne"/);
+  assert.match(html, /--font-body: "DM Sans"/);
+  assert.match(html, /--font-mono: "JetBrains Mono"/);
+  assert.match(js, /title: 'Overview'/);
+  assert.match(js, /title: 'Course Intake'/);
+  assert.match(js, /function renderCourseIntake\(\)/);
+  assert.match(js, /function navigateTeaching\(view\)/);
+});
+
 test('Switching from Teaching back to KIWI requires an explicit confirmation', () => {
   const html = read(teachingHtmlPath);
   const js = read(teachingJsPath);
