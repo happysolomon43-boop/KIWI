@@ -18473,19 +18473,20 @@ adminRouter.get('/health', async (req, res) => {
       .join(', ');
     const discoveryHealth = aiStatus.discovery.lastError ? 'warn' : 'pass';
     const routeSummary =
-      `VVIP=${aiStatus.routes.VVIP.primaryModel || 'unavailable'} | ` +
-      `VIP=${aiStatus.routes.VIP.primaryModel || 'unavailable'} | ` +
-      `IP=${aiStatus.routes.IP.primaryModel || 'unavailable'}`;
+      `VVIP=${(aiStatus.routes.VVIP.available && aiStatus.routes.VVIP.primaryModel) || 'unavailable'} | ` +
+      `VIP=${(aiStatus.routes.VIP.available && aiStatus.routes.VIP.primaryModel) || 'unavailable'} | ` +
+      `IP=${(aiStatus.routes.IP.available && aiStatus.routes.IP.primaryModel) || 'unavailable'}`;
 
     checks.push({
       id: 'gemini_pool',
       label: 'Gemini AI orchestrator',
-      status: aiStatus.projectSlots.total === 0
+      status: aiStatus.readiness.state !== 'READY' || aiStatus.projectSlots.total === 0
         ? 'fail'
-        : aiStatus.projectSlots.enabled === 0
-          ? 'warn'
-          : 'pass',
+        : Object.values(aiStatus.routes).every((route) => route.available)
+          ? 'pass'
+          : 'warn',
       value:
+        `runtime=${aiStatus.readiness.state} | ` +
         `${aiStatus.projectSlots.enabled}/${aiStatus.projectSlots.total} project/key slot(s) enabled | ` +
         routeSummary +
         (quotaSummary ? ` | route state: ${quotaSummary}` : ''),
@@ -22916,7 +22917,7 @@ await runSchemaMigrations();
 try {
   await _aiRuntime.initialize();
 } catch (e) {
-  console.error('[KIWI AI] Orchestrator persistent-state initialization failed; continuing with in-memory routing:', e.message);
+  console.error('[KIWI AI] Orchestrator initialization failed; AI requests paused and automatic recovery scheduled:', e.message);
 }
 
 try {
