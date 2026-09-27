@@ -21402,9 +21402,10 @@ const teachingRouter = createTeachingRouter({
   query,
   withTransaction,
   randomUUID,
-  // D30 has not qualified Teaching model routes. D07 intelligence remains
-  // wired through its Teaching-Orchestrator contract and therefore held.
+  // D30 has not qualified Teaching model routes. D07/D08 intelligence remains
+  // wired through Teaching-Orchestrator contracts and therefore held.
   d07Intelligence: null,
+  d08Intelligence: null,
 });
 app.use('/api/teaching', teachingRouter);
 
@@ -22938,6 +22939,12 @@ try {
   console.log('[KIWI Teaching] D07 Course Intake runtime verified; authoritative schema is ready.');
 } catch (e) {
   console.error('[KIWI Teaching] D07 Course Intake runtime unavailable; Course setup remains fail-closed:', e.message);
+}
+try {
+  await teachingRouter.assertD08Ready();
+  console.log('[KIWI Teaching] D08 Course Plan/Coverage runtime verified; authoritative schema is ready.');
+} catch (e) {
+  console.error('[KIWI Teaching] D08 Course Plan/Coverage runtime unavailable; Stage 2 review remains fail-closed:', e.message);
 }
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }
