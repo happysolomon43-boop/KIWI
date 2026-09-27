@@ -1,6 +1,7 @@
 'use strict';
 
 const { AI_TASKS } = require('./task-registry');
+const { AIError, AI_ERROR_CODES } = require('./errors');
 const { createModelCatalog, DEFAULT_MODEL_CATALOG, MODEL_STATUS } = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
 const { createProjectPool } = require('./project-pool');
@@ -122,7 +123,32 @@ function createAIRuntime({
     env,
   });
 
+  const initializationRetryMs = parseHealthSyncIntervalMs(env.AI_INITIALIZATION_RETRY_MS);
+  let initializationPromise = null;
+  let initializationResult = null;
+  let initializationRetryTimer = null;
+  const readiness = {
+    state: 'NOT_READY',
+    attempts: 0,
+    lastStartedAt: null,
+    readyAt: null,
+    lastFailureAt: null,
+    lastErrorCode: null,
+  };
+
+  function assertReady() {
+    if (readiness.state === 'READY') return;
+    throw new AIError('KIWI AI is temporarily unavailable while runtime state is restored', {
+      code: AI_ERROR_CODES.NOT_READY,
+      status: 503,
+      retryable: true,
+      scope: 'ORCHESTRATOR',
+      retryAfterMs: initializationRetryMs,
+    });
+  }
+
   const orchestrator = createAIOrchestrator({
+    assertReady,
     registry: AI_TASKS,
     catalog,
     router,
@@ -419,12 +445,14 @@ function createAIRuntime({
       return {
         primaryModel: plan.plannedPrimaryModel || null,
         primaryProjectSlot: plan.plannedPrimaryProjectSlot || null,
+        available: Boolean(plan.plannedPrimaryProjectSlot),
         candidates: plan.candidates.map((candidate) => candidate.modelId),
       };
     } catch (error) {
       return {
         primaryModel: null,
         primaryProjectSlot: null,
+        available: false,
         candidates: [],
         error: error?.code || error?.message || 'UNKNOWN',
       };
@@ -454,6 +482,11 @@ function createAIRuntime({
     }, {});
 
     return Object.freeze({
+      readiness: Object.freeze({
+        ...readiness,
+        retryScheduled: Boolean(initializationRetryTimer),
+        retryIntervalMs: initializationRetryMs,
+      }),
       projectSlots: Object.freeze({
         total: slots.length,
         enabled: slots.filter((slot) => slot.enabled).length,
@@ -536,7 +569,7 @@ function createAIRuntime({
     });
   }
 
-  async function initialize() {
+  async function initializeOnce() {
     // Load persisted discovered/promoted/suspended models before refreshing the
     // built-in seed metadata. This preserves lifecycle state across restarts.
     const hydratedCatalogModels = await modelLifecycle.hydratePersistedCatalog();
@@ -567,6 +600,52 @@ function createAIRuntime({
     });
   }
 
+  function stopInitializationRecovery() {
+    if (!initializationRetryTimer) return false;
+    timers.clearInterval?.(initializationRetryTimer);
+    initializationRetryTimer = null;
+    return true;
+  }
+
+  function scheduleInitializationRecovery() {
+    if (initializationRetryTimer || typeof timers.setInterval !== 'function') return;
+    initializationRetryTimer = timers.setInterval(() => {
+      initialize().catch(() => null);
+    }, initializationRetryMs);
+    initializationRetryTimer?.unref?.();
+  }
+
+  function initialize() {
+    if (readiness.state === 'READY') return Promise.resolve(initializationResult);
+    if (initializationPromise) return initializationPromise;
+    readiness.state = 'INITIALIZING';
+    readiness.attempts += 1;
+    readiness.lastStartedAt = new Date().toISOString();
+    initializationPromise = initializeOnce().then((result) => {
+      initializationResult = result;
+      readiness.state = 'READY';
+      readiness.readyAt = new Date().toISOString();
+      readiness.lastErrorCode = null;
+      stopInitializationRecovery();
+      return result;
+    }).catch((error) => {
+      readiness.state = 'NOT_READY';
+      readiness.lastFailureAt = new Date().toISOString();
+      // Database error messages may contain connection details; public status
+      // exposes a stable classification only.
+      readiness.lastErrorCode = 'INITIALIZATION_FAILED';
+      scheduleInitializationRecovery();
+      logger?.warn?.('[KIWI AI] runtime initialization failed; AI admission paused', {
+        attempt: readiness.attempts,
+        retryIntervalMs: initializationRetryMs,
+      });
+      throw error;
+    }).finally(() => {
+      initializationPromise = null;
+    });
+    return initializationPromise;
+  }
+
   function reportValidationFailure(modelId, reason) {
     return modelLifecycle.reportValidationFailure(modelId, reason);
   }
@@ -586,6 +665,7 @@ function createAIRuntime({
     discovery,
     orchestrator,
     initialize,
+    stopInitializationRecovery,
     status,
     operationalReport,
     runDiscoveryCycle,
