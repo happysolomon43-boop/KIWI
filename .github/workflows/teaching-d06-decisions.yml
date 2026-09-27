@@ -1,0 +1,62 @@
+name: Teaching D06 Decision Gates
+
+on:
+  pull_request:
+    paths:
+      - 'teaching/**'
+      - 'docs/teaching/**'
+      - 'package.json'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d06-decisions.js'
+      - '.github/workflows/teaching-d06-decisions.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'teaching/**'
+      - 'docs/teaching/**'
+      - 'package.json'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d06-decisions.js'
+      - '.github/workflows/teaching-d06-decisions.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-d06:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Verify D01 remains intact
+        run: npm run verify:teaching:d01
+      - name: Verify D02 remains intact
+        run: npm run verify:teaching:d02
+      - name: Verify D03 remains intact
+        run: npm run verify:teaching:d03
+      - name: Verify D04 remains intact
+        run: npm run verify:teaching:d04
+      - name: Verify D05 remains intact
+        run: npm run verify:teaching:d05
+      - name: Verify D06 decision closure
+        run: npm run verify:teaching:d06
+      - name: Check backend syntax
+        run: node --check index.js
+      - name: Check Teaching server modules
+        run: find teaching -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Run Teaching unit tests
+        run: npm run test:teaching
+      - name: Run full KIWI regression suite
+        run: npm test
+      - name: Verify web build
+        run: npm run build:web
+      - name: Run non-production Supabase integration suite
+        env:
+          TEACHING_TEST_DATABASE_URL: ${{ secrets.TEACHING_TEST_DATABASE_URL }}
+          TEACHING_TEST_PROJECT_REF: ${{ secrets.TEACHING_TEST_PROJECT_REF }}
+        run: npm run test:teaching:integration

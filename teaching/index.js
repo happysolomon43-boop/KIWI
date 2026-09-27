@@ -10,6 +10,7 @@ const { modules } = require('./modules');
 const orchestrator = require('./orchestrator');
 const preparation = require('./preparation');
 const runtime = require('./runtime');
+const policy = require('./policy');
 
 function createTeachingFoundation({
   env = process.env,
@@ -42,6 +43,7 @@ function createTeachingFoundation({
     }),
     repositories,
     service,
+    policy,
   });
 }
 
@@ -50,4 +52,5 @@ module.exports = {
   orchestrator,
   preparation,
   runtime,
+  policy,
 };
