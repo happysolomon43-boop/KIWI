@@ -82,6 +82,7 @@ function createAIOrchestrator({
   logger = console,
   env = process.env,
   clock = () => Date.now(),
+  assertReady = null,
 } = {}) {
   const resolvedRouter = router || createModelRouter({ registry, catalog });
   const resolvedProjectPool = projectPool || createProjectPool({ env });
@@ -147,6 +148,14 @@ function createAIOrchestrator({
   // process-local, bounded, and keyed only by an opaque generation group ID.
   const generationAffinity = new Map();
   const AFFINITY_TTL_MS = 30 * 60 * 1000;
+  const AFFINITY_MAX_ENTRIES = 2000;
+
+  function pruneAffinity() {
+    const now = nowMs();
+    for (const [key, entry] of generationAffinity) {
+      if (now - entry.updatedAt >= AFFINITY_TTL_MS) generationAffinity.delete(key);
+    }
+  }
 
   function affinityKey(task, generationGroupId) {
     if (!generationGroupId || !task?.affinityGroup) return null;
@@ -158,7 +167,7 @@ function createAIOrchestrator({
     if (!key) return null;
     const entry = generationAffinity.get(key);
     if (!entry) return null;
-    if (Date.now() - entry.updatedAt > AFFINITY_TTL_MS) {
+    if (nowMs() - entry.updatedAt >= AFFINITY_TTL_MS) {
       generationAffinity.delete(key);
       return null;
     }
@@ -169,14 +178,18 @@ function createAIOrchestrator({
     const key = affinityKey(task, generationGroupId);
     if (!key || !modelId) return;
 
+    pruneAffinity();
     const current = generationAffinity.get(key);
     if (!current) {
-      generationAffinity.set(key, { modelId, updatedAt: Date.now() });
+      if (generationAffinity.size >= AFFINITY_MAX_ENTRIES) {
+        generationAffinity.delete(generationAffinity.keys().next().value);
+      }
+      generationAffinity.set(key, { modelId, updatedAt: nowMs() });
       return;
     }
 
     if (current.modelId === modelId) {
-      current.updatedAt = Date.now();
+      current.updatedAt = nowMs();
       return;
     }
 
@@ -187,7 +200,7 @@ function createAIOrchestrator({
     // ceiling for later repair/completion calls. Parallel calls may finish out
     // of order, so a late stronger-model success must not upgrade affinity.
     if (!currentModel || !nextModel || nextModel.rank <= currentModel.rank) {
-      generationAffinity.set(key, { modelId, updatedAt: Date.now() });
+      generationAffinity.set(key, { modelId, updatedAt: nowMs() });
     }
   }
 
@@ -207,10 +220,10 @@ function createAIOrchestrator({
 
   async function initialize() {
     const hydrated = quotaManager
-      ? await sideEffect('quota hydration', () => quotaManager.hydrate())
+      ? await quotaManager.hydrate()
       : 0;
     const hydratedProviderHealth = resolvedProviderHealth?.hydrate
-      ? await sideEffect('provider health hydration', () => resolvedProviderHealth.hydrate())
+      ? await resolvedProviderHealth.hydrate()
       : 0;
 
     return Object.freeze({
@@ -297,6 +310,7 @@ function createAIOrchestrator({
     operationBudgetId = null,
   } = {}) {
     const task = resolvedRouter.getTask(taskId);
+    assertReady?.();
     const explicitPreferredModelId = preferredModelId || null;
     const storedAffinityModelId = explicitPreferredModelId
       ? null
@@ -394,7 +408,10 @@ function createAIOrchestrator({
     let admissionLimit = null;
     let congestionLevel = null;
 
+    let requestFinished = false;
     async function finishFailure(error, outcome = 'FAILED') {
+      if (requestFinished) return;
+      requestFinished = true;
       await sideEffect('telemetry finish failure', () => telemetry?.finishRequest(requestId, {
         taskId,
         taskClass: task.class,
@@ -456,9 +473,9 @@ function createAIOrchestrator({
       let modelTransientAttemptCount = 0;
       let ownsConfirmationProbe = false;
 
-      for (const slot of slots) {
+      try {
+        for (const slot of slots) {
         if (attempts.length >= retryPolicy.maxAttempts) {
-          resolvedProviderHealth.release(candidate.modelId);
           break modelLoop;
         }
 
@@ -504,7 +521,6 @@ function createAIOrchestrator({
             resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
             ownsConfirmationProbe = false;
           }
-          resolvedProviderHealth.release(candidate.modelId);
           throw budgetStoreError;
         }
         if (!budgetClaim.allowed) {
@@ -513,7 +529,6 @@ function createAIOrchestrator({
             resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
             ownsConfirmationProbe = false;
           }
-          resolvedProviderHealth.release(candidate.modelId);
           const budgetError = new AIError(
             `AI operation budget exhausted for task ${taskId}`,
             {
@@ -780,7 +795,6 @@ function createAIOrchestrator({
               resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
               ownsConfirmationProbe = false;
             }
-            resolvedProviderHealth.release(candidate.modelId);
             await finishFailure(
               aiError,
               aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED'
@@ -885,17 +899,17 @@ function createAIOrchestrator({
             resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
             ownsConfirmationProbe = false;
           }
-          resolvedProviderHealth.release(candidate.modelId);
           await finishFailure(aiError);
           throw aiError;
         }
+        }
+      } finally {
+        if (ownsConfirmationProbe) {
+          resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
+          ownsConfirmationProbe = false;
+        }
+        resolvedProviderHealth.release(candidate.modelId);
       }
-
-      if (ownsConfirmationProbe) {
-        resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
-        ownsConfirmationProbe = false;
-      }
-      resolvedProviderHealth.release(candidate.modelId);
       if (skipRemainingSlotsForModel) continue;
     }
 
@@ -976,6 +990,20 @@ function createAIOrchestrator({
 
     await finishFailure(finalError);
     throw finalError;
+    } catch (error) {
+      const failure = error instanceof AIError ? error : new AIError(
+        'KIWI AI runtime state is temporarily unavailable',
+        {
+          code: AI_ERROR_CODES.RUNTIME_UNAVAILABLE,
+          status: 503,
+          retryable: true,
+          retryAfterMs: 1000,
+          scope: 'ORCHESTRATOR',
+          cause: error,
+        }
+      );
+      await finishFailure(failure);
+      throw failure;
     } finally {
       trafficLease?.release?.();
     }
