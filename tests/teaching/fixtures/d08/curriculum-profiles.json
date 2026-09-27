@@ -1,0 +1,9 @@
+[
+  {"discipline":"mathematics","profile":"dependency-dense procedural/conceptual units","example_units":["Algebraic manipulation","Equation modelling","Proof and justification"]},
+  {"discipline":"biology","profile":"mechanism-and-evidence units","example_units":["Cell transport mechanisms","Experimental evidence","System-level consequences"]},
+  {"discipline":"chemistry","profile":"representation-linked quantitative units","example_units":["Particle model","Symbolic equations","Stoichiometric calculation"]},
+  {"discipline":"history","profile":"chronology-source-causation units","example_units":["Context chronology","Source interpretation","Causal argument"]},
+  {"discipline":"literature","profile":"textual-evidence interpretive units","example_units":["Close reading","Technique analysis","Supported interpretation"]},
+  {"discipline":"computer science","profile":"concept-implementation-debugging units","example_units":["Algorithm concept","Implementation trace","Debugging reasoning"]},
+  {"discipline":"mixed-profile","profile":"combined declarative-procedural-interpretive units","example_units":["Core concepts","Applied method","Evidence-based explanation"]}
+]
