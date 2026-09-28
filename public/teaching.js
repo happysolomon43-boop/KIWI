@@ -296,7 +296,8 @@ function sortedCourseSections() {
   });
 }
 
-function navigateTeaching(view, options = {}) {
+function navigateTeaching(view) {
+  const options = arguments[1] || {};
   const next = ['overview', 'intake', 'course'].includes(view) ? view : 'overview';
   if (next === 'course') {
     const courseId = options.courseId || selectedTeachingCourseId;
