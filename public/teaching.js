@@ -250,8 +250,8 @@ function showSetupMessage(container, message, kind = 'status') {
 }
 
 function menuIcon(kind) {
-  const paths = kind === 'intake'
-    ? '<path d="M7 3h10v4H7zM5 5H3v16h18V5h-2M7 12h10M7 16h7"/>'
+  const paths = kind === 'create'
+    ? '<path d="M12 5v14M5 12h14"/><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/>'
     : '<path d="M4 11 12 4l8 7v9H4zM9 20v-6h6v6"/>';
   return `<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" aria-hidden="true">${paths}</svg>`;
 }
@@ -261,8 +261,8 @@ function renderSectionMenu() {
   if (!nav) return;
 
   const items = [
-    { id: 'overview', title: 'Overview', description: 'Courses and next steps', icon: 'overview' },
-    { id: 'intake', title: 'Course Intake', description: 'Create a course draft', icon: 'intake' },
+    { id: 'overview', title: 'Overview', description: 'Your courses and next steps', icon: 'overview' },
+    { id: 'intake', title: 'Create Course', description: 'Start from a KIWI Subject', icon: 'create' },
   ];
 
   nav.replaceChildren();
@@ -360,7 +360,7 @@ function openTeachingCourseSection(sectionId) {
 function renderCourseCards(container) {
   container.replaceChildren();
   if (!teachingWorkspace.courses.length) {
-    container.append(el('div', 'teaching-empty', 'No Teaching courses yet. Start with Course Intake to connect an existing KIWI Subject and create your first draft.'));
+    container.append(el('div', 'teaching-empty', 'No courses yet. Create one from an existing KIWI Subject when you are ready to start learning.'));
     return;
   }
 
@@ -372,7 +372,7 @@ function renderCourseCards(container) {
       el('h3', '', course.title || 'Untitled course'),
       el('p', '', `${course.source_item_count || 0} preserved source item${course.source_item_count === 1 ? '' : 's'}`)
     );
-    const open = el('button', 'teaching-course-card__open', 'Open course');
+    const open = el('button', 'teaching-course-card__open', 'Open course →');
     open.type = 'button';
     open.setAttribute('aria-label', `Open ${course.title || 'Teaching course'}`);
     open.addEventListener('click', () => openTeachingCourse(course.course_id));
@@ -406,13 +406,13 @@ function renderCourseOverview(course, container) {
   head.append(title, el('span', 'teaching-course-card__state', course.lifecycle_state || 'Draft'));
   intro.append(
     head,
-    el('p', '', 'Course-specific planning, work, results, and teacher context live here instead of becoming permanent global Teaching destinations.')
+    el('p', '', 'Everything for this course stays together here—its academic plan, teaching work, results, and future course tools.')
   );
   const facts = el('div', 'teaching-course-facts');
   facts.append(
     el('div', 'teaching-course-fact', `${course.source_item_count || 0} source items`),
-    el('div', 'teaching-course-fact', 'Academic scope stays versioned'),
-    el('div', 'teaching-course-fact', 'Self-report stays separate from evidence')
+    el('div', 'teaching-course-fact', 'Versioned academic plan'),
+    el('div', 'teaching-course-fact', 'Evidence stays separate from self-report')
   );
   intro.append(facts);
   container.append(intro);
@@ -423,8 +423,8 @@ function renderCourseOverview(course, container) {
   const section = el('section', 'teaching-course-feature-section');
   const heading = el('div', 'teaching-course-feature-section__head');
   heading.append(
-    el('div', 'teaching-kicker', 'Course details'),
-    el('h2', '', 'What is ready inside this course')
+    el('div', 'teaching-kicker', 'Course tools'),
+    el('h2', '', 'Everything attached to this course')
   );
   section.append(heading);
   const grid = el('div', 'teaching-course-feature-grid');
@@ -506,23 +506,38 @@ function renderTeachingOverview() {
 
   const page = el('section', 'teaching-view');
   const hero = el('div', 'teaching-hero');
-  hero.append(
-    el('div', 'teaching-kicker', 'Your teaching workspace'),
-    el('h1', 'teaching-title', 'Learn with a course built around what you actually know.'),
-    el('p', 'teaching-lead', 'Start from a KIWI Subject, share useful context, and let Teaching preserve the difference between what you report and what evidence can verify.')
+  const heroContent = el('div', 'teaching-hero__content');
+  heroContent.append(
+    el('div', 'teaching-kicker', 'KIWI Teaching'),
+    el('h1', 'teaching-title', 'Build a course around what you need to learn.'),
+    el('p', 'teaching-lead', 'Start from a KIWI Subject, add useful context about how you learn, and keep the plan, evidence, and course history together.')
   );
   const actions = el('div', 'teaching-hero__actions');
-  const start = el('button', 'teaching-button teaching-button--primary', teachingWorkspace.courses.length ? 'Create another course' : 'Start Course Intake');
+  const start = el('button', 'teaching-button teaching-button--primary', 'Create Course');
   start.type = 'button';
   start.addEventListener('click', () => navigateTeaching('intake'));
   actions.append(start);
-  hero.append(actions);
+  heroContent.append(actions);
+
+  const snapshot = el('aside', 'teaching-hero__aside');
+  snapshot.append(el('div', 'teaching-hero__aside-label', 'Workspace'));
+  const stats = el('div', 'teaching-hero__stats');
+  const courseStat = el('div', 'teaching-hero__stat');
+  courseStat.append(el('strong', '', String(teachingWorkspace.courses.length)), el('span', '', teachingWorkspace.courses.length === 1 ? 'course' : 'courses'));
+  const subjectStat = el('div', 'teaching-hero__stat');
+  subjectStat.append(el('strong', '', String(teachingWorkspace.subjects.length)), el('span', '', teachingWorkspace.subjects.length === 1 ? 'KIWI Subject' : 'KIWI Subjects'));
+  stats.append(courseStat, subjectStat);
+  snapshot.append(
+    stats,
+    el('p', 'teaching-hero__aside-note', 'Course plans and future teaching tools stay attached to the course they belong to.')
+  );
+  hero.append(heroContent, snapshot);
   page.append(hero);
 
   const section = el('section', 'teaching-section');
   const head = el('div', 'teaching-section__head');
   const heading = el('div');
-  heading.append(el('div', 'teaching-kicker', 'Courses'), el('h2', '', 'Your course space'));
+  heading.append(el('div', 'teaching-kicker', 'Courses'), el('h2', '', 'Your courses'));
   head.append(heading);
   const grid = el('div', 'teaching-course-grid');
   renderCourseCards(grid);
@@ -608,14 +623,14 @@ function renderCourseIntake() {
   const page = el('section', 'teaching-view');
   const header = el('header', 'teaching-intake-header');
   header.append(
-    el('div', 'teaching-kicker', 'Course Intake'),
-    el('h1', 'teaching-title', 'Give your course the right starting point.'),
-    el('p', 'teaching-lead', 'Choose an existing KIWI Subject and share the context that will help Teaching plan responsibly.')
+    el('div', 'teaching-kicker', 'Stage 1 · Course Intake'),
+    el('h1', 'teaching-title', 'Create a course.'),
+    el('p', 'teaching-lead', 'Choose the KIWI Subject you want to learn and add any context that can help Teaching adapt how it explains, practises, and supports you.')
   );
   page.append(header);
 
   const steps = el('ol', 'teaching-stepbar');
-  for (const [number, label] of [['01', 'Choose a subject'], ['02', 'Share your context'], ['03', 'Create the draft']]) {
+  for (const [number, label] of [['01', 'Choose subject'], ['02', 'Add context'], ['03', 'Create draft']]) {
     const step = el('li', 'teaching-step');
     step.dataset.active = number === '01' ? 'true' : 'false';
     step.append(el('span', 'teaching-step__number', number), el('span', '', label));
@@ -626,12 +641,12 @@ function renderCourseIntake() {
   const layout = el('div', 'teaching-intake-layout');
   const aside = el('aside', 'teaching-intake-aside');
   aside.append(
-    el('div', 'teaching-kicker', 'A clean handoff'),
-    el('h2', '', 'Context helps. Evidence decides.'),
-    el('p', '', 'Your Intake can shape planning and highlight where to pay attention. It cannot prove mastery or lower the standard of evidence.')
+    el('div', 'teaching-kicker', 'How this works'),
+    el('h2', '', 'Tell KIWI how to teach you.'),
+    el('p', '', 'Your context can change how Teaching explains and where it pays attention. It never counts as proof of mastery or lowers the academic standard.')
   );
   const assurance = el('div', 'teaching-assurance');
-  for (const copy of ['Uses one authoritative KIWI Subject', 'Preserves your original wording', 'Keeps self-report separate from evidence']) {
+  for (const copy of ['Starts from one KIWI Subject', 'Keeps your own wording', 'Keeps self-report separate from evidence']) {
     const item = el('div', 'teaching-assurance__item');
     item.append(el('span', 'teaching-assurance__mark', '✓'), el('span', '', copy));
     assurance.append(item);
@@ -642,8 +657,8 @@ function renderCourseIntake() {
   form.noValidate = true;
   const subjectSection = el('section', 'teaching-form__section');
   subjectSection.append(
-    el('h2', '', 'Connect a KIWI Subject'),
-    el('p', '', 'The selected Subject is the course’s authoritative source inventory.')
+    el('h2', '', 'Choose your KIWI Subject'),
+    el('p', '', 'This becomes the academic source for the course.')
   );
   const subjectField = el('div', 'teaching-field');
   const subjectLabel = el('label', '', 'KIWI Subject');
@@ -660,8 +675,8 @@ function renderCourseIntake() {
 
   const contextSection = el('section', 'teaching-form__section');
   contextSection.append(
-    el('h2', '', 'Tell Teaching about your starting point'),
-    el('p', '', 'Everything here is optional. Use commas to separate short items.')
+    el('h2', '', 'Add context for your teacher'),
+    el('p', '', 'Everything here is optional. Add only what would genuinely help Teaching support you.')
   );
   const textarea = addField(contextSection, {
     label: 'Anything your teacher should know before this course begins?',
@@ -683,7 +698,7 @@ function renderCourseIntake() {
   contextSection.append(grid);
 
   const footer = el('footer', 'teaching-form__footer');
-  const submit = el('button', 'teaching-submit', 'Create Draft Course');
+  const submit = el('button', 'teaching-submit', 'Create course draft');
   submit.type = 'submit';
   submit.disabled = !teachingWorkspace.subjects.length;
   const message = el('div');
