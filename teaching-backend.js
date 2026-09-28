@@ -152,28 +152,57 @@ function createTeachingRouter({
         code: 'TEACHING_D08_SCHEMA_NOT_READY',
       });
     };
+
     router.get('/courses/:id/plan-review', requireD08Ready, async (req, res) => {
-      try { res.json(await coursePlanService.getReview(req.user, req.params.id)); }
+      try { res.json(await coursePlanService.getPlanReview(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load Course Plan review.'); }
     });
+
     router.post('/courses/:id/course-plan', requireD08Ready, async (req, res) => {
-      try { res.status(201).json(await coursePlanService.generatePlan(req.user, req.params.id)); }
+      try { res.status(201).json(await coursePlanService.generateCoursePlan(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to prepare Course Plan.'); }
     });
-    router.post('/courses/:id/coverage-audit', requireD08Ready, async (req, res) => {
-      try { res.status(201).json(await coursePlanService.auditCoverage(req.user, req.params.id, req.body?.stage)); }
-      catch (error) { sendError(res, error, 'Failed to run Course Coverage Audit.'); }
+
+    router.get('/courses/:id/coverage-report', requireD08Ready, async (req, res) => {
+      try { res.json(await coursePlanService.getCoverageReport(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load Course Coverage Report.'); }
     });
+
+    router.get('/courses/:id/activation-coverage-decision', requireD08Ready, async (req, res) => {
+      try { res.json(await coursePlanService.getActivationCoverageDecision(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to evaluate Course Coverage readiness.'); }
+    });
+
+    router.post('/courses/:id/coverage-audit', requireD08Ready, async (req, res) => {
+      try {
+        const stage = String(req.body?.stage || 'END_OF_COURSE').toUpperCase();
+        if (stage !== 'END_OF_COURSE') {
+          return res.status(400).json({
+            error: 'Explicit Coverage Audit creation is supported for END_OF_COURSE only; pre-activation audit is created atomically with a Course Plan.',
+            code: 'TEACHING_D08_COVERAGE_AUDIT_STAGE_INVALID',
+          });
+        }
+        return res.status(201).json(await coursePlanService.auditEndOfCourse(req.user, req.params.id));
+      } catch (error) { return sendError(res, error, 'Failed to run Course Coverage Audit.'); }
+    });
+
     router.post('/courses/:id/scope-review', requireD08Ready, async (req, res) => {
       try { res.status(201).json(await coursePlanService.detectScopeChange(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to review Course scope changes.'); }
     });
-    router.post('/courses/:id/scope-review/:scopeChangeId/apply', requireD08Ready, async (req, res) => {
-      try { res.json(await coursePlanService.applyScopeChange(req.user, req.params.id, req.params.scopeChangeId)); }
-      catch (error) { sendError(res, error, 'Failed to apply reviewed Course scope change.'); }
+
+    router.post('/courses/:id/scope-review/:scopeChangeId/analyze', requireD08Ready, async (req, res) => {
+      try { res.json(await coursePlanService.analyzeScopeChange(req.user, req.params.id, req.params.scopeChangeId)); }
+      catch (error) { sendError(res, error, 'Failed to analyze reviewed Course scope change.'); }
     });
-    router.post('/courses/:id/validated-prior-knowledge/recheck', requireD08Ready, async (req, res) => {
-      try { res.status(201).json(await coursePlanService.recordVpkContradiction(req.user, req.params.id, req.body)); }
+
+    router.post('/courses/:id/scope-review/:scopeChangeId/apply', requireD08Ready, async (req, res) => {
+      try { res.json(await coursePlanService.adoptAuthoritativeScopeChange(req.user, req.params.id, req.params.scopeChangeId)); }
+      catch (error) { sendError(res, error, 'Failed to adopt reviewed Course scope change.'); }
+    });
+
+    router.post('/courses/:id/validated-prior-knowledge/:decisionId/recheck', requireD08Ready, async (req, res) => {
+      try { res.status(201).json(await coursePlanService.reconcileVpkContradiction(req.user, req.params.id, req.params.decisionId, req.body)); }
       catch (error) { sendError(res, error, 'Failed to recheck Validated Prior Knowledge.'); }
     });
   }

@@ -15,7 +15,10 @@ function createD08CoursePlanRepository({ query, withTransaction, randomUUID, clo
     withTransaction,
     randomUUID,
     clock,
-    q: (runner, sql, params = []) => typeof runner === 'function' ? runner(sql, params) : runner.query(sql, params),
+    q: (runner, sql, params = []) => {
+      if (!runner) return query(sql, params);
+      return typeof runner === 'function' ? runner(sql, params) : runner.query(sql, params);
+    },
     json: (value) => JSON.stringify(value ?? null),
   });
   return Object.freeze({

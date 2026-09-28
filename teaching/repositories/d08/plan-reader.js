@@ -16,7 +16,49 @@ function createPlanReader({ query }) {
       error.code = 'TEACHING_D08_SCHEMA_NOT_READY';
       throw error;
     }
+    const { rows: columns = [] } = await query(`
+      select table_name,column_name from information_schema.columns
+      where table_schema='public' and (
+        (table_name='teaching_course_plans' and column_name in ('curriculum_audit_id','plan_contract_version','source_inventory_digest','scope_diff_summary','review_summary'))
+        or (table_name='teaching_source_content_items' and column_name in ('scope_version_no','supersedes_source_content_item_id','discovered_scope_change_id','superseded_at'))
+      )
+    `);
+    if (columns.length < 9) {
+      const error = new Error('Teaching D08 schema columns are not ready.');
+      error.code = 'TEACHING_D08_SCHEMA_NOT_READY';
+      throw error;
+    }
     return true;
+  }
+
+  async function getBaseSetup(studentId, courseId) {
+    const [course, intakes, sources, audits, diagnostics, vpk] = await Promise.all([
+      query('select * from public.teaching_courses where student_id=$1 and course_id=$2', [studentId, courseId]),
+      query('select * from public.teaching_student_course_intakes where student_id=$1 and course_id=$2 order by submitted_at desc', [studentId, courseId]),
+      query(`select source_content_item_id,source_kind,source_ref,source_version_ref,locator,content_hash,content_summary,
+                    academically_meaningful,classification,classification_reason,classifier_rule_version,scope_version_no,
+                    supersedes_source_content_item_id,discovered_scope_change_id,discovered_at
+               from public.teaching_source_content_items
+              where student_id=$1 and course_id=$2 and superseded_at is null
+              order by discovered_at,source_content_item_id`, [studentId, courseId]),
+      query('select * from public.teaching_curriculum_audits where student_id=$1 and course_id=$2 order by audit_version desc', [studentId, courseId]),
+      query('select * from public.teaching_diagnostic_plans where student_id=$1 and course_id=$2 order by plan_version desc', [studentId, courseId]),
+      query('select * from public.teaching_validated_prior_knowledge_decisions where student_id=$1 and course_id=$2 order by decided_at desc', [studentId, courseId]),
+    ]);
+    if (!course.rows?.[0]) {
+      const error = new Error('Teaching Course not found.');
+      error.status = 404;
+      error.code = 'TEACHING_COURSE_NOT_FOUND';
+      throw error;
+    }
+    return {
+      course: course.rows[0],
+      intake: intakes.rows?.[0] || null,
+      sources: sources.rows || [],
+      curriculumAudit: audits.rows?.[0] || null,
+      diagnosticPlan: diagnostics.rows?.[0] || null,
+      vpkDecisions: vpk.rows || [],
+    };
   }
 
   async function getLatestPlanBundle(studentId, courseId) {
@@ -32,27 +74,54 @@ function createPlanReader({ query }) {
         order by s.detected_at desc`,
       [studentId, courseId],
     );
-    if (!plan) return { plan: null, topics: [], subtopics: [], learningUnits: [], dependencies: [], prerequisites: [], mappings: [], exclusions: [], coverage: [], coverageAudits: [], scopeChanges };
-    const [topics, subtopics, learningUnits, dependencies, prerequisites, mappings, exclusions, coverage, coverageAudits] = await Promise.all([
+    if (!plan) {
+      return {
+        plan: null, topics: [], subtopics: [], learningUnits: [], dependencies: [], assumedPrerequisites: [],
+        coverageMappings: [], exclusions: [], coverage: [], coverageAudits: [], lineage: [], scopeChanges,
+      };
+    }
+    const results = await Promise.all([
       query(`select * from public.teaching_topics where student_id=$1 and course_plan_id=$2 order by ordinal,topic_id`, [studentId, plan.course_plan_id]),
       query(`select s.* from public.teaching_subtopics s join public.teaching_topics t on t.topic_id=s.topic_id where s.student_id=$1 and t.course_plan_id=$2 order by t.ordinal,s.ordinal,s.subtopic_id`, [studentId, plan.course_plan_id]),
       query(`select * from public.teaching_learning_units where student_id=$1 and course_plan_id=$2 order by created_at,learning_unit_id`, [studentId, plan.course_plan_id]),
       query(`select d.* from public.teaching_learning_unit_dependencies d join public.teaching_learning_units u on u.learning_unit_id=d.learning_unit_id where d.student_id=$1 and u.course_plan_id=$2 order by d.created_at,d.dependency_id`, [studentId, plan.course_plan_id]),
       query(`select * from public.teaching_course_plan_prerequisites where student_id=$1 and course_plan_id=$2 order by created_at,prerequisite_ref`, [studentId, plan.course_plan_id]),
-      query(`select m.*,s.source_ref,s.source_kind,s.content_summary,u.title learning_unit_title from public.teaching_course_plan_source_mappings m join public.teaching_source_content_items s on s.source_content_item_id=m.source_content_item_id join public.teaching_learning_units u on u.learning_unit_id=m.learning_unit_id where m.student_id=$1 and m.course_plan_id=$2 order by m.created_at,m.mapping_id`, [studentId, plan.course_plan_id]),
+      query(`select m.*,s.source_ref,s.source_kind,s.content_summary,u.title learning_unit_title
+               from public.teaching_course_plan_source_mappings m
+               join public.teaching_source_content_items s on s.source_content_item_id=m.source_content_item_id
+               join public.teaching_learning_units u on u.learning_unit_id=m.learning_unit_id
+              where m.student_id=$1 and m.course_plan_id=$2 order by m.created_at,m.mapping_id`, [studentId, plan.course_plan_id]),
       query(`select e.*,s.source_ref,s.content_summary from public.teaching_course_plan_exclusions e join public.teaching_source_content_items s on s.source_content_item_id=e.source_content_item_id where e.student_id=$1 and e.course_plan_id=$2 order by e.approved_at,e.exclusion_id`, [studentId, plan.course_plan_id]),
       query(`select c.*,s.source_ref,s.content_summary,s.classification,s.source_kind from public.teaching_course_coverage c join public.teaching_source_content_items s on s.source_content_item_id=c.source_content_item_id where c.student_id=$1 and c.course_plan_id=$2 order by c.found_at,c.coverage_entry_id`, [studentId, plan.course_plan_id]),
       query(`select * from public.teaching_coverage_audits where student_id=$1 and course_plan_id=$2 order by created_at desc`, [studentId, plan.course_plan_id]),
+      query(`select l.*,p.title predecessor_title,s.title successor_title
+               from public.teaching_learning_unit_lineage l
+               join public.teaching_learning_units p on p.learning_unit_id=l.predecessor_learning_unit_id
+               join public.teaching_learning_units s on s.learning_unit_id=l.successor_learning_unit_id
+              where l.student_id=$1 and s.course_plan_id=$2 order by l.created_at,l.lineage_id`, [studentId, plan.course_plan_id]),
     ]);
     return {
       plan,
-      topics: topics.rows || [], subtopics: subtopics.rows || [], learningUnits: learningUnits.rows || [],
-      dependencies: dependencies.rows || [], prerequisites: prerequisites.rows || [], mappings: mappings.rows || [],
-      exclusions: exclusions.rows || [], coverage: coverage.rows || [], coverageAudits: coverageAudits.rows || [], scopeChanges,
+      topics: results[0].rows || [],
+      subtopics: results[1].rows || [],
+      learningUnits: results[2].rows || [],
+      dependencies: results[3].rows || [],
+      assumedPrerequisites: results[4].rows || [],
+      coverageMappings: results[5].rows || [],
+      exclusions: results[6].rows || [],
+      coverage: results[7].rows || [],
+      coverageAudits: results[8].rows || [],
+      lineage: results[9].rows || [],
+      scopeChanges,
     };
   }
 
-  return Object.freeze({ assertReady, getLatestPlanBundle });
+  async function getPlanReview(studentId, courseId) {
+    const [base, plan] = await Promise.all([getBaseSetup(studentId, courseId), getLatestPlanBundle(studentId, courseId)]);
+    return { ...base, ...plan };
+  }
+
+  return Object.freeze({ assertReady, getBaseSetup, getLatestPlanBundle, getPlanReview });
 }
 
 module.exports = { createPlanReader };

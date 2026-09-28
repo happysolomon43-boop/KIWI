@@ -1,0 +1,209 @@
+'use strict';
+
+const { latestVpkByTarget } = require('./contracts');
+
+const CANONICAL_STATUSES = new Set(['ok','unresolved_inputs','academically_infeasible_under_constraints','requires_scope_review']);
+const TREATMENT_MAP = Object.freeze({
+  teach_full: 'FULL_INSTRUCTION',
+  teach_compressed: 'COMPRESSED_INSTRUCTION',
+  validated_prior_knowledge_no_initial_instruction: 'VALIDATED_PRIOR_KNOWLEDGE_NO_INITIAL_INSTRUCTION',
+});
+
+function invalid(message, reason = 'TEACHING_D08_TPF03_OUTPUT_INVALID') {
+  return { ok: false, reason, message };
+}
+
+function validateTpf03CoursePlanOutput(output, { course } = {}) {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return invalid('TPF-03 output must be an object.');
+  if (!CANONICAL_STATUSES.has(String(output.status || ''))) return invalid('TPF-03 status is invalid.');
+  if (!output.input_state_reference || typeof output.input_state_reference !== 'object') return invalid('TPF-03 input_state_reference is required.');
+  if (course) {
+    if (String(output.input_state_reference.aggregate_id || '') !== String(course.course_id)) return invalid('TPF-03 state reference does not match Course.', 'TEACHING_D08_TPF03_STATE_REFERENCE_MISMATCH');
+    if (String(output.input_state_reference.state_version || '') !== String(course.state_version)) return invalid('TPF-03 state version does not match Course.', 'TEACHING_D08_TPF03_STATE_REFERENCE_MISMATCH');
+  }
+  if (typeof output.review_required !== 'boolean' || !Array.isArray(output.review_reasons)) return invalid('TPF-03 review fields are invalid.');
+  if (!output.plan_basis || typeof output.plan_basis !== 'object' || Array.isArray(output.plan_basis)) return invalid('TPF-03 plan_basis is required.');
+  for (const name of ['planning_principles_applied','course_sequence','prerequisite_repairs','assessment_window_proposals','coverage_treatment_map','infeasibility_or_pressure','unresolved_items']) {
+    if (!Array.isArray(output[name])) return invalid(`TPF-03 ${name} must be an array.`);
+  }
+  for (const group of output.course_sequence) {
+    if (!Number.isFinite(Number(group.sequence_group)) || !Array.isArray(group.learning_units)) return invalid('TPF-03 course_sequence entry is malformed.');
+    for (const unit of group.learning_units) {
+      const ref = String(unit?.learning_unit_ref || '').trim();
+      if (!ref) return invalid('TPF-03 learning_unit_ref is required.');
+      if (!['teach_full','teach_compressed','validated_prior_knowledge_no_initial_instruction','unresolved'].includes(String(unit.initial_instruction_status || ''))) return invalid(`TPF-03 treatment is invalid for ${ref}.`);
+      if (!Array.isArray(unit.prerequisite_refs) || !Array.isArray(unit.prerequisite_repair_refs) || !Array.isArray(unit.follow_up_treatments)) return invalid(`TPF-03 unit arrays are invalid for ${ref}.`);
+    }
+  }
+  for (const item of output.coverage_treatment_map) {
+    if (!String(item?.required_source_or_unit_ref || '').trim() || !Array.isArray(item.planned_treatment_refs)) return invalid('TPF-03 coverage treatment entry is malformed.');
+    if (!['full','partial','unresolved'].includes(String(item.mapping_completeness_proposal || ''))) return invalid('TPF-03 coverage mapping completeness is invalid.');
+    if (item.coverage_status_claimed !== 'planned_only') return invalid('TPF-03 may claim planned_only coverage only.', 'TEACHING_D08_TPF03_COVERAGE_AUTHORITY_VIOLATION');
+  }
+  const blocks = output.status !== 'ok' || output.review_required === true || output.unresolved_items.some((item) => item?.blocks_final_plan === true);
+  return { ok: true, value: output, blocksFinalPlan: blocks };
+}
+
+function currentValidatedVpkRefsForAuditUnit(unitRef, { vpkDecisions = [], auditOutput = null, sources = [] } = {}) {
+  const latest = latestVpkByTarget(vpkDecisions);
+  const refs = [];
+  const direct = latest.get(`LEARNING_UNIT:${unitRef}`);
+  if (direct?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE') refs.push(String(direct.vpk_decision_id));
+  const sourceAccounting = auditOutput?.source_accounting || [];
+  const sourceByRef = new Map(sources.map((source) => [String(source.source_ref), source]));
+  for (const account of sourceAccounting) {
+    if (!(account.learning_unit_ids || []).map(String).includes(String(unitRef))) continue;
+    const source = sourceByRef.get(String(account.source_ref));
+    if (!source) continue;
+    const byId = latest.get(`SOURCE_CONTENT_ITEM:${source.source_content_item_id}`);
+    const byRef = latest.get(`SOURCE_CONTENT_ITEM:${source.source_ref}`);
+    const decision = byId?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE' ? byId : byRef;
+    if (decision?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE') refs.push(String(decision.vpk_decision_id));
+  }
+  return [...new Set(refs)];
+}
+
+function normalizeAuditPrerequisite(item, index, unitIds) {
+  const key = String(item?.prerequisite_ref || item?.key || item?.ref || item?.label || `prerequisite-${index + 1}`).trim();
+  const candidateUnit = String(item?.learning_unit_id || item?.blocks_learning_unit_id || '').trim();
+  return {
+    key,
+    label: String(item?.label || item?.title || key).trim(),
+    description: item?.description || item?.reason || item?.rationale || null,
+    learning_unit_key: candidateUnit && unitIds.has(candidateUnit) ? candidateUnit : null,
+    provenance_refs: Array.isArray(item?.provenance_refs) ? item.provenance_refs.map(String) : [],
+  };
+}
+
+function deriveLearningUnitLineage({ previousPlanContext = null, auditOutput }) {
+  if (!previousPlanContext?.units?.length || !previousPlanContext?.sourceMappings?.length) return [];
+  const oldSourcesByUnit = new Map(previousPlanContext.units.map((unit) => [String(unit.key), new Set()]));
+  for (const mapping of previousPlanContext.sourceMappings) {
+    const set = oldSourcesByUnit.get(String(mapping.learning_unit_key));
+    if (set) set.add(String(mapping.source_ref));
+  }
+  const newSourcesByUnit = new Map((auditOutput.learning_units || []).map((unit) => [String(unit.id), new Set()]));
+  for (const account of auditOutput.source_accounting || []) {
+    for (const unitRef of account.learning_unit_ids || []) {
+      const set = newSourcesByUnit.get(String(unitRef));
+      if (set) set.add(String(account.source_ref));
+    }
+  }
+  const oldToNew = new Map();
+  const newToOld = new Map();
+  for (const [oldKey, oldSources] of oldSourcesByUnit) {
+    const successors = [];
+    for (const [newKey, newSources] of newSourcesByUnit) {
+      if ([...oldSources].some((ref) => newSources.has(ref))) successors.push(newKey);
+    }
+    oldToNew.set(oldKey, successors);
+    for (const newKey of successors) {
+      if (!newToOld.has(newKey)) newToOld.set(newKey, []);
+      newToOld.get(newKey).push(oldKey);
+    }
+  }
+  const rows = [];
+  const seen = new Set();
+  for (const [oldKey, successors] of oldToNew) {
+    for (const newKey of successors) {
+      const predecessors = newToOld.get(newKey) || [];
+      const kind = successors.length > 1 ? 'SPLIT' : predecessors.length > 1 ? 'MERGE' : oldKey === newKey ? 'REFINED' : 'REPLACED';
+      const signature = `${oldKey}|${newKey}|${kind}`;
+      if (seen.has(signature)) continue;
+      seen.add(signature);
+      rows.push({ predecessor_key: oldKey, successor_key: newKey, kind, reason: 'Deterministic source-overlap lineage across Course Plan versions.' });
+    }
+  }
+  return rows;
+}
+
+function materializeCoursePlanFromTpf03(output, { audit, sources = [], vpkDecisions = [], previousPlanContext = null } = {}) {
+  const auditOutput = audit?.audit_output || audit;
+  if (!auditOutput || !Array.isArray(auditOutput.learning_units) || !Array.isArray(auditOutput.topics) || !Array.isArray(auditOutput.source_accounting)) return invalid('Validated Curriculum Audit structure is required.', 'TEACHING_D08_CURRICULUM_AUDIT_STRUCTURE_REQUIRED');
+  try {
+  const validated = validateTpf03CoursePlanOutput(output);
+  if (!validated.ok) return validated;
+  if (validated.blocksFinalPlan) return invalid('TPF-03 output reports unresolved/review-blocking Course Plan state.', 'TEACHING_D08_TPF03_PLAN_BLOCKED');
+  const treatmentByUnit = new Map();
+  for (const group of output.course_sequence) {
+    for (const item of group.learning_units) {
+      const ref = String(item.learning_unit_ref);
+      if (treatmentByUnit.has(ref)) return invalid(`TPF-03 repeats Learning Unit ${ref}.`, 'TEACHING_D08_TPF03_DUPLICATE_UNIT');
+      treatmentByUnit.set(ref, item);
+    }
+  }
+  const auditUnitIds = new Set(auditOutput.learning_units.map((unit) => String(unit.id)));
+  const missing = [...auditUnitIds].filter((id) => !treatmentByUnit.has(id));
+  const unknown = [...treatmentByUnit.keys()].filter((id) => !auditUnitIds.has(id));
+  if (missing.length) return invalid(`TPF-03 omitted required Learning Units: ${missing.join(', ')}`, 'TEACHING_D08_TPF03_REQUIRED_UNIT_OMITTED');
+  if (unknown.length) return invalid(`TPF-03 referenced unknown Learning Units: ${unknown.join(', ')}`, 'TEACHING_D08_TPF03_UNKNOWN_UNIT');
+
+  const topics = auditOutput.topics.map((topic, topicIndex) => ({
+    key: String(topic.id), title: String(topic.title), ordinal: topicIndex,
+    subtopics: (topic.subtopics || []).map((subtopic, subtopicIndex) => ({ key: String(subtopic.id), title: String(subtopic.title), ordinal: subtopicIndex })),
+  }));
+  const learning_units = auditOutput.learning_units.map((unit) => {
+    const planning = treatmentByUnit.get(String(unit.id));
+    if (planning.initial_instruction_status === 'unresolved') throw Object.assign(new Error(`TPF-03 left Learning Unit ${unit.id} unresolved.`), { code: 'TEACHING_D08_TPF03_PLAN_BLOCKED' });
+    const treatment = TREATMENT_MAP[planning.initial_instruction_status];
+    const vpkRefs = currentValidatedVpkRefsForAuditUnit(String(unit.id), { vpkDecisions, auditOutput, sources });
+    if (treatment !== 'FULL_INSTRUCTION' && !vpkRefs.length) throw Object.assign(new Error(`TPF-03 compressed ${unit.id} without current validated prior knowledge.`), { code: 'TEACHING_D08_VPK_PROVENANCE_REQUIRED' });
+    return {
+      key: String(unit.id), topic_key: String(unit.topic_id), subtopic_key: unit.subtopic_id == null ? null : String(unit.subtopic_id),
+      title: String(unit.title), intended_competence: String(unit.intended_competence), exit_conditions: unit.exit_conditions,
+      criticality: String(unit.criticality), foundational: unit.foundational === true || String(unit.criticality).toUpperCase() === 'FOUNDATIONAL',
+      instructional_load_min_minutes: unit.instructional_load_min_minutes, instructional_load_max_minutes: unit.instructional_load_max_minutes,
+      instructional_treatment: treatment, vpk_basis_refs: vpkRefs,
+      pedagogy_profile: null,
+      treatment_basis: planning.initial_treatment_basis || null,
+      follow_up_treatments: planning.follow_up_treatments || [],
+      instructional_emphasis: planning.instructional_emphasis || null,
+      emphasis_basis: planning.emphasis_basis || null,
+      evidence_goal: planning.evidence_goal || null,
+      student_intake_accommodation_notes: planning.student_intake_accommodation_notes || null,
+    };
+  });
+  const dependencies = (auditOutput.dependencies || []).map((edge) => ({
+    learning_unit_key: String(edge.learning_unit_id), prerequisite_learning_unit_key: String(edge.prerequisite_learning_unit_id), rationale: edge.rationale || null,
+  }));
+  const source_mappings = auditOutput.source_accounting.map((account) => ({
+    source_ref: String(account.source_ref), learning_unit_keys: (account.learning_unit_ids || []).map(String),
+  }));
+  const assumed_prerequisites = (auditOutput.assumed_prerequisites || []).map((item, index) => normalizeAuditPrerequisite(item, index, auditUnitIds));
+  const learning_unit_lineage = deriveLearningUnitLineage({ previousPlanContext, auditOutput });
+  return { ok: true, value: {
+    summary: output.student_facing_plan_summary_candidate || null,
+    topics, learning_units, dependencies, source_mappings, assumed_prerequisites, learning_unit_lineage,
+    canonical_plan_output: output,
+  }};
+  } catch (error) {
+    return invalid(error.message || 'Canonical TPF-03 plan materialization failed.', error.code || 'TEACHING_D08_TPF03_MATERIALIZATION_FAILED');
+  }
+}
+
+function validateTpf03ScopeImpactOutput(output, { course, plan, scopeChangeId } = {}) {
+  const base = validateTpf03CoursePlanOutput(output, { course });
+  if (!base.ok) return base;
+  const impact = output.scope_change_impact;
+  if (!impact || typeof impact !== 'object' || Array.isArray(impact)) return invalid('TPF-03 scope_change_impact is required.');
+  if (impact.history_must_remain_immutable !== true) return invalid('TPF-03 scope analysis must preserve immutable history.', 'TEACHING_D08_SCOPE_HISTORY_INVARIANT');
+  if (plan && String(impact.current_plan_version || '') !== String(plan.version_no) && String(impact.current_plan_version || '') !== `course-plan:${plan.course_plan_id}:v${plan.version_no}`) return invalid('TPF-03 scope impact references the wrong Course Plan version.', 'TEACHING_D08_SCOPE_PLAN_REFERENCE_MISMATCH');
+  return { ok: true, value: {
+    change_kind: impact.material_version_change_recommended === true ? 'MATERIAL_SCOPE_CHANGE' : 'MINOR_SUPPLEMENT',
+    affected_learning_units: [],
+    prerequisite_impacts: impact.new_prerequisites || [],
+    assessment_scope_impacts: impact.assessment_scope_impacts_for_downstream_review || [],
+    plan_version_recommended: impact.material_version_change_recommended === true,
+    student_summary: impact.proposed_change_summary || 'Course scope change reviewed.',
+    review_needed: output.review_required === true,
+    scope_change_ref: scopeChangeId || null,
+    canonical_scope_output: output,
+  }};
+}
+
+module.exports = {
+  validateTpf03CoursePlanOutput,
+  validateTpf03ScopeImpactOutput,
+  materializeCoursePlanFromTpf03,
+  deriveLearningUnitLineage,
+};
