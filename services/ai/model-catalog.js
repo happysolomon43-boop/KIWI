@@ -38,6 +38,10 @@ const COMMON_TEXT_CAPABILITIES = Object.freeze([
   'structuredOutput',
 ]);
 
+// The final cross-class availability route. Keep the provider model ID in the
+// catalogue so feature code and task definitions remain provider-agnostic.
+const GENERAL_EMERGENCY_FALLBACK_MODEL_ID = 'gemini-3.5-flash-lite';
+
 // Verified against the official Google Gemini model pages on 2026-09-22.
 // Discovery and automatic promotion are added in a later phase; Phase 2 keeps
 // a small, explicit production-safe seed catalog.
@@ -175,6 +179,7 @@ module.exports = {
   MODEL_STATUS,
   modelVersionRank,
   COMMON_TEXT_CAPABILITIES,
+  GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
   DEFAULT_MODEL_CATALOG,
   createModelCatalog,
 };
