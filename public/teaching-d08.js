@@ -202,8 +202,8 @@ function renderSummaryCard(course, review, container, openSection) {
   card.append(
     top,
     el('p', '', review.plan
-      ? 'Review what this course intends to teach, what is already validated, and whether every required source item is accounted for.'
-      : 'The course keeps its validated source analysis here until a versioned Course Plan can be committed.')
+      ? 'See what this course will teach, what is already validated, and whether every required part of the Subject is accounted for.'
+      : 'The validated course scope is ready here while the first versioned Course Plan is still pending.')
   );
   const metrics = el('div', 'teaching-d08-mini-metrics');
   metrics.append(
@@ -228,7 +228,7 @@ function renderPlanCard(review) {
   const card = el('section', 'teaching-d08-card');
   const head = el('div', 'teaching-d08-plan-head');
   const copy = el('div');
-  copy.append(el('div', 'teaching-kicker', 'Course Plan'), el('h3', '', 'Planned academic structure'));
+  copy.append(el('div', 'teaching-kicker', 'Course Plan'), el('h3', '', 'What this course will teach'));
   const status = el('span', 'teaching-d08-status', review.plan
     ? `Version ${review.plan.version} · ${safeStatus(review.plan.state)}`
     : review.routeQualification === 'UNQUALIFIED_UNTIL_D30' ? 'Generation held until D30' : 'Plan pending');
@@ -269,7 +269,7 @@ function renderPlanCard(review) {
 
 function renderCoverageCard(review) {
   const card = el('section', 'teaching-d08-card');
-  card.append(el('div', 'teaching-kicker', 'Coverage'), el('h3', '', 'Nothing required may disappear'));
+  card.append(el('div', 'teaching-kicker', 'Coverage'), el('h3', '', 'Required content stays accounted for'));
   const report = review.coverageReport;
   if (!report) {
     card.append(el('p', '', 'Coverage reconciliation begins when a validated Course Plan is committed. Until then, no source item is treated as covered.'));
@@ -292,7 +292,7 @@ function renderCoverageCard(review) {
 function renderAnalysisCard(review) {
   const card = el('section', 'teaching-d08-card');
   const analysis = review.sourceAnalysis || {};
-  card.append(el('div', 'teaching-kicker', 'Validated source analysis'), el('h3', '', 'What this course is responsible for'));
+  card.append(el('div', 'teaching-kicker', 'Validated source analysis'), el('h3', '', 'What the Subject requires'));
   const metrics = el('div', 'teaching-d08-metrics');
   metrics.append(
     metric(analysis.sourceCount, 'source items'),
@@ -327,7 +327,7 @@ function renderAnalysisCard(review) {
 
 function renderAssumptionsCard(review) {
   const card = el('section', 'teaching-d08-card');
-  card.append(el('div', 'teaching-kicker', 'Prerequisites'), el('h3', '', 'Assumptions stay visible'));
+  card.append(el('div', 'teaching-kicker', 'Prerequisites'), el('h3', '', 'Starting assumptions'));
   const assumptions = review.assumptions?.length ? review.assumptions : review.sourceAnalysis?.assumptions || [];
   if (!assumptions.length) {
     card.append(el('p', '', 'No student-facing prerequisite assumptions are currently recorded.'));
@@ -347,7 +347,7 @@ function renderAssumptionsCard(review) {
 
 function renderScopeCard(course, review, refresh) {
   const card = el('section', 'teaching-d08-card');
-  card.append(el('div', 'teaching-kicker', 'Scope control'), el('h3', '', 'Versioned change review'));
+  card.append(el('div', 'teaching-kicker', 'Scope control'), el('h3', '', 'Keep the plan current'));
   const state = review.scopeChange;
   if (state) card.append(el('p', '', `Latest review: ${safeStatus(state.kind)} · ${safeStatus(state.status)}`));
   else card.append(el('p', '', 'Check the KIWI Subject when you want to confirm that the Course is still based on the same authoritative scope.'));
@@ -389,7 +389,7 @@ async function renderCoursePlan({ course, container }) {
   copy.append(
     el('div', 'teaching-kicker', 'Course setup · Stage 2'),
     el('h2', '', 'Course Plan'),
-    el('p', '', 'Review the academic structure, coverage, assumptions, and scope lineage for this course. This is course context, not a global Teaching destination.')
+    el('p', '', 'Review what the course will teach, what is already accounted for, and the assumptions Teaching is carrying forward.')
   );
   const refreshButton = el('button', 'teaching-button', 'Refresh');
   refreshButton.type = 'button';
