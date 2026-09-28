@@ -22,6 +22,8 @@ function createTeachingRouter({
   randomUUID = null,
   d07Intelligence = null,
   d07Service = null,
+  d08Intelligence = null,
+  d08Service = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
     throw new TypeError('KIWI Teaching backend requires the existing authenticate middleware.');
@@ -38,9 +40,11 @@ function createTeachingRouter({
     withTransaction,
     randomUUID,
     d07Intelligence,
+    d08Intelligence,
   });
   const router = express.Router();
   let d07Ready = Boolean(d07Service);
+  let d08Ready = Boolean(d08Service);
 
   router.assertD07Ready = async () => {
     if (!foundation.d07?.repository) {
@@ -49,6 +53,16 @@ function createTeachingRouter({
     }
     await foundation.d07.repository.assertReady();
     d07Ready = true;
+    return true;
+  };
+
+  router.assertD08Ready = async () => {
+    if (!foundation.d08?.repository) {
+      d08Ready = false;
+      return false;
+    }
+    await foundation.d08.repository.assertReady();
+    d08Ready = true;
     return true;
   };
 
@@ -125,6 +139,71 @@ function createTeachingRouter({
     router.post('/courses/:id/validated-prior-knowledge', async (req, res) => {
       try { res.status(201).json(await courseIntakeService.decideVpk(req.user, req.params.id, req.body)); }
       catch (error) { sendError(res, error, 'Failed to record prior-knowledge decision.'); }
+    });
+  }
+
+
+  const coursePlanService = d08Service || foundation.d08?.service || null;
+  if (coursePlanService) {
+    const requireD08Ready = (req, res, next) => {
+      if (d08Ready) return next();
+      return res.status(503).json({
+        error: 'Teaching Course Plan and Coverage review is unavailable until the D08 schema is ready.',
+        code: 'TEACHING_D08_SCHEMA_NOT_READY',
+      });
+    };
+
+    router.get('/courses/:id/plan-review', requireD08Ready, async (req, res) => {
+      try { res.json(await coursePlanService.getPlanReview(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load Course Plan review.'); }
+    });
+
+    router.post('/courses/:id/course-plan', requireD08Ready, async (req, res) => {
+      try { res.status(201).json(await coursePlanService.generateCoursePlan(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to prepare Course Plan.'); }
+    });
+
+    router.get('/courses/:id/coverage-report', requireD08Ready, async (req, res) => {
+      try { res.json(await coursePlanService.getCoverageReport(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load Course Coverage Report.'); }
+    });
+
+    router.get('/courses/:id/activation-coverage-decision', requireD08Ready, async (req, res) => {
+      try { res.json(await coursePlanService.getActivationCoverageDecision(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to evaluate Course Coverage readiness.'); }
+    });
+
+    router.post('/courses/:id/coverage-audit', requireD08Ready, async (req, res) => {
+      try {
+        const stage = String(req.body?.stage || 'END_OF_COURSE').toUpperCase();
+        if (stage !== 'END_OF_COURSE') {
+          return res.status(400).json({
+            error: 'Explicit Coverage Audit creation is supported for END_OF_COURSE only; pre-activation audit is created atomically with a Course Plan.',
+            code: 'TEACHING_D08_COVERAGE_AUDIT_STAGE_INVALID',
+          });
+        }
+        return res.status(201).json(await coursePlanService.auditEndOfCourse(req.user, req.params.id));
+      } catch (error) { return sendError(res, error, 'Failed to run Course Coverage Audit.'); }
+    });
+
+    router.post('/courses/:id/scope-review', requireD08Ready, async (req, res) => {
+      try { res.status(201).json(await coursePlanService.detectScopeChange(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to review Course scope changes.'); }
+    });
+
+    router.post('/courses/:id/scope-review/:scopeChangeId/analyze', requireD08Ready, async (req, res) => {
+      try { res.json(await coursePlanService.analyzeScopeChange(req.user, req.params.id, req.params.scopeChangeId)); }
+      catch (error) { sendError(res, error, 'Failed to analyze reviewed Course scope change.'); }
+    });
+
+    router.post('/courses/:id/scope-review/:scopeChangeId/apply', requireD08Ready, async (req, res) => {
+      try { res.json(await coursePlanService.adoptAuthoritativeScopeChange(req.user, req.params.id, req.params.scopeChangeId)); }
+      catch (error) { sendError(res, error, 'Failed to adopt reviewed Course scope change.'); }
+    });
+
+    router.post('/courses/:id/validated-prior-knowledge/:decisionId/recheck', requireD08Ready, async (req, res) => {
+      try { res.status(201).json(await coursePlanService.reconcileVpkContradiction(req.user, req.params.id, req.params.decisionId, req.body)); }
+      catch (error) { sendError(res, error, 'Failed to recheck Validated Prior Knowledge.'); }
     });
   }
 

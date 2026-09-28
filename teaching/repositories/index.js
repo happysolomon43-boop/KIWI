@@ -3,6 +3,7 @@
 const { createTeachingKernelPersistence } = require('./kernel-persistence');
 const { createPreparationRuntimeRepository } = require('./preparation-runtime');
 const { createD07CourseIntakeRepository } = require('./d07-course-intake');
+const { createD08CoursePlanRepository } = require('./d08-course-plan');
 
 function requireMethod(value, name) {
   if (!value || typeof value[name] !== 'function') {
@@ -34,4 +35,5 @@ module.exports = {
   createTeachingKernelPersistence,
   createPreparationRuntimeRepository,
   createD07CourseIntakeRepository,
+  createD08CoursePlanRepository,
 };
