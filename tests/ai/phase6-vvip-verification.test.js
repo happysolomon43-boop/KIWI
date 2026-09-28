@@ -66,13 +66,14 @@ test('Phase 6 VVIP canonical tasks include assessment integrity audit', () => {
   assert.equal(AI_TASKS.IMPORT_IMAGE_EXTRACTION.reasoning, REASONING_LEVELS.MEDIUM);
 });
 
-test('all VVIP tasks resolve only to the approved stable Flash VVIP chain', () => {
+test('all VVIP tasks resolve through stable Flash before the 3.5 Lite emergency fallback', () => {
   const router = createModelRouter();
   const expected = [
     'gemini-3.8-flash',
     'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
   ];
 
   for (const id of [
@@ -85,7 +86,7 @@ test('all VVIP tasks resolve only to the approved stable Flash VVIP chain', () =
   ]) {
     const models = router.resolveCandidates(id).map((entry) => entry.modelId);
     assert.deepEqual(models, expected, id);
-    assert.ok(models.every((model) => !model.includes('lite')), id);
+    assert.equal(models.at(-1), 'gemini-3.5-flash-lite', id);
   }
 });
 

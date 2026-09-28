@@ -65,7 +65,7 @@ test('VIP reasoning, quality floors, and degradation permissions still match the
   }
 });
 
-test('VIP routing preserves Flash quality except the two explicitly approved Lite-first background jobs', () => {
+test('VIP routing stays Flash-first and ends with the general 3.5 Lite emergency route', () => {
   const router = createModelRouter();
   const liteFirstBackground = new Set([
     'MORNING_BRIEF',
@@ -95,7 +95,9 @@ test('VIP routing preserves Flash quality except the two explicitly approved Lit
         'gemini-3.1-flash-lite',
       ], `${taskId} Lite fallback`);
     } else {
-      assert.equal(models.some((model) => model.includes('lite')), false, taskId);
+      assert.deepEqual(models.slice(3), [
+        'gemini-3.5-flash-lite',
+      ], `${taskId} general emergency Lite fallback`);
     }
   }
 });

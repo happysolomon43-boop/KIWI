@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const { createModelRouter } = require('../../services/ai/model-router');
 
-test('VVIP routes through four approved stable Flash models for resilient quality-preserving fallback', () => {
+test('VVIP routes through four stable Flash models then the high-thinking Lite emergency fallback', () => {
   const router = createModelRouter();
   const ids = router.resolveCandidates('MAIN_CBT').map((entry) => entry.modelId);
 
@@ -14,6 +14,7 @@ test('VVIP routes through four approved stable Flash models for resilient qualit
     'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
   ]);
 });
 
@@ -26,6 +27,7 @@ test('flashcard generation receives the same VVIP model chain as main CBT', () =
     'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
   ]);
 });
 
@@ -37,6 +39,7 @@ test('VIP starts one stable Flash generation below VVIP primary', () => {
     'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
   ]);
 });
 
@@ -49,6 +52,18 @@ test('confirmed background tasks with a Flash-Lite floor stay Lite-first', () =>
       'gemini-3.5-flash-lite',
       'gemini-3.1-flash-lite',
     ], taskId);
+  }
+});
+
+test('Gemini 3.5 Lite always uses HIGH thinking, including lower-class native Lite tasks', () => {
+  const router = createModelRouter();
+  for (const taskId of ['MAIN_CBT', 'RECKONING_CBT', 'DEEP_AUDIT', 'CARD_EXPLANATION']) {
+    const fallback = router.resolveCandidates(taskId)
+      .find((entry) => entry.modelId === 'gemini-3.5-flash-lite');
+    assert.ok(fallback, taskId);
+    assert.equal(fallback.requestedReasoning, 'HIGH', taskId);
+    assert.equal(fallback.resolvedReasoning, 'HIGH', taskId);
+    assert.equal(fallback.thinkingGenerationConfig.thinkingConfig.thinkingLevel, 'high', taskId);
   }
 });
 
@@ -85,5 +100,6 @@ test('preferred model creates an affinity ceiling instead of upgrading unexpecte
     'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
   ]);
 });

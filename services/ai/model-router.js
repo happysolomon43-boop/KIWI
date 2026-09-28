@@ -9,6 +9,7 @@ const {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
   MODEL_STATUS,
+  GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
   createModelCatalog,
 } = require('./model-catalog');
 const {
@@ -70,6 +71,15 @@ function createModelRouter({
     return candidates.slice(index);
   }
 
+  function appendGeneralEmergencyFallback(models, task) {
+    const fallback = catalog.get(GENERAL_EMERGENCY_FALLBACK_MODEL_ID);
+    if (!fallback || fallback.status !== MODEL_STATUS.APPROVED) return models;
+    if (models.some((model) => model.id === fallback.id)) return models;
+    if (!modelSupportsCapabilities(fallback, task.capabilities)) return models;
+    if (!resolveThinkingLevel(fallback, 'HIGH')) return models;
+    return models.concat(fallback);
+  }
+
   function resolveCandidates(taskId, { preferredModelId = null } = {}) {
     const task = getTask(taskId);
     const flash = eligibleFamily(MODEL_FAMILIES.FLASH, task);
@@ -79,10 +89,12 @@ function createModelRouter({
 
     switch (task.modelPolicy) {
       case MODEL_POLICIES.TOP_STABLE_FLASH:
-        // Keep four approved stable Flash generations. The fourth route is a
-        // quality-preserving emergency fallback (still FLASH) and only matters
-        // when newer generations are overloaded or quota-limited.
-        models = pinAsCeiling(flash, pins.VVIP).slice(0, 4);
+        // Keep four approved stable Flash generations, then add the explicit
+        // high-thinking 3.5 Lite availability route as the final fallback.
+        models = appendGeneralEmergencyFallback(
+          pinAsCeiling(flash, pins.VVIP).slice(0, 4),
+          task
+        );
         break;
 
       case MODEL_POLICIES.VIP_STABLE_FLASH:
@@ -100,6 +112,7 @@ function createModelRouter({
         ) {
           models = models.concat(lite.slice(0, 2));
         }
+        models = appendGeneralEmergencyFallback(models, task);
         break;
 
       case MODEL_POLICIES.TOP_STABLE_FLASH_LITE:
@@ -118,7 +131,13 @@ function createModelRouter({
     }
 
     const routed = models.map((model) => {
-      const thinking = buildGeminiThinkingConfig(model, task.reasoning);
+      // The 3.5 Lite availability route always retains HIGH thinking even for
+      // lower-class tasks; it is a last-resort model fallback, not a quality
+      // shortcut. Lite-native tasks use the same high-quality configuration.
+      const requestedReasoning = model.id === GENERAL_EMERGENCY_FALLBACK_MODEL_ID
+        ? 'HIGH'
+        : task.reasoning;
+      const thinking = buildGeminiThinkingConfig(model, requestedReasoning);
       return Object.freeze({
         model,
         modelId: model.id,

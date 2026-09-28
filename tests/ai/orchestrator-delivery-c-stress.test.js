@@ -359,17 +359,18 @@ test('Delivery C: provider-wide outage returns PROVIDER_OVERLOADED, not false ca
       assert.equal(error.retryable, true);
       assert.notEqual(error.code, AI_ERROR_CODES.CAPACITY_EXHAUSTED);
       assert.equal(error.details.hadEligibleRoute, true);
-      assert.equal(error.details.attempts.length, 8);
+      assert.equal(error.details.attempts.length, 10);
       return true;
     }
   );
 
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 10);
   for (const modelId of [
     'gemini-3.8-flash',
     'gemini-3.7-flash',
     'gemini-3.6-flash',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
   ]) {
     assert.equal(providerHealth.snapshot(modelId).state, CIRCUIT_STATES.OPEN);
   }
