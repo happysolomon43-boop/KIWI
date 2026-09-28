@@ -239,6 +239,36 @@ const adaptiveReckoningEngine = createReckoningEngine({
   logger: console,
 });
 
+// One in-process job per Reckoning. The database preparation claim remains the
+// cross-instance authority, while this map prevents duplicate local launches.
+const _reckoningPreparationJobs = new Map();
+function _scheduleReckoningPreparation(reckoningId, userId) {
+  const key = `${reckoningId}:${userId}`;
+  const existing = _reckoningPreparationJobs.get(key);
+  if (existing) return existing;
+
+  const job = Promise.resolve()
+    .then(() => adaptiveReckoningEngine.start({ reckoningId, userId }))
+    .catch((error) => {
+      console.warn('[KIWI RECKONING] background preparation failed', {
+        reckoningId,
+        userId,
+        code: error?.code || null,
+        message: String(error?.message || error).slice(0, 500),
+      });
+      throw error;
+    })
+    .finally(() => {
+      _reckoningPreparationJobs.delete(key);
+    });
+
+  // The caller can attach its own completion handling; this catch prevents a
+  // fire-and-forget trigger from becoming an unhandled rejection.
+  job.catch(() => null);
+  _reckoningPreparationJobs.set(key, job);
+  return job;
+}
+
 function _runReckoningPreparationRecoverySweep() {
   if (
     !adaptiveReckoningEngine ||
@@ -583,7 +613,12 @@ async findAll() {
 refreshTokens: {
 async create(userId, tokenHash, expiresAt) {
   await query(
-    'INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES ($1, $2, $3, NOW())',
+    `INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (token_hash) DO UPDATE SET
+       user_id = EXCLUDED.user_id,
+       expires_at = EXCLUDED.expires_at,
+       created_at = NOW()`,
     [tokenHash, userId, expiresAt]
   );
   return true;
@@ -1690,10 +1725,20 @@ async get(userId, type, dateStr) {
 async set(userId, type, dateStr, data) {
   // Fix #5: deterministic id + ON CONFLICT eliminates read-then-write (2 ops → 1)
   const docId = `${userId}_${type}_${dateStr}`;
-  const payload = { id: docId, user_id: userId, type, date: dateStr, ...data, updated_at: new Date() };
-  const q = _buildUpsert('daily_ritual_cache', ['id'], payload);
-  await query(q.text, q.values);
-  return { id: docId, ...payload };
+  const serialized = JSON.stringify(data === undefined ? null : data);
+  const { rows } = await query(
+    `INSERT INTO daily_ritual_cache (id, user_id, type, date, data, updated_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       user_id = EXCLUDED.user_id,
+       type = EXCLUDED.type,
+       date = EXCLUDED.date,
+       data = EXCLUDED.data,
+       updated_at = NOW()
+     RETURNING *`,
+    [docId, userId, type, dateStr, serialized]
+  );
+  return rows[0] ? { id: docId, ...rows[0] } : { id: docId, user_id: userId, type, date: dateStr, data };
 },
 },
 // ── seedling_transactions ───────────────────────────────────────────────────
@@ -8799,15 +8844,17 @@ question_count: racedActive.question_count,
 recovered_race: true,
 };
 }
-// New Reckonings are prepared by the authoritative V2 engine only when the
-// learner presses Begin. Generation failure therefore leaves this row triggered
-// and retryable instead of creating an unusable in_progress lockout.
+// Begin preparation immediately. The durable database claim makes this safe
+// across restarts and multiple service instances; the UI reconnects by polling
+// the active session rather than requiring the learner to keep this request open.
+_scheduleReckoningPreparation(reckoning.id, userId);
 
 return {
 reckoning_id: reckoning.id,
-status: 'triggered',
+status: 'preparing',
 flagged_card_count: flaggedCards.length,
-question_count,
+question_count: questionCount,
+generation_status: 'pending',
 };
 }
 
@@ -13506,6 +13553,7 @@ expiresIn: ACCESS_EXPIRY,
 function generateRefreshToken(user) {
 return jwt.sign({ userId: user.id, tokenType: 'refresh' }, JWT_SECRET, {
 expiresIn: REFRESH_EXPIRY,
+jwtid: randomUUID(),
 });
 }
 

@@ -2674,7 +2674,7 @@
         align-items: center;
         justify-content: center;
         padding: 40px 24px;
-        animation: fadeIn 0.5s ease;
+        animation: none;
       }
       .reckoning-card {
         background: var(--bg-2);
@@ -2686,7 +2686,7 @@
         text-align: center;
         position: relative;
         overflow: hidden;
-        animation: scaleIn 0.5s var(--ease-spring);
+        animation: none;
       }
       .reckoning-card::before {
         content: "";
@@ -14234,6 +14234,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         return [
           reckoning.id || "",
           reckoning.status || "",
+          reckoning.generation_status || reckoning.generationStatus || "",
           reckoning.exam_session_id || "",
           reckoning.deferred_until || reckoning.deferral_expires_at || "",
           reckoning.score_pct ?? "",
@@ -14928,6 +14929,14 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const isAdaptiveV2 =
           Number(reckoning.engine_version || reckoning.engineVersion || 1) === 2 ||
           reckoning.adaptive === true;
+        const isPreparing = isAdaptiveV2 &&
+          (reckoning.generation_status === "pending" || reckoning.generationStatus === "pending");
+        if (isPreparing) {
+          _reckoningOverlayRenderKey = stateKey;
+          _renderAdaptivePreparing(reckoning);
+          _pollAdaptiveReckoningReadiness(reckoning.id);
+          return;
+        }
         const failureCount = Math.max(0, Number(reckoning.failure_count) || 0);
         const failsafeThreshold = Math.max(1, Number(reckoning.failsafe_threshold) || 6);
         const failsafeNoteHtml = isMandatory
@@ -14997,8 +15006,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             : ""
         }
         <div style="display:flex;flex-direction:column;gap:10px;">
-          <button class="btn btn-primary btn-lg" id="startReckoningBtn" style="width:100%;">
-            ${isInProgress ? "Resume The Reckoning" : "Begin The Reckoning"}
+          <button class="btn btn-primary btn-lg" id="startReckoningBtn" style="width:100%;" ${isPreparing ? "disabled" : ""}>
+            ${isPreparing ? "Preparing The Reckoning…" : (isInProgress ? "Resume The Reckoning" : "Begin The Reckoning")}
           </button>
           ${secondaryActionHtml}
           ${isInProgress ? `
@@ -15056,6 +15065,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
           navigateTo("settings", { fromReckoning: true });
         });
         document.getElementById("startReckoningBtn").addEventListener("click", async () => {
+          if (isPreparing) return;
           const _startBtn = document.getElementById("startReckoningBtn");
           if (_startBtn) {
             _startBtn.disabled = true;
@@ -15068,6 +15078,11 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               return;
             }
             if (isAdaptiveV2) {
+              reckoning.generation_status = "pending";
+              reckoning.generationStatus = "pending";
+              AppState.reckoning = reckoning;
+              _setReckoningLockdownUi(true);
+              _renderAdaptivePreparing(reckoning);
               const response = await api.startAdaptiveReckoning();
               reckoning.generation_status = response?.generation_status || "pending";
               reckoning.generationStatus = reckoning.generation_status;
