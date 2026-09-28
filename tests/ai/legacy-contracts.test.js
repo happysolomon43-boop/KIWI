@@ -93,9 +93,12 @@ test('custom CBT split-generation and completion safeguards remain present', () 
   assert.match(source, /\[KIWI CBT\] Ratio check:/);
 });
 
-test('normal and Reckoning CBT retain deterministic availability recovery', () => {
+test('normal CBT fails closed while Reckoning alone retains deterministic lockout recovery', () => {
   assert.match(source, /function generateFallbackExamQuestions/);
   assert.match(source, /isAIAvailabilityError\(generationErr\)/);
-  assert.match(source, /MAIN_CBT and Reckoning both get a deterministic availability fallback/);
+  assert.match(source, /const _allowDeterministicRecovery = isReckoningExam/);
+  assert.match(source, /if \(!_allowDeterministicRecovery\) throw generationErr/);
+  assert.match(source, /if \(_allowDeterministicRecovery && questions\.length < _minAccept\)/);
+  assert.doesNotMatch(source, /MAIN_CBT and Reckoning both get a deterministic availability fallback/);
   assert.match(source, /using deterministic recovery exam/);
 });

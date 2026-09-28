@@ -16501,6 +16501,10 @@ const _cbtCount       = count;
 const _cbtCards       = selectedCards;
 const _cbtBody        = body;
 const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? Math.max(0, Math.min(100, Number(theory_percent))) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage, difficulty_level: selectedDifficulty, ai_task_id: isReckoningExam ? 'RECKONING_CBT' : 'MAIN_CBT', generation_group_id: _cbtSessionId };
+// Ordinary CBT is AI-only. Deterministic source-card recovery is reserved for
+// Reckoning's lockout-safety contract and must never masquerade as a generated
+// normal exam when every model route is unavailable or returns unusable output.
+const _allowDeterministicRecovery = isReckoningExam;
 setImmediate(async () => {
   try {
     let questions;
@@ -16623,9 +16627,10 @@ setImmediate(async () => {
 
       if (!_availabilityRecovery) throw generationErr;
 
-      // MAIN_CBT and Reckoning both get a deterministic availability fallback.
-      // Provider overload/quota/network failure must not strand the learner after
-      // the request has already been accepted as a background job.
+      if (!_allowDeterministicRecovery) throw generationErr;
+
+      // Reckoning alone retains deterministic availability recovery so a
+      // provider outage cannot trap a learner behind an active lockout.
       questions = generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount);
       console.warn(
         `[KIWI CBT] ${_cbtOptions.ai_task_id} AI route unavailable (${generationErr.code || generationErr.message}); ` +
@@ -16640,10 +16645,10 @@ setImmediate(async () => {
     questions = filterInvalidCBTQuestions(questions || [], 'final integrity');
 
     // 60% minimum threshold — evaluated against the full requested count.
-    // If AI output is incomplete or invalid, both normal and Reckoning CBT get
-    // one deterministic source-card recovery before the job is allowed to fail.
+    // Only Reckoning may use deterministic source-card recovery. Ordinary CBT
+    // must fail honestly instead of presenting non-AI questions as AI output.
     const _minAccept = Math.max(1, Math.floor(_cbtCount * 0.6));
-    if (questions.length < _minAccept) {
+    if (_allowDeterministicRecovery && questions.length < _minAccept) {
       const _fallbackQuestions = filterInvalidCBTQuestions(
         generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount),
         'deterministic recovery'
