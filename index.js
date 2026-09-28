@@ -37,9 +37,6 @@ const { WebSocketServer } = require('ws');
 const { createEcosystemV2 } = require('./ecosystem_v2');
 const { buildTreeState } = require('./services/tree-state');
 const { createAIRuntime } = require('./services/ai/runtime');
-const { createGeminiTransport } = require('./services/ai/gemini-transport');
-const { buildGeminiThinkingConfig } = require('./services/ai/capability-adapter');
-const { normalizeGeminiResponse } = require('./services/ai/response-normalizer');
 const { isAIAvailabilityError } = require('./services/ai/errors');
 const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
@@ -21706,83 +21703,6 @@ _debugRouter.post('/exam-parse-test', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message, timings: { totalMs: Date.now() - startMs } });
   }
-});
-// TEMPORARY CONTROL: compare the four CBT models without orchestrator policy.
-// This route is authenticated, stores no content/results, and is removed after
-// the production control run.
-_debugRouter.post('/cbt-direct-model-control', async (req, res) => {
-  const { notes, count = 10 } = req.body || {};
-  if (!notes || typeof notes !== 'string') {
-    return res.status(400).json({ error: 'notes is required' });
-  }
-  const requestedCount = Math.max(1, Math.min(25, parseInt(count) || 10));
-  const models = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
-  const slots = _aiRuntime.projectPool.snapshot()
-    .filter((slot) => slot.enabled)
-    .slice(0, models.length)
-    .map((slot) => _aiRuntime.projectPool.get(slot.id));
-  if (slots.length < models.length) {
-    return res.status(503).json({ error: 'Four enabled Gemini project slots are required' });
-  }
-
-  const prompt = CBT_PROMPT
-    .replace('[NOTES]', notes.slice(0, 12000))
-    .replace('[COUNT]', requestedCount);
-  const transport = createGeminiTransport({ fetchImpl: globalThis.fetch });
-  const startedAt = Date.now();
-  const results = await Promise.all(models.map(async (modelId, index) => {
-    const slot = slots[index];
-    const model = _aiRuntime.catalog.get(modelId);
-    const thinking = buildGeminiThinkingConfig(model, 'HIGH');
-    const attemptStartedAt = Date.now();
-    try {
-      const response = await transport.generate({
-        apiKey: slot.apiKey,
-        modelId,
-        content: prompt,
-        generationConfig: {
-          maxOutputTokens: Math.min(17500, Math.max(8000, requestedCount * 700)),
-          ...thinking.generationConfig,
-        },
-        timeoutMs: 19000,
-      });
-      const normalized = normalizeGeminiResponse(response.raw, {
-        modelId,
-        slotId: slot.id,
-        latencyMs: response.latencyMs,
-      });
-      const questions = normalized.text
-        ? parseCBTResponse(normalized.text, 'direct-control', [])
-        : [];
-      return {
-        modelId,
-        slotId: slot.id,
-        ok: Boolean(normalized.text) && !normalized.blocked,
-        httpStatus: response.httpStatus,
-        latencyMs: response.latencyMs,
-        finishReason: normalized.finishReason,
-        outputChars: normalized.text.length,
-        parsedQuestions: questions.length,
-      };
-    } catch (error) {
-      return {
-        modelId,
-        slotId: slot.id,
-        ok: false,
-        httpStatus: error?.status || null,
-        code: error?.code || 'UNKNOWN',
-        latencyMs: Date.now() - attemptStartedAt,
-      };
-    }
-  }));
-
-  console.log('[KIWI DEBUG] direct CBT model control complete', results);
-  res.json({
-    control: 'DIRECT_TRANSPORT_NO_ORCHESTRATOR',
-    requestedCount,
-    totalMs: Date.now() - startedAt,
-    results,
-  });
 });
 app.use('/api/debug', _debugRouter);
 
