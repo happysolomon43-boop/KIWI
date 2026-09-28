@@ -1,6 +1,10 @@
 'use strict';
 
-const { AI_TASKS, RETRY_POLICY_CONFIG } = require('./task-registry');
+const {
+  AI_TASKS,
+  AI_EXECUTION_LANES,
+  RETRY_POLICY_CONFIG,
+} = require('./task-registry');
 const { createModelCatalog, MODEL_STATUS } = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
 const { createProjectPool } = require('./project-pool');
@@ -99,6 +103,49 @@ function createAIOrchestrator({
     if (value instanceof Date) return value.getTime();
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : Date.now();
+  }
+
+  // Student-facing calls must not inherit the very long timeout required by
+  // resumable/background generation. Explicit provider errors already fall
+  // through immediately; these ceilings protect only silent or hanging calls.
+  const interactiveAttemptTimeoutMs = boundedEnvNumber(
+    'AI_INTERACTIVE_ATTEMPT_TIMEOUT_MS',
+    19000,
+    5000,
+    60000
+  );
+  const confirmationProbeTimeoutMs = boundedEnvNumber(
+    'AI_CONFIRMATION_PROBE_TIMEOUT_MS',
+    5000,
+    1000,
+    15000
+  );
+  const interactiveOperationTimeoutMs = boundedEnvNumber(
+    'AI_INTERACTIVE_OPERATION_TIMEOUT_MS',
+    40000,
+    10000,
+    120000
+  );
+
+  function attemptTimeoutFor(task, candidate, {
+    confirmationProbe = false,
+    requestStartedAt,
+  } = {}) {
+    if (task.executionLane === AI_EXECUTION_LANES.BACKGROUND) {
+      return candidate.timeoutMs;
+    }
+
+    const elapsedMs = Math.max(0, nowMs() - requestStartedAt);
+    const remainingMs = interactiveOperationTimeoutMs - elapsedMs;
+    if (remainingMs <= 0) return 0;
+
+    return Math.max(1, Math.min(
+      candidate.timeoutMs,
+      confirmationProbe
+        ? confirmationProbeTimeoutMs
+        : interactiveAttemptTimeoutMs,
+      remainingMs
+    ));
   }
 
   // Provider/model availability is intentionally separate from persistent
@@ -393,7 +440,7 @@ function createAIOrchestrator({
       : null;
 
     const attempts = [];
-    const requestStarted = Date.now();
+    const requestStarted = nowMs();
     const operationId = operationBudgetId
       ? `${task.affinityGroup || taskId}::budget::${operationBudgetId}`
       : generationGroupId && task.affinityGroup
@@ -419,7 +466,7 @@ function createAIOrchestrator({
         outcome,
         fallbackDepth: Math.max(0, attempts.length ? (new Set(attempts.map((a) => a.modelId)).size - 1) : 0),
         attemptCount: attempts.length,
-        latencyMs: Date.now() - requestStarted,
+        latencyMs: nowMs() - requestStarted,
         usage: {},
         errorCode: error?.code || AI_ERROR_CODES.UNKNOWN,
         queueWaitMs,
@@ -548,8 +595,29 @@ function createAIOrchestrator({
           throw budgetError;
         }
 
+        const attemptTimeoutMs = attemptTimeoutFor(task, candidate, {
+          confirmationProbe: ownsConfirmationProbe,
+          requestStartedAt: requestStarted,
+        });
+        if (attemptTimeoutMs <= 0) {
+          throw new AIError(
+            `Interactive AI operation exceeded its ${Math.round(interactiveOperationTimeoutMs / 1000)}s deadline`,
+            {
+              code: AI_ERROR_CODES.TIMEOUT,
+              status: 504,
+              retryable: true,
+              scope: 'OPERATION',
+              details: {
+                taskId,
+                operationId,
+                timeoutMs: interactiveOperationTimeoutMs,
+              },
+            }
+          );
+        }
+
         const attemptNumber = attempts.length + 1;
-        const attemptStarted = Date.now();
+        const attemptStarted = nowMs();
         const operationAttemptNumber = budgetClaim.attemptNumber;
         const routeStateBefore = quotaManager?.get
           ? quotaManager.get(slot.id, candidate.modelId).state
@@ -565,7 +633,7 @@ function createAIOrchestrator({
             modelId: candidate.modelId,
             content,
             generationConfig,
-            timeoutMs: candidate.timeoutMs,
+            timeoutMs: attemptTimeoutMs,
           });
 
           const normalized = normalizer(transportResult.raw, {
@@ -651,7 +719,7 @@ function createAIOrchestrator({
             outcome: 'SUCCESS',
             fallbackDepth: modelIndex,
             attemptCount: attemptNumber,
-            latencyMs: Date.now() - requestStarted,
+            latencyMs: nowMs() - requestStarted,
             usage: normalized.usage,
             finishReason: normalized.finishReason,
             queueWaitMs,
@@ -758,7 +826,7 @@ function createAIOrchestrator({
             routeStateAfter,
             operationId,
             operationAttemptNumber,
-            latencyMs: Date.now() - attemptStarted,
+            latencyMs: nowMs() - attemptStarted,
             startedAt: new Date(attemptStarted),
             completedAt: new Date(),
           }));

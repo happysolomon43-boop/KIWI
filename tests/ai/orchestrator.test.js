@@ -94,6 +94,116 @@ test('exhausting a model across project slots falls to next model and restarts i
   assert.equal(result.attempts, 3);
 });
 
+test('interactive fallback uses a 19s primary ceiling and a 5s confirmation ceiling', async () => {
+  const calls = [];
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, timeoutMs: args.timeoutMs });
+        if (args.modelId === 'gemini-3.8-flash') {
+          throw new AIError('overloaded', {
+            code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+            status: 503,
+            retryable: true,
+            scope: 'PROVIDER_MODEL',
+          });
+        }
+        return { raw: successRaw('fallback'), latencyMs: 10, httpStatus: 200 };
+      },
+    },
+  });
+
+  const result = await ai.run('MAIN_CBT', { content: 'exam' });
+
+  assert.deepEqual(calls, [
+    { modelId: 'gemini-3.8-flash', timeoutMs: 19000 },
+    { modelId: 'gemini-3.8-flash', timeoutMs: 5000 },
+    { modelId: 'gemini-3.7-flash', timeoutMs: 19000 },
+  ]);
+  assert.equal(result.text, 'fallback');
+});
+
+test('interactive fallback shares one 40s operation deadline across models', async () => {
+  let now = 1000;
+  const calls = [];
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    clock: () => now,
+    transport: {
+      async generate(args) {
+        calls.push({ modelId: args.modelId, timeoutMs: args.timeoutMs });
+        if (calls.length === 1) now += 18000;
+        else if (calls.length === 2) now += 5000;
+        if (args.modelId === 'gemini-3.8-flash') {
+          throw new AIError('overloaded', {
+            code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+            status: 503,
+            retryable: true,
+            scope: 'PROVIDER_MODEL',
+          });
+        }
+        return { raw: successRaw('within-budget'), latencyMs: 10, httpStatus: 200 };
+      },
+    },
+  });
+
+  await ai.run('MAIN_CBT', { content: 'exam' });
+
+  assert.deepEqual(calls, [
+    { modelId: 'gemini-3.8-flash', timeoutMs: 19000 },
+    { modelId: 'gemini-3.8-flash', timeoutMs: 5000 },
+    { modelId: 'gemini-3.7-flash', timeoutMs: 17000 },
+  ]);
+});
+
+test('interactive deadline stops new provider attempts after 40s', async () => {
+  let now = 1000;
+  let calls = 0;
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    clock: () => now,
+    transport: {
+      async generate() {
+        calls += 1;
+        now += 40000;
+        throw new AIError('overloaded', {
+          code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+          status: 503,
+          retryable: true,
+          scope: 'PROVIDER_MODEL',
+        });
+      },
+    },
+  });
+
+  await assert.rejects(
+    ai.run('MAIN_CBT', { content: 'exam' }),
+    (error) => error.code === AI_ERROR_CODES.TIMEOUT && error.scope === 'OPERATION'
+  );
+  assert.equal(calls, 1);
+});
+
+test('background tasks retain their task-owned provider timeout', async () => {
+  const calls = [];
+  const ai = createAIOrchestrator({
+    projectPool: pool(),
+    logger: quietLogger,
+    transport: {
+      async generate(args) {
+        calls.push(args.timeoutMs);
+        return { raw: successRaw('background'), latencyMs: 10, httpStatus: 200 };
+      },
+    },
+  });
+
+  await ai.run('STUDY_TASK_GENERATION', { content: 'prepare later' });
+  assert.deepEqual(calls, [60000]);
+});
+
 test('model-not-found skips remaining keys for that model', async () => {
   const calls = [];
   const ai = createAIOrchestrator({
