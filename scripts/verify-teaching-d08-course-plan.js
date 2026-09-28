@@ -100,7 +100,8 @@ for (const name of ['mathematics','biology','chemistry','history','literature','
   if (!fixtures.some((fixture) => fixture.discipline === name)) throw new Error(`D08 fixture missing: ${name}`);
 }
 
-const featureSource = required.filter((file) => file.startsWith('teaching/d08') || file.startsWith('teaching/repositories/d08')).map(read).join('\n').toLowerCase();\nif (!featureSource.includes('validated-prior-knowledge.v1')) throw new Error('D08 validated-prior-knowledge.v1 persistence policy binding missing.');
+const featureSource = required.filter((file) => file.startsWith('teaching/d08') || file.startsWith('teaching/repositories/d08')).map(read).join('\n').toLowerCase();
+if (!featureSource.includes('validated-prior-knowledge.v1')) throw new Error('D08 validated-prior-knowledge.v1 persistence policy binding missing.');
 for (const forbidden of ['@google/generative-ai','openai','anthropic','gemini-pro']) {
   if (featureSource.includes(forbidden)) throw new Error(`D08 selects provider/model directly: ${forbidden}`);
 }
