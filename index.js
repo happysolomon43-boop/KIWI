@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 254854)
+Total output lines: 23351
+
 // ════════════════════════════════════════════════════════════════════════════
 //  KIWI BACKEND — Living Ecosystem Edition
 //  MIGRATED: Firebase/Firestore → PostgreSQL (Supabase pg Pool)
@@ -238,6 +241,36 @@ const adaptiveReckoningEngine = createReckoningEngine({
   getConcurrencyState: getReckoningGenerationConcurrencyState,
   logger: console,
 });
+
+// One in-process job per Reckoning. The database preparation claim remains the
+// cross-instance authority, while this map prevents duplicate local launches.
+const _reckoningPreparationJobs = new Map();
+function _scheduleReckoningPreparation(reckoningId, userId) {
+  const key = `${reckoningId}:${userId}`;
+  const existing = _reckoningPreparationJobs.get(key);
+  if (existing) return existing;
+
+  const job = Promise.resolve()
+    .then(() => adaptiveReckoningEngine.start({ reckoningId, userId }))
+    .catch((error) => {
+      console.warn('[KIWI RECKONING] background preparation failed', {
+        reckoningId,
+        userId,
+        code: error?.code || null,
+        message: String(error?.message || error).slice(0, 500),
+      });
+      throw error;
+    })
+    .finally(() => {
+      _reckoningPreparationJobs.delete(key);
+    });
+
+  // The caller can attach its own completion handling; this catch prevents a
+  // fire-and-forget trigger from becoming an unhandled rejection.
+  job.catch(() => null);
+  _reckoningPreparationJobs.set(key, job);
+  return job;
+}
 
 function _runReckoningPreparationRecoverySweep() {
   if (
@@ -583,7 +616,12 @@ async findAll() {
 refreshTokens: {
 async create(userId, tokenHash, expiresAt) {
   await query(
-    'INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES ($1, $2, $3, NOW())',
+    `INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (token_hash) DO UPDATE SET
+       user_id = EXCLUDED.user_id,
+       expires_at = EXCLUDED.expires_at,
+       created_at = NOW()`,
     [tokenHash, userId, expiresAt]
   );
   return true;
@@ -1690,10 +1728,20 @@ async get(userId, type, dateStr) {
 async set(userId, type, dateStr, data) {
   // Fix #5: deterministic id + ON CONFLICT eliminates read-then-write (2 ops → 1)
   const docId = `${userId}_${type}_${dateStr}`;
-  const payload = { id: docId, user_id: userId, type, date: dateStr, ...data, updated_at: new Date() };
-  const q = _buildUpsert('daily_ritual_cache', ['id'], payload);
-  await query(q.text, q.values);
-  return { id: docId, ...payload };
+  const serialized = JSON.stringify(data === undefined ? null : data);
+  const { rows } = await query(
+    `INSERT INTO daily_ritual_cache (id, user_id, type, date, data, updated_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       user_id = EXCLUDED.user_id,
+       type = EXCLUDED.type,
+       date = EXCLUDED.date,
+       data = EXCLUDED.data,
+       updated_at = NOW()
+     RETURNING *`,
+    [docId, userId, type, dateStr, serialized]
+  );
+  return rows[0] ? { id: docId, ...rows[0] } : { id: docId, user_id: userId, type, date: dateStr, data };
 },
 },
 // ── seedling_transactions ───────────────────────────────────────────────────
@@ -8799,15 +8847,17 @@ question_count: racedActive.question_count,
 recovered_race: true,
 };
 }
-// New Reckonings are prepared by the authoritative V2 engine only when the
-// learner presses Begin. Generation failure therefore leaves this row triggered
-// and retryable instead of creating an unusable in_progress lockout.
+// Begin preparation immediately. The durable database claim makes this safe
+// across restarts and multiple service instances; the UI reconnects by polling
+// the active session rather than requiring the learner to keep this request open.
+_scheduleReckoningPreparation(reckoning.id, userId);
 
 return {
 reckoning_id: reckoning.id,
-status: 'triggered',
+status: 'preparing',
 flagged_card_count: flaggedCards.length,
-question_count,
+question_count: questionCount,
+generation_status: 'pending',
 };
 }
 
@@ -11808,412 +11858,7 @@ if (c) names.push(`"${(c.front_content || '').slice(0, 60)}"`);
 }
 return names;
 }
-const dangerousFronts = await getCardFronts(dangerousCardStates);
-const ghostFronts = await getCardFronts(ghostCardStates);
-const stuckFronts = await getCardFronts(stuckCardStates);
-// H-5 FIX: Load recently dismissed invitations — spec input "yesterday's dismissed invitations"
-const yesterdayStrForDismiss = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-const dismissHistoryDoc = await db.dailyRitualCache
-.get(userId, 'dismissal_history', 'persistent')
-.catch(() => null);
-const recentDismissedLines = ((dismissHistoryDoc?.data) || [])
-.filter(d => d.date >= yesterdayStrForDismiss)
-.map(d => {
-const subName = d.subject_id
-? (subjects.find(s => s.id === d.subject_id)?.name || d.subject_id)
-: null;
-return subName ? `${d.action_type} for ${subName}` : d.action_type;
-});
-const dismissedContext = recentDismissedLines.length > 0
-? recentDismissedLines.join(', ')
-: 'none';
-const maxPressure =
-pressureList.length > 0
-? pressureList.reduce(
-(max, p) => (p.pressure_score > max.pressure_score ? p : max),
-pressureList[0]
-)
-: null;
-const highPressureSubject = maxPressure
-? subjects.find((s) => s.id === maxPressure.subject_id)
-: null;
-// G6: Gather at-risk Bubble context for Bubble-specific invitations [DESIGN: §15.2, §15.3]
-let urgentBubbles = [];
-let bubblePromptContext = '';
-try {
-  const activeBubbles = await db.masteryGoals.findActive(userId).catch(() => []);
-  urgentBubbles = activeBubbles.filter((b) =>
-    ['BEHIND', 'CRITICAL', 'RESCUE'].includes(b.trajectory_status) || b.stall_active
-  );
-  if (urgentBubbles.length > 0) {
-    const lines = urgentBubbles.map((b) => {
-      const daysToExam   = b.exam_date
-        ? Math.max(0, Math.ceil((new Date(b.exam_date) - new Date()) / 86400000))
-        : '?';
-      const contractInfo = b.daily_contract_cards
-        ? `${b.daily_contract_cards} cards due (${b.daily_contract_minutes || '?'} min)`
-        : 'contract pending';
-      const stallNote    = b.stall_active
-        ? `, STALL active (${b.stall_cause || 'diagnosing'})`
-        : '';
-      return `  - "${b.name || 'Exam Goal'}": ${b.trajectory_status}, ${daysToExam}d to exam, ${contractInfo}${stallNote}`;
-    });
-    bubblePromptContext = '\n- Exam goals behind pace (must be mentioned in at least one invitation):\n' +
-      lines.join('\n');
-  }
-} catch (_e) { /* non-fatal — invitations work without Bubble context */ }
-// P7.2 FIX: Reckoning invitation always first if active — updated to spec shape
-if (activeReckoning) {
-invitations.push({
-title: 'The Reckoning Awaits',
-context: `${activeReckoning.flagged_card_count} cards have been flagged in ${activeReckoning.subject_name}. The forest holds its breath.`,
-action_type: 'exam',
-subject_id: activeReckoning.subject_id || null,
-card_ids: [],
-dismissed: false,
-action: invitationActionLabel('exam'),
-});
-}
-// AI generates the remaining 2 (or 3 if no reckoning) invitations
-const needed = 3 - invitations.length;
-try {
-// P7.2 FIX: Updated prompt to request spec-compliant shape and action_types
-// Include streak and card counts so invitations reference current reality.
-const totalCards      = allCardStatesForInv.length;
-const totalDangerous  = allCardStatesForInv.filter((s) => s.state === 'DANGEROUS').length;
-const totalGhost      = allCardStatesForInv.filter((s) => s.state === 'GHOST').length;
-const totalStuck      = allCardStatesForInv.filter((s) => s.state === 'STUCK').length;
-const userStreak      = userStatsRow?.current_streak  || 0;
-const allSubjectNames = subjects.map((s) => s.name).join(', ') || 'none';
-const aiPrompt = `
-ROLE
-You are KIWI\'s invitation generator. Create ${needed} specific, motivating daily study invitations.
-STUDENT CONTEXT (real data — use these exact numbers and names in your invitations)
-- Current streak: ${userStreak} day(s)
-- Total cards in the forest: ${totalCards} | Cards due today: ${totalDue}
-- Dangerous cards (${totalDangerous} total; exam approaching, stage 1-2): ${dangerousFronts.join(', ') || 'none'}
-- Ghost cards (${totalGhost} total; stage 5, overdue 20+ days): ${ghostFronts.join(', ') || 'none'}
-- Stuck cards (${totalStuck} total; no progress in 14 days): ${stuckFronts.join(', ') || 'none'}
-- Highest-pressure subject: ${highPressureSubject?.name || 'none'}
-- All subjects: ${allSubjectNames}
-- Recently dismissed invitations (do not repeat): ${dismissedContext}
-${bubblePromptContext}
-RULES
-- Each invitation must name a SPECIFIC card or subject from the context above.
-- If any exam goals are listed above as behind pace, at least one invitation MUST reference that goal by name, its contract card count, and its trajectory status.
-- Invitations should feel like gentle but urgent nudges from the forest.
-- action_type must be one of: study_session | exam | review_specific_cards
-- title: short imperative (3-6 words). context: 1 sentence of honest urgency.
-- If a subject is named, include it as target_subject_name.
-- Total of ${needed} invitations.
-- Return ONLY valid JSON array: [{"title":"...","context":"...","action_type":"study_session|exam|review_specific_cards","target_subject_name":"..."}]
-`;
-    const aiResult = await ai.run('DAILY_INVITATIONS', { content: aiPrompt });
-    // H-4 FIX: Robust JSON extraction — slice from first [ to last ] to survive preambles/fences
-    const rawAiText = aiResult.text;
-    const jsonStartIdx = rawAiText.indexOf('[');
-    const jsonEndIdx = rawAiText.lastIndexOf(']');
-    const aiText = (jsonStartIdx !== -1 && jsonEndIdx > jsonStartIdx)
-      ? rawAiText.slice(jsonStartIdx, jsonEndIdx + 1)
-      : rawAiText.replace(/```[a-zA-Z]*|```/g, '').trim();
-    const aiInvs = JSON.parse(aiText);
-    for (const inv of aiInvs.slice(0, needed)) {
-      // H-3 FIX: Case-insensitive, trimmed matching — Gemini often returns different casing
-      const targetSubject = subjects.find(
-        (s) => s.name.toLowerCase() === (inv.target_subject_name || '').toLowerCase().trim()
-      );
-      // Resolve card_ids for review_specific_cards action type
-      let cardIds = [];
-      if (inv.action_type === 'review_specific_cards' && targetSubject) {
-        const relevantStates = allCardStatesForInv
-          .filter((s) => s.subject_id === targetSubject.id &&
-            ['DANGEROUS', 'GHOST', 'STUCK', 'AVOIDED'].includes(s.state))
-          .slice(0, 5);
-        cardIds = relevantStates.map((s) => s.card_id);
-      }
-      invitations.push({
-        title: inv.title || 'Tend Your Cards',
-        context: inv.context || 'Your weakest cards need attention today.',
-        action_type: ['study_session', 'exam', 'review_specific_cards'].includes(inv.action_type)
-          ? inv.action_type
-          : 'study_session',
-        subject_id: targetSubject?.id || null,
-        card_ids: cardIds,
-        dismissed: false,
-        action: invitationActionLabel(
-          ['study_session', 'exam', 'review_specific_cards'].includes(inv.action_type)
-            ? inv.action_type
-            : 'study_session'
-        ),
-      });
-    }
-    // C-5 FIX: Pad to 3 if AI returned fewer items than needed (partial/trimmed response)
-    while (invitations.length < 3) {
-      invitations.push({
-        title: 'Open the Forest',
-        context: 'Spend 10 minutes reviewing your weakest cards. Small steps build forests.',
-        action_type: 'study_session',
-        subject_id: null,
-        card_ids: [],
-        dismissed: false,
-        action: invitationActionLabel('study_session'),
-      });
-    }
-  } catch (_) {
-    // P7.2 FIX: Fallback now uses spec-compliant shape
-    if (dangerousFronts.length > 0 && invitations.length < 3) {
-      invitations.push({
-        title: 'Danger Cards Due',
-        context: `${dangerousFronts[0]} is stage 1-2 with an exam approaching. Review it now.`,
-        action_type: 'review_specific_cards',
-        subject_id: dangerousCardStates[0]?.subject_id || null,
-        card_ids: dangerousCardStates.slice(0, 3).map((s) => s.card_id),
-        dismissed: false,
-        action: invitationActionLabel('review_specific_cards'),
-      });
-    }
-    if (ghostFronts.length > 0 && invitations.length < 3) {
-      invitations.push({
-        title: 'A Ghost Stirs',
-        context: `${ghostFronts[0]} has been ignored for 20+ days past its due date. Bring it back before it fades.`,
-        action_type: 'review_specific_cards',
-        subject_id: ghostCardStates[0]?.subject_id || null,
-        card_ids: ghostCardStates.slice(0, 3).map((s) => s.card_id),
-        dismissed: false,
-        action: invitationActionLabel('review_specific_cards'),
-      });
-    }
-    if (highPressureSubject && invitations.length < 3) {
-      invitations.push({
-        title: `Tend ${highPressureSubject.name}`,
-        context: `Pressure is rising in ${highPressureSubject.name}. A study session will help the forest breathe.`,
-        action_type: 'study_session',
-        subject_id: highPressureSubject.id,
-        card_ids: [],
-        dismissed: false,
-        action: invitationActionLabel('study_session'),
-      });
-    }
-      // G6: Bubble-specific fallback invitation [DESIGN: §15.3]
-      if (urgentBubbles.length > 0 && invitations.length < 3) {
-        const ub          = urgentBubbles[0];
-        const ubSubject   = subjects.find((s) => s.id === ub.subject_id);
-        const statusLabel = ub.rescue_active ? 'RESCUE' : (ub.trajectory_status || 'BEHIND');
-        invitations.push({
-          title:       ub.stall_active ? 'Break the Stall' : `${statusLabel} — Act Now`,
-          context:     ub.stall_active
-            ? `"${ub.name || 'Your exam goal'}" is stalling — studying but not advancing. Complete today's ${ub.daily_contract_cards || '?'} contract cards to break it.`
-            : `"${ub.name || 'Your exam goal'}" is ${statusLabel} with ${ub.daily_contract_cards || '?'} cards due today. Complete the contract to restore trajectory.`,
-          action_type: 'study_session',
-          subject_id:  ubSubject?.id || ub.subject_id || null,
-          card_ids:    [],
-          dismissed:   false,
-          action:      invitationActionLabel('study_session'),
-        });
-      }
-    while (invitations.length < 3) {
-      invitations.push({
-        title: 'Open the Forest',
-        context: 'Spend 10 minutes reviewing your weakest cards. Small steps build forests.',
-        action_type: 'study_session',
-        subject_id: null,
-        card_ids: [],
-        dismissed: false,
-        action: invitationActionLabel('study_session'),
-      });
-    }
-  }
-  // Keep invitations deterministic, actionable, and honest about what completing
-  // them changes.  The AI may write the invitation, but it may not invent the
-  // completion contract or the pressure outcome.
-  const normalizedInvitations = invitations.slice(0, 3).map((invitation, index) => {
-    const subject = invitation.subject_id
-      ? subjects.find((item) => item.id === invitation.subject_id)
-      : null;
-    const pressure = invitation.subject_id
-      ? pressureList.find((item) => item.subject_id === invitation.subject_id)
-      : null;
-    const cardCount = Array.isArray(invitation.card_ids) ? invitation.card_ids.length : 0;
-    const priority = invitation.action_type === 'exam' || pressure?.intervention_level === 'L4'
-      ? 'critical'
-      : cardCount > 0 || ['L2', 'L3'].includes(pressure?.intervention_level)
-        ? 'important'
-        : 'steady';
-    const completion = invitation.action_type === 'exam'
-      ? 'Complete the required exam and submit every answer.'
-      : invitation.action_type === 'review_specific_cards'
-        ? `Review ${cardCount || 'the'} targeted card${cardCount === 1 ? '' : 's'} once each.`
-        : 'Complete one meaningful session: at least 5 unique cards and 5 active minutes.';
-
-    return {
-      ...invitation,
-      id: `${todayStr}:${invitation.action_type || 'study'}:${invitation.subject_id || 'general'}:${index}`,
-      subject_name: subject?.name || null,
-      priority,
-      completion,
-      estimated_minutes: invitation.action_type === 'exam'
-        ? 20
-        : invitation.action_type === 'review_specific_cards'
-          ? Math.max(5, cardCount * 2)
-          : 15,
-      pressure_effect: invitation.subject_id
-        ? 'Completion recalculates pressure from fresh evidence; only resolved causes disappear.'
-        : 'Completion contributes fresh evidence to today\'s forest health.',
-    };
-  });
-  const enrichedInvitations = await enrichInvitationCompletion(userId, normalizedInvitations, todayStr, safeTimezoneOffset);
-  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, enrichedInvitations);
-  return enrichedInvitations;
-}
-
-async function dismissInvitation(userId, invitationIndex, requestedDate = null) {
-const serverToday = new Date().toISOString().split('T')[0];
-const requestedTime = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedDate || ''))
-? new Date(`${requestedDate}T12:00:00.000Z`).getTime()
-: NaN;
-const todayStr = Number.isFinite(requestedTime) && Math.abs(requestedTime - Date.now()) <= 36 * 3600000
-? requestedDate
-: serverToday;
-const cached = await db.dailyRitualCache.get(userId, 'daily_invitations', todayStr);
-if (!cached || !cached.data) return { error: 'No invitations found' };
-const invitations = cached.data;
-if (invitationIndex < 0 || invitationIndex >= invitations.length) {
-return { error: 'Invalid invitation index' };
-}
-const invitation = invitations[invitationIndex];
-invitation.dismissed = true;
-await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, invitations);
-
-// P7.3 FIX: Cross-day dismissal history tracking.
-// Spec: if same action_type dismissed 5+ times in 2 weeks for same subject → +1 pressure on that subject.
-// History stored as a rolling log in daily_ritual_cache under type 'dismissal_history', date 'persistent'.
-let pressureApplied = false;
-let pressureSubjectId = null;
-try {
-const historyDoc = await db.dailyRitualCache.get(userId, 'dismissal_history', 'persistent');
-const history = historyDoc?.data || [];
-
-    // Append this dismissal
-    history.push({
-      date: todayStr,
-      action_type: invitation.action_type || 'unknown',
-      subject_id: invitation.subject_id || null,
-    });
-
-    // Prune entries older than 14 days
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 14);
-    const cutoffStr = cutoff.toISOString().split('T')[0];
-    const pruned = history.filter((entry) => entry.date >= cutoffStr);
-
-    // Check threshold: 5+ dismissals of same action_type for same subject in last 14 days
-    if (invitation.subject_id && invitation.action_type) {
-      const matchingDismissals = pruned.filter(
-        (entry) =>
-          entry.action_type === invitation.action_type &&
-          entry.subject_id === invitation.subject_id
-      ).length;
-
-      // M-1 FIX: Exact threshold crossing only — prevents +1 stacking on every dismiss above 5
-      if (matchingDismissals === 5) {
-        // P7.3 FIX: +1 pressure to that specific subject only (not all subjects)
-        // FIX (Issue 08): If no prior brainPressure record exists, initialise
-        // a zero-baseline so the +1 dismissal pressure is never silently dropped.
-        let currentPressure = await db.brainPressure.get(userId, invitation.subject_id);
-        if (!currentPressure) {
-          currentPressure = { pressure_score: 0, intervention_level: 'L0', sources: {} };
-        }
-        {
-          // Compute the durable avoidance source here. Canonical pressure
-          // recalculation preserves manual sources, so the consequence cannot
-          // vanish on the next dashboard refresh.
-          const newPressureScore = (currentPressure.pressure_score || 0) + 1;
-          const newInterventionLevel = computeInterventionLevel(newPressureScore);
-          await db.brainPressure.set(userId, invitation.subject_id, {
-            pressure_score: newPressureScore,
-            intervention_level: newInterventionLevel,
-            sources: {
-              ...(currentPressure.sources || {}),
-              manual_invitation_avoidance: Math.min(3, (Number(currentPressure.sources?.manual_invitation_avoidance) || 0) + 1),
-              manual_invitation_avoidance_at: new Date().toISOString(),
-            },
-          });
-          pressureApplied = true;
-          pressureSubjectId = invitation.subject_id;
-        }
-      }
-    }
-
-    // Persist pruned history
-    await db.dailyRitualCache.set(userId, 'dismissal_history', 'persistent', pruned);
-
-} catch (e) {
-console.error('[KIWI] Dismissal history update failed:', e.message);
-}
-
-return {
-dismissed: true,
-pressure_applied: pressureApplied,
-pressure_subject_id: pressureSubjectId,
-};
-}
-// ── Return Greeting (A3) ────────────────────────────────────────────────────
-
-async function getReturnGreeting(userId) {
-const status = await computeReturnStatus(userId);
-// Only show return greeting for users who have studied before and are slipping/abandoned
-if (status.status === 'active' || status.status === 'new') return null;
-// C-2 FIX: Cache enforcement — generate once per absence period, never on every page load
-const greetingTodayStr = new Date().toISOString().split('T')[0];
-const cachedGreeting = await db.dailyRitualCache
-.get(userId, 'return_greeting', greetingTodayStr)
-.catch(() => null);
-if (cachedGreeting?.data?.greeting) return cachedGreeting.data;
-// P7.4 FIX: Gather rich context — spec requires overdue count, KS decay, pressure, upcoming exams
-const now = new Date();
-const subjects = await db.subjects.findManyWithDecks(userId).catch(() => []);
-let overdueCount = 0;
-const upcomingExamsForReturn = [];
-for (const sub of subjects) {
-const decks = await db.decks.findBySubject(userId, sub.id).catch(() => []);
-for (const deck of decks) {
-const cards = await db.cards.findByDeck(userId, deck.id).catch(() => []);
-overdueCount += cards.filter((c) => isCardDue(c, now)).length;
-}
-if (sub.exam_date) {
-const daysToExam = Math.ceil((new Date(sub.exam_date) - now) / (1000 * 60 * 60 * 24));
-if (daysToExam >= 0 && daysToExam <= 21) {
-upcomingExamsForReturn.push(`${sub.name} in ${daysToExam} days`);
-}
-}
-}
-const pressureList = await db.brainPressure.findByUser(userId).catch(() => []);
-const highestPressure = pressureList.length > 0
-? pressureList.reduce((max, p) => (p.pressure_score > max.pressure_score ? p : max), pressureList[0])
-: null;
-// Ghost cards accumulate while away — estimate KS decay exposure
-const allStates = await db.cardStates.findByUser(userId).catch(() => []);
-const ghostCount = allStates.filter((s) => s.state === 'GHOST').length;
-const prompt = `
-ROLE
-You are the KIWI Return Guide. A student is returning after ${status.days_since} days away.
-CONTEXT (use this data — be honest and specific)
-- Days absent: ${status.days_since}
-- Absence type: ${status.status === 'abandoned' ? 'long absence (14+ days)' : 'short gap (3-13 days)'}
-- Overdue cards: ${overdueCount}
-- Ghost cards (dormant, KS at risk): ${ghostCount}
-- Highest pressure subject: ${highestPressure ? highestPressure.intervention_level + ' pressure' : 'none'}
-- Upcoming exams: ${upcomingExamsForReturn.join(', ') || 'none'}
-RULES
-- 1 paragraph, 2-3 sentences.
-- Be honest about what was missed — name the overdue count and ghost cards if significant.
-- If an exam is upcoming, name it and the days remaining.
-- No guilt. No punishment. Warmth and clarity.
-- Tone: honest, warm, forward-looking.
-OUTPUT
-Return only the greeting paragraph.
-`;
-  const result = await ai.run('RETURN_GREETING', { content: prompt });
+const dangerousFronts = await getCardFronts(dangerousCardStates)…4854 tokens truncated…URN_GREETING', { content: prompt });
   const greeting = result.text.trim();
   const greetingPayload = { greeting, status: status.status, days_since: status.days_since };
   await db.dailyRitualCache
@@ -13506,6 +13151,7 @@ expiresIn: ACCESS_EXPIRY,
 function generateRefreshToken(user) {
 return jwt.sign({ userId: user.id, tokenType: 'refresh' }, JWT_SECRET, {
 expiresIn: REFRESH_EXPIRY,
+jwtid: randomUUID(),
 });
 }
 
