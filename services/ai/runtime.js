@@ -101,55 +101,6 @@ function createAIRuntime({
   });
   const transport = createGeminiTransport({ fetchImpl });
 
-  // TEMPORARY: one-shot production control test for preview text models.
-  // Results are sanitized and written only to logs; normal routing is untouched.
-  async function runPreviewControlProbe() {
-    const slots = projectPool.snapshot()
-      .filter((slot) => slot.enabled)
-      .map((slot) => projectPool.get(slot.id))
-      .filter(Boolean);
-    if (slots.length === 0) return;
-
-    const models = await transport.listModels({ apiKey: slots[0].apiKey, timeoutMs: 15000 });
-    const excluded = /(image|audio|live|tts|transcri|embed|veo|robotics|computer-use|deep-research)/i;
-    const discovered = models
-      .filter((model) => /preview/i.test(model.name || ''))
-      .filter((model) => model.supportedGenerationMethods?.includes('generateContent'))
-      .filter((model) => /(?:flash|pro)/i.test(model.name || ''))
-      .filter((model) => !excluded.test(model.name || ''))
-      .map((model) => String(model.name).replace(/^models\//, ''));
-    const candidates = [...new Set(discovered)]
-      .sort((left, right) => Number(/-pro-/i.test(left)) - Number(/-pro-/i.test(right)))
-      .slice(0, Math.min(4, slots.length));
-    const startedAt = Date.now();
-    const results = await Promise.all(candidates.map(async (modelId, index) => {
-      const probeStartedAt = Date.now();
-      try {
-        const response = await transport.generate({
-          apiKey: slots[index].apiKey,
-          modelId,
-          content: 'Reply with exactly OK.',
-          generationConfig: { maxOutputTokens: 32, temperature: 0 },
-          timeoutMs: 19000,
-        });
-        const text = response.raw?.candidates?.[0]?.content?.parts
-          ?.map((part) => part.text || '').join('').trim() || null;
-        return { modelId, project: slots[index].id, ok: true, status: response.httpStatus,
-          latencyMs: Date.now() - probeStartedAt, text };
-      } catch (error) {
-        return { modelId, project: slots[index].id, ok: false, status: error.httpStatus || null,
-          latencyMs: Date.now() - probeStartedAt, code: error.code || error.name,
-          message: error.providerMessage || error.message };
-      }
-    }));
-    logger?.log?.('[KIWI PREVIEW CONTROL]', JSON.stringify({
-      discovered,
-      tested: candidates,
-      totalMs: Date.now() - startedAt,
-      results,
-    }));
-  }
-
   const qualifier = createModelQualifier({
     transport,
     projectPool,
@@ -639,13 +590,6 @@ function createAIRuntime({
         `${hydratedCatalogModels} persisted catalog model(s)`
       );
     }
-
-    timers.setImmediate?.(() => {
-      runPreviewControlProbe().catch((error) => logger?.warn?.(
-        '[KIWI PREVIEW CONTROL] failed',
-        { code: error.code || error.name, message: error.providerMessage || error.message }
-      ));
-    });
 
     return Object.freeze({
       ...state,
