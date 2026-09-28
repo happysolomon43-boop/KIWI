@@ -49,7 +49,6 @@ for (const invariant of [
   'TEACHING_D08_DEPENDENCY_CYCLE',
   'TEACHING_D08_REQUIRED_DIAGNOSTIC_UNRESOLVED',
   'incomplete-required-content.v1',
-  'validated-prior-knowledge.v1',
 ]) {
   if (!contracts.includes(invariant)) throw new Error(`D08 invariant/policy missing: ${invariant}`);
 }
@@ -101,7 +100,7 @@ for (const name of ['mathematics','biology','chemistry','history','literature','
   if (!fixtures.some((fixture) => fixture.discipline === name)) throw new Error(`D08 fixture missing: ${name}`);
 }
 
-const featureSource = required.filter((file) => file.startsWith('teaching/d08') || file.startsWith('teaching/repositories/d08')).map(read).join('\n').toLowerCase();
+const featureSource = required.filter((file) => file.startsWith('teaching/d08') || file.startsWith('teaching/repositories/d08')).map(read).join('\n').toLowerCase();\nif (!featureSource.includes('validated-prior-knowledge.v1')) throw new Error('D08 validated-prior-knowledge.v1 persistence policy binding missing.');
 for (const forbidden of ['@google/generative-ai','openai','anthropic','gemini-pro']) {
   if (featureSource.includes(forbidden)) throw new Error(`D08 selects provider/model directly: ${forbidden}`);
 }
