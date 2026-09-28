@@ -115,7 +115,7 @@ if (/insert into\s+public\.(gradebook|teaching_grade)/i.test(featureSource)) thr
 const ui = read('public/teaching-d08.js');
 const teachingUi = read('public/teaching.js');
 const teachingHtml = read('public/teaching.html');
-if (!ui.includes('Course setup · Stage 2') || !ui.includes('Nothing required may disappear')) throw new Error('D08 Stage 2 review UI missing.');
+if (!ui.includes('Course setup · Stage 2') || !ui.includes('Required content stays accounted for')) throw new Error('D08 Stage 2 review UI missing.');
 if (!ui.includes("courseSurface.registerSection") || !ui.includes("id: 'course-plan'") || !ui.includes('renderSummary: renderCoursePlanSummary')) {
   throw new Error('D08 Course Plan is not integrated as a course-scoped surface.');
 }
