@@ -9,7 +9,10 @@ if (typeof kiwiApiRequest !== 'function' || typeof hasKiwiSession !== 'function'
 
 const KIWI_PATH = '/';
 const teachingNavigationItems = new Map();
+const teachingCourseSections = new Map();
 let activeTeachingView = 'overview';
+let selectedTeachingCourseId = null;
+let activeTeachingCourseSection = 'overview';
 let teachingWorkspace = { subjects: [], courses: [] };
 
 function isTeachingDocument() {
@@ -267,7 +270,7 @@ function renderSectionMenu() {
     const button = el('button', 'teaching-menu-link');
     button.type = 'button';
     button.dataset.view = item.id;
-    button.dataset.active = activeTeachingView === item.id ? 'true' : 'false';
+    button.dataset.active = (activeTeachingView === item.id || (item.id === 'overview' && activeTeachingView === 'course')) ? 'true' : 'false';
 
     const icon = el('span', 'teaching-menu-link__icon');
     icon.innerHTML = menuIcon(item.icon);
@@ -282,11 +285,75 @@ function renderSectionMenu() {
   }
 }
 
+function getTeachingCourse(courseId) {
+  return teachingWorkspace.courses.find((course) => String(course.course_id) === String(courseId)) || null;
+}
+
+function sortedCourseSections() {
+  return [...teachingCourseSections.values()].sort((a, b) => {
+    const order = Number(a.order || 100) - Number(b.order || 100);
+    return order || a.label.localeCompare(b.label);
+  });
+}
+
 function navigateTeaching(view) {
-  activeTeachingView = view === 'intake' ? 'intake' : 'overview';
+  const options = arguments[1] || {};
+  const next = ['overview', 'intake', 'course'].includes(view) ? view : 'overview';
+  if (next === 'course') {
+    const courseId = options.courseId || selectedTeachingCourseId;
+    if (!courseId || !getTeachingCourse(courseId)) {
+      activeTeachingView = 'overview';
+      selectedTeachingCourseId = null;
+      activeTeachingCourseSection = 'overview';
+    } else {
+      activeTeachingView = 'course';
+      selectedTeachingCourseId = courseId;
+      activeTeachingCourseSection = options.sectionId || activeTeachingCourseSection || 'overview';
+    }
+  } else {
+    activeTeachingView = next;
+    if (next !== 'course') activeTeachingCourseSection = 'overview';
+  }
+
   setMenuOpen(false, { restoreFocus: false });
   renderSectionMenu();
   renderActiveTeachingView();
+  window.scrollTo({ top: 0, behavior: options.preserveScroll ? 'auto' : 'smooth' });
+}
+
+function registerTeachingCourseSection(item) {
+  if (!item || typeof item.id !== 'string' || !item.id.trim()) {
+    throw new TypeError('Teaching course sections require a stable string id.');
+  }
+  if (typeof item.label !== 'string' || !item.label.trim() || typeof item.render !== 'function') {
+    throw new TypeError('Teaching course sections require a label and render function.');
+  }
+  teachingCourseSections.set(item.id, Object.freeze({
+    id: item.id,
+    label: item.label,
+    order: Number.isFinite(Number(item.order)) ? Number(item.order) : 100,
+    render: item.render,
+    renderSummary: typeof item.renderSummary === 'function' ? item.renderSummary : null,
+  }));
+  if (activeTeachingView === 'course' && selectedTeachingCourseId && teachingWorkspace.courses.length) {
+    queueMicrotask(() => renderCourseWorkspace());
+  }
+  return () => {
+    teachingCourseSections.delete(item.id);
+    if (activeTeachingCourseSection === item.id) activeTeachingCourseSection = 'overview';
+    if (activeTeachingView === 'course') queueMicrotask(() => renderCourseWorkspace());
+  };
+}
+
+function openTeachingCourse(courseId, sectionId = 'overview') {
+  navigateTeaching('course', { courseId, sectionId });
+}
+
+function openTeachingCourseSection(sectionId) {
+  if (!selectedTeachingCourseId) return;
+  if (sectionId !== 'overview' && !teachingCourseSections.has(sectionId)) return;
+  activeTeachingCourseSection = sectionId;
+  renderCourseWorkspace();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -299,15 +366,140 @@ function renderCourseCards(container) {
 
   for (const course of teachingWorkspace.courses) {
     const card = el('article', 'teaching-course-card');
-    card.append(
+    const copy = el('div', 'teaching-course-card__copy');
+    copy.append(
       el('span', 'teaching-course-card__state', course.lifecycle_state || 'Draft'),
       el('h3', '', course.title || 'Untitled course'),
       el('p', '', `${course.source_item_count || 0} preserved source item${course.source_item_count === 1 ? '' : 's'}`)
     );
+    const open = el('button', 'teaching-course-card__open', 'Open course');
+    open.type = 'button';
+    open.setAttribute('aria-label', `Open ${course.title || 'Teaching course'}`);
+    open.addEventListener('click', () => openTeachingCourse(course.course_id));
+    card.append(copy, open);
     container.append(card);
   }
 }
 
+function renderCourseSectionNav(container, course) {
+  const items = [{ id: 'overview', label: 'Overview' }, ...sortedCourseSections()];
+  container.replaceChildren();
+  for (const item of items) {
+    const button = el('button', 'teaching-course-nav__item', item.label);
+    button.type = 'button';
+    button.dataset.active = activeTeachingCourseSection === item.id ? 'true' : 'false';
+    button.setAttribute('aria-current', activeTeachingCourseSection === item.id ? 'page' : 'false');
+    button.addEventListener('click', () => openTeachingCourseSection(item.id));
+    container.append(button);
+  }
+  container.setAttribute('aria-label', `${course.title || 'Course'} navigation`);
+}
+
+function renderCourseOverview(course, container) {
+  const intro = el('section', 'teaching-course-overview-card');
+  const head = el('div', 'teaching-course-overview-card__head');
+  const title = el('div');
+  title.append(
+    el('div', 'teaching-kicker', 'Course overview'),
+    el('h2', '', 'Your course workspace')
+  );
+  head.append(title, el('span', 'teaching-course-card__state', course.lifecycle_state || 'Draft'));
+  intro.append(
+    head,
+    el('p', '', 'Course-specific planning, work, results, and teacher context live here instead of becoming permanent global Teaching destinations.')
+  );
+  const facts = el('div', 'teaching-course-facts');
+  facts.append(
+    el('div', 'teaching-course-fact', `${course.source_item_count || 0} source items`),
+    el('div', 'teaching-course-fact', 'Academic scope stays versioned'),
+    el('div', 'teaching-course-fact', 'Self-report stays separate from evidence')
+  );
+  intro.append(facts);
+  container.append(intro);
+
+  const summaries = sortedCourseSections().filter((item) => item.renderSummary);
+  if (!summaries.length) return;
+
+  const section = el('section', 'teaching-course-feature-section');
+  const heading = el('div', 'teaching-course-feature-section__head');
+  heading.append(
+    el('div', 'teaching-kicker', 'Course details'),
+    el('h2', '', 'What is ready inside this course')
+  );
+  section.append(heading);
+  const grid = el('div', 'teaching-course-feature-grid');
+  section.append(grid);
+  container.append(section);
+
+  for (const item of summaries) {
+    const slot = el('div', 'teaching-course-feature-slot');
+    grid.append(slot);
+    Promise.resolve(item.renderSummary({
+      course,
+      container: slot,
+      openSection: () => openTeachingCourseSection(item.id),
+    })).catch((error) => {
+      slot.replaceChildren(el('div', 'teaching-message', error?.message || `${item.label} could not be loaded.`));
+      slot.firstElementChild.dataset.kind = 'error';
+    });
+  }
+}
+
+function renderCourseWorkspace() {
+  const main = document.getElementById('teachingApp');
+  if (!main) return;
+  const course = getTeachingCourse(selectedTeachingCourseId);
+  if (!course) {
+    activeTeachingView = 'overview';
+    selectedTeachingCourseId = null;
+    renderSectionMenu();
+    renderTeachingOverview();
+    return;
+  }
+
+  const page = el('section', 'teaching-view teaching-course-shell');
+  const context = el('div', 'teaching-course-context');
+  const back = el('button', 'teaching-course-back', '← All courses');
+  back.type = 'button';
+  back.addEventListener('click', () => navigateTeaching('overview'));
+  const identity = el('div', 'teaching-course-context__identity');
+  identity.append(
+    el('div', 'teaching-kicker', 'Teaching course'),
+    el('h1', '', course.title || 'Untitled course'),
+    el('p', '', `${course.source_item_count || 0} preserved source item${course.source_item_count === 1 ? '' : 's'} · ${String(course.lifecycle_state || 'Draft').replaceAll('_', ' ')}`)
+  );
+  context.append(back, identity);
+
+  const courseNav = el('nav', 'teaching-course-nav');
+  renderCourseSectionNav(courseNav, course);
+  const content = el('div', 'teaching-course-content');
+  page.append(context, courseNav, content);
+  main.replaceChildren(page);
+
+  if (activeTeachingCourseSection === 'overview') {
+    renderCourseOverview(course, content);
+    return;
+  }
+
+  const section = teachingCourseSections.get(activeTeachingCourseSection);
+  if (!section) {
+    activeTeachingCourseSection = 'overview';
+    renderCourseSectionNav(courseNav, course);
+    renderCourseOverview(course, content);
+    return;
+  }
+
+  Promise.resolve(section.render({
+    course,
+    container: content,
+    openOverview: () => openTeachingCourseSection('overview'),
+  })).catch((error) => {
+    content.replaceChildren();
+    const failure = el('div', 'teaching-message', error?.message || `${section.label} could not be loaded.`);
+    failure.dataset.kind = 'error';
+    content.append(failure);
+  });
+}
 function renderTeachingOverview() {
   const main = document.getElementById('teachingApp');
   if (!main) return;
@@ -365,7 +557,10 @@ function renderIntakeSuccess(course, extractionStatus, intakeSignals) {
       ? 'Your original Intake is preserved. AI interpretation remains safely held until Teaching routes complete qualification.'
       : 'Your Intake and its planning signals were saved without treating self-report as academic evidence.')
   );
-  const home = el('button', 'teaching-button teaching-button--primary', 'Back to overview');
+  const openCourse = el('button', 'teaching-button teaching-button--primary', 'Open course');
+  openCourse.type = 'button';
+  openCourse.addEventListener('click', () => openTeachingCourse(course.course_id));
+  const home = el('button', 'teaching-button', 'Back to overview');
   home.type = 'button';
   home.addEventListener('click', () => navigateTeaching('overview'));
   const readiness = el('button', 'teaching-button', 'Check the next course step');
@@ -401,7 +596,7 @@ function renderIntakeSuccess(course, extractionStatus, intakeSignals) {
   });
   const actions = el('div', 'teaching-hero__actions');
   actions.style.justifyContent = 'center';
-  actions.append(home, readiness);
+  actions.append(openCourse, home, readiness);
   page.append(actions, message);
   main.replaceChildren(page);
 }
@@ -539,6 +734,7 @@ function renderCourseIntake() {
 
 function renderActiveTeachingView() {
   if (activeTeachingView === 'intake') renderCourseIntake();
+  else if (activeTeachingView === 'course') renderCourseWorkspace();
   else renderTeachingOverview();
 }
 
@@ -637,6 +833,15 @@ window.KIWITeachingNavigation = Object.freeze({
   unregister: unregisterTeachingNavigationItem,
   render: renderTeachingNavigation,
   ids: () => Array.from(teachingNavigationItems.keys()),
+});
+
+window.KIWITeachingCourses = Object.freeze({
+  registerSection: registerTeachingCourseSection,
+  openCourse: openTeachingCourse,
+  openSection: openTeachingCourseSection,
+  currentCourseId: () => selectedTeachingCourseId,
+  getCourse: (courseId) => getTeachingCourse(courseId),
+  sectionIds: () => Array.from(teachingCourseSections.keys()),
 });
 
 function init() {
