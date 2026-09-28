@@ -341,6 +341,20 @@ test('D08 post-migration hardening fixes the guard search_path and Coverage Audi
   assert.match(sql, /CREATE INDEX teaching_coverage_audits_course_idx[\s\S]*teaching_coverage_audits\(course_id,created_at DESC\)/);
 });
 
+test('Course Plan is course-scoped with quick preview instead of global Teaching navigation', () => {
+  const core = fs.readFileSync(path.resolve(__dirname, '../../../public/teaching.js'), 'utf8');
+  const d08 = fs.readFileSync(path.resolve(__dirname, '../../../public/teaching-d08.js'), 'utf8');
+  const html = fs.readFileSync(path.resolve(__dirname, '../../../public/teaching.html'), 'utf8');
+  assert.match(core, /window\.KIWITeachingCourses/);
+  assert.match(core, /teachingCourseSections/);
+  assert.match(d08, /courseSurface\.registerSection/);
+  assert.match(d08, /id: 'course-plan'/);
+  assert.match(d08, /Quick view/);
+  assert.match(d08, /View full Course Plan/);
+  assert.doesNotMatch(d08, /nav\.register|KIWITeachingNavigation/);
+  assert.match(html, /teaching-course-nav__item/);
+});
+
 test('D08 feature code contains no provider/model selection, SKM writes or Gradebook writes', () => {
   const dir = path.resolve(__dirname, '../../../teaching/d08');
   const source = fs.readdirSync(dir).filter((name) => name.endsWith('.js')).map((name) => fs.readFileSync(path.join(dir, name), 'utf8')).join('\n');
