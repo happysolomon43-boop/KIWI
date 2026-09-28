@@ -35,6 +35,14 @@ test('new Reckonings start durable preparation automatically and return valid co
   assert.doesNotMatch(block, /\nquestion_count,\n/);
 });
 
+test('existing V2 Reckonings resume background preparation after deferral expiry or reload', () => {
+  const start = source.indexOf('async function reconcileActiveReckoning');
+  const end = source.indexOf('async function generateReckoningDebrief', start);
+  const block = source.slice(start, end);
+  assert.match(block, /active\.status === 'deferred'[\s\S]*?_scheduleReckoningPreparation\(active\.id, userId\)/);
+  assert.match(block, /active\.status === 'triggered'[\s\S]*?_scheduleReckoningPreparation\(active\.id, userId\)/);
+});
+
 test('preparing Reckoning cannot be started twice and its overlay does not blink', () => {
   assert.match(frontend, /const isPreparing = isAdaptiveV2/);
   assert.match(frontend, /if \(isPreparing\) return;/);

@@ -9493,16 +9493,37 @@ status: 'triggered',
 deferred_until: null,
 exam_session_id: null,
 });
+if (
+  Number(active.engine_version || 1) === 2 &&
+  (active.generation_status || 'not_started') === 'not_started'
+) {
+  _scheduleReckoningPreparation(active.id, userId);
+}
 return {
 ...active,
 status: 'triggered',
 deferred_until: null,
 exam_session_id: null,
+generation_status:
+  Number(active.engine_version || 1) === 2 &&
+  (active.generation_status || 'not_started') === 'not_started'
+    ? 'pending'
+    : active.generation_status,
 recovered_state: true,
 };
 }
 
-if (active.status !== 'in_progress') return active;
+if (active.status !== 'in_progress') {
+  if (
+    Number(active.engine_version || 1) === 2 &&
+    active.status === 'triggered' &&
+    (active.generation_status || 'not_started') === 'not_started'
+  ) {
+    _scheduleReckoningPreparation(active.id, userId);
+    return { ...active, generation_status: 'pending', recovered_state: true };
+  }
+  return active;
+}
 
 const examId = active.exam_session_id;
 if (!examId) {
