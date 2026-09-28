@@ -79,6 +79,51 @@ function installStyles() {
       .teaching-d08-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
       .teaching-d08-preview__actions{grid-template-columns:1fr}
     }
+    
+    /* Teaching polish: keep D08 visually native to the course workspace. */
+    .teaching-course-feature-card{min-height:206px;padding:20px;border-color:rgba(223,245,235,.075);border-radius:18px;background:var(--teaching-surface-soft);box-shadow:none}
+    .teaching-course-feature-card h3{margin-top:7px;font-size:20px;font-weight:700;letter-spacing:-.03em}
+    .teaching-course-feature-card p{margin-top:10px;color:#8ea097;font-size:12px;line-height:1.65}
+    .teaching-course-feature-card__status,.teaching-d08-status{padding:5px 8px;border:1px solid rgba(126,226,184,.09);background:rgba(126,226,184,.07);color:#93dfbd;font-size:9px;font-weight:600;letter-spacing:.06em}
+    .teaching-d08-mini-metrics{gap:7px;margin-top:16px}
+    .teaching-d08-mini-metric,.teaching-d08-metric{border-color:rgba(223,245,235,.065);border-radius:11px;background:rgba(255,255,255,.016)}
+    .teaching-d08-mini-metric{padding:10px}
+    .teaching-d08-mini-metric strong,.teaching-d08-metric strong{font-family:var(--font-display);font-weight:700;letter-spacing:-.03em}
+    .teaching-d08-mini-metric span,.teaching-d08-metric span{color:#74877e}
+    .teaching-course-feature-card__actions{gap:8px;padding-top:16px}
+    .teaching-d08-link-button{min-height:40px;padding:0 13px;border-color:rgba(223,245,235,.075);border-radius:10px;background:rgba(255,255,255,.016);color:#c7d5ce;font-size:12px;font-weight:650}
+    .teaching-d08-link-button:hover,.teaching-d08-link-button:focus-visible{border-color:rgba(126,226,184,.20);background:rgba(126,226,184,.07)}
+    .teaching-d08-link-button--primary{border-color:transparent;background:var(--teaching-accent);color:#07140f}
+    .teaching-d08-link-button--primary:hover,.teaching-d08-link-button--primary:focus-visible{background:var(--teaching-accent-strong)}
+    .teaching-d08-page{gap:16px}
+    .teaching-d08-page__head{align-items:flex-start;padding:4px 1px 6px}
+    .teaching-d08-page__head h2{margin-top:6px;font-size:clamp(28px,3.7vw,38px);font-weight:750;letter-spacing:-.04em}
+    .teaching-d08-page__head p{max-width:620px;margin-top:9px;color:#92a49b;font-size:13px;line-height:1.65}
+    .teaching-d08-grid{grid-template-columns:minmax(0,1.45fr) minmax(290px,.72fr);gap:12px}
+    .teaching-d08-stack{gap:12px}
+    .teaching-d08-card{padding:20px;border-color:rgba(223,245,235,.075);border-radius:18px;background:var(--teaching-surface-soft)}
+    .teaching-d08-card h3{margin-top:7px;font-size:20px;font-weight:700;letter-spacing:-.03em}
+    .teaching-d08-card p{color:#8b9e95;font-size:12px;line-height:1.65}
+    .teaching-d08-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:14px}
+    .teaching-d08-metric{padding:11px}
+    .teaching-d08-topic{margin-top:8px;border-color:rgba(223,245,235,.07);border-radius:12px;background:rgba(255,255,255,.012)}
+    .teaching-d08-topic summary{min-height:48px;padding:12px 13px;color:#d9e5df;font-size:12px;font-weight:650}
+    .teaching-d08-topic__body{padding:0 13px 13px}
+    .teaching-d08-subtopics{margin-bottom:10px;color:#71847b;font-size:11px}
+    .teaching-d08-unit{margin-top:7px;padding:11px;border-left-color:rgba(126,226,184,.22);background:rgba(126,226,184,.025);border-radius:0 9px 9px 0}
+    .teaching-d08-unit strong{font-size:12px}.teaching-d08-unit span{margin-top:4px;color:#82958c;font-size:11px}
+    .teaching-d08-list{gap:7px;margin-top:12px}
+    .teaching-d08-list li{padding:10px 11px;border-color:rgba(223,245,235,.06);border-radius:10px;background:rgba(255,255,255,.012);color:#94a69d;font-size:11px}
+    .teaching-d08-actions{gap:8px;margin-top:14px}.teaching-d08-note{margin-top:10px;color:#70837a;font-size:11px}
+    .teaching-d08-preview{width:min(500px,calc(100vw - 28px));border-color:rgba(223,245,235,.10);border-radius:20px;background:#0d1814;box-shadow:0 28px 86px rgba(0,0,0,.42)}
+    .teaching-d08-preview::backdrop{background:rgba(1,7,5,.70);backdrop-filter:blur(5px)}
+    .teaching-d08-preview__inner{padding:21px}
+    .teaching-d08-preview h2{margin-top:6px;font-size:25px;font-weight:750;letter-spacing:-.04em}
+    .teaching-d08-preview p{color:#8fa198;font-size:12px}
+    .teaching-d08-preview__close{width:36px;height:36px;border-color:rgba(223,245,235,.075);border-radius:10px;background:rgba(255,255,255,.018)}
+    .teaching-d08-preview__actions{gap:8px;margin-top:18px}
+    @media(max-width:820px){.teaching-d08-grid{grid-template-columns:1fr}}
+
   `;
   document.head.append(style);
 }
@@ -202,8 +247,8 @@ function renderSummaryCard(course, review, container, openSection) {
   card.append(
     top,
     el('p', '', review.plan
-      ? 'Review what this course intends to teach, what is already validated, and whether every required source item is accounted for.'
-      : 'The course keeps its validated source analysis here until a versioned Course Plan can be committed.')
+      ? 'See what this course will teach, what is already validated, and whether every required part of the Subject is accounted for.'
+      : 'The validated course scope is ready here while the first versioned Course Plan is still pending.')
   );
   const metrics = el('div', 'teaching-d08-mini-metrics');
   metrics.append(
@@ -228,7 +273,7 @@ function renderPlanCard(review) {
   const card = el('section', 'teaching-d08-card');
   const head = el('div', 'teaching-d08-plan-head');
   const copy = el('div');
-  copy.append(el('div', 'teaching-kicker', 'Course Plan'), el('h3', '', 'Planned academic structure'));
+  copy.append(el('div', 'teaching-kicker', 'Course Plan'), el('h3', '', 'What this course will teach'));
   const status = el('span', 'teaching-d08-status', review.plan
     ? `Version ${review.plan.version} · ${safeStatus(review.plan.state)}`
     : review.routeQualification === 'UNQUALIFIED_UNTIL_D30' ? 'Generation held until D30' : 'Plan pending');
@@ -269,7 +314,7 @@ function renderPlanCard(review) {
 
 function renderCoverageCard(review) {
   const card = el('section', 'teaching-d08-card');
-  card.append(el('div', 'teaching-kicker', 'Coverage'), el('h3', '', 'Nothing required may disappear'));
+  card.append(el('div', 'teaching-kicker', 'Coverage'), el('h3', '', 'Required content stays accounted for'));
   const report = review.coverageReport;
   if (!report) {
     card.append(el('p', '', 'Coverage reconciliation begins when a validated Course Plan is committed. Until then, no source item is treated as covered.'));
@@ -292,7 +337,7 @@ function renderCoverageCard(review) {
 function renderAnalysisCard(review) {
   const card = el('section', 'teaching-d08-card');
   const analysis = review.sourceAnalysis || {};
-  card.append(el('div', 'teaching-kicker', 'Validated source analysis'), el('h3', '', 'What this course is responsible for'));
+  card.append(el('div', 'teaching-kicker', 'Validated source analysis'), el('h3', '', 'What the Subject requires'));
   const metrics = el('div', 'teaching-d08-metrics');
   metrics.append(
     metric(analysis.sourceCount, 'source items'),
@@ -327,7 +372,7 @@ function renderAnalysisCard(review) {
 
 function renderAssumptionsCard(review) {
   const card = el('section', 'teaching-d08-card');
-  card.append(el('div', 'teaching-kicker', 'Prerequisites'), el('h3', '', 'Assumptions stay visible'));
+  card.append(el('div', 'teaching-kicker', 'Prerequisites'), el('h3', '', 'Starting assumptions'));
   const assumptions = review.assumptions?.length ? review.assumptions : review.sourceAnalysis?.assumptions || [];
   if (!assumptions.length) {
     card.append(el('p', '', 'No student-facing prerequisite assumptions are currently recorded.'));
@@ -347,7 +392,7 @@ function renderAssumptionsCard(review) {
 
 function renderScopeCard(course, review, refresh) {
   const card = el('section', 'teaching-d08-card');
-  card.append(el('div', 'teaching-kicker', 'Scope control'), el('h3', '', 'Versioned change review'));
+  card.append(el('div', 'teaching-kicker', 'Scope control'), el('h3', '', 'Keep the plan current'));
   const state = review.scopeChange;
   if (state) card.append(el('p', '', `Latest review: ${safeStatus(state.kind)} · ${safeStatus(state.status)}`));
   else card.append(el('p', '', 'Check the KIWI Subject when you want to confirm that the Course is still based on the same authoritative scope.'));
@@ -389,7 +434,7 @@ async function renderCoursePlan({ course, container }) {
   copy.append(
     el('div', 'teaching-kicker', 'Course setup · Stage 2'),
     el('h2', '', 'Course Plan'),
-    el('p', '', 'Review the academic structure, coverage, assumptions, and scope lineage for this course. This is course context, not a global Teaching destination.')
+    el('p', '', 'Review what the course will teach, what is already accounted for, and the assumptions Teaching is carrying forward.')
   );
   const refreshButton = el('button', 'teaching-button', 'Refresh');
   refreshButton.type = 'button';
