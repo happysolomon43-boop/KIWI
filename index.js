@@ -21704,59 +21704,6 @@ _debugRouter.post('/exam-parse-test', async (req, res) => {
     res.status(500).json({ error: e.message, timings: { totalMs: Date.now() - startMs } });
   }
 });
-// TEMPORARY one-run raw Gemini diagnostic. Removed immediately after use.
-_debugRouter.post('/gemini-raw-diagnostic', async (_req, res) => {
-  const slots = _aiRuntime.projectPool.snapshot()
-    .filter((slot) => slot.enabled)
-    .slice(0, 5)
-    .map((slot) => _aiRuntime.projectPool.get(slot.id));
-  if (slots.length < 5) return res.status(503).json({ error: 'Five enabled slots required' });
-
-  async function probe({ name, slot, url, body = null }) {
-    const startedAt = Date.now();
-    try {
-      const response = await fetch(url, {
-        method: body ? 'POST' : 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': slot.apiKey,
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(19000),
-      });
-      const payload = await response.json().catch(() => ({}));
-      return {
-        name,
-        slotId: slot.id,
-        status: response.status,
-        latencyMs: Date.now() - startedAt,
-        providerStatus: payload?.error?.status || null,
-        providerCode: payload?.error?.code || null,
-        providerMessage: String(payload?.error?.message || '').slice(0, 500) || null,
-        outputText: payload?.candidates?.[0]?.content?.parts?.find((part) => !part.thought)?.text || payload?.interaction?.output_text || payload?.output_text || null,
-        listedModels: Array.isArray(payload?.models)
-          ? payload.models.filter((model) => /gemini-(?:3\.8|3\.7|3\.6|3\.5|2\.5)-flash$/.test(model.name || '')).map((model) => ({ name: model.name, methods: model.supportedGenerationMethods }))
-          : null,
-      };
-    } catch (error) {
-      return { name, slotId: slot.id, status: null, latencyMs: Date.now() - startedAt, transportError: error?.name || 'UNKNOWN' };
-    }
-  }
-
-  const contentBody = (model) => ({
-    contents: [{ role: 'user', parts: [{ text: `Reply with exactly OK. Control model: ${model}` }] }],
-    generationConfig: { maxOutputTokens: 32 },
-  });
-  const results = await Promise.all([
-    probe({ name: 'models.list', slot: slots[0], url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000' }),
-    probe({ name: '3.8-generateContent', slot: slots[1], url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', body: contentBody('3.8') }),
-    probe({ name: '3.5-generateContent', slot: slots[2], url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent', body: contentBody('3.5') }),
-    probe({ name: '2.5-generateContent', slot: slots[3], url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', body: contentBody('2.5') }),
-    probe({ name: '3.8-interactions', slot: slots[4], url: 'https://generativelanguage.googleapis.com/v1beta/interactions', body: { model: 'gemini-3.8-flash', input: 'Reply with exactly OK.' } }),
-  ]);
-  console.log('[KIWI DEBUG] raw Gemini diagnostic complete', results.map(({ providerMessage, ...result }) => ({ ...result, providerMessagePresent: Boolean(providerMessage) })));
-  res.json({ diagnostic: 'RAW_GEMINI_ONE_RUN', results });
-});
 app.use('/api/debug', _debugRouter);
 
 app.use('/api', progressRouter);
