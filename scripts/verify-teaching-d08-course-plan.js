@@ -20,6 +20,7 @@ const required = [
   'teaching/repositories/d08/scope-store.js',
   'teaching/repositories/d08/vpk-store.js',
   'migrations/20260928_teaching_d08_course_plan_coverage.sql',
+  'migrations/20260928_teaching_d08_post_migration_hardening.sql',
   'docs/teaching/d08-course-plan-coverage.md',
   'docs/teaching/migrations/d08-recovery.md',
   'tests/teaching/fixtures/d08/curriculum-profiles.json',
@@ -88,6 +89,9 @@ for (const table of [
 if (!migration.includes('teaching_course_plan_d08_update_guard')) throw new Error('D08 Course Plan immutable-field guard missing.');
 if (!migration.includes('ENABLE ROW LEVEL SECURITY')) throw new Error('D08 RLS missing.');
 if (/GRANT\s+(INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,140}authenticated/i.test(migration)) throw new Error('D08 grants browser academic mutation.');
+const hardening = read('migrations/20260928_teaching_d08_post_migration_hardening.sql');
+if (!/SET search_path = pg_catalog, public/.test(hardening)) throw new Error('D08 Course Plan guard search_path hardening missing.');
+if (!hardening.includes('teaching_coverage_audits_course_idx')) throw new Error('D08 Coverage Audit course FK index hardening missing.');
 
 const backend = read('teaching-backend.js');
 for (const route of ['plan-review','coverage-report','activation-coverage-decision','scope-review/:scopeChangeId/analyze']) {

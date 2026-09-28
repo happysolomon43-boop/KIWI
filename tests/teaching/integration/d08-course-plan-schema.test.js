@@ -66,10 +66,10 @@ test('D08 schema has RLS, owner read policies, service-only mutation, lineage co
          'teaching_course_plans_curriculum_audit_idx','teaching_course_plan_mappings_coverage_idx',
          'teaching_course_plan_mappings_source_idx','teaching_course_plan_mappings_unit_idx',
          'teaching_course_plan_prerequisites_vpk_idx','teaching_course_plan_exclusions_source_idx',
-         'teaching_coverage_audits_plan_idx','teaching_course_scope_apps_plan_idx'
+         'teaching_coverage_audits_plan_idx','teaching_coverage_audits_course_idx','teaching_course_scope_apps_plan_idx'
        )`,
     );
-    assert.equal(indexes.length, 10);
+    assert.equal(indexes.length, 11);
 
     const { rows: triggers } = await pool.query(
       `select tgname from pg_trigger where not tgisinternal and tgname in (
@@ -79,6 +79,12 @@ test('D08 schema has RLS, owner read policies, service-only mutation, lineage co
       )`,
     );
     assert.equal(triggers.length, 6);
+
+    const { rows: functionConfig } = await pool.query(
+      `select proconfig from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+       where n.nspname='public' and p.proname='teaching_guard_d08_course_plan_update'`,
+    );
+    assert.ok(functionConfig[0]?.proconfig?.some((entry) => entry === 'search_path=pg_catalog, public'));
   } finally {
     await pool.end();
   }

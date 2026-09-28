@@ -335,6 +335,12 @@ test('D08 migration enforces RLS, immutable history, scoped mappings and browser
   assert.doesNotMatch(sql, /GRANT\s+(INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,120}TO\s+authenticated/i);
 });
 
+test('D08 post-migration hardening fixes the guard search_path and Coverage Audit course FK index', () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, '../../../migrations/20260928_teaching_d08_post_migration_hardening.sql'), 'utf8');
+  assert.match(sql, /ALTER FUNCTION public\.teaching_guard_d08_course_plan_update\(\)[\s\S]*SET search_path = pg_catalog, public/);
+  assert.match(sql, /CREATE INDEX teaching_coverage_audits_course_idx[\s\S]*teaching_coverage_audits\(course_id,created_at DESC\)/);
+});
+
 test('D08 feature code contains no provider/model selection, SKM writes or Gradebook writes', () => {
   const dir = path.resolve(__dirname, '../../../teaching/d08');
   const source = fs.readdirSync(dir).filter((name) => name.endsWith('.js')).map((name) => fs.readFileSync(path.join(dir, name), 'utf8')).join('\n');
