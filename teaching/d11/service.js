@@ -400,26 +400,33 @@ function createD11Service({
     return publicContext(context);
   }
 
-  async function startController(user, classId, sourceEventRef = null, idempotencyKey = null) {
+  async function startController(user, classId, sourceEventRef = null, idempotencyKey = null, options = {}) {
     const context = await repository.getClassContext(user.id, classId);
     assertClassPlanningEligible(context);
     if (String(context.classRow.course_lifecycle_state) !== 'ACTIVE') {
       fail('Only an Active Course may start a live Class Controller.', 'TEACHING_D11_COURSE_NOT_ACTIVE', 409);
     }
     if (context.session) return publicContext(context);
-    if (!context.blueprint) fail('A current validated Lesson Blueprint is required before Class start.', 'TEACHING_D11_BLUEPRINT_REQUIRED', 409);
+    if (!context.blueprint && options.allowRouteHeldStart !== true) fail('A current validated Lesson Blueprint is required before Class start.', 'TEACHING_D11_BLUEPRINT_REQUIRED', 409);
     const prep=await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:sourceEventRef || null});
     const refreshed=await repository.getClassContext(user.id,classId);
     if(prep?.changed===true && refreshed.workspace?.current_artifact_version_ref) {
       fail('Authoritative inputs changed after Lesson preparation; stale prepared artifact cannot start Class.','TEACHING_D11_PREPARED_ARTIFACT_STALE',409);
     }
-    await handoffPreparedCandidate(refreshed.workspace?.workspace_id || null,refreshed);
+    if(refreshed.blueprint) {
+      await handoffPreparedCandidate(refreshed.workspace?.workspace_id || null,refreshed);
+    } else if(options.allowRouteHeldStart !== true) {
+      fail('Prepared Lesson Blueprint is unavailable.','TEACHING_D11_BLUEPRINT_REQUIRED',409);
+    }
     const now = clock();
     if (now.getTime() < new Date(context.classRow.scheduled_start_at).getTime()) {
       fail('Class cannot start before its authoritative scheduled time.', 'TEACHING_D11_CLASS_START_EARLY', 409);
     }
     const result = await withTransaction((tx)=>repository.ensureControllerStartedUsing(tx,{
-      studentId:user.id,classId,expectedBlueprintId:context.blueprint.lesson_blueprint_id,sourceEventRef,idempotencyKey,
+      studentId:user.id,classId,
+      expectedBlueprintId:refreshed.blueprint?.lesson_blueprint_id || null,
+      sourceEventRef,idempotencyKey,
+      allowRouteHeldStart:options.allowRouteHeldStart === true,
     }));
     return publicContext({ ...context, session:result.session });
   }
