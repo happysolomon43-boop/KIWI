@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="theme-color" content="#030d0b" />
     <meta
@@ -24,6 +24,7 @@
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/contrib/auto-render.min.js"
             onload="if(window._onKatexReady) window._onKatexReady(); else window._katexReady = true;"></script>
+    <link rel="stylesheet" href="/kiwi-ui-system.css" />
     <style>
       /* ═══════════════════════════════════════════════════════════════════════════
    KIWI Living Ecosystem Design System — Complete CSS
@@ -24290,6 +24291,7 @@ document.addEventListener('keydown', (event) => {
 window.addEventListener('resize', _tourScheduleReposition, { passive: true });
 window.addEventListener('scroll', _tourScheduleReposition, { passive: true, capture: true });
 </script>
+<script src="/kiwi-ui-system.js"></script>
 <script src="/kiwi_product_v3.js"></script>
 <script src="/kiwi_bubbles_v1.js"></script>
 </body>
