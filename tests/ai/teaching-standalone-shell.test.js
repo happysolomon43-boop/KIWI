@@ -94,7 +94,7 @@ test('Switching from Teaching back to KIWI requires an explicit confirmation', (
   assert.match(js, /window\.location\.assign\(KIWI_PATH\)/);
 });
 
-test('Teaching bottom navigation is hidden and template-driven with no fixed item count', () => {
+test('Teaching bottom navigation stays hidden until four destinations are ready and Menu owns slot five', () => {
   const html = read(teachingHtmlPath);
   const js = read(teachingJsPath);
 
@@ -103,13 +103,21 @@ test('Teaching bottom navigation is hidden and template-driven with no fixed ite
   assert.doesNotMatch(html, /teaching-dock__slot/);
   assert.doesNotMatch(html, /teaching-dock__placeholder/);
 
+  assert.match(js, /const TEACHING_DOCK_LIMIT = 5/);
+  assert.match(js, /const TEACHING_DOCK_DESTINATION_SLOTS = TEACHING_DOCK_LIMIT - 1/);
   assert.match(js, /const teachingNavigationItems = new Map\(\)/);
   assert.match(js, /function registerTeachingNavigationItem/);
   assert.match(js, /function unregisterTeachingNavigationItem/);
-  assert.match(js, /shell\.hidden = teachingNavigationItems\.size === 0/);
+  assert.match(js, /dockReady = destinations\.length === TEACHING_DOCK_DESTINATION_SLOTS/);
+  assert.match(js, /shell\.hidden = !dockReady/);
+  assert.match(js, /if \(!dockReady\) return/);
+  assert.match(js, /id: 'menu'/);
+  assert.match(js, /label: 'Menu'/);
+  assert.match(js, /onSelect: \(\) => setMenuOpen\(true/);
   assert.match(js, /window\.KIWITeachingNavigation/);
-  assert.doesNotMatch(js, /slice\(0,\s*5\)/);
-  assert.doesNotMatch(js, /length\s*[<>]=?\s*5/);
+
+  assert.match(html, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(html, /body\[data-teaching-dock-visible="true"\] \.teaching-stage/);
 });
 
 test('Teaching suppresses Vercel live-feedback toolbar injection', () => {
