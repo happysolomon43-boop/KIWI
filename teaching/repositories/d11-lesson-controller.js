@@ -749,8 +749,10 @@ function createD11LessonControllerRepository({
     let nextSession = session;
     if (session) {
       const updated = await tx.query(
-        "update public.teaching_class_sessions set lesson_blueprint_id=$3,state_version=state_version+1," +
-        " event_cursor=event_cursor+1,updated_at=now() where class_session_id=$1 and student_id=$2 returning *",
+        "update public.teaching_class_sessions set lesson_blueprint_id=$3," +
+        " resume_instructional_substate=case when lesson_blueprint_id is null and instructional_substate='INTERRUPTED' then 'OPENING' else resume_instructional_substate end," +
+        " state_version=state_version+1,event_cursor=event_cursor+1,updated_at=now()" +
+        " where class_session_id=$1 and student_id=$2 returning *",
         [session.class_session_id,studentId,blueprintId]
       );
       nextSession = updated.rows[0];
@@ -795,6 +797,7 @@ function createD11LessonControllerRepository({
     expectedBlueprintId,
     sourceEventRef = null,
     idempotencyKey = null,
+    allowRouteHeldStart = false,
   } = {}) {
     const classRow = await loadClassBase(studentId,classId,tx,true);
     if (!classRow) return null;
@@ -814,6 +817,12 @@ function createD11LessonControllerRepository({
       error.status = 409;
       throw error;
     }
+    if (!blueprint && !allowRouteHeldStart) {
+      const error = new Error('Validated current Lesson Blueprint is required before Controller start.');
+      error.code = 'TEACHING_D11_BLUEPRINT_REQUIRED';
+      error.status = 409;
+      throw error;
+    }
     if (classRow.course_lifecycle_state !== 'ACTIVE' || classRow.lifecycle_state === 'CANCELLED') {
       const error = new Error('Class/Course is not eligible for live Controller start.');
       error.code = 'TEACHING_D11_CLASS_NOT_ACTIVE';
@@ -822,25 +831,36 @@ function createD11LessonControllerRepository({
     }
     const now = clock();
     const sessionId = randomUUID();
+    const routeHeld = !blueprint;
+    const initialLifecycle = routeHeld ? 'INTERRUPTED' : 'ACTIVE';
+    const initialSubstate = routeHeld ? 'INTERRUPTED' : 'OPENING';
     const inserted = await tx.query(
       "insert into public.teaching_class_sessions(" +
       "class_session_id,student_id,class_id,lesson_blueprint_id,lifecycle_state,instructional_substate,state_version," +
       "started_at,course_id,course_plan_id,source_course_state_version,source_course_plan_version," +
       "source_class_schedule_version,source_timetable_version_id,scheduled_start_at_snapshot,scheduled_end_at_snapshot," +
       "timezone_snapshot,event_cursor,progress_state,controller_contract_version" +
-      ") values($1,$2,$3,$4,'ACTIVE','OPENING',1,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,1," +
+      ") values($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1," +
       "'{\"completed_segment_refs\":[],\"completed_objective_refs\":[],\"evidence_event_refs\":[],\"independent_evidence_objective_refs\":[]}'::jsonb,'d11.controller.v1') returning *",
       [
-        sessionId,studentId,classId,blueprint?.lesson_blueprint_id || null,now,classRow.course_id,plan.course_plan_id,
-        classRow.course_state_version,plan.version_no,classRow.schedule_version,classRow.source_timetable_version_id || null,
+        sessionId,studentId,classId,blueprint?.lesson_blueprint_id || null,initialLifecycle,initialSubstate,
+        now,classRow.course_id,plan.course_plan_id,classRow.course_state_version,plan.version_no,
+        classRow.schedule_version,classRow.source_timetable_version_id || null,
         classRow.scheduled_start_at,classRow.scheduled_end_at,classRow.timezone,
       ]
     );
     await appendHistoryUsing(tx, {
       studentId,classId,classSessionId:sessionId,controllerVersion:1,eventCursor:1,
-      actionKind:'CONTROLLER_STARTED',fromState:null,toState:'OPENING',
-      reason:'Server-authoritative Class start established live instructional state.',
-      sourceEventRef,idempotencyKey,safeMetadata:{lesson_blueprint_id:blueprint?.lesson_blueprint_id || null,route_degraded_without_blueprint:!blueprint},
+      actionKind:routeHeld?'CONTROLLER_STARTED_ROUTE_HELD':'CONTROLLER_STARTED',fromState:null,toState:initialSubstate,
+      reason:routeHeld
+        ? 'Server-authoritative Class start preserved while Lesson Planner route is unavailable.'
+        : 'Server-authoritative Class start established live instructional state.',
+      sourceEventRef,idempotencyKey,
+      safeMetadata:{
+        lesson_blueprint_id:blueprint?.lesson_blueprint_id || null,
+        route_degraded_without_blueprint:routeHeld,
+        academic_penalty_created:false,
+      },
     });
     return Object.freeze({ session:inserted.rows[0], inserted:true });
   }
