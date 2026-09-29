@@ -9,6 +9,7 @@ const {
   DEFAULT_GRADING_POLICY,ADMISSION_POLICY,
 }=require('../../../teaching/d10/contracts');
 const {createD10Service}=require('../../../teaching/d10/service');
+const {createD10LifecycleRequestRepository}=require('../../../teaching/repositories/d10-lifecycle-requests');
 const {TEACHING_EVENTS}=require('../../../teaching/events/names');
 
 function facts(state='READY'){
