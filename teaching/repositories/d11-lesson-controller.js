@@ -214,11 +214,69 @@ function createD11LessonControllerRepository({
         signals: Object.freeze([]),
         negative_inference_forbidden: true,
       }),
-      knowledgeModelSignals: Object.freeze({
-        status: 'OWNER_PENDING_D13',
-        signals: Object.freeze([]),
-        negative_inference_forbidden: true,
-      }),
+      knowledgeModelSignals: await (async () => {
+        try {
+          const [states, misconceptions] = await Promise.all([
+            query(
+              "select learning_unit_id,state_version,knowledge_state,overlays,dimensions,certainty_state,retention_review_due_at,path_to_success,misconception_refs,algorithm_version" +
+              " from public.teaching_student_knowledge_states where student_id=$1 and course_id=$2 order by learning_unit_id",
+              [studentId, classRow.course_id]
+            ),
+            query(
+              "select misconception_id,learning_unit_id,status,hypothesis_payload,state_version,updated_at" +
+              " from public.teaching_persistent_misconceptions where student_id=$1 and course_id=$2" +
+              " and status in ('ACTIVE','REPAIRING','RESOLUTION_SUPPORTED') order by learning_unit_id,updated_at desc",
+              [studentId, classRow.course_id]
+            ),
+          ]);
+          const byUnit = new Map();
+          for (const row of misconceptions.rows || []) {
+            const list = byUnit.get(row.learning_unit_id) || [];
+            list.push(Object.freeze({
+              misconception_id: row.misconception_id,
+              status: row.status,
+              summary: row.hypothesis_payload?.summary || null,
+              state_version: Number(row.state_version),
+            }));
+            byUnit.set(row.learning_unit_id, list);
+          }
+          const version = (states.rows || []).reduce((max, row) => Math.max(max, Number(row.state_version || 0)), 0);
+          return Object.freeze({
+            status: 'AUTHORITATIVE_D13',
+            owner: 'Student Knowledge Model',
+            bundle_version: String(version),
+            signals: Object.freeze((states.rows || []).map((row) => Object.freeze({
+              learning_unit_id: row.learning_unit_id,
+              state_version: Number(row.state_version),
+              knowledge_state: row.knowledge_state,
+              overlays: Object.freeze(row.overlays || []),
+              certainty_state: row.certainty_state,
+              retention_review_due_at: row.retention_review_due_at,
+              planning_dimensions: Object.freeze({
+                independence: row.dimensions?.independence || 'INSUFFICIENT_EVIDENCE',
+                retention: row.dimensions?.retention || 'INSUFFICIENT_EVIDENCE',
+                transfer: row.dimensions?.transfer || 'INSUFFICIENT_EVIDENCE',
+              }),
+              path_to_success: Object.freeze(row.path_to_success || {}),
+              misconception_refs: Object.freeze(byUnit.get(row.learning_unit_id) || []),
+              algorithm_version: row.algorithm_version,
+            }))),
+            raw_weights_included: false,
+            official_marks_included: false,
+            progression_outcomes_included: false,
+            negative_inference_forbidden: true,
+          });
+        } catch (error) {
+          // D11 remains usable before/without D13 readiness. Missing SKM state is UNKNOWN,
+          // never negative evidence and never permission to fabricate a weaker learner state.
+          return Object.freeze({
+            status: 'D13_UNAVAILABLE',
+            signals: Object.freeze([]),
+            negative_inference_forbidden: true,
+            error_code: error?.code || null,
+          });
+        }
+      })(),
       governedRequestSignals: Object.freeze((governedRequests.rows || []).map((row) => Object.freeze({
         request_id: row.request_id,
         request_type: row.request_type,
