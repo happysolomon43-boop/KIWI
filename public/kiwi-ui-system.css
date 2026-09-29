@@ -188,6 +188,14 @@ code {
   transform: translateY(0) scale(1);
 }
 
+.kiwi-select-portal[data-placement="above"] .kiwi-select-panel {
+  transform-origin: bottom center;
+}
+
+.kiwi-select-portal[data-placement="below"] .kiwi-select-panel {
+  transform-origin: top center;
+}
+
 .kiwi-select-panel__head {
   min-height: 52px;
   display: flex;
@@ -329,54 +337,59 @@ body[data-kiwi-select-open="true"] {
     font-size: 16px;
   }
 
-  body[data-kiwi-select-open="true"] {
-    overflow: hidden;
-  }
-
-  .kiwi-select-backdrop {
-    background: rgba(0,0,0,.58);
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
-  }
-
-  .kiwi-select-panel {
-    left: 8px;
-    right: 8px;
-    top: auto;
-    bottom: max(8px, env(safe-area-inset-bottom, 0px));
-    width: auto;
-    max-height: min(72dvh, 620px);
-    border-radius: 22px;
-    transform: translateY(24px) scale(.99);
-    transform-origin: bottom center;
-  }
-
-  .kiwi-select-portal[data-open="true"] .kiwi-select-panel {
-    transform: translateY(0) scale(1);
-  }
-
-  .kiwi-select-panel::before {
-    content: "";
-    width: 42px;
-    height: 4px;
-    margin: 8px auto 0;
-    border-radius: 999px;
-    background: var(--kiwi-ui-border-strong);
-  }
-
-  .kiwi-select-panel__head {
-    min-height: 56px;
-    padding-top: 8px;
-  }
-
-  .kiwi-select-options {
-    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  }
-
   .kiwi-select-option {
     min-height: 50px;
     font-size: 15px;
   }
+}
+
+/*
+ * Bottom-sheet presentation is opt-in only. System-wide selectors are
+ * anchored to their trigger by default, including on touch devices.
+ * A specific flow may request sheet mode with data-kiwi-select-mode="sheet".
+ */
+.kiwi-select-portal[data-mode="sheet"] .kiwi-select-backdrop {
+  background: rgba(0,0,0,.58);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.kiwi-select-portal[data-mode="sheet"] .kiwi-select-panel {
+  left: 8px;
+  right: 8px;
+  top: auto;
+  bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  width: auto;
+  max-height: min(72dvh, 620px);
+  border-radius: 22px;
+  transform: translateY(24px) scale(.99);
+  transform-origin: bottom center;
+}
+
+.kiwi-select-portal[data-mode="sheet"][data-open="true"] .kiwi-select-panel {
+  transform: translateY(0) scale(1);
+}
+
+.kiwi-select-portal[data-mode="sheet"] .kiwi-select-panel::before {
+  content: "";
+  width: 42px;
+  height: 4px;
+  margin: 8px auto 0;
+  border-radius: 999px;
+  background: var(--kiwi-ui-border-strong);
+}
+
+.kiwi-select-portal[data-mode="sheet"] .kiwi-select-panel__head {
+  min-height: 56px;
+  padding-top: 8px;
+}
+
+.kiwi-select-portal[data-mode="sheet"] .kiwi-select-options {
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+body[data-kiwi-select-open="true"]:has(.kiwi-select-portal[data-mode="sheet"][data-open="true"]) {
+  overflow: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {
