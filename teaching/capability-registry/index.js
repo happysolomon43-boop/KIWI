@@ -21,15 +21,17 @@ const {
   assertIntelligenceClass,
 } = require('../ai/contracts');
 
-const REGISTRY_VERSION = '1.1';
-const REGISTRY_SOURCE_SHA256 = 'a68e19eff631d43d4ab31ddd15b46298dc4ffb48dc2006758e85f712200c4ef4';
+const COMPILED_BASE_VERSION = '1.1';
+const COMPILED_BASE_SOURCE_SHA256 = 'a68e19eff631d43d4ab31ddd15b46298dc4ffb48dc2006758e85f712200c4ef4';
+const REGISTRY_VERSION = '1.3';
+const REGISTRY_SOURCE_SHA256 = 'db2c9c89764b4fbcaffa4fc1d263f99ff0ddb337becbdc56b7ff71d829f5bc16';
 const REGISTRY_COMPILED_SHA256 = '73a6517a71f49b8f72323369b19c3f9cf50dec4032fae24f695f72c0766e2b9d';
 
 const EXPECTED_COUNTS = Object.freeze({
-  total: 169,
-  modelEligible: 147,
+  total: 170,
+  modelEligible: 148,
   t0Promptless: 22,
-  promptFamilies: 19,
+  promptFamilies: 20,
   legacyAliases: 165,
 });
 
@@ -42,10 +44,10 @@ function invariant(condition, message) {
 }
 
 invariant(crypto.createHash('sha256').update(compiled.bytes).digest('hex') === REGISTRY_COMPILED_SHA256, 'compiled registry payload hash drift');
-invariant(data.registry_version === REGISTRY_VERSION, 'compiled registry version drift');
-invariant(data.source_sha256 === REGISTRY_SOURCE_SHA256, 'compiled registry source hash drift');
+invariant(data.registry_version === COMPILED_BASE_VERSION, 'compiled registry version drift');
+invariant(data.source_sha256 === COMPILED_BASE_SOURCE_SHA256, 'compiled registry source hash drift');
 
-const capabilities = Object.freeze(data.capabilities.map((capability) => Object.freeze({
+const historicalCapabilities = data.capabilities.map((capability) => Object.freeze({
   id: capability.id,
   legacy_aliases: Object.freeze([...(capability.aliases || [])]),
   execution_class: capability.execution_class,
@@ -61,13 +63,34 @@ const capabilities = Object.freeze(data.capabilities.map((capability) => Object.
     structural_prompt_contract: 'Teaching-Structural-Prompt-Contract/D03-v1',
   }),
   output_schema_binding: 'RUNTIME_REQUIRED',
-})));
+}));
+
+const successorCapability = Object.freeze({
+  id: 'teaching.study.class_grounded_note_generation',
+  legacy_aliases: Object.freeze([]),
+  execution_class: 'DIRECT-AI',
+  authority_ceiling: 'T3',
+  authoritative_owner_boundary: 'Teaching Study Pack publication owner',
+  model_posture: 'MODEL_PRIMARY',
+  prompt_family_id: 'TPF-20',
+  prompt_family_version: '1.0',
+  commit_posture: 'Versioned private preparation artifact or reconciled note draft with claim-level plan/taught/source/card provenance; no direct publication, Class Summary rewrite, mastery/grade/schedule/question decision or authoritative-state mutation.',
+  blueprint_anchors: '§74, §370, §501 and post-Class Study Pack amendment.',
+  purpose: 'Prepare most of the note before Class from the approved Lesson Plan, sources and planned Class Study Card Set, then reconcile it after Class against actual taught scope, recorded teaching and the final card set. Explain and connect supplied card content without selecting from the wider collection. D03 registers the body; D11 supplies plan/actual records; D14 owns preparation/reconciliation; D27 owns card integration/publication boundary; D30 qualifies routes.',
+  contract_refs: Object.freeze({
+    constitution: 'Blueprint-11.7/Teaching-Constitution',
+    structural_prompt_contract: 'Teaching-Structural-Prompt-Contract/D03-v1',
+  }),
+  output_schema_binding: 'RUNTIME_REQUIRED',
+});
+
+const capabilities = Object.freeze([...historicalCapabilities, successorCapability]);
 
 const capabilityById = new Map();
 const canonicalByAlias = new Map();
 
 function assertRegistryIntegrity() {
-  invariant(capabilities.length === EXPECTED_COUNTS.total, 'expected exactly 169 capabilities');
+  invariant(capabilities.length === EXPECTED_COUNTS.total, 'expected exactly 170 capabilities');
   capabilityById.clear();
   canonicalByAlias.clear();
 
@@ -89,8 +112,11 @@ function assertRegistryIntegrity() {
       typeof capability.commit_posture === 'string' && capability.commit_posture.trim(),
       `${capability.id} missing commit posture`
     );
+    const expectedConstitution = capability.id === 'teaching.study.class_grounded_note_generation'
+      ? 'Blueprint-11.7/Teaching-Constitution'
+      : 'Blueprint-11.5/Teaching-Constitution';
     invariant(
-      capability.contract_refs.constitution === 'Blueprint-11.5/Teaching-Constitution',
+      capability.contract_refs.constitution === expectedConstitution,
       `${capability.id} missing Constitution binding`
     );
 
@@ -116,9 +142,9 @@ function assertRegistryIntegrity() {
   }
 
   invariant(t0Promptless === EXPECTED_COUNTS.t0Promptless, 'expected exactly 22 T0/no-prompt capabilities');
-  invariant(modelEligible === EXPECTED_COUNTS.modelEligible, 'expected exactly 147 model-eligible capabilities');
+  invariant(modelEligible === EXPECTED_COUNTS.modelEligible, 'expected exactly 148 model-eligible capabilities');
   invariant(aliasCount === EXPECTED_COUNTS.legacyAliases, 'expected exactly 165 legacy INV aliases');
-  invariant(familyIds.size === EXPECTED_COUNTS.promptFamilies, 'expected exactly 19 prompt families');
+  invariant(familyIds.size === EXPECTED_COUNTS.promptFamilies, 'expected exactly 20 prompt families');
 
   return Object.freeze({
     registryVersion: REGISTRY_VERSION,

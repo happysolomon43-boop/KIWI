@@ -37,7 +37,7 @@ const runtime = require('../teaching/runtime');
 const orchestrator = require('../teaching/orchestrator');
 
 const census = registry.assertRegistryIntegrity();
-assert(census.total === 169 && census.modelEligible === 147 && census.t0Promptless === 22 && census.promptFamilies === 19, 'Registry census drifted from 169/147/22/19.');
+assert(census.total === 170 && census.modelEligible === 148 && census.t0Promptless === 22 && census.promptFamilies === 20, 'Registry census drifted from successor 170/148/22/20.');
 for (const id of Object.values(preparation.PPL_T0_CAPABILITIES)) {
   const capability = registry.getCapability(id);
   assert(capability.authority_ceiling === 'T0', `${id} must remain T0.`);
@@ -81,7 +81,7 @@ for (const fragment of [
 
 const d05JsFiles = [
   'teaching/orchestrator/ai-adapter.js','teaching/orchestrator/teaching-orchestrator.js',
-  'teaching/preparation/t0-handlers.js','teaching/preparation/workflow.js',
+  'teaching/preparation/t0-handlers.js','teaching/preparation/workflow.js','teaching/preparation/subscribers.js',
 ];
 for (const file of d05JsFiles) {
   const content = read(file);
@@ -93,10 +93,19 @@ const serverEntry = read('index.js');
 for (const fragment of [
   "createTeachingD05RuntimePlatform",
   "createTeachingEventSubscriberRegistry",
+  "registerPreparationPublishedEventSubscribers",
   "eventPublisher: (event) => teachingPublishedEvents.publish(event)",
   "D05 runtime initialized; due-event and durable outbox workers started",
 ]) assert(serverEntry.includes(fragment), `Production server must wire D05 runtime fragment: ${fragment}`);
 assert(!serverEntry.includes("const { createTeachingRuntimePlatform } = require('./teaching/runtime');"), 'Production server must not remain pinned to the D02-only runtime constructor after D05.');
+
+const preparationSubscribers = read('teaching/preparation/subscribers.js');
+for (const fragment of [
+  "ppl-d09-deterministic-gate",
+  "PREPARATION_WORKSPACE_SEEDED",
+  "PREPARATION_INPUT_CHANGED",
+  "hasProcessedEvent",
+]) assert(preparationSubscribers.includes(fragment), `PPL published-event subscriber contract missing: ${fragment}`);
 
 const combined = [
   read('teaching/orchestrator/contracts.js'),

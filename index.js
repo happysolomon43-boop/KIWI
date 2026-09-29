@@ -44,6 +44,8 @@ const { createTeachingRouter } = require('./teaching-backend');
 const { createTeachingD05RuntimePlatform } = require('./teaching/runtime');
 const { createTeachingEventSubscriberRegistry } = require('./teaching/events/dispatcher');
 const { TEACHING_EVENTS } = require('./teaching/events/names');
+const { createPreparationRuntimeRepository } = require('./teaching/repositories/preparation-runtime');
+const { createPreparationPublishedEventHandlers, registerPreparationPublishedEventSubscribers } = require('./teaching/preparation/subscribers');
 const { requireRuntimeSecret, optionalRuntimeSecret } = require('./services/runtime-secrets');
 
 const DATABASE_URL = requireRuntimeSecret(process.env, 'DATABASE_URL', ['KIWI_DATABASE_URL']);
@@ -76,6 +78,18 @@ const ai = _aiRuntime.orchestrator;
 // durable committed-domain event outbox. It owns no academic-domain truth.
 const teachingAIRun = ai.run.bind(ai);
 const teachingPublishedEvents = createTeachingEventSubscriberRegistry();
+const teachingPreparationPublishedRepository = createPreparationRuntimeRepository({
+  query,
+  withTransaction,
+  randomUUID,
+});
+const teachingPreparationPublishedHandlers = createPreparationPublishedEventHandlers({
+  repository: teachingPreparationPublishedRepository,
+});
+registerPreparationPublishedEventSubscribers(
+  teachingPublishedEvents,
+  teachingPreparationPublishedHandlers
+);
 teachingPublishedEvents.register(TEACHING_EVENTS.REQUEST_DECIDED, {
   subscriberId: 'd10-request-decision-audit',
   handle: async (event) => Object.freeze({ accepted: true, requestId: event.aggregateId }),

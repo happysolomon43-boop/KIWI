@@ -18,7 +18,7 @@ function firstModelCapability() {
   return registry.listCapabilities().find((item) => item.authority_ceiling !== 'T0');
 }
 
-test('D03 registry census is exactly 169 = 147 model-eligible + 22 deterministic T0', () => {
+test('D03 registry census is exactly 170 = 148 model-eligible + 22 deterministic T0', () => {
   const integrity = registry.assertRegistryIntegrity();
   assert.deepEqual(
     {
@@ -28,7 +28,7 @@ test('D03 registry census is exactly 169 = 147 model-eligible + 22 deterministic
       promptFamilies: integrity.promptFamilies,
       legacyAliases: integrity.legacyAliases,
     },
-    { total: 169, modelEligible: 147, t0Promptless: 22, promptFamilies: 19, legacyAliases: 165 }
+    { total: 170, modelEligible: 148, t0Promptless: 22, promptFamilies: 20, legacyAliases: 165 }
   );
 });
 
@@ -54,13 +54,13 @@ test('four PPL deterministic capabilities are promptless and cannot be remapped'
   }
 });
 
-test('v1.3 prompt baseline is exact, frozen and covers all 147 model-eligible capabilities', () => {
+test('v1.4 prompt successor is exact, preserves the historical 19 bindings and covers all 148 model-eligible capabilities', () => {
   const status = catalog.promptCatalogStatus();
-  assert.equal(status.manifestVersion, '1.3');
-  assert.equal(status.manifestSha256, '4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce');
-  assert.equal(status.combinedPackSha256, '173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae');
-  assert.equal(status.familyCount, 19);
-  assert.equal(status.modelEligibleCapabilityCount, 147);
+  assert.equal(status.manifestVersion, '1.4');
+  assert.equal(status.manifestSha256, '7757b50cbf4cfb501158beeaccfbfd5776bc8ca8f7257b4855f5ed5fcdf67e3d');
+  assert.equal(status.combinedPackSha256, '6632f5c566fb81906c5ecf27e7d5412a330b93f63c429d46f3bee65aac91ab5d');
+  assert.equal(status.familyCount, 20);
+  assert.equal(status.modelEligibleCapabilityCount, 148);
 
   const capability = firstModelCapability();
   const family = catalog.getPromptFamily(capability.prompt_family_id);
@@ -101,13 +101,13 @@ test('runtime/build-time prompt text must match the exact manifested family SHA'
   );
 });
 
-test('all 19 frozen prompt bodies are runtime-loadable and byte-identical to their manifested SHA', () => {
+test('all 20 frozen prompt bodies are runtime-loadable and byte-identical to their manifested SHA', () => {
   assert.equal(require('../../../teaching/prompt-runtime/prompt-body-store').assertPromptBodyStoreReady(), true);
   const bodyStatus = require('../../../teaching/prompt-runtime/prompt-body-store').promptBodyStoreStatus();
-  assert.equal(bodyStatus.familyCount, 19);
+  assert.equal(bodyStatus.familyCount, 20);
   assert.equal(bodyStatus.promptBodiesRuntimeAvailable, true);
-  assert.equal(bodyStatus.manifestSha256, '4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce');
-  assert.equal(bodyStatus.combinedPackSha256, '173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae');
+  assert.equal(bodyStatus.manifestSha256, '7757b50cbf4cfb501158beeaccfbfd5776bc8ca8f7257b4855f5ed5fcdf67e3d');
+  assert.equal(bodyStatus.combinedPackSha256, '6632f5c566fb81906c5ecf27e7d5412a330b93f63c429d46f3bee65aac91ab5d');
 
   for (const family of catalog.listPromptFamilies()) {
     const body = catalog.getPromptBody(family.id, family.version);
@@ -187,8 +187,8 @@ test('every model-backed capability can compose its exact frozen family body wit
   }
 });
 
-test('all 169 capabilities have immutable D03 contracts and model prompts cannot raise authority or owner', () => {
-  assert.deepEqual(contracts.completeness, { modelBacked: 147, deterministic: 22, total: 169 });
+test('all 170 capabilities have immutable D03 contracts and model prompts cannot raise authority or owner', () => {
+  assert.deepEqual(contracts.completeness, { modelBacked: 148, deterministic: 22, total: 170 });
   for (const capability of registry.listCapabilities()) {
     const contract = contracts.getCapabilityContract(capability.id);
     assert.equal(contract.capabilityId, capability.id);
@@ -209,8 +209,35 @@ test('all 169 capabilities have immutable D03 contracts and model prompts cannot
   );
 });
 
+test('TPF-20 successor capability is exact, T3-only and still unqualified', () => {
+  const capability = registry.getCapability('teaching.study.class_grounded_note_generation');
+  assert.equal(capability.execution_class, 'DIRECT-AI');
+  assert.equal(capability.authority_ceiling, 'T3');
+  assert.equal(capability.prompt_family_id, 'TPF-20');
+  assert.equal(capability.model_posture, 'MODEL_PRIMARY');
+  assert.equal(capability.prompt_family_version, '1.0');
+
+  const family = catalog.getPromptFamily('TPF-20');
+  assert.equal(family.version, '1.0');
+  assert.equal(family.criticality, 'C3');
+  assert.equal(family.promptSha256, 'd8d13f679e6817c1c02935e6581f5fc6ad512812004b59eebcf9a7d85c962e67');
+
+  const body = catalog.getPromptBody('TPF-20', '1.0');
+  assert.equal(
+    crypto.createHash('sha256').update(Buffer.from(body.promptText, 'utf8')).digest('hex'),
+    family.promptSha256
+  );
+
+  const route = routes.resolveRouteControl(capability.id);
+  assert.equal(route.familyId, 'TPF-20');
+  assert.equal(route.qualificationStatus, 'UNQUALIFIED');
+  assert.equal(route.productionAuthorized, false);
+  assert.deepEqual(route.allowedPrimaryRoutes, []);
+  assert.deepEqual(route.allowedFallbackRoutes, []);
+});
+
 test('all Teaching model routes remain unqualified, provider-neutral and production blocked', () => {
-  assert.equal(Object.keys(routes.ROUTE_MANIFEST).length, 19);
+  assert.equal(Object.keys(routes.ROUTE_MANIFEST).length, 20);
   for (const route of Object.values(routes.ROUTE_MANIFEST)) {
     assert.equal(route.qualificationStatus, 'UNQUALIFIED');
     assert.equal(route.productionAuthorized, false);
@@ -273,9 +300,9 @@ test('D03 reuses D02 audit columns for version bindings and exposes a production
   assert.equal(plane.assertReady(), true);
   const status = plane.status();
   assert.equal(status.delivery, 'D03');
-  assert.equal(status.capabilityCounts.total, 169);
+  assert.equal(status.capabilityCounts.total, 170);
   assert.equal(status.promptBodiesRuntimeAvailable, true);
-  assert.equal(status.promptFamilyCount, 19);
+  assert.equal(status.promptFamilyCount, 20);
   assert.equal(status.routeQualification, 'UNQUALIFIED');
   assert.equal(status.productionModelExecutionAuthorized, false);
 });

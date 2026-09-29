@@ -540,7 +540,7 @@ function assertCapabilityContractsComplete() {
     }
   }
 
-  if (modelBacked !== 147 || deterministic !== 22) {
+  if (modelBacked !== 148 || deterministic !== 22) {
     fail(`Capability contract census mismatch: ${modelBacked} model-backed, ${deterministic} T0.`);
   }
 

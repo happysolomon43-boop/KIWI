@@ -40,6 +40,10 @@ const {
   createPreparationWorkflowPlan,
   executePreparationWorkflow,
 } = require('../../../teaching/preparation/workflow');
+const {
+  createPreparationPublishedEventHandlers,
+  registerPreparationPublishedEventSubscribers,
+} = require('../../../teaching/preparation/subscribers');
 
 const T1 = 'teaching.lesson.student_facing_class_summary_generation';
 const T2 = 'teaching.curriculum.intake_signal_extraction';
@@ -846,6 +850,140 @@ test('D05 durable published-event registry delivers only to explicitly registere
   );
 });
 
+test('D05/D09 PPL workspace-seeded durable event has an explicit deterministic subscriber', async () => {
+  const audits = [];
+  const handlers = createPreparationPublishedEventHandlers({
+    repository: {
+      async getWorkspaceSnapshot(workspaceId) {
+        return {
+          workspace: {
+            workspace_id: workspaceId,
+            state_version: 1,
+            current_authoritative_input_bundle_ref: 'bundle-1',
+            current_artifact_version_ref: null,
+            lifecycle_state: 'ACTIVE',
+            maturity_stage: 'SKELETON',
+          },
+        };
+      },
+      async getMaterialitySnapshot() { throw new Error('not expected'); },
+      async applyMaterialityDecision() { throw new Error('not expected'); },
+      async hasProcessedEvent() { return false; },
+      async auditNoop(input) { audits.push(input); return { ok: true }; },
+    },
+  });
+  const published = createTeachingEventSubscriberRegistry();
+  registerPreparationPublishedEventSubscribers(published, handlers);
+
+  const event = buildPreparationEvent({
+    eventId: 'ppl-seeded-1',
+    eventType: TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    workspaceId: 'workspace-1',
+    workspaceVersion: 1,
+    occurredAt: '2026-09-29T09:00:00Z',
+    correlationId: 'corr-ppl-seeded-1',
+    payload: {
+      target_ref: 'semester-schedule',
+      idempotency_scope_ref: 'schedule-profile-1',
+    },
+  });
+  const outcomes = await published.publish(event);
+
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].subscriberId, 'ppl-d09-deterministic-gate');
+  assert.equal(outcomes[0].result.accepted, true);
+  assert.equal(outcomes[0].result.modelWorkStarted, false);
+  assert.equal(outcomes[0].result.routeQualification, 'UNQUALIFIED_UNTIL_D30');
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].action, 'preparation.workspace.seed_event.accepted');
+  assert.equal(audits[0].reason, 'WORKSPACE_SEEDED_ROUTE_HELD');
+});
+
+test('D05/D09 PPL published-event subscriber is replay-idempotent after durable audit receipt', async () => {
+  let reads = 0;
+  let audits = 0;
+  const handlers = createPreparationPublishedEventHandlers({
+    repository: {
+      async getWorkspaceSnapshot() { reads += 1; throw new Error('replay must not re-read workspace'); },
+      async getMaterialitySnapshot() { throw new Error('not expected'); },
+      async applyMaterialityDecision() { throw new Error('not expected'); },
+      async hasProcessedEvent({ workspaceId, eventId }) {
+        assert.equal(workspaceId, 'workspace-replay');
+        assert.equal(eventId, 'ppl-seeded-replay');
+        return true;
+      },
+      async auditNoop() { audits += 1; throw new Error('replay must not duplicate audit'); },
+    },
+  });
+  const event = buildPreparationEvent({
+    eventId: 'ppl-seeded-replay',
+    eventType: TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    workspaceId: 'workspace-replay',
+    workspaceVersion: 1,
+    occurredAt: '2026-09-29T09:00:00Z',
+    correlationId: 'corr-ppl-replay',
+    payload: { idempotency_scope_ref: 'seed-replay' },
+  });
+  const result = await handlers.handleWorkspaceSeeded(event);
+  assert.equal(result.accepted, true);
+  assert.equal(result.idempotent, true);
+  assert.equal(result.disposition, 'ALREADY_PROCESSED');
+  assert.equal(reads, 0);
+  assert.equal(audits, 0);
+});
+
+test('D05/D09 PPL published-event handler rejects version gaps and safely no-ops stale events', async () => {
+  const audits = [];
+  let stateVersion = 2;
+  const handlers = createPreparationPublishedEventHandlers({
+    repository: {
+      async getWorkspaceSnapshot(workspaceId) {
+        return {
+          workspace: {
+            workspace_id: workspaceId,
+            state_version: stateVersion,
+            current_authoritative_input_bundle_ref: 'bundle-2',
+            current_artifact_version_ref: null,
+          },
+        };
+      },
+      async getMaterialitySnapshot() { throw new Error('not expected'); },
+      async applyMaterialityDecision() { throw new Error('not expected'); },
+      async hasProcessedEvent() { return false; },
+      async auditNoop(input) { audits.push(input); return { ok: true }; },
+    },
+  });
+
+  const stale = buildPreparationEvent({
+    eventId: 'ppl-seeded-stale',
+    eventType: TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    workspaceId: 'workspace-2',
+    workspaceVersion: 1,
+    occurredAt: '2026-09-29T09:00:00Z',
+    correlationId: 'corr-ppl-stale',
+    payload: { idempotency_scope_ref: 'seed-stale' },
+  });
+  const staleResult = await handlers.handleWorkspaceSeeded(stale);
+  assert.equal(staleResult.accepted, true);
+  assert.equal(staleResult.stale, true);
+  assert.equal(audits[0].action, 'preparation.event.stale.noop');
+
+  stateVersion = 0;
+  const future = buildPreparationEvent({
+    eventId: 'ppl-seeded-future',
+    eventType: TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    workspaceId: 'workspace-2',
+    workspaceVersion: 1,
+    occurredAt: '2026-09-29T09:00:01Z',
+    correlationId: 'corr-ppl-future',
+    payload: { idempotency_scope_ref: 'seed-future' },
+  });
+  await assert.rejects(
+    () => handlers.handleWorkspaceSeeded(future),
+    (error) => error.code === 'TEACHING_PPL_EVENT_ORDER_GAP'
+  );
+});
+
 test('D05 exact frozen family reaches the central provider transport without entering durable state', async () => {
   const { createAIOrchestrator } = require('../../../services/ai/orchestrator');
   const { createProjectPool } = require('../../../services/ai/project-pool');
@@ -879,4 +1017,62 @@ test('D05 exact frozen family reaches the central provider transport without ent
     correlationId: 'corr' });
   assert.equal(JSON.stringify(envelope).includes(record.promptText), false);
   assert.equal(JSON.stringify(envelope).includes('prompt_text'), false);
+});
+
+
+test('TCH-0919 TPF-20 exact body reaches central AI transport and is absent from durable execution envelope', async () => {
+  const { createAIOrchestrator } = require('../../../services/ai/orchestrator');
+  const { createProjectPool } = require('../../../services/ai/project-pool');
+  const { getPromptBody } = require('../../../teaching/prompt-runtime/prompt-catalog');
+  const capabilityId = 'teaching.study.class_grounded_note_generation';
+  const captured = [];
+  const ai = createAIOrchestrator({
+    projectPool: createProjectPool({ slots: [{ id: 'p1', index: 1, envName: 'K1', apiKey: 'test-key' }] }),
+    logger: { warn() {} },
+    transport: { async generate(args) {
+      captured.push(args);
+      return {
+        raw: { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'ok' }] } }] },
+        latencyMs: 1,
+        httpStatus: 200,
+      };
+    } },
+  });
+
+  const { orchestrator } = harness({
+    capabilityId,
+    aiRun: (_taskId, request) => ai.run('MAIN_CBT', request),
+  });
+  await orchestrator.execute(baseRequest(capabilityId, {
+    taskMode: 'PRE_CLASS_NOTE_PREPARATION',
+    academicInput: {
+      lesson_plan_ref: 'lesson-1@4',
+      source_snapshot_ref: 'source-1@2',
+      signal: 'TPF20_TRANSPORT_SENTINEL',
+    },
+  }));
+
+  assert.equal(captured.length, 1);
+  const content = captured[0].content;
+  const record = getPromptBody('TPF-20', '1.0');
+  const body = content
+    .split('<KIWI_TEACHING_FROZEN_PROMPT>\n')[1]
+    .split('</KIWI_TEACHING_FROZEN_PROMPT>')[0];
+  assert.equal(crypto.createHash('sha256').update(body).digest('hex'), record.promptSha256);
+  assert.equal(body, record.promptText);
+  assert.ok(content.includes('TPF20_TRANSPORT_SENTINEL'));
+
+  const envelope = createExecutionEnvelope({
+    executionId: 'tpf20-no-body',
+    capabilityId,
+    trigger: { type: 'committed_domain_event', ref: 'event-tpf20', source: 'teaching-study' },
+    stateReference: freshSnapshot.stateReference,
+    resultContract: { output_schema_id: 'study.note.test', output_schema_version: '1', validator_ids: ['study-note-validator'] },
+    correlationId: 'corr-tpf20-no-body',
+  });
+  const serialized = JSON.stringify(envelope);
+  assert.equal(serialized.includes(record.promptText), false);
+  assert.equal(serialized.includes('prompt_text'), false);
+  assert.equal(envelope.prompt_contract.family_id, 'TPF-20');
+  assert.equal(envelope.capability.authority_ceiling, 'T3');
 });

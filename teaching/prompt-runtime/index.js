@@ -44,12 +44,12 @@ function createTeachingPromptControlPlane() {
     const registry = assertRegistryIntegrity();
     assertPromptBodyStoreReady();
     const prompts = promptCatalogStatus();
-    if (prompts.familyCount !== 19 || prompts.modelEligibleCapabilityCount !== 147) {
+    if (prompts.familyCount !== 20 || prompts.modelEligibleCapabilityCount !== 148) {
       const error = new Error('Teaching D03 prompt catalog census is invalid.');
       error.code = 'TEACHING_D03_PROMPT_CATALOG_INVALID';
       throw error;
     }
-    if (completeness.total !== 169) {
+    if (completeness.total !== 170) {
       const error = new Error('Teaching D03 capability-contract census is invalid.');
       error.code = 'TEACHING_D03_CONTRACT_CENSUS_INVALID';
       throw error;
