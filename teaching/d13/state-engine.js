@@ -285,11 +285,14 @@ function synthesizeMisconceptions(events,studentId,learningUnitId) {
   return freezeDeep(out);
 }
 function blockOverlay(events) {
-  const failures=events.filter((e)=>['candidate_failure','investigation_needed'].includes(String(prerequisite(e).status||'')));
-  if(failures.length<2) return false;
-  const strategies=new Set();
-  for(const e of failures) for(const s of asArray(pathContext(e).prior_strategy_classes)) strategies.add(String(s));
-  return strategies.size>=2;
+  const authoritative=events.filter((event)=>{
+    const owner=String(event.source_owner||event.sourceOwner||'').trim().toUpperCase();
+    const condition=String(pathContext(event).block_condition||'').trim().toUpperCase();
+    return ['TEACHING_CONTROLLER','LESSON_PLANNER','TEACHING CONTROLLER / LESSON PLANNER'].includes(owner) &&
+      ['BLOCKED','CLEAR'].includes(condition) && validity(event)!=='INVALID';
+  });
+  if(!authoritative.length)return false;
+  return String(pathContext(authoritative[authoritative.length-1]).block_condition).toUpperCase()==='BLOCKED';
 }
 function unresolvedMaterialContradiction(events) {
   let lastNegative=-1;
