@@ -68,10 +68,16 @@ function validateNormalizedEvidence(input){
   const control=enumValue(v.controlContext,CONTROL,'TEACHING_D13_EVIDENCE_CONTROL_INVALID',{upper:true});
   const assistance=enumValue(v.assistanceLevel||'unknown',ASSISTANCE,'TEACHING_D13_EVIDENCE_ASSISTANCE_INVALID');
   const occurred=new Date(v.occurredAt);if(!Number.isFinite(occurred.getTime()))fail('Evidence occurredAt must be authoritative server-compatible time.','TEACHING_D13_EVIDENCE_TIME_INVALID');
+  const sourceOwner=str(v.sourceOwner,'TEACHING_D13_EVIDENCE_SOURCE_OWNER_REQUIRED');
+  const blockCondition=String(v.pathContext?.block_condition||'').trim().toUpperCase();
+  if(blockCondition && !['BLOCKED','CLEAR'].includes(blockCondition))fail('Unsupported authoritative block condition.','TEACHING_D13_BLOCK_CONDITION_INVALID');
+  if(blockCondition && !['TEACHING_CONTROLLER','LESSON_PLANNER','TEACHING CONTROLLER / LESSON PLANNER'].includes(sourceOwner.toUpperCase())){
+    fail('Only Teaching Controller/Lesson Planner authority may set or clear BLOCKED.','TEACHING_D13_BLOCK_OWNER_INVALID',403);
+  }
   if(validity==='INVALID' && strength!=='UNUSABLE')fail('Invalid evidence must be unusable for state inference.','TEACHING_D13_INVALID_EVIDENCE_MUST_BE_UNUSABLE');
   if(v.answerOrMethodExposed===true && strength!=='UNUSABLE')fail('Answer/method exposure cannot remain clean independent evidence.','TEACHING_D13_EXPOSED_EVIDENCE_MUST_BE_UNUSABLE');
   return Object.freeze({
-    sourceOwner:str(v.sourceOwner,'TEACHING_D13_EVIDENCE_SOURCE_OWNER_REQUIRED'),
+    sourceOwner,
     sourceRef:str(v.sourceRef,'TEACHING_D13_EVIDENCE_SOURCE_REF_REQUIRED'),
     courseId:str(v.courseId,'TEACHING_D13_EVIDENCE_COURSE_REQUIRED'),
     classSessionId:v.classSessionId==null?null:String(v.classSessionId),
