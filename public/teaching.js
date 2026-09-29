@@ -854,6 +854,7 @@ window.KIWITeachingCourses = Object.freeze({
   registerSection: registerTeachingCourseSection,
   openCourse: openTeachingCourse,
   openSection: openTeachingCourseSection,
+  openOverview: () => navigateTeaching('overview'),
   currentCourseId: () => selectedTeachingCourseId,
   getCourse: (courseId) => getTeachingCourse(courseId),
   sectionIds: () => Array.from(teachingCourseSections.keys()),

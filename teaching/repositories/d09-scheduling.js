@@ -153,6 +153,8 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     if(course.semester_id!==semester.semester_id){
       await q(tx,'update public.teaching_courses set semester_id=$3,state_version=state_version+1,updated_at=now() where course_id=$1 and student_id=$2',[courseId,studentId,semester.semester_id]);
     }
+    const referencedCourseIds=[...new Set([...input.blocks.map((x)=>x.courseId).filter(Boolean),...input.deadlines.map((x)=>x.courseId).filter(Boolean),...input.reserves.map((x)=>x.courseId).filter(Boolean)].map(String))];
+    for(const refCourseId of referencedCourseIds){const {rows:owned}=await q(tx,'select course_id from public.teaching_courses where student_id=$1 and course_id=$2 and (semester_id=$3 or course_id=$4)',[studentId,refCourseId,semester.semester_id,courseId]);if(!owned?.[0]){const e=new Error('Schedule input references a Course outside this Semester.');e.status=422;e.code='TEACHING_D09_CROSS_SEMESTER_REFERENCE';throw e;}}
     const previous=await latestProfile(studentId,semester.semester_id,tx);
     const {rows:vrows}=await q(tx,'select coalesce(max(version_no),0)+1 v from public.teaching_schedule_profiles where semester_id=$1',[semester.semester_id]);
     const version=Number(vrows[0].v), profileId=randomUUID();
@@ -169,10 +171,9 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     for(const b of input.blocks) await q(tx,\`insert into public.teaching_schedule_blocks(
       schedule_block_id,student_id,profile_id,course_id,block_kind,starts_at,ends_at,label,reason
     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9)\`,
-      [randomUUID(),studentId,profileId,b.courseId,b.kind,b.startsAt,b.endsAt,b.label,b.reason]);
-    const priorChildren=previous?await profileChildren(studentId,previous.profile_id,tx):{deadlines:[],reserves:[]};
-    const deadlines=[...priorChildren.deadlines.filter((d)=>String(d.course_id||'')!==String(courseId)),...input.deadlines.map((d)=>({...d,courseId:d.courseId||courseId}))];
-    const reserves=[...priorChildren.reserves.filter((r)=>String(r.course_id||'')!==String(courseId)),...input.reserves.map((r)=>({...r,courseId:r.courseId||courseId}))];
+      [randomUUID(),studentId,profileId,b.courseId||b.course_id||null,b.kind||b.block_kind,b.startsAt||b.starts_at,b.endsAt||b.ends_at,b.label||null,b.reason||null]);
+    const deadlines=[...priorChildrenFull.deadlines.filter((d)=>String(d.course_id||'')!==String(courseId)),...input.deadlines.map((d)=>({...d,courseId:d.courseId||courseId}))];
+    const reserves=[...priorChildrenFull.reserves.filter((r)=>String(r.course_id||'')!==String(courseId)),...input.reserves.map((r)=>({...r,courseId:r.courseId||courseId}))];
     for(const d of deadlines) await q(tx,\`insert into public.teaching_schedule_deadlines(
       schedule_deadline_id,student_id,profile_id,course_id,deadline_kind,deadline_at,label
     ) values($1,$2,$3,$4,$5,$6,$7)\`,
