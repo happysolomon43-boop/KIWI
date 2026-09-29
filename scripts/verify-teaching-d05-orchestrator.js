@@ -81,7 +81,7 @@ for (const fragment of [
 
 const d05JsFiles = [
   'teaching/orchestrator/ai-adapter.js','teaching/orchestrator/teaching-orchestrator.js',
-  'teaching/preparation/t0-handlers.js','teaching/preparation/workflow.js',
+  'teaching/preparation/t0-handlers.js','teaching/preparation/workflow.js','teaching/preparation/subscribers.js',
 ];
 for (const file of d05JsFiles) {
   const content = read(file);
