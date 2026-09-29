@@ -108,6 +108,11 @@ try {
 } catch (error) { fail(`frozen prompt body readiness: ${error.message}`); }
 
 const census = registry.assertRegistryIntegrity();
+check(registry.REGISTRY_VERSION === '1.3', 'D03 successor Registry version must be 1.3');
+check(
+  registry.REGISTRY_SOURCE_SHA256 === 'db2c9c89764b4fbcaffa4fc1d263f99ff0ddb337becbdc56b7ff71d829f5bc16',
+  'D03 successor Registry source SHA drifted'
+);
 check(
   census.total === 170 && census.modelEligible === 148 && census.t0Promptless === 22 &&
   census.promptFamilies === 20 && census.legacyAliases === 165,
