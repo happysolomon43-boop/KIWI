@@ -109,6 +109,27 @@ function registerD11Runtime({
     },
   }));
 
+  registrations.push(publishedEvents.register(TEACHING_EVENTS.REQUEST_DECIDED,{
+    subscriberId:'d11-request-decision-planning-signal',
+    handle:async(event)=>{
+      const studentId=event.actorId;
+      const requestId=event.payload?.request_id || event.aggregateId;
+      if(!studentId||!requestId) return Object.freeze({accepted:true,noop:true,reason:'REQUEST_DECIDED_CONTEXT_MISSING'});
+      const request=await repository.getGovernedRequest(requestId);
+      if(!request?.course_id) return Object.freeze({accepted:true,noop:true,reason:'REQUEST_DECIDED_COURSE_MISSING'});
+      const refreshed=await service.refreshCoursePreparation(studentId,request.course_id,{
+        correlationId:event.correlationId || event.eventId,
+        interruptActive:false,
+      });
+      return Object.freeze({
+        accepted:true,
+        planning_signal_only:true,
+        authoritative_target_applied:false,
+        refreshed:refreshed.length,
+      });
+    },
+  }));
+
   registrations.push(publishedEvents.register(TEACHING_EVENTS.REQUEST_APPLIED,{
     subscriberId:'d11-request-applied-materiality',
     handle:async(event)=>{
