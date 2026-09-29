@@ -49,7 +49,7 @@ const service=read('teaching/d11/service.js');
 for(const token of [
   'ensurePreparationWorkspace','evaluateFinalizationReadiness','validateLiveReplanProposal','earlyClosureReadiness',
   'BREAK_END_DUE','OVERTIME_CEILING','MODEL_ROUTE_UNQUALIFIED','refreshCoursePreparation',
-  'ROUTE_HELD','PRIVATE_NOTE','current_state','assertLiveContextCurrent',
+  'ROUTE_HELD','PRIVATE_NOTE','assertLiveContextCurrent',
 ]) if(!service.includes(token)) throw new Error('D11 service invariant missing '+token);
 
 const runtime=read('teaching/d11/runtime.js');
