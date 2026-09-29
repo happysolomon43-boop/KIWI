@@ -262,7 +262,7 @@ function synthesizeMisconceptions(events,studentId,learningUnitId) {
   for(const g of groups.values()){
     const lastSupport=g.support[g.support.length-1];
     const lastAt=new Date(occurredAt(lastSupport)||0).getTime();
-    const later=events.filter((e)=>new Date(occurredAt(e)||0).getTime()>lastAt && successfulIndependent(e));
+    const later=events.filter((e)=>new Date(occurredAt(e)||0).getTime()>lastAt && successfulIndependent(e) && String(misconception(e).status||'')==='none_supported');
     const independent=later.filter((e)=>!delayedQualified(e));
     const delayed=later.filter(delayedQualified);
     let status=g.support.length>=2?'RECURRING':'CANDIDATE';
@@ -285,7 +285,6 @@ function synthesizeMisconceptions(events,studentId,learningUnitId) {
   return freezeDeep(out);
 }
 function blockOverlay(events) {
-  if(events.some((e)=>pathContext(e).blocked_proposal_confirmed===true)) return true;
   const failures=events.filter((e)=>['candidate_failure','investigation_needed'].includes(String(prerequisite(e).status||'')));
   if(failures.length<2) return false;
   const strategies=new Set();
