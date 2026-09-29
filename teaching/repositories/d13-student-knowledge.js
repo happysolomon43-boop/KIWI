@@ -310,11 +310,18 @@ function createD13StudentKnowledgeRepository({query,withTransaction,randomUUID,c
 
   async function listCourseKnowledge(studentId,courseId,runner=null){
     const {rows}=await q(runner,
-      "select distinct on (s.learning_unit_id) s.*,lu.title,lu.intended_competence"+
-      " from public.teaching_student_knowledge_state_versions s"+
-      " join public.teaching_learning_units lu on lu.learning_unit_id=s.learning_unit_id and lu.student_id=s.student_id"+
-      " join public.teaching_course_plans cp on cp.course_plan_id=lu.course_plan_id and cp.student_id=s.student_id"+
-      " where s.student_id=$1 and cp.course_id=$2 order by s.learning_unit_id,s.version_no desc",
+      "with current_state as ("+
+      " select distinct on (s.learning_unit_id) s.* from public.teaching_student_knowledge_state_versions s"+
+      " where s.student_id=$1 order by s.learning_unit_id,s.version_no desc"+
+      ") select lu.learning_unit_id,lu.title,lu.intended_competence,lu.course_plan_id,"+
+      " cs.knowledge_state_version_id,cs.version_no,cs.algorithm_id,cs.algorithm_version,cs.base_state,cs.overlays,cs.dimensions,"+
+      " cs.certainty_band,cs.certainty_basis,cs.retention_context,cs.strongest_supported_claim,cs.contradiction_state,"+
+      " cs.evidence_event_count,cs.evidence_cutoff_at,cs.path_to_success,cs.confidence_calibration,cs.created_at"+
+      " from public.teaching_learning_units lu"+
+      " join public.teaching_course_plans cp on cp.course_plan_id=lu.course_plan_id and cp.student_id=lu.student_id"+
+      " left join current_state cs on cs.learning_unit_id=lu.learning_unit_id and cs.student_id=lu.student_id"+
+      " where lu.student_id=$1 and cp.course_id=$2 and cp.plan_state<>'SUPERSEDED'"+
+      " order by coalesce(lu.sequence_no,0),lu.learning_unit_id",
       [studentId,courseId]
     );
     return rows||[];
