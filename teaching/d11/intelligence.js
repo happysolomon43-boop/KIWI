@@ -352,7 +352,7 @@ function translationRequest({ context, closureFact, requestKey = null }) {
   });
 }
 
-function teacherNoteRequest({ context, closureFact, requestKey = null }) {
+function teacherNoteRequest({ context, closureFact, closureAnalysis = null, requestKey = null }) {
   const validate = async (out) => {
     if (!out || typeof out !== 'object' || Array.isArray(out)) return {ok:false,reason:'TEACHING_D11_TEACHER_NOTE_SCHEMA_INVALID'};
     if (Object.hasOwn(out,'official_mark') || Object.hasOwn(out,'mastery_state') || Object.hasOwn(out,'behavior_judgment')) {
@@ -376,7 +376,14 @@ function teacherNoteRequest({ context, closureFact, requestKey = null }) {
       context_kind:'private_teacher_note',
       access_purpose:'grounded_next_class_continuity',
     },
-    academicInput:{fact_pack:closureFact.fact_pack,private_internal_note:true,not_gradebook:true,not_skm_state:true,not_behavior_ledger:true},
+    academicInput:{
+      fact_pack:closureFact.fact_pack,
+      closure_analysis:closureAnalysis,
+      private_internal_note:true,
+      not_gradebook:true,
+      not_skm_state:true,
+      not_behavior_ledger:true,
+    },
     outputSchema,
     provenanceRefs:['class-closure:' + closureFact.closure_fact_id],
     declaredAuthorityLevel:'T2',
