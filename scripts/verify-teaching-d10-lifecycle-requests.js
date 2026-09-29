@@ -5,7 +5,7 @@ const root=path.resolve(__dirname,'..');
 const read=(p)=>fs.readFileSync(path.join(root,p),'utf8');
 const required=[
   'teaching/d10/contracts.js','teaching/d10/service.js','teaching/d10/runtime.js','teaching/d10/index.js',
-  'teaching/repositories/d10-lifecycle-requests.js','migrations/20260929_teaching_d10_course_lifecycle_requests.sql',
+  'teaching/repositories/d10-lifecycle-requests.js','migrations/20260929_teaching_d10_course_lifecycle_requests.sql','migrations/20260929_teaching_d10_fk_lineage_hardening.sql',
   'docs/teaching/d10-source-resolution.md','docs/teaching/d10-course-lifecycle-requests.md','docs/teaching/migrations/d10-recovery.md',
   'docs/teaching/design/d10-first-three-anchor-mockups.md','tests/teaching/unit/d10-course-lifecycle-requests.test.js',
   'tests/teaching/integration/d10-course-lifecycle-requests-schema.test.js','public/teaching-d10.js',
@@ -19,6 +19,8 @@ for(const token of ['DRAFT','READY','ACTIVE','PAUSED','TEACHING_ENDED','FINALIZI
 const migration=read('migrations/20260929_teaching_d10_course_lifecycle_requests.sql');
 for(const token of ['teaching_requests','teaching_request_history','teaching_request_applications','teaching_course_activations','teaching_course_lifecycle_history','teaching_course_admission_decisions','teaching_guard_d10_course_lifecycle','teaching_guard_d10_request_update','ENABLE ROW LEVEL SECURITY'])if(!migration.includes(token))throw new Error('D10 migration missing '+token);
 if(/GRANT\s+(INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,160}TO\s+authenticated/i.test(migration))throw new Error('D10 grants browser authoritative mutation.');
+const hardening=read('migrations/20260929_teaching_d10_fk_lineage_hardening.sql');
+for(const token of ['teaching_classes_source_timetable_version_fkey','teaching_courses_activation_id_fkey','teaching_course_activation_plan_idx','teaching_request_history_request_fk_idx'])if(!hardening.includes(token))throw new Error('D10 FK hardening missing '+token);
 const repo=read('teaching/repositories/d10-lifecycle-requests.js');
 for(const token of ['activateCourseUsing','teaching_request_applications','idempotent:true','ALTERNATIVE_ACCEPTANCE_REQUIRED','REQUEST_NOT_EFFECTIVE_YET','recordCancellationClosureUsing'])if(!repo.includes(token))throw new Error('D10 repository invariant missing '+token);
 const service=read('teaching/d10/service.js');

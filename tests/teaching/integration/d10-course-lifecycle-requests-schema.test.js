@@ -31,5 +31,7 @@ test('D10 schema has durable lifecycle/Request truth, RLS and browser read-only 
   assert.equal(policy.rows.length,1);assert.equal(Number(policy.rows[0].maximum_concurrent_courses),4);
   assert.deepEqual(policy.rows[0].counted_states,['READY','ACTIVE','PAUSED','INCOMPLETE']);
   assert.equal(policy.rows[0].rollout.schema_maximum,false);
+  const lineageFks=await pool.query("select conname from pg_constraint where contype='f' and conname in ('teaching_classes_source_timetable_version_fkey','teaching_classes_source_timetable_slot_fkey','teaching_classes_activation_id_fkey','teaching_classes_source_request_id_fkey','teaching_courses_activation_id_fkey','teaching_course_teacher_assignments_source_request_id_fkey','teaching_course_lifecycle_history_source_request_id_fkey','teaching_course_closure_records_source_request_id_fkey','teaching_course_admission_decisions_source_request_id_fkey')");
+  assert.equal(lineageFks.rows.length,9);
  }finally{await pool.end();}
 });
