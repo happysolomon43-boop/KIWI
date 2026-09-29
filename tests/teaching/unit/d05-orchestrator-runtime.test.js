@@ -868,6 +868,7 @@ test('D05/D09 PPL workspace-seeded durable event has an explicit deterministic s
       },
       async getMaterialitySnapshot() { throw new Error('not expected'); },
       async applyMaterialityDecision() { throw new Error('not expected'); },
+      async hasProcessedEvent() { return false; },
       async auditNoop(input) { audits.push(input); return { ok: true }; },
     },
   });
@@ -898,6 +899,39 @@ test('D05/D09 PPL workspace-seeded durable event has an explicit deterministic s
   assert.equal(audits[0].reason, 'WORKSPACE_SEEDED_ROUTE_HELD');
 });
 
+test('D05/D09 PPL published-event subscriber is replay-idempotent after durable audit receipt', async () => {
+  let reads = 0;
+  let audits = 0;
+  const handlers = createPreparationPublishedEventHandlers({
+    repository: {
+      async getWorkspaceSnapshot() { reads += 1; throw new Error('replay must not re-read workspace'); },
+      async getMaterialitySnapshot() { throw new Error('not expected'); },
+      async applyMaterialityDecision() { throw new Error('not expected'); },
+      async hasProcessedEvent({ workspaceId, eventId }) {
+        assert.equal(workspaceId, 'workspace-replay');
+        assert.equal(eventId, 'ppl-seeded-replay');
+        return true;
+      },
+      async auditNoop() { audits += 1; throw new Error('replay must not duplicate audit'); },
+    },
+  });
+  const event = buildPreparationEvent({
+    eventId: 'ppl-seeded-replay',
+    eventType: TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    workspaceId: 'workspace-replay',
+    workspaceVersion: 1,
+    occurredAt: '2026-09-29T09:00:00Z',
+    correlationId: 'corr-ppl-replay',
+    payload: { idempotency_scope_ref: 'seed-replay' },
+  });
+  const result = await handlers.handleWorkspaceSeeded(event);
+  assert.equal(result.accepted, true);
+  assert.equal(result.idempotent, true);
+  assert.equal(result.disposition, 'ALREADY_PROCESSED');
+  assert.equal(reads, 0);
+  assert.equal(audits, 0);
+});
+
 test('D05/D09 PPL published-event handler rejects version gaps and safely no-ops stale events', async () => {
   const audits = [];
   let stateVersion = 2;
@@ -915,6 +949,7 @@ test('D05/D09 PPL published-event handler rejects version gaps and safely no-ops
       },
       async getMaterialitySnapshot() { throw new Error('not expected'); },
       async applyMaterialityDecision() { throw new Error('not expected'); },
+      async hasProcessedEvent() { return false; },
       async auditNoop(input) { audits.push(input); return { ok: true }; },
     },
   });
