@@ -133,7 +133,8 @@ function createD11Service({
         lessonBlueprintId: context.blueprint.lesson_blueprint_id,
         versionNo: Number(context.blueprint.version_no),
         state: context.blueprint.blueprint_state,
-        payload: context.blueprint.blueprint_payload,
+        objectiveSummary: context.blueprint.objective_summary || null,
+        hiddenPlanPayloadExposed: false,
       }) : null,
       controller: context.session ? Object.freeze({
         classSessionId: context.session.class_session_id,
