@@ -1,0 +1,54 @@
+name: Platform Security Audit
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - '.github/workflows/platform-security-audit.yml'
+      - 'migrations/**'
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - '.github/workflows/platform-security-audit.yml'
+      - 'migrations/**'
+
+permissions:
+  contents: read
+
+jobs:
+  npm-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-fund
+      - name: Print detailed npm audit
+        run: npm audit --json > npm-audit.json || true
+      - name: Summarize audit
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const audit=JSON.parse(fs.readFileSync('npm-audit.json','utf8'));
+          const vulnerabilities=audit.vulnerabilities||{};
+          console.log(JSON.stringify({
+            metadata:audit.metadata,
+            vulnerabilities:Object.fromEntries(Object.entries(vulnerabilities).map(([name,v])=>[name,{
+              severity:v.severity,
+              isDirect:v.isDirect,
+              via:(v.via||[]).map(x=>typeof x==='string'?x:{name:x.name,title:x.title,severity:x.severity,url:x.url,range:x.range}),
+              effects:v.effects,
+              range:v.range,
+              nodes:v.nodes,
+              fixAvailable:v.fixAvailable
+            }]))
+          },null,2));
+          const counts=audit.metadata?.vulnerabilities||{};
+          if((counts.critical||0)>0 || (counts.high||0)>0 || (counts.moderate||0)>0){
+            process.exitCode=1;
+          }
+          NODE

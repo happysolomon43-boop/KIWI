@@ -15307,9 +15307,31 @@ const { deck_id, pptx_base64, subject_hint = '', mode = 'flashcard' } = req.body
 if (!officeparser) return res.status(503).json({ error: 'PPTX parsing not available. Add "officeparser" to package.json and redeploy.' });
 if (!pptx_base64) return res.status(400).json({ error: 'pptx_base64 is required' });
 if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
+const MAX_PPTX_BYTES = 20 * 1024 * 1024;
+const maxBase64Chars = Math.ceil(MAX_PPTX_BYTES * 4 / 3) + 8;
+if (pptx_base64.length > maxBase64Chars) {
+  return res.status(413).json({ error: 'PPTX is too large. Maximum upload size is 20 MB.' });
+}
 const buffer = Buffer.from(pptx_base64, 'base64');
-let text = await officeparser.parseOfficeAsync(buffer, { outputErrorToConsole: false });
-text = (text || '').trim();
+if (buffer.length > MAX_PPTX_BYTES) {
+  return res.status(413).json({ error: 'PPTX is too large. Maximum upload size is 20 MB.' });
+}
+const ast = await officeparser.parseOffice(buffer, {
+  fileType: 'pptx',
+  decompressionLimits: {
+    maxUncompressedBytes: 64 * 1024 * 1024,
+    maxZipEntries: 5000,
+    maxTableCells: 250000,
+  },
+});
+const rendered = await ast.to('text', {
+  includeImages: false,
+  textConfig: {
+    preserveLayout: false,
+    renderNotes: true,
+  },
+});
+let text = (rendered?.value || '').trim();
 if (text.length > 80000) text = text.slice(0, 80000);
 if (!text) return res.status(422).json({ error: 'No usable text extracted from PPTX' });
 if (mode === 'cbt') {
