@@ -897,6 +897,19 @@ function createD11Service({
     let noteProvenance={route_qualification:'UNQUALIFIED_UNTIL_D30'};
 
     if(intelligence) {
+      let closureAnalysis=null;
+      try {
+        const analyzed=await intelligence.analyzeClosure({
+          context,
+          closureFact:closure,
+          requestKey:'d11-closure-analysis:'+closure.closure_fact_id,
+        });
+        if(analyzed?.accepted && analyzed.validatedResult?.output) {
+          closureAnalysis=analyzed.validatedResult.output;
+        }
+      } catch (_) {
+        closureAnalysis=null;
+      }
       try {
         const translated=await intelligence.translateSummary({context,closureFact:closure,requestKey:summaryKey});
         if(translated?.accepted && translated.validatedResult?.output) {
@@ -914,7 +927,7 @@ function createD11Service({
         summaryProvenance={...summaryProvenance,safe_failure_code:error?.code || 'TEACHING_D11_SUMMARY_TRANSLATION_FAILED'};
       }
       try {
-        const note=await intelligence.writeTeacherNote({context,closureFact:closure,requestKey:noteKey});
+        const note=await intelligence.writeTeacherNote({context,closureFact:closure,closureAnalysis,requestKey:noteKey});
         if(note?.accepted && note.validatedResult?.output) {
           noteState='PRIVATE_NOTE';
           notePayload=note.validatedResult.output;
