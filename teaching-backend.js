@@ -288,6 +288,11 @@ function createTeachingRouter({
       });
     };
 
+    router.get('/teacher-identities', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.listTeacherIdentities(req.user)); }
+      catch (error) { sendError(res, error, 'Failed to load available Teacher identities.'); }
+    });
+
     router.get('/courses/:id/academic-rules', requireD10Ready, async (req, res) => {
       try { res.json(await lifecycleRequestService.getAcademicRules(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load academic rules and Teacher.'); }

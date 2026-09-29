@@ -45,7 +45,7 @@ Structural mockup:
 Course / Class identity        authoritative Class clock/status
 Teacher instruction / representation
 student response workspace
-bounded action/help controls
+bounded action/help controls · contextual **Request Early Dismissal** entry
 quiet evidence/status rail
 ```
 
@@ -54,3 +54,6 @@ Validation: classroom focus is stronger than ordinary browsing while retaining K
 ## Gate result
 
 The three anchors establish a consistent relationship: existing KIWI shell → Course workspace → focused Classroom. Density is moderate, academic authority is visible, serious states are not gamified, and the D10 production UI may implement Stage 6/7 and Requests without pulling the D11 live-class runtime forward.
+
+
+Contextual Request hook validation: Calendar binds reschedule/emergency absence to the current Class; Course Home binds Break/Pause/Resume/Teacher Change to the current Course; the D10 UI contract also exposes Assignment Extension and Classroom Early Dismissal hooks so later D16/D11 surfaces can attach without creating a second Request model.

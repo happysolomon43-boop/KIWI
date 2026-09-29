@@ -70,7 +70,7 @@ function renderStage7(course,review,container,reload){
   if(review.canActivate){const b=button('Start Course',true);b.addEventListener('click',async()=>{if(!window.confirm('Start this Course? The timetable, Course Plan, grading policy and Teacher assignment will become versioned activation commitments.'))return;b.disabled=true;try{await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/activate',{method:'POST',body:{}});await refreshCourseShell();await reload();}catch(e){window.alert(e.message||'Course activation failed safely.');}finally{b.disabled=false;}});actions.append(b);}
   if(review.course.lifecycleState==='ACTIVE')actions.append(Object.assign(button('Request Course Pause'),{onclick:()=>quickCourseRequest('COURSE_PAUSE',course.course_id,{reason:''})}));
   if(review.course.lifecycleState==='PAUSED')actions.append(Object.assign(button('Request Course Resume'),{onclick:()=>quickCourseRequest('COURSE_RESUME',course.course_id,{reason:''})}));
-  if(['ACTIVE','PAUSED'].includes(review.course.lifecycleState)){const br=button('Request Academic Break');br.addEventListener('click',()=>quickCourseRequest('ACADEMIC_BREAK',course.course_id,{}));actions.append(br);}
+  if(['ACTIVE','PAUSED'].includes(review.course.lifecycleState)){const br=button('Request Academic Break');br.addEventListener('click',()=>quickCourseRequest('ACADEMIC_BREAK',course.course_id,{}));const teacher=button('Request Teacher Change');teacher.addEventListener('click',()=>quickCourseRequest('TEACHER_CHANGE',course.course_id,{}));actions.append(br,teacher);}
   const open=button('Open Request Center');open.addEventListener('click',()=>quickCourseRequest(null,course.course_id,{}));actions.append(open);
   card.append(actions,el('p','teaching-d10-note','Post-activation timetable changes are formal Requests. Direct timetable dragging is not an authority path.'));
   container.append(card);
@@ -96,7 +96,7 @@ function buildRequestForm(container,context={}){
   const fields=el('div','teaching-d10-fields');
   const courseSelect=el('select');const empty=el('option','','Choose Course');empty.value='';courseSelect.append(empty);courses.forEach((c)=>{const o=el('option','',c.title||'Course');o.value=c.course_id;o.selected=String(context.courseId||'')===String(c.course_id);courseSelect.append(o);});
   const type=el('select');
-  const allowed=context.type?[context.type]:['ACADEMIC_BREAK','COURSE_PAUSE','COURSE_RESUME','COURSE_CANCELLATION'];
+  const allowed=context.type?[context.type]:['ACADEMIC_BREAK','COURSE_PAUSE','COURSE_RESUME','TEACHER_CHANGE','COURSE_CANCELLATION'];
   allowed.forEach((v)=>{const o=el('option','',words(v));o.value=v;type.append(o);});if(context.type)type.value=context.type;
   fields.append(field('Course',courseSelect),field('Request type',type));
   const dynamic=el('div','teaching-d10-fields');dynamic.style.gridColumn='1/-1';
@@ -109,6 +109,7 @@ function buildRequestForm(container,context={}){
     else if(t==='SINGLE_CLASS_RESCHEDULE'){const a=el('input'),b=el('input');a.type=b.type='datetime-local';a.dataset.role='start';b.dataset.role='end';if(context.requestedChange?.startsAt)a.value=context.requestedChange.startsAt.slice(0,16);if(context.requestedChange?.endsAt)b.value=context.requestedChange.endsAt.slice(0,16);dynamic.append(field('Requested Class start',a),field('Requested Class end',b));}
     else if(t==='EMERGENCY_ABSENCE'){dynamic.append(el('p','teaching-d10-note','Emergency absence does not require proof interrogation and cannot automatically become a behavior penalty.'));}
     else if(['COURSE_PAUSE','COURSE_RESUME','COURSE_CANCELLATION'].includes(t)){const reason=el('input');reason.dataset.role='reason';reason.value=context.requestedChange?.reason||'';dynamic.append(field('Reason (optional)',reason));}
+    else if(t==='TEACHER_CHANGE'){const teacher=el('select');teacher.dataset.role='teacher';const loading=el('option','','Loading available Teachers…');loading.value='';teacher.append(loading);dynamic.append(field('New Teacher',teacher));kiwiApiRequest('/teaching/teacher-identities').then((rows)=>{teacher.replaceChildren();if(!rows.length){const none=el('option','','No alternate Teacher identity is currently available');none.value='';teacher.append(none);return;}rows.forEach((row)=>{const option=el('option','',row.displayName);option.value=row.teacherIdentityId;teacher.append(option);});}).catch(()=>{teacher.replaceChildren(el('option','','Teacher list unavailable'));});}
     else if(t==='ASSIGNMENT_EXTENSION'){const due=el('input');due.type='datetime-local';due.dataset.role='deadline';dynamic.append(field('Requested deadline',due));}
     else if(t==='EARLY_DISMISSAL'){const leave=el('input');leave.type='datetime-local';leave.dataset.role='leave';dynamic.append(field('Requested leave time',leave));}
     else if(t==='ATTENDANCE_REVIEW_CORRECTION'){const outcome=el('input');outcome.dataset.role='outcome';dynamic.append(field('Requested attendance outcome',outcome));}
@@ -122,6 +123,7 @@ function buildRequestForm(container,context={}){
       const localIso=(node)=>node?.value?new Date(node.value).toISOString():null;
       if(t==='ACADEMIC_BREAK'||t==='SINGLE_CLASS_RESCHEDULE'){const nodes=dynamic.querySelectorAll('input');change.startsAt=localIso(nodes[0]);change.endsAt=localIso(nodes[1]);}
       if(['COURSE_PAUSE','COURSE_RESUME','COURSE_CANCELLATION'].includes(t))change.reason=dynamic.querySelector('[data-role="reason"]')?.value||'';
+      if(t==='TEACHER_CHANGE'){change.teacherIdentityId=dynamic.querySelector('[data-role="teacher"]')?.value||'';if(!change.teacherIdentityId)throw new Error('Choose an available Teacher identity.');}
       if(t==='ASSIGNMENT_EXTENSION')change.requestedDeadlineAt=localIso(dynamic.querySelector('[data-role="deadline"]'));
       if(t==='EARLY_DISMISSAL')change.requestedLeaveAt=localIso(dynamic.querySelector('[data-role="leave"]'));
       if(t==='ATTENDANCE_REVIEW_CORRECTION')change.requestedOutcome=dynamic.querySelector('[data-role="outcome"]')?.value||'';
@@ -160,6 +162,22 @@ function emergencyAbsence(item){openCreateRequest({type:'EMERGENCY_ABSENCE',cour
 courseSurface.registerSection({id:'activation',label:'Activation',order:40,render:renderActivation,renderSummary:renderActivationSummary});
 if(nav&&typeof nav.register==='function')nav.register({id:'requests',label:'Requests',description:'Formal changes and decisions',icon:'↗',menuIcon:'request',onSelect:()=>renderRequestCenter()});
 window.KIWITeachingD10=Object.freeze({
-  openRequests:()=>nav?.open?.('requests'),openCreate:openCreateRequest,createScheduleRequest:createAvailabilityRequest,
-  requestClassReschedule,emergencyAbsence,renderRequestCenter,
+  openRequests:()=>nav?.open?.('requests'),
+  openCreate:openCreateRequest,
+  openContextualRequest:openCreateRequest,
+  createScheduleRequest:createAvailabilityRequest,
+  requestClassReschedule,
+  emergencyAbsence,
+  requestAssignmentExtension:(context)=>openCreateRequest({type:'ASSIGNMENT_EXTENSION',...context}),
+  requestEarlyDismissal:(context)=>openCreateRequest({type:'EARLY_DISMISSAL',...context}),
+  requestAttendanceCorrection:(context)=>openCreateRequest({type:'ATTENDANCE_REVIEW_CORRECTION',...context}),
+  requestTeacherChange:(context)=>openCreateRequest({type:'TEACHER_CHANGE',...context}),
+  contextualSurfaces:Object.freeze({
+    calendar:Object.freeze(['SINGLE_CLASS_RESCHEDULE','EMERGENCY_ABSENCE']),
+    course:Object.freeze(['ACADEMIC_BREAK','COURSE_PAUSE','COURSE_RESUME','TEACHER_CHANGE','COURSE_CANCELLATION']),
+    assignment:Object.freeze(['ASSIGNMENT_EXTENSION']),
+    classroom:Object.freeze(['EARLY_DISMISSAL','EMERGENCY_ABSENCE']),
+    attendance:Object.freeze(['ATTENDANCE_REVIEW_CORRECTION']),
+  }),
+  renderRequestCenter,
 });
