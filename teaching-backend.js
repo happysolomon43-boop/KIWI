@@ -24,6 +24,9 @@ function createTeachingRouter({
   d07Service = null,
   d08Intelligence = null,
   d08Service = null,
+  d09Intelligence = null,
+  d09Service = null,
+  teachingRuntimePlatform = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
     throw new TypeError('KIWI Teaching backend requires the existing authenticate middleware.');
@@ -41,10 +44,13 @@ function createTeachingRouter({
     randomUUID,
     d07Intelligence,
     d08Intelligence,
+    d09Intelligence,
+    d09TransactionalMutation: teachingRuntimePlatform?.transactionalMutation || null,
   });
   const router = express.Router();
   let d07Ready = Boolean(d07Service);
   let d08Ready = Boolean(d08Service);
+  let d09Ready = Boolean(d09Service);
 
   router.assertD07Ready = async () => {
     if (!foundation.d07?.repository) {
@@ -53,6 +59,16 @@ function createTeachingRouter({
     }
     await foundation.d07.repository.assertReady();
     d07Ready = true;
+    return true;
+  };
+
+  router.assertD09Ready = async () => {
+    if (!foundation.d09?.repository) {
+      d09Ready = false;
+      return false;
+    }
+    await foundation.d09.repository.assertReady();
+    d09Ready = true;
     return true;
   };
 
@@ -204,6 +220,47 @@ function createTeachingRouter({
     router.post('/courses/:id/validated-prior-knowledge/:decisionId/recheck', requireD08Ready, async (req, res) => {
       try { res.status(201).json(await coursePlanService.reconcileVpkContradiction(req.user, req.params.id, req.params.decisionId, req.body)); }
       catch (error) { sendError(res, error, 'Failed to recheck Validated Prior Knowledge.'); }
+    });
+  }
+
+
+  const schedulingService = d09Service || foundation.d09?.service || null;
+  if (schedulingService) {
+    const requireD09Ready = (req, res, next) => {
+      if (d09Ready) return next();
+      return res.status(503).json({
+        error: 'Teaching Semester/Scheduling is unavailable until the D09 schema is ready.',
+        code: 'TEACHING_D09_SCHEMA_NOT_READY',
+      });
+    };
+
+    router.get('/semesters', requireD09Ready, async (req, res) => {
+      try { res.json(await schedulingService.listSemesters(req.user)); }
+      catch (error) { sendError(res, error, 'Failed to load Teaching Semesters.'); }
+    });
+    router.get('/courses/:id/schedule-review', requireD09Ready, async (req, res) => {
+      try { res.json(await schedulingService.getScheduleReview(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load Course scheduling review.'); }
+    });
+    router.put('/courses/:id/schedule-inputs', requireD09Ready, async (req, res) => {
+      try { res.json(await schedulingService.saveScheduleInputs(req.user, req.params.id, req.body)); }
+      catch (error) { sendError(res, error, 'Failed to save Semester and availability.'); }
+    });
+    router.post('/courses/:id/timetable/propose', requireD09Ready, async (req, res) => {
+      try { res.status(201).json(await schedulingService.proposeTimetable(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to calculate a feasible timetable.'); }
+    });
+    router.put('/courses/:id/timetable', requireD09Ready, async (req, res) => {
+      try { res.json(await schedulingService.editTimetable(req.user, req.params.id, req.body)); }
+      catch (error) { sendError(res, error, 'Timetable edit was not feasible.'); }
+    });
+    router.get('/calendar', requireD09Ready, async (req, res) => {
+      try { res.json(await schedulingService.getCalendar(req.user, {
+        from: req.query.from || null,
+        to: req.query.to || null,
+        currentTimeZone: req.query.currentTimeZone || 'UTC',
+      })); }
+      catch (error) { sendError(res, error, 'Failed to load Teaching Calendar.'); }
     });
   }
 

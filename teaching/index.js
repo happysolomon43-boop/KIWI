@@ -4,7 +4,7 @@ const { createTeachingConfig } = require('./config');
 const { createKiwiSubjectReader } = require('./integrations/kiwi-subjects');
 const { createKiwiExamInterface } = require('./integrations/kiwi-exam-interface');
 const { createKiwiNotificationInterface } = require('./integrations/kiwi-notifications');
-const { createTeachingRepositories, createD07CourseIntakeRepository, createD08CoursePlanRepository } = require('./repositories');
+const { createTeachingRepositories, createD07CourseIntakeRepository, createD08CoursePlanRepository, createD09SchedulingRepository } = require('./repositories');
 const { createTeachingService } = require('./services/teaching-service');
 const { modules } = require('./modules');
 const orchestrator = require('./orchestrator');
@@ -13,6 +13,7 @@ const runtime = require('./runtime');
 const policy = require('./policy');
 const d07 = require('./d07');
 const d08 = require('./d08');
+const d09 = require('./d09');
 
 function createTeachingFoundation({
   env = process.env,
@@ -23,6 +24,8 @@ function createTeachingFoundation({
   randomUUID = null,
   d07Intelligence = null,
   d08Intelligence = null,
+  d09Intelligence = null,
+  d09TransactionalMutation = null,
 } = {}) {
   const config = createTeachingConfig(env);
   const subjectReader = createKiwiSubjectReader({ subjects: subjectSource });
@@ -46,6 +49,12 @@ function createTeachingFoundation({
   const d08Service = d08Repository && d07Repository
     ? d08.createD08Service({ subjects: repositories.subjects, d07Repository, repository: d08Repository, intelligence: d08Intelligence })
     : null;
+  const d09Repository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+    ? createD09SchedulingRepository({ query, withTransaction, randomUUID })
+    : null;
+  const d09Service = d09Repository && d09TransactionalMutation
+    ? d09.createD09Service({ repository: d09Repository, transactionalMutation: d09TransactionalMutation, randomUUID, intelligence: d09Intelligence })
+    : null;
   const service = createTeachingService({
     config,
     repositories,
@@ -64,6 +73,7 @@ function createTeachingFoundation({
     service,
     d07: d07Service ? Object.freeze({ repository: d07Repository, service: d07Service }) : null,
     d08: d08Service ? Object.freeze({ repository: d08Repository, service: d08Service }) : null,
+    d09: d09Service ? Object.freeze({ repository: d09Repository, service: d09Service }) : null,
     policy,
   });
 }
@@ -76,4 +86,5 @@ module.exports = {
   policy,
   d07,
   d08,
+  d09,
 };
