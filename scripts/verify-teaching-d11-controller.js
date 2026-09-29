@@ -25,7 +25,7 @@ for(const token of [
 const intel=read('teaching/d11/intelligence.js');
 for(const token of ['teaching.lesson.pre_class_lesson_planning','teaching.lesson.live_lesson_replanning','teaching.lesson.lesson_closure_analysis',
   'teaching.lesson.student_facing_class_summary_generation','teaching.lesson.internal_post_class_teacher_note_generation',
-  'active_assessment_answers_included: false','student_translation_fact_pack','commit: false'])if(!intel.includes(token))throw new Error('D11 intelligence missing '+token);
+  'active_assessment_answers_included: false','classClosureTranslation','translation_directive:translation.directive','fact_pack:translation.factPack','translation_only:true','commit: false'])if(!intel.includes(token))throw new Error('D11 intelligence missing '+token);
 const repo=read('teaching/repositories/d11-lesson-controller.js');
 for(const token of ['ensurePreparationWorkspaceUsing','recordPreparationArtifact','currentDependencyVersion','CONTROLLER_STARTED_ROUTE_HELD',
   'academic_penalty_created:false','independent_performance!==true','commitClosureUsing','teaching_class_closure_facts','idempotency_key'])
