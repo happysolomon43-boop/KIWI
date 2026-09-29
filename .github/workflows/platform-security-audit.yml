@@ -29,6 +29,19 @@ jobs:
         run: npm install --ignore-scripts --no-fund
       - name: Print detailed npm audit
         run: npm audit --json > npm-audit.json || true
+      - name: Verify upgraded dependency APIs
+        run: |
+          node - <<'NODE'
+          const cron = require('node-cron');
+          const officeParser = require('officeparser');
+          if (typeof cron.schedule !== 'function') {
+            throw new Error('node-cron schedule API is unavailable');
+          }
+          if (typeof officeParser.parseOffice !== 'function') {
+            throw new Error('officeparser parseOffice API is unavailable');
+          }
+          console.log('[security] upgraded dependency APIs are available');
+          NODE
       - name: Summarize audit
         run: |
           node - <<'NODE'
