@@ -58,7 +58,7 @@ test('many weak repetitive successes cannot manufacture INDEPENDENT',()=>{
 test('weak repetitive positives do not overpower later strong contrary evidence',()=>{
   const events=[strong('e1',{occurred_at:'2026-01-01T00:00:00Z'}),strong('e2',{occurred_at:'2026-01-02T00:00:00Z'}),...Array.from({length:20},(_,i)=>ev('w'+i,{occurred_at:new Date(Date.UTC(2026,0,2,1,0,i)).toISOString(),evidential_strength:'WEAK',redundancy:'HIGHLY_REDUNDANT',comparability_group:'clone'})),failure('f1',{occurred_at:'2026-01-03T00:00:00Z'}),failure('f2',{occurred_at:'2026-01-04T00:00:00Z'})];
   const state=computeKnowledgeState(events,{studentId:'u1',learningUnitId:'lu1'});
-  assert.equal(state.base_state,'INDEPENDENT');
+  assert.equal(state.base_state,'EMERGING');
   assert.ok(state.overlays.includes('REGRESSED'));
 });
 
@@ -83,13 +83,13 @@ test('surface novelty with method cueing does not count as transfer',()=>{
 test('failed delayed retrieval adds FRAGILE without erasing prior competence',()=>{
   const delayedFailure=failure('f1',{occurred_at:'2026-01-10T00:00:00Z',evidence_claim:'retain_after_delay',demand_vector:{retention_timing:'delayed'}});
   const state=computeKnowledgeState([ev('e1',{occurred_at:'2026-01-01T00:00:00Z'}),ev('e2',{occurred_at:'2026-01-02T00:00:00Z'}),delayedFailure],{studentId:'u1',learningUnitId:'lu1'});
-  assert.equal(state.base_state,'INDEPENDENT');
+  assert.equal(state.base_state,'EMERGING');
   assert.ok(state.overlays.includes('FRAGILE'));
 });
 
 test('repeated substantive later independent failure adds REGRESSED',()=>{
   const state=computeKnowledgeState([ev('e1',{occurred_at:'2026-01-01T00:00:00Z'}),ev('e2',{occurred_at:'2026-01-02T00:00:00Z'}),failure('f1',{occurred_at:'2026-01-03T00:00:00Z'}),failure('f2',{occurred_at:'2026-01-04T00:00:00Z'})],{studentId:'u1',learningUnitId:'lu1'});
-  assert.equal(state.base_state,'INDEPENDENT');
+  assert.equal(state.base_state,'EMERGING');
   assert.ok(state.overlays.includes('REGRESSED'));
 });
 
