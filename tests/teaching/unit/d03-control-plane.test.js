@@ -214,7 +214,8 @@ test('TPF-20 successor capability is exact, T3-only and still unqualified', () =
   assert.equal(capability.execution_class, 'DIRECT-AI');
   assert.equal(capability.authority_ceiling, 'T3');
   assert.equal(capability.prompt_family_id, 'TPF-20');
-  assert.equal(capability.model_posture, 'MODEL_PRIMARY_UNQUALIFIED');
+  assert.equal(capability.model_posture, 'MODEL_PRIMARY');
+  assert.equal(capability.prompt_family_version, '1.0');
 
   const family = catalog.getPromptFamily('TPF-20');
   assert.equal(family.version, '1.0');
