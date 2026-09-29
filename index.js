@@ -21526,6 +21526,8 @@ const teachingRouter = createTeachingRouter({
   d07Intelligence: null,
   d08Intelligence: null,
   d09Intelligence: null,
+  d11Intelligence: null,
+  d11PublishedEventRegistry: teachingPublishedEvents,
   teachingRuntimePlatform,
 });
 app.use('/api/teaching', teachingRouter);
@@ -23078,6 +23080,12 @@ try {
   console.log('[KIWI Teaching] D10 Course Lifecycle/Request runtime verified; activation and formal Requests are ready.');
 } catch (e) {
   console.error('[KIWI Teaching] D10 Course Lifecycle/Request runtime unavailable; activation/Requests remain fail-closed:', e.message);
+}
+try {
+  await teachingRouter.assertD11Ready();
+  console.log('[KIWI Teaching] D11 Lesson Blueprint/Controller runtime verified; deterministic Class control is ready and model routes remain D30-held.');
+} catch (e) {
+  console.error('[KIWI Teaching] D11 Lesson Blueprint/Controller runtime unavailable; Class control remains fail-closed:', e.message);
 }
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }
