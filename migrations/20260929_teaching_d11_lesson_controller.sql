@@ -160,6 +160,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS teaching_class_controller_history_idempotency_
   WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS teaching_class_controller_history_session_idx
   ON public.teaching_class_controller_history(student_id,class_session_id,controller_version,event_cursor);
+CREATE INDEX IF NOT EXISTS teaching_class_controller_history_class_fk_idx
+  ON public.teaching_class_controller_history(class_id);
+CREATE INDEX IF NOT EXISTS teaching_class_controller_history_session_fk_idx
+  ON public.teaching_class_controller_history(class_session_id);
 
 CREATE TABLE IF NOT EXISTS public.teaching_class_closure_facts (
   closure_fact_id text PRIMARY KEY,
@@ -177,6 +181,8 @@ CREATE TABLE IF NOT EXISTS public.teaching_class_closure_facts (
 );
 CREATE INDEX IF NOT EXISTS teaching_class_closure_facts_course_idx
   ON public.teaching_class_closure_facts(student_id,course_id,closed_at DESC);
+CREATE INDEX IF NOT EXISTS teaching_class_closure_facts_blueprint_fk_idx
+  ON public.teaching_class_closure_facts(lesson_blueprint_id);
 
 CREATE TABLE IF NOT EXISTS public.teaching_class_summaries (
   class_summary_id text PRIMARY KEY,
@@ -188,11 +194,19 @@ CREATE TABLE IF NOT EXISTS public.teaching_class_summaries (
   summary_state text NOT NULL CHECK(summary_state IN ('TRANSLATED','ROUTE_HELD','REVIEW_NEEDED')),
   summary_payload jsonb NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(summary_payload)='object'),
   translation_provenance jsonb NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(translation_provenance)='object'),
+  idempotency_key text,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE(class_session_id,version_no)
 );
 CREATE INDEX IF NOT EXISTS teaching_class_summaries_student_idx
   ON public.teaching_class_summaries(student_id,class_id,version_no DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS teaching_class_summaries_idempotency_uidx
+  ON public.teaching_class_summaries(student_id,idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS teaching_class_summaries_session_fk_idx
+  ON public.teaching_class_summaries(class_session_id);
+CREATE INDEX IF NOT EXISTS teaching_class_summaries_closure_fk_idx
+  ON public.teaching_class_summaries(closure_fact_id);
 
 CREATE TABLE IF NOT EXISTS public.teaching_post_class_teacher_notes (
   teacher_note_id text PRIMARY KEY,
@@ -206,11 +220,19 @@ CREATE TABLE IF NOT EXISTS public.teaching_post_class_teacher_notes (
   note_payload jsonb NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(note_payload)='object'),
   provenance_refs jsonb NOT NULL DEFAULT '[]'::jsonb CHECK(jsonb_typeof(provenance_refs)='array'),
   generation_provenance jsonb NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(generation_provenance)='object'),
+  idempotency_key text,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE(class_session_id,version_no)
 );
 CREATE INDEX IF NOT EXISTS teaching_post_class_teacher_notes_course_idx
   ON public.teaching_post_class_teacher_notes(student_id,course_id,created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS teaching_post_class_teacher_notes_idempotency_uidx
+  ON public.teaching_post_class_teacher_notes(student_id,idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS teaching_post_class_teacher_notes_session_fk_idx
+  ON public.teaching_post_class_teacher_notes(class_session_id);
+CREATE INDEX IF NOT EXISTS teaching_post_class_teacher_notes_closure_fk_idx
+  ON public.teaching_post_class_teacher_notes(closure_fact_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS teaching_preparation_d11_next_class_workspace_uidx
   ON teaching_preparation.workspaces(student_id,target_kind,target_ref)
@@ -228,11 +250,13 @@ BEGIN
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',rel);
     EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC,anon,authenticated,service_role,teaching_domain_service',rel);
     EXECUTE format('GRANT SELECT ON TABLE public.%I TO service_role,teaching_domain_service',rel);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I',rel||'_domain_select',rel);
     EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO teaching_domain_service USING (true)',rel||'_domain_select',rel);
   END LOOP;
 END $$;
 
 GRANT SELECT ON public.teaching_class_summaries TO authenticated;
+DROP POLICY IF EXISTS teaching_class_summaries_student_select ON public.teaching_class_summaries;
 CREATE POLICY teaching_class_summaries_student_select
   ON public.teaching_class_summaries
   FOR SELECT TO authenticated
