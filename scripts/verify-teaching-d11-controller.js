@@ -28,7 +28,7 @@ for(const token of ['teaching.lesson.pre_class_lesson_planning','teaching.lesson
   'active_assessment_answers_included: false','student_translation_fact_pack','commit: false'])if(!intel.includes(token))throw new Error('D11 intelligence missing '+token);
 const repo=read('teaching/repositories/d11-lesson-controller.js');
 for(const token of ['ensurePreparationWorkspaceUsing','recordPreparationArtifact','currentDependencyVersion','CONTROLLER_STARTED_ROUTE_HELD',
-  'academic_penalty_created:false','independent_performance=true','commitClosureUsing','teaching_class_closure_facts','idempotency_key'])
+  'academic_penalty_created:false','independent_performance!==true','commitClosureUsing','teaching_class_closure_facts','idempotency_key'])
   if(!repo.includes(token))throw new Error('D11 repository missing '+token);
 const service=read('teaching/d11/service.js');
 for(const token of ['progressive_next_class_preparation','PRE_LOCK_READY','final_reconciliation','TEACHING_D11_CLIENT_FORCE_FORBIDDEN',
