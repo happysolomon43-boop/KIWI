@@ -78,6 +78,17 @@ function createD11LessonControllerRepository({
     return rows || [];
   }
 
+  async function loadLearningUnitDependencies(studentId, planId, runner = null) {
+    if (!planId) return [];
+    const { rows } = await q(runner,
+      "select d.* from public.teaching_learning_unit_dependencies d " +
+      "join public.teaching_learning_units u on u.learning_unit_id=d.learning_unit_id " +
+      "where d.student_id=$1 and u.course_plan_id=$2 order by d.learning_unit_id,d.prerequisite_learning_unit_id",
+      [studentId,planId]
+    );
+    return rows || [];
+  }
+
   async function latestBlueprint(studentId, classId, runner = null, lock = false) {
     const suffix = lock ? ' for update' : '';
     const { rows } = await q(runner,
@@ -112,13 +123,14 @@ function createD11LessonControllerRepository({
     const classRow = await loadClassBase(studentId, classId, runner, false);
     if (!classRow) return null;
     const plan = await loadCurrentPlan(studentId, classRow.course_id, runner, false);
-    const [learningUnits, blueprint, session, workspace] = await Promise.all([
+    const [learningUnits, learningUnitDependencies, blueprint, session, workspace] = await Promise.all([
       loadLearningUnits(studentId, plan?.course_plan_id, runner),
+      loadLearningUnitDependencies(studentId, plan?.course_plan_id, runner),
       latestBlueprint(studentId, classId, runner, false),
       getSession(studentId, classId, runner, false),
       getPreparationWorkspace(studentId, classId, runner, false),
     ]);
-    return Object.freeze({ classRow, plan, learningUnits, blueprint, session, workspace });
+    return Object.freeze({ classRow, plan, learningUnits, learningUnitDependencies, blueprint, session, workspace });
   }
 
   async function listClassesForCourse(studentId, courseId) {
@@ -154,9 +166,31 @@ function createD11LessonControllerRepository({
       " order by updated_at desc limit 20",
       [studentId, classRow.course_id]
     ).catch(() => ({ rows: [] }));
+    const [diagnostics,vpk,debt] = await Promise.all([
+      query(
+        "select diagnostic_plan_id,plan_version,requirement_state,requirement_reason,target_refs,non_graded,diagnostic_design,provenance_refs,created_at" +
+        " from public.teaching_diagnostic_plans where student_id=$1 and course_id=$2 order by plan_version desc limit 1",
+        [studentId,classRow.course_id]
+      ).catch(()=>({rows:[]})),
+      query(
+        "select distinct on (target_kind,target_ref) vpk_decision_id,target_kind,target_ref,decision_status,policy_version,evidence_refs,provenance_refs,decision_reasons,decided_at" +
+        " from public.teaching_validated_prior_knowledge_decisions where student_id=$1 and course_id=$2" +
+        " order by target_kind,target_ref,decided_at desc",
+        [studentId,classRow.course_id]
+      ).catch(()=>({rows:[]})),
+      query(
+        "select schedule_debt_entry_id,delta_minutes,cause_code,source_ref,timetable_version_id,recorded_at" +
+        " from public.teaching_schedule_debt_entries where student_id=$1 and course_id=$2 order by recorded_at desc limit 20",
+        [studentId,classRow.course_id]
+      ).catch(()=>({rows:[]})),
+    ]);
     return Object.freeze({
       priorClassFacts: Object.freeze((prior.rows || []).map((row) => Object.freeze({ ...row }))),
       teacherNotes: Object.freeze((notes.rows || []).map((row) => Object.freeze({ ...row }))),
+      diagnosticSignals: Object.freeze((diagnostics.rows || []).map((row)=>Object.freeze({ ...row }))),
+      validatedPriorKnowledgeSignals: Object.freeze((vpk.rows || []).map((row)=>Object.freeze({ ...row }))),
+      pacingSignals: Object.freeze({source_owner:'Scheduler/Calendar',scheduleDebtEntries:Object.freeze((debt.rows || []).map((row)=>Object.freeze({ ...row })))}),
+      correctionRecoverySignals: Object.freeze({source:'prior_class_teacher_notes_and_closure_facts',uncertainty_preserved:true}),
       workSignals: Object.freeze({
         status: 'OWNER_PENDING_D16',
         signals: Object.freeze([]),
