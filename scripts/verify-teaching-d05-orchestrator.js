@@ -94,11 +94,18 @@ for (const fragment of [
   "createTeachingD05RuntimePlatform",
   "createTeachingEventSubscriberRegistry",
   "registerPreparationPublishedEventSubscribers",
-  "ppl-d09-deterministic-gate",
   "eventPublisher: (event) => teachingPublishedEvents.publish(event)",
   "D05 runtime initialized; due-event and durable outbox workers started",
 ]) assert(serverEntry.includes(fragment), `Production server must wire D05 runtime fragment: ${fragment}`);
 assert(!serverEntry.includes("const { createTeachingRuntimePlatform } = require('./teaching/runtime');"), 'Production server must not remain pinned to the D02-only runtime constructor after D05.');
+
+const preparationSubscribers = read('teaching/preparation/subscribers.js');
+for (const fragment of [
+  "ppl-d09-deterministic-gate",
+  "PREPARATION_WORKSPACE_SEEDED",
+  "PREPARATION_INPUT_CHANGED",
+  "hasProcessedEvent",
+]) assert(preparationSubscribers.includes(fragment), `PPL published-event subscriber contract missing: ${fragment}`);
 
 const combined = [
   read('teaching/orchestrator/contracts.js'),
