@@ -23,6 +23,6 @@ jobs:
       - run: npm run build:web
       - name: Non-production Supabase integration
         env:
-          TEACHING_TEST_DATABASE_URL: \${{ secrets.TEACHING_TEST_DATABASE_URL }}
-          TEACHING_TEST_PROJECT_REF: \${{ secrets.TEACHING_TEST_PROJECT_REF }}
+          TEACHING_TEST_DATABASE_URL: ${{ secrets.TEACHING_TEST_DATABASE_URL }}
+          TEACHING_TEST_PROJECT_REF: ${{ secrets.TEACHING_TEST_PROJECT_REF }}
         run: npm run test:teaching:integration
