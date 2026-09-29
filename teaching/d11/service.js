@@ -341,8 +341,10 @@ function createD11Service({
 
   async function replanLesson(user, classId) {
     assertModelRoute();
-    let context = await repository.getClassContext(user.id, classId);
+    const live = await repository.assertLiveContextCurrent(user.id,classId);
+    let context = live.context || await repository.getClassContext(user.id, classId);
     assertClassPlanningEligible(context);
+    if(context.session && !live.ok) fail('Controller is stale against authoritative Course/Plan/Schedule state.','TEACHING_D11_STALE_LIVE_CONTEXT',409,live);
     if (!context.session || context.session.lifecycle_state === 'CLOSED') {
       fail('Live replanning requires an active Controller session.', 'TEACHING_D11_CONTROLLER_NOT_ACTIVE', 409);
     }
