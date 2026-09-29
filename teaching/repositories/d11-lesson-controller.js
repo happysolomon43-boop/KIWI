@@ -308,7 +308,7 @@ function createD11LessonControllerRepository({
     for (const note of signals?.teacherNotes || []) {
       deps.push({
         dependency_kind:'PRIOR_TEACHER_NOTE',
-        authoritative_owner_ref:'Lesson Planner/SKM',
+        authoritative_owner_ref:'Lesson Planner',
         aggregate_ref:'teacher-note:' + note.teacher_note_id,
         version_ref:String(note.created_at || note.teacher_note_id),
         component_scope_key:note.class_id || context.classRow.course_id,
