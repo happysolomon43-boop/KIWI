@@ -291,16 +291,25 @@ function blockOverlay(events) {
   for(const e of failures) for(const s of asArray(pathContext(e).prior_strategy_classes)) strategies.add(String(s));
   return strategies.size>=2;
 }
+function unresolvedMaterialContradiction(events) {
+  let lastNegative=-1;
+  for(let i=0;i<events.length;i+=1) if(substantiveNegative(events[i])) lastNegative=i;
+  if(lastNegative<0)return false;
+  // A material contradiction is resolved only by repeated, distinct later
+  // independent success. Quantity of weak/repetitive evidence cannot erase it.
+  return distinctIndependentSuccesses(events.slice(lastNegative+1)).length<2;
+}
 function baseStateFor(events) {
   if(!events.length) return 'UNSEEN';
   const meaningful=events.filter((event)=>validity(event)!=='INVALID');
   if(!meaningful.length) return 'UNSEEN';
   const independent=distinctIndependentSuccesses(meaningful);
+  const unresolved=unresolvedMaterialContradiction(meaningful);
   const delayed=meaningful.some(delayedQualified);
   const transfer=meaningful.some(transferQualified);
-  if(independent.length>=2 && transfer) return 'TRANSFERABLE';
-  if(independent.length>=2 && delayed) return 'SECURE';
-  if(independent.length>=2) return 'INDEPENDENT';
+  if(independent.length>=2 && !unresolved && transfer) return 'TRANSFERABLE';
+  if(independent.length>=2 && !unresolved && delayed) return 'SECURE';
+  if(independent.length>=2 && !unresolved) return 'INDEPENDENT';
   if(independent.length>=1) return 'EMERGING';
   if(meaningful.some(successfulAssisted)) return 'ASSISTED';
   return 'INTRODUCED';
@@ -314,24 +323,20 @@ function competenceEstablishedAt(events) {
   return null;
 }
 function regressionOverlays(events,baseState) {
-  if(STATE_RANK[baseState]<STATE_RANK.INDEPENDENT) return [];
+  // Overlays describe later evidence relative to previously demonstrated
+  // competence, so they must not depend on the newly recomputed base state.
   const established=competenceEstablishedAt(events);
   if(!established) return [];
   const establishedMs=new Date(established).getTime();
-  let negativeStreak=0; let fragile=false;
-  for(const event of events){
-    const t=new Date(occurredAt(event)||0).getTime(); if(t<establishedMs) continue;
-    if(successfulIndependent(event)){ negativeStreak=0; fragile=false; continue; }
-    if(substantiveNegative(event)){
-      const claim=String(event.evidence_claim||'').toLowerCase();
-      const transferOnly=['adapt_to_variation','integrate_or_transfer'].includes(claim) && baseState!=='TRANSFERABLE';
-      if(transferOnly){fragile=true; continue;}
-      negativeStreak+=1; fragile=true;
-    }
-    if(String(demand(event).retention_timing||'').toLowerCase()==='delayed' && substantiveNegative(event)) fragile=true;
-  }
-  if(negativeStreak>=2) return ['REGRESSED'];
-  return fragile?['FRAGILE']:[];
+  const later=events.filter((event)=>new Date(occurredAt(event)||0).getTime()>=establishedMs);
+  const negative= later.filter(substantiveNegative);
+  if(!negative.length)return [];
+  const lastNegative=events.map((event,index)=>({event,index})).filter(({event})=>substantiveNegative(event)).at(-1);
+  const recovery=lastNegative?distinctIndependentSuccesses(events.slice(lastNegative.index+1)):[];
+  if(recovery.length>=2)return [];
+  const distinctNegativeKeys=new Set(negative.map(independentKey));
+  if(distinctNegativeKeys.size>=2)return ['REGRESSED'];
+  return ['FRAGILE'];
 }
 function certaintyAtEvidence(baseState,overlays,retention) {
   if(overlays.includes('REGRESSED') || overlays.includes('FRAGILE')) return 'LOW';
@@ -354,7 +359,7 @@ function computeKnowledgeState(rawEvents,{studentId,learningUnitId}={}) {
   const calibration=confidenceCalibration(events);
   const dimensions={...summarizeDimensions(events,baseState),confidence_calibration:dimension(calibration.status==='PATTERN_SUPPORTED'?'SUPPORTED':calibration.status==='ISOLATED_SIGNAL'?'PARTIAL':'NOT_ASSESSED',calibration.basis_refs,calibration.pattern)};
   const latest=events[events.length-1] || null;
-  const contradictions=events.filter((event)=>substantiveNegative(event)).length>0 && events.filter(successfulIndependent).length>0;
+  const contradictions=unresolvedMaterialContradiction(events) && events.filter(successfulIndependent).length>0;
   return freezeDeep({
     algorithm_id:SKM_ALGORITHM_ID,
     algorithm_version:SKM_ALGORITHM_VERSION,
@@ -431,5 +436,5 @@ function learningAnalysisProjection(state,{history=[],asOf=new Date(),misconcept
 module.exports={
   SKM_ALGORITHM_ID,SKM_ALGORITHM_VERSION,BASE_STATES,OVERLAYS,STATE_RANK,
   computeKnowledgeState,projectEffectiveCertainty,learningAnalysisProjection,
-  misconceptionRecordId,successfulIndependent,substantiveNegative,transferQualified,delayedQualified,
+  misconceptionRecordId,successfulIndependent,substantiveNegative,transferQualified,delayedQualified,unresolvedMaterialContradiction,
 };
