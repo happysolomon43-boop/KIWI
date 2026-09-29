@@ -112,4 +112,74 @@ function validateNormalizedEvidenceEvent(input={}){
     system_failure_protected:v.system_failure_protected===true,
     evidence_validity:validity,
     occurred_at:time(v.occurred_at,'TEACHING_D13_EVIDENCE_OCCURRED_AT_REQUIRED'),
-    provenance_refs:uniqueStrings(v.provenance_refs|
+    provenance_refs:uniqueStrings(v.provenance_refs||[]),
+    evidence_schema_version:str(v.evidence_schema_version??EVIDENCE_SCHEMA_VERSION,'TEACHING_D13_EVIDENCE_SCHEMA_VERSION_REQUIRED'),
+  };
+  if(normalized.system_failure_protected && normalized.evidence_validity==='VALID') normalized.evidence_validity='SYSTEM_PROTECTED';
+  if(normalized.diagnostic && normalized.formal_assessment) fail('Diagnostic evidence cannot simultaneously be formal graded assessment evidence.','TEACHING_D13_EVIDENCE_PURPOSE_CONFLICT');
+  return freezeDeep(normalized);
+}
+
+function assistanceIsMaterial(level){
+  const rank=ASSISTANCE_RANK[String(level||'unknown').toLowerCase()] ?? ASSISTANCE_RANK.unknown;
+  return rank>=ASSISTANCE_RANK.conceptual;
+}
+function answerOrMethodExposed(event){return ['ESSENTIAL_METHOD','ANSWER'].includes(event.support_context.answer_method_exposure);}
+function usableForState(event){return event.evidence_validity==='VALID'&&!event.system_failure_protected&&!answerOrMethodExposed(event);}
+function isSuccess(event){return event.outcome==='SUCCESS';}
+function isFailure(event){return event.outcome==='FAILURE';}
+function isIndependent(event){
+  return event.independent_performance===true && !assistanceIsMaterial(event.support_context.assistance_level) && !answerOrMethodExposed(event);
+}
+function isDelayed(event){return event.demand_context.retention_timing==='delayed';}
+function isTransferDemand(event){
+  const d=event.demand_context;
+  const varied=['new_representation','new_context_same_construct','integrated'].includes(d.familiarity)
+    || ['new_legitimate_representation','cross_representation_connection'].includes(d.representation_demand)
+    || ['combine_eligible_constructs','embedded_in_broader_problem'].includes(d.integration_demand);
+  return d.transfer_eligible===true && d.same_eligible_construct===true && d.prerequisite_boundary_validated===true && d.method_cueing==='none' && varied;
+}
+
+function classifyEvidenceQuality(input){
+  const event=validateNormalizedEvidenceEvent(input);
+  if(!usableForState(event)) return freezeDeep({quality:'UNUSABLE',reason:'INVALID_REVIEW_SYSTEM_PROTECTED_OR_EXPOSED',independent:false,information_gain:'NONE'});
+  const independent=isIndependent(event);
+  if(event.outcome==='NO_EVIDENCE'||event.outcome==='INDETERMINATE') return freezeDeep({quality:'UNUSABLE',reason:'NO_INTERPRETABLE_EVIDENCE',independent,information_gain:'NONE'});
+  const delayed=isDelayed(event);
+  const transfer=isTransferDemand(event);
+  const controlled=event.control_context==='CONTROLLED_ASSESSMENT';
+  const weakReuse=['exact_reuse','near_reuse'].includes(event.demand_context.familiarity);
+  let quality='WEAK';
+  if(independent && (controlled||delayed||transfer)) quality='STRONG';
+  else if(independent && !weakReuse) quality='MODERATE';
+  else if(independent) quality='WEAK';
+  else if(isSuccess(event) && !assistanceIsMaterial(event.support_context.assistance_level)) quality='WEAK';
+  else quality='WEAK';
+  const information_gain=quality==='STRONG'?'HIGH':quality==='MODERATE'?'MODERATE':'LOW';
+  return freezeDeep({quality,reason:'DETERMINISTIC_EVIDENCE_QUALITY_V1',independent,delayed,transfer,controlled,information_gain});
+}
+
+function evidenceContribution(input){
+  const event=validateNormalizedEvidenceEvent(input);
+  const quality=classifyEvidenceQuality(event);
+  const success=isSuccess(event);
+  const failure=isFailure(event);
+  const independent=quality.independent;
+  const materialSupport=assistanceIsMaterial(event.support_context.assistance_level);
+  const contribution= !usableForState(event) ? 'NO_STATE_EFFECT'
+    : event.outcome==='EXPOSURE_ONLY' ? 'INTRODUCTION_ONLY'
+    : success && independent && quality.transfer ? 'TRANSFER_SUCCESS'
+    : success && independent && quality.delayed ? 'DELAYED_INDEPENDENT_SUCCESS'
+    : success && independent ? 'INDEPENDENT_SUCCESS'
+    : success && materialSupport ? 'ASSISTED_SUCCESS'
+    : failure && independent && quality.delayed ? 'DELAYED_INDEPENDENT_FAILURE'
+    : failure && independent ? 'INDEPENDENT_FAILURE'
+    : failure ? 'ASSISTED_OR_UNCONTROLLED_FAILURE'
+    : 'NO_STATE_EFFECT';
+  const highConfidenceWrong=event.confidence_sampled&&event.student_confidence==='HIGH'&&failure;
+  const lowConfidenceCorrect=event.confidence_sampled&&event.student_confidence==='LOW'&&success;
+  return freezeDeep({event,quality,...quality,contribution,success,failure,materialSupport,highConfidenceWrong,lowConfidenceCorrect});
+}
+
+function strengthRank(q){return {UNUSABLE:0,WEAK:1,MODERATE:2,STRONG:3}[q]||0;}
+function deduplicateE
