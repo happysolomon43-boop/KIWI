@@ -260,6 +260,42 @@ function createD11LessonControllerRepository({
         component_scope_key: prior.class_id,
       });
     }
+    for (const note of signals?.teacherNotes || []) {
+      deps.push({
+        dependency_kind:'PRIOR_TEACHER_NOTE',
+        authoritative_owner_ref:'Lesson Planner/SKM',
+        aggregate_ref:'teacher-note:' + note.teacher_note_id,
+        version_ref:String(note.created_at || note.teacher_note_id),
+        component_scope_key:note.class_id || context.classRow.course_id,
+      });
+    }
+    for (const diagnostic of signals?.diagnosticSignals || []) {
+      deps.push({
+        dependency_kind:'DIAGNOSTIC_PLAN',
+        authoritative_owner_ref:'Curriculum/Diagnostic',
+        aggregate_ref:'diagnostic-plan:' + diagnostic.diagnostic_plan_id,
+        version_ref:String(diagnostic.plan_version),
+        component_scope_key:context.classRow.course_id,
+      });
+    }
+    for (const decision of signals?.validatedPriorKnowledgeSignals || []) {
+      deps.push({
+        dependency_kind:'VALIDATED_PRIOR_KNOWLEDGE',
+        authoritative_owner_ref:'Validated Prior Knowledge owner',
+        aggregate_ref:'vpk:' + decision.vpk_decision_id,
+        version_ref:String(decision.decided_at || decision.policy_version || decision.vpk_decision_id),
+        component_scope_key:decision.target_ref || context.classRow.course_id,
+      });
+    }
+    for (const debt of signals?.pacingSignals?.scheduleDebtEntries || []) {
+      deps.push({
+        dependency_kind:'SCHEDULE_DEBT',
+        authoritative_owner_ref:'Scheduler/Calendar',
+        aggregate_ref:'schedule-debt:' + debt.schedule_debt_entry_id,
+        version_ref:String(debt.recorded_at || debt.schedule_debt_entry_id),
+        component_scope_key:context.classRow.course_id,
+      });
+    }
     for (const request of signals?.governedRequestSignals || []) {
       deps.push({
         dependency_kind: 'GOVERNED_REQUEST',
@@ -409,90 +445,6 @@ function createD11LessonControllerRepository({
         changed: true,
         created: createdWorkspace,
         correlationId,
-      });
-    });
-  }
-
-  async function recordPreparationArtifact({
-    studentId,
-    workspaceId,
-    inputBundleId,
-    blueprint,
-    lessonBlueprintId,
-    capabilityId = 'teaching.lesson.pre_class_lesson_planning',
-    promptFamilyRef = 'TPF-05',
-  } = {}) {
-    if (!workspaceId || !inputBundleId || !lessonBlueprintId) return null;
-    return withTransaction(async (tx) => {
-      const wsResult = await tx.query(
-        "select * from teaching_preparation.workspaces where workspace_id=$1 and student_id=$2 for update",
-        [workspaceId,studentId]
-      );
-      const workspace = wsResult.rows?.[0];
-      if (!workspace) {
-        const error = new Error('Preparation Workspace not found for Lesson Blueprint artifact.');
-        error.code = 'TEACHING_D11_PREPARATION_WORKSPACE_NOT_FOUND';
-        throw error;
-      }
-      if (workspace.current_authoritative_input_bundle_ref !== inputBundleId) {
-        const error = new Error('Preparation input bundle changed before artifact persistence.');
-        error.code = 'TEACHING_D11_PREPARATION_BUNDLE_STALE';
-        error.status = 409;
-        throw error;
-      }
-      const nextVersionResult = await tx.query(
-        "select coalesce(max(version_no),0)+1 next_version from teaching_preparation.artifact_versions where workspace_id=$1",
-        [workspaceId]
-      );
-      const artifactVersionId = randomUUID();
-      const digest = stableDigest(blueprint);
-      const versionNo = Number(nextVersionResult.rows[0].next_version);
-      await tx.query(
-        "insert into teaching_preparation.artifact_versions(" +
-        "artifact_version_id,workspace_id,student_id,artifact_kind,version_no,input_bundle_id,parent_artifact_version_id," +
-        "created_by_capability_id,prompt_family_ref,schema_version,artifact_digest,protected_content_class,validity_state,concise_rationale" +
-        ") values($1,$2,$3,'LESSON_BLUEPRINT',$4,$5,$6,$7,$8,'d11.lesson-blueprint.v1',$9,'UNPROTECTED','CURRENT',$10)",
-        [
-          artifactVersionId,workspaceId,studentId,versionNo,inputBundleId,
-          workspace.current_artifact_version_ref || null,capabilityId,promptFamilyRef,digest,
-          'Validated D11 Lesson Blueprint ' + lessonBlueprintId,
-        ]
-      );
-      const depResult = await tx.query(
-        "select input_dependency_id,aggregate_ref from teaching_preparation.input_bundle_dependencies where input_bundle_id=$1 order by input_dependency_id",
-        [inputBundleId]
-      );
-      const components = [
-        ...(blueprint.objectives || []).map((item) => ({ key:'objective:' + item.id, kind:'OBJECTIVE', value:item })),
-        ...(blueprint.segments || []).map((item) => ({ key:'segment:' + item.id, kind:'SEGMENT', value:item })),
-      ];
-      for (const component of components) {
-        const componentId = randomUUID();
-        await tx.query(
-          "insert into teaching_preparation.artifact_components(" +
-          "artifact_component_id,artifact_version_id,student_id,component_key,component_kind,component_digest,stale,stale_reason" +
-          ") values($1,$2,$3,$4,$5,$6,false,null)",
-          [componentId,artifactVersionId,studentId,component.key,component.kind,stableDigest(component.value)]
-        );
-        for (const dep of depResult.rows || []) {
-          await tx.query(
-            "insert into teaching_preparation.component_dependencies(" +
-            "component_dependency_id,artifact_component_id,input_dependency_id,student_id,dependency_role" +
-            ") values($1,$2,$3,$4,'AUTHORITATIVE_INPUT')",
-            [randomUUID(),componentId,dep.input_dependency_id,studentId]
-          );
-        }
-      }
-      const updated = await tx.query(
-        "update teaching_preparation.workspaces set current_artifact_version_ref=$2,state_version=state_version+1,updated_at=now()" +
-        " where workspace_id=$1 returning *",
-        [workspaceId,artifactVersionId]
-      );
-      return Object.freeze({
-        workspace: updated.rows[0],
-        artifactVersionId,
-        versionNo,
-        artifactDigest: digest,
       });
     });
   }
