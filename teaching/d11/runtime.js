@@ -176,7 +176,7 @@ function registerD11Runtime({
       return {safeMetadata:{
         class_id:classId,
         controller_version:state.controller?.stateVersion || null,
-        lesson_blueprint_bound:Boolean(state.blueprint?.lessonBlueprintId && state.controller),
+        lesson_blueprint_bound:Boolean(state.controller?.lessonBlueprintId),
       }};
     },
   });
