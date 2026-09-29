@@ -1,0 +1,118 @@
+'use strict';
+
+const { classClosureTranslation } = require('./fact-pack');
+const { validateStageOutput, noteRequest } = require('./study-note');
+const { validateBlock } = require('./board');
+const MODES=Object.freeze({OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'});
+const RESTRICTED=new Set(['ASSESSMENT','CLASSWORK']);
+const SIGNALS=new Set(['ASK_TEACHER','NEED_HELP','READY','FINISHED','BREAK_REQUEST','EARLY_DISMISSAL_REQUEST','TECHNICAL_ISSUE','LEAVE']);
+function fail(code,status=409){throw Object.assign(new Error(code),{code,status});}
+function createD14Service({repository,d11Repository,d11Service,d12Service,studyIntelligence=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
+  if(!repository||!d11Repository||!d11Service||!d12Service||!randomUUID)throw new TypeError('D14 requires the existing D11/D12 owners and its artifact repository.');
+  async function context(studentId,classId){const value=await d11Repository.getClassContext(studentId,classId);if(!value)fail('TEACHING_D14_CLASS_NOT_FOUND',404);return value;}
+  async function listClasses(user,courseId){const course=await repository.identity(user.id,courseId);if(!course)fail('TEACHING_D14_COURSE_NOT_FOUND',404);return {course,classes:await repository.listClasses(user.id,courseId)};}
+  async function snapshot(user,classId){
+    const d11=await d11Service.getClass(user,classId);
+    const source=await context(user.id,classId);
+    const mode=source.session?.instructional_substate||'PRE_CLASS';
+    const restricted=RESTRICTED.has(mode);
+    const [identity,scenes,notes,studyNote,teacherMessage,firstEntry]=await Promise.all([
+      repository.identity(user.id,source.classRow.course_id),
+      restricted?[]:repository.board(user.id,source.session?.class_session_id),
+      restricted?[]:repository.notebook(user.id,classId),
+      repository.latestNote(user.id,classId),
+      repository.latestTeacherMessage(user.id,classId),
+      repository.firstEntry(user.id,classId),
+    ]);
+    const closed=source.session?.lifecycle_state==='CLOSED';
+    let summary=null,closureFacts=null;
+    if(closed){
+      try{summary=await d11Service.getSummary(user,classId);}catch(error){if(error.status!==404)throw error;}
+      const closure=await d11Repository.getClosureFact(user.id,classId);
+      if(closure)closureFacts=classClosureTranslation(closure).factPack;
+    }
+    const currentLu=source.session?.progress_state?.current_learning_unit_ref||null;
+    const planned=Array.isArray(source.blueprint?.planned_learning_unit_refs)?source.blueprint.planned_learning_unit_refs:[];
+    const objective=source.blueprint?.objective_summary||null;
+    const now=clock().getTime(),start=new Date(source.classRow.scheduled_start_at).getTime(),end=new Date(source.classRow.scheduled_end_at).getTime();
+    const arrived=firstEntry?new Date(firstEntry.created_at).getTime():null;
+    const lateMinutes=arrived==null?0:Math.max(0,Math.floor((arrived-start)/60000));
+    const coreMinimum=(source.blueprint?.blueprint_payload?.objectives||[]).filter((o)=>o.criticality==='CORE').reduce((n,o)=>n+Number(o.minimum_safe_minutes||0),0);
+    const entry=source.session?.lifecycle_state==='CLOSED'?null:{lateMinutes,minutesRemaining:Math.max(0,Math.ceil((end-now)/60000)),veryLate:lateMinutes>0&&coreMinimum>0&&(end-arrived)/60000<coreMinimum,formalAttendanceDetermined:false};
+    const interruption=source.session?.instructional_substate==='INTERRUPTED'?{cause:source.session.interruption_metadata?.cause==='SYSTEM'?'SYSTEM':'UNDETERMINED',academicPenalty:false}:null;
+    return Object.freeze({class:d11.class,controller:d11.controller,time:d11.time,serverNow:clock().toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
+      mode:MODES[mode]||'Before Class',modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,
+      requiredMaterials:Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],
+      learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
+      board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
+      boardHistoryAllowed:!restricted,notebook:notes,notebookAllowed:!restricted,summary,closureFacts,
+      studyNote:studyNote?.state==='VALIDATED_PRIVATE'?{state:'PRIVATE_VALIDATED_AWAITING_D27',published:false}:studyNote?{state:studyNote.state,published:false}:null,
+      assessmentTakeover:mode==='ASSESSMENT',assessmentOwner:'D17',classworkOwner:'D16',
+      transcriptSecondary:true,controlsEnabled:!closed,academicStateFromBrowser:false});
+  }
+  async function notebook(user,classId,input={}){
+    const ctx=await context(user.id,classId);if(RESTRICTED.has(ctx.session?.instructional_substate))fail('TEACHING_D14_NOTEBOOK_RESTRICTED',403);
+    const content=String(input.content||'').trim();if(!content||content.length>10000)fail('TEACHING_D14_NOTEBOOK_CONTENT_INVALID',400);
+    const boardItemId=input.boardItemId?String(input.boardItemId):null;
+    const idempotencyKey=String(input.idempotencyKey||'');if(!idempotencyKey||idempotencyKey.length>160)fail('TEACHING_D14_IDEMPOTENCY_REQUIRED',400);
+    const row=await repository.addNotebook({studentId:user.id,classId,content,sourceKind:boardItemId?'BOARD_REFERENCE':'PERSONAL',boardItemId,idempotencyKey});
+    return {notebookItemId:row.notebook_item_id,content:row.content,boardItemId:row.board_item_id,versionNo:Number(row.version_no)};
+  }
+  async function signal(user,classId,input={}){
+    const ctx=await context(user.id,classId);const kind=String(input.kind||'').toUpperCase();
+    if(!SIGNALS.has(kind))fail('TEACHING_D14_SIGNAL_INVALID',400);
+    if(ctx.session?.lifecycle_state==='CLOSED'&&kind!=='LEAVE')fail('TEACHING_D14_CLASS_CLOSED');
+    if(ctx.session?.instructional_substate==='ASSESSMENT'&&!['TECHNICAL_ISSUE','LEAVE'].includes(kind))fail('TEACHING_D14_ASSESSMENT_CONTROL_RESTRICTED',403);
+    const body=input.body==null?null:String(input.body).trim();if(body?.length>2000)fail('TEACHING_D14_SIGNAL_TOO_LONG',400);
+    const key=String(input.idempotencyKey||'');if(!key||key.length>160)fail('TEACHING_D14_IDEMPOTENCY_REQUIRED',400);
+    const row=await repository.recordInteraction({studentId:user.id,classId,session:ctx.session,kind,body,idempotencyKey:key});
+    return {interactionId:row.interaction_id,kind:row.interaction_kind,acceptedAt:row.created_at,academicResponse:false,controllerMutation:false,status:'RECORDED_FOR_TEACHER'};
+  }
+  async function enter(user,classId){
+    const ctx=await context(user.id,classId);
+    const row=await repository.recordInteraction({studentId:user.id,classId,session:ctx.session,kind:'JOIN',body:null,idempotencyKey:`d14-join:${classId}`});
+    return {enteredAt:row.created_at,formalAttendanceDetermined:false};
+  }
+  async function respond(user,classId,input={}){
+    if(!input.learningUnitId||!input.responsePayload)fail('TEACHING_D14_RESPONSE_INVALID',400);
+    return d12Service.captureResponse(user,classId,input);
+  }
+  async function runStudyStage({studentId,classId,stage}){
+    const ctx=await context(studentId,classId);
+    if(!ctx.blueprint||ctx.blueprint.blueprint_state!=='VALIDATED')return {state:'ROUTE_HELD',reason:'APPROVED_LESSON_PLAN_REQUIRED'};
+    const previous=await repository.latestNote(studentId,classId);
+    const closure=stage==='POST_CLASS'?await d11Repository.getClosureFact(studentId,classId):null;
+    if(stage==='POST_CLASS'&&!closure)fail('TEACHING_D14_CLOSURE_REQUIRED');
+    const summary=stage==='POST_CLASS'?await d11Repository.latestSummary(studentId,classId):null;
+    if(stage==='POST_CLASS'&&!summary)return {state:'RECONCILIATION_HELD',reason:'FINAL_CLASS_SUMMARY_REQUIRED'};
+    if(!cardSetReader||!sourceReader){
+      const reason='D27_CARD_SET_OR_APPROVED_SOURCE_UNAVAILABLE';
+      const binding={classRef:`${classId}@${ctx.classRow.schedule_version}`,lessonPlanRef:`${ctx.blueprint.lesson_blueprint_id}@${ctx.blueprint.version_no}`,closureRef:closure?.closure_fact_id||null,cardSetRef:null};
+      const state=stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD';
+      await repository.saveNote({studentId,classId,state,stage,binding,validation:{blocked:reason},closureFactId:closure?.closure_fact_id||null,idempotencyKey:`d14-note-held:${stage}:${binding.lessonPlanRef}:${binding.closureRef||'pre'}`});
+      return {state,reason,published:false};
+    }
+    const [cardSet,sourceSnapshot]=await Promise.all([cardSetReader({studentId,classId,stage}),sourceReader({studentId,classId})]);
+    const planned=ctx.blueprint.planned_learning_unit_refs||[];
+    const completed=new Set(closure?.fact_pack?.completed_objective_refs||[]);
+    const actual=[...new Set((ctx.blueprint.blueprint_payload?.objectives||[]).filter((o)=>completed.has(o.id)).map((o)=>o.learning_unit_ref))];
+    const request=noteRequest({stage,context:ctx,cardSet,sourceSnapshot,closure,summary,priorNote:previous,plannedLearningUnits:planned,actualTaughtLearningUnits:actual});
+    const key=`d14-note:${classId}:${stage}:${request.binding.lessonPlanRef}:${request.binding.cardSetRef}:${request.binding.closureRef||'pre'}`;
+    if(!studyIntelligence){
+      const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD',stage,binding:request.binding,idempotencyKey:key});
+      return {state:row.state,routeQualification:'UNQUALIFIED_UNTIL_D30',published:false};
+    }
+    // No database transaction spans the central Teaching Orchestrator call.
+    const result=await studyIntelligence.execute(request);
+    const current=await context(studentId,classId);
+    const fresh=noteRequest({stage,context:current,cardSet:await cardSetReader({studentId,classId,stage}),sourceSnapshot:await sourceReader({studentId,classId}),closure:stage==='POST_CLASS'?await d11Repository.getClosureFact(studentId,classId):null,summary:stage==='POST_CLASS'?await d11Repository.latestSummary(studentId,classId):null,priorNote:previous,plannedLearningUnits:planned,actualTaughtLearningUnits:actual});
+    if(JSON.stringify(fresh.binding)!==JSON.stringify(request.binding))fail('TEACHING_D14_STALE_NOTE_RESULT');
+    const output=result?.validatedResult?.output;
+    if(!result?.accepted||!output)return {state:'ROUTE_HELD',reason:'MODEL_RESULT_NOT_ACCEPTED'};
+    const validation=validateStageOutput({output,stage,binding:request.binding,plannedLearningUnits:planned,actualTaughtLearningUnits:actual,sourceRefs:sourceSnapshot.spans,cardSet,priorNote:previous});
+    const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'PREPARED_NOT_PUBLISHABLE':'VALIDATED_PRIVATE',stage,binding:request.binding,payload:output,validation,closureFactId:closure?.closure_fact_id||null,idempotencyKey:key});
+    return {state:row.state,published:false,noteVersionId:row.note_version_id};
+  }
+  return Object.freeze({listClasses,snapshot,notebook,signal,enter,respond,runStudyStage,publishTeacherTurn:repository.publishTeacherTurn});
+}
+module.exports={createD14Service,MODES};

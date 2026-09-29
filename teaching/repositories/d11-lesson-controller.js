@@ -851,6 +851,20 @@ function createD11LessonControllerRepository({
         previous?.lesson_blueprint_id || null,
       ]
     );
+    if (!session && outboxStore) {
+      const { TEACHING_EVENTS } = require('../events/names');
+      const { EVENT_CATEGORIES } = require('../runtime/constants');
+      const eventId=`d14-lesson-plan-approved:${blueprintId}`;
+      await outboxStore.appendUsing(tx.query.bind(tx),{
+        eventId,schemaVersion:1,eventType:TEACHING_EVENTS.LESSON_PLAN_APPROVED,
+        eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,triggerType:'committed_domain_event',
+        source:'teaching.d11',origin:'d11',actorId:studentId,aggregateType:'CLASS',aggregateId:classId,
+        aggregateVersion:versionNo,occurredAt:clock().toISOString(),effectiveAt:clock().toISOString(),dueAt:null,
+        correlationId:eventId,causationId:null,idempotencyKey:eventId,
+        payload:{student_id:studentId,class_id:classId,lesson_blueprint_id:blueprintId,lesson_blueprint_version:versionNo},
+        auditRefs:[],provenanceRefs:[`lesson-blueprint:${blueprintId}`],
+      });
+    }
     let nextSession = session;
     if (session) {
       const updated = await tx.query(

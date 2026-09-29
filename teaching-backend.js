@@ -72,6 +72,7 @@ function createTeachingRouter({
   let d11Ready = Boolean(d11Service);
   let d12Ready = Boolean(d12Service);
   let d13Ready = Boolean(d13Service);
+  let d14Ready = false;
 
   router.assertD07Ready = async () => {
     if (!foundation.d07?.repository) {
@@ -132,6 +133,12 @@ function createTeachingRouter({
     }
     await repo13.assertReady();
     d13Ready = true;
+    return true;
+  };
+  router.assertD14Ready = async () => {
+    if (!foundation.d14?.repository) return false;
+    await foundation.d14.repository.assertReady();
+    d14Ready = true;
     return true;
   };
 
@@ -463,6 +470,29 @@ function createTeachingRouter({
     router.get('/classes/:id/summary', requireD11Ready, async (req, res) => {
       try { res.json(await lessonControllerService.getSummary(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load Class Summary.'); }
+    });
+  }
+
+  const classroomService = foundation.d14?.service || null;
+  if (classroomService) {
+    const requireD14Ready = (_req,res,next) => d14Ready ? next() : res.status(503).json({error:'Classroom artifacts are unavailable until the D14 schema is ready.',code:'TEACHING_D14_SCHEMA_NOT_READY'});
+    router.get('/courses/:id/classes',requireD14Ready,async(req,res)=>{
+      try{res.json(await classroomService.listClasses(req.user,req.params.id));}catch(error){sendError(res,error,'Could not load Classes.');}
+    });
+    router.get('/classes/:id/classroom',requireD14Ready,async(req,res)=>{
+      try{res.json(await classroomService.snapshot(req.user,req.params.id));}catch(error){sendError(res,error,'Could not load Classroom.');}
+    });
+    router.post('/classes/:id/classroom/enter',requireD14Ready,async(req,res)=>{
+      try{res.json(await classroomService.enter(req.user,req.params.id));}catch(error){sendError(res,error,'Could not enter Classroom.');}
+    });
+    router.post('/classes/:id/notebook',requireD14Ready,async(req,res)=>{
+      try{res.status(201).json(await classroomService.notebook(req.user,req.params.id,req.body||{}));}catch(error){sendError(res,error,'Could not save Notebook item.');}
+    });
+    router.post('/classes/:id/interactions',requireD14Ready,async(req,res)=>{
+      try{res.status(201).json(await classroomService.signal(req.user,req.params.id,req.body||{}));}catch(error){sendError(res,error,'Could not record Classroom interaction.');}
+    });
+    router.post('/classes/:id/classroom/responses',requireD14Ready,async(req,res)=>{
+      try{res.status(201).json(await classroomService.respond(req.user,req.params.id,req.body||{}));}catch(error){sendError(res,error,'Could not capture Classroom response.');}
     });
   }
 

@@ -890,8 +890,10 @@ function createD11Service({
     const summaryKey='d11-class-summary:'+closure.closure_fact_id;
     const noteKey='d11-teacher-note:'+closure.closure_fact_id;
 
+    const { classClosureTranslation } = require('../d14/fact-pack');
+    const translation=classClosureTranslation(closure);
     let summaryState='ROUTE_HELD';
-    let summaryPayload={fact_pack_ref:closure.closure_fact_id,translation_pending:true};
+    let summaryPayload={fact_pack_ref:closure.closure_fact_id,translation_pending:true,student_facing_fact_pack:translation.factPack,translation_directive:translation.directive};
     let summaryProvenance={route_qualification:'UNQUALIFIED_UNTIL_D30',translation_only:true};
     let noteState='ROUTE_HELD';
     let notePayload={fact_pack_ref:closure.closure_fact_id,planning_note_pending:true};

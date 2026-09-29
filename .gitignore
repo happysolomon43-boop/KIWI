@@ -1,1 +1,6 @@
-node_modules/\ndist/\npublic/vendor/pixi/\n.env\n.env.*\n!.env.example\n
+node_modules/
+dist/
+public/vendor/pixi/
+.env
+.env.*
+!.env.example

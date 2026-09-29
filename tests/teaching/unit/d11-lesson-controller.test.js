@@ -277,7 +277,10 @@ test('D11 Class Summary translation uses TPF-19 and only the bounded student fac
   const closure={closure_fact_id:'cf1',fact_pack:{student_translation_fact_pack:{schema_version:'d11.student-facing-fact-pack.v1',facts:[]},internal_secret:'not-for-translator'}};
   const context={classRow:{class_id:'cl1',student_id:'u1',course_lifecycle_state:'ACTIVE',course_state_version:1,schedule_version:1},plan:{course_plan_id:'p1',version_no:1},session:{state_version:2}};
   const req=intelligence.translationRequest({context,closureFact:closure,requestKey:'sum1'});
-  assert.deepEqual(req.academicInput.fact_pack,closure.fact_pack.student_translation_fact_pack);
+  assert.deepEqual(req.academicInput.fact_pack.facts,[]);
+  assert.equal(req.academicInput.translation_directive.translation_mode,'CLASS_SUMMARY');
+  assert.equal(req.academicInput.fact_pack.snapshot_ref,'class-closure:cf1@undefined');
+  assert.equal(JSON.stringify(req.academicInput).includes('internal_secret'),false);
   assert.equal(req.academicInput.source_fact_pack_ref,'class-closure:cf1');
 });
 

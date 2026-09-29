@@ -1,6 +1,7 @@
 'use strict';
 
 const { getCapability } = require('../capability-registry');
+const { classClosureTranslation } = require('../d14/fact-pack');
 const {
   validateLessonBlueprintProposal,
   validateLiveReplanProposal,
@@ -315,6 +316,7 @@ function closureAnalysisRequest({ context, closureFact, requestKey = null }) {
 }
 
 function translationRequest({ context, closureFact, requestKey = null }) {
+  const translation = classClosureTranslation(closureFact);
   const validate = async (out) => {
     if (!out || typeof out !== 'object' || Array.isArray(out)) return {ok:false,reason:'TEACHING_D11_SUMMARY_SCHEMA_INVALID'};
     if (!String(out.student_summary || '').trim()) return {ok:false,reason:'TEACHING_D11_SUMMARY_TEXT_REQUIRED'};
@@ -339,7 +341,7 @@ function translationRequest({ context, closureFact, requestKey = null }) {
       context_kind:'class_summary',
       access_purpose:'student_facing_fact_translation',
     },
-    academicInput:{fact_pack:closureFact.fact_pack?.student_translation_fact_pack || null,translation_only:true,source_fact_pack_ref:'class-closure:' + closureFact.closure_fact_id},
+    academicInput:{translation_directive:translation.directive,fact_pack:translation.factPack,translation_only:true,source_fact_pack_ref:'class-closure:' + closureFact.closure_fact_id},
     outputSchema,
     provenanceRefs:['class-closure:' + closureFact.closure_fact_id],
     declaredAuthorityLevel:'T1',
