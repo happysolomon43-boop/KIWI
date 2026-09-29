@@ -141,7 +141,7 @@ function registerD11Runtime({
       return {disposition:RECONCILIATION_DISPOSITIONS.ACTIONABLE};
     },
     handle:async(event)=>{
-      const state=await service.startController({id:event.actor_id},event.aggregate_id,event.event_id,event.idempotency_key);
+      const state=await service.startController({id:event.actor_id},event.aggregate_id,event.event_id,event.idempotency_key,{allowRouteHeldStart:true});
       return {safeMetadata:{class_id:event.aggregate_id,controller_version:state.controller?.stateVersion || null}};
     },
   });
