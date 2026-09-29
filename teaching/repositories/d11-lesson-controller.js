@@ -224,7 +224,9 @@ function createD11LessonControllerRepository({
               " from public.teaching_student_knowledge_state_versions s" +
               " join public.teaching_learning_units lu on lu.learning_unit_id=s.learning_unit_id and lu.student_id=s.student_id" +
               " join public.teaching_course_plans cp on cp.course_plan_id=lu.course_plan_id and cp.student_id=s.student_id" +
-              " where s.student_id=$1 and cp.course_id=$2 order by s.learning_unit_id,s.version_no desc",
+              " where s.student_id=$1 and cp.course_plan_id=(" +
+              " select cp2.course_plan_id from public.teaching_course_plans cp2 where cp2.student_id=$1 and cp2.course_id=$2 order by cp2.version_no desc limit 1" +
+              " ) order by s.learning_unit_id,s.version_no desc",
               [studentId, classRow.course_id]
             ),
             query(
@@ -232,7 +234,9 @@ function createD11LessonControllerRepository({
               " from public.teaching_persistent_misconception_versions m" +
               " join public.teaching_learning_units lu on lu.learning_unit_id=m.primary_learning_unit_id and lu.student_id=m.student_id" +
               " join public.teaching_course_plans cp on cp.course_plan_id=lu.course_plan_id and cp.student_id=m.student_id" +
-              " where m.student_id=$1 and cp.course_id=$2 order by m.misconception_record_id,m.version_no desc",
+              " where m.student_id=$1 and cp.course_plan_id=(" +
+              " select cp2.course_plan_id from public.teaching_course_plans cp2 where cp2.student_id=$1 and cp2.course_id=$2 order by cp2.version_no desc limit 1" +
+              " ) order by m.misconception_record_id,m.version_no desc",
               [studentId, classRow.course_id]
             ),
           ]);
