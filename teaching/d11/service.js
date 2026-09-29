@@ -148,11 +148,9 @@ function createD11Service({
     });
   }
 
-  async function advancePreparedCandidate({studentId,workspaceId,inputBundleId,blueprint,lessonBlueprintId}) {
-    if(!preparationRepository||!workspaceId||!inputBundleId) return null;
-    await repository.recordPreparationArtifact({
-      studentId,workspaceId,inputBundleId,blueprint,lessonBlueprintId,
-    });
+  async function advancePreparedCandidate({studentId,classId,workspaceId,blueprint}) {
+    if(!preparationRepository||!workspaceId||!classId) return null;
+    await repository.recordPreparationArtifact({studentId,classId,blueprint});
     let snapshot=await preparationRepository.getWorkspaceSnapshot(workspaceId);
     if(snapshot.workspace.maturity_stage==='SKELETON') {
       await transitionPreparation(workspaceId,{nextMaturity:'STRUCTURED',reason:'D11 validated Blueprint structure'});
@@ -332,10 +330,9 @@ function createD11Service({
     });
     await advancePreparedCandidate({
       studentId:user.id,
+      classId,
       workspaceId:prep?.workspace?.workspace_id || null,
-      inputBundleId:prep?.bundle?.input_bundle_id || null,
       blueprint:validation.value,
-      lessonBlueprintId:saved.blueprint.lesson_blueprint_id,
     });
     return publicContext({ ...context, blueprint:saved.blueprint, session:saved.session || context.session });
   }
