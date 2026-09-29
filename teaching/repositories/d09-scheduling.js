@@ -72,7 +72,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const bundles=[], unresolvedCourses=[];
     for(const sibling of siblingRows){
       const bundle=await latestPlanBundle(studentId,sibling.course_id);
-      if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,reason:'COURSE_PLAN_NOT_READY'}); continue; }
+      if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,stateVersion:Number(sibling.state_version),reason:'COURSE_PLAN_NOT_READY'}); continue; }
       bundles.push({...bundle,course:sibling,semesterTimezone:semester?.timezone});
     }
     const {rows:historyRows=[]}=await query(`select * from public.teaching_timetable_versions
@@ -87,11 +87,12 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const {rows:semesterRows}=await q(tx,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,context.semester.semester_id]);
     const {rows:profileRows}=await q(tx,`select * from public.teaching_schedule_profiles
       where student_id=$1 and semester_id=$2 order by version_no desc limit 1 for update`,[studentId,context.semester.semester_id]);
+    const {rows:courseRows=[]}=await q(tx,`select * from public.teaching_courses
+      where student_id=$1 and semester_id=$2 order by created_at,course_id for update`,[studentId,context.semester.semester_id]);
     const current={semester:semesterRows?.[0]||null,profile:profileRows?.[0]||null,courses:[]};
-    for(const expected of context.courses||[]){
-      const currentCourse=await ensureCourse(studentId,expected.course.course_id,tx,true);
+    for(const currentCourse of courseRows){
       const {rows:planRows}=await q(tx,`select * from public.teaching_course_plans
-        where student_id=$1 and course_id=$2 order by version_no desc limit 1 for update`,[studentId,expected.course.course_id]);
+        where student_id=$1 and course_id=$2 order by version_no desc limit 1 for update`,[studentId,currentCourse.course_id]);
       current.courses.push({course:currentCourse,plan:planRows?.[0]||null});
     }
     return assertSchedulingContextCurrent(context,current);
