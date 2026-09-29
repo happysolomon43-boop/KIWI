@@ -54,13 +54,16 @@ ALTER TABLE public.teaching_class_sessions
   ADD COLUMN IF NOT EXISTS scheduled_end_at_snapshot timestamptz,
   ADD COLUMN IF NOT EXISTS timezone_snapshot text,
   ADD COLUMN IF NOT EXISTS event_cursor bigint NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS cycle_phase text NOT NULL DEFAULT 'TEACH',
+  ADD COLUMN IF NOT EXISTS current_learning_evidence_descriptor text,
+  ADD COLUMN IF NOT EXISTS current_assistance_level text NOT NULL DEFAULT 'NONE',
   ADD COLUMN IF NOT EXISTS resume_instructional_substate text,
   ADD COLUMN IF NOT EXISTS break_started_at timestamptz,
   ADD COLUMN IF NOT EXISTS break_ends_at timestamptz,
   ADD COLUMN IF NOT EXISTS overtime_started_at timestamptz,
   ADD COLUMN IF NOT EXISTS overtime_ceiling_at timestamptz,
   ADD COLUMN IF NOT EXISTS closure_reason text,
-  ADD COLUMN IF NOT EXISTS progress_state jsonb NOT NULL DEFAULT '{"completed_segment_refs":[],"completed_objective_refs":[]}'::jsonb,
+  ADD COLUMN IF NOT EXISTS progress_state jsonb NOT NULL DEFAULT '{"completed_segment_refs":[],"completed_objective_refs":[],"evidence_event_refs":[],"independent_evidence_objective_refs":[]}'::jsonb,
   ADD COLUMN IF NOT EXISTS controller_contract_version text NOT NULL DEFAULT 'd11.controller.v1';
 
 ALTER TABLE public.teaching_class_sessions
@@ -100,6 +103,19 @@ ALTER TABLE public.teaching_class_sessions
     'OPENING','DIAGNOSTIC','INSTRUCTION','GUIDED_PRACTICE','INDEPENDENT_PRACTICE',
     'CLASSWORK','REMEDIATION'
   ));
+ALTER TABLE public.teaching_class_sessions
+  DROP CONSTRAINT IF EXISTS teaching_class_sessions_d11_cycle_check;
+ALTER TABLE public.teaching_class_sessions
+  ADD CONSTRAINT teaching_class_sessions_d11_cycle_check
+  CHECK (
+    cycle_phase IN ('TEACH','ELICIT_CHECK','DIAGNOSE','RESPOND','VERIFY')
+    AND (current_learning_evidence_descriptor IS NULL OR current_learning_evidence_descriptor IN (
+      'DEMONSTRATION','GUIDED','INDEPENDENT_FAMILIAR','INDEPENDENT_VARIED',
+      'METHOD_SELECTION','DELAYED_RETRIEVAL','INTEGRATION_TRANSFER'
+    ))
+    AND current_assistance_level IN ('NONE','LIGHT','GUIDED','MODELED')
+  );
+
 ALTER TABLE public.teaching_class_sessions
   DROP CONSTRAINT IF EXISTS teaching_class_sessions_d11_progress_check;
 ALTER TABLE public.teaching_class_sessions
