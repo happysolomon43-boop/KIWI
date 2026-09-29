@@ -1,12 +1,13 @@
 'use strict';
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {assertNonProductionDatabase,integrationConfig,createIntegrationPool}=require('./test-db');
-const url=process.env.TEACHING_TEST_DATABASE_URL;
-const ref=process.env.TEACHING_TEST_PROJECT_REF;
-const skip=(!url||!ref)?'No non-production Supabase branch/project configured for Teaching D09 integration tests.':false;
-function guard(){if(!url||!ref)throw new Error('Non-production database configuration required.');if(ref===PROD||url.includes(PROD))throw new Error('D09 integration refuses production Supabase.');}
-test('D09 integration guard refuses production',()=>{assert.throws(()=>{if(PROD===PROD)throw new Error('D09 integration refuses production Supabase.');},/refuses production/);});
+const {PRODUCTION_PROJECT_REF,assertNonProductionDatabase,integrationConfig,createIntegrationPool}=require('./test-db');
+const {connectionString:url,projectRef:ref,skipReason:skip}=integrationConfig('D09');
+function guard(){return assertNonProductionDatabase({connectionString:url,projectRef:ref});}
+test('D09 integration guard refuses production',()=>assert.throws(
+  ()=>assertNonProductionDatabase({connectionString:'postgresql://example@localhost/test',projectRef:PRODUCTION_PROJECT_REF}),
+  /production/
+));
 test('D09 schema has RLS, student read-only access, versioning and timetable guard',{skip},async()=>{
  guard();const pool=createIntegrationPool(url);
  try{
