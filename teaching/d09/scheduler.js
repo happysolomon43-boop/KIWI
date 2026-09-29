@@ -77,6 +77,20 @@ function localDateRange(semester) {
 }
 function rowValue(row, snake, camel) { return row?.[snake] ?? row?.[camel] ?? null; }
 
+function subtractIntervals(start,end,intervals) {
+  let pieces=[{start,end}];
+  for(const interval of intervals){
+    const bs=rowValue(interval,'starts_at','startsAt'), be=rowValue(interval,'ends_at','endsAt');
+    const next=[];
+    for(const piece of pieces){
+      if(!overlap(piece.start,piece.end,bs,be)){ next.push(piece); continue; }
+      if(Date.parse(bs)>Date.parse(piece.start)) next.push({start:piece.start,end:new Date(Math.min(Date.parse(bs),Date.parse(piece.end))).toISOString()});
+      if(Date.parse(be)<Date.parse(piece.end)) next.push({start:new Date(Math.max(Date.parse(be),Date.parse(piece.start))).toISOString(),end:piece.end});
+    }
+    pieces=next.filter((piece)=>Date.parse(piece.end)>Date.parse(piece.start));
+  }
+  return pieces;
+}
 function buildPeriods(context) {
   const semester=context.semester;
   const tz=assertIanaTimezone(semester.timezone);
@@ -100,23 +114,41 @@ function buildPeriods(context) {
       if(Date.parse(start)<Date.parse(semesterStart)) start=new Date(semesterStart).toISOString();
       if(Date.parse(end)>Date.parse(semesterEnd)) end=new Date(semesterEnd).toISOString();
       if(Date.parse(end)<=Date.parse(start)) continue;
-      let excluded=false;
+      const cuts=[];
       for(const hard of hardRecurring){
-        const hs=zonedLocalToInstant(key,String(rowValue(hard,'local_start','startLocal')).slice(0,5),tz);
-        const he=zonedLocalToInstant(key,String(rowValue(hard,'local_end','endLocal')).slice(0,5),tz);
-        if(overlap(start,end,hs,he)){ excluded=true; break; }
+        cuts.push({
+          startsAt:zonedLocalToInstant(key,String(rowValue(hard,'local_start','startLocal')).slice(0,5),tz),
+          endsAt:zonedLocalToInstant(key,String(rowValue(hard,'local_end','endLocal')).slice(0,5),tz),
+        });
       }
-      if(excluded) continue;
-      const conflicting=blocks.filter((block)=>['HARD_UNAVAILABLE','BREAK','HOLIDAY','TRAVEL','PROTECTED_REVISION','PROTECTED_ASSESSMENT'].includes(String(block.kind)))
-        .filter((block)=>overlap(start,end,rowValue(block,'starts_at','startsAt'),rowValue(block,'ends_at','endsAt')));
-      if(conflicting.length) continue;
-      periods.push({
-        key,dow,start,end,kind:String(row.kind),minutes:minutesBetween(start,end),
-        preferenceWeight:Number(rowValue(row,'preference_weight','preferenceWeight'))||0,
-      });
+      for(const block of blocks){
+        if(rowValue(block,'course_id','courseId')) continue;
+        if(!['HARD_UNAVAILABLE','BREAK','HOLIDAY','TRAVEL'].includes(String(rowValue(block,'block_kind','kind')))) continue;
+        if(overlap(start,end,rowValue(block,'starts_at','startsAt'),rowValue(block,'ends_at','endsAt'))) cuts.push(block);
+      }
+      for(const piece of subtractIntervals(start,end,cuts)){
+        periods.push({
+          key,dow,start:piece.start,end:piece.end,kind:String(row.kind),minutes:minutesBetween(piece.start,piece.end),
+          preferenceWeight:Number(rowValue(row,'preference_weight','preferenceWeight'))||0,
+        });
+      }
     }
   }
   return periods.sort((a,b)=>Date.parse(a.start)-Date.parse(b.start) || b.preferenceWeight-a.preferenceWeight);
+}
+function isProtectedBlockCompatible(block,taskKind){
+  const kind=String(rowValue(block,'block_kind','kind'));
+  if(kind==='PROTECTED_REVISION') return taskKind==='REVISION_RESERVE';
+  if(kind==='PROTECTED_ASSESSMENT') return taskKind==='ASSESSMENT_RESERVE';
+  return false;
+}
+function conflictsForWork(context,work,task,start,end){
+  return (context.blocks||[]).some((block)=>{
+    const courseId=rowValue(block,'course_id','courseId');
+    if(courseId && String(courseId)!==String(work.courseId)) return false;
+    if(!overlap(start,end,rowValue(block,'starts_at','startsAt'),rowValue(block,'ends_at','endsAt'))) return false;
+    return !isProtectedBlockCompatible(block,task.kind);
+  });
 }
 function topologicalUnits(courseBundle) {
   const units=courseBundle.units || [];
@@ -243,6 +275,8 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
         if(available<=0) continue;
         const minutes=Math.min(task.remaining,available,scheduleLimit-scheduledTotal);
         if(minutes<=0) continue;
+        const candidateEnd=new Date(cursorMs+minutes*MINUTE_MS).toISOString();
+        if(conflictsForWork(context,w,task,period.cursor,candidateEnd)) continue;
         const score=preferenceScore(period,w,preferences)
           - (w.lastDate===period.key?40:0)
           - (period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY'?10000:0)
@@ -341,7 +375,9 @@ function validateEditedSchedule(context, existingSlots, edits,{now=new Date().to
       const e=new Error('Edited slot falls outside Semester boundaries.'); e.status=422; e.code='TEACHING_D09_HARD_SEMESTER_BOUNDARY_VIOLATION'; throw e;
     }
     for(const block of hardBlocks){
-      if(overlap(slot.startsAt,slot.endsAt,block.starts_at,block.ends_at)){
+      const blockCourse=rowValue(block,'course_id','courseId');
+      if(blockCourse && String(blockCourse)!==String(slot.courseId)) continue;
+      if(overlap(slot.startsAt,slot.endsAt,rowValue(block,'starts_at','startsAt'),rowValue(block,'ends_at','endsAt')) && !isProtectedBlockCompatible(block,slot.kind)){
         const e=new Error('Edited slot conflicts with a hard unavailable, break, holiday, travel or protected period.'); e.status=422; e.code='TEACHING_D09_HARD_CONSTRAINT_VIOLATION'; throw e;
       }
     }
@@ -394,5 +430,5 @@ function projectCalendarSlot(slot,currentTimeZone) {
 
 module.exports = {
   DEFAULT_HORIZON,dateParts,dateKey,addDateKey,weekdayOfKey,zonedLocalToInstant,overlap,minutesBetween,
-  buildPeriods,topologicalUnits,buildCourseWork,computeSchedule,validateEditedSchedule,projectCalendarSlot,
+  subtractIntervals,buildPeriods,topologicalUnits,buildCourseWork,computeSchedule,validateEditedSchedule,projectCalendarSlot,
 };
