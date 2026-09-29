@@ -23,6 +23,7 @@ const {
 } = require('../../../teaching/orchestrator/composition');
 const { createTransactionalTeachingMutation } = require('../../../teaching/runtime/transactional-mutation');
 const { TEACHING_EVENTS } = require('../../../teaching/events/names');
+const { validateTeachingEvent } = require('../../../teaching/events/contracts');
 const { createTeachingEventSubscriberRegistry } = require('../../../teaching/events/dispatcher');
 const {
   evaluateWorkspaceTransition,
@@ -40,6 +41,9 @@ const {
   createPreparationWorkflowPlan,
   executePreparationWorkflow,
 } = require('../../../teaching/preparation/workflow');
+const {
+  toCanonicalEvent,
+} = require('../../../teaching/runtime/durable-outbox-runtime');
 const {
   createPreparationPublishedEventHandlers,
   registerPreparationPublishedEventSubscribers,
@@ -217,6 +221,34 @@ function harness({
   });
   return { orchestrator, getOwnerCalls: () => ownerCalls };
 }
+
+test('D05 durable outbox normalizes PostgreSQL Date timestamps before event validation', () => {
+  const canonical = toCanonicalEvent({
+    event_id: 'evt-outbox-date',
+    schema_version: 1,
+    event_type: TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    event_category: 'committed_domain_event',
+    trigger_type: 'committed_domain_event',
+    source: 'teaching_preparation',
+    origin: 'teaching_preparation',
+    actor_id: null,
+    aggregate_type: 'preparation_workspace',
+    aggregate_id: 'workspace-1',
+    aggregate_version: 1,
+    occurred_at: new Date('2026-09-29T05:38:45.106Z'),
+    effective_at: null,
+    correlation_id: 'corr-outbox-date',
+    causation_id: null,
+    idempotency_key: 'outbox-date-1',
+    payload: {},
+    audit_refs: [],
+    provenance_refs: [],
+  });
+
+  assert.equal(canonical.occurredAt, '2026-09-29T05:38:45.106Z');
+  assert.equal(canonical.effectiveAt, null);
+  assert.doesNotThrow(() => validateTeachingEvent(canonical));
+});
 
 test('D05 trigger normalization preserves authority categories and server time', () => {
   const command = normalizeOrchestrationTrigger({
@@ -771,6 +803,87 @@ test('D05 scheduled due-event publication can share the authoritative owner tran
   ]);
 });
 
+
+test('D05 durable outbox canonicalizes pg Date timestamps before event validation', () => {
+  const { toCanonicalEvent } = require('../../../teaching/runtime/durable-outbox-runtime');
+  const event = toCanonicalEvent({
+    event_id: 'outbox-date-1',
+    schema_version: 1,
+    event_type: TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    event_category: 'committed_domain_event',
+    trigger_type: 'committed_domain_event',
+    source: 'teaching_preparation',
+    origin: 'teaching_preparation',
+    actor_id: null,
+    aggregate_type: 'preparation_workspace',
+    aggregate_id: 'workspace-date-1',
+    aggregate_version: 1,
+    occurred_at: new Date('2026-09-29T05:38:45.106Z'),
+    effective_at: new Date('2026-09-30T05:38:45.106Z'),
+    correlation_id: 'corr-date-1',
+    causation_id: null,
+    idempotency_key: 'outbox-date-1:key',
+    payload: { target_ref: 'semester-schedule' },
+    audit_refs: [],
+    provenance_refs: [],
+  });
+  assert.equal(event.occurredAt, '2026-09-29T05:38:45.106Z');
+  assert.equal(event.effectiveAt, '2026-09-30T05:38:45.106Z');
+});
+
+test('D05 durable outbox publishes a Date-backed PostgreSQL row through canonical event validation', async () => {
+  const { createDurableTeachingOutboxRuntime } = require('../../../teaching/runtime/durable-outbox-runtime');
+  const { validateTeachingEvent } = require('../../../teaching/events/contracts');
+  const seen = [];
+  let published = 0;
+  const row = {
+    event_id: 'outbox-date-2',
+    schema_version: 1,
+    event_type: TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    event_category: 'committed_domain_event',
+    trigger_type: 'committed_domain_event',
+    source: 'teaching_preparation',
+    origin: 'teaching_preparation',
+    actor_id: null,
+    aggregate_type: 'preparation_workspace',
+    aggregate_id: 'workspace-date-2',
+    aggregate_version: 1,
+    occurred_at: new Date('2026-09-29T05:38:45.106Z'),
+    effective_at: null,
+    correlation_id: 'corr-date-2',
+    causation_id: null,
+    idempotency_key: 'outbox-date-2:key',
+    payload: { target_ref: 'semester-schedule' },
+    audit_refs: [],
+    provenance_refs: [],
+    attempt_count: 1,
+    claim_token: 'claim-date-2',
+  };
+  const runtime = createDurableTeachingOutboxRuntime({
+    store: {
+      async releaseExpiredClaims() { return 0; },
+      async claimPending() { return [row]; },
+      async markPublished(event) {
+        assert.equal(event.event_id, row.event_id);
+        published += 1;
+      },
+      async retry() { throw new Error('valid Date-backed row must not enter retry'); },
+    },
+    publish: async (event) => {
+      const validated = validateTeachingEvent(event);
+      seen.push(validated);
+      return { ok: true };
+    },
+    workerId: 'test-outbox-date-worker',
+    timers: { setInterval() { return null; }, clearInterval() {} },
+  });
+  const result = await runtime.tick();
+  assert.equal(result.claimed, 1);
+  assert.deepEqual(result.outcomes, ['PUBLISHED']);
+  assert.equal(published, 1);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].occurredAt, '2026-09-29T05:38:45.106Z');
+});
 
 test('D05 durable published-event registry fails closed when no subscriber exists', async () => {
   const registry = createTeachingEventSubscriberRegistry();

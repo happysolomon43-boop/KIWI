@@ -6,6 +6,15 @@ function parseBounded(value, fallback, min, max) {
   return Math.max(min, Math.min(Math.floor(numeric), max));
 }
 
+function canonicalTimestamp(value) {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) throw new TypeError('Teaching outbox row contains an invalid Date timestamp.');
+    return value.toISOString();
+  }
+  return String(value);
+}
+
 function toCanonicalEvent(row) {
   return Object.freeze({
     eventId: row.event_id,
@@ -19,8 +28,8 @@ function toCanonicalEvent(row) {
     aggregateType: row.aggregate_type,
     aggregateId: row.aggregate_id,
     aggregateVersion: row.aggregate_version,
-    occurredAt: row.occurred_at,
-    effectiveAt: row.effective_at,
+    occurredAt: canonicalTimestamp(row.occurred_at),
+    effectiveAt: canonicalTimestamp(row.effective_at),
     correlationId: row.correlation_id,
     causationId: row.causation_id,
     idempotencyKey: row.idempotency_key,
@@ -87,6 +96,7 @@ function createDurableTeachingOutboxRuntime({
             logger?.error?.('[KIWI Teaching] outbox publication exhausted current retry budget; retained durably', {
               eventId: event.event_id,
               code: error?.code || null,
+              message: error?.message || String(error),
             });
             outcomes.push('RETAINED_FOR_RECOVERY');
           } else {
@@ -139,4 +149,4 @@ function createDurableTeachingOutboxRuntime({
   return Object.freeze({ tick, start, stop, status });
 }
 
-module.exports = { createDurableTeachingOutboxRuntime, toCanonicalEvent };
+module.exports = { createDurableTeachingOutboxRuntime, toCanonicalEvent, canonicalTimestamp };

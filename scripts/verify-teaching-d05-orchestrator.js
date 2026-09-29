@@ -89,6 +89,13 @@ for (const file of d05JsFiles) {
 }
 
 
+const outboxRuntime = read('teaching/runtime/durable-outbox-runtime.js');
+for (const fragment of [
+  'function canonicalTimestamp(value)',
+  'occurredAt: canonicalTimestamp(row.occurred_at)',
+  'effectiveAt: canonicalTimestamp(row.effective_at)',
+]) assert(outboxRuntime.includes(fragment), `D05 durable outbox timestamp normalization missing: ${fragment}`);
+
 const serverEntry = read('index.js');
 for (const fragment of [
   "createTeachingD05RuntimePlatform",
