@@ -7,7 +7,7 @@ const path=require('node:path');
 const {
   zonedLocalToInstant,computeSchedule,validateEditedSchedule,projectCalendarSlot,
 }=require('../../../teaching/d09/scheduler');
-const {normalizeScheduleInputs,headroomPolicy}=require('../../../teaching/d09/contracts');
+const {normalizeScheduleInputs,headroomPolicy,assertSchedulingContextCurrent}=require('../../../teaching/d09/contracts');
 const {schedulingRequest}=require('../../../teaching/d09/intelligence');
 const {createD09Service}=require('../../../teaching/d09/service');
 
@@ -24,7 +24,7 @@ function bundle(id,unitCount=4,minutes=60){
 }
 function context(courses=[bundle('c1')],opts={}){
   return {
-    semester:semester(),profile:{profile_id:'sp1',version_no:1,preferences:{avoidConsecutiveSameCourseDays:true},settings:{horizon:{imminentDays:7,concreteDays:28}}},
+    semester:semester(),profile:{profile_id:'sp1',version_no:1,semester_state_version:1,preferences:{avoidConsecutiveSameCourseDays:true},settings:{horizon:{imminentDays:7,concreteDays:28}}},
     availability:opts.availability||availability(),blocks:opts.blocks||[],deadlines:opts.deadlines||[],reserves:opts.reserves||[],
     courses,unresolvedCourses:[],
   };
@@ -96,6 +96,70 @@ test('D09 protected periods admit intended reserve work and reject unrelated edi
   }],[{slotId:'s1',startsAt:'2026-10-05T09:30:00Z',endsAt:'2026-10-05T10:30:00Z'}]),{code:'TEACHING_D09_HARD_CONSTRAINT_VIOLATION'});
 });
 
+test('D09 stable timetable recalculation retains prior feasible placements before soft preference churn',()=>{
+  const base=context([bundle('c1',4,60)],{availability:availability([1,2,3,4,5],'09:00','12:00')});
+  const initial=computeSchedule(base,{now:'2026-09-29T04:00:00Z'});
+  const recalculation=context([bundle('c1',4,60)],{availability:availability([1,2,3,4,5],'09:00','12:00')});
+  recalculation.profile={...recalculation.profile,preferences:{avoidConsecutiveSameCourseDays:true,preferredStartTimes:['11:00']}};
+  recalculation.priorSlots=initial.schedule.map((slot,index)=>({
+    timetable_slot_id:'prior-'+index,course_id:slot.courseId,slot_kind:slot.kind,
+    starts_at:slot.startsAt,ends_at:slot.endsAt,timezone:slot.timezone,
+  }));
+  const next=computeSchedule(recalculation,{now:'2026-09-29T04:00:00Z'});
+  assert.equal(next.outcome,'FEASIBLE');
+  assert.equal(next.metrics.stableSlotsRetained,initial.schedule.length);
+  assert.deepEqual(
+    next.schedule.map((slot)=>[slot.courseId,slot.startsAt,slot.endsAt]),
+    initial.schedule.map((slot)=>[slot.courseId,slot.startsAt,slot.endsAt]),
+  );
+});
+
+test('D09 sparse availability and recovery-headroom exhaustion fail closed',()=>{
+  const sparse=computeSchedule(context([bundle('c1',8,60)],{availability:availability([1],'09:00','10:00')}),{now:'2026-09-29T04:00:00Z'});
+  assert.equal(sparse.outcome,'INFEASIBLE');
+  assert.ok(sparse.reasons.includes('REQUIRED_INSTRUCTIONAL_LOAD_UNSCHEDULED'));
+  const headroomContext=context([bundle('c1',9,60)],{availability:availability([1,2],'09:00','14:00')});
+  headroomContext.semester={...headroomContext.semester,ends_at:'2026-10-06T14:00:00Z'};
+  const headroom=computeSchedule(headroomContext,{now:'2026-09-29T04:00:00Z'});
+  assert.equal(headroom.outcome,'INFEASIBLE');
+  assert.ok(headroom.reasons.includes('RECOVERY_HEADROOM_BELOW_MINIMUM'));
+});
+
+test('D09 long breaks are hard scheduling exclusions and hard deadlines are never crossed',()=>{
+  const breakBlock={block_kind:'BREAK',starts_at:'2026-10-05T00:00:00Z',ends_at:'2026-10-16T23:59:59Z'};
+  const withBreak=computeSchedule(context([bundle('c1',4,60)],{blocks:[breakBlock]}),{now:'2026-09-29T04:00:00Z'});
+  assert.ok(withBreak.schedule.every((slot)=>!((Date.parse(slot.startsAt)<Date.parse(breakBlock.ends_at))&&(Date.parse(breakBlock.starts_at)<Date.parse(slot.endsAt)))));
+  const deadlineAt='2026-10-02T10:00:00Z';
+  const deadline=computeSchedule(context([bundle('c1',5,60)],{deadlines:[{course_id:'c1',deadline_kind:'HARD',deadline_at:deadlineAt}]}),{now:'2026-09-29T04:00:00Z'});
+  assert.equal(deadline.outcome,'INFEASIBLE');
+  assert.ok(deadline.reasons.includes('HARD_DEADLINE_CANNOT_BE_MET:c1'));
+  assert.ok(deadline.schedule.every((slot)=>Date.parse(slot.endsAt)<=Date.parse(deadlineAt)));
+});
+
+test('D09 stale Semester, profile, Course or Course Plan versions invalidate a scheduling result',()=>{
+  const expected=context();
+  const current={
+    semester:{...expected.semester},
+    profile:{...expected.profile},
+    courses:expected.courses.map((item)=>({course:{...item.course},plan:{...item.plan}})),
+  };
+  assert.equal(assertSchedulingContextCurrent(expected,current),true);
+  assert.throws(()=>assertSchedulingContextCurrent(expected,{...current,semester:{...current.semester,state_version:2}}),{code:'TEACHING_D09_STALE_SCHEDULING_CONTEXT'});
+  assert.throws(()=>assertSchedulingContextCurrent(expected,{...current,profile:{...current.profile,version_no:2}}),{code:'TEACHING_D09_STALE_SCHEDULING_CONTEXT'});
+  assert.throws(()=>assertSchedulingContextCurrent(expected,{...current,courses:[{...current.courses[0],course:{...current.courses[0].course,state_version:2}}]}),{code:'TEACHING_D09_STALE_SCHEDULING_CONTEXT'});
+  assert.throws(()=>assertSchedulingContextCurrent(expected,{...current,courses:[{...current.courses[0],plan:{...current.courses[0].plan,version_no:2}}]}),{code:'TEACHING_D09_STALE_SCHEDULING_CONTEXT'});
+  assert.throws(()=>assertSchedulingContextCurrent(expected,{...current,courses:[...current.courses,{course:{...bundle('c2').course,semester_id:'sem1'},plan:bundle('c2').plan}]}),{code:'TEACHING_D09_STALE_SCHEDULING_CONTEXT'});
+});
+
+test('D09 canonical scheduling module seam exposes the implemented Scheduler authority',()=>{
+  const scheduling=require('../../../teaching/modules/scheduling');
+  assert.equal(scheduling.id,'scheduling');
+  assert.equal(scheduling.authority,'scheduler');
+  assert.equal(scheduling.status,'implemented-d09');
+  assert.equal(typeof scheduling.computeSchedule,'function');
+  assert.equal(typeof scheduling.createD09Service,'function');
+});
+
 test('D09 calendar timezone conversion is display-only',()=>{
   const projected=projectCalendarSlot({starts_at:'2026-10-01T08:00:00Z',ends_at:'2026-10-01T09:00:00Z'},'Africa/Lagos');
   assert.equal(projected.displayTimeZone,'Africa/Lagos');
@@ -124,11 +188,14 @@ test('D09 authoritative timetable proposal commits through D05 and does not call
     async getScheduleReview(){return {...context(),timetable:null,slots:[],feasibility:null,debtMinutes:0};},
     async listSemesters(){return [];},
   };
-  const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){mutationCalls+=1;const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
+  let replayKeys=[];
+  const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){mutationCalls+=1;const result=await mutate({});const first=buildEvent(result),second=buildEvent(result);replayKeys=[first.idempotencyKey,second.idempotencyKey];return {mutationResult:result};}};
   const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z'),intelligence:{execute(){aiCalls+=1;}}});
   await service.proposeTimetable({id:'u1'},'c1');
   assert.equal(mutationCalls,1);
   assert.equal(aiCalls,0);
+  assert.equal(replayKeys.length,2);
+  assert.equal(replayKeys[0],replayKeys[1]);
 });
 
 test('D09 migration creates versioned Scheduler truth with RLS and no authenticated mutation',()=>{
@@ -138,6 +205,15 @@ test('D09 migration creates versioned Scheduler truth with RLS and no authentica
   assert.match(sql,/teaching_guard_d09_timetable_update/);
   assert.match(sql,/REVOKE INSERT,UPDATE,DELETE,TRUNCATE[\s\S]*FROM authenticated/);
   assert.doesNotMatch(sql,/GRANT\s+(INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,140}TO\s+authenticated/i);
+});
+
+test('D09 repository invalidates prior timetable state and revalidates authoritative versions inside proposal transaction',()=>{
+  const src=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d09-scheduling.js'),'utf8');
+  const contracts=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d09/contracts.js'),'utf8');
+  assert.match(contracts,/TEACHING_D09_STALE_SCHEDULING_CONTEXT/);
+  assert.match(src,/assertContextCurrentUsing\(tx,\{studentId,context\}\)/);
+  assert.match(src,/timetable_state='STALE'/);
+  assert.match(src,/priorChildrenFull=previous/);
 });
 
 test('D09 implementation does not select providers, activate Courses, write SKM or delete curriculum',()=>{

@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { digest } = require('../d09/contracts');
+const { digest, assertSchedulingContextCurrent } = require('../d09/contracts');
 
 function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=()=>new Date()}={}) {
   if(typeof query!=='function'||typeof withTransaction!=='function'||typeof randomUUID!=='function') throw new TypeError('D09 repository requires query, withTransaction and randomUUID.');
@@ -72,10 +72,30 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const bundles=[], unresolvedCourses=[];
     for(const sibling of siblingRows){
       const bundle=await latestPlanBundle(studentId,sibling.course_id);
-      if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,reason:'COURSE_PLAN_NOT_READY'}); continue; }
+      if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,stateVersion:Number(sibling.state_version),reason:'COURSE_PLAN_NOT_READY'}); continue; }
       bundles.push({...bundle,course:sibling,semesterTimezone:semester?.timezone});
     }
-    return {course,semester,profile,...children,courses:bundles,unresolvedCourses};
+    const {rows:historyRows=[]}=await query(`select * from public.teaching_timetable_versions
+      where student_id=$1 and semester_id=$2 order by version_no desc limit 1`,[studentId,course.semester_id]);
+    const priorTimetable=historyRows[0]||null;
+    const {rows:priorSlots=[]}=priorTimetable
+      ? await query('select * from public.teaching_timetable_slots where student_id=$1 and timetable_version_id=$2 order by starts_at',[studentId,priorTimetable.timetable_version_id])
+      : {rows:[]};
+    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots};
+  }
+  async function assertContextCurrentUsing(tx,{studentId,context}){
+    const {rows:semesterRows}=await q(tx,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,context.semester.semester_id]);
+    const {rows:profileRows}=await q(tx,`select * from public.teaching_schedule_profiles
+      where student_id=$1 and semester_id=$2 order by version_no desc limit 1 for update`,[studentId,context.semester.semester_id]);
+    const {rows:courseRows=[]}=await q(tx,`select * from public.teaching_courses
+      where student_id=$1 and semester_id=$2 order by created_at,course_id for update`,[studentId,context.semester.semester_id]);
+    const current={semester:semesterRows?.[0]||null,profile:profileRows?.[0]||null,courses:[]};
+    for(const currentCourse of courseRows){
+      const {rows:planRows}=await q(tx,`select * from public.teaching_course_plans
+        where student_id=$1 and course_id=$2 order by version_no desc limit 1 for update`,[studentId,currentCourse.course_id]);
+      current.courses.push({course:currentCourse,plan:planRows?.[0]||null});
+    }
+    return assertSchedulingContextCurrent(context,current);
   }
   async function ensurePplBundleUsing(tx,{studentId,semester,profile,dependencies,changedRefs=[]}){
     const {rows:existingRows}=await q(tx,`select * from teaching_preparation.workspaces
@@ -156,6 +176,9 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const referencedCourseIds=[...new Set([...input.blocks.map((x)=>x.courseId).filter(Boolean),...input.deadlines.map((x)=>x.courseId).filter(Boolean),...input.reserves.map((x)=>x.courseId).filter(Boolean)].map(String))];
     for(const refCourseId of referencedCourseIds){const {rows:owned}=await q(tx,'select course_id from public.teaching_courses where student_id=$1 and course_id=$2 and (semester_id=$3 or course_id=$4)',[studentId,refCourseId,semester.semester_id,courseId]);if(!owned?.[0]){const e=new Error('Schedule input references a Course outside this Semester.');e.status=422;e.code='TEACHING_D09_CROSS_SEMESTER_REFERENCE';throw e;}}
     const previous=await latestProfile(studentId,semester.semester_id,tx);
+    const priorChildrenFull=previous
+      ? await profileChildren(studentId,previous.profile_id,tx)
+      : {availability:[],blocks:[],deadlines:[],reserves:[]};
     const {rows:vrows}=await q(tx,'select coalesce(max(version_no),0)+1 v from public.teaching_schedule_profiles where semester_id=$1',[semester.semester_id]);
     const version=Number(vrows[0].v), profileId=randomUUID();
     const settings={horizon:{imminentDays:7,concreteDays:28},operational_policy_ref:'rolling-horizon.operational.v1'};
@@ -182,16 +205,21 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       schedule_reserve_id,student_id,profile_id,course_id,reserve_kind,minutes,protected_start_at,protected_end_at
     ) values($1,$2,$3,$4,$5,$6,$7,$8)`,
       [randomUUID(),studentId,profileId,r.courseId||r.course_id,r.kind||r.reserve_kind,Number(r.minutes),r.protectedStartAt||r.protected_start_at||null,r.protectedEndAt||r.protected_end_at||null]);
+    const {rowCount:staledTimetableCount=0}=await q(tx,`update public.teaching_timetable_versions
+      set timetable_state='STALE'
+      where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')`,
+      [studentId,semester.semester_id]);
     const deps=[
       {dependency_kind:'SEMESTER',authoritative_owner_ref:'scheduler',aggregate_ref:'semester:'+semester.semester_id,version_ref:String(semester.state_version)},
       {dependency_kind:'SCHEDULE_PROFILE',authoritative_owner_ref:'scheduler',aggregate_ref:'schedule-profile:'+profileId,version_ref:String(version)},
     ];
     const ppl=await ensurePplBundleUsing(tx,{studentId,semester,profile,dependencies:deps,changedRefs:deps.map((d)=>d.aggregate_ref)});
     await auditUsing(tx,{studentId,action:'scheduler.inputs.commit',entityType:'SEMESTER',entityId:semester.semester_id,stateVersionRef:semester.state_version,
-      beforeRef:{profile_id:previous?.profile_id||null},afterRef:{profile_id:profileId,profile_version:version},safeMetadata:{course_id:courseId}});
+      beforeRef:{profile_id:previous?.profile_id||null},afterRef:{profile_id:profileId,profile_version:version},safeMetadata:{course_id:courseId,staled_timetable_count:Number(staledTimetableCount)||0}});
     return {semester,profile,ppl};
   }
   async function saveProposalUsing(tx,{studentId,courseId,context,result,source='DETERMINISTIC_INITIAL'}){
+    await assertContextCurrentUsing(tx,{studentId,context});
     await ensureCourse(studentId,courseId,tx,true);
     const {rows:vrows}=await q(tx,'select coalesce(max(version_no),0)+1 v from public.teaching_timetable_versions where semester_id=$1',[context.semester.semester_id]);
     const version=Number(vrows[0].v), timetableId=randomUUID();
@@ -260,7 +288,20 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const latest=context.semester?await latestTimetable(studentId,context.semester.semester_id):{timetable:null,slots:[],feasibility:null};
     const {rows:debt}=context.semester?await query(`select coalesce(sum(delta_minutes),0)::int debt_minutes from public.teaching_schedule_debt_entries
       where student_id=$1 and semester_id=$2`,[studentId,context.semester.semester_id]):{rows:[{debt_minutes:0}]};
-    return {...context,...latest,debtMinutes:Math.max(0,Number(debt?.[0]?.debt_minutes)||0)};
+    const refs=latest.timetable?.course_plan_refs||[];
+    const currentByCourse=new Map((context.courses||[]).map((bundle)=>[String(bundle.course.course_id),bundle]));
+    const staleSchedule=Boolean(latest.timetable) && (
+      String(latest.timetable.profile_id)!==String(context.profile?.profile_id||'')
+      || refs.length!==(context.courses||[]).length
+      || refs.some((ref)=>{
+        const bundle=currentByCourse.get(String(ref.course_id));
+        return !bundle
+          || String(ref.course_plan_id)!==String(bundle.plan.course_plan_id)
+          || Number(ref.version_no)!==Number(bundle.plan.version_no)
+          || Number(ref.state_version)!==Number(bundle.course.state_version);
+      })
+    );
+    return {...context,...latest,staleSchedule,debtMinutes:Math.max(0,Number(debt?.[0]?.debt_minutes)||0)};
   }
   async function listCalendar(studentId,{from,to}={}){
     const params=[studentId], filters=[];
@@ -280,7 +321,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
   }
 
   return Object.freeze({
-    assertReady,listSemesters,getSchedulingContext,saveScheduleInputsUsing,saveProposalUsing,latestTimetable,getScheduleReview,listCalendar,
+    assertReady,listSemesters,getSchedulingContext,assertContextCurrentUsing,saveScheduleInputsUsing,saveProposalUsing,latestTimetable,getScheduleReview,listCalendar,
   });
 }
 module.exports={createD09SchedulingRepository};

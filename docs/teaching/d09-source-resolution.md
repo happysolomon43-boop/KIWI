@@ -23,3 +23,8 @@ Live-state reconciliation:
 - Teaching model-backed routes remain UNQUALIFIED until D30; D09 core does not depend on them.
 
 No frozen-design contradiction requiring change control was identified.
+
+
+## 2026-09-29 corrective closure resolution
+
+A post-merge closure audit found implementation-compliance gaps that were not source-authority contradictions: the existing `teaching/modules/scheduling/index.js` seam remained descriptor-only; proposal persistence did not revalidate all captured Semester/profile/Course/Course Plan versions inside the commit transaction; prior timetable state was not used to implement TCH-0124 stability; required stale/replay/long-break/recovery-exhaustion regressions were incomplete; and `saveScheduleInputsUsing()` referenced an undefined `priorChildrenFull` variable. These findings align with, rather than contradict, the accepted D08→D09 handoff. No change-control exception is required. The corrective implementation therefore makes the existing scheduling module seam substantive, invalidates timetable versions when Stage 4 inputs change, revalidates the complete Semester Course set and current Course Plan versions before proposal commit, retains prior feasible slots during recalculation, fixes preservation of other-Course deadlines/reserves, and adds the missing regression coverage. D10 remains out of scope until this corrective branch is accepted and deployed.

@@ -61,6 +61,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       horizonStage:s.horizon_stage,learningUnitRefs:s.learning_unit_refs,plannedMinutes:s.planned_minutes,
       exceptionCodes:s.exception_codes,rationale:s.rationale,
     }));
+    const scheduleStale=Boolean(review.staleSchedule);
     const past=slots.filter((s)=>Date.parse(s.endsAt)<=Date.parse(serverNow)).length;
     return Object.freeze({
       stage:'PROPOSED_TIMETABLE_AND_FEASIBILITY',
@@ -79,11 +80,11 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       }):null,
       timetable:review.timetable?Object.freeze({
         timetableVersionId:review.timetable.timetable_version_id,version:Number(review.timetable.version_no),
-        state:review.timetable.timetable_state,sourceKind:review.timetable.source_kind,createdAt:review.timetable.created_at,
+        state:scheduleStale?'STALE':review.timetable.timetable_state,sourceKind:review.timetable.source_kind,createdAt:review.timetable.created_at,
       }):null,
       slots:Object.freeze(slots),
       feasibility:review.feasibility?Object.freeze({
-        outcome:review.feasibility.outcome,evaluatedAt:review.feasibility.evaluated_at,
+        outcome:scheduleStale?'STALE':review.feasibility.outcome,evaluatedAt:review.feasibility.evaluated_at,
         metrics:review.feasibility.capacity_metrics,reasons:review.feasibility.reasons,alternatives:review.feasibility.alternatives,
         headroomPolicyVersion:review.feasibility.headroom_policy_version,
       }):null,
@@ -93,6 +94,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
         verifiedLearning:Object.freeze({status:'UNAVAILABLE_UNTIL_D13',source:'STUDENT_KNOWLEDGE_MODEL_OWNER_NOT_IMPLEMENTED_IN_D09'}),
       }),
       scheduleHealth:Object.freeze({
+        state:scheduleStale?'STALE_RECALCULATION_REQUIRED':'CURRENT',
         debtState:Number(review.debtMinutes)>0?'SCHEDULE_DEBT_PRESENT':'NO_SCHEDULE_DEBT',
         rawDebtMinutesExposedToStudent:false,
         behindDiagnosis:Number(review.debtMinutes)>0

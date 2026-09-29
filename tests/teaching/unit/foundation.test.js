@@ -156,13 +156,19 @@ test('privileged academic operations fail closed outside the server trust bounda
   );
 });
 
-test('canonical Teaching module package boundaries exist without academic behavior', () => {
+test('canonical Teaching module package boundaries remain explicit as later deliveries mature individual modules', () => {
   assert.deepEqual(Object.keys(modules).sort(), [
     'assessment','attendance','classroom','controller','courses','curriculum','grading',
     'knowledge','lessons','pedagogy','progression','requests','scheduling','sharedUi',
     'teacherIdentity','work',
   ].sort());
-  for (const descriptor of Object.values(modules)) {
+  for (const [id, descriptor] of Object.entries(modules)) {
+    if (id === 'scheduling') {
+      assert.equal(descriptor.status, 'implemented-d09');
+      assert.equal(descriptor.authority, 'scheduler');
+      assert.equal(typeof descriptor.computeSchedule, 'function');
+      continue;
+    }
     assert.equal(descriptor.status, 'foundation-only');
     assert.equal(descriptor.authority, 'none-d01-foundation');
   }

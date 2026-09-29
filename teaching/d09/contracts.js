@@ -193,10 +193,70 @@ function assertCurrentCoursePlan(course, plan, scopeChanges=[]) {
   }
   return true;
 }
+function assertSchedulingContextCurrent(expected, current) {
+  const stale=[];
+  const expectedSemester=expected?.semester, currentSemester=current?.semester;
+  if(!expectedSemester || !currentSemester
+    || String(expectedSemester.semester_id)!==String(currentSemester.semester_id)
+    || Number(expectedSemester.state_version)!==Number(currentSemester.state_version)) {
+    stale.push('SEMESTER');
+  }
+  const expectedProfile=expected?.profile, currentProfile=current?.profile;
+  if(!expectedProfile || !currentProfile
+    || String(expectedProfile.profile_id)!==String(currentProfile.profile_id)
+    || Number(expectedProfile.version_no)!==Number(currentProfile.version_no)
+    || Number(expectedProfile.semester_state_version)!==Number(currentProfile.semester_state_version)) {
+    stale.push('SCHEDULE_PROFILE');
+  }
+  const currentCourses=new Map((current?.courses||[]).map((bundle)=>[String(bundle.course?.course_id),bundle]));
+  const expectedCourseIds=new Set([
+    ...(expected?.courses||[]).map((bundle)=>String(bundle.course?.course_id||'')),
+    ...(expected?.unresolvedCourses||[]).map((item)=>String(item.courseId||'')),
+  ].filter(Boolean));
+  const currentCourseIds=new Set(currentCourses.keys());
+  if(expectedCourseIds.size!==currentCourseIds.size
+    || [...expectedCourseIds].some((courseId)=>!currentCourseIds.has(courseId))) {
+    stale.push('SEMESTER_COURSE_SET');
+  }
+  for(const bundle of expected?.courses||[]){
+    const courseId=String(bundle.course?.course_id||'');
+    const now=currentCourses.get(courseId);
+    if(!now
+      || Number(bundle.course?.state_version)!==Number(now.course?.state_version)
+      || String(bundle.course?.semester_id||'')!==String(now.course?.semester_id||'')) {
+      stale.push('COURSE:'+courseId);
+      continue;
+    }
+    if(!now.plan
+      || String(bundle.plan?.course_plan_id)!==String(now.plan?.course_plan_id)
+      || Number(bundle.plan?.version_no)!==Number(now.plan?.version_no)
+      || String(bundle.plan?.source_snapshot_ref||'')!==String(now.plan?.source_snapshot_ref||'')
+      || ['REVIEW_REQUIRED','SUPERSEDED'].includes(String(now.plan?.plan_state))) {
+      stale.push('COURSE_PLAN:'+courseId);
+    }
+  }
+  for(const unresolved of expected?.unresolvedCourses||[]){
+    const courseId=String(unresolved.courseId||'');
+    const now=currentCourses.get(courseId);
+    if(!now
+      || (unresolved.stateVersion!=null && Number(unresolved.stateVersion)!==Number(now.course?.state_version))
+      || now.plan) {
+      stale.push('UNRESOLVED_COURSE:'+courseId);
+    }
+  }
+  if(stale.length){
+    const error=new Error('Scheduling inputs changed while the timetable was being calculated. Recalculate from current authoritative state.');
+    error.code='TEACHING_D09_STALE_SCHEDULING_CONTEXT';
+    error.status=409;
+    error.staleRefs=Object.freeze([...new Set(stale)]);
+    throw error;
+  }
+  return true;
+}
 
 module.exports = {
   AVAILABILITY_KINDS,BLOCK_KINDS,DEADLINE_KINDS,RESERVE_KINDS,TIMETABLE_STATES,SLOT_KINDS,
   fail,digest,assertIanaTimezone,normalizeSemester,normalizeAvailability,normalizeBlocks,
   normalizeDeadlines,normalizeReserves,normalizePreferences,normalizeScheduleInputs,
-  instructionalMinutes,headroomPolicy,assertCurrentCoursePlan,
+  instructionalMinutes,headroomPolicy,assertCurrentCoursePlan,assertSchedulingContextCurrent,
 };
