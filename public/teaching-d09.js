@@ -155,5 +155,5 @@ async function renderCalendar() {
   try{const data=await kiwiApiRequest('/teaching/calendar?currentTimeZone='+encodeURIComponent(zone)),list=el('div','teaching-d09-calendar');[...data.authoritativeClasses,...data.preactivationProposals].forEach((item)=>{const card=el('article','teaching-d09-calendar-item');card.append(el('strong','',item.course_title||'Teaching Class'),el('div','teaching-d09-note',item.authoritative?'Approved timetable':'Pre-activation proposal'),el('p','',item.displayStart+' → '+item.displayEnd+' · '+data.currentTimeZone));list.append(card);});if(!list.children.length)list.append(el('div','teaching-empty','No Teaching timetable items yet.'));page.append(list);}catch(error){page.append(el('div','teaching-message',error.message||'Calendar could not be loaded.'));}
 }
 courseSurface.registerSection({id:'schedule',label:'Schedule',order:30,render:renderSchedule,renderSummary});
-if(nav&&typeof nav.register==='function')nav.register({id:'calendar',label:'Calendar',icon:'◷',onSelect:renderCalendar});
+if(nav&&typeof nav.register==='function')nav.register({id:'calendar',label:'Calendar',description:'Classes, timetable and proposals',icon:'◷',menuIcon:'calendar',onSelect:renderCalendar});
 window.KIWITeachingD09=Object.freeze({openSchedule:(courseId)=>courseSurface.openCourse(courseId,'schedule'),openCalendar:renderCalendar});
