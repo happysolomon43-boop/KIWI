@@ -2,17 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Pool } = require('pg');
+const { assertNonProductionDatabase, integrationConfig, createIntegrationPool } = require('./test-db');
 
-const PROD = 'nqdwifqskxkblgdgeutn';
-const url = process.env.TEACHING_TEST_DATABASE_URL;
-const ref = process.env.TEACHING_TEST_PROJECT_REF;
-const skip = (!url || !ref) ? 'No non-production Supabase branch/project configured for Teaching D08 integration tests.' : false;
+const { connectionString: url, projectRef: ref, skipReason: skip } = integrationConfig('D08');
 
-function guard() {
-  if (!url || !ref) throw new Error('Non-production database configuration required.');
-  if (ref === PROD || url.includes(PROD)) throw new Error('D08 integration refuses production Supabase.');
-}
+function guard() { return assertNonProductionDatabase({ connectionString: url, projectRef: ref }); }
 
 test('D08 integration guard refuses production', () => {
   assert.throws(() => {
@@ -23,7 +17,7 @@ test('D08 integration guard refuses production', () => {
 
 test('D08 schema has RLS, owner read policies, service-only mutation, lineage columns and indexes', { skip }, async () => {
   guard();
-  const pool = new Pool({ connectionString: url, ssl: { rejectUnauthorized: false }, max: 1 });
+  const pool = createIntegrationPool(url);
   try {
     const names = [
       'teaching_course_plan_prerequisites','teaching_course_plan_source_mappings','teaching_course_plan_exclusions',
