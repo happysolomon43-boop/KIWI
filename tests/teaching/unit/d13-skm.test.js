@@ -351,6 +351,39 @@ test('D13 response-event subscriber is registered after D12-compatible committed
   assert.equal(handled,evt);
 });
 
+test('out-of-order evidence replay computes the same state from authoritative timestamps',()=>{
+  const chronological=[
+    event('e1','2026-09-01'),event('e2','2026-09-02'),
+    event('e3','2026-09-12',{evidence_claim:'retain_after_delay',demand_vector:{retention_timing:'delayed'}}),
+  ];
+  const outOfOrder=[chronological[2],chronological[0],chronological[1]];
+  assert.equal(computeKnowledgeState(chronological,{studentId:'u1',learningUnitId:'lu1'}).base_state,'SECURE');
+  assert.equal(computeKnowledgeState(outOfOrder,{studentId:'u1',learningUnitId:'lu1'}).base_state,'SECURE');
+});
+
+test('D12 BLOCKED proposal evidence cannot directly set the durable BLOCKED overlay',()=>{
+  const d12Proposal=failEvent('n1','2026-09-03',{
+    source_owner:'D12_RESPONSE_EVALUATOR',
+    prerequisite_context:{status:'investigation_needed',prerequisite_ref:'lu0'},
+    path_context:{prior_strategy_classes:['representation','micro_remediation'],blocked_proposal_confirmed:true},
+  });
+  const s=computeKnowledgeState([event('e1','2026-09-01'),d12Proposal],{studentId:'u1',learningUnitId:'lu1'});
+  assert.equal(s.overlays.includes('BLOCKED'),false);
+});
+
+test('authoritative Controller block condition sets and later clears BLOCKED orthogonally',()=>{
+  const block=event('b1','2026-09-03',{source_owner:'TEACHING_CONTROLLER',evidential_strength:'WEAK',independent_performance:false,path_context:{block_condition:'BLOCKED'}});
+  let s=computeKnowledgeState([event('e1','2026-09-01'),block],{studentId:'u1',learningUnitId:'lu1'});
+  assert.ok(s.overlays.includes('BLOCKED'));
+  const clear=event('b2','2026-09-04',{source_owner:'TEACHING_CONTROLLER',evidential_strength:'WEAK',independent_performance:false,path_context:{block_condition:'CLEAR'}});
+  s=computeKnowledgeState([event('e1','2026-09-01'),block,clear],{studentId:'u1',learningUnitId:'lu1'});
+  assert.equal(s.overlays.includes('BLOCKED'),false);
+});
+
+test('non-planning evidence owners cannot forge BLOCKED conditions',()=>{
+  assert.throws(()=>validateNormalizedEvidence({...normalizedEvidence('ASSESSMENT_OWNER'),pathContext:{block_condition:'BLOCKED'}}),/Controller\/Lesson Planner authority/i);
+});
+
 test('algorithm/version and replay semantics are carried in every computed state',()=>{
   const s=computeKnowledgeState([event('e1','2026-09-01')],{studentId:'u1',learningUnitId:'lu1'});
   assert.equal(s.algorithm_id,SKM_ALGORITHM_ID);
