@@ -82,6 +82,7 @@ function createTeachingFoundation({
         intelligence: d11Intelligence,
         withTransaction,
         dueEventStore: d10RuntimePlatform.eventStore,
+        outboxStore: d10RuntimePlatform.outboxStore,
         preparationRepository: d11PreparationRepository,
       })
     : null;
