@@ -7,7 +7,7 @@ const { computeSchedule,validateEditedSchedule } = require('../d09/scheduler');
 const { normalizeCreateRequest,requestDefinition } = require('./contracts');
 
 function createD10Service({
-  repository,d09Repository,transactionalMutation,randomUUID,clock=()=>new Date(),
+  repository,d09Repository,transactionalMutation,randomUUID,outboxStore=null,clock=()=>new Date(),
 }={}) {
   if(!repository) throw new TypeError('D10 service requires repository.');
   if(!d09Repository) throw new TypeError('D10 service requires the D09 Scheduler repository owner.');
@@ -441,6 +441,42 @@ function createD10Service({
     const studentId=user.id;
     const result=await repository.applyRequest({
       studentId,requestId,expectedVersion,
+      onAppliedUsing:outboxStore&&typeof outboxStore.appendUsing==='function'
+        ? async(tx,{request,application,targetResult})=>{
+            const occurredAt=serverNow().toISOString();
+            const eventId=`d10-request-applied:${request.request_id}:${application.request_version}`;
+            await outboxStore.appendUsing(tx.query.bind(tx),{
+              eventId,
+              schemaVersion:1,
+              eventType:TEACHING_EVENTS.REQUEST_APPLIED,
+              eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
+              triggerType:'committed_domain_event',
+              source:'request',
+              origin:'d10',
+              actorId:request.student_id,
+              aggregateType:'REQUEST',
+              aggregateId:request.request_id,
+              aggregateVersion:Number(request.state_version),
+              occurredAt,
+              effectiveAt:request.applied_at ? new Date(request.applied_at).toISOString() : occurredAt,
+              dueAt:null,
+              correlationId:eventId,
+              causationId:null,
+              idempotencyKey:eventId,
+              payload:{
+                request_id:request.request_id,
+                course_id:request.course_id,
+                request_type:request.request_type,
+                target_owner:request.target_owner,
+                target_ref:request.target_ref,
+                application_ref:application.application_ref,
+                target_version_after:targetResult?.targetVersionAfter || null,
+              },
+              auditRefs:[],
+              provenanceRefs:[`request:${request.request_id}`,`request-application:${application.request_application_id}`],
+            });
+          }
+        : null,
       applyTargetUsing:async(tx,request)=>{
         const def=requestDefinition(request.request_type);
         if(!def.implementedOwner) throw error('The authoritative target owner is not implemented in D10; Request remains a handoff record.','TEACHING_D10_REQUEST_OWNER_PENDING',409,{owner:def.owner});
