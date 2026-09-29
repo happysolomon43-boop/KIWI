@@ -13,7 +13,7 @@ const {
   validateLiveReplanProposal,
 } = require('./contracts');
 const { TEACHING_EVENTS } = require('../events/names');
-const { evaluateWorkspaceTransition, evaluateFinalizationReadiness } = require('../preparation/t0-handlers');
+const { evaluateWorkspaceTransition, evaluateFinalizationReadiness, reconcileMaterialityAndStaleness } = require('../preparation/t0-handlers');
 const { EVENT_CATEGORIES } = require('../runtime/constants');
 
 function fail(message, code, status = 409, details = null) {
@@ -543,6 +543,83 @@ function createD11Service({
     return publicContext({...context,session:result.session});
   }
 
+  async function resumeBreakFromDueEvent(event) {
+    const context=await repository.getClassContext(event.actorId,event.aggregateId);
+    if(!context?.session) return Object.freeze({idempotent:true,reason:'CONTROLLER_NOT_STARTED'});
+    const session=context.session;
+    if(session.lifecycle_state==='CLOSED') return Object.freeze({idempotent:true,reason:'CONTROLLER_CLOSED'});
+    if(session.instructional_substate!=='BREAK') return Object.freeze({idempotent:true,reason:'NO_LONGER_IN_BREAK'});
+    if(Number(event.aggregateVersion)!==Number(session.state_version)) {
+      return Object.freeze({idempotent:true,reason:'STALE_BREAK_EVENT'});
+    }
+    const now=clock();
+    if(session.break_ends_at && now.getTime()<new Date(session.break_ends_at).getTime()) {
+      fail('Break-end event fired before the authoritative break deadline.','TEACHING_D11_BREAK_EVENT_EARLY',409);
+    }
+    const resume=session.resume_instructional_substate;
+    if(!resume) fail('Break resume state is missing.','TEACHING_D11_BREAK_RESUME_STATE_MISSING',409);
+    assertTransitionAllowed({lifecycleState:session.lifecycle_state,fromState:'BREAK',toState:resume,resumeState:resume});
+    const changed=await withTransaction((tx)=>repository.transitionUsing(tx,{
+      studentId:event.actorId,classId:event.aggregateId,expectedVersion:Number(session.state_version),
+      toState:resume,lifecycleState:'ACTIVE',resumeState:resume,
+      reason:'Server-authoritative Break expiry',actionKind:'BREAK_ENDED',
+      sourceEventRef:event.eventId,idempotencyKey:event.idempotencyKey,
+      extraUpdates:{resume_instructional_substate:null,break_started_at:null,break_ends_at:null},
+    }));
+    return Object.freeze({idempotent:false,session:changed.session});
+  }
+
+  async function refreshCoursePreparation(studentId,courseId,{correlationId=null,interruptActive=true}={}) {
+    const classes=await repository.listClassesForCourse(studentId,courseId);
+    const results=[];
+    for(const klass of classes) {
+      const before=await repository.getClassContext(studentId,klass.class_id);
+      if(before?.session?.lifecycle_state==='ACTIVE' || before?.session?.lifecycle_state==='INTERRUPTED') {
+        const live=await repository.assertLiveContextCurrent(studentId,klass.class_id);
+        if(interruptActive && before.session.lifecycle_state==='ACTIVE' && !live.ok) {
+          await withTransaction((tx)=>repository.transitionUsing(tx,{
+            studentId,classId:klass.class_id,expectedVersion:Number(before.session.state_version),
+            toState:'INTERRUPTED',lifecycleState:'INTERRUPTED',resumeState:before.session.instructional_substate,
+            reason:'Authoritative upstream Course/Plan/Schedule state changed during Class',
+            actionKind:'UPSTREAM_STATE_CHANGED',
+            safeMetadata:{mismatches:live.mismatches || []},
+            extraUpdates:{resume_instructional_substate:before.session.instructional_substate},
+          }));
+        }
+        results.push(Object.freeze({classId:klass.class_id,live:true,workspaceChanged:false}));
+        continue;
+      }
+      const prep=await repository.ensurePreparationWorkspace({studentId,classId:klass.class_id,correlationId});
+      if(prep?.changed && preparationRepository && prep.workspace?.current_artifact_version_ref) {
+        const snapshot=await preparationRepository.getMaterialitySnapshot(prep.workspace.workspace_id);
+        if(snapshot?.artifact) {
+          const decision=reconcileMaterialityAndStaleness({
+            changedDependencyRefs:(prep.dependencies || []).map((dep)=>dep.aggregate_ref),
+            componentDependencies:snapshot.componentDependencies || [],
+            allComponentIds:snapshot.componentIds || [],
+          });
+          if(decision.material) {
+            await preparationRepository.applyMaterialityDecision({
+              workspaceId:prep.workspace.workspace_id,
+              artifactVersionId:snapshot.artifact.artifact_version_id,
+              expectedStateVersion:snapshot.workspace.state_version,
+              decision,
+              correlationId,
+              causationId:null,
+            });
+          }
+        }
+      }
+      results.push(Object.freeze({
+        classId:klass.class_id,
+        live:false,
+        workspaceChanged:Boolean(prep?.changed),
+        workspaceId:prep?.workspace?.workspace_id || null,
+      }));
+    }
+    return Object.freeze(results);
+  }
+
   async function authorizeOvertime(user,classId,input={}) {
     const context=await repository.getClassContext(user.id,classId);
     if(!context?.session||context.session.lifecycle_state!=='ACTIVE') fail('Overtime requires an active Controller.','TEACHING_D11_CONTROLLER_NOT_ACTIVE',409);
@@ -656,6 +733,28 @@ function createD11Service({
     });
   }
 
+  async function handleClassEndDue(event) {
+    const context=await repository.getClassContext(event.actorId,event.aggregateId);
+    if(!context?.session) return Object.freeze({idempotent:true,reason:'CONTROLLER_NOT_STARTED'});
+    if(context.session.lifecycle_state==='CLOSED') return Object.freeze({idempotent:true,reason:'ALREADY_CLOSED'});
+    const now=clock();
+    const scheduledEnd=new Date(context.classRow.scheduled_end_at);
+    const ceiling=context.session.overtime_ceiling_at?new Date(context.session.overtime_ceiling_at):null;
+    if(event.payload?.kind!=='OVERTIME_CEILING' && ceiling && ceiling.getTime()>now.getTime()) {
+      if(!context.session.overtime_started_at && now.getTime()>=scheduledEnd.getTime()) {
+        await markOvertimeStarted({id:event.actorId},event.aggregateId,{expectedVersion:context.session.state_version});
+      }
+      return Object.freeze({deferred:true,overtimeCeilingAt:ceiling.toISOString()});
+    }
+    return closeClass({id:event.actorId},event.aggregateId,{
+      expectedVersion:context.session.state_version,
+      reason:event.payload?.kind==='OVERTIME_CEILING'?'OVERTIME_CEILING':'SCHEDULED_CLASS_END',
+      sourceEventRef:event.eventId,
+      idempotencyKey:event.idempotencyKey,
+      force:true,
+    });
+  }
+
   async function getSummary(user,classId) {
     const summary=await repository.latestSummary(user.id,classId);
     if(!summary) fail('Class Summary not found.','TEACHING_D11_SUMMARY_NOT_FOUND',404);
@@ -697,9 +796,12 @@ function createD11Service({
     setEvidenceDescriptor,
     recordProgress,
     startBreak,
+    resumeBreakFromDueEvent,
+    refreshCoursePreparation,
     authorizeOvertime,
     markOvertimeStarted,
     closeClass,
+    handleClassEndDue,
     getSummary,
     getTeacherNote,
     publicContext,
