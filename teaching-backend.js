@@ -27,6 +27,9 @@ function createTeachingRouter({
   d09Intelligence = null,
   d09Service = null,
   d10Service = null,
+  d11Intelligence = null,
+  d11Service = null,
+  d11PublishedEventRegistry = null,
   teachingRuntimePlatform = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
@@ -48,12 +51,15 @@ function createTeachingRouter({
     d09Intelligence,
     d09TransactionalMutation: teachingRuntimePlatform?.transactionalMutation || null,
     d10RuntimePlatform: teachingRuntimePlatform || null,
+    d11Intelligence,
+    d11PublishedEventRegistry,
   });
   const router = express.Router();
   let d07Ready = Boolean(d07Service);
   let d08Ready = Boolean(d08Service);
   let d09Ready = Boolean(d09Service);
   let d10Ready = Boolean(d10Service);
+  let d11Ready = Boolean(d11Service);
 
   router.assertD07Ready = async () => {
     if (!foundation.d07?.repository) {
@@ -82,6 +88,16 @@ function createTeachingRouter({
     }
     await foundation.d10.repository.assertReady();
     d10Ready = true;
+    return true;
+  };
+
+  router.assertD11Ready = async () => {
+    if (!foundation.d11?.repository) {
+      d11Ready = false;
+      return false;
+    }
+    await foundation.d11.repository.assertReady();
+    d11Ready = true;
     return true;
   };
 
@@ -353,6 +369,66 @@ function createTeachingRouter({
     router.post('/requests/:id/apply', requireD10Ready, async (req, res) => {
       try { res.json(await lifecycleRequestService.applyRequest(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Approved Request could not be applied.'); }
+    });
+  }
+
+  const lessonControllerService = d11Service || foundation.d11?.service || null;
+  if (lessonControllerService) {
+    const requireD11Ready = (req, res, next) => {
+      if (d11Ready) return next();
+      return res.status(503).json({
+        error: 'Teaching Lesson Blueprint and Controller are unavailable until the D11 schema is ready.',
+        code: 'TEACHING_D11_SCHEMA_NOT_READY',
+      });
+    };
+
+    router.get('/classes/:id/controller', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.getClass(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load Teaching Controller state.'); }
+    });
+    router.post('/classes/:id/lesson-blueprint/prepare', requireD11Ready, async (req, res) => {
+      try { res.status(201).json(await lessonControllerService.prepareLesson(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Lesson Blueprint preparation failed safely.'); }
+    });
+    router.post('/classes/:id/controller/start', requireD11Ready, async (req, res) => {
+      try { res.status(201).json(await lessonControllerService.startController(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Class Controller could not start.'); }
+    });
+    router.post('/classes/:id/controller/transition', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.transition(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Controller transition failed safely.'); }
+    });
+    router.post('/classes/:id/controller/cycle/advance', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.advanceInstructionCycle(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Instruction cycle transition failed safely.'); }
+    });
+    router.post('/classes/:id/controller/evidence-descriptor', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.setEvidenceDescriptor(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Evidence descriptor update failed safely.'); }
+    });
+    router.post('/classes/:id/controller/progress', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.recordProgress(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Controller progress update failed safely.'); }
+    });
+    router.post('/classes/:id/controller/break', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.startBreak(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Class break could not start.'); }
+    });
+    router.post('/classes/:id/controller/overtime', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.authorizeOvertime(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Class overtime could not be authorized.'); }
+    });
+    router.post('/classes/:id/controller/replan', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.replanLesson(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Live Lesson replanning failed safely.'); }
+    });
+    router.post('/classes/:id/controller/close', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.closeClass(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Class Closure failed safely.'); }
+    });
+    router.get('/classes/:id/summary', requireD11Ready, async (req, res) => {
+      try { res.json(await lessonControllerService.getSummary(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load Class Summary.'); }
     });
   }
 
