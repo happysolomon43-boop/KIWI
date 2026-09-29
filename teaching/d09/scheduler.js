@@ -150,6 +150,14 @@ function conflictsForWork(context,work,task,start,end){
     return !isProtectedBlockCompatible(block,task.kind);
   });
 }
+function protectedPreference(context,work,task,start,end){
+  return (context.blocks||[]).some((block)=>{
+    const courseId=rowValue(block,'course_id','courseId');
+    if(courseId && String(courseId)!==String(work.courseId)) return false;
+    return isProtectedBlockCompatible(block,task.kind)
+      && overlap(start,end,rowValue(block,'starts_at','startsAt'),rowValue(block,'ends_at','endsAt'));
+  }) ? 500 : 0;
+}
 function topologicalUnits(courseBundle) {
   const units=courseBundle.units || [];
   const byId=new Map(units.map((u)=>[String(u.learning_unit_id),u]));
@@ -278,6 +286,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
         const candidateEnd=new Date(cursorMs+minutes*MINUTE_MS).toISOString();
         if(conflictsForWork(context,w,task,period.cursor,candidateEnd)) continue;
         const score=preferenceScore(period,w,preferences)
+          + protectedPreference(context,w,task,period.cursor,candidateEnd)
           - (w.lastDate===period.key?40:0)
           - (period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY'?10000:0)
           + (w.deadline.kind==='HARD'?12:0)

@@ -133,7 +133,7 @@ test('D09 authoritative timetable proposal commits through D05 and does not call
 
 test('D09 migration creates versioned Scheduler truth with RLS and no authenticated mutation',()=>{
   const sql=fs.readFileSync(path.resolve(__dirname,'../../../migrations/20260929_teaching_d09_scheduling.sql'),'utf8');
-  for(const name of ['teaching_schedule_profiles','teaching_availability_windows','teaching_schedule_blocks','teaching_schedule_deadlines','teaching_schedule_reserves','teaching_timetable_versions','teaching_timetable_slots','teaching_schedule_feasibility','teaching_schedule_debt_entries'])assert.match(sql,new RegExp('CREATE TABLE public\\\\.'+name));
+  for(const name of ['teaching_schedule_profiles','teaching_availability_windows','teaching_schedule_blocks','teaching_schedule_deadlines','teaching_schedule_reserves','teaching_timetable_versions','teaching_timetable_slots','teaching_schedule_feasibility','teaching_schedule_debt_entries'])assert.match(sql,new RegExp('CREATE TABLE public\\.'+name));
   assert.match(sql,/ENABLE ROW LEVEL SECURITY/);
   assert.match(sql,/teaching_guard_d09_timetable_update/);
   assert.match(sql,/REVOKE INSERT,UPDATE,DELETE,TRUNCATE[\s\S]*FROM authenticated/);
