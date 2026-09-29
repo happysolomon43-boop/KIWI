@@ -5,6 +5,7 @@ const {
   LEARNING_EVIDENCE_DESCRIPTORS,
   ASSISTANCE_LEVELS,
   PRIORITY_ORDER,
+  DEFAULT_ADAPTIVE_RESERVE_POLICY,
   assertTransitionAllowed,
   classTimeEnvelope,
   computeOvertimeCeiling,
@@ -79,7 +80,7 @@ function createD11Service({
   dueEventStore,
   preparationRepository = null,
   clock = () => new Date(),
-  minimumReserveMinutes = 1,
+  reservePolicy = DEFAULT_ADAPTIVE_RESERVE_POLICY,
 } = {}) {
   if (!repository || typeof repository.getClassContext !== 'function') throw new TypeError('D11 service requires repository.');
   if (typeof withTransaction !== 'function') throw new TypeError('D11 service requires withTransaction().');
@@ -305,7 +306,7 @@ function createD11Service({
       learningUnits: context.learningUnits,
       scheduledStartAt: context.classRow.scheduled_start_at,
       scheduledEndAt: context.classRow.scheduled_end_at,
-      minimumReserveMinutes,
+      reservePolicy,
     });
     if (!validation.ok) {
       fail('Lesson Blueprint failed deterministic D11 validation.', validation.reason || 'TEACHING_D11_BLUEPRINT_INVALID', 422, validation);
@@ -318,7 +319,7 @@ function createD11Service({
       blueprint:validation.value,
       validationMetadata:{
         deterministic_validation:'PASS',
-        reserve_policy:{minimum_minutes:minimumReserveMinutes},
+        reserve_policy:validation.value.adaptive_reserve_policy,
         orchestrator_execution_id:result.executionId || null,
       },
       generationProvenance:{
@@ -368,11 +369,12 @@ function createD11Service({
           learningUnits:context.learningUnits,
           scheduledStartAt:time.server_now,
           scheduledEndAt:time.authoritative_end_at,
-          minimumReserveMinutes,
+          reservePolicy,
           currentBlueprint:context.blueprint.blueprint_payload || {},
         },
         remainingMinutes:time.remaining_minutes,
         completedObjectiveRefs:context.session.progress_state?.completed_objective_refs || [],
+        reservePolicy,
       });
     } catch(e) {
       fail('Live Lesson replan failed deterministic D11 validation.',e.code || 'TEACHING_D11_REPLAN_INVALID',422);
