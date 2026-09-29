@@ -33,6 +33,7 @@ const required = [
   'teaching/prompt-runtime/frozen/prompt-family-catalog.v1.3.part-03',
   'teaching/prompt-runtime/frozen/prompt-manifest.v1.4.json.gz.b64',
   'teaching/prompt-runtime/frozen/TPF-20_Class_Grounded_Study_Note_v1.0_DESIGN_FROZEN.md.gz.b64',
+  'docs/teaching/change-control/KIWI_Teaching_D03_TPF20_Successor_Correction_v1.0.md',
   'teaching/prompt-runtime/constitution.js',
   'teaching/prompt-runtime/prompt-catalog.js',
   'teaching/prompt-runtime/prompt-body-store.js',
@@ -113,8 +114,25 @@ check(
   'Capability Registry successor census must be 170/148/22/20 with 165 historical aliases'
 );
 const noteCapability = registry.getCapability('teaching.study.class_grounded_note_generation');
+check(noteCapability.execution_class === 'DIRECT-AI', 'TPF-20 capability must remain DIRECT-AI');
 check(noteCapability.authority_ceiling === 'T3', 'TPF-20 capability must remain T3');
+check(noteCapability.model_posture === 'MODEL_PRIMARY', 'TPF-20 capability model posture must remain MODEL_PRIMARY');
 check(noteCapability.prompt_family_id === 'TPF-20', 'TPF-20 capability binding drifted');
+check(noteCapability.prompt_family_version === '1.0', 'TPF-20 capability family version must remain v1.0');
+
+const correctionDoc = fs.readFileSync(
+  path.join(root, 'docs/teaching/change-control/KIWI_Teaching_D03_TPF20_Successor_Correction_v1.0.md'),
+  'utf8'
+);
+for (const token of [
+  'TCH-0919',
+  '170/148/22/20',
+  'd8d13f679e6817c1c02935e6581f5fc6ad512812004b59eebcf9a7d85c962e67',
+  'UNQUALIFIED',
+  'D30',
+]) {
+  check(correctionDoc.includes(token), `D03 TPF-20 correction record missing ${token}`);
+}
 
 const promptCatalogCode = fs.readFileSync(
   path.join(root, 'teaching/prompt-runtime/prompt-catalog.js'),
