@@ -11,6 +11,7 @@ const KIWI_PATH = '/';
 const teachingNavigationItems = new Map();
 const teachingCourseSections = new Map();
 let activeTeachingView = 'overview';
+let activeTeachingNavigationId = null;
 let selectedTeachingCourseId = null;
 let activeTeachingCourseSection = 'overview';
 let teachingWorkspace = { subjects: [], courses: [] };
@@ -151,14 +152,7 @@ function renderTeachingNavigation() {
     label.textContent = item.label;
 
     control.addEventListener('click', () => {
-      if (typeof item.onSelect === 'function') {
-        item.onSelect();
-        return;
-      }
-
-      if (item.href) {
-        window.location.assign(item.href);
-      }
+      selectTeachingNavigationItem(item);
     });
 
     dock.appendChild(fragment);
@@ -179,19 +173,27 @@ function registerTeachingNavigationItem(item) {
   teachingNavigationItems.set(item.id, {
     id: item.id,
     label: item.label,
+    description: typeof item.description === 'string' ? item.description : '',
     icon: typeof item.icon === 'string' ? item.icon : '',
+    menuIcon: typeof item.menuIcon === 'string' ? item.menuIcon : '',
     href: typeof item.href === 'string' ? item.href : null,
     onSelect: typeof item.onSelect === 'function' ? item.onSelect : null,
   });
 
   renderTeachingNavigation();
+  renderSectionMenu();
 
   return () => unregisterTeachingNavigationItem(item.id);
 }
 
 function unregisterTeachingNavigationItem(id) {
   teachingNavigationItems.delete(id);
+  if (activeTeachingNavigationId === id) {
+    activeTeachingNavigationId = null;
+    activeTeachingView = 'overview';
+  }
   renderTeachingNavigation();
+  renderSectionMenu();
 }
 
 function renderTeachingSessionProblem(message) {
@@ -252,7 +254,9 @@ function showSetupMessage(container, message, kind = 'status') {
 function menuIcon(kind) {
   const paths = kind === 'create'
     ? '<path d="M12 5v14M5 12h14"/><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/>'
-    : '<path d="M4 11 12 4l8 7v9H4zM9 20v-6h6v6"/>';
+    : kind === 'calendar'
+      ? '<path d="M6 3v3M18 3v3M4 8h16"/><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 12h3M13 12h3M8 16h3M13 16h3"/>'
+      : '<path d="M4 11 12 4l8 7v9H4zM9 20v-6h6v6"/>';
   return `<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" aria-hidden="true">${paths}</svg>`;
 }
 
@@ -263,6 +267,13 @@ function renderSectionMenu() {
   const items = [
     { id: 'overview', title: 'Overview', description: 'Your courses and next steps', icon: 'overview' },
     { id: 'intake', title: 'Create Course', description: 'Start from a KIWI Subject', icon: 'create' },
+    ...[...teachingNavigationItems.values()].map((item) => ({
+      id: 'navigation:' + item.id,
+      title: item.label,
+      description: item.description || 'Open this Teaching workspace',
+      icon: item.menuIcon || 'overview',
+      navigationItem: item,
+    })),
   ];
 
   nav.replaceChildren();
@@ -270,7 +281,9 @@ function renderSectionMenu() {
     const button = el('button', 'teaching-menu-link');
     button.type = 'button';
     button.dataset.view = item.id;
-    button.dataset.active = (activeTeachingView === item.id || (item.id === 'overview' && activeTeachingView === 'course')) ? 'true' : 'false';
+    button.dataset.active = item.navigationItem
+      ? (activeTeachingNavigationId === item.navigationItem.id ? 'true' : 'false')
+      : ((activeTeachingView === item.id || (item.id === 'overview' && activeTeachingView === 'course')) && !activeTeachingNavigationId ? 'true' : 'false');
 
     const icon = el('span', 'teaching-menu-link__icon');
     icon.innerHTML = menuIcon(item.icon);
@@ -280,9 +293,30 @@ function renderSectionMenu() {
       el('span', 'teaching-menu-link__description', item.description)
     );
     button.append(icon, copy, el('span', 'teaching-menu-link__arrow', '›'));
-    button.addEventListener('click', () => navigateTeaching(item.id));
+    button.addEventListener('click', () => item.navigationItem
+      ? selectTeachingNavigationItem(item.navigationItem)
+      : navigateTeaching(item.id));
     nav.append(button);
   }
+}
+
+function selectTeachingNavigationItem(item) {
+  if (!item) return;
+  activeTeachingNavigationId = item.id;
+  activeTeachingView = 'navigation';
+  selectedTeachingCourseId = null;
+  activeTeachingCourseSection = 'overview';
+  setMenuOpen(false, { restoreFocus: false });
+  renderSectionMenu();
+
+  if (typeof item.onSelect === 'function') {
+    item.onSelect();
+  } else if (item.href) {
+    window.location.assign(item.href);
+    return;
+  }
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function getTeachingCourse(courseId) {
@@ -298,6 +332,7 @@ function sortedCourseSections() {
 
 function navigateTeaching(view) {
   const options = arguments[1] || {};
+  activeTeachingNavigationId = null;
   const next = ['overview', 'intake', 'course'].includes(view) ? view : 'overview';
   if (next === 'course') {
     const courseId = options.courseId || selectedTeachingCourseId;

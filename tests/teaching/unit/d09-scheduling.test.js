@@ -216,6 +216,17 @@ test('D09 repository invalidates prior timetable state and revalidates authorita
   assert.match(src,/priorChildrenFull=previous/);
 });
 
+test('D09 Calendar is exposed through the Teaching side menu navigation registry',()=>{
+  const shell=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching.js'),'utf8');
+  const d09ui=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-d09.js'),'utf8');
+  assert.match(shell,/\.\.\.\[\.\.\.teachingNavigationItems\.values\(\)\]/);
+  assert.match(shell,/selectTeachingNavigationItem/);
+  assert.match(shell,/renderSectionMenu\(\)/);
+  assert.match(d09ui,/id:'calendar'/);
+  assert.match(d09ui,/menuIcon:'calendar'/);
+  assert.match(d09ui,/description:'Classes, timetable and proposals'/);
+});
+
 test('D09 implementation does not select providers, activate Courses, write SKM or delete curriculum',()=>{
   const dir=path.resolve(__dirname,'../../../teaching/d09');
   const src=fs.readdirSync(dir).filter((f)=>f.endsWith('.js')).map((f)=>fs.readFileSync(path.join(dir,f),'utf8')).join('\n');
