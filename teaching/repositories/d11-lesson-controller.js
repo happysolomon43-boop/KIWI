@@ -538,6 +538,9 @@ function createD11LessonControllerRepository({
       closure_reason:'closure_reason',
       ended_at:'ended_at',
       progress_state:'progress_state',
+      cycle_phase:'cycle_phase',
+      current_learning_evidence_descriptor:'current_learning_evidence_descriptor',
+      current_assistance_level:'current_assistance_level',
     };
     for (const [key,column] of Object.entries(allowedExtra)) {
       if (!Object.prototype.hasOwnProperty.call(extraUpdates,key)) continue;
