@@ -30,6 +30,9 @@ function createTeachingRouter({
   d11Intelligence = null,
   d11Service = null,
   d11PublishedEventRegistry = null,
+  d12Intelligence = null,
+  d12Service = null,
+  d12PublishedEventRegistry = null,
   teachingRuntimePlatform = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
@@ -53,6 +56,8 @@ function createTeachingRouter({
     d10RuntimePlatform: teachingRuntimePlatform || null,
     d11Intelligence,
     d11PublishedEventRegistry,
+    d12Intelligence,
+    d12PublishedEventRegistry,
   });
   const router = express.Router();
   let d07Ready = Boolean(d07Service);
@@ -60,6 +65,7 @@ function createTeachingRouter({
   let d09Ready = Boolean(d09Service);
   let d10Ready = Boolean(d10Service);
   let d11Ready = Boolean(d11Service);
+  let d12Ready = Boolean(d12Service);
 
   router.assertD07Ready = async () => {
     if (!foundation.d07?.repository) {
@@ -98,6 +104,17 @@ function createTeachingRouter({
     }
     await foundation.d11.repository.assertReady();
     d11Ready = true;
+    return true;
+  };
+
+  router.assertD12Ready = async () => {
+    const repo12 = foundation.d12?.repository || d12Service?.repository || null;
+    if (!repo12 || typeof repo12.assertReady !== 'function') {
+      d12Ready = false;
+      return false;
+    }
+    await repo12.assertReady();
+    d12Ready = true;
     return true;
   };
 
@@ -429,6 +446,50 @@ function createTeachingRouter({
     router.get('/classes/:id/summary', requireD11Ready, async (req, res) => {
       try { res.json(await lessonControllerService.getSummary(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load Class Summary.'); }
+    });
+  }
+
+
+  const responsePedagogyService = d12Service || foundation.d12?.service || null;
+  if (responsePedagogyService) {
+    const requireD12Ready = (req, res, next) => {
+      if (d12Ready) return next();
+      return res.status(503).json({
+        error: 'Teaching Response Evaluation and Pedagogy are unavailable until the D12 schema is ready.',
+        code: 'TEACHING_D12_SCHEMA_NOT_READY',
+      });
+    };
+
+    router.post('/classes/:id/responses', requireD12Ready, async (req, res) => {
+      try { res.status(201).json(await responsePedagogyService.captureResponse(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Student response could not be captured safely.'); }
+    });
+    router.get('/responses/:id/evaluation', requireD12Ready, async (req, res) => {
+      try { res.json(await responsePedagogyService.getResponseEvaluation(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load response evaluation.'); }
+    });
+    router.post('/response-evaluations/:evaluationId/pedagogy', requireD12Ready, async (req, res) => {
+      try {
+        const classId = String(req.body?.classId || '').trim();
+        if (!classId) return res.status(400).json({ error:'classId is required.', code:'TEACHING_D12_CLASS_ID_REQUIRED' });
+        res.status(201).json(await responsePedagogyService.recommendPedagogy(req.user, classId, req.params.evaluationId, req.body || {}));
+      } catch (error) { sendError(res, error, 'Pedagogy decision could not be produced safely.'); }
+    });
+    router.post('/classes/:id/productive-struggle', requireD12Ready, async (req, res) => {
+      try { res.json(await responsePedagogyService.analyzeProductiveStruggle(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Productive-struggle decision failed safely.'); }
+    });
+    router.post('/classes/:id/teacher-correction', requireD12Ready, async (req, res) => {
+      try { res.status(201).json(await responsePedagogyService.analyzeTeacherCorrection(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Teacher self-correction analysis failed safely.'); }
+    });
+    router.post('/classes/:classId/learning-units/:id/pedagogy-profile', requireD12Ready, async (req, res) => {
+      try { res.status(201).json(await responsePedagogyService.classifyPedagogyProfile(req.user, req.params.classId, req.params.id)); }
+      catch (error) { sendError(res, error, 'Learning Unit Pedagogical Profile classification failed safely.'); }
+    });
+    router.get('/learning-units/:id/pedagogy-profile', requireD12Ready, async (req, res) => {
+      try { res.json(await responsePedagogyService.getPedagogyProfile(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load Learning Unit Pedagogical Profile.'); }
     });
   }
 
