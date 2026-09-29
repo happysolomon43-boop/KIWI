@@ -185,6 +185,10 @@
         calc(38px + var(--safe-bottom));
     }
 
+    body[data-teaching-dock-visible="true"] .teaching-stage {
+      padding-bottom: calc(88px + var(--safe-bottom));
+    }
+
     .teaching-stage:empty::before {
       content: "";
       display: block;
@@ -429,51 +433,53 @@
       pointer-events: none;
       padding:
         0
-        clamp(14px, 3vw, 34px)
-        calc(10px + var(--safe-bottom));
+        10px
+        calc(6px + var(--safe-bottom));
     }
 
     .teaching-dock {
       pointer-events: auto;
-      width: min(720px, 100%);
-      min-height: 70px;
+      width: min(560px, calc(100vw - 20px));
+      min-height: 54px;
       margin: 0 auto;
-      display: flex;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       align-items: center;
-      gap: 9px;
-      padding: 10px 12px;
-      overflow-x: auto;
-      overscroll-behavior-x: contain;
-      scrollbar-width: none;
+      gap: 5px;
+      padding: 6px;
+      overflow: hidden;
       border: 1px solid var(--teaching-border);
-      border-radius: 23px;
-      background: rgba(4, 20, 15, 0.92);
-      box-shadow: var(--teaching-shadow);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-    }
-
-    .teaching-dock::-webkit-scrollbar {
-      display: none;
+      border-radius: 17px;
+      background: rgba(4, 20, 15, 0.94);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
 
     .teaching-dock__item {
-      flex: 1 0 min(132px, 32vw);
-      min-width: 92px;
-      height: 50px;
+      min-width: 0;
+      height: 40px;
+      padding: 0 5px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
-      border-radius: 15px;
-      border: 1px solid rgba(116, 229, 180, 0.09);
-      background: rgba(116, 229, 180, 0.035);
+      gap: 5px;
+      border-radius: 11px;
+      border: 1px solid rgba(116, 229, 180, 0.08);
+      background: rgba(116, 229, 180, 0.028);
       color: #aac9bc;
       text-decoration: none;
       cursor: pointer;
       white-space: nowrap;
-      font-size: 12px;
-      font-weight: 720;
+      overflow: hidden;
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+
+    .teaching-dock__label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .teaching-dock__item:hover,
@@ -485,8 +491,33 @@
     }
 
     .teaching-dock__icon {
-      font-size: 16px;
+      flex: 0 0 auto;
+      font-size: 14px;
       line-height: 1;
+    }
+
+    .teaching-dock__item[data-menu="true"] {
+      border-color: rgba(116, 229, 180, 0.14);
+      background: rgba(116, 229, 180, 0.055);
+    }
+
+    @media (max-width: 430px) {
+      .teaching-dock {
+        width: calc(100vw - 12px);
+        gap: 3px;
+        padding: 5px;
+      }
+
+      .teaching-dock__item {
+        height: 38px;
+        padding: 0 3px;
+        gap: 3px;
+        font-size: 9.5px;
+      }
+
+      .teaching-dock__icon {
+        font-size: 13px;
+      }
     }
 
     .teaching-confirm {
