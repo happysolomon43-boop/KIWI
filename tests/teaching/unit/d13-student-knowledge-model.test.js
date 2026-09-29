@@ -14,6 +14,7 @@ const {createD13Service}=require('../../../teaching/d13/service');
 const {createTeachingEventSubscriberRegistry}=require('../../../teaching/events/dispatcher');
 const {registerD12Runtime}=require('../../../teaching/d12/runtime');
 const {registerD13Runtime}=require('../../../teaching/d13/runtime');
+const {EVENT_CATEGORIES}=require('../../../teaching/runtime/constants');
 
 function demand(overrides={}){
   return {
@@ -55,7 +56,7 @@ test('many weak repetitive successes cannot manufacture INDEPENDENT',()=>{
 });
 
 test('weak repetitive positives do not overpower later strong contrary evidence',()=>{
-  const events=[strong('e1'),strong('e2'),...Array.from({length:20},(_,i)=>ev('w'+i,{evidential_strength:'WEAK',redundancy:'HIGHLY_REDUNDANT',comparability_group:'clone'})),failure('f1'),failure('f2')];
+  const events=[strong('e1',{occurred_at:'2026-01-01T00:00:00Z'}),strong('e2',{occurred_at:'2026-01-02T00:00:00Z'}),...Array.from({length:20},(_,i)=>ev('w'+i,{occurred_at:new Date(Date.UTC(2026,0,2,1,0,i)).toISOString(),evidential_strength:'WEAK',redundancy:'HIGHLY_REDUNDANT',comparability_group:'clone'})),failure('f1',{occurred_at:'2026-01-03T00:00:00Z'}),failure('f2',{occurred_at:'2026-01-04T00:00:00Z'})];
   const state=computeKnowledgeState(events,{studentId:'u1',learningUnitId:'lu1'});
   assert.equal(state.base_state,'INDEPENDENT');
   assert.ok(state.overlays.includes('REGRESSED'));
@@ -80,14 +81,14 @@ test('surface novelty with method cueing does not count as transfer',()=>{
 });
 
 test('failed delayed retrieval adds FRAGILE without erasing prior competence',()=>{
-  const delayedFailure=failure('f1',{evidence_claim:'retain_after_delay',demand_vector:{retention_timing:'delayed'}});
-  const state=computeKnowledgeState([ev('e1'),ev('e2'),delayedFailure],{studentId:'u1',learningUnitId:'lu1'});
+  const delayedFailure=failure('f1',{occurred_at:'2026-01-10T00:00:00Z',evidence_claim:'retain_after_delay',demand_vector:{retention_timing:'delayed'}});
+  const state=computeKnowledgeState([ev('e1',{occurred_at:'2026-01-01T00:00:00Z'}),ev('e2',{occurred_at:'2026-01-02T00:00:00Z'}),delayedFailure],{studentId:'u1',learningUnitId:'lu1'});
   assert.equal(state.base_state,'INDEPENDENT');
   assert.ok(state.overlays.includes('FRAGILE'));
 });
 
 test('repeated substantive later independent failure adds REGRESSED',()=>{
-  const state=computeKnowledgeState([ev('e1'),ev('e2'),failure('f1'),failure('f2')],{studentId:'u1',learningUnitId:'lu1'});
+  const state=computeKnowledgeState([ev('e1',{occurred_at:'2026-01-01T00:00:00Z'}),ev('e2',{occurred_at:'2026-01-02T00:00:00Z'}),failure('f1',{occurred_at:'2026-01-03T00:00:00Z'}),failure('f2',{occurred_at:'2026-01-04T00:00:00Z'})],{studentId:'u1',learningUnitId:'lu1'});
   assert.equal(state.base_state,'INDEPENDENT');
   assert.ok(state.overlays.includes('REGRESSED'));
 });
@@ -141,10 +142,10 @@ test('persistent misconception requires recurring evidence and independent/delay
   const candidate={status:'candidate',hypothesis:'sign changes incorrectly across equality',confidence:'medium',affected_competence_refs:['lu1']};
   const recurring={status:'recurring_supported',hypothesis:candidate.hypothesis,confidence:'high',affected_competence_refs:['lu1']};
   const events=[
-    failure('f1',{misconception_context:candidate}),
-    failure('f2',{misconception_context:recurring}),
-    strong('c1',{misconception_context:{status:'none_supported'}}),
-    strong('c2',{misconception_context:{status:'none_supported'},evidence_claim:'retain_after_delay',demand_vector:{retention_timing:'delayed'}}),
+    failure('f1',{occurred_at:'2026-01-01T00:00:00Z',misconception_context:candidate}),
+    failure('f2',{occurred_at:'2026-01-02T00:00:00Z',misconception_context:recurring}),
+    strong('c1',{occurred_at:'2026-01-03T00:00:00Z',misconception_context:{status:'none_supported'}}),
+    strong('c2',{occurred_at:'2026-01-10T00:00:00Z',misconception_context:{status:'none_supported'},evidence_claim:'retain_after_delay',demand_vector:{retention_timing:'delayed'}}),
   ];
   const state=computeKnowledgeState(events,{studentId:'u1',learningUnitId:'lu1'});
   assert.equal(state.misconceptions[0].status,'RESOLVED');
@@ -181,7 +182,7 @@ test('normalized evidence rejects direct Gradebook/mastery authority fields',()=
     sourceOwner:'ASSESSMENT_DOMAIN',sourceRef:'a1',courseId:'c1',learningUnitRefs:['lu1'],evidenceClaim:'independent_performance',
     demandVector:demand(),evidenceValidity:'VALID',evidentialStrength:'STRONG',informationGain:'HIGH',redundancy:'NEW_INFORMATION',
     controlContext:'CONTROLLED',assistanceLevel:'none',occurredAt:'2026-01-01T00:00:00Z',official_mark:88,
-  }),/authority/i);
+  }),/authorit/i);
 });
 
 test('TPF-09 T2 interpretation cannot commit durable SKM or Gradebook truth',()=>{
@@ -191,8 +192,8 @@ test('TPF-09 T2 interpretation cannot commit durable SKM or Gradebook truth',()=
     official_record_boundaries:{gradebook_changed:false,skm_state_committed:false,vpk_certified:false,assessment_eligibility_changed:false,progression_decided:false},
   };
   assert.equal(validateTPF09Output(base,{expectedStateReference:'skm:u1:lu1@2',taskMode:'evidence_event_interpretation',learningUnitRefs:['lu1']}).status,'ok');
-  assert.throws(()=>validateTPF09Output({...base,official_record_boundaries:{...base.official_record_boundaries,skm_state_committed:true}},{expectedStateReference:'skm:u1:lu1@2',taskMode:'evidence_event_interpretation',learningUnitRefs:['lu1']}),/authority/i);
-  assert.throws(()=>validateTPF09Output({...base,mastery_probability:0.91},{expectedStateReference:'skm:u1:lu1@2',taskMode:'evidence_event_interpretation',learningUnitRefs:['lu1']}),/authority/i);
+  assert.throws(()=>validateTPF09Output({...base,official_record_boundaries:{...base.official_record_boundaries,skm_state_committed:true}},{expectedStateReference:'skm:u1:lu1@2',taskMode:'evidence_event_interpretation',learningUnitRefs:['lu1']}),/authorit/i);
+  assert.throws(()=>validateTPF09Output({...base,mastery_probability:0.91},{expectedStateReference:'skm:u1:lu1@2',taskMode:'evidence_event_interpretation',learningUnitRefs:['lu1']}),/authorit/i);
 });
 
 test('D12 validated evaluation normalizes multidimensional evidence and exposed answers become unusable',()=>{
@@ -221,7 +222,7 @@ test('D13 response subscriber runs after D12 subscriber when registered in found
   registerD12Runtime({publishedEvents:registry,service:{handleResponseSubmittedEvent:async()=>{calls.push('d12');return {accepted:true};}}});
   registerD13Runtime({publishedEvents:registry,service:{handleResponseSubmittedEvent:async()=>{calls.push('d13');return {accepted:true};}}});
   await registry.publish({
-    eventId:'e',schemaVersion:1,eventType:'teaching.student.response_submitted',eventCategory:'COMMITTED_DOMAIN_EVENT',
+    eventId:'e',schemaVersion:1,eventType:'teaching.student.response_submitted',eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
     triggerType:'committed_domain_event',source:'test',origin:'test',actorId:'u1',aggregateType:'teaching_student_response',aggregateId:'r1',
     aggregateVersion:1,occurredAt:'2026-01-01T00:00:00Z',effectiveAt:'2026-01-01T00:00:00Z',dueAt:null,
     correlationId:'e',causationId:null,idempotencyKey:'e',payload:{student_id:'u1',response_id:'r1'},auditRefs:[],provenanceRefs:[],
