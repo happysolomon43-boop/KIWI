@@ -118,7 +118,9 @@ test('D09 sparse availability and recovery-headroom exhaustion fail closed',()=>
   const sparse=computeSchedule(context([bundle('c1',8,60)],{availability:availability([1],'09:00','10:00')}),{now:'2026-09-29T04:00:00Z'});
   assert.equal(sparse.outcome,'INFEASIBLE');
   assert.ok(sparse.reasons.includes('REQUIRED_INSTRUCTIONAL_LOAD_UNSCHEDULED'));
-  const headroom=computeSchedule(context([bundle('c1',9,60)],{availability:availability([1,2],'09:00','14:00')}),{now:'2026-09-29T04:00:00Z'});
+  const headroomContext=context([bundle('c1',9,60)],{availability:availability([1,2],'09:00','14:00')});
+  headroomContext.semester={...headroomContext.semester,ends_at:'2026-10-06T14:00:00Z'};
+  const headroom=computeSchedule(headroomContext,{now:'2026-09-29T04:00:00Z'});
   assert.equal(headroom.outcome,'INFEASIBLE');
   assert.ok(headroom.reasons.includes('RECOVERY_HEADROOM_BELOW_MINIMUM'));
 });
