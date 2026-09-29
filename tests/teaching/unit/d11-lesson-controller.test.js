@@ -291,7 +291,7 @@ test('D11 migration preserves browser read-only authority, student Summary visib
   assert.match(sql,/teaching_class_summaries_student_select/);
   assert.match(sql,/GRANT SELECT ON public.teaching_class_summaries TO authenticated/);
   assert.doesNotMatch(sql,/GRANT SELECT ON public.teaching_post_class_teacher_notes TO authenticated/);
-  assert.doesNotMatch(sql,/GRANTs+(INSERT|UPDATE|DELETE|TRUNCATE)[sS]{0,220}TOs+authenticated/i);
+  assert.doesNotMatch(sql,/GRANT\s+(INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,220}TO\s+authenticated/i);
   assert.match(sql,/interval '15 minutes'/);
 });
 
@@ -312,7 +312,7 @@ test('D11 model-outage path preserves T0 Class start as safe route-held Controll
   assert.match(repo,/CONTROLLER_STARTED_ROUTE_HELD/);
   assert.match(repo,/initialLifecycle = routeHeld ? 'INTERRUPTED' : 'ACTIVE'/);
   assert.match(repo,/academic_penalty_created:false/);
-  assert.match(runtime,/VALIDATED_BLUEPRINT_NOT_AVAILABLE_ROUTE_HELD/);
+  assert.match(runtime,/model_route_required_for_t0_start:false/);
   assert.match(runtime,/disposition:RECONCILIATION_DISPOSITIONS.ACTIONABLE/);
 });
 
@@ -322,7 +322,7 @@ test('D11 source never selects provider/model IDs or creates future-domain autho
     'teaching/d11/runtime.js','teaching/repositories/d11-lesson-controller.js',
   ];
   const src=files.map((file)=>fs.readFileSync(path.resolve(__dirname,'../../..',file),'utf8')).join('\n');
-  assert.doesNotMatch(src,/@google/generative-ai|\bopenai\b|\banthropic\b|gemini-[0-9]/i);
+  assert.doesNotMatch(src,/@google\/generative-ai|\bopenai\b|\banthropic\b|gemini-[0-9]/i);
   assert.doesNotMatch(src,/insert into\s+public\.teaching_(gradebook|attendance|student_knowledge|progression)/i);
   assert.doesNotMatch(src,/active_assessment_answers_included:\s*true/i);
 });
