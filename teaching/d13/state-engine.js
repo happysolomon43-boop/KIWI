@@ -178,7 +178,7 @@ function summarizeDimensions(events,baseState) {
   });
 }
 function confidenceCalibration(events) {
-  const samples=events.filter((event)=>confidence(event).provided===true);
+  const samples=events.filter((event)=>confidence(event).provided===true && validity(event)!=='INVALID' && evidenceStrength(event)!=='UNUSABLE');
   if (!samples.length) return freezeDeep({status:'NOT_ASSESSED',pattern:null,basis_refs:[],note:'Missing confidence is missing evidence, not low confidence.'});
   const highWrong=samples.filter((event)=>String(confidence(event).band||confidence(event).value_or_band||'').toLowerCase()==='high' && isIncorrect(event));
   const lowCorrect=samples.filter((event)=>String(confidence(event).band||confidence(event).value_or_band||'').toLowerCase()==='low' && isCorrect(event));
@@ -213,6 +213,7 @@ function pathToSuccess(events) {
   const helpful=new Map(); const errors=new Map(); const prereqs=new Map();
   let assistedSuccess=false;
   for(const event of events){
+    if(validity(event)==='INVALID' || evidenceStrength(event)==='UNUSABLE') continue;
     const ref=eventId(event); const path=pathContext(event); const pre=prerequisite(event);
     if(successfulAssisted(event)) assistedSuccess=true;
     for(const err of asArray(event.observed_errors || event.observedErrors)){
@@ -244,6 +245,7 @@ function pathToSuccess(events) {
 function synthesizeMisconceptions(events,studentId,learningUnitId) {
   const groups=new Map();
   for(const event of events){
+    if(validity(event)==='INVALID' || evidenceStrength(event)==='UNUSABLE') continue;
     const m=misconception(event);
     const hypothesis=String(m.hypothesis || '').trim();
     if(!hypothesis || !['candidate','recurring_supported','recurring'].includes(String(m.status||''))) continue;
@@ -292,14 +294,16 @@ function blockOverlay(events) {
 }
 function baseStateFor(events) {
   if(!events.length) return 'UNSEEN';
-  const independent=distinctIndependentSuccesses(events);
-  const delayed=events.some(delayedQualified);
-  const transfer=events.some(transferQualified);
+  const meaningful=events.filter((event)=>validity(event)!=='INVALID');
+  if(!meaningful.length) return 'UNSEEN';
+  const independent=distinctIndependentSuccesses(meaningful);
+  const delayed=meaningful.some(delayedQualified);
+  const transfer=meaningful.some(transferQualified);
   if(independent.length>=2 && transfer) return 'TRANSFERABLE';
   if(independent.length>=2 && delayed) return 'SECURE';
   if(independent.length>=2) return 'INDEPENDENT';
   if(independent.length>=1) return 'EMERGING';
-  if(events.some(successfulAssisted)) return 'ASSISTED';
+  if(meaningful.some(successfulAssisted)) return 'ASSISTED';
   return 'INTRODUCED';
 }
 function competenceEstablishedAt(events) {
