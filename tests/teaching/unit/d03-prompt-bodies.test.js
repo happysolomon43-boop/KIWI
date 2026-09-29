@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const {
   loadPromptBodyStore,
   getFrozenPromptBodyRecord,
@@ -84,8 +85,10 @@ test('TPF-20 compressed repository asset fails closed if its exact frozen bytes 
   const tmpAsset = path.join(tmpDir, 'TPF-20_Class_Grounded_Study_Note_v1.0_DESIGN_FROZEN.md.gz.b64');
   try {
     const encoded = fs.readFileSync(asset, 'utf8').trim();
-    const replacement = encoded.slice(0, -1) + (encoded.endsWith('A') ? 'B' : 'A');
-    fs.writeFileSync(tmpAsset, replacement);
+    const bytes = zlib.gunzipSync(Buffer.from(encoded, 'base64'));
+    const altered = Buffer.from(bytes);
+    altered[altered.length - 1] = altered[altered.length - 1] ^ 1;
+    fs.writeFileSync(tmpAsset, zlib.gzipSync(altered).toString('base64'));
     assert.throws(
       () => loadPromptBodyStore({ tpf20Asset: tmpAsset }),
       { code: 'TEACHING_UNMANIFESTED_PROMPT_TEXT_REJECTED' }
