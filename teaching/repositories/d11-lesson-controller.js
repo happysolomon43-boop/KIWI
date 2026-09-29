@@ -481,7 +481,7 @@ function createD11LessonControllerRepository({
       "source_class_schedule_version,source_timetable_version_id,scheduled_start_at_snapshot,scheduled_end_at_snapshot," +
       "timezone_snapshot,event_cursor,progress_state,controller_contract_version" +
       ") values($1,$2,$3,$4,'ACTIVE','OPENING',1,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,1," +
-      "'{\"completed_segment_refs\":[],\"completed_objective_refs\":[]}'::jsonb,'d11.controller.v1') returning *",
+      "'{\"completed_segment_refs\":[],\"completed_objective_refs\":[],\"evidence_event_refs\":[],\"independent_evidence_objective_refs\":[]}'::jsonb,'d11.controller.v1') returning *",
       [
         sessionId,studentId,classId,blueprint.lesson_blueprint_id,now,classRow.course_id,plan.course_plan_id,
         classRow.course_state_version,plan.version_no,classRow.schedule_version,classRow.source_timetable_version_id || null,
@@ -566,7 +566,7 @@ function createD11LessonControllerRepository({
   }
 
   async function recordProgressUsing(tx, {
-    studentId,classId,expectedVersion,completedSegmentRefs=[],completedObjectiveRefs=[],evidenceRefs=[],
+    studentId,classId,expectedVersion,completedSegmentRefs=[],completedObjectiveRefs=[],evidenceRefs=[],independentEvidenceObjectiveRefs=[],
   } = {}) {
     const session = await getSession(studentId,classId,tx,true);
     if (!session || Number(session.state_version) !== Number(expectedVersion)) {
@@ -587,6 +587,7 @@ function createD11LessonControllerRepository({
       error.status = 422;
       throw error;
     }
+    let independentEvidenceRows = [];
     if (evidenceRefs.length) {
       const evidence = await tx.query(
         "select evidence_event_id from public.teaching_evidence_events where student_id=$1" +
@@ -599,17 +600,39 @@ function createD11LessonControllerRepository({
         error.status = 422;
         throw error;
       }
+      independentEvidenceRows = evidence.rows;
+    }
+    const independentRefs = [...new Set(independentEvidenceObjectiveRefs.map(String))];
+    if (independentRefs.some((ref) => !validObjectives.has(ref))) {
+      const error = new Error('Independent-evidence progress references an unknown objective.');
+      error.code = 'TEACHING_D11_INDEPENDENT_EVIDENCE_REF_INVALID';
+      error.status = 422;
+      throw error;
+    }
+    if (independentRefs.length) {
+      const { rows: verifiedRows } = await tx.query(
+        "select distinct evidence_event_id from public.teaching_evidence_events where student_id=$1" +
+        " and class_session_id=$2 and independent_performance=true and evidence_event_id=any($3::text[])",
+        [studentId,session.class_session_id,evidenceRefs.map(String)]
+      );
+      if (!verifiedRows.length) {
+        const error = new Error('Independent objective progress requires at least one independent-performance evidence event.');
+        error.code = 'TEACHING_D11_INDEPENDENT_EVIDENCE_REQUIRED';
+        error.status = 422;
+        throw error;
+      }
     }
     const prior = session.progress_state || {};
     const progress = {
       completed_segment_refs:[...new Set([...(prior.completed_segment_refs || []),...segments])],
       completed_objective_refs:[...new Set([...(prior.completed_objective_refs || []),...objectives])],
       evidence_event_refs:[...new Set([...(prior.evidence_event_refs || []),...evidenceRefs.map(String)])],
+      independent_evidence_objective_refs:[...new Set([...(prior.independent_evidence_objective_refs || []),...independentRefs])],
     };
     return transitionUsing(tx, {
       studentId,classId,expectedVersion,toState:session.instructional_substate,
       lifecycleState:session.lifecycle_state,reason:'Controller progress checkpoint',
-      actionKind:'PROGRESS_CHECKPOINT',safeMetadata:{new_segment_refs:segments,new_objective_refs:objectives,evidence_refs:evidenceRefs},
+      actionKind:'PROGRESS_CHECKPOINT',safeMetadata:{new_segment_refs:segments,new_objective_refs:objectives,evidence_refs:evidenceRefs,independent_evidence_objective_refs:independentRefs},
       extraUpdates:{progress_state:progress},
     });
   }
