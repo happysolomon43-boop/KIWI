@@ -209,6 +209,15 @@ function assertSchedulingContextCurrent(expected, current) {
     stale.push('SCHEDULE_PROFILE');
   }
   const currentCourses=new Map((current?.courses||[]).map((bundle)=>[String(bundle.course?.course_id),bundle]));
+  const expectedCourseIds=new Set([
+    ...(expected?.courses||[]).map((bundle)=>String(bundle.course?.course_id||'')),
+    ...(expected?.unresolvedCourses||[]).map((item)=>String(item.courseId||'')),
+  ].filter(Boolean));
+  const currentCourseIds=new Set(currentCourses.keys());
+  if(expectedCourseIds.size!==currentCourseIds.size
+    || [...expectedCourseIds].some((courseId)=>!currentCourseIds.has(courseId))) {
+    stale.push('SEMESTER_COURSE_SET');
+  }
   for(const bundle of expected?.courses||[]){
     const courseId=String(bundle.course?.course_id||'');
     const now=currentCourses.get(courseId);
@@ -224,6 +233,15 @@ function assertSchedulingContextCurrent(expected, current) {
       || String(bundle.plan?.source_snapshot_ref||'')!==String(now.plan?.source_snapshot_ref||'')
       || ['REVIEW_REQUIRED','SUPERSEDED'].includes(String(now.plan?.plan_state))) {
       stale.push('COURSE_PLAN:'+courseId);
+    }
+  }
+  for(const unresolved of expected?.unresolvedCourses||[]){
+    const courseId=String(unresolved.courseId||'');
+    const now=currentCourses.get(courseId);
+    if(!now
+      || (unresolved.stateVersion!=null && Number(unresolved.stateVersion)!==Number(now.course?.state_version))
+      || now.plan) {
+      stale.push('UNRESOLVED_COURSE:'+courseId);
     }
   }
   if(stale.length){
