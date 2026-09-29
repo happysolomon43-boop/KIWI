@@ -445,7 +445,7 @@ function createD11Service({
     }
   }
 
-  async function startController(user,classId,sourceEventRef=null,idempotencyKey=null) {
+  async function startController(user,classId,sourceEventRef=null,idempotencyKey=null,options={}) {
     let context=await repository.getClassContext(user.id,classId);
     assertClassPlanningEligible(context);
     if(String(context.classRow.course_lifecycle_state)!=='ACTIVE') {
