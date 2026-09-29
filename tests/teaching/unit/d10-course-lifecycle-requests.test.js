@@ -146,7 +146,7 @@ test('D10 post-activation UI removes direct timetable authority and exposes one 
 
 test('D10 design gate covers all three anchors without implementing D11 live controller',()=>{
   const design=fs.readFileSync(path.resolve(__dirname,'../../../docs/teaching/design/d10-first-three-anchor-mockups.md'),'utf8');
-  for(const token of ['Teaching shell + Today anchor','Course Home anchor','Normal Live Classroom anchor','TCH-0578','TCH-0581']) assert.match(design,new RegExp(token));
+  for(const token of ['Teaching shell + Today anchor','Course Home anchor','Normal Live Classroom anchor','TCH-0578','TCH-0581']) assert.ok(design.includes(token),token);
   assert.match(design,/non-functional D10 mockup/);
 });
 
