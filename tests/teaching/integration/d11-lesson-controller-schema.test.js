@@ -85,6 +85,32 @@ test('D11 schema extends the Class kernel with durable Controller/closure/transl
     assert.ok(constraints.rows.some((r)=>/overtime_ceiling_at.*15 minutes/i.test(r.def)));
     assert.ok(constraints.rows.some((r)=>/break_ends_at.*scheduled_end_at_snapshot/i.test(r.def)));
 
+    const unindexedD11Fks=await pool.query(`
+      with fks as (
+        select con.conname,con.conrelid,con.conkey,n.nspname,c.relname
+        from pg_constraint con
+        join pg_class c on c.oid=con.conrelid
+        join pg_namespace n on n.oid=c.relnamespace
+        where con.contype='f' and n.nspname='public'
+          and c.relname=any($1::text[])
+      ),
+      idx as (
+        select indrelid,indkey::smallint[] as indkey
+        from pg_index where indisvalid and indisready
+      )
+      select f.relname,f.conname
+      from fks f
+      where not exists (
+        select 1 from idx i
+        where i.indrelid=f.conrelid
+          and i.indkey[0:cardinality(f.conkey)-1]=f.conkey
+      )
+    `,[[
+      'teaching_lesson_blueprints','teaching_class_sessions','teaching_class_controller_history',
+      'teaching_class_closure_facts','teaching_class_summaries','teaching_post_class_teacher_notes',
+    ]]);
+    assert.deepEqual(unindexedD11Fks.rows,[]);
+
     const pplIndex=await pool.query(
       "select indexdef from pg_indexes where schemaname='teaching_preparation' and indexname='teaching_preparation_d11_next_class_workspace_uidx'"
     );
