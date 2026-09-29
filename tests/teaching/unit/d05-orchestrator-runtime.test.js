@@ -23,6 +23,7 @@ const {
 } = require('../../../teaching/orchestrator/composition');
 const { createTransactionalTeachingMutation } = require('../../../teaching/runtime/transactional-mutation');
 const { TEACHING_EVENTS } = require('../../../teaching/events/names');
+const { validateTeachingEvent } = require('../../../teaching/events/contracts');
 const { createTeachingEventSubscriberRegistry } = require('../../../teaching/events/dispatcher');
 const {
   evaluateWorkspaceTransition,
