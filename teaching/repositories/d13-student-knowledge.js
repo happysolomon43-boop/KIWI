@@ -313,7 +313,9 @@ function createD13StudentKnowledgeRepository({query,withTransaction,randomUUID,c
 
   async function listCourseKnowledge(studentId,courseId,runner=null){
     const {rows}=await q(runner,
-      "with current_state as ("+
+      "with current_plan as ("+
+      " select course_plan_id from public.teaching_course_plans where student_id=$1 and course_id=$2 order by version_no desc limit 1"+
+      "), current_state as ("+
       " select distinct on (s.learning_unit_id) s.* from public.teaching_student_knowledge_state_versions s"+
       " where s.student_id=$1 order by s.learning_unit_id,s.version_no desc"+
       ") select lu.learning_unit_id,lu.title,lu.intended_competence,lu.course_plan_id,"+
@@ -321,10 +323,11 @@ function createD13StudentKnowledgeRepository({query,withTransaction,randomUUID,c
       " cs.certainty_band,cs.certainty_basis,cs.retention_context,cs.strongest_supported_claim,cs.contradiction_state,"+
       " cs.evidence_event_count,cs.evidence_cutoff_at,cs.path_to_success,cs.confidence_calibration,cs.created_at"+
       " from public.teaching_learning_units lu"+
-      " join public.teaching_course_plans cp on cp.course_plan_id=lu.course_plan_id and cp.student_id=lu.student_id"+
+      " join current_plan cp on cp.course_plan_id=lu.course_plan_id"+
+      " join public.teaching_topics t on t.topic_id=lu.topic_id and t.student_id=lu.student_id"+
+      " left join public.teaching_subtopics st on st.subtopic_id=lu.subtopic_id and st.student_id=lu.student_id"+
       " left join current_state cs on cs.learning_unit_id=lu.learning_unit_id and cs.student_id=lu.student_id"+
-      " where lu.student_id=$1 and cp.course_id=$2 and cp.plan_state<>'SUPERSEDED'"+
-      " order by coalesce(lu.sequence_no,0),lu.learning_unit_id",
+      " where lu.student_id=$1 order by t.ordinal,coalesce(st.ordinal,0),lu.created_at,lu.learning_unit_id",
       [studentId,courseId]
     );
     return rows||[];
