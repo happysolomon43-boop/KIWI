@@ -96,6 +96,10 @@ CREATE INDEX teaching_student_knowledge_state_latest_idx
   ON public.teaching_student_knowledge_state_versions(student_id,learning_unit_id,version_no DESC);
 CREATE INDEX teaching_student_knowledge_state_algorithm_idx
   ON public.teaching_student_knowledge_state_versions(algorithm_version,created_at DESC);
+CREATE INDEX teaching_student_knowledge_state_learning_unit_fk_idx
+  ON public.teaching_student_knowledge_state_versions(learning_unit_id);
+CREATE INDEX teaching_student_knowledge_state_cause_evidence_fk_idx
+  ON public.teaching_student_knowledge_state_versions(cause_evidence_event_id);
 
 CREATE TABLE public.teaching_skm_evidence_applications (
   evidence_application_id text PRIMARY KEY,
@@ -113,6 +117,12 @@ CREATE TABLE public.teaching_skm_evidence_applications (
 );
 CREATE INDEX teaching_skm_evidence_applications_lu_idx
   ON public.teaching_skm_evidence_applications(student_id,learning_unit_id,created_at DESC);
+CREATE INDEX teaching_skm_evidence_applications_event_fk_idx
+  ON public.teaching_skm_evidence_applications(evidence_event_id);
+CREATE INDEX teaching_skm_evidence_applications_learning_unit_fk_idx
+  ON public.teaching_skm_evidence_applications(learning_unit_id);
+CREATE INDEX teaching_skm_evidence_applications_state_fk_idx
+  ON public.teaching_skm_evidence_applications(resulting_state_version_id);
 
 CREATE TABLE public.teaching_persistent_misconception_versions (
   misconception_version_id text PRIMARY KEY,
@@ -140,6 +150,12 @@ CREATE INDEX teaching_persistent_misconception_current_idx
   ON public.teaching_persistent_misconception_versions(student_id,misconception_record_id,version_no DESC);
 CREATE INDEX teaching_persistent_misconception_learning_unit_idx
   ON public.teaching_persistent_misconception_versions(student_id,primary_learning_unit_id,version_no DESC);
+CREATE INDEX teaching_persistent_misconception_learning_unit_fk_idx
+  ON public.teaching_persistent_misconception_versions(primary_learning_unit_id);
+CREATE INDEX teaching_persistent_misconception_supersedes_fk_idx
+  ON public.teaching_persistent_misconception_versions(supersedes_misconception_version_id);
+CREATE INDEX teaching_persistent_misconception_cause_evidence_fk_idx
+  ON public.teaching_persistent_misconception_versions(cause_evidence_event_id);
 
 CREATE TRIGGER teaching_student_knowledge_state_versions_immutable
 BEFORE UPDATE OR DELETE ON public.teaching_student_knowledge_state_versions
