@@ -1,0 +1,42 @@
+name: KIWI UI System
+
+on:
+  pull_request:
+    paths:
+      - 'index.html'
+      - 'public/kiwi-ui-system.css'
+      - 'public/kiwi-ui-system.js'
+      - 'public/teaching.html'
+      - 'public/teaching-d10.js'
+      - 'tests/ui/system-ui.test.js'
+      - '.github/workflows/kiwi-ui-system.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'public/kiwi-ui-system.css'
+      - 'public/kiwi-ui-system.js'
+      - 'public/teaching.html'
+      - 'public/teaching-d10.js'
+      - 'tests/ui/system-ui.test.js'
+      - '.github/workflows/kiwi-ui-system.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ui-system:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Syntax check UI JavaScript
+        run: |
+          node --check public/kiwi-ui-system.js
+          node --check public/teaching-d10.js
+          node --check public/kiwi_product_v3.js
+      - name: Verify responsive UI system and Request Center
+        run: node --test tests/ui/system-ui.test.js
