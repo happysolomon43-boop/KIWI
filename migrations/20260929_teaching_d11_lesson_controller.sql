@@ -234,9 +234,10 @@ CREATE INDEX IF NOT EXISTS teaching_post_class_teacher_notes_session_fk_idx
 CREATE INDEX IF NOT EXISTS teaching_post_class_teacher_notes_closure_fk_idx
   ON public.teaching_post_class_teacher_notes(closure_fact_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS teaching_preparation_d11_next_class_workspace_uidx
+DROP INDEX IF EXISTS teaching_preparation.teaching_preparation_d11_next_class_workspace_uidx;
+CREATE UNIQUE INDEX teaching_preparation_d11_next_class_workspace_uidx
   ON teaching_preparation.workspaces(student_id,target_kind,target_ref)
-  WHERE target_kind='next_class' AND lifecycle_state NOT IN ('SUPERSEDED','CANCELLED');
+  WHERE target_kind='next_class' AND lifecycle_state IN ('ACTIVE','FINALIZATION_DUE','FINALIZED');
 
 DO $$
 DECLARE rel text;
