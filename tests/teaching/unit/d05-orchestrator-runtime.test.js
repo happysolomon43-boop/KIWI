@@ -41,6 +41,9 @@ const {
   executePreparationWorkflow,
 } = require('../../../teaching/preparation/workflow');
 const {
+  toCanonicalEvent,
+} = require('../../../teaching/runtime/durable-outbox-runtime');
+const {
   createPreparationPublishedEventHandlers,
   registerPreparationPublishedEventSubscribers,
 } = require('../../../teaching/preparation/subscribers');
@@ -217,6 +220,34 @@ function harness({
   });
   return { orchestrator, getOwnerCalls: () => ownerCalls };
 }
+
+test('D05 durable outbox normalizes PostgreSQL Date timestamps before event validation', () => {
+  const canonical = toCanonicalEvent({
+    event_id: 'evt-outbox-date',
+    schema_version: 1,
+    event_type: TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    event_category: 'committed_domain_event',
+    trigger_type: 'committed_domain_event',
+    source: 'teaching_preparation',
+    origin: 'teaching_preparation',
+    actor_id: null,
+    aggregate_type: 'preparation_workspace',
+    aggregate_id: 'workspace-1',
+    aggregate_version: 1,
+    occurred_at: new Date('2026-09-29T05:38:45.106Z'),
+    effective_at: null,
+    correlation_id: 'corr-outbox-date',
+    causation_id: null,
+    idempotency_key: 'outbox-date-1',
+    payload: {},
+    audit_refs: [],
+    provenance_refs: [],
+  });
+
+  assert.equal(canonical.occurredAt, '2026-09-29T05:38:45.106Z');
+  assert.equal(canonical.effectiveAt, null);
+  assert.doesNotThrow(() => validateTeachingEvent(canonical));
+});
 
 test('D05 trigger normalization preserves authority categories and server time', () => {
   const command = normalizeOrchestrationTrigger({
