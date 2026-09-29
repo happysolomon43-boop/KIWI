@@ -11,16 +11,77 @@ function fmt(value){if(!value)return '—'; try{return new Date(value).toLocaleS
 function installStyles(){
   if(document.getElementById('teachingD10Styles')) return;
   const style=document.createElement('style');style.id='teachingD10Styles';style.textContent=`
-    .teaching-d10-page{display:grid;gap:16px}.teaching-d10-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
-    .teaching-d10-card{padding:18px;border:1px solid var(--teaching-border);border-radius:18px;background:var(--teaching-surface-soft)}
+    .teaching-d10-page{display:grid;gap:18px;min-width:0}
+    .teaching-d10-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+    .teaching-d10-card{min-width:0;padding:18px;border:1px solid var(--teaching-border);border-radius:18px;background:var(--teaching-surface-soft)}
     .teaching-d10-card h3{margin:7px 0 4px;font-size:20px}.teaching-d10-card p{color:var(--teaching-muted);line-height:1.55}
     .teaching-d10-list{display:grid;gap:8px;margin:14px 0}.teaching-d10-row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--teaching-border)}
-    .teaching-d10-row:first-child{border-top:0}.teaching-d10-status{font-family:var(--font-mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase}
-    .teaching-d10-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.teaching-d10-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-    .teaching-d10-field{display:grid;gap:6px}.teaching-d10-field span{font-size:11px;color:var(--teaching-muted)}.teaching-d10-field input,.teaching-d10-field select,.teaching-d10-field textarea{width:100%;box-sizing:border-box}
-    .teaching-d10-request{padding:14px;border:1px solid var(--teaching-border);border-radius:14px}.teaching-d10-request__top{display:flex;justify-content:space-between;gap:12px}
+    .teaching-d10-row:first-child{border-top:0}.teaching-d10-status{display:inline-flex;align-items:center;min-height:26px;padding:5px 8px;border:1px solid var(--teaching-border);border-radius:999px;background:rgba(255,255,255,.025);font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+    .teaching-d10-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.teaching-d10-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .teaching-d10-field{display:grid;gap:7px;min-width:0}.teaching-d10-field>span{font-size:11px;font-weight:650;color:#a8c5b9;letter-spacing:.01em}
+    .teaching-d10-field input,.teaching-d10-field select,.teaching-d10-field textarea{width:100%;box-sizing:border-box}
+    .teaching-d10-field input,.teaching-d10-field textarea{border:1px solid var(--teaching-border);border-radius:11px;background:rgba(4,20,15,.72);color:var(--teaching-text);padding:11px 12px;outline:none;font:inherit;transition:border-color 150ms ease,box-shadow 150ms ease,background 150ms ease}
+    .teaching-d10-field textarea{min-height:108px;resize:vertical;line-height:1.55}
+    .teaching-d10-field input:focus,.teaching-d10-field textarea:focus{border-color:var(--teaching-accent);box-shadow:0 0 0 3px var(--teaching-accent-soft);background:rgba(4,20,15,.92)}
     .teaching-d10-note{font-size:12px;color:var(--teaching-muted)}.teaching-d10-blocker{font-size:12px}
-    @media(max-width:800px){.teaching-d10-grid,.teaching-d10-fields{grid-template-columns:1fr}}
+
+    .teaching-d10-request-center{gap:20px}
+    .teaching-d10-hero{position:relative;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px;align-items:end;padding:clamp(20px,4vw,32px);border:1px solid var(--teaching-border);border-radius:22px;background:radial-gradient(circle at 90% 0%,rgba(98,217,165,.12),transparent 34%),linear-gradient(145deg,rgba(8,35,26,.96),rgba(4,19,14,.9))}
+    .teaching-d10-hero::after{content:"";position:absolute;right:-80px;top:-110px;width:240px;height:240px;border:1px solid rgba(98,217,165,.08);border-radius:50%;pointer-events:none}
+    .teaching-d10-hero__copy{position:relative;z-index:1;max-width:720px}.teaching-d10-hero h2{margin:8px 0 8px;font-family:var(--font-display);font-size:clamp(28px,5vw,42px);letter-spacing:-.035em;line-height:1.06}
+    .teaching-d10-hero p{max-width:650px;margin:0;color:var(--teaching-muted);font-size:14px;line-height:1.65}
+    .teaching-d10-hero__signals{position:relative;z-index:1;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;max-width:360px}
+    .teaching-d10-signal{display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:7px 10px;border:1px solid var(--teaching-border);border-radius:999px;background:rgba(3,17,13,.64);color:#b8d5c8;font-size:11px;white-space:nowrap}
+    .teaching-d10-signal::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--teaching-accent);box-shadow:0 0 0 4px rgba(98,217,165,.08)}
+
+    .teaching-d10-composer{padding:0;overflow:hidden;background:linear-gradient(180deg,rgba(8,30,23,.92),rgba(5,22,17,.88))}
+    .teaching-d10-composer__head{display:grid;grid-template-columns:auto minmax(0,1fr);gap:13px;padding:20px 20px 16px;border-bottom:1px solid var(--teaching-border)}
+    .teaching-d10-step{width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--teaching-border-strong);border-radius:11px;background:var(--teaching-accent-soft);color:var(--teaching-accent);font-family:var(--font-mono);font-size:10px;font-weight:800}
+    .teaching-d10-composer__head h3{margin:0 0 4px;font-size:20px}.teaching-d10-composer__head p{margin:0;max-width:720px}
+    .teaching-d10-composer__body{display:grid;gap:14px;padding:20px}
+    .teaching-d10-form-note{display:flex;gap:9px;align-items:flex-start;padding:11px 12px;border:1px solid rgba(98,217,165,.12);border-radius:11px;background:rgba(98,217,165,.045);color:#93b6a7;font-size:11px;line-height:1.55}
+    .teaching-d10-form-note strong{color:#cce6da}
+    .teaching-d10-composer__actions{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding-top:2px}
+    .teaching-d10-composer__actions .teaching-d10-actions{margin:0}
+    .teaching-d10-form-message:empty{display:none}.teaching-d10-form-message{margin-top:2px}
+
+    .teaching-d10-request-section{display:grid;gap:11px}
+    .teaching-d10-section-head{display:flex;align-items:end;justify-content:space-between;gap:12px;padding:2px 2px 0}
+    .teaching-d10-section-head h3{margin:4px 0 0;font-size:20px}.teaching-d10-section-count{color:var(--teaching-muted);font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+    .teaching-d10-request-list{display:grid;gap:10px}
+    .teaching-d10-request{min-width:0;padding:16px;border:1px solid var(--teaching-border);border-radius:16px;background:linear-gradient(180deg,rgba(8,30,23,.72),rgba(5,21,16,.7));transition:border-color 150ms ease,transform 150ms ease,background 150ms ease}
+    .teaching-d10-request:hover{border-color:var(--teaching-border-strong);background:linear-gradient(180deg,rgba(9,34,25,.86),rgba(5,22,17,.8))}
+    .teaching-d10-request__top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+    .teaching-d10-request__title{min-width:0}.teaching-d10-request__title strong{display:block;font-size:15px;line-height:1.3}.teaching-d10-request__meta{margin-top:5px;color:var(--teaching-muted);font-size:11px;line-height:1.45}
+    .teaching-d10-request[data-state="APPLIED"] .teaching-d10-status,.teaching-d10-request[data-state="CLOSED"] .teaching-d10-status{border-color:rgba(98,217,165,.24);background:rgba(98,217,165,.09);color:#91e4be}
+    .teaching-d10-request[data-state="ALTERNATIVE_PROPOSED"] .teaching-d10-status{border-color:rgba(245,158,11,.26);background:rgba(245,158,11,.08);color:#f7c76f}
+    .teaching-d10-request[data-state="REJECTED"] .teaching-d10-status,.teaching-d10-request[data-state="WITHDRAWN"] .teaching-d10-status{border-color:rgba(224,82,82,.25);background:rgba(224,82,82,.08);color:#f19a9a}
+    .teaching-d10-request__notice{margin-top:12px;padding:10px 11px;border:1px solid var(--teaching-border);border-radius:10px;background:rgba(255,255,255,.025);font-size:11px;line-height:1.5;color:#a9c6ba}
+    .teaching-d10-request__notice[data-kind="alternative"]{border-color:rgba(245,158,11,.2);background:rgba(245,158,11,.055);color:#e9c47d}
+    .teaching-d10-request .teaching-d10-actions{padding-top:2px;border-top:1px solid rgba(116,229,180,.08)}
+
+    @media(max-width:800px){
+      .teaching-d10-grid,.teaching-d10-fields{grid-template-columns:1fr}
+      .teaching-d10-hero{grid-template-columns:1fr;align-items:start}
+      .teaching-d10-hero__signals{justify-content:flex-start;max-width:none}
+      .teaching-d10-request__top{align-items:flex-start}
+    }
+    @media(max-width:520px){
+      .teaching-d10-page{gap:14px}
+      .teaching-d10-hero{padding:19px 16px;border-radius:18px}
+      .teaching-d10-hero h2{font-size:30px}
+      .teaching-d10-hero__signals{display:grid;grid-template-columns:1fr 1fr;width:100%}
+      .teaching-d10-signal{justify-content:flex-start;white-space:normal}
+      .teaching-d10-composer__head,.teaching-d10-composer__body{padding-left:15px;padding-right:15px}
+      .teaching-d10-composer__actions{align-items:stretch}
+      .teaching-d10-composer__actions .teaching-d10-actions{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto}
+      .teaching-d10-composer__actions .teaching-button,.teaching-d10-composer__actions .teaching-d08-link-button{min-height:46px}
+      .teaching-d10-request{padding:14px}
+      .teaching-d10-request__top{display:grid;grid-template-columns:minmax(0,1fr) auto}
+      .teaching-d10-request .teaching-d10-actions{display:grid;grid-template-columns:1fr}
+      .teaching-d10-request .teaching-d10-actions>*{width:100%}
+      .teaching-d10-section-head{align-items:start}
+    }
   `;document.head.append(style);
 }
 function field(label,input){const wrap=el('label','teaching-d10-field');wrap.append(el('span','',label),input);return wrap;}
@@ -92,67 +153,154 @@ async function renderActivationSummary({course,container,openSection}){
 
 function buildRequestForm(container,context={}){
   const courses=typeof courseSurface.all==='function'?courseSurface.all():[];
-  const card=el('section','teaching-d10-card');card.append(el('div','teaching-kicker','New formal Request'),el('h3','','Ask for an academic change'),el('p','','Requests are proposals until the authoritative owner approves and applies them. Alternatives never take effect without explicit acceptance.'));
+  const card=el('section','teaching-d10-card teaching-d10-composer');
+  const head=el('div','teaching-d10-composer__head'),step=el('div','teaching-d10-step','01'),copy=el('div');
+  copy.append(el('h3','','Request a change'),el('p','','Choose what should change. KIWI records the proposal first; the authoritative owner decides whether and when it can take effect.'));
+  head.append(step,copy);
+  const body=el('div','teaching-d10-composer__body');
   const fields=el('div','teaching-d10-fields');
-  const courseSelect=el('select');const empty=el('option','','Choose Course');empty.value='';courseSelect.append(empty);courses.forEach((c)=>{const o=el('option','',c.title||'Course');o.value=c.course_id;o.selected=String(context.courseId||'')===String(c.course_id);courseSelect.append(o);});
-  const type=el('select');
+
+  const courseSelect=el('select');
+  courseSelect.setAttribute('aria-label','Course');
+  const empty=el('option','','Choose Course');empty.value='';courseSelect.append(empty);
+  courses.forEach((course)=>{const option=el('option','',course.title||'Course');option.value=course.course_id;option.selected=String(context.courseId||'')===String(course.course_id);courseSelect.append(option);});
+
+  const type=el('select');type.setAttribute('aria-label','Request type');
   const allowed=context.type?[context.type]:['ACADEMIC_BREAK','COURSE_PAUSE','COURSE_RESUME','TEACHER_CHANGE','COURSE_CANCELLATION'];
-  allowed.forEach((v)=>{const o=el('option','',words(v));o.value=v;type.append(o);});if(context.type)type.value=context.type;
+  allowed.forEach((value)=>{const option=el('option','',words(value));option.value=value;type.append(option);});
+  if(context.type){type.value=context.type;type.disabled=true;}
+
   fields.append(field('Course',courseSelect),field('Request type',type));
+
   const dynamic=el('div','teaching-d10-fields');dynamic.style.gridColumn='1/-1';
-  const explanation=el('textarea');explanation.rows=3;explanation.placeholder='Optional explanation in ordinary academic language';
+  const explanation=el('textarea');explanation.rows=3;explanation.placeholder='Add useful context for this request (optional)';
   const effective=el('input');effective.type='datetime-local';
-  fields.append(dynamic,field('Explanation',explanation),field('Take effect no earlier than (optional)',effective));
+  fields.append(dynamic,field('Explanation (optional)',explanation),field('Earliest effective time (optional)',effective));
+
   function draw(){
-    dynamic.replaceChildren();const t=type.value;
-    if(t==='ACADEMIC_BREAK'){const a=el('input'),b=el('input');a.type=b.type='datetime-local';a.dataset.role='start';b.dataset.role='end';dynamic.append(field('Break starts',a),field('Break ends',b));}
-    else if(t==='SINGLE_CLASS_RESCHEDULE'){const a=el('input'),b=el('input');a.type=b.type='datetime-local';a.dataset.role='start';b.dataset.role='end';if(context.requestedChange?.startsAt)a.value=context.requestedChange.startsAt.slice(0,16);if(context.requestedChange?.endsAt)b.value=context.requestedChange.endsAt.slice(0,16);dynamic.append(field('Requested Class start',a),field('Requested Class end',b));}
-    else if(t==='EMERGENCY_ABSENCE'){dynamic.append(el('p','teaching-d10-note','Emergency absence does not require proof interrogation and cannot automatically become a behavior penalty.'));}
-    else if(['COURSE_PAUSE','COURSE_RESUME','COURSE_CANCELLATION'].includes(t)){const reason=el('input');reason.dataset.role='reason';reason.value=context.requestedChange?.reason||'';dynamic.append(field('Reason (optional)',reason));}
-    else if(t==='TEACHER_CHANGE'){const teacher=el('select');teacher.dataset.role='teacher';const loading=el('option','','Loading available Teachers…');loading.value='';teacher.append(loading);dynamic.append(field('New Teacher',teacher));kiwiApiRequest('/teaching/teacher-identities').then((rows)=>{teacher.replaceChildren();if(!rows.length){const none=el('option','','No alternate Teacher identity is currently available');none.value='';teacher.append(none);return;}rows.forEach((row)=>{const option=el('option','',row.displayName);option.value=row.teacherIdentityId;teacher.append(option);});}).catch(()=>{teacher.replaceChildren(el('option','','Teacher list unavailable'));});}
-    else if(t==='ASSIGNMENT_EXTENSION'){const due=el('input');due.type='datetime-local';due.dataset.role='deadline';dynamic.append(field('Requested deadline',due));}
-    else if(t==='EARLY_DISMISSAL'){const leave=el('input');leave.type='datetime-local';leave.dataset.role='leave';dynamic.append(field('Requested leave time',leave));}
-    else if(t==='ATTENDANCE_REVIEW_CORRECTION'){const outcome=el('input');outcome.dataset.role='outcome';dynamic.append(field('Requested attendance outcome',outcome));}
-  }type.addEventListener('change',draw);draw();
-  const message=el('div'),actions=el('div','teaching-d10-actions'),create=button('Create Request',true),cancel=button('Clear');actions.append(create,cancel);card.append(fields,actions,message);
+    dynamic.replaceChildren();const requestType=type.value;
+    if(requestType==='ACADEMIC_BREAK'){
+      const start=el('input'),end=el('input');start.type=end.type='datetime-local';start.dataset.role='start';end.dataset.role='end';dynamic.append(field('Break starts',start),field('Break ends',end));
+    }else if(requestType==='SINGLE_CLASS_RESCHEDULE'){
+      const start=el('input'),end=el('input');start.type=end.type='datetime-local';start.dataset.role='start';end.dataset.role='end';
+      if(context.requestedChange?.startsAt)start.value=context.requestedChange.startsAt.slice(0,16);
+      if(context.requestedChange?.endsAt)end.value=context.requestedChange.endsAt.slice(0,16);
+      dynamic.append(field('Requested Class start',start),field('Requested Class end',end));
+    }else if(requestType==='EMERGENCY_ABSENCE'){
+      dynamic.append(el('div','teaching-d10-form-note','Emergency absence can trigger learning recovery later, but it cannot automatically become a behavior penalty.'));
+    }else if(['COURSE_PAUSE','COURSE_RESUME','COURSE_CANCELLATION'].includes(requestType)){
+      const reason=el('input');reason.dataset.role='reason';reason.placeholder='Short reason (optional)';reason.value=context.requestedChange?.reason||'';dynamic.append(field('Reason (optional)',reason));
+    }else if(requestType==='TEACHER_CHANGE'){
+      const teacher=el('select');teacher.dataset.role='teacher';teacher.setAttribute('aria-label','New Teacher');
+      const loading=el('option','','Loading available Teachers…');loading.value='';teacher.append(loading);dynamic.append(field('New Teacher',teacher));
+      kiwiApiRequest('/teaching/teacher-identities').then((rows)=>{
+        teacher.replaceChildren();
+        if(!rows.length){const none=el('option','','No alternate Teacher is currently available');none.value='';teacher.append(none);return;}
+        rows.forEach((row)=>{const option=el('option','',row.displayName);option.value=row.teacherIdentityId;teacher.append(option);});
+      }).catch(()=>{teacher.replaceChildren(el('option','','Teacher list unavailable'));});
+    }else if(requestType==='ASSIGNMENT_EXTENSION'){
+      const due=el('input');due.type='datetime-local';due.dataset.role='deadline';dynamic.append(field('Requested deadline',due));
+    }else if(requestType==='EARLY_DISMISSAL'){
+      const leave=el('input');leave.type='datetime-local';leave.dataset.role='leave';dynamic.append(field('Requested leave time',leave));
+    }else if(requestType==='ATTENDANCE_REVIEW_CORRECTION'){
+      const outcome=el('input');outcome.dataset.role='outcome';outcome.placeholder='Describe the attendance outcome you are requesting';dynamic.append(field('Requested attendance outcome',outcome));
+    }
+  }
+
+  type.addEventListener('change',draw);draw();
+
+  const note=el('div','teaching-d10-form-note');
+  const noteText=el('span');noteText.append(el('strong','','Nothing changes immediately. '),document.createTextNode('Submitting creates a formal Request. Alternatives need your explicit acceptance before they can take effect.'));
+  note.append(noteText);
+
+  const message=el('div','teaching-d10-form-message');
+  const footer=el('div','teaching-d10-composer__actions'),actions=el('div','teaching-d10-actions'),create=button('Create formal Request',true),cancel=button('Reset');
+  actions.append(create,cancel);footer.append(actions);
+  body.append(fields,note,message,footer);card.append(head,body);
+
   cancel.addEventListener('click',()=>{pendingRequestContext=null;renderRequestCenter();});
   create.addEventListener('click',async()=>{
-    create.disabled=true;try{
-      const t=type.value,cid=courseSelect.value||context.courseId;if(!cid)throw new Error('Choose a Course.');
+    create.disabled=true;
+    try{
+      const requestType=type.value,courseId=courseSelect.value||context.courseId;if(!courseId)throw new Error('Choose a Course.');
       const change={...(context.requestedChange||{})};
       const localIso=(node)=>node?.value?new Date(node.value).toISOString():null;
-      if(t==='ACADEMIC_BREAK'||t==='SINGLE_CLASS_RESCHEDULE'){const nodes=dynamic.querySelectorAll('input');change.startsAt=localIso(nodes[0]);change.endsAt=localIso(nodes[1]);}
-      if(['COURSE_PAUSE','COURSE_RESUME','COURSE_CANCELLATION'].includes(t))change.reason=dynamic.querySelector('[data-role="reason"]')?.value||'';
-      if(t==='TEACHER_CHANGE'){change.teacherIdentityId=dynamic.querySelector('[data-role="teacher"]')?.value||'';if(!change.teacherIdentityId)throw new Error('Choose an available Teacher identity.');}
-      if(t==='ASSIGNMENT_EXTENSION')change.requestedDeadlineAt=localIso(dynamic.querySelector('[data-role="deadline"]'));
-      if(t==='EARLY_DISMISSAL')change.requestedLeaveAt=localIso(dynamic.querySelector('[data-role="leave"]'));
-      if(t==='ATTENDANCE_REVIEW_CORRECTION')change.requestedOutcome=dynamic.querySelector('[data-role="outcome"]')?.value||'';
-      const body={type:t,courseId:cid,requestedChange:change,explanation:explanation.value||null,effectiveAt:effective.value?new Date(effective.value).toISOString():null,idempotencyKey:'ui:'+crypto.randomUUID()};
-      const created=await kiwiApiRequest('/teaching/requests',{method:'POST',body});pendingRequestContext=null;message.textContent='Request created as Draft.';message.className='teaching-message';await renderRequestCenter(created.requestId);
-    }catch(e){message.textContent=e.message||'Request could not be created.';message.className='teaching-message';message.dataset.kind='error';}finally{create.disabled=false;}
+      if(requestType==='ACADEMIC_BREAK'||requestType==='SINGLE_CLASS_RESCHEDULE'){const nodes=dynamic.querySelectorAll('input');change.startsAt=localIso(nodes[0]);change.endsAt=localIso(nodes[1]);}
+      if(['COURSE_PAUSE','COURSE_RESUME','COURSE_CANCELLATION'].includes(requestType))change.reason=dynamic.querySelector('[data-role="reason"]')?.value||'';
+      if(requestType==='TEACHER_CHANGE'){change.teacherIdentityId=dynamic.querySelector('[data-role="teacher"]')?.value||'';if(!change.teacherIdentityId)throw new Error('Choose an available Teacher identity.');}
+      if(requestType==='ASSIGNMENT_EXTENSION')change.requestedDeadlineAt=localIso(dynamic.querySelector('[data-role="deadline"]'));
+      if(requestType==='EARLY_DISMISSAL')change.requestedLeaveAt=localIso(dynamic.querySelector('[data-role="leave"]'));
+      if(requestType==='ATTENDANCE_REVIEW_CORRECTION')change.requestedOutcome=dynamic.querySelector('[data-role="outcome"]')?.value||'';
+
+      const payload={type:requestType,courseId,requestedChange:change,explanation:explanation.value||null,effectiveAt:effective.value?new Date(effective.value).toISOString():null,idempotencyKey:'ui:'+crypto.randomUUID()};
+      const created=await kiwiApiRequest('/teaching/requests',{method:'POST',body:payload});
+      pendingRequestContext=null;message.textContent='Request created as Draft.';message.className='teaching-message teaching-d10-form-message';
+      await renderRequestCenter(created.requestId);
+    }catch(error){
+      message.textContent=error.message||'Request could not be created.';message.className='teaching-message teaching-d10-form-message';message.dataset.kind='error';
+    }finally{create.disabled=false;}
   });
+
   container.append(card);
 }
 async function act(path,label,method='POST',body={}){if(!window.confirm(label+'?'))return;await kiwiApiRequest(path,{method,body});await renderRequestCenter();}
 function requestCard(item){
-  const card=el('article','teaching-d10-request'),top=el('div','teaching-d10-request__top');top.append(el('strong','',words(item.type)),el('span','teaching-d10-status',words(item.state)));card.append(top,el('p','teaching-d10-note','Created '+fmt(item.createdAt)+(item.effectiveAt?' · effective '+fmt(item.effectiveAt):'')));
-  if(item.decision?.explanation)card.append(el('p','',item.decision.explanation));
-  if(item.alternativeProposal)card.append(el('p','teaching-message','Alternative available. It will not change academic state until you explicitly accept it.'));
-  if(item.applicationRef)card.append(el('p','teaching-d10-note','Applied '+fmt(item.appliedAt)+'.'));
-  if(item.requiresFutureOwner)card.append(el('p','teaching-d10-note','The formal Request record is ready, but the authoritative '+item.target.owner+' owner is delivered later. D10 does not fabricate that owner’s state.'));
+  const card=el('article','teaching-d10-request');card.dataset.state=String(item.state||'');card.dataset.requestId=String(item.requestId||'');
+  const top=el('div','teaching-d10-request__top'),title=el('div','teaching-d10-request__title');
+  title.append(el('strong','',words(item.type)),el('div','teaching-d10-request__meta','Created '+fmt(item.createdAt)+(item.effectiveAt?' · earliest effect '+fmt(item.effectiveAt):'')));
+  top.append(title,el('span','teaching-d10-status',words(item.state)));card.append(top);
+
+  if(item.decision?.explanation)card.append(el('div','teaching-d10-request__notice',item.decision.explanation));
+  if(item.alternativeProposal){const notice=el('div','teaching-d10-request__notice','Alternative available. Review it carefully; nothing changes until you explicitly accept this exact alternative.');notice.dataset.kind='alternative';card.append(notice);}
+  if(item.applicationRef)card.append(el('div','teaching-d10-request__notice','Applied '+fmt(item.appliedAt)+'.'));
+  if(item.requiresFutureOwner)card.append(el('div','teaching-d10-request__notice','This Request is recorded, but the '+item.target.owner+' owner is delivered later. KIWI will not fabricate that owner’s state.'));
+
   const actions=el('div','teaching-d10-actions');
-  if(item.state==='DRAFT'){const b=button('Submit');b.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/submit','Submit this Request');actions.append(b);}
-  if(item.state==='REVIEWING'){const b=button('Run authoritative review',true);b.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/review','Review this Request');actions.append(b);}
-  if(item.state==='ALTERNATIVE_PROPOSED'){const accept=button('Accept alternative',true);accept.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/alternative/accept','Accept this exact alternative','POST',{alternativeVersion:item.alternativeProposal.version});const decline=button('Decline');decline.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/alternative/decline','Decline this alternative','POST',{alternativeVersion:item.alternativeProposal.version});actions.append(accept,decline);}
-  if(['DRAFT','SUBMITTED','REVIEWING','ALTERNATIVE_PROPOSED'].includes(item.state)){const w=button('Withdraw');w.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/withdraw','Withdraw this Request');actions.append(w);}
-  card.append(actions);return card;
+  if(item.state==='DRAFT'){const submit=button('Submit for review',true);submit.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/submit','Submit this Request');actions.append(submit);}
+  if(item.state==='REVIEWING'){const review=button('Run authoritative review',true);review.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/review','Review this Request');actions.append(review);}
+  if(item.state==='ALTERNATIVE_PROPOSED'){
+    const accept=button('Accept alternative',true);accept.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/alternative/accept','Accept this exact alternative','POST',{alternativeVersion:item.alternativeProposal.version});
+    const decline=button('Decline');decline.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/alternative/decline','Decline this alternative','POST',{alternativeVersion:item.alternativeProposal.version});
+    actions.append(accept,decline);
+  }
+  if(['DRAFT','SUBMITTED','REVIEWING','ALTERNATIVE_PROPOSED'].includes(item.state)){const withdraw=button('Withdraw');withdraw.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/withdraw','Withdraw this Request');actions.append(withdraw);}
+  if(actions.children.length)card.append(actions);
+  return card;
 }
+
 async function renderRequestCenter(focusRequestId=null){
-  installStyles();const main=document.getElementById('teachingApp');if(!main)return;const page=el('section','teaching-view teaching-d10-page'),head=el('div','teaching-d10-card');head.append(el('div','teaching-kicker','Requests'),el('h2','','Request Center'),el('p','','Formal schedule, Course and administrative changes live here with their decision, effective time, alternatives and application history.'));page.append(head);main.replaceChildren(page);
+  installStyles();
+  const main=document.getElementById('teachingApp');if(!main)return;
+  const page=el('section','teaching-view teaching-d10-page teaching-d10-request-center');
+
+  const hero=el('section','teaching-d10-hero'),heroCopy=el('div','teaching-d10-hero__copy'),signals=el('div','teaching-d10-hero__signals');
+  heroCopy.append(el('div','teaching-kicker','Requests'),el('h2','','Request Center'),el('p','','Ask for schedule, Course or administrative changes without directly rewriting academic state. Every Request keeps its decision, timing, alternative and application history.'));
+  signals.append(el('span','teaching-d10-signal','Server validated'),el('span','teaching-d10-signal','Alternatives require acceptance'));
+  hero.append(heroCopy,signals);page.append(hero);main.replaceChildren(page);
+
   if(pendingRequestContext||!focusRequestId)buildRequestForm(page,pendingRequestContext||{});
-  const list=el('div','teaching-d10-page');list.append(el('div','teaching-kicker','', ''));
-  try{const items=await kiwiApiRequest('/teaching/requests');if(!items.length)list.append(el('div','teaching-empty','No formal Requests yet.'));else items.forEach((item)=>list.append(requestCard(item)));page.append(list);if(focusRequestId){const target=[...list.children].find((node)=>node.textContent.includes(focusRequestId));target?.scrollIntoView?.({behavior:'smooth'});}}
-  catch(e){page.append(el('div','teaching-message',e.message||'Requests could not be loaded.'));}
+
+  const section=el('section','teaching-d10-request-section'),head=el('div','teaching-d10-section-head'),headCopy=el('div');
+  headCopy.append(el('div','teaching-kicker','History'),el('h3','','Your Requests'));
+  const count=el('div','teaching-d10-section-count','Loading…');head.append(headCopy,count);section.append(head);
+  const list=el('div','teaching-d10-request-list');section.append(list);page.append(section);
+
+  try{
+    const items=await kiwiApiRequest('/teaching/requests');
+    count.textContent=items.length+' total';
+    if(!items.length){
+      const empty=el('div','teaching-empty');empty.append(el('strong','','No formal Requests yet.'),el('div','','When you ask KIWI to change an active academic commitment, its Request history will appear here.'));list.append(empty);
+    }else{
+      items.forEach((item)=>list.append(requestCard(item)));
+    }
+    if(focusRequestId){
+      const target=[...list.children].find((node)=>node.dataset.requestId===String(focusRequestId));
+      target?.scrollIntoView?.({behavior:'smooth',block:'center'});
+    }
+  }catch(error){
+    count.textContent='Unavailable';
+    const message=el('div','teaching-message',error.message||'Requests could not be loaded.');message.dataset.kind='error';list.append(message);
+  }
 }
 function openCreateRequest(context){pendingRequestContext=context||{};if(nav&&typeof nav.open==='function')nav.open('requests');else renderRequestCenter();}
 async function createAvailabilityRequest(courseId,scheduleInputs){pendingRequestContext={type:'PERMANENT_AVAILABILITY_CHANGE',courseId,requestedChange:{scheduleInputs}};const created=await kiwiApiRequest('/teaching/requests',{method:'POST',body:{...pendingRequestContext,explanation:'Post-activation availability change',idempotencyKey:'schedule:'+crypto.randomUUID()}});pendingRequestContext=null;if(nav&&typeof nav.open==='function')nav.open('requests');return created;}
