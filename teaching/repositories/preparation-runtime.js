@@ -270,6 +270,23 @@ function createPreparationRuntimeRepository({ query, withTransaction, randomUUID
     });
   }
 
+  async function hasProcessedEvent({ workspaceId, eventId } = {}) {
+    const normalizedWorkspaceId = String(workspaceId || '').trim();
+    const normalizedEventId = String(eventId || '').trim();
+    if (!normalizedWorkspaceId || !normalizedEventId) return false;
+    const { rows = [] } = await query(
+      `select 1
+         from public.teaching_academic_audit_log
+        where entity_type='PREPARATION_WORKSPACE'
+          and entity_id=$1
+          and authoritative_owner='Preparation Runtime'
+          and causation_id=$2
+        limit 1`,
+      [normalizedWorkspaceId, normalizedEventId]
+    );
+    return Boolean(rows[0]);
+  }
+
   async function auditNoop({ workspaceId, action, reason, correlationId = null, causationId = null, safeMetadata = {} } = {}) {
     return withTransaction(async (tx) => {
       const { rows } = await tx.query(
@@ -303,6 +320,7 @@ function createPreparationRuntimeRepository({ query, withTransaction, randomUUID
     loadComponentDependencies,
     applyWorkspaceTransition,
     applyMaterialityDecision,
+    hasProcessedEvent,
     auditNoop,
     readProtectedPayload,
   });
