@@ -18,6 +18,7 @@ const TEACHING_EVENTS = Object.freeze({
   ASSIGNMENT_DUE: 'teaching.assignment.due',
   REQUEST_EFFECTIVE_DUE: 'teaching.request.effective_due',
   REQUEST_DECIDED: 'teaching.request.decided',
+  REQUEST_APPLIED: 'teaching.request.applied',
   COURSE_RISK_CHANGED: 'teaching.course.risk_changed',
 
   // D05 Progressive Preparation Lifecycle durable events. Scheduled review and
