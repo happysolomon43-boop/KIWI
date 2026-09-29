@@ -21,8 +21,14 @@ function createD11LessonControllerRepository({
     : query(text, params);
 
   function stableDigest(value) {
-    const canonical = JSON.stringify(value, Object.keys(value || {}).sort());
-    return crypto.createHash('sha256').update(canonical).digest('hex');
+    const canonicalize=(input)=>{
+      if(Array.isArray(input)) return input.map(canonicalize);
+      if(input&&typeof input==='object'){
+        return Object.fromEntries(Object.keys(input).sort().map((key)=>[key,canonicalize(input[key])]));
+      }
+      return input;
+    };
+    return crypto.createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex');
   }
 
   async function assertReady() {
