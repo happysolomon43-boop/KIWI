@@ -127,16 +127,28 @@ test('D04 schema, RLS and protected preparation boundaries exist', { skip: skipR
        group by schemaname, cmd
        order by schemaname, cmd
     `);
-    assert.deepEqual(servicePolicyCounts, [
-      { schemaname: 'public', cmd: 'INSERT', count: 24 },
-      { schemaname: 'public', cmd: 'SELECT', count: 24 },
-      { schemaname: 'public', cmd: 'UPDATE', count: 17 },
-      { schemaname: 'teaching_preparation', cmd: 'INSERT', count: 22 },
-      { schemaname: 'teaching_preparation', cmd: 'SELECT', count: 22 },
-      { schemaname: 'teaching_preparation', cmd: 'UPDATE', count: 10 },
-      { schemaname: 'teaching_protected', cmd: 'INSERT', count: 1 },
-      { schemaname: 'teaching_protected', cmd: 'SELECT', count: 1 },
-    ]);
+    // D04 establishes minimum narrow-service policy coverage. Later accepted
+    // migrations may add owner-safe policies/tables, so a current-head
+    // integration database must not freeze the global policy census at the
+    // historical D04-only count.
+    const policyCount = new Map(
+      servicePolicyCounts.map((row) => [`${row.schemaname}:${row.cmd}`, row.count])
+    );
+    for (const [key, minimum] of [
+      ['public:INSERT', 24],
+      ['public:SELECT', 24],
+      ['public:UPDATE', 17],
+      ['teaching_preparation:INSERT', 22],
+      ['teaching_preparation:SELECT', 22],
+      ['teaching_preparation:UPDATE', 10],
+      ['teaching_protected:INSERT', 1],
+      ['teaching_protected:SELECT', 1],
+    ]) {
+      assert.ok(
+        (policyCount.get(key) || 0) >= minimum,
+        `current schema regressed D04 service-policy floor for ${key}`
+      );
+    }
 
   } finally {
     await pool.end();
