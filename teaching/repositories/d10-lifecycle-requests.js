@@ -253,12 +253,12 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
     const nextVersion=Number(facts.course.state_version)+1;
     await q(tx,`insert into public.teaching_course_activations(
       activation_id,student_id,course_id,semester_id,course_state_version,semester_state_version,
-      course_plan_id,course_plan_version,course_plan_scope_version,grading_policy_id,grading_policy_version,
+      course_plan_id,course_plan_version,course_plan_source_snapshot_ref,grading_policy_id,grading_policy_version,
       timetable_version_id,timetable_version,teacher_assignment_id,teacher_identity_id,admission_policy_version,
       concurrent_count_before,activated_at
     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
     [activationId,studentId,courseId,facts.semester.semester_id,nextVersion,facts.semester.state_version,
-     facts.plan.course_plan_id,facts.plan.version_no,facts.plan.scope_version_no,facts.gradingPolicy.grading_policy_id,facts.gradingPolicy.version_no,
+     facts.plan.course_plan_id,facts.plan.version_no,facts.plan.source_snapshot_ref,facts.gradingPolicy.grading_policy_id,facts.gradingPolicy.version_no,
      schedule.timetable.timetable_version_id,schedule.timetable.version_no,facts.teacherAssignment.teacher_assignment_id,facts.teacherAssignment.teacher_identity_id,
      facts.admission.policy.policy_version,facts.admission.counted.length,activatedAt]);
     const {rows}=await q(tx,`update public.teaching_courses set lifecycle_state='ACTIVE',state_version=state_version+1,

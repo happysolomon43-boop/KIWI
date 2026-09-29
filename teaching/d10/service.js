@@ -77,7 +77,7 @@ function createD10Service({
         progressionOutcome:facts.course.progression_outcome||null,
       }),
       coursePlan:facts.plan?Object.freeze({
-        coursePlanId:facts.plan.course_plan_id,version:Number(facts.plan.version_no),scopeVersion:Number(facts.plan.scope_version_no),
+        coursePlanId:facts.plan.course_plan_id,version:Number(facts.plan.version_no),
         state:facts.plan.plan_state,currentSourceSnapshot:String(facts.plan.source_snapshot_ref||'')===String(facts.course.subject_snapshot_ref||''),
       }):null,
       coverage:Object.freeze({

@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS public.teaching_course_activations (
   semester_state_version bigint NOT NULL,
   course_plan_id text NOT NULL REFERENCES public.teaching_course_plans(course_plan_id) ON DELETE RESTRICT,
   course_plan_version bigint NOT NULL,
-  course_plan_scope_version bigint NOT NULL,
+  course_plan_source_snapshot_ref text NOT NULL,
   grading_policy_id text NOT NULL REFERENCES public.teaching_grading_policy_versions(grading_policy_id) ON DELETE RESTRICT,
   grading_policy_version bigint NOT NULL,
   timetable_version_id text NOT NULL REFERENCES public.teaching_timetable_versions(timetable_version_id) ON DELETE RESTRICT,
