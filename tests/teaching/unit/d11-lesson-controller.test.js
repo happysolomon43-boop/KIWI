@@ -334,7 +334,7 @@ test('D11 model-outage path preserves T0 Class start as safe route-held Controll
   const repo=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d11-lesson-controller.js'),'utf8');
   const runtime=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d11/runtime.js'),'utf8');
   assert.match(repo,/CONTROLLER_STARTED_ROUTE_HELD/);
-  assert.match(repo,/initialLifecycle = routeHeld ? 'INTERRUPTED' : 'ACTIVE'/);
+  assert.match(repo,/initialLifecycle = routeHeld \? 'INTERRUPTED' : 'ACTIVE'/);
   assert.match(repo,/academic_penalty_created:false/);
   assert.match(runtime,/model_route_required_for_t0_start:false/);
   assert.match(runtime,/disposition:RECONCILIATION_DISPOSITIONS.ACTIONABLE/);
