@@ -123,7 +123,7 @@ function createD11LessonControllerRepository({
     const suffix = lock ? ' for update' : '';
     const { rows } = await q(runner,
       "select * from teaching_preparation.workspaces where student_id=$1 and target_kind='next_class'" +
-      " and target_ref=$2 and lifecycle_state not in ('SUPERSEDED','CANCELLED')" +
+      " and target_ref=$2 and lifecycle_state in ('ACTIVE','FINALIZATION_DUE','FINALIZED')" +
       " order by created_at desc limit 1" + suffix,
       [studentId, classId]
     );
@@ -148,8 +148,8 @@ function createD11LessonControllerRepository({
   async function listClassesForCourse(studentId, courseId) {
     const { rows } = await query(
       "select c.* from public.teaching_classes c where c.student_id=$1 and c.course_id=$2" +
-      " and c.lifecycle_state<>'CANCELLED' order by c.scheduled_start_at",
-      [studentId, courseId]
+      " and c.lifecycle_state<>'CANCELLED' and c.scheduled_end_at >= $3 order by c.scheduled_start_at",
+      [studentId, courseId, clock()]
     );
     return rows || [];
   }
@@ -371,16 +371,22 @@ function createD11LessonControllerRepository({
     let workspace = await getPreparationWorkspace(studentId, classId, tx, true);
     const createdWorkspace = !workspace;
     if (!workspace) {
+      const priorWorkspaceResult=await tx.query(
+        "select workspace_id from teaching_preparation.workspaces where student_id=$1 and target_kind='next_class'" +
+        " and target_ref=$2 order by created_at desc limit 1",
+        [studentId,classId]
+      );
+      const priorWorkspaceId=priorWorkspaceResult.rows?.[0]?.workspace_id || null;
       const workspaceId = randomUUID();
       const inserted = await tx.query(
         "insert into teaching_preparation.workspaces(" +
         "workspace_id,student_id,workspace_type,target_kind,target_ref,authoritative_owner_ref," +
         "preparation_profile_ref,lifecycle_state,maturity_stage,state_version,target_effective_at," +
-        "finalization_or_freeze_at,protected_content_class,trigger_policy_ref,cost_execution_budget_ref" +
+        "finalization_or_freeze_at,protected_content_class,trigger_policy_ref,cost_execution_budget_ref,supersedes_workspace_id" +
         ") values($1,$2,'LESSON_BLUEPRINT','next_class',$3,'Teaching Controller / Lesson Planner'," +
         "'teaching.preparation.next_class@1.0','ACTIVE','SKELETON',0,$4,$4,'UNPROTECTED'," +
-        "'d11.class-materiality.v1','teaching.preparation.budget.next_class') returning *",
-        [workspaceId, studentId, classId, classRow.scheduled_start_at]
+        "'d11.class-materiality.v1','teaching.preparation.budget.next_class',$5) returning *",
+        [workspaceId, studentId, classId, classRow.scheduled_start_at, priorWorkspaceId]
       );
       workspace = inserted.rows[0];
     }
