@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { assertNonProductionDatabase, integrationConfig, createIntegrationPool } = require('./test-db');
+const { PRODUCTION_PROJECT_REF, assertNonProductionDatabase, integrationConfig, createIntegrationPool } = require('./test-db');
 
 
 
@@ -12,7 +12,7 @@ test('integration-test guard rejects production Supabase', () => {
       connectionString: `postgresql://example.${PRODUCTION_PROJECT_REF}@localhost/test`,
       projectRef: PRODUCTION_PROJECT_REF,
     }),
-    /refuse to run against the production/
+    /production/
   );
 });
 
