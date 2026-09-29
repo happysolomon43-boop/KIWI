@@ -820,6 +820,20 @@ async function loadTeachingWorkspace() {
   teachingWorkspace = { subjects, courses };
 }
 
+async function refreshTeachingWorkspace({ preserveView = true } = {}) {
+  const courseId = selectedTeachingCourseId;
+  await loadTeachingWorkspace();
+  if (courseId && !getTeachingCourse(courseId)) {
+    selectedTeachingCourseId = null;
+    activeTeachingCourseSection = 'overview';
+    activeTeachingView = 'overview';
+  }
+  renderSectionMenu();
+  renderActiveTeachingView();
+  if (!preserveView) window.scrollTo({ top: 0, behavior: 'smooth' });
+  return teachingWorkspace;
+}
+
 async function verifyTeachingSession() {
   if (!hasKiwiSession()) {
     renderTeachingSessionProblem();
@@ -907,6 +921,7 @@ window.KIWITeachingNavigation = Object.freeze({
   unregister: unregisterTeachingNavigationItem,
   render: renderTeachingNavigation,
   ids: () => Array.from(teachingNavigationItems.keys()),
+  open: (id) => { const item = teachingNavigationItems.get(id); if (item) selectTeachingNavigationItem(item); },
 });
 
 window.KIWITeachingCourses = Object.freeze({
@@ -917,6 +932,8 @@ window.KIWITeachingCourses = Object.freeze({
   currentCourseId: () => selectedTeachingCourseId,
   getCourse: (courseId) => getTeachingCourse(courseId),
   sectionIds: () => Array.from(teachingCourseSections.keys()),
+  all: () => teachingWorkspace.courses.slice(),
+  refresh: refreshTeachingWorkspace,
 });
 
 function init() {

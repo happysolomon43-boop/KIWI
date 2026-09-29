@@ -96,7 +96,8 @@ function stage4(course,data,container,reload) {
   const assessment=el('input'); assessment.type='number'; assessment.min='0'; assessment.value=String(data.profile?.reserves?.find((r)=>r.kind==='ASSESSMENT'&&String(r.courseId)===String(course.course_id))?.minutes||0);
   addField(academic,'Target/deadline',deadline); addField(academic,'Deadline type',deadlineKind); addField(academic,'Revision reserve minutes',revision); addField(academic,'Assessment reserve minutes',assessment); card.append(academic);
 
-  const message=el('div'), actions=el('div','teaching-d09-actions'), save=el('button','teaching-button teaching-button--primary','Save Stage 4'); save.type='button'; actions.append(save); card.append(actions,message);
+  const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
+  const message=el('div'), actions=el('div','teaching-d09-actions'), save=el('button','teaching-button teaching-button--primary',postActivation?'Request this availability change':'Save Stage 4'); save.type='button'; actions.append(save); card.append(actions,message);
   save.addEventListener('click',async()=>{
     save.disabled=true;
     try {
@@ -108,8 +109,16 @@ function stage4(course,data,container,reload) {
       const blockValues=[...blocks.children].map((row)=>row.readValue?.()).filter(Boolean), deadlines=[];
       if(deadline.value){const parts=deadline.value.split('T');deadlines.push({kind:deadlineKind.value,deadlineAt:wallToIso(parts[0],parts[1],tz)});}
       const body={semester:{semesterId:sem.semesterId||null,name:name.value,startsAt:wallToIso(start.value,'00:00',tz),endsAt:wallToIso(end.value,'23:59',tz),timezone:tz},availability,blocks:blockValues,deadlines,reserves:[{kind:'REVISION',minutes:Number(revision.value)||0},{kind:'ASSESSMENT',minutes:Number(assessment.value)||0}],preferences:{avoidConsecutiveSameCourseDays:true,preferredStartTimes:[availTime.start.value]}};
-      await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body});
-      message.textContent='Semester and availability saved. Feasibility can now be recalculated.'; message.className='teaching-message'; await reload();
+      if(postActivation){
+        if(!window.KIWITeachingD10?.createScheduleRequest) throw new Error('Formal Request Center is unavailable.');
+        await window.KIWITeachingD10.createScheduleRequest(course.course_id,body);
+        message.textContent='A formal availability-change Request was created. The current timetable remains authoritative until approval/application.';
+      }else{
+        await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body});
+        message.textContent='Semester and availability saved. Feasibility can now be recalculated.';
+        await reload();
+      }
+      message.className='teaching-message';
     } catch(error) { message.textContent=error.message||'Stage 4 could not be saved.'; message.className='teaching-message'; message.dataset.kind='error'; }
     finally { save.disabled=false; }
   });
@@ -118,7 +127,8 @@ function stage4(course,data,container,reload) {
 function stage5(course,data,container,reload) {
   const card=el('section','teaching-d09-card');
   card.append(el('div','teaching-kicker','Course setup · Stage 5'),el('h3','','Proposed Timetable and Feasibility'),el('p','','KIWI schedules from Learning Unit instructional load, hard constraints and global recovery capacity. Required work is never deleted to make the calendar look feasible.'));
-  const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',data.timetable?'Recalculate timetable':'Propose timetable'), status=el('span','teaching-d09-status',statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button'; actions.append(propose,status); card.append(actions);
+  const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
+  const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',postActivation?'Timetable locked after activation':(data.timetable?'Recalculate timetable':'Propose timetable')), status=el('span','teaching-d09-status',statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button';propose.disabled=postActivation; actions.append(propose,status); card.append(actions);
   const metrics=el('div','teaching-d09-metrics'); metrics.append(metric(data.feasibility?.metrics?.scheduledMinutes??0,'scheduled minutes'),metric(data.feasibility?.metrics?.requiredMinutes??0,'required minutes'),metric(data.feasibility?.metrics?.headroomRatio==null?'—':Math.round(data.feasibility.metrics.headroomRatio*100)+'%','Recovery headroom')); card.append(metrics);
   if(data.feasibility?.reasons?.length){const list=el('ul','teaching-d08-list');data.feasibility.reasons.forEach((reason)=>list.append(el('li','',statusName(reason))));card.append(list);}
   if(data.feasibility?.alternatives?.length){card.append(el('p','teaching-d09-note','Feasible alternatives'));const list=el('ul','teaching-d08-list');data.feasibility.alternatives.forEach((item)=>list.append(el('li','',item.message)));card.append(list);}
@@ -127,7 +137,7 @@ function stage5(course,data,container,reload) {
   (data.slots||[]).forEach((slot)=>{
     const item=el('article','teaching-d09-slot'), top=el('div','teaching-d09-slot__top'); top.append(el('strong','',statusName(slot.kind)),el('span','teaching-d09-status',slot.horizonStage)); item.append(top,el('small','',new Date(slot.startsAt).toLocaleString()+' → '+new Date(slot.endsAt).toLocaleString()+' · '+slot.timezone));
     const slotActions=el('div','teaching-d09-actions');
-    [['Earlier 30m',-30],['Later 30m',30]].forEach((choice)=>{const button=el('button','teaching-d08-link-button',choice[0]);button.type='button';button.addEventListener('click',async()=>{button.disabled=true;try{await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable',{method:'PUT',body:{edits:[{slotId:slot.slotId,startsAt:new Date(Date.parse(slot.startsAt)+choice[1]*60000).toISOString(),endsAt:new Date(Date.parse(slot.endsAt)+choice[1]*60000).toISOString(),exceptionReason:'Student pre-activation direct edit'}]}});await reload();}catch(error){window.alert(error.message||'That edit is not feasible.');}finally{button.disabled=false;}});slotActions.append(button);});
+    if(!postActivation){[['Earlier 30m',-30],['Later 30m',30]].forEach((choice)=>{const button=el('button','teaching-d08-link-button',choice[0]);button.type='button';button.addEventListener('click',async()=>{button.disabled=true;try{await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable',{method:'PUT',body:{edits:[{slotId:slot.slotId,startsAt:new Date(Date.parse(slot.startsAt)+choice[1]*60000).toISOString(),endsAt:new Date(Date.parse(slot.endsAt)+choice[1]*60000).toISOString(),exceptionReason:'Student pre-activation direct edit'}]}});await reload();}catch(error){window.alert(error.message||'That edit is not feasible.');}finally{button.disabled=false;}});slotActions.append(button);});}else{slotActions.append(el('span','teaching-d09-note','Use Calendar → Request new time.'));}
     item.append(slotActions); slotList.append(item);
   });
   card.append(slotList);
@@ -152,7 +162,7 @@ async function renderCalendar() {
   installStyles(); const main=document.getElementById('teachingApp'); if(!main)return; const page=el('section','teaching-view teaching-d09-page'),zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
   const head=el('div','teaching-d09-card');head.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Approved Class times are authoritative. Pre-activation proposals are separate. Current timezone is display-only and never changes lateness or schedule truth.'));
   const back=el('button','teaching-d08-link-button','Back to courses');back.type='button';back.addEventListener('click',()=>courseSurface.openOverview?courseSurface.openOverview():window.location.reload());head.append(back);page.append(head);main.replaceChildren(page);
-  try{const data=await kiwiApiRequest('/teaching/calendar?currentTimeZone='+encodeURIComponent(zone)),list=el('div','teaching-d09-calendar');[...data.authoritativeClasses,...data.preactivationProposals].forEach((item)=>{const card=el('article','teaching-d09-calendar-item');card.append(el('strong','',item.course_title||'Teaching Class'),el('div','teaching-d09-note',item.authoritative?'Approved timetable':'Pre-activation proposal'),el('p','',item.displayStart+' → '+item.displayEnd+' · '+data.currentTimeZone));list.append(card);});if(!list.children.length)list.append(el('div','teaching-empty','No Teaching timetable items yet.'));page.append(list);}catch(error){page.append(el('div','teaching-message',error.message||'Calendar could not be loaded.'));}
+  try{const data=await kiwiApiRequest('/teaching/calendar?currentTimeZone='+encodeURIComponent(zone)),list=el('div','teaching-d09-calendar');[...data.authoritativeClasses,...data.preactivationProposals].forEach((item)=>{const card=el('article','teaching-d09-calendar-item');card.append(el('strong','',item.course_title||'Teaching Class'),el('div','teaching-d09-note',item.authoritative?'Approved timetable':'Pre-activation proposal'),el('p','',item.displayStart+' → '+item.displayEnd+' · '+data.currentTimeZone));if(item.authoritative&&window.KIWITeachingD10){const actions=el('div','teaching-d09-actions'),move=el('button','teaching-d08-link-button','Request new time'),absence=el('button','teaching-d08-link-button','Emergency absence');move.type=absence.type='button';move.addEventListener('click',()=>window.KIWITeachingD10.requestClassReschedule(item));absence.addEventListener('click',()=>window.KIWITeachingD10.emergencyAbsence(item));actions.append(move,absence);card.append(actions);}list.append(card);});if(!list.children.length)list.append(el('div','teaching-empty','No Teaching timetable items yet.'));page.append(list);}catch(error){page.append(el('div','teaching-message',error.message||'Calendar could not be loaded.'));}
 }
 courseSurface.registerSection({id:'schedule',label:'Schedule',order:30,render:renderSchedule,renderSummary});
 if(nav&&typeof nav.register==='function')nav.register({id:'calendar',label:'Calendar',description:'Classes, timetable and proposals',icon:'◷',menuIcon:'calendar',onSelect:renderCalendar});
