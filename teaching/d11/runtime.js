@@ -133,7 +133,7 @@ function registerD11Runtime({
       if(!context.blueprint) {
         await repository.ensurePreparationWorkspace({studentId,classId:event.aggregate_id,correlationId:event.event_id});
         return {
-          disposition:RECONCILIATION_DISPOSITIONS.ALREADY_SATISFIED,
+          disposition:RECONCILIATION_DISPOSITIONS.ACTIONABLE,
           reason:'VALIDATED_BLUEPRINT_NOT_AVAILABLE_ROUTE_HELD',
           metadata:{blueprint_missing:true,model_work_started:false,route_qualification:'UNQUALIFIED_UNTIL_D30'},
         };
