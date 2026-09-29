@@ -46,4 +46,70 @@ function normalizeDemandContext(input={}){
   return freezeDeep({
     familiarity: enumVal(v.familiarity??'unknown',familiarity,'TEACHING_D13_DEMAND_FAMILIARITY_INVALID'),
     method_cueing: enumVal(v.method_cueing??'unknown',methodCueing,'TEACHING_D13_DEMAND_CUEING_INVALID'),
-    representation_demand: enumVal(v.representatio
+    representation_demand: enumVal(v.representation_demand??'unknown',representation,'TEACHING_D13_DEMAND_REPRESENTATION_INVALID'),
+    integration_demand: enumVal(v.integration_demand??'unknown',integration,'TEACHING_D13_DEMAND_INTEGRATION_INVALID'),
+    retention_timing: enumVal(v.retention_timing??'unknown',retention,'TEACHING_D13_DEMAND_RETENTION_INVALID'),
+    transfer_eligible: v.transfer_eligible===true,
+    same_eligible_construct: v.same_eligible_construct!==false,
+    prerequisite_boundary_validated: v.prerequisite_boundary_validated!==false,
+  });
+}
+
+function normalizeSupportContext(input={}){
+  const v=isObject(input)?input:{};
+  const level=String(v.assistance_level??'unknown').trim().toLowerCase();
+  if(!(level in ASSISTANCE_RANK))fail('Invalid instructional assistance level.','TEACHING_D13_ASSISTANCE_INVALID');
+  return freezeDeep({
+    assistance_level:level,
+    instructional_support_refs:uniqueStrings(v.instructional_support_refs||[]),
+    answer_method_exposure:enumVal(String(v.answer_method_exposure??'UNKNOWN').toUpperCase(),ANSWER_EXPOSURE,'TEACHING_D13_EXPOSURE_INVALID'),
+    permitted_tools:uniqueStrings(v.permitted_tools||[]),
+    accessibility_support:uniqueStrings(v.accessibility_support||[]),
+    accessibility_support_is_instructional_assistance:false,
+  });
+}
+
+function validateNormalizedEvidenceEvent(input={}){
+  const v=obj(input,'TEACHING_D13_EVIDENCE_INVALID');
+  const demand=normalizeDemandContext(v.demand_context||{});
+  const support=normalizeSupportContext(v.support_context||{});
+  const validity=enumVal(String(v.evidence_validity??'VALID').toUpperCase(),EVIDENCE_VALIDITY,'TEACHING_D13_EVIDENCE_VALIDITY_INVALID');
+  const outcome=enumVal(String(v.outcome??'INDETERMINATE').toUpperCase(),EVIDENCE_OUTCOMES,'TEACHING_D13_EVIDENCE_OUTCOME_INVALID');
+  const confidenceSampled=v.confidence_sampled===true;
+  const studentConfidence=confidenceSampled
+    ? enumVal(String(v.student_confidence??'UNKNOWN').toUpperCase(),CONFIDENCE_BANDS,'TEACHING_D13_STUDENT_CONFIDENCE_INVALID')
+    : null;
+  if(!confidenceSampled && v.student_confidence!=null) fail('Student confidence may only be stored when explicitly sampled.','TEACHING_D13_CONFIDENCE_NOT_SAMPLED');
+  const normalized={
+    evidence_event_id:str(v.evidence_event_id,'TEACHING_D13_EVIDENCE_ID_REQUIRED'),
+    student_id:str(v.student_id,'TEACHING_D13_STUDENT_ID_REQUIRED'),
+    course_id:str(v.course_id,'TEACHING_D13_COURSE_ID_REQUIRED'),
+    learning_unit_id:str(v.learning_unit_id,'TEACHING_D13_LEARNING_UNIT_REQUIRED'),
+    source_response_id:str(v.source_response_id,'TEACHING_D13_SOURCE_RESPONSE_INVALID',{optional:true}),
+    source_evaluation_id:str(v.source_evaluation_id,'TEACHING_D13_SOURCE_EVALUATION_INVALID',{optional:true}),
+    source_owner:str(v.source_owner??'SKM/Evidence','TEACHING_D13_SOURCE_OWNER_REQUIRED'),
+    evidence_kind:str(v.evidence_kind,'TEACHING_D13_EVIDENCE_KIND_REQUIRED'),
+    evidence_purpose:str(v.evidence_purpose,'TEACHING_D13_EVIDENCE_PURPOSE_REQUIRED'),
+    formal_assessment:v.formal_assessment===true,
+    diagnostic:v.diagnostic===true,
+    task_ref:str(v.task_ref,'TEACHING_D13_TASK_REF_INVALID',{optional:true}),
+    construct_ref:str(v.construct_ref??v.learning_unit_id,'TEACHING_D13_CONSTRUCT_REF_REQUIRED'),
+    outcome,
+    response_quality:isObject(v.response_quality)?v.response_quality:{},
+    instructional_lineage_refs:uniqueStrings(v.instructional_lineage_refs||[]),
+    demand_context:demand,
+    support_context:support,
+    independent_performance:v.independent_performance===true,
+    control_context:enumVal(String(v.control_context??'UNKNOWN').toUpperCase(),CONTROL_CONTEXTS,'TEACHING_D13_CONTROL_CONTEXT_INVALID'),
+    observed_errors:Array.isArray(v.observed_errors)?v.observed_errors:[],
+    confidence_sampled:confidenceSampled,
+    student_confidence:studentConfidence,
+    comparability_group:str(v.comparability_group,'TEACHING_D13_COMPARABILITY_GROUP_INVALID',{optional:true}),
+    redundancy_key:str(v.redundancy_key,'TEACHING_D13_REDUNDANCY_KEY_INVALID',{optional:true}),
+    misconception_signal:isObject(v.misconception_signal)?v.misconception_signal:null,
+    path_signal:isObject(v.path_signal)?v.path_signal:null,
+    retention_review_due_at:time(v.retention_review_due_at,'TEACHING_D13_RETENTION_DUE_INVALID',{optional:true}),
+    system_failure_protected:v.system_failure_protected===true,
+    evidence_validity:validity,
+    occurred_at:time(v.occurred_at,'TEACHING_D13_EVIDENCE_OCCURRED_AT_REQUIRED'),
+    provenance_refs:uniqueStrings(v.provenance_refs|
