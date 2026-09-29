@@ -19,6 +19,7 @@ function requireRepository(repository) {
     'getWorkspaceSnapshot',
     'getMaterialitySnapshot',
     'applyMaterialityDecision',
+    'hasProcessedEvent',
     'auditNoop',
   ]) {
     if (typeof repository?.[method] !== 'function') {
@@ -46,6 +47,23 @@ function eventAuditMetadata(event, extra = {}) {
 function createPreparationPublishedEventHandlers({ repository } = {}) {
   requireRepository(repository);
 
+  async function replayOutcome(event) {
+    const processed = await repository.hasProcessedEvent({
+      workspaceId: event.aggregateId,
+      eventId: event.eventId,
+    });
+    return processed
+      ? Object.freeze({
+          accepted: true,
+          idempotent: true,
+          stale: false,
+          disposition: 'ALREADY_PROCESSED',
+          modelWorkStarted: false,
+          routeQualification: 'UNQUALIFIED_UNTIL_D30',
+        })
+      : null;
+  }
+
   async function classifyVersion(workspace, event) {
     const currentVersion = normalizeVersion(workspace.state_version, 'workspace.state_version');
     const eventVersion = normalizeVersion(event.aggregateVersion, 'event.aggregateVersion');
@@ -68,7 +86,7 @@ function createPreparationPublishedEventHandlers({ repository } = {}) {
       action: 'preparation.event.stale.noop',
       reason,
       correlationId: event.correlationId || null,
-      causationId: event.causationId || event.eventId || null,
+      causationId: event.eventId || null,
       safeMetadata: eventAuditMetadata(event, {
         current_workspace_version: Number(workspace.state_version),
       }),
@@ -77,6 +95,8 @@ function createPreparationPublishedEventHandlers({ repository } = {}) {
   }
 
   async function handleWorkspaceSeeded(event) {
+    const replay = await replayOutcome(event);
+    if (replay) return replay;
     const snapshot = await repository.getWorkspaceSnapshot(event.aggregateId);
     if (!snapshot?.workspace) {
       fail(`Preparation Workspace not found: ${event.aggregateId}`, 'TEACHING_PPL_WORKSPACE_NOT_FOUND');
@@ -95,7 +115,7 @@ function createPreparationPublishedEventHandlers({ repository } = {}) {
       action: 'preparation.workspace.seed_event.accepted',
       reason: 'WORKSPACE_SEEDED_ROUTE_HELD',
       correlationId: event.correlationId || null,
-      causationId: event.causationId || event.eventId || null,
+      causationId: event.eventId || null,
       safeMetadata: eventAuditMetadata(event, {
         current_authoritative_input_bundle_ref: snapshot.workspace.current_authoritative_input_bundle_ref,
       }),
@@ -110,6 +130,8 @@ function createPreparationPublishedEventHandlers({ repository } = {}) {
   }
 
   async function handleInputChanged(event) {
+    const replay = await replayOutcome(event);
+    if (replay) return replay;
     const snapshot = await repository.getMaterialitySnapshot(event.aggregateId);
     if (!snapshot?.workspace) {
       fail(`Preparation Workspace not found: ${event.aggregateId}`, 'TEACHING_PPL_WORKSPACE_NOT_FOUND');
@@ -127,7 +149,7 @@ function createPreparationPublishedEventHandlers({ repository } = {}) {
         action: 'preparation.materiality.noop',
         reason: 'NO_CURRENT_ARTIFACT_TO_INVALIDATE',
         correlationId: event.correlationId || null,
-        causationId: event.causationId || event.eventId || null,
+        causationId: event.eventId || null,
         safeMetadata: eventAuditMetadata(event, {
           changed_dependency_refs: changedDependencyRefs,
         }),
@@ -154,7 +176,7 @@ function createPreparationPublishedEventHandlers({ repository } = {}) {
         action: 'preparation.materiality.noop',
         reason: decision.disposition,
         correlationId: event.correlationId || null,
-        causationId: event.causationId || event.eventId || null,
+        causationId: event.eventId || null,
         safeMetadata: eventAuditMetadata(event, {
           changed_dependency_refs: changedDependencyRefs,
         }),
@@ -173,7 +195,7 @@ function createPreparationPublishedEventHandlers({ repository } = {}) {
       expectedStateVersion: snapshot.workspace.state_version,
       decision,
       correlationId: event.correlationId || null,
-      causationId: event.causationId || event.eventId || null,
+      causationId: event.eventId || null,
     });
     return Object.freeze({
       accepted: true,
