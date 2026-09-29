@@ -50,3 +50,8 @@ Rejected, withdrawn and declined Requests cannot enter application state. Altern
 The migration uses RLS, owner-scoped authenticated SELECT and server/domain-only authoritative mutation. D10 history/application/activation records are immutable. Recovery is forward-corrective once academic D10 data exists.
 
 The open D03/TPF-20 correction and D30 empirical model-route qualification hold remain outside D10. D10 does not claim D31 production release.
+
+
+## FK/lineage hardening
+
+After the base D10 migration, `20260929_teaching_d10_fk_lineage_hardening.sql` added leading indexes for the new D10 foreign-key paths plus relational lineage constraints for Class → D09 timetable/slot, Class/Course → D10 activation, and Request-linked teacher/lifecycle/closure/admission records. This is a forward corrective migration; it does not rewrite or delete predecessor history.

@@ -15,7 +15,7 @@ function facts(state='READY'){
   return {
     course:{course_id:'c1',title:'Math',lifecycle_state:state,state_version:2,status_overlays:[],progression_outcome:null,subject_snapshot_ref:'snap'},
     semester:{semester_id:'s1',name:'Term',starts_at:'2026-10-01T00:00:00Z',ends_at:'2026-12-01T00:00:00Z',timezone:'UTC',state_version:1},
-    plan:{course_plan_id:'p1',version_no:1,scope_version_no:1,plan_state:'REVIEW_READY',source_snapshot_ref:'snap'},
+    plan:{course_plan_id:'p1',version_no:1,plan_state:'REVIEW_READY',source_snapshot_ref:'snap'},
     coverageAudit:{coverage_audit_id:'ca1',outcome:'PASS'},
     diagnostic:{resolved:true},
     coverage:{allowed:true,blockers:[]},
@@ -155,4 +155,79 @@ test('D10 source does not select model providers or create future Gradebook, Att
   const src=files.map((file)=>fs.readFileSync(path.resolve(__dirname,'../../..',file),'utf8')).join('\n');
   assert.doesNotMatch(src,/@google\/generative-ai|openai|anthropic|gemini-/i);
   assert.doesNotMatch(src,/insert into\s+public\.teaching_(gradebook|attendance|student_knowledge|progression)/i);
+});
+
+
+function requestRepositoryHarness({state='APPROVED',studentResponse=null,effectiveAt=null}={}){
+  let sequence=0,targetCalls=0;
+  let request={
+    request_id:'r1',student_id:'u1',course_id:'c1',request_type:'COURSE_PAUSE',requester_type:'STUDENT',requester_id:'u1',
+    target_owner:'course_lifecycle',target_type:'COURSE',target_ref:'c1',target_version_ref:'course-state:2',
+    lifecycle_state:state,state_version:3,requested_change:{reason:'pause'},explanation:null,decision:{code:'APPROVED'},
+    effective_at:effectiveAt,alternative_proposal:null,alternative_version:null,student_response:studentResponse,application_ref:null,
+  };
+  const applications=[];
+  async function query(sql,params=[]){
+    const compact=String(sql).replace(/\s+/g,' ').trim();
+    if(compact.includes('select * from public.teaching_requests')&&compact.includes('for update')) return {rows:[{...request}]};
+    if(compact.includes('select * from public.teaching_request_applications')) return {rows:applications.map((x)=>({...x}))};
+    if(compact.startsWith('insert into public.teaching_request_applications')){
+      const row={request_application_id:params[0],student_id:params[1],request_id:params[2],request_version:params[3],
+        target_owner:params[4],target_ref:params[5],target_version_before:params[6],target_version_after:params[7],
+        application_ref:params[8],applied_at:params[9],safe_metadata:JSON.parse(params[10])};
+      applications.push(row);return {rows:[{...row}],rowCount:1};
+    }
+    if(compact.includes("update public.teaching_requests set lifecycle_state='APPLIED'")){
+      request={...request,lifecycle_state:'APPLIED',state_version:request.state_version+1,application_ref:params[2],applied_at:params[3]};return {rows:[{...request}],rowCount:1};
+    }
+    if(compact.includes("update public.teaching_requests set lifecycle_state='CLOSED'")){
+      request={...request,lifecycle_state:'CLOSED',state_version:request.state_version+1,close_reason:'APPLIED',closed_at:params[2]};return {rows:[{...request}],rowCount:1};
+    }
+    if(compact.startsWith('insert into public.teaching_request_history')) return {rows:[],rowCount:1};
+    if(compact.startsWith('insert into public.teaching_academic_audit_log')) return {rows:[],rowCount:1};
+    throw new Error('Unexpected SQL in D10 harness: '+compact);
+  }
+  const repository=createD10LifecycleRequestRepository({
+    query,withTransaction:async(fn)=>fn({query}),randomUUID:()=> 'id-'+(++sequence),clock:()=>new Date('2026-09-29T07:00:00Z'),
+  });
+  return {
+    repository,
+    async apply(){
+      return repository.applyRequest({
+        studentId:'u1',requestId:'r1',expectedVersion:3,
+        applyTargetUsing:async()=>{targetCalls+=1;return {targetVersionAfter:'course-state:3',safeMetadata:{owner:'course_lifecycle'}};},
+      });
+    },
+    targetCalls:()=>targetCalls,
+    applications:()=>applications,
+  };
+}
+
+test('D10 approved Request applies authoritative target exactly once across replay',async()=>{
+  const h=requestRepositoryHarness();
+  const first=await h.apply();
+  assert.equal(first.idempotent,false);
+  assert.equal(first.request.lifecycle_state,'CLOSED');
+  assert.equal(h.targetCalls(),1);
+  assert.equal(h.applications().length,1);
+  const second=await h.repository.applyRequest({
+    studentId:'u1',requestId:'r1',
+    applyTargetUsing:async()=>{throw new Error('target must not run on replay');},
+  });
+  assert.equal(second.idempotent,true);
+  assert.equal(h.targetCalls(),1);
+  assert.equal(h.applications().length,1);
+});
+
+test('D10 adjusted Request cannot mutate before explicit acceptance',async()=>{
+  const h=requestRepositoryHarness({state:'APPROVED_WITH_ADJUSTMENT',studentResponse:null});
+  await assert.rejects(()=>h.apply(),{code:'TEACHING_D10_ALTERNATIVE_ACCEPTANCE_REQUIRED'});
+  assert.equal(h.targetCalls(),0);
+  assert.equal(h.applications().length,0);
+});
+
+test('D10 server time blocks early effective-time mutation',async()=>{
+  const h=requestRepositoryHarness({effectiveAt:'2026-09-29T09:00:00Z'});
+  await assert.rejects(()=>h.apply(),{code:'TEACHING_D10_REQUEST_NOT_EFFECTIVE_YET'});
+  assert.equal(h.targetCalls(),0);
 });
