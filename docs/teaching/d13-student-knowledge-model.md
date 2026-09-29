@@ -40,7 +40,7 @@ A Learning Unit begins `UNSEEN`. Meaningful exposure without successful evidence
 
 The engine recomputes from the complete immutable normalized evidence history ordered by authoritative occurrence time. Arrival order therefore cannot become academic truth. State application locks the Learning Unit and validates the snapshot digest/current state version before append, retrying once on a stale snapshot.
 
-Weak or highly repetitive evidence does not count as repeated independent proof. Strong contrary later evidence adds `FRAGILE` or, when repeated and substantive, `REGRESSED` without deleting the historical base-state record. `BLOCKED` requires repeated trusted prerequisite failure evidence plus materially different attempted instructional strategies; a D12 advisory proposal cannot set it directly.
+Weak or highly repetitive evidence does not count as repeated independent proof. Strong contrary later evidence adds `FRAGILE` or, when repeated and substantive, `REGRESSED` without deleting the historical base-state record. `BLOCKED` is an orthogonal planning condition: only a trusted Teaching Controller/Lesson Planner condition fact may set or clear it. D12 prerequisite evidence and a D12 `blocked_proposal` can motivate planning investigation but cannot directly commit the durable overlay.
 
 ## Misconception, confidence, and path memory
 
