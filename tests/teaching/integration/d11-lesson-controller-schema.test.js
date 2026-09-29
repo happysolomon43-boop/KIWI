@@ -82,7 +82,7 @@ test('D11 schema extends the Class kernel with durable Controller/closure/transl
     const constraints=await pool.query(
       "select conname,pg_get_constraintdef(oid) def from pg_constraint where conrelid='public.teaching_class_sessions'::regclass"
     );
-    assert.ok(constraints.rows.some((r)=>/overtime_ceiling_at.*15 minutes/i.test(r.def)));
+    assert.ok(constraints.rows.some((r)=>/overtime_ceiling_at.*(?:15 minutes|00:15:00)/i.test(r.def)));
     assert.ok(constraints.rows.some((r)=>/break_ends_at.*scheduled_end_at_snapshot/i.test(r.def)));
 
     const unindexedD11Fks=await pool.query(`
