@@ -118,6 +118,12 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
     return {course,...rules};
   }
 
+  async function listTeacherIdentities(studentId){
+    const {rows=[]}=await query(`select teacher_identity_id,display_name,style_envelope_version,active,created_at
+      from public.teaching_teacher_identities where student_id=$1 and active=true order by created_at,teacher_identity_id`,[studentId]);
+    return rows;
+  }
+
   async function currentAdmissionPolicy(runner=null){
     const {rows}=await q(runner,`select * from public.teaching_course_admission_policies where enabled=true and effective_from<=$1 order by effective_from desc,created_at desc limit 1`,[now()]);
     const p=rows?.[0]||null;
@@ -229,46 +235,48 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
     });
   }
 
-  async function activateCourse({studentId,courseId,expected={},activateScheduleUsing}){
+  async function activateCourseUsing(tx,{studentId,courseId,expected={},activateScheduleUsing}){
     if(typeof activateScheduleUsing!=='function') throw new TypeError('D10 activation requires the D09 Scheduler activation owner callback.');
-    return withTransaction(async(tx)=>{
-      const facts=await activationFacts(studentId,courseId,tx,true);
-      if(facts.course.lifecycle_state!=='READY') throw err('Course must be Ready before activation.','TEACHING_D10_ACTIVATION_REQUIRES_READY');
-      if(facts.blockers.length) {
-        await recordAdmissionUsing(tx,{studentId,courseId,kind:'ACTIVATION',policy:facts.admission.policy,countBefore:facts.admission.counted.length,outcome:'BLOCK',reason:facts.blockers.join(',')});
-        throw err('Course activation prerequisites are no longer current.','TEACHING_D10_ACTIVATION_BLOCKED',409,{blockers:facts.blockers});
-      }
-      if(expected.planId&&String(expected.planId)!==String(facts.plan.course_plan_id)) throw err('Course Plan changed before activation.','TEACHING_D10_ACTIVATION_STALE');
-      if(expected.timetableVersionId&&String(expected.timetableVersionId)!==String(facts.timetable.timetable_version_id)) throw err('Timetable changed before activation.','TEACHING_D10_ACTIVATION_STALE');
-      const schedule=await activateScheduleUsing(tx,facts);
-      const activationId=randomUUID();
-      const activatedAt=now();
-      await q(tx,'update public.teaching_grading_policy_versions set locked_at=coalesce(locked_at,$3) where student_id=$1 and grading_policy_id=$2',
-        [studentId,facts.gradingPolicy.grading_policy_id,activatedAt]);
-      const nextVersion=Number(facts.course.state_version)+1;
-      await q(tx,`insert into public.teaching_course_activations(
-        activation_id,student_id,course_id,semester_id,course_state_version,semester_state_version,
-        course_plan_id,course_plan_version,course_plan_scope_version,grading_policy_id,grading_policy_version,
-        timetable_version_id,timetable_version,teacher_assignment_id,teacher_identity_id,admission_policy_version,
-        concurrent_count_before,activated_at
-      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-      [activationId,studentId,courseId,facts.semester.semester_id,nextVersion,facts.semester.state_version,
-       facts.plan.course_plan_id,facts.plan.version_no,facts.plan.scope_version_no,facts.gradingPolicy.grading_policy_id,facts.gradingPolicy.version_no,
-       schedule.timetable.timetable_version_id,schedule.timetable.version_no,facts.teacherAssignment.teacher_assignment_id,facts.teacherAssignment.teacher_identity_id,
-       facts.admission.policy.policy_version,facts.admission.counted.length,activatedAt]);
-      const {rows}=await q(tx,`update public.teaching_courses set lifecycle_state='ACTIVE',state_version=state_version+1,
-        activated_at=$3,academic_record_started_at=$3,activation_id=$4,updated_at=now()
-        where student_id=$1 and course_id=$2 returning *`,[studentId,courseId,activatedAt,activationId]);
-      const updated=rows[0];
-      await lifecycleHistoryUsing(tx,{studentId,courseId,fromState:'READY',toState:'ACTIVE',stateVersion:updated.state_version,
-        reason:'Start Course activation committed',policyVersion:facts.admission.policy.policy_version});
-      await recordAdmissionUsing(tx,{studentId,courseId,kind:'ACTIVATION',policy:facts.admission.policy,countBefore:facts.admission.counted.length,outcome:'ALLOW'});
-      await auditUsing(tx,{studentId,action:'course.activate',entityType:'COURSE',entityId:courseId,stateVersionRef:updated.state_version,
-        beforeRef:{lifecycle_state:'READY'},afterRef:{lifecycle_state:'ACTIVE',activation_id:activationId},
-        safeMetadata:{plan_version:facts.plan.version_no,timetable_version:schedule.timetable.version_no,grading_policy_version:facts.gradingPolicy.version_no,
-          admission_policy_version:facts.admission.policy.policy_version}});
-      return {course:updated,activationId,schedule,facts};
-    });
+    const facts=await activationFacts(studentId,courseId,tx,true);
+    if(facts.course.lifecycle_state!=='READY') throw err('Course must be Ready before activation.','TEACHING_D10_ACTIVATION_REQUIRES_READY');
+    if(facts.blockers.length) {
+      await recordAdmissionUsing(tx,{studentId,courseId,kind:'ACTIVATION',policy:facts.admission.policy,countBefore:facts.admission.counted.length,outcome:'BLOCK',reason:facts.blockers.join(',')});
+      throw err('Course activation prerequisites are no longer current.','TEACHING_D10_ACTIVATION_BLOCKED',409,{blockers:facts.blockers});
+    }
+    if(expected.planId&&String(expected.planId)!==String(facts.plan.course_plan_id)) throw err('Course Plan changed before activation.','TEACHING_D10_ACTIVATION_STALE');
+    if(expected.timetableVersionId&&String(expected.timetableVersionId)!==String(facts.timetable.timetable_version_id)) throw err('Timetable changed before activation.','TEACHING_D10_ACTIVATION_STALE');
+    const activationId=randomUUID();
+    const schedule=await activateScheduleUsing(tx,facts,activationId);
+    const activatedAt=now();
+    await q(tx,'update public.teaching_grading_policy_versions set locked_at=coalesce(locked_at,$3) where student_id=$1 and grading_policy_id=$2',
+      [studentId,facts.gradingPolicy.grading_policy_id,activatedAt]);
+    const nextVersion=Number(facts.course.state_version)+1;
+    await q(tx,`insert into public.teaching_course_activations(
+      activation_id,student_id,course_id,semester_id,course_state_version,semester_state_version,
+      course_plan_id,course_plan_version,course_plan_scope_version,grading_policy_id,grading_policy_version,
+      timetable_version_id,timetable_version,teacher_assignment_id,teacher_identity_id,admission_policy_version,
+      concurrent_count_before,activated_at
+    ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+    [activationId,studentId,courseId,facts.semester.semester_id,nextVersion,facts.semester.state_version,
+     facts.plan.course_plan_id,facts.plan.version_no,facts.plan.scope_version_no,facts.gradingPolicy.grading_policy_id,facts.gradingPolicy.version_no,
+     schedule.timetable.timetable_version_id,schedule.timetable.version_no,facts.teacherAssignment.teacher_assignment_id,facts.teacherAssignment.teacher_identity_id,
+     facts.admission.policy.policy_version,facts.admission.counted.length,activatedAt]);
+    const {rows}=await q(tx,`update public.teaching_courses set lifecycle_state='ACTIVE',state_version=state_version+1,
+      activated_at=$3,academic_record_started_at=$3,activation_id=$4,updated_at=now()
+      where student_id=$1 and course_id=$2 returning *`,[studentId,courseId,activatedAt,activationId]);
+    const updated=rows[0];
+    await lifecycleHistoryUsing(tx,{studentId,courseId,fromState:'READY',toState:'ACTIVE',stateVersion:updated.state_version,
+      reason:'Start Course activation committed',policyVersion:facts.admission.policy.policy_version});
+    await recordAdmissionUsing(tx,{studentId,courseId,kind:'ACTIVATION',policy:facts.admission.policy,countBefore:facts.admission.counted.length,outcome:'ALLOW'});
+    await auditUsing(tx,{studentId,action:'course.activate',entityType:'COURSE',entityId:courseId,stateVersionRef:updated.state_version,
+      beforeRef:{lifecycle_state:'READY'},afterRef:{lifecycle_state:'ACTIVE',activation_id:activationId},
+      safeMetadata:{plan_version:facts.plan.version_no,timetable_version:schedule.timetable.version_no,grading_policy_version:facts.gradingPolicy.version_no,
+        admission_policy_version:facts.admission.policy.policy_version}});
+    return {course:updated,activationId,schedule,facts,activatedAt};
+  }
+
+  async function activateCourse(input){
+    return withTransaction((tx)=>activateCourseUsing(tx,input));
   }
 
   async function archiveIncomplete({studentId,courseId,reason,sourceRequestId=null}){
@@ -519,8 +527,8 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
   }
 
   return Object.freeze({
-    assertReady,ensureCourse,auditUsing,getAcademicRules,prepareAcademicRules,currentAdmissionPolicy,countedCourses,admissionSnapshot,
-    getActivationFacts,markReady,activateCourse,transitionCourseUsing,archiveIncomplete,
+    assertReady,ensureCourse,auditUsing,getAcademicRules,prepareAcademicRules,listTeacherIdentities,currentAdmissionPolicy,countedCourses,admissionSnapshot,
+    getActivationFacts,markReady,activateCourseUsing,activateCourse,transitionCourseUsing,archiveIncomplete,
     createRequest,getRequest,getRequestById,listRequests,transitionRequest,recordDecisionUsing,acceptAlternativeUsing,declineAlternative,
     getClassTargetUsing,getClassTarget,changeTeacherUsing,recordCancellationClosureUsing,applyRequest,recordAdmissionUsing,
   });

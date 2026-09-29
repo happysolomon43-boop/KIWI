@@ -80,6 +80,10 @@ teachingPublishedEvents.register(TEACHING_EVENTS.REQUEST_DECIDED, {
   subscriberId: 'd10-request-decision-audit',
   handle: async (event) => Object.freeze({ accepted: true, requestId: event.aggregateId }),
 });
+teachingPublishedEvents.register(TEACHING_EVENTS.COURSE_ACTIVATED, {
+  subscriberId: 'd10-course-activation-followup',
+  handle: async (event) => Object.freeze({ accepted: true, courseId: event.aggregateId }),
+});
 const teachingRuntimePlatform = createTeachingD05RuntimePlatform({
   query,
   withTransaction,
