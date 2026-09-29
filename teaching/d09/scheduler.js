@@ -179,15 +179,12 @@ function topologicalUnits(courseBundle) {
   return ordered;
 }
 function deadlineFor(courseId, deadlines, semesterEnd) {
-  const rows=(deadlines||[]).filter((d)=>!d.course_id || String(d.course_id)===String(courseId));
-  const hard=rows.filter((d)=>d.kind==='HARD').sort((a,b)=>Date.parse(a.deadline_at)-Date.parse(b.deadline_at))[0];
-  const flexible=rows.filter((d)=>d.kind==='FLEXIBLE').sort((a,b)=>Date.parse(a.deadline_at)-Date.parse(b.deadline_at))[0];
-  return {
-    hard:hard?.deadline_at||null,
-    flexible:flexible?.deadline_at||null,
-    target:hard?.deadline_at||flexible?.deadline_at||semesterEnd,
-    kind:hard?'HARD':flexible?'FLEXIBLE':'SEMESTER',
-  };
+  const rows=(deadlines||[]).filter((d)=>!rowValue(d,'course_id','courseId') || String(rowValue(d,'course_id','courseId'))===String(courseId));
+  const hard=rows.filter((d)=>String(rowValue(d,'deadline_kind','kind'))==='HARD').sort((a,b)=>Date.parse(rowValue(a,'deadline_at','deadlineAt'))-Date.parse(rowValue(b,'deadline_at','deadlineAt')))[0];
+  const flexible=rows.filter((d)=>String(rowValue(d,'deadline_kind','kind'))==='FLEXIBLE').sort((a,b)=>Date.parse(rowValue(a,'deadline_at','deadlineAt'))-Date.parse(rowValue(b,'deadline_at','deadlineAt')))[0];
+  const hardAt=hard?rowValue(hard,'deadline_at','deadlineAt'):null;
+  const flexibleAt=flexible?rowValue(flexible,'deadline_at','deadlineAt'):null;
+  return { hard:hardAt, flexible:flexibleAt, target:hardAt||flexibleAt||semesterEnd, kind:hard?'HARD':flexible?'FLEXIBLE':'SEMESTER' };
 }
 function buildCourseWork(context) {
   const reserves=context.reserves||[];
@@ -205,11 +202,12 @@ function buildCourseWork(context) {
       });
     }
     let reserveMinutes=0;
-    for(const reserve of reserves.filter((r)=>!r.course_id || String(r.course_id)===courseId)){
+    for(const reserve of reserves.filter((r)=>!rowValue(r,'course_id','courseId') || String(rowValue(r,'course_id','courseId'))===courseId)){
       const minutes=Number(reserve.minutes)||0;
+      const reserveKind=String(rowValue(reserve,'reserve_kind','kind')||'REVISION');
       reserveMinutes+=minutes;
       if(minutes>0) tasks.push({
-        kind:reserve.kind==='ASSESSMENT'?'ASSESSMENT_RESERVE':'REVISION_RESERVE',
+        kind:reserveKind==='ASSESSMENT'?'ASSESSMENT_RESERVE':'REVISION_RESERVE',
         courseId, learningUnitIds:[], title:reserve.kind==='ASSESSMENT'?'Assessment capacity':'Revision capacity',
         remaining:minutes, minimum:minutes, sourceMax:minutes,
       });
