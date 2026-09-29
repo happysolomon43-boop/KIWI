@@ -487,7 +487,7 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
     return rows[0];
   }
 
-  async function applyRequest({studentId,requestId,expectedVersion=null,applyTargetUsing}){
+  async function applyRequest({studentId,requestId,expectedVersion=null,applyTargetUsing,onAppliedUsing=null}){
     if(typeof applyTargetUsing!=='function') throw new TypeError('D10 Request application requires target-owner callback.');
     return withTransaction(async(tx)=>{
       const {rows}=await q(tx,'select * from public.teaching_requests where student_id=$1 and request_id=$2 for update',[studentId,requestId]);
@@ -522,6 +522,9 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
         reason:'Applied Request closed',applicationRef});
       await auditUsing(tx,{studentId,action:'request.apply',entityType:'REQUEST',entityId:requestId,stateVersionRef:closed.state_version,
         beforeRef:{state:current.lifecycle_state},afterRef:{state:'CLOSED',application_ref:applicationRef},safeMetadata:{target_owner:current.target_owner}});
+      if(typeof onAppliedUsing==='function'){
+        await onAppliedUsing(tx,{request:closed,application:appRows[0],targetResult,current});
+      }
       return {request:closed,application:appRows[0],targetResult,idempotent:false};
     });
   }
