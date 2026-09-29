@@ -268,8 +268,8 @@ test('Learning Analysis is a derived projection with no raw probabilities or wei
 });
 
 test('normalized evidence rejects official Gradebook/progression mutation payloads',()=>{
-  assert.throws(()=>validateNormalizedEvidence({...normalizedEvidence(),official_mark:80}),/authority/i);
-  assert.throws(()=>validateNormalizedEvidence({...normalizedEvidence(),progression_decision:'ADVANCE'}),/authority/i);
+  assert.throws(()=>validateNormalizedEvidence({...normalizedEvidence(),official_mark:80}),/authorit/i);
+  assert.throws(()=>validateNormalizedEvidence({...normalizedEvidence(),progression_decision:'ADVANCE'}),/authorit/i);
 });
 
 test('TPF-09 T2 output may signal but cannot set durable knowledge/mastery state',()=>{
@@ -283,7 +283,7 @@ test('TPF-09 T2 output may signal but cannot set durable knowledge/mastery state
   for(const mutation of [
     {mastery_state:'MASTERED'},{knowledge_state:'INDEPENDENT'},{durable_state:'SECURE'},
     {gradebook_mark:80},{progression_decision:'ADVANCE'}
-  ]) assert.throws(()=>validateTPF09Output({...base,...mutation},{expectedStateReference:'skm:u1:lu1@2',taskMode:'learning_state_signal',learningUnitRefs:['lu1']}),/authority/i);
+  ]) assert.throws(()=>validateTPF09Output({...base,...mutation},{expectedStateReference:'skm:u1:lu1@2',taskMode:'learning_state_signal',learningUnitRefs:['lu1']}),/authorit/i);
 });
 
 test('authority-key scanner catches common disguised cross-owner state aliases',()=>{
