@@ -201,6 +201,15 @@ function createD13Service({repository,intelligence=null,randomUUID,clock=()=>new
     }[taskMode];
     if(!route||typeof intelligence[route]!=='function')fail('Unsupported D13 TPF-09 task mode.','TEACHING_D13_TPF09_TASK_MODE_UNSUPPORTED',400);
     const result=await intelligence[route](common);
+    // TPF-09 is T2 only. Re-read the authoritative owner snapshot after model
+    // work so a stale interpretation cannot be presented as current or used by
+    // any future owner-side consequence.
+    const current=await repository.loadKnowledgeSnapshot(user.id,learningUnitId);
+    if(!current ||
+      Number(current.stateVersion)!==Number(snapshot.stateVersion) ||
+      String(current.evidenceDigest)!==String(snapshot.evidenceDigest)){
+      fail('Student Knowledge Model evidence/state changed during TPF-09 analysis.','TEACHING_D13_STALE_TPF09_RESULT',409);
+    }
     return Object.freeze({state:'ANALYZED',accepted:Boolean(result?.accepted),analysis:result?.validatedResult?.output||null,durableStateCommitted:false});
   }
 
