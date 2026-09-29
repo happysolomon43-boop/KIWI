@@ -218,50 +218,67 @@ function createD11LessonControllerRepository({
         try {
           const [states, misconceptions] = await Promise.all([
             query(
-              "select learning_unit_id,state_version,knowledge_state,overlays,dimensions,certainty_state,retention_review_due_at,path_to_success,misconception_refs,algorithm_version" +
-              " from public.teaching_student_knowledge_states where student_id=$1 and course_id=$2 order by learning_unit_id",
+              "select distinct on (s.learning_unit_id) s.knowledge_state_version_id,s.learning_unit_id,s.version_no,s.algorithm_version," +
+              " s.base_state,s.overlays,s.dimensions,s.certainty_band,s.certainty_basis,s.retention_context," +
+              " s.strongest_supported_claim,s.contradiction_state,s.path_to_success,s.confidence_calibration,s.evidence_cutoff_at" +
+              " from public.teaching_student_knowledge_state_versions s" +
+              " join public.teaching_learning_units lu on lu.learning_unit_id=s.learning_unit_id and lu.student_id=s.student_id" +
+              " join public.teaching_course_plans cp on cp.course_plan_id=lu.course_plan_id and cp.student_id=s.student_id" +
+              " where s.student_id=$1 and cp.course_id=$2 order by s.learning_unit_id,s.version_no desc",
               [studentId, classRow.course_id]
             ),
             query(
-              "select misconception_id,learning_unit_id,status,hypothesis_payload,state_version,updated_at" +
-              " from public.teaching_persistent_misconceptions where student_id=$1 and course_id=$2" +
-              " and status in ('ACTIVE','REPAIRING','RESOLUTION_SUPPORTED') order by learning_unit_id,updated_at desc",
+              "select distinct on (m.misconception_record_id) m.*" +
+              " from public.teaching_persistent_misconception_versions m" +
+              " join public.teaching_learning_units lu on lu.learning_unit_id=m.primary_learning_unit_id and lu.student_id=m.student_id" +
+              " join public.teaching_course_plans cp on cp.course_plan_id=lu.course_plan_id and cp.student_id=m.student_id" +
+              " where m.student_id=$1 and cp.course_id=$2 order by m.misconception_record_id,m.version_no desc",
               [studentId, classRow.course_id]
             ),
           ]);
           const byUnit = new Map();
           for (const row of misconceptions.rows || []) {
-            const list = byUnit.get(row.learning_unit_id) || [];
-            list.push(Object.freeze({
-              misconception_id: row.misconception_id,
-              status: row.status,
-              summary: row.hypothesis_payload?.summary || null,
-              state_version: Number(row.state_version),
-            }));
-            byUnit.set(row.learning_unit_id, list);
+            if (row.status === 'RESOLVED') continue;
+            for (const ref of new Set([String(row.primary_learning_unit_id), ...((row.affected_learning_unit_refs || []).map(String))])) {
+              const list = byUnit.get(ref) || [];
+              list.push(Object.freeze({
+                misconception_record_id: row.misconception_record_id,
+                status: row.status,
+                summary: row.hypothesis,
+                version_no: Number(row.version_no),
+              }));
+              byUnit.set(ref, list);
+            }
           }
-          const version = (states.rows || []).reduce((max, row) => Math.max(max, Number(row.state_version || 0)), 0);
+          const stateRows = states.rows || [];
+          const bundleVersion = stateRows
+            .map((row) => String(row.learning_unit_id) + '@' + String(row.algorithm_version) + ':' + String(row.version_no))
+            .sort().join('|') || 'EMPTY';
           return Object.freeze({
             status: 'AUTHORITATIVE_D13',
             owner: 'Student Knowledge Model',
-            bundle_version: String(version),
-            signals: Object.freeze((states.rows || []).map((row) => Object.freeze({
+            bundle_version: bundleVersion,
+            signals: Object.freeze(stateRows.map((row) => Object.freeze({
               learning_unit_id: row.learning_unit_id,
-              state_version: Number(row.state_version),
-              knowledge_state: row.knowledge_state,
+              state_ref: 'skm:' + row.learning_unit_id + '@' + String(row.version_no),
+              state_version: Number(row.version_no),
+              algorithm_version: row.algorithm_version,
+              base_state: row.base_state,
               overlays: Object.freeze(row.overlays || []),
-              certainty_state: row.certainty_state,
-              retention_review_due_at: row.retention_review_due_at,
+              certainty_band: row.certainty_band,
+              retention_context: Object.freeze(row.retention_context || {}),
+              strongest_supported_claim: row.strongest_supported_claim,
+              contradiction_state: row.contradiction_state === true,
               planning_dimensions: Object.freeze({
-                independence: row.dimensions?.independence || 'INSUFFICIENT_EVIDENCE',
-                retention: row.dimensions?.retention || 'INSUFFICIENT_EVIDENCE',
-                transfer: row.dimensions?.transfer || 'INSUFFICIENT_EVIDENCE',
+                independence: row.dimensions?.independence || { status:'NOT_ASSESSED' },
+                retention: row.dimensions?.retention || { status:'NOT_ASSESSED' },
+                transfer: row.dimensions?.transfer || { status:'NOT_ASSESSED' },
               }),
               path_to_success: Object.freeze(row.path_to_success || {}),
-              misconception_refs: Object.freeze(byUnit.get(row.learning_unit_id) || []),
-              algorithm_version: row.algorithm_version,
+              unresolved_misconceptions: Object.freeze(byUnit.get(String(row.learning_unit_id)) || []),
             }))),
             raw_weights_included: false,
+            raw_model_probabilities_included: false,
             official_marks_included: false,
             progression_outcomes_included: false,
             negative_inference_forbidden: true,
@@ -272,6 +289,9 @@ function createD11LessonControllerRepository({
           return Object.freeze({
             status: 'D13_UNAVAILABLE',
             signals: Object.freeze([]),
+            raw_weights_included: false,
+            official_marks_included: false,
+            progression_outcomes_included: false,
             negative_inference_forbidden: true,
             error_code: error?.code || null,
           });
@@ -370,6 +390,15 @@ function createD11LessonControllerRepository({
         aggregate_ref:'teacher-note:' + note.teacher_note_id,
         version_ref:String(note.created_at || note.teacher_note_id),
         component_scope_key:note.class_id || context.classRow.course_id,
+      });
+    }
+    for (const state of signals?.knowledgeModelSignals?.signals || []) {
+      deps.push({
+        dependency_kind: 'SKM_STATE',
+        authoritative_owner_ref: 'Student Knowledge Model',
+        aggregate_ref: 'skm:' + state.learning_unit_id,
+        version_ref: String(state.algorithm_version || 'unknown') + ':' + String(state.state_version || 0),
+        component_scope_key: state.learning_unit_id,
       });
     }
     for (const request of signals?.governedRequestSignals || []) {
