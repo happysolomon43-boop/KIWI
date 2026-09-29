@@ -47,33 +47,6 @@ async function seedClassRuntime({repository,dueEventStore,studentId,classRow,cau
   return Object.freeze({classId:classRow.class_id,startEventId:startId,endEventId:endId,preparationWorkspaceId:prep?.workspace?.workspace_id || null});
 }
 
-function requestRefreshEvent({request,studentId,correlationId=null,causationId=null}) {
-  const dueAt=new Date(new Date(request.effective_at).getTime()+2000).toISOString();
-  const eventId='d11-preparation-refresh:'+request.request_id+':v'+request.state_version;
-  return {
-    eventId,
-    schemaVersion:1,
-    eventType:TEACHING_EVENTS.LESSON_PREPARATION_REFRESH_DUE,
-    eventCategory:EVENT_CATEGORIES.SCHEDULED_DUE_EVENT,
-    triggerType:'system_time',
-    source:'teaching.d11',
-    origin:'d11',
-    actorId:studentId,
-    aggregateType:'REQUEST',
-    aggregateId:request.request_id,
-    aggregateVersion:Number(request.state_version),
-    occurredAt:new Date().toISOString(),
-    effectiveAt:dueAt,
-    dueAt,
-    correlationId,
-    causationId,
-    idempotencyKey:eventId,
-    payload:{request_id:request.request_id,course_id:request.course_id},
-    auditRefs:[],
-    provenanceRefs:['request:'+request.request_id,'course:'+request.course_id],
-  };
-}
-
 function registerD11Runtime({
   publishedEvents,
   eventRuntime,
@@ -101,59 +74,47 @@ function registerD11Runtime({
       return Object.freeze({accepted:true,seeded:seeded.length,classRuntime:Object.freeze(seeded)});
     },
   });
-  const requestPublishedRegistration=publishedEvents.register(TEACHING_EVENTS.REQUEST_DECIDED,{
-    subscriberId:'d11-governed-request-materiality',
+  const requestDecisionRegistration=publishedEvents.register(TEACHING_EVENTS.REQUEST_DECIDED,{
+    subscriberId:'d11-governed-request-planning-signal',
     handle:async(event)=>{
       const request=await repository.getGovernedRequest(event.payload?.request_id || event.aggregateId);
       if(!request?.course_id) return Object.freeze({accepted:true,noop:true,reason:'REQUEST_HAS_NO_COURSE'});
-      if(!['APPROVED','APPROVED_WITH_ADJUSTMENT'].includes(String(request.lifecycle_state))) {
-        return Object.freeze({accepted:true,noop:true,reason:'REQUEST_NOT_APPROVED'});
-      }
-      const effectiveAt=request.effective_at?new Date(request.effective_at):new Date();
-      if(request.application_ref || effectiveAt.getTime()<=clock().getTime()) {
-        const refreshed=await service.refreshCoursePreparation(event.actorId,request.course_id,{
-          correlationId:event.correlationId || event.eventId,
-          interruptActive:true,
-        });
-        const classes=await repository.listClassesForCourse(event.actorId,request.course_id);
-        for(const classRow of classes) {
-          await seedClassRuntime({repository,dueEventStore,studentId:event.actorId,classRow,causationId:event.eventId});
-        }
-        return Object.freeze({accepted:true,immediate:true,refreshed:refreshed.length,scheduled:classes.length});
-      }
-      await dueEventStore.enqueue(requestRefreshEvent({
-        request,studentId:event.actorId,correlationId:event.correlationId || event.eventId,causationId:event.eventId,
-      }));
-      return Object.freeze({accepted:true,immediate:false,effectiveAt:request.effective_at});
+      const refreshed=await service.refreshCoursePreparation(request.student_id,request.course_id,{
+        correlationId:event.correlationId || event.eventId,
+        interruptActive:false,
+      });
+      return Object.freeze({
+        accepted:true,
+        planningSignalUpdated:true,
+        courseId:request.course_id,
+        refreshed:refreshed.length,
+        targetStateNotAssumedApplied:true,
+      });
     },
   });
 
-
-  eventRuntime.register(TEACHING_EVENTS.LESSON_PREPARATION_REFRESH_DUE,{
-    reconcile:async(event)=>{
-      const request=await repository.getGovernedRequest(event.payload?.request_id || event.aggregate_id);
-      if(!request) return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'REQUEST_NO_LONGER_EXISTS'};
-      if(!['APPROVED','APPROVED_WITH_ADJUSTMENT','APPLIED','CLOSED'].includes(String(request.lifecycle_state))) {
-        return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'REQUEST_NO_LONGER_APPROVED'};
-      }
-      return {disposition:RECONCILIATION_DISPOSITIONS.ACTIONABLE};
-    },
+  const requestAppliedRegistration=publishedEvents.register(TEACHING_EVENTS.REQUEST_APPLIED,{
+    subscriberId:'d11-request-applied-materiality',
     handle:async(event)=>{
-      const request=await repository.getGovernedRequest(event.payload?.request_id || event.aggregate_id);
-      if(!request?.application_ref) {
-        const e=new Error('D10 Request effect has not committed yet; D11 materiality refresh will retry.');
-        e.code='TEACHING_D11_REQUEST_EFFECT_NOT_APPLIED_YET';
-        throw e;
-      }
-      const refreshed=await service.refreshCoursePreparation(event.actor_id,request.course_id,{
-        correlationId:event.correlation_id || event.event_id,
+      const studentId=event.actorId;
+      const courseId=event.payload?.course_id;
+      if(!studentId||!courseId) return Object.freeze({accepted:true,noop:true,reason:'REQUEST_APPLIED_CONTEXT_MISSING'});
+      const refreshed=await service.refreshCoursePreparation(studentId,courseId,{
+        correlationId:event.correlationId || event.eventId,
         interruptActive:true,
       });
-      const classes=await repository.listClassesForCourse(event.actor_id,request.course_id);
-      for(const classRow of classes) {
-        await seedClassRuntime({repository,dueEventStore,studentId:event.actor_id,classRow,causationId:event.event_id});
+      const classes=await repository.listClassesForCourse(studentId,courseId);
+      const seeded=[];
+      for(const classRow of classes){
+        seeded.push(await seedClassRuntime({repository,dueEventStore,studentId,classRow,causationId:event.eventId}));
       }
-      return {safeMetadata:{course_id:request.course_id,refreshed:refreshed.length,scheduled:classes.length}};
+      return Object.freeze({
+        accepted:true,
+        appliedMaterialityReconciled:true,
+        courseId,
+        refreshed:refreshed.length,
+        scheduled:seeded.length,
+      });
     },
   });
 
@@ -256,12 +217,13 @@ function registerD11Runtime({
 
   return Object.freeze({
     publishedRegistration,
-    requestPublishedRegistration,
-    dueEventTypes:Object.freeze([TEACHING_EVENTS.LESSON_PREPARATION_REFRESH_DUE,TEACHING_EVENTS.CLASS_START_DUE,TEACHING_EVENTS.BREAK_END_DUE,TEACHING_EVENTS.CLASS_END_DUE]),
+    requestDecisionRegistration,
+    requestAppliedRegistration,
+    dueEventTypes:Object.freeze([TEACHING_EVENTS.CLASS_START_DUE,TEACHING_EVENTS.BREAK_END_DUE,TEACHING_EVENTS.CLASS_END_DUE]),
     serverTimeAuthoritative:true,
     modelRouteQualification:'UNQUALIFIED_UNTIL_D30',
     clock,
   });
 }
 
-module.exports={scheduledEvent,requestRefreshEvent,seedClassRuntime,registerD11Runtime};
+module.exports={scheduledEvent,seedClassRuntime,registerD11Runtime};
