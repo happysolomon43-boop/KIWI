@@ -64,7 +64,7 @@ function createTeachingFoundation({
     ? createD10LifecycleRequestRepository({ query, withTransaction, randomUUID })
     : null;
   const d10Service = d10Repository && d09Repository && d09TransactionalMutation
-    ? d10.createD10Service({ repository: d10Repository, d09Repository, transactionalMutation: d09TransactionalMutation, randomUUID })
+    ? d10.createD10Service({ repository: d10Repository, d09Repository, transactionalMutation: d09TransactionalMutation, randomUUID, outboxStore:d10RuntimePlatform?.outboxStore || null })
     : null;
   if (d10Service && d10RuntimePlatform?.eventRuntime) {
     d10.registerD10DueEventHandler({ eventRuntime: d10RuntimePlatform.eventRuntime, repository: d10Repository, service: d10Service });
