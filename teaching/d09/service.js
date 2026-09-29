@@ -127,7 +127,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
   async function editTimetable(user,courseId,input={}){
     const context=await repository.getSchedulingContext(user.id,courseId);
     requireReadyContext(context,courseId);
-    if(!['DRAFT','PLANNING','SETUP'].includes(String(context.course.lifecycle_state||'DRAFT'))){
+    if(!['DRAFT','READY','PLANNING','SETUP'].includes(String(context.course.lifecycle_state||'DRAFT'))){
       const e=new Error('Direct timetable editing is pre-activation only.'); e.status=409; e.code='TEACHING_D09_PREACTIVATION_EDIT_ONLY'; throw e;
     }
     const latest=await repository.latestTimetable(user.id,context.semester.semester_id);
