@@ -31,6 +31,7 @@ function baseRequest({
   provenanceRefs,
   declaredAuthorityLevel,
   validators,
+  requestKey,
 }) {
   return {
     trigger: {
@@ -41,6 +42,8 @@ function baseRequest({
     },
     capabilityId,
     declaredAuthorityLevel,
+    idempotencyKey: String(requestKey || (context.classRow.class_id + ':' + taskMode + ':' + (context.session?.state_version ?? context.classRow.schedule_version))),
+    correlationId: String(requestKey || (context.classRow.class_id + ':' + taskMode + ':' + (context.session?.state_version ?? context.classRow.schedule_version))),
     stateReference: {
       aggregate_type: 'teaching_class_controller',
       aggregate_id: context.classRow.class_id,
@@ -133,7 +136,7 @@ function plannerInput(context, signals) {
   });
 }
 
-function lessonPlanRequest({ context, signals }) {
+function lessonPlanRequest({ context, signals, requestKey = null }) {
   const validate = async (out) => validateLessonBlueprintProposal(out, {
     learningUnits: context.learningUnits,
     scheduledStartAt: context.classRow.scheduled_start_at,
@@ -167,6 +170,7 @@ function lessonPlanRequest({ context, signals }) {
     outputSchema,
     provenanceRefs: refs,
     declaredAuthorityLevel: 'T3',
+    requestKey,
     validators: {
       schema: validate,
       domain: validate,
@@ -179,7 +183,7 @@ function lessonPlanRequest({ context, signals }) {
   });
 }
 
-function liveReplanRequest({ context, signals, remainingMinutes }) {
+function liveReplanRequest({ context, signals, remainingMinutes, requestKey = null }) {
   const current = context.blueprint?.blueprint_payload || {};
   const completed = context.session?.progress_state?.completed_objective_refs || [];
   const blueprintContext = {
@@ -235,11 +239,12 @@ function liveReplanRequest({ context, signals, remainingMinutes }) {
     outputSchema,
     provenanceRefs:refs,
     declaredAuthorityLevel:'T3',
+    requestKey,
     validators:{schema:validate,domain:validate,provenance:async()=>({ok:true})},
   });
 }
 
-function closureAnalysisRequest({ context, closureFact }) {
+function closureAnalysisRequest({ context, closureFact, requestKey = null }) {
   const validate = async (out) => {
     if (!out || typeof out !== 'object' || Array.isArray(out)) return {ok:false,reason:'TEACHING_D11_CLOSURE_ANALYSIS_SCHEMA_INVALID'};
     if (!['OK','REVIEW_NEEDED','INSUFFICIENT_EVIDENCE','UNRESOLVED_CONFLICT'].includes(String(out.status || '').toUpperCase())) {
@@ -270,11 +275,12 @@ function closureAnalysisRequest({ context, closureFact }) {
     outputSchema,
     provenanceRefs:['class-closure:' + closureFact.closure_fact_id],
     declaredAuthorityLevel:'T2',
+    requestKey,
     validators:{schema:validate,domain:validate,provenance:async()=>({ok:true})},
   });
 }
 
-function translationRequest({ context, closureFact }) {
+function translationRequest({ context, closureFact, requestKey = null }) {
   const validate = async (out) => {
     if (!out || typeof out !== 'object' || Array.isArray(out)) return {ok:false,reason:'TEACHING_D11_SUMMARY_SCHEMA_INVALID'};
     if (!String(out.student_summary || '').trim()) return {ok:false,reason:'TEACHING_D11_SUMMARY_TEXT_REQUIRED'};
@@ -303,11 +309,12 @@ function translationRequest({ context, closureFact }) {
     outputSchema,
     provenanceRefs:['class-closure:' + closureFact.closure_fact_id],
     declaredAuthorityLevel:'T1',
+    requestKey,
     validators:{schema:validate,domain:async()=>({ok:true}),provenance:async()=>({ok:true})},
   });
 }
 
-function teacherNoteRequest({ context, closureFact }) {
+function teacherNoteRequest({ context, closureFact, requestKey = null }) {
   const validate = async (out) => {
     if (!out || typeof out !== 'object' || Array.isArray(out)) return {ok:false,reason:'TEACHING_D11_TEACHER_NOTE_SCHEMA_INVALID'};
     if (Object.hasOwn(out,'official_mark') || Object.hasOwn(out,'mastery_state') || Object.hasOwn(out,'behavior_judgment')) {
@@ -335,6 +342,7 @@ function teacherNoteRequest({ context, closureFact }) {
     outputSchema,
     provenanceRefs:['class-closure:' + closureFact.closure_fact_id],
     declaredAuthorityLevel:'T2',
+    requestKey,
     validators:{schema:validate,domain:validate,provenance:async()=>({ok:true})},
   });
 }
