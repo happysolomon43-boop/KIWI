@@ -1,0 +1,389 @@
+/* KIWI system-wide responsive form controls and viewport safety. */
+:root {
+  --kiwi-ui-accent: var(--teaching-accent, var(--green-bright, #62d9a5));
+  --kiwi-ui-accent-soft: var(--teaching-accent-soft, rgba(98, 217, 165, .12));
+  --kiwi-ui-text: var(--teaching-text, var(--text, #edf8f3));
+  --kiwi-ui-muted: var(--teaching-muted, var(--text-3, #7ea294));
+  --kiwi-ui-surface: var(--teaching-surface-strong, var(--surface, #0e2019));
+  --kiwi-ui-surface-soft: var(--teaching-surface-soft, var(--surface-2, #142b21));
+  --kiwi-ui-border: var(--teaching-border, var(--border, rgba(116,229,180,.16)));
+  --kiwi-ui-border-strong: var(--teaching-border-strong, var(--border-2, rgba(116,229,180,.3)));
+  --kiwi-ui-shadow: 0 24px 80px rgba(0, 0, 0, .46);
+}
+
+html {
+  width: 100%;
+  max-width: 100%;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: clip;
+}
+
+#app,
+#authPage,
+#mainContent,
+.main-content,
+.page-wrap,
+.teaching-app,
+.teaching-stage,
+.teaching-view,
+.teaching-d10-page {
+  min-width: 0;
+  max-width: 100%;
+}
+
+img,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+}
+
+input,
+textarea,
+button,
+.kiwi-select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+pre,
+code {
+  max-width: 100%;
+}
+
+@supports not (overflow: clip) {
+  body { overflow-x: hidden; }
+}
+
+.kiwi-select {
+  position: relative;
+  width: 100%;
+}
+
+.kiwi-select__native {
+  display: none !important;
+}
+
+.kiwi-select__trigger {
+  width: 100%;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 13px;
+  border: 1px solid var(--kiwi-ui-border);
+  border-radius: 11px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0)),
+    var(--kiwi-ui-surface-soft);
+  color: var(--kiwi-ui-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.kiwi-select__trigger:hover {
+  border-color: var(--kiwi-ui-border-strong);
+  background: var(--kiwi-ui-surface);
+}
+
+.kiwi-select__trigger:focus-visible,
+.kiwi-select__trigger[aria-expanded="true"] {
+  border-color: var(--kiwi-ui-accent);
+  box-shadow: 0 0 0 3px var(--kiwi-ui-accent-soft);
+}
+
+.kiwi-select__trigger[aria-disabled="true"] {
+  opacity: .52;
+  cursor: not-allowed;
+}
+
+.kiwi-select__value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kiwi-select__value[data-placeholder="true"] {
+  color: var(--kiwi-ui-muted);
+}
+
+.kiwi-select__chevron {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--kiwi-ui-muted);
+  transition: transform 150ms ease, color 150ms ease;
+}
+
+.kiwi-select__trigger[aria-expanded="true"] .kiwi-select__chevron {
+  transform: rotate(180deg);
+  color: var(--kiwi-ui-accent);
+}
+
+.kiwi-select-portal {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  pointer-events: none;
+}
+
+.kiwi-select-portal[data-open="true"] {
+  pointer-events: auto;
+}
+
+.kiwi-select-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(0,0,0,.18);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.kiwi-select-portal[data-open="true"] .kiwi-select-backdrop {
+  opacity: 1;
+}
+
+.kiwi-select-panel {
+  position: fixed;
+  left: var(--kiwi-select-left, 16px);
+  top: var(--kiwi-select-top, 16px);
+  width: var(--kiwi-select-width, min(360px, calc(100vw - 32px)));
+  max-height: var(--kiwi-select-max-height, min(460px, calc(100dvh - 32px)));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--kiwi-ui-border-strong);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 15% 0%, var(--kiwi-ui-accent-soft), transparent 38%),
+    var(--kiwi-ui-surface);
+  color: var(--kiwi-ui-text);
+  box-shadow: var(--kiwi-ui-shadow);
+  opacity: 0;
+  transform: translateY(-4px) scale(.985);
+  transform-origin: top center;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.kiwi-select-portal[data-open="true"] .kiwi-select-panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.kiwi-select-panel__head {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 8px;
+}
+
+.kiwi-select-panel__title {
+  min-width: 0;
+  font-weight: 750;
+  line-height: 1.2;
+  letter-spacing: -.015em;
+}
+
+.kiwi-select-panel__close {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--kiwi-ui-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--kiwi-ui-muted);
+  cursor: pointer;
+}
+
+.kiwi-select-panel__close:hover,
+.kiwi-select-panel__close:focus-visible {
+  outline: none;
+  color: var(--kiwi-ui-text);
+  border-color: var(--kiwi-ui-border-strong);
+  background: var(--kiwi-ui-accent-soft);
+}
+
+.kiwi-select-search-wrap {
+  padding: 0 12px 10px;
+}
+
+.kiwi-select-search {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--kiwi-ui-border);
+  border-radius: 10px;
+  background: rgba(0,0,0,.14);
+  color: var(--kiwi-ui-text);
+  outline: none;
+  font: inherit;
+}
+
+.kiwi-select-search:focus {
+  border-color: var(--kiwi-ui-accent);
+  box-shadow: 0 0 0 3px var(--kiwi-ui-accent-soft);
+}
+
+.kiwi-select-options {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 8px 10px;
+}
+
+.kiwi-select-group {
+  padding: 8px 10px 5px;
+  color: var(--kiwi-ui-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.kiwi-select-option {
+  width: 100%;
+  min-height: 45px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--kiwi-ui-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kiwi-select-option:hover,
+.kiwi-select-option:focus-visible,
+.kiwi-select-option[data-active="true"] {
+  outline: none;
+  background: rgba(255,255,255,.035);
+  border-color: var(--kiwi-ui-border);
+}
+
+.kiwi-select-option[aria-selected="true"] {
+  background: var(--kiwi-ui-accent-soft);
+  border-color: var(--kiwi-ui-border-strong);
+}
+
+.kiwi-select-option:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
+
+.kiwi-select-option__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.kiwi-select-option__check {
+  color: var(--kiwi-ui-accent);
+  font-weight: 800;
+}
+
+.kiwi-select-empty {
+  padding: 20px 12px;
+  color: var(--kiwi-ui-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+body[data-kiwi-select-open="true"] {
+  overscroll-behavior: none;
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  input,
+  textarea {
+    font-size: 16px;
+  }
+
+  .kiwi-select__trigger {
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  body[data-kiwi-select-open="true"] {
+    overflow: hidden;
+  }
+
+  .kiwi-select-backdrop {
+    background: rgba(0,0,0,.58);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+
+  .kiwi-select-panel {
+    left: 8px;
+    right: 8px;
+    top: auto;
+    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    width: auto;
+    max-height: min(72dvh, 620px);
+    border-radius: 22px;
+    transform: translateY(24px) scale(.99);
+    transform-origin: bottom center;
+  }
+
+  .kiwi-select-portal[data-open="true"] .kiwi-select-panel {
+    transform: translateY(0) scale(1);
+  }
+
+  .kiwi-select-panel::before {
+    content: "";
+    width: 42px;
+    height: 4px;
+    margin: 8px auto 0;
+    border-radius: 999px;
+    background: var(--kiwi-ui-border-strong);
+  }
+
+  .kiwi-select-panel__head {
+    min-height: 56px;
+    padding-top: 8px;
+  }
+
+  .kiwi-select-options {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .kiwi-select-option {
+    min-height: 50px;
+    font-size: 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kiwi-select__trigger,
+  .kiwi-select__chevron,
+  .kiwi-select-backdrop,
+  .kiwi-select-panel {
+    transition: none;
+  }
+}
