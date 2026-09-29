@@ -2,10 +2,18 @@
 
 Migration: `20260929_teaching_d13_student_knowledge_model.sql`.
 
-D13 is forward-additive. It extends the existing immutable `teaching_evidence_events` contract with normalized evidence-demand, assistance/exposure, confidence, provenance, validity and replay fields; it does not create a parallel evidence truth. It adds the D13-owned current SKM projection plus immutable state history/evidence-application history, durable misconception current/history records, and immutable TPF-09 interpretation artifacts.
+D13 is forward-additive to academic history. It extends the existing immutable D04 Evidence Event record and adds append-only SKM state, evidence-application, and misconception-version histories. It does not delete or rewrite D11/D12 history, official Gradebook truth, Course Plan/Coverage truth, Assessment Eligibility, or Progression.
 
-Recovery rule: correct forward. Do not delete real Evidence Events, state history, misconception history or interpretation artifacts after student use. If an algorithm defect is found, introduce a new versioned SKM algorithm and replay/audit from the immutable Evidence Event history. The current projection may be recalculated by an explicitly versioned migration/replay procedure, but historical versions must remain distinguishable by `algorithm_version`.
+Recovery must correct forward. Do not recover a production defect by deleting or updating historical SKM state versions, evidence applications, misconception versions, or Evidence Events. Introduce a versioned algorithm/normalization correction, preserve the original evidence/provenance, and recompute through the owner-controlled D13 path.
 
-If code reaches production before the migration, D13 readiness must fail closed with `TEACHING_D13_SCHEMA_MISSING`; D01–D12 remain available. If the migration reaches production before code, all added Evidence Event columns are nullable/defaulted or additive, and no existing D01–D12 write path acquires new authority.
+If code reaches production before the migration, `assertD13Ready()` fails closed with `TEACHING_D13_SCHEMA_MISSING`. If the migration reaches production before code, D01–D12 behavior remains valid; the new Evidence Event columns are nullable/defaulted and the new owner tables are additive.
 
-Never recover by granting `anon`/`authenticated` direct mutation access, copying Gradebook percentages into SKM state, deleting contradictory evidence, converting TPF-09 output into direct state writes, or weakening the D30 route-qualification hold.
+D13 intentionally revokes table-wide authenticated SELECT on `teaching_evidence_events` and re-grants only the legacy student-safe columns. This prevents direct browser access to internal qualitative inference metadata while preserving the pre-D13 Evidence Event read surface.
+
+No rollback may:
+- grant browser-authoritative DML to SKM/evidence state;
+- remove RLS or immutability;
+- copy official Gradebook marks into SKM state;
+- allow TPF-09/T2 output to commit durable state directly;
+- collapse Gradebook, Knowledge Model, and Progression truth into one store;
+- replace immutable replayable evidence with a mutable score-only projection.
