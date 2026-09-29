@@ -246,6 +246,64 @@ function alternativesFor(reasons, context, courseWork) {
   add('KEEP_REQUIRED_SCOPE_AND_SURFACE_INFEASIBILITY','Keep all required Learning Units and record the schedule as infeasible rather than deleting curriculum.');
   return out;
 }
+function subtractOccupiedPeriods(periods, occupied=[]) {
+  if(!occupied.length) return periods.map((period)=>({...period}));
+  const out=[];
+  for(const period of periods){
+    const cuts=occupied
+      .filter((slot)=>overlap(period.start,period.end,slot.start,slot.end))
+      .map((slot)=>({startsAt:slot.start,endsAt:slot.end}));
+    for(const piece of subtractIntervals(period.start,period.end,cuts)){
+      out.push({...period,start:piece.start,end:piece.end,minutes:minutesBetween(piece.start,piece.end)});
+    }
+  }
+  return out;
+}
+function retainStablePlacements(context, periods, work, scheduleLimit, now) {
+  const prior=[...(context.priorSlots||[])].sort((a,b)=>Date.parse(rowValue(a,'starts_at','startsAt'))-Date.parse(rowValue(b,'starts_at','startsAt')));
+  const slots=[], occupied=[], dayCounts=new Map();
+  let scheduledTotal=0;
+  for(const priorSlot of prior){
+    if(scheduledTotal>=scheduleLimit) break;
+    const courseId=String(rowValue(priorSlot,'course_id','courseId')||'');
+    const kind=String(rowValue(priorSlot,'slot_kind','kind')||'CLASS');
+    const workItem=work.find((item)=>item.courseId===courseId);
+    if(!workItem) continue;
+    const task=workItem.tasks.find((item)=>item.kind===kind && item.remaining>0);
+    if(!task) continue;
+    const start=rowValue(priorSlot,'starts_at','startsAt'), priorEnd=rowValue(priorSlot,'ends_at','endsAt');
+    if(!start||!priorEnd) continue;
+    const priorMinutes=minutesBetween(start,priorEnd);
+    if(priorMinutes<=0) continue;
+    const minutes=Math.min(priorMinutes,task.remaining,scheduleLimit-scheduledTotal);
+    if(minutes<=0) continue;
+    const end=new Date(Date.parse(start)+minutes*MINUTE_MS).toISOString();
+    const containing=periods.find((period)=>Date.parse(period.start)<=Date.parse(start) && Date.parse(end)<=Date.parse(period.end));
+    if(!containing) continue;
+    if(occupied.some((slot)=>overlap(start,end,slot.start,slot.end))) continue;
+    if(workItem.deadline.hard && Date.parse(end)>Date.parse(workItem.deadline.hard)) continue;
+    if(conflictsForWork(context,workItem,task,start,end)) continue;
+    const localDate=dateKey(new Date(start),context.semester.timezone);
+    const dayCount=dayCounts.get(localDate)||0;
+    if(kind==='CLASS' && dayCount>=2) continue;
+    slots.push({
+      courseId,kind,startsAt:start,endsAt:end,timezone:context.semester.timezone,
+      localDate,learningUnitIds:[...task.learningUnitIds],plannedMinutes:minutes,
+      horizonStage:horizonStage(start,now,context.profile?.settings||{}),
+      exceptionCodes:Object.freeze([]),
+      rationale:'Stable timetable placement retained from the previous timetable where still feasible.',
+    });
+    occupied.push({start,end});
+    task.remaining-=minutes;
+    workItem.scheduledMinutes+=minutes;
+    if(kind==='CLASS'){
+      workItem.lastDate=localDate;
+      dayCounts.set(localDate,dayCount+1);
+    }
+    scheduledTotal+=minutes;
+  }
+  return {slots,occupied,dayCounts,scheduledTotal};
+}
 function computeSchedule(context,{now=new Date().toISOString()}={}) {
   assertAcademicTimestamp(now,'now');
   const periods=buildPeriods(context);
@@ -259,33 +317,34 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
   if(!periods.length) initialReasons.push('NO_USABLE_AVAILABILITY');
   if(required>maxCore) initialReasons.push('RECOVERY_HEADROOM_BELOW_MINIMUM');
   const scheduleLimit=Math.min(required,maxCore);
-  const slots=[];
-  const dayCounts=new Map();
+  const stable=retainStablePlacements(context,periods,work,scheduleLimit,now);
+  const slots=[...stable.slots];
+  const dayCounts=stable.dayCounts;
   const preferences=context.profile?.preferences || context.preferences || {};
-  let scheduledTotal=0;
-  const usable=periods.map((p)=>({...p,cursor:p.start}));
+  let scheduledTotal=stable.scheduledTotal;
+  const usable=subtractOccupiedPeriods(periods,stable.occupied).map((p)=>({...p,cursor:p.start}));
   let safety=0;
   while(scheduledTotal<scheduleLimit && work.some((w)=>w.tasks.some((t)=>t.remaining>0)) && safety<100000){
     safety+=1;
     let best=null;
     for(const period of usable){
-      const count=dayCounts.get(period.key)||0;
-      if(count>=2) continue;
       const cursorMs=Date.parse(period.cursor);
       if(cursorMs>=Date.parse(period.end)) continue;
       for(const w of work){
         const task=w.tasks.find((t)=>t.remaining>0);
         if(!task) continue;
-        if(w.deadline.hard && cursorMs>=Date.parse(w.deadline.hard)) continue;
+        const count=dayCounts.get(period.key)||0;
+        if(task.kind==='CLASS' && count>=2) continue;
         const available=minutesBetween(period.cursor,period.end);
         if(available<=0) continue;
         const minutes=Math.min(task.remaining,available,scheduleLimit-scheduledTotal);
         if(minutes<=0) continue;
         const candidateEnd=new Date(cursorMs+minutes*MINUTE_MS).toISOString();
+        if(w.deadline.hard && Date.parse(candidateEnd)>Date.parse(w.deadline.hard)) continue;
         if(conflictsForWork(context,w,task,period.cursor,candidateEnd)) continue;
         const score=preferenceScore(period,w,preferences)
           + protectedPreference(context,w,task,period.cursor,candidateEnd)
-          - (w.lastDate===period.key?40:0)
+          - (task.kind==='CLASS' && w.lastDate===period.key?40:0)
           - (period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY'?10000:0)
           + (w.deadline.kind==='HARD'?12:0)
           - (w.scheduledMinutes/Math.max(1,w.requiredMinutes))*20;
@@ -299,7 +358,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
     const start=best.period.cursor;
     const end=new Date(Date.parse(start)+best.minutes*MINUTE_MS).toISOString();
     const count=dayCounts.get(best.period.key)||0;
-    const spacingException=best.w.lastDate && addDateKey(best.w.lastDate,1)===best.period.key;
+    const spacingException=best.task.kind==='CLASS' && best.w.lastDate && addDateKey(best.w.lastDate,1)===best.period.key;
     slots.push({
       courseId:best.w.courseId,kind:best.task.kind,startsAt:start,endsAt:end,timezone:context.semester.timezone,
       localDate:best.period.key,learningUnitIds:[...best.task.learningUnitIds],plannedMinutes:best.minutes,
@@ -311,9 +370,11 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
     });
     best.task.remaining-=best.minutes;
     best.w.scheduledMinutes+=best.minutes;
-    best.w.lastDate=best.period.key;
+    if(best.task.kind==='CLASS'){
+      best.w.lastDate=best.period.key;
+      dayCounts.set(best.period.key,count+1);
+    }
     best.period.cursor=end;
-    dayCounts.set(best.period.key,count+1);
     scheduledTotal+=best.minutes;
   }
   const unscheduled=work.reduce((sum,w)=>sum+w.tasks.reduce((s,t)=>s+t.remaining,0),0);
@@ -331,14 +392,14 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
   const debtMinutes=Math.max(0,required-scheduledTotal);
   return Object.freeze({
     outcome,
-    schedule: Object.freeze(slots),
+    schedule: Object.freeze(slots.sort((a,b)=>Date.parse(a.startsAt)-Date.parse(b.startsAt))),
     reasons:Object.freeze([...new Set(reasons)]),
     alternatives:Object.freeze(outcome==='FEASIBLE'?[]:alternativesFor(reasons,context,work)),
     metrics:Object.freeze({
       totalCapacityMinutes:totalCapacity,targetCoreCapacityMinutes:targetCore,minimumSafeCoreCapacityMinutes:maxCore,
       requiredMinutes:required,scheduledMinutes:scheduledTotal,unscheduledMinutes:unscheduled,
       headroomRatio:Number(headroomRatio.toFixed(4)),debtMinutes,
-      courseCount:work.length,normalDailyFullClassMaximum:2,
+      courseCount:work.length,normalDailyFullClassMaximum:2,stableSlotsRetained:stable.slots.length,
     }),
     courseSummaries:Object.freeze(work.map((w)=>Object.freeze({
       courseId:w.courseId,requiredMinutes:w.requiredMinutes,scheduledMinutes:w.scheduledMinutes,
@@ -354,6 +415,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
       semester:[context.semester.semester_id,context.semester.state_version,context.semester.starts_at,context.semester.ends_at,context.semester.timezone],
       profile:context.profile?.profile_id||null,profileVersion:context.profile?.version_no||null,
       courses:work.map((w)=>[w.courseId,w.bundle.plan?.course_plan_id,w.bundle.plan?.version_no,w.requiredMinutes]),
+      schedule:slots.map((slot)=>[slot.courseId,slot.kind,slot.startsAt,slot.endsAt,slot.plannedMinutes]),
       reasons,
     }),
   });
@@ -388,11 +450,13 @@ function validateEditedSchedule(context, existingSlots, edits,{now=new Date().to
         const e=new Error('Edited slot conflicts with a hard unavailable, break, holiday, travel or protected period.'); e.status=422; e.code='TEACHING_D09_HARD_CONSTRAINT_VIOLATION'; throw e;
       }
     }
-    const key=dateKey(new Date(slot.startsAt),context.semester.timezone);
-    dayCounts.set(key,(dayCounts.get(key)||0)+1);
+    if(slot.kind==='CLASS'){
+      const key=dateKey(new Date(slot.startsAt),context.semester.timezone);
+      dayCounts.set(key,(dayCounts.get(key)||0)+1);
+    }
   }
   for(const [key,count] of dayCounts){
-    if(count>2 && !slots.filter((s)=>dateKey(new Date(s.startsAt),context.semester.timezone)===key).every((s)=>s.exception_reason||s.exceptionCodes?.length)){
+    if(count>2 && !slots.filter((s)=>s.kind==='CLASS' && dateKey(new Date(s.startsAt),context.semester.timezone)===key).every((s)=>s.exception_reason||s.exceptionCodes?.length)){
       const e=new Error('More than two full Teaching Classes in one day requires an explicit justified exception.'); e.status=422; e.code='TEACHING_D09_DAILY_CLASS_LIMIT_EXCEPTION_REQUIRED'; throw e;
     }
   }
@@ -437,5 +501,5 @@ function projectCalendarSlot(slot,currentTimeZone) {
 
 module.exports = {
   DEFAULT_HORIZON,dateParts,dateKey,addDateKey,weekdayOfKey,zonedLocalToInstant,overlap,minutesBetween,
-  subtractIntervals,buildPeriods,topologicalUnits,buildCourseWork,computeSchedule,validateEditedSchedule,projectCalendarSlot,
+  subtractIntervals,buildPeriods,topologicalUnits,buildCourseWork,subtractOccupiedPeriods,retainStablePlacements,computeSchedule,validateEditedSchedule,projectCalendarSlot,
 };
