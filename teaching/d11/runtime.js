@@ -170,7 +170,8 @@ function registerD11Runtime({
         {id:studentId},
         classId,
         event.event_id,
-        event.idempotency_key
+        event.idempotency_key,
+        {allowRouteHeldStart:true}
       );
       return {safeMetadata:{
         class_id:classId,
