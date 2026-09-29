@@ -2,17 +2,20 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { assertNonProductionDatabase, integrationConfig, createIntegrationPool } = require('./test-db');
+const { PRODUCTION_PROJECT_REF, assertNonProductionDatabase, integrationConfig, createIntegrationPool } = require('./test-db');
 
 const { connectionString: url, projectRef: ref, skipReason: skip } = integrationConfig('D08');
 
 function guard() { return assertNonProductionDatabase({ connectionString: url, projectRef: ref }); }
 
 test('D08 integration guard refuses production', () => {
-  assert.throws(() => {
-    const candidate = PROD;
-    if (candidate === PROD) throw new Error('D08 integration refuses production Supabase.');
-  }, /refuses production/);
+  assert.throws(
+    () => assertNonProductionDatabase({
+      connectionString: 'postgresql://example@localhost/test',
+      projectRef: PRODUCTION_PROJECT_REF,
+    }),
+    /production/
+  );
 });
 
 test('D08 schema has RLS, owner read policies, service-only mutation, lineage columns and indexes', { skip }, async () => {
