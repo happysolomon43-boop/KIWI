@@ -75,6 +75,26 @@ test('unknown family, wrong version, altered historical body and extra historica
   }
 });
 
+test('TPF-20 compressed repository asset fails closed if its exact frozen bytes are altered', () => {
+  const asset = path.resolve(
+    __dirname,
+    '../../../teaching/prompt-runtime/frozen/TPF-20_Class_Grounded_Study_Note_v1.0_DESIGN_FROZEN.md.gz.b64'
+  );
+  const tmpDir = fs.mkdtempSync(path.join(process.cwd(), 'kiwi-tpf20-'));
+  const tmpAsset = path.join(tmpDir, 'TPF-20_Class_Grounded_Study_Note_v1.0_DESIGN_FROZEN.md.gz.b64');
+  try {
+    const encoded = fs.readFileSync(asset, 'utf8').trim();
+    const replacement = encoded.slice(0, -1) + (encoded.endsWith('A') ? 'B' : 'A');
+    fs.writeFileSync(tmpAsset, replacement);
+    assert.throws(
+      () => loadPromptBodyStore({ tpf20Asset: tmpAsset }),
+      { code: 'TEACHING_UNMANIFESTED_PROMPT_TEXT_REJECTED' }
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('composition keeps exact frozen bytes separate from untrusted academic data', () => {
   const control = createTeachingPromptControlPlane();
   control.assertReady();
