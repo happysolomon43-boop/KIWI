@@ -135,7 +135,20 @@ assert(promptStatus.productionModelExecutionAuthorized === false, 'D06 must not 
 
 const capabilityRegistry = require('../teaching/capability-registry');
 const capabilityCensus = capabilityRegistry.assertRegistryIntegrity();
-assert(capabilityCensus.total === 169 && capabilityCensus.modelEligible === 147 && capabilityCensus.t0Promptless === 22 && capabilityCensus.promptFamilies === 19, 'D06 must preserve 169/147/22/19 intelligence baseline.');
+assert(
+  capabilityCensus.total === 170 &&
+  capabilityCensus.modelEligible === 148 &&
+  capabilityCensus.t0Promptless === 22 &&
+  capabilityCensus.promptFamilies === 20,
+  'D06 must preserve the current D03 successor 170/148/22/20 intelligence baseline.'
+);
+const tpf20 = capabilityRegistry.getCapability('teaching.study.class_grounded_note_generation');
+assert(
+  tpf20.execution_class === 'DIRECT-AI' &&
+  tpf20.authority_ceiling === 'T3' &&
+  tpf20.prompt_family_id === 'TPF-20',
+  'D06 must preserve the late D03 TPF-20 successor capability without changing D06 policy ownership.'
+);
 
 const repoPolicySource = [
   read('teaching/policy/index.js'),
