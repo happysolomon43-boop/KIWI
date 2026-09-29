@@ -469,7 +469,7 @@ function createD11Service({
       studentId:user.id,classId,
       expectedBlueprintId:bindBlueprint?context.blueprint.lesson_blueprint_id:null,
       bindBlueprint,
-      allowRouteHeldStart:!bindBlueprint,
+      allowRouteHeldStart:options.allowRouteHeldStart===true && !bindBlueprint,
       sourceEventRef,idempotencyKey,
     }));
     const refreshed=await repository.getClassContext(user.id,classId);
