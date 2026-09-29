@@ -1,5 +1,6 @@
 'use strict';
 
+const { randomUUID } = require('node:crypto');
 const {
   LEARNING_EVIDENCE_DESCRIPTORS,
   ASSISTANCE_LEVELS,
@@ -172,7 +173,7 @@ function createD11Service({
     context = await repository.getClassContext(user.id, classId);
     const signals = await repository.getPlanningSignals(user.id, context.classRow);
 
-    const result = await intelligence.planLesson({ context, signals });
+    const result = await intelligence.planLesson({ context, signals, requestKey:randomUUID() });
     if (!result?.accepted || !result.validatedResult) {
       fail('Lesson Planner did not produce an accepted provisional Blueprint.', 'TEACHING_D11_BLUEPRINT_NOT_ACCEPTED', 422);
     }
@@ -223,7 +224,7 @@ function createD11Service({
     });
     if (time.remaining_minutes <= 0) fail('No authoritative Class time remains for replanning.', 'TEACHING_D11_REPLAN_NO_TIME', 409);
     const signals = await repository.getPlanningSignals(user.id, context.classRow);
-    const result = await intelligence.replanLesson({ context, signals, remainingMinutes:time.remaining_minutes });
+    const result = await intelligence.replanLesson({ context, signals, remainingMinutes:time.remaining_minutes, requestKey:randomUUID() });
     if (!result?.accepted || !result.validatedResult) {
       fail('Live Lesson replan was not accepted.', 'TEACHING_D11_REPLAN_NOT_ACCEPTED', 422);
     }
@@ -414,6 +415,25 @@ function createD11Service({
     return publicContext({...context,session:changed.session});
   }
 
+  async function markOvertimeStarted(user,classId,input={}) {
+    const context=await repository.getClassContext(user.id,classId);
+    if(!context?.session||context.session.lifecycle_state!=='ACTIVE') fail('Overtime start requires an active Controller.','TEACHING_D11_CONTROLLER_NOT_ACTIVE',409);
+    if(!context.session.overtime_ceiling_at) fail('Overtime has not been authorized.','TEACHING_D11_OVERTIME_NOT_AUTHORIZED',409);
+    const now=clock();
+    if(now.getTime()<new Date(context.classRow.scheduled_end_at).getTime()) fail('Overtime cannot start before scheduled Class end.','TEACHING_D11_OVERTIME_START_EARLY',409);
+    if(now.getTime()>new Date(context.session.overtime_ceiling_at).getTime()) fail('Overtime ceiling has elapsed.','TEACHING_D11_OVERTIME_WINDOW_EXPIRED',409);
+    if(context.session.overtime_started_at) return publicContext(context);
+    const changed=await withTransaction((tx)=>repository.transitionUsing(tx,{
+      studentId:user.id,classId,expectedVersion:Number(input.expectedVersion),
+      toState:context.session.instructional_substate,lifecycleState:'ACTIVE',
+      reason:'Scheduled end reached; authorized overtime entered',
+      actionKind:'OVERTIME_STARTED',
+      safeMetadata:{overtime_ceiling_at:context.session.overtime_ceiling_at},
+      extraUpdates:{overtime_started_at:now},
+    }));
+    return publicContext({...context,session:changed.session});
+  }
+
   function earlyClosureSatisfied(context) {
     const blueprint=context.blueprint?.blueprint_payload || {};
     const progress=context.session?.progress_state || {};
@@ -445,14 +465,14 @@ function createD11Service({
 
     if(intelligence) {
       try {
-        const translated=await intelligence.translateSummary({context,closureFact:committed.closureFact});
+        const translated=await intelligence.translateSummary({context,closureFact:committed.closureFact,requestKey:randomUUID()});
         if(translated?.accepted&&translated.validatedResult) {
           summaryState='TRANSLATED'; summaryPayload=translated.validatedResult;
           summaryProv={execution_id:translated.executionId||null,capability_id:'teaching.lesson.student_facing_class_summary_generation',translation_only:true};
         }
       } catch (_) { summaryState='REVIEW_NEEDED'; }
       try {
-        const note=await intelligence.writeTeacherNote({context,closureFact:committed.closureFact});
+        const note=await intelligence.writeTeacherNote({context,closureFact:committed.closureFact,requestKey:randomUUID()});
         if(note?.accepted&&note.validatedResult) {
           noteState='PRIVATE_NOTE'; notePayload=note.validatedResult;
           noteProv={execution_id:note.executionId||null,capability_id:'teaching.lesson.internal_post_class_teacher_note_generation'};
@@ -522,6 +542,7 @@ function createD11Service({
     recordProgress,
     startBreak,
     authorizeOvertime,
+    markOvertimeStarted,
     closeClass,
     getSummary,
     getTeacherNote,
