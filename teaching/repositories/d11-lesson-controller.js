@@ -214,11 +214,93 @@ function createD11LessonControllerRepository({
         signals: Object.freeze([]),
         negative_inference_forbidden: true,
       }),
-      knowledgeModelSignals: Object.freeze({
-        status: 'OWNER_PENDING_D13',
-        signals: Object.freeze([]),
-        negative_inference_forbidden: true,
-      }),
+      knowledgeModelSignals: await (async () => {
+        try {
+          const [states, misconceptions] = await Promise.all([
+            query(
+              "select distinct on (s.learning_unit_id) s.knowledge_state_version_id,s.learning_unit_id,s.version_no,s.algorithm_version," +
+              " s.base_state,s.overlays,s.dimensions,s.certainty_band,s.certainty_basis,s.retention_context," +
+              " s.strongest_supported_claim,s.contradiction_state,s.path_to_success,s.confidence_calibration,s.evidence_cutoff_at" +
+              " from public.teaching_student_knowledge_state_versions s" +
+              " join public.teaching_learning_units lu on lu.learning_unit_id=s.learning_unit_id and lu.student_id=s.student_id" +
+              " join public.teaching_course_plans cp on cp.course_plan_id=lu.course_plan_id and cp.student_id=s.student_id" +
+              " where s.student_id=$1 and cp.course_plan_id=(" +
+              " select cp2.course_plan_id from public.teaching_course_plans cp2 where cp2.student_id=$1 and cp2.course_id=$2 order by cp2.version_no desc limit 1" +
+              " ) order by s.learning_unit_id,s.version_no desc",
+              [studentId, classRow.course_id]
+            ),
+            query(
+              "select distinct on (m.misconception_record_id) m.*" +
+              " from public.teaching_persistent_misconception_versions m" +
+              " join public.teaching_learning_units lu on lu.learning_unit_id=m.primary_learning_unit_id and lu.student_id=m.student_id" +
+              " join public.teaching_course_plans cp on cp.course_plan_id=lu.course_plan_id and cp.student_id=m.student_id" +
+              " where m.student_id=$1 and cp.course_plan_id=(" +
+              " select cp2.course_plan_id from public.teaching_course_plans cp2 where cp2.student_id=$1 and cp2.course_id=$2 order by cp2.version_no desc limit 1" +
+              " ) order by m.misconception_record_id,m.version_no desc",
+              [studentId, classRow.course_id]
+            ),
+          ]);
+          const byUnit = new Map();
+          for (const row of misconceptions.rows || []) {
+            if (row.status === 'RESOLVED') continue;
+            for (const ref of new Set([String(row.primary_learning_unit_id), ...((row.affected_learning_unit_refs || []).map(String))])) {
+              const list = byUnit.get(ref) || [];
+              list.push(Object.freeze({
+                misconception_record_id: row.misconception_record_id,
+                status: row.status,
+                summary: row.hypothesis,
+                version_no: Number(row.version_no),
+              }));
+              byUnit.set(ref, list);
+            }
+          }
+          const stateRows = states.rows || [];
+          const bundleVersion = stateRows
+            .map((row) => String(row.learning_unit_id) + '@' + String(row.algorithm_version) + ':' + String(row.version_no))
+            .sort().join('|') || 'EMPTY';
+          return Object.freeze({
+            status: 'AUTHORITATIVE_D13',
+            owner: 'Student Knowledge Model',
+            bundle_version: bundleVersion,
+            signals: Object.freeze(stateRows.map((row) => Object.freeze({
+              learning_unit_id: row.learning_unit_id,
+              state_ref: 'skm:' + row.learning_unit_id + '@' + String(row.version_no),
+              state_version: Number(row.version_no),
+              algorithm_version: row.algorithm_version,
+              base_state: row.base_state,
+              overlays: Object.freeze(row.overlays || []),
+              certainty_band: row.certainty_band,
+              retention_context: Object.freeze(row.retention_context || {}),
+              strongest_supported_claim: row.strongest_supported_claim,
+              contradiction_state: row.contradiction_state === true,
+              planning_dimensions: Object.freeze({
+                independence: row.dimensions?.independence || { status:'NOT_ASSESSED' },
+                retention: row.dimensions?.retention || { status:'NOT_ASSESSED' },
+                transfer: row.dimensions?.transfer || { status:'NOT_ASSESSED' },
+              }),
+              path_to_success: Object.freeze(row.path_to_success || {}),
+              unresolved_misconceptions: Object.freeze(byUnit.get(String(row.learning_unit_id)) || []),
+            }))),
+            raw_weights_included: false,
+            raw_model_probabilities_included: false,
+            official_marks_included: false,
+            progression_outcomes_included: false,
+            negative_inference_forbidden: true,
+          });
+        } catch (error) {
+          // D11 remains usable before/without D13 readiness. Missing SKM state is UNKNOWN,
+          // never negative evidence and never permission to fabricate a weaker learner state.
+          return Object.freeze({
+            status: 'D13_UNAVAILABLE',
+            signals: Object.freeze([]),
+            raw_weights_included: false,
+            official_marks_included: false,
+            progression_outcomes_included: false,
+            negative_inference_forbidden: true,
+            error_code: error?.code || null,
+          });
+        }
+      })(),
       governedRequestSignals: Object.freeze((governedRequests.rows || []).map((row) => Object.freeze({
         request_id: row.request_id,
         request_type: row.request_type,
@@ -312,6 +394,15 @@ function createD11LessonControllerRepository({
         aggregate_ref:'teacher-note:' + note.teacher_note_id,
         version_ref:String(note.created_at || note.teacher_note_id),
         component_scope_key:note.class_id || context.classRow.course_id,
+      });
+    }
+    for (const state of signals?.knowledgeModelSignals?.signals || []) {
+      deps.push({
+        dependency_kind: 'SKM_STATE',
+        authoritative_owner_ref: 'Student Knowledge Model',
+        aggregate_ref: 'skm:' + state.learning_unit_id,
+        version_ref: String(state.algorithm_version || 'unknown') + ':' + String(state.state_version || 0),
+        component_scope_key: state.learning_unit_id,
       });
     }
     for (const request of signals?.governedRequestSignals || []) {
