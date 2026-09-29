@@ -359,6 +359,12 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')`,[studentId,semesterId]);
     return Number(rowCount)||0;
   }
+  async function suspendCourseClassesUsing(tx,{studentId,courseId,requestId=null}){
+    const {rowCount=0}=await q(tx,`update public.teaching_classes set lifecycle_state='CANCELLED',source_request_id=coalesce($3,source_request_id),updated_at=now()
+      where student_id=$1 and course_id=$2 and lifecycle_state='SCHEDULED' and scheduled_start_at>=now()`,
+      [studentId,courseId,requestId]);
+    return Number(rowCount)||0;
+  }
   async function materializeApprovedTimetableUsing(tx,{studentId,semesterId,timetable,slots,activationId=null,requestId=null}){
     const at=clock();
     await q(tx,`update public.teaching_classes set lifecycle_state='CANCELLED',updated_at=now()
@@ -384,7 +390,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
   }
   return Object.freeze({
     assertReady,listSemesters,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,saveScheduleInputsUsing,saveProposalUsing,
-    latestTimetable,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,materializeApprovedTimetableUsing,
+    latestTimetable,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
   });
 }
 module.exports={createD09SchedulingRepository};
