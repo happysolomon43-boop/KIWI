@@ -314,33 +314,6 @@ function createD11LessonControllerRepository({
         component_scope_key:note.class_id || context.classRow.course_id,
       });
     }
-    for (const diagnostic of signals?.diagnosticSignals || []) {
-      deps.push({
-        dependency_kind:'DIAGNOSTIC_PLAN',
-        authoritative_owner_ref:'Curriculum/Diagnostic',
-        aggregate_ref:'diagnostic-plan:' + diagnostic.diagnostic_plan_id,
-        version_ref:String(diagnostic.plan_version),
-        component_scope_key:context.classRow.course_id,
-      });
-    }
-    for (const decision of signals?.validatedPriorKnowledgeSignals || []) {
-      deps.push({
-        dependency_kind:'VALIDATED_PRIOR_KNOWLEDGE',
-        authoritative_owner_ref:'Validated Prior Knowledge owner',
-        aggregate_ref:'vpk:' + decision.vpk_decision_id,
-        version_ref:String(decision.decided_at || decision.policy_version || decision.vpk_decision_id),
-        component_scope_key:decision.target_ref || context.classRow.course_id,
-      });
-    }
-    for (const debt of signals?.pacingSignals?.scheduleDebtEntries || []) {
-      deps.push({
-        dependency_kind:'SCHEDULE_DEBT',
-        authoritative_owner_ref:'Scheduler/Calendar',
-        aggregate_ref:'schedule-debt:' + debt.schedule_debt_entry_id,
-        version_ref:String(debt.recorded_at || debt.schedule_debt_entry_id),
-        component_scope_key:context.classRow.course_id,
-      });
-    }
     for (const request of signals?.governedRequestSignals || []) {
       deps.push({
         dependency_kind: 'GOVERNED_REQUEST',
@@ -636,6 +609,10 @@ function createD11LessonControllerRepository({
     if (ref.startsWith('class-closure:')) {
       const {rows}=await query("select fact_pack_version from public.teaching_class_closure_facts where closure_fact_id=$1 limit 1",[ref.slice(14)]);
       return rows?.[0]?.fact_pack_version == null ? null : String(rows[0].fact_pack_version);
+    }
+    if (ref.startsWith('teacher-note:')) {
+      const {rows}=await query("select created_at from public.teaching_post_class_teacher_notes where teacher_note_id=$1 limit 1",[ref.slice(13)]);
+      return rows?.[0]?.created_at == null ? null : String(rows[0].created_at);
     }
     if (ref.startsWith('request:')) {
       const {rows}=await query("select state_version from public.teaching_requests where request_id=$1 limit 1",[ref.slice(8)]);
