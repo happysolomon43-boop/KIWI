@@ -32,6 +32,8 @@ const LEARNING_EVIDENCE_DESCRIPTORS = Object.freeze([
 
 const OBJECTIVE_CRITICALITY = Object.freeze(['CORE','SECONDARY','ENRICHMENT']);
 const ASSISTANCE_LEVELS = Object.freeze(['NONE','LIGHT','GUIDED','MODELED']);
+const INSTRUCTION_CYCLE_PHASES = Object.freeze(['TEACH','ELICIT_CHECK','DIAGNOSE','RESPOND','VERIFY']);
+
 const PRIORITY_ORDER = Object.freeze([
   'CONCEPTUAL_CORRECTNESS',
   'BLOCKING_PREREQUISITES',
@@ -114,6 +116,7 @@ function normalizeObjective(item, index, allowedUnits) {
         if (!LEARNING_EVIDENCE_DESCRIPTORS.includes(normalized)) fail('Unknown learning/evidence descriptor: ' + descriptor, 'TEACHING_D11_DESCRIPTOR_INVALID');
         return normalized;
       }),
+    independent_evidence_required: criticality === 'CORE' ? item.independent_evidence_required !== false : item.independent_evidence_required === true,
   });
 }
 
@@ -146,7 +149,7 @@ function normalizeSegment(item, index, objectiveIds) {
   });
 }
 
-function normalizeLessonBlueprintProposal(output, { learningUnits = [], scheduledStartAt, scheduledEndAt } = {}) {
+function normalizeLessonBlueprintProposal(output, { learningUnits = [], scheduledStartAt, scheduledEndAt, minimumReserveMinutes = 1 } = {}) {
   if (!output || typeof output !== 'object' || Array.isArray(output)) fail('Lesson Blueprint output must be an object.', 'TEACHING_D11_BLUEPRINT_SCHEMA_INVALID');
   const status = String(output.status || 'OK').toUpperCase();
   if (!['OK','REVIEW_NEEDED','INSUFFICIENT_EVIDENCE','UNRESOLVED_CONFLICT'].includes(status)) {
@@ -170,7 +173,8 @@ function normalizeLessonBlueprintProposal(output, { learningUnits = [], schedule
 
   const scheduledMinutes = Math.max(0, Math.floor((new Date(scheduledEndAt).getTime() - new Date(scheduledStartAt).getTime()) / 60000));
   if (!Number.isFinite(scheduledMinutes) || scheduledMinutes <= 0) fail('Authoritative Class duration is invalid.', 'TEACHING_D11_CLASS_DURATION_INVALID');
-  const adaptiveReserveMinutes = integer(output.adaptive_reserve_minutes == null ? 0 : output.adaptive_reserve_minutes, 'adaptive_reserve_minutes', { min: 0, max: scheduledMinutes });
+  const minimumReserve = integer(minimumReserveMinutes, 'minimumReserveMinutes', { min: 1, max: scheduledMinutes });
+  const adaptiveReserveMinutes = integer(output.adaptive_reserve_minutes, 'adaptive_reserve_minutes', { min: minimumReserve, max: scheduledMinutes });
   const plannedMinutes = segments.reduce((sum, item) => sum + item.planned_minutes, 0);
   const minimumSafeMinutes = segments.filter((item) => item.criticality === 'CORE').reduce((sum, item) => sum + item.minimum_safe_minutes, 0);
   if (plannedMinutes + adaptiveReserveMinutes > scheduledMinutes) {
@@ -186,6 +190,7 @@ function normalizeLessonBlueprintProposal(output, { learningUnits = [], schedule
     objectives,
     segments,
     adaptive_reserve_minutes: adaptiveReserveMinutes,
+    minimum_reserve_minutes: minimumReserve,
     planned_minutes: plannedMinutes,
     minimum_safe_core_minutes: minimumSafeMinutes,
     scheduled_minutes: scheduledMinutes,
@@ -281,6 +286,13 @@ function validateLiveReplanProposal(output, { blueprintContext, remainingMinutes
   return base;
 }
 
+function nextInstructionCyclePhase(current) {
+  const normalized = String(current || 'TEACH').toUpperCase();
+  const index = INSTRUCTION_CYCLE_PHASES.indexOf(normalized);
+  if (index < 0) fail('Unknown instruction cycle phase.', 'TEACHING_D11_CYCLE_PHASE_INVALID');
+  return INSTRUCTION_CYCLE_PHASES[(index + 1) % INSTRUCTION_CYCLE_PHASES.length];
+}
+
 function buildClosureFactPack({ session, classRow, blueprint, progressState = {}, evidenceEvents = [], history = [], serverNow = new Date(), reason } = {}) {
   const completedSegments = Array.isArray(progressState.completed_segment_refs) ? progressState.completed_segment_refs.map(String) : [];
   const completedObjectives = Array.isArray(progressState.completed_objective_refs) ? progressState.completed_objective_refs.map(String) : [];
@@ -306,6 +318,10 @@ function buildClosureFactPack({ session, classRow, blueprint, progressState = {}
     completed_objective_refs: Object.freeze(completedObjectives),
     unfinished_core_objective_refs: Object.freeze(unfinishedCore),
     evidence_event_refs: Object.freeze(evidenceRefs),
+    independent_evidence_objective_refs: Object.freeze((progressState.independent_evidence_objective_refs || []).map(String)),
+    cycle_phase_at_close: session.cycle_phase || null,
+    learning_evidence_descriptor_at_close: session.current_learning_evidence_descriptor || null,
+    assistance_level_at_close: session.current_assistance_level || null,
     interruption_count: history.filter((entry) => entry.to_state === 'INTERRUPTED').length,
     break_count: history.filter((entry) => entry.to_state === 'BREAK').length,
     overtime_used: Boolean(session.overtime_started_at),
@@ -323,6 +339,7 @@ module.exports = {
   LEARNING_EVIDENCE_DESCRIPTORS,
   OBJECTIVE_CRITICALITY,
   ASSISTANCE_LEVELS,
+  INSTRUCTION_CYCLE_PHASES,
   PRIORITY_ORDER,
   normalizeLessonBlueprintProposal,
   validateLessonBlueprintProposal,
@@ -330,6 +347,7 @@ module.exports = {
   assertTransitionAllowed,
   classTimeEnvelope,
   computeOvertimeCeiling,
+  nextInstructionCyclePhase,
   buildClosureFactPack,
   freezeDeep,
   toIso,
