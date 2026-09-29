@@ -12,8 +12,9 @@ assert(tasks.length===25&&new Set(tasks).size===25,'D13 task census must remain 
 const required=[
   'teaching/d13/contracts.js','teaching/d13/state-engine.js','teaching/d13/intelligence.js','teaching/d13/service.js','teaching/d13/runtime.js','teaching/d13/index.js',
   'teaching/repositories/d13-student-knowledge.js','migrations/20260929_teaching_d13_student_knowledge_model.sql',
-  'tests/teaching/unit/d13-student-knowledge-model.test.js','tests/teaching/integration/d13-student-knowledge-model-schema.test.js',
+  'tests/teaching/unit/d13-skm.test.js','tests/teaching/integration/d13-skm-schema.test.js',
   'docs/teaching/d13-source-resolution.md','docs/teaching/d13-student-knowledge-model.md','docs/teaching/migrations/d13-recovery.md',
+  '.github/workflows/teaching-d13-skm.yml',
 ];
 for(const f of required)assert(fs.existsSync(path.join(root,f)),'D13 missing '+f);
 
@@ -22,7 +23,7 @@ for(const id of tasks)assert(doc.includes(id),'D13 task not accounted for: '+id)
 
 const state=read('teaching/d13/state-engine.js');
 for(const token of [
-  'EVIDENCE_QUALITY_STATE_MACHINE_V1','skm-evidence-state-machine.v1',
+  'EVIDENCE_QUALITY_STATE_MACHINE_V1','skm-evidence-state-machine.v1','unresolvedMaterialContradiction',
   "'UNSEEN'","'INTRODUCED'","'ASSISTED'","'EMERGING'","'INDEPENDENT'","'SECURE'","'TRANSFERABLE'",
   "'FRAGILE'","'BLOCKED'","'REGRESSED'",
   'projectEffectiveCertainty','learningAnalysisProjection','synthesizeMisconceptions','pathToSuccess',
@@ -30,7 +31,7 @@ for(const token of [
 assert(!/mastery_probability|mastery_percentage|Math\.exp\(|bayes/i.test(state),'D13 state engine must not invent probabilistic mastery arithmetic.');
 
 const contracts=read('teaching/d13/contracts.js');
-for(const token of ['validateNormalizedEvidence','normalizeD12EvaluationBundle','validateTPF09Output','official_mark','progression_outcome','mastery_probability'])
+for(const token of ['validateNormalizedEvidence','normalizeD12EvaluationBundle','validateTPF09Output','official_mark','progression_outcome','mastery_probability','mastery_state','knowledge_state','gradebook_percentage','known_system_or_network_interruption','TEACHING_D13_BLOCK_OWNER_INVALID'])
   assert(contracts.includes(token),'D13 authority/evidence contract missing '+token);
 
 const intelligence=read('teaching/d13/intelligence.js');
@@ -47,7 +48,7 @@ const service=read('teaching/d13/service.js');
 for(const token of [
   'handleResponseSubmittedEvent','ingestOwnerValidatedEvidence','recomputeAndCommit',
   'TEACHING_D13_GRADEBOOK_DIRECT_STATE_FORBIDDEN','TEACHING_D13_PROGRESSION_DIRECT_STATE_FORBIDDEN',
-  'UNQUALIFIED_UNTIL_D30','rawModelProbabilitiesIncluded:false','rawEvidenceWeightsIncluded:false',
+  'UNQUALIFIED_UNTIL_D30','TEACHING_D13_STALE_TPF09_RESULT','rawModelProbabilitiesIncluded:false','rawEvidenceWeightsIncluded:false',
 ])assert(service.includes(token),'D13 service missing '+token);
 
 const repoSource=read('teaching/repositories/d13-student-knowledge.js');
@@ -81,8 +82,8 @@ const production=read('index.js');
 assert(production.includes('d13Intelligence: null'),'Production must preserve D30 hold for D13 model routes.');
 assert(production.includes('d13PublishedEventRegistry: teachingPublishedEvents'),'D13 durable subscriber must be registered.');
 
-const unit=read('tests/teaching/unit/d13-student-knowledge-model.test.js');
-for(const phrase of ['many weak repetitive successes','failed delayed retrieval','out-of-order replay','high-confidence wrong','low-confidence correct','TPF-09 T2 interpretation','Gradebook as direct SKM assigner'])
+const unit=read('tests/teaching/unit/d13-skm.test.js');
+for(const phrase of ['many weak repetitive successes','failed delayed retrieval','out-of-order evidence replay','high-confidence wrong','low-confidence correct','TPF-09 T2 output','D12 BLOCKED proposal','known KIWI/network interruption'])
   assert(unit.includes(phrase),'D13 longitudinal/authority test coverage missing '+phrase);
 
 const pkg=JSON.parse(read('package.json'));
