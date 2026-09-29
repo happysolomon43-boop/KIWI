@@ -185,6 +185,7 @@ function createD11Service({
       }):null,
       controller:context.session?Object.freeze({
         classSessionId:context.session.class_session_id,
+        lessonBlueprintId:context.session.lesson_blueprint_id || null,
         lifecycleState:context.session.lifecycle_state,
         instructionalSubstate:context.session.instructional_substate,
         stateVersion:Number(context.session.state_version),
