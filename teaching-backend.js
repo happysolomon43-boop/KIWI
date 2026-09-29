@@ -484,7 +484,7 @@ function createTeachingRouter({
       } catch (error) { sendError(res, error, 'Failed to load Learning Analysis.'); }
     });
     router.get('/learning-units/:id/learning-analysis', requireD13Ready, async (req, res) => {
-      try { res.json(await studentKnowledgeModelService.getLearningUnitAnalysis(req.user, req.params.id)); }
+      try { res.json(await studentKnowledgeModelService.getLearningAnalysis(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load Learning Unit analysis.'); }
     });
   }
