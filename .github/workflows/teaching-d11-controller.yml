@@ -1,0 +1,55 @@
+name: Teaching D11 Lesson Controller
+
+on:
+  pull_request:
+    paths:
+      - 'teaching/**'
+      - 'migrations/**'
+      - 'docs/teaching/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d11-controller.js'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'package.json'
+      - '.github/workflows/teaching-d11-controller.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'teaching/**'
+      - 'migrations/**'
+      - 'docs/teaching/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d11-controller.js'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'package.json'
+      - '.github/workflows/teaching-d11-controller.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-d11:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - name: Verify Teaching D01-D11
+        run: for d in d01 d02 d03 d04 d05 d06 d07 d08 d09 d10 d11; do npm run verify:teaching:$d; done
+      - name: Syntax check Teaching runtime
+        run: find teaching -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Syntax check D11 tests and verifier
+        run: node --check tests/teaching/unit/d11-lesson-controller.test.js && node --check tests/teaching/integration/d11-lesson-controller-schema.test.js && node --check scripts/verify-teaching-d11-controller.js && node --check teaching-backend.js
+      - run: npm run test:teaching
+      - run: npm test
+      - run: npm run build:web
+      - name: Non-production Supabase integration
+        env:
+          TEACHING_TEST_DATABASE_URL: ${{ secrets.TEACHING_TEST_DATABASE_URL }}
+          TEACHING_TEST_PROJECT_REF: ${{ secrets.TEACHING_TEST_PROJECT_REF }}
+        run: npm run test:teaching:integration
