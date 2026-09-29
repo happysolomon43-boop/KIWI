@@ -289,8 +289,10 @@ function createD11Service({
 
   async function prepareLesson(user, classId) {
     assertModelRoute();
-    let context = await repository.getClassContext(user.id, classId);
+    const live = await repository.assertLiveContextCurrent(user.id,classId);
+    let context = live.context || await repository.getClassContext(user.id, classId);
     assertClassPlanningEligible(context);
+    if(context.session && !live.ok) fail('Controller is stale against authoritative Course/Plan/Schedule state.','TEACHING_D11_STALE_LIVE_CONTEXT',409,live);
     const prep = await repository.ensurePreparationWorkspace({ studentId:user.id, classId });
     context = await repository.getClassContext(user.id, classId);
     const signals = await repository.getPlanningSignals(user.id, context.classRow);
@@ -463,8 +465,10 @@ function createD11Service({
   }
 
   async function advanceInstructionCycle(user, classId, input = {}) {
-    const context = await repository.getClassContext(user.id,classId);
+    const live = await repository.assertLiveContextCurrent(user.id,classId);
+    const context = live.context;
     if (!context?.session || context.session.lifecycle_state !== 'ACTIVE') fail('Instruction cycle requires an active Controller.', 'TEACHING_D11_CONTROLLER_NOT_ACTIVE', 409);
+    if(!live.ok) fail('Controller is stale against authoritative Course/Plan/Schedule state.','TEACHING_D11_STALE_LIVE_CONTEXT',409,live);
     if (['BREAK','ASSESSMENT','INTERRUPTED','CLOSURE'].includes(context.session.instructional_substate)) {
       fail('Instruction cycle phase cannot advance in the current instructional substate.', 'TEACHING_D11_CYCLE_PHASE_BLOCKED', 409);
     }
@@ -481,8 +485,10 @@ function createD11Service({
   }
 
   async function setEvidenceDescriptor(user,classId,input={}) {
-    const context=await repository.getClassContext(user.id,classId);
+    const live=await repository.assertLiveContextCurrent(user.id,classId);
+    const context=live.context;
     if(!context?.session) fail('Controller has not started.','TEACHING_D11_CONTROLLER_NOT_STARTED',409);
+    if(!live.ok) fail('Controller is stale against authoritative Course/Plan/Schedule state.','TEACHING_D11_STALE_LIVE_CONTEXT',409,live);
     if(['ASSESSMENT','BREAK','INTERRUPTED','CLOSURE'].includes(context.session.instructional_substate)) fail('Evidence descriptor/assistance changes are blocked in the current substate.','TEACHING_D11_DESCRIPTOR_STATE_BLOCKED',409);
     const descriptor=input.descriptor==null?null:String(input.descriptor).toUpperCase();
     if(descriptor!==null&&!LEARNING_EVIDENCE_DESCRIPTORS.includes(descriptor)) {
@@ -502,8 +508,10 @@ function createD11Service({
   }
 
   async function recordProgress(user,classId,input={}) {
-    const context=await repository.getClassContext(user.id,classId);
+    const live=await repository.assertLiveContextCurrent(user.id,classId);
+    const context=live.context;
     if(!context?.session) fail('Controller has not started.','TEACHING_D11_CONTROLLER_NOT_STARTED',409);
+    if(!live.ok) fail('Controller is stale against authoritative Course/Plan/Schedule state.','TEACHING_D11_STALE_LIVE_CONTEXT',409,live);
     const changed=await withTransaction((tx)=>repository.recordProgressUsing(tx,{
       studentId:user.id,classId,expectedVersion:Number(input.expectedVersion),
       completedSegmentRefs:Array.isArray(input.completedSegmentRefs)?input.completedSegmentRefs:[],
@@ -515,8 +523,10 @@ function createD11Service({
   }
 
   async function startBreak(user,classId,input={}) {
-    const context=await repository.getClassContext(user.id,classId);
+    const live=await repository.assertLiveContextCurrent(user.id,classId);
+    const context=live.context;
     if(!context?.session||context.session.lifecycle_state!=='ACTIVE') fail('Break requires an active Controller.','TEACHING_D11_CONTROLLER_NOT_ACTIVE',409);
+    if(!live.ok) fail('Controller is stale against authoritative Course/Plan/Schedule state.','TEACHING_D11_STALE_LIVE_CONTEXT',409,live);
     if(['BREAK','ASSESSMENT','CLOSURE','INTERRUPTED'].includes(context.session.instructional_substate)) fail('Break is not legal in the current substate.','TEACHING_D11_BREAK_STATE_INVALID',409);
     if(context.session.overtime_started_at) fail('Breaks belong inside the scheduled Class block, not overtime.','TEACHING_D11_BREAK_OVERTIME_FORBIDDEN',409);
     const duration=Number(input.durationMinutes);
@@ -621,8 +631,10 @@ function createD11Service({
   }
 
   async function authorizeOvertime(user,classId,input={}) {
-    const context=await repository.getClassContext(user.id,classId);
+    const live=await repository.assertLiveContextCurrent(user.id,classId);
+    const context=live.context;
     if(!context?.session||context.session.lifecycle_state!=='ACTIVE') fail('Overtime requires an active Controller.','TEACHING_D11_CONTROLLER_NOT_ACTIVE',409);
+    if(!live.ok) fail('Controller is stale against authoritative Course/Plan/Schedule state.','TEACHING_D11_STALE_LIVE_CONTEXT',409,live);
     if(context.session.instructional_substate==='BREAK') fail('Overtime cannot be authorized during Break.','TEACHING_D11_OVERTIME_BREAK_FORBIDDEN',409);
     if(context.session.overtime_ceiling_at) fail('Overtime ceiling is already fixed and cannot be reset or extended.','TEACHING_D11_OVERTIME_ALREADY_FIXED',409);
     const ceiling=computeOvertimeCeiling({scheduledEndAt:context.classRow.scheduled_end_at,requestedMinutes:Number(input.minutes),serverNow:clock()});
