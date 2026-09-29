@@ -156,9 +156,15 @@ test('D11 live replan may remove enrichment while preserving unfinished CORE',()
 test('D11 live replan rejects silent removal of unfinished CORE objective',()=>{
   const current=contracts.normalizeLessonBlueprintProposal(blueprint(),validationContext);
   const bad=blueprint({
-    objectives:blueprint().objectives.slice(1),
+    objectives:[
+      {id:'replacement-core',learning_unit_ref:'lu2',label:'Different core',criticality:'CORE',minimum_safe_minutes:10,
+        prerequisite_refs:[],evidence_descriptor_targets:['INDEPENDENT_FAMILIAR'],independent_evidence_required:true},
+      ...blueprint().objectives.slice(1),
+    ],
     segments:[
-      {...blueprint().segments[1],objective_refs:['sec-1'],planned_minutes:20},
+      {id:'replacement-seg',kind:'INSTRUCTION',objective_refs:['replacement-core'],planned_minutes:15,minimum_safe_minutes:10,
+        criticality:'CORE',optional:false,learning_evidence_descriptor:'DEMONSTRATION',assistance_level:'NONE'},
+      {...blueprint().segments[1],objective_refs:['sec-1'],planned_minutes:15},
       {...blueprint().segments[2],objective_refs:['enr-1'],planned_minutes:10},
     ],
     adaptive_reserve_minutes:5,
