@@ -1,0 +1,28 @@
+{
+  "authority_source": "KIWI_Teaching_Phase15_Final_Prompt_Manifest_v1.4.json",
+  "manifest_version": "1.4",
+  "manifest_sha256": "7757b50cbf4cfb501158beeaccfbfd5776bc8ca8f7257b4855f5ed5fcdf67e3d",
+  "historical_manifest_version": "1.3",
+  "historical_manifest_sha256": "4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce",
+  "historical_combined_pack_sha256": "173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae",
+  "successor_combined_pack_sha256": "6632f5c566fb81906c5ecf27e7d5412a330b93f63c429d46f3bee65aac91ab5d",
+  "capability_census": {
+    "total": 170,
+    "model_eligible": 148,
+    "t0_promptless": 22,
+    "prompt_families": 20
+  },
+  "appended_family": {
+    "id": "TPF-20",
+    "version": "1.0",
+    "name": "Class-Grounded Study Note",
+    "criticality": "C3",
+    "capability_id": "teaching.study.class_grounded_note_generation",
+    "authority_ceiling": "T3",
+    "prompt_file": "TPF-20_Class_Grounded_Study_Note_v1.0_DESIGN_FROZEN.md",
+    "prompt_sha256": "d8d13f679e6817c1c02935e6581f5fc6ad512812004b59eebcf9a7d85c962e67",
+    "qualification_status": "UNQUALIFIED",
+    "qualification_gate": "D30"
+  },
+  "note": "Runtime identity mirror only; canonical manifest remains Project Knowledge. TPF-01–19 stay bound to accepted v1.3 identities."
+}

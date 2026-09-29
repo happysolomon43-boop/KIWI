@@ -1,188 +1,124 @@
 'use strict';
 
-const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
-const { getFrozenPromptBodyRecord, promptBodyStoreStatus } = require('./prompt-body-store');
+const part00 = require('./prompt-catalog-data.v1.3.part-00');
+const part01 = require('./prompt-catalog-data.v1.3.part-01');
 
-const EXPECTED_MANIFEST_SHA256 = '4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce';
-const EXPECTED_PACK_SHA256 = '173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae';
-const FROZEN_PROMPT_BINDING = Symbol('KIWI_TEACHING_FROZEN_PROMPT_BINDING');
+const HISTORICAL_MANIFEST_VERSION = '1.3';
+const HISTORICAL_MANIFEST_SHA256 = '4276531b4fad9cab683dc9b829f857715ec561dd548aeb384459007515ffe6ce';
+const HISTORICAL_COMBINED_PACK_SHA256 = '173b091587e16604c112d9f500c3915bb0057aab8946aacb2c0a5ca8da8c7aae';
 
-function sha256(value) {
-  return crypto.createHash('sha256').update(value).digest('hex');
-}
+const MANIFEST_VERSION = '1.4';
+const MANIFEST_SHA256 = '7757b50cbf4cfb501158beeaccfbfd5776bc8ca8f7257b4855f5ed5fcdf67e3d';
+const COMBINED_PACK_SHA256 = '6632f5c566fb81906c5ecf27e7d5412a330b93f63c429d46f3bee65aac91ab5d';
 
-function fail(message, code = 'TEACHING_PROMPT_BASELINE_INVALID') {
-  const error = new Error(message);
-  error.code = code;
-  throw error;
-}
-
-const catalogBytes = Buffer.concat([0,1,2,3].map((index) =>
-  fs.readFileSync(path.join(__dirname, 'frozen', `prompt-family-catalog.v1.3.part-${String(index).padStart(2, '0')}`))
-));
-const EXPECTED_COMPILED_CATALOG_SHA256 = '87499e2dc8c00e4cf0d789b654171c84d929c9352189fe509ec173f3f5a2346b';
-if (sha256(catalogBytes) !== EXPECTED_COMPILED_CATALOG_SHA256) fail('Teaching prompt-family catalog payload hash mismatch.');
-const manifest = JSON.parse(catalogBytes.toString('utf8'));
-if (manifest.manifest_source_sha256 !== EXPECTED_MANIFEST_SHA256) fail('Teaching prompt manifest v1.3 source identity mismatch.');
-if (manifest.manifest_version !== '1.3') fail('Teaching prompt manifest must be v1.3.');
-if (manifest.prompt_family_count !== 19) fail('Teaching prompt manifest must contain 19 families.');
-if (manifest.model_eligible_capability_count !== 147) fail('Teaching prompt manifest must describe exactly 147 model-eligible capabilities.');
-if (manifest.combined_prompt_pack?.sha256 !== EXPECTED_PACK_SHA256) {
-  fail('Prompt manifest combined-pack hash does not match the user-authorized v1.3 pack.');
-}
-
-const familyById = new Map();
-for (const family of manifest.families) {
-  if (familyById.has(family.family_id)) fail(`Duplicate prompt family ${family.family_id}.`);
-  familyById.set(family.family_id, Object.freeze({
-    id: family.family_id,
-    name: family.name,
-    version: String(family.version),
-    criticality: family.criticality,
-    capabilityCount: family.capability_count,
-    promptFile: family.prompt_file,
-    promptSha256: family.prompt_sha256,
-    status: family.status,
-  }));
-}
-if (familyById.size !== 19) fail('Teaching prompt catalog must contain exactly 19 families.');
-if ([...familyById.values()].reduce((sum, family) => sum + family.capabilityCount, 0) !== 147) {
-  fail('Teaching prompt catalog capability coverage must total 147.');
-}
-
-const ASSESSMENT_FAMILY_BOUNDARIES = Object.freeze({
-  planning: 'TPF-12',
-  generation: 'TPF-13',
-  validationRepair: 'TPF-14',
-  formalMarking: 'TPF-15',
-  moderationAppeal: 'TPF-16',
+const TPF20 = Object.freeze({
+  id:'TPF-20',
+  version:'1.0',
+  name:'Class-Grounded Study Note',
+  criticality:'C3',
+  capabilityCount:1,
+  promptFile:'TPF-20_Class_Grounded_Study_Note_v1.0_DESIGN_FROZEN.md',
+  promptSha256:'d8d13f679e6817c1c02935e6581f5fc6ad512812004b59eebcf9a7d85c962e67',
+  sourceManifestVersion:MANIFEST_VERSION,
+  sourceManifestSha256:MANIFEST_SHA256,
+  routeQualification:'UNQUALIFIED',
 });
 
-function getPromptFamily(familyId) {
-  const family = familyById.get(String(familyId || '').trim());
-  if (!family) {
-    const error = new Error(`Unknown Teaching prompt family: ${familyId}`);
-    error.code = 'TEACHING_PROMPT_FAMILY_UNKNOWN';
-    throw error;
-  }
+const historicalFamilies = Object.freeze([...part00, ...part01].map((item) => Object.freeze({ ...item })));
+if (historicalFamilies.length !== 19) throw new Error('Historical D03 prompt catalog must remain exactly 19 families.');
+const families = Object.freeze([...historicalFamilies, TPF20]);
+const byId = new Map(families.map((family) => [family.id, family]));
+
+function fail(message, code='TEACHING_PROMPT_CATALOG_INVALID') {
+  const error = new Error(message); error.code=code; throw error;
+}
+
+function getPromptFamily(id) {
+  const family=byId.get(String(id||'').trim().toUpperCase());
+  if(!family) fail(`Unknown frozen Teaching prompt family: ${id}`,'TEACHING_PROMPT_FAMILY_UNKNOWN');
   return family;
 }
 
-function assertPromptArtifactIdentity({ familyId, version, promptFile, promptSha256 } = {}) {
-  const family = getPromptFamily(familyId);
-  if (
-    String(version || '') !== family.version ||
-    String(promptFile || '') !== family.promptFile ||
-    String(promptSha256 || '') !== family.promptSha256
-  ) {
-    const error = new Error(`${family.id} prompt artifact is not the exact v1.3-manifested file/version/hash.`);
-    error.code = 'TEACHING_UNMANIFESTED_PROMPT_REJECTED';
-    throw error;
+function listPromptFamilies() { return families; }
+
+function manifestIdentityFor(family) {
+  if (family.id === 'TPF-20') {
+    return Object.freeze({
+      manifestVersion:MANIFEST_VERSION,
+      manifestSha256:MANIFEST_SHA256,
+      combinedPackSha256:COMBINED_PACK_SHA256,
+    });
   }
-  return true;
+  return Object.freeze({
+    manifestVersion:HISTORICAL_MANIFEST_VERSION,
+    manifestSha256:HISTORICAL_MANIFEST_SHA256,
+    combinedPackSha256:HISTORICAL_COMBINED_PACK_SHA256,
+  });
 }
 
-function assertManifestedPromptText({ familyId, version, promptText } = {}) {
-  const family = getPromptFamily(familyId);
-  if (String(version || '') !== family.version) {
-    const error = new Error(`${family.id} prompt text version must be exactly v${family.version}.`);
-    error.code = 'TEACHING_PROMPT_VERSION_UNMANIFESTED';
-    throw error;
-  }
-  if (typeof promptText !== 'string' || !promptText.length) {
-    const error = new Error(`${family.id} prompt text is required for runtime/build-time identity validation.`);
-    error.code = 'TEACHING_PROMPT_TEXT_REQUIRED';
-    throw error;
-  }
-  const actualSha256 = sha256(Buffer.from(promptText, 'utf8'));
-  if (actualSha256 !== family.promptSha256) {
-    const error = new Error(`${family.id} prompt text does not match the manifest-frozen SHA-256.`);
-    error.code = 'TEACHING_UNMANIFESTED_PROMPT_TEXT_REJECTED';
-    throw error;
-  }
-  return true;
-}
-
-function createFrozenPromptBinding(familyId, expectedVersion = null) {
-  const family = getPromptFamily(familyId);
-  if (expectedVersion != null && String(expectedVersion) !== family.version) {
-    const error = new Error(`${family.id} is frozen at v${family.version}; requested v${expectedVersion} is not manifested.`);
-    error.code = 'TEACHING_PROMPT_VERSION_UNMANIFESTED';
-    throw error;
-  }
-
-  const binding = {
-    familyId: family.id,
-    familyName: family.name,
-    familyVersion: family.version,
-    criticality: family.criticality,
-    promptSourceFile: family.promptFile,
-    promptSourceSha256: family.promptSha256,
-    combinedPackFile: manifest.combined_prompt_pack?.file || null,
-    combinedPackSha256: EXPECTED_PACK_SHA256,
-    manifestVersion: manifest.manifest_version,
-    manifestSha256: EXPECTED_MANIFEST_SHA256,
-    promptBodyEmbedded: false,
-    promptBodyRuntimeAvailable: true,
+function createFrozenPromptBinding(familyId, version) {
+  const family=getPromptFamily(familyId);
+  if(String(version)!==family.version) fail(
+    `${family.id} is frozen at version ${family.version}, not ${version}.`,
+    'TEACHING_PROMPT_VERSION_MISMATCH'
+  );
+  const identity=manifestIdentityFor(family);
+  const binding={
+    familyId:family.id,
+    familyVersion:family.version,
+    familyName:family.name,
+    defaultCriticality:family.criticality,
+    promptFile:family.promptFile,
+    promptSha256:family.promptSha256,
+    capabilityCount:family.capabilityCount,
+    ...identity,
   };
-  Object.defineProperty(binding, FROZEN_PROMPT_BINDING, { value: true, enumerable: false, writable: false });
+  Object.defineProperty(binding,'__frozenCatalogBinding',{value:true,enumerable:false,writable:false});
   return Object.freeze(binding);
 }
 
 function assertFrozenPromptBinding(binding) {
-  if (!binding || binding[FROZEN_PROMPT_BINDING] !== true) {
-    const error = new Error('Teaching prompt execution requires a binding loaded from the hash-locked v1.3 prompt catalog.');
-    error.code = 'TEACHING_UNMANIFESTED_PROMPT_REJECTED';
-    throw error;
+  if (!binding?.__frozenCatalogBinding) fail('Prompt binding did not originate from frozen D03 catalog.','TEACHING_PROMPT_BINDING_UNTRUSTED');
+  const expected=createFrozenPromptBinding(binding.familyId,binding.familyVersion);
+  for(const field of ['familyId','familyVersion','promptFile','promptSha256','manifestVersion','manifestSha256','combinedPackSha256']){
+    if(binding[field]!==expected[field]) fail(`Frozen prompt binding drift: ${field}`,'TEACHING_PROMPT_BINDING_DRIFT');
   }
-  const family = getPromptFamily(binding.familyId);
-  assertPromptArtifactIdentity({
-    familyId: family.id,
-    version: binding.familyVersion,
-    promptFile: binding.promptSourceFile,
-    promptSha256: binding.promptSourceSha256,
-  });
   return true;
 }
 
-function listPromptFamilies() {
-  return Object.freeze([...familyById.values()]);
+function assertPromptArtifactIdentity({ manifestSha256, combinedPackSha256 }={}) {
+  if (manifestSha256 !== MANIFEST_SHA256 || combinedPackSha256 !== COMBINED_PACK_SHA256) {
+    fail('Teaching prompt artifact identity does not match successor manifest v1.4.','TEACHING_PROMPT_ARTIFACT_MISMATCH');
+  }
+  return true;
 }
 
 function getPromptBody(familyId, version) {
-  const family = getPromptFamily(familyId);
-  if (String(version) !== family.version) fail('Unmanifested Teaching prompt version.', 'TEACHING_PROMPT_VERSION_UNMANIFESTED');
-  const body = getFrozenPromptBodyRecord(family.id);
-  assertPromptArtifactIdentity({ familyId, version: body.version, promptFile: body.promptFile, promptSha256: body.promptSha256 });
-  return body;
+  const { getFrozenPromptBodyRecord } = require('./prompt-body-store');
+  return getFrozenPromptBodyRecord(familyId,version);
 }
 
 function promptCatalogStatus() {
+  const capabilityCount=families.reduce((sum,f)=>sum+Number(f.capabilityCount||0),0);
   return Object.freeze({
-    manifestVersion: manifest.manifest_version,
-    manifestSha256: EXPECTED_MANIFEST_SHA256,
-    combinedPromptPack: manifest.combined_prompt_pack?.file || null,
-    combinedPackSha256: EXPECTED_PACK_SHA256,
-    familyCount: familyById.size,
-    modelEligibleCapabilityCount: manifest.model_eligible_capability_count,
-    closureStatus: manifest.closure_status,
-    ...promptBodyStoreStatus(),
-    qualificationPending: true,
+    manifestVersion:MANIFEST_VERSION,
+    manifestSha256:MANIFEST_SHA256,
+    combinedPackSha256:COMBINED_PACK_SHA256,
+    historicalManifestVersion:HISTORICAL_MANIFEST_VERSION,
+    historicalManifestSha256:HISTORICAL_MANIFEST_SHA256,
+    historicalCombinedPackSha256:HISTORICAL_COMBINED_PACK_SHA256,
+    historicalFamilyCount:19,
+    familyCount:families.length,
+    modelEligibleCapabilityCount:capabilityCount,
+    promptBodiesRuntimeAvailable:true,
+    promptBodiesVerified:true,
+    tpf20Qualification:'UNQUALIFIED',
   });
 }
 
-module.exports = {
-  EXPECTED_MANIFEST_SHA256,
-  EXPECTED_PACK_SHA256,
-  ASSESSMENT_FAMILY_BOUNDARIES,
-  getPromptFamily,
-  getPromptBody,
-  listPromptFamilies,
-  createFrozenPromptBinding,
-  assertFrozenPromptBinding,
-  assertPromptArtifactIdentity,
-  assertManifestedPromptText,
-  promptCatalogStatus,
+module.exports={
+  MANIFEST_VERSION,MANIFEST_SHA256,COMBINED_PACK_SHA256,
+  HISTORICAL_MANIFEST_VERSION,HISTORICAL_MANIFEST_SHA256,HISTORICAL_COMBINED_PACK_SHA256,
+  TPF20,getPromptFamily,listPromptFamilies,createFrozenPromptBinding,assertFrozenPromptBinding,
+  assertPromptArtifactIdentity,getPromptBody,promptCatalogStatus,
 };

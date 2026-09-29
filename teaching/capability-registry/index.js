@@ -14,22 +14,32 @@ function loadCompiledRegistry() {
 }
 
 const compiled = loadCompiledRegistry();
-const data = compiled.data;
+const historical = compiled.data;
 const {
   AUTHORITY_ORDER,
   assertAuthorityLevel,
   assertIntelligenceClass,
 } = require('../ai/contracts');
 
-const REGISTRY_VERSION = '1.1';
-const REGISTRY_SOURCE_SHA256 = 'a68e19eff631d43d4ab31ddd15b46298dc4ffb48dc2006758e85f712200c4ef4';
+const HISTORICAL_REGISTRY_VERSION = '1.1';
+const HISTORICAL_REGISTRY_SOURCE_SHA256 = 'a68e19eff631d43d4ab31ddd15b46298dc4ffb48dc2006758e85f712200c4ef4';
 const REGISTRY_COMPILED_SHA256 = '73a6517a71f49b8f72323369b19c3f9cf50dec4032fae24f695f72c0766e2b9d';
 
-const EXPECTED_COUNTS = Object.freeze({
+const REGISTRY_VERSION = '1.3';
+const REGISTRY_SOURCE_SHA256 = 'db2c9c89764b4fbcaffa4fc1d263f99ff0ddb337becbdc56b7ff71d829f5bc16';
+
+const HISTORICAL_EXPECTED_COUNTS = Object.freeze({
   total: 169,
   modelEligible: 147,
   t0Promptless: 22,
   promptFamilies: 19,
+  legacyAliases: 165,
+});
+const EXPECTED_COUNTS = Object.freeze({
+  total: 170,
+  modelEligible: 148,
+  t0Promptless: 22,
+  promptFamilies: 20,
   legacyAliases: 165,
 });
 
@@ -41,33 +51,60 @@ function invariant(condition, message) {
   }
 }
 
-invariant(crypto.createHash('sha256').update(compiled.bytes).digest('hex') === REGISTRY_COMPILED_SHA256, 'compiled registry payload hash drift');
-invariant(data.registry_version === REGISTRY_VERSION, 'compiled registry version drift');
-invariant(data.source_sha256 === REGISTRY_SOURCE_SHA256, 'compiled registry source hash drift');
+invariant(crypto.createHash('sha256').update(compiled.bytes).digest('hex') === REGISTRY_COMPILED_SHA256, 'historical compiled registry payload hash drift');
+invariant(historical.registry_version === HISTORICAL_REGISTRY_VERSION, 'historical compiled registry version drift');
+invariant(historical.source_sha256 === HISTORICAL_REGISTRY_SOURCE_SHA256, 'historical compiled registry source hash drift');
+invariant(historical.capabilities.length === HISTORICAL_EXPECTED_COUNTS.total, 'historical 169-capability payload drift');
 
-const capabilities = Object.freeze(data.capabilities.map((capability) => Object.freeze({
-  id: capability.id,
-  legacy_aliases: Object.freeze([...(capability.aliases || [])]),
-  execution_class: capability.execution_class,
-  authority_ceiling: capability.authority_ceiling,
-  authoritative_owner_boundary: capability.authoritative_owner_boundary,
-  model_posture: capability.model_posture,
-  prompt_family_id: capability.prompt_family_id,
-  commit_posture: capability.commit_posture,
-  blueprint_anchors: capability.blueprint_anchors,
-  purpose: capability.purpose,
+function normalizeHistoricalCapability(capability) {
+  return Object.freeze({
+    id: capability.id,
+    legacy_aliases: Object.freeze([...(capability.aliases || [])]),
+    execution_class: capability.execution_class,
+    authority_ceiling: capability.authority_ceiling,
+    authoritative_owner_boundary: capability.authoritative_owner_boundary,
+    model_posture: capability.model_posture,
+    prompt_family_id: capability.prompt_family_id,
+    commit_posture: capability.commit_posture,
+    blueprint_anchors: capability.blueprint_anchors,
+    purpose: capability.purpose,
+    contract_refs: Object.freeze({
+      constitution: 'Blueprint-11.5/Teaching-Constitution',
+      structural_prompt_contract: 'Teaching-Structural-Prompt-Contract/D03-v1',
+    }),
+    output_schema_binding: 'RUNTIME_REQUIRED',
+  });
+}
+
+const historicalCapabilities = Object.freeze(historical.capabilities.map(normalizeHistoricalCapability));
+
+const TPF20_CAPABILITY = Object.freeze({
+  id: 'teaching.study.class_grounded_note_generation',
+  legacy_aliases: Object.freeze([]),
+  execution_class: 'DIRECT-AI',
+  authority_ceiling: 'T3',
+  authoritative_owner_boundary: 'Teaching Study Pack publication owner',
+  model_posture: 'MODEL_PRIMARY',
+  prompt_family_id: 'TPF-20',
+  commit_posture: 'DRAFT_PROPOSAL_ONLY; VALIDATOR_AND_STUDY_PACK_OWNER_CONTROL_PUBLICATION',
+  blueprint_anchors: '§370, §501, TPF-20 Class C amendment',
+  purpose: 'Prepare and reconcile a Class-grounded student study-note draft from authorized Lesson Plan/source/card inputs and the authoritative actual-Class record without publishing or mutating academic truth.',
   contract_refs: Object.freeze({
     constitution: 'Blueprint-11.5/Teaching-Constitution',
     structural_prompt_contract: 'Teaching-Structural-Prompt-Contract/D03-v1',
+    canonical_successor_registry: 'KIWI_Teaching_Capability_Registry_v1.3.md',
+    prompt_family: 'TPF-20 v1.0',
   }),
   output_schema_binding: 'RUNTIME_REQUIRED',
-})));
+});
+
+const capabilities = Object.freeze([...historicalCapabilities, TPF20_CAPABILITY]);
 
 const capabilityById = new Map();
 const canonicalByAlias = new Map();
 
 function assertRegistryIntegrity() {
-  invariant(capabilities.length === EXPECTED_COUNTS.total, 'expected exactly 169 capabilities');
+  invariant(capabilities.length === EXPECTED_COUNTS.total, 'expected exactly 170 capabilities');
   capabilityById.clear();
   canonicalByAlias.clear();
 
@@ -116,14 +153,22 @@ function assertRegistryIntegrity() {
   }
 
   invariant(t0Promptless === EXPECTED_COUNTS.t0Promptless, 'expected exactly 22 T0/no-prompt capabilities');
-  invariant(modelEligible === EXPECTED_COUNTS.modelEligible, 'expected exactly 147 model-eligible capabilities');
+  invariant(modelEligible === EXPECTED_COUNTS.modelEligible, 'expected exactly 148 model-eligible capabilities');
   invariant(aliasCount === EXPECTED_COUNTS.legacyAliases, 'expected exactly 165 legacy INV aliases');
-  invariant(familyIds.size === EXPECTED_COUNTS.promptFamilies, 'expected exactly 19 prompt families');
+  invariant(familyIds.size === EXPECTED_COUNTS.promptFamilies, 'expected exactly 20 prompt families');
+
+  const tpf20 = capabilityById.get(TPF20_CAPABILITY.id);
+  invariant(tpf20.execution_class === 'DIRECT-AI', 'TPF-20 successor capability must remain DIRECT-AI');
+  invariant(tpf20.authority_ceiling === 'T3', 'TPF-20 successor capability must remain T3');
+  invariant(tpf20.prompt_family_id === 'TPF-20', 'TPF-20 successor capability binding drift');
 
   return Object.freeze({
     registryVersion: REGISTRY_VERSION,
     sourceSha256: REGISTRY_SOURCE_SHA256,
+    historicalRegistryVersion: HISTORICAL_REGISTRY_VERSION,
+    historicalSourceSha256: HISTORICAL_REGISTRY_SOURCE_SHA256,
     compiledSha256: REGISTRY_COMPILED_SHA256,
+    historicalCapabilityCount: historicalCapabilities.length,
     total: capabilities.length,
     modelEligible,
     t0Promptless,
@@ -182,9 +227,13 @@ function listCapabilities() {
 
 module.exports = {
   EXPECTED_COUNTS,
+  HISTORICAL_EXPECTED_COUNTS,
   REGISTRY_VERSION,
   REGISTRY_SOURCE_SHA256,
+  HISTORICAL_REGISTRY_VERSION,
+  HISTORICAL_REGISTRY_SOURCE_SHA256,
   REGISTRY_COMPILED_SHA256,
+  TPF20_CAPABILITY,
   integrity,
   assertRegistryIntegrity,
   getCapability,

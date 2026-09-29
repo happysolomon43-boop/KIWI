@@ -63,7 +63,7 @@ function stricterCriticality(defaultCriticality, capabilityOverride = null) {
 
 function createUnqualifiedRouteManifest() {
   const byFamily = {};
-  for (let number = 1; number <= 19; number += 1) {
+  for (let number = 1; number <= 20; number += 1) {
     const familyId = `TPF-${String(number).padStart(2, '0')}`;
     const family = getPromptFamily(familyId);
     byFamily[familyId] = Object.freeze({
@@ -87,7 +87,7 @@ function createUnqualifiedRouteManifest() {
   return Object.freeze(byFamily);
 }
 
-const ROUTE_MANIFEST_VERSION = 'D03-v1';
+const ROUTE_MANIFEST_VERSION = 'D03-v1.4-successor';
 const ROUTE_MANIFEST = createUnqualifiedRouteManifest();
 
 function resolveRouteControl(capabilityId, {
