@@ -12,6 +12,9 @@ const {
 }=require('../../../teaching/d13/contracts');
 const {createD13Service}=require('../../../teaching/d13/service');
 const {registerD13Runtime}=require('../../../teaching/d13/runtime');
+const {registerD12Runtime}=require('../../../teaching/d12/runtime');
+const {createTeachingEventSubscriberRegistry}=require('../../../teaching/events/dispatcher');
+const {EVENT_CATEGORIES}=require('../../../teaching/runtime/constants');
 
 function event(id,at,overrides={}){
   const base={
@@ -382,6 +385,52 @@ test('authoritative Controller block condition sets and later clears BLOCKED ort
 
 test('non-planning evidence owners cannot forge BLOCKED conditions',()=>{
   assert.throws(()=>validateNormalizedEvidence({...normalizedEvidence('ASSESSMENT_OWNER'),pathContext:{block_condition:'BLOCKED'}}),/Controller\/Lesson Planner authority/i);
+});
+
+test('answer or essential-method exposure becomes unusable for independent SKM evidence',()=>{
+  const bundle=d12Bundle({correctness:'correct'});
+  bundle.evaluation.evidence_strength='CONTAMINATED';
+  bundle.evaluation.exposure_state={answer_or_method_exposed:true,fresh_verification_needed:true};
+  bundle.response.assistance_context.answer_or_method_exposed=true;
+  const n=normalizeD12EvaluationBundle(bundle);
+  assert.equal(n.answerOrMethodExposed,true);
+  assert.equal(n.evidentialStrength,'UNUSABLE');
+  assert.equal(n.independentPerformance,false);
+});
+
+test('D12 subscriber runs before D13 when foundation registration order is preserved',async()=>{
+  const registry=createTeachingEventSubscriberRegistry();
+  const calls=[];
+  registerD12Runtime({publishedEvents:registry,service:{handleResponseSubmittedEvent:async()=>{calls.push('d12');return {accepted:true};}}});
+  registerD13Runtime({publishedEvents:registry,service:{handleResponseSubmittedEvent:async()=>{calls.push('d13');return {accepted:true};}}});
+  await registry.publish({
+    eventId:'evt-order',schemaVersion:1,eventType:'teaching.student.response_submitted',
+    eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,triggerType:'committed_domain_event',
+    source:'test',origin:'test',actorId:'u1',aggregateType:'teaching_student_response',aggregateId:'r1',aggregateVersion:1,
+    occurredAt:'2026-09-29T10:00:00.000Z',effectiveAt:'2026-09-29T10:00:00.000Z',dueAt:null,
+    correlationId:'evt-order',causationId:null,idempotencyKey:'evt-order',
+    payload:{student_id:'u1',response_id:'r1'},auditRefs:[],provenanceRefs:[],
+  });
+  assert.deepEqual(calls,['d12','d13']);
+});
+
+test('route-held D12 evaluation is a D13 no-op rather than fabricated knowledge',async()=>{
+  const repository={
+    loadKnowledgeSnapshot:async()=>null,
+    latestEvaluationForResponse:async()=>({evaluation_id:'eval-held',evaluation_state:'ROUTE_HELD'}),
+  };
+  const service=createD13Service({repository,randomUUID:()=> 'uuid'});
+  const out=await service.handleResponseSubmittedEvent({eventId:'evt',actorId:'u1',payload:{response_id:'r1'}});
+  assert.equal(out.noop,true);
+  assert.equal(out.evaluationState,'ROUTE_HELD');
+});
+
+test('Gradebook cannot be used as a direct SKM state assigner',async()=>{
+  const service=createD13Service({repository:{loadKnowledgeSnapshot:async()=>null},randomUUID:()=> 'uuid'});
+  await assert.rejects(
+    ()=>service.ingestOwnerValidatedEvidence({studentId:'u1',evidence:normalizedEvidence('GRADEBOOK')}),
+    /Gradebook facts cannot directly assign/i
+  );
 });
 
 test('algorithm/version and replay semantics are carried in every computed state',()=>{
