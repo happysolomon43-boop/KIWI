@@ -300,7 +300,7 @@ function createD10Service({
   async function evaluateDecision(user,request,{forceEmergency=false}={}){
     const def=requestDefinition(request.request_type);
     if(request.lifecycle_state!=='REVIEWING') throw error('Request must be Reviewing before a decision can be recorded.','TEACHING_D10_REQUEST_REVIEW_STATE_INVALID');
-    if(def.emergency||forceEmergency) return {state:'APPROVED',decision:{code:'EMERGENCY_RECORDED',explanation:'Emergency absence is recorded immediately without proof interrogation.',proofRequired:false,behaviorPenaltyAutomatic:false,ownerHandoffPending:'D15_ATTENDANCE'}};
+    if(def.emergency||forceEmergency) return {state:'APPROVED',decision:{code:'EMERGENCY_RECORDED',explanation:'Emergency absence is recorded immediately without proof interrogation.',proofRequired:false,behaviorPenaltyAutomatic:false,learningRecoveryHandoffRequired:true,ownerHandoffPending:'D15_ATTENDANCE'}};
     if(request.request_type==='SINGLE_CLASS_RESCHEDULE') return previewReschedule(user,request);
     if(['PERMANENT_AVAILABILITY_CHANGE','ACADEMIC_BREAK','COURSE_RESUME'].includes(request.request_type)){
       if(request.request_type==='COURSE_RESUME'){
