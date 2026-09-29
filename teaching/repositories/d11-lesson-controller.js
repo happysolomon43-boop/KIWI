@@ -348,7 +348,7 @@ function createD11LessonControllerRepository({
     const digest = crypto.createHash('sha256').update(JSON.stringify(refs)).digest('hex');
 
     let workspace = await getPreparationWorkspace(studentId, classId, tx, true);
-    const createdWorkspace = !workspace;
+    let createdWorkspace = !workspace;
     if (!workspace) {
       const priorWorkspaceResult=await tx.query(
         "select workspace_id from teaching_preparation.workspaces where student_id=$1 and target_kind='next_class'" +
@@ -378,6 +378,37 @@ function createD11LessonControllerRepository({
       );
       currentBundle = loaded.rows?.[0] || null;
     }
+    if (
+      workspace &&
+      currentBundle?.content_digest !== digest &&
+      (workspace.maturity_stage === 'PRE_LOCK_READY' || workspace.lifecycle_state !== 'ACTIVE')
+    ) {
+      const priorWorkspace=workspace;
+      await tx.query(
+        "update teaching_preparation.workspaces set lifecycle_state='SUPERSEDED',state_version=state_version+1,updated_at=now()" +
+        " where workspace_id=$1",
+        [priorWorkspace.workspace_id]
+      );
+      const successorId=randomUUID();
+      const inserted=await tx.query(
+        "insert into teaching_preparation.workspaces(" +
+        "workspace_id,student_id,workspace_type,target_kind,target_ref,authoritative_owner_ref," +
+        "preparation_profile_ref,lifecycle_state,maturity_stage,state_version,target_effective_at," +
+        "finalization_or_freeze_at,protected_content_class,trigger_policy_ref,cost_execution_budget_ref,supersedes_workspace_id" +
+        ") values($1,$2,'LESSON_BLUEPRINT','next_class',$3,'Teaching Controller / Lesson Planner'," +
+        "'teaching.preparation.next_class@1.0','ACTIVE','SKELETON',0,$4,$4,'UNPROTECTED'," +
+        "'d11.class-materiality.v1','teaching.preparation.budget.next_class',$5) returning *",
+        [successorId,studentId,classId,classRow.scheduled_start_at,priorWorkspace.workspace_id]
+      );
+      workspace=inserted.rows[0];
+      await tx.query(
+        "update teaching_preparation.workspaces set superseded_by_workspace_id=$2 where workspace_id=$1",
+        [priorWorkspace.workspace_id,successorId]
+      );
+      currentBundle=null;
+      createdWorkspace=true;
+    }
+
     if (currentBundle?.content_digest === digest) {
       return Object.freeze({
         workspace,
@@ -778,6 +809,7 @@ function createD11LessonControllerRepository({
     studentId,
     classId,
     expectedBlueprintId,
+    bindBlueprint = true,
     sourceEventRef = null,
     idempotencyKey = null,
     allowRouteHeldStart = false,
@@ -787,13 +819,14 @@ function createD11LessonControllerRepository({
     const existing = await getSession(studentId,classId,tx,true);
     if (existing) return Object.freeze({ session:existing, inserted:false });
     const plan = await loadCurrentPlan(studentId,classRow.course_id,tx,true);
-    const blueprint = await latestBlueprint(studentId,classId,tx,true);
+    let blueprint = await latestBlueprint(studentId,classId,tx,true);
     if (!plan) {
       const error = new Error('Current Course Plan is required before Controller start.');
       error.code = 'TEACHING_D11_COURSE_PLAN_REQUIRED';
       error.status = 409;
       throw error;
     }
+    if (bindBlueprint === false) blueprint = null;
     if (expectedBlueprintId && (!blueprint || blueprint.lesson_blueprint_id !== expectedBlueprintId)) {
       const error = new Error('Expected Lesson Blueprint is no longer current.');
       error.code = 'TEACHING_D11_BLUEPRINT_STALE';
@@ -941,13 +974,15 @@ function createD11LessonControllerRepository({
       error.status = 422;
       throw error;
     }
+    let loadedEvidence=[];
     if (evidenceRefs.length) {
       const evidence = await tx.query(
-        "select evidence_event_id from public.teaching_evidence_events where student_id=$1" +
+        "select evidence_event_id,independent_performance,response_quality from public.teaching_evidence_events where student_id=$1" +
         " and class_session_id=$2 and evidence_event_id=any($3::text[])",
         [studentId,session.class_session_id,evidenceRefs.map(String)]
       );
-      if (evidence.rows.length !== new Set(evidenceRefs.map(String)).size) {
+      loadedEvidence=evidence.rows || [];
+      if (loadedEvidence.length !== new Set(evidenceRefs.map(String)).size) {
         const error = new Error('Every progress evidence reference must belong to the current Class session.');
         error.code = 'TEACHING_D11_PROGRESS_EVIDENCE_INVALID';
         error.status = 422;
@@ -962,15 +997,22 @@ function createD11LessonControllerRepository({
       throw error;
     }
     if (independentRefs.length) {
-      const { rows: verifiedRows } = await tx.query(
-        "select distinct evidence_event_id from public.teaching_evidence_events where student_id=$1" +
-        " and class_session_id=$2 and independent_performance=true and evidence_event_id=any($3::text[])",
-        [studentId,session.class_session_id,evidenceRefs.map(String)]
-      );
-      if (!verifiedRows.length) {
-        const error = new Error('Independent objective progress requires at least one independent-performance evidence event.');
+      const supported=new Set();
+      for(const row of loadedEvidence) {
+        if(row.independent_performance!==true) continue;
+        const quality=row.response_quality || {};
+        const refs=[
+          ...(quality.objective_ref?[String(quality.objective_ref)]:[]),
+          ...(Array.isArray(quality.objective_refs)?quality.objective_refs.map(String):[]),
+        ];
+        for(const ref of refs) supported.add(ref);
+      }
+      const unsupported=independentRefs.filter((ref)=>!supported.has(ref));
+      if (unsupported.length) {
+        const error = new Error('Independent objective progress requires objective-linked independent-performance evidence.');
         error.code = 'TEACHING_D11_INDEPENDENT_EVIDENCE_REQUIRED';
         error.status = 422;
+        error.unsupportedObjectiveRefs=unsupported;
         throw error;
       }
     }
