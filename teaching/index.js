@@ -4,7 +4,7 @@ const { createTeachingConfig } = require('./config');
 const { createKiwiSubjectReader } = require('./integrations/kiwi-subjects');
 const { createKiwiExamInterface } = require('./integrations/kiwi-exam-interface');
 const { createKiwiNotificationInterface } = require('./integrations/kiwi-notifications');
-const { createTeachingRepositories, createPreparationRuntimeRepository, createD07CourseIntakeRepository, createD08CoursePlanRepository, createD09SchedulingRepository, createD10LifecycleRequestRepository, createD11LessonControllerRepository, createD12ResponsePedagogyRepository, createD13StudentKnowledgeModelRepository } = require('./repositories');
+const { createTeachingRepositories, createPreparationRuntimeRepository, createD07CourseIntakeRepository, createD08CoursePlanRepository, createD09SchedulingRepository, createD10LifecycleRequestRepository, createD11LessonControllerRepository, createD12ResponsePedagogyRepository, createD13StudentKnowledgeRepository } = require('./repositories');
 const { createTeachingService } = require('./services/teaching-service');
 const { modules } = require('./modules');
 const orchestrator = require('./orchestrator');
@@ -132,7 +132,7 @@ function createTeachingFoundation({
   }
 
   const d13Repository = d12Repository && typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
-    ? createD13StudentKnowledgeModelRepository({ query, withTransaction, randomUUID })
+    ? createD13StudentKnowledgeRepository({ query, withTransaction, randomUUID })
     : null;
   const d13Service = d13Repository
     ? d13.createD13Service({
