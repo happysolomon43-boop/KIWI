@@ -33,6 +33,9 @@ function createTeachingRouter({
   d12Intelligence = null,
   d12Service = null,
   d12PublishedEventRegistry = null,
+  d13Intelligence = null,
+  d13Service = null,
+  d13PublishedEventRegistry = null,
   teachingRuntimePlatform = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
@@ -58,6 +61,8 @@ function createTeachingRouter({
     d11PublishedEventRegistry,
     d12Intelligence,
     d12PublishedEventRegistry,
+    d13Intelligence,
+    d13PublishedEventRegistry,
   });
   const router = express.Router();
   let d07Ready = Boolean(d07Service);
@@ -66,6 +71,7 @@ function createTeachingRouter({
   let d10Ready = Boolean(d10Service);
   let d11Ready = Boolean(d11Service);
   let d12Ready = Boolean(d12Service);
+  let d13Ready = Boolean(d13Service);
 
   router.assertD07Ready = async () => {
     if (!foundation.d07?.repository) {
@@ -115,6 +121,17 @@ function createTeachingRouter({
     }
     await repo12.assertReady();
     d12Ready = true;
+    return true;
+  };
+
+  router.assertD13Ready = async () => {
+    const repo13 = foundation.d13?.repository || d13Service?.repository || null;
+    if (!repo13 || typeof repo13.assertReady !== 'function') {
+      d13Ready = false;
+      return false;
+    }
+    await repo13.assertReady();
+    d13Ready = true;
     return true;
   };
 
@@ -446,6 +463,29 @@ function createTeachingRouter({
     router.get('/classes/:id/summary', requireD11Ready, async (req, res) => {
       try { res.json(await lessonControllerService.getSummary(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load Class Summary.'); }
+    });
+  }
+
+
+  const studentKnowledgeModelService = d13Service || foundation.d13?.service || null;
+  if (studentKnowledgeModelService) {
+    const requireD13Ready = (req, res, next) => {
+      if (d13Ready) return next();
+      return res.status(503).json({
+        error: 'Teaching Student Knowledge Model is unavailable until the D13 schema is ready.',
+        code: 'TEACHING_D13_SCHEMA_NOT_READY',
+      });
+    };
+    router.get('/learning-analysis', requireD13Ready, async (req, res) => {
+      try {
+        const courseId = String(req.query.courseId || '').trim();
+        if (!courseId) return res.status(400).json({ error:'courseId is required.', code:'TEACHING_D13_COURSE_ID_REQUIRED' });
+        res.json(await studentKnowledgeModelService.getCourseLearningAnalysis(req.user, courseId));
+      } catch (error) { sendError(res, error, 'Failed to load Learning Analysis.'); }
+    });
+    router.get('/learning-units/:id/learning-analysis', requireD13Ready, async (req, res) => {
+      try { res.json(await studentKnowledgeModelService.getLearningUnitAnalysis(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load Learning Unit analysis.'); }
     });
   }
 
