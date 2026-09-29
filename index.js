@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 256077)
-Total output lines: 23463
-
 // ════════════════════════════════════════════════════════════════════════════
 //  KIWI BACKEND — Living Ecosystem Edition
 //  MIGRATED: Firebase/Firestore → PostgreSQL (Supabase pg Pool)
@@ -1204,7 +1201,21303 @@ async findById(userId, id) {
     'SELECT * FROM exam_questions WHERE id = $1 AND user_id = $2 LIMIT 1',
     [id, userId]
   );
-  return rows[0] |…231077 tokens truncated… PRIMARY KEY,
+  return rows[0] || null;
+},
+async update(userId, id, data) {
+  const payload = { ...data, updated_at: new Date() };
+  const q = _buildUpdate('exam_questions', 'id', id, payload, userId);
+  const result = await query(q.text, q.values);
+  return result.rowCount > 0 ? { id, ...payload } : null;
+},
+// BUG #4 FIX: findBySession was absent — recomputeAndStoreCardState always received
+// examLogs = [] because the guard `db.examQuestions.findBySession ?` silently failed.
+async findBySession(userId, examSessionId) {
+  const { rows } = await query(
+    'SELECT * FROM exam_questions WHERE user_id = $1 AND exam_session_id = $2',
+    [userId, examSessionId]
+  );
+  return rows;
+},
+},
+// ── subject_stats ────────────────────────────────────────────────────────────
+subjectStats: {
+async get(userId, subjectId) {
+  // Fix #8: deterministic id eliminates WHERE scan
+  const docId = `${userId}_${subjectId}`;
+  const { rows } = await query('SELECT * FROM subject_stats WHERE id = $1 LIMIT 1', [docId]);
+  return rows[0] ? { id: docId, ...rows[0] } : null;
+},
+async upsert(userId, subjectId, data) {
+  // Fix #9: deterministic id + ON CONFLICT eliminates read-then-write
+  const docId = `${userId}_${subjectId}`;
+  const payload = { id: docId, user_id: userId, subject_id: subjectId, ...data, updated_at: new Date() };
+  const q = _buildUpsert('subject_stats', ['id'], payload);
+  await query(q.text, q.values);
+  return { id: docId, ...payload };
+},
+async findMany(userId) {
+  const { rows } = await query('SELECT * FROM subject_stats WHERE user_id = $1', [userId]);
+  return rows;
+},
+},
+// ── achievements ─────────────────────────────────────────────────────────────
+achievements: {
+async upsert(code, data) {
+  // Fix #13: code is the natural doc id
+  const payload = { id: code, ...data, code, updated_at: new Date() };
+  const q = _buildUpsert('achievements', ['id'], payload);
+  await query(q.text, q.values);
+  _achievementsCache = null; // Fix #49: invalidate cache on write
+  return { id: code, ...payload };
+},
+async findAll() {
+  // Fix #49: load once and cache — achievements are static
+  if (_achievementsCache) return _achievementsCache;
+  const { rows } = await query('SELECT * FROM achievements');
+  _achievementsCache = rows;
+  return _achievementsCache;
+},
+},
+// ── user_achievements ───────────────────────────────────────────────────────
+userAchievements: {
+async create(userId, achievementId) {
+  // Fix #14: deterministic id enables direct markShown lookup
+  const id = `${userId}_${achievementId}`;
+  const payload = {
+    id,
+    user_id: userId,
+    achievement_id: achievementId,
+    unlocked_at: new Date(),
+    shown_to_user: false,
+  };
+  await query(
+    `INSERT INTO user_achievements (id, user_id, achievement_id, unlocked_at, shown_to_user)
+     VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING`,
+    [id, userId, achievementId, payload.unlocked_at, false]
+  );
+  return { id, ...payload };
+},
+async findManyWithAchievement(userId) {
+  // Fix #26: use achievements cache (Fix #49) — eliminates N individual doc fetches
+  const { rows } = await query(
+    'SELECT * FROM user_achievements WHERE user_id = $1',
+    [userId]
+  );
+  const allAchievements = await db.achievements.findAll();
+  const achMap = new Map(allAchievements.map(a => [a.id, a]));
+  return rows.map(ua => {
+    const ach = achMap.get(ua.achievement_id);
+    if (ach) ua.achievement = ach;
+    return ua;
+  });
+},
+async markShown(userId, achievementId) {
+  // Fix #14: deterministic id eliminates WHERE scan
+  const docId = `${userId}_${achievementId}`;
+  await query(
+    'UPDATE user_achievements SET shown_to_user = true WHERE id = $1',
+    [docId]
+  ).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  return true;
+},
+},
+// ── tasks ────────────────────────────────────────────────────────────────────
+tasks: {
+async findMany(userId, filters = {}) {
+  let sql = 'SELECT * FROM tasks WHERE user_id = $1';
+  const vals = [userId];
+  if (filters.status) { sql += ` AND status = $${vals.length + 1}`; vals.push(filters.status); }
+  const { rows } = await query(sql, vals);
+  return rows;
+},
+async create(userId, data) {
+  const id = randomUUID();
+  const payload = {
+    ...data,
+    id,
+    user_id: userId,
+    status: 'active',
+    current_value: 0,
+    created_at: new Date(),
+  };
+  const q = _buildInsert('tasks', payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+async update(userId, taskId, data) {
+  // Fix #38: eliminate post-write re-fetch
+  const payload = { ...data, updated_at: new Date() };
+  const q = _buildUpdate('tasks', 'id', taskId, payload);
+  await query(q.text, q.values);
+  return { id: taskId, ...payload };
+},
+async deleteActive(userId) {
+  // Firestore batch → single DELETE
+  await query(
+    "DELETE FROM tasks WHERE user_id = $1 AND status = 'active'",
+    [userId]
+  );
+  return true;
+},
+async findById(userId, taskId) {
+  const { rows } = await query(
+    'SELECT * FROM tasks WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [taskId, userId]
+  );
+  return rows[0] || null;
+},
+},
+// ── community_decks ─────────────────────────────────────────────────────────
+communityDecks: {
+async findMany({ search, tags, group, subject } = {}, { page = 1, limit = 20 } = {}) {
+  // Fix #52: filter to is_public=true — prevents exposing draft/unlisted decks
+  // Group/subject filtering added for community filter bar feature
+  const conditions = ['is_public = true'];
+  const vals = [];
+  if (search) {
+    conditions.push(`(title ILIKE $${vals.length + 1} OR subject ILIKE $${vals.length + 1})`);
+    vals.push(`%${search}%`);
+  }
+  if (group)   { conditions.push(`group_name = $${vals.length + 1}`);  vals.push(group); }
+  if (subject) { conditions.push(`subject ILIKE $${vals.length + 1}`); vals.push(`%${subject}%`); }
+  const whereClause = conditions.join(' AND ');
+  const countSQL = `SELECT COUNT(*) AS count FROM community_decks WHERE ${whereClause}`;
+  const { rows: [{ count }] } = await query(countSQL, vals);
+  const offset = (page - 1) * limit;
+  const dataVals = [...vals, limit, offset];
+  const sql = `SELECT *, COALESCE(author_name, author_id::text, 'Anonymous') AS author FROM community_decks WHERE ${whereClause} ORDER BY clone_count DESC LIMIT $${dataVals.length - 1} OFFSET $${dataVals.length}`;
+  const { rows: decks } = await query(sql, dataVals);
+  return { decks, total: parseInt(count || '0', 10) };
+},
+async findById(id) {
+  const { rows } = await query('SELECT * FROM community_decks WHERE id = $1 LIMIT 1', [id]);
+  return rows[0] || null;
+},
+async findByIdWithOriginalCards(id) {
+  const cd = await this.findById(id);
+  if (!cd || !cd.original_deck_id) return cd;
+  const { rows: [deck] } = await query('SELECT * FROM decks WHERE id = $1', [cd.original_deck_id]);
+  if (deck) {
+    cd.originalDeck = deck;
+    const { rows: cards } = await query('SELECT * FROM cards WHERE deck_id = $1', [cd.original_deck_id]);
+    cd.originalDeck.cards = cards;
+  }
+  return cd;
+},
+async upsertByOriginalDeck(originalDeckId, data) {
+  // Fix #15: originalDeckId is the natural doc id
+  const payload = { ...data, id: originalDeckId, original_deck_id: originalDeckId, updated_at: new Date() };
+  if (!payload.created_at) payload.created_at = new Date();
+  const q = _buildUpsert('community_decks', ['id'], payload);
+  await query(q.text, q.values);
+  return { id: originalDeckId, ...payload };
+},
+async update(id, data) {
+  // Fix #38: eliminate post-write re-fetch
+  const payload = { ...data, updated_at: new Date() };
+  const q = _buildUpdate('community_decks', 'id', id, payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+async count({ author_id } = {}) {
+  if (!author_id) return 0;
+  const { rows } = await query(
+    'SELECT COUNT(*) AS count FROM community_decks WHERE author_id = $1',
+    [author_id]
+  );
+  return parseInt(rows[0]?.count || '0', 10);
+},
+},
+// ── community_ratings ────────────────────────────────────────────────────────
+communityRatings: {
+async upsert(communityDeckId, userId, rating) {
+  // Fix #16: deterministic id eliminates WHERE scan on every rating write
+  const docId = `${communityDeckId}_${userId}`;
+  const payload = { id: docId, community_deck_id: communityDeckId, user_id: userId, rating, updated_at: new Date() };
+  await query(
+    `INSERT INTO community_ratings (id, community_deck_id, user_id, rating, updated_at)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (id) DO UPDATE SET rating = EXCLUDED.rating, updated_at = EXCLUDED.updated_at`,
+    [docId, communityDeckId, userId, rating, payload.updated_at]
+  );
+  return { id: docId, ...payload };
+},
+async findByDeck(communityDeckId) {
+  const { rows } = await query(
+    'SELECT * FROM community_ratings WHERE community_deck_id = $1',
+    [communityDeckId]
+  );
+  return rows;
+},
+},
+
+// ════════════════════════════════════════════════════════════════════════════
+//  P1.7 NOTE: Migration script skeleton
+//  A one-time migration is required to:
+//    (a) create card_states for every existing card,
+//    (b) compute initial KS per subject and global,
+//    (c) extend user_stats with seedlings_balance, streak_shields_held, etc.,
+//    (d) extend exam_sessions with is_reckoning flag.
+//  See migration/ directory for the runnable script.
+// ════════════════════════════════════════════════════════════════════════════
+// ── knowledge_scores (P2/P1.2 FIX: KS history/snapshot log)
+// Stores historical KS values for graphing over time.
+knowledgeScores: {
+async create(userId, subjectId, score, band) {
+  const id = randomUUID();
+  const payload = {
+    id,
+    user_id: userId,
+    subject_id: subjectId,
+    score,
+    band,
+    recorded_at: new Date(),
+  };
+  await query(
+    'INSERT INTO knowledge_scores (id, user_id, subject_id, score, band, recorded_at) VALUES ($1,$2,$3,$4,$5,$6)',
+    [id, userId, subjectId, score, band, payload.recorded_at]
+  );
+  return { id, ...payload };
+},
+async findBySubject(userId, subjectId, limit = 52) {
+  const { rows } = await query(
+    'SELECT * FROM knowledge_scores WHERE user_id = $1 AND subject_id = $2 ORDER BY recorded_at DESC LIMIT $3',
+    [userId, subjectId, limit]
+  );
+  return rows;
+},
+},
+
+//  NEW COLLECTIONS (Phases 2–8)
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── card_states ─────────────────────────────────────────────────────────────
+cardStates: {
+async get(userId, cardId) {
+  // Fix #1: deterministic id eliminates collection scan
+  const docId = `${userId}_${cardId}`;
+  const { rows } = await query('SELECT * FROM card_states WHERE id = $1 LIMIT 1', [docId]);
+  return rows[0] ? { id: docId, ...rows[0] } : null;
+},
+async create(userId, cardId, data) {
+  // Fix #2: deterministic id; Fix #39/40: include deck_id/subject_id; Fix #41: exclude weight
+  const id = `${userId}_${cardId}`;
+  const { weight: _w, ...cleanData } = data; // Fix #41: strip deprecated weight field
+  const payload = {
+    id,
+    user_id: userId,
+    card_id: cardId,
+    state: cleanData.state || 'SEEDLING',
+    stage: cleanData.stage || 1,
+    deck_id: cleanData.deck_id || null,       // Fix #39
+    subject_id: cleanData.subject_id || null, // Fix #40
+    verified: cleanData.verified || false,
+    verified_at: cleanData.verified_at || null,
+    last_evaluated_at: new Date(),
+    created_at: new Date(),
+    bubble_ids: cleanData.bubble_ids || [],
+    learning_debt: cleanData.learning_debt || false,
+    cross_bubble: cleanData.cross_bubble || false,
+    parking_expires_at: cleanData.parking_expires_at || null,
+    ...cleanData,
+  };
+  const q = _buildInsert('card_states', payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+async update(userId, cardId, data) {
+  // Fix #3: upsert via ON CONFLICT eliminates read-then-write
+  const docId = `${userId}_${cardId}`;
+  const updatePayload = { ...data, last_evaluated_at: new Date(), updated_at: new Date() };
+  // Try UPDATE first; if no rows affected, fall back to create
+  const q = _buildUpdate('card_states', 'id', docId, updatePayload);
+  const result = await query(q.text, q.values);
+  if (result.rowCount === 0) {
+    return this.create(userId, cardId, data);
+  }
+  return { id: docId, ...updatePayload };
+},
+async findByUser(userId) {
+  const { rows } = await query('SELECT * FROM card_states WHERE user_id = $1', [userId]);
+  return rows;
+},
+// BUG-08 FIX: findByCards was called by batchInitializeSeedlingStates but never defined
+// Queries only the relevant card states instead of loading all states for the user
+async findByCards(userId, cardIds) {
+  if (!cardIds || cardIds.length === 0) return [];
+  const { rows } = await query(
+    'SELECT * FROM card_states WHERE user_id = $1 AND card_id = ANY($2::text[])',
+    [userId, cardIds]
+  );
+  return rows;
+},
+async findBySubject(userId, subjectId) {
+  const decks = await db.decks.findBySubject(userId, subjectId);
+  const deckIds = decks.map((d) => d.id);
+  if (deckIds.length === 0) return [];
+  // Single JOIN query: replaces nested per-deck/per-card loops
+  const { rows } = await query(
+    `SELECT cs.* FROM card_states cs
+     JOIN cards c ON cs.card_id = c.id
+     WHERE cs.user_id = $1 AND c.deck_id = ANY($2::text[])`,
+    [userId, deckIds]
+  );
+  return rows;
+},
+},
+// ── brain_pressure ──────────────────────────────────────────────────────────
+brainPressure: {
+async get(userId, subjectId) {
+  // Fix #10: deterministic id eliminates WHERE scan
+  const docId = `${userId}_${subjectId}`;
+  const { rows } = await query('SELECT * FROM brain_pressure WHERE id = $1 LIMIT 1', [docId]);
+  return rows[0] ? { id: docId, ...rows[0] } : null;
+},
+async set(userId, subjectId, data) {
+  // Fix #11: deterministic id + ON CONFLICT eliminates read-then-write
+  const docId = `${userId}_${subjectId}`;
+  const payload = {
+    id: docId,
+    user_id: userId,
+    subject_id: subjectId,
+    pressure_score: data.pressure_score !== undefined ? data.pressure_score : 0,
+    intervention_level: data.intervention_level || 'L0',
+    sources: data.sources || {},
+    ...data,
+    updated_at: new Date(),
+  };
+  await query(
+    `INSERT INTO brain_pressure (id, user_id, subject_id, pressure_score, intervention_level, sources, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (id) DO UPDATE SET
+       pressure_score = EXCLUDED.pressure_score,
+       intervention_level = EXCLUDED.intervention_level,
+       sources = EXCLUDED.sources,
+       updated_at = EXCLUDED.updated_at`,
+    [docId, userId, subjectId, payload.pressure_score, payload.intervention_level,
+     JSON.stringify(payload.sources), payload.updated_at]
+  );
+  return { id: docId, ...payload };
+},
+async findByUser(userId) {
+  const { rows } = await query('SELECT * FROM brain_pressure WHERE user_id = $1', [userId]);
+  return rows;
+},
+},
+// ── reckoning_sessions ──────────────────────────────────────────────────────
+reckoningSessions: {
+async findById(id) {
+  const { rows } = await query('SELECT * FROM reckoning_sessions WHERE id = $1 LIMIT 1', [id]);
+  return rows[0] || null;
+},
+async create(userId, data) {
+  const id = randomUUID();
+  const payload = {
+    id,
+    user_id: userId,
+    status: 'triggered',
+    ...data,
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+  const q = _buildInsert('reckoning_sessions', payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+async update(id, data) {
+  // Fix #38: eliminate post-write re-fetch
+  const payload = { ...data, updated_at: new Date() };
+  const q = _buildUpdate('reckoning_sessions', 'id', id, payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+async findActiveByUser(userId) {
+  const { rows } = await query(
+    `SELECT * FROM reckoning_sessions WHERE user_id = $1
+     AND status IN ('triggered', 'deferred', 'in_progress')
+     ORDER BY created_at DESC LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
+},
+async claimActivationAnnouncement(userId, id) {
+  const { rows } = await query(
+    `UPDATE reckoning_sessions
+     SET activation_announced_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND activation_announced_at IS NULL
+     RETURNING activation_announced_at`,
+    [id, userId]
+  );
+  return rows.length > 0;
+},
+async findByUser(userId) {
+  const { rows } = await query(
+    'SELECT * FROM reckoning_sessions WHERE user_id = $1 ORDER BY created_at DESC',
+    [userId]
+  );
+  return rows;
+},
+},
+// ── chronicle_entries ────────────────────────────────────────────────────────
+chronicleEntries: {
+async create(userId, data) {
+  const id = randomUUID();
+  const payload = { id, user_id: userId, ...data, created_at: new Date() };
+  const q = _buildInsert('chronicle_entries', payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+async findByUser(userId) {
+  const { rows } = await query(
+    'SELECT * FROM chronicle_entries WHERE user_id = $1 ORDER BY week_start DESC',
+    [userId]
+  );
+  return rows;
+},
+async findLatest(userId) {
+  const { rows } = await query(
+    'SELECT * FROM chronicle_entries WHERE user_id = $1 ORDER BY week_start DESC LIMIT 1',
+    [userId]
+  );
+  return rows[0] || null;
+},
+},
+// ── almanac_entries ─────────────────────────────────────────────────────────
+almanacEntries: {
+async create(userId, data) {
+  // Fix #17: deterministic id enables direct unlock lookup
+  const entryCode = data.entry_code || randomUUID();
+  const id = `${userId}_${entryCode}`;
+  const payload = {
+    id,
+    user_id: userId,
+    unlocked: false,
+    unlocked_at: null,
+    narrative: null,
+    ...data,
+    created_at: new Date(),
+  };
+  const q = _buildInsert('almanac_entries', payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+async findByUser(userId) {
+  const { rows } = await query('SELECT * FROM almanac_entries WHERE user_id = $1', [userId]);
+  return rows;
+},
+async unlock(userId, entryCode, narrative) {
+  // Fix #17: deterministic id eliminates WHERE scan
+  const docId = `${userId}_${entryCode}`;
+  const { rows: [existing] } = await query('SELECT * FROM almanac_entries WHERE id = $1', [docId]);
+  if (!existing) return null;
+  const updatePayload = { unlocked: true, unlocked_at: new Date(), narrative, updated_at: new Date() };
+  await query(
+    `UPDATE almanac_entries SET unlocked = true, unlocked_at = $1, narrative = $2, updated_at = $3 WHERE id = $4`,
+    [updatePayload.unlocked_at, narrative, updatePayload.updated_at, docId]
+  );
+  return { id: docId, ...existing, ...updatePayload };
+},
+},
+// ── user_persona ────────────────────────────────────────────────────────────
+userPersona: {
+async get(userId) {
+  // Fix #12: derive current week's doc id; fallback to query for legacy docs
+  const _now = new Date();
+  const _day = _now.getDay();
+  const _monday = new Date(_now);
+  _monday.setDate(_now.getDate() - (_day === 0 ? 6 : _day - 1));
+  _monday.setHours(0, 0, 0, 0);
+  const _weekStr = _monday.toISOString().slice(0, 10);
+  const docId = `${userId}_${_weekStr}`;
+  const { rows: [byId] } = await query('SELECT * FROM user_persona WHERE id = $1', [docId]);
+  if (byId) return { id: byId.id, ...byId };
+  // Fallback: most recent persona (backward compat pre-migration)
+  const { rows } = await query(
+    'SELECT * FROM user_persona WHERE user_id = $1 ORDER BY assigned_week_start DESC LIMIT 1',
+    [userId]
+  );
+  return rows[0] ? { id: rows[0].id, ...rows[0] } : null;
+},
+async create(userId, data) {
+  // Fix #12: deterministic id keyed to assigned week
+  const _ws = data.assigned_week_start
+    ? (typeof data.assigned_week_start === 'string'
+      ? data.assigned_week_start.slice(0, 10)
+      : new Date(data.assigned_week_start).toISOString().slice(0, 10))
+    : new Date().toISOString().slice(0, 10);
+  const id = `${userId}_${_ws}`;
+  const payload = {
+    id,
+    user_id: userId,
+    ...data,
+    created_at: new Date(),
+  };
+  const q = _buildUpsert('user_persona', ['id'], payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+},
+// ── daily_ritual_cache ──────────────────────────────────────────────────────
+dailyRitualCache: {
+async get(userId, type, dateStr) {
+  // Fix #4: deterministic id eliminates 3-field WHERE scan
+  const docId = `${userId}_${type}_${dateStr}`;
+  const { rows } = await query('SELECT * FROM daily_ritual_cache WHERE id = $1', [docId]);
+  return rows[0] ? { id: docId, ...rows[0] } : null;
+},
+async set(userId, type, dateStr, data) {
+  // Fix #5: deterministic id + ON CONFLICT eliminates read-then-write (2 ops → 1)
+  const docId = `${userId}_${type}_${dateStr}`;
+  const serialized = JSON.stringify(data === undefined ? null : data);
+  const { rows } = await query(
+    `INSERT INTO daily_ritual_cache (id, user_id, type, date, data, updated_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       user_id = EXCLUDED.user_id,
+       type = EXCLUDED.type,
+       date = EXCLUDED.date,
+       data = EXCLUDED.data,
+       updated_at = NOW()
+     RETURNING *`,
+    [docId, userId, type, dateStr, serialized]
+  );
+  return rows[0] ? { id: docId, ...rows[0] } : { id: docId, user_id: userId, type, date: dateStr, data };
+},
+},
+// ── seedling_transactions ───────────────────────────────────────────────────
+seedlingTransactions: {
+async create(userId, data) {
+  const id = randomUUID();
+  const payload = { id, user_id: userId, ...data, created_at: new Date() };
+  const q = _buildInsert('seedling_transactions', payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+async findByUser(userId) {
+  const { rows } = await query(
+    'SELECT * FROM seedling_transactions WHERE user_id = $1 ORDER BY created_at DESC',
+    [userId]
+  );
+  return rows;
+},
+},
+// ── user_inventory ──────────────────────────────────────────────────────────
+userInventory: {
+async getItem(userId, itemCode) {
+  // Fix #6: deterministic id eliminates WHERE scan
+  const docId = `${userId}_${itemCode}`;
+  const { rows } = await query('SELECT * FROM user_inventory WHERE id = $1 LIMIT 1', [docId]);
+  return rows[0] ? { id: docId, ...rows[0] } : null;
+},
+async setItem(userId, itemCode, data) {
+  // Fix #7: deterministic id + ON CONFLICT eliminates read-then-write
+  const docId = `${userId}_${itemCode}`;
+  const payload = {
+    id: docId,
+    user_id: userId,
+    item_code: itemCode,
+    quantity: data.quantity !== undefined ? data.quantity : 0,
+    unlocked: data.unlocked !== undefined ? data.unlocked : false,
+    acquired_at: data.acquired_at || null,
+    ...data,
+    updated_at: new Date(),
+  };
+  const q = _buildUpsert('user_inventory', ['id'], payload);
+  await query(q.text, q.values);
+  return { id: docId, ...payload };
+},
+async findByUser(userId) {
+  const { rows } = await query('SELECT * FROM user_inventory WHERE user_id = $1', [userId]);
+  return rows;
+},
+},
+// ── marketplace_items ───────────────────────────────────────────────────────
+marketplaceItems: {
+async seed() {
+  const existing = await this.findAll();
+  if (existing.length > 0) return existing;
+  const items = [
+    {
+      item_code: 'reckoning_buffer',
+      name: 'Reckoning Buffer',
+      description: 'Extends Reckoning deferral from 4 hours to 24 hours.',
+      category: 'consumable',
+      gate1_condition: { type: 'reckoning_survived', count: 1 },
+      gate2_seedling_cost: 25,
+      purchase_limit: 3,
+    },
+    {
+      item_code: 'biome_midnight_garden',
+      name: 'Midnight Garden',
+      description: 'A dark, starlit biome theme.',
+      category: 'cosmetic',
+      gate1_condition: { type: 'fruition_sessions', count: 10 },
+      gate2_seedling_cost: 30,
+      purchase_limit: 1,
+    },
+    {
+      item_code: 'biome_autumn_grove',
+      name: 'Autumn Grove',
+      description: 'Warm amber and crimson biome theme.',
+      category: 'cosmetic',
+      gate1_condition: { type: 'fruition_sessions', count: 10 },
+      gate2_seedling_cost: 30,
+      purchase_limit: 1,
+    },
+    {
+      item_code: 'deep_audit',
+      name: 'Deep Audit',
+      description: 'AI-generated meta-cognitive analysis of a subject.',
+      category: 'service',
+      gate1_condition: {
+        type: 'thriving_sessions_across_subjects',
+        count: 20,
+        min_subjects: 3,
+      },
+      gate2_seedling_cost: 40,
+      purchase_limit: 999,
+    },
+    {
+      item_code: 'archive_expansion',
+      name: 'Archive Expansion',
+      description: 'Archive a mastered subject with extended review intervals.',
+      category: 'service',
+      gate1_condition: { type: 'subject_ks_and_fruiting', ks: 100, fruiting: 15 },
+      gate2_seedling_cost: 60,
+      purchase_limit: 1,
+    },
+    // P8.3: Rare Flora per zone — was missing from catalog (spec P8.3)
+    {
+      item_code: 'rare_flora',
+      name: 'Rare Flora',
+      description: 'A rare botanical specimen for a specific subject zone in your Biome.',
+      category: 'cosmetic',
+      gate1_condition: { type: 'fruition_sessions_in_subject', count: 5 },
+      gate2_seedling_cost: 10,
+      // BUG 8 FIX: no global purchase_limit — per-subject enforcement is in purchaseItem
+      // using inventory key `rare_flora_${subjectId}` (one per zone, unlimited zones).
+      purchase_limit: null,
+    },
+    {
+      item_code: 'artifact_night_scholar',
+      name: 'The Night Scholar',
+      description: 'Artifact for studying past midnight.',
+      category: 'artifact',
+      gate1_condition: { type: 'sessions_after_midnight', count: 10 },
+      gate2_seedling_cost: 15,
+      purchase_limit: 1,
+    },
+    {
+      item_code: 'artifact_dawn_keeper',
+      name: 'The Dawn Keeper',
+      description: 'Artifact for early morning sessions.',
+      category: 'artifact',
+      gate1_condition: { type: 'sessions_before_7am', count: 10 },
+      gate2_seedling_cost: 15,
+      purchase_limit: 1,
+    },
+    {
+      item_code: 'artifact_unbroken',
+      name: 'The Unbroken',
+      description: 'Artifact for sustained focus.',
+      category: 'artifact',
+      gate1_condition: { type: 'consecutive_days_no_wilt', count: 30 },
+      gate2_seedling_cost: 20,
+      purchase_limit: 1,
+    },
+    {
+      item_code: 'artifact_archivist',
+      name: 'The Archivist',
+      description: 'Artifact for completing Archive Expansion.',
+      category: 'artifact',
+      gate1_condition: { type: 'archive_expansion_owned', count: 1 },
+      gate2_seedling_cost: 10,
+      purchase_limit: 1,
+    },
+  ];
+  // Migrated from Firestore batch: ON CONFLICT DO NOTHING for idempotency
+  for (const item of items) {
+    const id = randomUUID();
+    await query(
+      `INSERT INTO marketplace_items (id, item_code, name, description, category, gate1_condition, gate2_seedling_cost, purchase_limit, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (item_code) DO NOTHING`,
+      [id, item.item_code, item.name, item.description, item.category,
+       JSON.stringify(item.gate1_condition), item.gate2_seedling_cost, item.purchase_limit, new Date()]
+    );
+  }
+  return items;
+},
+async findAll() {
+  const { rows } = await query('SELECT * FROM marketplace_items ORDER BY created_at ASC');
+  return rows;
+},
+async findByCode(code) {
+  const { rows } = await query(
+    'SELECT * FROM marketplace_items WHERE item_code = $1 LIMIT 1',
+    [code]
+  );
+  return rows[0] || null;
+},
+},
+// ── exam_sessions extension helpers ─────────────────────────────────────────
+examSessionsExt: {
+async addIsReckoning(userId, examSessionId, isReckoning) {
+  return db.examSessions.update(userId, examSessionId, { is_reckoning: isReckoning });
+},
+},
+// ── mastery_goals (PB.1) — [DESIGN: §12.1, §12.2, §12.3] ──────────────────
+masteryGoals: {
+async create(userId, data) {
+  const id = randomUUID();
+  const now = new Date();
+  const payload = {
+    // Identity
+    user_id:             userId,
+    subject_id:          data.subject_id          || null,
+    name:                data.name                || null,
+    card_ids:            data.card_ids            || [],
+    cross_bubble_card_ids: data.cross_bubble_card_ids || [],
+    deck_ids:            data.deck_ids            || [],
+    // Timeline [DESIGN: §12.1]
+    created_at:          now,
+    test_date:           data.test_date           || null,
+    exam_date:           data.exam_date           || null,
+    deadline_editable:   true,
+    status:              data.exam_date ? 'active' : 'dormant',
+    // Phase [DESIGN: §12.1]
+    phase:               'SEEDING',
+    phase_entered_at:    now,
+    phase_history:       [],
+    // Progress [DESIGN: §12.1]
+    current_ks:          0,
+    target_ks:           100,
+    required_ks_per_day: 0,
+    actual_ks_velocity:  0,
+    trajectory_gap:      0,
+    trajectory_status:   'ON_TRACK',
+    projected_completion_date:   null,
+    projected_best_case:         null,
+    projected_minimum_viable:    null,
+    // Daily Contract [DESIGN: §9, §12.1]
+    daily_contract_cards:        0,
+    daily_contract_breakdown:    {},
+    daily_contract_minutes:      0,
+    daily_contract_generated_at: null,
+    daily_contract_completed:    false,
+    daily_contract_consequence:  null,
+    // Stall Detection [DESIGN: §6, §12.1]
+    stall_active:              false,
+    stall_detected_at:         null,
+    stall_cause:               null,
+    stall_response_active:     null,
+    consecutive_low_velocity_days: 0,
+    stall_resolved_at:         null,
+    // Velocity [DESIGN: §3.4]
+    velocity_samples:     [],
+    last_recalculated_at: null,
+    // Outcomes [DESIGN: §12.1]
+    completed_at:              null,
+    final_ks_at_deadline:      null,
+    rescue_active:             false,
+    rescue_mode_entered_at:    null,
+    learning_debt_card_count:  0,
+    test_date_gate_failed:     false,
+    test_date_gate_passed:     false, // FIX (Issue 11): tracks formal gate pass event
+    // Rescue and early-stall flags
+    rescue_eligible:              false,
+    seeding_early_stall_checked:  false,
+    // Contract Streaks (GAP-S4)
+    contract_streak_current:      0,
+    contract_streak_best:         0,
+    // Miss-consequence field (GAP-M2)
+    daily_contract_miss_consequence: null,
+    // Autopsy [DESIGN: §11]
+    autopsy_generated:    false,
+    autopsy_generated_at: null,
+    // Coverage tracking [DESIGN: §2.2]
+    coverage_gap_active:  false,
+    ...data,
+    // These must override any spread — created_at is authoritative
+    id,
+    user_id:     userId,
+    created_at:  now,
+    updated_at:  now,
+  };
+  const q = _buildInsert('mastery_goals', payload);
+  await query(q.text, q.values);
+  return { id, ...payload };
+},
+async findById(userId, goalId) {
+  const { rows } = await query(
+    'SELECT * FROM mastery_goals WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [goalId, userId]
+  );
+  return _normalizeMasteryGoalRow(rows[0] || null);
+},
+async findByUser(userId, statusFilter = null) {
+  let sql = 'SELECT * FROM mastery_goals WHERE user_id = $1';
+  const vals = [userId];
+  if (statusFilter) { sql += ` AND status = $${vals.length + 1}`; vals.push(statusFilter); }
+  sql += ' ORDER BY created_at DESC';
+  const { rows } = await query(sql, vals);
+  return rows.map(_normalizeMasteryGoalRow);
+},
+async findActive(userId) {
+  return this.findByUser(userId, 'active');
+},
+async findBySubject(userId, subjectId) {
+  const { rows } = await query(
+    "SELECT * FROM mastery_goals WHERE user_id = $1 AND subject_id = $2 AND status = 'active'",
+    [userId, subjectId]
+  );
+  return rows.map(_normalizeMasteryGoalRow);
+},
+async update(userId, goalId, data) {
+  const payload = { ...data, updated_at: new Date() };
+  const q = _buildUpdate('mastery_goals', 'id', goalId, payload, userId);
+  const result = await query(q.text, q.values);
+  if (result.rowCount === 0) return null;
+  const { rows } = await query(
+    'SELECT * FROM mastery_goals WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [goalId, userId]
+  );
+  return rows[0] ? _normalizeMasteryGoalRow({ id: goalId, ...rows[0] }) : null;
+},
+async archive(userId, goalId, finalStatus = 'archived') {
+  return this.update(userId, goalId, {
+    status:      finalStatus,
+    archived_at: new Date(),
+  });
+},
+// goal_history sub-collection [DESIGN: §12.2] — migrated to goal_history table
+// Event-specific fields live in data JSONB so history writes remain schema-stable.
+async addHistoryEntry(goalId, entry) {
+  const id = randomUUID();
+  const createdAt = entry?.created_at ? new Date(entry.created_at) : new Date();
+  const eventType = entry?.event_type || null;
+  const data = { ...(entry || {}) };
+  delete data.event_type;
+  delete data.created_at;
+  await query(
+    'INSERT INTO goal_history (id, goal_id, event_type, data, created_at) VALUES ($1,$2,$3,$4,$5)',
+    [id, goalId, eventType, JSON.stringify(data), createdAt]
+  );
+  return { id, goal_id: goalId, event_type: eventType, ...data, created_at: createdAt };
+},
+async getHistory(goalId, limit = 90) {
+  const { rows } = await query(
+    'SELECT * FROM goal_history WHERE goal_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [goalId, limit]
+  );
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
+},
+async getHistoryForWeek(goalId, weekStart, weekEnd) {
+  const { rows } = await query(
+    'SELECT * FROM goal_history WHERE goal_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY created_at ASC',
+    [goalId, weekStart, weekEnd]
+  );
+  return rows.map((row) => ({ ...row, ...(row.data || {}) }));
+},
+// concept_clusters sub-collection [DESIGN: §12.3] — migrated to concept_clusters table
+async addCluster(goalId, clusterData) {
+  const id = randomUUID();
+  const payload = {
+    id,
+    goal_id:        goalId,
+    name:           clusterData.name     || 'All Cards',
+    card_ids:       clusterData.card_ids || [],
+    cluster_ks:     clusterData.cluster_ks || 0,
+    cluster_status: 'WEAK',
+    identified_at:  new Date(),
+    last_ks_update: new Date(),
+    updated_at:     new Date(),
+  };
+  await query(
+    `INSERT INTO concept_clusters (id, goal_id, name, card_ids, cluster_ks, cluster_status, identified_at, last_ks_update, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [id, goalId, payload.name, JSON.stringify(payload.card_ids), payload.cluster_ks,
+     payload.cluster_status, payload.identified_at, payload.last_ks_update, payload.updated_at]
+  );
+  return { id, ...payload };
+},
+async getClusters(goalId) {
+  const { rows } = await query(
+    'SELECT * FROM concept_clusters WHERE goal_id = $1 ORDER BY identified_at ASC',
+    [goalId]
+  );
+  return rows.map((row) => ({
+    ...row,
+    cluster_ks: Number(row.cluster_ks) || 0,
+  }));
+},
+async updateCluster(goalId, clusterId, data) {
+  const payload = { ...data, last_ks_update: new Date(), updated_at: new Date() };
+  const q = _buildUpdate('concept_clusters', 'id', clusterId, payload);
+  await query(q.text, q.values);
+  const { rows } = await query('SELECT * FROM concept_clusters WHERE id = $1', [clusterId]);
+  return { id: clusterId, ...rows[0] };
+},
+},
+};
+
+
+// ── Module-level caches and helpers ─────────────────────────────────────────
+let _achievementsCache = null;            // Fix #49 — achievements static cache
+let _usersCacheTTL = 0;
+let _usersCache = null;
+const USERS_CACHE_TTL_MS = 300000;
+async function getUsersWithCache() {
+  if (_usersCache && Date.now() - _usersCacheTTL < USERS_CACHE_TTL_MS) return _usersCache;
+  _usersCache = await db.users.findAll();
+  _usersCacheTTL = Date.now();
+  return _usersCache;
+}
+const _progressRateLimit = new Map();
+const PROGRESS_RATE_LIMIT_MS = 30000;
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CENTRAL AI ROUTING
+// All Gemini provider access, model selection, reasoning policy, quota state,
+// project/key rotation, retries and telemetry live under services/ai.
+// Feature code routes through the centralized orchestrator by canonical task ID.
+
+// ════════════════════════════════════════════════════════════════════════════
+//  EXISTING SERVICES (SRS, XP, Streak, Tree, Analytics)
+//  Modified to integrate with Living Ecosystem hooks
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── srsService ───────────────────────────────────────────────────────────────
+
+// ── Study Mode Intervals ────────────────────────────────────────────────────
+// Sub-day intervals (again/hard/good) are in milliseconds.
+// easy_days is in days (applied to all card stages as a minimum graduation interval).
+// Learning cards (stage 1–2): again and hard requeue within session.
+// Review cards  (stage 3–5): only again requeues; hard/good/easy use SM-2 interval_days.
+const STUDY_MODE_INTERVALS = {
+  intense: { again_ms: 1  * 60 * 1000, hard_ms: 1 * 60 * 60 * 1000, good_ms:  3 * 60 * 60 * 1000, easy_days: 1 },
+  normal:  { again_ms: 6  * 60 * 1000, hard_ms: 3 * 60 * 60 * 1000, good_ms:  8 * 60 * 60 * 1000, easy_days: 2 },
+  casual:  { again_ms: 20 * 60 * 1000, hard_ms: 6 * 60 * 60 * 1000, good_ms: 24 * 60 * 60 * 1000, easy_days: 5 },
+};
+
+// ── FSRS-4.5 Implementation ───────────────────────────────────────────────
+// Pre-trained weights from the FSRS-4.5 paper (do not modify).
+const FSRS_W = [
+  0.4072, 1.1829, 3.1262, 15.4722, // w[0-3]:  initial stability per rating
+  7.2102, 0.5316, 1.0651,  0.0589, // w[4-7]:  initial difficulty
+  1.5330, 0.1544, 1.0070,  1.9395, // w[8-11]: stability after recall
+  0.1100, 0.2900, 2.2700,  0.0000, // w[12-15]:stability after lapse
+  2.9898, 0.5100, 0.3400,          // w[16-18]:difficulty update
+];
+
+// Study-mode → target retention mapping (replaces SM-2 interval growth as the
+// mode-specific scheduling lever for review-phase cards).
+const FSRS_TARGET_RETENTION = {
+  intense: 0.95, // review more often, less forgetting tolerated
+  normal:  0.90, // standard FSRS default
+  casual:  0.85, // longer intervals, more forgetting acceptable
+};
+
+// ── FSRS helper functions ─────────────────────────────────────────────────
+
+function fsrsInitialDifficulty(rating) {
+  // rating: 1=again, 2=hard, 3=good, 4=easy
+  return Math.min(10, Math.max(1, FSRS_W[4] - (rating - 3) * FSRS_W[5]));
+}
+
+function fsrsInitialStability(rating) {
+  // w[0]=again, w[1]=hard, w[2]=good, w[3]=easy
+  return Math.max(0.1, FSRS_W[rating - 1]);
+}
+
+function fsrsNextDifficulty(D, rating) {
+  const D0_3 = fsrsInitialDifficulty(3); // neutral anchor
+  const rawD  = D - FSRS_W[6] * (rating - 3);
+  return Math.min(10, Math.max(1, FSRS_W[7] * D0_3 + (1 - FSRS_W[7]) * rawD));
+}
+
+function fsrsStabilityAfterRecall(D, S, R, rating) {
+  const easyBonus = rating === 4 ? FSRS_W[16] : 1;
+  // Core growth term — excludes hard penalty so we can branch on it cleanly.
+  const growthTerm =
+    Math.exp(FSRS_W[8]) *
+    (11 - D) *
+    Math.pow(S, -FSRS_W[9]) *
+    (Math.exp(FSRS_W[10] * (1 - R)) - 1) *
+    easyBonus;
+
+  if (rating === 2) {
+    if (FSRS_W[15] === 0) {
+      // Default FSRS-4.5 weights set w[15]=0, zeroing out stability growth for
+      // hard responses and causing perpetual interval stagnation.
+      // Geometric-mean correction: hard stability lands at √(S × S′_good),
+      // always strictly between no-growth (S) and full-good-growth (S′_good).
+      // Adapts automatically to D, S, R — no magic constant required.
+      const sGood = S * (growthTerm + 1); // what 'good' would give
+      return Math.sqrt(S * sGood);
+    }
+    // w[15] is non-zero (recalibrated weights) — use standard FSRS formula.
+    return S * (growthTerm * FSRS_W[15] + 1);
+  }
+
+  return S * (growthTerm + 1);
+}
+
+function fsrsStabilityAfterLapse(D, S, R) {
+  return Math.max(
+    FSRS_W[11],
+    Math.pow(D, -FSRS_W[12]) *
+    (Math.pow(S + 1, FSRS_W[13]) - 1) *
+    Math.exp(FSRS_W[14] * (1 - R))
+  );
+}
+
+function fsrsRetrievability(daysSinceReview, S) {
+  // FSRS exponential forgetting curve: R(t,S) = 0.9^(t/S)
+  // At t=S days R=0.90 (target). Replaces the power-law approximation which
+  // decayed too slowly, causing SLIPPING and weight modulation to fire ~56%
+  // later than intended and miscalibrating stability growth via incorrect R.
+  if (!S || S <= 0 || !daysSinceReview || daysSinceReview <= 0) return 1;
+  return Math.pow(0.9, daysSinceReview / S);
+}
+
+function fsrsInterval(S, targetRetention) {
+  // Exact inverse of exponential R: I = S × ln(R_target) / ln(0.9)
+  return Math.max(1, Math.round(S * Math.log(targetRetention) / Math.log(0.9)));
+}
+
+// Bootstrap FSRS state from existing SM-2 fields for cards that pre-date FSRS.
+function initFsrsFromSm2(card) {
+  const S      = Math.max(0.1, card.interval_days || 1);
+  const efNorm = Math.max(0, Math.min(1, ((card.easiness_factor || 2.5) - 1.3) / (3.5 - 1.3)));
+  const D      = Math.round((10 - efNorm * 9) * 10) / 10;
+  return { S, D };
+}
+
+// ── Latency Modulation Layer ──────────────────────────────────────────────
+
+function computeLatencyModifier(responseTimeMs, cardBaselineMs) {
+  if (!cardBaselineMs || cardBaselineMs <= 0 || !responseTimeMs) return 1.0;
+  const cappedMs = Math.min(responseTimeMs, 90000);
+  const ratio    = cappedMs / cardBaselineMs;
+  if (ratio < 0.40) return 1.15; // very fast: strong fluency signal
+  if (ratio < 0.75) return 1.07; // fast: above-baseline fluency
+  if (ratio < 1.50) return 1.00; // normal range: no adjustment
+  if (ratio < 2.50) return 0.92; // slow: effortful retrieval
+  if (ratio < 4.00) return 0.82; // very slow: marginal recall
+  return 0.72;                   // extremely slow: borderline failure
+}
+
+function updateCardBaseline(existingAvg, newResponseMs, reviewCount) {
+  const alpha = 0.3;
+  if (!existingAvg || reviewCount < 1) return newResponseMs;
+  return Math.round(existingAvg * (1 - alpha) + newResponseMs * alpha);
+}
+
+// Stage from FSRS stability — replaces SM-2 computeStage(repetitions, interval).
+// Thresholds mirror the old SM-2 interval thresholds so UX disruption is minimal.
+function computeStageFromStability(S, repetitionCount) {
+  if (!repetitionCount || repetitionCount === 0) return 1;
+  if (!S || S < 1)  return 1;
+  if (S < 7)        return 2;
+  if (S < 21)       return 3;
+  if (S < 90)       return 4;
+  return 5;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── HYBRID: computeStageHybrid — FSRS stability + SM-2 rep dual gate ─────────
+// Stage advancement requires BOTH gates: memory strength (FSRS stability S) AND
+// behavioural confirmation (repetition_count). In practice, natural FSRS
+// progression accumulates reps in parallel with S, so the rep gate rarely
+// blocks honest reviews — it only prevents a single "Easy" click from leaping
+// to stage 4 without behavioural confirmation.
+//
+// Rep thresholds (calibrated to natural FSRS progression):
+//   Stage 5: S ≥ 90  AND rep ≥ 5   (very long-term + confirmed mastery)
+//   Stage 4: S ≥ 21  AND rep ≥ 3   (strong memory + confirmed several times)
+//   Stage 3: S ≥ 7   AND rep ≥ 2   (meaningful stability + confirmed twice)
+//   Stage 2: S ≥ 1   AND rep ≥ 1   (any real stability + first confirmation)
+//   Stage 1: everything else
+function computeStageHybrid(S, repetitionCount) {
+  if (!repetitionCount || repetitionCount === 0) return 1;
+  if (!S || S < 0.1) return 1;
+  if (S >= 90 && repetitionCount >= 5) return 5;
+  if (S >= 21 && repetitionCount >= 3) return 4;
+  if (S >= 7  && repetitionCount >= 2) return 3;
+  if (S >= 1  && repetitionCount >= 1) return 2;
+  return 1;
+}
+
+
+function calculateNextReview(card, response, mode = 'normal', responseTimeMs = null) {
+const mi              = STUDY_MODE_INTERVALS[mode] || STUDY_MODE_INTERVALS.normal;
+const targetRetention = FSRS_TARGET_RETENTION[mode] || FSRS_TARGET_RETENTION.normal;
+const ratingMap       = { again: 1, hard: 2, good: 3, easy: 4 };
+const rating          = ratingMap[response];
+if (!rating) throw new Error(`Invalid response: ${response}`);
+
+let {
+  interval_days, easiness_factor, repetition_count, stage,
+  fsrs_stability, fsrs_difficulty, avg_response_time_ms, last_reviewed_at, last_response,
+} = card;
+
+const isLearning = (stage || 1) <= 2; // Stage 1–2 = learning, 3–5 = review
+
+// SM-2 easiness_factor kept for backward compat (analytics, cloning, resets).
+// It no longer drives scheduling but is still updated and stored.
+const qualityMap  = { again: 0, hard: 2, good: 3, easy: 5 };
+const q           = qualityMap[response];
+easiness_factor   = Math.max(1.3, (easiness_factor || 2.5) + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)));
+
+// Requeue flag — unchanged from SM-2: again always; hard on learning cards only.
+const requeue = response === 'again' || (response === 'hard' && isLearning);
+
+// Days since last review (needed for retrievability R).
+const daysSinceReview = last_reviewed_at
+  ? Math.max(0, (Date.now() - new Date(last_reviewed_at).getTime()) / 86400000)
+  : 0;
+
+let newS, newD, nextReviewAt;
+
+if (isLearning) {
+  // ── Learning phase (stage 1–2) ────────────────────────────────────────
+  // Sub-day intervals are unchanged. We still run FSRS formulas so the card
+  // has correct stability/difficulty ready the moment it graduates to review.
+  if (!fsrs_stability || !fsrs_difficulty) {
+    newS = fsrsInitialStability(rating);
+    newD = fsrsInitialDifficulty(rating);
+  } else {
+    newD       = fsrsNextDifficulty(fsrs_difficulty, rating);
+    const R    = fsrsRetrievability(daysSinceReview, fsrs_stability);
+    newS = response === 'again'
+      ? fsrsStabilityAfterLapse(newD, fsrs_stability, R)
+      : fsrsStabilityAfterRecall(newD, fsrs_stability, R, rating);
+  }
+  newS = Math.max(0.1, newS);
+
+  if (response === 'again') {
+    repetition_count = 0;
+    interval_days    = 1;
+    stage            = Math.max(1, (stage || 1) - 1);
+    nextReviewAt     = new Date(Date.now() + mi.again_ms);
+  } else {
+    repetition_count = (repetition_count || 0) + 1;
+    interval_days    = 1;
+    stage            = computeStageHybrid(newS, repetition_count);
+    if (response === 'hard') {
+      nextReviewAt = new Date(Date.now() + mi.hard_ms);
+    } else if (response === 'good') {
+      nextReviewAt = new Date(Date.now() + mi.good_ms);
+    } else {
+      // easy — graduate
+      nextReviewAt = new Date(Date.now() + mi.easy_days * 24 * 60 * 60 * 1000);
+    }
+  }
+} else {
+  // ── Review phase (stage 3–5) ─────────────────────────────────────────
+  // Bootstrap FSRS from SM-2 fields for cards that pre-date this implementation.
+  if (!fsrs_stability || !fsrs_difficulty) {
+    const init   = initFsrsFromSm2(card);
+    fsrs_stability  = init.S;
+    fsrs_difficulty = init.D;
+  }
+
+  const R = fsrsRetrievability(daysSinceReview, fsrs_stability);
+  newD    = fsrsNextDifficulty(fsrs_difficulty, rating);
+
+  if (response === 'again') {
+    newS             = Math.max(0.1, fsrsStabilityAfterLapse(newD, fsrs_stability, R));
+    repetition_count = 0;
+    interval_days    = 1;
+  } else {
+    newS = fsrsStabilityAfterRecall(newD, fsrs_stability, R, rating);
+
+    // Latency modulation — apply only on correct responses in review phase.
+    const cappedRtMs = responseTimeMs ? Math.min(responseTimeMs, 90000) : null;
+    let modifier     = computeLatencyModifier(cappedRtMs, avg_response_time_ms);
+    // Flaw-3 skepticism cap: very fast answer right after an 'again' → no fluency boost.
+    if (last_response === 'again' && cappedRtMs && avg_response_time_ms &&
+        cappedRtMs / avg_response_time_ms < 0.4) {
+      modifier = Math.min(1.0, modifier);
+    }
+    newS = Math.max(0.1, newS * modifier);
+
+    repetition_count = (repetition_count || 0) + 1;
+    interval_days    = fsrsInterval(newS, targetRetention);
+  }
+
+  stage        = computeStageHybrid(newS, repetition_count);
+  nextReviewAt = new Date(Date.now() + interval_days * 24 * 60 * 60 * 1000);
+}
+
+return {
+  interval_days,
+  easiness_factor,
+  repetition_count,
+  stage,
+  next_review_at: nextReviewAt,
+  requeue,
+  fsrs_stability: newS,
+  fsrs_difficulty: newD,
+};
+}
+
+// computeStage — DEPRECATED. Legacy SM-2 stage computation kept for backward
+// compatibility only (analytics, external tooling, old card migration reads).
+// Scheduling now uses computeStageHybrid (S + rep dual-gate) since hybrid rollout.
+// DO NOT use for new scheduling logic — see computeStageHybrid above.
+function computeStage(repetitions, interval) {
+if (repetitions === 0) return 1;
+if (interval <= 1) return 2;
+if (interval <= 14) return 3;
+if (interval <= 60) return 4;
+return 5;
+}
+
+function isCardDue(card, now = new Date()) {
+if (!card.next_review_at) return true;
+// Exact timestamp comparison — required for sub-day mode intervals (again/hard/good).
+// Date-only stripping is intentionally removed.
+return new Date(card.next_review_at) <= now;
+}
+// ── Legacy progression compatibility ────────────────────────────────────────
+// XP has been retired from KIWI. These helpers remain only so historical rows
+// can be read without a destructive database migration; no new XP is awarded.
+
+function computeLevel(totalXP) {
+const bands = [
+{ upTo: 10, perLevel: 500 },
+{ upTo: 20, perLevel: 1000 },
+{ upTo: 30, perLevel: 2000 },
+{ upTo: 50, perLevel: 3000 },
+{ upTo: 75, perLevel: 5000 },
+{ upTo: 100, perLevel: 8000 },
+{ upTo: Infinity, perLevel: 15000 },
+];
+let level = 1,
+remaining = totalXP;
+for (const band of bands) {
+const levelsInBand =
+band.upTo === Infinity
+? 999
+: Math.min(band.upTo - (level - 1), Math.floor(remaining / band.perLevel));
+if (remaining < band.perLevel) break;
+const earned = Math.min(levelsInBand, Math.floor(remaining / band.perLevel));
+level += earned;
+remaining -= earned * band.perLevel;
+if (level > band.upTo) continue;
+break;
+}
+return { level, xpIntoLevel: remaining };
+}
+
+function getXpToNextLevel(currentLevel) {
+if (currentLevel < 10) return 500;
+if (currentLevel < 20) return 1000;
+if (currentLevel < 30) return 2000;
+if (currentLevel < 50) return 3000;
+if (currentLevel < 75) return 5000;
+if (currentLevel < 100) return 8000;
+return 15000;
+}
+
+async function awardXP(userId, amount) {
+return { retired: true, awarded: 0 };
+}
+
+function toPublicStats(stats) {
+if (!stats) return null;
+const {
+total_xp: _totalXp,
+xp_in_current_level: _xpInLevel,
+current_level: _currentLevel,
+xp_earned: _xpEarned,
+...publicStats
+} = stats;
+return publicStats;
+}
+
+// One study contract feeds every product surface. Historical rows may predate
+// the meaningful_session column, so their recorded evidence is evaluated using
+// the same five-distinct-card / five-active-minute threshold.
+function sessionIsMeaningful(session) {
+  if (!session) return false;
+  if (session.meaningful_session === true) return true;
+  const uniqueCards = Number(session.unique_cards_reviewed ?? session.unique_cards) || 0;
+  const activeSeconds = Number(session.active_seconds) || 0;
+  return ecosystemV2.isMeaningfulSession({ uniqueCards, activeSeconds });
+}
+// ════════════════════════════════════════════════════════════════════════════
+//  DEADLINE FSRS SERVICE (PB.7)  [DESIGN: §5]
+//  FSRS stability values are NEVER modified — only scheduling interval compressed
+// ════════════════════════════════════════════════════════════════════════════
+
+// [DESIGN: §5.2] Phase urgency ceilings (max U per phase)
+// ⚠ CORRECTED from v1.0: HARDENING=0.60, FINAL=0.80, RESCUE=0.90
+const PHASE_URGENCY_CEILING = {
+  SEEDING:   0.10,
+  GROWING:   0.30,
+  HARDENING: 0.60,
+  FINAL:     0.80,
+  RESCUE:    0.90,
+};
+
+// [DESIGN: §5.2] Card-state multipliers — applied within phase ceiling
+// U_final = phase_ceiling × state_multiplier
+const CARD_STATE_URGENCY_MULTIPLIER = {
+  VERIFIED:  0.3,
+  STABLE:    0.5,
+  GROWING:   0.5,
+  SEEDLING:  0.5,
+  SLIPPING:  0.65, // early-warning: between STABLE and AVOIDED
+  AVOIDED:   0.80,
+  STUCK:     0.85,
+  FRAGILE:   0.9,
+  DANGEROUS: 1.0,
+};
+
+// [DESIGN: §5.3] Hard interval caps per phase per card state.
+// null = no cap (interval governed by urgency multiplier only).
+// ⚠ CORRECTED from v1.0: values now match design §5.3 table exactly.
+// SEEDING: no caps [DESIGN: §5.3 — "None"]
+// HARDENING: global cap of 5 days for all cards [DESIGN: §2.4]
+const PHASE_INTERVAL_CAPS = {
+  SEEDING: {
+    default: null,
+  },
+  GROWING: {
+    STUCK:     7,
+    FRAGILE:   7,
+    DANGEROUS: 5,
+    default:   null,
+  },
+  HARDENING: {
+    STUCK:     4,
+    FRAGILE:   4,
+    DANGEROUS: 2,
+    default:   5,
+  },
+  FINAL: {
+    STUCK:     2,
+    FRAGILE:   2,
+    DANGEROUS: 1,
+    default:   null,
+  },
+  RESCUE: {
+    default:   1,
+  },
+};
+
+// [DESIGN: §5.2] Compute effective U for a card in a given phase
+function computeUrgencyMultiplier(phase, cardState) {
+  const ceiling   = PHASE_URGENCY_CEILING[phase] || 0;
+  const stateMult = CARD_STATE_URGENCY_MULTIPLIER[cardState] || 0.5;
+  return parseFloat((ceiling * stateMult).toFixed(4));
+}
+
+// [DESIGN: §5.2, §5.3] Wrap base SRS interval with urgency compression and hard cap.
+// NEVER modifies easiness_factor, repetition_count, or stability.
+function wrapIntervalWithUrgency(baseInterval, cardStateDoc, phase) {
+  if (!phase) return baseInterval;
+  const cardState  = cardStateDoc?.state || CARD_STATES.GROWING;
+  const U          = computeUrgencyMultiplier(phase, cardState);
+  const compressed = Math.max(1, Math.round(baseInterval * (1 - U)));
+  const phaseCaps  = PHASE_INTERVAL_CAPS[phase] || {};
+  const stateCap   = phaseCaps[cardState] !== undefined ? phaseCaps[cardState] : phaseCaps.default;
+  if (stateCap !== null && stateCap !== undefined) {
+    return Math.min(compressed, stateCap);
+  }
+  return compressed;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  BUBBLE SCHEDULER SERVICE (PB.8)  [DESIGN: §4]
+// ════════════════════════════════════════════════════════════════════════════
+
+// [DESIGN: §4.4] Multi-bubble allocation using trajectory_gap formula
+// ⚠ CORRECTED from v1.0: gap-based weights (not status buckets), min 15%, max 70%
+function computeAllocationWeights(activeGoals) {
+  if (!activeGoals || activeGoals.length === 0) return {};
+  if (activeGoals.length === 1) return { [activeGoals[0].id]: 100 };
+
+  const n = activeGoals.length;
+  const gaps = activeGoals.map((g) => Math.max(0, Number(g.trajectory_gap) || 0));
+  const totalGap = gaps.reduce((a, b) => a + b, 0);
+  const raw = activeGoals.map((g, i) => ({
+    id: g.id,
+    target: totalGap > 0 ? (gaps[i] / totalGap) * 100 : 100 / n,
+  }));
+
+  const minWeight = n * 15 <= 100 ? 15 : 0;
+  const maxWeight = 70;
+  const weights = new Map();
+  let free = raw.map((r) => r.id);
+  let remaining = 100;
+
+  for (let pass = 0; pass < n + 2 && free.length > 0; pass++) {
+    const targetTotal = free.reduce(
+      (sum, id) => sum + (raw.find((r) => r.id === id)?.target || 0),
+      0
+    );
+    const proposed = new Map();
+    for (const id of free) {
+      const base = raw.find((r) => r.id === id)?.target || 0;
+      proposed.set(id, targetTotal > 0 ? remaining * (base / targetTotal) : remaining / free.length);
+    }
+
+    const newlyFixed = [];
+    for (const id of free) {
+      const value = proposed.get(id);
+      if (value < minWeight) {
+        weights.set(id, minWeight);
+        remaining -= minWeight;
+        newlyFixed.push(id);
+      } else if (value > maxWeight) {
+        weights.set(id, maxWeight);
+        remaining -= maxWeight;
+        newlyFixed.push(id);
+      }
+    }
+
+    if (newlyFixed.length === 0) {
+      for (const id of free) weights.set(id, proposed.get(id));
+      remaining = 0;
+      break;
+    }
+    free = free.filter((id) => !newlyFixed.includes(id));
+  }
+
+  if (free.length > 0 && remaining > 0) {
+    const share = remaining / free.length;
+    free.forEach((id) => weights.set(id, share));
+  }
+
+  const result = {};
+  const remainders = raw.map(({ id }) => {
+    const exact = weights.get(id) ?? (100 / n);
+    const floored = Math.floor(exact);
+    result[id] = floored;
+    return { id, remainder: exact - floored };
+  });
+  let diff = 100 - Object.values(result).reduce((sum, v) => sum + v, 0);
+  remainders.sort((a, b) => b.remainder - a.remainder);
+  let guard = 0;
+  while (diff !== 0 && guard++ < 1000) {
+    let changed = false;
+    for (const { id } of remainders) {
+      if (diff > 0 && result[id] < maxWeight) {
+        result[id] += 1;
+        diff -= 1;
+        changed = true;
+      } else if (diff < 0 && result[id] > minWeight) {
+        result[id] -= 1;
+        diff += 1;
+        changed = true;
+      }
+      if (diff === 0) break;
+    }
+    if (!changed) break;
+  }
+  return result;
+}
+
+// [DESIGN: §4.2] Cards eligible for parking: STABLE or VERIFIED, next_review ≥ 5 days away.
+function isParkable(stateDoc, now = new Date()) {
+  if (!stateDoc) return false;
+  const parkableStates = [CARD_STATES.STABLE, CARD_STATES.VERIFIED];
+  if (!parkableStates.includes(stateDoc.state)) return false;
+  if (!stateDoc.next_review_at) return false;
+  const nextReview = new Date(stateDoc.next_review_at);
+  const daysUntil  = Math.ceil((nextReview - now) / 86400000);
+  return daysUntil >= 5;
+}
+
+// [DESIGN: §2.6] Build RESCUE deck: cluster leaders + all STUCK/FRAGILE/AVOIDED/DANGEROUS cards
+async function buildRescueDeck(userId, goal) {
+  const cardIds        = goal.card_ids || [];
+  const allStatesDocs  = await db.cardStates.findByUser(userId);
+  const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+  const rescueSet      = new Set();
+  for (const cardId of cardIds) {
+    const state = statesByCardId.get(cardId)?.state;
+    if ([CARD_STATES.STUCK, CARD_STATES.FRAGILE, CARD_STATES.AVOIDED, CARD_STATES.DANGEROUS].includes(state)) {
+      rescueSet.add(cardId);
+    }
+  }
+  try {
+    const clusters = await db.masteryGoals.getClusters(goal.id);
+    for (const cluster of clusters) {
+      for (const cardId of (cluster.card_ids || [])) {
+        const st = statesByCardId.get(cardId)?.state;
+        if (st !== CARD_STATES.VERIFIED) { rescueSet.add(cardId); break; }
+      }
+    }
+  } catch (_e) { /* non-fatal */ }
+  return [...rescueSet];
+}
+
+// ── GAP-C2: composeWeightedSessionQueue — multi-bubble proportional allocation ──
+// [DESIGN: §4.4] Each bubble receives a proportional card slot budget.
+// Called only when activeGoals.length > 1. Single-bubble path is unchanged.
+async function composeWeightedSessionQueue(userId, dedupedQueue, activeGoals, now) {
+  try {
+    const weights      = computeAllocationWeights(activeGoals);
+    const totalSlots   = dedupedQueue.length;
+    const urgentStates = new Set([CARD_STATES.STUCK, CARD_STATES.FRAGILE,
+                                  CARD_STATES.DANGEROUS, CARD_STATES.AVOIDED]);
+    const result       = [];
+    const usedIds      = new Set();
+
+    const sorted = [...activeGoals].sort(
+      (a, b) => (weights[b.id] || 0) - (weights[a.id] || 0)
+    );
+
+    for (const goal of sorted) {
+      const weight     = weights[goal.id] || 15;
+      const slotBudget = Math.max(1, Math.round(totalSlots * weight / 100));
+      const goalSet    = new Set(goal.card_ids || []);
+      const status     = goal.trajectory_status || 'ON_TRACK';
+
+      let candidates = dedupedQueue.filter((item) => {
+        const id = item.card?.id || item.id;
+        return goalSet.has(id) && !usedIds.has(id);
+      });
+
+      if (status === 'CRITICAL' || status === 'BEHIND' || status === 'DRIFTING') {
+        candidates.sort((a, b) => {
+          const aUrgent = urgentStates.has(a.state?.state || a.cardState || '') ? 0 : 1;
+          const bUrgent = urgentStates.has(b.state?.state || b.cardState || '') ? 0 : 1;
+          return aUrgent - bUrgent;
+        });
+      }
+
+      const chosen = candidates.slice(0, slotBudget);
+      chosen.forEach((item) => usedIds.add(item.card?.id || item.id));
+      result.push(...chosen);
+    }
+
+    const fillers = dedupedQueue.filter((item) => !usedIds.has(item.card?.id || item.id));
+    result.push(...fillers.slice(0, Math.max(0, totalSlots - result.length)));
+    return result;
+  } catch (e) {
+    console.error('[KIWI] composeWeightedSessionQueue failed, using original queue:', e.message);
+    return dedupedQueue;
+  }
+}
+
+// [DESIGN: §4] Main queue modification engine.
+// Implements all four intervention levels: DRIFTING, BEHIND, CRITICAL, RESCUE
+// SAFETY: always returns original queue on any error — never breaks session start
+// ⚠ CORRECTED from v1.0: DRIFTING level added, RESCUE mode added, gap-based logic
+// B4-C1 stall response merged in; now hoisted before multi-bubble path
+
+async function modifySessionQueueForBubbles(userId, queue, subjectId = null) {
+  try {
+    const activeGoals = subjectId
+      ? await db.masteryGoals.findBySubject(userId, subjectId)
+      : await db.masteryGoals.findActive(userId);
+    if (!activeGoals || activeGoals.length === 0) return queue;
+
+    // O(N) FIX: pre-fetch all card states for queue cards in one batch query
+    // Replaces 3 separate sequential db.cardStates.get loops (dedup, warmup, parking)
+    const allQueueCardIds = queue.map(item => item.card?.id || item.id).filter(Boolean);
+    const queueStatesMap  = new Map();
+    if (allQueueCardIds.length > 0) {
+      const allQueueStates = await db.cardStates.findByUser(userId).catch(() => []);
+      const queueCardSet   = new Set(allQueueCardIds);
+      for (const s of allQueueStates) {
+        if (queueCardSet.has(s.card_id)) queueStatesMap.set(s.card_id, s);
+      }
+    }
+
+    // Step 1: Deduplicate cross-bubble cards [DESIGN: §8.3]
+    const seenCrossCards = new Set();
+    const dedupedQueue   = [];
+    for (const item of queue) {
+      const cardId   = item.card?.id || item.id;
+      const stateDoc = queueStatesMap.get(cardId) || null;
+      if (stateDoc?.cross_bubble) {
+        if (seenCrossCards.has(cardId)) continue;
+        seenCrossCards.add(cardId);
+      }
+      dedupedQueue.push(item);
+    }
+
+    // Determine highest-urgency trajectory status
+    const statusRank = { RESCUE:4, CRITICAL:3, BEHIND:2, DRIFTING:1, ON_TRACK:0 };
+    const topGoal    = activeGoals.reduce((prev, curr) =>
+      (statusRank[curr.trajectory_status] || 0) > (statusRank[prev.trajectory_status] || 0) ? curr : prev
+    , activeGoals[0]);
+    const topStatus  = topGoal?.trajectory_status || 'ON_TRACK';
+
+    // ON_TRACK: return queue unchanged [DESIGN: §15.2]
+    if (topStatus === 'ON_TRACK') return dedupedQueue;
+
+    // ── GAP-C1: Apply stall response queue modifications [DESIGN: §6.2] ─────────
+    // stall_response_active was set by activateStallResponse but never read here.
+    // Applied BEFORE trajectory-level intervention so stall selection refines
+    // the card set that trajectory intervention then reorders/counts.
+    const stalledGoal = activeGoals.find((g) => g.stall_active && g.stall_response_active);
+    if (stalledGoal) {
+      const response    = stalledGoal.stall_response_active;
+      const goalCardSet = new Set(stalledGoal.card_ids || []);
+
+      if (response === 'RESCUE_REVIEWS') {
+        // [DESIGN: §6.2 D1] STUCK cards repeated 3× per session, spaced across queue
+        const stuckItems = dedupedQueue.filter((item) => {
+          const cardId = item.card?.id || item.id;
+          return goalCardSet.has(cardId) &&
+            (item.state?.state || item.cardState) === CARD_STATES.STUCK;
+        }).slice(0, 3);
+        const n = dedupedQueue.length;
+        for (let k = stuckItems.length - 1; k >= 0; k--) {
+          dedupedQueue.splice(Math.floor((2 * n) / 3), 0, { ...stuckItems[k], _rescue_repeat: 3 });
+          dedupedQueue.splice(Math.floor(n / 3),       0, { ...stuckItems[k], _rescue_repeat: 2 });
+          dedupedQueue.splice(0, 0,                       { ...stuckItems[k], _rescue_repeat: 1 });
+        }
+
+      } else if (response === 'CLUSTER_LOCK') {
+        // [DESIGN: §6.2 D2] 50% of session time dedicated to weakest cluster
+        try {
+          const weakCluster = await getWeakestCluster(stalledGoal.id);
+          if (weakCluster) {
+            const clusterSet   = new Set(weakCluster.card_ids || []);
+            const clusterItems = dedupedQueue.filter((item) => clusterSet.has(item.card?.id || item.id));
+            const otherItems   = dedupedQueue.filter((item) => !clusterSet.has(item.card?.id || item.id));
+            const clusterSlot  = Math.ceil(dedupedQueue.length * 0.5);
+            dedupedQueue.splice(0, dedupedQueue.length,
+              ...clusterItems.slice(0, clusterSlot),
+              ...otherItems.slice(0, Math.max(0, dedupedQueue.length - clusterSlot))
+            );
+          }
+        } catch (_e) { /* non-fatal */ }
+
+      } else if (response === 'CARD_FREEZE') {
+        // [DESIGN: §6.2 D3] Freeze SEEDLING cards from the stalled bubble
+        const filtered = dedupedQueue.filter((item) => {
+          const cardId = item.card?.id || item.id;
+          const state  = item.state?.state || item.cardState;
+          return !(goalCardSet.has(cardId) && state === CARD_STATES.SEEDLING);
+        });
+        dedupedQueue.splice(0, dedupedQueue.length, ...filtered);
+
+      } else if (response === 'AVOIDANCE_FRONT') {
+        // [DESIGN: §6.2 D4] AVOIDED cards moved to front
+        const avoided = dedupedQueue.filter((item) => {
+          const cardId = item.card?.id || item.id;
+          const state  = item.state?.state || item.cardState;
+          return goalCardSet.has(cardId) && state === CARD_STATES.AVOIDED;
+        });
+        const others  = dedupedQueue.filter((item) => !avoided.includes(item));
+        dedupedQueue.splice(0, dedupedQueue.length, ...avoided, ...others);
+      }
+    }
+
+    const allBubbleCardIds = new Set(activeGoals.flatMap((g) => g.card_ids || []));
+    // now hoisted here so it is available for both composeWeightedSessionQueue and isParkable
+    const now              = new Date();
+
+    // ── GAP-C2: Multi-bubble proportional allocation [DESIGN: §4.4] ────────────
+    if (activeGoals.length > 1) {
+      return await composeWeightedSessionQueue(userId, dedupedQueue, activeGoals, now);
+    }
+
+    // ── GAP-3 (B4-GAP3): FINAL phase — VERIFIED warm-up pre-pass [DESIGN: §2.5] ─
+    // §2.5: VERIFIED cards appear in a 2-minute warm-up block then are set aside.
+    // Runs before trajectory-level logic so all single-bubble paths inherit the warm-up order.
+    if (topGoal?.phase === BUBBLE_PHASES.FINAL) {
+      const MAX_WARMUP_MINS = 2;
+      const VERIFIED_MINS   = CARD_REVIEW_MINUTES[CARD_STATES.VERIFIED] || 0.5;
+      let   warmupMins      = 0;
+      const warmupItems     = [];
+      const nonWarmupItems  = [];
+      for (const item of dedupedQueue) {
+        const cardId     = item.card?.id || item.id;
+        const stateDoc   = queueStatesMap.get(cardId) || null;  // O(N) FIX: use pre-fetched map
+        const inBubble   = allBubbleCardIds.has(cardId);
+        const isVerified = stateDoc?.state === CARD_STATES.VERIFIED;
+        if (inBubble && isVerified) {
+          if (warmupMins < MAX_WARMUP_MINS) {
+            warmupItems.push({ ...item, _warmup: true });
+            warmupMins += VERIFIED_MINS;
+          }
+          // VERIFIED budget exhausted → card dropped entirely ("set aside") [DESIGN: §2.5]
+        } else {
+          nonWarmupItems.push(item);
+        }
+      }
+      dedupedQueue.length = 0;
+      dedupedQueue.push(...warmupItems, ...nonWarmupItems);
+    }
+
+    // ── RESCUE: 100% RESCUE deck, FSRS bypassed entirely [DESIGN: §4.3, §2.6] ─
+    if (topStatus === 'RESCUE') {
+      const rescueDeck = await buildRescueDeck(userId, topGoal);
+      if (rescueDeck.length === 0) return dedupedQueue;
+      const rescueSet   = new Set(rescueDeck);
+      const rescueQueue = dedupedQueue.filter((item) => {
+        const cardId = item.card?.id || item.id;
+        return rescueSet.has(cardId);
+      });
+      return rescueQueue.length > 0 ? rescueQueue : dedupedQueue;
+    }
+
+    // ── DRIFTING: bubble urgent cards sorted to front, no parking [DESIGN: §4.3] ─
+    if (topStatus === 'DRIFTING') {
+      const urgentStates = new Set([CARD_STATES.STUCK, CARD_STATES.FRAGILE, CARD_STATES.DANGEROUS, CARD_STATES.AVOIDED]);
+      return [...dedupedQueue].sort((a, b) => {
+        const aId     = a.card?.id || a.id;
+        const bId     = b.card?.id || b.id;
+        const aUrgent = allBubbleCardIds.has(aId) &&
+          urgentStates.has(a.state?.state || a.cardState || '') ? 0 : 1;
+        const bUrgent = allBubbleCardIds.has(bId) &&
+          urgentStates.has(b.state?.state || b.cardState || '') ? 0 : 1;
+        return aUrgent - bUrgent;
+      });
+    }
+
+    // ── BEHIND / CRITICAL: parking + promotion [DESIGN: §4.3] ──────────────────
+    // [DESIGN: §2.4] HARDENING phase parks stable cards for 7 days (once/week)
+    const parkDays = (topGoal?.phase === BUBBLE_PHASES.HARDENING || topStatus === 'CRITICAL')
+      ? 7
+      : 3;
+    const modified = [];
+    const urgent   = [CARD_STATES.STUCK, CARD_STATES.FRAGILE, CARD_STATES.DANGEROUS, CARD_STATES.AVOIDED];
+
+    for (const item of dedupedQueue) {
+      const cardId   = item.card?.id || item.id;
+      const stateDoc = queueStatesMap.get(cardId) || null;  // O(N) FIX: use pre-fetched map
+      const inBubble = allBubbleCardIds.has(cardId);
+      if (inBubble && isParkable(stateDoc, now)) {
+        const parkExpiry = new Date(now.getTime() + parkDays * 86400000);
+        await db.cardStates.update(userId, cardId, { parking_expires_at: parkExpiry }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        continue;
+      }
+      modified.push(item);
+    }
+
+    modified.sort((a, b) => {
+      const aId     = a.card?.id || a.id;
+      const bId     = b.card?.id || b.id;
+      const aState  = a.state?.state || a.cardState || '';
+      const bState  = b.state?.state || b.cardState || '';
+      const aUrgent = allBubbleCardIds.has(aId) && urgent.includes(aState) ? 0 : 1;
+      const bUrgent = allBubbleCardIds.has(bId) && urgent.includes(bState) ? 0 : 1;
+      return aUrgent - bUrgent;
+    });
+
+    // [DESIGN: §4.3 CRITICAL] 80% bubble / 20% others
+    // [DESIGN: §4.3 BEHIND]   60% bubble / 40% others
+    const bubblePct          = topStatus === 'CRITICAL' ? 0.8 : 0.6;
+    const targetBubbleCount  = Math.round(modified.length * bubblePct);
+    const bubbleCards        = modified.filter((item) =>  allBubbleCardIds.has(item.card?.id || item.id));
+    const otherCards         = modified.filter((item) => !allBubbleCardIds.has(item.card?.id || item.id));
+    const slicedBubble       = bubbleCards.slice(0, targetBubbleCount);
+    const slicedOther        = otherCards.slice(0, modified.length - slicedBubble.length);
+    return [...slicedBubble, ...slicedOther];
+
+  } catch (e) {
+    console.error('[KIWI] Bubble queue modification failed (non-fatal):', e.message);
+    return queue;
+  }
+}
+
+// ── streakService ────────────────────────────────────────────────────────────
+
+function getDateString(date) {
+return new Date(date).toDateString();
+}
+
+function checkStreakOnLogin(userStats) {
+const today = getDateString(new Date());
+const lastStudy = userStats.last_study_date ? getDateString(userStats.last_study_date) : null;
+const yesterday = getDateString(new Date(Date.now() - 86400000));
+if (lastStudy === today) return { action: 'none', reason: 'already_studied_today' };
+if (lastStudy === yesterday) return { action: 'none', reason: 'studied_yesterday' };
+// Ecosystem V2 resolves missed calendar dates only when the next meaningful session commits.
+return { action: 'none', reason: 'streak_resolved_on_meaningful_session' };
+}
+
+// ── treeService: Ecosystem V2 permanent Growth Points ────────────────────────
+function computeDaysUntilNextStage(stats) {
+  return ecosystemV2.nextTreeStage(stats);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  SERVICE: analyticsService// ════════════════════════════════════════════════════════════════════════════
+//  SERVICE: analyticsService
+
+// ════════════════════════════════════════════════════════════════════════════
+
+async function recalculateSubjectHealth(userId, subjectId) {
+const deckList = await db.decks.findBySubjectWithCards(userId, subjectId);
+const allCards = deckList.flatMap((d) => d.cards);
+const totalCards = allCards.length;
+if (totalCards === 0) return null;
+
+const stageCounts = [0, 0, 0, 0, 0, 0];
+allCards.forEach((card) => {
+  const stage = Math.min(5, Math.max(1, Number(card.stage) || 1));
+  stageCounts[stage] = (stageCounts[stage] || 0) + 1;
+});
+const stageScore = (
+  (
+    (stageCounts[1] || 0) * 0 +
+    (stageCounts[2] || 0) * 0.2 +
+    (stageCounts[3] || 0) * 0.4 +
+    (stageCounts[4] || 0) * 0.7 +
+    (stageCounts[5] || 0) * 1.0
+  ) / totalCards
+) * 100;
+
+// Lifetime averages made Health effectively immovable after enough history.
+// Weight the learner's most recent 120 reviews so Health can genuinely improve
+// or fall while still retaining the card-maturity signal.
+const cardIds = allCards.map((card) => card.id);
+const allLogs = await db.reviewLogs.findByCards(userId, cardIds);
+const totalReviews = allLogs.length;
+const recentLogs = [...allLogs]
+  .sort((a, b) => new Date(b.reviewed_at || b.created_at || 0) - new Date(a.reviewed_at || a.created_at || 0))
+  .slice(0, 120);
+const responseCounts = { again: 0, hard: 0, good: 0, easy: 0 };
+let weightedRecall = 0;
+let weightTotal = 0;
+recentLogs.forEach((log, index) => {
+  const response = String(log.response || '').toLowerCase();
+  responseCounts[response] = (responseCounts[response] || 0) + 1;
+  const responseValue = response === 'easy' ? 1 : response === 'good' ? 0.8 : response === 'hard' ? 0.5 : 0;
+  const recencyWeight = Math.pow(0.985, index);
+  weightedRecall += responseValue * recencyWeight;
+  weightTotal += recencyWeight;
+});
+const srsQuality = weightTotal > 0 ? (weightedRecall / weightTotal) * 100 : stageScore;
+
+const { rows: recentExamRows } = await query(
+  "SELECT score_pct FROM exam_sessions " +
+  "WHERE user_id = $1 AND subject_id = $2 AND status = 'completed' AND score_pct IS NOT NULL " +
+  "ORDER BY COALESCE(completed_at, created_at) DESC LIMIT 5",
+  [userId, subjectId]
+);
+let examPerf = srsQuality;
+if (recentExamRows.length > 0) {
+  let examWeighted = 0;
+  let examWeightTotal = 0;
+  recentExamRows.forEach((exam, index) => {
+    const weight = Math.pow(0.82, index);
+    examWeighted += Math.max(0, Math.min(100, Number(exam.score_pct) || 0)) * weight;
+    examWeightTotal += weight;
+  });
+  examPerf = examWeightTotal > 0 ? examWeighted / examWeightTotal : srsQuality;
+}
+
+const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000);
+const sessionList = await db.sessions.findBySubject(userId, subjectId, thirtyDaysAgo);
+const qualifyingSessions = sessionList.filter((session) => {
+  const active = Math.max(0, Number(session.active_seconds) || 0);
+  const unique = Math.max(0, Number(session.unique_cards_reviewed) || 0);
+  const reviews = Math.max(0, Number(session.cards_reviewed) || 0);
+  return session.meaningful_session === true || (active >= 60 && (unique >= 3 || reviews >= 5));
+});
+const uniqueDays = new Set(
+  qualifyingSessions
+    .filter((session) => session.started_at)
+    .map((session) => new Date(session.started_at).toISOString().slice(0, 10))
+).size;
+const consistency = Math.min(100, (uniqueDays / 12) * 100);
+
+const healthScore = srsQuality * 0.4 + examPerf * 0.3 + stageScore * 0.2 + consistency * 0.1;
+const recentReviewCount = recentLogs.length;
+const ratio = (name) => recentReviewCount > 0
+  ? parseFloat((((responseCounts[name] || 0) / recentReviewCount) * 100).toFixed(2))
+  : 0;
+const existing = await db.subjectStats.get(userId, subjectId);
+const latestStudy = qualifyingSessions
+  .filter((session) => session.started_at)
+  .sort((a, b) => new Date(b.started_at) - new Date(a.started_at))[0] || null;
+
+const sharedData = {
+  health_score: Math.min(100, Math.max(0, parseFloat(healthScore.toFixed(2)))),
+  total_cards: totalCards,
+  stage_1_count: stageCounts[1] || 0,
+  stage_2_count: stageCounts[2] || 0,
+  stage_3_count: stageCounts[3] || 0,
+  stage_4_count: stageCounts[4] || 0,
+  stage_5_count: stageCounts[5] || 0,
+  again_ratio: ratio('again'),
+  hard_ratio: ratio('hard'),
+  good_ratio: ratio('good'),
+  easy_ratio: ratio('easy'),
+  total_reviews: totalReviews,
+  days_studied_last_30: uniqueDays,
+  total_study_minutes: existing?.total_study_minutes || 0,
+  last_studied_at: latestStudy?.started_at || existing?.last_studied_at || null,
+};
+await db.subjectStats.upsert(userId, subjectId, sharedData);
+return healthScore;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ACHIEVEMENTS MASTER DATA
+
+// ════════════════════════════════════════════════════════════════════════════
+const ACHIEVEMENTS_DATA = [
+{
+code: 'first_review',
+name: 'First Step',
+description: 'Complete your first card review',
+icon_emoji: '⭐',
+category: 'streak',
+xp_reward: 25,
+is_secret: true,
+is_timed: false,
+},
+{
+code: 'streak_7',
+name: 'Week Warrior',
+description: 'Maintain a 7-day streak',
+icon_emoji: '🔥',
+category: 'streak',
+xp_reward: 50,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'streak_14',
+name: 'Fortnight Force',
+description: 'Maintain a 14-day streak',
+icon_emoji: '🔥',
+category: 'streak',
+xp_reward: 100,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'streak_30',
+name: 'Monthly Master',
+description: 'Maintain a 30-day streak',
+icon_emoji: '🔥',
+category: 'streak',
+xp_reward: 300,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'streak_60',
+name: 'Iron Will',
+description: 'Maintain a 60-day streak',
+icon_emoji: '🔥',
+category: 'streak',
+xp_reward: 600,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'streak_100',
+name: 'Century',
+description: 'Maintain a 100-day streak',
+icon_emoji: '🔥',
+category: 'streak',
+xp_reward: 1000,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'streak_180',
+name: 'Unstoppable',
+description: 'Maintain a 180-day streak',
+icon_emoji: '🔥',
+category: 'streak',
+xp_reward: 2000,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'streak_365',
+name: 'Legendary',
+description: 'Maintain a 365-day streak',
+icon_emoji: '🔥',
+category: 'streak',
+xp_reward: 5000,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'first_mastered',
+name: 'First Victory',
+description: 'Promote your first card to Mastered',
+icon_emoji: '✨',
+category: 'mastery',
+xp_reward: 75,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'mastered_10',
+name: 'Getting There',
+description: '10 cards Mastered',
+icon_emoji: '✨',
+category: 'mastery',
+xp_reward: 100,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'mastered_50',
+name: 'Knowledge Builder',
+description: '50 cards Mastered',
+icon_emoji: '✨',
+category: 'mastery',
+xp_reward: 300,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'mastered_100',
+name: 'Scholar',
+description: '100 cards Mastered',
+icon_emoji: '✨',
+category: 'mastery',
+xp_reward: 500,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'mastered_250',
+name: 'Expert',
+description: '250 cards Mastered',
+icon_emoji: '✨',
+category: 'mastery',
+xp_reward: 1000,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'mastered_500',
+name: 'Master',
+description: '500 cards Mastered',
+icon_emoji: '✨',
+category: 'mastery',
+xp_reward: 2000,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'mastered_1000',
+name: 'Grandmaster',
+description: '1000 cards Mastered',
+icon_emoji: '✨',
+category: 'mastery',
+xp_reward: 4000,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'deck_complete',
+name: 'Deck Complete',
+description: 'Reach Mastered on every card in a deck',
+icon_emoji: '📦',
+category: 'mastery',
+xp_reward: 500,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'speed_lightning',
+name: 'Lightning',
+description: 'Complete a 20+ card session in <10 min with 90%+ accuracy',
+icon_emoji: '⚡',
+category: 'speed',
+xp_reward: 200,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'speed_flash',
+name: 'Flash Review',
+description: 'Review 50 cards in a single day',
+icon_emoji: '⚡',
+category: 'speed',
+xp_reward: 150,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'speed_five_sessions',
+name: 'Relentless',
+description: 'Complete 5 study sessions in one day',
+icon_emoji: '⚡',
+category: 'speed',
+xp_reward: 200,
+is_secret: true,
+is_timed: false,
+},
+{
+code: 'exam_first',
+name: 'Examiner',
+description: 'Complete your first CBT exam',
+icon_emoji: '📝',
+category: 'exam',
+xp_reward: 75,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'exam_perfect',
+name: 'Exam Ace',
+description: 'Score 100% on a CBT exam (min 20 questions)',
+icon_emoji: '📝',
+category: 'exam',
+xp_reward: 500,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'exam_consistent',
+name: 'Consistent',
+description: 'Score 80%+ on 5 consecutive CBT exams',
+icon_emoji: '??',
+category: 'exam',
+xp_reward: 400,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'exam_10',
+name: 'Exam Hunter',
+description: 'Complete 10 CBT exams',
+icon_emoji: '📝',
+category: 'exam',
+xp_reward: 300,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'exam_100q',
+name: 'Marathon',
+description: 'Complete a 100-question CBT exam',
+icon_emoji: '📝',
+category: 'exam',
+xp_reward: 400,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'tree_stage_2',
+name: 'Sprout',
+description: 'Kiwi tree reaches Stage 2',
+icon_emoji: '🌱',
+category: 'growth',
+xp_reward: 50,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'tree_stage_3',
+name: 'Taking Root',
+description: 'Kiwi tree reaches Stage 3',
+icon_emoji: '🌱',
+category: 'growth',
+xp_reward: 100,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'tree_stage_4',
+name: 'Growing Strong',
+description: 'Kiwi tree reaches Stage 4',
+icon_emoji: '🌱',
+category: 'growth',
+xp_reward: 200,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'tree_stage_5',
+name: 'Thriving',
+description: 'Kiwi tree reaches Stage 5',
+icon_emoji: '🌱',
+category: 'growth',
+xp_reward: 350,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'tree_stage_6',
+name: 'Blooming',
+description: 'Kiwi tree reaches Stage 6',
+icon_emoji: '🌱',
+category: 'growth',
+xp_reward: 500,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'tree_stage_7',
+name: 'First Fruit',
+description: 'Kiwi tree reaches Stage 7',
+icon_emoji: '🌱',
+category: 'growth',
+xp_reward: 750,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'tree_stage_8',
+name: 'Ancient Kiwi',
+description: 'Kiwi tree reaches Stage 8',
+icon_emoji: '🌱',
+category: 'growth',
+xp_reward: 1500,
+is_secret: false,
+is_timed: false,
+},
+{
+code: 'secret_night_owl',
+name: 'Night Owl',
+description: 'Start a study session after midnight',
+icon_emoji: '🦉',
+category: 'secret',
+xp_reward: 100,
+is_secret: true,
+is_timed: false,
+},
+{
+code: 'secret_early_bird',
+name: 'Early Bird',
+description: 'Start a study session before 6:00 AM',
+icon_emoji: '🐦',
+category: 'secret',
+xp_reward: 100,
+is_secret: true,
+is_timed: false,
+},
+{
+code: 'secret_bounce_back',
+name: 'Bounce Back',
+description: 'Complete a session after the seed wilted',
+icon_emoji: '💪',
+category: 'secret',
+xp_reward: 200,
+is_secret: true,
+is_timed: false,
+},
+{
+code: 'secret_social',
+name: 'Community Spirit',
+description: 'Clone 5 community decks',
+icon_emoji: '🤝',
+category: 'secret',
+xp_reward: 100,
+is_secret: true,
+is_timed: false,
+},
+{
+code: 'secret_creator',
+name: 'Content Creator',
+description: 'Publish your first community deck',
+icon_emoji: '🎨',
+category: 'secret',
+xp_reward: 150,
+is_secret: true,
+is_timed: false,
+},
+{
+code: 'secret_deep_dive',
+name: 'Deep Diver',
+description: 'Study the same subject 5 consecutive days',
+icon_emoji: '🤿',
+category: 'secret',
+xp_reward: 200,
+is_secret: true,
+is_timed: false,
+},
+{
+code: 'secret_weekend',
+name: 'Weekend Warrior',
+description: 'Study both Saturday AND Sunday for 4 consecutive weekends',
+icon_emoji: '🏖️',
+category: 'secret',
+xp_reward: 250,
+is_secret: true,
+is_timed: false,
+},
+{
+code: 'timed_new_year',
+name: 'New Year Scholar',
+description: 'Complete a study session on January 1st',
+icon_emoji: '🎆',
+category: 'timed',
+xp_reward: 200,
+is_secret: false,
+is_timed: true,
+},
+{
+code: 'timed_back_to_school',
+name: 'Back to School',
+description: 'Study on the first Monday of September',
+icon_emoji: '🎒',
+category: 'timed',
+xp_reward: 150,
+is_secret: false,
+is_timed: true,
+},
+];
+
+async function seedAchievements() {
+try {
+await Promise.all(ACHIEVEMENTS_DATA.map((ach) => db.achievements.upsert(ach.code, ach)));
+console.log(`[KIWI] ✅ ${ACHIEVEMENTS_DATA.length} achievements seeded`);
+} catch (e) {
+console.error('[KIWI] Achievement seeding failed:', e.message);
+}
+}
+
+function isFirstMondayOfSeptember(date) {
+if (date.getMonth() !== 8) return false;
+const firstDay = new Date(date.getFullYear(), 8, 1);
+const firstMonday = new Date(firstDay);
+firstMonday.setDate(firstMonday.getDate() + ((1 - firstDay.getDay() + 7) % 7));
+return date.toDateString() === firstMonday.toDateString();
+}
+
+async function checkAchievements(userId, context = {}) {
+const newUnlocks = [];
+const [user, statsList, uaList, allAchievements] = await Promise.all([
+db.users.findById(userId),
+db.userStats.get(userId),
+db.userAchievements.findManyWithAchievement(userId),
+db.achievements.findAll(),
+]);
+if (!user || !statsList) return newUnlocks;
+const stats = statsList;
+const unlockedCodes = new Set(uaList.map((ua) => ua.achievement?.code).filter(Boolean));
+for (const ach of allAchievements) {
+if (unlockedCodes.has(ach.code)) continue;
+if (ach.is_timed) {
+const now = new Date();
+if (ach.available_from && now < new Date(ach.available_from)) continue;
+if (ach.available_until && now > new Date(ach.available_until)) continue;
+if (ach.code === 'timed_back_to_school' && !isFirstMondayOfSeptember(now)) continue;
+}
+let unlocked = false;
+switch (ach.code) {
+case 'first_review':
+unlocked = stats.total_cards_reviewed >= 1;
+break;
+case 'streak_7':
+unlocked = stats.current_streak >= 7;
+break;
+case 'streak_14':
+unlocked = stats.current_streak >= 14;
+break;
+case 'streak_30':
+unlocked = stats.current_streak >= 30;
+break;
+case 'streak_60':
+unlocked = stats.current_streak >= 60;
+break;
+case 'streak_100':
+unlocked = stats.current_streak >= 100;
+break;
+case 'streak_180':
+unlocked = stats.current_streak >= 180;
+break;
+case 'streak_365':
+unlocked = stats.current_streak >= 365;
+break;
+case 'first_mastered':
+unlocked = stats.total_cards_mastered >= 1;
+break;
+case 'mastered_10':
+unlocked = stats.total_cards_mastered >= 10;
+break;
+case 'mastered_50':
+unlocked = stats.total_cards_mastered >= 50;
+break;
+case 'mastered_100':
+unlocked = stats.total_cards_mastered >= 100;
+break;
+case 'mastered_250':
+unlocked = stats.total_cards_mastered >= 250;
+break;
+case 'mastered_500':
+unlocked = stats.total_cards_mastered >= 500;
+break;
+case 'mastered_1000':
+unlocked = stats.total_cards_mastered >= 1000;
+break;
+case 'deck_complete':
+if (context?.deckId) {
+const deckCards = await db.cards.findByDeck(userId, context.deckId);
+unlocked = deckCards.length > 0 && deckCards.every((c) => c.stage === 5);
+}
+break;
+case 'speed_lightning':
+// P11 FIX: Removed accuracy_pct dependency — field is never written to sessions.
+// Condition updated: complete a 20+ card session in under 10 minutes.
+if (context?.session) {
+const s = context.session;
+unlocked =
+s.cards_reviewed >= 20 &&
+(s.duration_seconds || 0) < 600;
+}
+break;
+case 'speed_flash':
+if (context?.session) {
+const today = new Date();
+today.setHours(0, 0, 0, 0);
+const todayCount = await db.reviewLogs.count(userId, { reviewed_at_gte: today });
+unlocked = todayCount >= 50;
+}
+break;
+case 'speed_five_sessions':
+if (context?.session) {
+const today = new Date();
+today.setHours(0, 0, 0, 0);
+const todayCount = await db.sessions.count(userId, {
+session_completed: true,
+started_at_gte: today,
+});
+unlocked = todayCount >= 5;
+}
+break;
+case 'exam_first':
+unlocked = stats.total_exams_completed >= 1;
+break;
+case 'exam_10':
+unlocked = stats.total_exams_completed >= 10;
+break;
+case 'exam_perfect':
+if (context?.exam)
+unlocked = context.exam.score_pct === 100 && context.exam.question_count >= 20;
+break;
+case 'exam_consistent':
+if (context?.exam) {
+const recentExams = await db.examSessions.findMany(
+userId,
+{ status: 'completed' },
+{ limit: 5 }
+);
+unlocked =
+recentExams.length >= 5 && recentExams.every((e) => parseFloat(e.score_pct || 0) >= 80);
+}
+break;
+case 'exam_100q':
+if (context?.exam) unlocked = context.exam.question_count >= 100;
+break;
+case 'tree_stage_2':
+unlocked = stats.tree_stage >= 2;
+break;
+case 'tree_stage_3':
+unlocked = stats.tree_stage >= 3;
+break;
+case 'tree_stage_4':
+unlocked = stats.tree_stage >= 4;
+break;
+case 'tree_stage_5':
+unlocked = stats.tree_stage >= 5;
+break;
+case 'tree_stage_6':
+unlocked = stats.tree_stage >= 6;
+break;
+case 'tree_stage_7':
+unlocked = stats.tree_stage >= 7;
+break;
+case 'tree_stage_8':
+unlocked = stats.tree_stage >= 8;
+break;
+case 'secret_night_owl':
+if (context?.sessionStart) {
+const hour = new Date(context.sessionStart).getHours();
+unlocked = hour >= 0 && hour <= 2;
+}
+break;
+case 'secret_early_bird':
+if (context?.sessionStart) {
+const hour = new Date(context.sessionStart).getHours();
+unlocked = hour >= 4 && hour < 6;
+}
+break;
+case 'secret_bounce_back':
+if (context?.seedGrowth !== undefined) unlocked = context.seedGrowth < 10;
+break;
+case 'secret_social': {
+const clonesMade = await db.communityDecks.count({ author_id: userId });
+unlocked = clonesMade >= 5;
+break;
+}
+case 'secret_creator': {
+const published = await db.decks.count(userId, { is_public: true });
+unlocked = published >= 1;
+break;
+}
+case 'secret_deep_dive':
+if (context?.subjectId) {
+const logs = await db.sessions.findBySubject(userId, context.subjectId);
+const recent = logs
+.sort((a, b) => new Date(b.started_at) - new Date(a.started_at))
+.slice(0, 5);
+if (recent.length >= 5) {
+const dates = recent.map((l) => new Date(l.started_at).toISOString().split('T')[0]);
+let consecutive = 1;
+for (let i = 1; i < dates.length; i++) {
+const diff = (new Date(dates[i - 1]) - new Date(dates[i])) / 86400000;
+if (diff === 1) consecutive++;
+else break;
+}
+unlocked = consecutive >= 5;
+}
+}
+break;
+case 'secret_weekend': {
+const allSessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 9999 }
+);
+const weekendDates = new Set();
+for (const s of allSessions.sessions) {
+const d = new Date(s.started_at);
+const day = d.getDay();
+if (day === 0 || day === 6) {
+const year = d.getFullYear();
+const week = Math.floor((d.getDate() - 1) / 7);
+weekendDates.add(`${year}-${week}-${day}`);
+}
+}
+unlocked = weekendDates.size >= 8;
+break;
+}
+case 'timed_new_year': {
+const now = new Date();
+unlocked = now.getMonth() === 0 && now.getDate() === 1 && context?.sessionCompleted;
+break;
+}
+case 'timed_back_to_school': {
+unlocked = isFirstMondayOfSeptember(new Date()) && context?.sessionCompleted;
+break;
+}
+
+        // PB.19: Bubble Almanac unlock conditions [DESIGN: §15.5]
+        // ⚠ CORRECTED from v1.0: all 10 conditions match design §15.5 exactly
+
+        case 'bubble_created': {
+          const all = await db.masteryGoals.findByUser(userId);
+          unlocked  = all.length >= 1;
+          break;
+        }
+
+        case 'bubble_first_completed': {
+          const completed = await db.masteryGoals.findByUser(userId, 'completed');
+          unlocked = completed.length >= 1;
+          break;
+        }
+
+        case 'test_date_gate_passed_first_attempt': {
+          // FIX (Issue 11 Part B): Require test_date_gate_passed === true (set only
+          // when the gate was formally evaluated and KS >= 60 at that moment) AND
+          // test_date_gate_failed must not be set on the same bubble.
+          // This closes two false-positive gaps:
+          //   Gap A: bubbles whose test_date is in the future (gate not yet reached)
+          //          can never have test_date_gate_passed = true.
+          //   Gap B: a different bubble's natural KS >= 60 cannot satisfy this condition
+          //          without the gate evaluation event having fired on that bubble.
+          const allBubbles = await db.masteryGoals.findByUser(userId);
+          unlocked = allBubbles.some((g) =>
+            g.test_date_gate_passed === true && !g.test_date_gate_failed
+          );
+          break;
+        }
+
+        case 'bubble_completed_after_rescue': {
+          // [DESIGN: §15.5] Complete a Bubble AFTER entering RESCUE
+          const completedBubbles = await db.masteryGoals.findByUser(userId, 'completed');
+          // rescue_mode_entered_at is set when RESCUE was entered
+          unlocked = completedBubbles.some((g) => g.rescue_mode_entered_at != null);
+          break;
+        }
+
+        case 'stall_resolved_within_days': {
+          // [DESIGN: §15.5] Resolve stall within 7 days of detection
+          const days     = ach.unlock_condition?.value || 7;
+          const allGoals = await db.masteryGoals.findByUser(userId);
+          unlocked = allGoals.some((g) => {
+            if (!g.stall_detected_at || !g.stall_resolved_at) return false;
+            const daysTaken = Math.ceil(
+              (new Date(g.stall_resolved_at) - new Date(g.stall_detected_at)) / 86400000
+            );
+            return daysTaken <= days;
+          });
+          break;
+        }
+
+        case 'bubble_completed_long': {
+          // [DESIGN: §15.5] Complete a Bubble of ≥ N days
+          const minDays    = ach.unlock_condition?.value || 80;
+          const completed  = await db.masteryGoals.findByUser(userId, 'completed');
+          unlocked = completed.some((g) => {
+            if (!g.exam_date || !g.created_at) return false;
+            const totalDays = Math.ceil(
+              (new Date(g.exam_date) - new Date(g.created_at)) / 86400000
+            );
+            return totalDays >= minDays;
+          });
+          break;
+        }
+
+        case 'bubbles_completed_count': {
+          // [DESIGN: §15.5] N Bubbles completed
+          const minCount  = ach.unlock_condition?.value || 5;
+          const completed = await db.masteryGoals.findByUser(userId, 'completed');
+          unlocked = completed.length >= minCount;
+          break;
+        }
+
+        case 'debt_settled': {
+          // [DESIGN: §15.5, §10.3] All Learning Debt cleared from a missed Bubble
+          // debt_cleared event is logged by checkLearningDebtCleared
+          const missedBubbles = await db.masteryGoals.findByUser(userId, 'missed');
+          for (const b of missedBubbles) {
+            const hist = await db.masteryGoals.getHistory(b.id, 10).catch(() => []);
+            if (hist.some((h) => h.event_type === 'learning_debt_cleared')) {
+              unlocked = true;
+              break;
+            }
+          }
+          break;
+        }
+
+        case 'no_active_debt_global': {
+          // [DESIGN: §15.5] No active Learning Debt across ALL subjects
+          const allStates = await db.cardStates.findByUser(userId);
+          unlocked = !allStates.some((s) => s.learning_debt === true);
+          break;
+        }
+
+        case 'cross_bubble_both_completed': {
+          // [DESIGN: §15.5] Complete two overlapping (cross_bubble) Bubbles simultaneously
+          const allStates  = await db.cardStates.findByUser(userId);
+          const crossCards = allStates.filter((s) => s.cross_bubble === true);
+          if (crossCards.length > 0) {
+            const completed = await db.masteryGoals.findByUser(userId, 'completed');
+            // Two completed bubbles that shared at least one card
+            const completedIds = new Set(completed.map((b) => b.id));
+            unlocked = crossCards.some((s) => {
+              const bubbles = s.bubble_ids || [];
+              return bubbles.filter((id) => completedIds.has(id)).length >= 2;
+            });
+          }
+          break;
+        }
+}
+if (unlocked) {
+await db.userAchievements.create(userId, ach.id || ach.code);
+newUnlocks.push(ach);
+}
+}
+return newUnlocks;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  SERVICE: geminiService  (existing AI calls + integration hooks)
+
+// ════════════════════════════════════════════════════════════════════════════
+const CBT_PROMPT = `
+## ⚠ PRIMARY DIRECTIVE — READ THIS FIRST
+
+You must generate EXACTLY [COUNT] questions. This is the single non-negotiable requirement of this entire task. Every other rule in this prompt is a quality guideline that is SECONDARY to the count. If following any quality rule would prevent you from reaching [COUNT], ignore that rule and write the question anyway. Reaching [COUNT] is mandatory. Stopping early is a failure regardless of the reason.
+
+If you feel you have "covered all the concepts", keep going: apply twisting techniques, change the angle, flip the question, use scenario injection, test consequences, or ask about exceptions. There is always another valid question to write from any body of material.
+
+---
+
+## ROLE
+
+You are an expert external examiner with deep subject knowledge. You have studied the provided notes thoroughly — but you do NOT write questions from the notes. You write questions the way a university examiner does: you take the *knowledge* in the notes and construct entirely independent questions that test whether a student truly understands it.
+
+Your questions should feel like they came from an exam paper, not from a study guide.
+
+---
+
+## EXAMINER MINDSET — CRITICAL
+
+This is the most important section. Read it before generating a single question.
+
+**You are NOT a summarizer. You are an examiner.**
+
+The difference:
+- A summarizer reads "Mitosis produces 2 identical diploid cells" and asks: *"How many cells does mitosis produce?"*
+- An examiner reads the same line and asks: *"A skin cell with 46 chromosomes completes mitosis. A researcher later counts chromosomes in one of the daughter cells and finds 23. Which of the following best explains this finding?"*
+
+The examiner asks questions that require understanding, not retrieval.
+
+### The Golden Rule — Never Copy Examples
+If the notes contain a worked example (e.g., "Pisum sativum crossed TT × tt gives Tt"), you must NEVER reproduce that example as a question. Instead:
+- Change the organism
+- Change the trait
+- Change the context
+- Reverse the direction of reasoning
+- Present a scenario where the student applies the same principle to something unfamiliar
+
+The student learned from the example. The exam tests whether they can go beyond it.
+
+---
+
+## SUBJECT INTELLIGENCE SYSTEM
+
+Before generating questions, analyze the notes and classify the subject:
+
+**Step 1 — Detect content type:**
+- Count the proportion of: definitions/concepts/relationships (Theory) vs. formulas/worked examples/numerical reasoning (Calculation)
+
+**Step 2 — Set generation ratio automatically:**
+
+| Subject Profile | Theory Questions | Calculation Questions |
+|---|---|---|
+| Pure theory (e.g., Biology, History) | 90–95% | 5–10% |
+| Mixed with light calculation (e.g., Chemistry, Geography) | 65–75% | 25–35% |
+| Calculation-heavy (e.g., Physics, Maths) | 30–40% | 60–70% |
+| Pure calculation | 10–15% | 85–90% |
+
+Apply this ratio automatically. Do not ask the user — infer from the notes.
+
+⚠ OVERRIDE RULE: If a ## QUESTION TYPE BALANCE section appears later in this prompt, it COMPLETELY REPLACES Step 2. The table above becomes void. Do NOT apply the auto-detected ratio — use only the exact percentages specified in the ## QUESTION TYPE BALANCE section. The student has made an explicit choice and it must be honoured precisely.
+
+---
+
+## DISTRACTOR ENGINEERING — HOW TO BUILD COMPETITIVE OPTIONS
+
+Weak distractors are the #1 failure of AI-generated CBT questions. Every wrong option must be genuinely believable to a student with partial understanding.
+
+### The Four Distractor Types (use all four across your question set):
+
+**Type 1 — The Partial Truth**
+Correct in a related context, wrong in this one. The student must know the boundary condition to reject it.
+> Example: If the answer involves meiosis producing haploid cells, a distractor says "produces two genetically identical diploid cells" — true of mitosis, wrong here.
+
+**Type 2 — The Vocabulary Trap**
+Correct terminology, wrong relationship. One word or one relationship swapped.
+> Example: "The cell membrane is located outside the cell wall" vs "The cell wall is located outside the cell membrane" — same words, inverted relationship.
+
+**Type 3 — The Adjacent Concept**
+A real, correct concept from the same subject domain that is frequently confused with the answer. The student must know the distinction between two similar real things.
+> Example: Testing Protocooperation? A distractor uses Mutualism — both are beneficial symbiotic relationships, but one is obligatory and the other is not. A student with partial understanding of symbiosis will hesitate.
+
+**Type 4 — The Plausible Fabrication**
+Assembled from real terminology in the correct domain. Sounds entirely credible but describes something that does not exist or does not apply here. Built to fool someone who knows the vocabulary but not the mechanism.
+> Example: "Centrioles form a ring-shaped scaffold that anchors chromosomes to the cytoplasm during cytokinesis" — uses the right words, plausibly constructed, factually wrong.
+
+### Rules for All Distractors:
+- ALL four options must belong to the SAME conceptual domain as the stem — never pull a distractor from a different chapter or topic just to fill a slot
+- A student with 60-80% mastery must genuinely hesitate on at least 3 of the 4 options
+- Never use "All of the above" or "None of the above"
+- Match the grammatical form and approximate length of all options — no option should visually stand out as different
+- Randomize correct answer position — distribute evenly across A, B, C, D across the exam
+- **Avoid option recycling where possible**: Try not to reuse the exact same option text across different questions. This is a preference, not a hard rule — reaching [COUNT] questions is more important than unique option text.
+
+---
+
+## QUESTION TWISTING TECHNIQUES
+
+Use these to avoid direct, predictable questions:
+
+**1. Reversal**
+Instead of asking what something is, ask what it is NOT, or what would happen if it were absent.
+> ❌ "What does the plasma membrane do?"
+> ✅ "A cell's plasma membrane is rendered completely non-selective. Which function is MOST immediately compromised?"
+
+**2. Scenario Injection**
+Embed the concept in a real or hypothetical scenario the notes never mentioned.
+> ❌ "What is neotony?"
+> ✅ "A zoologist observes a population of amphibians that reproduce exclusively while retaining juvenile physical characteristics throughout their lives. This phenomenon is best classified as:"
+
+**3. The Exception Frame**
+Ask about boundary cases, exceptions, or conditions where the concept breaks down.
+> ❌ "Where is the Golgi apparatus found?"
+> ✅ "Which of the following cell types would you NOT expect to contain a Golgi apparatus, and why?"
+
+**4. Consequence Testing**
+Ask what happens downstream if a step/component fails.
+> ❌ "What does the centromere do?"
+> ✅ "During cell division, centromere function is pharmacologically inhibited. What is the most likely consequence in the daughter cells?"
+
+**5. Comparison Inversion**
+Instead of asking how A differs from B, give a scenario and ask which of A or B it describes.
+> ❌ "How does prokaryotic DNA differ from eukaryotic DNA?"
+> ✅ "A scientist isolates genetic material from an unknown organism and finds it is circular, double-stranded, and lacks intron sequences. The organism is most likely:"
+
+**6. The Misidentification Trap**
+Describe something correctly but in unfamiliar terms, and ask what it is.
+> "An organism where the entire body functions as a reproductive unit, fusing directly with a morphologically similar individual to form a zygote. This describes:"
+
+---
+
+## CALCULATION QUESTION PROTOCOL
+
+For any numerical content in the notes:
+
+1. **Never use the same numbers from the notes.** Always generate fresh values.
+2. **Never use the same scenario from the notes.** Change the organism, object, or context entirely.
+3. **Generate three difficulty tiers per concept:**
+   - *Direct application* — plug values into formula (Easy)
+   - *Multi-step* — requires 2+ operations or unit conversion (Medium)
+   - *Reverse calculation* — give the result, ask for the input variable (Hard)
+4. **Distractors for calculation questions must be:**
+   - Results of common arithmetic errors (e.g., forgot to square, used wrong unit)
+   - Results of using the wrong formula (plausible substitution)
+   - Correct magnitude, wrong unit
+   - Off-by-one errors in significant figures
+
+---
+
+## OUTPUT FORMAT
+
+### QUESTIONS SECTION
+
+⚠ FORMAT RULE — ABSOLUTE: Every question MUST start with the words "Question N" on its own line (where N is the question number). Do NOT use "1.", "1)", "#1", "Q1", or any other format. The parser depends on EXACTLY "Question N". Deviation will cause questions to be lost.
+
+Example of CORRECT format:
+Question 1
+Cognitive Level: Application
+Difficulty: Medium
+Type: Theory
+Stem:
+A student observes that...
+
+Options:
+A) First option
+B) Second option
+C) Third option
+D) Fourth option
+
+Question 2
+Cognitive Level: Analysis
+...
+
+Question [N]
+
+Cognitive Level: [Knowledge | Comprehension | Application | Analysis | Evaluation | Synthesis]
+Difficulty: [Easy | Medium | Hard]
+Type: [Theory | Calculation]
+
+Stem:
+[Question or incomplete statement. Must end with ? or :]
+
+Options:
+A) [Option]
+B) [Option]
+C) [Option]
+D) [Option]
+
+### ANSWERS SECTION (after ALL questions)
+
+SEPARATOR RULE — CRITICAL: After the last question, output a separator line that is EXACTLY three dashes and nothing else:
+---
+The separator must be on its own line with no spaces, no extra text, no punctuation before or after the dashes. The parser splits on this exact string.
+
+ANSWERS AND EXPLANATIONS
+
+Question [N]:
+Correct Answer: [Letter]
+Explanation: [1–2 sentences MAX. Why the correct answer is right + the key misconception in the most dangerous distractor only.]
+
+**Output Sequence — Non-negotiable:**
+1. ALL questions first (no answers, no hints)
+2. "---" separator
+3. ALL answers and explanations
+
+---
+
+## CONCEPT DECOMPOSITION RULES
+
+For every major concept, generate questions across these dimensions. Use as many of these angles as needed to reach [COUNT]:
+
+| Dimension | Question Focus |
+|---|---|
+| Definition | What it IS |
+| Function | What it DOES |
+| Application | Using it in a standard context |
+| Novel Application | Using it in a context the notes never mentioned |
+| Relationships | How it connects to other concepts |
+| Exceptions | When it does NOT apply |
+| Consequences | What breaks if it's absent or disrupted |
+| Misconceptions | Specific distractors targeting common errors |
+
+For lists/enumerations in notes: create 1 question per item testing application or consequence — not just identification.
+
+For processes/sequences: test each step's function AND what happens if that step is disrupted.
+
+---
+
+## QUESTION QUALITY RULES
+
+**The No Trivial Recall Rule**
+❌ "What year did X happen?"
+❌ "How many stages does mitosis have?"
+✅ Questions that require the student to *use* knowledge, not just retrieve it
+
+**The Atomic Rule**
+One concept per question. No compound questions.
+
+**The Fairness Rule**
+A student who genuinely understands the material must be able to answer correctly. No trick wording. No ambiguous stems.
+
+**The No-Padding Rule**
+Never generate a question just to increase count. Every question must test something not already covered by another question.
+
+---
+
+## COGNITIVE DISTRIBUTION TARGET
+
+| Level | Target % |
+|---|---|
+| Knowledge/Recall | < 10% |
+| Comprehension | 15–20% |
+| Application | 35–40% |
+| Analysis | 20–25% |
+| Evaluation/Synthesis | 10–15% |
+
+---
+
+## VOLUME GUIDELINE
+
+| Notes Size | Expected Questions |
+|---|---|
+| < 300 words | 15–25 |
+| 300–800 words | 30–50 |
+| 800–2000 words | 50–80 |
+| 2000+ words | 80–120+ |
+
+Volume is a byproduct of coverage — never a target. Do not pad.
+
+---
+
+## VOLUME INSTRUCTION — ABSOLUTE RULE
+
+You MUST generate EXACTLY [COUNT] questions. No fewer. No more.
+
+- Use twisting techniques, scenario injection, consequence testing, and definition questions to reach [COUNT].
+- Never stop before [COUNT] for any reason — not because concepts feel exhausted, not because quality feels hard to maintain, not for any other reason.
+- If you reach what feels like the end of the material before reaching [COUNT], keep going: change the angle, reverse the question, test the same concept from a different scenario, or write a simpler direct question. All of these count.
+- [COUNT] questions is mandatory. This rule overrides every other rule in this prompt.
+
+---
+
+## COVERAGE REQUIREMENT — MANDATORY
+
+You MUST draw at least one question from EVERY distinct concept, term, process, formula, or fact mentioned in the provided study notes.
+
+- Spread questions proportionally across ALL sections and topics of the notes.
+- Do NOT cluster all questions around 2–3 concepts while ignoring the rest of the notes.
+- If you have covered all topics but have not yet reached [COUNT], revisit topics from different angles rather than stopping.
+
+---
+
+## PRE-OUTPUT CHECKLIST
+
+Before generating, confirm:
+- [ ] If a ## QUESTION TYPE BALANCE section exists: it has been noted and the Subject Intelligence System auto-ratio has been discarded
+- [ ] If a ## BROAD COVERAGE MODE section exists: topic-first ordering is locked in
+- [ ] If a ## FOCUSED COVERAGE MODE section exists: depth-over-breadth is the priority
+- [ ] Theory/calculation split target is known and will be enforced throughout generation (not just in aggregate)
+- [ ] No question copies a note example directly
+- [ ] All distractors use the four distractor types
+- [ ] At least 60% of questions use a twisting technique
+- [ ] Calculation questions use fresh numbers and scenarios
+- [ ] All questions come before all answers
+
+FINAL COUNT CHECK — before outputting answers: count your Theory questions and Calculation questions separately. If the split does not match the ## QUESTION TYPE BALANCE target (±1 question), rewrite questions before proceeding.
+
+---
+
+## START PROTOCOL
+
+When notes are provided:
+1. **Analyze** — detect subject type, ratio, all major concepts, lists, processes, relationships
+2. **Plan** — mentally map which twisting technique and distractor type suits each concept
+3. **Generate ALL questions** — interleave theory and calculation questions throughout. Do NOT front-load one type. If your balance target is 50/50, alternate roughly every 1–2 questions. If it is 70/30, write 2–3 theory then 1 calculation throughout. Follow the ## QUESTION TYPE BALANCE ratio from start to finish, not just in aggregate.
+4. **Separator** — output "---"
+5. **Generate ALL answers and explanations** — brief, focused
+
+---
+
+Study Notes:
+[NOTES]
+
+---
+
+⚠ FINAL REMINDER BEFORE YOU BEGIN: You must write exactly [COUNT] questions. Count them as you go. If you finish the answers section and have written fewer than [COUNT] questions, you have failed this task. Do not stop generating questions until you have written [COUNT] of them.
+`;
+
+// ── Split-path prompt: Theory questions only ─────────────────────────────────
+const THEORY_CBT_PROMPT = `
+## ⚠ PRIMARY DIRECTIVE — READ THIS FIRST
+
+You must generate EXACTLY [COUNT] questions. This is the single non-negotiable requirement of this entire task. Every other rule in this prompt is a quality guideline that is SECONDARY to the count. If following any quality rule would prevent you from reaching [COUNT], ignore that rule and write the question anyway. Reaching [COUNT] is mandatory. Stopping early is a failure regardless of the reason.
+
+ALL [COUNT] questions must be Theory type. Do not generate any Calculation questions.
+
+If you feel you have "covered all the concepts", keep going: move to the next untouched topic, apply twisting techniques, change the angle, flip the question, use scenario injection, test consequences, or ask about exceptions. There is always another valid question to write from any body of material.
+
+---
+
+## ROLE
+
+You are an expert external examiner with deep subject knowledge in conceptual,
+theoretical, and descriptive disciplines. You have studied the provided notes
+thoroughly — but you do NOT write questions from the notes. You write questions
+the way a university examiner does: you take the *knowledge* in the notes and
+construct entirely independent questions that test whether a student truly
+understands it.
+
+Your questions test concepts, relationships, mechanisms, classifications, and
+reasoning — never raw recall.
+
+---
+
+## EXAMINER MINDSET — CRITICAL
+
+This is the most important section. Read it before generating a single question.
+
+**You are NOT a summarizer. You are an examiner.**
+
+The difference:
+- A summarizer reads "Mitosis produces 2 identical diploid cells" and asks:
+  *"How many cells does mitosis produce?"*
+- An examiner reads the same line and asks: *"A skin cell with 46 chromosomes
+  completes mitosis. A researcher later counts chromosomes in one of the daughter
+  cells and finds 23. Which of the following best explains this finding?"*
+
+The examiner asks questions that require understanding, not retrieval.
+
+### The Golden Rule — Never Copy Examples
+If the notes contain a worked example (e.g., "Pisum sativum crossed TT × tt
+gives Tt"), you must NEVER reproduce that example as a question. Instead:
+- Change the organism
+- Change the trait
+- Change the context
+- Reverse the direction of reasoning
+- Present a scenario where the student applies the same principle to something
+  unfamiliar
+
+The student learned from the example. The exam tests whether they can go beyond it.
+
+---
+
+## SUBJECT CONTENT CLASSIFIER
+
+Before generating questions, classify the material's conceptual structure.
+
+**Step 1 — Detect theory content types:**
+
+| Content Type | Description |
+|---|---|
+| Definitional | Terms, classifications, taxonomies |
+| Mechanistic | Processes, sequences, cause-effect chains |
+| Relational | How concepts connect, compare, or interact |
+| Contextual | Applications of theory to real or hypothetical scenarios |
+| Evaluative | Why something matters, its limitations, its exceptions |
+
+**Step 2 — Map question distribution to content types:**
+
+Prioritize Mechanistic and Relational content — these yield the deepest questions.
+Definitional content should produce the fewest questions, and only where the term
+is genuinely complex.
+Contextual and Evaluative content should anchor the hardest questions.
+
+**Step 3 — Flag high-yield zones:**
+Any concept that: (a) appears in a list, (b) is part of a sequence or process,
+or (c) is explicitly contrasted with another concept — is a high-yield target.
+Generate at least one non-trivial question from each flagged zone.
+
+All questions generated by this prompt are **Theory type**.
+No calculation or numerical questions are produced here.
+
+---
+
+## DISTRACTOR ENGINEERING — HOW TO BUILD COMPETITIVE OPTIONS
+
+Weak distractors are the #1 failure of AI-generated CBT questions. Every wrong
+option must be genuinely believable to a student with partial understanding.
+
+### The Four Distractor Types (use all four across your question set):
+
+**Type 1 — The Partial Truth**
+The distractor is correct in a related context but wrong here.
+> Example: If the answer involves meiosis, a distractor references mitosis with
+> accurate but misapplied facts.
+
+**Type 2 — The Vocabulary Trap**
+Uses the correct technical vocabulary but in the wrong relationship.
+> Example: "Cytoplasm fuses instead of the nucleus" vs "Nucleus fuses instead of
+> the cytoplasm" — one word flip, entirely different meaning.
+
+**Type 3 — The Adjacent Concept**
+A real concept from the same topic that students frequently confuse with the
+correct answer.
+> Example: Testing Paedogamy? A distractor uses Hologamy — same category,
+> different definition.
+
+**Type 4 — The Plausible Fabrication**
+Sounds exactly like something that could be true but isn't. Built from the same
+terminology as the correct answer, just assembled wrongly.
+> Example: "Fusion of two gametes from separate larval stages" — sounds like
+> Neotony, isn't.
+
+### Rules for All Distractors:
+- All four options must belong to the same domain/category
+- At least 2 options must make a student with 60% knowledge hesitate
+- Never use "All of the above" or "None of the above"
+- Never make the correct answer obviously longer or more detailed than distractors
+- Randomize correct answer position — don't always put it in position B or C
+
+### Theory-Specific Distractor Rules:
+- Distractors must exploit conceptual confusions, not just vocabulary swaps
+- For process/sequence questions: distractors must represent plausible but
+  incorrect steps or orders — not random noise
+- For definition questions: distractors must describe real but different
+  phenomena, not nonsense
+- For relationship questions: distractors must reverse, exaggerate, or partially
+  describe the true relationship
+
+---
+
+## QUESTION TWISTING TECHNIQUES
+
+Use these to avoid direct, predictable questions. At least **70%** of questions
+must use at least one technique.
+
+**1. Reversal**
+Instead of asking what something is, ask what it is NOT, or what would happen
+if it were absent.
+
+**2. Scenario Injection**
+Embed the concept in a real or hypothetical scenario the notes never mentioned.
+
+**3. The Exception Frame**
+Ask about boundary cases, exceptions, or conditions where the concept breaks down.
+
+**4. Consequence Testing**
+Ask what happens downstream if a step or component fails.
+
+**5. Comparison Inversion**
+Instead of asking how A differs from B, give a scenario and ask which of A or
+B it describes.
+
+**6. The Misidentification Trap**
+Describe something correctly but in unfamiliar terms, and ask what it is.
+
+### Theory-Specific Twisting Notes:
+- Classification topics → use Scenario Injection + Misidentification Trap most aggressively
+- Process topics → use Consequence Testing + Reversal
+- Relationship/comparison topics → use Comparison Inversion
+- Definition-heavy topics → Exception Frame prevents trivial recall traps
+
+---
+
+## THEORY QUESTION PROTOCOL
+
+For any conceptual, definitional, or relational content in the notes:
+
+1. **Never reproduce a note example directly.** Change the species, organism,
+   scenario, or context entirely.
+2. **Never ask "what is X?" for any term a student could find in a glossary.**
+   Ask what X does, when X applies, what breaks without X, or what X is NOT.
+3. **Generate across three cognitive tiers per concept:**
+   - *Recognition* — identify a concept from its description in a novel context (Easy)
+   - *Mechanism* — explain why a concept works or what it produces (Medium)
+   - *Edge case / Exception* — apply the concept where it fails, is absent, or
+     is misapplied (Hard)
+4. **For process/sequence content:** Test each step's function AND the
+   consequence of disruption — not just the name of the step.
+5. **For list content:** One question per item minimum. The question must test
+   application or consequence — not just the name.
+6. **For comparison content:** Never ask "what is the difference between X and Y?"
+   Embed both in a scenario and ask the student to discriminate.
+
+---
+
+## OUTPUT FORMAT
+
+⚠ FORMAT RULE — ABSOLUTE: Every question MUST start with the words "Question N" on its own line (where N is the question number). Do NOT use "1.", "1)", "#1", "Q1", or any other format. The parser depends on EXACTLY "Question N". Deviation will cause questions to be lost.
+
+### QUESTIONS SECTION
+
+Question [N]
+
+Cognitive Level: [Knowledge | Comprehension | Application | Analysis | Evaluation | Synthesis]
+Difficulty: [Easy | Medium | Hard]
+Type: Theory
+
+Stem:
+[Question or incomplete statement. Must end with ? or :]
+
+Options:
+A) [Option]
+B) [Option]
+C) [Option]
+D) [Option]
+
+### ANSWERS SECTION (after ALL questions)
+
+SEPARATOR RULE — CRITICAL: After the last question, output a separator line that is EXACTLY three dashes and nothing else:
+---
+The separator must be on its own line with no spaces, no extra text, no punctuation before or after the dashes. The parser splits on this exact string.
+
+ANSWERS AND EXPLANATIONS
+
+Question [N]:
+Correct Answer: [Letter]
+Explanation: [1–2 sentences MAX. Why the correct answer is right + the key
+misconception in the most dangerous distractor only.]
+
+**Output Sequence — Non-negotiable:**
+1. ALL questions first (no answers, no hints)
+2. "---" separator
+3. ALL answers and explanations
+
+---
+
+## CONCEPT DECOMPOSITION RULES
+
+For every major concept, generate questions across these dimensions — only where
+the material genuinely supports it:
+
+| Dimension | Question Focus |
+|---|---|
+| Definition | What it IS — use sparingly, only for genuinely complex terms |
+| Function | What it DOES |
+| Application | Using it in a standard context |
+| Novel Application | Using it in a context the notes never mentioned |
+| Relationships | How it connects to other concepts |
+| Exceptions | When it does NOT apply |
+| Consequences | What breaks if it's absent or disrupted |
+| Misconceptions | Distractors targeting the most common errors |
+
+For lists/enumerations: 1 question per item testing application or consequence —
+not identification.
+For processes/sequences: test each step's function AND disruption consequence.
+For contrasts/comparisons: use Comparison Inversion — never ask the difference
+directly.
+
+---
+
+## QUESTION QUALITY RULES
+
+**The No Trivial Recall Rule**
+Questions must require the student to *use* knowledge, not just retrieve it.
+
+**The Atomic Rule**
+One concept per question. No compound questions.
+
+**The Fairness Rule**
+A student who genuinely understands the material must be able to answer correctly.
+No trick wording. No ambiguous stems.
+
+**The No-Padding Rule**
+Never generate a question just to increase count. Every question must test
+something not already covered by another question.
+
+**The No-Glossary Rule** *(Theory-specific)*
+If a student could answer the question by looking up the term in a dictionary
+or glossary, the question is invalid. Rewrite it.
+
+---
+
+## COGNITIVE DISTRIBUTION TARGET
+
+| Level | Target % |
+|---|---|
+| Knowledge/Recall | < 5% |
+| Comprehension | 15–20% |
+| Application | 35–40% |
+| Analysis | 25–30% |
+| Evaluation/Synthesis | 10–15% |
+
+Theory questions should skew toward Analysis and Application.
+
+---
+
+## PRE-OUTPUT CHECKLIST
+
+Before generating, confirm:
+- [ ] All content classified by theory type (definitional, mechanistic,
+      relational, contextual, evaluative)
+- [ ] High-yield zones flagged and assigned twisting techniques
+- [ ] No question copies a note example directly
+- [ ] All four distractor types used across the question set
+- [ ] At least 70% of questions use a twisting technique
+- [ ] No question is answerable by glossary lookup alone
+- [ ] All [COUNT] questions are Theory type — zero Calculation questions
+- [ ] All questions come before all answers
+
+FINAL COUNT CHECK — before outputting answers: count your questions. If the total does not equal [COUNT], write additional theory questions before proceeding.
+
+---
+
+## START PROTOCOL
+
+When notes are provided:
+
+1. **Analyze** — classify all content by theory type; flag high-yield zones;
+   identify all major concepts, lists, processes, and comparisons
+2. **Plan** — assign a twisting technique and distractor strategy to each concept
+3. **Generate ALL [COUNT] questions** — organized by topic, in order of topic
+4. **Separator** — output "---"
+5. **Generate ALL answers and explanations** — 1–2 sentences, one most-dangerous
+   distractor called out per question
+
+---
+
+Study Notes:
+[NOTES]
+
+---
+
+⚠ FINAL REMINDER BEFORE YOU BEGIN: You must write exactly [COUNT] Theory questions. Count them as you go. ALL questions must have Type: Theory. Do not generate any Calculation questions. If you finish the answers section and have written fewer than [COUNT] questions, you have failed this task.
+`;
+
+// ── Split-path prompt: Calculation questions only ────────────────────────────
+const CALC_CBT_PROMPT = `
+## ⚠ PRIMARY DIRECTIVE — READ THIS FIRST
+
+You must generate EXACTLY [COUNT] questions. This is the single non-negotiable requirement of this entire task. Every other rule in this prompt is a quality guideline that is SECONDARY to the count. If following any quality rule would prevent you from reaching [COUNT], ignore that rule and write the question anyway. Reaching [COUNT] is mandatory. Stopping early is a failure regardless of the reason.
+
+ALL [COUNT] questions must be Calculation type. Do not generate any Theory questions.
+
+If you feel you have "covered all the formulas", keep going: change the unknown variable, swap the scenario, add a unit conversion, create a reverse calculation, or test a proportional reasoning step. There is always another valid calculation question from any quantitative material.
+
+---
+
+## ROLE
+
+You are an expert external examiner with deep subject knowledge in quantitative,
+mathematical, and applied disciplines. You have studied the provided notes
+thoroughly — but you do NOT write questions from the notes. You write questions
+the way a university examiner does: you take the *mathematical principles* in
+the notes and construct entirely independent questions that test whether a
+student truly knows how to apply them.
+
+Your questions test numerical reasoning, formula application, unit handling,
+multi-step problem solving, and quantitative interpretation — never conceptual
+recall.
+
+---
+
+## EXAMINER MINDSET — CRITICAL
+
+This is the most important section. Read it before generating a single question.
+
+**You are NOT a calculator. You are an examiner.**
+
+The difference:
+- A calculator-setter reads "v = u + at" and asks: *"What is the velocity if
+  u = 5, a = 2, t = 3?"*
+- An examiner reads the same formula and asks: *"A train decelerates uniformly
+  from 90 km/h to rest over 15 seconds. A second train decelerates from the same
+  speed to rest in half the time. By what factor does the second train's
+  deceleration exceed the first?"*
+
+The examiner asks questions that require thinking, not substitution.
+
+### The Golden Rule — Never Copy Worked Examples
+If the notes contain a worked example (e.g., "F = ma, so 10 kg × 3 m/s² = 30 N"),
+you must NEVER reproduce that example as a question. Instead:
+- Change the object or physical system
+- Swap which variable is the unknown
+- Reverse the direction of solving (give the answer, ask for an input)
+- Add a real-world constraint that requires an extra step
+- Change the units so a conversion is required
+
+The student practiced with the example. The exam tests whether they can handle
+something new.
+
+---
+
+## SUBJECT CONTENT CLASSIFIER
+
+Before generating questions, classify the mathematical content structure.
+
+**Step 1 — Detect calculation content types:**
+
+| Content Type | Description |
+|---|---|
+| Formula Application | Direct substitution into a single equation |
+| Multi-Step Chain | Two or more sequential operations — formula output feeds the next |
+| Unit Conversion | Requires changing units before, during, or after solving |
+| Reverse Calculation | Given an output, solve for an input variable |
+| Comparative Scenario | Two parallel systems requiring parallel calculation and comparison |
+| Proportional Reasoning | How does output change when one input scales? |
+| Error Identification | A worked solution contains a mistake — locate and correct it |
+
+**Step 2 — Map question distribution to content types:**
+
+Formula Application questions are the floor — the minimum bar. The majority of
+questions should be Multi-Step, Reverse Calculation, or Comparative Scenario.
+Unit Conversion and Error Identification questions must appear wherever the notes
+contain unit-heavy or estimation content.
+
+**Step 3 — Flag high-yield zones:**
+Every formula, constant, and worked example in the notes is a high-yield target.
+Each must produce questions at a minimum of two difficulty tiers.
+Each formula must appear in at least one Reverse Calculation question.
+
+All questions generated by this prompt are **Calculation type**.
+No conceptual-only or theory questions are produced here.
+
+---
+
+## DISTRACTOR ENGINEERING — HOW TO BUILD COMPETITIVE OPTIONS
+
+Weak distractors are the #1 failure of AI-generated CBT questions. Every wrong
+option must be the result of a mistake a real student could genuinely make.
+
+### The Four Distractor Types (use all four across your question set):
+
+**Type 1 — The Arithmetic Slip**
+The correct method, but with one computational error — wrong squaring, incorrect
+sign, multiplication/division inversion.
+
+**Type 2 — The Formula Swap**
+Uses a real formula from the same topic, applied incorrectly to this scenario.
+
+**Type 3 — The Unit Ghost**
+Correct numerical answer but wrong unit — or correct unit with value calculated
+in mixed units without conversion.
+
+**Type 4 — The Magnitude Mirage**
+Answer is exactly one power of ten off (×10, ÷10, ×100) — caused by a prefix
+error, missed conversion, or wrong scientific notation.
+
+### Rules for All Distractors:
+- All four options must be plausible numerical results — no obviously absurd
+  magnitudes
+- At least 2 options must trap a student who knows the right formula but made
+  a procedural error
+- Never use "All of the above" or "None of the above"
+- Never make the correct answer the only option with units attached
+- Randomize correct answer position — don't always put it in position B or C
+
+### Calculation-Specific Distractor Rules:
+- Every distractor must be traceable to a real error pathway
+- For multi-step questions: one distractor must represent stopping after the
+  first correct step (partial answer trap)
+- For reverse calculation questions: one distractor must represent the forward
+  answer (student solved in the wrong direction)
+- For unit questions: one distractor must be the correct number in the wrong unit
+
+---
+
+## QUESTION TWISTING TECHNIQUES
+
+Use these to avoid direct substitution questions. At least **60%** of questions
+must use at least one technique.
+
+**1. Reversal** — Give the result. Ask for the input that produced it.
+**2. Scenario Injection** — Embed the formula in a real-world context the notes never used.
+**3. The Exception Frame** — Ask what happens at a boundary value or limiting case.
+**4. Consequence Testing** — Change one variable and ask how the result changes proportionally.
+**5. Comparison Inversion** — Give two scenarios. Ask which is larger and by what factor.
+**6. The Hidden Variable** — Require an intermediate calculation the student must identify first.
+
+### Calculation-Specific Twisting Notes:
+- Reversal and Hidden Variable are the most powerful — prioritize them
+- Consequence Testing is mandatory for any formula with a squared or
+  square-rooted variable
+- Never produce a question that is pure substitution with no intellectual step
+- Comparison Inversion is ideal wherever the notes contain two related formulas
+
+---
+
+## CALCULATION QUESTION PROTOCOL
+
+For any numerical content in the notes:
+
+1. **Never use the same numbers from the notes.** Always generate fresh values.
+2. **Never use the same scenario from the notes.** Change the object, organism,
+   or context entirely.
+3. **Generate across three difficulty tiers per concept:**
+   - *Direct application* — one formula, given values, solve for one unknown (Easy)
+   - *Multi-step* — requires 2+ operations, unit conversion, or identification
+     of an intermediate variable (Medium)
+   - *Reverse / Comparative* — give the result and solve for the input, or
+     compare two parallel scenarios (Hard)
+4. **Distractors for every calculation question must include:**
+   - Result of a common arithmetic error (wrong squaring, sign flip, inversion)
+   - Result of using the wrong but plausible formula
+   - Correct magnitude, wrong unit
+   - Partial-answer trap: stopping one step too early
+5. **Unit discipline:**
+   - Always state units in both the stem and all options
+   - At least 30% of questions must require a unit conversion step
+   - The correct unit must never be the only unit present in the options
+6. **Significant figures:** Answers to 2–3 significant figures unless otherwise
+   specified. Never create distractors that differ only in rounding.
+
+---
+
+## OUTPUT FORMAT
+
+⚠ FORMAT RULE — ABSOLUTE: Every question MUST start with the words "Question N" on its own line (where N is the question number). Do NOT use "1.", "1)", "#1", "Q1", or any other format. The parser depends on EXACTLY "Question N". Deviation will cause questions to be lost.
+
+### QUESTIONS SECTION
+
+Question [N]
+
+Cognitive Level: [Application | Analysis | Evaluation | Synthesis]
+Difficulty: [Easy | Medium | Hard]
+Type: Calculation
+
+Stem:
+[Scenario with all given values and units. Final sentence states what to find.
+Must end with ? or :]
+
+Options:
+A) [Value + Unit]
+B) [Value + Unit]
+C) [Value + Unit]
+D) [Value + Unit]
+
+### ANSWERS SECTION (after ALL questions)
+
+SEPARATOR RULE — CRITICAL: After the last question, output a separator line that is EXACTLY three dashes and nothing else:
+---
+The separator must be on its own line with no spaces, no extra text, no punctuation before or after the dashes. The parser splits on this exact string.
+
+ANSWERS AND EXPLANATIONS
+
+Question [N]:
+Correct Answer: [Letter]
+Verification: [Mandatory — compute the answer in one line: state the formula, substitute the exact values from the stem, compute the numerical result with units. Example: "R = √(400²+300²+2·400·300·cos60°) = √370,000 = 608.3 N → matches option B". If your computed result does NOT match the text of the letter you wrote above, CHANGE the Correct Answer letter before proceeding. This check is non-negotiable.]
+Explanation: [Full solution pathway — every step shown, with units carried through
+each line. Name the specific mistake that produces the most dangerous distractor.]
+
+⚠ CORRECT ANSWER INTEGRITY RULE: The letter in "Correct Answer:" MUST be the option whose text equals your Verification result. Mismatches indicate a question-writing error. If you detect a mismatch, either (a) change the Correct Answer letter to match your computed result, or (b) rewrite the question so it is internally consistent. Leaving a mismatch is a critical error.
+
+**Output Sequence — Non-negotiable:**
+1. ALL questions first (no answers, no working shown)
+2. "---" separator
+3. ALL answers with full working and common error note
+
+---
+
+## CONCEPT DECOMPOSITION RULES
+
+For every formula or quantitative concept, generate questions across these
+dimensions — only where the material genuinely supports it:
+
+| Dimension | Question Focus |
+|---|---|
+| Direct Application | Substitute given values into the formula |
+| Isolation | Rearrange and solve for a different variable |
+| Multi-Step Chain | Formula output becomes input to the next formula |
+| Unit Conversion | Solve requiring at least one unit change |
+| Proportional Reasoning | How does output change when one input doubles/halves? |
+| Limiting / Boundary Case | What value produces zero, maximum, or undefined output? |
+| Comparative Scenario | Two parallel systems — which is greater and by how much? |
+| Error Identification | A worked solution contains an error — identify it |
+
+For every formula in the notes: at least one Isolation question and one
+Proportional Reasoning question must be generated.
+For every worked example in the notes: generate the parallel question at the
+next difficulty tier — never the same example.
+
+---
+
+## QUESTION QUALITY RULES
+
+**The No Substitution-Only Rule**
+Questions must require at least one reasoning step beyond raw substitution.
+
+**The Atomic Rule**
+One concept per question. No compound questions asking for two separate answers.
+
+**The Fairness Rule**
+A student who genuinely understands the material and is careful with units must
+be able to answer correctly. No ambiguous or under-specified stems.
+
+**The No-Padding Rule**
+Never generate a question just to increase count. Every question must test a
+different formula, difficulty tier, or reasoning pathway.
+
+**The Units Rule** *(Calculation-specific)*
+Every numerical stem must state all units. Every option must carry a unit.
+A question with unitless options is invalid.
+
+---
+
+## COGNITIVE DISTRIBUTION TARGET
+
+| Level | Target % |
+|---|---|
+| Knowledge/Recall | 0% |
+| Comprehension | 5–10% |
+| Application | 40–45% |
+| Analysis | 30–35% |
+| Evaluation/Synthesis | 15–20% |
+
+Calculation questions live almost entirely in Application and Analysis.
+
+---
+
+## PRE-OUTPUT CHECKLIST
+
+Before generating, confirm:
+- [ ] All formulas and quantitative concepts identified and mapped to difficulty
+      tiers
+- [ ] No question uses the same numbers or scenario from the notes
+- [ ] All distractors traceable to real, named error pathways
+- [ ] All four distractor types used across the question set
+- [ ] At least 60% of questions use a twisting technique
+- [ ] Every option carries a unit
+- [ ] At least 30% of questions require a unit conversion step
+- [ ] Every formula appears in at least one Isolation question
+- [ ] All [COUNT] questions are Calculation type — zero Theory questions
+- [ ] All questions come before all answers
+- [ ] Every question stem is internally consistent — no impossible scenarios (e.g., asking for a force that would require subtracting from a smaller number to reach a larger number)
+- [ ] For every Calculation question: I have computed the answer and verified the declared Correct Answer letter matches the option text that contains my result
+
+FINAL COUNT CHECK — before outputting answers: count your questions. If the total does not equal [COUNT], write additional calculation questions before proceeding.
+
+---
+
+## START PROTOCOL
+
+When notes are provided:
+
+1. **Analyze** — identify every formula, constant, numerical relationship, and
+   worked example; map each to difficulty tiers
+2. **Plan** — assign a twisting technique, distractor error pathway, and
+   difficulty tier to each question
+3. **Generate ALL [COUNT] questions** — organized by formula/concept, in order of topic
+4. **Separator** — output "---"
+5. **Generate ALL answers with full working** — every step shown, units carried
+   through each line, one common error named per question
+
+---
+
+Study Notes:
+[NOTES]
+
+---
+
+⚠ FINAL REMINDER BEFORE YOU BEGIN: You must write exactly [COUNT] Calculation questions. Count them as you go. ALL questions must have Type: Calculation. Do not generate any Theory questions. If you finish the answers section and have written fewer than [COUNT] questions, you have failed this task.
+`;
+
+// ── Broad-coverage prompt (replaces directive injection for broad-only path) ──
+const BROAD_CBT_PROMPT = `
+## ⚠ PRIMARY DIRECTIVE — READ THIS FIRST
+
+You must generate EXACTLY [COUNT] questions. This is the single non-negotiable requirement of this entire task. Every other rule in this prompt is a quality guideline that is SECONDARY to the count. If following any quality rule would prevent you from reaching [COUNT], ignore that rule and write the question anyway. Reaching [COUNT] is mandatory. Stopping early is a failure regardless of the reason.
+
+If you feel you have "covered all the concepts", keep going: move to the next untouched topic, apply twisting techniques, change the angle, flip the question, use scenario injection, test consequences, or ask about exceptions. There is always another valid question to write from any body of material.
+
+---
+
+## ROLE
+
+You are an expert external examiner with deep subject knowledge. You have studied the provided notes thoroughly — but you do NOT write questions from the notes. You write questions the way a university examiner does: you take the *knowledge* in the notes and construct entirely independent questions that test whether a student truly understands it.
+
+Your questions should feel like they came from an exam paper, not from a study guide.
+
+---
+
+## BROAD COVERAGE MISSION — THE CORE PHILOSOPHY OF THIS EXAM
+
+This exam exists for one purpose: **to touch every corner of the notes**. A student who only studied 3 topics deeply will be exposed. A student who surveyed the entire material will be rewarded.
+
+**Your single most important job before writing each question:**
+Ask yourself: *"Which topic in these notes has NOT received a question yet?"* — write that topic next. Every single time. Without exception.
+
+This overrides depth. This overrides elegance. This overrides your instinct to go deeper on an interesting concept. **Breadth first. Always.**
+
+---
+
+## EXAMINER MINDSET — CRITICAL
+
+This is the most important section. Read it before generating a single question.
+
+**You are NOT a summarizer. You are an examiner.**
+
+The difference:
+- A summarizer reads "Mitosis produces 2 identical diploid cells" and asks: *"How many cells does mitosis produce?"*
+- An examiner reads the same line and asks: *"A skin cell with 46 chromosomes completes mitosis. A researcher later counts chromosomes in one of the daughter cells and finds 23. Which of the following best explains this finding?"*
+
+The examiner asks questions that require understanding, not retrieval.
+
+### The Golden Rule — Never Copy Examples
+If the notes contain a worked example (e.g., "Pisum sativum crossed TT × tt gives Tt"), you must NEVER reproduce that example as a question. Instead:
+- Change the organism
+- Change the trait
+- Change the context
+- Reverse the direction of reasoning
+- Present a scenario where the student applies the same principle to something unfamiliar
+
+The student learned from the example. The exam tests whether they can go beyond it.
+
+---
+
+## SUBJECT INTELLIGENCE SYSTEM
+
+Before generating questions, analyze the notes and classify the subject:
+
+**Step 1 — Detect content type:**
+- Count the proportion of: definitions/concepts/relationships (Theory) vs. formulas/worked examples/numerical reasoning (Calculation)
+
+**Step 2 — Set generation ratio automatically:**
+
+| Subject Profile | Theory Questions | Calculation Questions |
+|---|---|---|
+| Pure theory (e.g., Biology, History) | 90–95% | 5–10% |
+| Mixed with light calculation (e.g., Chemistry, Geography) | 65–75% | 25–35% |
+| Calculation-heavy (e.g., Physics, Maths) | 30–40% | 60–70% |
+| Pure calculation | 10–15% | 85–90% |
+
+Apply this ratio automatically. Do not ask the user — infer from the notes.
+
+---
+
+## BROAD COVERAGE ORDERING RULE — MANDATORY
+
+**Before writing each question, run this check:**
+
+1. List every distinct topic, concept, term, process, and formula present in the notes.
+2. Identify which ones have NOT yet received a question.
+3. Write your next question about one of those uncovered topics.
+4. Only when ALL distinct topics have at least one question may you return to any topic for a second question.
+
+**This is not optional. This is not a preference. This is the structural rule of this exam.**
+
+Consequences of violating this rule:
+- Writing 3 questions on osmosis before covering active transport = FAILURE
+- Writing 2 consecutive questions on the same formula = FAILURE
+- Skipping a topic because it "seems minor" = FAILURE
+
+Every topic in the notes exists because the student studied it. Every topic deserves at least one question.
+
+---
+
+## DISTRACTOR ENGINEERING — HOW TO BUILD COMPETITIVE OPTIONS
+
+Weak distractors are the #1 failure of AI-generated CBT questions. Every wrong option must be genuinely believable to a student with partial understanding.
+
+### The Four Distractor Types (use all four across your question set):
+
+**Type 1 — The Partial Truth**
+Correct in a related context, wrong in this one. The student must know the boundary condition to reject it.
+
+**Type 2 — The Vocabulary Trap**
+Correct terminology, wrong relationship. One word or one relationship swapped.
+
+**Type 3 — The Adjacent Concept**
+A real, correct concept from the same subject domain that is frequently confused with the answer.
+
+**Type 4 — The Plausible Fabrication**
+Assembled from real terminology in the correct domain. Sounds entirely credible but describes something that does not exist or does not apply here.
+
+### Rules for All Distractors:
+- ALL four options must belong to the SAME conceptual domain as the stem
+- A student with 60-80% mastery must genuinely hesitate on at least 3 of the 4 options
+- Never use "All of the above" or "None of the above"
+- Match the grammatical form and approximate length of all options
+- Randomize correct answer position — distribute evenly across A, B, C, D across the exam
+- **Avoid option recycling where possible**: Try not to reuse the exact same option text across different questions. Reaching [COUNT] questions is more important than unique option text.
+
+---
+
+## QUESTION TWISTING TECHNIQUES
+
+Use these to avoid direct, predictable questions:
+
+**1. Reversal** — Ask what it is NOT, or what would happen if it were absent.
+**2. Scenario Injection** — Embed the concept in a scenario the notes never mentioned.
+**3. The Exception Frame** — Ask about boundary cases or conditions where the concept breaks down.
+**4. Consequence Testing** — Ask what happens downstream if a step/component fails.
+**5. Comparison Inversion** — Give a scenario and ask which of A or B it describes.
+**6. The Misidentification Trap** — Describe something correctly but in unfamiliar terms, and ask what it is.
+
+---
+
+## THEORY QUESTION PROTOCOL
+
+For any conceptual, definitional, relational, or process-based content in the notes:
+
+1. **Never reproduce a note example directly.** Change the species, organism, scenario, or context entirely.
+2. **Never ask "what is X?" for any term a student could find in a glossary.** Ask what X does, when X applies, what breaks without X, or what X is NOT.
+3. **Generate across three cognitive tiers per concept:**
+   - *Recognition* — identify a concept from its description in a novel context (Easy)
+   - *Mechanism* — explain why a concept works or what it produces (Medium)
+   - *Edge case / Exception* — apply the concept where it fails, is absent, or is misapplied (Hard)
+4. **For process/sequence content:** Test each step's function AND the consequence of disruption — not just the name of the step.
+5. **For list content:** One question per item minimum. The question must test application or consequence — not just the name.
+6. **For comparison content:** Never ask "what is the difference between X and Y?" Embed both in a scenario and ask the student to discriminate.
+
+---
+
+## CALCULATION QUESTION PROTOCOL
+
+For any numerical content in the notes:
+
+1. **Never use the same numbers from the notes.** Always generate fresh values.
+2. **Never use the same scenario from the notes.** Change the organism, object, or context entirely.
+3. **Generate three difficulty tiers per concept:**
+   - *Direct application* — plug values into formula (Easy)
+   - *Multi-step* — requires 2+ operations or unit conversion (Medium)
+   - *Reverse calculation* — give the result, ask for the input variable (Hard)
+4. **Distractors for calculation questions must be:**
+   - Results of common arithmetic errors (e.g., forgot to square, used wrong unit)
+   - Results of using the wrong formula (plausible substitution)
+   - Correct magnitude, wrong unit
+   - Off-by-one errors in significant figures
+
+---
+
+## OUTPUT FORMAT
+
+⚠ FORMAT RULE — ABSOLUTE: Every question MUST start with the words "Question N" on its own line (where N is the question number). Do NOT use "1.", "1)", "#1", "Q1", or any other format. The parser depends on EXACTLY "Question N". Deviation will cause questions to be lost.
+
+Question [N]
+
+Cognitive Level: [Knowledge | Comprehension | Application | Analysis | Evaluation | Synthesis]
+Difficulty: [Easy | Medium | Hard]
+Type: [Theory | Calculation]
+
+Stem:
+[Question or incomplete statement. Must end with ? or :]
+
+Options:
+A) [Option]
+B) [Option]
+C) [Option]
+D) [Option]
+
+### ANSWERS SECTION (after ALL questions)
+
+SEPARATOR RULE — CRITICAL: After the last question, output a separator line that is EXACTLY three dashes and nothing else:
+---
+The separator must be on its own line with no spaces, no extra text, no punctuation before or after the dashes. The parser splits on this exact string.
+
+ANSWERS AND EXPLANATIONS
+
+Question [N]:
+Correct Answer: [Letter]
+Explanation: [1–2 sentences MAX. Why the correct answer is right + the key misconception in the most dangerous distractor only.]
+
+**Output Sequence — Non-negotiable:**
+1. ALL questions first (no answers, no hints)
+2. "---" separator
+3. ALL answers and explanations
+
+---
+
+## CONCEPT DECOMPOSITION RULES
+
+For every major concept, generate questions across these dimensions — but remember: **one question per topic before revisiting any topic**:
+
+| Dimension | Question Focus |
+|---|---|
+| Definition | What it IS |
+| Function | What it DOES |
+| Application | Using it in a standard context |
+| Novel Application | Using it in a context the notes never mentioned |
+| Relationships | How it connects to other concepts |
+| Exceptions | When it does NOT apply |
+| Consequences | What breaks if it's absent or disrupted |
+| Misconceptions | Specific distractors targeting common errors |
+
+For lists/enumerations in notes: create 1 question per item testing application or consequence — not just identification.
+For processes/sequences: test each step's function AND what happens if that step is disrupted.
+
+---
+
+## QUESTION QUALITY RULES
+
+**The No Trivial Recall Rule** — Questions must require the student to *use* knowledge, not just retrieve it.
+**The Atomic Rule** — One concept per question. No compound questions.
+**The Fairness Rule** — A student who genuinely understands the material must be able to answer correctly.
+**The No-Padding Rule** — Never generate a question just to increase count.
+
+---
+
+## COGNITIVE DISTRIBUTION TARGET
+
+| Level | Target % |
+|---|---|
+| Knowledge/Recall | < 10% |
+| Comprehension | 15–20% |
+| Application | 35–40% |
+| Analysis | 20–25% |
+| Evaluation/Synthesis | 10–15% |
+
+---
+
+## VOLUME INSTRUCTION — ABSOLUTE RULE
+
+You MUST generate EXACTLY [COUNT] questions. No fewer. No more.
+
+- Use twisting techniques, scenario injection, consequence testing, and definition questions to reach [COUNT].
+- Never stop before [COUNT] for any reason.
+- [COUNT] questions is mandatory. This rule overrides every other rule in this prompt.
+
+---
+
+## COVERAGE REQUIREMENT — MANDATORY
+
+You MUST draw at least one question from EVERY distinct concept, term, process, formula, or fact mentioned in the provided study notes.
+
+- Map ALL topics before writing question 1. Know your full topic list upfront.
+- Spread questions across ALL sections and topics of the notes.
+- Do NOT write a second question on any topic until every other topic has received its first question.
+
+---
+
+## PRE-OUTPUT CHECKLIST
+
+Before generating, confirm:
+- [ ] I have listed every distinct topic, concept, term, process, and formula in the notes — this is my coverage map
+- [ ] Topic-first ordering is locked in — I will check my coverage map before every single question
+- [ ] No topic will receive a second question until all topics have received their first
+- [ ] Theory/calculation split has been auto-detected from the notes and will be maintained proportionally
+- [ ] No question copies a note example directly
+- [ ] All distractors use the four distractor types
+- [ ] At least 60% of questions use a twisting technique
+- [ ] Calculation questions use fresh numbers and scenarios
+- [ ] All questions come before all answers
+
+FINAL COUNT CHECK — before outputting answers: count your questions. If the total does not equal [COUNT], write additional questions before proceeding.
+
+FINAL COVERAGE CHECK — before outputting answers: scan your coverage map. If any topic received zero questions, write a question for it before proceeding.
+
+---
+
+## START PROTOCOL
+
+When notes are provided:
+1. **Map** — list every distinct topic, concept, term, formula, and process in the notes. This is your coverage map. You will consult it before every question.
+2. **Classify** — detect subject type and auto-set theory/calculation ratio
+3. **Generate ALL questions** — follow coverage map strictly. Topic that has zero questions → write that next. Interleave theory and calculation proportionally as you go.
+4. **Separator** — output "---"
+5. **Generate ALL answers and explanations** — brief, focused
+
+---
+
+Study Notes:
+[NOTES]
+
+---
+
+⚠ FINAL REMINDER BEFORE YOU BEGIN: You must write exactly [COUNT] questions. Count them as you go. You must also cover every topic in the notes — check your coverage map as you go. If you finish the answers section and have written fewer than [COUNT] questions, or left any topic uncovered, you have failed this task.
+`;
+
+const FLASHCARD_PROMPT = `
+ROLE: You are an expert educational content creator specializing in building comprehensive, pedagogically-sound Anki flashcard sets. Your task is to analyze the provided notes and generate a complete set of Anki cards that ensures no detail is overlooked.
+
+INTELLIGENCE DIRECTIVE: You must recognize when source material contains enumerated lists, dense paragraphs, or multi-part concepts, and automatically decompose them into atomic, testable units. A card asking for "5 pillars" is a note, not a flashcard — break it into 5 separate cards or use cloze deletions.
+
+However, decomposition is only correct when each resulting card has independently testable, distinct content. Items that are minor elaborations of the same idea, or that differ only in trivial detail, must be merged — not split. The goal is complete coverage of meaningful distinctions, not maximum card count.
+
+---
+
+MANDATORY REASONING PHASE (EXECUTE BEFORE GENERATING ANY CARDS)
+
+Before writing a single card, complete a silent reasoning pass through the material. This is not optional. Do not skip to output.
+
+During the reasoning pass, answer the following internally:
+
+1. COMPREHENSION CHECK
+   · Have I read and fully understood the entire source material?
+   · What are the major topics and subtopics present?
+
+2. DEFINITION QUALITY CHECK
+   · Which definitions are awkward, vague, or textbook-stiff?
+   · How can I rewrite them to be speakable and clear without losing accuracy?
+
+3. ANGLE IDENTIFICATION
+   · What is the best angle to test each concept from?
+   · Is this best tested as a definition, a process, a comparison, a function, a cause-effect?
+   · Can one concept generate multiple cards from different angles?
+
+4. DECOMPOSITION PLANNING
+   · Where are the lists, multi-part answers, or dense paragraphs?
+   · Have I planned how each will be decomposed into atomic cards or cloze deletions?
+   · For each item I plan to decompose: does it have distinct, independently testable content — its own name, function, rule, or specific detail? If yes, decompose. If items are variations of the same point or differ only in minor detail, merge them into one card.
+
+5. FRAMEWORK ALIGNMENT
+   · Which subject framework applies to this material?
+   · Have I mentally mapped the key card types I will use?
+   · Where will I need to override the default framework, and why?
+
+Only after completing this reasoning pass should you begin generating cards.
+
+---
+
+OPERATING MODES (SILENT — AUTO-DETECTED)
+
+This prompt operates in two modes. Detection is automatic and silent — do not announce which mode is active.
+
+DEFAULT MODE:
+Applied when no override signal is present. Cards are written for conceptual understanding and recognition. Language is natural and speakable. Definitions are paraphrased for clarity and retention.
+
+PRECISION MODE — activated by the words NOT CBT anywhere in the input:
+Used when the exam requires exact recall rather than recognition. In Precision Mode:
+· Back answers prioritise exact academic phrasing and technical completeness
+· Definitions retain formal structure where verbatim precision matters
+· Cards include nuanced distinctions and edge cases that default mode would simplify
+· Verbatim recall is treated as a valid learning objective
+· The Plain Language Rule still applies where it does not compromise accuracy — but accuracy wins any conflict
+
+---
+
+OUTPUT FORMAT SPECIFICATION v4.0
+
+PURPOSE: Standardizes flashcard output structure for reliable parsing. This is a format contract. Deviation is an error.
+
+Standard Cards (Non-Cloze):
+
+Card [N]
+
+Card Type: [Specific Type from Framework]
+
+Front:
+[The question, prompt, or incomplete statement]
+
+Back:
+[The complete answer, explanation, or filled-in content]
+
+Cloze Deletion Cards:
+
+Card [N]
+
+Card Type: Cloze Deletion
+
+Front:
+[Text with {{c1::hidden}} content and {{c1::additional}} deletions]
+
+Back:
+(Cloze - see Front)
+
+---
+
+FIELD SPECIFICATIONS
+
+Card Header
+· Format: Card [N] where N is a sequential integer starting at 1
+· Must appear exactly as shown: the word "Card" + space + number
+· Followed by exactly one blank line
+
+Card Type Line
+· Format: Card Type: followed by the specific type selected from the subject framework
+· Approved types: Concept Definition, Formula Recall, Variable & Unit, Conceptual Understanding, Problem-Solving Trigger, Common Mistake, Cloze Deletion, Concept Explanation, Rules & Naming, Characteristic, Formula & Condition, Step-by-Step Procedure, Theorem & Property, Connection, Process Explanation, Compare & Contrast, Function > Structure, Component, Input-Output
+
+Front Section
+· Header: Front: on its own line
+· Content begins on the line immediately following the header
+· For Cloze: must contain at least one {{c1::text}} deletion. All deletions in a card use {{c1::}} — never c2, c3, or higher.
+
+Back Section
+· Header: Back: on its own line
+· For Cloze cards: Back is optional or contains "(Cloze - see Front)"
+· For all other types: required and must contain a complete answer
+
+Card Separation
+· Exactly one blank line between the end of Back content and the next Card header
+· No horizontal rules (---) between cards
+· No markdown code blocks around cards
+
+Typography Rules
+· Use Unicode subscripts for numbers and letters in scientific notation:
+  · Numbers: ₀ ₁ ₂ ₃ ₄ ₅ ₆ ₇ ₈ ₉
+  · Common letters: ₐ ₑ ₓ ₖ ₗ ₘ ₙ ₒ ₚ ₛ ₜ
+  · Examples: H₂O, CO₂, V₁, T₂
+· Use Unicode superscripts for exponents:
+  · Numbers: ⁰ ¹ ² ³ ⁴ ⁵ ⁶ ⁷ ⁸ ⁹
+  · Examples: m², cm³, 10⁶
+· For variable exponents without widely supported superscripts, use caret notation: 5^x, e^{kx}, x^{2y}
+· Apply consistently: H₂O not H2O, m² not m2
+
+---
+
+PLAIN LANGUAGE RULE (CRITICAL)
+
+Every Back answer must be written in natural, speakable language — something you could say out loud clearly without stumbling. Do not copy definitions verbatim from the source material if they are dense or textbook-stiff. Rewrite them to flow like one person explaining to another, while keeping all key technical terms intact.
+
+The test: read the Back answer aloud. If it sounds natural, it passes. If it sounds like reading off a label, rewrite it.
+
+Examples:
+
+❌ Bad (verbatim dump):
+Back: The transmission and expression of characters or traits in organisms from parent to the offspring.
+
+✅ Good (natural but accurate):
+Back: Heredity is how parents pass their traits and characteristics down to their offspring.
+
+❌ Bad:
+Back: A mature sex cell which takes in sexual reproduction.
+
+✅ Good:
+Back: A gamete is a mature sex cell — like sperm or an egg — that participates in sexual reproduction.
+
+This rule applies to ALL card types. In Precision Mode (NOT CBT), accuracy overrides naturalness when they conflict — but the goal is still to avoid unnecessary stiffness.
+
+---
+
+TIERED BACK FORMAT
+
+Back answers follow a two-tier structure.
+
+TIER 1 — Core Answer (Always required)
+The direct, minimal answer to the front. One line where possible. No padding, no elaboration.
+
+TIER 2 — Clarification Note (Optional)
+Used only when the core answer alone would leave a genuine gap in understanding. Written in HTML italics inside parentheses, separated from Tier 1 by one blank line.
+
+Format:
+Back:
+[Core answer]
+
+<i>(Clarification note)</i>
+
+Examples:
+
+✅ Simple concept — Tier 1 only:
+Front: What is the chemical symbol for gold?
+Back:
+Au
+
+✅ Concept that benefits from context — both tiers:
+Front: What is biology?
+Back:
+The study of life
+
+<i>(Covers everything from how organisms are structured and function, to how they evolve, reproduce, and interact with their environment)</i>
+
+✅ Process answer with helpful context:
+Front: What does the S phase of interphase do?
+Back:
+DNA replication — the cell copies all its chromosomes
+
+<i>(After S phase, the cell has double the normal DNA, giving each future daughter cell a complete set)</i>
+
+WHEN TO USE TIER 2:
+· The core answer is technically correct but could be easily misunderstood without context
+· The concept is abstract and a real-world anchor would help it stick
+· The answer is a label that needs a brief "what that actually means" note
+
+WHEN NOT TO USE TIER 2:
+· The core answer is already self-explanatory
+· Adding context would just repeat the front question
+· The card is a cloze deletion
+
+Do not default to always including Tier 2. Overuse defeats its purpose. If in doubt, leave it out.
+
+---
+
+CARD ATOMICITY RULES (CRITICAL)
+
+The "5 Pillars" Rule:
+If source material contains a list of 3+ distinct items, you MUST choose one of these approaches:
+
+1. Decompose into atomic cards (Preferred):
+   Card 1
+   Card Type: Component
+   Front: What is the first pillar of the CIA triad in cybersecurity?
+   Back: Confidentiality — making sure information is only accessible to authorised people
+
+   Card 2
+   Card Type: Component
+   Front: What is the second pillar of the CIA triad?
+   Back: Integrity — protecting information from being altered or corrupted
+
+2. Use Cloze Deletion (For tightly related items):
+   Card 1
+   Card Type: Cloze Deletion
+   Front: The three pillars of the CIA triad are {{c1::Confidentiality}}, {{c1::Integrity}}, and {{c1::Availability}}.
+   Back: (Cloze - see Front)
+
+Allowed Exception — Bounded List Recall:
+Cards that ask for a complete list are allowed only when:
+· The list represents a single conceptual unit (e.g., stages, phases, categories)
+· The list has a stable canonical size (≤ 7 items)
+· Recall of the entire set is the specific learning objective
+
+What is forbidden:
+❌ Unbounded or explanatory lists:
+1. Scalability – The ability to easily increase or decrease computing resources.
+2. Cost – Reduces expenses by eliminating physical hardware.
+3. Flexibility – Enables access from anywhere.
+This is a note, not a flashcard. It will be rejected.
+
+THE DECOMPOSITION TEST
+
+Before splitting any concept into multiple cards, apply this test to each item:
+
+DECOMPOSE when the item has:
+· A distinct name, label, or term that can be tested independently
+· Its own specific function, rule, process, or example that differs meaningfully from siblings
+· Content that would be genuinely missed if absent from the deck
+
+MERGE when items:
+· Express the same idea in slightly different words
+· Are minor elaborations of a parent concept with no unique testable detail
+· Would produce cards whose backs are nearly interchangeable
+
+The test question: if a student got this card wrong on an exam, would it be because they missed a genuinely distinct piece of knowledge — or just because they forgot one rephrasing of something they already know? Only the former justifies a separate card.
+
+---
+
+Cloze Numbering Rule (ABSOLUTE): Always use {{c1::}} for every deletion in every cloze card. Never use c2, c3, c4, or any higher number. All blanks in a card hide and reveal together. Using different cloze numbers creates separate sub-cards — this is always wrong in this system.
+
+---
+
+CARD CREATION FRAMEWORK
+
+FOR BIOLOGY NOTES:
+1. Cloze Deletion: Sequences and definitions
+2. Process Explanation: Step-by-step process explanations
+3. Compare & Contrast: Differentiating related concepts
+4. Function > Structure: Explaining functional advantages
+5. Component: Each key component or part (atomic cards only)
+6. Input-Output: What goes in and what comes out of processes
+
+FOR CHEMISTRY NOTES:
+1. Cloze Deletion: Fill-in-the-blank for key facts and trends
+2. Concept Explanation: "Explain why" questions for mechanisms
+3. Formula & Unit: All formulas and their units
+4. Problem-Solving Trigger: When to apply each concept
+5. Rules & Naming: Procedural rules and naming conventions
+6. Characteristic: Each key characteristic or feature
+
+FOR PHYSICS NOTES:
+1. Concept Definition: Definitions in the student's own words
+2. Formula Recall: Every formula and its components
+3. Variable & Unit: Separate cards for each variable definition and unit
+4. Conceptual Understanding: "Why" and "how" questions about relationships
+5. Problem-Solving Trigger: When to use each law or formula
+6. Common Mistake: Addressing each common pitfall
+
+Physics Clarity Rule: Do not dump raw formulas or vector expansions without context. Every expression must be paired with a clear prompt explaining what is being calculated, when it is used, and what each term represents.
+
+FOR MATHEMATICS NOTES:
+1. Formula & Condition: Formulas and when they apply
+2. Step-by-Step Procedure: Detailed recipe cards for each method
+3. Conceptual Understanding: "Why" questions about underlying principles
+4. Theorem & Property: Stating and explaining theorems
+5. Common Mistake: Highlighting frequent errors
+6. Connection: Linking to related topics
+
+FOR ALL OTHER SUBJECTS:
+Default to Concept Definition, Component, Compare & Contrast, Cloze Deletion, Rules & Naming, and Conceptual Understanding as your base types. Select and adapt based on what the content demands.
+
+---
+
+VALIDATION RULES
+
+1. Smart Exhaustiveness: Cover every concept, term, rule, and meaningful distinction in the source material — but only decompose into separate cards when each item has independently testable, distinct content. Complete coverage of meaningful distinctions is the standard.
+2. No Enumeration Cards: Cards asking for "List the 5..." or "Name the 3..." with multi-item answers are forbidden. Split them or use Cloze.
+3. Sequential Numbering: Cards must be numbered Card 1, Card 2, Card 3... with no gaps.
+4. Cloze Format: Cloze cards MUST have {{c1::}} syntax in Front and MUST NOT contain substantive Back content. All deletions use {{c1::}} only — c2/c3/c4 are forbidden.
+5. Content Presence: No empty Front sections. Back required for all non-Cloze cards.
+6. Scientific Notation: All scientific notation must use proper Unicode subscripts/superscripts or caret notation as specified.
+7. Plain Language: Every Back answer must pass the Plain Language Rule before output.
+8. Reasoning Phase: The Mandatory Reasoning Phase must be completed before Card 1 is written.
+9. Framework Discipline: Use the subject framework as default. Override only when necessary, and name the override.
+10. Return all cards as plain text inline in your response — do not reference external files.
+
+---
+
+COVERAGE REQUIREMENT — MANDATORY
+
+You MUST generate at least one card for EVERY distinct concept, term, rule, process, formula, example, and fact mentioned in the notes — no matter how small or brief.
+
+- If the notes contain 20 distinct concepts, all 20 must appear in at least one card.
+- Do NOT cluster cards around 3–4 prominent concepts while skipping the rest.
+- Do NOT skip any sentence, bullet point, or section of the notes.
+- After completing your Mandatory Reasoning Pass, scan the notes one final time and confirm every distinct piece of knowledge has a card assigned to it before generating output.
+- Coverage of the full notes is non-negotiable. Incomplete coverage is a failure of this task.
+
+---
+
+NOTES TO PROCESS:
+[NOTES]
+`;
+
+// estimateCBTCount — derives question count from word count per CBT_PROMPT VOLUME GUIDELINE
+// < 300 words → 20 | 300–800 → 40 | 800–2000 → 65 | 2000+ → 100
+function estimateCBTCount(text) {
+const words = text.trim().split(/\s+/).filter(Boolean).length;
+if (words < 300) return 20;
+if (words < 800) return 40;
+if (words < 2000) return 65;
+return 100;
+}
+
+// ── CBT option integrity ────────────────────────────────────────────────────
+// Repeated option text across DIFFERENT questions is valid and must never be
+// mutated. Integrity is enforced only inside each MCQ: A-D must all be present,
+// non-placeholder, pairwise distinct, and the declared correct answer must be A-D.
+const CBT_OPTION_KEYS = ['option_a', 'option_b', 'option_c', 'option_d'];
+const CBT_OPTION_PLACEHOLDERS = new Set([
+  'option a',
+  'option b',
+  'option c',
+  'option d',
+  '(none of the above applies here)',
+  '[option removed — duplicate]',
+  'not applicable',
+]);
+
+function _normalizeCBTOptionText(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function validateCBTQuestionOptions(question) {
+  const correct = String(question?.correct_answer || '').toUpperCase();
+  if (!['A', 'B', 'C', 'D'].includes(correct)) {
+    return { valid: false, reason: 'invalid_correct_answer' };
+  }
+
+  const options = CBT_OPTION_KEYS.map((key) => String(question?.[key] || '').trim());
+  if (options.some((value) => !value)) {
+    return { valid: false, reason: 'missing_option' };
+  }
+  if (options.some((value) => CBT_OPTION_PLACEHOLDERS.has(_normalizeCBTOptionText(value)))) {
+    return { valid: false, reason: 'placeholder_option' };
+  }
+
+  const normalized = options.map(_normalizeCBTOptionText);
+  if (new Set(normalized).size !== CBT_OPTION_KEYS.length) {
+    return { valid: false, reason: 'duplicate_option_within_question' };
+  }
+
+  return { valid: true };
+}
+
+function filterInvalidCBTQuestions(questions, stage = 'post-generation') {
+  if (!Array.isArray(questions) || questions.length === 0) return [];
+  const kept = [];
+  let dropped = 0;
+
+  for (const question of questions) {
+    const check = validateCBTQuestionOptions(question);
+    if (!check.valid) {
+      dropped++;
+      console.warn(
+        `[KIWI CBT] Q${question?.question_number ?? '?'} dropped during ${stage}: ${check.reason}`
+      );
+      continue;
+    }
+    kept.push(question);
+  }
+
+  if (dropped > 0) {
+    console.warn(`[KIWI CBT] ${stage}: dropped ${dropped} malformed question(s); no option text was mutated`);
+  }
+  return kept;
+}
+
+// Fisher-Yates shuffle — used to interleave theory + calc arrays after split generation
+function _shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+async function generateCBTQuestions(notes, count, options) {
+// ── Dynamic directives — injected between COVERAGE REQUIREMENT and PRE-OUTPUT CHECKLIST ──
+// theory_percent:    0-100 (theory share). null = not set (use Subject Intelligence auto-detect).
+// customize_balance: if true, the user explicitly set a theory/calc ratio — inject BALANCE directive.
+// broad_coverage:    if true, forces maximum topic breadth over depth.
+// force_type:        'theory' | 'calculation' | null — selects a type-specific prompt for split generation.
+const _opts            = options || {};
+const _taskId           = _opts.ai_task_id || 'MAIN_CBT';
+const customizeBalance = !!_opts.customize_balance;
+const broadCoverage    = !!_opts.broad_coverage;
+const forceType        = _opts.force_type || null; // 'theory' | 'calculation' | null
+const difficultyLevel  = ['easy', 'hard', 'very_hard', 'hell'].includes(_opts.difficulty_level)
+  ? _opts.difficulty_level : null;
+const _generationGroupId = _opts.generation_group_id || null;
+
+let dynamicDirectives = '';
+
+if (difficultyLevel) {
+  const difficultyDirectives = {
+    easy: [
+      'EASY: test direct understanding and recognition from the supplied subject data.',
+      'Use clear wording, mostly single-step reasoning, and distractors that are plausible but distinguishable.',
+      'Do not make questions trivial and do not introduce outside facts.'
+    ],
+    hard: [
+      'HARD: require application, comparison, and multi-step reasoning rather than direct recall.',
+      'Use close distractors based on real misconceptions and connect related facts from the supplied data.',
+      'Hard is intentionally above the normal/default exam and must not be treated as medium.'
+    ],
+    very_hard: [
+      'VERY HARD: require synthesis across multiple concepts, exception handling, and two-to-three-step reasoning.',
+      'All distractors must remain defensible until the learner notices a precise conceptual distinction.',
+      'Stay entirely within the supplied subject data.'
+    ],
+    hell: [
+      'HELL: use the maximum justified complexity available inside the supplied subject data.',
+      'Require cross-concept synthesis, reverse reasoning, exception chains, error diagnosis, and consequence analysis.',
+      'Every distractor must be highly plausible. Never rely on obscure outside knowledge, ambiguous wording, or cheap tricks.',
+      'The difficulty must come from mastery of the subject data itself.'
+    ],
+  };
+  dynamicDirectives += '\n## SELECTED DIFFICULTY — MANDATORY\n\n' +
+    difficultyDirectives[difficultyLevel].join('\n- ') + '\n\n---\n';
+}
+
+// NOTE: Custom balance (customize_balance=true) is always handled via the SPLIT PATH in the
+// route handler — the handler computes theoryN/calcN and calls generateCBTQuestions twice with
+// force_type='theory' and force_type='calculation'. The BALANCE directive injection that used to
+// live here was dead code: the split path always sets forceType, making !forceType false, so
+// this block could never execute. Ratio enforcement is entirely handled by the route handler.
+//
+// When customizeBalance is false: no ratio directive is injected.
+// The Subject Intelligence System in CBT_PROMPT will auto-detect the correct ratio
+// (e.g. 90-95% theory for Biology/Library Science, 60-70% calc for Physics/Maths).
+
+// Coverage directive:
+// - BROAD_CBT_PROMPT path (broadCoverage && !customizeBalance && !forceType): skip injection —
+//   broad coverage is baked into BROAD_CBT_PROMPT natively.
+// - All other paths: inject broad or focused directive as appropriate.
+const _useBroadPrompt = broadCoverage && !customizeBalance && !forceType;
+if (!_useBroadPrompt) {
+  if (broadCoverage) {
+    dynamicDirectives +=
+      '\n## BROAD COVERAGE MODE \u2014 MANDATORY\n\n' +
+      'The student has activated Broad Coverage mode. Topic breadth is your ONLY priority for question selection:\n' +
+      '- Before writing each question, you MUST ask: "Which topic from the notes has NOT been tested yet?" — write that topic next, every single time.\n' +
+      '- Every distinct topic, sub-topic, concept, or fact in the notes MUST receive its own question before any topic receives a second question.\n' +
+      '- Do NOT write 2 or more consecutive questions on the same concept under any circumstances.\n' +
+      '- Only after ALL distinct topics have at least one question may you revisit topics from different angles.\n' +
+      '- Depth is sacrificed for breadth. One solid question per topic is better than three deep questions on one topic.\n' +
+      '\n---\n';
+  } else {
+    dynamicDirectives +=
+      '\n## FOCUSED COVERAGE MODE \u2014 MANDATORY\n\n' +
+      'Broad Coverage mode is OFF. Your priority is DEPTH, not breadth:\n' +
+      '- Concentrate on the most important and heavily tested concepts in the notes. Cover them from multiple angles.\n' +
+      '- For each key concept, apply multiple twisting techniques: reversal, scenario injection, consequence testing, exception framing.\n' +
+      '- Do NOT race to cover every minor detail. A student who truly understands the core concepts is the target.\n' +
+      '- Spread questions proportionally by topic weight — spend more questions on concepts that have more depth, more formulas, or more relationships.\n' +
+      '\n---\n';
+  }
+}
+
+// Select base prompt:
+// - forceType='theory'       → THEORY_CBT_PROMPT   (split path — theory half)
+// - forceType='calculation'  → CALC_CBT_PROMPT      (split path — calc half)
+// - broad && !customize      → BROAD_CBT_PROMPT     (broad-only path, no split)
+// - otherwise                → CBT_PROMPT           (existing combined path)
+let _basePrompt;
+if (forceType === 'theory') {
+  _basePrompt = THEORY_CBT_PROMPT;
+} else if (forceType === 'calculation') {
+  _basePrompt = CALC_CBT_PROMPT;
+} else if (_useBroadPrompt) {
+  _basePrompt = BROAD_CBT_PROMPT;
+} else {
+  _basePrompt = CBT_PROMPT;
+}
+
+// Inject dynamic directives immediately before ## PRE-OUTPUT CHECKLIST
+const prompt = _basePrompt
+  .replace('## PRE-OUTPUT CHECKLIST', dynamicDirectives + '## PRE-OUTPUT CHECKLIST')
+  .replace('[NOTES]', notes)
+  .replace('[COUNT]', count);
+
+// Allocate enough output for the requested exam without forcing every small exam
+// into a 24k-token generation. Oversized budgets materially increase latency.
+const scaledTokens = Math.min(48000, Math.max(8000, count * 700));
+const _theoryPct = customizeBalance && typeof _opts.theory_percent === 'number' ? _opts.theory_percent : 'auto';
+console.log(`[KIWI CBT] generateCBTQuestions: requesting ${count} questions, difficulty=${difficultyLevel || 'off/default'}, theory=${_theoryPct}%, broad=${broadCoverage}, customBalance=${customizeBalance}, forceType=${forceType || 'none'}, route=${_taskId}, maxOutputTokens=${scaledTokens}`);
+const result = await ai.run(
+  _taskId,
+  {
+    content: prompt,
+    generationConfig: { maxOutputTokens: scaledTokens },
+  },
+  { generationGroupId: _generationGroupId }
+);
+if (result.finishReason === 'MAX_TOKENS') {
+  console.warn(`[KIWI CBT] Output truncated at ${count} questions — response cut short. Consider lowering count or notes size.`);
+}
+console.log(`[KIWI CBT] ${_taskId} served by ${result.requestedModel} via ${result.projectSlot}; fallbackDepth=${result.fallbackDepth}`);
+return result.text;
+}
+async function generateCBTCompletionQuestions(notes, existingQuestions, needed, forceType, difficultyLevel, generationGroupId = null) {
+  const existingSummary = existingQuestions.map((q, i) =>
+    `Q${i + 1}: ${q.stem}\n  A) ${q.option_a}  B) ${q.option_b}  C) ${q.option_c}  D) ${q.option_d}`
+  ).join('\n\n');
+
+  // When called from the split path, enforce the same type constraint so completion
+  // passes don't accidentally fill theory shortfalls with calc questions or vice versa.
+  const _typeConstraint = forceType === 'theory'
+    ? '6. Question type — ALL completion questions must be Theory type ONLY. Do not generate any Calculation questions.'
+    : forceType === 'calculation'
+    ? '6. Question type — ALL completion questions must be Calculation type ONLY. Do not generate any Theory questions.'
+    : null;
+  const _difficultyConstraint = difficultyLevel
+    ? '7. Difficulty — Every completion question must preserve the selected "' + difficultyLevel.replace('_', ' ') + '" standard. Stay entirely within the supplied notes.'
+    : null;
+
+  const completionPrompt = [
+    '## COMPLETION REQUEST',
+    '',
+    'You previously generated a set of exam questions from the study notes below, but the output was incomplete.',
+    'Your task: generate EXACTLY ' + needed + ' additional question(s) to complete the exam.',
+    '',
+    '## STRICT REQUIREMENTS FOR COMPLETION QUESTIONS',
+    '',
+    '1. No concept repetition — Do NOT ask about any concept, fact, or topic already covered in the existing questions below.',
+    '2. No option recycling — None of your new options (A/B/C/D) may match any option text that already appears in the existing questions.',
+    '3. Full distractor quality — Apply the same confusion-grade distractor standards: all four options must belong to the same conceptual domain, a student with 60-80% mastery must genuinely hesitate on at least 3 options.',
+    '4. Same output format — Use the identical format: Question N, Stem, Options A-D, then ANSWERS AND EXPLANATIONS after a --- separator.',
+    '5. Question numbering — Start from Question ' + (existingQuestions.length + 1) + '.',
+    ...(_typeConstraint ? [_typeConstraint] : []),
+    ...(_difficultyConstraint ? [_difficultyConstraint] : []),
+    '',
+    '## EXISTING QUESTIONS (do not repeat these concepts or options)',
+    '',
+    existingSummary,
+    '',
+    '## STUDY NOTES',
+    '',
+    notes,
+    '',
+    'Generate exactly ' + needed + ' question(s) following all rules above.',
+  ].join('\n');
+
+  const completionTokens = Math.min(24000, Math.max(6000, needed * 700));
+  const completionGroupId = generationGroupId || null;
+  const result = await ai.run(
+    'CBT_COMPLETION',
+    {
+      content: completionPrompt,
+      generationConfig: { maxOutputTokens: completionTokens },
+    },
+    { generationGroupId: completionGroupId }
+  );
+  return result.text;
+}
+
+function _parseCBTQuestionAudit(rawText) {
+  const cleaned = String(rawText || '').replace(/\`\`\`json|\`\`\`/gi, '').trim();
+  const first = cleaned.indexOf('{');
+  const last = cleaned.lastIndexOf('}');
+  if (first < 0 || last <= first) throw new Error('AI audit did not return JSON');
+  const parsed = JSON.parse(cleaned.slice(first, last + 1));
+  return {
+    question_valid: parsed.question_valid !== false,
+    answer_key_correct: parsed.answer_key_correct !== false,
+    ambiguous: parsed.ambiguous === true,
+    answerable_from_source: parsed.answerable_from_source !== false,
+    recommended_answer: /^[A-D]$/.test(String(parsed.recommended_answer || '').toUpperCase())
+      ? String(parsed.recommended_answer).toUpperCase()
+      : null,
+    reason: String(parsed.reason || '').slice(0, 1200),
+    confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
+  };
+}
+
+const _cbtQuestionAuditPromises = new Map();
+
+async function auditCBTQuestion(userId, exam, question) {
+  const key = userId + ':' + exam.id + ':' + question.id;
+  if (_cbtQuestionAuditPromises.has(key)) return _cbtQuestionAuditPromises.get(key);
+
+  const work = (async () => {
+    await db.examQuestions.update(userId, question.id, {
+      flagged_by_student: true,
+      flagged_at: question.flagged_at || new Date(),
+      ai_audit_status: 'pending',
+    });
+
+    try {
+      const sourceCard = question.card_id
+        ? await db.cards.findById(userId, question.card_id).catch(() => null)
+        : null;
+      const sourceContext = sourceCard
+        ? [
+            'SOURCE CARD FRONT: ' + String(sourceCard.front_content || sourceCard.front || ''),
+            'SOURCE CARD BACK: ' + String(sourceCard.back_content || sourceCard.back || ''),
+          ].join('\n')
+        : 'SOURCE CARD: unavailable. Judge using the question and options only.';
+
+      const prompt = [
+        'You are KIWI Assessment Integrity. Audit one multiple-choice question for correctness.',
+        'Do not grade the student and do not use the learner\'s selected option.',
+        'Determine whether the item itself is valid and whether its stored answer key is defensible.',
+        '',
+        'QUESTION: ' + String(question.stem || ''),
+        'A) ' + String(question.option_a || ''),
+        'B) ' + String(question.option_b || ''),
+        'C) ' + String(question.option_c || ''),
+        'D) ' + String(question.option_d || ''),
+        'STORED ANSWER KEY: ' + String(question.correct_answer || ''),
+        'STORED EXPLANATION: ' + String(question.explanation || ''),
+        sourceContext,
+        '',
+        'Return ONLY JSON with exactly these fields:',
+        '{"question_valid":true,"answer_key_correct":true,"ambiguous":false,"answerable_from_source":true,"recommended_answer":"A","reason":"short reason","confidence":0.0}',
+        '',
+        'Rules:',
+        '- question_valid=false for a malformed, internally contradictory, or materially misleading stem/options.',
+        '- answer_key_correct=false if another option is clearly more correct than the stored key.',
+        '- ambiguous=true if multiple options are reasonably correct under the supplied material.',
+        '- answerable_from_source=false if the source material does not support a defensible answer.',
+        '- Do not mark a question flawed merely because it is difficult.',
+      ].join('\n');
+
+      const result = await ai.run('CBT_QUESTION_AUDIT', {
+        content: prompt,
+        generationConfig: { maxOutputTokens: 1600 },
+      });
+      const audit = _parseCBTQuestionAudit(result.text);
+      const bonusAwarded =
+        audit.question_valid === false ||
+        audit.answer_key_correct === false ||
+        audit.ambiguous === true ||
+        audit.answerable_from_source === false;
+
+      await db.examQuestions.update(userId, question.id, {
+        ai_audit_status: 'reviewed',
+        ai_audit_result: audit,
+        ai_audit_reviewed_at: new Date(),
+        bonus_awarded: bonusAwarded,
+      });
+      return { status: 'reviewed', bonus_awarded: bonusAwarded, audit };
+    } catch (error) {
+      await db.examQuestions.update(userId, question.id, {
+        ai_audit_status: 'error',
+        ai_audit_result: { error: String(error.message || 'audit failed').slice(0, 500) },
+        ai_audit_reviewed_at: new Date(),
+      }).catch(() => null);
+      throw error;
+    } finally {
+      _cbtQuestionAuditPromises.delete(key);
+    }
+  })();
+
+  _cbtQuestionAuditPromises.set(key, work);
+  return work;
+}
+
+// B25: Fallback exam question generator (rule-based from card content)
+
+function generateFallbackExamQuestions(cards, examSessionId, count) {
+  const usable = (cards || []).filter((card) =>
+    String(card?.front_content || '').trim() &&
+    String(card?.back_content || '').trim()
+  );
+  if (usable.length === 0 || count <= 0) return [];
+
+  const answerPool = [...new Set(
+    usable
+      .map((card) => String(card.back_content || '').trim())
+      .filter(Boolean)
+  )];
+
+  const questions = [];
+  for (let idx = 0; idx < count; idx++) {
+    const card = usable[idx % usable.length];
+    const correct = String(card.back_content || '').trim();
+    const correctPoolIndex = Math.max(0, answerPool.indexOf(correct));
+    const distractors = [];
+
+    for (let step = 1; step <= answerPool.length && distractors.length < 3; step++) {
+      const candidate = answerPool[(correctPoolIndex + step + idx) % answerPool.length];
+      if (candidate && candidate !== correct && !distractors.includes(candidate)) {
+        distractors.push(candidate);
+      }
+    }
+
+    for (const candidate of [
+      'None of the supplied alternatives',
+      'A different concept from the study material',
+      'The study material does not support this option',
+    ]) {
+      if (distractors.length >= 3) break;
+      if (candidate !== correct && !distractors.includes(candidate)) {
+        distractors.push(candidate);
+      }
+    }
+
+    const options = [correct, ...distractors.slice(0, 3)];
+    const rotation = idx % options.length;
+    const rotated = options.slice(rotation).concat(options.slice(0, rotation));
+    const correctIndex = rotated.indexOf(correct);
+    const correctLetter = ['A', 'B', 'C', 'D'][Math.max(0, correctIndex)];
+
+    questions.push({
+      exam_session_id: examSessionId,
+      card_id: card.id,
+      question_number: idx + 1,
+      cognitive_level: 'Knowledge',
+      difficulty: 'Medium',
+      question_type: 'Theory',
+      stem: String(card.front_content || '').trim(),
+      option_a: rotated[0] || '',
+      option_b: rotated[1] || '',
+      option_c: rotated[2] || '',
+      option_d: rotated[3] || '',
+      correct_answer: correctLetter,
+      explanation: `The correct answer is grounded directly in the source card: "${correct.slice(0, 160)}"`,
+    });
+  }
+
+  return questions;
+}
+
+async function generateFlashcards(notes, subjectHint = '') {
+const prompt =
+FLASHCARD_PROMPT.replace('[NOTES]', notes) +
+(subjectHint ? `\nSubject hint: ${subjectHint}` : '');
+const result = await ai.run('FLASHCARD_GENERATION', {
+  content: prompt,
+  generationConfig: { maxOutputTokens: 15000 },
+});
+return result.text;
+}
+
+async function summarizeCard(front, back, context = {}) {
+const { subjectName = '', stage = null, cardState = '' } = context;
+const contextLines = [];
+if (subjectName) contextLines.push(`Subject: ${subjectName}`);
+if (stage)       contextLines.push(`Learning stage: ${stage} / 5 (${stage <= 2 ? 'early — still being learned' : stage <= 4 ? 'intermediate — consolidating' : 'advanced — near mastery'})`);
+if (cardState && cardState !== 'SEEDLING') contextLines.push(`Card status: ${cardState}`);
+const contextBlock = contextLines.length > 0 ? `\nContext:\n${contextLines.join('\n')}\n` : '';
+const prompt = `You are a study tutor. Explain this flashcard in 1–2 clear, educational sentences that help the student understand WHY the answer is correct — not just what it says.
+${contextBlock}
+Card front: ${front}
+Card back: ${back}
+
+Rules:
+- Address the concept directly, not the card format.
+- If the answer is a definition, explain the underlying mechanism or significance.
+- If the answer is a process, name the key step or consequence that makes it memorable.
+- Never say "this card says" or "the answer is". Just explain the concept.
+- Maximum 2 sentences.`;
+// Routing, timeout and thinking policy are owned by the centralized AI task registry.
+const result = await ai.run('CARD_EXPLANATION', { content: prompt });
+return result.text.trim();
+}
+
+async function extractFromImage(base64Image, mimeType) {
+const prompt =
+'Extract all question-answer pairs or key-value pairs from this image. Return as JSON array of {front, back} objects. If no pairs found, return the raw text.';
+try {
+const result = await ai.run('IMPORT_IMAGE_EXTRACTION', {
+  content: {
+    contents: [
+      {
+        parts: [
+          { text: prompt },
+          { inlineData: { mimeType: mimeType || 'image/jpeg', data: base64Image } },
+        ],
+      },
+    ],
+  },
+});
+return result.text;
+} catch (e) {
+console.error('Gemini vision error:', e);
+return 'Extraction failed.';
+}
+}
+
+async function generateTasksWithGemini(userData) {
+const prompt = `You are a study coach for a spaced-repetition learning app. Generate personalized study tasks for a student based on their current progress.
+STUDENT PROFILE
+- Current streak: ${userData.current_streak || 0} days
+- Total cards reviewed (lifetime): ${userData.total_cards_reviewed || 0}
+- Total cards mastered: ${userData.total_cards_mastered || 0}
+- Total sessions completed: ${userData.total_sessions_completed || 0}
+- Cards with "again" rating (struggling): ${userData.total_again_count || 0}
+- Average session accuracy: ${userData.average_accuracy != null ? (userData.average_accuracy * 100).toFixed(0) + '%' : 'unknown'}
+TASK OUTPUT RULES
+- Return ONLY valid JSON. No markdown, no preamble.
+- Generate tasks that are achievable based on the student's current level — not too easy, not impossible.
+- Use concrete numbers tied to the student's data above (e.g. "Review 20 cards" not "Review some cards").
+- task_category must be one of: review_cards, accuracy_target, study_time, quiz_score, master_cards, reduce_again, streak, complete_deck
+JSON STRUCTURE
+{
+  "daily": [{"title":"...","description":"...","task_category":"review_cards","target_value":20}],
+  "weekly": [{"title":"...","description":"...","task_category":"streak","target_value":5}],
+  "monthly": [{"title":"...","description":"...","task_category":"master_cards","target_value":30}]
+}
+Generate exactly: 3 daily tasks, 2 weekly tasks, 1 monthly task.`;
+try {
+const result = await ai.run('STUDY_TASK_GENERATION', { content: prompt });
+const text = result.text
+.replace(/```json|```/g, '')
+.trim();
+return JSON.parse(text);
+} catch (e) {
+return null;
+}
+}
+
+function parseCBTResponse(text, examSessionId, sourceCards) {
+// ── SPLIT FIX ────────────────────────────────────────────────────────────────
+// ROOT CAUSE (confirmed via Render logs): the old regex
+//   /\n---[\s\S]*?(?:ANSWERS...)/i
+// used [\s\S]*? which, while lazy, still spans every --- separator between
+// questions.  _splitIdx landed on the FIRST \n--- in the output (between Q3
+// and Q4, or Q17 and Q18, etc.) — not the actual answers divider — so
+// questionsBlock was truncated to only the first few questions even though
+// the AI generated all of them correctly (confirmed: answers block always
+// had the full count mapped).
+//
+// Strategy A: --- immediately followed by ANSWERS header (only whitespace/##
+//             between).  This is the canonical separator the prompt requests.
+// Strategy B: ANSWERS header anywhere in the text without requiring ---.
+//             Handles cases where the AI omits the preceding divider.
+// Strategy C: last \n--- in the text (original fallback — unchanged).
+// ─────────────────────────────────────────────────────────────────────────────
+let questionsBlock, answersBlock;
+const _ansLabel = '(?:ANSWERS?\\s+(?:AND\\s+)?EXPLANATIONS?|ANSWER\\s+KEY)';
+// Strategy A: --- immediately before ANSWERS header (zero or more blank lines)
+const _reA = new RegExp('\\n---\\s*\\n\\s*(?:#{1,3}\\s*)?' + _ansLabel, 'i');
+// Strategy B: ANSWERS header without preceding ---
+const _reB = new RegExp('\\n\\s*(?:#{1,3}\\s*)?' + _ansLabel + '\\s*\\n', 'i');
+const _matchA = text.match(_reA);
+const _matchB = text.match(_reB);
+// Prefer A; fall back to B; then C
+const _bestMatch = _matchA || _matchB;
+if (_bestMatch) {
+  const _splitIdx = text.indexOf(_bestMatch[0]);
+  questionsBlock = text.slice(0, _splitIdx);
+  answersBlock   = text.slice(_splitIdx + _bestMatch[0].length);
+  console.log(`[KIWI CBT PARSE] Split strategy: ${_matchA ? 'A (---+header)' : 'B (header-only)'} at char ${_splitIdx}`);
+} else {
+  // Strategy C: last \n--- in the text
+  const _lastDash = text.lastIndexOf('\n---');
+  if (_lastDash !== -1) {
+    questionsBlock = text.slice(0, _lastDash);
+    answersBlock   = text.slice(_lastDash + 4);
+    console.log(`[KIWI CBT PARSE] Split strategy: C (last ---) at char ${_lastDash}`);
+  } else {
+    questionsBlock = text;
+    answersBlock   = '';
+    console.warn('[KIWI CBT PARSE] Split strategy: NONE — no separator found, treating whole text as questions');
+  }
+}
+// ── OPTION PARSER HELPER ──────────────────────────────────────────────────────
+// ROOT CAUSE FIX: old regex ^A[)\s]+ missed "A. text" and "(A) text" formats.
+// This helper handles ALL Gemini option formats: "A) text", "A. text",
+// "A: text", "A text", "(A) text", "(A.) text"
+function _parseOptionText(line, letter) {
+  // Format 1: "(A)" or "(A.)" with paren wrapper
+  const parenRe = new RegExp('^\\(' + letter + '[.)]\\)\\s*', 'i');
+  if (parenRe.test(line)) return line.replace(parenRe, '').trim() || null;
+  // Format 2: "A)" "A." "A:" — letter + explicit punctuation separator ONLY.
+  // We deliberately exclude space-only ("A text") because stems can start with a
+  // capital letter: "A student observed..." would be falsely captured as option A.
+  const basicRe = new RegExp('^' + letter + '[).:] *', 'i');
+  if (basicRe.test(line)) {
+    const stripped = line.replace(basicRe, '').trim();
+    return stripped || null;
+  }
+  return null;
+}
+
+const questions = [];
+const qLines = questionsBlock.split('\n');
+let current = null, qNum = 0;
+for (const rawLine of qLines) {
+  // Strip markdown wrappers Gemini sometimes adds: **text**, __text__, ### prefix
+  const line = rawLine.trim()
+    .replace(/^\*\*(.+)\*\*$/, '$1')
+    .replace(/^__(.+)__$/, '$1')
+    .replace(/^#{1,3}\s*/, '');
+  if (!line) continue;
+
+  // ── QUESTION DETECTION — PRIMARY + FALLBACK ────────────────────────────────
+  // ROOT CAUSE: Gemini starts questions with "Question N" for the first few,
+  // then switches to "N." or "N)" despite the format instruction. Once
+  // current._stemDone=true, the old parser silently dropped every subsequent
+  // line because non-"Question N" headers fell into the "past options — ignore"
+  // branch. This means only 2-3 questions were ever parsed from a full AI output.
+  //
+  // FIX: detect "Question N" (explicit) AND bare "N." / "N)" / "N:" formats.
+  // The numeric fallback only fires when we are past a question's options
+  // (current._stemDone=true) so list items inside stems are not confused
+  // with question starts.
+
+  // PRIMARY: explicit "Question N" format (prompt mandates this)
+  const qMatchExplicit = line.match(/^Question\s*(\d+)/i);
+
+  // FALLBACK: bare "N." / "N)" / "N:" format that Gemini uses despite instructions
+  let qMatchNumeric = null;
+  if (!qMatchExplicit) {
+    const numRaw = line.match(/^(\d{1,3})[.:\)]\s+\S/);
+    if (numRaw) {
+      const n = parseInt(numRaw[1], 10);
+      // Only treat as question start when we are past the previous question's options
+      // AND the number advances sequentially (prevents list items from matching)
+      const pastOptions = !current || current._stemDone === true;
+      if (pastOptions && n > qNum && n <= qNum + 5) {
+        qMatchNumeric = numRaw;
+      }
+    }
+  }
+
+  const qMatch = qMatchExplicit || qMatchNumeric;
+
+  if (qMatch) {
+    if (current && current.stem) questions.push(current);
+    qNum = parseInt(qMatch[1], 10);
+    // Capture any inline stem that appears on the same line after the number
+    // e.g. "Question 3: Which of the following..." — don't lose that text
+    const inlineStem = line
+      .replace(/^Question\s*\d+[:\s]*/i, '')
+      .replace(/^\d+[.:\)]\s*/, '')
+      .trim();
+    // CBT-BUG-FIX: Try multiple strategies to link question to source card:
+    // 1. Index-based (question N → card N-1) for backwards compatibility
+    // 2. Content-based fuzzy matching using stem text against card front_content
+    let _linkedCardId = sourceCards[qNum - 1]?.id || null;
+    // 3. If index-based failed, try fuzzy content match
+    if (!_linkedCardId && inlineStem && sourceCards.length > 0) {
+      const stemLower = inlineStem.toLowerCase();
+      let bestScore = 0;
+      for (const sc of sourceCards) {
+        const front = (sc.front_content || '').toLowerCase();
+        // Simple word overlap scoring
+        const stemWords = stemLower.split(/\s+/).filter(w => w.length > 3);
+        let overlap = 0;
+        for (const sw of stemWords) {
+          if (front.includes(sw)) overlap++;
+        }
+        if (overlap > bestScore) {
+          bestScore = overlap;
+          _linkedCardId = sc.id;
+        }
+      }
+      if (bestScore < 2) _linkedCardId = null; // require at least 2 word matches
+    }
+    current = {
+      exam_session_id: examSessionId,
+      card_id: _linkedCardId,
+      question_number: qNum,
+      cognitive_level: 'Application',
+      difficulty: 'Medium',
+      question_type: 'Theory',
+      stem: inlineStem,  // preserve inline stem if present
+      option_a: '',
+      option_b: '',
+      option_c: '',
+      option_d: '',
+      correct_answer: '',
+      explanation: '',
+    };
+    continue;
+  }
+
+  if (!current) continue;
+
+  if (line.match(/^Cognitive Level:/i))
+    current.cognitive_level = line.replace(/^Cognitive Level:\s*/i, '').trim() || current.cognitive_level;
+  else if (line.match(/^Difficulty:/i))
+    current.difficulty = line.replace(/^Difficulty:\s*/i, '').trim() || current.difficulty;
+  else if (line.match(/^Type:/i))
+    current.question_type = line.replace(/^Type:\s*/i, '').trim() || current.question_type;
+  else if (line.match(/^Stem:/i)) {
+    const stemContent = line.replace(/^Stem:\s*/i, '').trim();
+    if (stemContent) current.stem = stemContent;
+    // else: stem stays — next non-label line fills it via fallthrough
+  } else {
+    // ── OPTION DETECTION — handles A) A. A: (A) formats ─────────────────────
+    const optA = _parseOptionText(line, 'A');
+    const optB = optA === null ? _parseOptionText(line, 'B') : null;
+    const optC = optA === null && optB === null ? _parseOptionText(line, 'C') : null;
+    const optD = optA === null && optB === null && optC === null ? _parseOptionText(line, 'D') : null;
+
+    if (optA !== null)      { current._stemDone = true; current.option_a = optA; }
+    else if (optB !== null) { current._stemDone = true; current.option_b = optB; }
+    else if (optC !== null) { current._stemDone = true; current.option_c = optC; }
+    else if (optD !== null) { current._stemDone = true; current.option_d = optD; }
+    else if (line.match(/^Options:/i)) {
+      // skip "Options:" label line
+    } else if (current._stemDone) {
+      // Past all options of this question — ignore trailing lines.
+      // NOTE: a new question header (qMatch above) is checked first so
+      // the next "Question N" or "N." WILL break out of this state.
+    } else if (current.stem && !line.match(/^(Cognitive Level|Difficulty|Type|Stem|Options):/i)) {
+      // Multi-line stem continuation
+      current.stem += ' ' + line;
+    } else if (!current.stem && !line.match(/^(Cognitive Level|Difficulty|Type|Stem|Options):/i)) {
+      // First content line with no Stem: label — use as stem
+      current.stem = line;
+    }
+  }
+}
+if (current && current.stem) questions.push(current);
+const answerMap = new Map();
+const aLines = answersBlock.split('\n');
+let currentAnswerNum = null,
+currentAnswer = {};
+for (const rawLine of aLines) {
+const line = rawLine.trim().replace(/^\*\*(.+)\*\*$/, '$1').replace(/^#{1,3}\s*/, '');
+if (!line) continue;
+const qNumMatch = line.match(/^Question\s*(\d+)\s*:/i);
+if (qNumMatch) {
+if (currentAnswerNum !== null && currentAnswer.correct_answer)
+answerMap.set(currentAnswerNum, currentAnswer);
+currentAnswerNum = parseInt(qNumMatch[1], 10);
+currentAnswer = {};
+continue;
+}
+if (currentAnswerNum === null) continue;
+if (line.match(/^Correct Answer:/i)) {
+const ans = line.replace(/^Correct Answer:\s*/i, '').trim();
+const letterMatch = ans.match(/^[A-D]/i);
+currentAnswer.correct_answer = letterMatch ? letterMatch[0].toUpperCase() : '';
+} else if (line.match(/^Explanation:/i)) {
+currentAnswer.explanation = line.replace(/^Explanation:\s*/i, '');
+} else if (currentAnswer.explanation !== undefined) {
+currentAnswer.explanation += ' ' + line;
+}
+}
+if (currentAnswerNum !== null && currentAnswer.correct_answer)
+answerMap.set(currentAnswerNum, currentAnswer);
+
+// Helper: strip markdown bold/italic that Gemini sometimes leaves in stems/options
+const _stripMd = (s) => (s || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/__([^_]+)__/g, '$1').replace(/_([^_]+)_/g, '$1').trim();
+
+// ── PARSE DIAGNOSTICS LOG ────────────────────────────────────────────────────
+console.log(`[KIWI CBT PARSE] Raw AI response: ${text.length} chars`);
+console.log(`[KIWI CBT PARSE] Questions block: ${questionsBlock.length} chars | Answers block: ${answersBlock.length} chars`);
+console.log(`[KIWI CBT PARSE] Questions found in block: ${questions.length} | Answers mapped: ${answerMap.size}`);
+const _missingAnswers = questions.filter(q => !answerMap.has(q.question_number)).map(q => q.question_number);
+if (_missingAnswers.length > 0) console.warn(`[KIWI CBT PARSE] Questions with no answer mapping: ${_missingAnswers.join(', ')}`);
+// ─────────────────────────────────────────────────────────────────────────────
+
+const mapped = questions.map((q, idx) => {
+const ans = answerMap.get(q.question_number) || {};
+// Strip internal parsing flags (_stemDone) so they don't get inserted into the DB
+const { _stemDone, ...cleanQ } = q;
+const oA = _stripMd(cleanQ.option_a) || '';
+const oB = _stripMd(cleanQ.option_b) || '';
+const oC = _stripMd(cleanQ.option_c) || '';
+const oD = _stripMd(cleanQ.option_d) || '';
+const correctLetter = String(ans.correct_answer || '').toUpperCase();
+if (!cleanQ.stem) {
+  console.warn(`[KIWI CBT PARSE] Q${q.question_number} DROPPED — no stem`);
+  return null;
+}
+
+const parsedQuestion = {
+  ...cleanQ,
+  stem: _stripMd(cleanQ.stem),
+  question_number: idx + 1,
+  option_a: oA,
+  option_b: oB,
+  option_c: oC,
+  option_d: oD,
+  correct_answer: correctLetter,
+  explanation: ans.explanation || 'No explanation provided.',
+};
+const optionCheck = validateCBTQuestionOptions(parsedQuestion);
+if (!optionCheck.valid) {
+  console.warn(
+    `[KIWI CBT PARSE] Q${q.question_number} DROPPED — invalid options (${optionCheck.reason})`
+  );
+  return null;
+}
+return parsedQuestion;
+});
+const passed = mapped.filter(Boolean);
+console.log(`[KIWI CBT PARSE] After filter: ${passed.length} questions passed (${questions.length - passed.length} dropped)`);
+
+// ── CALC ANSWER SANITY CHECK ──────────────────────────────────────────────────
+// For Calculation questions, cross-check the declared correct_answer letter
+// against the numerical values in the explanation.
+//
+// Root cause: a generative model can compute the right value
+// but assigns the wrong letter, or writes an explanation that leads to a different
+// result than the declared answer. This pass detects clear mismatches and auto-
+// corrects them rather than serving wrong answers to students.
+//
+// Strategy: extract the last significant number from the explanation and check if
+// it appears in the declared correct option. If instead it clearly matches a
+// different option, swap the correct_answer. Only correct when confidence is high
+// (unique match to exactly one alternative option).
+function _extractNumbers(str) {
+  // Extract all numbers ≥ 0.01 found in the string (skip page numbers / question numbers)
+  const matches = (str || '').match(/\b\d[\d,]*\.?\d*\b/g) || [];
+  return matches.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => n >= 0.01 && n < 1e9);
+}
+
+function _optionContainsNumber(optText, num) {
+  if (!optText || num == null) return false;
+  const optNums = _extractNumbers(optText);
+  // Allow ±0.5% tolerance for rounding differences
+  return optNums.some(n => Math.abs(n - num) / Math.max(n, num, 1) < 0.005);
+}
+
+const sanityChecked = passed.map(q => {
+  // Only check Calculation questions with a non-trivial explanation
+  if ((q.question_type || '').toLowerCase() !== 'calculation') return q;
+  const expl = q.explanation || '';
+  if (expl.length < 20) return q;
+
+  const opts = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
+  const declaredLetter = q.correct_answer;
+  const declaredText   = opts[declaredLetter] || '';
+
+  // Extract numbers from explanation
+  const explNums = _extractNumbers(expl);
+  if (!explNums.length) return q;
+
+  // Take the last significant number in the explanation (usually the final result)
+  // and the most-frequent number — prefer the one that uniquely matches an option
+  const candidateNums = [...new Set(explNums)].filter(n => n > 0.1);
+
+  // Check if declared correct option contains any explanation number
+  const declaredOk = candidateNums.some(n => _optionContainsNumber(declaredText, n));
+  if (declaredOk) return q; // declared answer matches explanation — no correction needed
+
+  // Declared option does NOT match — look for a unique alternative
+  const letters = ['A', 'B', 'C', 'D'].filter(l => l !== declaredLetter);
+  const matchingLetters = letters.filter(l => {
+    const optText = opts[l] || '';
+    return candidateNums.some(n => _optionContainsNumber(optText, n));
+  });
+
+  if (matchingLetters.length === 1) {
+    // Exactly one other option matches the explanation's numbers — high confidence swap
+    const correctedLetter = matchingLetters[0];
+    console.warn(
+      `[KIWI SANITY] Q${q.question_number} (${q.question_type}): declared correct=${declaredLetter} ` +
+      `("${declaredText}") but explanation numbers match ${correctedLetter} ` +
+      `("${opts[correctedLetter]}") — auto-correcting correct_answer`
+    );
+    return { ...q, correct_answer: correctedLetter };
+  }
+
+  // Ambiguous or no match — log a warning but leave as-is
+  if (matchingLetters.length !== 1) {
+    console.warn(
+      `[KIWI SANITY] Q${q.question_number} (${q.question_type}): declared correct=${declaredLetter} ` +
+      `does not match explanation (${matchingLetters.length} alternatives matched) — leaving unchanged`
+    );
+  }
+  return q;
+});
+
+return sanityChecked;
+}
+
+function parseFlashcards(rawText) {
+  const cards = [];
+
+  // Strip markdown code fences that Gemini commonly wraps output in
+  let text = rawText.replace(/^```[\w]*\n?/gm, '').replace(/^```$/gm, '').trim();
+
+  // ── Strategy 1: JSON array of {front, back} or {front_content, back_content} ──
+  if (cards.length === 0) {
+    try {
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            const front = (item.front || item.front_content || item.question || '').trim();
+            const back  = (item.back  || item.back_content  || item.answer   || '').trim();
+            if (front && back) {
+              cards.push({
+                front_content: front,
+                back_content:  back,
+                card_type: front.includes('{{c1::') ? 'cloze' : 'standard',
+              });
+            }
+          }
+        }
+      }
+    } catch (_) { /* not JSON — fall through */ }
+  }
+
+  // ── Strategy 2: Card N / Card Type / Front / Back blocks (KIWI prompt format) ──
+  if (cards.length === 0) {
+    // Normalise line endings
+    const lines = text.split(/\r?\n/);
+    let current = null;
+    let state = null; // 'front' | 'back' | null
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        // Blank line can signal end of back content when we have a full card
+        if (current && current.front && current.back) {
+          cards.push({
+            front_content: current.front.trim(),
+            back_content:  current.back.trim(),
+            card_type: current.front.includes('{{c1::') ? 'cloze' : 'standard',
+          });
+          current = null;
+          state = null;
+        }
+        continue;
+      }
+
+      if (/^Card\s+\d+/i.test(trimmed)) {
+        if (current && current.front && current.back) {
+          cards.push({
+            front_content: current.front.trim(),
+            back_content:  current.back.trim(),
+            card_type: current.front.includes('{{c1::') ? 'cloze' : 'standard',
+          });
+        }
+        current = { front: '', back: '' };
+        state = null;
+        continue;
+      }
+
+      if (/^Card\s+Type\s*:/i.test(trimmed)) { continue; } // skip type line
+
+      if (/^Front\s*:/i.test(trimmed)) {
+        if (current === null) current = { front: '', back: '' };
+        const inline = trimmed.replace(/^Front\s*:\s*/i, '').trim();
+        current.front = inline;
+        state = 'front';
+        continue;
+      }
+
+      if (/^Back\s*:/i.test(trimmed)) {
+        if (current === null) current = { front: '', back: '' };
+        const inline = trimmed.replace(/^Back\s*:\s*/i, '').trim();
+        current.back = inline;
+        state = 'back';
+        continue;
+      }
+
+      // Continuation lines
+      if (current && state === 'front') {
+        current.front += (current.front ? ' ' : '') + trimmed;
+      } else if (current && state === 'back') {
+        current.back += (current.back ? ' ' : '') + trimmed;
+      }
+    }
+
+    // Flush last card
+    if (current && current.front && current.back) {
+      cards.push({
+        front_content: current.front.trim(),
+        back_content:  current.back.trim(),
+        card_type: current.front.includes('{{c1::') ? 'cloze' : 'standard',
+      });
+    }
+  }
+
+  // ── Strategy 3: Numbered Q&A pairs  (1. Q ... A: ...) ──
+  if (cards.length === 0) {
+    const qaPairs = text.matchAll(/\d+[\.\)]\s+(.+?)\n+(?:A(?:nswer)?[:\.]?\s*)(.+?)(?=\n\d+[\.\)]|\n*$)/gis);
+    for (const m of qaPairs) {
+      const front = m[1].trim(), back = m[2].trim();
+      if (front && back) cards.push({ front_content: front, back_content: back, card_type: 'standard' });
+    }
+  }
+
+  // ── Strategy 4: Loose Front:/Back: pairs anywhere in the text ──
+  if (cards.length === 0) {
+    const frontMatches = [...text.matchAll(/^Front\s*:\s*(.+)/gim)];
+    const backMatches  = [...text.matchAll(/^Back\s*:\s*(.+)/gim)];
+    const len = Math.min(frontMatches.length, backMatches.length);
+    for (let i = 0; i < len; i++) {
+      const front = frontMatches[i][1].trim();
+      const back  = backMatches[i][1].trim();
+      if (front && back) cards.push({ front_content: front, back_content: back, card_type: front.includes('{{c1::') ? 'cloze' : 'standard' });
+    }
+  }
+
+  return cards;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  SERVICE: taskService
+
+// ════════════════════════════════════════════════════════════════════════════
+
+async function generateTasksForUser(userId) {
+const [user, stats, allSubjects] = await Promise.all([
+db.users.findById(userId),
+db.userStats.get(userId),
+db.subjects.findManyWithDecks(userId),
+]);
+if (!user || !stats) return;
+const now = new Date();
+const allCards = await db.cards.findAllForUser(userId);
+const dueCards = allCards.filter(
+(c) => !c.next_review_at || new Date(c.next_review_at) <= now
+).length;
+const stage1 = allCards.filter((c) => c.stage === 1).length;
+const thirtyDaysAgo = new Date();
+thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+const logs = await db.reviewLogs.findByUser(userId, thirtyDaysAgo);
+// F-13 FIX: batch fetch cards & decks instead of N+1 serial calls
+const againLogs = logs.filter(l => l.response === 'again' && l.card_id);
+const againCardIds = [...new Set(againLogs.map(l => l.card_id))];
+let _batchCards = [];
+if (againCardIds.length > 0) {
+  const { rows: _cr } = await query('SELECT id, deck_id FROM cards WHERE user_id = $1 AND id = ANY($2)', [userId, againCardIds]);
+  _batchCards = _cr;
+}
+const againDeckIds = [...new Set(_batchCards.map(c => c.deck_id).filter(Boolean))];
+let _batchDecks = [];
+if (againDeckIds.length > 0) {
+  const { rows: _dr } = await query('SELECT id, subject_id FROM decks WHERE user_id = $1 AND id = ANY($2)', [userId, againDeckIds]);
+  _batchDecks = _dr;
+}
+const _cardMap  = new Map(_batchCards.map(c => [c.id, c]));
+const _deckMap  = new Map(_batchDecks.map(d => [d.id, d]));
+const againBySubject = {};
+for (const log of againLogs) {
+  const card = _cardMap.get(log.card_id);
+  if (card?.deck_id) {
+    const deck = _deckMap.get(card.deck_id);
+    if (deck?.subject_id) {
+      againBySubject[deck.subject_id] = (againBySubject[deck.subject_id] || 0) + 1;
+    }
+  }
+}
+let againHeavy = null,
+maxAgain = 0;
+for (const [sid, count] of Object.entries(againBySubject)) {
+if (count > maxAgain) {
+maxAgain = count;
+againHeavy = allSubjects.find((s) => s.id === sid)?.name;
+}
+}
+const _sevenDaysAgo = new Date(); _sevenDaysAgo.setDate(_sevenDaysAgo.getDate() - 7);
+const _recentLogs = logs.filter(l => new Date(l.reviewed_at) >= _sevenDaysAgo);
+const _totalRecent = _recentLogs.length;
+const _goodRecent  = _recentLogs.filter(l => l.response === 'good' || l.response === 'easy').length;
+const _acc7d = _totalRecent > 0 ? Math.round((_goodRecent / _totalRecent) * 100) : 70;
+const userData = {
+due_cards_today: dueCards,
+subjects: allSubjects.map((s) => ({ // F-14 FIX: use real subject data
+name: s.name,
+due: 0,
+health_score: typeof s.health_score === 'number' ? Math.round(s.health_score) : 50,
+last_studied: s.last_study_date ? new Date(s.last_study_date).toLocaleDateString() : 'Never',
+})),
+current_streak: stats.current_streak,
+stage_1_cards: stage1,
+again_heavy: againHeavy || allSubjects[0]?.name || 'General',
+weakest_subject: againHeavy || allSubjects[0]?.name || 'General',
+sessions_today: 0,
+mastered_this_week: 0,
+average_accuracy_7d: _acc7d, // F-14 FIX: real 7-day accuracy
+exams_this_month: 0,
+};
+let tasks;
+try {
+tasks = await generateTasksWithGemini(userData);
+} catch (e) {
+tasks = null;
+}
+if (!tasks) {
+tasks = {
+daily: [
+{
+title: `Review ${Math.min(30, dueCards || 20)} cards today`,
+description: 'Complete a study session',
+task_category: 'review_cards',
+target_value: Math.min(30, dueCards || 20),
+},
+{
+title: 'Maintain your streak',
+description: 'Study at least 5 cards to keep your streak alive',
+task_category: 'streak',
+target_value: 5,
+},
+{
+title: 'Hit 70% accuracy',
+description: 'Get at least 70% Good or Easy responses',
+task_category: 'accuracy_target',
+target_value: 70,
+},
+],
+weekly: [
+{
+title: 'Review 150 cards this week',
+description: 'Accumulate 150 card reviews',
+task_category: 'review_cards',
+target_value: 150,
+},
+{
+title: 'Study 3 hours this week',
+description: 'Accumulate 180 minutes of study time',
+task_category: 'study_time',
+target_value: 180,
+},
+],
+monthly: [
+{
+title: 'Complete 600 reviews this month',
+description: 'Study consistently',
+task_category: 'review_cards',
+target_value: 600,
+},
+],
+};
+}
+const expiresDaily = new Date(now);
+expiresDaily.setDate(expiresDaily.getDate() + 1);
+const expiresWeekly = new Date(now);
+expiresWeekly.setDate(expiresWeekly.getDate() + 7);
+const expiresMonthly = new Date(now);
+expiresMonthly.setDate(expiresMonthly.getDate() + 30);
+await db.tasks.deleteActive(userId);
+const creates = [
+...(tasks.daily || []).map((t) =>
+db.tasks.create(userId, { ...t, type: 'daily', expires_at: expiresDaily })
+),
+...(tasks.weekly || []).map((t) =>
+db.tasks.create(userId, { ...t, type: 'weekly', expires_at: expiresWeekly })
+),
+...(tasks.monthly || []).map((t) =>
+db.tasks.create(userId, { ...t, type: 'monthly', expires_at: expiresMonthly })
+),
+];
+await Promise.all(creates);
+}
+
+async function updateTaskProgress(userId, sessionData = null, examData = null) {
+const taskList = await db.tasks.findMany(userId, { status: 'active' });
+await Promise.all(
+taskList.map(async (task) => {
+let newValue = task.current_value;
+switch (task.task_category) {
+case 'review_cards':
+if (sessionData?.cards_reviewed) newValue += sessionData.cards_reviewed;
+break;
+case 'accuracy_target':
+// P11b FIX: accuracy_pct is never written (removed from session logic per P4.2).
+// This branch can never execute. Retain case to avoid default fallthrough.
+// TODO: Replace with a meaningful metric when accuracy tracking is redesigned.
+break;
+case 'study_time':
+if (sessionData?.duration_seconds)
+newValue += Math.round(sessionData.duration_seconds / 60);
+break;
+case 'quiz_score':
+if (examData?.score_pct) newValue = Math.max(newValue, Math.round(examData.score_pct));
+break;
+case 'master_cards':
+if (sessionData?.new_mastered_count) newValue += sessionData.new_mastered_count;
+break;
+case 'reduce_again':
+if (sessionData?.cards_again !== undefined) newValue = sessionData.cards_again;
+break;
+case 'streak':
+if (sessionData?.cards_reviewed >= 5) newValue += 1;
+break;
+case 'complete_deck':
+if (sessionData?.session_completed) newValue += 1;
+break;
+}
+if (newValue >= task.target_value) {
+await db.tasks.update(userId, task.id, {
+current_value: newValue,
+status: 'completed',
+completed_at: new Date(),
+});
+} else {
+await db.tasks.update(userId, task.id, { current_value: newValue });
+}
+})
+);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PHASE 2 — Card Intelligence Layer & Knowledge Score
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── cardIntelligenceService ─────────────────────────────────────────────────
+const CARD_STATES = {
+SEEDLING: 'SEEDLING',
+GROWING: 'GROWING',
+STABLE: 'STABLE',
+FRAGILE: 'FRAGILE',
+VERIFIED: 'VERIFIED',
+STUCK: 'STUCK',
+AVOIDED: 'AVOIDED',
+DANGEROUS: 'DANGEROUS',
+GHOST: 'GHOST',
+SLIPPING: 'SLIPPING',
+};
+
+function daysBetween(dateA, dateB) {
+const d1 = new Date(dateA);
+d1.setHours(0, 0, 0, 0);
+const d2 = new Date(dateB);
+d2.setHours(0, 0, 0, 0);
+return Math.floor((d2 - d1) / 86400000);
+}
+
+function daysSince(date) {
+if (!date) return Infinity;
+return daysBetween(date, new Date());
+}
+// getSubjectExamDate: resolves exam date even when not explicitly set
+// Priority: (1) subject.exam_date if set, (2) last_exam_at + 90 days,
+// (3) subject.created_at + 90 days. Returns null if none resolvable.
+
+async function getSubjectExamDate(userId, subjectId) {
+try {
+const subject = await db.subjects.findById(subjectId);
+if (!subject) return null;
+// 1. Explicit exam date: use if not more than 3 days past
+if (subject.exam_date) {
+const daysToExplicit = daysBetween(new Date(), new Date(subject.exam_date));
+if (daysToExplicit >= -3) return new Date(subject.exam_date);
+}
+// 2. Infer from last KIWI exam on this subject + 90-day semester cycle
+const stats = await db.subjectStats.get(userId, subjectId);
+if (stats && stats.last_exam_at) {
+const projected = new Date(stats.last_exam_at);
+projected.setDate(projected.getDate() + 90);
+const daysToProjected = daysBetween(new Date(), projected);
+if (daysToProjected >= -3 && daysToProjected <= 365) return projected;
+}
+// 3. Fallback: subject creation + 90 days (first-semester assumption)
+if (subject.created_at) {
+const projected = new Date(subject.created_at);
+projected.setDate(projected.getDate() + 90);
+const daysToProjected = daysBetween(new Date(), projected);
+if (daysToProjected >= -3 && daysToProjected <= 365) return projected;
+}
+return null;
+} catch (e) {
+return null;
+}
+}
+
+async function determineCardState(card, reviewLogs, examLogs, subjectExamDate = null) {
+const { stage, next_review_at, last_reviewed_at, created_at } = card;
+const now = new Date();
+// SEEDLING: never reviewed
+if (!reviewLogs || reviewLogs.length === 0) {
+return { state: CARD_STATES.SEEDLING, stage: stage || 1, verified: false };
+}
+// GHOST: Stage 5, overdue by >=20 days past the card's due date.
+// "Better implemented": computes from next_review_at rather than last_reviewed_at,
+// so a card on a 30-day or 90-day interval won't ghost mid-interval — only genuine
+// neglect (ignored for 20+ days after the card came due) is flagged.
+// FIX #2: Preserve verified status — GHOST must not wipe VERIFIED.
+if (stage === 5) {
+const daysSinceReview = daysSince(last_reviewed_at);
+const daysOverdue = next_review_at
+  ? Math.floor((Date.now() - new Date(next_review_at).getTime()) / 86400000)
+  : daysSinceReview;
+if (daysOverdue >= 20) {
+return {
+state: CARD_STATES.GHOST,
+stage: 5,
+verified: card.verified === true,
+ghost_days: daysSinceReview,
+};
+}
+}
+// DANGEROUS: subject exam within 14 days, stage 1-2
+// FIX #11: Removed deprecated `weight` field
+if (stage <= 2 && subjectExamDate) {
+const daysToExam = daysBetween(now, new Date(subjectExamDate));
+if (daysToExam <= 14 && daysToExam >= 0) {
+return { state: CARD_STATES.DANGEROUS, stage, verified: false };
+}
+}
+// STUCK: >=5 reviews, no stage change in 14 days, >=2 of last 3 responses were Again/Hard
+const recentLogs = reviewLogs
+.filter((l) => l.card_id === card.id)
+.sort((a, b) => new Date(b.reviewed_at) - new Date(a.reviewed_at));
+if (recentLogs.length >= 5) {
+const last14Days = recentLogs.filter((l) => daysSince(l.reviewed_at) <= 14);
+// FIX #12: Ensure recent logs match current stage (catches recently promoted cards)
+// FIX (Issue 07): Filter null/undefined new_stage before building stage set.
+// Previously, a single null new_stage produced stagesInLast14 = [null], making
+// stagesInLast14[0] === stage always false and silently suppressing STUCK.
+// When no valid stage data exists, fall back to [stage] (conservative: assume
+// the card stayed at its current stage, so the stuck check can proceed on
+// response-quality data alone).
+const validStageLogs = last14Days.filter((l) => l.new_stage != null);
+const stagesInLast14 = validStageLogs.length > 0
+  ? [...new Set(validStageLogs.map((l) => l.new_stage))]
+  : [stage]; // no stage data → assume stage unchanged, allow response-quality check
+if (stagesInLast14.length === 1 && stagesInLast14[0] === stage) {
+// VELOCITY-BASED STUCK: quality trend tracked over last 5 responses.
+// Catches "Good → Hard → Again" decay earlier than a fixed last-3 count.
+const responseScore = (r) => ({ easy: 3, good: 2, hard: 1, again: 0 })[r] ?? 2;
+const last5 = recentLogs.slice(0, 5);
+const scores = last5.map(l => responseScore(l.response));
+// Compare recent 3 vs prior 2 — negative delta means decaying trend
+const recentAvg = (scores[0] + scores[1] + scores[2]) / 3;
+const olderAvg  = scores.length >= 5 ? (scores[3] + scores[4]) / 2 : recentAvg;
+const trendDecaying = recentAvg < olderAvg;
+const badInLast3 = last5.slice(0, 3).filter(
+(l) => l.response === 'again' || l.response === 'hard'
+).length;
+// Fire STUCK if: (a) 2+ bad in last 3, OR (b) trend clearly decaying AND 1+ bad in last 3
+if (badInLast3 >= 2 || (trendDecaying && badInLast3 >= 1)) {
+return { state: CARD_STATES.STUCK, stage, verified: false };
+}
+}
+}
+// AVOIDED: 7+ days overdue once is sufficient (severe single event).
+// Moderate path: 3+ days overdue with 2+ prior overdue occurrences in 14 days (was 3).
+if (next_review_at) {
+const daysOverdue = daysBetween(new Date(next_review_at), now);
+// Severe: one 7+ day overdue event = immediate AVOIDED
+if (daysOverdue >= 7) {
+return { state: CARD_STATES.AVOIDED, stage, verified: false };
+}
+// Moderate: repeated avoidance pattern
+if (daysOverdue >= 3) {
+const overdueOccurrences = recentLogs.filter((l) => {
+if (!l.next_review_at) return false;
+const overdue = daysBetween(new Date(l.next_review_at), new Date(l.reviewed_at)) >= 3;
+return overdue && daysSince(l.reviewed_at) <= 14;
+}).length;
+if (overdueOccurrences >= 2) {
+return { state: CARD_STATES.AVOIDED, stage, verified: false };
+}
+}
+}
+// HYBRID CHANGE 5: FSRS early-warning SLIPPING — predictive signal.
+// Fires for review-phase cards (stage >= 3) whose FSRS retrievability has
+// dropped below 0.40. Memory is critically weak even if recent reviews went
+// well (lucky streak). This is a predictive check; the behavioural SLIPPING
+// below is reactive. Intentionally precedes the behavioural check.
+if (stage >= 3 && card.fsrs_stability && card.last_reviewed_at) {
+const _fsrsElapsed = daysSince(card.last_reviewed_at);
+const _fsrsR = fsrsRetrievability(_fsrsElapsed, card.fsrs_stability);
+if (_fsrsR < 0.40) {
+return { state: CARD_STATES.SLIPPING, stage, verified: false };
+}
+}
+// SLIPPING: early-warning state — last 2 responses both Again/Hard.
+// Fires with as few as 2 reviews. Lower severity than STUCK (+1 pressure).
+// AVOIDED takes priority: this check only reaches here if not overdue enough for AVOIDED.
+if (recentLogs.length >= 2) {
+const last2 = recentLogs.slice(0, 2);
+const slippingBad = last2.filter((l) => l.response === 'again' || l.response === 'hard').length;
+if (slippingBad >= 2) {
+return { state: CARD_STATES.SLIPPING, stage, verified: false };
+}
+}
+// Stage 5: FRAGILE vs VERIFIED
+// FIX #1: card.verified guard must precede examLogs.some() to prevent
+// verified cards being demoted to FRAGILE when examLogs is empty.
+if (stage === 5) {
+if (card.verified === true) {
+return { state: CARD_STATES.VERIFIED, stage: 5, verified: true };
+}
+const hasCorrectExam =
+examLogs && examLogs.some((e) => e.card_id === card.id && e.is_correct === true);
+if (hasCorrectExam) {
+return { state: CARD_STATES.VERIFIED, stage: 5, verified: true };
+}
+return { state: CARD_STATES.FRAGILE, stage: 5, verified: false };
+}
+// STABLE: stage 3-4, no consecutive failures, reviewed on schedule
+if (stage >= 3 && stage <= 4) {
+const last3 = recentLogs.slice(0, 3);
+const allGood = last3.every((l) => l.response === 'good' || l.response === 'easy');
+// FIX #5b: Correct daysBetween order — earlier date first, later date second
+const onSchedule = last3.every((l) => {
+if (!l.previous_interval) return true;
+const actualInterval = daysBetween(
+l.previous_review_at || l.created_at || now,
+l.reviewed_at
+);
+return actualInterval <= (l.previous_interval || 1) + 1;
+});
+if (allGood && onSchedule) {
+return { state: CARD_STATES.STABLE, stage, verified: false };
+}
+// SPEC FIX (Issue 04): GROWING is defined as Stage 1–3 only.
+// Stage 3 non-stable → GROWING (correct per spec range).
+// Stage 4 non-stable → card is not-STABLE but still in the STABLE bracket (3-4);
+//   it is not STUCK (checked above), not AVOIDED, not GHOST. The most accurate
+//   available state is STABLE — the card is within the mastered range but
+//   temporarily off-schedule. This avoids a GROWING label at stage 4 which
+//   violates the spec definition and distorts KS weight computation.
+if (stage === 3) {
+return { state: CARD_STATES.GROWING, stage, verified: false };
+}
+// stage === 4, not meeting STABLE criteria — classify as STABLE (not demoted)
+return { state: CARD_STATES.STABLE, stage, verified: false };
+}
+// GROWING: stage 1-3, normal progress
+// FIX #11: Removed deprecated `weight` field
+if (stage >= 1 && stage <= 3) {
+return { state: CARD_STATES.GROWING, stage, verified: false };
+}
+// Default fallback
+return { state: CARD_STATES.GROWING, stage: stage || 1, weight: 1, verified: false };
+}
+
+async function evaluateCardStateFull(userId, card, subjectExamDate = null) {
+if (!subjectExamDate && card.deck_id) {
+try {
+const deck = await db.decks.findById(userId, card.deck_id);
+if (deck && deck.subject_id) {
+subjectExamDate = await getSubjectExamDate(userId, deck.subject_id);
+}
+} catch (e) {
+/ non-fatal /
+}
+}
+// Fix #43: cap at 365 days — prevents unbounded growth as review history accumulates
+const reviewLogs = await db.reviewLogs.findByUser(userId, new Date(Date.now() - 365 * 24 * 60 * 60 * 1000));
+const cardLogs = reviewLogs.filter((l) => l.card_id === card.id);
+// FIX #14: Build examLogs from actual exam history instead of empty array
+let examLogs = [];
+try {
+// FIX (Issue 05a): Raised limit from 50 → 1000; apply same 365-day window
+// as reviewLogs (Fix #43) to prevent cap from hiding VERIFIED-granting exams.
+const examCutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+const rawExamSessions = await db.examSessions.findMany(userId, { status: 'completed' }, { limit: 1000 });
+const allExamSessions = (rawExamSessions.sessions || rawExamSessions || [])
+  .filter(es => es.id && new Date(es.completed_at || es.created_at || 0) >= examCutoff);
+
+if (allExamSessions.length > 0 && db.examQuestions.findBySession) {
+  // FIX (Issue 05b): Parallel fetch — eliminates N+1 serial await per session
+  const questionSets = await Promise.all(
+    allExamSessions.map(es =>
+      db.examQuestions.findBySession(userId, es.id).catch(() => [])
+    )
+  );
+  for (const questions of questionSets) {
+    for (const q of (questions || [])) {
+      if (q.card_id === card.id && !isAdaptiveReckoningQuestion(q)) {
+        examLogs.push({ card_id: card.id, is_correct: q.is_correct === true });
+      }
+    }
+  }
+}
+} catch (e) {
+examLogs = []; // non-fatal
+}
+return determineCardState(card, cardLogs, examLogs, subjectExamDate);
+}
+
+async function initializeCardState(userId, cardId, initialState = CARD_STATES.SEEDLING) {
+// Fix #39+40: populate deck_id and subject_id for downstream filtering
+// Fix #41: removed deprecated weight:1 field — use computeEffectiveWeight() at read time
+const existing = await db.cardStates.get(userId, cardId);
+if (existing) return existing;
+const card = await db.cards.findById(userId, cardId);
+if (!card) return null;
+let subjectId = null;
+if (card.deck_id) {
+try {
+const deck = await db.decks.findById(userId, card.deck_id);
+if (deck) subjectId = deck.subject_id || null;
+} catch (e) { /* non-fatal */ }
+}
+const payload = {
+state: initialState,
+stage: card.stage || 1,
+deck_id: card.deck_id || null,    // Fix #39
+subject_id: subjectId,             // Fix #40
+verified: false,
+verified_at: null,
+last_evaluated_at: new Date(),
+};
+await db.cardStates.create(userId, cardId, payload);
+return payload;
+}
+
+async function recomputeAndStoreCardState(userId, cardId, subjectExamDate = null) {
+const card = await db.cards.findById(userId, cardId);
+if (!card) return null;
+// Auto-resolve subject exam date via getSubjectExamDate (handles null, inferred, and explicit)
+if (!subjectExamDate && card.deck_id) {
+try {
+const deck = await db.decks.findById(userId, card.deck_id);
+if (deck && deck.subject_id) {
+subjectExamDate = await getSubjectExamDate(userId, deck.subject_id);
+}
+} catch (e) {
+/ non-fatal /
+}
+}
+const reviewLogs = await db.reviewLogs.findByUser(userId, new Date(0));
+const cardLogs = reviewLogs.filter((l) => l.card_id === card.id);
+// FIX #13: Replaced dead conditional with actual exam-correctness lookup
+let examLogs = [];
+try {
+// FIX (Issue 05a): Raised limit from 50 → 1000; apply same 365-day window
+// as reviewLogs (Fix #43) to prevent cap from hiding VERIFIED-granting exams.
+const examCutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+const rawExamSessions = await db.examSessions.findMany(userId, { status: 'completed' }, { limit: 1000 });
+const allExamSessions = (rawExamSessions.sessions || rawExamSessions || [])
+  .filter(es => es.id && new Date(es.completed_at || es.created_at || 0) >= examCutoff);
+
+if (allExamSessions.length > 0 && db.examQuestions.findBySession) {
+  // FIX (Issue 05b): Parallel fetch — eliminates N+1 serial await per session
+  const questionSets = await Promise.all(
+    allExamSessions.map(es =>
+      db.examQuestions.findBySession(userId, es.id).catch(() => [])
+    )
+  );
+  for (const questions of questionSets) {
+    for (const q of (questions || [])) {
+      if (q.card_id === card.id && !isAdaptiveReckoningQuestion(q)) {
+        examLogs.push({ card_id: card.id, is_correct: q.is_correct === true });
+      }
+    }
+  }
+}
+} catch (e) {
+examLogs = []; // non-fatal
+}
+const stateResult = await determineCardState(card, cardLogs, examLogs, subjectExamDate);
+const existingStateForPenalty = await db.cardStates.get(userId, cardId).catch(() => null);
+if (
+  existingStateForPenalty &&
+  Number(existingStateForPenalty.reckoning_penalty_factor) < 1 &&
+  existingStateForPenalty.reckoning_penalty_applied_at &&
+  card.last_reviewed_at &&
+  new Date(card.last_reviewed_at).getTime() >
+    new Date(existingStateForPenalty.reckoning_penalty_applied_at).getTime()
+) {
+  stateResult.reckoning_penalty_factor = 1;
+  stateResult.reckoning_penalty_applied_at = null;
+}
+await db.cardStates.update(userId, cardId, stateResult);
+return stateResult;
+}
+
+async function batchInitializeSeedlingStates(userId, cardIds) {
+// Fix #29: check existing states in one query; batch-write only missing ones
+if (!cardIds || cardIds.length === 0) return [];
+const existingStates = await db.cardStates.findByCards(userId, cardIds);
+const existingMap = new Map(existingStates.map(s => [s.card_id, s]));
+// Migrated: Firestore batch → withTransaction INSERT loop (Fix #29)
+const newCardIds = cardIds.filter(cid => !existingMap.has(cid));
+const existingResults = cardIds
+  .filter(cid => existingMap.has(cid))
+  .map(cid => existingMap.get(cid));
+if (newCardIds.length === 0) return existingResults;
+const created = await withTransaction(async (client) => {
+  const out = [];
+  for (const cardId of newCardIds) {
+    const docId = `${userId}_${cardId}`;
+    const payload = {
+      id: docId,
+      user_id: userId, card_id: cardId,
+      state: CARD_STATES.SEEDLING, stage: 1,
+      verified: false, verified_at: null,
+      last_evaluated_at: new Date(), created_at: new Date(),
+      bubble_ids: '[]', learning_debt: false, cross_bubble: false, parking_expires_at: null,
+    };
+    await client.query(
+      `INSERT INTO card_states (id, user_id, card_id, state, stage, verified, verified_at,
+        last_evaluated_at, created_at, bubble_ids, learning_debt, cross_bubble, parking_expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ON CONFLICT (id) DO NOTHING`,
+      [docId, userId, cardId, CARD_STATES.SEEDLING, 1, false, null,
+       payload.last_evaluated_at, payload.created_at, '[]', false, false, null]
+    );
+    out.push({ ...payload, bubble_ids: [] });
+  }
+  return out;
+});
+return [...existingResults, ...created];
+}
+// ── knowledgeScoreService ─────────────────────────────────────────────────────
+const KS_BANDS = [
+{ max: 19, name: '🌱 Seed' },
+{ max: 39, name: '🌿 Sprouting' },
+{ max: 59, name: '🍃 Growing' },
+{ max: 74, name: '🌸 Forming' },
+{ max: 89, name: '🌳 Strong' },
+{ max: 99, name: '🥝 Mastered' },
+{ max: 100, name: '👑 Sovereign' },
+];
+
+function getBandName(score) {
+const s = Math.min(100, Math.max(0, score));
+for (const band of KS_BANDS) {
+if (s <= band.max) return band.name;
+}
+return '👑 Sovereign';
+}
+
+function getBaseWeight(stage, verified, isFragile) {
+if (stage === 1) return 1;
+if (stage === 2) return 2;
+if (stage === 3) return 3;
+if (stage === 4) return 4.5;
+if (stage === 5) {
+if (verified) return 5.0;
+if (isFragile) return 4.5;
+return 4.5; // Stage 5 without verification = FRAGILE weight
+}
+return 1;
+}
+
+function applyGhostDecay(baseWeight, daysSinceReview, verified, isGhost = false) {
+// P2.4 fix: GHOST state cards always decay; only skip decay for non-GHOST stage-5 cards
+if (!isGhost && (!verified || daysSinceReview < 60)) return baseWeight;
+if (daysSinceReview <= 89) return 4.5;
+if (daysSinceReview <= 119) return 4.0;
+return 3.0;
+}
+
+function computeEffectiveWeight(cardState, card) {
+const { stage, verified } = cardState;
+const isFragile = cardState.state === CARD_STATES.FRAGILE;
+const isGhost   = cardState.state === CARD_STATES.GHOST;
+
+// Failsafe KS penalty is evidence-recoverable rather than destructive: when the
+// 6-failure circuit breaker releases a Reckoning, every existing card contributes
+// only 10% of its normal weight. A card returns to normal contribution after it is
+// genuinely reviewed AFTER the penalty timestamp. This gives an exact ~90% subject
+// KS reduction without erasing SRS history, and lets deliberate study rebuild it.
+const penaltyFactorRaw = Number(cardState.reckoning_penalty_factor);
+const penaltyFactor = Number.isFinite(penaltyFactorRaw)
+  ? Math.max(0, Math.min(1, penaltyFactorRaw))
+  : 1;
+const penaltyAppliedAt = cardState.reckoning_penalty_applied_at
+  ? new Date(cardState.reckoning_penalty_applied_at).getTime()
+  : 0;
+const lastReviewedAt = card.last_reviewed_at
+  ? new Date(card.last_reviewed_at).getTime()
+  : 0;
+const activePenaltyFactor =
+  penaltyFactor < 1 &&
+  penaltyAppliedAt > 0 &&
+  !(lastReviewedAt > penaltyAppliedAt)
+    ? penaltyFactor
+    : 1;
+
+let effectiveWeight;
+// Issue-2 FIX: Pristine SEEDLINGs (stage=1, never reviewed, no repetitions)
+// contribute weight=0 instead of weight=1.
+const isPristineSeedling = stage === 1 &&
+  !verified &&
+  (card.repetition_count === 0 || card.repetition_count == null);
+if (isPristineSeedling) {
+  effectiveWeight = 0;
+} else {
+  const baseWeight      = getBaseWeight(stage, verified, isFragile);
+  const daysSinceReview = daysSince(card.last_reviewed_at);
+  if (isGhost || (stage === 5 && daysSinceReview >= 60)) {
+    effectiveWeight = applyGhostDecay(baseWeight, daysSinceReview, verified, isGhost);
+  } else if (stage >= 3 && card.fsrs_stability && card.last_reviewed_at) {
+    const R       = fsrsRetrievability(daysSinceReview, card.fsrs_stability);
+    const rFactor = Math.max(0.6, Math.min(1.0, R));
+    effectiveWeight = parseFloat((baseWeight * rFactor).toFixed(4));
+  } else {
+    effectiveWeight = baseWeight;
+  }
+}
+
+return parseFloat((effectiveWeight * activePenaltyFactor).toFixed(4));
+}
+
+// Fix #20: accepts cachedStates to eliminate redundant findByUser calls across callers
+// Fix #21: uses findAllForUser + filter instead of per-deck findByDeck loop
+async function computeKnowledgeScore(userId, subjectId = null, cachedStates = null) {
+// KS-CACHE: Skip cache only when caller provides fresh cachedStates
+if (!cachedStates) {
+  const cached = getCachedKS(userId, subjectId);
+  if (cached) return cached;
+}
+let allCards = [];
+if (subjectId) {
+const decks = await db.decks.findBySubject(userId, subjectId);
+const deckIdSet = new Set(decks.map(d => d.id));
+// Fix #21: 1 read for all user cards vs N reads (one per deck)
+const userCards = await db.cards.findAllForUser(userId);
+allCards = userCards.filter(c => deckIdSet.has(c.deck_id));
+} else {
+allCards = await db.cards.findAllForUser(userId);
+}
+if (allCards.length === 0) {
+return { score: 0, band: '🌱 Seed', totalCards: 0, sumWeights: 0 };
+}
+// Fix #20: use caller-supplied states when available; else fetch once
+const allStatesDocs = cachedStates || await db.cardStates.findByUser(userId);
+const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+let sumWeights = 0;
+// FIX (Issue 06a): Batch-initialise all missing states in parallel BEFORE the loop.
+// Eliminates N+1 serial await pattern — one Promise.all instead of one await per card.
+const missingCards_ks = allCards.filter(c => !statesByCardId.has(c.id));
+if (missingCards_ks.length > 0) {
+  const newDocs_ks = await Promise.all(
+    missingCards_ks.map(c => initializeCardState(userId, c.id, CARD_STATES.SEEDLING).catch(() => null))
+  );
+  newDocs_ks.forEach((doc, i) => {
+    if (doc) statesByCardId.set(missingCards_ks[i].id, doc);
+  });
+}
+for (const card of allCards) {
+const stateDoc = statesByCardId.get(card.id); // guaranteed present after pre-init
+const weight = computeEffectiveWeight(stateDoc, card);
+sumWeights += weight;
+}
+const score = (sumWeights / (allCards.length * 5)) * 100;
+const clamped = Math.min(100, Math.max(0, score));
+const result = {
+score: parseFloat(clamped.toFixed(2)),
+band: getBandName(clamped),
+totalCards: allCards.length,
+sumWeights: parseFloat(sumWeights.toFixed(2)),
+};
+setCachedKS(userId, subjectId, result);
+return result;
+}
+
+// Fix #22: precomputedSubjectScores param avoids re-computing already-known subject KS
+async function computeGlobalKnowledgeScore(userId, precomputedSubjectScores = null) {
+// KS-CACHE: Check global cache first
+const cached = getCachedKS(userId, null);
+if (cached) return cached;
+const subjects = await db.subjects.findManyWithDecks(userId);
+if (subjects.length === 0) {
+  const empty = { score: 0, band: '🌱 Seed', totalCards: 0 };
+  setCachedKS(userId, null, empty);
+  return empty;
+}
+let totalWeightedSum = 0;
+let totalCardCount = 0;
+for (const subject of subjects) {
+const ks = (precomputedSubjectScores && precomputedSubjectScores[subject.id])
+? precomputedSubjectScores[subject.id]
+: await computeKnowledgeScore(userId, subject.id);
+totalWeightedSum += ks.score * (ks.totalCards || 0);
+totalCardCount += (ks.totalCards || 0);
+}
+if (totalCardCount === 0) return { score: 0, band: '🌱 Seed', totalCards: 0 };
+const globalScore = totalWeightedSum / totalCardCount;
+const result = {
+score: parseFloat(globalScore.toFixed(2)),
+band: getBandName(globalScore),
+totalCards: totalCardCount,
+};
+setCachedKS(userId, null, result);
+return result;
+}
+
+async function persistKnowledgeScore(userId, subjectId = null) {
+// KS-CACHE: Always invalidate before persisting — we want fresh data after SRS changes
+invalidateKSCache(userId, subjectId);
+if (subjectId) {
+const ks = await computeKnowledgeScore(userId, subjectId);
+await db.subjectStats.upsert(userId, subjectId, { knowledge_score: ks.score });
+// Fix #22: pass pre-computed subject KS so global doesn't re-fetch that subject
+const globalKS = await computeGlobalKnowledgeScore(userId, { [subjectId]: ks });
+await db.userStats.update(userId, { knowledge_score_global: globalKS.score });
+return ks;
+}
+const globalKS = await computeGlobalKnowledgeScore(userId);
+await db.userStats.update(userId, { knowledge_score_global: globalKS.score });
+return globalKS;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MASTERY BUBBLE SERVICE (PB.2 / PB.3 / PB.4)
+//  [DESIGN: §2, §3, §9, §10, §11]
+// ════════════════════════════════════════════════════════════════════════════
+
+const BUBBLE_PHASES = {
+  SEEDING:   'SEEDING',
+  GROWING:   'GROWING',
+  HARDENING: 'HARDENING',
+  FINAL:     'FINAL',
+  RESCUE:    'RESCUE',
+};
+
+// ─── PB.3: Phase Boundary Computation ────────────────────────────────────────
+// [DESIGN: §2.1] Default boundaries: SEEDING=40%, GROWING=testDate, HARDENING=90%, FINAL=100%
+
+function computePhaseBoundaries(totalDays, testDateDayOffset = null) {
+  const seedingEnd      = Math.floor(totalDays * 0.4);
+  const growingFallback = Math.floor(totalDays * 0.7); // [DESIGN: §2.3 — 70% of days fallback]
+  const testDay         = testDateDayOffset || growingFallback;
+  const growingEnd      = Math.min(testDay, growingFallback); // whichever is FIRST
+  const hardeningEnd    = Math.floor(totalDays * 0.9);
+  return { seedingEnd, growingEnd, hardeningEnd, finalEnd: totalDays };
+}
+
+// ─── PB.3: Current Phase Computation ─────────────────────────────────────────
+// [DESIGN: §2.1] Phase transition trigger for GROWING: Test Date reached OR 70% days elapsed
+// (whichever is first) — both conditions checked here
+
+function computeCurrentPhase(goal, now = new Date()) {
+  if (goal.rescue_active) return BUBBLE_PHASES.RESCUE; // RESCUE overrides all
+  const examDate = goal.exam_date ? new Date(goal.exam_date) : null;
+  if (!examDate) return BUBBLE_PHASES.SEEDING;
+  const totalDays  = Math.max(1, Math.ceil((examDate - new Date(goal.created_at)) / 86400000));
+  const daysPassed = Math.max(0, Math.ceil((now - new Date(goal.created_at)) / 86400000));
+  const testDate   = goal.test_date ? new Date(goal.test_date) : null;
+  const testOffset = testDate
+    ? Math.ceil((testDate - new Date(goal.created_at)) / 86400000)
+    : null;
+  const bounds = computePhaseBoundaries(totalDays, testOffset);
+  if (daysPassed <= bounds.seedingEnd)   return BUBBLE_PHASES.SEEDING;
+  if (daysPassed <= bounds.growingEnd)   return BUBBLE_PHASES.GROWING;
+  if (daysPassed <= bounds.hardeningEnd) return BUBBLE_PHASES.HARDENING;
+  return BUBBLE_PHASES.FINAL;
+}
+
+// ─── PB.2: Fractional KS for a Bubble ────────────────────────────────────────
+// [DESIGN: §1.2, §15.6] Reuses existing knowledgeScoreService formula — no new formula
+
+async function computeBubbleKS(userId, goal) {
+  const cardIds = goal.card_ids || [];
+  if (cardIds.length === 0) return { score: 0, band: '🌱 Seed', totalCards: 0, sumWeights: 0 };
+
+  const [allStatesDocs, bubbleCards] = await Promise.all([
+    db.cardStates.findByUser(userId),
+    db.cards.findByIds(userId, cardIds),
+  ]);
+  const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+  const cardsById = new Map(bubbleCards.map((card) => [card.id, card]));
+
+  let sumWeights = 0;
+  let validCount = 0;
+  for (const cardId of cardIds) {
+    const card = cardsById.get(cardId);
+    if (!card) continue;
+    validCount++;
+    let stateDoc = statesByCardId.get(cardId);
+    if (!stateDoc) {
+      stateDoc = await initializeCardState(userId, cardId, CARD_STATES.SEEDLING);
+      statesByCardId.set(cardId, stateDoc);
+    }
+    sumWeights += computeEffectiveWeight(stateDoc, card);
+  }
+  if (validCount === 0) return { score: 0, band: '🌱 Seed', totalCards: 0, sumWeights: 0 };
+  const score   = (sumWeights / (validCount * 5)) * 100;
+  const clamped = Math.min(100, Math.max(0, score));
+  return {
+    score:      parseFloat(clamped.toFixed(2)),
+    band:       getBandName(clamped),
+    totalCards: validCount,
+    sumWeights: parseFloat(sumWeights.toFixed(2)),
+  };
+}
+
+// ─── PB.4: Required KS Per Day ───────────────────────────────────────────────
+function computeRequiredKSPerDay(goal, currentKS, now = new Date()) {
+  if (!goal.exam_date) return 0;
+  const examDate      = new Date(goal.exam_date);
+  const daysRemaining = Math.max(1, Math.ceil((examDate - now) / 86400000));
+  const targetKS      = Number(goal.target_ks) || 100;
+  const current       = Number(currentKS) || 0;
+  const ksNeeded      = Math.max(0, targetKS - current);
+  return parseFloat((ksNeeded / daysRemaining).toFixed(3));
+}
+
+// ─── PB.4: Rolling Velocity ───────────────────────────────────────────────────
+// Samples are daily net KS deltas. Legacy numeric samples remain readable.
+function velocitySampleValue(sample) {
+  if (typeof sample === 'number') return Number.isFinite(sample) ? sample : 0;
+  return Number(sample?.delta) || 0;
+}
+
+function appendDailyVelocitySample(existingSamples, delta, now = new Date()) {
+  const samples = [...(existingSamples || [])];
+  const day = now.toISOString().slice(0, 10);
+  const roundedDelta = parseFloat((Number(delta) || 0).toFixed(3));
+  const last = samples[samples.length - 1];
+
+  if (last && typeof last === 'object' && last.date === day) {
+    samples[samples.length - 1] = {
+      ...last,
+      date: day,
+      delta: parseFloat((velocitySampleValue(last) + roundedDelta).toFixed(3)),
+    };
+  } else {
+    samples.push({ date: day, delta: roundedDelta });
+  }
+  return samples.slice(-90);
+}
+
+function getVelocityWindow(goal, days, now = new Date()) {
+  const samples = goal.velocity_samples || [];
+  if (samples.length === 0) return [];
+
+  const allDated = samples.every((sample) => sample && typeof sample === 'object' && sample.date);
+  if (!allDated) {
+    return samples.slice(-days).map(velocitySampleValue);
+  }
+
+  const byDate = new Map();
+  for (const sample of samples) {
+    byDate.set(sample.date, (byDate.get(sample.date) || 0) + velocitySampleValue(sample));
+  }
+
+  const createdDay = goal.created_at ? new Date(goal.created_at).toISOString().slice(0, 10) : null;
+  const values = [];
+  for (let offset = days - 1; offset >= 0; offset--) {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - offset);
+    const day = d.toISOString().slice(0, 10);
+    if (createdDay && day < createdDay) continue;
+    values.push(byDate.get(day) || 0);
+  }
+  return values;
+}
+
+function computeVelocityFromGoal(goal, now = new Date()) {
+  const window = getVelocityWindow(goal, 7, now);
+  if (window.length === 0) return 0;
+  return parseFloat((window.reduce((a, b) => a + b, 0) / window.length).toFixed(3));
+}
+
+// ─── PB.4: Trajectory Status — Gap-Based [DESIGN: §3.2] ─────────────────────
+// ⚠ CORRECTED from v1.0: gap-based formula, DRIFTING status added
+// gap ≤ 0: ON_TRACK | 0 < gap ≤ 0.3: DRIFTING | 0.3 < gap ≤ 1.0: BEHIND | gap > 1.0: CRITICAL
+// RESCUE overrides when rescue_active = true
+
+function computeTrajectoryStatus(goal, currentKS, now = new Date()) {
+  if (goal.rescue_active) return 'RESCUE'; // [DESIGN: §3.2 — RESCUE overrides]
+  if (!goal.exam_date) return 'ON_TRACK';
+  const examDate      = new Date(goal.exam_date);
+  const daysRemaining = Math.ceil((examDate - now) / 86400000);
+  if (daysRemaining <= 0) return 'CRITICAL';
+  const required = computeRequiredKSPerDay(goal, currentKS, now);
+  const velocity = computeVelocityFromGoal({ ...goal }, now);
+  const gap      = parseFloat((required - velocity).toFixed(3)); // [DESIGN: §3.1]
+  if (gap <= 0)   return 'ON_TRACK';
+  if (gap <= 0.3) return 'DRIFTING';  // [DESIGN: §3.2]
+  if (gap <= 1.0) return 'BEHIND';
+  return 'CRITICAL';
+}
+
+// ─── PB.4: Three-Line Projection [DESIGN: §3.3] ──────────────────────────────
+// Returns { bestCase, currentPace, minimumViable } as projected completion dates
+
+function computeProjections(goal, currentKS, velocity, now = new Date()) {
+  if (!goal.exam_date) return { bestCase: null, currentPace: null, minimumViable: null };
+  const targetKS      = Number(goal.target_ks) || 100;
+  const current       = Number(currentKS) || 0;
+  const pace          = Number(velocity) || 0;
+  const ksNeeded      = Math.max(0, targetKS - current);
+  const examDate      = new Date(goal.exam_date);
+  const daysRemaining = Math.max(1, Math.ceil((examDate - now) / 86400000));
+  const minViableRate = ksNeeded / daysRemaining; // minimum pace to hit deadline
+  const bestCaseRate  = pace * 1.15; // 115% of current pace [DESIGN: §3.3 "100% daily contract"]
+  const bestCaseDays  = bestCaseRate > 0 ? Math.ceil(ksNeeded / bestCaseRate) : null;
+  const currentDays   = pace > 0 ? Math.ceil(ksNeeded / pace) : null;
+  const addDays = (d, base) => {
+    const r = new Date(base); r.setDate(r.getDate() + d); return r;
+  };
+  return {
+    bestCase:      bestCaseDays != null ? addDays(bestCaseDays, now) : null,
+    currentPace:   currentDays  != null ? addDays(currentDays, now)  : null,
+    minimumViable: examDate,    // minimum viable is always the hard deadline
+    minViableRate: parseFloat(minViableRate.toFixed(3)),
+  };
+}
+
+// ─── PB.2: Daily Contract Generation [DESIGN: §9] ────────────────────────────
+// ⚠ CORRECTED from v1.0: adds time estimate, 35-min cap, 3-day spread, consequence text
+// GROWING phase: no new SEEDLING cards unless coverage is complete [DESIGN: §2.3]
+
+const CARD_REVIEW_MINUTES = {
+  DANGEROUS: 2.5, FRAGILE: 2.5,
+  STUCK: 1.75, AVOIDED: 1.75,
+  GROWING: 1.5, STABLE: 1.5, SEEDLING: 1.5,
+  VERIFIED: 0.5,
+};
+const MAX_CONTRACT_MINUTES = 35; // [DESIGN: §9.2]
+
+async function generateDailyContract(userId, goalId) {
+  const goal = await db.masteryGoals.findById(userId, goalId);
+  if (!goal) return null;
+
+  // ── GAP-S4: Contract streak tracking [DESIGN: §9.4] ──────────────────────
+  // Called once per day when a new contract is generated.
+  // If the previous contract was completed (daily_contract_completed = true)
+  // and it was generated on a different calendar day, increment the streak.
+  const prevGenDate = goal.daily_contract_generated_at
+    ? new Date(goal.daily_contract_generated_at) : null;
+  const _now = new Date();
+  const isNewDay = prevGenDate
+    ? _now.toDateString() !== prevGenDate.toDateString() : false;
+  if (isNewDay) {
+    const prevCompleted = goal.daily_contract_completed || false;
+    const curStreak     = goal.contract_streak_current || 0;
+    const bestStreak    = goal.contract_streak_best    || 0;
+    const newStreak     = prevCompleted ? curStreak + 1 : 0;
+    const newBest       = Math.max(bestStreak, newStreak);
+    await db.masteryGoals.update(userId, goalId, {
+      contract_streak_current: newStreak,
+      contract_streak_best:    newBest,
+    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  }
+
+  // PostgreSQL NUMERIC values are returned by pg as strings. Normalize them
+  // once at the Bubble boundary so arithmetic never falls into string
+  // concatenation (e.g. "31" + 8.6) before calling toFixed().
+  const currentKS = Number(goal.current_ks) || 0;
+  const required  = Number(computeRequiredKSPerDay(goal, currentKS)) || 0;
+  const phase     = goal.phase || BUBBLE_PHASES.SEEDING;
+
+  const allStatesDocs  = await db.cardStates.findByUser(userId);
+  const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+
+  // [DESIGN: §2.3] GROWING: block new SEEDLING cards unless ≥80% of cards have been reviewed
+  let coverageComplete = true;
+  if (phase === BUBBLE_PHASES.GROWING) {
+    const cardIds = goal.card_ids || [];
+    const reviewedCount = cardIds.filter((id) => {
+      const st = statesByCardId.get(id);
+      return st && st.state !== CARD_STATES.SEEDLING;
+    }).length;
+    coverageComplete = cardIds.length === 0 || (reviewedCount / cardIds.length) >= 0.8;
+  }
+
+  // Phase-based priority table (lower = higher priority) [DESIGN: §2.2–§2.6]
+  const phaseStatePriority = {
+    SEEDING:   { DANGEROUS:1, AVOIDED:2, STUCK:3, FRAGILE:4, SEEDLING:5, GROWING:6, STABLE:7, VERIFIED:8 },
+    GROWING:   { DANGEROUS:1, STUCK:2, FRAGILE:3, AVOIDED:4, GROWING:5, SEEDLING:6, STABLE:7, VERIFIED:8 },
+    HARDENING: { DANGEROUS:1, STUCK:1, FRAGILE:2, AVOIDED:2, GROWING:3, STABLE:4, SEEDLING:5, VERIFIED:8 },
+    FINAL:     { DANGEROUS:1, STUCK:1, FRAGILE:1, AVOIDED:2, GROWING:3, STABLE:4, SEEDLING:5, VERIFIED:8 },
+    RESCUE:    { DANGEROUS:1, STUCK:1, FRAGILE:1, AVOIDED:1, GROWING:2, STABLE:3, SEEDLING:4, VERIFIED:8 },
+  };
+  const priorityTable = phaseStatePriority[phase] || phaseStatePriority.SEEDING;
+
+  const scored = [];
+  for (const cardId of (goal.card_ids || [])) {
+    const stateDoc = statesByCardId.get(cardId);
+    // Skip parked cards
+    if (stateDoc?.parking_expires_at && new Date(stateDoc.parking_expires_at) > new Date()) continue;
+    const state = stateDoc?.state || CARD_STATES.SEEDLING;
+    // [DESIGN: §2.3] In GROWING, skip SEEDLING if coverage not yet complete
+    if (phase === BUBBLE_PHASES.GROWING && !coverageComplete && state === CARD_STATES.SEEDLING) continue;
+    const priority = priorityTable[state] || 9;
+    scored.push({ cardId, state, priority });
+  }
+  scored.sort((a, b) => a.priority - b.priority);
+
+  // [DESIGN: §2.5] FINAL phase: VERIFIED cards get a 2-minute warm-up block at the
+  // start of the session — brief exposure, then set aside. They are NOT in the main
+  // contract queue. Split scored into warm-up and main pools before the loop.
+  const MAX_WARMUP_MINUTES = 2;
+  const warmupCards  = [];
+  let   warmupMins   = 0;
+  if (phase === BUBBLE_PHASES.FINAL) {
+    for (const { cardId, state } of scored) {
+      if (state !== CARD_STATES.VERIFIED) continue;
+      const mins = CARD_REVIEW_MINUTES[state] || 1.0;
+      if (warmupMins + mins > MAX_WARMUP_MINUTES) break;
+      warmupCards.push({ cardId, state, _warmup: true });
+      warmupMins += mins;
+    }
+  }
+  // Exclude VERIFIED from main loop in FINAL (they are handled above)
+  const mainScored = (phase === BUBBLE_PHASES.FINAL)
+    ? scored.filter(({ state }) => state !== CARD_STATES.VERIFIED)
+    : scored;
+
+  // [DESIGN: §9.2] Build contract within 35-minute cap; spread excess across 3 days
+  const contractCards = [...warmupCards.map(w => w.cardId)];
+  const breakdown     = {};
+  warmupCards.forEach(({ state }) => { breakdown[state] = (breakdown[state] || 0) + 1; });
+  let totalMinutes    = warmupMins;
+
+  // [DESIGN: §2.2] SEEDING phase: no more than 15 new SEEDLING cards per session
+  const MAX_SEEDING_NEW = 15;
+  let seedlingCount = 0;
+
+  for (const { cardId, state } of mainScored) {
+    const mins = CARD_REVIEW_MINUTES[state] || 1.5;
+    if (totalMinutes + mins > MAX_CONTRACT_MINUTES) break;
+    // §2.2 cap: stop adding SEEDLING cards once the per-session limit is reached
+    if (phase === BUBBLE_PHASES.SEEDING && state === CARD_STATES.SEEDLING) {
+      if (seedlingCount >= MAX_SEEDING_NEW) continue; // skip this SEEDLING, keep looping
+      seedlingCount++;
+    }
+    contractCards.push(cardId);
+    breakdown[state] = (breakdown[state] || 0) + 1;
+    totalMinutes += mins;
+  }
+
+  // [DESIGN: §9.2] If still behind, show spread-recovery consequence text
+  const remainingCards = scored.length - contractCards.length;
+  const consequence = remainingCards > 0
+    ? `${remainingCards} card${remainingCards > 1 ? 's' : ''} deferred to tomorrow. Complete today's contract to avoid further drift.`
+    : required > 0
+      ? `Complete today's contract: trajectory stays on track.`
+      : `You are ahead of pace. Today's cards maintain your lead.`;
+
+  // Tomorrow's consequence if today is skipped [DESIGN: §9.2]
+  const tomorrowCount = required > 0
+    ? Math.ceil((required * 2 + currentKS - currentKS) / (CARD_REVIEW_MINUTES.GROWING / 60 || 0.5) * 0.3) // rough
+    : 0;
+  const missConsequence = tomorrowCount > contractCards.length
+    ? `If skipped, you'll need ${tomorrowCount} cards tomorrow instead of ${contractCards.length}.`
+    : null;
+
+  const contract = {
+    cards:                    contractCards,
+    breakdown,
+    daily_contract_cards:     contractCards.length,
+    daily_contract_breakdown: breakdown,
+    daily_contract_minutes:   parseFloat(totalMinutes.toFixed(1)),
+    daily_contract_generated_at: new Date(),
+    daily_contract_completed: false,
+    daily_contract_consequence: consequence,
+    miss_consequence:         missConsequence,
+    target_ks_today:          parseFloat((currentKS + required).toFixed(2)),
+  };
+
+  await db.masteryGoals.update(userId, goalId, {
+    daily_contract_cards:            contract.daily_contract_cards,
+    daily_contract_breakdown:        contract.daily_contract_breakdown,
+    daily_contract_minutes:          contract.daily_contract_minutes,
+    daily_contract_generated_at:     contract.daily_contract_generated_at,
+    daily_contract_completed:        false,
+    daily_contract_consequence:      consequence,
+    // GAP-M2: persist miss_consequence so client can display without recomputing [DESIGN: §9.2]
+    daily_contract_miss_consequence: missConsequence || null,
+  });
+  return contract;
+}
+
+// ─── PB.4: Main Trajectory Update — called after every session ───────────────
+// ⚠ CORRECTED: RESCUE trigger (KS<70 ≤7 days), target_ks=70 fixed, stall check wired
+// [DESIGN: §2.6, §3, §6]
+
+async function updateBubbleTrajectory(userId, goalId) {
+  const goal = await db.masteryGoals.findById(userId, goalId);
+  if (!goal || goal.status !== 'active') return null;
+
+  const now       = new Date();
+  const ksResult  = await computeBubbleKS(userId, goal);
+  const prevKS    = Number(goal.current_ks) || 0;
+  const ksDelta   = parseFloat((ksResult.score - prevKS).toFixed(3));
+
+  // Aggregate repeated same-day trajectory updates into one net daily sample.
+  const samples   = appendDailyVelocitySample(goal.velocity_samples || [], ksDelta, now);
+  const velocity  = computeVelocityFromGoal({ ...goal, velocity_samples: samples }, now);
+
+  // Gap and trajectory status [DESIGN: §3.1, §3.2]
+  const requiredPerDay   = computeRequiredKSPerDay(goal, ksResult.score, now);
+  const trajectoryGap    = parseFloat((requiredPerDay - velocity).toFixed(3));
+  const trajectoryStatus = computeTrajectoryStatus(
+    { ...goal, velocity_samples: samples }, ksResult.score, now
+  );
+  const newPhase = computeCurrentPhase(goal, now);
+
+  // Three projections [DESIGN: §3.3]
+  const projections = computeProjections(
+    { ...goal, velocity_samples: samples }, ksResult.score, velocity, now
+  );
+
+  const updates = {
+    current_ks:                  ksResult.score,
+    actual_ks_velocity:          velocity,
+    velocity_samples:            samples,
+    trajectory_status:           trajectoryStatus,
+    trajectory_gap:              trajectoryGap,
+    required_ks_per_day:         requiredPerDay,
+    projected_completion_date:   projections.currentPace  || null,
+    projected_best_case:         projections.bestCase     || null,
+    projected_minimum_viable:    projections.minimumViable || null,
+    last_recalculated_at:        now,
+  };
+
+  // ── PB.3: Phase transition detection ────────────────────────────────────────
+  if (newPhase !== goal.phase && !goal.rescue_active) {
+    updates.phase            = newPhase;
+    updates.phase_entered_at = now;
+    // G3: Early rescue eligibility flag when entering HARDENING below KS 70 [DESIGN: §2.4]
+    // This is distinct from the RESCUE activation trigger (which requires ≤7 days).
+    // The flag surfaces in the Bubble widget and is used for advisory tone escalation.
+    if (newPhase === BUBBLE_PHASES.HARDENING && ksResult.score < 70) {
+      updates.rescue_eligible = true;
+      await db.masteryGoals.addHistoryEntry(goalId, {
+        event_type:  'rescue_eligible_flagged',
+        ks_at_event: ksResult.score,
+        notes:       `Entered HARDENING at KS ${ksResult.score.toFixed(1)} — below 70. Rescue eligibility flag set.`,
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    }
+    // Append to phase_history array [DESIGN: §12.1]
+    const phaseHistoryEntry = {
+      phase:       newPhase,
+      entered_at:  now,
+      exited_at:   null,
+      ks_at_entry: ksResult.score,
+      ks_at_exit:  null,
+    };
+    updates.phase_history = [...(goal.phase_history || []), phaseHistoryEntry]; // migrated: FieldValue.arrayUnion → JS spread
+    await db.masteryGoals.addHistoryEntry(goalId, {
+      event_type:  'phase_transition',
+      from_phase:  goal.phase,
+      to_phase:    newPhase,
+      ks_at_event: ksResult.score,
+      notes:       `Phase transitioned ${goal.phase} → ${newPhase}.`,
+    });
+  }
+
+  // ── PB.3: Test Date gate — KS must be ≥60 at Test Date [DESIGN: §2.3] ─────
+  // ⚠ CORRECTED: threshold is 60 (not configurable), triggers +3 brain pressure on next calculateSubjectPressure call
+  if (goal.test_date && !goal.test_date_gate_failed) {
+    const testDate = new Date(goal.test_date);
+    if (now >= testDate) {
+      if (ksResult.score < 60) {
+        updates.phase               = BUBBLE_PHASES.HARDENING;
+        updates.phase_entered_at    = now;
+        updates.test_date_gate_failed = true;
+        // [DESIGN: §2.3] Store honest message for client to surface
+        updates.gate_fail_message   = 'Your understanding is behind schedule. KIWI is shifting focus.';
+        await db.masteryGoals.addHistoryEntry(goalId, {
+          event_type:  'test_date_gate_failed',
+          from_phase:  BUBBLE_PHASES.GROWING,
+          to_phase:    BUBBLE_PHASES.HARDENING,
+          ks_at_event: ksResult.score,
+          notes:       'KS below 60 at Test Date. HARDENING activated early.',
+        });
+      } else if (!goal.test_date_gate_passed) {
+        // FIX (Issue 11 Part A): Log explicit pass event so the almanac
+        // unlock can rely on a formal gate evaluation event rather than
+        // inferring it from field state (which cannot distinguish
+        // "gate not yet reached" from "gate passed on first attempt").
+        updates.test_date_gate_passed = true;
+        await db.masteryGoals.addHistoryEntry(goalId, {
+          event_type:  'test_date_gate_passed',
+          ks_at_event: ksResult.score,
+          notes:       'KS >= 60 at Test Date. Gate cleared on first attempt.',
+        });
+      }
+    }
+  }
+
+  // ── PB.3: RESCUE activation [DESIGN: §2.6] ───────────────────────────────
+  // ⚠ CORRECTED from v1.0: KS < 70 with ≤7 days remaining (not KS<40, ≤10 days)
+  // target_ks drops to fixed 70 [DESIGN: §2.6]
+  if (!goal.rescue_active) {
+    const examDate    = goal.exam_date ? new Date(goal.exam_date) : null;
+    const daysToExam  = examDate ? Math.ceil((examDate - now) / 86400000) : 999;
+    const inLatePhase = newPhase === BUBBLE_PHASES.FINAL || newPhase === BUBBLE_PHASES.HARDENING;
+    if (inLatePhase && daysToExam <= 7 && ksResult.score < 70) {
+      updates.rescue_active          = true;
+      updates.phase                  = BUBBLE_PHASES.RESCUE;
+      updates.phase_entered_at       = now;
+      updates.rescue_mode_entered_at = now;
+      updates.target_ks              = 70;   // [DESIGN: §2.6] fixed 70, NOT computed
+      await db.masteryGoals.addHistoryEntry(goalId, {
+        event_type:  'rescue_activated',
+        from_phase:  goal.phase,
+        to_phase:    BUBBLE_PHASES.RESCUE,
+        ks_at_event: ksResult.score,
+        notes:       `RESCUE mode: ${daysToExam}d to exam, KS=${ksResult.score}. Target drops to 70.`,
+      });
+    }
+  }
+
+  // ── Deadline check — auto-close if exam date has passed ──────────────────
+  const examDate   = goal.exam_date ? new Date(goal.exam_date) : null;
+  const daysToExam = examDate ? Math.ceil((examDate - now) / 86400000) : 999;
+  if (examDate && now >= examDate) {
+    const targetKS  = updates.target_ks || goal.target_ks || 100;
+    const outcome   = ksResult.score >= targetKS
+      ? 'completed'
+      : (goal.rescue_active && ksResult.score >= 70)
+        ? 'partially_completed'   // [DESIGN: §2.6]
+        : 'missed';
+    await closeMasteryGoal(userId, goalId, outcome);
+    return { ...goal, ...updates, status: outcome };
+  }
+
+  // ── Daily KS snapshot (at most once per 12h) [DESIGN: §3.4] ─────────────
+  const lastSnap = goal.last_ks_snapshot_at ? new Date(goal.last_ks_snapshot_at) : null;
+  if (!lastSnap || (now - lastSnap) / 3600000 >= 12) {
+    updates.last_ks_snapshot_at = now;
+    // GAP-M1: compute card_state_distribution + session stats for §12.2 compliance
+    let _cardsReviewed = 0; let _cardsAdvanced = 0;
+    const _cardStateDist = {};
+    try {
+      const _recentSessions = await db.sessions.findMany(
+        userId, { session_completed: true }, { limit: 1 }
+      );
+      const _lastSess = (_recentSessions.sessions || [])[0];
+      if (_lastSess) {
+        _cardsReviewed = _lastSess.cards_reviewed || 0;
+        _cardsAdvanced = _lastSess.cards_advanced || 0;
+      }
+      const _bubbleStates = await db.cardStates.findByUser(userId);
+      const _goalCardSet  = new Set(goal.card_ids || []);
+      for (const _s of _bubbleStates) {
+        if (_goalCardSet.has(_s.card_id)) {
+          _cardStateDist[_s.state] = (_cardStateDist[_s.state] || 0) + 1;
+        }
+      }
+    } catch (_e) { /* non-fatal — history entry proceeds without distribution */ }
+    await db.masteryGoals.addHistoryEntry(goalId, {
+      event_type:              'ks_snapshot',
+      date:                    now,
+      ks_at_event:             ksResult.score,
+      ks_gain_today:           ksDelta,
+      phase:                   newPhase || goal.phase,
+      trajectory_status:       trajectoryStatus,
+      trajectory_gap:          trajectoryGap,
+      contract_completed:      goal.daily_contract_completed || false,
+      // [DESIGN: §12.2] Three previously missing fields — GAP-M1
+      cards_reviewed:          _cardsReviewed,
+      cards_advanced:          _cardsAdvanced,
+      card_state_distribution: _cardStateDist,
+      notes: `KS=${ksResult.score}. Velocity=${velocity.toFixed(2)}/day. Gap=${trajectoryGap.toFixed(2)}.`,
+    });
+  }
+
+  // ── PB.3: SEEDING coverage gap check [DESIGN: §2.2] ────────────────────
+  if ((newPhase || goal.phase) === BUBBLE_PHASES.SEEDING) {
+    const allStatesDocs  = await db.cardStates.findByUser(userId);
+    const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+    const cardIds        = goal.card_ids || [];
+    if (cardIds.length > 0) {
+      const totalDays  = examDate ? Math.ceil((examDate - new Date(goal.created_at)) / 86400000) : 90;
+      const daysPassed = Math.ceil((now - new Date(goal.created_at)) / 86400000);
+      const at40Pct    = daysPassed >= Math.floor(totalDays * 0.4);
+      if (at40Pct) {
+        const reviewed    = cardIds.filter((id) => statesByCardId.get(id)?.state !== CARD_STATES.SEEDLING).length;
+        const coveragePct = reviewed / cardIds.length;
+        updates.coverage_gap_active = coveragePct < 0.8;
+        if (coveragePct < 0.8 && !goal.coverage_gap_active) {
+          await db.masteryGoals.addHistoryEntry(goalId, {
+            event_type:  'coverage_gap_detected',
+            ks_at_event: ksResult.score,
+            notes:       `Coverage ${(coveragePct * 100).toFixed(0)}% at SEEDING midpoint. New card introduction paused.`,
+          });
+        }
+      }
+      // G4: Early stall trigger — KS < 20 at SEEDING midpoint (20% of days) [DESIGN: §2.2]
+      // Bypasses the normal 14-day velocity window requirement.
+      // One-shot: seeding_early_stall_checked prevents re-triggering.
+      const seedingMidpoint = Math.floor(totalDays * 0.2);
+      if (
+        daysPassed >= seedingMidpoint &&
+        ksResult.score < 20 &&
+        !goal.seeding_early_stall_checked &&
+        !goal.stall_active
+      ) {
+        updates.seeding_early_stall_checked = true;
+        // Check velocity directly — require only 1 sample (vs normal 3) [DESIGN: §2.2]
+        const earlyWindow = getVelocityWindow({ ...goal, velocity_samples: samples }, 7, now);
+        const earlyVelocity = earlyWindow.length > 0
+          ? earlyWindow.reduce((a, b) => a + b, 0) / earlyWindow.length
+          : 0;
+        if (earlyVelocity < 0.3) {
+          const cause = await diagnoseStallCause(userId, { ...goal, ...updates }).catch(() => 'STUCK_CLUSTER');
+          await activateStallResponse(userId, goalId, cause).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          await db.masteryGoals.addHistoryEntry(goalId, {
+            event_type:  'early_stall_detected',
+            ks_at_event: ksResult.score,
+            notes:       `Early stall: KS ${ksResult.score.toFixed(1)} at SEEDING midpoint (day ${daysPassed}/${totalDays}). Velocity: ${earlyVelocity.toFixed(2)}/day.`,
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        }
+      }
+    }
+  }
+
+  await db.masteryGoals.update(userId, goalId, updates);
+
+  // ── PB.5: Stall check — called every trajectory update [DESIGN: §6] ─────
+  // ⚠ CORRECTED from v1.0: stall check was defined but never called from here
+  await checkAndUpdateStallState(userId, { ...goal, ...updates, current_ks: ksResult.score })
+    .catch((e) => console.error("[KIWI] silent catch:", e.message));
+
+  await generateDailyContract(userId, goalId).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  return { ...goal, ...updates, current_ks: ksResult.score };
+}
+
+// ─── Update all active bubbles for a user (called from session end hook) ─────
+async function updateAllBubblesForUser(userId) {
+  try {
+    const activeGoals = await db.masteryGoals.findActive(userId);
+    for (const goal of activeGoals) {
+      await updateBubbleTrajectory(userId, goal.id).catch((e) => {
+        console.error(`[KIWI] Bubble trajectory failed for ${goal.id}:`, e.message);
+      });
+    }
+  } catch (e) {
+    console.error('[KIWI] updateAllBubblesForUser failed:', e.message);
+  }
+}
+
+// ─── Full Bubble creation flow ────────────────────────────────────────────────
+async function createMasteryGoal(userId, data) {
+  let cardIds = [...new Set(data.card_ids || [])];
+  if (cardIds.length === 0 && (data.deck_ids || []).length > 0) {
+    const deckCards = await Promise.all(
+      data.deck_ids.map((deckId) => db.cards.findByDeck(userId, deckId).catch(() => []))
+    );
+    cardIds = [...new Set(deckCards.flat().map((card) => card.id))];
+  }
+  await batchInitializeSeedlingStates(userId, cardIds).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  // Default bubble name if not provided [DESIGN: §12.1]
+  if (!data.name && data.exam_date) {
+    const subject = await db.subjects.findById(data.subject_id).catch(() => null);
+    const examStr = new Date(data.exam_date).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+    data.name = `${subject?.name || 'Exam'} — ${examStr}`;
+  }
+  let goal = null;
+  try {
+    goal = await db.masteryGoals.create(userId, { ...data, card_ids: cardIds });
+    const ksResult = await computeBubbleKS(userId, goal);
+    const now      = new Date();
+    const required = computeRequiredKSPerDay(goal, ksResult.score, now);
+    await db.masteryGoals.update(userId, goal.id, {
+      current_ks:          ksResult.score,
+      required_ks_per_day: required,
+    });
+    await generateDailyContract(userId, goal.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    await db.masteryGoals.addHistoryEntry(goal.id, {
+      event_type:  'created',
+      ks_at_event:  ksResult.score,
+      notes:       `Bubble created. ${cardIds.length} cards. Exam: ${data.exam_date}. Required: ${required.toFixed(2)} KS/day.`,
+    });
+    return { ...goal, current_ks: ksResult.score, required_ks_per_day: required };
+  } catch (e) {
+    if (goal?.id) {
+      await query('DELETE FROM goal_history WHERE goal_id = $1', [goal.id]).catch(() => {});
+      await query('DELETE FROM concept_clusters WHERE goal_id = $1', [goal.id]).catch(() => {});
+      await query('DELETE FROM mastery_goals WHERE id = $1 AND user_id = $2', [goal.id, userId]).catch(() => {});
+    }
+    throw e;
+  }
+}
+
+// ─── Close a mastery goal [DESIGN: §10.1, §2.6] ──────────────────────────────
+// ⚠ CORRECTED from v1.0: handles PARTIALLY_COMPLETED status for RESCUE outcomes
+async function closeMasteryGoal(userId, goalId, reason = 'completed') {
+  const goal = await db.masteryGoals.findById(userId, goalId);
+  if (!goal) return null;
+  const ksResult = await computeBubbleKS(userId, goal);
+  const validStatuses = ['completed', 'partially_completed', 'missed', 'archived'];
+  const finalStatus   = validStatuses.includes(reason) ? reason : 'missed';
+  await db.masteryGoals.update(userId, goalId, {
+    status:               finalStatus,
+    final_ks_at_deadline: ksResult.score,
+    completed_at:         new Date(),
+  });
+  // PB.14: Mark unverified cards as learning_debt when missed or partially completed [DESIGN: §10.1]
+  if (finalStatus === 'missed' || finalStatus === 'partially_completed') {
+    const allStatesDocs  = await db.cardStates.findByUser(userId);
+    const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+    let debtCount = 0;
+    for (const cardId of (goal.card_ids || [])) {
+      const stateDoc = statesByCardId.get(cardId);
+      if (stateDoc && stateDoc.state !== CARD_STATES.VERIFIED) {
+        await db.cardStates.update(userId, cardId, { learning_debt: true }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        debtCount++;
+      }
+    }
+    await db.masteryGoals.update(userId, goalId, { learning_debt_card_count: debtCount });
+  }
+  await db.masteryGoals.addHistoryEntry(goalId, {
+    event_type:  finalStatus,
+    ks_at_event: ksResult.score,
+    notes:       `Bubble ${finalStatus}. Final KS: ${ksResult.score.toFixed(1)}.`,
+  });
+  return { status: finalStatus, final_ks: ksResult.score };
+}
+
+// ── Stage 5 Verification Logic ────────────────────────────────────────────────
+
+async function processExamVerification(userId, examSession) {
+const results = { verified: [], reclassified: [] };
+const questions = examSession.questions || [];
+// VERIFICATION-BUG-FIX: Pre-load subject cards for content matching when card_id is missing
+let _subjectCards = [];
+const _deckIds = examSession.deck_ids || [];
+if (_deckIds.length > 0) {
+  const _allDeckCards = await Promise.all(_deckIds.map(did => db.cards.findByDeck(userId, did).catch(() => [])));
+  _subjectCards = _allDeckCards.flat();
+} else if (examSession.subject_id) {
+  _subjectCards = await db.cards.findBySubject(userId, examSession.subject_id).catch(() => []);
+}
+function _resolveCardId(q) {
+  if (q.card_id) return q.card_id;
+  if (_subjectCards.length === 0 || !q.stem) return null;
+  const stem = q.stem.toLowerCase();
+  const stemWords = stem.split(/\s+/).filter(w => w.length > 3);
+  let bestCard = null, bestScore = 0;
+  for (const sc of _subjectCards) {
+    const front = (sc.front_content || '').toLowerCase();
+    let overlap = 0;
+    for (const sw of stemWords) { if (front.includes(sw)) overlap++; }
+    if (overlap > bestScore) { bestScore = overlap; bestCard = sc; }
+  }
+  return (bestCard && bestScore >= 2) ? bestCard.id : null;
+}
+for (const q of questions) {
+const resolvedCardId = _resolveCardId(q);
+if (!resolvedCardId || q.is_correct === undefined) continue;
+const card = await db.cards.findById(userId, resolvedCardId);
+if (!card) continue;
+const stateDoc = await db.cardStates.get(userId, card.id);
+if (!stateDoc) continue;
+if (q.is_correct === true) {
+if (card.stage === 5 && !stateDoc.verified) {
+await db.cardStates.update(userId, card.id, {
+state: CARD_STATES.VERIFIED,
+verified: true,
+verified_at: new Date(),
+});
+await db.cards.update(userId, card.id, { verified: true, verified_at: new Date() });
+results.verified.push(card.id);
+// P8.1c: +1 Seedling for first-time VERIFIED card (spec P8.1)
+await awardSeedlings(userId, 1, 'card_verified_first_time',
+`Card ${card.id} verified for the first time in exam`,
+'card-verified:' + userId + ':' + card.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+} else {
+// B7: Apply full SRS "Again" treatment — recalculate EF and repetitions
+const srsResult = calculateNextReview(card, 'again');
+await db.cards.update(userId, card.id, {
+stage: srsResult.stage,
+interval_days: srsResult.interval_days,
+easiness_factor: srsResult.easiness_factor,
+repetition_count: srsResult.repetition_count,
+next_review_at: srsResult.next_review_at,
+last_response: 'again',
+// FIX 1: persist FSRS state so scheduling stays consistent after exam failures
+fsrs_stability: srsResult.fsrs_stability,
+fsrs_difficulty: srsResult.fsrs_difficulty,
+});
+const newStateType = srsResult.stage <= 2 ? CARD_STATES.GROWING : CARD_STATES.STABLE;
+await db.cardStates.update(userId, card.id, {
+state: newStateType,
+stage: srsResult.stage,
+verified: false,
+});
+results.reclassified.push({
+card_id: card.id,
+old_stage: card.stage,
+new_stage: srsResult.stage,
+});
+}
+}
+return results;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CROSS-BUBBLE INTELLIGENCE (PB.10)  [DESIGN: §8]
+// ════════════════════════════════════════════════════════════════════════════
+
+// [DESIGN: §8.2] Mark cards that appear in multiple active bubbles as cross_bubble.
+// Semantic overlap check: if a card appears in both, it is shared regardless of naming.
+async function detectAndMarkCrossBubbleCards(userId, newGoalCardIds, existingGoals) {
+  const existingCardSet  = new Set(existingGoals.flatMap((g) => g.card_ids || []));
+  const overlappingCards = newGoalCardIds.filter((id) => existingCardSet.has(id));
+  const smallerSetSize = Math.min(newGoalCardIds.length, existingCardSet.size);
+  const overlapPct     = smallerSetSize > 0 ? overlappingCards.length / smallerSetSize : 0;
+  if (overlappingCards.length > 0) {
+    const existingGoalIds = existingGoals.map((goal) => goal.id);
+    await query(
+      `UPDATE card_states cs
+       SET cross_bubble = true,
+           bubble_ids = (
+             SELECT COALESCE(jsonb_agg(DISTINCT item), '[]'::jsonb)
+             FROM jsonb_array_elements(COALESCE(cs.bubble_ids, '[]'::jsonb) || $3::jsonb) AS item
+           ),
+           updated_at = NOW()
+       WHERE cs.user_id = $1 AND cs.card_id = ANY($2::text[])`,
+      [userId, overlappingCards, JSON.stringify(existingGoalIds)]
+    ).catch((e) => console.error('[KIWI] Cross-Bubble state update failed:', e.message));
+  }
+
+  for (const goal of existingGoals) {
+    const goalCards = new Set(goal.card_ids || []);
+    const sharedWithGoal = overlappingCards.filter((id) => goalCards.has(id));
+    if (sharedWithGoal.length === 0) continue;
+    const merged = [...new Set([...(goal.cross_bubble_card_ids || []), ...sharedWithGoal])];
+    await db.masteryGoals.update(userId, goal.id, { cross_bubble_card_ids: merged })
+      .catch((e) => console.error("[KIWI] silent catch:", e.message));
+  }
+
+  return {
+    overlapping_card_count: overlappingCards.length,
+    overlapping_card_ids:   overlappingCards,
+    overlap_pct:            parseFloat((overlapPct * 100).toFixed(1)),
+    should_prompt_user:     overlapPct > 0.40,
+  };
+}
+
+// [DESIGN: §8.2] Called by POST /api/bubbles/overlap-check before creation.
+// Returns whether the student should be prompted about shared cards.
+async function checkBubbleOverlap(userId, newCardIds) {
+  const existingGoals = await db.masteryGoals.findActive(userId);
+  if (existingGoals.length === 0) {
+    return { should_prompt_user: false, overlap_pct: 0, overlapping_card_count: 0, overlapping_card_ids: [] };
+  }
+  const existingCardSet = new Set(existingGoals.flatMap((g) => g.card_ids || []));
+  const overlappingCards = (newCardIds || []).filter((id) => existingCardSet.has(id));
+  const smallerSetSize = Math.min((newCardIds || []).length, existingCardSet.size);
+  const overlapPct = smallerSetSize > 0 ? overlappingCards.length / smallerSetSize : 0;
+  return {
+    overlapping_card_count: overlappingCards.length,
+    overlapping_card_ids: overlappingCards,
+    overlap_pct: parseFloat((overlapPct * 100).toFixed(1)),
+    should_prompt_user: overlapPct > 0.40,
+  };
+}
+
+// [DESIGN: §8.2] When a cross_bubble card is reviewed, propagate KS to all containing bubbles.
+async function propagateCrossBubbleKSUpdate(userId, cardId) {
+  try {
+    const stateDoc = await db.cardStates.get(userId, cardId);
+    if (!stateDoc?.cross_bubble) return;
+    const activeGoals = await db.masteryGoals.findActive(userId);
+    for (const goal of activeGoals) {
+      if ((goal.card_ids || []).includes(cardId)) {
+        const ksResult = await computeBubbleKS(userId, goal);
+        await db.masteryGoals.update(userId, goal.id, {
+          current_ks: ksResult.score,
+        }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      }
+    }
+  } catch (_e) { /* intentionally non-fatal */ }
+}
+
+// [DESIGN: §7.3] Update cluster KS for all clusters containing a reviewed card.
+async function updateClusterKSForCard(userId, cardId) {
+  try {
+    const activeGoals = await db.masteryGoals.findActive(userId);
+    for (const goal of activeGoals) {
+      if (!(goal.card_ids || []).includes(cardId)) continue;
+      const clusters = await db.masteryGoals.getClusters(goal.id);
+      for (const cluster of clusters) {
+        if ((cluster.card_ids || []).includes(cardId)) {
+          const ks = await computeClusterKS(userId, cluster);
+          const clusterStatus =
+            ks >= 80 ? 'MASTERED' : ks >= 60 ? 'STRONG' : ks >= 30 ? 'DEVELOPING' : 'WEAK';
+          await db.masteryGoals.updateCluster(goal.id, cluster.id, {
+            cluster_ks:     ks,
+            cluster_status: clusterStatus,
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        }
+      }
+    }
+  } catch (_e) { /* non-fatal */ }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  STALL DETECTION SERVICE (PB.5)  [DESIGN: §6]
+// ════════════════════════════════════════════════════════════════════════════
+
+// [DESIGN: §6.1] Stall = student IS studying but KS not advancing.
+// All three conditions must be true:
+//   1. KS velocity < 0.3 points/day (averaged over last 14 samples)
+//   2. At least 3 velocity samples exist (student has been active)
+//   3. Sufficient study activity confirmed via session history
+// ⚠ CORRECTED from v1.0: absolute 0.3 KS/day threshold (not ratio), correct conditions
+
+async function detectStall(userId, goal) {
+  const samples = goal.velocity_samples || [];
+  // Condition 3: student must be actively studying — not merely absent [DESIGN: §6.1]
+  // Requires ≥3 sessions in the last 14 days, each with ≥5 cards reviewed.
+  // Falls back to velocity-sample proxy if session query fails (non-fatal).
+  // GAP-S3: Phase-specific stall window [DESIGN: §2.4 — 'detects within 5 days' in HARDENING]
+  // §6.1 default is 14 days. HARDENING overrides to 5-day window and 1-session minimum.
+  const _isHardening  = goal.phase === BUBBLE_PHASES.HARDENING;
+  const _stallWindow  = _isHardening ? 5 : 14;
+  const _stallMinSess = _isHardening ? 1 : 3;
+  const _minSamples   = _isHardening ? 1 : 3;
+  if (samples.length < _minSamples) return { isStall: false, cause: null };
+  try {
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000);
+    const recentResult    = await db.sessions.findMany(
+      userId,
+      { session_completed: true, started_at_gte: fourteenDaysAgo },
+      { limit: 50 }
+    );
+    const activeSessions = (recentResult.sessions || []).filter(
+      (s) => (s.cards_reviewed || 0) >= 5
+    );
+    // [DESIGN: §6.1 / GAP-S3] Minimum sessions: 3 normally, 1 in HARDENING
+    if (activeSessions.length < _stallMinSess) return { isStall: false, cause: null };
+  } catch (_e) {
+    // Non-fatal: if session query fails, fall through to velocity check below.
+    // The samples.length < 3 guard above already handled the zero-samples case.
+  }
+  // Condition 1: average daily KS gain < 0.3 over last _stallWindow days [DESIGN: §6.1 / GAP-S3]
+  const recent      = getVelocityWindow(goal, _stallWindow);
+  const avgVelocity = recent.length > 0
+    ? recent.reduce((a, b) => a + b, 0) / recent.length
+    : 0;
+  if (avgVelocity >= 0.3) return { isStall: false, cause: null };
+  // Stall confirmed — diagnose cause
+  const cause = await diagnoseStallCause(userId, goal);
+  return { isStall: true, cause };
+}
+
+// [DESIGN: §6.2] Four stall causes identified by card state distribution analysis.
+// ⚠ CORRECTED from v1.0: correct names (STUCK_CLUSTER, CONCEPT_CEILING, WIDTH_PROBLEM,
+//   AVOIDANCE_PATTERN), percentage-based thresholds (not absolute counts)
+
+async function diagnoseStallCause(userId, goal) {
+  const cardIds    = goal.card_ids || [];
+  const totalCards = cardIds.length;
+  if (totalCards === 0) return 'STUCK_CLUSTER';
+
+  const allStatesDocs  = await db.cardStates.findByUser(userId);
+  const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+
+  let stuckCount   = 0;
+  let avoidedCount = 0;
+  let seedlingOrGrowingCount = 0;
+
+  for (const cardId of cardIds) {
+    const st = statesByCardId.get(cardId)?.state;
+    if (st === CARD_STATES.STUCK)    stuckCount++;
+    if (st === CARD_STATES.AVOIDED)  avoidedCount++;
+    if (st === CARD_STATES.SEEDLING || st === CARD_STATES.GROWING) seedlingOrGrowingCount++;
+  }
+
+  // [DESIGN: §6.2 Diagnosis 1] STUCK_CLUSTER: >35% of cards STUCK
+  if (stuckCount / totalCards > 0.35) return 'STUCK_CLUSTER';
+
+  // [DESIGN: §6.2 Diagnosis 4] AVOIDANCE_PATTERN: >20% of cards AVOIDED
+  if (avoidedCount / totalCards > 0.20) return 'AVOIDANCE_PATTERN';
+
+  // [DESIGN: §6.2 Diagnosis 3] WIDTH_PROBLEM: >50% still SEEDLING/GROWING after 40+ days
+  const createdAt  = goal.created_at ? new Date(goal.created_at) : null;
+  const daysPassed = createdAt ? Math.ceil((new Date() - createdAt) / 86400000) : 0;
+  if (daysPassed >= 40 && seedlingOrGrowingCount / totalCards > 0.50) return 'WIDTH_PROBLEM';
+
+  // [DESIGN: §6.2 Diagnosis 2] CONCEPT_CEILING: one cluster KS < 30, others > 60
+  try {
+    const clusters = await db.masteryGoals.getClusters(goal.id);
+    if (clusters.length > 1) {
+      const weakClusters   = clusters.filter((c) => (c.cluster_ks || 0) < 30);
+      const strongClusters = clusters.filter((c) => (c.cluster_ks || 0) > 60);
+      if (weakClusters.length >= 1 && strongClusters.length >= 1) return 'CONCEPT_CEILING';
+    }
+  } catch (_e) { /* non-fatal */ }
+
+  return 'STUCK_CLUSTER'; // default diagnosis
+}
+
+// [DESIGN: §6.2] Differentiated stall responses per cause
+// ⚠ CORRECTED from v1.0: v1.0 only set intervention_level='L2' for all causes
+async function activateStallResponse(userId, goalId, cause) {
+  // Map cause to stall_response_active enum [DESIGN: §12.1]
+  const responseMap = {
+    STUCK_CLUSTER:     'RESCUE_REVIEWS',  // 3x same card in session + CBT [DESIGN: §6.2 D1]
+    CONCEPT_CEILING:   'CLUSTER_LOCK',    // 50% session time on weak cluster [DESIGN: §6.2 D2]
+    WIDTH_PROBLEM:     'CARD_FREEZE',     // freeze new cards, focus top 40% [DESIGN: §6.2 D3]
+    AVOIDANCE_PATTERN: 'AVOIDANCE_FRONT', // avoided cards moved to front of queue [DESIGN: §6.2 D4]
+  };
+  const response = responseMap[cause] || 'RESCUE_REVIEWS';
+  await db.masteryGoals.update(userId, goalId, {
+    stall_active:          true,
+    stall_detected_at:     new Date(),
+    stall_cause:           cause,
+    stall_response_active: response,
+  });
+  await db.masteryGoals.addHistoryEntry(goalId, {
+    event_type:  'stall_detected',
+    ks_at_event: 0,
+    notes:       `Stall detected. Cause: ${cause}. Response: ${response} activated.`,
+  });
+}
+
+// [DESIGN: §6.3] Stall is resolved when velocity ≥ 0.5 KS/day for 7 consecutive days
+// ⚠ CORRECTED from v1.0: absolute 0.5 threshold (not ratio of required pace)
+async function resolveStallIfRecovered(userId, goalId) {
+  const goal = await db.masteryGoals.findById(userId, goalId);
+  if (!goal || !goal.stall_active) return;
+  const samples = goal.velocity_samples || [];
+  if (samples.length < 7) return;
+  const last7  = getVelocityWindow(goal, 7);
+  if (last7.length < 7) return;
+  const minOf7 = Math.min(...last7);
+  // All 7 consecutive calendar days must be ≥ 0.5 [DESIGN: §6.3]
+  if (minOf7 >= 0.5) {
+    await db.masteryGoals.update(userId, goalId, {
+      stall_active:          false,
+      stall_resolved_at:     new Date(),
+      stall_response_active: null,
+    });
+    await db.masteryGoals.addHistoryEntry(goalId, {
+      event_type:  'stall_resolved',
+      ks_at_event: goal.current_ks || 0,
+      notes:       `Stall resolved. 7-day min velocity: ${minOf7.toFixed(2)} KS/day.`,
+    });
+  }
+}
+
+async function checkAndUpdateStallState(userId, goal) {
+  if (goal.stall_active) {
+    await resolveStallIfRecovered(userId, goal.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  } else {
+    const { isStall, cause } = await detectStall(userId, goal).catch(() => ({ isStall: false }));
+    if (isStall) await activateStallResponse(userId, goal.id, cause).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CONCEPT CLUSTER SERVICE (PB.6)  [DESIGN: §7]
+// ════════════════════════════════════════════════════════════════════════════
+
+// [DESIGN: §7.4] Extend existing notes-to-cards AI call with cluster groupings
+async function generateConceptClusters(userId, goalId, notes = '') {
+  const goal    = await db.masteryGoals.findById(userId, goalId);
+  if (!goal) return [];
+  const cardIds = goal.card_ids || [];
+  // [DESIGN: §7.4] Fallback: single cluster if too few cards or no notes
+  if (!notes || cardIds.length < 5) {
+    const fallback = await db.masteryGoals.addCluster(goalId, {
+      name:       'All Cards',
+      card_ids:   cardIds,
+      cluster_ks: goal.current_ks || 0,
+    });
+    return [fallback];
+  }
+  // [DESIGN: §7.4] AI prompt extension — 3–7 clusters
+  const prompt = `
+ROLE
+You are a concept clustering expert for a spaced repetition learning app.
+STUDY NOTES (first 2000 chars)
+${notes.slice(0, 2000)}
+TOTAL CARDS
+${cardIds.length} cards indexed 0 to ${cardIds.length - 1}
+RULES
+- Return ONLY valid JSON. No markdown, no preamble, no explanation.
+- Format exactly: [{"name":"Cluster Name","card_indices":[0,2,5]},...]
+- Produce 3–7 clusters. Every card index must appear in exactly one cluster.
+- Cluster names must be specific topic names (not "Group 1", not "Miscellaneous").
+- Name each cluster after the central concept it covers.
+OUTPUT
+JSON array only.
+`;
+  let clusters = [];
+  try {
+    const result    = await ai.run('CONCEPT_CLUSTERING', { content: prompt });
+    const text      = result.text.trim();
+    const cleanText = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    const parsed    = JSON.parse(cleanText);
+    if (Array.isArray(parsed)) {
+      for (const c of parsed) {
+        const clusterCardIds = (c.card_indices || [])
+          .filter((i) => typeof i === 'number' && i >= 0 && i < cardIds.length)
+          .map((i) => cardIds[i]);
+        if (clusterCardIds.length === 0) continue;
+        const cluster = await db.masteryGoals.addCluster(goalId, {
+          name:       c.name || 'Unnamed Cluster',
+          card_ids:   clusterCardIds,
+          cluster_ks: 0,
+        });
+        clusters.push(cluster);
+      }
+    }
+  } catch (e) {
+    console.error('[KIWI] Cluster AI failed, using fallback:', e.message);
+  }
+  // [DESIGN: §7.4] Fallback if AI parse failed
+  if (clusters.length === 0) {
+    const fallback = await db.masteryGoals.addCluster(goalId, {
+      name:       'All Cards',
+      card_ids:   cardIds,
+      cluster_ks: goal.current_ks || 0,
+    });
+    clusters = [fallback];
+  }
+  return clusters;
+}
+
+// [DESIGN: §7.3] Cluster KS — same formula as Bubble KS, scoped to cluster
+async function computeClusterKS(userId, cluster) {
+  const cardIds = cluster.card_ids || [];
+  if (cardIds.length === 0) return 0;
+  const allStatesDocs  = await db.cardStates.findByUser(userId);
+  const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+  let sumWeights = 0;
+  let validCount  = 0;
+  for (const cardId of cardIds) {
+    const card = await db.cards.findById(userId, cardId).catch(() => null);
+    if (!card) continue;
+    validCount++;
+    let stateDoc = statesByCardId.get(cardId);
+    if (!stateDoc) stateDoc = await initializeCardState(userId, cardId, CARD_STATES.SEEDLING);
+    sumWeights += computeEffectiveWeight(stateDoc, card);
+  }
+  if (validCount === 0) return 0;
+  return parseFloat(((sumWeights / (validCount * 5)) * 100).toFixed(2));
+}
+
+// [DESIGN: §7.3] Weakest cluster — for Concept Ceiling stall response
+async function getWeakestCluster(goalId) {
+  const clusters = await db.masteryGoals.getClusters(goalId);
+  if (clusters.length === 0) return null;
+  return clusters.reduce((worst, c) =>
+    (c.cluster_ks || 0) < (worst.cluster_ks || 0) ? c : worst
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PHASE 3 — The Brain, Credentials & Exam Redesign
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── brainService ──────────────────────────────────────────────────────────────
+
+// Fix #24+25: accept pre-fetched data; fix per-card WHERE scans → bulk fetch
+async function calculateSubjectPressure(userId, subjectId, prefetchedAllCards = null, prefetchedAllStates = null) {
+const decks = await db.decks.findBySubject(userId, subjectId);
+const deckIdSet = new Set(decks.map(d => d.id));
+// Fix #24: 1 read instead of N per-deck reads
+const allCards = prefetchedAllCards
+? prefetchedAllCards.filter(c => deckIdSet.has(c.deck_id))
+: (await db.cards.findAllForUser(userId)).filter(c => deckIdSet.has(c.deck_id));
+// Fix #24: 1 read for all states instead of 1 WHERE scan per card
+const allStatesDocs = prefetchedAllStates || await db.cardStates.findByUser(userId);
+const stateMap = new Map(allStatesDocs.map(s => [s.card_id, s]));
+const cardStates = [];
+// FIX (Issue 06b): Batch-initialise missing states in parallel before the loop.
+const missingCards_sp = allCards.filter(c => !stateMap.has(c.id));
+if (missingCards_sp.length > 0) {
+  const newDocs_sp = await Promise.all(
+    missingCards_sp.map(c => initializeCardState(userId, c.id).catch(() => null))
+  );
+  newDocs_sp.forEach((doc, i) => {
+    if (doc) stateMap.set(missingCards_sp[i].id, doc);
+  });
+}
+for (const card of allCards) {
+const stateDoc = stateMap.get(card.id);
+if (!stateDoc) continue; // guard: initializeCardState can fail; skip rather than crash
+cardStates.push({ card, state: stateDoc });
+}
+// Pressure is derived, but event penalties and earned Reckoning relief are
+// inputs to that derivation. Loading the previous record prevents a canonical
+// recalculation from silently erasing a consequence just shown to the learner.
+const existingPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+const previousSources = existingPressure?.sources || {};
+const pressureSources = {};
+let pressureScore = 0;
+// 1. GHOST cards (+3 each)
+const ghostCards = cardStates.filter((cs) => cs.state.state === CARD_STATES.GHOST);
+if (ghostCards.length > 0) {
+pressureSources.ghost = ghostCards.length * 3;
+pressureScore += pressureSources.ghost;
+}
+// 2. FRAGILE cards (+2 each)
+const fragileCards = cardStates.filter((cs) => cs.state.state === CARD_STATES.FRAGILE);
+if (fragileCards.length > 0) {
+pressureSources.fragile = fragileCards.length * 2;
+pressureScore += pressureSources.fragile;
+}
+// 3. 10+ STUCK cards (+2)
+const stuckCards = cardStates.filter((cs) => cs.state.state === CARD_STATES.STUCK);
+if (stuckCards.length >= 10) {
+pressureSources.stuck_bulk = 2;
+pressureScore += 2;
+}
+// 3b. SLIPPING cards — early-warning pressure (+1 each, capped at +5)
+const slippingCards = cardStates.filter((cs) => cs.state.state === CARD_STATES.SLIPPING);
+if (slippingCards.length > 0) {
+pressureSources.slipping = Math.min(5, slippingCards.length);
+pressureScore += pressureSources.slipping;
+}
+// 4. KS >70 but credential below Competent (+3)
+const ksData = await computeKnowledgeScore(userId, subjectId);
+const credential = await getCurrentCredential(userId, subjectId);
+if (ksData.score > 70 && credential.tier < 3) {
+// Competent is tier 3
+pressureSources.ks_divergence = 3;
+pressureScore += 3;
+}
+// 5. No exam in 21+ days (+2) — P3.1-B1 FIX: scoped to this subject.
+// Previously used the most recent exam across ALL subjects — cross-subject
+// exams were incorrectly clearing this pressure source.
+// Fix #44: only need recent exams to check "21+ days" condition — limit:50 is sufficient
+const allCompletedExams = await db.examSessions.findMany(userId, { status: 'completed' }, { limit: 50 });
+const subjectExamsForPressure = (Array.isArray(allCompletedExams) ? allCompletedExams : (allCompletedExams.exams || []))
+.filter(e => e.subject_id === subjectId)
+.sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
+const lastSubjectExam = subjectExamsForPressure[0] || null;
+// New and tiny subjects are not neglected merely because they have never had
+// an exam. Recency pressure begins after the subject can support a real exam.
+const subjectForPressure = await db.subjects.findById(subjectId).catch(() => null);
+const subjectAgeDays = subjectForPressure?.created_at ? daysSince(subjectForPressure.created_at) : 0;
+const examEligible = allCards.length >= 10 && subjectAgeDays >= 21;
+if (examEligible && (!lastSubjectExam || daysSince(lastSubjectExam.completed_at) >= 21)) {
+pressureSources.no_exam = 2;
+pressureScore += 2;
+}
+// 6. 5+ AVOIDED cards for 7+ days (+1 each) — P3.1-B2 FIX: enforce duration check.
+// Previously fired immediately on AVOIDED state; spec requires 7+ days.
+const avoidedCards = cardStates.filter((cs) => {
+if (cs.state.state !== CARD_STATES.AVOIDED) return false;
+const since = cs.state.avoided_since || cs.state.state_changed_at || cs.state.updated_at;
+  // FIX (Issue 10): Removed ternary guard — daysSince() handles null/undefined by
+  // returning Infinity (L4406: `if (!date) return Infinity`). Infinity >= 7 → true,
+  // so legacy AVOIDED records with no timestamp are correctly counted, not silently excluded.
+  return daysSince(since) >= 7;
+});
+if (avoidedCards.length >= 5) {
+pressureSources.avoided = avoidedCards.length * 1;
+pressureScore += pressureSources.avoided;
+}
+// 7. Exam within 10 days and KS <60 (+5)
+// Use getSubjectExamDate to resolve actual or inferred exam date
+const resolvedExamDate = await getSubjectExamDate(userId, subjectId);
+if (resolvedExamDate) {
+const daysToExam = daysBetween(new Date(), resolvedExamDate);
+if (daysToExam >= 0 && daysToExam <= 10 && ksData.score < 60) {
+pressureSources.exam_urgency = 5;
+pressureScore += 5;
+}
+}
+// 8. DANGEROUS cards are a subject-level risk signal, not an endlessly
+// compounding per-card-per-day fine. Count the breadth of the problem plus a
+// bounded age component, capped at +10 for the whole subject.
+const dangerousCards = cardStates.filter((cs) => cs.state.state === CARD_STATES.DANGEROUS);
+if (dangerousCards.length > 0) {
+  const averageDangerDays = dangerousCards.reduce((sum, cs) => {
+    return sum + Math.max(0, daysSince(cs.card?.last_reviewed_at || cs.card?.created_at || new Date()));
+  }, 0) / dangerousCards.length;
+  const dangerousPressure = Math.min(10, dangerousCards.length + Math.floor(averageDangerDays / 3));
+  pressureSources.dangerous = dangerousPressure;
+  pressureScore += dangerousPressure;
+}
+// 9. Ignored reclassification alert 3+ days (+2)
+if (existingPressure?.alert_ignored_at && daysSince(existingPressure.alert_ignored_at) >= 3) {
+pressureSources.ignored_alert = 2;
+pressureScore += 2;
+}
+// 10. AI explanation over-reliance (ai_crutch) — pressure for leaning too heavily
+// on AI summaries instead of genuine retention. Threshold: >4 AI explain calls
+// for this subject in the past 24 h. +1 per 3 excess calls, capped at +5.
+// Intent: if you always hit "Explain" instead of recalling, the system knows.
+const aiExplainCount = (typeof getAIExplainCount === 'function')
+  ? getAIExplainCount(userId, subjectId) : 0;
+if (aiExplainCount > 4) {
+const aiCrutchPressure = Math.min(5, Math.floor((aiExplainCount - 4) / 3) + 1);
+pressureSources.ai_crutch = aiCrutchPressure;
+pressureScore += aiCrutchPressure;
+}
+// ── PB.11: 7 Bubble pressure sources [DESIGN: §15.1] ────────────────────────
+// ⚠ CORRECTED from v1.0: correct pressure values, DRIFTING added (+1),
+//   BEHIND=+3, CRITICAL=+5, RESCUE=+7, debt max=+5 [DESIGN: §15.1 table]
+try {
+  const subjectBubbles = await db.masteryGoals.findBySubject(userId, subjectId);
+  let highestBubbleRisk = 0;
+  let highestBubbleKey = null;
+  let testDateGateRisk = 0;
+  let stallRisk = 0;
+  for (const bubble of subjectBubbles) {
+    if (bubble.status !== 'active') continue;
+    // Multiple goals in one subject describe the same underlying learning risk.
+    // Use the highest trajectory risk rather than charging every bubble.
+    let risk = 0;
+    let riskKey = null;
+    if (bubble.rescue_active || bubble.phase === 'RESCUE') {
+      risk = 7; riskKey = 'bubble_rescue';
+    } else if (bubble.trajectory_status === 'CRITICAL') {
+      risk = 5; riskKey = 'bubble_critical';
+    } else if (bubble.trajectory_status === 'BEHIND') {
+      risk = 3; riskKey = 'bubble_behind';
+    } else if (bubble.trajectory_status === 'DRIFTING') {
+      risk = 1; riskKey = 'bubble_drifting';
+    }
+    if (risk > highestBubbleRisk) {
+      highestBubbleRisk = risk;
+      highestBubbleKey = riskKey;
+    }
+    if (bubble.test_date_gate_failed) testDateGateRisk = 3;
+    if (bubble.stall_active) stallRisk = 2;
+  }
+  if (highestBubbleRisk > 0 && highestBubbleKey) {
+    pressureSources[highestBubbleKey] = highestBubbleRisk;
+    pressureScore += highestBubbleRisk;
+  }
+  if (testDateGateRisk) {
+    pressureSources.test_date_gate = testDateGateRisk;
+    pressureScore += testDateGateRisk;
+  }
+  if (stallRisk) {
+    pressureSources.bubble_stall = stallRisk;
+    pressureScore += stallRisk;
+  }
+  // Source 16: Learning debt cards below Stage 3 (+1 per card, max +5) [DESIGN: §15.1, §10.4]
+  // ⚠ CORRECTED from v1.0: max +5 (not +10) [DESIGN: §10.4]
+  const allCardStatesForDebt = db.cardStates.findBySubject
+    ? await db.cardStates.findBySubject(userId, subjectId)
+    : (await db.cardStates.findByUser(userId)).filter((s) => s.learning_debt === true);
+  const debtCards = allCardStatesForDebt.filter((s) => s.learning_debt === true);
+  if (debtCards.length > 0) {
+    const debtPressure = Math.min(5, debtCards.length); // [DESIGN: §10.4 — max +5]
+    pressureSources.learning_debt = debtPressure;
+    pressureScore += debtPressure;
+  }
+} catch (e) {
+  // Non-fatal — bubble pressure sources are best-effort
+}
+// Manual consequences are bounded and time-decaying. The old implementation
+// accumulated these forever, so normal learning could never reduce Pressure.
+// Timestamp-less legacy values are intentionally discarded on recalculation.
+const manualPressurePolicy = {
+  manual_exam_forfeit: { ttlMs: 7 * 86400000, cap: 20 },
+  manual_reckoning_failure: { ttlMs: 3 * 86400000, cap: 15 },
+  manual_reckoning_deferral: { ttlMs: 24 * 3600000, cap: 5 },
+  manual_invitation_avoidance: { ttlMs: 3 * 86400000, cap: 3 },
+};
+for (const [key, policy] of Object.entries(manualPressurePolicy)) {
+  const timestampKey = key + '_at';
+  const rawTimestamp = previousSources[timestampKey];
+  const timestampMs = rawTimestamp ? new Date(rawTimestamp).getTime() : NaN;
+  if (!Number.isFinite(timestampMs)) continue;
+  const ageMs = Math.max(0, Date.now() - timestampMs);
+  if (ageMs >= policy.ttlMs) continue;
+  const basePoints = Math.min(policy.cap, Math.max(0, Number(previousSources[key]) || 0));
+  if (!basePoints) continue;
+  const decayedPoints = Math.max(1, Math.ceil(basePoints * (1 - ageMs / policy.ttlMs)));
+  pressureSources[key] = decayedPoints;
+  pressureSources[timestampKey] = new Date(timestampMs).toISOString();
+  pressureScore += decayedPoints;
+}
+
+// A failsafe release must be meaningful. While pressure remains L4, keep a
+// non-scoring latch that prevents an immediate new Reckoning from recreating
+// the lockdown. The latch clears automatically once this subject is genuinely
+// brought below the L4 threshold.
+const failsafeLatched = previousSources.reckoning_failsafe_latched === true;
+if (failsafeLatched) {
+  pressureSources.reckoning_failsafe_latched = true;
+  if (previousSources.reckoning_failsafe_released_at) {
+    pressureSources.reckoning_failsafe_released_at = previousSources.reckoning_failsafe_released_at;
+  }
+}
+
+// A passed Reckoning proves current recall without pretending every weak card
+// disappeared. Give bounded, durable relief for seven days.
+const reliefUntil = previousSources.reckoning_relief_until;
+if (reliefUntil && new Date(reliefUntil).getTime() > Date.now()) {
+  const relief = Math.min(15, Math.max(0, pressureScore));
+  pressureSources.reckoning_relief = -relief;
+  pressureSources.reckoning_relief_until = reliefUntil;
+  pressureScore -= relief;
+}
+// P5.6 FIX: cap pressure at 100 before storing/returning to prevent bar overflow
+const cappedPressureScore = Math.min(100, Math.max(0, pressureScore));
+const interventionLevel = computeInterventionLevel(cappedPressureScore);
+if (failsafeLatched && interventionLevel !== 'L4') {
+  pressureSources.reckoning_failsafe_latched = false;
+  pressureSources.reckoning_failsafe_recovered_at = new Date().toISOString();
+}
+await db.brainPressure.set(userId, subjectId, {
+pressure_score: cappedPressureScore,
+intervention_level: interventionLevel,
+sources: pressureSources,
+});
+return {
+pressure_score: cappedPressureScore,
+intervention_level: interventionLevel,
+sources: pressureSources,
+};
+}
+
+function computeInterventionLevel(pressureScore) {
+if (pressureScore >= 20) return 'L4';
+if (pressureScore >= 15) return 'L3';
+if (pressureScore >= 5) return 'L2';
+if (pressureScore > 0) return 'L1';
+return 'L0';
+}
+
+async function calculateAllSubjectPressures(userId) {
+// Flush any queued card state recomputes for this user NOW — ensures pressure
+// is computed from current card states, not states from 60s ago.
+const _flushPrefix = userId + ':';
+const _flushKeys = [..._ksQueue.keys()].filter(k => k.startsWith(_flushPrefix));
+const _flushBatch = _flushKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+if (_flushBatch.length > 0) {
+  await Promise.all(_flushBatch.map(({ userId: uid, cardId }) =>
+    recomputeAndStoreCardState(uid, cardId).catch(() => null)
+  ));
+}
+const subjects = await db.subjects.findManyWithDecks(userId);
+const results = {};
+// Fix #25: fetch all cards + states ONCE, pass to each calculateSubjectPressure call
+const [prefetchedAllCards, prefetchedAllStates] = await Promise.all([
+db.cards.findAllForUser(userId),
+db.cardStates.findByUser(userId),
+]);
+for (const subject of subjects) {
+results[subject.id] = await calculateSubjectPressure(userId, subject.id, prefetchedAllCards, prefetchedAllStates);
+}
+return results;
+}
+// ── Reckoning State Machine ───────────────────────────────────────────────────
+
+async function triggerReckoning(userId, subjectId) {
+const active = await db.reckoningSessions.findActiveByUser(userId);
+if (active) return { reckoning_id: active.id, status: active.status };
+// BUG 13 FIX: db.subjects.findById is a function — always truthy. Ternary guard was dead code.
+const subject = await db.subjects.findById(subjectId).catch(() => null);
+const pressureData = await calculateSubjectPressure(userId, subjectId);
+if (pressureData.intervention_level !== 'L4') {
+return { status: 'not_required', pressure_score: pressureData.pressure_score };
+}
+if (pressureData.sources?.reckoning_failsafe_latched === true) {
+return {
+  status: 'failsafe_recovery',
+  pressure_score: pressureData.pressure_score,
+  message: 'Reckoning failsafe recovery is active until this subject falls below L4 pressure.',
+};
+}
+// Fix #50: share the bulk fetches with calculateSubjectPressure — no per-card WHERE scans
+const decks = await db.decks.findBySubject(userId, subjectId);
+const deckIdSet = new Set(decks.map(d => d.id));
+const [_reckAllCards, _reckAllStates] = await Promise.all([
+db.cards.findAllForUser(userId),
+db.cardStates.findByUser(userId),
+]);
+const _reckStateMap = new Map(_reckAllStates.map(s => [s.card_id, s]));
+const subjectCardsForReckoning = _reckAllCards.filter(c => deckIdSet.has(c.deck_id));
+let flaggedCards = [];
+for (const card of subjectCardsForReckoning) {
+let stateDoc = _reckStateMap.get(card.id);
+if (!stateDoc) stateDoc = await initializeCardState(userId, card.id);
+if (
+[
+CARD_STATES.DANGEROUS,
+CARD_STATES.GHOST,
+CARD_STATES.STUCK,
+CARD_STATES.AVOIDED,
+CARD_STATES.FRAGILE,
+].includes(stateDoc.state)
+) {
+flaggedCards.push(card);
+}
+}
+// A lockout must always have a valid remedy. L4 may come from deadline, debt,
+// credential divergence, or Bubble sources without any adverse-state cards.
+// In that case, use the subject's weakest available cards as evidence.
+if (flaggedCards.length === 0) {
+flaggedCards = [...subjectCardsForReckoning]
+.sort((a, b) => {
+const aState = _reckStateMap.get(a.id) || {};
+const bState = _reckStateMap.get(b.id) || {};
+const aStage = Number(a.stage || aState.stage || 1);
+const bStage = Number(b.stage || bState.stage || 1);
+if (aStage !== bStage) return aStage - bStage;
+return new Date(a.last_reviewed_at || a.created_at || 0) - new Date(b.last_reviewed_at || b.created_at || 0);
+})
+.slice(0, 25);
+}
+if (flaggedCards.length === 0) {
+return {
+status: 'intervention_required',
+error: 'Reckoning cannot start until this subject contains study cards.',
+pressure_score: pressureData.pressure_score,
+};
+}
+// PB.11: Bubble-critical card weighting for Reckoning pool [DESIGN: §15.2]
+// Cards belonging to active Bubbles are sorted to the front so they are
+// preferentially included when the pool is sliced to questionCount.
+// Each group (bubble / non-bubble) is independently shuffled to preserve
+// within-group randomness. Non-fatal: if Bubble query fails, the unweighted
+// pool is used and Reckoning proceeds normally.
+let _reckBubbleCardIds = [];
+try {
+  const activeBubbles = await db.masteryGoals.findActive(userId).catch(() => []);
+  if (activeBubbles.length > 0) {
+    const bubbleCardSet  = new Set(activeBubbles.flatMap((g) => g.card_ids || []));
+    _reckBubbleCardIds = [...bubbleCardSet];
+    const bubbleCards    = flaggedCards.filter((c) =>  bubbleCardSet.has(c.id));
+    const nonBubbleCards = flaggedCards.filter((c) => !bubbleCardSet.has(c.id));
+    const shuffle = (arr) => arr.sort(() => 0.5 - Math.random());
+    flaggedCards = [...shuffle(bubbleCards), ...shuffle(nonBubbleCards)];
+  }
+} catch (_e) { /* non-fatal — Reckoning proceeds with unweighted pool */ }
+const questionCount = Math.min(25, Math.max(5, flaggedCards.length));
+let reckoning;
+try {
+reckoning = await db.reckoningSessions.create(userId, {
+subject_id: subjectId,
+subject_name: subject?.name || 'Unknown',
+pressure_score: pressureData.pressure_score,
+flagged_card_count: flaggedCards.length,
+question_count: questionCount,
+status: 'triggered',
+deferral_used: false,
+deferred_until: null,
+exam_session_id: null,
+score_pct: null,
+debrief_text: null,
+// P3.7-B1a FIX: store flagged card IDs so the exam generator can use
+// the correct pool instead of the standard stage >= 3 eligibility filter.
+flagged_card_ids: flaggedCards.map(c => c.id),
+// Delivery E: every newly-triggered Reckoning is V2-authoritative. Existing
+// pre-Delivery-E rows keep engine_version=1 and continue on the legacy path.
+engine_version: 2,
+engine_mode: 'LIVE',
+engine_phase: 'PREPARING',
+generation_status: 'not_started',
+generation_error: null,
+questions_used: 0,
+state_version: 0,
+});
+} catch (err) {
+// Database uniqueness is the final arbiter. Two concurrent pressure refreshes can
+// both observe "no active Reckoning" before either inserts; in that race, return
+// the already-created state instead of surfacing a 500 or creating duplicates.
+if (err?.code !== '23505') throw err;
+const racedActive = await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
+if (!racedActive) throw err;
+return {
+reckoning_id: racedActive.id,
+status: racedActive.status,
+flagged_card_count: racedActive.flagged_card_count,
+question_count: racedActive.question_count,
+recovered_race: true,
+};
+}
+// Begin preparation immediately. The durable database claim makes this safe
+// across restarts and multiple service instances; the UI reconnects by polling
+// the active session rather than requiring the learner to keep this request open.
+_scheduleReckoningPreparation(reckoning.id, userId);
+
+return {
+reckoning_id: reckoning.id,
+status: 'preparing',
+flagged_card_count: flaggedCards.length,
+question_count: questionCount,
+generation_status: 'pending',
+};
+}
+
+async function deferReckoning(reckoningId, expectedUserId = null) {
+const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+if (!reckoning) return null;
+if (expectedUserId && String(reckoning.user_id) !== String(expectedUserId)) {
+return { error: 'Reckoning not found' };
+}
+
+const now = Date.now();
+const existingExpiry = reckoning.deferred_until
+? new Date(reckoning.deferred_until).getTime()
+: 0;
+
+if (reckoning.status === 'completed') {
+return { error: 'This Reckoning is already completed' };
+}
+if (reckoning.status === 'in_progress') {
+return { error: 'A Reckoning cannot be deferred after its exam has started' };
+}
+// Idempotent retry: repeated taps/network retries must not charge pressure twice.
+if (existingExpiry > now) {
+if (reckoning.status !== 'deferred' || reckoning.exam_session_id) {
+await db.reckoningSessions.update(reckoningId, {
+status: 'deferred',
+exam_session_id: null,
+});
+}
+return { status: 'deferred', deferred_until: new Date(existingExpiry) };
+}
+if (reckoning.deferral_used) return { error: 'Deferral already used' };
+
+const deferredUntil = new Date(now + 4 * 3600000);
+await db.reckoningSessions.update(reckoningId, {
+status: 'deferred',
+deferral_used: true,
+was_deferred: true,
+deferred_until: deferredUntil,
+exam_session_id: null,
+});
+
+// Apply the +5 penalty exactly once, even if two defer requests race.
+const currentPressure = await db.brainPressure
+.get(reckoning.user_id, reckoning.subject_id)
+.catch(() => null);
+const deferralSources = currentPressure?.sources || {};
+if (deferralSources.reckoning_deferral_attempt_id !== reckoningId) {
+await db.brainPressure.set(reckoning.user_id, reckoning.subject_id, {
+pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5),
+intervention_level: 'L4',
+sources: {
+...deferralSources,
+manual_reckoning_deferral: 5,
+manual_reckoning_deferral_at: new Date().toISOString(),
+reckoning_deferral_attempt_id: reckoningId,
+},
+});
+}
+
+return { status: 'deferred', deferred_until: deferredUntil };
+}
+
+async function startReckoningExam(reckoningId, examSessionId) {
+const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+if (!reckoning) throw new Error('Reckoning not found');
+
+const expiryMs = reckoning.deferred_until
+? new Date(reckoning.deferred_until).getTime()
+: 0;
+if (expiryMs > Date.now()) {
+const err = new Error('This Reckoning is still deferred. Wait for the cooldown to end.');
+err.code = 'RECKONING_DEFERRED';
+err.deferred_until = reckoning.deferred_until;
+throw err;
+}
+
+if (reckoning.status === 'completed') {
+throw new Error('This Reckoning is already completed');
+}
+
+const exam = await db.examSessions
+  .findByIdWithQuestions(reckoning.user_id, examSessionId)
+  .catch(() => null);
+if (!exam || !exam.is_reckoning) {
+  throw new Error('Linked Reckoning exam was not found');
+}
+if (!['ready', 'active'].includes(exam.status)) {
+  throw new Error(`Linked Reckoning exam is already ${exam.status}`);
+}
+
+// The Reckoning and its exam are one state machine. Never mark the Reckoning
+// in_progress while leaving the exam in ready: submission requires both to agree.
+if (exam.status !== 'active' || !exam.started_at) {
+  const startedAt = exam.status === 'ready' ? new Date() : (exam.started_at || new Date());
+  const activatedExam = await db.examSessions.update(reckoning.user_id, examSessionId, {
+    status: 'active',
+    started_at: startedAt,
+  });
+  if (!activatedExam) throw new Error('Failed to activate linked Reckoning exam');
+  exam.status = 'active';
+  exam.started_at = startedAt;
+}
+
+if (reckoning.status === 'in_progress') {
+if (String(reckoning.exam_session_id || '') === String(examSessionId || '')) {
+return { status: 'in_progress', exam_session_id: reckoning.exam_session_id };
+}
+throw new Error('Another Reckoning exam is already in progress. Resume it instead.');
+}
+if (reckoning.status === 'deferred') {
+await db.reckoningSessions.update(reckoningId, {
+status: 'triggered',
+deferred_until: null,
+exam_session_id: null,
+});
+}
+if (reckoning.status !== 'triggered' && reckoning.status !== 'deferred') {
+throw new Error('Reckoning is not ready to start');
+}
+
+await db.reckoningSessions.update(reckoningId, {
+status: 'in_progress',
+exam_session_id: examSessionId,
+deferred_until: null,
+score_pct: null,
+debrief_text: null,
+completed_at: null,
+});
+return { status: 'in_progress', exam_session_id: examSessionId };
+}
+
+const RECKONING_FAILSAFE_FAILURES = 6;
+const RECKONING_FAILSAFE_KS_FACTOR = 0.10;
+
+async function applyReckoningFailsafePenalty(userId, subjectId, reckoningId, failureCount) {
+  // Claim the one-time consequence atomically. This protects against two tabs,
+  // duplicated submit requests, crash recovery and multi-instance deployments
+  // applying the 90% reduction more than once.
+  const freshBeforeClaim = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+  if (!freshBeforeClaim) throw new Error('Reckoning not found while applying failsafe');
+
+  const alreadyReleased = freshBeforeClaim.status === 'failsafe_released' || freshBeforeClaim.failsafe_released_at;
+  if (alreadyReleased) {
+    return {
+      released: true,
+      already_applied: true,
+      failure_count: Number(freshBeforeClaim.failure_count) || failureCount,
+      ks_before: Number(freshBeforeClaim.failsafe_penalty_ks_before) || 0,
+      ks_after: Number(freshBeforeClaim.failsafe_penalty_ks_after) || 0,
+      reduction_pct: 90,
+    };
+  }
+
+  const { rows: claimedRows } = await query(
+    `UPDATE reckoning_sessions
+     SET failsafe_claimed_at = NOW(), updated_at = NOW()
+     WHERE id = $1
+       AND failsafe_released_at IS NULL
+       AND (
+         failsafe_claimed_at IS NULL OR
+         failsafe_claimed_at < NOW() - INTERVAL '2 minutes'
+       )
+     RETURNING id`,
+    [reckoningId]
+  );
+
+  if (!claimedRows[0]) {
+    // Another request owns the claim. Wait briefly for it to finish rather than
+    // racing a second 90% reduction. If it is still running, return a retryable
+    // error and leave the lockdown intact.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const current = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+      if (current?.status === 'failsafe_released' || current?.failsafe_released_at) {
+        return {
+          released: true,
+          already_applied: true,
+          failure_count: Number(current.failure_count) || failureCount,
+          ks_before: Number(current.failsafe_penalty_ks_before) || 0,
+          ks_after: Number(current.failsafe_penalty_ks_after) || 0,
+          reduction_pct: 90,
+        };
+      }
+    }
+    const err = new Error('Reckoning failsafe is already being applied. Retry shortly.');
+    err.code = 'RECKONING_FAILSAFE_IN_PROGRESS';
+    throw err;
+  }
+
+  try {
+    invalidateKSCache(userId, subjectId);
+    const before = await computeKnowledgeScore(userId, subjectId).catch(() => ({ score: 0 }));
+    const beforeScore = Number(before?.score) || 0;
+
+    const decks = await db.decks.findBySubject(userId, subjectId).catch(() => []);
+    const deckIds = new Set(decks.map((d) => d.id));
+    const allCards = await db.cards.findAllForUser(userId).catch(() => []);
+    const subjectCards = allCards.filter((card) => deckIds.has(card.deck_id));
+    const cardIds = subjectCards.map((card) => card.id);
+
+    if (cardIds.length > 0) {
+      await batchInitializeSeedlingStates(userId, cardIds);
+      await query(
+        `UPDATE card_states
+         SET reckoning_penalty_factor = $1,
+             reckoning_penalty_applied_at = NOW(),
+             updated_at = NOW()
+         WHERE user_id = $2
+           AND card_id = ANY($3::text[])`,
+        [RECKONING_FAILSAFE_KS_FACTOR, userId, cardIds]
+      );
+    }
+
+    invalidateKSCache(userId, subjectId);
+    const after = await persistKnowledgeScore(userId, subjectId).catch(() => ({
+      score: beforeScore * RECKONING_FAILSAFE_KS_FACTOR,
+    }));
+    const afterScore = Number(after?.score) || 0;
+
+    const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+    await db.brainPressure.set(userId, subjectId, {
+      pressure_score: Number(currentPressure?.pressure_score) || 0,
+      intervention_level: currentPressure?.intervention_level || 'L4',
+      sources: {
+        ...(currentPressure?.sources || {}),
+        reckoning_failsafe_latched: true,
+        reckoning_failsafe_released_at: new Date().toISOString(),
+        reckoning_failsafe_failure_count: failureCount,
+      },
+    });
+
+    await db.reckoningSessions.update(reckoningId, {
+      status: 'failsafe_released',
+      failsafe_released_at: new Date(),
+      failsafe_claimed_at: null,
+      failsafe_penalty_ks_before: beforeScore,
+      failsafe_penalty_ks_after: afterScore,
+      completed_at: new Date(),
+      deferred_until: null,
+      exam_session_id: null,
+    });
+
+    wsSend(userId, 'ks_change', {
+      subject_id: subjectId,
+      ks_delta: parseFloat((afterScore - beforeScore).toFixed(2)),
+      new_ks: afterScore,
+      source: 'reckoning_failsafe',
+    });
+
+    return {
+      released: true,
+      failure_count: failureCount,
+      ks_before: beforeScore,
+      ks_after: afterScore,
+      reduction_pct: beforeScore > 0
+        ? parseFloat((((beforeScore - afterScore) / beforeScore) * 100).toFixed(2))
+        : 90,
+    };
+  } catch (err) {
+    // Leave the lock active, but release this claim so a later request can retry.
+    await query(
+      `UPDATE reckoning_sessions
+       SET failsafe_claimed_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND failsafe_released_at IS NULL`,
+      [reckoningId]
+    ).catch(() => null);
+    throw err;
+  }
+}
+
+function normalizeReckoningCompletion(scoreOrRecovery) {
+  if (scoreOrRecovery && typeof scoreOrRecovery === 'object') {
+    return {
+      scorePct: Number(scoreOrRecovery.rawAccuracy) || 0,
+      survived: scoreOrRecovery.survived === true,
+      recoveryScore: Number(scoreOrRecovery.recoveryScore) || 0,
+      unresolvedCriticalCount:
+        Number(scoreOrRecovery.unresolvedCriticalCount) || 0,
+      adaptive: true,
+    };
+  }
+  const scorePct = Number(scoreOrRecovery) || 0;
+  return {
+    scorePct,
+    survived: scorePct >= 70,
+    recoveryScore: null,
+    unresolvedCriticalCount: null,
+    adaptive: false,
+  };
+}
+
+async function finalizeAdaptiveReckoningOutcome({
+  session,
+  examSessionId,
+  userId,
+  recovery,
+  evidenceState,
+  learningEffects,
+  reason,
+}) {
+  const exam = await db.examSessions
+    .findByIdWithQuestions(userId, examSessionId)
+    .catch(() => null);
+
+  let ks = { before: null, after: null, delta: null, replayed: false };
+  if (exam) {
+    ks = await finalizeExamKsOutcome(
+      userId,
+      exam,
+      recovery.rawAccuracy,
+      _finiteKsNumber(exam.ks_before)
+    );
+  } else {
+    await persistKnowledgeScore(userId, session.subject_id).catch(() => null);
+  }
+
+  // This summary comes from persisted evidence, not from effects applied in the
+  // current request. On a crash retry, effects are correctly skipped as already
+  // applied, but the learner's recovered/unresolved result must remain identical.
+  const recoveredCount = Number(evidenceState?.recovered) || 0;
+  const unresolvedCount = Number(evidenceState?.unresolved) || 0;
+
+  const debriefText =
+    session.debrief_text ||
+    `Recovery evidence: ${recovery.recoveryScore}% · ${recoveredCount} recovered · ${unresolvedCount} unresolved.`;
+
+  const reckoning = await completeReckoning(
+    session.id,
+    recovery,
+    debriefText
+  );
+
+  await ecosystemV2.refreshVitality(userId)
+    .catch((error) =>
+      console.error('[KIWI] adaptive Reckoning vitality refresh failed:', error.message)
+    );
+
+  return {
+    reckoning,
+    knowledge_score: ks,
+    recovery,
+    consequence_summary: {
+      recovered: recoveredCount,
+      unresolved: unresolvedCount,
+      stop_reason: reason,
+    },
+  };
+}
+
+async function completeReckoning(reckoningId, scoreOrRecovery, debriefText) {
+const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+if (!reckoning) return null;
+const subjectId = reckoning.subject_id;
+const userId = reckoning.user_id;
+const completion = normalizeReckoningCompletion(scoreOrRecovery);
+const scorePct = completion.scorePct;
+const survived = completion.survived;
+const attemptKey =
+  reckoning.exam_session_id ||
+  reckoning.last_failure_exam_id ||
+  reckoning.id;
+
+let failureCount = Number(reckoning.failure_count) || 0;
+let countedThisAttempt = false;
+
+if (!survived) {
+  // Atomic + idempotent attempt accounting. Reconciliation or a retried submit
+  // cannot increment the counter twice for the same exam session.
+  const { rows } = await query(
+    `UPDATE reckoning_sessions
+     SET failure_count = failure_count + 1,
+         last_failure_exam_id = $2,
+         updated_at = NOW()
+     WHERE id = $1
+       AND (last_failure_exam_id IS DISTINCT FROM $2)
+     RETURNING failure_count`,
+    [reckoningId, String(attemptKey)]
+  );
+  if (rows[0]) {
+    failureCount = Number(rows[0].failure_count) || failureCount + 1;
+    countedThisAttempt = true;
+  } else {
+    const fresh = await db.reckoningSessions.findById(reckoningId).catch(() => reckoning);
+    failureCount = Number(fresh?.failure_count) || failureCount;
+  }
+}
+
+if (survived) {
+  const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+  const currentSources = currentPressure?.sources || {};
+  const reliefUntil = new Date(Date.now() + 7 * 86400000).toISOString();
+  if (currentSources.reckoning_relief_attempt_id !== attemptKey) {
+    const relievedScore = Math.max(0, (Number(currentPressure?.pressure_score) || 0) - 15);
+    await db.brainPressure.set(userId, subjectId, {
+      pressure_score: relievedScore,
+      intervention_level: computeInterventionLevel(relievedScore),
+      sources: {
+        ...currentSources,
+        reckoning_relief_until: reliefUntil,
+        reckoning_relief: -15,
+        reckoning_relief_attempt_id: attemptKey,
+        reckoning_failsafe_latched: false,
+      },
+    });
+  }
+
+  await db.reckoningSessions.update(reckoningId, {
+    status: 'completed',
+    score_pct: scorePct,
+    debrief_text: debriefText,
+    completed_at: new Date(),
+    exam_session_id: reckoning.exam_session_id,
+    deferred_until: null,
+    ...(completion.adaptive ? {
+      raw_accuracy: scorePct,
+      recovery_score: completion.recoveryScore,
+      unresolved_critical_count: completion.unresolvedCriticalCount,
+    } : {}),
+  });
+
+  await awardSeedlings(
+    userId,
+    5,
+    'reckoning_survival',
+    `Survived Reckoning in ${reckoning.subject_name} with ${scorePct}%`,
+    'reckoning-survival:' + reckoning.id
+  );
+
+  return {
+    id: reckoning.id,
+    subject_id: subjectId,
+    subject_name: reckoning.subject_name,
+    status: 'completed',
+    pressure_reset: false,
+    pressure_relief_applied: true,
+    survived: true,
+    retry_required: false,
+    failure_count: failureCount,
+    failsafe_threshold: RECKONING_FAILSAFE_FAILURES,
+    relief_until: reliefUntil,
+    debrief_text: debriefText,
+  };
+}
+
+// A failed attempt remains a mandatory global lockdown through attempts 1–5.
+const currentPressure = await db.brainPressure.get(userId, subjectId).catch(() => null);
+const currentSources = currentPressure?.sources || {};
+if (countedThisAttempt && currentSources.reckoning_failure_attempt_id !== attemptKey) {
+  await db.brainPressure.set(userId, subjectId, {
+    pressure_score: Math.min(100, (Number(currentPressure?.pressure_score) || 0) + 5),
+    intervention_level: 'L4',
+    sources: {
+      ...currentSources,
+      manual_reckoning_failure: Math.min(15, (Number(currentSources.manual_reckoning_failure) || 0) + 5),
+      manual_reckoning_failure_at: new Date().toISOString(),
+      reckoning_failure_attempt_id: attemptKey,
+    },
+  });
+}
+
+if (failureCount >= RECKONING_FAILSAFE_FAILURES) {
+  const failsafe = await applyReckoningFailsafePenalty(
+    userId, subjectId, reckoningId, failureCount
+  );
+  return {
+    id: reckoning.id,
+    subject_id: subjectId,
+    subject_name: reckoning.subject_name,
+    status: 'failsafe_released',
+    survived: false,
+    retry_required: false,
+    failure_count: failureCount,
+    failsafe_threshold: RECKONING_FAILSAFE_FAILURES,
+    failsafe_released: true,
+    failsafe,
+    debrief_text: debriefText,
+  };
+}
+
+await db.reckoningSessions.update(reckoningId, {
+  status: 'triggered',
+  score_pct: scorePct,
+  debrief_text: debriefText,
+  completed_at: new Date(),
+  exam_session_id: null,
+  deferred_until: null,
+  ...(completion.adaptive ? {
+    raw_accuracy: scorePct,
+    recovery_score: completion.recoveryScore,
+    unresolved_critical_count: completion.unresolvedCriticalCount,
+  } : {}),
+});
+
+return {
+  id: reckoning.id,
+  subject_id: subjectId,
+  subject_name: reckoning.subject_name,
+  status: 'triggered',
+  pressure_reset: false,
+  pressure_relief_applied: false,
+  survived: false,
+  retry_required: true,
+  failure_count: failureCount,
+  failsafe_threshold: RECKONING_FAILSAFE_FAILURES,
+  failures_remaining: Math.max(0, RECKONING_FAILSAFE_FAILURES - failureCount),
+  debrief_text: debriefText,
+};
+}
+
+// Crash/reload fail-safe for Reckoning sessions.
+//
+// The durable source of truth is the Reckoning row + its linked exam. A browser
+// refresh must never strand an account in an unrecoverable in_progress lockout:
+//   • ready/active linked exam  -> keep it resumable
+//   • completed linked exam     -> finish the Reckoning idempotently
+//   • missing/invalid linked exam -> roll back to triggered so it can be rebuilt
+async function reconcileActiveReckoning(userId, active) {
+if (!active || active.user_id !== userId) return active || null;
+
+const storedFailureCount = Number(active.failure_count) || 0;
+
+// A failed adaptive outcome can legitimately clear exam_session_id while the
+// engine is still FINALIZING. Recover that exact persisted attempt before the
+// generic non-in-progress path returns the row to Brain.
+if (
+  Number(active.engine_version) === 2 &&
+  ['PILOT', 'LIVE'].includes(String(active.engine_mode || '')) &&
+  active.engine_phase === 'FINALIZING' &&
+  !active.exam_session_id &&
+  active.last_failure_exam_id
+) {
+  await adaptiveReckoningEngine.finalize({
+    examSessionId: active.last_failure_exam_id,
+    userId,
+  });
+  return await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
+}
+
+if (
+  storedFailureCount >= RECKONING_FAILSAFE_FAILURES &&
+  active.status !== 'in_progress'
+) {
+  await applyReckoningFailsafePenalty(
+    userId,
+    active.subject_id,
+    active.id,
+    storedFailureCount
+  );
+  return null;
+}
+
+// Legacy/self-healing attempt accounting: earlier deployments did not persist a
+// failure counter. Reconstruct it from completed Reckoning exams belonging to
+// this same Reckoning era. If the user already crossed the six-failure circuit
+// breaker, release the stale lockdown immediately and apply the one-time KS
+// consequence rather than making them fail six more times after the upgrade.
+if (
+  Number(active.engine_version || 1) < 2 &&
+  (Number(active.failure_count) || 0) < RECKONING_FAILSAFE_FAILURES
+) {
+  const { rows: legacyFailures } = await query(
+    `SELECT id
+     FROM exam_sessions
+     WHERE user_id = $1
+       AND subject_id = $2
+       AND is_reckoning = true
+       AND status = 'completed'
+       AND score_pct < 70
+       AND total_questions > 0
+       AND completed_at >= $3
+     ORDER BY completed_at ASC`,
+    [userId, active.subject_id, active.created_at || new Date(0)]
+  ).catch(() => ({ rows: [] }));
+
+  const historicalFailureCount = legacyFailures.length;
+  if (historicalFailureCount > (Number(active.failure_count) || 0)) {
+    const lastFailureId = legacyFailures[legacyFailures.length - 1]?.id || active.last_failure_exam_id || null;
+    await db.reckoningSessions.update(active.id, {
+      failure_count: historicalFailureCount,
+      last_failure_exam_id: lastFailureId,
+    });
+    active = {
+      ...active,
+      failure_count: historicalFailureCount,
+      last_failure_exam_id: lastFailureId,
+    };
+  }
+
+  if (
+    historicalFailureCount >= RECKONING_FAILSAFE_FAILURES &&
+    active.status !== 'in_progress'
+  ) {
+    await applyReckoningFailsafePenalty(
+      userId,
+      active.subject_id,
+      active.id,
+      historicalFailureCount
+    );
+    return null;
+  }
+}
+
+const now = Date.now();
+const expiryMs = active.deferred_until
+? new Date(active.deferred_until).getTime()
+: 0;
+
+// Deferral is a time-based state. Heal legacy/inconsistent rows where the
+// timestamp is still in the future but status was accidentally changed back to
+// triggered after a failed attempt.
+if (
+expiryMs > now &&
+active.status !== 'in_progress' &&
+active.status !== 'completed'
+) {
+if (active.status !== 'deferred' || active.exam_session_id) {
+await db.reckoningSessions.update(active.id, {
+status: 'deferred',
+exam_session_id: null,
+});
+}
+return {
+...active,
+status: 'deferred',
+exam_session_id: null,
+deferred_until: active.deferred_until,
+recovered_state: true,
+};
+}
+
+// Expired deferrals become a clean triggered state exactly once.
+if (active.status === 'deferred') {
+await db.reckoningSessions.update(active.id, {
+status: 'triggered',
+deferred_until: null,
+exam_session_id: null,
+});
+if (
+  Number(active.engine_version || 1) === 2 &&
+  (active.generation_status || 'not_started') === 'not_started'
+) {
+  _scheduleReckoningPreparation(active.id, userId);
+}
+return {
+...active,
+status: 'triggered',
+deferred_until: null,
+exam_session_id: null,
+generation_status:
+  Number(active.engine_version || 1) === 2 &&
+  (active.generation_status || 'not_started') === 'not_started'
+    ? 'pending'
+    : active.generation_status,
+recovered_state: true,
+};
+}
+
+if (active.status !== 'in_progress') {
+  if (
+    Number(active.engine_version || 1) === 2 &&
+    active.status === 'triggered' &&
+    (active.generation_status || 'not_started') === 'not_started'
+  ) {
+    _scheduleReckoningPreparation(active.id, userId);
+    return { ...active, generation_status: 'pending', recovered_state: true };
+  }
+  return active;
+}
+
+const examId = active.exam_session_id;
+if (!examId) {
+await db.reckoningSessions.update(active.id, {
+status: 'triggered',
+exam_session_id: null,
+deferred_until: null,
+});
+return { ...active, status: 'triggered', exam_session_id: null, deferred_until: null, recovered_from_crash: true };
+}
+
+const exam = await db.examSessions.findByIdWithQuestions(userId, examId).catch(() => null);
+if (!exam) {
+await db.reckoningSessions.update(active.id, {
+status: 'triggered',
+exam_session_id: null,
+deferred_until: null,
+});
+return { ...active, status: 'triggered', exam_session_id: null, deferred_until: null, recovered_from_crash: true };
+}
+
+if (exam.status === 'completed') {
+if (
+  Number(active.engine_version) === 2 &&
+  ['PILOT', 'LIVE'].includes(String(active.engine_mode || '')) &&
+  active.engine_phase === 'FINALIZING'
+) {
+  await adaptiveReckoningEngine.finalize({
+    examSessionId: examId,
+    userId,
+  });
+  return await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
+}
+
+let recoveredScore = Number(exam.score_pct);
+if (!Number.isFinite(recoveredScore)) {
+const total = Array.isArray(exam.questions) ? exam.questions.length : 0;
+const correct = total > 0
+? exam.questions.filter((q) => q.is_correct === true).length
+: 0;
+recoveredScore = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
+}
+const recoveryDebrief =
+active.debrief_text ||
+`This Reckoning result was recovered after an interrupted session. Your recorded score was ${recoveredScore}%. KIWI restored the server-backed outcome so the subject cannot remain trapped in a stale lock.`;
+await completeReckoning(active.id, recoveredScore, recoveryDebrief);
+return await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
+}
+
+if (exam.status === 'ready' || exam.status === 'active') {
+return active;
+}
+
+// Any other terminal/corrupt linked exam is detached so the user can safely
+// generate a fresh attempt instead of being trapped behind Resume.
+await db.reckoningSessions.update(active.id, {
+status: 'triggered',
+exam_session_id: null,
+deferred_until: null,
+});
+return { ...active, status: 'triggered', exam_session_id: null, deferred_until: null, recovered_from_crash: true };
+}
+// ── credentialService ─────────────────────────────────────────────────────────
+const CREDENTIAL_TIERS = [
+{
+tier: 0,
+code: 'untested',
+name: '🌱 Untested',
+thresholdPct: 0,
+minExams: 0,
+consecutiveRequired: false,
+},
+{
+tier: 1,
+code: 'attempted',
+name: '⬜ Attempted',
+thresholdPct: 0,
+minExams: 1,
+consecutiveRequired: false,
+},
+{
+tier: 2,
+code: 'foundational',
+name: '🟫 Foundational',
+thresholdPct: 60,
+minExams: 2,
+consecutiveRequired: false,
+},
+{
+tier: 3,
+code: 'competent',
+name: '🟩 Competent',
+thresholdPct: 70,
+minExams: 3,
+consecutiveRequired: false,
+},
+{
+tier: 4,
+code: 'proficient',
+name: '🟦 Proficient',
+thresholdPct: 80,
+minExams: 5,
+consecutiveRequired: false,
+},
+{
+tier: 5,
+code: 'advanced',
+name: '🟪 Advanced',
+thresholdPct: 90,
+minExams: 5,
+consecutiveRequired: false,
+},
+{
+tier: 6,
+code: 'expert',
+name: '🟡 Expert',
+thresholdPct: 95,
+minExams: 3,
+consecutiveRequired: true,
+},
+{
+tier: 7,
+code: 'sovereign',
+name: '🔴 Sovereign',
+thresholdPct: 100,
+minExams: 1,
+consecutiveRequired: false,
+},
+];
+
+async function evaluateCredential(userId, subjectId) {
+const exams = await db.examSessions.findMany(userId, { status: 'completed' }, { limit: 100 }); // 100 is safe: credential logic only needs last 5 consecutive exams max
+const subjectExams = exams.filter((e) => e.subject_id === subjectId);
+if (subjectExams.length === 0) {
+return { tier: 0, code: 'untested', name: '🌱 Untested', nextRequirement: '1 exam' };
+}
+const scores = subjectExams.map((e) => parseFloat(e.score_pct || 0)).sort((a, b) => b - a);
+let currentTier = 1; // Attempted
+for (let i = CREDENTIAL_TIERS.length - 1; i >= 0; i--) {
+const tierDef = CREDENTIAL_TIERS[i];
+if (tierDef.tier === 0) continue;
+if (tierDef.tier === 1 && subjectExams.length >= 1) {
+currentTier = 1;
+break;
+}
+const qualifying = subjectExams.filter(
+(e) => parseFloat(e.score_pct || 0) >= tierDef.thresholdPct
+);
+if (qualifying.length >= tierDef.minExams) {
+if (tierDef.consecutiveRequired) {
+// Check last N consecutive exams all >= threshold
+const sortedByDate = subjectExams.sort(
+(a, b) => new Date(b.completed_at) - new Date(a.completed_at)
+);
+const lastN = sortedByDate.slice(0, tierDef.minExams);
+if (lastN.every((e) => parseFloat(e.score_pct || 0) >= tierDef.thresholdPct)) {
+currentTier = tierDef.tier;
+break;
+}
+} else {
+currentTier = tierDef.tier;
+break;
+}
+}
+}
+const tierDef = CREDENTIAL_TIERS[currentTier];
+// P3.4-B1 FIX: load previously stored tier to detect advancement.
+// credential.newlyEarned was always undefined — credentialEarned at the
+// exam submit call site was permanently false, so celebrations never fired.
+const storedStatsForCred = await db.subjectStats.get(userId, subjectId).catch(() => null);
+const previousStoredTier = storedStatsForCred?.credential_tier || 0;
+return {
+tier: currentTier,
+code: tierDef.code,
+name: tierDef.name,
+exams_taken: subjectExams.length,
+average_score: parseFloat((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)),
+newlyEarned: currentTier > previousStoredTier,
+};
+}
+
+async function getCurrentCredential(userId, subjectId) {
+return evaluateCredential(userId, subjectId);
+}
+
+async function checkCredentialRegression(userId, subjectId) {
+const credential = await evaluateCredential(userId, subjectId);
+const exams = await db.examSessions.findMany(userId, { status: 'completed' }, { limit: 10 });
+const subjectExams = exams
+.filter((e) => e.subject_id === subjectId)
+.sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
+if (subjectExams.length < 3) return null;
+const tierDef = CREDENTIAL_TIERS[credential.tier];
+if (!tierDef || tierDef.tier <= 1) return null;
+const last3 = subjectExams.slice(0, 3);
+const allBelow = last3.every((e) => parseFloat(e.score_pct || 0) < tierDef.thresholdPct);
+if (allBelow) {
+return {
+warning: true,
+message: `Your ${tierDef.name} credential in this subject is under review. Last 3 exams averaged ${parseFloat((last3.reduce((s, e) => s + parseFloat(e.score_pct || 0), 0) / 3).toFixed(2))}%.`,
+credential_tier: credential.tier,
+};
+}
+return null;
+}
+// ── Streak Engine Redesign ────────────────────────────────────────────────────
+
+// ── P3.10: Reclassification Alert (D3) ───────────────────────────────────────────
+
+async function triggerReclassificationAlert(userId, subjectId, scorePct, reclassifiedCards) {
+const alertTimestamp = new Date();
+const existingPressureDoc = await db.brainPressure.get(userId, subjectId).catch(() => null);
+await db.brainPressure.set(userId, subjectId, {
+...(existingPressureDoc || {}),
+reclassification_alert_at: alertTimestamp,
+alert_ignored_at: null,
+alert_acknowledged_at: null,
+});
+let alertText = '';
+try {
+const cardNames = reclassifiedCards.slice(0, 6).map(r =>
+`Card ${r.card_id} (was Stage ${r.old_stage}, now Stage ${r.new_stage})`
+).join('\n');
+const d3Prompt = `## ROLE
+You are KIWIs Brain — the authoritative academic intelligence layer.
+EVIDENCE
+Subject exam score: ${scorePct}% (below the 60% threshold)
+Cards reclassified downward (${reclassifiedCards.length} total):
+${cardNames}
+RULES
+- Write exactly 2 sentences.
+- Sentence 1: Name the contradiction directly — high stage, low score.
+- Sentence 2: Explain exactly what was done and what it means for the student.
+- Tone: Authoritative but not punitive.
+OUTPUT
+Return only the 2-sentence alert text.`;
+    const aiResult = await ai.run('RECLASSIFICATION_ALERT', { content: d3Prompt });
+    alertText = aiResult.text.trim();
+  } catch (_) {
+    alertText = `Your exam score of ${scorePct}% contradicts the advanced stage of ` +
+      `${reclassifiedCards.length} card(s) — their SRS progress was ahead of your ` +
+      `demonstrated knowledge. The Brain has reclassified these cards to earlier stages.`;
+  }
+  const freshPressureDoc = await db.brainPressure.get(userId, subjectId).catch(() => null);
+  await db.brainPressure.set(userId, subjectId, {
+    ...(freshPressureDoc || {}),
+    reclassification_alert_text: alertText,
+    reclassification_alert_at: alertTimestamp,
+  });
+  return { alert_text: alertText, reclassified_count: reclassifiedCards.length };
+}
+
+// ── Exam SRS Feedback Loop ────────────────────────────────────────────────────
+
+async function applyExamSRSFeedback(userId, examSession) {
+const questions = examSession.questions || [];
+const reclassified = [];
+// SRS-BUG-FIX: Pre-load ALL subject cards for content-based matching when card_id is missing.
+// This ensures every exam question affects SRS — no question is silently skipped.
+let _subjectCards = [];
+const _deckIds = examSession.deck_ids || [];
+if (_deckIds.length > 0) {
+  const _allDeckCards = await Promise.all(_deckIds.map(did => db.cards.findByDeck(userId, did).catch(() => [])));
+  _subjectCards = _allDeckCards.flat();
+} else if (examSession.subject_id) {
+  _subjectCards = await db.cards.findBySubject(userId, examSession.subject_id).catch(() => []);
+}
+// Build a content lookup map for fuzzy matching
+const _contentCardMap = new Map();
+for (const sc of _subjectCards) {
+  const front = (sc.front_content || '').toLowerCase();
+  if (front.length > 5) _contentCardMap.set(front.slice(0, 50), sc);
+}
+function _resolveCardId(q) {
+  if (q.card_id) return q.card_id;
+  if (_subjectCards.length === 0) return null;
+  // Fuzzy match: find card whose front_content overlaps most with question stem
+  const stem = (q.stem || '').toLowerCase();
+  if (!stem) return null;
+  const stemWords = stem.split(/\s+/).filter(w => w.length > 3);
+  let bestCard = null, bestScore = 0;
+  for (const sc of _subjectCards) {
+    const front = (sc.front_content || '').toLowerCase();
+    let overlap = 0;
+    for (const sw of stemWords) { if (front.includes(sw)) overlap++; }
+    if (overlap > bestScore) { bestScore = overlap; bestCard = sc; }
+  }
+  return (bestCard && bestScore >= 2) ? bestCard.id : null;
+}
+for (const q of questions) {
+  const resolvedCardId = _resolveCardId(q);
+  if (!resolvedCardId) continue; // Still no match — skip this question
+  if (q.is_correct === false) {
+    const card = await db.cards.findById(userId, resolvedCardId);
+    if (!card) continue;
+    const newStage = Math.max(1, card.stage - 1);
+    await db.cards.update(userId, card.id, {
+      stage: newStage,
+      interval_days: 1,
+      repetition_count: 0,
+      next_review_at: new Date(Date.now() + 86400000),
+    });
+    queueKSRecompute(userId, card.id);
+    reclassified.push({ card_id: card.id, old_stage: card.stage, new_stage: newStage });
+  }
+  // Queue recompute for correct answers too — they may unlock VERIFIED state
+  if (q.is_correct === true) {
+    queueKSRecompute(userId, resolvedCardId);
+  }
+}
+return reclassified;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PHASE 4 — Study Session & Focus Seed
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── Session Priority Queue ────────────────────────────────────────────────────
+const PRIORITY_ORDER = [
+CARD_STATES.GHOST,
+CARD_STATES.DANGEROUS,
+CARD_STATES.STUCK,
+'DUE_UNSCHEDULED',
+'DUE_SCHEDULED',
+CARD_STATES.VERIFIED, // NEWLY_VERIFIED = Stage 5 verified, reviewed today
+CARD_STATES.SEEDLING,
+];
+
+// P10 NOTE: buildSessionQueue is a canonical service function but is currently NOT called
+// by the session start endpoint (which uses its own inline sort). Both are now fixed to
+// use the same spec-compliant priority order so any future wiring is correct.
+async function buildSessionQueue(userId, deckId) {
+const cards = await db.cards.findByDeck(userId, deckId);
+const now = new Date();
+const queue = [];
+for (const card of cards) {
+let stateDoc = await db.cardStates.get(userId, card.id);
+if (!stateDoc) stateDoc = await initializeCardState(userId, card.id);
+let priority = -1;
+let category = 'OTHER';
+// P2b FIX: Spec P4.1 order — DANGEROUS=0, AVOIDED=1, GHOST=2, STUCK=3, FRAGILE=4
+if (stateDoc.state === CARD_STATES.DANGEROUS) {
+priority = 0;
+category = CARD_STATES.DANGEROUS;
+} else if (stateDoc.state === CARD_STATES.AVOIDED) {
+priority = 1;
+category = CARD_STATES.AVOIDED;
+} else if (stateDoc.state === CARD_STATES.GHOST) {
+priority = 2;
+category = CARD_STATES.GHOST;
+} else if (stateDoc.state === CARD_STATES.STUCK) {
+priority = 3;
+category = CARD_STATES.STUCK;
+} else if (stateDoc.state === CARD_STATES.FRAGILE) {
+priority = 4;
+category = CARD_STATES.FRAGILE;
+} else if (isCardDue(card, now)) {
+priority = 5;
+category = 'DUE_SCHEDULED';
+} else if (
+stateDoc.state === CARD_STATES.VERIFIED &&
+card.last_reviewed_at &&
+daysSince(card.last_reviewed_at) === 0
+) {
+priority = 6;
+category = CARD_STATES.VERIFIED;
+} else if (stateDoc.state === CARD_STATES.SEEDLING) {
+priority = 7;
+category = CARD_STATES.SEEDLING;
+}
+if (priority >= 0) {
+queue.push({ card, state: stateDoc, priority, category });
+}
+}
+// P12 FIX: Secondary sort by overdue date within same priority tier (most overdue first)
+queue.sort((a, b) => {
+if (a.priority !== b.priority) return a.priority - b.priority;
+const aOverdue = a.card.next_review_at ? new Date(a.card.next_review_at).getTime() : 0;
+const bOverdue = b.card.next_review_at ? new Date(b.card.next_review_at).getTime() : 0;
+return aOverdue - bOverdue;
+});
+return queue;
+}
+// Focus Seed stages are computed and committed by Ecosystem V2.
+// ── Return Mechanic// ── Return Mechanic ─────────────────────────────────────────────────────────
+
+async function computeReturnStatus(userId) {
+// P5.3-F FIX: removed misplaced rate-limit guard (this function makes no AI calls)
+const stats = await db.userStats.get(userId);
+if (!stats || !stats.last_study_date) return { status: 'new', days_since: null };
+const days = daysSince(stats.last_study_date);
+if (days >= 14) return { status: 'abandoned', days_since: days, greeting_type: 'A3_full_return' };
+if (days >= 3)
+return { status: 'slipping', days_since: days, greeting_type: 'A3_partial_return' };
+return { status: 'active', days_since: days };
+}
+// ── Card Summarizer ───────────────────────────────────────────────────────────
+const SUMMARY_CACHE = new Map(); // in-memory with TTL
+
+// DOUBLE-LOOKUP FIX: accept an optional pre-fetched card object to avoid re-querying the DB.
+// Callers that already have the card (e.g. the /summary route) pass it in directly.
+async function getCardSummary(userId, cardId, front, back, context = {}, cachedCard = null) {
+const cacheKey = `${userId}:${cardId}`;
+const cached = SUMMARY_CACHE.get(cacheKey);
+if (cached && cached.expires > Date.now()) {
+return cached.summary;
+}
+// Use the caller's card object if provided; otherwise fetch from DB.
+// This eliminates the redundant round-trip when the route already has the card.
+try {
+const cardDoc = cachedCard || await db.cards.findById(userId, cardId);
+if (cardDoc && cardDoc.ai_summary) {
+SUMMARY_CACHE.set(cacheKey, { summary: cardDoc.ai_summary, expires: Date.now() + 3600000 });
+return cardDoc.ai_summary;
+}
+} catch (e) { /* non-fatal — proceed to generate */ }
+const summary = await summarizeCard(front, back, context);
+SUMMARY_CACHE.set(cacheKey, { summary, expires: Date.now() + 3600000 });
+db.cards.update(userId, cardId, { ai_summary: summary }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+return summary;
+}
+
+// ── Mastery Moment AI (B1) ────────────────────────────────────────────────────
+// P5 FIX: Called the first time a card advances to Stage 5. Generates 1 personalized
+// sentence and stores it permanently on cards.mastery_moment in Firestore.
+// Fire-and-forget — does not block the card response.
+async function generateMasteryMoment(userId, cardId, front, back) {
+const prompt = `You are KIWI, a study companion. A student has just mastered a flashcard for the first time — it has reached Stage 5, the highest level of long-term retention.
+
+Card front: ${front}
+Card back: ${back}
+
+Write exactly 1 sentence (maximum 20 words) of warm, specific acknowledgement that this concept is now part of their long-term memory. Reference the card content directly. No preamble. Just the sentence.`;
+const result = await ai.run('MASTERY_MOMENT', { content: prompt });
+const mastery_moment = result.text.trim();
+await db.cards.update(userId, cardId, { mastery_moment }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+return mastery_moment;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PHASE 5 — Biome & Visualization
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── biomeService ──────────────────────────────────────────────────────────────
+// BIOME_ZONES constant removed — dead 3-zone KS-only system. Replaced by 4-state determineZoneState(). (P5.1-F1)
+// P5.1 FIX: 4-signal, 4-state zone determination (replaces KS-only 3-state function)
+// Inputs: knowledgeScore (0-100), pressure points (L4 at 20), card states, and inactivity.
+
+function determineZoneState(knowledgeScore, pressure, cardStateCounts, daysSinceLastSession) {
+const totalCards = Object.values(cardStateCounts || {}).reduce((a, b) => a + b, 0);
+const troubleCount = (cardStateCounts['GHOST'] || 0) + (cardStateCounts['STUCK'] || 0);
+const troublePct = totalCards > 0 ? (troubleCount / totalCards) * 100 : 0;
+const days = daysSinceLastSession || 0;
+// P4-FIX-ZONE: A brand-new subject (days=0, KS=0) has never been studied — it is
+// not "neglected" or "struggling", it is simply new. Neglected/Struggling conditions
+// that rely on KS or days only fire when there IS a study history to degrade from.
+// "days > 0" is the proxy for "this subject has been studied at least once".
+// Neglected — highest priority; requires actual deterioration, not just a new subject
+if (pressure >= 20 || (knowledgeScore < 15 && days > 0) || days >= 14) {
+return { zoneName: 'Neglected', stateClass: 'zone-neglected' };
+}
+// Struggling — KS-based condition also requires study history
+if (pressure >= 15 || troublePct >= 10 || (knowledgeScore < 30 && days > 0)) {
+return { zoneName: 'Struggling', stateClass: 'zone-struggling' };
+}
+// Thriving — all three conditions must be met
+if (pressure === 0 && troublePct < 5 && knowledgeScore > 60) {
+return { zoneName: 'Thriving', stateClass: 'zone-thriving' };
+}
+// Growing — default for everything in between
+return { zoneName: 'Growing', stateClass: 'zone-growing' };
+}
+
+
+// BIOME-CACHE: Cache biome data for 30 seconds
+const _biomeCache = new Map();
+const BIOME_CACHE_TTL = 30_000;
+function getCachedBiome(userId) {
+  const entry = _biomeCache.get(userId);
+  if (entry && entry.expires > Date.now()) return entry.data;
+  return null;
+}
+function setCachedBiome(userId, data) {
+  _biomeCache.set(userId, { data, expires: Date.now() + BIOME_CACHE_TTL });
+}
+
+async function buildBiomeData(userId) {
+const cached = getCachedBiome(userId);
+if (cached) { return cached; }
+const user = await db.users.findById(userId);
+const stats = await db.userStats.get(userId);
+const rawSubjects = await db.subjects.findManyWithDecks(userId);
+const inventory = await db.userInventory.findByUser(userId).catch(() => []);
+const rareFloraSubjects = new Set(inventory
+.map((item) => item.item_code || '')
+.filter((code) => code.startsWith('rare_flora_'))
+.map((code) => code.slice('rare_flora_'.length)));
+// P4-FIX-DEDUP: Deduplicate subjects by lowercased name — duplicate Firestore documents
+// caused the same subject to render twice in the Biome (ISSUE-027). Keep the copy with
+// the most decks/cards so real data is never discarded.
+const subjectsByName = new Map();
+for (const s of rawSubjects) {
+  const key = (s.name || '').toLowerCase().trim();
+  const existing = subjectsByName.get(key);
+  if (!existing || (s.total_cards || 0) > (existing.total_cards || 0) || (s.deck_count || 0) > (existing.deck_count || 0)) {
+    subjectsByName.set(key, s);
+  }
+}
+const subjects = Array.from(subjectsByName.values());
+const now = new Date();
+const todayStr = now.toISOString().split('T')[0];
+// Flush queued card state recomputes so pressure reads from current states
+const _biomeFlushPrefix = userId + ':';
+const _biomeFlushKeys = [..._ksQueue.keys()].filter(k => k.startsWith(_biomeFlushPrefix));
+const _biomeFlushBatch = _biomeFlushKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+if (_biomeFlushBatch.length > 0) {
+  await Promise.all(_biomeFlushBatch.map(({ userId: uid, cardId }) =>
+    recomputeAndStoreCardState(uid, cardId).catch(() => null)
+  ));
+}
+// P5.2-F7 FIX: parallelise at subject level to meet <300ms requirement
+const subjectsData = await Promise.all(subjects.map(async (subject) => {
+const [ks, credential, pressure, decks] = await Promise.all([
+computeKnowledgeScore(userId, subject.id),
+evaluateCredential(userId, subject.id),
+// P4-FIX-PRESSURE-BIOME: calculateSubjectPressure recalculates AND writes fresh pressure.
+// Previously used db.brainPressure.get which returned stale/empty data for users who
+// had never completed a session. Now pressure is always current (ISSUE-024/029).
+calculateSubjectPressure(userId, subject.id).catch(() => db.brainPressure.get(userId, subject.id)),
+db.decks.findBySubject(userId, subject.id),
+]);
+// Parallelise deck card fetches
+const deckCardArrays = await Promise.all(
+decks.map(deck => db.cards.findByDeck(userId, deck.id))
+);
+let allCards = [];
+for (const dc of deckCardArrays) allCards.push(...dc);
+// BIOME-TIMEOUT-FIX: bulk-fetch all card states in ONE query instead of N+1
+// individual fetches that exhaust the connection pool (max:15) for large libraries.
+const cardIds = allCards.map(c => c.id);
+const existingStates = cardIds.length > 0
+  ? await db.cardStates.findByCards(userId, cardIds).catch(() => [])
+  : [];
+const stateMap = new Map(existingStates.map(s => [s.card_id, s]));
+// Only initialize states that are genuinely missing (rare for active users)
+const missingIds = cardIds.filter(id => !stateMap.has(id));
+if (missingIds.length > 0) {
+  const initialized = await Promise.all(
+    missingIds.map(id => initializeCardState(userId, id).catch(() => null))
+  );
+  for (const s of initialized) { if (s) stateMap.set(s.card_id, s); }
+}
+const cardStatesDocs = allCards.map(card => stateMap.get(card.id)).filter(Boolean);
+const stateCounts = {};
+for (const s of Object.values(CARD_STATES)) stateCounts[s] = 0;
+for (const cs of cardStatesDocs) stateCounts[cs.state] = (stateCounts[cs.state] || 0) + 1;
+const subjectStatDoc = await db.subjectStats.get(userId, subject.id);
+let daysSinceLastSession = 0;
+const lastStudied = subjectStatDoc?.last_studied_at;
+if (lastStudied) {
+const diffMs = now.getTime() - new Date(lastStudied).getTime();
+daysSinceLastSession = Math.floor(diffMs / 86400000);
+} else {
+// P4-FIX-DROUGHT: Never-studied subjects get 0, not 999. A new subject
+// is not neglected — it has simply never been touched (ISSUE-026).
+daysSinceLastSession = 0;
+}
+const pressureScore = pressure?.pressure_score || 0;
+const zoneResult = determineZoneState(ks.score, pressureScore, stateCounts, daysSinceLastSession);
+// P5.2-F5 FIX: pre-populate cached zone description if generated today
+const descCacheType = `zone_desc_${subject.id}`;
+const cachedDesc = await db.dailyRitualCache.get(userId, descCacheType, todayStr).catch(() => null);
+return {
+subject_id: subject.id,
+subject_name: subject.name,
+knowledge_score: ks.score,
+knowledge_band: ks.band,
+credential_tier: credential.tier,
+credential_name: credential.name,
+pressure_score: pressureScore,
+// Canonical intervention level from the strict L0–L4 pressure scale.
+intervention_level: pressure?.intervention_level || 'L0',
+zone: zoneResult.zoneName,
+stateClass: zoneResult.stateClass,
+card_count: allCards.length,
+state_distribution: stateCounts,
+fruit_count: subjectStatDoc?.fruit_count || 0,
+rare_flora: rareFloraSubjects.has(subject.id),
+last_studied_at: lastStudied || null,
+days_since_last_session: daysSinceLastSession,
+exam_date: subject.exam_date || null,
+zone_description: cachedDesc?.data || null,
+};
+}));
+const globalKS = await computeGlobalKnowledgeScore(userId);
+const globalZoneResult = determineZoneState(
+globalKS.score,
+0,
+subjectsData.reduce((acc, s) => {
+for (const [k, v] of Object.entries(s.state_distribution || {})) {
+acc[k] = (acc[k] || 0) + v;
+}
+return acc;
+}, {}),
+0
+);
+// P5.4-F8 FIX: streak milestones are permanent — survive streak breaks
+const currentStreak = stats?.current_streak || 0;
+const allMilestoneThresholds = [7, 30, 100, 365];
+const earnedMilestones = stats?.streak_milestones_earned || [];
+const activeMilestones = [...new Set([
+...earnedMilestones,
+...allMilestoneThresholds.filter(m => currentStreak >= m),
+])].sort((a, b) => a - b);
+// Ecosystem V2: one canonical persisted Vitality value everywhere.
+const canonicalTreeHealth = Math.max(0, Math.min(100, Math.round(stats?.tree_health ?? 100)));
+const totalFruits = subjectsData.reduce((sum, subject) => sum + (Number(subject.fruit_count) || 0), 0);
+const canonicalTreeState = buildTreeState({
+stage: stats?.tree_stage || 1,
+vitality: canonicalTreeHealth,
+growthPoints: Number(stats?.growth_points) || 0,
+nextStage: ecosystemV2.nextTreeStage(stats || {}),
+knowledgeScore: globalKS.score,
+fruits: totalFruits,
+milestones: activeMilestones,
+streak: currentStreak,
+});
+const _biomeResult = {
+user_id: userId,
+username: user?.username,
+global_knowledge_score: globalKS.score,
+global_zone: globalZoneResult.zoneName,
+tree_stage: canonicalTreeState.stage,
+tree_health: canonicalTreeState.vitality,
+growth_points: canonicalTreeState.growthPoints,
+next_tree_stage: canonicalTreeState.nextStage,
+current_streak: canonicalTreeState.streak,
+streak_milestones: canonicalTreeState.milestones,
+treeState: canonicalTreeState,
+subjects: subjectsData,
+};
+setCachedBiome(userId, _biomeResult);
+return _biomeResult;
+}
+// ── Zone Description AI (D1) ─────────────────────────────────────────────────
+
+async function generateZoneDescription(userId, subjectId) {
+if (checkAIRateLimit(userId, 'zone_description', 20)) {
+return null; // caller must show: "Zone description unavailable — rate limit reached."
+}
+const todayStr = new Date().toISOString().split('T')[0];
+const cacheType = `zone_desc_${subjectId || 'global'}`;
+const cached = await db.dailyRitualCache.get(userId, cacheType, todayStr);
+if (cached) return cached.data;
+// Fetch subject data for prompt construction
+const subjectDoc = await db.subjects.findById(subjectId);
+const subjectDecks = await db.decks.findBySubject(userId, subjectId);
+const subjectDeckIds = subjectDecks.map((d) => d.id);
+let subjectCards = [];
+for (const did of subjectDeckIds) {
+const dc = await db.cards.findByDeck(userId, did);
+subjectCards.push(...dc);
+}
+const ks = await computeKnowledgeScore(userId, subjectId).catch(() => ({ score: 0, band: 'Seed' }));
+// P5.3-G FIX: read-only pressure fetch — calculateSubjectPressure has write side-effects
+const pressureDoc = await db.brainPressure.get(userId, subjectId).catch(() => null);
+const pressureScore = pressureDoc?.pressure_score || 0;
+const stateCounts = {};
+for (const card of subjectCards) {
+const sd = await db.cardStates.get(userId, card.id);
+const st = sd?.state || 'SEEDLING';
+stateCounts[st] = (stateCounts[st] || 0) + 1;
+}
+// P5.3-E FIX: fetch days since last session (required prompt input per spec)
+const subjectStatDoc = await db.subjectStats.get(userId, subjectId).catch(() => null);
+const lastStudied = subjectStatDoc?.last_studied_at;
+const daysSinceLastSession = lastStudied
+? Math.floor((Date.now() - new Date(lastStudied).getTime()) / 86400000)
+: 0; // P4-FIX-DROUGHT: new subject = 0, not 999 (ISSUE-026)
+// P5.3-B FIX: compute zone via determineZoneState (subject.zone was always undefined)
+const zoneResult = determineZoneState(ks.score, pressureScore, stateCounts, daysSinceLastSession);
+const zone = zoneResult.zoneName;
+// P5.3-C FIX: use stateCounts directly (subject.state_distribution was always undefined)
+const stateDistForZone = stateCounts;
+const pressureForZone = pressureScore;
+// P5.3-D FIX: fetch credential directly (subject.credential_name was always undefined)
+const credentialResult = await evaluateCredential(userId, subjectId).catch(() => ({ name: 'Untested' }));
+const credentialForZone = credentialResult.name || 'Untested';
+const zoneTones = {
+Thriving: 'flourishing and abundant — roots deep, canopy full, fruit ripe',
+Growing: 'vital but still forming — new growth pushing through, some patches thin',
+Struggling: 'stressed — thorns visible, soil dry, growth stalled under pressure',
+Neglected: 'drought-stricken and silent — cracked earth, bare branches, waiting',
+};
+// P4-FIX-PROMPT: Variables were using {var} instead of ${var} — all values were sent as
+// literal placeholder text to Gemini, making every prompt hollow (ISSUE-035 / P5.3-A).
+const prompt = `
+You are a mystical ecological guide in the KIWI study application. Describe the "${zone}" zone for a student.
+Zone character: ${zoneTones[zone] || 'alive and complex'}
+Context (do NOT mention these numbers directly — let them colour the imagery):
+- Knowledge Score: ${ks.score.toFixed(1)}/100
+- Credential tier: ${credentialForZone}
+- Pressure level: ${pressureForZone} pts
+- Days since last session: ${daysSinceLastSession}
+- Dangerous cards: ${stateDistForZone['DANGEROUS'] || 0}
+- Ghost cards: ${stateDistForZone['GHOST'] || 0}
+- Stuck cards: ${stateDistForZone['STUCK'] || 0}
+- Verified mastered cards: ${stateDistForZone['VERIFIED'] || 0}
+Rules:
+- Write exactly 2 sentences.
+- Match the tone precisely to the zone character.
+- Reference ecological imagery — roots, thorns, fruits, light, soil — based on the card-state data.
+- Do not mention numbers or technical terms.
+- Keep it atmospheric and honest.
+Respond with only the description text.
+`;
+  const result = await ai.run('ZONE_DESCRIPTION', { content: prompt });
+  const text = result.text.trim();
+  await db.dailyRitualCache.set(userId, cacheType, todayStr, text);
+  return text;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PHASE 6 — Narrative Systems
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── chronicleService ──────────────────────────────────────────────────────────
+// Fallback chronicle when AI is unavailable
+
+function buildFallbackChronicle(userId) {
+const now = new Date();
+const weekStart = new Date(now);
+weekStart.setDate(weekStart.getDate() - now.getDay());
+const weekEnd = new Date(weekStart);
+weekEnd.setDate(weekEnd.getDate() + 6);
+return {
+chronicles: [
+{
+week_start: weekStart.toISOString().split('T')[0],
+week_end: weekEnd.toISOString().split('T')[0],
+summary:
+'This week you continued building your knowledge ecosystem. Cards moved through stages, some flourished, others need attention.',
+key_events: [
+{ day: 'Monday', text: 'Weekly study session began' },
+{ day: 'Wednesday', text: 'Mid-week review checkpoint' },
+{ day: 'Friday', text: 'Weekend consolidation phase' },
+],
+strongest_subject: 'Your strongest subject continues to thrive.',
+weakest_subject: 'One subject needs more attention — consider a focused session.',
+mood: 'Steady',
+generated_by: 'fallback',
+},
+],
+};
+}
+
+async function generateWeeklyChronicle(userId, force = false, timezoneOffsetMinutes = 0) {
+const now = new Date();
+const safeTimezoneOffset = Math.max(-840, Math.min(840, Number(timezoneOffsetMinutes) || 0));
+const localNow = new Date(now.getTime() - safeTimezoneOffset * 60000);
+const localWeekStart = new Date(localNow);
+// FIX-10: Monday-anchored week. (getDay()+6)%7 = 0 on Mon, 6 on Sun.
+localWeekStart.setDate(localWeekStart.getDate() - ((localWeekStart.getDay() + 6) % 7));
+localWeekStart.setHours(0, 0, 0, 0);
+const weekStart = new Date(localWeekStart.getTime() + safeTimezoneOffset * 60000);
+const weekStr = localWeekStart.toISOString().split('T')[0];
+const existing = await db.chronicleEntries.findLatest(userId);
+// Normalize existing.week_start to YYYY-MM-DD string for reliable comparison
+// (PostgreSQL date columns may come back as Date objects or ISO strings with time)
+const existingWeekStr = existing
+  ? (typeof existing.week_start === 'string'
+      ? existing.week_start.slice(0, 10)
+      : existing.week_start
+        ? new Date(existing.week_start).toISOString().slice(0, 10)
+        : '')
+  : '';
+// Keep one stable Chronicle identity per week. A manual refresh recomputes the
+// evidence and updates that row only after generation succeeds.
+if (!force && existing && existingWeekStr === weekStr) return existing;
+if (checkAIRateLimit(userId, 'chronicle', 5)) {
+if (existing) return existing;
+return null;
+}
+const stats = await db.userStats.get(userId);
+const subjects = await db.subjects.findManyWithDecks(userId);
+const logs = await db.reviewLogs.findByUser(userId, weekStart);
+const sessions = await db.sessions.findMany(userId, { session_completed: true, started_at_gte: weekStart }, { limit: 200 }); // Fix #45 corrected: filter by week, 200 covers any week
+const weekInteractions = sessions.sessions.filter((s) => new Date(s.started_at) >= weekStart);
+const weekSessions = weekInteractions.filter(sessionIsMeaningful);
+const deckToSubjectForChronicle = new Map();
+for (const subject of subjects) {
+const subjectDecks = await db.decks.findBySubject(userId, subject.id).catch(() => []);
+for (const deck of subjectDecks) deckToSubjectForChronicle.set(deck.id, subject.id);
+}
+const allCardsForChronicle = await db.cards.findAllForUser(userId).catch(() => []);
+const cardToSubjectForChronicle = new Map(allCardsForChronicle.map((card) => [
+card.id,
+deckToSubjectForChronicle.get(card.deck_id) || null,
+]));
+const subjectReviewCounts = {};
+for (const log of logs) {
+const sid = log.subject_id || cardToSubjectForChronicle.get(log.card_id) || null;
+if (sid) subjectReviewCounts[sid] = (subjectReviewCounts[sid] || 0) + 1;
+}
+// B12: Collect rich per-subject stats for the chronicle prompt
+const subjectSnapshots = [];
+for (const sub of subjects) {
+try {
+const ks = await computeKnowledgeScore(userId, sub.id);
+const cred = await evaluateCredential(userId, sub.id);
+const press = await db.brainPressure.get(userId, sub.id);
+const sStat = await db.subjectStats.get(userId, sub.id);
+subjectSnapshots.push({
+name: sub.name,
+ks: ks.score,
+credential: cred.name,
+pressure: press?.pressure_score || 0,
+fruit_count: sStat?.fruit_count || 0,
+total_cards: sub.total_cards || 0,
+cards_reviewed_this_week: subjectReviewCounts[sub.id] || 0,
+});
+} catch (e) {}
+}
+const fruitings = weekSessions.filter((s) => s.fruiting_achieved).length;
+
+// CHRONICLE-ENRICH: Gather richer per-subject and aggregate signals for the teacher-voice prompt.
+// (a) Total "Again" responses this week — high count = the student struggled a lot.
+const totalAgain = weekSessions.reduce((sum, s) => sum + (s.cards_again || 0), 0);
+
+// (b) Per-subject session count this week
+const subjectSessionCountsEnriched = {};
+for (const s of weekSessions) {
+  const sid = s.subject_id || deckToSubjectForChronicle.get(s.deck_id) || null;
+  if (sid) subjectSessionCountsEnriched[sid] = (subjectSessionCountsEnriched[sid] || 0) + 1;
+}
+
+// (c) All card states for this user — one DB call, then group by subject_id
+const allCardStatesDocs = await db.cardStates.findByUser(userId).catch(() => []);
+const cardStatesBySubject = {};
+for (const cs of allCardStatesDocs) {
+  if (!cs.subject_id) continue;
+  if (!cardStatesBySubject[cs.subject_id]) cardStatesBySubject[cs.subject_id] = { GHOST: 0, FRAGILE: 0, STUCK: 0, AVOIDED: 0, DANGEROUS: 0 };
+  const bucket = cardStatesBySubject[cs.subject_id];
+  if (bucket[cs.state] !== undefined) bucket[cs.state]++;
+}
+
+// (d) Enrich each subjectSnapshot with days_since_last_session and card state counts
+for (const snap of subjectSnapshots) {
+  const subObj = subjects.find(s => s.name === snap.name);
+  if (!subObj) continue;
+  const sStat2 = await db.subjectStats.get(userId, subObj.id).catch(() => null);
+  const lastStudied2 = sStat2?.last_studied_at || sStat2?.last_session_date;
+  snap.days_since_last_session = lastStudied2
+    ? Math.floor((Date.now() - new Date(lastStudied2).getTime()) / 86400000)
+    : null; // null = never studied
+  snap.sessions_this_week = subjectSessionCountsEnriched[subObj.id] || 0;
+  const stCounts = cardStatesBySubject[subObj.id] || {};
+  snap.ghost_count    = stCounts.GHOST     || 0;
+  snap.fragile_count  = stCounts.FRAGILE   || 0;
+  snap.stuck_count    = stCounts.STUCK     || 0;
+  snap.avoided_count  = stCounts.AVOIDED   || 0;
+  snap.dangerous_count = stCounts.DANGEROUS || 0;
+}
+
+// (e) Neglected subjects — no session in 7+ days, or never studied but has cards
+const neglectedSubjectLines = subjectSnapshots
+  .filter(s => s.total_cards > 0 && (s.days_since_last_session === null || s.days_since_last_session >= 7))
+  .map(s => `${s.name} (${s.days_since_last_session === null ? 'never studied' : s.days_since_last_session + 'd ago'}, pressure: ${s.pressure})`)
+  .join(', ') || 'None — all subjects were touched this week.';
+
+// P6.1 FIX: gather previous 2 chronicles for continuity context
+const allChronicles = await db.chronicleEntries.findByUser(userId).catch(() => []);
+// GAP-1 FIX: fetch exam sessions for the week so Chronicle narrator knows about CBT results
+const allExamSessions = await db.examSessions.findMany(userId, { started_at_gte: weekStart }, { limit: 200 }).catch(() => []); // Fix #45 corrected: filter by week
+const weekExams = allExamSessions.filter(
+(e) => new Date(e.created_at || e.started_at) >= weekStart && (e.score_pct != null || e.score_percentage != null)
+);
+const examLines = weekExams.map((e) => {
+const subName = subjects.find((s) => s.id === e.subject_id)?.name || 'Unknown';
+return `${subName}: ${Math.round(Number(e.score_pct ?? e.score_percentage) || 0)}% (${
+    e.is_reckoning ? 'Reckoning' : 'CBT'
+  })`;
+}).join(', ') || 'None';
+// (f) Best and worst exam this week — placed here so weekExams is already declared
+const sortedExams = [...weekExams].sort((a, b) => Number(a.score_pct ?? a.score_percentage) - Number(b.score_pct ?? b.score_percentage));
+const worstExam  = sortedExams[0]  ? `${subjects.find(s => s.id === sortedExams[0].subject_id)?.name || 'Unknown'}: ${Math.round(Number(sortedExams[0].score_pct ?? sortedExams[0].score_percentage) || 0)}%` : null;
+const bestExam   = sortedExams[sortedExams.length - 1] ? `${subjects.find(s => s.id === sortedExams[sortedExams.length - 1].subject_id)?.name || 'Unknown'}: ${Math.round(Number(sortedExams[sortedExams.length - 1].score_pct ?? sortedExams[sortedExams.length - 1].score_percentage) || 0)}%` : null;
+const prevChronicles = allChronicles
+.filter((c) => c.id !== existing?.id)
+.sort((a, b) => new Date(b.week_start) - new Date(a.week_start))
+.slice(0, 2);
+const prevChronicleText =
+prevChronicles.length > 0
+? prevChronicles
+.map((c, i) => `Week of ${c.week_start}: ${(c.narrative || '').slice(0, 200)}...`)
+.join('\n')
+: 'None yet — this is the first entry.';
+// P6.1 FIX: gather reckoning events this week
+const allReckonings = await db.reckoningSessions.findByUser(userId).catch(() => []);
+const weekReckonings = allReckonings.filter((r) => new Date(r.triggered_at) >= weekStart);
+const reckoningLine =
+weekReckonings.length > 0
+? `${weekReckonings.length} Reckoning(s) this week — statuses: ${weekReckonings.map((r) => r.status).join(', ')}`
+: 'No Reckoning this week.';
+// P6.1 FIX: get current persona for chronicle context
+const currentPersona = await db.userPersona.get(userId).catch(() => null);
+const personaLine = currentPersona
+? `${currentPersona.persona_label} — ${currentPersona.persona_description}`
+: 'Unclassified';
+// Most-attended subject (by session count this week)
+const subjectSessionCounts = {};
+for (const s of weekSessions) {
+const sid = s.subject_id || deckToSubjectForChronicle.get(s.deck_id) || null;
+if (sid) subjectSessionCounts[sid] = (subjectSessionCounts[sid] || 0) + 1;
+}
+const mostAttendedId = Object.entries(subjectSessionCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+const mostAttendedSubject =
+subjects.find((s) => s.id === mostAttendedId)?.name ||
+subjectSnapshots[0]?.name ||
+'your primary subject';
+// Biggest stage advance this week (from review logs)
+// FIX-7: count actual stage advances, not proxy ratings
+const stageAdvances = logs.filter(
+(l) =>
+l.new_stage !== undefined &&
+l.previous_stage !== undefined &&
+l.new_stage > l.previous_stage
+).length;
+// Weakest subject (highest pressure or lowest KS)
+const weakest = subjectSnapshots.sort((a, b) => b.pressure - a.pressure || a.ks - b.ks)[0];
+
+// PB.18 / GAP-S1: Inject Bubble Chronicle events into the narrative context [DESIGN: §15.4]
+// getBubbleEventsForChronicle is defined in B7-CHRONICLE block.
+// weekStart is already in scope from this function's earlier lines.
+const weekEndDate = new Date(weekStart.getTime() + 6 * 86400000);
+const bubbleEvents = await getBubbleEventsForChronicle(userId, weekStart, weekEndDate)
+  .catch(() => []);
+const bubbleChronicleContext = bubbleEvents.length > 0
+  ? '\nMASTERY BUBBLE EVENTS THIS WEEK\n' +
+    bubbleEvents.map((b) =>
+      `${b.bubble_name} (${b.subject_id || 'unknown'}): ` +
+      b.events.map((e) =>
+        `${e.type.replace(/_/g, ' ')} at KS ${e.ks != null ? e.ks.toFixed(1) : '?'}` +
+        (e.notes ? ` — ${e.notes.slice(0, 80)}` : '')
+      ).join('; ')
+    ).join('\n')
+  : '';
+
+const prompt = `
+ROLE
+You are this student's academic advisor. You have just reviewed their full week of study data. You speak directly, honestly, and personally — like a teacher who has read the student's file and is now sitting across from them. Your tone adapts to what the data shows: firm and direct when the student has been avoiding work, genuinely warm when they have earned it. You are not a narrator. You are not poetic. You observe, you name what you see, and you give direction.
+
+No metaphors. No atmospheric language. Every sentence must be grounded in a specific number, subject name, card state, or score from the data below. If you cannot back a claim with data, do not make it.
+
+STUDENT PROFILE
+Persona: ${personaLine}
+Streak: ${stats?.current_streak || 0} days active
+
+THIS WEEK
+Week of: ${weekStr}
+Meaningful sessions: ${weekSessions.length} | Short interactions: ${weekInteractions.length - weekSessions.length} | Cards reviewed: ${logs.length} | Stage advances: ${stageAdvances}
+"Again" responses (struggle count): ${totalAgain}
+Fruitings this week: ${fruitings}
+Reckoning: ${reckoningLine}
+Exams: ${examLines}${worstExam ? `\nWorst exam: ${worstExam}` : ''}${bestExam && bestExam !== worstExam ? `\nBest exam: ${bestExam}` : ''}
+${bubbleChronicleContext}
+SUBJECT BREAKDOWN
+${subjectSnapshots.map((s) => [
+  `${s.name}:`,
+  `  KS ${s.ks.toFixed(1)} | Credential: ${s.credential} | Pressure: ${s.pressure}`,
+  `  Sessions this week: ${s.sessions_this_week} | Cards reviewed this week: ${s.cards_reviewed_this_week} | Days since last session: ${s.days_since_last_session === null ? 'never studied' : s.days_since_last_session + 'd'}`,
+  `  Problem cards — GHOST: ${s.ghost_count}, FRAGILE: ${s.fragile_count}, STUCK: ${s.stuck_count}, AVOIDED: ${s.avoided_count}, DANGEROUS: ${s.dangerous_count}`,
+  `  Total cards: ${s.total_cards} | Fruits: ${s.fruit_count}`,
+].join('\n')).join('\n\n')}
+
+NEGLECTED SUBJECTS (7+ days without a session)
+${neglectedSubjectLines}
+
+PREVIOUS WEEK CONTEXT (do not repeat, use only for continuity)
+${prevChronicleText}
+
+WHAT TO WRITE — EXACTLY 5 PARAGRAPHS
+
+Paragraph 1 — WHERE YOU PUT YOUR TIME
+Name the most-attended subject. State the exact session count and cards reviewed in it. Be honest about whether the effort was focused or scattered across too many things. If one subject dominated while others were untouched, say so plainly.
+
+Paragraph 2 — THE REAL PROGRESS
+Name the single most significant thing that improved this week. Use the actual number: a KS score that moved, a stage advance count, an exam score, a credential milestone, a Reckoning survived. If progress was thin, say that too. Do not invent praise.
+
+Paragraph 3 — WHAT WAS AVOIDED (most important paragraph)
+This paragraph must be direct and specific. If there are neglected subjects, name them, state how many days since the last session, name the pressure score, and name the count of GHOST, FRAGILE, or STUCK cards sitting there. If the student's Again count was high, name it. If an exam score was poor, name it. Do not soften this. The student needs to feel the weight of what they did not do. If nothing was avoided and the week was genuinely solid, acknowledge that honestly — but verify it first.
+
+Paragraph 4 — ONE THING THAT IS GENUINELY EARNED
+Find something specific and real to recognise. A streak maintained, a pressure score that dropped, cards that moved out of FRAGILE state, consistent daily sessions, a passed exam. One specific thing. If the week was poor across the board, make this paragraph brief — one sentence. Never manufacture warmth.
+
+Paragraph 5 — NEXT WEEK: ONE DIRECTIVE
+Give the student one specific instruction. Not "study Chemistry more." Give: the exact subject, the exact card state to target, or the exact pressure score to bring down below a threshold. Make it feel like a task they have been assigned, not a suggestion. Close with a single sentence of honest encouragement — tied to something real they showed this week.
+
+TONE RULES
+- If sessions this week < 5 OR neglected subjects exist: be firm. Name what was skipped. Do not cushion.
+- If sessions >= 10 AND stage advances >= 20 AND no neglected subjects: be warm. They earned it.
+- In all cases: be specific. Vague encouragement is worthless. Vague criticism is cowardly.
+- Never say "a subject" when you have the name. Never say "some cards" when you have the counts.
+- Never use bullet points or headers inside the output.
+- Total length: 280–420 words.
+
+OUTPUT
+Return only the 5 paragraphs. No labels. No headers. No preamble.
+`;
+  const result = await ai.run('WEEKLY_CHRONICLE', { content: prompt });
+  const narrative = result.text.trim();
+  const entryData = {
+    week_start: weekStr,
+    week_end: new Date(localWeekStart.getTime() + 6 * 86400000).toISOString().split('T')[0],
+    narrative,
+    stats_snapshot: {
+      streak: stats?.current_streak || 0,
+      meaningful_sessions: weekSessions.length,
+      short_interactions: weekInteractions.length - weekSessions.length,
+      cards_reviewed: logs.length,
+      again_responses: totalAgain,
+      fruiting_sessions: fruitings,
+      stage_advances: stageAdvances,
+      subjects: subjectSnapshots,
+      exams: weekExams.map((e) => ({
+        subject_id: e.subject_id,
+        score: Number(e.score_percentage ?? e.score_pct) || 0,
+        is_reckoning: !!e.is_reckoning,
+      })),
+      neglected_subjects: subjectSnapshots
+        .filter((s) => s.total_cards > 0 && (s.days_since_last_session === null || s.days_since_last_session >= 7))
+        .map((s) => s.name),
+    },
+  };
+  if (force && existing && existingWeekStr === weekStr) {
+    await query(
+      `UPDATE chronicle_entries
+       SET week_end = $1, narrative = $2, stats_snapshot = $3
+       WHERE id = $4 AND user_id = $5`,
+      [entryData.week_end, entryData.narrative, entryData.stats_snapshot, existing.id, userId]
+    );
+    return { ...existing, ...entryData, updated_at: new Date() };
+  }
+  return db.chronicleEntries.create(userId, entryData);
+}
+// ── almanacService ────────────────────────────────────────────────────────────
+const ALMANAC_DEFINITIONS = [
+  // ── Chapter 1: Origins ──────────────────────────────────────────────────────
+  {
+    chapter: 1,
+    entry_code: 'first_step',
+    name: 'The First Step',
+    unlock_condition: { type: 'first_review' },
+    narrative:
+      'Every great forest begins with a single seed. You held knowledge in your hands for the first time.',
+  },
+  {
+    chapter: 1,
+    entry_code: 'most_reviewed_card',
+    name: 'The Worn Path',
+    unlock_condition: { type: 'card_review_count', value: 20 },
+    narrative:
+      'One concept drew you back twenty times. Repetition is not weakness — it is the path becoming a road.',
+  },
+  {
+    chapter: 1,
+    entry_code: 'first_stage_2',
+    name: 'The First Leaf',
+    unlock_condition: { type: 'stage_reached', value: 2 },
+    narrative:
+      'A concept took root and pushed upward. Stage 2 is where memory becomes familiarity.',
+  },
+  // P6.3 FIX: Added missing first_stage_3 and first_stage_4 entries (spec requires Stage 2-5 all defined)
+  {
+    chapter: 1,
+    entry_code: 'first_stage_3',
+    name: 'The Growing Branch',
+    unlock_condition: { type: 'stage_reached', value: 3 },
+    narrative:
+      'A concept has grown roots deep enough to branch. Stage 3 is knowledge gaining structure.',
+  },
+  {
+    chapter: 1,
+    entry_code: 'first_stage_4',
+    name: 'The Reaching Canopy',
+    unlock_condition: { type: 'stage_reached', value: 4 },
+    narrative:
+      'You have carried a concept long enough for it to reach toward the light. Stage 4 is memory becoming reliable.',
+  },
+  {
+    chapter: 1,
+    entry_code: 'first_stage_5',
+    name: 'The Tall Tree',
+    unlock_condition: { type: 'stage_reached', value: 5 },
+    narrative: 'A card reached its highest stage. You no longer remember this — you know it.',
+  },
+  {
+    chapter: 1,
+    entry_code: 'again_scholar',
+    name: 'The Honest Learner',
+    unlock_condition: { type: 'again_count', value: 50 },
+    narrative: 'You pressed Again fifty times. That honesty is rarer than any perfect score.',
+  },
+  {
+    chapter: 1,
+    entry_code: 'rooting',
+    name: 'The Rooting',
+    unlock_condition: { type: 'streak', value: 7 },
+    narrative: 'Seven days of study sent roots into the soil. Your memory begins to anchor.',
+  },
+  // ── Chapter 2: Garden ───────────────────────────────────────────────────────
+  {
+    chapter: 2,
+    entry_code: 'first_verified',
+    name: 'The First Verified',
+    unlock_condition: { type: 'verified_count', value: 1 },
+    narrative: 'A card survived the exam fire. You know it — not just remember it.',
+  },
+  {
+    chapter: 2,
+    entry_code: 'deep_garden',
+    name: 'The Deep Garden',
+    unlock_condition: { type: 'card_count', value: 100 },
+    narrative: 'One hundred cards in your ecosystem. The forest is no longer a seedling.',
+  },
+  {
+    chapter: 2,
+    entry_code: 'fastest_growth',
+    name: 'The Swift Vine',
+    unlock_condition: { type: 'cards_advanced_in_week', value: 30 },
+    narrative:
+      'Thirty cards advanced in a single week. You moved through the forest like sunlight.',
+  },
+  {
+    chapter: 2,
+    entry_code: 'first_credential',
+    name: 'The First Badge',
+    unlock_condition: { type: 'credential', value: 1 },
+    narrative: 'Your first exam credential. Evidence, not assumption, that you have learned.',
+  },
+  {
+    chapter: 2,
+    entry_code: 'competent',
+    name: 'The Competent Hand',
+    unlock_condition: { type: 'credential', value: 3 },
+    narrative:
+      'Competence is no longer a goal but a baseline. You handle this subject with growing ease.',
+  },
+  {
+    chapter: 2,
+    entry_code: 'most_verified',
+    name: 'The Certified Forest',
+    unlock_condition: { type: 'verified_count', value: 25 },
+    narrative:
+      'Twenty-five cards have passed the exam trial. Your knowledge has been tested, not just reviewed.',
+  },
+  // GAP-2 FIX: two missing Chapter 2 entries from spec
+  {
+    chapter: 2,
+    entry_code: 'highest_ks',
+    name: 'The Flourishing Zone',
+    unlock_condition: { type: 'subject_ks_threshold', value: 80 },
+    narrative: 'One subject reached 80. That zone is no longer growing — it is thriving.',
+  },
+  {
+    chapter: 2,
+    entry_code: 'first_neglected',
+    name: 'The Abandoned Corner',
+    unlock_condition: { type: 'zone_state_reached', value: 'Neglected' },
+    narrative: 'A zone went dark. You let it happen. The forest remembers what you ignored.',
+  },
+  // ── Chapter 4: Mastery (PB.19) — [DESIGN: §15.5 exact 10 entries] ───────────
+  // ⚠ CORRECTED from v1.0: names, entry_codes, and unlock_conditions now match
+  //   design §15.5 exactly. v1.0 had 10 different entries with wrong conditions.
+  {
+    chapter: 4,
+    entry_code: 'first_promise',
+    name: 'The First Promise',
+    unlock_condition: { type: 'bubble_created', value: 1 },
+    narrative: 'You made a promise to yourself with a deadline. The forest now knows your exam date.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'deadline_gardener',
+    name: 'The Deadline Gardener',
+    // [DESIGN: §15.5] "First Bubble completed"
+    unlock_condition: { type: 'bubble_first_completed' },
+    narrative: 'A Mastery Bubble reached its exam date with the goal intact. The first garden kept.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'gate_keeper',
+    name: 'The Gate Keeper',
+    // [DESIGN: §15.5] "Pass the Test Date gate (KS ≥ 60) on first attempt"
+    unlock_condition: { type: 'test_date_gate_passed_first_attempt' },
+    narrative: 'The checkpoint arrived and your understanding held. You passed the gate on the first try.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'the_comeback',
+    name: 'The Comeback',
+    // [DESIGN: §15.5] "Complete a Bubble after entering RESCUE mode"
+    unlock_condition: { type: 'bubble_completed_after_rescue' },
+    narrative: 'You entered RESCUE mode and still closed the goal. Recovery under pressure is a different kind of mastery.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'stall_breaker',
+    name: 'The Stall Breaker',
+    // [DESIGN: §15.5] "Resolve a stall within 7 days of detection"
+    unlock_condition: { type: 'stall_resolved_within_days', value: 7 },
+    narrative: 'A stall was detected. Seven days later, it was broken. You did not wait for the wall to crack on its own.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'marathon_scholar',
+    name: 'The Marathon Scholar',
+    // [DESIGN: §15.5] "Complete a Bubble of ≥ 80 days"
+    unlock_condition: { type: 'bubble_completed_long', value: 80 },
+    narrative: 'Eighty days of consistent forward motion. The long game is its own form of intelligence.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'the_archivist',
+    name: 'The Archivist',
+    // [DESIGN: §15.5] "5 Bubbles completed"
+    unlock_condition: { type: 'bubbles_completed_count', value: 5 },
+    narrative: 'Five mastery goals closed. The forest holds a record of every promise you kept.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'debt_settled',
+    name: 'Debt Settled',
+    // [DESIGN: §15.5] "Clear all Learning Debt from a missed Bubble"
+    unlock_condition: { type: 'debt_settled' },
+    narrative: 'Every card from the missed goal has reached VERIFIED. The debt is gone. The slate is not clean — it is earned.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'the_creditor',
+    name: 'The Creditor',
+    // [DESIGN: §15.5] "Have no active Learning Debt across all subjects"
+    unlock_condition: { type: 'no_active_debt_global' },
+    narrative: 'No outstanding debt across any subject. You owe yourself nothing.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'cross_subject',
+    name: 'Cross-Subject',
+    // [DESIGN: §15.5] "Complete two overlapping Bubbles simultaneously"
+    unlock_condition: { type: 'cross_bubble_both_completed' },
+    narrative: 'Two goals sharing material — both completed. The overlap became a bridge, not a conflict.',
+  },
+  // ── Chapter 3: Storms ───────────────────────────────────────────────────────
+  {
+    chapter: 3,
+    entry_code: 'long_streak',
+    name: 'The Unbroken Chain',
+    unlock_condition: { type: 'streak', value: 30 },
+    narrative: 'Thirty consecutive days. You made a promise and you kept it.',
+  },
+  {
+    chapter: 3,
+    entry_code: 'most_sessions_day',
+    name: 'The Storm Day',
+    unlock_condition: { type: 'sessions_in_one_day', value: 3 },
+    narrative: 'Three sessions in a single day. The forest felt the weight of your intention.',
+  },
+  {
+    chapter: 3,
+    entry_code: 'reckoning_survived',
+    name: 'The Reckoning Survived',
+    unlock_condition: { type: 'reckoning_completed', value: 1 },
+    narrative:
+      'You faced the Reckoning and came through the other side. The forest trusts you more now.',
+  },
+  {
+    chapter: 3,
+    entry_code: 'return_after_gap',
+    name: 'The Return',
+    unlock_condition: { type: 'return_after_days', value: 7 },
+    narrative: 'You were away for a week and you came back. The forest waited.',
+  },
+  // P6.3 FIX: Added missing ks_biggest_gain and ks_biggest_drop entries (spec: Storms chapter)
+  {
+    chapter: 3,
+    entry_code: 'ks_biggest_gain',
+    name: 'The Great Surge',
+    unlock_condition: { type: 'ks_gain_in_week', value: 10 },
+    narrative:
+      'One week, your knowledge score surged more than any other. That was a week of deep cultivation.',
+  },
+  {
+    chapter: 3,
+    entry_code: 'ks_biggest_drop',
+    name: 'The Storm That Broke Branches',
+    unlock_condition: { type: 'ks_drop_in_week', value: 5 },
+    narrative:
+      'Once, the ecosystem shook. Cards fell, stages dropped, and the forest felt it. You stayed anyway.',
+  },
+  {
+    chapter: 3,
+    entry_code: 'proficient',
+    name: 'The Proficient Path',
+    unlock_condition: { type: 'credential', value: 4 },
+    narrative:
+      'Proficiency means the path is clear even in dim light. Your knowledge guides others.',
+  },
+  {
+    chapter: 3,
+    entry_code: 'advanced',
+    name: 'The Advanced Canopy',
+    unlock_condition: { type: 'credential', value: 5 },
+    narrative: 'You climb where most cannot reach. The air is thin but the view is vast.',
+  },
+  {
+    chapter: 3,
+    entry_code: 'expert',
+    name: 'The Expert Root System',
+    unlock_condition: { type: 'credential', value: 6 },
+    narrative: 'Your roots run deeper than the questions. You see the soil, not just the surface.',
+  },
+  {
+    chapter: 3,
+    entry_code: 'sovereign',
+    name: 'The Sovereign Tree',
+    unlock_condition: { type: 'credential', value: 7 },
+    narrative: 'You are the sovereign of this knowledge. The forest belongs to you.',
+  },
+  // ── Chapter 4: Firelight ────────────────────────────────────────────────────
+  {
+    chapter: 4,
+    entry_code: 'night_scholar',
+    name: 'The Night Scholar',
+    unlock_condition: { type: 'sessions_after_midnight', value: 10 },
+    narrative: 'While the world sleeps, your mind lights candles in the dark.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'dawn_keeper',
+    name: 'The Dawn Keeper',
+    unlock_condition: { type: 'sessions_before_7am', value: 10 },
+    narrative: 'You greet knowledge before the sun greets the earth. Discipline is your dawn.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'unbroken',
+    name: 'The Unbroken',
+    unlock_condition: { type: 'consecutive_days_no_wilt', value: 30 },
+    narrative: 'Thirty days without a broken focus. Your will is forged, not found.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'preferred_length',
+    name: 'The Steady Rhythm',
+    unlock_condition: { type: 'total_sessions', value: 20 },
+    narrative: 'Twenty sessions completed. A rhythm has emerged from what was once effort.',
+  },
+  {
+    chapter: 4,
+    entry_code: 'morning_learner',
+    name: 'The Morning Mind',
+    unlock_condition: { type: 'sessions_before_noon', value: 15 },
+    narrative: 'You have given fifteen mornings to knowledge. The early hours remember you.',
+  },
+  // P6.3 FIX: Added missing productive_day entry (spec: most productive day of week — Firelight chapter)
+  {
+    chapter: 4,
+    entry_code: 'productive_day',
+    name: 'The Day That Bloomed',
+    unlock_condition: { type: 'single_day_reviews', value: 30 },
+    narrative:
+      'One day, you reviewed thirty cards in a single sitting. The forest grew faster that day than any other.',
+  },
+  // ── P8.7: Auto-earned Chronicle Artifacts (spec P8.7) — previously missing ──────
+  {
+    chapter: 3,
+    entry_code: 'thirty_day_gardener',
+    name: 'The 30-Day Gardener',
+    unlock_condition: { type: 'streak', value: 30 },
+    narrative:
+      'Thirty consecutive days of cultivation. The forest has learned to trust your hands.',
+    is_artifact: true,
+  },
+  {
+    chapter: 3,
+    entry_code: 'century_streak',
+    name: 'Century Streak',
+    unlock_condition: { type: 'streak', value: 100 },
+    narrative:
+      'One hundred days unbroken. Most gardens grow tall in years — yours grew in months.',
+    is_artifact: true,
+  },
+  {
+    chapter: 4,
+    entry_code: 'the_honest_one_artifact',
+    name: 'The Honest One',
+    unlock_condition: { type: 'again_greater_than_easy', min_sessions: 300 },
+    narrative:
+      'Three hundred sessions where truth outweighed pride. That is a rare discipline.',
+    is_artifact: true,
+  },
+  {
+    chapter: 2,
+    entry_code: 'the_polymath',
+    name: 'The Polymath',
+    unlock_condition: { type: 'subjects_above_ks', ks_threshold: 60, min_subjects: 3 },
+    narrative:
+      'Three subjects flowering above 60. The forest grows wide and deep at once.',
+    is_artifact: true,
+  },
+  // ── Chapter 5: Canopy (hidden AI discoveries — seeded locked, unlocked by D4) ──
+  {
+    chapter: 5,
+    entry_code: 'hidden_pattern_1',
+    name: '???',
+    unlock_condition: {
+      type: 'hidden_discovery',
+      trigger: 'sessions_after_midnight',
+      threshold: 12,
+    },
+    narrative: null, // Generated by D4 AI call on unlock
+    is_ai_generated: true,
+  },
+  {
+    chapter: 5,
+    entry_code: 'hidden_pattern_2',
+    name: '???',
+    unlock_condition: {
+      type: 'hidden_discovery',
+      trigger: 'reckoning_deferred_then_passed',
+      threshold: 1,
+    },
+    narrative: null,
+    is_ai_generated: true,
+  },
+  {
+    chapter: 5,
+    entry_code: 'hidden_pattern_3',
+    name: '???',
+    unlock_condition: {
+      type: 'hidden_discovery',
+      trigger: 'same_card_reviewed_many_times',
+      threshold: 25,
+    },
+    narrative: null,
+    is_ai_generated: true,
+  },
+  {
+    chapter: 5,
+    entry_code: 'hidden_pattern_4',
+    name: '???',
+    unlock_condition: {
+      type: 'hidden_discovery',
+      trigger: 'subject_resurrected_from_neglect',
+      threshold: 1,
+    },
+    narrative: null,
+    is_ai_generated: true,
+  },
+];
+
+async function seedAlmanacForUser(userId) {
+const existing = await db.almanacEntries.findByUser(userId);
+const existingCodes = new Set(existing.map((e) => e.entry_code));
+// Upsert any new definitions not yet seeded (idempotent)
+for (const def of ALMANAC_DEFINITIONS) {
+if (!existingCodes.has(def.entry_code)) {
+await db.almanacEntries.create(userId, def);
+}
+}
+return db.almanacEntries.findByUser(userId);
+}
+// P6.5: D4 Hidden Almanac Discovery — AI-generated narrative for novel behavioral patterns
+
+async function generateHiddenDiscovery(userId, entryCode, triggerType, behaviorContext) {
+const promptMap = {
+sessions_after_midnight: `The student has studied past midnight more than 12 times. They are a creature of the night hours.`,
+reckoning_deferred_then_passed: `The student once deferred their Reckoning — then returned and passed it. They retreated, but they did not flee.`,
+same_card_reviewed_many_times: `One card was reviewed 25+ times by the student. Some concepts are mountains you circle before you climb.`,
+subject_resurrected_from_neglect: `The student resurrected a neglected subject after leaving it behind. The garden was dying — and they returned.`,
+};
+const behaviorLine =
+promptMap[triggerType] || `A unique behavioral pattern was detected: ${triggerType}.`;
+const prompt = `
+ROLE
+You are the Archivist of the Kiwi Forest — an ancient, observant voice who records the hidden truths of each student\'s journey. You write with quiet authority and metaphoric depth.
+PATTERN OBSERVED
+${behaviorLine}
+ADDITIONAL CONTEXT
+${JSON.stringify(behaviorContext || {})}
+TASK
+Write a Hidden Almanac Discovery entry for this student.
+- Title: 3–6 evocative words (title case, no punctuation)
+- Narrative: exactly one paragraph, 2–4 sentences, second person, metaphoric but grounded in the actual behavior
+- Tone: contemplative, slightly archaic, never generic
+OUTPUT FORMAT (JSON only, no markdown)
+{"title": "...", "narrative": "..."}
+`;
+  try {
+    const result = await ai.run('HIDDEN_DISCOVERY', { content: prompt });
+    const raw = result.text
+      .trim()
+      .replace(/```json|```/g, '')
+      .trim();
+    const parsed = JSON.parse(raw);
+    return { title: parsed.title || '???', narrative: parsed.narrative || null };
+  } catch (e) {
+    return { title: '???', narrative: null }; // Chapter 5 waits — fallback is silence
+  }
+}
+
+async function checkAlmanacUnlocks(userId) {
+const entries = await db.almanacEntries.findByUser(userId);
+const stats = await db.userStats.get(userId);
+const unlocked = [];
+for (const entry of entries) {
+if (entry.unlocked) continue;
+let shouldUnlock = false;
+let hiddenContext = {};
+switch (entry.unlock_condition.type) {
+case 'first_review':
+shouldUnlock = (stats?.total_cards_reviewed || 0) >= 1;
+break;
+case 'streak':
+shouldUnlock = (stats?.current_streak || 0) >= entry.unlock_condition.value;
+break;
+case 'stage_reached': {
+const allCards = await db.cards.findAllForUser(userId);
+shouldUnlock = allCards.some((c) => c.stage >= entry.unlock_condition.value);
+break;
+}
+case 'verified_count': {
+const allStates = await db.cardStates.findByUser(userId);
+const verified = allStates.filter((s) => s.verified).length;
+shouldUnlock = verified >= entry.unlock_condition.value;
+break;
+}
+case 'card_count': {
+const allCards = await db.cards.findAllForUser(userId);
+shouldUnlock = allCards.length >= entry.unlock_condition.value;
+break;
+}
+case 'card_review_count': {
+// Check if any single card has been reviewed >= value times
+const allCards = await db.cards.findAllForUser(userId);
+shouldUnlock = allCards.some((c) => (c.review_count || 0) >= entry.unlock_condition.value);
+break;
+}
+case 'again_count': {
+// Use total review logs where rating === 'again'
+const allLogs = await db.reviewLogs.findByUser(userId, new Date(0)).catch(() => []);
+const againCount = allLogs.filter((l) => l.rating === 'again').length;
+shouldUnlock = againCount >= entry.unlock_condition.value;
+break;
+}
+case 'cards_advanced_in_week': {
+const weekStart = new Date();
+weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+weekStart.setHours(0, 0, 0, 0);
+const logs = await db.reviewLogs.findByUser(userId, weekStart).catch(() => []);
+const advances = logs.filter((l) => l.stage_after > l.stage_before).length;
+shouldUnlock = advances >= entry.unlock_condition.value;
+break;
+}
+case 'credential': {
+const subjects = await db.subjects.findManyWithDecks(userId);
+for (const sub of subjects) {
+const cred = await evaluateCredential(userId, sub.id);
+if (cred.tier >= entry.unlock_condition.value) {
+shouldUnlock = true;
+break;
+}
+}
+break;
+}
+case 'sessions_after_midnight': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count for almanac/gate, 2000 = practical upper bound
+);
+const count = sessions.sessions.filter((s) => {
+const h = new Date(s.started_at).getHours();
+return h >= 0 && h <= 2;
+}).length;
+shouldUnlock = count >= entry.unlock_condition.value;
+break;
+}
+case 'sessions_before_7am': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+const count = sessions.sessions.filter((s) => {
+const h = new Date(s.started_at).getHours();
+return h >= 4 && h < 7;
+}).length;
+shouldUnlock = count >= entry.unlock_condition.value;
+break;
+}
+case 'sessions_before_noon': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+const count = sessions.sessions.filter(
+(s) => new Date(s.started_at).getHours() < 12
+).length;
+shouldUnlock = count >= entry.unlock_condition.value;
+break;
+}
+case 'total_sessions':
+shouldUnlock = (stats?.total_sessions_completed || 0) >= entry.unlock_condition.value;
+break;
+case 'consecutive_days_no_wilt':
+shouldUnlock = (stats?.current_streak || 0) >= entry.unlock_condition.value;
+break;
+case 'sessions_in_one_day': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count for sessions-in-one-day almanac
+);
+const byDay = {};
+for (const s of sessions.sessions) {
+const d = new Date(s.started_at).toISOString().slice(0, 10);
+byDay[d] = (byDay[d] || 0) + 1;
+}
+shouldUnlock = Object.values(byDay).some((c) => c >= entry.unlock_condition.value);
+break;
+}
+case 'reckoning_completed': {
+const reckonings = await db.reckoningSessions.findByUser(userId).catch(() => []);
+shouldUnlock =
+reckonings.filter((r) => r.status === 'completed').length >= entry.unlock_condition.value;
+break;
+}
+case 'return_after_days': {
+// Check if user has a login gap >= value days in their history
+const userDoc = await db.users.findById(userId).catch(() => null);
+if (userDoc?.last_login_at && userDoc?.previous_login_at) {
+const gap =
+(new Date(userDoc.last_login_at) - new Date(userDoc.previous_login_at)) / 86400000;
+shouldUnlock = gap >= entry.unlock_condition.value;
+}
+break;
+}
+case 'archive_expansion_owned': {
+const inv = await db.userInventory.getItem(userId, 'archive_expansion');
+shouldUnlock = inv && inv.unlocked;
+break;
+}
+case 'seedlings_balance':
+shouldUnlock = (stats?.seedlings_balance || 0) >= entry.unlock_condition.value;
+break;
+// P6.3 FIX: New condition handlers for missing entry types
+case 'ks_gain_in_week': {
+const subjectsForKS = await db.subjects.findManyWithDecks(userId);
+for (const sub of subjectsForKS) {
+const currentKS = await computeKnowledgeScore(userId, sub.id).catch(() => ({ score: 0 }));
+const subStatDoc = await db.subjectStats.get(userId, sub.id).catch(() => null);
+const prevKS = subStatDoc?.previous_week_ks;
+if (prevKS === undefined || prevKS === null) break; // no history yet — don't unlock
+if (currentKS.score - prevKS >= entry.unlock_condition.value) {
+shouldUnlock = true;
+break;
+}
+}
+break;
+}
+case 'ks_drop_in_week': {
+const subjectsForDrop = await db.subjects.findManyWithDecks(userId);
+for (const sub of subjectsForDrop) {
+const currentKS = await computeKnowledgeScore(userId, sub.id).catch(() => ({ score: 0 }));
+const subStatDoc = await db.subjectStats.get(userId, sub.id).catch(() => null);
+const prevKS = subStatDoc?.previous_week_ks || currentKS.score;
+if (prevKS - currentKS.score >= entry.unlock_condition.value) {
+shouldUnlock = true;
+break;
+}
+}
+break;
+}
+case 'single_day_reviews': {
+const allLogsForDay = await db.reviewLogs.findByUser(userId, new Date(0)).catch(() => []);
+const dayCountMap = {};
+for (const log of allLogsForDay) {
+const d = new Date(log.reviewed_at).toISOString().slice(0, 10);
+dayCountMap[d] = (dayCountMap[d] || 0) + 1;
+}
+shouldUnlock = Object.values(dayCountMap).some((c) => c >= entry.unlock_condition.value);
+break;
+}
+// P8.7b: The Honest One — again count > easy count across min_sessions (spec P8.7)
+case 'again_greater_than_easy': {
+const minSessions = entry.unlock_condition.min_sessions || 300;
+const totalSessionsDone = stats?.total_sessions_completed || 0;
+if (totalSessionsDone < minSessions) break;
+const allLogsHonest = await db.reviewLogs
+.findByUser(userId, new Date(0))
+.catch(() => []);
+const againCnt = allLogsHonest.filter(
+(l) => l.response === 'again' || l.rating === 'again'
+).length;
+const easyCnt = allLogsHonest.filter(
+(l) => l.response === 'easy' || l.rating === 'easy'
+).length;
+shouldUnlock = againCnt > easyCnt;
+break;
+}
+// P8.7b: The Polymath — N subjects with KS >= threshold (spec P8.7)
+case 'subjects_above_ks': {
+const threshold = entry.unlock_condition.ks_threshold || 60;
+const needed = entry.unlock_condition.min_subjects || 3;
+const allSubjectsKS = await db.subjects.findManyWithDecks(userId);
+let subjectsAbove = 0;
+for (const sub of allSubjectsKS) {
+const ksData = await computeKnowledgeScore(userId, sub.id).catch(() => ({ score: 0 }));
+if (ksData.score >= threshold) subjectsAbove++;
+if (subjectsAbove >= needed) break; // short-circuit
+}
+shouldUnlock = subjectsAbove >= needed;
+break;
+}
+// P6.5: Hidden discovery conditions — Chapter 5 AI-generated entries
+case 'hidden_discovery': {
+const trigger = entry.unlock_condition.trigger;
+const threshold = entry.unlock_condition.threshold || 1;
+if (trigger === 'sessions_after_midnight') {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+const count = sessions.sessions.filter(
+(s) => new Date(s.started_at).getHours() <= 2
+).length;
+if (count >= threshold) {
+shouldUnlock = true;
+hiddenContext = { count };
+}
+} else if (trigger === 'reckoning_deferred_then_passed') {
+const reckonings = await db.reckoningSessions.findByUser(userId).catch(() => []);
+const deferredAndPassed = reckonings.filter(
+(r) => r.was_deferred && r.status === 'completed'
+);
+if (deferredAndPassed.length >= threshold) {
+shouldUnlock = true;
+hiddenContext = { count: deferredAndPassed.length };
+}
+} else if (trigger === 'same_card_reviewed_many_times') {
+const allCards = await db.cards.findAllForUser(userId);
+const mostReviewed = allCards.reduce(
+(max, c) => ((c.review_count || 0) > (max.review_count || 0) ? c : max),
+{}
+);
+if ((mostReviewed.review_count || 0) >= threshold) {
+shouldUnlock = true;
+hiddenContext = { card: mostReviewed.front, count: mostReviewed.review_count };
+}
+} else if (trigger === 'subject_resurrected_from_neglect') {
+const subjects = await db.subjects.findManyWithDecks(userId);
+for (const sub of subjects) {
+const subStat = await db.subjectStats.get(userId, sub.id).catch(() => null);
+if (subStat?.was_neglected_then_resumed) {
+shouldUnlock = true;
+hiddenContext = { subject: sub.name };
+break;
+}
+}
+}
+break;
+}
+case 'subject_ks_threshold': {
+// FIX-5: Unlock when any subject's Knowledge Score meets or exceeds threshold.
+// unlock_condition = { type: 'subject_ks_threshold', value: <0-100> }
+const ksThreshold = entry.unlock_condition.value;
+const allSubjectsForKS = await db.subjects.findManyWithDecks(userId);
+for (const sub of allSubjectsForKS) {
+const ksData = await computeKnowledgeScore(userId, sub.id).catch(() => ({ score: 0 }));
+if (ksData.score >= ksThreshold) { shouldUnlock = true; break; }
+}
+break;
+}
+case 'zone_state_reached': {
+// FIX-6: Unlock when any Biome zone reaches the specified zone_state string.
+// unlock_condition = { type: 'zone_state_reached', value: 'Neglected' | 'Thriving' | ... }
+const targetZoneState = entry.unlock_condition.value;
+const subjectsForZone = await db.subjects.findManyWithDecks(userId);
+for (const sub of subjectsForZone) {
+const subStat = await db.subjectStats.get(userId, sub.id).catch(() => null);
+if (subStat && subStat.zone_state === targetZoneState) { shouldUnlock = true; break; }
+}
+break;
+}
+} // close switch (entry.unlock_condition.type)
+if (shouldUnlock) {
+let narrative = entry.narrative;
+let entryName = entry.name;
+// P6.5: For Chapter 5 AI entries, generate narrative via D4
+if (entry.is_ai_generated) {
+const discovery = await generateHiddenDiscovery(
+userId,
+entry.entry_code,
+entry.unlock_condition.trigger,
+hiddenContext
+);
+if (discovery.narrative) {
+narrative = discovery.narrative;
+entryName = discovery.title;
+} else {
+continue; // Chapter 5 waits — do not unlock without AI narrative
+}
+}
+await db.almanacEntries.unlock(userId, entry.entry_code, narrative);
+// Update name if AI-generated
+if (entry.is_ai_generated && entryName !== '???') {
+// Migrated: Firestore where+update → pg UPDATE by (user_id, entry_code)
+await query(
+  'UPDATE almanac_entries SET name = $1 WHERE user_id = $2 AND entry_code = $3',
+  [entryName, userId, entry.entry_code]
+);
+}
+// Award seedlings for almanac unlock
+await hookSeedlingEarnings(userId, 'almanac_unlock', { entry_code: entry.entry_code }).catch(
+() => {}
+);
+unlocked.push(entry.entry_code);
+}
+}
+return unlocked;
+}
+// ── personaService ────────────────────────────────────────────────────────────
+
+async function generateWeeklyPersona(userId) {
+const weekStart = new Date();
+weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+weekStart.setHours(0, 0, 0, 0);
+const existing = await db.userPersona.get(userId);
+if (existing && new Date(existing.assigned_week_start) >= weekStart) return existing;
+const stats = await db.userStats.get(userId);
+
+// ISSUE-041 FIX: Require a minimum of 28 days of account age AND at least 10 completed
+// sessions before assigning a persona. New users return null — frontend must show nothing.
+const accountAgeMs = stats?.created_at ? Date.now() - new Date(stats.created_at).getTime() : 0;
+const accountAgeDays = accountAgeMs / 86400000;
+const totalSessions = stats?.total_sessions_completed || 0;
+if (accountAgeDays < 28 || totalSessions < 10) {
+return null; // Not enough data — persona classification deferred
+}
+// FIX-8: spec P6.6 requires last 4 weeks only
+const sessions = await db.sessions.findMany(
+userId,
+{
+session_completed: true,
+started_at_gte: new Date(Date.now() - 28 * 86400000),
+},
+{ limit: 200 }
+);
+const allStates = await db.cardStates.findByUser(userId);
+const ghostPct =
+allStates.length > 0
+? (allStates.filter((s) => s.state === CARD_STATES.GHOST).length / allStates.length) * 100
+: 0;
+const avgSessionTime =
+sessions.sessions.length > 0
+? sessions.sessions.reduce((sum, s) => sum + (s.duration_seconds || 0), 0) /
+sessions.sessions.length
+: 0;
+const personas = [
+{
+code: 'the_tide',
+label: 'The Tide',
+icon: '🌊',
+desc: 'You ebb and flow. Intense stretches followed by quiet — your rhythm is tidal, not daily.',
+},
+{
+code: 'the_storm',
+label: 'The Storm',
+icon: '⛈️',
+desc: 'You arrive suddenly and study hard. Sessions are intense, frequent, then gone — until the next front.',
+},
+{
+code: 'the_dawn',
+label: 'The Dawn',
+icon: '🌄',
+desc: 'You study in the early hours before the world wakes. Your focus is deep and solitary.',
+},
+{
+code: 'the_night',
+label: 'The Night',
+icon: '🌙',
+desc: 'The night fuels your mind. You learn when the world sleeps.',
+},
+{
+code: 'the_specialist',
+label: 'The Specialist',
+icon: '🔬',
+desc: 'One subject, one obsession. You go deep rather than wide.',
+},
+{
+code: 'the_resilient',
+label: 'The Resilient',
+icon: '🌱',
+desc: 'You stumble, but you never stop. Reckoning, gaps, hard weeks — you return every time.',
+},
+{
+code: 'the_honest_one',
+label: 'The Honest One',
+icon: '🪞',
+desc: 'You press Again when you should. No inflated streaks, no easy ratings. Just truth.',
+},
+{
+code: 'the_avoider',
+label: 'The Avoider',
+icon: '🌫️',
+desc: 'Certain cards keep getting pushed to the bottom. The pattern is known — the question is when you face it.',
+},
+];
+let selected = personas[Math.floor(Math.random() * personas.length)];
+// Rule-based fallback
+const hourCounts = {};
+for (const s of sessions.sessions) {
+const h = new Date(s.started_at).getHours();
+hourCounts[h] = (hourCounts[h] || 0) + 1;
+}
+let maxHour = -1,
+maxCount = 0;
+for (const [h, c] of Object.entries(hourCounts)) {
+if (c > maxCount) {
+maxCount = c;
+maxHour = parseInt(h);
+}
+}
+if (maxHour >= 4 && maxHour < 7)
+selected = personas.find((p) => p.code === 'the_dawn') || selected;
+else if (maxHour >= 0 && maxHour <= 2)
+selected = personas.find((p) => p.code === 'the_night') || selected;
+else if (avgSessionTime > 600) selected = personas.find((p) => p.code === 'the_tide') || selected;
+else if (avgSessionTime < 180)
+selected = personas.find((p) => p.code === 'the_storm') || selected;
+else if (ghostPct < 5) selected = personas.find((p) => p.code === 'the_honest_one') || selected;
+// B14: Full AI-driven classification with extensive behavioral data
+try {
+const verifiedCards = allStates.filter((s) => s.verified).length;
+const stuckCards = allStates.filter((s) => s.state === 'STUCK').length;
+const avoidedCards = allStates.filter((s) => s.state === 'AVOIDED').length;
+const subjectCount = (await db.subjects.findManyWithDecks(userId)).length;
+const totalMastered = stats?.total_cards_mastered || 0;
+const reckonings = await db.reckoningSessions.findByUser(userId).catch(() => []);
+const shieldsUsed = (stats?.streak_shields_earned || 0) - (stats?.streak_shields_held || 0);
+const prompt = `
+ROLE
+You are a behavioral learning analyst who classifies students into precise study personas.
+BEHAVIORAL DATA
+- Total sessions completed: ${sessions.sessions.length}
+- Average session duration (seconds): ${Math.round(avgSessionTime)}
+- Longest single session: ${Math.max(0, ...sessions.sessions.map((s) => s.duration_seconds || 0))}s
+- Ghost card %: ${ghostPct.toFixed(1)}
+- Avoided cards count: ${avoidedCards}
+- Verified (exam-tested) cards: ${verifiedCards}
+- Stuck cards: ${stuckCards}
+- Current streak: ${stats?.current_streak || 0}
+- Total cards mastered: ${totalMastered}
+- Number of subjects: ${subjectCount}
+- Peak study hour: ${maxHour >= 0 ? maxHour + ':00' : 'unknown'}
+- Fruitings achieved: ${sessions.sessions.filter((s) => s.fruiting_achieved).length}
+- Reckonings faced: ${reckonings.length} (survived: ${reckonings.filter((r) => r.status === 'completed').length})
+- Streak shields used: ${shieldsUsed}
+PERSONAS AVAILABLE
+${personas.map((p) => p.code + ': ' + p.desc).join('\n')}
+INSTRUCTIONS
+Analyse the behavioral data holistically. Select the ONE persona code that best describes this student\'s dominant pattern.
+Return ONLY the persona code — no explanation, no punctuation.
+`;
+    const result = await ai.run('WEEKLY_PERSONA', { content: prompt });
+    const code = result.text.trim().toLowerCase();
+    const found = personas.find((p) => p.code === code);
+    if (found) selected = found;
+  } catch (e) {
+    // keep rule-based selection from above
+  }
+  const persona = await db.userPersona.create(userId, {
+    persona_code: selected.code,
+    persona_label: selected.label,
+    persona_icon: selected.icon,
+    persona_description: selected.desc,
+    assigned_week_start: weekStart,
+  });
+  return persona;
+}
+// ── weeklyAnchor ──────────────────────────────────────────────────────────────
+
+async function getWeeklyAnchor(userId) {
+// M-7 FIX: Rate limit moved below cache check — should gate Gemini only, not cached reads
+const now = new Date();
+const weekStart = new Date(now);
+// H-7 FIX: Monday-based week key — aligns with Chronicle (FIX-10) and spec week definition
+weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+weekStart.setHours(0, 0, 0, 0);
+const weekStr = weekStart.toISOString().split('T')[0];
+// P6.7 FIX: Return cached anchor if it exists for this week
+const cached = await db.dailyRitualCache.get(userId, 'weekly_anchor', weekStr).catch(() => null);
+if (cached?.data) return cached.data;
+// P6.7 FIX: Gather spec-required inputs for C2 AI call
+const subjects = await db.subjects.findManyWithDecks(userId).catch(() => []);
+const pressures = await db.brainPressure.findByUser(userId).catch(() => []);
+// Subject with biggest KS-to-credential gap
+let biggestGapSubject = null;
+let biggestGap = -1;
+for (const sub of subjects) {
+try {
+const ks = await computeKnowledgeScore(userId, sub.id);
+const cred = await evaluateCredential(userId, sub.id);
+// Normalize: KS is 0-100, credential tier is 0-7 (scaled to 0-100)
+const credNormalized = (cred.tier / 7) * 100;
+const gap = ks.score - credNormalized;
+if (gap > biggestGap) {
+biggestGap = gap;
+biggestGapSubject = { name: sub.name, ks: ks.score, credential: cred.name };
+}
+} catch (e) {}
+}
+// Highest pressure subject
+const highestPressure = pressures.sort(
+(a, b) => (b.pressure_score || 0) - (a.pressure_score || 0)
+)[0];
+const highPressureSubject = highestPressure
+? subjects.find((s) => s.id === highestPressure.subject_id)?.name || 'Unknown'
+: null;
+// Previous anchor for continuity
+const prevAnchorCache = await db.dailyRitualCache
+.get(userId, 'weekly_anchor', 'prev')
+.catch(() => null);
+const prevAnchorText = prevAnchorCache?.data?.anchor_text || null;
+// This week's chronicle
+const latestChronicle = await db.chronicleEntries.findLatest(userId).catch(() => null);
+// P6.7 FIX: Gemini C2 call
+// M-7 FIX: Rate limit applied here only — after cache check, so cached value always served
+let anchorText;
+try {
+if (checkAIRateLimit(userId, 'weekly_anchor', 5)) {
+throw new Error('AI_RATE_LIMITED');
+}
+const prompt = `
+ROLE
+You are The Brain of the Kiwi ecosystem — an advisor who provides a single weekly focus directive. You are precise, direct, and never vague.
+INPUTS
+Subject with biggest KS-to-credential gap: ${biggestGapSubject ? `${biggestGapSubject.name} (KS: ${biggestGapSubject.ks.toFixed(1)}, Credential: ${biggestGapSubject.credential})` : 'None'}
+Highest pressure subject: ${highPressureSubject || 'None'} (pressure: ${highestPressure?.pressure_score || 0})
+Previous week's anchor: ${prevAnchorText || 'None'}
+This week's Chronicle excerpt: ${latestChronicle ? (latestChronicle.narrative || '').slice(0, 200) : 'None'}
+TASK
+Write exactly 3 sentences naming the single most important focus for this week.
+- Sentence 1: Name the subject and the specific gap or pressure to address.
+- Sentence 2: Give a concrete, actionable target (e.g., "Take 2 exams this week" or "Review 20 STUCK cards before Thursday").
+- Sentence 3: One sentence of honest encouragement — not generic.
+Tone: direct, confident, warm.
+Return only the 3 sentences.
+`;
+    const result = await ai.run('WEEKLY_ANCHOR', { content: prompt });
+    anchorText = result.text.trim();
+  } catch (_) {
+    // P6.7 Fallback: derived from highest-pressure subject or KS gap
+    if (biggestGapSubject) {
+      anchorText = `This week: close the gap in ${biggestGapSubject.name}. Your KS is ${biggestGapSubject.ks.toFixed(0)} but your credential hasn\'t caught up — take an exam. Every verified card is evidence, not assumption.`;
+    } else if (highPressureSubject) {
+      anchorText = `This week: address the pressure building in ${highPressureSubject}. Review the flagged cards before the Brain escalates. Pressure is not failure — it is a signal.`;
+    } else {
+      anchorText =
+        'This week: one consistent session every day. The forest grows by showing up, not by intensity alone.';
+    }
+  }
+  // P6.7 FIX: Persist to daily_ritual_cache (keyed by weekStr so it lasts all week)
+  const anchorPayload = {
+    week: weekStr,
+    anchor_text: anchorText,
+    generated_at: new Date().toISOString(),
+    focus_subject: biggestGapSubject?.name || highPressureSubject || null,
+  };
+  await db.dailyRitualCache.set(userId, 'weekly_anchor', weekStr, anchorPayload).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  // Also store under 'prev' for next week's continuity
+  await db.dailyRitualCache.set(userId, 'weekly_anchor', 'prev', anchorPayload).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  return anchorPayload;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PHASE 7 — Daily Ritual
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── Morning Brief (A1) ──────────────────────────────────────────────────────
+
+async function getMorningBrief(userId) {
+const todayStr = new Date().toISOString().split('T')[0];
+const cached = await db.dailyRitualCache.get(userId, 'morning_brief', todayStr);
+if (cached) return cached.data;
+const stats = await db.userStats.get(userId);
+const subjects = await db.subjects.findManyWithDecks(userId);
+// New user with no subjects yet — return a welcome prompt instead of AI-generated brief
+if (!subjects || subjects.length === 0) {
+  const welcomeBrief = "Welcome to KIWI! Start by creating your first subject and adding flashcards — your personalised daily briefing will appear here once you begin studying.";
+  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, welcomeBrief).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  return welcomeBrief;
+}
+const now = new Date();
+const dueCards = [];
+for (const sub of subjects) {
+const decks = await db.decks.findBySubject(userId, sub.id);
+for (const deck of decks) {
+const cards = await db.cards.findByDeck(userId, deck.id);
+dueCards.push(...cards.filter((c) => isCardDue(c, now)));
+}
+}
+const pressureList = await db.brainPressure.findByUser(userId);
+const maxPressure =
+pressureList.length > 0
+? pressureList.reduce(
+(max, p) => (p.pressure_score > max.pressure_score ? p : max),
+pressureList[0]
+)
+: null;
+const allBriefStates = await db.cardStates.findByUser(userId);
+const briefDangerous = allBriefStates.filter((s) => s.state === 'DANGEROUS').length;
+const briefGhost = allBriefStates.filter((s) => s.state === 'GHOST').length;
+const briefStuck = allBriefStates.filter((s) => s.state === 'STUCK').length;
+const activeReckForBrief = await db.reckoningSessions.findActiveByUser(userId);
+const recentAchievements = await db.userAchievements.findManyWithAchievement(userId);
+const newAchievementsToday = recentAchievements
+.filter((ua) => ua.unlocked_at && daysSince(ua.unlocked_at) < 1)
+.map((ua) => ua.achievement?.name || '')
+.filter(Boolean)
+.slice(0, 2);
+// P7.1 FIX: Add missing spec inputs — shields, verified this week, neglected subjects, exam dates
+const shieldsHeld = stats?.streak_shields_held || 0;
+const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+const verifiedThisWeek = allBriefStates.filter(
+(s) => s.state === 'VERIFIED' && s.verified_at && new Date(s.verified_at) >= weekAgo
+).length;
+const neglectedSubjects = [];
+const upcomingExams = [];
+const perSubjectKSLines = [];
+for (const sub of subjects) {
+const subStats = await db.subjectStats.get(userId, sub.id).catch(() => null);
+if (subStats?.last_session_date) {
+const daysSinceSession = daysSince(subStats.last_session_date);
+if (daysSinceSession >= 14) neglectedSubjects.push(sub.name);
+}
+if (sub.exam_date) {
+const daysToExam = Math.ceil((new Date(sub.exam_date) - now) / (1000 * 60 * 60 * 24));
+// H-2 FIX: Align exam collection window to 7 days — matches prompt rule ("within 7 days")
+if (daysToExam >= 0 && daysToExam <= 7) {
+upcomingExams.push(`${sub.name} in ${daysToExam}d`);
+}
+}
+// H-1 FIX: Per-subject KS for prompt
+const subKS = await computeKnowledgeScore(userId, sub.id, allBriefStates).catch(() => ({ score: 0 })); // Fix #23
+perSubjectKSLines.push(`${sub.name}: ${Math.round(subKS.score)}`);
+}
+// H-1 FIX: Global KS
+const globalKSForBrief = await computeKnowledgeScore(userId, null, allBriefStates).catch(() => ({ score: 0, band: 'Seed' })); // Fix #23
+// H-1 FIX: Yesterday's session summary
+const yesterdayForBrief = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+const yesterdaySessionsResult = await db.sessions
+.findMany(userId, { session_completed: true, started_at_gte: yesterdayForBrief }, { limit: 20 })
+.catch(() => ({ sessions: [] }));
+const yesterdayCards = (yesterdaySessionsResult.sessions || [])
+.reduce((sum, s) => sum + (s.cards_reviewed || 0), 0);
+const yesterdaySummary = yesterdayCards > 0
+? `Reviewed ${yesterdayCards} cards across ${yesterdaySessionsResult.sessions.length} session(s)`
+: 'No completed sessions yesterday';
+// H-1 FIX: Subjects with 5+ STUCK or AVOIDED cards (spec: "subjects with 5+ STUCK/AVOIDED cards")
+const stuckCountBySubject = {};
+const avoidedCountBySubject = {};
+for (const st of allBriefStates) {
+if (st.state === 'STUCK') stuckCountBySubject[st.subject_id] = (stuckCountBySubject[st.subject_id] || 0) + 1;
+if (st.state === 'AVOIDED') avoidedCountBySubject[st.subject_id] = (avoidedCountBySubject[st.subject_id] || 0) + 1;
+}
+const urgentStagnantSubjects = subjects
+.filter(s => ((stuckCountBySubject[s.id] || 0) + (avoidedCountBySubject[s.id] || 0)) >= 5)
+.map(s => `${s.name} (${(stuckCountBySubject[s.id] || 0) + (avoidedCountBySubject[s.id] || 0)} stagnant)`);
+// H-1 FIX: Last Reckoning result
+const allReckoningsForBrief = await db.reckoningSessions.findByUser(userId).catch(() => []);
+const lastFinishedReckoning = allReckoningsForBrief
+.find(r => r.status === 'completed' || r.status === 'failed');
+const lastReckoningLine = lastFinishedReckoning
+? `${lastFinishedReckoning.status === 'completed' ? 'Survived' : 'Failed'} Reckoning in ${lastFinishedReckoning.subject_name || 'a subject'} (score: ${lastFinishedReckoning.score_pct || 0}%)`
+: 'None';
+  // PB.17: Gather bubble context for morning brief [DESIGN: §15.3, §16.3]
+  let bubbleContext = '';
+  try {
+    const activeBubbles = await db.masteryGoals.findActive(userId);
+    if (activeBubbles.length > 0) {
+      const bubbleLines = activeBubbles.map((g) => {
+        const daysToExam = g.exam_date
+          ? Math.max(0, Math.ceil((new Date(g.exam_date) - new Date()) / 86400000))
+          : '?';
+        const contractInfo = g.daily_contract_cards
+          ? `${g.daily_contract_cards} cards (${g.daily_contract_minutes || '?'} min)`
+          : 'contract pending';
+        return `  - ${g.name || g.subject_id}: ${g.phase} phase, KS=${(g.current_ks || 0).toFixed(1)}, ` +
+               `${g.trajectory_status}, ${daysToExam}d to exam, today: ${contractInfo}`;
+      });
+      const stallWarnings = activeBubbles
+        .filter((g) => g.stall_active)
+        .map((g) => `  ⚠ STALL in ${g.name || g.subject_id}: ${g.stall_cause || 'diagnosing'}`);
+      bubbleContext = '\nACTIVE MASTERY GOALS\n' + bubbleLines.join('\n');
+      if (stallWarnings.length > 0) {
+        bubbleContext += '\nSTALL ALERTS\n' + stallWarnings.join('\n');
+      }
+    }
+  } catch (_e) { /* non-fatal — morning brief works without bubble context */ }
+const prompt = `
+ROLE
+You are the KIWI Morning Guide — a warm, personalised narrator who delivers a 3-sentence daily briefing directly to the student in second person (you/your).
+INPUT
+- Global Knowledge Score: ${Math.round(globalKSForBrief.score)} / 100 (${globalKSForBrief.band || 'Seed'})
+- Per-subject KS: ${perSubjectKSLines.join(' | ') || 'none'}
+- Streak: ${stats?.current_streak || 0} days (shields held: ${shieldsHeld})
+- Due cards today: ${dueCards.length}
+- Total subjects: ${subjects.length}
+- Dangerous cards (exam urgent): ${briefDangerous}
+- Ghost cards (dormant): ${briefGhost}
+- Stuck cards: ${briefStuck}
+- Cards verified this week: ${verifiedThisWeek}
+- Subjects with 5+ stagnant cards: ${urgentStagnantSubjects.join(', ') || 'none'}
+- Neglected subjects (14+ days idle): ${neglectedSubjects.join(', ') || 'none'}
+- Upcoming exams (within 7 days): ${upcomingExams.join(', ') || 'none'}
+- Yesterday's activity: ${yesterdaySummary}
+- Highest pressure subject: ${maxPressure ? maxPressure.intervention_level + ' (' + maxPressure.pressure_score + ' pts)' : 'None'}
+- Active Reckoning: ${activeReckForBrief ? 'YES — ' + activeReckForBrief.subject_name : 'None'}
+- Last Reckoning result: ${lastReckoningLine}
+- Achievements unlocked today: ${newAchievementsToday.join(', ') || 'none'}
+${bubbleContext}
+RULES
+- Exactly 3 sentences. Always address the student directly in second person (you/your). Never write in third person.
+- Sentence 1: Greeting + due-card count; mention dangerous/ghost cards or upcoming exams if present.
+- Sentence 2: If active Reckoning, warn about it. If upcoming exam within 7 days, name it. Otherwise name the highest-pressure or most stagnant subject.
+- Sentence 3: One specific, actionable encouragement naming a concrete next step tied to the data above.
+- If new achievements were earned today, weave one in naturally.
+- Never mention "AI", "algorithm", or technical terms.
+- Tone: warm, slightly mystical, concise.
+OUTPUT
+Return only the 3 sentences.
+`;
+  const result = await ai.run('MORNING_BRIEF', { content: prompt });
+  const brief = result.text.trim();
+  await db.dailyRitualCache.set(userId, 'morning_brief', todayStr, brief);
+  return brief;
+}
+// ── Daily Invitations (A2) ─────────────────────────────────────────────────
+
+// P7-01 FIX: helper to derive visible action label from action_type
+function invitationActionLabel(actionType) {
+if (actionType === 'exam') return 'Enter Exam Hall →';
+if (actionType === 'review_specific_cards') return 'Review These Cards →';
+return 'Start Study Session →';
+}
+
+async function enrichInvitationCompletion(userId, invitations, todayStr, timezoneOffsetMinutes = 0) {
+const [year, month, day] = todayStr.split('-').map(Number);
+const start = new Date(Date.UTC(year, month - 1, day) + Number(timezoneOffsetMinutes || 0) * 60000);
+const end = new Date(start.getTime() + 86400000);
+const [sessionResult, examsResult, reviews, decksResult] = await Promise.all([
+db.sessions.findMany(userId, { session_completed: true, started_at_gte: start }, { limit: 200 }).catch(() => ({ sessions: [] })),
+db.examSessions.findMany(userId, { status: 'completed', started_at_gte: start }, { limit: 100 }).catch(() => []),
+db.reviewLogs.findByUser(userId, start).catch(() => []),
+db.decks.findMany(userId).catch(() => ({ decks: [] })),
+]);
+const sessions = (sessionResult?.sessions || [])
+.filter((session) => new Date(session.ended_at || session.started_at) < end);
+const exams = (Array.isArray(examsResult) ? examsResult : (examsResult?.exams || []))
+.filter((exam) => new Date(exam.completed_at || exam.ended_at || exam.started_at) < end);
+const decks = decksResult?.decks || decksResult || [];
+const deckSubjects = new Map(decks.map((deck) => [deck.id, deck.subject_id]));
+const reviewsInDay = reviews.filter((review) => new Date(review.reviewed_at || review.created_at) < end);
+const reviewedCards = new Set(reviewsInDay.map((review) => review.card_id));
+
+return (invitations || []).map((invitation) => {
+let completed = false;
+let completedAt = null;
+if (invitation.action_type === 'exam') {
+const match = exams.find((exam) => !invitation.subject_id || exam.subject_id === invitation.subject_id);
+completed = !!match;
+completedAt = match?.completed_at || match?.ended_at || null;
+} else if (invitation.action_type === 'review_specific_cards') {
+const targets = Array.isArray(invitation.card_ids) ? invitation.card_ids : [];
+completed = targets.length > 0 && targets.every((cardId) => reviewedCards.has(cardId));
+if (completed) completedAt = reviewsInDay.filter((review) => targets.includes(review.card_id)).sort((a, b) => new Date(b.reviewed_at) - new Date(a.reviewed_at))[0]?.reviewed_at || null;
+} else {
+const match = sessions.find((session) => {
+const sessionSubject = session.subject_id || deckSubjects.get(session.deck_id) || null;
+return sessionIsMeaningful(session) && (!invitation.subject_id || sessionSubject === invitation.subject_id);
+});
+completed = !!match;
+completedAt = match?.ended_at || null;
+}
+return { ...invitation, completed, completed_at: completedAt };
+});
+}
+
+async function getDailyInvitations(userId, requestedDate = null, timezoneOffsetMinutes = 0) {
+const serverToday = new Date().toISOString().split('T')[0];
+const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedDate || ''));
+const requestedTime = isValidDate ? new Date(`${requestedDate}T12:00:00.000Z`).getTime() : NaN;
+const todayStr = Number.isFinite(requestedTime) && Math.abs(requestedTime - Date.now()) <= 36 * 3600000
+? requestedDate
+: serverToday;
+const safeTimezoneOffset = Math.max(-840, Math.min(840, Number(timezoneOffsetMinutes) || 0));
+const cached = await db.dailyRitualCache.get(userId, 'daily_invitations', todayStr);
+// Older cached invitation shapes are regenerated once so completion contracts
+// and stable IDs are available immediately after this release.
+if (cached && Array.isArray(cached.data) && cached.data.every((item) => item?.completion && item?.id)) {
+const enriched = await enrichInvitationCompletion(userId, cached.data, todayStr, safeTimezoneOffset);
+await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, enriched).catch(() => {});
+return enriched;
+}
+const subjects = await db.subjects.findManyWithDecks(userId);
+const pressureList = await db.brainPressure.findByUser(userId);
+// Load user stats for streak and study-history context.
+const userStatsRow = await db.userStats.get(userId).catch(() => null);
+// B15: AI-generated invitations with specific card names and situations
+const invitations = [];
+// Gather rich context for AI
+const activeReckoning = await db.reckoningSessions.findActiveByUser(userId);
+const allCardStatesForInv = await db.cardStates.findByUser(userId);
+let totalDue = 0;
+for (const subject of subjects) {
+const decks = await db.decks.findBySubject(userId, subject.id).catch(() => []);
+for (const deck of decks) {
+const cards = await db.cards.findByDeck(userId, deck.id).catch(() => []);
+totalDue += cards.filter((card) => isCardDue(card)).length;
+}
+}
+const dangerousCardStates = allCardStatesForInv
+.filter((s) => s.state === 'DANGEROUS')
+.slice(0, 3);
+const ghostCardStates = allCardStatesForInv.filter((s) => s.state === 'GHOST').slice(0, 3);
+const stuckCardStates = allCardStatesForInv.filter((s) => s.state === 'STUCK').slice(0, 3);
+// Resolve card front texts for named cards
+async function getCardFronts(states, limit = 2) {
+const names = [];
+for (const st of states.slice(0, limit)) {
+try {
+const c = await db.cards.findById(userId, st.card_id);
+if (c) names.push(`"${(c.front_content || '').slice(0, 60)}"`);
+} catch (e) {}
+}
+return names;
+}
+const dangerousFronts = await getCardFronts(dangerousCardStates);
+const ghostFronts = await getCardFronts(ghostCardStates);
+const stuckFronts = await getCardFronts(stuckCardStates);
+// H-5 FIX: Load recently dismissed invitations — spec input "yesterday's dismissed invitations"
+const yesterdayStrForDismiss = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+const dismissHistoryDoc = await db.dailyRitualCache
+.get(userId, 'dismissal_history', 'persistent')
+.catch(() => null);
+const recentDismissedLines = ((dismissHistoryDoc?.data) || [])
+.filter(d => d.date >= yesterdayStrForDismiss)
+.map(d => {
+const subName = d.subject_id
+? (subjects.find(s => s.id === d.subject_id)?.name || d.subject_id)
+: null;
+return subName ? `${d.action_type} for ${subName}` : d.action_type;
+});
+const dismissedContext = recentDismissedLines.length > 0
+? recentDismissedLines.join(', ')
+: 'none';
+const maxPressure =
+pressureList.length > 0
+? pressureList.reduce(
+(max, p) => (p.pressure_score > max.pressure_score ? p : max),
+pressureList[0]
+)
+: null;
+const highPressureSubject = maxPressure
+? subjects.find((s) => s.id === maxPressure.subject_id)
+: null;
+// G6: Gather at-risk Bubble context for Bubble-specific invitations [DESIGN: §15.2, §15.3]
+let urgentBubbles = [];
+let bubblePromptContext = '';
+try {
+  const activeBubbles = await db.masteryGoals.findActive(userId).catch(() => []);
+  urgentBubbles = activeBubbles.filter((b) =>
+    ['BEHIND', 'CRITICAL', 'RESCUE'].includes(b.trajectory_status) || b.stall_active
+  );
+  if (urgentBubbles.length > 0) {
+    const lines = urgentBubbles.map((b) => {
+      const daysToExam   = b.exam_date
+        ? Math.max(0, Math.ceil((new Date(b.exam_date) - new Date()) / 86400000))
+        : '?';
+      const contractInfo = b.daily_contract_cards
+        ? `${b.daily_contract_cards} cards due (${b.daily_contract_minutes || '?'} min)`
+        : 'contract pending';
+      const stallNote    = b.stall_active
+        ? `, STALL active (${b.stall_cause || 'diagnosing'})`
+        : '';
+      return `  - "${b.name || 'Exam Goal'}": ${b.trajectory_status}, ${daysToExam}d to exam, ${contractInfo}${stallNote}`;
+    });
+    bubblePromptContext = '\n- Exam goals behind pace (must be mentioned in at least one invitation):\n' +
+      lines.join('\n');
+  }
+} catch (_e) { /* non-fatal — invitations work without Bubble context */ }
+// P7.2 FIX: Reckoning invitation always first if active — updated to spec shape
+if (activeReckoning) {
+invitations.push({
+title: 'The Reckoning Awaits',
+context: `${activeReckoning.flagged_card_count} cards have been flagged in ${activeReckoning.subject_name}. The forest holds its breath.`,
+action_type: 'exam',
+subject_id: activeReckoning.subject_id || null,
+card_ids: [],
+dismissed: false,
+action: invitationActionLabel('exam'),
+});
+}
+// AI generates the remaining 2 (or 3 if no reckoning) invitations
+const needed = 3 - invitations.length;
+try {
+// P7.2 FIX: Updated prompt to request spec-compliant shape and action_types
+// Include streak and card counts so invitations reference current reality.
+const totalCards      = allCardStatesForInv.length;
+const totalDangerous  = allCardStatesForInv.filter((s) => s.state === 'DANGEROUS').length;
+const totalGhost      = allCardStatesForInv.filter((s) => s.state === 'GHOST').length;
+const totalStuck      = allCardStatesForInv.filter((s) => s.state === 'STUCK').length;
+const userStreak      = userStatsRow?.current_streak  || 0;
+const allSubjectNames = subjects.map((s) => s.name).join(', ') || 'none';
+const aiPrompt = `
+ROLE
+You are KIWI\'s invitation generator. Create ${needed} specific, motivating daily study invitations.
+STUDENT CONTEXT (real data — use these exact numbers and names in your invitations)
+- Current streak: ${userStreak} day(s)
+- Total cards in the forest: ${totalCards} | Cards due today: ${totalDue}
+- Dangerous cards (${totalDangerous} total; exam approaching, stage 1-2): ${dangerousFronts.join(', ') || 'none'}
+- Ghost cards (${totalGhost} total; stage 5, overdue 20+ days): ${ghostFronts.join(', ') || 'none'}
+- Stuck cards (${totalStuck} total; no progress in 14 days): ${stuckFronts.join(', ') || 'none'}
+- Highest-pressure subject: ${highPressureSubject?.name || 'none'}
+- All subjects: ${allSubjectNames}
+- Recently dismissed invitations (do not repeat): ${dismissedContext}
+${bubblePromptContext}
+RULES
+- Each invitation must name a SPECIFIC card or subject from the context above.
+- If any exam goals are listed above as behind pace, at least one invitation MUST reference that goal by name, its contract card count, and its trajectory status.
+- Invitations should feel like gentle but urgent nudges from the forest.
+- action_type must be one of: study_session | exam | review_specific_cards
+- title: short imperative (3-6 words). context: 1 sentence of honest urgency.
+- If a subject is named, include it as target_subject_name.
+- Total of ${needed} invitations.
+- Return ONLY valid JSON array: [{"title":"...","context":"...","action_type":"study_session|exam|review_specific_cards","target_subject_name":"..."}]
+`;
+    const aiResult = await ai.run('DAILY_INVITATIONS', { content: aiPrompt });
+    // H-4 FIX: Robust JSON extraction — slice from first [ to last ] to survive preambles/fences
+    const rawAiText = aiResult.text;
+    const jsonStartIdx = rawAiText.indexOf('[');
+    const jsonEndIdx = rawAiText.lastIndexOf(']');
+    const aiText = (jsonStartIdx !== -1 && jsonEndIdx > jsonStartIdx)
+      ? rawAiText.slice(jsonStartIdx, jsonEndIdx + 1)
+      : rawAiText.replace(/```[a-zA-Z]*|```/g, '').trim();
+    const aiInvs = JSON.parse(aiText);
+    for (const inv of aiInvs.slice(0, needed)) {
+      // H-3 FIX: Case-insensitive, trimmed matching — Gemini often returns different casing
+      const targetSubject = subjects.find(
+        (s) => s.name.toLowerCase() === (inv.target_subject_name || '').toLowerCase().trim()
+      );
+      // Resolve card_ids for review_specific_cards action type
+      let cardIds = [];
+      if (inv.action_type === 'review_specific_cards' && targetSubject) {
+        const relevantStates = allCardStatesForInv
+          .filter((s) => s.subject_id === targetSubject.id &&
+            ['DANGEROUS', 'GHOST', 'STUCK', 'AVOIDED'].includes(s.state))
+          .slice(0, 5);
+        cardIds = relevantStates.map((s) => s.card_id);
+      }
+      invitations.push({
+        title: inv.title || 'Tend Your Cards',
+        context: inv.context || 'Your weakest cards need attention today.',
+        action_type: ['study_session', 'exam', 'review_specific_cards'].includes(inv.action_type)
+          ? inv.action_type
+          : 'study_session',
+        subject_id: targetSubject?.id || null,
+        card_ids: cardIds,
+        dismissed: false,
+        action: invitationActionLabel(
+          ['study_session', 'exam', 'review_specific_cards'].includes(inv.action_type)
+            ? inv.action_type
+            : 'study_session'
+        ),
+      });
+    }
+    // C-5 FIX: Pad to 3 if AI returned fewer items than needed (partial/trimmed response)
+    while (invitations.length < 3) {
+      invitations.push({
+        title: 'Open the Forest',
+        context: 'Spend 10 minutes reviewing your weakest cards. Small steps build forests.',
+        action_type: 'study_session',
+        subject_id: null,
+        card_ids: [],
+        dismissed: false,
+        action: invitationActionLabel('study_session'),
+      });
+    }
+  } catch (_) {
+    // P7.2 FIX: Fallback now uses spec-compliant shape
+    if (dangerousFronts.length > 0 && invitations.length < 3) {
+      invitations.push({
+        title: 'Danger Cards Due',
+        context: `${dangerousFronts[0]} is stage 1-2 with an exam approaching. Review it now.`,
+        action_type: 'review_specific_cards',
+        subject_id: dangerousCardStates[0]?.subject_id || null,
+        card_ids: dangerousCardStates.slice(0, 3).map((s) => s.card_id),
+        dismissed: false,
+        action: invitationActionLabel('review_specific_cards'),
+      });
+    }
+    if (ghostFronts.length > 0 && invitations.length < 3) {
+      invitations.push({
+        title: 'A Ghost Stirs',
+        context: `${ghostFronts[0]} has been ignored for 20+ days past its due date. Bring it back before it fades.`,
+        action_type: 'review_specific_cards',
+        subject_id: ghostCardStates[0]?.subject_id || null,
+        card_ids: ghostCardStates.slice(0, 3).map((s) => s.card_id),
+        dismissed: false,
+        action: invitationActionLabel('review_specific_cards'),
+      });
+    }
+    if (highPressureSubject && invitations.length < 3) {
+      invitations.push({
+        title: `Tend ${highPressureSubject.name}`,
+        context: `Pressure is rising in ${highPressureSubject.name}. A study session will help the forest breathe.`,
+        action_type: 'study_session',
+        subject_id: highPressureSubject.id,
+        card_ids: [],
+        dismissed: false,
+        action: invitationActionLabel('study_session'),
+      });
+    }
+      // G6: Bubble-specific fallback invitation [DESIGN: §15.3]
+      if (urgentBubbles.length > 0 && invitations.length < 3) {
+        const ub          = urgentBubbles[0];
+        const ubSubject   = subjects.find((s) => s.id === ub.subject_id);
+        const statusLabel = ub.rescue_active ? 'RESCUE' : (ub.trajectory_status || 'BEHIND');
+        invitations.push({
+          title:       ub.stall_active ? 'Break the Stall' : `${statusLabel} — Act Now`,
+          context:     ub.stall_active
+            ? `"${ub.name || 'Your exam goal'}" is stalling — studying but not advancing. Complete today's ${ub.daily_contract_cards || '?'} contract cards to break it.`
+            : `"${ub.name || 'Your exam goal'}" is ${statusLabel} with ${ub.daily_contract_cards || '?'} cards due today. Complete the contract to restore trajectory.`,
+          action_type: 'study_session',
+          subject_id:  ubSubject?.id || ub.subject_id || null,
+          card_ids:    [],
+          dismissed:   false,
+          action:      invitationActionLabel('study_session'),
+        });
+      }
+    while (invitations.length < 3) {
+      invitations.push({
+        title: 'Open the Forest',
+        context: 'Spend 10 minutes reviewing your weakest cards. Small steps build forests.',
+        action_type: 'study_session',
+        subject_id: null,
+        card_ids: [],
+        dismissed: false,
+        action: invitationActionLabel('study_session'),
+      });
+    }
+  }
+  // Keep invitations deterministic, actionable, and honest about what completing
+  // them changes.  The AI may write the invitation, but it may not invent the
+  // completion contract or the pressure outcome.
+  const normalizedInvitations = invitations.slice(0, 3).map((invitation, index) => {
+    const subject = invitation.subject_id
+      ? subjects.find((item) => item.id === invitation.subject_id)
+      : null;
+    const pressure = invitation.subject_id
+      ? pressureList.find((item) => item.subject_id === invitation.subject_id)
+      : null;
+    const cardCount = Array.isArray(invitation.card_ids) ? invitation.card_ids.length : 0;
+    const priority = invitation.action_type === 'exam' || pressure?.intervention_level === 'L4'
+      ? 'critical'
+      : cardCount > 0 || ['L2', 'L3'].includes(pressure?.intervention_level)
+        ? 'important'
+        : 'steady';
+    const completion = invitation.action_type === 'exam'
+      ? 'Complete the required exam and submit every answer.'
+      : invitation.action_type === 'review_specific_cards'
+        ? `Review ${cardCount || 'the'} targeted card${cardCount === 1 ? '' : 's'} once each.`
+        : 'Complete one meaningful session: at least 5 unique cards and 5 active minutes.';
+
+    return {
+      ...invitation,
+      id: `${todayStr}:${invitation.action_type || 'study'}:${invitation.subject_id || 'general'}:${index}`,
+      subject_name: subject?.name || null,
+      priority,
+      completion,
+      estimated_minutes: invitation.action_type === 'exam'
+        ? 20
+        : invitation.action_type === 'review_specific_cards'
+          ? Math.max(5, cardCount * 2)
+          : 15,
+      pressure_effect: invitation.subject_id
+        ? 'Completion recalculates pressure from fresh evidence; only resolved causes disappear.'
+        : 'Completion contributes fresh evidence to today\'s forest health.',
+    };
+  });
+  const enrichedInvitations = await enrichInvitationCompletion(userId, normalizedInvitations, todayStr, safeTimezoneOffset);
+  await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, enrichedInvitations);
+  return enrichedInvitations;
+}
+
+async function dismissInvitation(userId, invitationIndex, requestedDate = null) {
+const serverToday = new Date().toISOString().split('T')[0];
+const requestedTime = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedDate || ''))
+? new Date(`${requestedDate}T12:00:00.000Z`).getTime()
+: NaN;
+const todayStr = Number.isFinite(requestedTime) && Math.abs(requestedTime - Date.now()) <= 36 * 3600000
+? requestedDate
+: serverToday;
+const cached = await db.dailyRitualCache.get(userId, 'daily_invitations', todayStr);
+if (!cached || !cached.data) return { error: 'No invitations found' };
+const invitations = cached.data;
+if (invitationIndex < 0 || invitationIndex >= invitations.length) {
+return { error: 'Invalid invitation index' };
+}
+const invitation = invitations[invitationIndex];
+invitation.dismissed = true;
+await db.dailyRitualCache.set(userId, 'daily_invitations', todayStr, invitations);
+
+// P7.3 FIX: Cross-day dismissal history tracking.
+// Spec: if same action_type dismissed 5+ times in 2 weeks for same subject → +1 pressure on that subject.
+// History stored as a rolling log in daily_ritual_cache under type 'dismissal_history', date 'persistent'.
+let pressureApplied = false;
+let pressureSubjectId = null;
+try {
+const historyDoc = await db.dailyRitualCache.get(userId, 'dismissal_history', 'persistent');
+const history = historyDoc?.data || [];
+
+    // Append this dismissal
+    history.push({
+      date: todayStr,
+      action_type: invitation.action_type || 'unknown',
+      subject_id: invitation.subject_id || null,
+    });
+
+    // Prune entries older than 14 days
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 14);
+    const cutoffStr = cutoff.toISOString().split('T')[0];
+    const pruned = history.filter((entry) => entry.date >= cutoffStr);
+
+    // Check threshold: 5+ dismissals of same action_type for same subject in last 14 days
+    if (invitation.subject_id && invitation.action_type) {
+      const matchingDismissals = pruned.filter(
+        (entry) =>
+          entry.action_type === invitation.action_type &&
+          entry.subject_id === invitation.subject_id
+      ).length;
+
+      // M-1 FIX: Exact threshold crossing only — prevents +1 stacking on every dismiss above 5
+      if (matchingDismissals === 5) {
+        // P7.3 FIX: +1 pressure to that specific subject only (not all subjects)
+        // FIX (Issue 08): If no prior brainPressure record exists, initialise
+        // a zero-baseline so the +1 dismissal pressure is never silently dropped.
+        let currentPressure = await db.brainPressure.get(userId, invitation.subject_id);
+        if (!currentPressure) {
+          currentPressure = { pressure_score: 0, intervention_level: 'L0', sources: {} };
+        }
+        {
+          // Compute the durable avoidance source here. Canonical pressure
+          // recalculation preserves manual sources, so the consequence cannot
+          // vanish on the next dashboard refresh.
+          const newPressureScore = (currentPressure.pressure_score || 0) + 1;
+          const newInterventionLevel = computeInterventionLevel(newPressureScore);
+          await db.brainPressure.set(userId, invitation.subject_id, {
+            pressure_score: newPressureScore,
+            intervention_level: newInterventionLevel,
+            sources: {
+              ...(currentPressure.sources || {}),
+              manual_invitation_avoidance: Math.min(3, (Number(currentPressure.sources?.manual_invitation_avoidance) || 0) + 1),
+              manual_invitation_avoidance_at: new Date().toISOString(),
+            },
+          });
+          pressureApplied = true;
+          pressureSubjectId = invitation.subject_id;
+        }
+      }
+    }
+
+    // Persist pruned history
+    await db.dailyRitualCache.set(userId, 'dismissal_history', 'persistent', pruned);
+
+} catch (e) {
+console.error('[KIWI] Dismissal history update failed:', e.message);
+}
+
+return {
+dismissed: true,
+pressure_applied: pressureApplied,
+pressure_subject_id: pressureSubjectId,
+};
+}
+// ── Return Greeting (A3) ────────────────────────────────────────────────────
+
+async function getReturnGreeting(userId) {
+const status = await computeReturnStatus(userId);
+// Only show return greeting for users who have studied before and are slipping/abandoned
+if (status.status === 'active' || status.status === 'new') return null;
+// C-2 FIX: Cache enforcement — generate once per absence period, never on every page load
+const greetingTodayStr = new Date().toISOString().split('T')[0];
+const cachedGreeting = await db.dailyRitualCache
+.get(userId, 'return_greeting', greetingTodayStr)
+.catch(() => null);
+if (cachedGreeting?.data?.greeting) return cachedGreeting.data;
+// P7.4 FIX: Gather rich context — spec requires overdue count, KS decay, pressure, upcoming exams
+const now = new Date();
+const subjects = await db.subjects.findManyWithDecks(userId).catch(() => []);
+let overdueCount = 0;
+const upcomingExamsForReturn = [];
+for (const sub of subjects) {
+const decks = await db.decks.findBySubject(userId, sub.id).catch(() => []);
+for (const deck of decks) {
+const cards = await db.cards.findByDeck(userId, deck.id).catch(() => []);
+overdueCount += cards.filter((c) => isCardDue(c, now)).length;
+}
+if (sub.exam_date) {
+const daysToExam = Math.ceil((new Date(sub.exam_date) - now) / (1000 * 60 * 60 * 24));
+if (daysToExam >= 0 && daysToExam <= 21) {
+upcomingExamsForReturn.push(`${sub.name} in ${daysToExam} days`);
+}
+}
+}
+const pressureList = await db.brainPressure.findByUser(userId).catch(() => []);
+const highestPressure = pressureList.length > 0
+? pressureList.reduce((max, p) => (p.pressure_score > max.pressure_score ? p : max), pressureList[0])
+: null;
+// Ghost cards accumulate while away — estimate KS decay exposure
+const allStates = await db.cardStates.findByUser(userId).catch(() => []);
+const ghostCount = allStates.filter((s) => s.state === 'GHOST').length;
+const prompt = `
+ROLE
+You are the KIWI Return Guide. A student is returning after ${status.days_since} days away.
+CONTEXT (use this data — be honest and specific)
+- Days absent: ${status.days_since}
+- Absence type: ${status.status === 'abandoned' ? 'long absence (14+ days)' : 'short gap (3-13 days)'}
+- Overdue cards: ${overdueCount}
+- Ghost cards (dormant, KS at risk): ${ghostCount}
+- Highest pressure subject: ${highestPressure ? highestPressure.intervention_level + ' pressure' : 'none'}
+- Upcoming exams: ${upcomingExamsForReturn.join(', ') || 'none'}
+RULES
+- 1 paragraph, 2-3 sentences.
+- Be honest about what was missed — name the overdue count and ghost cards if significant.
+- If an exam is upcoming, name it and the days remaining.
+- No guilt. No punishment. Warmth and clarity.
+- Tone: honest, warm, forward-looking.
+OUTPUT
+Return only the greeting paragraph.
+`;
+  const result = await ai.run('RETURN_GREETING', { content: prompt });
+  const greeting = result.text.trim();
+  const greetingPayload = { greeting, status: status.status, days_since: status.days_since };
+  await db.dailyRitualCache
+    .set(userId, 'return_greeting', greetingTodayStr, greetingPayload)
+    .catch((e) => console.error("[KIWI] silent catch:", e.message));
+  return greetingPayload;
+}
+// ════════════════════════════════════════════════════════════════════════════
+//  BUBBLE ADVISORY + AUTOPSY (PB.15 / PB.16)  [DESIGN: §11, §16.1]
+// ════════════════════════════════════════════════════════════════════════════
+
+// [DESIGN: §16.1] A5 — AI advisory with deterministic fallback
+// Cached per Bubble per calendar day. Output: exactly 2 sentences. [DESIGN: §16.1]
+async function generateBubbleAdvisory(userId, goal, subjectName) {
+  const velocity   = computeVelocityFromGoal(goal);
+  const required   = goal.required_ks_per_day || 0;
+  const currentKS  = goal.current_ks || 0;
+  const targetKS   = goal.target_ks || 100;
+  const examDate   = goal.exam_date ? new Date(goal.exam_date) : null;
+  const daysToExam = examDate
+    ? Math.max(0, Math.ceil((examDate - new Date()) / 86400000))
+    : '?';
+  const gap        = parseFloat((required - velocity).toFixed(2));
+
+  // GAP-S2: Enrich advisory prompt with card_state_counts + weakest_cluster [DESIGN: §16.1]
+  // These three inputs are required by design — sentence 2 names the exact cluster to address.
+  let _cardStateCounts  = {};
+  let _weakestCluster   = null;
+  let _weakestClusterKS = 0;
+  try {
+    const _allStates   = await db.cardStates.findByUser(userId);
+    const _goalCardSet = new Set(goal.card_ids || []);
+    for (const _s of _allStates) {
+      if (_goalCardSet.has(_s.card_id)) {
+        _cardStateCounts[_s.state] = (_cardStateCounts[_s.state] || 0) + 1;
+      }
+    }
+    const _weakCluster = await getWeakestCluster(goal.id).catch(() => null);
+    if (_weakCluster) {
+      _weakestCluster   = _weakCluster.name || 'Unknown Cluster';
+      _weakestClusterKS = await computeClusterKS(userId, _weakCluster).catch(() => 0);
+    }
+  } catch (_e) { /* non-fatal — advisory proceeds with reduced context */ }
+
+  const _stateCountLine = Object.entries(_cardStateCounts)
+    .filter(([, v]) => v > 0)
+    .map(([k, v]) => `${k}:${v}`).join(', ') || 'none';
+
+  const prompt = `
+ROLE
+You are KIWI's Mastery Guide. Give an honest, concise study advisory for a student.
+BUBBLE DATA
+Subject: ${subjectName}
+Current KS: ${currentKS.toFixed(1)} / ${targetKS}
+Phase: ${goal.phase}
+Trajectory: ${goal.trajectory_status}
+Days to exam: ${daysToExam}
+Daily velocity: ${velocity.toFixed(2)} KS/day (required: ${required.toFixed(2)})
+Gap: ${gap.toFixed(2)} KS/day ${gap > 0 ? 'behind' : 'ahead'}
+Stall active: ${goal.stall_active ? 'YES — cause: ' + (goal.stall_cause || 'diagnosing') : 'NO'}
+Card state counts: ${_stateCountLine}
+Weakest cluster: ${_weakestCluster || 'N/A'} (cluster KS: ${_weakestClusterKS.toFixed(1)})
+RULES
+- Exactly 2 sentences. No more, no less.
+- Sentence 1: honest assessment of current situation.
+- Sentence 2: one specific, actionable instruction naming exact cards or clusters.
+- Tone: calm, direct, honest — not alarming, not vague.
+- No bullet points. Plain prose only.
+OUTPUT
+Return only the 2-sentence advisory text.
+`;
+  try {
+    const result = await ai.run('BUBBLE_ADVISORY', { content: prompt });
+    const text   = result.text.trim();
+    if (text && text.trim().length > 10) return text.trim();
+    return buildFallbackAdvisory(goal, subjectName, daysToExam, velocity, required, gap, _weakestCluster, _weakestClusterKS);
+  } catch (e) {
+    return buildFallbackAdvisory(goal, subjectName, daysToExam, velocity, required, gap, _weakestCluster, _weakestClusterKS);
+  }
+}
+
+// [DESIGN: §16.1] Deterministic fallback when AI call fails
+// GAP-S2: fallback now accepts cluster params to match §16.1 fallback spec
+function buildFallbackAdvisory(goal, subjectName, daysToExam, velocity, required, gap,
+                               weakestCluster = null, weakestClusterKS = 0) {
+  if (goal.trajectory_status === 'ON_TRACK') {
+    return `${subjectName} is on track at ${velocity.toFixed(1)} KS/day — ahead of the ${required.toFixed(1)} required. Keep your current routine and complete today's contract cards.`;
+  }
+  if (goal.rescue_active) {
+    return `${subjectName} is in RESCUE mode with ${daysToExam} days remaining — only the highest-priority cards matter now. Open your Daily Contract and work through every card on the list before doing anything else.`;
+  }
+  if (goal.trajectory_status === 'CRITICAL') {
+    return `${subjectName} is critically behind — you need ${required.toFixed(1)} KS/day but are averaging ${velocity.toFixed(1)}, a gap of ${gap.toFixed(1)}. Today, prioritise every STUCK and FRAGILE card in your contract without skipping any.`;
+  }
+  // [DESIGN: §16.1] Fallback sentence 2 names the exact cluster [DESIGN: §16.1]
+  const clusterRef = weakestCluster
+    ? `Prioritise the '${weakestCluster}' cluster — it sits at ${weakestClusterKS.toFixed(0)}% mastery and is your biggest gap.`
+    : 'Prioritise the STUCK and FRAGILE cards in today\'s contract to close the gap before your exam.';
+  return `${subjectName} is ${gap.toFixed(1)} KS/day behind schedule. ${clusterRef}`;
+}
+
+// [DESIGN: §11] Bubble Autopsy — deterministic, 4 sections, generated 24h after Bubble closes
+// ⚠ CORRECTED from v1.0: all 4 sections present, 3 specific recommendations [DESIGN: §11.2]
+async function generateBubbleAutopsy(userId, goal) {
+  const history        = await db.masteryGoals.getHistory(goal.id, 200).catch(() => []);
+  const phaseTransitions = history.filter((h) => h.event_type === 'phase_transition');
+  const stallEvents      = history.filter((h) => h.event_type === 'stall_detected');
+  const stallResolved    = history.filter((h) => h.event_type === 'stall_resolved');
+  const ksSnapshots      = history.filter((h) => h.event_type === 'ks_snapshot')
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const contractComplete = ksSnapshots.filter((h) => h.contract_completed).length;
+  const contractTotal    = ksSnapshots.length;
+  const examDate   = goal.exam_date ? new Date(goal.exam_date) : null;
+  const totalDays  = examDate
+    ? Math.ceil((examDate - new Date(goal.created_at)) / 86400000)
+    : 0;
+  const finalKS    = goal.final_ks_at_deadline || goal.current_ks || 0;
+  const firstKS    = ksSnapshots.length > 0 ? ksSnapshots[0].ks_at_event : 0;
+
+  // Card analysis
+  const allStatesDocs  = await db.cardStates.findByUser(userId);
+  const statesByCardId = new Map(allStatesDocs.map((s) => [s.card_id, s]));
+  let verifiedCount = 0;
+  let debtCount     = 0;
+  for (const cardId of (goal.card_ids || [])) {
+    const s = statesByCardId.get(cardId);
+    if (s?.state === CARD_STATES.VERIFIED) verifiedCount++;
+    if (s?.learning_debt)                  debtCount++;
+  }
+  const totalCards = (goal.card_ids || []).length;
+
+  // Velocity analysis for best/worst week
+  const weeklyVelocities = [];
+  const samples = goal.velocity_samples || [];
+  for (let i = 0; i < samples.length - 6; i += 7) {
+    const week = samples.slice(i, i + 7).map(velocitySampleValue);
+    weeklyVelocities.push(week.reduce((a, b) => a + b, 0) / week.length);
+  }
+  const bestWeekVelocity  = weeklyVelocities.length > 0 ? Math.max(...weeklyVelocities) : 0;
+  const worstWeekVelocity = weeklyVelocities.length > 0 ? Math.min(...weeklyVelocities) : 0;
+
+  // Cluster performance
+  const clusters = await db.masteryGoals.getClusters(goal.id).catch(() => []);
+  const clusterPerformance = await Promise.all(clusters.map(async (c) => {
+    const ks = await computeClusterKS(userId, c).catch(() => 0);
+    return { name: c.name, ks };
+  }));
+  const masteredClusters = clusterPerformance.filter((c) => c.ks >= 80).map((c) => c.name);
+  const stalledClusters  = clusterPerformance.filter((c) => c.ks < 40).map((c) => c.name);
+
+  // ── SECTION 1: Timeline [DESIGN: §11.2 Section 1] ─────────────────────────
+  const section1 = {
+    title:             'Timeline',
+    phase_transitions: phaseTransitions.map((t) => ({
+      from:  t.from_phase,
+      to:    t.to_phase,
+      ks:    (t.ks_at_event || 0).toFixed(1),
+    })),
+    stall_events:      stallEvents.map((s, i) => ({
+      cause:    s.notes?.split('Cause: ')[1]?.split('.')[0] || 'Unknown',
+      resolved: i < stallResolved.length,
+    })),
+    contract_completion_rate: contractTotal > 0
+      ? parseFloat(((contractComplete / contractTotal) * 100).toFixed(1))
+      : 0,
+    best_week_velocity:  parseFloat(bestWeekVelocity.toFixed(2)),
+    worst_week_velocity: parseFloat(worstWeekVelocity.toFixed(2)),
+  };
+
+  // ── SECTION 2: Card Analysis [DESIGN: §11.2 Section 2] ────────────────────
+  const section2 = {
+    title:            'Card Analysis',
+    started_at_ks:    parseFloat(firstKS.toFixed(1)),
+    finished_at_ks:   parseFloat(finalKS.toFixed(1)),
+    ks_gain:          parseFloat((finalKS - firstKS).toFixed(1)),
+    verified:         `${verifiedCount} of ${totalCards}`,
+    learning_debt:    debtCount,
+    mastered_clusters: masteredClusters,
+    stalled_clusters:  stalledClusters,
+  };
+
+  // ── SECTION 3: What Caused the Outcome [DESIGN: §11.2 Section 3] ──────────
+  let causeText = '';
+  if (goal.status === 'completed') {
+    const driverParts = [];
+    if (section1.contract_completion_rate >= 80) driverParts.push('consistent Daily Contract completion');
+    if (stallEvents.length === 0) driverParts.push('no stall events');
+    if (bestWeekVelocity >= 2) driverParts.push(`strong velocity peak of ${bestWeekVelocity.toFixed(1)} KS/day`);
+    causeText = driverParts.length > 0
+      ? `Primary drivers of completion: ${driverParts.join('; ')}.`
+      : 'Goal completed through consistent study over the full period.';
+  } else if (goal.status === 'missed') {
+    const longestStall = stallEvents.length > 0
+      ? `GROWING phase stall (${stallEvents[0].notes?.split('Cause: ')[1]?.split('.')[0] || 'unknown cause'}) unresolved`
+      : null;
+    causeText = longestStall
+      ? `Primary failure point: ${longestStall}. Final KS was ${finalKS.toFixed(1)} — ${(100 - finalKS).toFixed(1)} points short of the target.`
+      : `Deadline reached at KS ${finalKS.toFixed(1)} — ${(100 - finalKS).toFixed(1)} points short. Insufficient study velocity in the final phase.`;
+  } else {
+    causeText = `Partially completed: KS reached ${finalKS.toFixed(1)} of the original 100 target. RESCUE mode narrowed the scope to 70.`;
+  }
+  const section3 = { title: 'What Caused the Outcome', cause: causeText };
+
+  // ── SECTION 4: 3 Specific Data-Derived Recommendations [DESIGN: §11.2 Section 4] ─
+  const recommendations = [];
+  // Recommendation 1: SEEDING phase timing
+  const seedingTransition = phaseTransitions.find((t) => t.to_phase === 'GROWING');
+  if (seedingTransition) {
+    const seedingKS = parseFloat(seedingTransition.ks_at_event || 0);
+    if (seedingKS < 30) {
+      recommendations.push('Your SEEDING phase ended below KS 30. Start your next bubble 2 weeks earlier to allow more coverage time before the GROWING phase begins.');
+    }
+  }
+  // Recommendation 2: CBT and FRAGILE cards
+  if (stalledClusters.length > 0) {
+    recommendations.push(`Your ${stalledClusters[0]} cluster stalled — cluster_KS stayed below 40. In your next bubble, schedule a dedicated CBT exam session specifically for this cluster every 5 days during HARDENING.`);
+  }
+  // Recommendation 3: Best velocity reference
+  if (bestWeekVelocity >= 1.5) {
+    recommendations.push(`Your peak velocity was ${bestWeekVelocity.toFixed(1)} KS/day in your strongest week — you are capable of that pace. Starting your next bubble at that rate would change the outcome.`);
+  }
+  // Fill to 3 if needed with generic recommendations
+  if (recommendations.length < 3) {
+    recommendations.push(
+      ...[
+        `Daily Contract completion rate was ${section1.contract_completion_rate}%. Completing the contract 80%+ of days is the single strongest predictor of bubble success.`,
+        `${debtCount > 0 ? `${debtCount} cards carry learning debt forward.` : 'No learning debt.'} ${debtCount > 0 ? 'Resolve them through CBT exam sessions before starting a new bubble on this subject.' : 'Maintain this by completing the FINAL phase before each exam.'}`,
+      ].slice(0, 3 - recommendations.length)
+    );
+  }
+  const section4 = { title: 'Recommendations for Next Time', items: recommendations.slice(0, 3) };
+
+  return {
+    status:    goal.status,
+    final_ks:  finalKS,
+    total_days: totalDays,
+    section1,
+    section2,
+    section3,
+    section4,
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  BUBBLE CHRONICLE INTEGRATION (PB.18)  [DESIGN: §15.4]
+// ════════════════════════════════════════════════════════════════════════════
+
+// [DESIGN: §15.4] Bubble event types for Chronicle context.
+// Called at key lifecycle moments. Stores events for weekly Chronicle generation.
+// Events are stored in goal_history with a chronicle-ready format.
+
+const BUBBLE_CHRONICLE_EVENTS = {
+  BUBBLE_CREATED:       'bubble_created',
+  PHASE_TRANSITION:     'phase_transition',      // already wired in updateBubbleTrajectory
+  TEST_DATE_GATE_PASSED: 'test_date_gate_passed',
+  TEST_DATE_GATE_FAILED: 'test_date_gate_failed', // already wired
+  STALL_DETECTED:       'stall_detected',         // already wired in activateStallResponse
+  STALL_RESOLVED:       'stall_resolved',         // already wired in resolveStallIfRecovered
+  RESCUE_ENTERED:       'rescue_activated',       // already wired in updateBubbleTrajectory
+  BUBBLE_COMPLETED:     'completed',              // already wired in closeMasteryGoal
+  BUBBLE_MISSED:        'missed',                 // already wired in closeMasteryGoal
+  DEBT_CLEARED:         'learning_debt_cleared',
+};
+
+// [DESIGN: §15.4] Get all bubble events for a user in a given week (for Chronicle context)
+async function getBubbleEventsForChronicle(userId, weekStart, weekEnd) {
+  try {
+    const allGoals = await db.masteryGoals.findByUser(userId);
+    const weekEvents = [];
+    for (const goal of allGoals) {
+      const events = await db.masteryGoals
+        .getHistoryForWeek(goal.id, weekStart, weekEnd)
+        .catch(() => []);
+      const chronicleWorthy = [
+        'bubble_created', 'phase_transition', 'test_date_gate_passed',
+        'test_date_gate_failed', 'stall_detected', 'stall_resolved',
+        'rescue_activated', 'completed', 'missed', 'partially_completed',
+        'learning_debt_cleared',
+      ];
+      const filtered = events.filter((e) => chronicleWorthy.includes(e.event_type));
+      if (filtered.length > 0) {
+        weekEvents.push({
+          bubble_id:    goal.id,
+          bubble_name:  goal.name || goal.subject_id || 'Unknown',
+          subject_id:   goal.subject_id,
+          final_status: goal.status,
+          events:       filtered.map((e) => ({
+            type:  e.event_type,
+            date:  e.created_at,
+            notes: e.notes || '',
+            ks:    e.ks_at_event,
+          })),
+        });
+      }
+    }
+    return weekEvents;
+  } catch (e) {
+    console.error('[KIWI] getBubbleEventsForChronicle failed:', e.message);
+    return [];
+  }
+}
+
+// [DESIGN: §10.3] Check if all learning debt is cleared for a subject; fire Almanac event
+async function checkLearningDebtCleared(userId, subjectId) {
+  try {
+    const allStates = await db.cardStates.findByUser(userId);
+    const subjectDebt = allStates.filter((s) =>
+      s.learning_debt === true && s.subject_id === subjectId
+    );
+    if (subjectDebt.length === 0) {
+      // All debt cleared — add Chronicle event and fire Almanac check
+      const missedBubbles = await db.masteryGoals.findByUser(userId, 'missed');
+      for (const b of missedBubbles.filter((b) => b.subject_id === subjectId)) {
+        await db.masteryGoals.addHistoryEntry(b.id, {
+          event_type:  'learning_debt_cleared',
+          ks_at_event:  b.current_ks || 0,
+          notes:       `All learning debt cleared for subject ${subjectId}.`,
+        }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      }
+    }
+  } catch (_e) { /* non-fatal */ }
+}
+
+// ── Pressure Explanation (D2) ─────────────────────────────────────────────────
+
+async function getPressureExplanation(userId, subjectId) {
+const pressure = await db.brainPressure.get(userId, subjectId);
+if (!pressure || pressure.pressure_score === 0) {
+  return { explanation: 'This subject is calm. No pressure detected.', sources: {} };
+}
+// P7.5 FIX: Cache per subject per day — spec requires this, was missing entirely
+const todayStr = new Date().toISOString().split('T')[0];
+const cacheKey = `pressure_${subjectId}`;
+const cached = await db.dailyRitualCache.get(userId, cacheKey, todayStr).catch(() => null);
+// F5-1-P: return sources from cache alongside explanation text
+if (cached?.data?.explanation) return cached.data;
+// H-8 FIX: Pre-translate raw source keys into plain language before injecting into prompt.
+// The prompt forbids state labels (GHOST, STUCK etc.) but JSON.stringify leaks them as keys.
+// F5-1-P: added 7 bubble source keys [DESIGN: §15.1] so AI prompt describes them correctly
+// KEY-SYNC FIX: keys now match what calculateSubjectPressure() actually writes to pressureSources.
+// Old keys (ghost_cards, stuck_cards, etc.) were pre-migration artefacts and never matched.
+const sourceLabelMap = {
+  ghost:          'cards that have gone dormant (not reviewed in 60+ days past their due date)',
+  fragile:        'cards never correctly answered in a practice exam',
+  stuck_bulk:     '10 or more cards with no stage progress in the last 14 days',
+  slipping:       'cards drifting below the stability threshold (early-warning state)',
+  ks_divergence:  'knowledge score above 70 but credential not yet at Competent tier',
+  no_exam:        'no exam taken in this subject for 21 or more days',
+  avoided:        'cards consistently skipped when overdue for 7 or more days',
+  exam_urgency:   'an exam is due within 7 days with inadequate preparation',
+  dangerous:      'beginner-level cards with an upcoming exam',
+  ignored_alert:                 'a reclassification alert ignored for 3 or more days',
+  ai_crutch:                     'over-reliance on AI explanations without independent recall',
+  manual_invitation_avoidance:  'repeatedly dismissing the same subject invitation across two weeks',
+  manual_exam_forfeit:          'forfeiting an exam before submission',
+  manual_reckoning_deferral:    'deferring an active Reckoning',
+  manual_reckoning_failure:     'not yet meeting the Reckoning pass threshold',
+  // PB.11 bubble sources [DESIGN: §15.1]
+  bubble_drifting:  'a mastery goal slightly behind its learning trajectory',
+  bubble_behind:    'a mastery goal falling behind its required pace',
+  bubble_critical:  'a mastery goal critically behind — exam risk is high',
+  bubble_rescue:    'RESCUE mode active — exam is near and mastery is critically low',
+  test_date_gate:   'knowledge score below 60 when the checkpoint date passed',
+  bubble_stall:     'a mastery goal where studying is not advancing understanding',
+  learning_debt:    'unmastered cards carried forward from a missed exam goal',
+};
+const translatedSources = Object.entries(pressure.sources || {})
+.filter(([, v]) => v > 0)
+.map(([k, v]) => `${sourceLabelMap[k] || k.replace(/_/g, ' ')} (×${v})`)
+.join('; ') || 'general inactivity';
+const prompt = `
+ROLE
+You are the KIWI Pressure Interpreter. Explain why a subject has pressure in simple, warm terms.
+DATA
+Pressure score: ${pressure.pressure_score}
+Intervention level: ${pressure.intervention_level}
+Sources: ${translatedSources}
+RULES
+- 3-4 sentences. (P7.5 FIX: was 2-3, spec requires 3-4)
+- Sentence 1: State the pressure level and overall situation plainly.
+- Sentence 2-3: Explain the PRIMARY and SECONDARY sources of pressure, naming specific card types or behaviours.
+- Sentence 4: Suggest one concrete, actionable step to begin reducing pressure.
+- Never use technical jargon. No state labels like GHOST or STUCK — describe them in plain language.
+- Tone: caring, slightly urgent if pressure is high, calm if pressure is low.
+OUTPUT
+Return only the explanation text.
+`;
+  let explanation;
+  try {
+    const result = await ai.run('PRESSURE_EXPLANATION', { content: prompt });
+    explanation = result.text.trim();
+  } catch (e) {
+    const sources = Object.keys(pressure.sources || {});
+    // M-4 FIX: Humanise intervention level codes — users must never see "L3" or "L4"
+    const fallbackLevelLabel = { L0: 'low', L1: 'mild', L2: 'moderate', L3: 'high', L4: 'critical' }[pressure.intervention_level] || 'moderate';
+    explanation = `This subject is under ${fallbackLevelLabel} pressure (score: ${pressure.pressure_score}). ${sources.length > 0 ? 'The main contributors are: ' + sources.join(', ') + '.' : ''} Cards that have gone unreviewed for a long time are the most common cause. Start with a short study session focused on your most overdue material.`;
+  }
+  // P7.5 FIX: Persist to cache so subsequent taps today serve instantly
+  // F5-1-P: also persist sources so cached responses can render labelled chips [DESIGN: §15.1]
+  await db.dailyRitualCache.set(userId, cacheKey, todayStr, {
+    explanation,
+    sources: pressure.sources || {},
+  }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+  return { explanation, sources: pressure.sources || {} };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PHASE 8 — Marketplace & Seedlings
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── seedlingService ───────────────────────────────────────────────────────────
+
+async function awardSeedlings(userId, amount, eventType, description, eventKey = null) {
+  const stableKey = eventKey || ('legacy-award:' + eventType + ':' + randomUUID());
+  const result = await ecosystemV2.awardSeedlingsForEvent(userId, {
+    eventKey: stableKey,
+    eventType,
+    amount,
+    description,
+  });
+  const stats = await db.userStats.get(userId);
+  return {
+    awarded: result.applied ? Number(amount) || 0 : 0,
+    duplicate: !result.applied,
+    new_balance: Number(stats?.seedlings_balance) || 0,
+    event_key: stableKey,
+  };
+}
+
+async function spendSeedlings(userId, amount, eventType, description) {
+  const spendAmount = Math.max(0, Number(amount) || 0);
+  if (spendAmount <= 0) return { error: 'Invalid Seedling amount' };
+  return withTransaction(async (client) => {
+    const updated = await client.query(
+      'UPDATE user_stats SET seedlings_balance = seedlings_balance - $2, updated_at = NOW() ' +
+      'WHERE user_id = $1 AND seedlings_balance >= $2 RETURNING seedlings_balance',
+      [userId, spendAmount]
+    );
+    if (updated.rowCount === 0) {
+      const current = await client.query(
+        'SELECT seedlings_balance FROM user_stats WHERE user_id = $1',
+        [userId]
+      );
+      return {
+        error: 'Insufficient seedlings',
+        balance: Number(current.rows[0]?.seedlings_balance) || 0,
+      };
+    }
+    const balance = Number(updated.rows[0].seedlings_balance) || 0;
+    const eventKey = 'seedling-spend:' + eventType + ':' + randomUUID();
+    await client.query(
+      'INSERT INTO progression_events ' +
+      '(event_key, user_id, event_type, growth_points, seedlings, metadata, created_at) ' +
+      'VALUES ($1,$2,$3,0,$4,$5,NOW())',
+      [eventKey, userId, eventType, -spendAmount, JSON.stringify({ description })]
+    );
+    await client.query(
+      'INSERT INTO ecosystem_seedling_ledger ' +
+      '(event_key, user_id, amount, balance_after, event_type, description, created_at) ' +
+      'VALUES ($1,$2,$3,$4,$5,$6,NOW())',
+      [eventKey, userId, -spendAmount, balance, eventType, description]
+    );
+    await client.query(
+      'INSERT INTO seedling_transactions ' +
+      '(id, user_id, type, amount, reason, event_key, event_type, description, balance_after, created_at) ' +
+      'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())',
+      [randomUUID(), userId, eventType, -spendAmount, description, eventKey, eventType, description, balance]
+    );
+    return { spent: spendAmount, new_balance: balance, event_key: eventKey };
+  });
+}
+
+// Non-session rewards use stable event keys. Session quality and card growth are
+// intentionally absent: Ecosystem V2 is their only authority.
+async function hookSeedlingEarnings(userId, eventType, context = {}) {
+  let amount = 0;
+  let key = null;
+  let description = null;
+
+  if (eventType === 'exam_result') {
+    const score = Number(context.score_pct) || 0;
+    amount = score === 100 ? 10 : score >= 80 ? 5 : 0;
+    key = context.exam_id ? 'exam-result:' + context.exam_id : null;
+    description = score === 100 ? 'Perfect exam result' : 'Passed exam with ' + score + '%';
+  } else if (eventType === 'weekly_chronicle') {
+    const date = new Date();
+    const weekStart = new Date(Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate() - ((date.getUTCDay() + 6) % 7)
+    )).toISOString().slice(0, 10);
+    amount = 2;
+    key = 'weekly-chronicle:' + userId + ':' + weekStart;
+    description = 'Weekly chronicle generated';
+  } else if (eventType === 'almanac_unlock' && context.entry_code) {
+    amount = 5;
+    key = 'almanac:' + userId + ':' + context.entry_code;
+    description = 'Unlocked almanac entry: ' + context.entry_code;
+  }
+
+  if (!amount || !key) return { awarded: 0, ignored: true };
+  return awardSeedlings(userId, amount, eventType, description, key);
+}
+
+// ── Marketplace Catalog ──────────────────────────────────────────────────────
+
+async function getMarketplaceCatalog(userId) {
+await db.marketplaceItems.seed();
+// Only sell effects that are implemented end-to-end. Historical decorative and
+// artifact rows remain readable in inventory, but are not advertised as live
+// products until they change an actual KIWI surface.
+const usefulCodes = new Set(['reckoning_buffer', 'deep_audit', 'archive_expansion', 'rare_flora']);
+const items = (await db.marketplaceItems.findAll()).filter((item) => usefulCodes.has(item.item_code));
+const stats = await db.userStats.get(userId);
+const inventory = await db.userInventory.findByUser(userId);
+const subjects = await db.subjects.findManyWithDecks(userId);
+const enriched = [];
+for (const item of items) {
+const owned = inventory.find((i) => i.item_code === item.item_code);
+let gate1Progress = await checkGate1Progress(userId, item.gate1_condition);
+let subjectEligibility = null;
+if (['rare_flora', 'archive_expansion'].includes(item.item_code)) {
+subjectEligibility = {};
+for (const subject of subjects) {
+const scopedProgress = await checkGate1Progress(userId, {
+...item.gate1_condition,
+subject_id: subject.id,
+});
+subjectEligibility[subject.id] = scopedProgress;
+}
+const eligibleEntries = Object.values(subjectEligibility).filter((entry) => entry.met);
+gate1Progress = eligibleEntries[0]
+|| Object.values(subjectEligibility).sort((a, b) => {
+const aRatio = (Number(a.current) || 0) / Math.max(1, Number(a.target) || 1);
+const bRatio = (Number(b.current) || 0) / Math.max(1, Number(b.target) || 1);
+return bRatio - aRatio;
+})[0]
+|| gate1Progress;
+}
+const gate2Met = (stats?.seedlings_balance || 0) >= item.gate2_seedling_cost;
+enriched.push({
+...item,
+owned_quantity: owned?.quantity || 0,
+gate1_met: gate1Progress.met,
+gate1_current: gate1Progress.current, // B18
+gate1_target: gate1Progress.target, // B18
+// CATALOG FIX (enables NEW-L1 + NEW-L3): forward extra gate1Progress fields
+// so the frontend can render the progress_note and subject diversity label.
+gate1_progress_note: gate1Progress.progress_note || null,
+subject_diversity_current: gate1Progress.subject_diversity_current ?? null,
+subject_diversity_target: gate1Progress.subject_diversity_target ?? null,
+gate2_met: gate2Met,
+gate2_current: stats?.seedlings_balance || 0,
+gate2_target: item.gate2_seedling_cost,
+purchasable: gate1Progress.met && gate2Met,
+subject_eligibility: subjectEligibility,
+});
+}
+// P8-01 FIX: wrap return with top-level seedlings_balance for reliable frontend access
+return {
+items: enriched,
+seedlings_balance: stats?.seedlings_balance || 0,
+};
+}
+// B18: Gate 1 progress helper — returns {met, current, target}
+
+async function checkGate1Progress(userId, condition) {
+if (!condition) return { met: true, current: null, target: null };
+try {
+switch (condition.type) {
+case 'reckoning_survived': {
+const sessions = await db.reckoningSessions.findByUser(userId);
+const current = sessions.filter(
+(s) => s.status === 'completed' && (s.score_pct || 0) >= 70
+).length;
+return { met: current >= condition.count, current, target: condition.count };
+}
+case 'fruition_sessions': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count for marketplace gate
+);
+const current = sessions.sessions.filter((s) => s.fruiting_achieved).length;
+return { met: current >= condition.count, current, target: condition.count };
+}
+case 'thriving_sessions_across_subjects': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count for marketplace gate
+);
+const thriving = sessions.sessions.filter((s) => s.fruiting_achieved);
+const current = thriving.length;
+// NEW-M4 FIX (checkGate1Progress): deduplicate by subject_id, not deck_id.
+// NEW-L3 FIX: expose subject_diversity_current/target so the frontend can
+// show "X / 3 subjects" when the session count bar is full but item is locked.
+const allSubjectsM4p = await db.subjects.findManyWithDecks(userId);
+const deckToSubjectM4p = {};
+for (const sub of allSubjectsM4p) {
+const decksM4p = await db.decks.findBySubject(userId, sub.id);
+for (const dk of decksM4p) deckToSubjectM4p[dk.id] = sub.id;
+}
+const uniqueSubjectsM4p = new Set(thriving.map((s) => deckToSubjectM4p[s.deck_id] || s.deck_id));
+return {
+met: current >= condition.count && uniqueSubjectsM4p.size >= (condition.min_subjects || 1),
+current,
+target: condition.count,
+subject_diversity_current: uniqueSubjectsM4p.size,
+subject_diversity_target: condition.min_subjects || 1,
+};
+}
+case 'consecutive_days_no_wilt': {
+const stats = await db.userStats.get(userId);
+const current = stats?.current_streak || 0;
+return { met: current >= condition.count, current, target: condition.count };
+}
+case 'sessions_after_midnight': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+const current = sessions.sessions.filter((s) => {
+const h = new Date(s.started_at).getHours();
+return h >= 0 && h <= 2;
+}).length;
+return { met: current >= condition.count, current, target: condition.count };
+}
+case 'sessions_before_7am': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+const current = sessions.sessions.filter((s) => {
+const h = new Date(s.started_at).getHours();
+return h >= 4 && h < 7;
+}).length;
+return { met: current >= condition.count, current, target: condition.count };
+}
+// NEW-M2 FIX: add subject_ks_and_fruiting case to checkGate1Progress.
+// Was missing entirely — Archive Expansion showed a binary 0%/100% bar with
+// no useful intermediate value. Returns the best subject's fruiting count
+// and KS so the frontend can display dual-progress.
+case 'subject_ks_and_fruiting': {
+const subjectsM2 = await db.subjects.findManyWithDecks(userId);
+let bestKsM2 = 0;
+let bestFruitingsM2 = 0;
+let metM2 = false;
+for (const subM2 of subjectsM2.filter((subject) => !condition.subject_id || subject.id === condition.subject_id)) {
+const ksM2 = await computeKnowledgeScore(userId, subM2.id);
+const sessionsM2 = await db.sessions.findMany(userId, { session_completed: true }, { limit: 2000 }); // Fix #45 corrected: lifetime count for gate check
+const subjectDecksM2 = await db.decks.findBySubject(userId, subM2.id);
+const deckIdsM2 = new Set(subjectDecksM2.map((d) => d.id));
+const fruitingsM2 = sessionsM2.sessions.filter(
+(s) => s.fruiting_achieved && deckIdsM2.has(s.deck_id)
+).length;
+if (ksM2.score > bestKsM2 || (ksM2.score === bestKsM2 && fruitingsM2 > bestFruitingsM2)) {
+bestKsM2 = ksM2.score;
+bestFruitingsM2 = fruitingsM2;
+}
+if (ksM2.score >= condition.ks && fruitingsM2 >= condition.fruiting) metM2 = true;
+}
+return {
+met: metM2,
+current: bestFruitingsM2,
+target: condition.fruiting,
+ks_current: Math.round(bestKsM2),
+ks_target: condition.ks,
+};
+}
+// P8.3: progress display for fruition_sessions_in_subject
+// BUG 6 FIX: scope to the target subject when condition.subject_id is present.
+// At catalog-display time (no subject_id) the check is global — surface an
+// honest progress_note so the UI can warn the user the purchase gate is per-zone.
+case 'fruition_sessions_in_subject': {
+const allSessP = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+const allFruiting = allSessP.sessions.filter((s) => s.fruiting_achieved);
+if (condition.subject_id) {
+const subjectDecks = await db.decks.findBySubject(userId, condition.subject_id);
+const deckIds = new Set(subjectDecks.map((d) => d.id));
+const current = allFruiting.filter((s) => deckIds.has(s.deck_id)).length;
+return { met: current >= condition.count, current, target: condition.count };
+}
+// Catalog view — no subject context yet; report global total with note
+const current = allFruiting.length;
+return {
+met: current >= condition.count,
+current,
+target: condition.count,
+progress_note: 'Shown across all subjects; purchase gate will be checked per zone',
+};
+}
+default:
+return { met: await checkGate1Condition(userId, condition), current: null, target: null };
+}
+} catch (e) {
+return { met: false, current: 0, target: null };
+}
+}
+
+async function checkGate1Condition(userId, condition) {
+if (!condition) return true;
+switch (condition.type) {
+case 'reckoning_survived': {
+const sessions = await db.reckoningSessions.findByUser(userId);
+const survived = sessions.filter(
+(s) => s.status === 'completed' && (s.score_pct || 0) >= 70
+).length;
+return survived >= condition.count;
+}
+case 'fruition_sessions': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count for gate condition
+);
+return sessions.sessions.filter((s) => s.fruiting_achieved).length >= condition.count;
+}
+case 'thriving_sessions_across_subjects': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+const thriving = sessions.sessions.filter((s) => s.fruiting_achieved);
+// NEW-M4 FIX (checkGate1Condition): deduplicate by subject_id, not deck_id.
+// 3 decks inside one Biology subject must count as 1 unique subject, not 3.
+const allSubjectsM4c = await db.subjects.findManyWithDecks(userId);
+const deckToSubjectM4c = {};
+for (const sub of allSubjectsM4c) {
+const decksM4c = await db.decks.findBySubject(userId, sub.id);
+for (const dk of decksM4c) deckToSubjectM4c[dk.id] = sub.id;
+}
+const uniqueSubjectsM4c = new Set(thriving.map((s) => deckToSubjectM4c[s.deck_id] || s.deck_id));
+return thriving.length >= condition.count && uniqueSubjectsM4c.size >= (condition.min_subjects || 1);
+}
+case 'subject_ks_and_fruiting': {
+const subjects = await db.subjects.findManyWithDecks(userId);
+for (const sub of subjects.filter((subject) => !condition.subject_id || subject.id === condition.subject_id)) {
+const ks = await computeKnowledgeScore(userId, sub.id);
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+// NEW-M1 FIX: scope fruiting sessions to this subject's decks only.
+// Cross-subject fruitings must not satisfy the per-subject Archive Expansion gate.
+const subjectDecksM1 = await db.decks.findBySubject(userId, sub.id);
+const deckIdsM1 = new Set(subjectDecksM1.map((d) => d.id));
+const fruitings = sessions.sessions.filter(
+(s) => s.fruiting_achieved && deckIdsM1.has(s.deck_id)
+).length;
+if (ks.score >= condition.ks && fruitings >= condition.fruiting) return true;
+}
+return false;
+}
+case 'sessions_after_midnight': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+return (
+sessions.sessions.filter((s) => {
+const h = new Date(s.started_at).getHours();
+return h >= 0 && h <= 2;
+}).length >= condition.count
+);
+}
+case 'sessions_before_7am': {
+const sessions = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+return (
+sessions.sessions.filter((s) => {
+const h = new Date(s.started_at).getHours();
+return h >= 4 && h < 7;
+}).length >= condition.count
+);
+}
+case 'consecutive_days_no_wilt': {
+const stats = await db.userStats.get(userId);
+return (stats?.current_streak || 0) >= condition.count;
+}
+case 'archive_expansion_owned': {
+const inv = await db.userInventory.getItem(userId, 'archive_expansion');
+return !!(inv && inv.unlocked);
+}
+// P8.3: gate condition for Rare Flora — subject-scoped fruiting count
+case 'fruition_sessions_in_subject': {
+// When subjectId is available in closure (purchase context), use it;
+// otherwise fall back to any-subject fruiting count for catalog display.
+const allSess = await db.sessions.findMany(
+userId,
+{ session_completed: true },
+{ limit: 2000 } // Fix #45 corrected: lifetime count
+);
+const fruitingSessions = allSess.sessions.filter((s) => s.fruiting_achieved);
+// Subject-scoped count: sessions whose deck belongs to the requested subject.
+// condition.subject_id is injected at purchase time; absent = catalog view (use total).
+if (condition.subject_id) {
+const subjectDecks = await db.decks.findBySubject(userId, condition.subject_id);
+const deckIds = new Set(subjectDecks.map((d) => d.id));
+const subjectFruitings = fruitingSessions.filter((s) => deckIds.has(s.deck_id)).length;
+return subjectFruitings >= condition.count;
+}
+return fruitingSessions.length >= condition.count;
+}
+default:
+return false;
+}
+}
+
+async function purchaseItem(userId, itemCode, subjectId = null, options = {}) {
+const item = await db.marketplaceItems.findByCode(itemCode);
+if (!item) return { error: 'Item not found' };
+if (['rare_flora', 'deep_audit', 'archive_expansion'].includes(itemCode) && !subjectId) {
+return { error: 'subject_id is required for this item' };
+}
+
+// General Marketplace purchases remain blocked during an active Reckoning. The
+// Brain has one deliberately scoped exception for the 24-hour Buffer product so
+// the recovery surface can offer the deferral without reopening Marketplace.
+if (itemCode === 'reckoning_buffer' && options.allowDuringReckoning !== true) {
+const activeReckoning = await db.reckoningSessions.findActiveByUser(userId).catch(() => null);
+if (activeReckoning) {
+return {
+error: 'Cannot purchase Reckoning Buffer from Marketplace during an active Reckoning',
+code: 'RECKONING_ACTIVE',
+};
+}
+}
+
+// P8.3: for Rare Flora, inject subject_id into gate condition so per-subject count works
+const gate1Condition =
+['rare_flora', 'archive_expansion'].includes(item.item_code) && subjectId
+? { ...item.gate1_condition, subject_id: subjectId }
+: item.gate1_condition;
+
+// BUG 8 FIX: Rare Flora is limited to one per subject zone, not one globally.
+// Check per-zone ownership using a subject-scoped inventory key before purchase.
+if (item.item_code === 'rare_flora') {
+if (!subjectId) return { error: 'subject_id required to purchase Rare Flora for a zone' };
+const subjectInventoryKey = `rare_flora_${subjectId}`;
+const existingForZone = await db.userInventory.getItem(userId, subjectInventoryKey);
+if ((existingForZone?.quantity || 0) >= 1) {
+return { error: 'Rare Flora already owned for this zone', limit: 1, owned: 1 };
+}
+}
+if (item.item_code === 'archive_expansion') {
+const subjectInventoryKey = `archive_expansion_${subjectId}`;
+const existingForSubject = await db.userInventory.getItem(userId, subjectInventoryKey);
+if ((existingForSubject?.quantity || 0) >= 1) {
+return { error: 'Archive Expansion already applied to this subject', limit: 1, owned: 1 };
+}
+}
+
+const gate1Met = await checkGate1Condition(userId, gate1Condition);
+if (!gate1Met) return { error: 'Gate 1 condition not met', gate: 1 };
+
+// P8.4a: Enforce purchase_limit — prevent repurchase of permanent items (spec P8.4)
+const scopedPermanent = ['rare_flora', 'archive_expansion'].includes(item.item_code);
+const existingForLimit = await db.userInventory.getItem(userId, itemCode);
+if (!scopedPermanent && item.purchase_limit && (existingForLimit?.quantity || 0) >= item.purchase_limit) {
+return {
+error: 'Purchase limit reached',
+limit: item.purchase_limit,
+owned: existingForLimit.quantity,
+};
+}
+
+const spendResult = await spendSeedlings(
+userId,
+item.gate2_seedling_cost,
+'marketplace_purchase',
+`Purchased ${item.name}`
+);
+if (spendResult.error) return spendResult;
+// Update inventory
+// BUG 8 FIX: use per-subject key for rare_flora so each zone tracks independently
+const inventoryKey = (item.item_code === 'rare_flora' && subjectId)
+? `rare_flora_${subjectId}`
+: (item.item_code === 'archive_expansion' && subjectId)
+  ? `archive_expansion_${subjectId}`
+  : itemCode;
+const existing = await db.userInventory.getItem(userId, inventoryKey);
+const newQty = (existing?.quantity || 0) + 1;
+await db.userInventory.setItem(userId, inventoryKey, {
+quantity: newQty,
+unlocked: true,
+acquired_at: new Date(),
+});
+_biomeCache.delete(userId);
+
+// P8.4b + P8.5: For Deep Audit (service), auto-trigger AI call immediately.
+// If Gemini fails, refund Seedlings and roll back inventory. (spec P8.4, P8.5)
+if (item.item_code === 'deep_audit') {
+if (!subjectId) {
+// No subject provided — purchase succeeds but audit deferred to explicit call
+return {
+purchased: true,
+item_code: itemCode,
+quantity: newQty,
+balance: spendResult.new_balance,
+note: 'Provide subject_id in purchase body to trigger Deep Audit immediately.',
+};
+}
+try {
+const auditResult = await generateDeepAudit(userId, subjectId);
+return {
+purchased: true,
+item_code: itemCode,
+quantity: newQty,
+balance: spendResult.new_balance,
+audit: auditResult,
+};
+} catch (auditErr) {
+console.error('[KIWI] Deep Audit AI failed after purchase — refunding:', auditErr.message);
+// P8.5: Refund Seedlings
+await awardSeedlings(
+userId,
+item.gate2_seedling_cost,
+'deep_audit_refund',
+'Deep Audit AI failed — Seedlings refunded',
+'seedling-refund:' + spendResult.event_key
+).catch((e) => console.error("[KIWI] silent catch:", e.message));
+// Roll back inventory quantity
+await db.userInventory.setItem(userId, itemCode, {
+quantity: existing?.quantity || 0,
+unlocked: (existing?.quantity || 0) > 0,
+acquired_at: existing?.acquired_at || null,
+}).catch((e) => console.error("[KIWI] silent catch:", e.message));
+return { error: 'Audit unavailable; please retry.' };
+}
+}
+
+// NEW-C1 FIX: Archive Expansion must auto-trigger applyArchiveExpansion().
+// BUG 1 removed the dedicated route correctly, but the trigger was never added here.
+// The purchase completed without ever archiving any cards or setting subject status.
+if (item.item_code === 'archive_expansion') {
+try {
+const archiveResult = await applyArchiveExpansion(userId, subjectId);
+if (!archiveResult.archived_count) {
+throw new Error('No verified mature cards were eligible for archive expansion');
+}
+} catch (archiveError) {
+await awardSeedlings(
+userId,
+item.gate2_seedling_cost,
+'archive_expansion_refund',
+'Archive Expansion failed — Seedlings refunded',
+'seedling-refund:' + spendResult.event_key
+).catch(() => {});
+await db.userInventory.setItem(userId, inventoryKey, {
+quantity: existing?.quantity || 0,
+unlocked: (existing?.quantity || 0) > 0,
+acquired_at: existing?.acquired_at || null,
+}).catch(() => {});
+return { error: 'Archive Expansion could not be applied; Seedlings were refunded.' };
+}
+}
+return {
+purchased: true,
+item_code: itemCode,
+quantity: newQty,
+balance: spendResult.new_balance,
+};
+}
+async function getReckoningBufferState(userId) {
+await db.marketplaceItems.seed();
+const item = await db.marketplaceItems.findByCode('reckoning_buffer');
+if (!item) return null;
+const [owned, stats, gate] = await Promise.all([
+  db.userInventory.getItem(userId, 'reckoning_buffer').catch(() => null),
+  db.userStats.get(userId).catch(() => null),
+  checkGate1Progress(userId, item.gate1_condition).catch(() => ({
+    met: false,
+    current: 0,
+    target: item.gate1_condition?.count || 1,
+  })),
+]);
+const ownedQuantity = Math.max(0, Number(owned?.quantity) || 0);
+const seedlingCost = Math.max(0, Number(item.gate2_seedling_cost) || 0);
+const seedlingsBalance = Math.max(0, Number(stats?.seedlings_balance) || 0);
+const purchaseLimit = Number(item.purchase_limit) > 0 ? Number(item.purchase_limit) : null;
+const limitReached = purchaseLimit !== null && ownedQuantity >= purchaseLimit;
+return {
+  item_code: item.item_code,
+  name: item.name || 'Reckoning Buffer',
+  description: item.description || 'Defers an active Reckoning for 24 hours.',
+  defer_hours: 24,
+  owned_quantity: ownedQuantity,
+  seedling_cost: seedlingCost,
+  seedlings_balance: seedlingsBalance,
+  purchase_limit: purchaseLimit,
+  gate1_met: gate?.met === true,
+  gate1_current: Number(gate?.current) || 0,
+  gate1_target: Number(gate?.target) || Number(item.gate1_condition?.count) || 1,
+  limit_reached: limitReached,
+  purchasable: gate?.met === true && seedlingsBalance >= seedlingCost && !limitReached,
+};
+}
+
+// ── Deep Audit AI (E4) ───────────────────────────────────────────────────────
+
+async function generateDeepAudit(userId, subjectId) {
+// BUG 13 FIX: db.subjects.findById is a function — always truthy. Ternary guard was dead code.
+const subject = await db.subjects.findById(subjectId).catch(() => null);
+const ks = await computeKnowledgeScore(userId, subjectId);
+const decks = await db.decks.findBySubject(userId, subjectId);
+let allCards = [];
+for (const deck of decks) {
+const cards = await db.cards.findByDeck(userId, deck.id);
+allCards.push(...cards);
+}
+const stateCounts = {};
+for (const s of Object.values(CARD_STATES)) stateCounts[s] = 0;
+for (const card of allCards) {
+let stateDoc = await db.cardStates.get(userId, card.id);
+if (!stateDoc) stateDoc = await initializeCardState(userId, card.id);
+stateCounts[stateDoc.state] = (stateCounts[stateDoc.state] || 0) + 1;
+}
+// B19: Collect front text of weakest cards for concrete analysis
+const weakCardFronts = [];
+for (const card of allCards) {
+const st = await db.cardStates.get(userId, card.id);
+if (st && ['GHOST', 'STUCK', 'FRAGILE', 'AVOIDED', 'DANGEROUS'].includes(st.state)) {
+weakCardFronts.push({ state: st.state, front: (card.front_content || '').slice(0, 80) });
+}
+}
+const weakSample = weakCardFronts.slice(0, 6);
+const prompt = `
+ROLE
+You are the KIWI Deep Audit — a meta-cognitive analyst who produces a student-facing audit of a knowledge subject.
+INPUT
+Subject: ${subject?.name || 'Unknown'}
+Knowledge Score: ${ks.score.toFixed(1)}/100 (${ks.band})
+Total Cards: ${allCards.length}
+State Distribution: ${JSON.stringify(stateCounts)}
+Weakest Cards (front text sample):
+${weakSample.map((w) => `  [${w.state}] ${w.front}`).join('\n') || '  (none identified)'}
+RULES
+- Write exactly 4 short paragraphs.
+- Paragraph 1: Overall assessment with KS context.
+- Paragraph 2: Strengths — cite specific card counts for VERIFIED and STABLE states.
+- Paragraph 3: Weaknesses — reference the specific card front texts above by name/concept.
+- Paragraph 4: One specific pattern observed AND one precise, actionable recommendation (e.g., "The student avoids calculation cards. Review the first 3 GHOST cards listed above.").
+- Tone: analytical but warm. No jargon. No bullet points.
+- Total length: 250-400 words.
+OUTPUT
+Return only the audit text.
+`;
+  let audit;
+  try {
+    const result = await ai.run('DEEP_AUDIT', { content: prompt });
+    audit = result.text.trim();
+  } catch (e) {
+    audit = `Your ${subject?.name || 'subject'} audit shows a knowledge score of ${ks.score.toFixed(1)}. Strengths lie in stable cards. Weaknesses gather where cards are stuck or ghosted. Review the flagged cards first. Schedule a reckoning if pressure persists.`;
+  }
+  return {
+    subject_id: subjectId,
+    subject_name: subject?.name,
+    audit,
+    ks_score: ks.score,
+    state_distribution: stateCounts,
+  };
+}
+// ── Archive Expansion ───────────────────────────────────────────────────────
+
+async function applyArchiveExpansion(userId, subjectId) {
+const decks = await db.decks.findBySubject(userId, subjectId);
+let archivedCount = 0;
+for (const deck of decks) {
+const cards = await db.cards.findByDeck(userId, deck.id);
+for (const card of cards) {
+if (card.stage === 5) {
+const stateDoc = await db.cardStates.get(userId, card.id);
+if (stateDoc?.verified) {
+// P8.6b: Graduated 90-180 day interval — not a flat 180 (spec P8.6)
+const archiveInterval = 90 + Math.floor(Math.random() * 91); // [90, 180]
+await db.cards.update(userId, card.id, {
+interval_days: archiveInterval,
+next_review_at: new Date(Date.now() + archiveInterval * 86400000),
+archived: true,
+});
+archivedCount++;
+}
+}
+}
+}
+// P8.6a: Flag the subject document as archived so Biome can render golden zone + badge (spec P8.6)
+if (archivedCount > 0) {
+await db.subjects.update(userId, subjectId, {
+status: 'archived',
+archived: true,
+archived_at: new Date(),
+}).catch((e) => console.error('[KIWI] applyArchiveExpansion subject flag failed:', e.message));
+await db.subjectStats.upsert(userId, subjectId, {
+archived: true,
+archived_at: new Date(),
+}).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+return { archived_count: archivedCount, subject_id: subjectId };
+}
+// ── Reckoning Buffer Consumption ────────────────────────────────────────────
+
+async function consumeReckoningBuffer(userId, reckoningId) {
+const buffer = await db.userInventory.getItem(userId, 'reckoning_buffer');
+if (!buffer || buffer.quantity <= 0) return { error: 'No Reckoning Buffer owned' };
+// NEW-L2 FIX (consumeReckoningBuffer): same always-truthy guard pattern — the
+// original NEW-L2 audit target. Fixed here to match the deferReckoning fix.
+const reckoning = await db.reckoningSessions.findById(reckoningId).catch(() => null);
+// BUG 4 FIX: Buffer is valid on both 'triggered' (first use) and 'deferred'
+// (user already used the 4-hour deferral and now wants to extend to 24 hours).
+if (!reckoning || !['triggered', 'deferred'].includes(reckoning.status)) {
+return { error: 'No active reckoning to buffer' };
+}
+// BUG 10 FIX: verify the reckoning belongs to this user before consuming their buffer.
+// reckoning_id leaks via the 403 lockout response; without this check, User A
+// could extend User B's Reckoning at User A's inventory cost.
+if (reckoning.user_id !== userId) {
+return { error: 'Not your reckoning' };
+}
+if (reckoning.generation_status === 'pending') {
+return {
+error: 'Reckoning preparation is already running. Wait for it to finish before deferring.',
+code: 'RECKONING_PREPARING',
+};
+}
+const newQty = buffer.quantity - 1;
+await db.userInventory.setItem(userId, 'reckoning_buffer', {
+quantity: newQty,
+});
+// Extend deferral to 24 hours
+const deferredUntil = new Date(Date.now() + 24 * 3600000);
+await db.reckoningSessions.update(reckoningId, {
+status: 'deferred',
+deferral_used: true,
+deferred_until: deferredUntil,
+});
+return { consumed: true, deferred_until: deferredUntil, remaining: newQty };
+}
+// ── Chronicle Artifacts ──────────────────────────────────────────────────────
+
+async function generateChronicleArtifact(userId, weekStart) {
+const chronicle = await db.chronicleEntries.findLatest(userId);
+if (!chronicle || chronicle.week_start !== weekStart) return null;
+const prompt = `
+ROLE
+You are a mystical chronicler who writes a short artifact inscription based on a weekly study summary.
+INPUT
+${chronicle.narrative}
+RULES
+- Write exactly 2 sentences.
+- Style: ancient inscription, poetic, slightly mysterious.
+- Do not mention modern concepts (apps, phones, etc.).
+OUTPUT
+Return only the inscription.
+`;
+  let artifact;
+  try {
+    const result = await ai.run('CHRONICLE_ARTIFACT', { content: prompt });
+    artifact = result.text.trim();
+  } catch (e) {
+    artifact = 'The forest remembers this week. Your path is recorded in the roots of time.';
+  }
+  await db.chronicleEntries.create(userId, {
+    week_start: weekStart,
+    narrative: chronicle.narrative,
+    artifact_text: artifact,
+    is_artifact: true,
+  });
+  return { artifact_text: artifact, week: weekStart };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  EXPRESS APP, MIDDLEWARE & ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+const app = express();
+
+const _corsOptions = {
+  origin: true, // open to all origins
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  // x-admin-token required for the hidden admin-override path (was missing — caused
+  // CORS preflight to fail with "Failed to fetch" when admin panel was accessed
+  // via the tap-unlock passcode flow, because the browser blocked the custom header).
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
+};
+
+app.use(compression()); // Gzip all responses — typically cuts JSON payload 60-70%
+app.use(cors(_corsOptions));
+// Handle preflight OPTIONS requests for all routes
+app.options(/(.*)/, cors(_corsOptions));
+
+app.use(express.json({ limit: '10mb' }));
+
+app.use(cookieParser());
+// Serve frontend static files for single-domain deployment
+
+// Serve frontend with aggressive caching for assets, no-cache for HTML
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  lastModified: true,
+  setHeaders: function(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  }
+}));
+// ── Additional requires for file parsing ────────────────────────────────────
+let pdfParse, mammoth, officeparser;
+try {
+pdfParse = require('pdf-parse');
+} catch (e) {
+pdfParse = null;
+}
+try {
+mammoth = require('mammoth');
+} catch (e) {
+mammoth = null;
+}
+try {
+officeparser = require('officeparser');
+} catch (e) {
+officeparser = null;
+}
+// ── AI Rate Limiter (B5) ──────────────────────────────────────────────────────
+const aiCallTracker = new Map(); // key: `${userId}:${endpoint}` → {count, resetAt}
+
+// ── AI Explanation Subject Tracker ────────────────────────────────────────────
+// Tracks daily AI summary (explain) calls per user per subject.
+// Used by calculateSubjectPressure to detect AI over-reliance (ai_crutch source).
+// Resets per 24-hour window. Server restart resets all counts (acceptable — in-memory).
+const _aiExplainBySubject = new Map(); // key: `${userId}:${subjectId}` → {count, resetAt}
+
+function recordAIExplainForSubject(userId, subjectId) {
+  if (!subjectId) return;
+  const key = `${userId}:${subjectId}`;
+  const now = Date.now();
+  const entry = _aiExplainBySubject.get(key);
+  if (!entry || now > entry.resetAt) {
+    _aiExplainBySubject.set(key, { count: 1, resetAt: now + 86_400_000 }); // 24 h window
+  } else {
+    entry.count += 1;
+  }
+}
+
+function getAIExplainCount(userId, subjectId) {
+  if (!subjectId) return 0;
+  const key = `${userId}:${subjectId}`;
+  const entry = _aiExplainBySubject.get(key);
+  return (entry && Date.now() <= entry.resetAt) ? entry.count : 0;
+}
+
+function checkAIRateLimit(userId, endpoint, maxPerHour) {
+const key = `${userId}:${endpoint}`;
+const now = Date.now();
+const entry = aiCallTracker.get(key);
+if (!entry || now > entry.resetAt) {
+aiCallTracker.set(key, { count: 1, resetAt: now + 3_600_000 });
+return false; // not limited
+}
+if (entry.count >= maxPerHour) return true; // limited
+entry.count += 1;
+return false;
+}
+// ── authMiddleware ──────────────────────────────────────────────────────────
+const JWT_SECRET = requireRuntimeSecret(process.env, 'JWT_SECRET', ['SESSION_SECRET']);
+const ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY || '15m';
+const REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '30d';
+
+function generateAccessToken(user) {
+return jwt.sign({ userId: user.id, role: user.role || 'user' }, JWT_SECRET, {
+expiresIn: ACCESS_EXPIRY,
+});
+}
+
+function generateRefreshToken(user) {
+return jwt.sign({ userId: user.id, tokenType: 'refresh' }, JWT_SECRET, {
+expiresIn: REFRESH_EXPIRY,
+jwtid: randomUUID(),
+});
+}
+
+// Perf-1 FIX: short-lived cache for verified JWT → user lookups.
+// authenticate() is called on every protected route. Without caching, a single
+// dashboard page load (10+ parallel API requests) pays one DB round-trip per
+// request. The cache key is the raw JWT string; TTL is 30 s so revoked tokens
+// are rejected within half a minute at worst.
+const _authCache = new Map(); // Map<token, { user, expiresAt }>
+const _AUTH_CACHE_TTL_MS = 30_000;
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  KNOWLEDGE SCORE CACHE — Eliminates N+1 recomputation on dashboard/biome/brain
+// ═════════════════════════════════════════════════════════════════════════════
+const _ksCache = new Map();      // key: `${userId}:${subjectId||'global'}` → { score, band, totalCards, expiresAt }
+const _KS_CACHE_TTL_MS = 30_000; // 30s — short enough that exam SRS shows quickly, long enough for UI
+
+function getCachedKS(userId, subjectId) {
+  const key = `${userId}:${subjectId || 'global'}`;
+  const entry = _ksCache.get(key);
+  if (entry && Date.now() < entry.expiresAt) return entry.data;
+  return null;
+}
+function setCachedKS(userId, subjectId, data) {
+  const key = `${userId}:${subjectId || 'global'}`;
+  _ksCache.set(key, { data, expiresAt: Date.now() + _KS_CACHE_TTL_MS });
+}
+function invalidateKSCache(userId, subjectId) {
+  if (subjectId) {
+    _ksCache.delete(`${userId}:${subjectId}`);
+    _ksCache.delete(`${userId}:global`);
+  } else {
+    for (const k of _ksCache.keys()) { if (k.startsWith(`${userId}:`)) _ksCache.delete(k); }
+  }
+}
+
+async function authenticate(req, res, next) {
+const authHeader = req.headers.authorization;
+if (!authHeader?.startsWith('Bearer '))
+return res.status(401).json({ error: 'Missing access token' });
+const token = authHeader.slice(7);
+try {
+const decoded = jwt.verify(token, JWT_SECRET);
+// Check cache first
+const now = Date.now();
+const cached = _authCache.get(token);
+if (cached && cached.expiresAt > now) {
+  // BLOCK CHECK: blocked user may have been unblocked/blocked since cache was stored
+  if (cached.user.is_blocked) return res.status(403).json({ error: 'Your account has been suspended. Please contact support.' });
+  req.user = cached.user;
+  return next();
+}
+const user = await db.users.findById(decoded.userId);
+if (!user) return res.status(401).json({ error: 'User not found' });
+// BLOCK CHECK: refuse access to suspended accounts
+if (user.is_blocked) return res.status(403).json({ error: 'Your account has been suspended. Please contact support.' });
+// Store in cache
+_authCache.set(token, { user, expiresAt: now + _AUTH_CACHE_TTL_MS });
+// Prune stale entries lazily (keep Map bounded)
+if (_authCache.size > 2000) {
+  for (const [k, v] of _authCache) {
+    if (v.expiresAt <= now) _authCache.delete(k);
+    if (_authCache.size <= 1000) break;
+  }
+}
+req.user = user;
+next();
+} catch (e) {
+return res.status(401).json({ error: 'Invalid or expired access token' });
+}
+}
+
+// Admin master token — allows hidden admin panel access without requiring role=admin in DB.
+// Set ADMIN_MASTER_TOKEN env var to override. Default is NOT exposed to users.
+const ADMIN_MASTER_TOKEN = optionalRuntimeSecret(process.env, 'ADMIN_MASTER_TOKEN');
+
+// requireAdminAccess — accepts either:
+//   (a) X-Admin-Token header matching ADMIN_MASTER_TOKEN (hidden panel auth)
+//   (b) authenticated user with role='admin' (DB-level admin)
+function requireAdminAccess(req, res, next) {
+  if (ADMIN_MASTER_TOKEN && req.headers['x-admin-token'] === ADMIN_MASTER_TOKEN) {
+    req.user = req.user || { id: 'admin', role: 'admin', name: 'KIWI Admin' };
+    return next();
+  }
+  authenticate(req, res, (err) => {
+    if (err) return res.status(401).json({ error: 'Unauthorized' });
+    if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+    next();
+  });
+}
+
+function requireAdmin(req, res, next) {
+if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+next();
+}
+
+// ── In-memory OTP store for password reset ────────────────────────────────────
+// email (lowercase) → { otp, expiresAt, userId }
+const _otpStore = new Map();
+// ── Reckoning Lockout Middleware (B4) ─────────────────────────────────────────
+
+async function reckoningLockout(req, res, next) {
+if (!req.user) return next();
+
+const baseUrl = String(req.baseUrl || '');
+const pathName = String(req.path || '');
+const method = String(req.method || '').toUpperCase();
+
+// Brain and the exact Settings backing endpoints are hard exemptions from the
+// global Reckoning lock. Evaluate them BEFORE touching Reckoning state so a
+// damaged/stale Reckoning row can never make the recovery surfaces unusable.
+const settingsAllowed =
+  (baseUrl === '/api' && (
+    pathName === '/settings' ||
+    pathName === '/settings/export' ||
+    pathName === '/settings/notifications'
+  )) ||
+  (baseUrl.endsWith('/study') && pathName === '/mode') ||
+  (baseUrl.endsWith('/marketplace') && pathName === '/inventory' && method === 'GET');
+
+const brainSurfaceAllowed =
+  baseUrl.endsWith('/brain') ||
+  (baseUrl.endsWith('/bubbles') && (method === 'GET' || method === 'DELETE'));
+
+if (brainSurfaceAllowed || settingsAllowed) return next();
+
+try {
+  let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+  if (active) active = await reconcileActiveReckoning(req.user.id, active);
+  if (!active) return next();
+
+  // During a live deferral KIWI is intentionally usable. The instant the
+  // server-side deadline expires, this middleware becomes global again.
+  const expiryMs = active.deferred_until
+    ? new Date(active.deferred_until).getTime()
+    : 0;
+  if (expiryMs > Date.now()) return next();
+
+  // Generation of the mandatory exam is allowed, but a normal CBT generation is not.
+  if (
+    baseUrl.endsWith('/exams') &&
+    method === 'POST' &&
+    (pathName === '/generate' || pathName === '/') &&
+    (req.body?.is_reckoning || req.body?.reckoning_id)
+  ) {
+    return next();
+  }
+
+  // Once generated, only the exact server-linked Reckoning exam may be read,
+  // started, pre-marked or resumed. Past/normal exams stay locked.
+  if (baseUrl.endsWith('/exams') && active.exam_session_id) {
+    const firstSegment = pathName.split('/').filter(Boolean)[0] || '';
+    if (String(firstSegment) === String(active.exam_session_id)) return next();
+  }
+
+  // Delivery D recovery exception: after a failed adaptive outcome the normal
+  // retry path clears exam_session_id, but a process retry may still need to
+  // finish the exact completed V2 exam recorded as last_failure_exam_id.
+  if (
+    baseUrl.endsWith('/exams') &&
+    Number(active.engine_version) === 2 &&
+    ['FINALIZING', 'COMPLETE'].includes(String(active.engine_phase || '')) &&
+    active.last_failure_exam_id
+  ) {
+    const firstSegment = pathName.split('/').filter(Boolean)[0] || '';
+    if (String(firstSegment) === String(active.last_failure_exam_id)) return next();
+  }
+
+  const userStats = await db.userStats.get(req.user.id).catch(() => null);
+  return res.status(423).json({
+    error: 'KIWI is locked while The Reckoning is active. Complete The Reckoning or open Brain or Settings.',
+    code: 'RECKONING_GLOBAL_LOCKED',
+    lock_scope: 'global',
+    settings_available: true,
+    brain_available: true,
+    reckoning: {
+      ...active,
+      subjectId: active.subject_id,
+      subjectName: active.subject_name,
+      reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
+      requiredScore: 70,
+      pressure: active.pressure_score || 0,
+      shields: userStats?.streak_shields_held || 0,
+      canDefer: active.status === 'triggered' && !active.deferral_used,
+      can_defer: active.status === 'triggered' && !active.deferral_used,
+      deferHours: 4,
+      deferPenalty: 5,
+      failure_count: Number(active.failure_count) || 0,
+      failsafe_threshold: RECKONING_FAILSAFE_FAILURES,
+      should_announce: true,
+    },
+  });
+} catch (e) {
+  console.error('[KIWI] Reckoning global-lock check failed:', e.message);
+  // Once a request has entered a protected feature router, inability to verify
+  // lock state must never silently unlock the application.
+  return res.status(503).json({
+    error: 'KIWI could not verify Reckoning state for this protected feature. Brain and Settings remain available while you retry.',
+    code: 'RECKONING_STATE_UNAVAILABLE',
+    retryable: true,
+  });
+}
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  AUTH ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+// _safeUserCreate — schema-resilient INSERT for the users table.
+// Attempts the full insert (all extended columns). If Postgres returns error
+// 42703 (undefined_column) — meaning the DB migration hasn't been run yet —
+// it falls back to a minimal INSERT of only the guaranteed core columns, then
+// tries to UPDATE the extended columns with a per-column fallback. This keeps
+// registration working even on a partial schema, and logs a clear warning so
+// the developer knows to run migration_add_user_columns.sql.
+async function _safeUserCreate(data) {
+  // Attempt full insert via the generic builder
+  try {
+    return await db.users.create(data);
+  } catch (err) {
+    if (err.code !== '42703') throw err; // re-throw anything other than undefined_column
+    console.warn(
+      '[KIWI] Schema missing extended user columns (error 42703). ' +
+      'Run migration_add_user_columns.sql in your Supabase SQL editor. ' +
+      'Falling back to core-only INSERT.'
+    );
+  }
+
+  // ── Fallback: insert only columns that must exist in every schema ──
+  const id = data.id;
+  const now = new Date();
+  const { rows } = await query(
+    `INSERT INTO users (id, username, email, password_hash, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (id) DO NOTHING
+     RETURNING *`,
+    [id, data.username, data.email, data.password_hash, now, now]
+  );
+  const user = rows[0] || { id, ...data, created_at: now, updated_at: now };
+
+  // ── Try to UPDATE each extended column individually ──
+  const extended = {
+    full_name: data.full_name ?? '',
+    avatar_url: data.avatar_url ?? '',
+    bio: data.bio ?? '',
+    role: data.role ?? 'user',
+    is_active: data.is_active ?? true,
+    is_guest: data.is_guest ?? false,
+    guest_expires_at: data.guest_expires_at ?? null,
+    last_login_at: data.last_login_at ?? null,
+    telegram_link_token: data.telegram_link_token ?? null,
+    notification_preferences: data.notification_preferences
+      ? JSON.stringify(data.notification_preferences)
+      : JSON.stringify({ email: true, telegram: false }),
+  };
+  for (const [col, val] of Object.entries(extended)) {
+    try {
+      await query(`UPDATE users SET "${col}" = $1 WHERE id = $2`, [val, id]);
+    } catch (_colErr) {
+      // Column truly doesn't exist yet — skip silently; log at debug level only
+    }
+  }
+  return user;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── Account-level KIWI tour state ────────────────────────────────────────────
+// The tour is versioned so future tour redesigns can be introduced deliberately.
+// State is stored in a dedicated onboarding_state row per user; localStorage is
+// only a client cache/fallback and is never the source of truth.
+const KIWI_TOUR_VERSION = 'v2';
+const KIWI_TOUR_STATUSES = new Set(['started', 'done', 'skipped']);
+
+function _tourStateMarker(status, version = KIWI_TOUR_VERSION) {
+  return `tour:${version}:${status}`;
+}
+
+async function getKiwiTourState(userId, version = KIWI_TOUR_VERSION) {
+  const { rows } = await query(
+    'SELECT completed_steps FROM onboarding_state WHERE user_id = $1 LIMIT 1',
+    [userId]
+  );
+  const raw = rows[0]?.completed_steps;
+  const steps = Array.isArray(raw)
+    ? raw
+    : (typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch (_) { return []; } })() : []);
+  const has = (status) => steps.includes(_tourStateMarker(status, version));
+  const status = has('done') ? 'done' : has('skipped') ? 'skipped' : has('started') ? 'started' : 'unseen';
+  return { version, status };
+}
+
+async function setKiwiTourState(userId, status, version = KIWI_TOUR_VERSION) {
+  if (version !== KIWI_TOUR_VERSION) {
+    const err = new Error('Unsupported tour version');
+    err.status = 400;
+    throw err;
+  }
+  if (!KIWI_TOUR_STATUSES.has(status)) {
+    const err = new Error('Invalid tour status');
+    err.status = 400;
+    throw err;
+  }
+
+  const rowId = `${userId}:tour`;
+  const marker = _tourStateMarker(status, version);
+  const completed = status === 'done' || status === 'skipped';
+  await query(
+    `INSERT INTO onboarding_state
+       (id, user_id, completed_steps, current_step, completed, completed_at, created_at, updated_at)
+     VALUES ($1, $2, jsonb_build_array($3::text), $4, $5,
+             CASE WHEN $5 THEN NOW() ELSE NULL END, NOW(), NOW())
+     ON CONFLICT (user_id) DO UPDATE SET
+       completed_steps = CASE
+         WHEN COALESCE(onboarding_state.completed_steps, '[]'::jsonb) @> jsonb_build_array($3::text)
+           THEN COALESCE(onboarding_state.completed_steps, '[]'::jsonb)
+         ELSE COALESCE(onboarding_state.completed_steps, '[]'::jsonb) || jsonb_build_array($3::text)
+       END,
+       current_step = EXCLUDED.current_step,
+       completed = onboarding_state.completed OR EXCLUDED.completed,
+       completed_at = CASE
+         WHEN EXCLUDED.completed THEN COALESCE(onboarding_state.completed_at, NOW())
+         ELSE onboarding_state.completed_at
+       END,
+       updated_at = NOW()`,
+    [rowId, userId, marker, `tour_${version}_${status}`, completed]
+  );
+  return getKiwiTourState(userId, version);
+}
+
+const authRouter = express.Router();
+
+authRouter.post('/register', async (req, res) => {
+let _createdUserId = null; // tracks user row created so catch can clean up orphans
+try {
+const { name, username: rawUsername, email, password } = req.body;
+const username = (name || rawUsername || '').trim();
+if (!username || !email || !password)
+return res
+.status(400)
+.json({ error: 'Missing required fields (name/username, email, password)' });
+if (password.length < 6)
+return res.status(400).json({ error: 'Password must be at least 6 characters' });
+const existing = await db.users.findByUsernameOrEmail(username, email);
+if (existing) return res.status(409).json({ error: 'Username or email already in use' });
+const hashedPassword = await bcrypt.hash(password, 10);
+const telegramLinkToken = crypto.randomBytes(8).toString('hex');
+const user = await _safeUserCreate({
+id: crypto.randomUUID(),
+username,
+email,
+password_hash: hashedPassword,
+full_name: '',
+avatar_url: '',
+bio: '',
+role: 'user',
+is_active: true,
+last_login_at: new Date(),
+telegram_link_token: telegramLinkToken,
+notification_preferences: { email: true, telegram: false },
+});
+_createdUserId = user.id; // set before post-creation steps so catch can clean up
+await db.userStats.create(user.id);
+// Send welcome email
+await sendEmailNotification(user.id, 'welcome', { name: username }).catch((e) =>
+console.error('[KIWI] Welcome email failed:', e.message)
+);
+const accessToken = generateAccessToken(user);
+const refreshToken = generateRefreshToken(user);
+const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+const expiresAt = new Date(Date.now() + 30 * 86400000);
+await db.refreshTokens.create(user.id, refreshHash, expiresAt);
+const { password_hash, ...safeUser } = user;
+res.status(201).json({
+  user: safeUser,
+  accessToken,
+  refreshToken,
+  expiresIn: 900,
+  welcome: true,
+  tour_state: { version: KIWI_TOUR_VERSION, status: 'unseen' },
+});
+} catch (e) {
+console.error('[KIWI] Registration error:', e.message);
+// If the error happened after user creation (e.g. JWT_SECRET missing, almanac seed fail),
+// clean up the orphaned user row so they can register again cleanly.
+if (_createdUserId) {
+  try {
+    await query('DELETE FROM refresh_tokens WHERE user_id = $1', [_createdUserId]);
+    await query('DELETE FROM user_stats WHERE user_id = $1', [_createdUserId]);
+    await query('DELETE FROM users WHERE id = $1', [_createdUserId]);
+    console.error('[KIWI] Cleaned up orphaned user after failed registration:', _createdUserId);
+  } catch (cleanupErr) {
+    console.error('[KIWI] Cleanup failed:', cleanupErr.message);
+  }
+}
+res.status(500).json({ error: 'Registration failed. Please try again.', details: e.message });
+}
+});
+
+authRouter.post('/login', async (req, res) => {
+try {
+const { usernameOrEmail, email: rawEmail, password } = req.body;
+const loginId = (usernameOrEmail || rawEmail || '').trim();
+if (!loginId || !password)
+return res.status(400).json({ error: 'Email/username and password required' });
+const userBase = await db.users.findByUsernameOrEmail(loginId, loginId);
+if (!userBase) return res.status(401).json({ error: 'Invalid credentials' });
+const userStatsTmp = await db.userStats.get(userBase.id);
+const user = { ...userBase, stats: userStatsTmp };
+const valid = await bcrypt.compare(password, user.password_hash);
+if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+await db.users.update(user.id, { last_login_at: new Date() });
+// Check streak on login
+const streakCheck = checkStreakOnLogin(user.stats || {});
+if (streakCheck.updates) {
+await db.userStats.update(user.id, streakCheck.updates);
+}
+// Ecosystem V2 resolves streak gaps once, when a meaningful session commits.
+// Phase 7: Return greeting — Perf-3 FIX: race computeReturnStatus against
+// a 400ms deadline. If it resolves in time the real status is used; if it
+// takes longer (slow DB) we send the safe 'active' default and the dashboard
+// will fetch the real value on load. This cuts worst-case login latency by
+// ~200ms without losing the greeting for users on fast connections.
+let returnStatus = { status: 'active' };
+try {
+  returnStatus = await Promise.race([
+    computeReturnStatus(user.id),
+    new Promise(resolve => setTimeout(() => resolve({ status: 'active' }), 400)),
+  ]);
+} catch (_) {}
+// P8 FIX: If 14+ day absence, proactively trigger GHOST decay recompute for all
+// Stage-5 cards that are >=20 days overdue past their due date. Without this, GHOST
+// state is only detected lazily when a card is loaded — returnees would see a falsely
+// healthy dashboard. Uses next_review_at to match the GHOST definition in determineCardState.
+if (returnStatus.status === 'abandoned') {
+(async () => {
+try {
+const allCards = await db.cards.findAllForUser(user.id);
+const twentyDaysAgo = new Date(Date.now() - 20 * 86400000);
+const stage5Dormant = allCards.filter(c =>
+c.stage === 5 &&
+c.next_review_at &&
+new Date(c.next_review_at) <= twentyDaysAgo
+);
+for (const card of stage5Dormant) {
+queueKSRecompute(user.id, card.id); // queued
+}
+if (stage5Dormant.length > 0) {
+console.log(`[KIWI] GHOST decay pass: recomputed ${stage5Dormant.length} card(s) for user ${user.id}`);
+}
+} catch (e) {
+console.error('[KIWI] GHOST decay pass failed:', e.message);
+}
+})();
+}
+const accessToken = generateAccessToken(user);
+const refreshToken = generateRefreshToken(user);
+const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+const expiresAt = new Date(Date.now() + 30 * 86400000);
+await db.refreshTokens.create(user.id, refreshHash, expiresAt);
+// Streak rewards commit only with the active-day event, never on login.
+// Refresh the evidence-backed living persona weekly.
+generateLivingPersona(user.id).catch(e => console.error('[KIWI] Living persona refresh failed on login:', e.message));
+// P6.2 FIX: Chronicle catch-up — if last chronicle is older than 7 days, generate on login
+const latestChronicle = await db.chronicleEntries.findLatest(user.id).catch(() => null);
+const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+if (!latestChronicle || new Date(latestChronicle.week_start) < sevenDaysAgo) {
+// GAP-3 FIX: award seedlings on catch-up path so Wednesday users get their 2 seedlings
+generateWeeklyChronicle(user.id)
+.then(() => hookSeedlingEarnings(user.id, 'weekly_chronicle', {}).catch((e) => console.error("[KIWI] silent catch:", e.message)))
+.catch((e) => console.error('[KIWI] Chronicle catch-up failed:', e.message));
+}
+// Autostart must fail closed. A temporary database/read failure is not proof
+// that this account has never seen the tour, so never turn it into "unseen".
+const tourState = await getKiwiTourState(user.id).catch((error) => {
+  console.error('[KIWI TOUR] Failed to load account tour state on login:', error.message);
+  return { version: KIWI_TOUR_VERSION, status: 'unknown' };
+});
+const { password_hash, stats: _stats, ...safeUser } = user;
+res.json({
+user: safeUser,
+accessToken,
+refreshToken,
+expiresIn: 900,
+return_status: returnStatus,
+is_streak_frozen: !!(user.stats?.streak_shields_held),
+tour_state: tourState,
+});
+} catch (e) {
+console.error('Login error:', e);
+res.status(500).json({ error: 'Login failed', details: e.message });
+}
+});
+
+authRouter.post('/refresh', async (req, res) => {
+try {
+const { refreshToken } = req.body;
+if (!refreshToken) return res.status(400).json({ error: 'Refresh token required' });
+const decoded = jwt.verify(refreshToken, JWT_SECRET);
+const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+const tokenDoc = await db.refreshTokens.findByHash(refreshHash, decoded.userId);
+if (!tokenDoc || new Date(tokenDoc.expires_at) < new Date()) {
+return res.status(401).json({ error: 'Invalid or expired refresh token' });
+}
+const user = await db.users.findById(decoded.userId);
+if (!user) return res.status(401).json({ error: 'User not found' });
+const newAccessToken = generateAccessToken(user);
+const newRefreshToken = generateRefreshToken(user);
+const newHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+const newExpires = new Date(Date.now() + 30 * 86400000);
+await db.refreshTokens.deleteByHash(refreshHash);
+await db.refreshTokens.create(user.id, newHash, newExpires);
+const refreshStats = await db.userStats.get(user.id).catch(() => null);
+res.json({
+accessToken: newAccessToken,
+refreshToken: newRefreshToken,
+expiresIn: 900,
+is_streak_frozen: Number(refreshStats?.streak_shields_held) > 0,
+});
+} catch (e) {
+console.error('Refresh error:', e);
+res.status(401).json({ error: 'Invalid refresh token' });
+}
+});
+
+
+// F-18 FIX: IP-based rate limit for guest account creation
+const _guestRateLimit = new Map();
+const GUEST_RATE_LIMIT  = 5;
+const GUEST_RATE_WINDOW = 3_600_000; // 1 hour
+
+authRouter.post('/guest', async (req, res) => {
+// B21: Create a temporary guest user with 10 pre-seeded demo cards
+try {
+// F-18 FIX: rate limit guest creation per IP
+const _guestIp  = req.ip || req.socket?.remoteAddress || 'unknown';
+const _now      = Date.now();
+const _gRL      = _guestRateLimit.get(_guestIp);
+if (_gRL && _now < _gRL.resetAt) {
+  if (_gRL.count >= GUEST_RATE_LIMIT) {
+    return res.status(429).json({ error: 'Too many guest accounts from this IP. Try again later.' });
+  }
+  _gRL.count++;
+} else {
+  _guestRateLimit.set(_guestIp, { count: 1, resetAt: _now + GUEST_RATE_WINDOW });
+}
+const guestId = crypto.randomUUID();
+const guestName = 'Guest' + guestId.slice(0, 8);
+const dummyHash = await bcrypt.hash('guest' + guestId, 6);
+const user = await _safeUserCreate({
+id: guestId,
+username: guestName,
+email: `${guestName}@kiwi.guest`,
+password_hash: dummyHash,
+full_name: 'Guest Explorer',
+avatar_url: '',
+bio: '',
+role: 'guest',
+is_active: true,
+is_guest: true,
+guest_expires_at: new Date(Date.now() + 7 * 86400000),
+last_login_at: new Date(),
+});
+await db.userStats.create(user.id);
+// Seed a demo subject and deck with 10 cards
+const demoSubject = await db.subjects.create(user.id, {
+name: 'Demo: Study Skills',
+color_hex: '#10B981',
+emoji: '🌱',
+});
+const demoDeck = await db.decks.create(user.id, {
+name: 'Introduction Deck',
+description: 'Sample cards to explore KIWI',
+subject_id: demoSubject.id,
+card_count: 0,
+});
+const DEMO_CARDS = [
+{
+front_content: 'What is spaced repetition?',
+back_content:
+'A learning technique that reviews material at increasing intervals to improve long-term retention.',
+},
+{
+front_content: 'What does SRS stand for?',
+back_content:
+'Spaced Repetition System — a method of reviewing flashcards based on how well you know them.',
+},
+{
+front_content: 'What is active recall?',
+back_content:
+'Actively retrieving information from memory rather than passively re-reading, proven to strengthen memory.',
+},
+{
+front_content: 'What is the Ebbinghaus Forgetting Curve?',
+back_content:
+'A graph showing how memory fades over time without reinforcement — the basis for spaced repetition.',
+},
+{
+front_content: 'What is interleaving?',
+back_content:
+'Mixing different subjects or problem types during study sessions to improve long-term learning.',
+},
+{
+front_content: 'What does "Again" mean in KIWI?',
+back_content:
+'You did not remember the card. It will be shown again soon at a shorter interval.',
+},
+{
+front_content: 'What does "Good" mean in KIWI?',
+back_content:
+'You remembered the card with some effort. The interval increases by a standard amount.',
+},
+{
+front_content: 'What does Stage 5 mean?',
+back_content:
+'A card at Stage 5 (Mastered) has been reviewed successfully many times and has a long review interval.',
+},
+{
+front_content: 'What is a Knowledge Score?',
+back_content:
+"KIWI's metric (0–100) reflecting the effective mastery of all your cards, weighted by stage and state.",
+},
+{
+front_content: 'What is a Reckoning?',
+back_content:
+'A mandatory exam triggered when brain pressure is too high — face it to reset pressure and prove mastery.',
+},
+];
+const createdCards = await db.cards.createMany(user.id, demoDeck.id, DEMO_CARDS);
+await db.decks.update(user.id, demoDeck.id, { card_count: createdCards.length });
+await batchInitializeSeedlingStates(
+user.id,
+createdCards.map((c) => c.id)
+);
+const accessToken = generateAccessToken(user);
+const refreshToken = generateRefreshToken(user);
+const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+await db.refreshTokens.create(user.id, refreshHash, new Date(Date.now() + 7 * 86400000));
+const { password_hash, ...safeUser } = user;
+res.status(201).json({
+user: safeUser,
+accessToken,
+refreshToken,
+expiresIn: 900,
+is_guest: true,
+demo_cards: createdCards.length,
+is_streak_frozen: false,
+});
+} catch (e) {
+console.error('Guest creation error:', e);
+res.status(500).json({ error: 'Failed to create guest session', details: e.message });
+}
+});
+
+// ── Forgot Password — OTP via email ────────────────────────────────────────
+authRouter.post('/forgot-password', async (req, res) => {
+try {
+  const email = (req.body.email || '').toLowerCase().trim();
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+  const user = await db.users.findByEmail(email).catch(() => null);
+  // Always return success — prevents email enumeration
+  if (!user) return res.json({ message: 'If that email is registered, a reset code has been sent.' });
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  _otpStore.set(email, { otp, expiresAt: Date.now() + 10 * 60 * 1000, userId: user.id });
+  // Send OTP email
+  await sendBrevoEmail(email, 'password_reset_otp', {
+    name: user.full_name || user.name || 'Student', otp
+  }).catch(() => {});
+  // Return OTP in dev mode (no email configured) so it can be tested
+  const devMode = !process.env.BREVO_API_KEY || process.env.NODE_ENV !== 'production';
+  res.json({
+    message: 'If that email is registered, a reset code has been sent.',
+    ...(devMode ? { otp_dev: otp, note: 'otp_dev shown because no email service is configured' } : {})
+  });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to process request' });
+}
+});
+
+authRouter.post('/verify-reset-otp', async (req, res) => {
+try {
+  const email = (req.body.email || '').toLowerCase().trim();
+  const { otp } = req.body;
+  if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
+  const stored = _otpStore.get(email);
+  if (!stored) return res.status(400).json({ error: 'Invalid or expired code. Request a new one.' });
+  if (Date.now() > stored.expiresAt) {
+    _otpStore.delete(email);
+    return res.status(400).json({ error: 'Code has expired. Please request a new one.' });
+  }
+  if (stored.otp !== otp.toString().trim()) return res.status(400).json({ error: 'Incorrect code. Please try again.' });
+  _otpStore.delete(email);
+  const resetToken = jwt.sign({ userId: stored.userId, type: 'password_reset' }, JWT_SECRET, { expiresIn: '15m' });
+  res.json({ resetToken, message: 'Code verified. You can now set a new password.' });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to verify code' });
+}
+});
+
+authRouter.post('/reset-password', async (req, res) => {
+try {
+  const { resetToken, newPassword } = req.body;
+  if (!resetToken || !newPassword) return res.status(400).json({ error: 'Reset token and new password are required' });
+  if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  const decoded = jwt.verify(resetToken, JWT_SECRET);
+  if (decoded.type !== 'password_reset') return res.status(400).json({ error: 'Invalid reset token' });
+  const bcrypt = require('bcryptjs');
+  const hash = await bcrypt.hash(newPassword, 12);
+  await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, decoded.userId]);
+  for (const [k, v] of _authCache) {
+    if (v.user?.id === decoded.userId) _authCache.delete(k);
+  }
+  res.json({ message: 'Password reset successfully. You can now log in.' });
+} catch (e) {
+  if (e.name === 'JsonWebTokenError' || e.name === 'TokenExpiredError') {
+    return res.status(400).json({ error: 'Reset link expired. Please request a new code.' });
+  }
+  res.status(500).json({ error: 'Failed to reset password' });
+}
+});
+
+authRouter.patch('/change-password', authenticate, async (req, res) => {
+try {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new passwords are required' });
+  if (newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  const bcrypt = require('bcryptjs');
+  const user = await db.users.findById(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const valid = await bcrypt.compare(currentPassword, user.password_hash);
+  if (!valid) return res.status(400).json({ error: 'Current password is incorrect' });
+  const hash = await bcrypt.hash(newPassword, 12);
+  await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+  for (const [k, v] of _authCache) {
+    if (v.user?.id === req.user.id) _authCache.delete(k);
+  }
+  res.json({ message: 'Password changed successfully' });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to change password' });
+}
+});
+
+authRouter.post('/logout', async (req, res) => {
+// Perf-1 FIX: evict token from auth cache immediately on logout
+const _logoutAuthHeader = req.headers.authorization;
+if (_logoutAuthHeader?.startsWith('Bearer ')) {
+  _authCache.delete(_logoutAuthHeader.slice(7));
+}
+try {
+const { refreshToken } = req.body;
+if (refreshToken) {
+const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+await db.refreshTokens.deleteByHash(refreshHash);
+}
+res.json({ message: 'Logged out successfully' });
+} catch (e) {
+res.status(500).json({ error: 'Logout failed' });
+}
+});
+
+authRouter.get('/me', authenticate, async (req, res) => {
+try {
+const stats = await db.userStats.get(req.user.id);
+const { password_hash, ...safeUser } = req.user;
+res.json({ ...safeUser, stats: toPublicStats(stats) });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch user' });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  SUBJECT ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+const subjectRouter = express.Router();
+
+subjectRouter.use(authenticate);
+
+subjectRouter.use(reckoningLockout);
+
+subjectRouter.get('/', async (req, res) => {
+try {
+const subjects = await db.subjects.findManyWithDecks(req.user.id);
+const healthPromises = subjects.map(async (s) => {
+try {
+const h = await recalculateSubjectHealth(req.user.id, s.id);
+return { ...s, health_score: h != null ? Math.min(100, Math.max(0, h)) : 50 };
+} catch (e) {
+return { ...s, health_score: 50 };
+}
+});
+res.json(await Promise.all(healthPromises));
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch subjects', details: e.message });
+}
+});
+
+subjectRouter.post('/', async (req, res) => {
+try {
+// DB columns are "color" and "icon" (confirmed from Render.com logs — not color_hex/emoji)
+const { name, color_hex, color, emoji, icon } = req.body;
+if (!name) return res.status(400).json({ error: 'Name required' });
+const subject = await db.subjects.create(req.user.id, {
+name,
+color: color || color_hex || '#4F46E5',
+icon: icon || emoji || '📚',
+});
+res.status(201).json(subject);
+} catch (e) {
+res.status(500).json({ error: 'Failed to create subject' });
+}
+});
+
+subjectRouter.put('/:id', async (req, res) => {
+try {
+const subject = await db.subjects.update(req.user.id, req.params.id, req.body);
+res.json(subject);
+} catch (e) {
+res.status(500).json({ error: 'Failed to update subject' });
+}
+});
+
+subjectRouter.delete('/:id', async (req, res) => {
+try {
+await db.subjects.delete(req.user.id, req.params.id);
+res.json({ message: 'Subject deleted' });
+} catch (e) {
+res.status(500).json({ error: 'Failed to delete subject' });
+}
+});
+
+subjectRouter.get('/:id/topics', async (req, res) => {
+try {
+const topics = await db.topics.findMany(req.user.id, req.params.id);
+res.json(topics);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch topics' });
+}
+});
+
+subjectRouter.post('/:id/topics', async (req, res) => {
+try {
+const { name } = req.body;
+if (!name) return res.status(400).json({ error: 'Name required' });
+const topic = await db.topics.create(req.user.id, req.params.id, name);
+res.status(201).json(topic);
+} catch (e) {
+res.status(500).json({ error: 'Failed to create topic' });
+}
+});
+
+subjectRouter.get('/:id/health', async (req, res) => {
+try {
+const health = await recalculateSubjectHealth(req.user.id, req.params.id);
+res.json({ health_score: health });
+} catch (e) {
+res.status(500).json({ error: 'Failed to calculate health' });
+}
+});
+
+subjectRouter.get('/:id/biome', async (req, res) => {
+try {
+const ks = await computeKnowledgeScore(req.user.id, req.params.id);
+const credential = await evaluateCredential(req.user.id, req.params.id);
+const pressure = await db.brainPressure.get(req.user.id, req.params.id);
+const zoneDesc = await generateZoneDescription(req.user.id, req.params.id);
+res.json({
+knowledge_score: ks,
+credential,
+pressure,
+zone_description: zoneDesc,
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to build biome', details: e.message });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  DECK ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+const deckRouter = express.Router();
+
+deckRouter.use(authenticate);
+
+deckRouter.use(reckoningLockout);
+
+deckRouter.get('/', async (req, res) => {
+try {
+const { subject_id, topic_id, page = 1, limit = 20 } = req.query;
+const result = await db.decks.findMany(req.user.id, { subject_id, topic_id });
+const start = (page - 1) * limit;
+const paginated = result.decks.slice(start, start + parseInt(limit));
+res.json({
+decks: paginated,
+total: result.total,
+page: parseInt(page),
+total_pages: Math.ceil(result.total / limit),
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch decks' });
+}
+});
+
+deckRouter.post('/', async (req, res) => {
+try {
+const { subject_id, topic_id, name, description, is_public } = req.body;
+if (!name || !subject_id)
+return res.status(400).json({ error: 'Name and subject_id required' });
+const deck = await db.decks.create(req.user.id, {
+subject_id,
+topic_id,
+name,
+description,
+is_public: is_public || false,
+card_count: 0,
+});
+res.status(201).json(deck);
+} catch (e) {
+res.status(500).json({ error: 'Failed to create deck' });
+}
+});
+
+deckRouter.get('/:id', async (req, res) => {
+try {
+const deck = await db.decks.findByIdFull(req.user.id, req.params.id);
+if (!deck) return res.status(404).json({ error: 'Deck not found' });
+res.json(deck);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch deck' });
+}
+});
+
+deckRouter.put('/:id', async (req, res) => {
+try {
+const deck = await db.decks.update(req.user.id, req.params.id, req.body);
+res.json(deck);
+} catch (e) {
+res.status(500).json({ error: 'Failed to update deck' });
+}
+});
+
+deckRouter.delete('/:id', async (req, res) => {
+try {
+await db.decks.delete(req.user.id, req.params.id);
+res.json({ message: 'Deck deleted' });
+} catch (e) {
+res.status(500).json({ error: 'Failed to delete deck' });
+}
+});
+
+// ── POST /api/decks/:id/reset — wipe SRS progress for every card in a deck ───
+// Resets all cards back to SEEDLING (stage 1, ease 2.5, no schedule). Useful
+// when a user wants to restudy a whole deck from scratch without deleting cards.
+deckRouter.post('/:id/reset', async (req, res) => {
+try {
+  const deckId = req.params.id;
+  const userId = req.user.id;
+  // Verify deck belongs to this user
+  const deck = await db.decks.findById(userId, deckId);
+  if (!deck) return res.status(404).json({ error: 'Deck not found' });
+  // Reset all card scheduling fields in one SQL pass
+  await query(
+    `UPDATE cards SET stage = 1, review_count = 0, repetition_count = 0,
+     easiness_factor = 2.5, next_review_at = NOW(), last_reviewed_at = NULL,
+     updated_at = NOW()
+     WHERE deck_id = $1 AND user_id = $2`,
+    [deckId, userId]
+  );
+  // Reset card_states to SEEDLING for every card in the deck
+  await query(
+    `UPDATE card_states SET state = 'SEEDLING', stage = 1, verified = false,
+     verified_at = NULL, learning_debt = false,
+     last_evaluated_at = NOW(), updated_at = NOW()
+     WHERE card_id IN (
+       SELECT id FROM cards WHERE deck_id = $1 AND user_id = $2
+     ) AND user_id = $2`,
+    [deckId, userId]
+  );
+  // Explicitly zero subject KS before recomputing so stale score is never visible
+  await db.subjectStats.upsert(userId, deck.subject_id, { knowledge_score: 0 }).catch(() => {});
+  // Recompute KS after deck reset so score reflects new SEEDLING state
+  await persistKnowledgeScore(userId, deck.subject_id).catch(() => {});
+  wsSend(userId, 'ks_change', { subject_id: deck.subject_id, source: 'deck_reset' });
+  const { rows } = await query(
+    'SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = $1 AND user_id = $2',
+    [deckId, userId]
+  );
+  const count = parseInt(rows[0]?.cnt || '0', 10);
+  res.json({ message: `Deck reset: ${count} card${count !== 1 ? 's' : ''} returned to SEEDLING`, count });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to reset deck', details: e.message });
+}
+});
+
+// ── POST /api/subjects/:id/reset — wipe SRS progress for ALL cards in a subject ─
+// Resets every card across every deck in the subject back to SEEDLING.
+subjectRouter.post('/:id/reset', async (req, res) => {
+try {
+  const subjectId = req.params.id;
+  const userId = req.user.id;
+  const subject = await db.subjects.findById(subjectId);
+  if (!subject) return res.status(404).json({ error: 'Subject not found' });
+  const decks = await db.decks.findBySubject(userId, subjectId);
+  if (!decks.length) return res.json({ message: 'No decks to reset', count: 0 });
+  const deckIds = decks.map(d => d.id);
+  // Reset all cards in one pass
+  await query(
+    `UPDATE cards SET stage = 1, review_count = 0, repetition_count = 0,
+     easiness_factor = 2.5, next_review_at = NOW(), last_reviewed_at = NULL,
+     updated_at = NOW()
+     WHERE deck_id = ANY($1) AND user_id = $2`,
+    [deckIds, userId]
+  );
+  // Reset card_states
+  await query(
+    `UPDATE card_states SET state = 'SEEDLING', stage = 1, verified = false,
+     verified_at = NULL, learning_debt = false,
+     last_evaluated_at = NOW(), updated_at = NOW()
+     WHERE card_id IN (
+       SELECT id FROM cards WHERE deck_id = ANY($1) AND user_id = $2
+     ) AND user_id = $2`,
+    [deckIds, userId]
+  );
+  const { rows } = await query(
+    'SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = ANY($1) AND user_id = $2',
+    [deckIds, userId]
+  );
+  const count = parseInt(rows[0]?.cnt || '0', 10);
+  // Explicitly zero subject_stats KS before recomputing — prevents stale score showing
+  await db.subjectStats.upsert(userId, subjectId, { knowledge_score: 0 }).catch(() => {});
+  // Recompute KS after mass reset
+  await persistKnowledgeScore(userId, subjectId).catch(() => {});
+  // KS-BUG-4 FIX: sync goal.current_ks in Biome — otherwise old KS shows until cron runs
+  await updateAllBubblesForUser(userId).catch(() => {});
+  res.json({ message: `Subject reset: ${count} card${count !== 1 ? 's' : ''} returned to SEEDLING`, count });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to reset subject', details: e.message });
+}
+});
+
+// ── POST /api/decks/merge — combine multiple decks into one new deck ──────────
+deckRouter.post('/merge', async (req, res) => {
+try {
+const { source_deck_ids, target_name, subject_id } = req.body;
+if (!Array.isArray(source_deck_ids) || source_deck_ids.length < 2)
+  return res.status(400).json({ error: 'Provide at least 2 source_deck_ids' });
+
+const firstDeck = await db.decks.findById(req.user.id, source_deck_ids[0]);
+if (!firstDeck) return res.status(404).json({ error: 'Source deck not found' });
+
+const mergedDeck = await db.decks.create(req.user.id, {
+  subject_id: subject_id || firstDeck.subject_id,
+  name: target_name || `Merged Deck (${new Date().toLocaleDateString()})`,
+  description: `Merged from ${source_deck_ids.length} decks`,
+  card_count: 0,
+  is_public: false,
+});
+
+let total = 0;
+for (const deckId of source_deck_ids) {
+  await query('UPDATE cards SET deck_id = $1 WHERE deck_id = $2 AND user_id = $3', [mergedDeck.id, deckId, req.user.id]);
+  const { rows } = await query('SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = $1', [mergedDeck.id]);
+  total = parseInt(rows[0]?.cnt || '0', 10);
+  await db.decks.delete(req.user.id, deckId);
+}
+
+await db.decks.update(req.user.id, mergedDeck.id, { card_count: total });
+res.status(201).json({ deck: mergedDeck, card_count: total });
+} catch (e) {
+res.status(500).json({ error: 'Failed to merge decks', details: e.message });
+}
+});
+
+// ── POST /api/decks/:id/move-cards — drag cards from one deck to another ─────
+deckRouter.post('/:id/move-cards', async (req, res) => {
+try {
+const { card_ids, target_deck_id } = req.body;
+if (!Array.isArray(card_ids) || !card_ids.length || !target_deck_id)
+  return res.status(400).json({ error: 'card_ids array and target_deck_id required' });
+
+const sourceDeckId = req.params.id;
+const targetDeck = await db.decks.findById(req.user.id, target_deck_id);
+if (!targetDeck) return res.status(404).json({ error: 'Target deck not found' });
+
+for (const cardId of card_ids) {
+  await query('UPDATE cards SET deck_id = $1 WHERE id = $2 AND user_id = $3 AND deck_id = $4',
+    [target_deck_id, cardId, req.user.id, sourceDeckId]);
+}
+
+const [{ rows: srcRows }, { rows: tgtRows }] = await Promise.all([
+  query('SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = $1 AND user_id = $2', [sourceDeckId, req.user.id]),
+  query('SELECT COUNT(*) AS cnt FROM cards WHERE deck_id = $1 AND user_id = $2', [target_deck_id, req.user.id]),
+]);
+const srcCount = parseInt(srcRows[0]?.cnt || '0', 10);
+const tgtCount = parseInt(tgtRows[0]?.cnt || '0', 10);
+await db.decks.update(req.user.id, sourceDeckId, { card_count: srcCount });
+await db.decks.update(req.user.id, target_deck_id, { card_count: tgtCount });
+
+res.json({ moved: card_ids.length, source_count: srcCount, target_count: tgtCount });
+} catch (e) {
+res.status(500).json({ error: 'Failed to move cards', details: e.message });
+}
+});
+
+// ── POST /api/decks/:id/reassign — move a deck (and all its cards) to a different subject ──
+deckRouter.post('/:id/reassign', async (req, res) => {
+try {
+const { target_subject_id } = req.body;
+if (!target_subject_id) return res.status(400).json({ error: 'target_subject_id is required' });
+const deck = await db.decks.findById(req.user.id, req.params.id);
+if (!deck) return res.status(404).json({ error: 'Deck not found' });
+const targetSubject = await db.subjects.findById(target_subject_id);
+if (!targetSubject) return res.status(404).json({ error: 'Target subject not found' });
+if (deck.subject_id === target_subject_id) return res.status(400).json({ error: 'Deck is already in that subject' });
+// Move the deck
+await db.decks.update(req.user.id, deck.id, { subject_id: target_subject_id });
+// Cascade: update subject_id on all card_states for cards in this deck
+const cards = await db.cards.findByDeck(req.user.id, deck.id);
+const cardIds = cards.map(c => c.id);
+if (cardIds.length > 0) {
+  const docIds = cardIds.map(cid => `${req.user.id}_${cid}`);
+  await query(
+    `UPDATE card_states SET subject_id = $1 WHERE id = ANY($2::text[])`,
+    [target_subject_id, docIds]
+  );
+}
+// Invalidate cached pressure for both subjects
+calculateSubjectPressure(req.user.id, deck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+calculateSubjectPressure(req.user.id, target_subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+res.json({ success: true, deck_id: deck.id, moved_cards: cardIds.length, new_subject_id: target_subject_id, subject_name: targetSubject.name });
+} catch (e) {
+res.status(500).json({ error: 'Failed to reassign deck', details: e.message });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CARD ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+const cardRouter = express.Router();
+
+cardRouter.use(authenticate);
+
+cardRouter.use(reckoningLockout);
+
+cardRouter.get('/', async (req, res) => {
+try {
+const { deck_id, stage, page = 1, limit = 50 } = req.query;
+const result = await db.cards.findMany(
+req.user.id,
+{ deck_id, stage },
+{ page: parseInt(page), limit: parseInt(limit) }
+);
+res.json(result);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch cards' });
+}
+});
+
+cardRouter.get('/:id', async (req, res) => {
+try {
+const card = await db.cards.findById(req.user.id, req.params.id);
+if (!card) return res.status(404).json({ error: 'Card not found' });
+const stateDoc = await db.cardStates.get(req.user.id, card.id);
+res.json({ ...card, intelligence: stateDoc || null });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch card' });
+}
+});
+
+cardRouter.post('/', async (req, res) => {
+try {
+const { deck_id, front_content, back_content, front_image_url, back_image_url, tags } =
+req.body;
+if (!deck_id || !front_content || !back_content)
+return res.status(400).json({ error: 'Required fields missing' });
+const ai_summary = await summarizeCard(front_content, back_content);
+const card = await db.cards.create(req.user.id, {
+deck_id,
+front_content,
+back_content,
+front_image_url,
+back_image_url,
+tags: tags || [],
+ai_summary,
+});
+await db.decks.update(req.user.id, deck_id, { card_count: { increment: 1 } });
+await initializeCardState(req.user.id, card.id, CARD_STATES.SEEDLING);
+res.status(201).json(card);
+} catch (e) {
+res.status(500).json({ error: 'Failed to create card', details: e.message });
+}
+});
+
+cardRouter.put('/:id', async (req, res) => {
+try {
+const card = await db.cards.update(req.user.id, req.params.id, req.body);
+res.json(card);
+} catch (e) {
+res.status(500).json({ error: 'Failed to update card' });
+}
+});
+
+// PATCH /api/cards/:id — edit card front and/or back content (library editor)
+cardRouter.patch('/:id', async (req, res) => {
+try {
+  const { front, back } = req.body;
+  if (!front && !back) {
+    return res.status(400).json({ error: 'At least one of front or back must be provided.' });
+  }
+  const trimmedFront = typeof front === 'string' ? front.trim() : undefined;
+  const trimmedBack  = typeof back  === 'string' ? back.trim()  : undefined;
+  if (trimmedFront !== undefined && trimmedFront.length === 0) {
+    return res.status(400).json({ error: 'Front cannot be empty.' });
+  }
+  if (trimmedBack !== undefined && trimmedBack.length === 0) {
+    return res.status(400).json({ error: 'Back cannot be empty.' });
+  }
+  const existing = await db.cards.findById(req.user.id, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Card not found.' });
+  // DB uses front_content / back_content — map from the API-facing names
+  const updates = {};
+  if (trimmedFront !== undefined) updates.front_content = trimmedFront;
+  if (trimmedBack  !== undefined) updates.back_content  = trimmedBack;
+  const updated = await db.cards.update(req.user.id, req.params.id, updates);
+  res.json(updated);
+} catch (e) {
+  res.status(500).json({ error: 'Failed to update card', details: e.message });
+}
+});
+
+cardRouter.delete('/:id', async (req, res) => {
+try {
+const card = await db.cards.findById(req.user.id, req.params.id);
+if (card?.deck_id)
+await db.decks.update(req.user.id, card.deck_id, { card_count: { increment: -1 } });
+await db.cards.delete(req.user.id, req.params.id);
+res.json({ message: 'Card deleted' });
+} catch (e) {
+res.status(500).json({ error: 'Failed to delete card' });
+}
+});
+
+// POST /api/cards/:id/reset — wipe SRS progress back to SEEDLING (Issue-056)
+cardRouter.post('/:id/reset', async (req, res) => {
+try {
+const card = await db.cards.findById(req.user.id, req.params.id);
+if (!card) return res.status(404).json({ error: 'Card not found' });
+// Reset scheduling fields on the card document
+await db.cards.update(req.user.id, req.params.id, {
+stage: 1,
+review_count: 0,
+ease_factor: 2.5,
+interval: 0,
+next_review_at: null,
+last_reviewed_at: null,
+});
+// Reset card_state to SEEDLING (update creates if missing)
+await db.cardStates.update(req.user.id, req.params.id, {
+state: 'SEEDLING',
+stage: 1,
+verified: false,
+verified_at: null,
+learning_debt: false,
+last_evaluated_at: new Date(),
+});
+// Recompute KS after individual card reset so score stays accurate
+const _resetCardForKs = await db.cards.findById(req.user.id, req.params.id).catch(() => null);
+if (_resetCardForKs?.deck_id) {
+  const _deckForKs = await db.decks.findById(req.user.id, _resetCardForKs.deck_id).catch(() => null);
+  if (_deckForKs?.subject_id) {
+    await persistKnowledgeScore(req.user.id, _deckForKs.subject_id).catch(() => {});
+    wsSend(req.user.id, 'ks_change', { subject_id: _deckForKs.subject_id, source: 'card_reset' });
+  }
+}
+res.json({ message: 'Card reset to SEEDLING' });
+} catch (e) {
+res.status(500).json({ error: 'Failed to reset card', details: e.message });
+}
+});
+
+// ── POST /cards/:id/quick-questions — generate 1-3 CBT questions from a single card ──
+cardRouter.post('/:id/quick-questions', async (req, res) => {
+try {
+  const card = await db.cards.findById(req.user.id, req.params.id);
+  if (!card) return res.status(404).json({ error: 'Card not found' });
+  const count    = Math.min(3, Math.max(1, parseInt(req.body?.count) || 1));
+  const calcOnly = req.body?.calcOnly === true || req.body?.calcOnly === 'true';
+  if (checkAIRateLimit(req.user.id, 'quick_questions', 30)) {
+    return res.status(429).json({ error: 'Quick Questions rate limit reached. Please wait a moment.' });
+  }
+  const front = card.front || card.front_content || '';
+  const back  = card.back  || card.back_content  || '';
+  const cardContent = `Card Front (Question/Concept):\n${front}\n\nCard Back (Answer/Explanation):\n${back}`;
+
+  const _basePrompt = calcOnly ? CALC_CBT_PROMPT : CBT_PROMPT;
+  const _cardConstraint = calcOnly
+    ? `## CARD-SCOPED CONSTRAINT — CRITICAL\n\nYou are generating CALCULATION questions ONLY from the following flashcard. Every question must require numerical or mathematical working directly derivable from the card content. Do NOT introduce outside knowledge. Generate exactly ${count} calculation MCQ question${count > 1 ? 's' : ''}.\n\n## ⚠ MANDATORY ANSWER VERIFICATION (Quick Questions — non-negotiable)\n\nFor EVERY question you generate, before writing "Correct Answer:", you MUST:\n1. Compute the answer from the stem's given values using the relevant formula.\n2. Identify which option (A/B/C/D) contains the exact numerical result of your computation.\n3. Write ONLY that option's letter as the Correct Answer.\n4. If your computed result does not appear in any option, rewrite one distractor to contain the correct result, then mark it.\n\nIf the question stem has a logical contradiction (e.g., it asks for a value that is mathematically impossible to reach given the constraints), REWRITE the stem to remove the contradiction before generating options.\n\nThis rule overrides all other rules. A wrong Correct Answer is always a critical failure.\n\n## PRE-OUTPUT CHECKLIST`
+    : `## CARD-SCOPED CONSTRAINT — CRITICAL\n\nYou are generating questions ONLY from the following flashcard. Do NOT introduce outside knowledge. Every question must be directly answerable from the card content above. The card's front is the concept/question; the card's back is the answer/explanation. Generate exactly ${count} MCQ question${count > 1 ? 's' : ''} that test understanding of this specific card.\n\n## PRE-OUTPUT CHECKLIST`;
+
+  const prompt = _basePrompt
+    .replace('[NOTES]', cardContent)
+    .replace('[COUNT]', String(count))
+    .replace('## PRE-OUTPUT CHECKLIST', _cardConstraint);
+
+  console.log(`[KIWI QQ] generating ${count} question(s) — calcOnly=${calcOnly} — routed by KIWI AI Orchestrator`);
+  const result = await ai.run('QUICK_QUESTIONS', {
+    content: prompt,
+    generationConfig: { maxOutputTokens: Math.max(4000, count * 900) },
+  });
+  const aiText = result.text;
+  const questions = parseCBTResponse(aiText, null, []);
+  if (!questions.length) {
+    return res.status(500).json({ error: 'Could not parse questions from AI response. Please try again.' });
+  }
+  res.json({ ok: true, count: questions.length, calcOnly, questions: questions.slice(0, count) });
+} catch (e) {
+  console.error('[KIWI QQ] quick-questions error:', e.message);
+  res.status(500).json({ error: e.message || 'Quick Questions generation failed' });
+}
+});
+
+cardRouter.get('/:id/summary', async (req, res) => {
+try {
+const card = await db.cards.findById(req.user.id, req.params.id);
+if (!card) return res.status(404).json({ error: 'Card not found' });
+if (checkAIRateLimit(req.user.id, 'summarizer', 20)) {
+return res.status(429).json({ error: 'AI explanation rate limit reached. Please wait before requesting more explanations.' });
+}
+// DB-PARALLEL FIX: deck + cardState fetched simultaneously — no dependency on each other.
+// Subject lookup still needs deck.subject_id but that's one hop, not three serial ones.
+let subjectName = '';
+let cardState = '';
+let _explainSubjectId = null;
+try {
+const [deck, stateDoc] = await Promise.all([
+  card.deck_id ? db.decks.findById(req.user.id, card.deck_id) : Promise.resolve(null),
+  db.cardStates.get(req.user.id, card.id),
+]);
+cardState = stateDoc?.state || '';
+if (deck?.subject_id) {
+  _explainSubjectId = deck.subject_id;
+  const subject = await db.subjects.findById(deck.subject_id);
+  subjectName = subject?.name || '';
+}
+} catch (_) { /* context is non-fatal — summarize without it */ }
+// Record AI explanation for pressure tracking (non-fatal; fires even if context failed)
+recordAIExplainForSubject(req.user.id, _explainSubjectId);
+const context = { subjectName, stage: card.stage || null, cardState };
+// DOUBLE-LOOKUP FIX: pass the already-fetched card so getCardSummary skips its re-query.
+const summary = await getCardSummary(
+req.user.id,
+card.id,
+card.front_content,
+card.back_content,
+context,
+card
+);
+res.json({ summary });
+} catch (e) {
+// Return 503 (not 500) so the frontend's generic "Server error" toast
+// does NOT fire — only the AI-specific "AI service unavailable" toast shows.
+res.status(503).json({ error: 'AI explanation failed. Please try again.', details: e.message });
+}
+});
+// GET /api/cards/:id/mastery-moment — return cached or freshly generated mastery moment
+cardRouter.get('/:id/mastery-moment', async (req, res) => {
+try {
+const card = await db.cards.findById(req.user.id, req.params.id);
+if (!card) return res.status(404).json({ error: 'Card not found' });
+// Return cached mastery_moment if already generated
+if (card.mastery_moment) {
+return res.json({ mastery_moment: card.mastery_moment });
+}
+// Generate on-demand (only for stage 5 cards — allow for any card that requests it)
+if (checkAIRateLimit(req.user.id, 'mastery_moment', 30)) {
+return res.status(429).json({ error: 'AI rate limit reached. Please wait before requesting more mastery moments.' });
+}
+const moment = await generateMasteryMoment(
+req.user.id,
+card.id,
+card.front_content || '',
+card.back_content || ''
+);
+res.json({ mastery_moment: moment });
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate mastery moment', details: e.message });
+}
+});
+
+// Import routes with SEEDLING adaptation
+
+cardRouter.post('/import/ai', async (req, res) => {
+try {
+const { deck_id, notes, card_count = 10, subject_hint = '' } = req.body;
+if (!deck_id || !notes) return res.status(400).json({ error: 'deck_id and notes required' });
+// Resolve deck / subject metadata before forking to background
+const aiImportDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+const aiImportSubjectId = aiImportDeck?.subject_id || null;
+// ── Respond immediately with job_id; AI generation runs in background ────────
+const noteJobId = randomUUID();
+_jobStoreSet(noteJobId, { status: 'pending', type: 'note_generation' });
+res.status(202).json({ job_id: noteJobId, deck_id, subject_id: aiImportSubjectId, status: 'generating' });
+// ── Background: generate flashcards and push job_done via WebSocket ───────────
+const _noteUserId    = req.user.id;
+const _noteDeckId    = deck_id;
+const _noteNotes     = notes;
+const _noteHint      = subject_hint;
+const _noteSubjectId = aiImportSubjectId;
+setImmediate(async () => {
+  try {
+    const aiText = await generateFlashcards(_noteNotes, _noteHint);
+    const parsed = parseFlashcards(aiText);
+    if (parsed.length === 0) {
+      _jobStoreSet(noteJobId, { status: 'failed', type: 'note_generation', error: 'Could not parse flashcards from AI response' });
+      wsSend(_noteUserId, 'job_failed', { job_id: noteJobId, type: 'note_generation', error: 'Could not parse flashcards from AI response' });
+      return;
+    }
+    const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
+    const created   = await db.cards.createMany(_noteUserId, _noteDeckId, cardsData);
+    await db.decks.update(_noteUserId, _noteDeckId, { card_count: { increment: created.length } });
+    await batchInitializeSeedlingStates(_noteUserId, created.map(c => c.id));
+    const suggest_bubble = _noteSubjectId !== null && created.length >= 5;
+    _jobStoreSet(noteJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'ai', deck_id: _noteDeckId, subject_id: _noteSubjectId, suggest_bubble } });
+    wsSend(_noteUserId, 'job_done', {
+      job_id: noteJobId,
+      type: 'note_generation',
+      result: { cards: created, count: created.length, source: 'ai', deck_id: _noteDeckId, subject_id: _noteSubjectId, suggest_bubble },
+    });
+  } catch (bgErr) {
+    console.error('[KIWI] Note import background failed:', bgErr.message);
+    _jobStoreSet(noteJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'Flashcard generation failed' });
+    wsSend(_noteUserId, 'job_failed', { job_id: noteJobId, type: 'note_generation', error: bgErr.message || 'Flashcard generation failed' });
+  }
+});
+} catch (e) {
+res.status(500).json({ error: 'AI import failed', details: e.message });
+}
+});
+
+cardRouter.post('/import/text', async (req, res) => {
+try {
+const { deck_id, text, format = 'qa_pairs', delimiter = '::' } = req.body;
+if (!deck_id || !text) return res.status(400).json({ error: 'deck_id and text required' });
+const lines = text.split('\n').filter((l) => l.trim());
+const cardsData = [];
+if (format === 'qa_pairs') {
+for (const line of lines) {
+const [front, back] = line.split(delimiter);
+if (front && back)
+cardsData.push({ front_content: front.trim(), back_content: back.trim() });
+}
+} else if (format === 'csv') {
+// Simple CSV: front,back per line
+for (const line of lines) {
+const [front, back] = line.split(',');
+if (front && back)
+cardsData.push({ front_content: front.trim(), back_content: back.trim() });
+}
+}
+if (cardsData.length === 0)
+return res.status(422).json({ error: 'No valid cards found in text' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, {
+card_count: { increment: created.length },
+});
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+res.status(201).json({ cards: created, count: created.length });
+} catch (e) {
+res.status(500).json({ error: 'Text import failed', details: e.message });
+}
+});
+
+cardRouter.post('/import/image', async (req, res) => {
+try {
+const { deck_id, image_base64, mime_type = 'image/jpeg' } = req.body;
+if (!deck_id || !image_base64)
+return res.status(400).json({ error: 'deck_id and image_base64 required' });
+const extracted = await extractFromImage(Buffer.from(image_base64, 'base64'), mime_type);
+let cardsData = [];
+try {
+const parsed = JSON.parse(extracted);
+if (Array.isArray(parsed))
+cardsData = parsed
+.map((p) => ({
+front_content: p.front || p.question || '',
+back_content: p.back || p.answer || '',
+}))
+.filter((c) => c.front_content && c.back_content);
+} catch (e) {
+const lines = extracted.split('\n').filter((l) => l.includes(':') || l.includes('—'));
+for (const line of lines) {
+const parts = line.split(/[:—]/);
+if (parts.length >= 2)
+cardsData.push({ front_content: parts[0].trim(), back_content: parts[1].trim() });
+}
+}
+if (cardsData.length === 0)
+return res.status(422).json({ error: 'Could not extract cards from image' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, {
+card_count: { increment: created.length },
+});
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+res.status(201).json({ cards: created, count: created.length, source: 'image' });
+} catch (e) {
+res.status(500).json({ error: 'Image import failed', details: e.message });
+}
+});
+
+cardRouter.post('/import/pdf', async (req, res) => {
+try {
+const { deck_id, pdf_base64, mode = 'flashcard', subject_hint: pdf_subject_hint = '' } = req.body;
+if (!pdf_base64) return res.status(400).json({ error: 'pdf_base64 is required' });
+if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
+if (!pdfParse) return res.status(503).json({ error: 'PDF parsing is not available. The pdf-parse package is not installed on this server. Add "pdf-parse" to package.json dependencies and redeploy.' });
+const buffer = Buffer.from(pdf_base64, 'base64');
+const parsed = await pdfParse(buffer);
+let text = (parsed.text || '').trim();
+// Enforce 80,000-character limit
+if (text.length > 80000) text = text.slice(0, 80000);
+if (!text) return res.status(422).json({ error: 'No usable text extracted from PDF' });
+if (mode === 'cbt') {
+const count = estimateCBTCount(text);
+const aiText = await generateCBTQuestions(text, count);
+const questions = parseCBTResponse(aiText, null, []);
+if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
+return res.status(200).json({ questions, count: questions.length, source: 'pdf' });
+}
+// Chunk into <=12000-char segments and send each to Gemini
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+try {
+const aiText = await generateFlashcards(chunk, pdf_subject_hint);
+const parsed2 = parseFlashcards(aiText);
+cardsData.push(...parsed2);
+} catch (e) {
+// Fallback: pair consecutive lines as front/back
+const lines = chunk.split('\n').filter((l) => l.trim().length > 10);
+for (let i = 0; i < lines.length - 1; i += 2) {
+cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
+}
+}
+}
+if (cardsData.length === 0)
+return res.status(422).json({ error: 'No usable text extracted from PDF' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, {
+card_count: { increment: created.length },
+});
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+res.status(201).json({ cards: created, count: created.length, source: 'pdf' });
+} catch (e) {
+res.status(500).json({ error: 'PDF import failed', details: e.message });
+}
+});
+
+cardRouter.post('/import/docx', async (req, res) => {
+try {
+const { deck_id, docx_base64, mode = 'flashcard', subject_hint: docx_subject_hint = '' } = req.body;
+if (!docx_base64) return res.status(400).json({ error: 'docx_base64 is required' });
+if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
+if (!mammoth) return res.status(503).json({ error: 'DOCX parsing not available' });
+const buffer = Buffer.from(docx_base64, 'base64');
+const result = await mammoth.extractRawText({ buffer });
+let text = (result.value || '').trim();
+// Enforce 80,000-character limit
+if (text.length > 80000) text = text.slice(0, 80000);
+if (!text) return res.status(422).json({ error: 'No usable text extracted from DOCX' });
+if (mode === 'cbt') {
+const count = estimateCBTCount(text);
+const aiText = await generateCBTQuestions(text, count);
+const questions = parseCBTResponse(aiText, null, []);
+if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
+return res.status(200).json({ questions, count: questions.length, source: 'docx' });
+}
+// Chunk into <=12000-char segments and send each to Gemini
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+try {
+const aiText = await generateFlashcards(chunk, docx_subject_hint);
+const parsed2 = parseFlashcards(aiText);
+cardsData.push(...parsed2);
+} catch (e) {
+const lines = chunk.split('\n').filter((l) => l.trim().length > 10);
+for (let i = 0; i < lines.length - 1; i += 2) {
+cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
+}
+}
+}
+if (cardsData.length === 0)
+return res.status(422).json({ error: 'No usable text extracted from DOCX' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, {
+card_count: { increment: created.length },
+});
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+// FIX #4a: Recalculate KS after DOCX import
+const docxDeck = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+if (docxDeck?.subject_id) {
+await persistKnowledgeScore(req.user.id, docxDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+res.status(201).json({ cards: created, count: created.length, source: 'docx' });
+} catch (e) {
+res.status(500).json({ error: 'DOCX import failed', details: e.message });
+}
+});
+// POST /api/cards/import/txt — plain text file import (Issue-058)
+cardRouter.post('/import/txt', async (req, res) => {
+try {
+const { deck_id, txt_base64, subject_hint = '', mode = 'flashcard' } = req.body;
+if (!txt_base64) return res.status(400).json({ error: 'txt_base64 is required' });
+if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
+let text = Buffer.from(txt_base64, 'base64').toString('utf-8').trim();
+if (text.length > 80000) text = text.slice(0, 80000);
+if (!text) return res.status(422).json({ error: 'No usable text in file' });
+if (mode === 'cbt') {
+const count = estimateCBTCount(text);
+const aiText = await generateCBTQuestions(text, count);
+const questions = parseCBTResponse(aiText, null, []);
+if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
+return res.status(200).json({ questions, count: questions.length, source: 'txt' });
+}
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+const aiText = await generateFlashcards(chunk, subject_hint);
+cardsData.push(...parseFlashcards(aiText));
+}
+if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this text' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
+await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
+res.status(201).json({ cards: created, count: created.length, source: 'txt' });
+} catch (e) {
+res.status(500).json({ error: 'TXT import failed', details: e.message });
+}
+});
+
+// POST /api/cards/import/md — Markdown file import (Issue-059)
+cardRouter.post('/import/md', async (req, res) => {
+try {
+const { deck_id, md_base64, subject_hint = '', mode = 'flashcard' } = req.body;
+if (!md_base64) return res.status(400).json({ error: 'md_base64 is required' });
+if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
+let text = Buffer.from(md_base64, 'base64').toString('utf-8').trim();
+// Strip common markdown syntax so AI focuses on content, not formatting
+text = text
+  .replace(/^#{1,6}\s+/gm, '')
+  .replace(/\*\*([^*]+)\*\*/g, '$1')
+  .replace(/__([^_]+)__/g, '$1')
+  .replace(/\*([^*]+)\*/g, '$1')
+  .replace(/_([^_]+)_/g, '$1')
+  .replace(/~~([^~]+)~~/g, '$1')
+  .replace(/`{1,3}[^`]*`{1,3}/g, '')
+  .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+  .replace(/^\s*[-*+]\s+/gm, '')
+  .replace(/^\s*\d+\.\s+/gm, '');
+if (text.length > 80000) text = text.slice(0, 80000);
+if (!text) return res.status(422).json({ error: 'No usable text in markdown file' });
+if (mode === 'cbt') {
+const count = estimateCBTCount(text);
+const aiText = await generateCBTQuestions(text, count);
+const questions = parseCBTResponse(aiText, null, []);
+if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
+return res.status(200).json({ questions, count: questions.length, source: 'md' });
+}
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+const aiText = await generateFlashcards(chunk, subject_hint);
+cardsData.push(...parseFlashcards(aiText));
+}
+if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this markdown' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
+await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
+res.status(201).json({ cards: created, count: created.length, source: 'md' });
+} catch (e) {
+res.status(500).json({ error: 'Markdown import failed', details: e.message });
+}
+});
+
+// POST /api/cards/import/pptx — PowerPoint import (Issue-060)
+// Requires: add "officeparser" to package.json dependencies and redeploy
+cardRouter.post('/import/pptx', async (req, res) => {
+try {
+const { deck_id, pptx_base64, subject_hint = '', mode = 'flashcard' } = req.body;
+if (!officeparser) return res.status(503).json({ error: 'PPTX parsing not available. Add "officeparser" to package.json and redeploy.' });
+if (!pptx_base64) return res.status(400).json({ error: 'pptx_base64 is required' });
+if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
+const MAX_PPTX_BYTES = 20 * 1024 * 1024;
+const maxBase64Chars = Math.ceil(MAX_PPTX_BYTES * 4 / 3) + 8;
+if (pptx_base64.length > maxBase64Chars) {
+  return res.status(413).json({ error: 'PPTX is too large. Maximum upload size is 20 MB.' });
+}
+const buffer = Buffer.from(pptx_base64, 'base64');
+if (buffer.length > MAX_PPTX_BYTES) {
+  return res.status(413).json({ error: 'PPTX is too large. Maximum upload size is 20 MB.' });
+}
+const ast = await officeparser.parseOffice(buffer, {
+  fileType: 'pptx',
+  decompressionLimits: {
+    maxUncompressedBytes: 64 * 1024 * 1024,
+    maxZipEntries: 5000,
+    maxTableCells: 250000,
+  },
+});
+const rendered = await ast.to('text', {
+  includeImages: false,
+  textConfig: {
+    preserveLayout: false,
+    renderNotes: true,
+  },
+});
+let text = (rendered?.value || '').trim();
+if (text.length > 80000) text = text.slice(0, 80000);
+if (!text) return res.status(422).json({ error: 'No usable text extracted from PPTX' });
+if (mode === 'cbt') {
+const count = estimateCBTCount(text);
+const aiText = await generateCBTQuestions(text, count);
+const questions = parseCBTResponse(aiText, null, []);
+if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
+return res.status(200).json({ questions, count: questions.length, source: 'pptx' });
+}
+const chunks = [];
+for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
+let cardsData = [];
+for (const chunk of chunks) {
+const aiText = await generateFlashcards(chunk, subject_hint);
+cardsData.push(...parseFlashcards(aiText));
+}
+if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this presentation' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
+await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
+res.status(201).json({ cards: created, count: created.length, source: 'pptx' });
+} catch (e) {
+res.status(500).json({ error: 'PPTX import failed', details: e.message });
+}
+});
+
+// Quizlet parser (B9 — accepts URL or plain text)
+
+cardRouter.post('/import/quizlet', async (req, res) => {
+try {
+const { deck_id, text, url } = req.body;
+if (!deck_id || (!text && !url))
+return res.status(400).json({ error: 'deck_id and either text or url required' });
+// P2.9: Rate limit - 5 Quizlet URL imports per day per user
+// FIX #6: Pass 24-hour window (86400000 ms) instead of default 1-hour
+if (url && checkAIRateLimit(req.user.id, 'quizlet_import', 5, 86400000)) {
+return res.status(429).json({ error: 'Rate limit: max 5 Quizlet URL imports per day' });
+}
+let cardsData = [];
+if (url) {
+// B9: Fetch Quizlet page and extract embedded JSON
+try {
+const https = require('https');
+const rawHtml = await new Promise((resolve, reject) => {
+const req2 = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (response) => {
+let body = '';
+response.on('data', (chunk) => (body += chunk));
+response.on('end', () => resolve(body));
+});
+req2.on('error', reject);
+req2.setTimeout(10000, () => {
+req2.destroy();
+reject(new Error('Timeout'));
+});
+});
+// Quizlet embeds card data in window.Quizlet["setData"] or similar JSON blobs
+// FIX #7: Use \s for zero-or-more whitespace around setData
+const jsonMatch = rawHtml.match(/"setData"\s:\s({[\s\S]?})\s[,}]/);
+if (jsonMatch) {
+const setData = JSON.parse(jsonMatch[1]);
+const terms = setData.terms || setData.studiableItems || [];
+for (const term of terms) {
+const front = term.word || term.term || (term.sides && term.sides[0]?.label) || '';
+const back = term.definition || (term.sides && term.sides[1]?.label) || '';
+if (front && back)
+cardsData.push({ front_content: front.trim(), back_content: back.trim() });
+}
+}
+if (cardsData.length === 0) {
+// Fallback: scan for any JSON array with word/definition pairs
+const allJsonMatch = rawHtml.match(/\{[^]?"word"[^]?\}/g);
+if (allJsonMatch) {
+for (const chunk of allJsonMatch) {
+try {
+const parsed = JSON.parse(chunk);
+for (const item of parsed) {
+if (item.word && item.definition) {
+cardsData.push({
+front_content: item.word.trim(),
+back_content: item.definition.trim(),
+});
+}
+}
+} catch (e) {}
+}
+}
+}
+} catch (fetchErr) {
+return res
+.status(422)
+.json({ error: 'Failed to fetch Quizlet URL', details: fetchErr.message });
+}
+} else {
+// Plain text path
+const lines = text.split('\n').filter((l) => l.trim());
+for (const line of lines) {
+let parts = line.split('\t');
+if (parts.length < 2) parts = line.split(/[—–]/);
+if (parts.length >= 2) {
+cardsData.push({
+front_content: parts[0].trim(),
+back_content: parts.slice(1).join(' — ').trim(),
+});
+}
+}
+}
+if (cardsData.length === 0)
+return res.status(422).json({ error: 'No valid Quizlet cards found' });
+const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
+await db.decks.update(req.user.id, deck_id, {
+card_count: { increment: created.length },
+});
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+// FIX #4b: Recalculate KS after Quizlet import
+const quizletDeck = await db.decks.findById(req.user.id, deck_id).catch(() => null);
+if (quizletDeck?.subject_id) {
+await persistKnowledgeScore(req.user.id, quizletDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+res
+.status(201)
+.json({
+cards: created,
+count: created.length,
+source: url ? 'quizlet_url' : 'quizlet_text',
+});
+} catch (e) {
+res.status(500).json({ error: 'Quizlet import failed', details: e.message });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  STUDY ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+const studyRouter = express.Router();
+
+studyRouter.use(authenticate);
+
+studyRouter.use(reckoningLockout);
+
+studyRouter.post('/start', async (req, res) => {
+try {
+const { deck_id, card_limit, include_all_decks_in_subject, subject_id, card_ids, card_state_filter } = req.body;
+const explicitCardIds = Array.isArray(card_ids)
+  ? [...new Set(card_ids.filter(Boolean).map(id => String(id)))]
+  : [];
+const explicitCardSelection = explicitCardIds.length > 0;
+// Fixed: Allow subject_id + include_all_decks_in_subject without explicit deck_id
+if (!deck_id && !(include_all_decks_in_subject && subject_id)) {
+return res
+.status(400)
+.json({
+error: 'deck_id required, or provide subject_id with include_all_decks_in_subject=true',
+});
+}
+// If no deck_id but subject_id + include_all, get first deck of subject to satisfy subsequent logic
+if (!deck_id && include_all_decks_in_subject && subject_id) {
+const firstDecks = await db.decks.findBySubject(req.user.id, subject_id);
+if (!firstDecks.length)
+return res.status(400).json({ error: 'No decks found for this subject' });
+// deck_id will be overridden by the deckIds array below, this satisfies the variable reference
+}
+let deck = null;
+if (deck_id) {
+deck = await db.decks.findById(req.user.id, deck_id);
+if (!deck) return res.status(404).json({ error: 'Deck not found' });
+}
+let deckIds = deck_id ? [deck_id] : [];
+if (include_all_decks_in_subject && subject_id) {
+const subjectDecks = await db.decks.findBySubject(req.user.id, subject_id);
+deckIds = subjectDecks.map((d) => d.id);
+}
+let allCards = [];
+// PERF: single bulk query for all decks instead of N parallel queries
+if (deckIds.length > 0) {
+  allCards = await db.cards.findByDeckIds(req.user.id, deckIds).catch(() => []);
+}
+// FIX-A: If card_ids provided, scope session to those specific cards only.
+// Used by review_specific_cards invitation action_type.
+if (explicitCardSelection) {
+const idSet = new Set(explicitCardIds);
+allCards = allCards.filter((c) => idSet.has(String(c.id)));
+}
+// Phase 4: Build priority queue — batch-fetch all card states in one query (O(1) DB calls)
+const allCardIds = allCards.map(c => c.id);
+const allStatesList = await batchInitializeSeedlingStates(req.user.id, allCardIds);
+const statesById = new Map(allStatesList.map(s => [s.card_id, s]));
+const queue = allCards.map(card => ({ card, state: statesById.get(card.id) || { state: CARD_STATES.SEEDLING } }));
+// Sort by priority (spec P4.1): DANGEROUS > AVOIDED > GHOST > STUCK > FRAGILE > normal due > seedling
+// P2 FIX: Corrected order — DANGEROUS must surface before GHOST (exam urgency > dormancy)
+// P12 FIX: Secondary sort by overdue date within same priority tier (most overdue first)
+queue.sort((a, b) => {
+// Priority tiers:
+//   0 = DANGEROUS  — critical failure-risk cards
+//   1 = AVOIDED    — user-skipped, needs intervention
+//   2 = GHOST      — long-dormant, never reinforced
+//   3 = STUCK      — repeated recall failures
+//   4 = FRAGILE    — barely passing, at-risk
+//   5 = due        — reviewed cards whose next_review_at is now in the past
+//   6 = SEEDLING   — never reviewed; next_review_at = creation timestamp (not a real due date)
+//   7 = not yet due
+//
+// BUG FIX: SEEDLING was absent from priorityMap, so cards created months ago fell
+// through to the isCardDue() branch (creation timestamp is always in the past) and
+// landed at tier 5 — identical to genuinely due cards. The ascending secondary sort
+// then placed the oldest-created SEEDLINGs first, filling the entire card_limit before
+// any real due cards could surface. Assigning SEEDLING its own tier (6) corrects the
+// ordering: reviewed-but-due cards always precede never-reviewed cards.
+const priorityMap = {
+  [CARD_STATES.DANGEROUS]: 0,
+  [CARD_STATES.AVOIDED]:   1,
+  [CARD_STATES.GHOST]:     2,
+  [CARD_STATES.STUCK]:     3,
+  [CARD_STATES.FRAGILE]:   4,
+  [CARD_STATES.SEEDLING]:  6, // tier 6: new cards surface after all genuinely due cards
+};
+const getTier = (card, state) => {
+  if (priorityMap[state] !== undefined) return priorityMap[state];
+  if (!card.next_review_at) return 6; // defensive — db.cards.create always sets a timestamp
+  return isCardDue(card) ? 5 : 7;
+};
+const pa = getTier(a.card, a.state.state);
+const pb = getTier(b.card, b.state.state);
+if (pa !== pb) return pa - pb;
+// Within the same tier: surface the most overdue card first (earliest next_review_at first).
+// For SEEDLING (tier 6), next_review_at equals creation time, so ascending order surfaces
+// the oldest-imported unreviewed cards first — a sensible default for new-card sequencing.
+const aOverdue = a.card.next_review_at ? new Date(a.card.next_review_at).getTime() : 0;
+const bOverdue = b.card.next_review_at ? new Date(b.card.next_review_at).getTime() : 0;
+return aOverdue - bOverdue; // earlier timestamp = more overdue = first
+});
+// PB.9: Apply bubble queue modifications [DESIGN: §4, §15.2]
+const bubbleSubjectId  = subject_id || (deck ? deck.subject_id : null);
+// ISSUE-009 FIX: Enforce next_review_at — exclude cards not yet due unless they
+// are in a special state that overrides scheduling (DANGEROUS, AVOIDED, GHOST, STUCK, FRAGILE).
+// SEEDLING cards have no next_review_at so isCardDue() returns true for them.
+const SPECIAL_OVERRIDE = new Set([
+  CARD_STATES.DANGEROUS, CARD_STATES.AVOIDED,
+  CARD_STATES.GHOST,     CARD_STATES.STUCK,
+  CARD_STATES.FRAGILE,   CARD_STATES.SLIPPING,
+  // SLIPPING = early-warning state (2 consecutive Again/Hard). These cards
+  // must appear in sessions even when next_review_at is still in the future —
+  // they are heading toward STUCK and need intervention now.
+  // SEEDLING intentionally excluded: isCardDue() already returns true for
+  // brand-new cards (next_review_at is null). Including SEEDLING here caused
+  // recently-reviewed cards to bypass the due-date check because card_states
+  // is updated asynchronously (queueKSRecompute fires every 60s), so a card
+  // could sit as SEEDLING in the DB long after its next_review_at was set.
+]);
+const dueQueue = queue.filter(
+  (item) => isCardDue(item.card) || SPECIAL_OVERRIDE.has(item.state?.state)
+);
+// FALLBACK: if dueQueue is empty (all cards recently reviewed), include all learning-stage cards
+// so the user can always study something. Learning cards (stage 1-2) should never be locked out.
+// FIX (Issue 09): Previous fallback filtered to stage <= 2, producing an empty
+// queue for users whose entire deck is at stage 3+. Now falls back to the full
+// queue sorted by next_review_at (most-overdue first) so any user can always
+// start a session regardless of their collection's stage distribution.
+const effectiveDueQueue = explicitCardSelection
+  ? queue
+  : dueQueue.length > 0
+    ? dueQueue
+    : queue.length > 0
+      ? [...queue].sort((a, b) => {
+          const aDate = a.card.next_review_at ? new Date(a.card.next_review_at).getTime() : 0;
+          const bDate = b.card.next_review_at ? new Date(b.card.next_review_at).getTime() : 0;
+          return aDate - bDate; // earliest next_review_at → most overdue → review first
+        })
+      : [];
+// STATE FILTER: If card_state_filter provided, narrow queue to only those states.
+// Returns an honest 422 instead of silently starting an empty or wrong session.
+const csf = Array.isArray(card_state_filter)
+  ? card_state_filter.map(s => s.toUpperCase()).filter(Boolean)
+  : card_state_filter
+    ? [String(card_state_filter).toUpperCase()]
+    : null;
+let stateFilteredQueue = effectiveDueQueue;
+if (csf && csf.length > 0) {
+  stateFilteredQueue = effectiveDueQueue.filter(item => csf.includes(item.state?.state));
+  if (stateFilteredQueue.length === 0) {
+    const filterLabel = csf.join(' / ');
+    return res.status(422).json({
+      error: `No ${filterLabel} cards found to study in this subject. Try removing the filter or reviewing all due cards.`,
+    });
+  }
+}
+// A caller-supplied card_ids list is an explicit study contract (targeted
+// invitation, attention deck, exact-card review). Preserve it exactly: normal
+// Bubble queue intervention may duplicate, park, or omit cards, which is correct
+// for ordinary sessions but wrong for an explicit selection.
+const modifiedQueue = explicitCardSelection
+  ? stateFilteredQueue
+  : await modifySessionQueueForBubbles(
+      req.user.id, stateFilteredQueue, bubbleSubjectId
+    ).catch(() => stateFilteredQueue);
+const limitedQueue = card_limit && card_limit > 0
+  ? modifiedQueue.slice(0, parseInt(card_limit))
+  : modifiedQueue;
+// Issue-6 FIX: Guard against empty queue before creating a session document.
+// Without this guard, a subject with existing decks but zero cards causes a
+// dangling session to be created, and the frontend receives a 201 with an
+// empty card array — silently broken study state.
+if (limitedQueue.length === 0) {
+  return res.status(422).json({
+    error: allCards.length === 0
+      ? 'No cards found in this subject. Add cards before starting a study session.'
+      : 'No cards are currently due. All cards are scheduled for a future review — check back later.',
+  });
+}
+let sessionCards = limitedQueue.map((q) => q.card || q);
+const sessionDeckId = deck_id || (deckIds.length > 0 ? deckIds[0] : null);
+const session = await db.sessions.create(req.user.id, sessionDeckId, new Date());
+// Fetch user study mode once — used for interval hints and first-return detection
+const _modeStats = await db.userStats.get(req.user.id).catch(() => null);
+const _studyMode = _modeStats?.study_mode || 'normal';
+const _fmtMsHint = (ms) => {
+  if (!ms || ms <= 0) return '<1m';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.round(ms / 3600000);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.round(ms / 86400000);
+  return days < 7 ? `${days}d` : days < 30 ? `${Math.round(days / 7)}w` : `${Math.round(days / 30)}mo`;
+};
+// Normalize cards for frontend: map front_content→front, back_content→back
+// MISS-1+MISS-2 FIX: reads from limitedQueue (bubble-modified), propagates _warmup flag [DESIGN: §2.5]
+// FIX: pre-compute mode-aware interval hints so buttons show correct times from card 1
+const _hintNow = Date.now();
+const normalizedCards = limitedQueue.map((q) => {
+  const card = q.card;
+  let hintAgain = '<1m', hintHard = '~', hintGood = '~', hintEasy = '~';
+  try {
+    const hA = calculateNextReview(card, 'again', _studyMode);
+    const hH = calculateNextReview(card, 'hard',  _studyMode);
+    const hG = calculateNextReview(card, 'good',  _studyMode);
+    const hE = calculateNextReview(card, 'easy',  _studyMode);
+    hintAgain = _fmtMsHint(new Date(hA.next_review_at).getTime() - _hintNow);
+    hintHard  = _fmtMsHint(new Date(hH.next_review_at).getTime() - _hintNow);
+    hintGood  = _fmtMsHint(new Date(hG.next_review_at).getTime() - _hintNow);
+    hintEasy  = _fmtMsHint(new Date(hE.next_review_at).getTime() - _hintNow);
+  } catch (_) {}
+  return {
+    ...card,
+    front:    card.front_content || card.front || '',
+    back:     card.back_content  || card.back  || '',
+    priority: q.state?.state     || null,
+    _warmup:  q._warmup          || false,
+    next_review_at: card.next_review_at || null,
+    intervalHintAgain: hintAgain,
+    intervalHintHard:  hintHard,
+    intervalHintGood:  hintGood,
+    intervalHintEasy:  hintEasy,
+  };
+});
+// P9 FIX: Detect first-return session so frontend can trigger zone restoration animation.
+// is_first_return_session = true when user last studied 3+ days ago (return threshold).
+let is_first_return_session = false;
+if (_modeStats?.last_study_date) {
+  const daysSinceLastStudy = Math.floor((Date.now() - new Date(_modeStats.last_study_date).getTime()) / 86400000);
+  is_first_return_session = daysSinceLastStudy >= 3;
+}
+try {
+const returnStats = _modeStats;
+if (returnStats && returnStats.last_study_date) {
+const daysSinceLastStudy = Math.floor(
+(Date.now() - new Date(returnStats.last_study_date).getTime()) / 86400000
+);
+is_first_return_session = daysSinceLastStudy >= 3;
+}
+} catch (e) { /* non-fatal */ }
+_sessionQueues.set(session.id, normalizedCards);
+setTimeout(() => _sessionQueues.delete(session.id), 4 * 3600 * 1000);
+const _firstPage = normalizedCards.slice(0, PAGE_SIZE);
+res.status(201).json({
+session,
+sessionId: session.id,
+server_now: new Date().toISOString(),
+cards: _firstPage,
+total_cards: normalizedCards.length,
+total_due: normalizedCards.length,
+has_more: normalizedCards.length > PAGE_SIZE,
+subject_id: subject_id || (deck ? deck.subject_id : null),
+deck_id: sessionDeckId,
+is_first_return_session,
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to start session', details: e.message });
+}
+});
+
+// ── GET /study/session/:id/next-cards — paginated card fetch ─────────────────
+studyRouter.get('/session/:sessionId/next-cards', async (req, res) => {
+  try {
+    const offset = parseInt(req.query.offset || '0', 10);
+    const limit  = parseInt(req.query.limit  || String(PAGE_SIZE), 10);
+    const queue  = _sessionQueues.get(req.params.sessionId);
+    if (!queue) return res.status(404).json({ error: 'Session queue not found — expired or already ended' });
+    const cards  = queue.slice(offset, offset + limit);
+    res.json({ cards, offset, total: queue.length, has_more: offset + limit < queue.length });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch next cards', details: e.message });
+  }
+});
+
+studyRouter.post('/card/:cardId/response', async (req, res) => {
+try {
+const { session_id, response, response_time_ms } = req.body;
+const cardId = req.params.cardId;
+if (!session_id || !response)
+return res.status(400).json({ error: 'session_id and response required' });
+const session = await db.sessions.findById(req.user.id, session_id);
+if (!session) return res.status(404).json({ error: 'Session not found' });
+if (session.finalized_at || session.session_completed || session.ended_at) {
+  return res.status(409).json({
+    error: 'This study session has already ended. Start a new session before reviewing more cards.',
+    code: 'SESSION_ENDED',
+  });
+}
+const card = await db.cards.findById(req.user.id, cardId);
+if (!card) return res.status(404).json({ error: 'Card not found' });
+const qualityMap = { again: 0, hard: 2, good: 3, easy: 5 };
+const q = qualityMap[response];
+if (q === undefined) return res.status(400).json({ error: 'Invalid response' });
+const prevStage = card.stage;
+const userStats = await db.userStats.get(req.user.id);
+const mode = userStats?.study_mode || 'normal';
+const nextReview = calculateNextReview(card, response, mode, response_time_ms);
+// HYBRID CHANGE 6: Wire wrapIntervalWithUrgency — previously dead code.
+// Applies deadline interval compression when the card belongs to an active
+// goal that has an exam phase (HARDENING caps at 5d, RESCUE caps at 1d, etc).
+// Only review-phase cards (stage >= 3) with interval > 1 day are compressed.
+// FSRS stability is NEVER modified — only interval_days + next_review_at.
+// Non-fatal: urgency failure must never break the card review response.
+try {
+  if ((nextReview.stage || 1) >= 3 && nextReview.interval_days > 1) {
+    const _activeGoals = await db.masteryGoals.findActive(req.user.id);
+    const _matchGoal   = _activeGoals.find(
+      (g) => Array.isArray(g.card_ids) && g.card_ids.includes(cardId)
+    );
+    if (_matchGoal && _matchGoal.phase) {
+      const _stateDocs = await db.cardStates
+        .findByCards(req.user.id, [cardId])
+        .catch(() => []);
+      const _stateDoc  = _stateDocs.find((d) => d.card_id === cardId) || null;
+      const _wrapped   = wrapIntervalWithUrgency(
+        nextReview.interval_days,
+        _stateDoc,
+        _matchGoal.phase
+      );
+      if (_wrapped < nextReview.interval_days) {
+        nextReview.interval_days  = _wrapped;
+        nextReview.next_review_at = new Date(
+          Date.now() + _wrapped * 24 * 60 * 60 * 1000
+        );
+      }
+    }
+  }
+} catch (_urgencyErr) {
+  console.error('[KIWI] urgency wrap failed:', _urgencyErr.message);
+}
+let sessionUpdates = {};
+if (response === 'again') sessionUpdates.cards_again = { increment: 1 };
+if (response === 'hard') sessionUpdates.cards_hard = { increment: 1 };
+if (response === 'good') sessionUpdates.cards_good = { increment: 1 };
+if (response === 'easy') sessionUpdates.cards_easy = { increment: 1 };
+sessionUpdates.cards_reviewed = { increment: 1 };
+await db.sessions.update(req.user.id, session_id, sessionUpdates);
+await db.cards.update(req.user.id, cardId, {
+interval_days: nextReview.interval_days,
+easiness_factor: nextReview.easiness_factor,
+repetition_count: nextReview.repetition_count,
+stage: nextReview.stage,
+next_review_at: nextReview.next_review_at,
+last_reviewed_at: new Date(),
+last_response: response,
+fsrs_stability: nextReview.fsrs_stability,
+fsrs_difficulty: nextReview.fsrs_difficulty,
+// Latency baseline: update only for correct, non-distracted reviews (500ms–120s window)
+...(response !== 'again' && response_time_ms > 500 && response_time_ms < 120000
+  ? { avg_response_time_ms: updateCardBaseline(card.avg_response_time_ms, response_time_ms, card.review_count || 0) }
+  : {}),
+});
+const newMastered = nextReview.stage === 5 && prevStage !== 5 ? 1 : 0;
+const statsUpdates = {
+total_cards_reviewed: { increment: 1 },
+};
+if (newMastered) statsUpdates.total_cards_mastered = { increment: 1 };
+await db.userStats.update(req.user.id, statsUpdates);
+await db.reviewLogs.create(req.user.id, {
+card_id: cardId,
+session_id,
+response,
+response_time_ms: response_time_ms || 0,
+previous_stage: prevStage,
+new_stage: nextReview.stage,
+previous_interval: card.interval_days,
+new_interval: nextReview.interval_days,
+// FIX #3: next_review_at enables AVOIDED detection (overdue >= 3 days)
+// Store the NEWLY computed date, not the old stale one
+next_review_at: nextReview.next_review_at || null,
+// FIX #5a: previous_review_at enables correct interval math in STABLE check
+previous_review_at: card.last_reviewed_at || null,
+// BUG-2 FIX: reviewed_at was missing — findByUser queries filter on this field
+reviewed_at: new Date(),
+fsrs_stability_after: nextReview.fsrs_stability,
+});
+// Phase 2 & 3: Fire-and-forget — do not block card response latency
+queueKSRecompute(req.user.id, cardId); // queued — drained every 60s
+propagateCrossBubbleKSUpdate(req.user.id, cardId).catch((e) => console.error("[KIWI] silent catch:", e.message));
+updateClusterKSForCard(req.user.id, cardId).catch((e) => console.error("[KIWI] silent catch:", e.message));
+if (nextReview.stage !== prevStage) {
+ecosystemV2.awardCardGrowthMilestones(
+  req.user.id,
+  cardId,
+  nextReview.stage,
+  session_id
+).catch((e) => console.error('[KIWI] card growth milestone failed:', e.message));
+}
+// P5 FIX: AI Mastery Moment (B1) — first time card reaches Stage 5
+// Fire-and-forget: does not delay response; sentence stored in Firestore for frontend to read
+if (nextReview.stage === 5 && prevStage !== 5) {
+generateMasteryMoment(
+req.user.id,
+cardId,
+card.front_content || card.front || '',
+card.back_content || card.back || ''
+).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+// Phase 4: Focus Seed is previewed in the client and committed only at session finalization.
+// FIX P9.4-05: compute per-button interval hints using exact next_review_at timestamps
+// so sub-day mode intervals display correctly (e.g. "6m", "3h", "2d")
+const _fmtMs = (ms) => {
+  if (!ms || ms <= 0) return '<1m';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.round(ms / 3600000);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.round(ms / 86400000);
+  if (days < 7) return `${days}d`;
+  if (days < 30) return `${Math.round(days / 7)}w`;
+  return `${Math.round(days / 30)}mo`;
+};
+const _hintNow = Date.now();
+const _hA = calculateNextReview(card, 'again', mode);
+const _hH = calculateNextReview(card, 'hard',  mode);
+const _hG = calculateNextReview(card, 'good',  mode);
+const _hE = calculateNextReview(card, 'easy',  mode);
+res.json({
+success: true,
+new_stage: nextReview.stage,
+newStage: nextReview.stage,
+interval_days: nextReview.interval_days,
+next_review_at: nextReview.next_review_at,
+// ISSUE-010 FIX: tell frontend to requeue this card at end of session queue
+requeue: response === 'again',
+intervalHintAgain: _fmtMs(new Date(_hA.next_review_at).getTime() - _hintNow),
+intervalHintHard:  _fmtMs(new Date(_hH.next_review_at).getTime() - _hintNow),
+intervalHintGood:  _fmtMs(new Date(_hG.next_review_at).getTime() - _hintNow),
+intervalHintEasy:  _fmtMs(new Date(_hE.next_review_at).getTime() - _hintNow),
+});
+wsSend(req.user.id, 'card_reviewed', { new_stage: nextReview.stage, card_id: cardId });
+} catch (e) {
+res.status(500).json({ error: 'Failed to record response', details: e.message });
+}
+});
+
+studyRouter.post('/partial-flush', async (req, res) => {
+// Progressive KS flush: drain _ksQueue entries for this user immediately.
+// Frontend calls this every N cards so session-end KS computation is near-instant.
+try {
+  const userPrefix = req.user.id + ':';
+  const userKeys = [..._ksQueue.keys()].filter(k => k.startsWith(userPrefix));
+  const batch = userKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+  await Promise.all(batch.map(({ userId, cardId }) =>
+    recomputeAndStoreCardState(userId, cardId).catch(() => null)
+  ));
+  res.json({ flushed: batch.length });
+} catch (e) {
+  res.status(500).json({ error: 'Flush failed', details: e.message });
+}
+});
+
+studyRouter.post('/end', async (req, res) => {
+  try {
+    const {
+      session_id,
+      break_count = 0,
+      focused_seconds,
+      idle_seconds = 0,
+      local_date = null,
+    } = req.body;
+    if (!session_id) return res.status(400).json({ error: 'session_id required' });
+
+    const session = await db.sessions.findById(req.user.id, session_id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    let deck = null;
+    let subjectId = null;
+    let sessionKsDelta = 0;
+    try {
+      deck = session.deck_id
+        ? await db.decks.findById(req.user.id, session.deck_id).catch(() => null)
+        : null;
+      subjectId = deck && deck.subject_id ? deck.subject_id : null;
+      if (subjectId) {
+        const preStats = await db.subjectStats.get(req.user.id, subjectId).catch(() => null);
+        const preKS = Number(preStats && preStats.knowledge_score) || 0;
+        const userKeys = [..._ksQueue.keys()].filter((key) => key.startsWith(req.user.id + ':'));
+        const userBatch = userKeys.map((key) => {
+          const value = _ksQueue.get(key);
+          _ksQueue.delete(key);
+          return value;
+        });
+        await Promise.all(userBatch.map(({ userId, cardId }) =>
+          recomputeAndStoreCardState(userId, cardId).catch(() => null)
+        ));
+        const newKS = await persistKnowledgeScore(req.user.id, subjectId).catch(() => null);
+        sessionKsDelta = parseFloat(((Number(newKS && newKS.score) || 0) - preKS).toFixed(2));
+        // Pressure is part of Vitality, so it must be current before the outcome commits.
+        await calculateSubjectPressure(req.user.id, subjectId).catch(() => null);
+      }
+    } catch (preFinalizeError) {
+      console.error('[KIWI] ecosystem pre-finalization analytics failed:', preFinalizeError.message);
+    }
+
+    const outcome = await ecosystemV2.finalizeSession({
+      userId: req.user.id,
+      sessionId: session_id,
+      breakCount: break_count,
+      focusedSeconds: focused_seconds,
+      idleSeconds: idle_seconds,
+      localDate: local_date,
+      ksDelta: sessionKsDelta,
+    });
+
+    res.json(outcome);
+    wsSend(req.user.id, 'session_complete', {
+      committed: true,
+      cards_reviewed: outcome.cards_reviewed,
+      session_quality: outcome.session_quality,
+      focus_seed_stage: outcome.focus_seed_stage,
+      fruiting_achieved: outcome.fruiting_achieved,
+      growth_points_earned: outcome.growth_points_earned,
+      seedlings_earned: outcome.seedlings_earned,
+      tree_health: outcome.tree_health,
+      tree_stage: outcome.tree_stage,
+    });
+
+    // Non-progression enrichment may run after the committed response. It cannot
+    // mint fruit, alter Growth Points, change streaks, or reinterpret Vitality.
+    (async () => {
+      try {
+        if (subjectId) {
+          await recalculateSubjectHealth(req.user.id, subjectId)
+            .catch((e) => console.error('[KIWI] subject health refresh failed:', e.message));
+          const pressure = await db.brainPressure.get(req.user.id, subjectId).catch(() => null);
+          if (pressure && pressure.intervention_level === 'L4') {
+            triggerReckoning(req.user.id, subjectId).catch((e) =>
+              console.error('[KIWI] Reckoning trigger failed:', e.message)
+            );
+          }
+          await updateAllBubblesForUser(req.user.id).catch(() => null);
+        }
+        const sessionFull = await db.sessions.findByIdFull(req.user.id, session_id).catch(() => session);
+        await updateTaskProgress(req.user.id, sessionFull).catch(() => null);
+      } catch (backgroundError) {
+        console.error('[KIWI] post-session enrichment failed:', backgroundError.message);
+      }
+    })();
+  } catch (error) {
+    const status = error.statusCode || 500;
+    res.status(status).json({
+      error: status === 404 ? 'Session not found' : 'Failed to end session',
+      details: error.message,
+    });
+  }
+});
+
+
+// ── POST /study/queue// ── POST /study/queue (BUG 2 FIX) ────────────────────────────────────────────
+// Lightweight queue endpoint. Returns due cards for a subject without creating
+// a full session. Clients that expect /queue (vs /start) will now resolve.
+studyRouter.post('/queue', async (req, res) => {
+  try {
+    const { subject_id, include_all_decks_in_subject, deck_id } = req.body;
+    if (!deck_id && !(include_all_decks_in_subject && subject_id)) {
+      return res.status(400).json({
+        error: 'Provide deck_id, or subject_id with include_all_decks_in_subject=true',
+      });
+    }
+    let deckIds = [];
+    if (deck_id) {
+      deckIds = [deck_id];
+    } else {
+      const decks = await db.decks.findBySubject(req.user.id, subject_id);
+      deckIds = decks.map((d) => d.id);
+    }
+    const allCards = [];
+    for (const dId of deckIds) {
+      const cards = await db.cards.findByDeck(req.user.id, dId);
+      allCards.push(...cards);
+    }
+    const now = new Date();
+    const sessionId = randomUUID();
+    const subject =
+      subject_id ? await db.subjects.findById(subject_id).catch(() => null) : null;
+    const cards = allCards.map((c) => ({
+      ...c,
+      isDue: !c.next_review_at || new Date(c.next_review_at) <= now,
+      is_due: !c.next_review_at || new Date(c.next_review_at) <= now,
+    }));
+    res.json({ session_id: sessionId, cards, total: cards.length, name: subject?.name || '' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to get study queue', details: e.message });
+  }
+});
+
+// ── POST /study/review (BUG 2 FIX) ───────────────────────────────────────────
+// Alias for /study/card/:cardId/response — accepts {card_id, rating, session_id}
+// and returns next_review_at so callers don't need to know the :cardId URL form.
+studyRouter.post('/review', async (req, res) => {
+  try {
+    const { card_id, rating, session_id } = req.body;
+    if (!card_id || !rating) {
+      return res.status(400).json({ error: 'card_id and rating are required' });
+    }
+    const card = await db.cards.findById(req.user.id, card_id);
+    if (!card) return res.status(404).json({ error: 'Card not found' });
+    const ratingMap = { again: 1, hard: 2, good: 3, easy: 4 };
+    const numericRating = typeof rating === 'number' ? rating : (ratingMap[rating] || 3);
+    // FIX 2: calculateNextReview expects a string response, not a numeric rating.
+    const reverseRatingMap = { 1: 'again', 2: 'hard', 3: 'good', 4: 'easy' };
+    const responseStr = reverseRatingMap[numericRating] || 'good';
+    const { next_review_at, stage } = calculateNextReview(card, responseStr);
+    await db.cards.update(req.user.id, card_id, {
+      next_review_at,
+      stage,
+      review_count: { increment: 1 },
+      last_reviewed_at: new Date(),
+    });
+    queueKSRecompute(req.user.id, card_id);
+    res.json({ success: true, card_id, next_review_at, stage });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to record review', details: e.message });
+  }
+});
+
+studyRouter.get('/due-today', async (req, res) => {
+try {
+const cards = await db.cards.findAllForUser(req.user.id);
+const now = new Date();
+const due = cards.filter((c) => isCardDue(c, now));
+res.json({ count: due.length, cards: due });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch due cards' });
+}
+});
+
+// ── Study Mode ───────────────────────────────────────────────────────────────
+// Stores the user's chosen study pace (intense / normal / casual) in user_stats.
+// calculateNextReview reads this to apply the correct sub-day intervals.
+studyRouter.get('/mode', async (req, res) => {
+try {
+const stats = await db.userStats.get(req.user.id);
+res.json({ mode: stats?.study_mode || 'normal' });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch study mode' });
+}
+});
+
+studyRouter.post('/mode', async (req, res) => {
+try {
+const { mode } = req.body;
+if (!['intense', 'normal', 'casual'].includes(mode))
+return res.status(400).json({ error: 'Invalid mode. Must be intense, normal, or casual.' });
+await db.userStats.update(req.user.id, { study_mode: mode });
+res.json({ success: true, mode });
+} catch (e) {
+res.status(500).json({ error: 'Failed to update study mode' });
+}
+});
+
+studyRouter.get('/stats', async (req, res) => {
+try {
+const stats = await db.userStats.get(req.user.id);
+if (!stats) return res.status(404).json({ error: 'Stats not found' });
+const nextStage = computeDaysUntilNextStage(stats);
+res.json({ ...toPublicStats(stats), is_streak_frozen: Number(stats?.streak_shields_held) > 0, next_stage_requirements: nextStage });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch stats' });
+}
+});
+
+// ── GET /study/history — recent completed sessions for Progress view ──────────
+// Returns a unified, date-sorted list of ALL activity types:
+//   study sessions, CBT exams (completed + forfeited), and Reckoning exams.
+studyRouter.get('/history', async (req, res) => {
+try {
+const limit = Math.min(parseInt(req.query.limit || '20', 10), 50);
+
+// ── 1. Study sessions ─────────────────────────────────────────────────────
+const result = await db.sessions.findMany(
+  req.user.id,
+  { session_completed: true },
+  { limit }
+);
+const sessions = result.sessions || [];
+const subjects = await db.subjects.findManyWithDecks(req.user.id).catch(() => []);
+const deckSubjectMap = new Map();
+subjects.forEach(s => (s.decks || []).forEach(d => deckSubjectMap.set(d.id, { subjectId: s.id, subjectName: s.name })));
+
+const studyHistory = sessions.map(s => {
+  const deckInfo = deckSubjectMap.get(s.deck_id) || {};
+  return {
+    id: s.id,
+    source: 'Study Session',
+    type: 'Study',
+    subjectName: deckInfo.subjectName || 'General',
+    subjectId: deckInfo.subjectId || null,
+    date: s.started_at || s.created_at,
+    cardsReviewed: s.cards_reviewed || 0,
+    ksDelta: s.ks_delta || 0,
+    duration: s.duration_seconds || 0,
+    activeSeconds: s.active_seconds || 0,
+    focusQuality: s.session_quality || 0,
+    meaningful: sessionIsMeaningful(s),
+    seedOutcome: s.focus_seed_stage || 'Dormant',
+    status: 'completed',
+  };
+});
+
+// ── 2. Exam sessions (completed + forfeited) ──────────────────────────────
+const [completedExams, forfeitedExams] = await Promise.all([
+  db.examSessions.findMany(req.user.id, { status: 'completed' }, { limit }).catch(() => []),
+  db.examSessions.findMany(req.user.id, { status: 'forfeited' }, { limit }).catch(() => []),
+]);
+
+function normaliseExam(e, status) {
+  const isReckoning = !!e.is_reckoning;
+  return {
+    id: e.id,
+    source: isReckoning ? 'Reckoning Exam' : 'CBT Exam',
+    type: isReckoning ? 'Reckoning' : 'CBT Exam',
+    subjectName: e.subject_name || 'General',
+    subjectId: e.subject_id || null,
+    date: e.started_at || e.created_at,
+    cardsReviewed: e.total_questions || 0,
+    correctAnswers: e.correct_answers || 0,
+    totalQuestions: e.total_questions || 0,
+    scorePct: e.score_pct != null ? Math.round(e.score_pct) : null,
+    ksDelta: e.ks_delta == null ? null : Number(e.ks_delta),
+    duration: e.duration_seconds || 0,
+    timedOut: e.timed_out === true,
+    status,
+  };
+}
+
+const examHistory = [
+  ...completedExams.map(e => normaliseExam(e, 'completed')),
+  ...forfeitedExams.map(e => normaliseExam(e, 'forfeited')),
+];
+
+// ── 3. Merge, sort by date desc, cap at limit ─────────────────────────────
+const allHistory = [...studyHistory, ...examHistory]
+  .sort((a, b) => new Date(b.date) - new Date(a.date))
+  .slice(0, limit);
+
+res.json({ sessions: allHistory });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch session history', details: e.message });
+}
+});
+
+studyRouter.get('/review-heatmap', async (req, res) => {
+try {
+// Support ?days=N param; default 365 for full GitHub-style yearly view.
+const days = Math.max(1, Math.min(parseInt(req.query.days || '365', 10) || 365, 365));
+const sinceDate = new Date();
+sinceDate.setDate(sinceDate.getDate() - days);
+
+// Review logs remain the detailed source, while daily_activity is the durable
+// day-level ledger used by streak/vitality. Merge with MAX (not sum) so a day
+// still appears if one pipeline was delayed without double-counting reviews.
+const [logs, activityResult] = await Promise.all([
+  db.reviewLogs.findByUser(req.user.id, sinceDate),
+  query(
+    "SELECT activity_date::text AS activity_date, cards_reviewed, meaningful_sessions, active_seconds " +
+    "FROM daily_activity WHERE user_id = $1 AND activity_date >= $2::date ORDER BY activity_date ASC",
+    [req.user.id, sinceDate.toISOString().slice(0, 10)]
+  ).catch(() => ({ rows: [] })),
+]);
+const heatmap = {};
+logs.forEach((l) => {
+  if (!l.reviewed_at) return;
+  const d = new Date(l.reviewed_at).toISOString().split('T')[0];
+  heatmap[d] = (heatmap[d] || 0) + 1;
+});
+for (const row of activityResult.rows || []) {
+  const d = String(row.activity_date || '').slice(0, 10);
+  if (!d) continue;
+  const ledgerCount = Math.max(
+    Number(row.cards_reviewed) || 0,
+    Number(row.meaningful_sessions) || 0,
+    Number(row.active_seconds) >= 60 ? 1 : 0
+  );
+  heatmap[d] = Math.max(heatmap[d] || 0, ledgerCount);
+}
+res.json(heatmap);
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate heatmap' });
+}
+});
+
+// ── GET /study/forgetting-curve/:subjectId — projected retention per subject ─
+studyRouter.get('/forgetting-curve/:subjectId', async (req, res) => {
+try {
+const decks = await db.decks.findBySubject(req.user.id, req.params.subjectId);
+let allCards = [];
+for (const d of decks) {
+  const cards = await db.cards.findByDeck(req.user.id, d.id);
+  allCards.push(...cards);
+}
+// FSRS forgetting curve projection — uses real fsrs_stability per card.
+// Cards with no stability yet return R=1 via the guard in fsrsRetrievability.
+const today = new Date();
+const snapshots = [0, 1, 3, 7, 14, 30].map(days => {
+  const futDate = new Date(today);
+  futDate.setDate(today.getDate() + days);
+  let sum = 0;
+  allCards.forEach(card => {
+    const lastRev = card.last_reviewed_at ? new Date(card.last_reviewed_at) : today;
+    const t = Math.max(0, (futDate - lastRev) / 86400000); // days
+    sum += Math.min(100, Math.max(0, fsrsRetrievability(t, card.fsrs_stability) * 100));
+  });
+  const avg = allCards.length > 0 ? sum / allCards.length : 0;
+  return { day: days, retention: Math.round(avg * 10) / 10 };
+});
+const stageDist = [0,1,2,3,4,5].map(s => ({
+  stage: s,
+  count: allCards.filter(c => (c.stage || 0) === s).length,
+}));
+res.json({ subject_id: req.params.subjectId, card_count: allCards.length, projections: snapshots, stage_distribution: stageDist });
+} catch (e) {
+res.status(500).json({ error: 'Failed to compute forgetting curve', details: e.message });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  EXAM ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── MODULE-LEVEL TELEGRAM HELPERS (BUG 1 FIX) ───────────────────────────────
+// These were incorrectly scoped inside startServer(). Route handlers run at
+// request time with module scope — not inside startServer(). Moving them here
+// so examRouter and brainRouter handlers can access them.
+const _TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+async function sendTelegramMessage(chatId, text) {
+  if (!_TELEGRAM_BOT_TOKEN || !chatId) return false;
+  try {
+    const url = `https://api.telegram.org/bot${_TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const _r = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
+    });
+    return _r.ok;
+  } catch (e) {
+    console.error('[KIWI] Telegram send failed:', e.message);
+    return false;
+  }
+}
+
+async function sendTelegramExamResult(userId, subjectId, scorePct, passed) {
+  try {
+    const user = await db.users.findById(userId);
+    if (!user) return;
+    const prefs = user.notification_preferences || {};
+    if (prefs.telegram === false) return;
+    if (!user.telegram_chat_id) return;
+    const subject = await db.subjects.findById(subjectId).catch(() => null);
+    const subjName = subject?.name || 'Study Session';
+    const status = passed ? '✅ PASSED' : '❌ Did not pass';
+    await sendTelegramMessage(
+      user.telegram_chat_id,
+      `*Exam Result: ${subjName}*\nScore: *${scorePct}%*\nStatus: ${status}`
+    );
+  } catch (e) {
+    console.error('[KIWI] Telegram exam notify failed:', e.message);
+  }
+}
+
+async function sendTelegramDailyReminder(userId) {
+  try {
+    const user = await db.users.findById(userId);
+    if (!user) return;
+    const prefs = user.notification_preferences || {};
+    if (prefs.telegram === false) return;
+    if (!user.telegram_chat_id) return;
+    await sendTelegramMessage(
+      user.telegram_chat_id,
+      `🥝 *KIWI Daily Reminder*\nYour cards are waiting. Keep the streak alive!`
+    );
+  } catch (e) {
+    console.error('[KIWI] Telegram reminder failed:', e.message);
+  }
+}
+
+// ── Exam Knowledge Score accounting ──────────────────────────────────────────
+// KS is a state-derived score, not currency. An exam history row must therefore
+// store the actual before/after snapshots and derive delta from those snapshots.
+// Never substitute the absolute post-exam KS into a field named ks_delta.
+function _finiteKsNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function ensureExamKsBaseline(userId, exam) {
+  if (!exam?.id || !exam?.subject_id) return null;
+  const stored = _finiteKsNumber(exam.ks_before);
+  if (stored !== null) return stored;
+
+  invalidateKSCache(userId, exam.subject_id);
+  const current = await computeKnowledgeScore(userId, exam.subject_id).catch(() => null);
+  const baseline = _finiteKsNumber(current?.score);
+  if (baseline === null) return null;
+
+  await db.examSessions.update(userId, exam.id, { ks_before: baseline });
+  exam.ks_before = baseline;
+  return baseline;
+}
+
+async function finalizeExamKsOutcome(userId, exam, scorePct, baselineOverride = null) {
+  return finalizeKsSnapshot({
+    userId,
+    exam,
+    scorePct,
+    baselineOverride,
+    persistScore: persistKnowledgeScore,
+    updateExam: (uid, examId, update) =>
+      db.examSessions.update(uid, examId, update),
+    emitChange: (uid, payload) =>
+      wsSend(uid, 'ks_change', payload),
+    logger: console,
+  });
+}
+
+const examRouter = express.Router();
+
+examRouter.use(authenticate);
+
+examRouter.use(reckoningLockout);
+// POST /exams/generate — alias for POST /exams/ with camelCase body normalization
+
+examRouter.post('/generate', async (req, res) => {
+try {
+// Normalize camelCase to snake_case
+const body = req.body;
+if (body.subjectId && !body.subject_id) body.subject_id = body.subjectId;
+if (body.deckIds && !body.deck_ids) body.deck_ids = body.deckIds;
+if (body.count && !body.question_count) body.question_count = body.count;
+if (body.questionCount && !body.question_count) body.question_count = body.questionCount;
+const {
+subject_id,
+deck_ids,
+question_count = 25,
+card_range = 'all',
+time_limit_seconds = 1800,
+theory_percent = null,
+customize_balance = false,
+broad_coverage = false,
+difficulty_level = null,
+} = body;
+if (difficulty_level != null && difficulty_level !== '' && !['easy', 'hard', 'very_hard', 'hell'].includes(difficulty_level)) {
+return res.status(400).json({ error: 'difficulty_level must be easy, hard, very_hard, hell, or omitted' });
+}
+const selectedDifficulty = ['easy', 'hard', 'very_hard', 'hell'].includes(difficulty_level)
+  ? difficulty_level : null;
+if (!subject_id) return res.status(400).json({ error: 'subject_id required' });
+const targetDeckIds =
+deck_ids && deck_ids.length > 0
+? deck_ids
+: (await db.decks.findBySubject(req.user.id, subject_id)).map((d) => d.id);
+if (targetDeckIds.length === 0)
+return res.status(400).json({ error: 'No decks available for this subject' });
+let allCards = [];
+for (const deckId of targetDeckIds) {
+const cards = await db.cards.findByDeck(req.user.id, deckId);
+allCards.push(...cards);
+}
+// P3-FIX: strip cards with no meaningful content so the AI doesn't generate
+// nonsensical questions from test/placeholder cards (e.g. front="Fh", back="Buj").
+// Minimum: front AND back must each have at least 5 meaningful characters.
+allCards = allCards.filter((c) => {
+const front = (c.front_content || '').trim();
+const back  = (c.back_content  || '').trim();
+return front.length >= 5 && back.length >= 5;
+});
+if (allCards.length === 0)
+return res.status(400).json({ error: 'No cards with meaningful content found. Add real study cards before generating an exam.' });
+// P3.7-B1b FIX: when is_reckoning, use the flagged card pool stored on the
+// reckoning session — not the standard stage>=3 filter which excludes GHOST/STUCK.
+// P3.5 FIX: support card_state_filter for all non-reckoning exams.
+// P3-C3 FIX: FE sends card_state_filter as an array of active chip values
+// (e.g. ['DANGEROUS', 'GHOST']) and chip values are UPPERCASE.  Normalise
+// here so the switch statement below always receives a lowercase scalar.
+const raw_csf = body.card_state_filter;
+const card_state_filter = Array.isArray(raw_csf)
+? (raw_csf.length === 0
+? 'all'
+: raw_csf.length === 1
+? raw_csf[0].toLowerCase()
+: 'mixed_priority')
+: ((raw_csf || 'all').toLowerCase());
+let selectedCards;
+let sourceCards;
+let reckoningQuestionCount = null;
+
+const isReckoningExam = !!(body.is_reckoning || body.reckoning_id);
+if (isReckoningExam) {
+// Reckoning: load flagged pool from the active session and bind generation to that exact id.
+let activeReck = await db.reckoningSessions.findActiveByUser(req.user.id).catch(() => null);
+if (activeReck) activeReck = await reconcileActiveReckoning(req.user.id, activeReck).catch(() => activeReck);
+if (!activeReck) {
+  return res.status(409).json({ error: 'No active Reckoning exists for this account.' });
+}
+if (Number(activeReck.engine_version || 1) === 2) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning must be started through the V2 Reckoning start route.',
+    code: 'RECKONING_V2_USE_START',
+    reckoning_id: activeReck.id,
+  });
+}
+if (activeReck.status === 'in_progress' && activeReck.exam_session_id) {
+  return res.status(409).json({
+    error: 'A Reckoning exam is already in progress. Resume the existing exam instead of generating another one.',
+    code: 'RECKONING_RESUME_REQUIRED',
+    exam_session_id: activeReck.exam_session_id,
+  });
+}
+if (body.reckoning_id && body.reckoning_id !== activeReck.id) {
+  return res.status(409).json({ error: 'Reckoning id does not match the active Reckoning.' });
+}
+reckoningQuestionCount = Math.max(1, Number(activeReck.question_count) || Number(question_count) || 25);
+const flaggedIds = activeReck?.flagged_card_ids || [];
+if (flaggedIds.length === 0) {
+  return res.status(400).json({ error: 'Reckoning session has no flagged cards. Complete more study sessions to flag cards before attempting a Reckoning exam.' });
+}
+if (flaggedIds.length > 0) {
+const flaggedPool = await db.cards.findByIds(req.user.id, flaggedIds).catch(() => []);
+const reckoningCount = reckoningQuestionCount;
+sourceCards = flaggedPool;
+
+// PB.11: Weight Bubble cards 3× in the Reckoning selection pool [DESIGN: §15.2]
+// After weighting, deduplicate so each card appears once in the final question set.
+// Non-fatal: falls back to unweighted selection if Bubble query fails.
+try {
+  const activeBubbles = await db.masteryGoals.findActive(req.user.id).catch(() => []);
+  const bubbleCardSet  = activeBubbles.length > 0
+    ? new Set(activeBubbles.flatMap((g) => g.card_ids || []))
+    : new Set();
+  const weightedPool = [];
+  for (const card of flaggedPool) {
+    weightedPool.push(card);
+    if (bubbleCardSet.has(card.id)) {
+      weightedPool.push(card, card); // 3× total for Bubble cards
+    }
+  }
+  const seenIds = new Set();
+  selectedCards = weightedPool
+    .sort(() => 0.5 - Math.random())
+    .filter((c) => (seenIds.has(c.id) ? false : seenIds.add(c.id)))
+    .slice(0, Math.min(reckoningCount, flaggedPool.length));
+} catch (_e) {
+  // Non-fatal fallback: standard unweighted selection
+  selectedCards = flaggedPool
+    .sort(() => 0.5 - Math.random())
+    .slice(0, Math.min(reckoningCount, flaggedPool.length));
+}
+}
+}
+
+if (!selectedCards) {
+// Non-reckoning path: apply card_state_filter
+// Batch-fetch all card states in one query instead of N sequential fetches
+const stateFilteredCards = [];
+const flaggedStates = [CARD_STATES.DANGEROUS, CARD_STATES.GHOST, CARD_STATES.STUCK,
+CARD_STATES.FRAGILE, CARD_STATES.AVOIDED];
+const allExamCardIds = allCards.map(c => c.id);
+const examStatesList = await batchInitializeSeedlingStates(req.user.id, allExamCardIds);
+const examStatesById = new Map(examStatesList.map(s => [s.card_id, s]));
+// P-HONEST: Pre-fetch subject exam date once for real-time DANGEROUS condition
+const _rtExamDate = (card_state_filter === 'dangerous' || card_state_filter === 'mixed_priority')
+  ? await getSubjectExamDate(req.user.id, subject_id).catch(() => null)
+  : null;
+const _rtDaysToExam = _rtExamDate
+  ? Math.floor((new Date(_rtExamDate) - Date.now()) / 86400000)
+  : null;
+for (const card of allCards) {
+const stateDoc = examStatesById.get(card.id) || { state: CARD_STATES.SEEDLING };
+const st = stateDoc.state;
+let include = false;
+switch (card_state_filter) {
+case 'dangerous':
+  // Real-time DANGEROUS: stage 1–2 within 14 days of subject exam date.
+  // Falls back to stored state when no exam date is configured.
+  if (card.stage <= 2 && _rtExamDate !== null && _rtDaysToExam !== null) {
+    include = (_rtDaysToExam >= 0 && _rtDaysToExam <= 14);
+  } else {
+    include = (st === CARD_STATES.DANGEROUS);
+  }
+  break;
+case 'ghost':     include = (st === CARD_STATES.GHOST); break;
+case 'stuck':     include = (st === CARD_STATES.STUCK); break;
+case 'fragile':   include = (st === CARD_STATES.FRAGILE); break;
+case 'avoided':   include = (st === CARD_STATES.AVOIDED); break;
+case 'mixed_priority':
+if (flaggedStates.includes(st)) {
+stateFilteredCards.push(card, card, card); // weight 3×
+continue;
+}
+include = card.stage >= 3;
+break;
+case 'all':
+default:
+include = card.stage >= 3 && ![CARD_STATES.GHOST, CARD_STATES.STUCK].includes(st);
+}
+if (include) stateFilteredCards.push(card);
+}
+// Deduplicate mixed_priority weighted copies
+const seenIds = new Set();
+const dedupedCards = stateFilteredCards.filter(c => seenIds.has(c.id) ? false : seenIds.add(c.id));
+sourceCards = dedupedCards.length > 0 ? dedupedCards : allCards;
+if (dedupedCards.length === 0 && card_state_filter !== 'all') {
+  const filterLabel = Array.isArray(raw_csf) ? raw_csf.join(' / ') : raw_csf;
+  return res.status(400).json({ error: `No ${filterLabel} cards found in this subject. You need to review more cards before any reach that state. Try selecting a different filter or removing filters entirely.` });
+}
+if (sourceCards.length === 0)
+return res.status(400).json({ error: 'No cards available for exam.' });
+selectedCards = sourceCards
+.sort(() => 0.5 - Math.random())
+.slice(0, Math.min(question_count, sourceCards.length));
+}
+// Normal exams use the requested count. Reckoning exams must honor the count
+// recorded when the Reckoning was triggered.
+const count = isReckoningExam ? reckoningQuestionCount : question_count;
+const examSession = await db.examSessions.create(req.user.id, {
+subject_id,
+deck_ids: targetDeckIds,
+question_count: count,
+card_range,
+time_limit_seconds,
+is_reckoning: isReckoningExam,
+status: 'ready',
+difficulty_level: selectedDifficulty,
+});
+
+// FIX: strip {{c1::answer}} cloze syntax before sending to AI — raw cloze
+// markup confuses Gemini and produces garbled distractors/stems.
+const _stripCloze = (s) => (s || '').replace(/\{\{c\d+::([^}]*)\}\}/g, '$1');
+const notes = selectedCards
+.map((c) => `Q: ${_stripCloze(c.front_content)}\nA: ${_stripCloze(c.back_content)}`)
+.join('\n\n');
+if (checkAIRateLimit(req.user.id, 'cbt_generation', 10)) {
+return res.status(429).json({ error: 'Exam generation rate limit reached. Please wait before generating another exam.' });
+}
+// ── Respond immediately with job_id; AI generation runs in background ────────
+const cbtJobId = randomUUID();
+_jobStoreSet(cbtJobId, { status: 'pending', type: 'cbt_generation' });
+res.status(202).json({ job_id: cbtJobId, exam_session_id: examSession.id, status: 'generating' });
+// ── Background: generate questions, store them, push job_done via WebSocket ──
+const _cbtUserId      = req.user.id;
+const _cbtSessionId   = examSession.id;
+const _cbtNotes       = notes;
+const _cbtCount       = count;
+const _cbtCards       = selectedCards;
+const _cbtBody        = body;
+const _cbtOptions     = { theory_percent: (customize_balance && theory_percent !== null) ? Math.max(0, Math.min(100, Number(theory_percent))) : null, customize_balance: !!customize_balance, broad_coverage: !!broad_coverage, difficulty_level: selectedDifficulty, ai_task_id: isReckoningExam ? 'RECKONING_CBT' : 'MAIN_CBT', generation_group_id: _cbtSessionId };
+// Ordinary CBT is AI-only. Deterministic source-card recovery is reserved for
+// Reckoning's lockout-safety contract and must never masquerade as a generated
+// normal exam when every model route is unavailable or returns unusable output.
+const _allowDeterministicRecovery = isReckoningExam;
+setImmediate(async () => {
+  try {
+    let questions;
+
+    try {
+    if (_cbtOptions.customize_balance && _cbtOptions.theory_percent !== null) {
+      // ── SPLIT PATH: parallel theory + calculation generation ──────────────────
+      const theoryN = Math.round(_cbtCount * (_cbtOptions.theory_percent / 100));
+      const calcN   = _cbtCount - theoryN;
+      console.log(`[KIWI CBT] Split path: ${theoryN} theory + ${calcN} calc (${_cbtOptions.theory_percent}% theory)`);
+
+      // Run both AI calls in parallel — if either throws, Promise.all rejects and
+      // job_failed is emitted by the outer catch.
+      // Skip a side entirely if its count is 0 (e.g. 100% calculation → theoryN=0).
+      let theoryQs = [];
+      let calcQs   = [];
+
+      if (theoryN > 0 && calcN > 0) {
+        // Normal split — both sides needed
+        const [theoryText, calcText] = await Promise.all([
+          generateCBTQuestions(_cbtNotes, theoryN, { ..._cbtOptions, force_type: 'theory' }),
+          generateCBTQuestions(_cbtNotes, calcN,   { ..._cbtOptions, force_type: 'calculation' }),
+        ]);
+        theoryQs = parseCBTResponse(theoryText, _cbtSessionId, _cbtCards);
+        calcQs   = parseCBTResponse(calcText,   _cbtSessionId, _cbtCards);
+      } else if (theoryN === 0) {
+        // 100% calculation — skip theory call entirely
+        const calcText = await generateCBTQuestions(_cbtNotes, calcN, { ..._cbtOptions, force_type: 'calculation' });
+        calcQs = parseCBTResponse(calcText, _cbtSessionId, _cbtCards);
+      } else {
+        // 100% theory — skip calc call entirely
+        const theoryText = await generateCBTQuestions(_cbtNotes, theoryN, { ..._cbtOptions, force_type: 'theory' });
+        theoryQs = parseCBTResponse(theoryText, _cbtSessionId, _cbtCards);
+      }
+
+      // Safety-net: override question_type regardless of what the AI wrote —
+      // the type is guaranteed by the prompt, but we enforce it here too.
+      theoryQs.forEach(q => { q.question_type = 'Theory'; });
+      calcQs.forEach(q   => { q.question_type = 'Calculation'; });
+
+      // ── One bounded completion wave, both sides in parallel ────────────────
+      // The former 2nd/3rd serial completion passes could turn a 2-call exam into
+      // six sequential model calls. One parallel repair wave preserves quality
+      // while keeping generation time predictable.
+      const completionTasks = [];
+      if (theoryQs.length < theoryN) {
+        const needed = theoryN - theoryQs.length;
+        completionTasks.push(
+          generateCBTCompletionQuestions(
+            _cbtNotes, theoryQs, needed, 'theory',
+            _cbtOptions.difficulty_level, _cbtSessionId
+          ).then((text) => ({ kind: 'theory', needed, text }))
+        );
+      }
+      if (calcQs.length < calcN) {
+        const needed = calcN - calcQs.length;
+        completionTasks.push(
+          generateCBTCompletionQuestions(
+            _cbtNotes, calcQs, needed, 'calculation',
+            _cbtOptions.difficulty_level, _cbtSessionId
+          ).then((text) => ({ kind: 'calculation', needed, text }))
+        );
+      }
+      if (completionTasks.length > 0) {
+        const repairs = await Promise.allSettled(completionTasks);
+        for (const repair of repairs) {
+          if (repair.status !== 'fulfilled' || !repair.value?.text) {
+            if (repair.status === 'rejected') {
+              console.warn('[KIWI CBT] Split completion wave failed:', repair.reason?.message || repair.reason);
+            }
+            continue;
+          }
+          const parsed = parseCBTResponse(repair.value.text, _cbtSessionId, _cbtCards);
+          if (repair.value.kind === 'theory') {
+            parsed.forEach((q) => { q.question_type = 'Theory'; });
+            theoryQs = [...theoryQs, ...parsed.slice(0, repair.value.needed)];
+          } else {
+            parsed.forEach((q) => { q.question_type = 'Calculation'; });
+            calcQs = [...calcQs, ...parsed.slice(0, repair.value.needed)];
+          }
+        }
+      }
+
+      // ── Merge, shuffle, renumber ──────────────────────────────────────────────
+      const merged = _shuffleArray([...theoryQs, ...calcQs]);
+      merged.forEach((q, i) => { q.question_number = i + 1; });
+      questions = merged;
+
+      console.log(`[KIWI CBT] Split merge: ${theoryQs.length} theory + ${calcQs.length} calc = ${questions.length} total`);
+
+    } else {
+      // ── EXISTING PATH: single combined AI call ────────────────────────────────
+      const aiText = await generateCBTQuestions(_cbtNotes, _cbtCount, _cbtOptions);
+      if (!aiText) throw new Error('AI exam generation returned empty response');
+      questions = parseCBTResponse(aiText, _cbtSessionId, _cbtCards);
+      if (questions.length === 0) {
+        throw new Error('AI generated questions could not be parsed. Ensure your cards have full content.');
+      }
+      // Completion passes — same structure as before
+      if (questions.length < _cbtCount) {
+        const needed = _cbtCount - questions.length;
+        console.log('[KIWI CBT] First pass: ' + questions.length + '/' + _cbtCount + ' — issuing completion prompt for ' + needed + ' missing');
+        try {
+          const completionText = await generateCBTCompletionQuestions(_cbtNotes, questions, needed, null, _cbtOptions.difficulty_level, _cbtSessionId);
+          if (completionText) {
+            const completionQs = parseCBTResponse(completionText, _cbtSessionId, _cbtCards);
+            const offset = questions.length;
+            questions = [...questions, ...completionQs.slice(0, needed).map((q, i) => ({ ...q, question_number: offset + i + 1 }))];
+          }
+        } catch (completionErr) {
+          console.warn('[KIWI CBT] Completion prompt failed:', completionErr.message);
+        }
+
+      }
+    }
+    } catch (generationErr) {
+      const _availabilityRecovery =
+        isAIAvailabilityError(generationErr) ||
+        /could not be parsed|empty response|no visible text/i.test(String(generationErr?.message || ''));
+
+      if (!_availabilityRecovery) throw generationErr;
+
+      if (!_allowDeterministicRecovery) throw generationErr;
+
+      // Reckoning alone retains deterministic availability recovery so a
+      // provider outage cannot trap a learner behind an active lockout.
+      questions = generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount);
+      console.warn(
+        `[KIWI CBT] ${_cbtOptions.ai_task_id} AI route unavailable (${generationErr.code || generationErr.message}); ` +
+        `using deterministic recovery exam with ${questions.length}/${_cbtCount} questions`
+      );
+    }
+
+    // ── Shared post-generation checks (both paths) ────────────────────────────
+    // Enforce the same MCQ invariant on AI output, completion output and
+    // deterministic recovery output before deciding whether the exam is usable.
+    // This never rewrites option text and never treats cross-question reuse as an error.
+    questions = filterInvalidCBTQuestions(questions || [], 'final integrity');
+
+    // 60% minimum threshold — evaluated against the full requested count.
+    // Only Reckoning may use deterministic source-card recovery. Ordinary CBT
+    // must fail honestly instead of presenting non-AI questions as AI output.
+    const _minAccept = Math.max(1, Math.floor(_cbtCount * 0.6));
+    if (_allowDeterministicRecovery && questions.length < _minAccept) {
+      const _fallbackQuestions = filterInvalidCBTQuestions(
+        generateFallbackExamQuestions(_cbtCards, _cbtSessionId, _cbtCount),
+        'deterministic recovery'
+      );
+      if (_fallbackQuestions.length >= _minAccept) {
+        console.warn(
+          `[KIWI CBT] AI output only produced ${questions.length}/${_cbtCount}; ` +
+          `replacing it with deterministic recovery exam (${_fallbackQuestions.length}/${_cbtCount})`
+        );
+        questions = _fallbackQuestions;
+      }
+    }
+    if (questions.length < _minAccept) {
+      await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      const _friendlyGenerationError =
+        'KIWI could not build enough valid questions from the selected cards. ' +
+        'Add more complete cards or reduce the question count, then try again.';
+      _jobStoreSet(cbtJobId, { status: 'failed', type: 'cbt_generation', error: _friendlyGenerationError });
+      wsSend(_cbtUserId, 'job_failed', {
+        job_id: cbtJobId,
+        type: 'cbt_generation',
+        error: _friendlyGenerationError,
+      });
+      return;
+    }
+    if (questions.length < _cbtCount) {
+      console.log('[KIWI CBT] Proceeding with ' + questions.length + '/' + _cbtCount + ' questions (≥60% threshold)');
+    }
+
+    // Log actual ratio for split path (informational — ratio is guaranteed by the split logic above)
+    if (_cbtOptions.customize_balance && _cbtOptions.theory_percent != null) {
+      const _actualTheory = questions.filter(q => q.question_type === 'Theory').length;
+      const _actualCalc   = questions.filter(q => q.question_type === 'Calculation').length;
+      const _expectedTheory = Math.round(_cbtCount * (_cbtOptions.theory_percent / 100));
+      const _expectedCalc   = _cbtCount - _expectedTheory;
+      console.log(`[KIWI CBT] Ratio check: expected ${_expectedTheory}T/${_expectedCalc}C, got ${_actualTheory}T/${_actualCalc}C`);
+      if (Math.abs(_actualTheory - _expectedTheory) > 1 || Math.abs(_actualCalc - _expectedCalc) > 1) {
+        console.warn(`[KIWI CBT] ⚠️ Ratio mismatch after split generation — check completion pass behaviour`);
+      }
+    }
+    console.log(`[KIWI CBT] ✅ Generation complete: ${questions.length}/${_cbtCount} questions ready for session ${_cbtSessionId}`);
+    await Promise.all(questions.map(q => db.examQuestions.create(_cbtUserId, _cbtSessionId, q)));
+    const readyExam = await db.examSessions.findByIdWithQuestions(_cbtUserId, _cbtSessionId);
+    // Link the generated exam to the exact Reckoning that requested it.
+    // For Reckoning this link is not optional: silently swallowing a failure here
+    // leaves the account locked while the client thinks generation succeeded.
+    if (_cbtBody.is_reckoning || _cbtBody.reckoning_id) {
+      let activeReck = null;
+      if (_cbtBody.reckoning_id) {
+        const requested = await db.reckoningSessions.findById(_cbtBody.reckoning_id).catch(() => null);
+        if (requested?.user_id === _cbtUserId) activeReck = requested;
+      }
+      if (!activeReck) activeReck = await db.reckoningSessions.findActiveByUser(_cbtUserId);
+      if (!activeReck) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => null);
+        throw new Error('Active Reckoning disappeared before the generated exam could be linked. Please retry.');
+      }
+
+      activeReck = await reconcileActiveReckoning(_cbtUserId, activeReck).catch(() => activeReck);
+      if (
+        activeReck?.status === 'in_progress' &&
+        activeReck.exam_session_id &&
+        String(activeReck.exam_session_id) !== String(_cbtSessionId)
+      ) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => null);
+        throw new Error('Another Reckoning exam is already active. Resume the existing exam.');
+      }
+
+      if (!activeReck) {
+        await db.examSessions.delete(_cbtUserId, _cbtSessionId).catch(() => null);
+        throw new Error('Reckoning recovery completed before this exam could be linked. Refresh and continue.');
+      }
+      await startReckoningExam(activeReck.id, _cbtSessionId);
+    }
+    _jobStoreSet(cbtJobId, { status: 'done', type: 'cbt_generation', result: readyExam });
+    wsSend(_cbtUserId, 'job_done', { job_id: cbtJobId, type: 'cbt_generation', result: readyExam, exam: readyExam });
+  } catch (bgErr) {
+    console.error('[KIWI] CBT background generation failed:', bgErr.message);
+    const _safeExamGenerationError = isAIAvailabilityError(bgErr)
+      ? 'AI generation is temporarily busy. KIWI could not complete this exam right now; please retry shortly.'
+      : 'KIWI could not finish generating this exam. Please retry.';
+    _jobStoreSet(cbtJobId, {
+      status: 'failed',
+      type: 'cbt_generation',
+      error: _safeExamGenerationError,
+      internal_error_code: bgErr?.code || null,
+    });
+    wsSend(_cbtUserId, 'job_failed', {
+      job_id: cbtJobId,
+      type: 'cbt_generation',
+      error: _safeExamGenerationError,
+    });
+  }
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate exam', details: e.message });
+}
+});
+
+// ── POST /api/exams/:id/forfeit — forfeit an in-progress exam, apply penalties ──
+// BUGFIX: moved out of the /generate handler — was incorrectly registered as a
+// nested route inside the generate try-block, causing duplicate handler registrations.
+examRouter.post('/:id/forfeit', async (req, res) => {
+try {
+  const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+  if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (exam.is_reckoning) return res.status(403).json({ error: 'Reckoning exams cannot be forfeited' });
+  if (exam.status === 'forfeited' || exam.status === 'completed') {
+    return res.status(400).json({ error: 'Exam already ended' });
+  }
+
+  // KS-FORFEIT-FIX: capture pre-forfeit KS so we can compute a real delta.
+  const _forfeitPreKsScore = await ensureExamKsBaseline(req.user.id, exam).catch(() => null);
+
+  await db.examSessions.update(req.user.id, req.params.id, {
+    status: 'forfeited',
+    completed_at: new Date(),
+  });
+  if (exam.subject_id) {
+    const bp = await db.brainPressure.get(req.user.id, exam.subject_id);
+    const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
+    await db.brainPressure.set(req.user.id, exam.subject_id, {
+      pressure_score: Math.min(100, cur + 15),
+      intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
+      sources: {
+        ...(bp?.sources || {}),
+        manual_exam_forfeit: Math.min(20, (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15),
+        manual_exam_forfeit_at: new Date().toISOString(),
+      },
+    }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+
+    // KS-FORFEIT-FIX: treat all exam questions as wrong answers so cards get downgraded.
+    // This causes a real KS drop — not a cosmetic one. Forfeit has consequences.
+    // Mark every question is_correct=false so applyExamSRSFeedback downgrades the cards.
+    const _forfeitExamForSRS = {
+      ...exam,
+      questions: (exam.questions || []).map(q => ({ ...q, is_correct: false })),
+    };
+    await applyExamSRSFeedback(req.user.id, _forfeitExamForSRS)
+      .catch((e) => console.error('[KIWI] Forfeit SRS downgrade failed:', e.message));
+
+    // FORFEIT-FLUSH-FIX: drain KS queue immediately so card states are current
+    // before calculateSubjectPressure runs. Without this, the +15 write above gets
+    // overwritten by a stale-state recalculation triggered by the WS pressure_change event.
+    const _forfeitFlushKeys = [..._ksQueue.keys()].filter(k => k.startsWith(req.user.id + ':'));
+    const _forfeitFlushBatch = _forfeitFlushKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+    if (_forfeitFlushBatch.length > 0) {
+      await Promise.all(_forfeitFlushBatch.map(({ userId: uid, cardId }) =>
+        recomputeAndStoreCardState(uid, cardId).catch(() => null)
+      ));
+    }
+    // Recompute pressure from the now-current card states and persist
+    const _forfeitBp = await db.brainPressure.get(req.user.id, exam.subject_id).catch(() => null);
+    const _forfeitCurPressure = parseFloat(_forfeitBp?.pressure_score) || 0; // PRESSURE-FIX: parseFloat for pg NUMERIC string
+    const _forfeitFreshPressure = await calculateSubjectPressure(req.user.id, exam.subject_id)
+      .catch(() => null);
+    const _forfeitFinalScore = _forfeitFreshPressure?.pressure_score ?? Math.min(100, _forfeitCurPressure + 15);
+
+    const _forfeitKsOutcome = await finalizeExamKsOutcome(
+      req.user.id, exam, 0, _forfeitPreKsScore
+    ).catch(() => ({ after: null, delta: null }));
+    const _forfeitPostKs = { score: _forfeitKsOutcome.after };
+    const _forfeitKsDelta = _forfeitKsOutcome.delta;
+
+    // Notify frontend in real-time so pressure/KS widgets update without a reload
+    // Use the freshly computed pressure for the WS event (not the raw +15 value)
+    wsSend(req.user.id, 'pressure_change', {
+      subject_id: exam.subject_id,
+      pressure_score: _forfeitFinalScore,
+      delta: _forfeitFinalScore - _forfeitCurPressure,
+    });
+    await ecosystemV2.refreshVitality(req.user.id)
+      .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
+    res.json({ success: true, message: 'Exam forfeited. Penalties applied.', ksDelta: _forfeitKsDelta });
+  } else {
+    await ecosystemV2.refreshVitality(req.user.id)
+      .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
+    res.json({ success: true, message: 'Exam forfeited. Penalties applied.', ksDelta: 0 });
+  }
+} catch (e) {
+  res.status(500).json({ error: 'Failed to forfeit exam', details: e.message });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  AUTO-FORFEIT ENDPOINT — for navigator.sendBeacon (no custom headers)
+// ════════════════════════════════════════════════════════════════════════════
+examRouter.post('/:id/auto-forfeit', async (req, res) => {
+  try {
+    const { forfeiture_token } = req.body || {};
+    if (!forfeiture_token) {
+      return res.status(400).json({ error: 'forfeiture_token required' });
+    }
+    // Find exam by ID directly (no auth — sendBeacon can't send headers)
+    // Security: forfeiture_token proves intent, verified below
+    const { rows: examRows } = await query('SELECT * FROM exam_sessions WHERE id = $1 LIMIT 1', [req.params.id]);
+    if (!examRows[0]) return res.status(404).json({ error: 'Exam not found' });
+    // Load questions too — needed for SRS feedback
+    const { rows: qRows } = await query('SELECT * FROM exam_questions WHERE exam_session_id = $1', [req.params.id]);
+    const exam = { ...examRows[0], questions: qRows || [] };
+    
+    // Allow auto-forfeit without full auth — token proves intent
+    // Token is a one-time secret generated at exam start
+    const expectedToken = exam.forfeiture_token;
+    if (!expectedToken || expectedToken !== forfeiture_token) {
+      return res.status(403).json({ error: 'Invalid forfeiture token' });
+    }
+    
+    const userId = exam.user_id;
+    if (exam.is_reckoning) return res.status(403).json({ error: 'Reckoning exams cannot be forfeited' });
+    if (exam.status === 'forfeited' || exam.status === 'completed') {
+      return res.status(400).json({ error: 'Exam already ended' });
+    }
+
+    // Capture pre-forfeit KS
+    const _forfeitPreKsScore = await ensureExamKsBaseline(userId, exam).catch(() => null);
+
+    await db.examSessions.update(userId, req.params.id, {
+      status: 'forfeited',
+      completed_at: new Date(),
+      forfeited_by: 'auto_leave_detection',
+    });
+    if (exam.subject_id) {
+      const bp = await db.brainPressure.get(userId, exam.subject_id);
+      const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
+      await db.brainPressure.set(userId, exam.subject_id, {
+        pressure_score: Math.min(100, cur + 15),
+        intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
+        sources: {
+          ...(bp?.sources || {}),
+          manual_exam_forfeit: Math.min(20, (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15),
+        manual_exam_forfeit_at: new Date().toISOString(),
+        },
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+
+      // KS-FORFEIT-FIX: treat all exam questions as wrong answers so cards get downgraded
+      const _forfeitExamForSRS = {
+        ...exam,
+        questions: (exam.questions || []).map(q => ({ ...q, is_correct: false })),
+      };
+      await applyExamSRSFeedback(userId, _forfeitExamForSRS)
+        .catch((e) => console.error('[KIWI] Forfeit SRS downgrade failed:', e.message));
+
+      const _forfeitKsOutcome = await finalizeExamKsOutcome(
+        userId, exam, 0, _forfeitPreKsScore
+      ).catch(() => ({ after: null, delta: null }));
+      const _forfeitPostKs = { score: _forfeitKsOutcome.after };
+      const _forfeitKsDelta = _forfeitKsOutcome.delta;
+
+      // Notify via WebSocket
+      const _forfeitBp = await db.brainPressure.get(userId, exam.subject_id).catch(() => null);
+      const _forfeitCurPressure = _forfeitBp ? _forfeitBp.pressure_score || 0 : 0;
+      wsSend(userId, 'pressure_change', {
+        subject_id: exam.subject_id,
+        pressure_score: _forfeitCurPressure,
+        delta: 15,
+      });
+      await ecosystemV2.refreshVitality(userId)
+        .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
+      res.json({ success: true, message: 'Exam auto-forfeited. Penalties applied.', ksDelta: _forfeitKsDelta });
+    } else {
+      await ecosystemV2.refreshVitality(userId)
+        .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
+      res.json({ success: true, message: 'Exam auto-forfeited. Penalties applied.', ksDelta: 0 });
+    }
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to auto-forfeit exam', details: e.message });
+  }
+});
+
+// F-23 FIX: Removed deprecated sync POST /exams/ route (unreachable from UI, duplicates /generate)
+
+examRouter.get('/', async (req, res) => {
+try {
+const { status, page = 1, limit = 20 } = req.query;
+const exams = await db.examSessions.findMany(
+req.user.id,
+{ status },
+{ limit: parseInt(limit), offset: (page - 1) * limit }
+);
+res.json(exams);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch exams' });
+}
+});
+
+// ── Adaptive Reckoning V2 execution endpoints (Delivery C) ───────────────
+// These routes are dormant for legacy/shadow sessions. The engine itself
+// verifies engine_version=2 and engine_mode=PILOT/LIVE before returning state
+// or accepting an answer.
+examRouter.get('/:id/reckoning/state', async (req, res) => {
+  try {
+    const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+    if (!exam) return res.status(404).json({ error: 'Exam not found' });
+    if (!exam.is_reckoning) {
+      return res.status(409).json({ error: 'This exam is not a Reckoning' });
+    }
+
+    const state = await adaptiveReckoningEngine.getState({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    if (state.safetyExpired && state.enginePhase === 'ACTIVE') {
+      const finalResult = await adaptiveReckoningEngine.finalize({
+        examSessionId: req.params.id,
+        userId: req.user.id,
+        forceReason: 'SAFETY_EXPIRED',
+      });
+      return res.json(finalResult);
+    }
+    res.json(state);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to load adaptive Reckoning state',
+      code: error.code || 'ERR_RECKONING_STATE',
+    });
+  }
+});
+
+examRouter.post('/:id/reckoning/answer', async (req, res) => {
+  try {
+    const questionId = req.body?.question_id ?? req.body?.questionId;
+    const selectedOption = req.body?.selected_option ?? req.body?.selectedOption;
+    const responseTimeMs =
+      req.body?.response_time_ms ??
+      req.body?.responseTimeMs ??
+      0;
+
+    if (!questionId || !/^[A-D]$/i.test(String(selectedOption || ''))) {
+      return res.status(400).json({
+        error: 'question_id and selected_option A-D are required',
+      });
+    }
+
+    const currentState = await adaptiveReckoningEngine.getState({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    if (currentState.safetyExpired && currentState.enginePhase === 'ACTIVE') {
+      const finalResult = await adaptiveReckoningEngine.finalize({
+        examSessionId: req.params.id,
+        userId: req.user.id,
+        forceReason: 'SAFETY_EXPIRED',
+      });
+      return res.json(finalResult);
+    }
+
+    const result = await adaptiveReckoningEngine.recordAnswer({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+      questionId: String(questionId),
+      selectedOption: String(selectedOption).toUpperCase(),
+      responseTimeMs: Math.max(0, Number(responseTimeMs) || 0),
+    });
+
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to record adaptive Reckoning answer',
+      code: error.code || 'ERR_RECKONING_ANSWER',
+    });
+  }
+});
+
+examRouter.post('/:id/reckoning/continue', async (req, res) => {
+  try {
+    const state = await adaptiveReckoningEngine.getState({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    if (state.safetyExpired && state.enginePhase === 'ACTIVE') {
+      const finalResult = await adaptiveReckoningEngine.finalize({
+        examSessionId: req.params.id,
+        userId: req.user.id,
+        forceReason: 'SAFETY_EXPIRED',
+      });
+      return res.json(finalResult);
+    }
+    const result = await adaptiveReckoningEngine.continueCheckpoint({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to continue adaptive Reckoning',
+      code: error.code || 'ERR_RECKONING_CONTINUE',
+    });
+  }
+});
+
+examRouter.post('/:id/reckoning/finalize', async (req, res) => {
+  try {
+    const result = await adaptiveReckoningEngine.finalize({
+      examSessionId: req.params.id,
+      userId: req.user.id,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'Failed to finalize adaptive Reckoning',
+      code: error.code || 'ERR_RECKONING_FINALIZE',
+    });
+  }
+});
+
+// ── GET /exams/retry-decks — last 5 retry decks created from exam wrong answers ──
+// Must appear BEFORE /:id or Express will treat 'retry-decks' as an id param.
+examRouter.get('/retry-decks', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT d.*,
+              COUNT(c.id) AS card_count_live,
+              COALESCE(
+                ARRAY_AGG(c.id ORDER BY c.created_at) FILTER (WHERE c.id IS NOT NULL),
+                ARRAY[]::text[]
+              ) AS card_ids
+         FROM decks d
+         LEFT JOIN cards c ON c.deck_id = d.id AND c.user_id = d.user_id AND COALESCE(c.archived, false) = false
+        WHERE d.user_id = $1 AND d.name LIKE 'Retry — %'
+        GROUP BY d.id
+        ORDER BY d.created_at DESC
+        LIMIT 5`,
+      [req.user.id]
+    );
+    res.json({ decks: rows });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch retry decks', details: e.message });
+  }
+});
+
+examRouter.get('/:id', async (req, res) => {
+try {
+const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (
+  exam.is_reckoning &&
+  (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
+) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning state must be loaded from the V2 state endpoint.',
+    code: 'RECKONING_V2_USE_STATE',
+  });
+}
+// Normalize questions for frontend without leaking the key during a live exam.
+// Completed/forfeited exams may reveal the key and audit outcome for review.
+if (exam.questions && Array.isArray(exam.questions)) {
+const revealAnswers = ['completed', 'forfeited'].includes(exam.status);
+exam.questions = exam.questions.map((q) => {
+  const {
+    correct_answer,
+    explanation,
+    ai_audit_result,
+    bonus_awarded,
+    ...safe
+  } = q;
+  const normalized = {
+    ...safe,
+    id: q.id || q.question_number || Math.random().toString(36).slice(2),
+    options: [
+      { id: 'A', text: q.option_a || '' },
+      { id: 'B', text: q.option_b || '' },
+      { id: 'C', text: q.option_c || '' },
+      { id: 'D', text: q.option_d || '' },
+    ].filter((opt) => opt.text),
+  };
+  if (revealAnswers) {
+    normalized.correct_answer = correct_answer || 'A';
+    normalized.correctAnswer = correct_answer || 'A';
+    normalized.explanation = explanation || '';
+    normalized.ai_audit_result = ai_audit_result || null;
+    normalized.bonus_awarded = bonus_awarded === true;
+  }
+  return normalized;
+});
+}
+res.json(exam);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch exam' });
+}
+});
+
+examRouter.post('/:id/start', async (req, res) => {
+try {
+const existing = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+if (!existing) return res.status(404).json({ error: 'Exam not found' });
+if (!['ready', 'active'].includes(existing.status)) {
+return res.status(409).json({ error: `Exam is already ${existing.status}` });
+}
+await ensureExamKsBaseline(req.user.id, existing).catch((err) => {
+console.error('[KIWI] Could not snapshot pre-exam KS:', err.message);
+});
+const exam = existing.status === 'active' && existing.started_at
+? existing
+: await db.examSessions.update(req.user.id, req.params.id, {
+status: 'active',
+started_at: new Date(),
+ks_before: _finiteKsNumber(existing.ks_before),
+});
+const { questions: _questions, ...safeExam } = exam;
+res.json({ ...safeExam, server_now: new Date().toISOString() });
+} catch (e) {
+res.status(500).json({ error: 'Failed to start exam' });
+}
+});
+
+// POST /exams/:id/start-token — store forfeiture token for auto-forfeit detection
+examRouter.post('/:id/start-token', async (req, res) => {
+  try {
+    const { forfeiture_token } = req.body || {};
+    if (!forfeiture_token) return res.status(400).json({ error: 'forfeiture_token required' });
+    await db.examSessions.update(req.user.id, req.params.id, { forfeiture_token });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to store token', details: e.message });
+  }
+});
+
+
+examRouter.get('/:id/question/:number', async (req, res) => {
+try {
+const question = await db.examQuestions.findByNumber(
+req.user.id,
+req.params.id,
+parseInt(req.params.number)
+);
+if (!question) return res.status(404).json({ error: 'Question not found' });
+if (isAdaptiveReckoningQuestion(question)) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning questions are only exposed through the V2 state endpoint.',
+    code: 'RECKONING_V2_USE_STATE',
+  });
+}
+const { correct_answer, explanation, ...safeQuestion } = question;
+res.json(safeQuestion);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch question' });
+}
+});
+
+examRouter.post('/:id/pre-mark', async (req, res) => {
+try {
+  const { question_number, selected_option, time_spent_seconds = 0 } = req.body || {};
+  if (question_number == null || !/^[A-D]$/.test(String(selected_option || ''))) {
+    return res.status(400).json({ error: 'question_number and selected_option A-D are required' });
+  }
+  const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+  if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (
+    exam.is_reckoning &&
+    (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
+  ) {
+    return res.status(409).json({
+      error: 'Adaptive Reckoning answers must use the dedicated V2 answer endpoint.',
+      code: 'RECKONING_V2_USE_ADAPTIVE_ENDPOINT',
+    });
+  }
+  if (exam.status !== 'active' || !exam.started_at) {
+    return res.status(409).json({ error: 'Exam must be active before an answer can be saved' });
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(exam.started_at).getTime()) / 1000));
+  const timeLimitSeconds = Math.max(1, Number(exam.time_limit_seconds) || 1800);
+  if (elapsedSeconds > timeLimitSeconds + 15) {
+    return res.status(409).json({ error: 'Exam time has expired', timed_out: true });
+  }
+  const question = exam.questions.find((item) => String(item.question_number) === String(question_number));
+  if (!question) return res.status(404).json({ error: 'Question not found' });
+  // Save the current choice only. Card verification, SRS, KS, credentials, and
+  // pressure must change exactly once, after the whole exam is submitted.
+  await db.examQuestions.update(req.user.id, question.id, {
+    selected_option: String(selected_option),
+    time_spent_seconds: Math.max(0, Number(time_spent_seconds) || 0),
+  });
+  res.json({ ok: true, server_now: new Date().toISOString() });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to save exam answer', details: e.message });
+}
+});
+
+// A flag is a request for an integrity audit, not merely a client-side bookmark.
+// The audit never returns the answer key while the exam is active.
+examRouter.post('/:id/flag-question', async (req, res) => {
+try {
+  const { question_number } = req.body || {};
+  if (question_number == null) return res.status(400).json({ error: 'question_number is required' });
+  const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+  if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (exam.status !== 'active' || !exam.started_at) {
+    return res.status(409).json({ error: 'Only an active exam question can be flagged for review' });
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(exam.started_at).getTime()) / 1000));
+  const timeLimitSeconds = Math.max(1, Number(exam.time_limit_seconds) || 1800);
+  if (elapsedSeconds > timeLimitSeconds + 15) {
+    return res.status(409).json({ error: 'Exam time has expired', timed_out: true });
+  }
+  const question = exam.questions.find((item) => String(item.question_number) === String(question_number));
+  if (!question) return res.status(404).json({ error: 'Question not found' });
+
+  const adaptiveQuestion = isAdaptiveReckoningQuestion(question);
+  let auditResult = null;
+
+  if (question.flagged_by_student && question.ai_audit_status === 'reviewed') {
+    auditResult = {
+      status: 'reviewed',
+      bonus_awarded: question.bonus_awarded === true,
+      audit: question.ai_audit_result || null,
+    };
+  } else {
+    auditResult = await auditCBTQuestion(req.user.id, exam, question);
+  }
+
+  let adaptiveState = null;
+  if (adaptiveQuestion && auditResult?.bonus_awarded === true) {
+    adaptiveState = await adaptiveReckoningEngine.adjudicateDefectiveQuestion({
+      examSessionId: exam.id,
+      userId: req.user.id,
+      questionId: question.id,
+      audit: auditResult.audit || {},
+    });
+  }
+
+  res.json({
+    ok: true,
+    status: 'reviewed',
+    defective: auditResult?.bonus_awarded === true,
+    adaptive_state: adaptiveState,
+  });
+} catch (e) {
+  res.status(503).json({
+    error: 'Question review could not be completed yet. You can continue the exam and try the flag again.',
+    code: 'QUESTION_AUDIT_FAILED',
+  });
+}
+});
+
+examRouter.post('/:id/submit', async (req, res) => {
+try {
+const { answers: submittedAnswers, ended_early = false } = req.body;
+if (!submittedAnswers || !Array.isArray(submittedAnswers))
+return res.status(400).json({ error: 'answers array required' });
+// Validate answer shapes — null/undefined selected_option is allowed (unanswered = wrong)
+for (const a of submittedAnswers) {
+const qn = a.question_number ?? a.questionId;
+if (qn === undefined) {
+return res.status(400).json({ error: 'Each answer must have question_number or questionId' });
+}
+if (typeof qn !== 'number' && typeof qn !== 'string') {
+return res.status(400).json({ error: 'question_number must be a number or string' });
+}
+const so = a.selected_option ?? a.selectedOptionId ?? null;
+if (so !== null && (typeof so !== 'string' || !/^[A-D]$/.test(so))) {
+return res.status(400).json({ error: 'selected_option must be a single letter A-D or null' });
+}
+}
+let exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (
+  exam.is_reckoning &&
+  (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
+) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning cannot be submitted through the normal CBT endpoint.',
+    code: 'RECKONING_V2_USE_ADAPTIVE_ENDPOINT',
+  });
+}
+if (exam.status !== 'active' || !exam.started_at) {
+  return res.status(409).json({ error: 'Exam must be started before it can be submitted' });
+}
+const submittedAt = new Date();
+const elapsedSeconds = Math.max(0, Math.floor((submittedAt - new Date(exam.started_at)) / 1000));
+const timeLimitSeconds = Math.max(1, Number(exam.time_limit_seconds) || 1800);
+const timedOut = elapsedSeconds > timeLimitSeconds + 15;
+// The client gets a small network grace period. Beyond it, only choices already
+// saved by pre-mark count; a late request cannot add or change answers.
+const answers = timedOut
+  ? exam.questions.map((question) => ({
+      question_number: question.question_number,
+      selected_option: question.selected_option || null,
+      time_spent_seconds: question.time_spent_seconds || 0,
+    }))
+  : submittedAnswers;
+// Resolve any requested question-integrity audits before final scoring. This is
+// the only case where submission may wait on AI, and all flagged questions are
+// audited in parallel. The learner's original right/wrong state is never changed.
+const pendingFlagged = exam.questions.filter(
+  (question) => question.flagged_by_student && question.ai_audit_status !== 'reviewed'
+);
+if (pendingFlagged.length > 0) {
+  await Promise.allSettled(
+    pendingFlagged.map((question) => auditCBTQuestion(req.user.id, exam, question))
+  );
+  exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+}
+
+// PERF-FIX: preKsScore is only needed for the background ks_delta calculation.
+// Computing it here (3+ DB queries: decks + all cards + all card_states) was
+// the primary cause of "Exam submission timed out" — it sat on the critical
+// HTTP-response path and added 500ms–3s+ for users with large libraries.
+// Moved into setImmediate; preKsScore captured there before SRS runs.
+let correct = 0,
+total = exam.questions.length;
+const questionResults = [];
+// PERF: score all questions synchronously first (no DB), then batch-write in parallel
+const _dbUpdatePromises = [];
+for (const q of exam.questions) {
+const answer = answers.find((a) => String(a.question_number ?? a.questionId) === String(q.question_number));
+const selectedOption = answer ? (answer.selected_option ?? answer.selectedOptionId) : null;
+const isCorrect = Boolean(answer && selectedOption === q.correct_answer);
+const bonusAwarded = q.flagged_by_student === true && q.bonus_awarded === true;
+const awardedPoint = isCorrect || bonusAwarded;
+// Preserve raw correctness for SRS/KS learning signals. A bonus repairs a flawed
+// assessment item; it does not pretend the learner selected the stored key.
+q.is_correct = isCorrect;
+q.bonus_awarded = bonusAwarded;
+if (awardedPoint) correct++;
+questionResults.push({
+question_number: q.question_number,
+selected: selectedOption || null,
+correct: isCorrect,
+bonus_awarded: bonusAwarded,
+awarded_point: awardedPoint,
+correct_answer: q.correct_answer,
+});
+if (answer) {
+// Queue DB write — don't await inside loop
+_dbUpdatePromises.push(db.examQuestions.update(req.user.id, q.id, {
+selected_option: selectedOption,
+is_correct: isCorrect,
+time_spent_seconds: answer.time_spent_seconds || 0,
+}).catch(e => console.error('[KIWI] examQuestion update failed:', e.message)));
+}
+}
+// PERF-FIX: question-answer DB writes are now deferred to setImmediate below.
+// They do not affect the synchronous response payload (questionResults is already
+// built in-memory above), so there is no reason to block res.json() on them.
+const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
+const now = submittedAt;
+const durationSec = Math.min(elapsedSeconds, timeLimitSeconds);
+const completedExam = await db.examSessions.update(req.user.id, req.params.id, {
+status: 'completed',
+score_pct: scorePct,
+correct_answers: correct,
+total_questions: total,
+ended_early: timedOut ? false : ended_early,
+timed_out: timedOut,
+completed_at: now,
+duration_seconds: durationSec,
+});
+// BUG-09 FIX: Build synchronous-only fields and respond immediately.
+    // All SRS / credential / KS work runs in background; results pushed via WS.
+    const passed = scorePct >= 70;
+    // Build question_review synchronously (only needs exam.questions + answers)
+    const question_review = exam.questions.map((q) => {
+      const userAnswer = answers.find(
+        (a) => String(a.question_number ?? a.questionId) === String(q.question_number)
+      );
+      const selected = userAnswer ? (userAnswer.selected_option ?? userAnswer.selectedOptionId) : null;
+      return {
+        question_number: q.question_number,
+        stem: q.stem || '',
+        options: {
+          A: q.option_a || '',
+          B: q.option_b || '',
+          C: q.option_c || '',
+          D: q.option_d || '',
+        },
+        correct_answer: q.correct_answer || '',
+        explanation: q.explanation || '',
+        selected_option: selected,
+        is_correct: selected === q.correct_answer,
+        bonus_awarded: q.flagged_by_student === true && q.bonus_awarded === true,
+        awarded_point: (selected === q.correct_answer) || (q.flagged_by_student === true && q.bonus_awarded === true),
+        audit_reason: q.flagged_by_student === true && q.bonus_awarded === true
+          ? String(q.ai_audit_result?.reason || 'AI integrity review found the item flawed.')
+          : null,
+      };
+    });
+    const submitJobId = randomUUID();
+    _jobStoreSet(submitJobId, { status: 'pending', type: 'exam_submit' });
+    // Respond immediately — SRS/credential/KS fields are null here;
+    // enriched values arrive via WS 'exam_result_ready' after background completes.
+    res.json({
+      job_id: submitJobId,
+      exam: completedExam,
+      score_pct: scorePct,
+      correct_answers: correct,
+      total_questions: total,
+      duration_seconds: durationSec,
+      timed_out: timedOut,
+      question_results: questionResults,
+      question_review,
+      verification: null,
+      reclassified: [],
+      credential: null,
+      regression_warning: null,
+      reclassification_alert_text: null,
+      new_achievements: [],
+      ksDelta: null,
+      passed,
+      credentialEarned: false,
+      new_almanac_unlocks: [],
+    });
+    // ── Background: SRS processing + AI debrief ──────────────────────────────
+    const _debriefUserId   = req.user.id;
+    const _debriefExam     = exam;
+    const _debriefResults  = questionResults;
+    const _debriefScorePct = scorePct;
+    const _debriefCorrect  = correct;
+    const _debriefTotal    = total;
+    setImmediate(async () => {
+      // PERF-FIX: Flush question-answer writes that were deferred from the critical path.
+      // Run in parallel with preKsScore fetch so neither blocks the other.
+      const [preKsScore] = await Promise.all([
+        ensureExamKsBaseline(_debriefUserId, _debriefExam).catch(() => null),
+        Promise.all(_dbUpdatePromises), // persist selected_option / is_correct per question
+      ]);
+      let _bgVerification = null, _bgReclassified = [], _bgCredential = null, _bgRegression = null;
+      let _bgKsDelta = 0, _bgCredentialEarned = false, _bgNewAchievements = [], _bgAlmanacUnlocks = [];
+      try {
+        const _examForSrs = _debriefExam;
+        // Phase 2: Stage 5 verification
+        _bgVerification = await processExamVerification(_debriefUserId, _examForSrs)
+          .catch((e) => { console.error('[KIWI] processExamVerification failed:', e.message); return null; });
+        // Phase 3: SRS feedback loop
+        _bgReclassified = await applyExamSRSFeedback(_debriefUserId, _examForSrs)
+          .catch((e) => { console.error('[KIWI] applyExamSRSFeedback failed:', e.message); return []; });
+        if (_debriefScorePct < 60 && _bgReclassified.length > 0) {
+          const allSubjectCardsForAlert = [];
+          for (const deckId of _debriefExam.deck_ids || []) {
+            const deckCards = await db.cards.findByDeck(_debriefUserId, deckId).catch(() => []);
+            allSubjectCardsForAlert.push(...deckCards);
+          }
+          const highStageCardsForAlert = allSubjectCardsForAlert.filter(c => c.stage >= 4);
+          if (highStageCardsForAlert.length >= 15) {
+            const reclassifiedHighStage = _bgReclassified.filter(r => r.old_stage >= 4);
+            await triggerReclassificationAlert(
+              _debriefUserId, _debriefExam.subject_id, _debriefScorePct, reclassifiedHighStage
+            ).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          }
+        }
+        _bgCredential = await evaluateCredential(_debriefUserId, _debriefExam.subject_id)
+          .catch((e) => { console.error('[KIWI] evaluateCredential failed:', e.message); return null; });
+        _bgRegression = await checkCredentialRegression(_debriefUserId, _debriefExam.subject_id)
+          .catch((e) => { console.error('[KIWI] checkCredentialRegression failed:', e.message); return null; });
+        const _bgExisting = await db.subjectStats.get(_debriefUserId, _debriefExam.subject_id).catch(() => null);
+        {
+          const prevCredTier = _bgExisting?.credential_tier || 0;
+          if (_bgCredential && _bgCredential.tier > prevCredTier) {
+            const tiersGained = _bgCredential.tier - prevCredTier;
+            await awardSeedlings(
+              _debriefUserId, Math.min(tiersGained, 2) * 3, 'credential_tier_advance',
+              `Credential advanced to tier ${_bgCredential.tier} in subject ${_debriefExam.subject_id}`,
+              'credential-exam:' + _debriefExam.id
+            ).catch((e) => console.error("[KIWI] silent catch:", e.message));
+            await db.subjectStats.upsert(_debriefUserId, _debriefExam.subject_id, {
+              credential_tier: _bgCredential.tier,
+            }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          }
+        }
+        await db.userStats.update(_debriefUserId, { total_exams_completed: { increment: 1 } });
+        if (_debriefScorePct >= 80) {
+          await hookSeedlingEarnings(_debriefUserId, 'exam_result', {
+            score_pct: _debriefScorePct,
+            exam_id: _debriefExam.id,
+          });
+        }
+        const _bgCurrentAvg = _bgExisting?.average_exam_score || 0;
+        const _bgTotalExams = (_bgExisting?.total_exams || 0) + 1;
+        const _bgNewAvg = parseFloat(((_bgCurrentAvg * (_bgTotalExams - 1) + _debriefScorePct) / _bgTotalExams).toFixed(2));
+        await db.subjectStats.upsert(_debriefUserId, _debriefExam.subject_id, {
+          average_exam_score: _bgNewAvg,
+          total_exams: _bgTotalExams,
+          last_exam_at: new Date(),
+        });
+        await (async () => {
+          const examCardIds = (_debriefExam.questions || []).map(q => q.card_id).filter(Boolean);
+          await Promise.all(
+            examCardIds.map(cid => recomputeAndStoreCardState(_debriefUserId, cid).catch((e) => console.error("[KIWI] silent catch:", e.message)))
+          );
+        })().catch((e) => console.error("[KIWI] silent catch:", e.message));
+        await recalculateSubjectHealth(_debriefUserId, _debriefExam.subject_id)
+          .catch((e) => console.error('[KIWI] recalculateSubjectHealth failed:', e.message));
+        const _preExamPressureDoc = await db.brainPressure.get(_debriefUserId, _debriefExam.subject_id).catch(() => null);
+        const _preExamPressureScore = parseFloat(_preExamPressureDoc?.pressure_score) || 0;
+        const pressureAfterExam = await calculateSubjectPressure(_debriefUserId, _debriefExam.subject_id)
+          .catch((e) => { console.error('[KIWI] calculateSubjectPressure failed:', e.message); return null; });
+        if (pressureAfterExam) {
+          const _examPDelta = (pressureAfterExam.pressure_score || 0) - _preExamPressureScore;
+          if (_examPDelta !== 0) {
+            wsSend(_debriefUserId, 'pressure_change', {
+              subject_id: _debriefExam.subject_id,
+              pressure_score: pressureAfterExam.pressure_score || 0,
+              delta: parseFloat(_examPDelta.toFixed(1)),
+              source: 'exam_submission',
+            });
+          }
+          if (pressureAfterExam.intervention_level === 'L4') {
+            triggerReckoning(_debriefUserId, _debriefExam.subject_id).catch((e) => console.error('[KIWI] silent catch:', e.message));
+          }
+        }
+        const _bgKsOutcome = await finalizeExamKsOutcome(
+          _debriefUserId, _debriefExam, _debriefScorePct, preKsScore
+        ).catch((e) => {
+          console.error('[KIWI] Failed to finalize exam KS snapshots:', e.message);
+          return { delta: null };
+        });
+        _bgKsDelta = _bgKsOutcome.delta;
+        // KS-BUG-3 FIX: sync goal.current_ks in Biome after exam changes card states
+        await updateAllBubblesForUser(_debriefUserId)
+          .catch((e) => console.error('[KIWI] updateAllBubblesForUser (exam) failed:', e.message));
+        await ecosystemV2.refreshVitality(_debriefUserId)
+          .catch((e) => console.error('[KIWI] vitality refresh failed:', e.message));
+        _bgCredentialEarned = !!(_bgCredential && _bgCredential.tier && _bgCredential.newlyEarned);
+        await updateTaskProgress(_debriefUserId, null, completedExam)
+          .catch((e) => console.error('[KIWI] updateTaskProgress failed:', e.message));
+        await sendTelegramExamResult(_debriefUserId, _debriefExam.subject_id, _debriefScorePct, _debriefScorePct >= 70)
+          .catch((e) => console.error("[KIWI] silent catch:", e.message));
+        {
+          const _examSubject = await db.subjects.findById(_debriefExam.subject_id).catch(() => null);
+          await sendEmailNotification(_debriefUserId, 'exam_result', {
+            subjectName: _examSubject?.name || 'Study Session',
+            scorePct: _debriefScorePct,
+            passed: _debriefScorePct >= 70,
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        }
+        // Push enriched SRS/credential/KS results to client via WebSocket
+        wsSend(_debriefUserId, 'exam_result_ready', {
+          job_id: submitJobId,
+          verification: _bgVerification,
+          reclassified: _bgReclassified,
+          credential: _bgCredential,
+          regression_warning: _bgRegression,
+          reclassification_alert_text: (_bgRegression && _bgRegression.message) || null,
+          ksDelta: _bgKsDelta,
+          credentialEarned: _bgCredentialEarned,
+          passed: _debriefScorePct >= 70,
+        });
+      } catch (_srsErr) {
+        console.error('[KIWI] Background SRS processing failed:', _srsErr.message);
+      }
+      let debriefText = '';
+      try {
+        const wrong = _debriefResults.filter((qr) => !qr.correct);
+        if (wrong.length === 0) {
+          debriefText = 'Perfect score! Every card in this exam was correctly answered. Your mastery is verified.';
+        } else {
+          // PERF-FIX: batch-fetch all wrong-question cards in one query (replaces
+          // serial await-per-card + await-per-deck N+1 pattern that could make
+          // 2×wrong.length sequential DB round-trips before AI debrief could fire).
+          const _wrongCardIds = wrong
+            .map(qr => (_debriefExam.questions.find(eq => eq.question_number === qr.question_number) || {}).card_id)
+            .filter(Boolean);
+          const _batchCards = _wrongCardIds.length > 0
+            ? await query(
+                'SELECT * FROM cards WHERE user_id = $1 AND id = ANY($2::text[])',
+                [_debriefUserId, _wrongCardIds]
+              ).then(r => r.rows).catch(() => [])
+            : [];
+          const _cardById = new Map(_batchCards.map(c => [c.id, c]));
+          const _deckIdSet = new Set(_batchCards.map(c => c.deck_id).filter(Boolean));
+          const _batchDecks = _deckIdSet.size > 0
+            ? await query(
+                'SELECT * FROM decks WHERE user_id = $1 AND id = ANY($2::text[])',
+                [_debriefUserId, [..._deckIdSet]]
+              ).then(r => r.rows).catch(() => [])
+            : [];
+          const _deckById = new Map(_batchDecks.map(d => [d.id, d]));
+
+          const weakCardFronts = [];
+          const weakSubjects = new Map();
+          for (const qr of wrong) {
+            const q = _debriefExam.questions.find((eq) => eq.question_number === qr.question_number);
+            if (q && q.card_id) {
+              const card = _cardById.get(q.card_id);
+              if (card) {
+                weakCardFronts.push(`"${(card.front_content || card.front || '').slice(0, 70)}"`);
+                if (card.deck_id) {
+                  const deck = _deckById.get(card.deck_id);
+                  if (deck?.subject_id)
+                    weakSubjects.set(deck.subject_id, (weakSubjects.get(deck.subject_id) || 0) + 1);
+                }
+              }
+            }
+          }
+          let weakAreas = [];
+          for (const [subjectId, count] of weakSubjects) {
+            const subject = await db.subjects.findById(subjectId).catch(() => null);
+            if (subject)
+              weakAreas.push({ subject_id: subjectId, subject_name: subject.name, incorrect_count: count });
+          }
+          try {
+            const aiDebriefPrompt = `## ROLE
+
+You are KIWI's Exam Debrief Analyst — a concise, analytical voice who helps students understand their exam performance.
+EXAM DATA
+Score: ${_debriefScorePct}% (${_debriefCorrect}/${_debriefTotal} correct)
+Incorrect questions (${wrong.length}): The student failed these specific concepts:
+${weakCardFronts.slice(0, 8).join('\n')}
+Weak subject areas: ${weakAreas.map((a) => a.subject_name + ' (' + a.incorrect_count + ' wrong)').join(', ') || 'general'}
+RULES
+- Write exactly 3 paragraphs.
+- Paragraph 1: Honest overall assessment of the score. Reference specific concepts that were missed.
+- Paragraph 2: Identify the pattern — why are these cards difficult? (conceptual gaps, memory fragility, exam pressure?)
+- Paragraph 3: Two precise, actionable next steps — which cards to review first and why.
+- Tone: Direct, analytical, but supportive. No empty praise.
+- Total length: 150-250 words.
+OUTPUT
+Return only the debrief text.`;
+            // Output stays compact; model, reasoning and timeout are owned by the task registry.
+            const aiResult = await ai.run('EXAM_DEBRIEF', {
+              content: aiDebriefPrompt,
+              generationConfig: { maxOutputTokens: 512 },
+            });
+            debriefText = aiResult.text.trim();
+          } catch (_) {
+            debriefText =
+              `You scored ${_debriefScorePct}%, getting ${_debriefCorrect}/${_debriefTotal} correct. ` +
+              (_debriefResults.filter(q => !q.correct).length > 0
+                ? `${_debriefResults.filter(q => !q.correct).length} question(s) were answered incorrectly.`
+                : '') +
+              (weakAreas.length > 0 ? ` The weakest area was ${weakAreas[0].subject_name}.` : '') +
+              `\n\nFocus on the failing cards using spaced repetition.` +
+              `\n\nRecommended next step: Review missed cards immediately, then schedule a follow-up exam in 3 days.`;
+          }
+        }
+        _jobStoreSet(submitJobId, { status: 'done', type: 'exam_submit', result: { debrief: debriefText } });
+        wsSend(_debriefUserId, 'job_done', { job_id: submitJobId, type: 'exam_submit', result: { debrief: debriefText } });
+      } catch (debriefBgErr) {
+        console.error('[KIWI] Background debrief failed:', debriefBgErr.message);
+        _jobStoreSet(submitJobId, { status: 'failed', type: 'exam_submit', error: 'Debrief generation failed' });
+        wsSend(_debriefUserId, 'job_failed', { job_id: submitJobId, type: 'exam_submit', error: 'Debrief generation failed' });
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to submit exam', details: e.message });
+  }
+});
+// B24: AI-powered exam debrief
+
+examRouter.get('/:id/debrief', async (req, res) => {
+try {
+const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+if (!exam || exam.status !== 'completed')
+return res.status(400).json({ error: 'Exam not completed' });
+const wrong = exam.questions.filter((q) => !q.is_correct);
+const correct = exam.questions.filter((q) => q.is_correct);
+const weakSubjects = new Map();
+const wrongCardFronts = [];
+for (const q of wrong) {
+if (q.card_id) {
+const card = await db.cards.findById(req.user.id, q.card_id).catch(() => null);
+if (card) {
+wrongCardFronts.push(`"${(card.front_content || '').slice(0, 70)}"`);
+if (card.deck_id) {
+const deck = await db.decks.findById(req.user.id, card.deck_id).catch(() => null);
+if (deck?.subject_id)
+weakSubjects.set(deck.subject_id, (weakSubjects.get(deck.subject_id) || 0) + 1);
+}
+}
+}
+}
+let weakAreas = [];
+for (const [subjectId, count] of weakSubjects) {
+const subject = await db.subjects.findById(subjectId).catch(() => null);
+if (subject)
+weakAreas.push({
+subject_id: subjectId,
+subject_name: subject.name,
+incorrect_count: count,
+});
+}
+if (wrong.length === 0) {
+return res.json({
+debrief:
+'Perfect score! Every card in this exam was correctly answered. Your mastery is verified.',
+weak_areas: [],
+recommended_cards: [],
+});
+}
+// B24: Generate AI-powered debrief
+let debriefText;
+try {
+const aiDebriefPrompt = `
+ROLE
+You are KIWI's Exam Debrief Analyst — a concise, analytical voice who helps students understand their exam performance.
+EXAM DATA
+Score: ${exam.score_pct}% (${exam.correct_answers}/${exam.total_questions} correct)
+Incorrect questions (${wrong.length}): The student failed these specific concepts:
+${wrongCardFronts.slice(0, 8).join('\n')}
+Weak subject areas: ${weakAreas.map((a) => a.subject_name + ' (' + a.incorrect_count + ' wrong)').join(', ') || 'general'}
+RULES
+- Write exactly 3 paragraphs.
+- Paragraph 1: Honest overall assessment of the score. Reference specific concepts that were missed.
+- Paragraph 2: Identify the pattern — why are these cards difficult? (conceptual gaps, memory fragility, exam pressure?)
+- Paragraph 3: Two precise, actionable next steps — which cards to review first and why.
+- Tone: Direct, analytical, but supportive. No empty praise.
+- Total length: 150-250 words.
+OUTPUT
+Return only the debrief text.
+`;
+      const aiResult = await ai.run('EXAM_DEBRIEF', { content: aiDebriefPrompt });
+      debriefText = aiResult.text.trim();
+    } catch (_) {
+      // B25 fallback: structured non-AI debrief
+      debriefText =
+        `You scored ${exam.score_pct}%, getting ${exam.correct_answers} of ${exam.total_questions} correct. ` +
+        (wrong.length > 0
+          ? `${wrong.length} card${wrong.length > 1 ? 's' : ''} were answered incorrectly.`
+          : '') +
+        (weakAreas.length > 0 ? ` The weakest area was ${weakAreas[0].subject_name}.` : '') +
+        `\n\nThe missed concepts suggest gaps that require active review — not passive re-reading. Focus on the failing cards using spaced repetition.` +
+        `\n\nRecommended next step: Review the ${Math.min(wrong.length, 5)} failed cards immediately, then schedule an exam in 3 days to re-test retention.`;
+    }
+    res.json({
+      score_pct: exam.score_pct,
+      correct_answers: exam.correct_answers,
+      total_questions: exam.total_questions,
+      debrief: debriefText,
+      weak_areas: weakAreas,
+      recommended_cards: wrong.filter((q) => q.card_id).map((q) => q.card_id),
+      ksDelta: exam.ks_delta || 0,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to generate debrief', details: e.message });
+  }
+});
+
+// GET /exams/:id/review — fetch full question-by-question review for any completed exam.
+// Returns the same question_review shape as the submit response, reconstructed from Firestore.
+// Used by the frontend Review tab when viewing past exams or when question_review is absent.
+examRouter.get('/:id/review', async (req, res) => {
+  try {
+    const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+    if (!exam) return res.status(404).json({ error: 'Exam not found' });
+    if (exam.status !== 'completed')
+      return res.status(400).json({ error: 'Exam not completed' });
+
+    const question_review = exam.questions.map((q) => ({
+      question_number: q.question_number,
+      stem: q.stem || '',
+      options: {
+        A: q.option_a || '',
+        B: q.option_b || '',
+        C: q.option_c || '',
+        D: q.option_d || '',
+      },
+      correct_answer: q.correct_answer || '',
+      explanation: q.explanation || '',
+      selected_option: q.selected_option || null,
+      is_correct: q.is_correct ?? (q.selected_option === q.correct_answer),
+      bonus_awarded: q.bonus_awarded === true,
+      awarded_point: (q.is_correct ?? (q.selected_option === q.correct_answer)) || q.bonus_awarded === true,
+      audit_reason: q.bonus_awarded === true
+        ? String(q.ai_audit_result?.reason || 'AI integrity review found the question flawed.')
+        : null,
+    }));
+
+    res.json({
+      exam_id: exam.id,
+      score_pct: exam.score_pct,
+      correct_answers: exam.correct_answers,
+      total_questions: exam.total_questions,
+      ks_delta: exam.ks_delta || 0,
+      question_review,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch exam review', details: e.message });
+  }
+});
+
+
+// ── POST /exams/:id/create-retry-deck — build a deck from wrong answers ──────
+examRouter.post('/:id/create-retry-deck', async (req, res) => {
+  try {
+    const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
+    if (!exam) return res.status(404).json({ error: 'Exam not found' });
+    if (exam.status !== 'completed') return res.status(400).json({ error: 'Exam not completed yet' });
+
+    const wrongQs = exam.questions.filter(q => !(q.is_correct ?? (q.selected_option === q.correct_answer)));
+    if (wrongQs.length === 0) return res.status(400).json({ error: 'No wrong answers — perfect score! Nothing to retry.' });
+
+    let subjectId = exam.subject_id || null;
+    // FIX: exam.subject_id is null for Reckoning exams (they pull flagged cards
+    // across multiple subjects, so no single subject_id is ever assigned at
+    // creation). db.decks.create() silently OMITS the subject_id column when it's
+    // null, so the retry deck was left with subject_id = NULL forever — and
+    // every future "Study" click on that retry deck fails the
+    // `!deck.subject_id` guard with no visible explanation. Infer the subject
+    // from the wrong-answer cards' own decks instead of leaving it null.
+    if (!subjectId) {
+      try {
+        const fallbackCardIds = [...new Set(wrongQs.map(q => q.card_id).filter(Boolean))];
+        const fallbackCards = fallbackCardIds.length
+          ? await db.cards.findByIds(req.user.id, fallbackCardIds)
+          : [];
+        const deckIds = [...new Set(fallbackCards.map(c => c.deck_id).filter(Boolean))];
+        if (deckIds.length > 0) {
+          const { rows: fallbackDecks } = await query(
+            'SELECT id, subject_id FROM decks WHERE user_id = $1 AND id = ANY($2::text[])',
+            [req.user.id, deckIds]
+          );
+          const subjectCounts = {};
+          for (const d of fallbackDecks) {
+            if (d.subject_id) subjectCounts[d.subject_id] = (subjectCounts[d.subject_id] || 0) + 1;
+          }
+          const bestSubject = Object.entries(subjectCounts).sort((a, b) => b[1] - a[1])[0];
+          if (bestSubject) subjectId = bestSubject[0];
+        }
+      } catch (e) {
+        console.error('[KIWI] Retry deck subject_id fallback failed (non-fatal):', e.message);
+      }
+    }
+    const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const retryDeck = await db.decks.create(req.user.id, {
+      subject_id: subjectId,
+      name: `Retry — ${exam.subject_name || 'Exam'} (${dateStr})`,
+      description: `Weakness deck: ${wrongQs.length} questions answered incorrectly on ${dateStr}`,
+      card_count: 0,
+      is_public: false,
+    });
+
+    const createdCards = [];
+    for (const q of wrongQs) {
+      const front = q.stem || '';
+      const optMap = { A: q.option_a || '', B: q.option_b || '', C: q.option_c || '', D: q.option_d || '' };
+      const correctText = optMap[q.correct_answer] || '';
+      const back = `Correct: ${q.correct_answer}) ${correctText}${q.explanation ? '\n\nExplanation: ' + q.explanation : ''}`;
+      if (front.length > 4 && back.length > 4) {
+        const card = await db.cards.create(req.user.id, {
+          deck_id: retryDeck.id,
+          front_content: front,
+          back_content: back,
+          tags: ['retry', 'exam-weakness'],
+          ai_summary: '',
+        });
+        createdCards.push(card);
+      }
+    }
+
+    await db.decks.update(req.user.id, retryDeck.id, { card_count: createdCards.length });
+    if (createdCards.length > 0) {
+      await batchInitializeSeedlingStates(req.user.id, createdCards.map(c => c.id));
+    }
+
+    res.status(201).json({
+      deck: retryDeck,
+      card_count: createdCards.length,
+      message: `Retry deck created with ${createdCards.length} card${createdCards.length !== 1 ? 's' : ''}`,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create retry deck', details: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+const taskRouter = express.Router();
+
+taskRouter.use(authenticate);
+
+taskRouter.use(reckoningLockout);
+
+taskRouter.get('/', async (req, res) => {
+try {
+const tasks = await db.tasks.findMany(req.user.id, { status: 'active' });
+res.json(tasks);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch tasks' });
+}
+});
+
+taskRouter.get('/refresh', async (req, res) => {
+try {
+await generateTasksForUser(req.user.id);
+const tasks = await db.tasks.findMany(req.user.id, { status: 'active' });
+res.json(tasks);
+} catch (e) {
+res.status(500).json({ error: 'Failed to refresh tasks' });
+}
+});
+
+taskRouter.get('/completed', async (req, res) => {
+try {
+const tasks = await db.tasks.findMany(req.user.id, { status: 'completed' });
+res.json(tasks);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch completed tasks' });
+}
+});
+
+taskRouter.get('/history', async (req, res) => {
+try {
+const tasks = await db.tasks.findMany(req.user.id, {});
+res.json(tasks);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch task history' });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  COMMUNITY ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+const communityRouter = express.Router();
+
+communityRouter.use(authenticate);
+
+communityRouter.use(reckoningLockout);
+
+communityRouter.get('/decks', async (req, res) => {
+try {
+const { search, tags, page = 1, limit = 20, group, subject } = req.query;
+const result = await db.communityDecks.findMany(
+{ search, tags, group, subject },
+{ page: parseInt(page), limit: parseInt(limit) }
+);
+res.json(result);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch community decks' });
+}
+});
+
+communityRouter.get('/decks/:id', async (req, res) => {
+try {
+const deck = await db.communityDecks.findByIdWithOriginalCards(req.params.id);
+if (!deck) return res.status(404).json({ error: 'Community deck not found' });
+res.json(deck);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch community deck' });
+}
+});
+
+communityRouter.post('/decks/:id/clone', async (req, res) => {
+try {
+// F-24 FIX: require subject_id — null orphans are never included in KS/health calculations
+if (!req.body.subject_id) return res.status(400).json({ error: 'subject_id is required to clone a deck' });
+const communityDeck = await db.communityDecks.findByIdWithOriginalCards(req.params.id);
+if (!communityDeck) return res.status(404).json({ error: 'Community deck not found' });
+const newDeck = await db.decks.create(req.user.id, {
+name: `${communityDeck.title || 'Cloned'} (Clone)`,
+description: communityDeck.description,
+subject_id: req.body.subject_id || null,
+card_count: (communityDeck.originalDeck?.cards || communityDeck.sample_cards || []).length || communityDeck.card_count || 0,
+is_public: false,
+});
+const originalCards = communityDeck.originalDeck?.cards || [];
+if (originalCards.length > 0) {
+const cardsData = originalCards.map((c) => ({
+front_content: c.front_content,
+back_content: c.back_content,
+front_image_url: c.front_image_url,
+back_image_url: c.back_image_url,
+tags: c.tags || [],
+}));
+const created = await db.cards.createMany(req.user.id, newDeck.id, cardsData);
+// Update deck card_count to actual number of cards created
+await db.decks.update(req.user.id, newDeck.id, { card_count: created.length });
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+}
+// FIX #4c: Recalculate KS after community clone
+if (newDeck.subject_id) {
+await persistKnowledgeScore(req.user.id, newDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+await db.communityDecks.update(req.params.id, { clone_count: { increment: 1 } });
+const clonedDeck = await db.decks.findByIdFull(req.user.id, newDeck.id);
+res.status(201).json({ message: 'Deck cloned successfully', deck: clonedDeck });
+} catch (e) {
+res.status(500).json({ error: 'Failed to clone deck', details: e.message });
+}
+});
+// POST /api/community/import — clone a community deck by deckId in body
+
+communityRouter.post('/import', async (req, res) => {
+try {
+const { deckId, subject_id } = req.body;
+if (!deckId) return res.status(400).json({ error: 'deckId required' });
+// F-24 FIX: require subject_id — null orphans skip KS/health calculations silently
+if (!subject_id) return res.status(400).json({ error: 'subject_id is required to import a deck' });
+const communityDeck = await db.communityDecks.findByIdWithOriginalCards(deckId);
+if (!communityDeck) return res.status(404).json({ error: 'Community deck not found' });
+const newDeck = await db.decks.create(req.user.id, {
+name: `${communityDeck.title || 'Cloned'} (Clone)`,
+description: communityDeck.description,
+subject_id: subject_id || null,
+card_count: (communityDeck.originalDeck?.cards || []).length,
+is_public: false,
+});
+const originalCards = (communityDeck.originalDeck?.cards?.length ? communityDeck.originalDeck.cards : null) || communityDeck.sample_cards || [];
+if (originalCards.length > 0) {
+const cardsData = originalCards.map((c) => ({
+front_content: c.front_content || c.front || '',
+back_content: c.back_content || c.back || '',
+tags: c.tags || [],
+}));
+const created = await db.cards.createMany(req.user.id, newDeck.id, cardsData);
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+}
+await db.communityDecks.update(deckId, { clone_count: { increment: 1 } });
+// FIX #4d: Recalculate KS after community import
+if (newDeck.subject_id) {
+await persistKnowledgeScore(req.user.id, newDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+const clonedDeck = await db.decks.findByIdFull(req.user.id, newDeck.id);
+res.status(201).json({ message: 'Deck imported successfully', deck: clonedDeck });
+} catch (e) {
+res.status(500).json({ error: 'Failed to import deck', details: e.message });
+}
+});
+
+communityRouter.post('/decks/:id/rate', async (req, res) => {
+try {
+const { rating } = req.body;
+if (!rating || rating < 1 || rating > 5)
+return res.status(400).json({ error: 'Rating must be 1-5' });
+await db.communityRatings.upsert(req.params.id, req.user.id, rating);
+const allRatings = await db.communityRatings.findByDeck(req.params.id);
+const avg =
+allRatings.length > 0
+? parseFloat((allRatings.reduce((s, r) => s + r.rating, 0) / allRatings.length).toFixed(2))
+: 0;
+await db.communityDecks.update(req.params.id, { average_rating: avg });
+res.json({ average_rating: avg, total_ratings: allRatings.length });
+} catch (e) {
+res.status(500).json({ error: 'Failed to rate deck' });
+}
+});
+
+// 062 FIX: Publish a user's own deck to the community library.
+// Was completely absent — no route, no frontend button. upsertByOriginalDeck existed in
+// the DB layer but was never exposed as an endpoint.
+communityRouter.post('/decks/publish', async (req, res) => {
+try {
+const { deck_id, description, tags, group_name } = req.body;
+if (!deck_id) return res.status(400).json({ error: 'deck_id required' });
+const deck = await db.decks.findByIdFull(req.user.id, deck_id);
+if (!deck) return res.status(404).json({ error: 'Deck not found' });
+if (deck.user_id && deck.user_id !== req.user.id) {
+return res.status(403).json({ error: 'You can only publish your own decks' });
+}
+const user = await db.users.findById(req.user.id);
+const { rows: [{ count: _rawCount }] } = await query('SELECT COUNT(*) AS count FROM cards WHERE deck_id = $1', [deck_id]);
+const cardCount = parseInt(_rawCount, 10) || 0;
+console.log('[PUBLISH DEBUG] deck_id:', deck_id, 'cardCount from DB:', cardCount, 'deck.card_count:', deck.card_count);
+// Minimum card requirement removed — count verified via direct DB query above
+// Resolve subject name for community listing
+let subjectName = deck.subject_name || '';
+if (!subjectName && deck.subject_id) {
+const subjectDoc = await db.subjects.findById(deck.subject_id).catch(() => null);
+if (subjectDoc) subjectName = subjectDoc.name || '';
+}
+// Snapshot cards at publish time so import works even if original deck is deleted
+const { rows: _snapshotCards } = await query('SELECT front_content, back_content, tags FROM cards WHERE deck_id = $1', [deck_id]);
+const communityEntry = await db.communityDecks.upsertByOriginalDeck(deck_id, {
+title: deck.name,
+author_name: user?.username || 'Anonymous',
+author_id: req.user.id,
+description: description || deck.description || '',
+subject: subjectName,
+tags: tags || deck.tags || [],
+card_count: _snapshotCards.length || cardCount,
+sample_cards: _snapshotCards,
+likes: 0,
+downloads: 0,
+clone_count: 0,
+average_rating: 0,
+is_public: true,
+...(group_name ? { group_name } : {}),
+});
+// Mark the original deck as public
+await db.decks.update(req.user.id, deck_id, { is_public: true });
+res.status(201).json({ message: 'Deck published to community', community_deck: communityEntry });
+} catch (e) {
+res.status(500).json({ error: 'Failed to publish deck', details: e.message });
+}
+});
+
+// DELETE /api/community/decks/:id — author or admin can remove
+communityRouter.delete('/decks/:id', async (req, res) => {
+  try {
+    const deck = await db.communityDecks.findById(req.params.id);
+    if (!deck) return res.status(404).json({ error: 'Deck not found' });
+    if (deck.author_id !== req.user.id) return res.status(403).json({ error: 'Not your deck' });
+    await query('DELETE FROM community_decks WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Deck removed from community' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete deck', details: e.message });
+  }
+});
+
+// DELETE /api/community/groups/:groupName — delete all author's decks in a group
+communityRouter.delete('/groups/:groupName', async (req, res) => {
+  try {
+    const groupName = decodeURIComponent(req.params.groupName);
+    if (!groupName) return res.status(400).json({ error: 'Group name required' });
+    const { rowCount } = await query(
+      'DELETE FROM community_decks WHERE group_name = $1 AND author_id = $2',
+      [groupName, req.user.id]
+    );
+    res.json({ success: true, deleted: rowCount || 0, group_name: groupName });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete group', details: e.message });
+  }
+});
+
+// PATCH /api/community/decks/:id/group — set group_name for a deck
+communityRouter.patch('/decks/:id/group', async (req, res) => {
+  try {
+    const { group_name } = req.body;
+    const deck = await db.communityDecks.findById(req.params.id);
+    if (!deck) return res.status(404).json({ error: 'Deck not found' });
+    if (deck.author_id !== req.user.id) return res.status(403).json({ error: 'Not your deck' });
+    await query('UPDATE community_decks SET group_name = $1, updated_at = NOW() WHERE id = $2', [group_name || null, req.params.id]);
+    res.json({ message: 'Group updated' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update group', details: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ADMIN ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+const adminRouter = express.Router();
+
+adminRouter.use(requireAdminAccess);
+adminRouter.use(reckoningLockout);
+
+adminRouter.get('/users', async (req, res) => {
+// Fix #51: userStats.findAll() + in-memory join replaces N individual get() calls
+try {
+const [users, allStats] = await Promise.all([
+db.users.findAll(),
+db.userStats.findAll(),
+]);
+const statsMap = new Map(allStats.map(s => [s.userId, s]));
+const result = users.map((u) => ({ ...u, password_hash: undefined, stats: toPublicStats(statsMap.get(u.id) || null) }));
+res.json(result);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch users' });
+}
+});
+
+adminRouter.delete('/users/:id', async (req, res) => {
+try {
+const targetUser = await db.users.findById(req.params.id);
+if (!targetUser) return res.status(404).json({ error: 'User not found' });
+// Permanently delete — mark is_blocked + delete so they can't re-register easily
+await query(`UPDATE users SET is_blocked = true, blocked_reason = 'Permanently removed by admin' WHERE id = $1`, [req.params.id]);
+await db.users.delete(req.params.id);
+await db.refreshTokens.deleteByUserId(req.params.id);
+// Clear from auth cache immediately
+for (const [k, v] of _authCache) {
+  if (v.user?.id === req.params.id) _authCache.delete(k);
+}
+res.json({ message: 'User permanently removed' });
+} catch (e) {
+res.status(500).json({ error: 'Failed to delete user' });
+}
+});
+
+adminRouter.patch('/users/:id/block', async (req, res) => {
+try {
+  const { reason } = req.body;
+  const targetUser = await db.users.findById(req.params.id);
+  if (!targetUser) return res.status(404).json({ error: 'User not found' });
+  await query('UPDATE users SET is_blocked = true, blocked_reason = $1 WHERE id = $2',
+    [reason || 'Blocked by admin', req.params.id]);
+  // Evict from auth cache so block takes effect on next request
+  for (const [k, v] of _authCache) {
+    if (v.user?.id === req.params.id) _authCache.delete(k);
+  }
+  res.json({ message: 'User blocked', userId: req.params.id });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to block user' });
+}
+});
+
+adminRouter.patch('/users/:id/unblock', async (req, res) => {
+try {
+  const targetUser = await db.users.findById(req.params.id);
+  if (!targetUser) return res.status(404).json({ error: 'User not found' });
+  await query('UPDATE users SET is_blocked = false, blocked_reason = NULL WHERE id = $1', [req.params.id]);
+  res.json({ message: 'User unblocked', userId: req.params.id });
+} catch (e) {
+  res.status(500).json({ error: 'Failed to unblock user' });
+}
+});
+
+adminRouter.get('/stats', async (req, res) => {
+// Fix #35: replace 4 unbounded collection dumps with count() aggregations
+// Migrated: Firestore .count().get() → pg COUNT(*) queries
+try {
+const [usersRes, cardsRes, sessionsRes, statsList] = await Promise.all([
+query('SELECT COUNT(*) AS count FROM users'),
+query('SELECT COUNT(*) AS count FROM cards'),
+query('SELECT COUNT(*) AS count FROM sessions'),
+db.userStats.findAll(),
+]);
+const total_users    = parseInt(usersRes.rows[0]?.count || '0', 10);
+const total_cards    = parseInt(cardsRes.rows[0]?.count || '0', 10);
+const totalSessions  = parseInt(sessionsRes.rows[0]?.count || '0', 10);
+res.json({
+total_users,
+total_cards,
+total_sessions: totalSessions,
+average_level:
+statsList.length > 0
+? statsList.reduce((s, st) => s + st.current_level, 0) / statsList.length
+: 0,
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch stats' });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ADMIN — PRESSURE DIAGNOSTICS
+// ════════════════════════════════════════════════════════════════════════════
+
+// GET /api/admin/diag/subjects/:userId — fetch subjects for a user (for dropdown)
+adminRouter.get('/diag/subjects/:userId', async (req, res) => {
+  try {
+    const subjects = await db.subjects.findManyWithDecks(req.params.userId);
+    res.json(subjects.map(s => ({ id: s.id, name: s.name, deck_count: s.deck_count || 0, total_cards: s.total_cards || 0 })));
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch subjects: ' + e.message });
+  }
+});
+
+// POST /api/admin/diag/pressure — run full pressure pipeline and return step-by-step diagnostics
+adminRouter.post('/diag/pressure', async (req, res) => {
+  const { userId, subjectId } = req.body || {};
+  if (!userId || !subjectId) return res.status(400).json({ error: 'userId and subjectId required' });
+  const steps = [];
+  const ts = () => new Date().toISOString();
+  try {
+    // Step 1: subject info
+    const subject = await db.subjects.findById(subjectId).catch(() => null);
+    steps.push({ step: 1, label: 'Subject lookup', ok: !!subject, detail: subject ? `"${subject.name}"` : 'NOT FOUND — subjectId invalid or belongs to different user' });
+    if (!subject) return res.json({ ok: false, steps });
+
+    // Step 2: deck + card count
+    const decks = await db.decks.findBySubject(userId, subjectId).catch(() => []);
+    const deckIdSet = new Set(decks.map(d => d.id));
+    const allUserCards = await db.cards.findAllForUser(userId).catch(() => []);
+    const subjectCards = allUserCards.filter(c => deckIdSet.has(c.deck_id));
+    steps.push({ step: 2, label: 'Cards found', ok: subjectCards.length > 0, detail: `${decks.length} deck(s), ${subjectCards.length} card(s)` });
+
+    // Step 3: card state breakdown
+    const allStates = await db.cardStates.findByUser(userId).catch(() => []);
+    const subjectCardIds = new Set(subjectCards.map(c => c.id));
+    const subjectStates = allStates.filter(s => subjectCardIds.has(s.card_id));
+    const stateCounts = {};
+    for (const s of subjectStates) stateCounts[s.state] = (stateCounts[s.state] || 0) + 1;
+    const missingStates = subjectCards.length - subjectStates.length;
+    steps.push({
+      step: 3, label: 'Card state breakdown', ok: true,
+      detail: Object.keys(stateCounts).length > 0
+        ? Object.entries(stateCounts).map(([k, v]) => `${k}: ${v}`).join(', ') + (missingStates > 0 ? ` | ${missingStates} card(s) have NO state row (will be initialised)` : '')
+        : `No state rows found for any of the ${subjectCards.length} card(s) — all will be initialised as SEEDLING`
+    });
+
+    // Step 4: KS queue snapshot
+    const queueKeys = [..._ksQueue.keys()].filter(k => k.startsWith(userId + ':'));
+    steps.push({ step: 4, label: 'KS queue before flush', ok: true, detail: `${queueKeys.length} pending recompute(s) for this user` });
+
+    // Step 5: flush KS queue
+    const flushBatch = queueKeys.map(k => { const v = _ksQueue.get(k); _ksQueue.delete(k); return v; });
+    if (flushBatch.length > 0) {
+      await Promise.all(flushBatch.map(({ userId: uid, cardId }) =>
+        recomputeAndStoreCardState(uid, cardId).catch(() => null)
+      ));
+    }
+    steps.push({ step: 5, label: 'KS queue flushed', ok: true, detail: flushBatch.length > 0 ? `Flushed ${flushBatch.length} item(s) — card states are now current` : 'Queue was empty — no flush needed' });
+
+    // Step 6: brain_pressure from DB before calculate
+    const bpBefore = await db.brainPressure.get(userId, subjectId).catch(() => null);
+    steps.push({ step: 6, label: 'DB pressure BEFORE calculate', ok: true, detail: bpBefore ? `pressure_score=${bpBefore.pressure_score}, level=${bpBefore.intervention_level}` : 'No row in brain_pressure table yet (first run)' });
+
+    // Step 7: run calculateSubjectPressure
+    let calcResult = null;
+    let calcError = null;
+    try {
+      calcResult = await calculateSubjectPressure(userId, subjectId);
+    } catch (e) {
+      calcError = e.message;
+    }
+    if (calcError) {
+      steps.push({ step: 7, label: 'calculateSubjectPressure', ok: false, detail: `THREW: ${calcError}` });
+      return res.json({ ok: false, steps });
+    }
+
+    // Step 7 detail: break down every source
+    const sourcesDetail = Object.keys(calcResult.sources).length > 0
+      ? Object.entries(calcResult.sources).map(([k, v]) => `${k}=+${v}`).join(', ')
+      : 'NO sources fired — all pressure conditions returned 0';
+    steps.push({
+      step: 7, label: 'calculateSubjectPressure result', ok: calcResult.pressure_score > 0,
+      score: calcResult.pressure_score,
+      level: calcResult.intervention_level,
+      detail: `score=${calcResult.pressure_score}, level=${calcResult.intervention_level} | Sources: ${sourcesDetail}`
+    });
+
+    // Step 8: brain_pressure from DB after calculate (should match step 7)
+    const bpAfter = await db.brainPressure.get(userId, subjectId).catch(() => null);
+    const writeOk = bpAfter && parseFloat(bpAfter.pressure_score) === calcResult.pressure_score;
+    steps.push({
+      step: 8, label: 'DB pressure AFTER calculate', ok: writeOk,
+      detail: bpAfter
+        ? `pressure_score=${bpAfter.pressure_score}${writeOk ? ' ✓ matches computed value' : ` ✗ MISMATCH — computed ${calcResult.pressure_score}`}`
+        : 'No row written — db.brainPressure.set may have failed'
+    });
+
+    // Step 9: diagnosis summary
+    let diagnosis = '';
+    if (subjectCards.length === 0) diagnosis = 'NO CARDS — subject has no cards, pressure will always be 0';
+    else if (Object.keys(stateCounts).length === 0) diagnosis = 'NO CARD STATES — cards exist but no state rows; all initialise as SEEDLING which contributes 0 pressure';
+    else if (calcResult.pressure_score === 0) diagnosis = 'Score is 0 — card states present but none meet pressure thresholds (e.g. all SEEDLING/GROWING/STABLE). Pressure only fires for GHOST/FRAGILE/SLIPPING/DANGEROUS/AVOIDED/STUCK≥10 and behavioral sources.';
+    else diagnosis = `Pressure is working correctly — score ${calcResult.pressure_score} written to DB.`;
+    steps.push({ step: 9, label: 'Diagnosis', ok: calcResult.pressure_score > 0, detail: diagnosis });
+
+    res.json({ ok: calcResult.pressure_score > 0, pressure_score: calcResult.pressure_score, steps });
+  } catch (e) {
+    steps.push({ step: 99, label: 'Unexpected error', ok: false, detail: e.message });
+    res.status(500).json({ ok: false, steps, error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ADMIN — SYSTEM HEALTH CHECK
+// ════════════════════════════════════════════════════════════════════════════
+
+// Secret-free AI operations snapshot. This combines live admission/circuit state
+// with durable recent request/attempt aggregates; prompts, API keys and model
+// response bodies are never part of the report.
+adminRouter.get('/ai/status', async (req, res) => {
+  try {
+    const requestedWindow = Number(req.query?.window_minutes);
+    const windowMinutes = Number.isFinite(requestedWindow)
+      ? Math.max(1, Math.min(Math.floor(requestedWindow), 1440))
+      : 15;
+    const report = await _aiRuntime.operationalReport({ windowMinutes });
+    res.json(report);
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to build AI operational status',
+      details: error?.message || String(error),
+    });
+  }
+});
+
+adminRouter.get('/health', async (req, res) => {
+  const checks = [];
+  const t0 = Date.now();
+
+  // 1 — Database connectivity
+  try {
+    await query('SELECT 1');
+    checks.push({ id: 'db_connection', label: 'Database connection', status: 'pass', value: 'Connected' });
+  } catch (e) {
+    checks.push({ id: 'db_connection', label: 'Database connection', status: 'fail', value: e.message });
+  }
+
+  // 2 — Table existence (expected 31 tables)
+  const EXPECTED_TABLES = [
+    'users','sessions','subjects','decks','cards','card_states',
+    'exam_sessions','exam_questions','brain_pressure','reckoning_sessions',
+    'chronicle_entries','almanac_entries','user_persona','daily_ritual_cache',
+    'seedling_transactions','user_inventory','marketplace_items','knowledge_scores',
+    'user_stats','refresh_tokens','tasks','community_decks','community_ratings',
+    'mastery_goals','background_jobs','mastery_clusters','bubble_sessions',
+    'biome_zones','biome_zone_descriptions','onboarding_state','notifications',
+  ];
+  try {
+    const { rows } = await query(`SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`);
+    const existing = new Set(rows.map(r => r.tablename));
+    const missing = EXPECTED_TABLES.filter(t => !existing.has(t));
+    const found   = EXPECTED_TABLES.filter(t => existing.has(t));
+    checks.push({
+      id: 'tables', label: 'DB tables',
+      status: missing.length === 0 ? 'pass' : 'warn',
+      value: `${found.length}/${EXPECTED_TABLES.length} present${missing.length > 0 ? ` | missing: ${missing.join(', ')}` : ''}`,
+    });
+  } catch (e) {
+    checks.push({ id: 'tables', label: 'DB tables', status: 'fail', value: e.message });
+  }
+
+  // 3 — Environment variables
+  const ENV_REQUIRED = ['DATABASE_URL', 'JWT_SECRET'];
+  const ENV_OPTIONAL = ['BREVO_API_KEY', 'TELEGRAM_BOT_TOKEN', 'ADMIN_MASTER_TOKEN', 'APP_URL', 'PORT', 'NODE_ENV'];
+  const ENV_ALL = [...ENV_REQUIRED, ...ENV_OPTIONAL];
+  const envMissReq = ENV_REQUIRED.filter(k => !process.env[k]);
+  const envMissOpt = ENV_OPTIONAL.filter(k => !process.env[k]);
+  const envPresent = ENV_ALL.filter(k => !!process.env[k]);
+  checks.push({
+    id: 'env_vars', label: 'Environment variables',
+    status: envMissReq.length > 0 ? 'fail' : envMissOpt.length > 0 ? 'warn' : 'pass',
+    value: `${envPresent.length}/${ENV_ALL.length} set`
+      + (envMissReq.length > 0 ? ` | MISSING (required): ${envMissReq.join(', ')}` : '')
+      + (envMissOpt.length > 0 ? ` | optional unset: ${envMissOpt.join(', ')}` : ''),
+  });
+
+  // 4 — WebSocket server
+  try {
+    const wsUserCount = _wsClients.size;
+    const wsConnCount = [..._wsClients.values()].reduce((n, s) => n + s.size, 0);
+    checks.push({ id: 'websocket', label: 'WebSocket server', status: 'pass', value: `${wsUserCount} user(s), ${wsConnCount} connection(s)` });
+  } catch (e) {
+    checks.push({ id: 'websocket', label: 'WebSocket server', status: 'warn', value: e.message });
+  }
+
+  // 5 — In-memory stores
+  checks.push({ id: 'ks_queue',       label: 'KS recompute queue',    status: 'pass', value: `${_ksQueue.size} pending item(s)` });
+  checks.push({ id: 'session_queues', label: 'Active session queues', status: 'pass', value: `${_sessionQueues.size} active session(s)` });
+  checks.push({ id: 'job_store',      label: 'In-memory job store',   status: 'pass', value: `${_jobStore.size} job(s)` });
+  // 6 — Central AI orchestrator health (secret-free)
+  try {
+    const aiStatus = _aiRuntime.status();
+    const quotaSummary = Object.entries(aiStatus.quota.states || {})
+      .filter(([state]) => state !== 'READY')
+      .map(([state, count]) => `${state}:${count}`)
+      .join(', ');
+    const discoveryHealth = aiStatus.discovery.lastError ? 'warn' : 'pass';
+    const routeSummary =
+      `VVIP=${(aiStatus.routes.VVIP.available && aiStatus.routes.VVIP.primaryModel) || 'unavailable'} | ` +
+      `VIP=${(aiStatus.routes.VIP.available && aiStatus.routes.VIP.primaryModel) || 'unavailable'} | ` +
+      `IP=${(aiStatus.routes.IP.available && aiStatus.routes.IP.primaryModel) || 'unavailable'}`;
+
+    checks.push({
+      id: 'gemini_pool',
+      label: 'Gemini AI orchestrator',
+      status: aiStatus.readiness.state !== 'READY' || aiStatus.projectSlots.total === 0
+        ? 'fail'
+        : Object.values(aiStatus.routes).every((route) => route.available)
+          ? 'pass'
+          : 'warn',
+      value:
+        `runtime=${aiStatus.readiness.state} | ` +
+        `${aiStatus.projectSlots.enabled}/${aiStatus.projectSlots.total} project/key slot(s) enabled | ` +
+        routeSummary +
+        (quotaSummary ? ` | route state: ${quotaSummary}` : ''),
+    });
+
+    const providerStates = aiStatus.providerHealth?.states || {};
+    const providerOpen = Number(providerStates.OPEN) || 0;
+    const providerHalfOpen = Number(providerStates.HALF_OPEN) || 0;
+    const recentErrors = aiStatus.telemetry?.errorsByCode || {};
+    const recentProviderOverload = Number(recentErrors.PROVIDER_OVERLOADED) || 0;
+    const recentRateLimits =
+      (Number(recentErrors.RATE_LIMIT_RPM) || 0) +
+      (Number(recentErrors.RATE_LIMIT_TPM) || 0) +
+      (Number(recentErrors.RATE_LIMIT_RPD) || 0) +
+      (Number(recentErrors.RATE_LIMIT_UNKNOWN) || 0);
+
+    checks.push({
+      id: 'ai_traffic_control',
+      label: 'AI traffic controller',
+      status: aiStatus.traffic?.congestionLevel === 'SEVERE'
+        ? 'warn'
+        : 'pass',
+      value:
+        `active=${aiStatus.traffic?.active || 0}/${aiStatus.traffic?.effectiveConcurrency || 0} ` +
+        `queued=${aiStatus.traffic?.queued || 0}/${aiStatus.traffic?.maxQueue || 0} ` +
+        `congestion=${aiStatus.traffic?.congestionLevel || 'UNKNOWN'} ` +
+        `(base=${aiStatus.traffic?.baseConcurrency || 0})`,
+    });
+
+    checks.push({
+      id: 'ai_provider_health',
+      label: 'AI provider/model health',
+      status: providerOpen > 0 || providerHalfOpen > 0 ? 'warn' : 'pass',
+      value:
+        `models tracked=${aiStatus.providerHealth?.trackedModels || 0} ` +
+        `open=${providerOpen} half-open=${providerHalfOpen} | ` +
+        `last 5m: provider-overload=${recentProviderOverload}, rate-limit=${recentRateLimits}, ` +
+        `fallbacks=${aiStatus.telemetry?.fallbackRequests || 0}, ` +
+        `avg queue=${aiStatus.telemetry?.averageQueueWaitMs || 0}ms`,
+    });
+
+    checks.push({
+      id: 'ai_health_sync',
+      label: 'AI persisted health synchronization',
+      status: aiStatus.healthSync?.lastError ? 'warn' : 'pass',
+      value:
+        `interval=${Math.round((aiStatus.healthSync?.intervalMs || 0) / 1000)}s` +
+        (aiStatus.healthSync?.lastCompletedAt
+          ? ` | last completed ${aiStatus.healthSync.lastCompletedAt}`
+          : '') +
+        (aiStatus.healthSync?.lastSummary
+          ? ` | quota rows=${aiStatus.healthSync.lastSummary.quotaRows}, provider rows=${aiStatus.healthSync.lastSummary.providerRows}`
+          : '') +
+        (aiStatus.healthSync?.lastError
+          ? ` | last error: ${aiStatus.healthSync.lastError.message}`
+          : ''),
+    });
+
+    checks.push({
+      id: 'ai_model_discovery',
+      label: 'AI stable-model discovery',
+      status: discoveryHealth,
+      value:
+        `enabled=${aiStatus.discovery.enabled} auto-promote=${aiStatus.discovery.autoPromote}` +
+        (aiStatus.discovery.lastCompletedAt
+          ? ` | last completed ${aiStatus.discovery.lastCompletedAt}`
+          : '') +
+        (aiStatus.discovery.lastSummary
+          ? ` | provider=${aiStatus.discovery.lastSummary.providerModels} stable=${aiStatus.discovery.lastSummary.stableFlashModels} promoted=${aiStatus.discovery.lastSummary.promoted.length}`
+          : '') +
+        (aiStatus.discovery.lastError
+          ? ` | last error: ${aiStatus.discovery.lastError.code || aiStatus.discovery.lastError.message}`
+          : ''),
+    });
+
+    checks.push({
+      id: 'ai_retention',
+      label: 'AI operational data retention',
+      status: aiStatus.retention.lastError ? 'warn' : 'pass',
+      value:
+        `requests=${aiStatus.retention.policy.requestRetentionDays}d, ` +
+        `qualifications=${aiStatus.retention.policy.qualificationRetentionDays}d, ` +
+        `rollups=${aiStatus.retention.policy.rollupRetentionDays}d` +
+        (aiStatus.retention.lastCompletedAt
+          ? ` | last cleanup ${aiStatus.retention.lastCompletedAt}`
+          : ''),
+    });
+  } catch (e) {
+    checks.push({ id: 'gemini_pool', label: 'Gemini AI orchestrator', status: 'warn', value: e.message });
+  }
+
+  // 7 — Cron jobs (static manifest — registered at startup if NODE_ENV !== 'test')
+  const CRON_MANIFEST = [
+    { schedule: '* * * * *',     label: 'KS recompute batch drain (every 1 min)' },
+    { schedule: '*/10 * * * *',  label: 'Abandoned exam auto-forfeit (every 10 min)' },
+    { schedule: '0 3 * * *',     label: 'Nightly maintenance + active-user ritual/task preparation (03:00 UTC)' },
+    { schedule: '0 8 * * *',     label: 'Morning login reminder dispatch (08:00 UTC)' },
+    { schedule: '0 11 * * *',    label: 'Mid-morning login reminder dispatch (11:00 UTC)' },
+    { schedule: '0 14 * * *',    label: 'Daily ritual reminder dispatch (14:00 UTC)' },
+    { schedule: '0 0 * * 1',     label: 'Weekly Chronicle + Anchor generation (Mon 00:00 UTC)' },
+  ];
+  const cronActive = process.env.NODE_ENV !== 'test';
+  checks.push({
+    id: 'cron_jobs', label: 'Scheduled cron jobs',
+    status: cronActive ? 'pass' : 'warn',
+    value: `${CRON_MANIFEST.length} registered${cronActive ? '' : ' (disabled — NODE_ENV=test)'}`,
+  });
+
+  // 8 — background_jobs table live count
+  try {
+    const { rows: bjRows } = await query(`SELECT COUNT(*) AS c FROM background_jobs WHERE status IN ('pending','running')`);
+    const pending = parseInt(bjRows[0]?.c || '0', 10);
+    checks.push({ id: 'bg_jobs_db', label: 'background_jobs (pending/running)', status: 'pass', value: `${pending} job(s)` });
+  } catch (e) {
+    checks.push({ id: 'bg_jobs_db', label: 'background_jobs table', status: 'warn', value: 'Query failed: ' + e.message });
+  }
+
+  // 9 — DB connection pool state
+  try {
+    const poolTotal   = pool.totalCount;
+    const poolIdle    = pool.idleCount;
+    const poolWaiting = pool.waitingCount;
+    checks.push({
+      id: 'db_pool', label: 'DB connection pool',
+      status: poolWaiting > 5 ? 'warn' : 'pass',
+      value: `${poolTotal} total · ${poolIdle} idle · ${poolWaiting} waiting`,
+    });
+  } catch (e) {
+    checks.push({ id: 'db_pool', label: 'DB connection pool', status: 'warn', value: e.message });
+  }
+
+  const elapsed = Date.now() - t0;
+  const overallOk = checks.every(c => c.status !== 'fail');
+  res.json({
+    ok: overallOk,
+    elapsed_ms: elapsed,
+    timestamp: new Date().toISOString(),
+    node_env: process.env.NODE_ENV || 'undefined',
+    checks,
+    cron_manifest: CRON_MANIFEST,
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  NEW PHASE ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  BUBBLE ROUTER (PB.12)  [DESIGN: §14]
+// ════════════════════════════════════════════════════════════════════════════
+const bubbleRouter = express.Router();
+bubbleRouter.use(authenticate);
+bubbleRouter.use(reckoningLockout);
+
+// ── GET /api/bubbles — list all bubbles for user ──────────────────────────
+bubbleRouter.get('/', async (req, res) => {
+  try {
+    const all = await db.masteryGoals.findByUser(req.user.id);
+    const enriched = await Promise.all(all.map(async (g) => {
+      const subject = await db.subjects.findById(g.subject_id).catch(() => null);
+      return { ...g, subject_name: subject?.name || 'Unknown' };
+    }));
+    res.json({ bubbles: enriched });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch bubbles', details: e.message });
+  }
+});
+
+// ── POST /api/bubbles — create bubble [DESIGN: §14] ──────────────────────
+bubbleRouter.post('/', async (req, res) => {
+  try {
+    const gateStats = await db.userStats.get(req.user.id);
+    const completedSessions = Number(gateStats?.total_sessions_completed) || 0;
+    if (completedSessions < 5) {
+      return res.status(403).json({
+        error: 'Mastery Bubbles unlock after 5 completed sessions',
+        code: 'BUBBLE_LOCKED',
+        current_sessions: completedSessions,
+        required_sessions: 5,
+      });
+    }
+    const { subject_id, deck_ids, exam_date, test_date, card_ids, name } = req.body;
+    if (!subject_id || !exam_date)
+      return res.status(400).json({ error: 'subject_id and exam_date required' });
+
+    const examDate = new Date(exam_date);
+    const testDate = test_date ? new Date(test_date) : null;
+    if (Number.isNaN(examDate.getTime()))
+      return res.status(400).json({ error: 'exam_date must be a valid date' });
+    if (testDate && Number.isNaN(testDate.getTime()))
+      return res.status(400).json({ error: 'test_date must be a valid date' });
+    if (testDate && testDate > examDate)
+      return res.status(400).json({ error: 'test_date cannot be after exam_date' });
+    if (name != null && (typeof name !== 'string' || name.trim().length > 120))
+      return res.status(400).json({ error: 'name must be 120 characters or fewer' });
+
+    const subject = await db.subjects.findById(subject_id).catch(() => null);
+    if (!subject || subject.user_id !== req.user.id)
+      return res.status(404).json({ error: 'Subject not found' });
+
+    const normalizedDeckIds = [...new Set(
+      (Array.isArray(deck_ids) ? deck_ids : []).filter((id) => typeof id === 'string' && id)
+    )];
+    const normalizedCardIds = [...new Set(
+      (Array.isArray(card_ids) ? card_ids : []).filter((id) => typeof id === 'string' && id)
+    )];
+    // GAP-M4: deck_ids is optional when card_ids is provided directly [DESIGN: §14]
+    // Either deck_ids (resolved to card_ids server-side) or card_ids must be present.
+    const hasDecks = normalizedDeckIds.length > 0;
+    const hasCards = normalizedCardIds.length > 0;
+    if (!hasDecks && !hasCards)
+      return res.status(400).json({ error: 'Either deck_ids or card_ids must be provided' });
+
+    if (hasDecks) {
+      const selectedDecks = await Promise.all(
+        normalizedDeckIds.map((deckId) => db.decks.findById(req.user.id, deckId).catch(() => null))
+      );
+      if (selectedDecks.some((deck) => !deck || deck.subject_id !== subject_id)) {
+        return res.status(400).json({ error: 'Every selected deck must belong to the selected subject' });
+      }
+    }
+
+    const existingGoals = await db.masteryGoals.findActive(req.user.id);
+    let resolvedCardIds = [...normalizedCardIds];
+    if (resolvedCardIds.length === 0) {
+      const deckCards = await Promise.all(
+        normalizedDeckIds.map((deckId) => db.cards.findByDeck(req.user.id, deckId).catch(() => []))
+      );
+      resolvedCardIds = [...new Set(deckCards.flat().map((card) => card.id))];
+    } else {
+      const { rows: matchingCards } = await query(
+        `SELECT c.id
+         FROM cards c
+         INNER JOIN decks d ON d.id = c.deck_id AND d.user_id = c.user_id
+         WHERE c.user_id = $1 AND d.subject_id = $2 AND c.id = ANY($3::text[])`,
+        [req.user.id, subject_id, resolvedCardIds]
+      );
+      if (matchingCards.length !== resolvedCardIds.length) {
+        return res.status(400).json({ error: 'Every selected card must belong to the selected subject' });
+      }
+    }
+    if (resolvedCardIds.length === 0)
+      return res.status(400).json({ error: 'The selected decks do not contain any cards' });
+
+    const overlapPreview = await checkBubbleOverlap(req.user.id, resolvedCardIds)
+      .catch(() => ({ overlapping_card_count: 0, overlap_pct: 0, should_prompt_user: false }));
+
+    const goal = await createMasteryGoal(req.user.id, {
+      subject_id, deck_ids: normalizedDeckIds, name: name || null,
+      exam_date: examDate,
+      test_date: testDate,
+      card_ids:  resolvedCardIds,
+    });
+
+    // Apply cross-bubble metadata only after the new Bubble has been created successfully.
+    const overlapResult = await detectAndMarkCrossBubbleCards(
+      req.user.id, resolvedCardIds, existingGoals
+    ).catch(() => overlapPreview);
+
+    if ((overlapResult.overlapping_card_ids || []).length > 0) {
+      await db.masteryGoals.update(req.user.id, goal.id, {
+        cross_bubble_card_ids: overlapResult.overlapping_card_ids,
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+      goal.cross_bubble_card_ids = overlapResult.overlapping_card_ids;
+    }
+
+    // Stamp the new Bubble onto every included state in one write. The former
+    // per-card read/update loop made large deck creation take long enough for
+    // the browser to time out even though the goal had already been created.
+    await query(
+      `UPDATE card_states cs
+       SET bubble_ids = (
+         SELECT COALESCE(jsonb_agg(DISTINCT item), '[]'::jsonb)
+         FROM jsonb_array_elements(COALESCE(cs.bubble_ids, '[]'::jsonb) || jsonb_build_array($3::text)) AS item
+       ), updated_at = NOW()
+       WHERE cs.user_id = $1 AND cs.card_id = ANY($2::text[])`,
+      [req.user.id, resolvedCardIds, goal.id]
+    ).catch((e) => console.error('[KIWI] Bubble state stamping failed:', e.message));
+    res.status(201).json({ ...goal, overlap: overlapResult });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create bubble', details: e.message });
+  }
+});
+
+// ── GET /api/bubbles/debt — all learning debt cards [DESIGN: §14] ─────────
+// ⚠ NEW in v2.0 — endpoint was missing from v1.0 plan
+// NOTE: Route declared BEFORE /:id to avoid Express treating 'debt' as a param
+bubbleRouter.get('/debt', async (req, res) => {
+  try {
+    const allStates = await db.cardStates.findByUser(req.user.id);
+    const debtStates = allStates.filter((s) => s.learning_debt === true);
+    const enriched = await Promise.all(debtStates.map(async (s) => {
+      const card    = await db.cards.findById(req.user.id, s.card_id).catch(() => null);
+      const subject = card?.subject_id
+        ? await db.subjects.findById(card.subject_id).catch(() => null)
+        : null;
+      return card ? {
+        card_id:      s.card_id,
+        front:        card.front_content || '',
+        state:        s.state,
+        subject_name: subject?.name || 'Unknown',
+        subject_id:   card.subject_id || null,
+      } : null;
+    }));
+    res.json({ debt_cards: enriched.filter(Boolean) });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch learning debt', details: e.message });
+  }
+});
+
+// ── POST /api/bubbles/overlap-check [DESIGN: §14, §8.2] ──────────────────
+// ⚠ NEW in v2.0 — endpoint was missing from v1.0 plan
+// Call before creating a bubble to surface the user prompt about shared cards
+bubbleRouter.post('/overlap-check', async (req, res) => {
+  try {
+    const { card_ids, deck_ids } = req.body;
+    let resolvedCardIds = card_ids || [];
+    if (resolvedCardIds.length === 0 && deck_ids) {
+      for (const deckId of (deck_ids || [])) {
+        const cards = await db.cards.findByDeck(req.user.id, deckId).catch(() => []);
+        resolvedCardIds.push(...cards.map((c) => c.id));
+      }
+    }
+    const result = await checkBubbleOverlap(req.user.id, resolvedCardIds);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: 'Overlap check failed', details: e.message });
+  }
+});
+
+// ── GET /api/bubbles/:id ──────────────────────────────────────────────────
+bubbleRouter.get('/:id', async (req, res) => {
+  try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+    const subject        = await db.subjects.findById(goal.subject_id).catch(() => null);
+    const clusters       = await db.masteryGoals.getClusters(req.params.id).catch(() => []);
+    const enrichedClusters = await Promise.all(clusters.map(async (c) => {
+      const ks = await computeClusterKS(req.user.id, c).catch(() => c.cluster_ks || 0);
+      return { ...c, cluster_ks: ks };
+    }));
+    // Surface gate_fail_message if present [DESIGN: §2.3]
+    res.json({
+      ...goal,
+      subject_name: subject?.name || 'Unknown',
+      clusters:     enrichedClusters,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch bubble', details: e.message });
+  }
+});
+
+// ── PATCH /api/bubbles/:id — update deadline or test_date [DESIGN: §14] ──
+// ⚠ CORRECTED from v1.0: PATCH not PUT [DESIGN: §14]
+bubbleRouter.patch('/:id', async (req, res) => {
+  try {
+    const { exam_date, test_date, name } = req.body;
+    const existingGoal = await db.masteryGoals.findById(req.user.id, req.params.id).catch(() => null);
+    if (!existingGoal) return res.status(404).json({ error: 'Bubble not found' });
+
+    const updates = {};
+    if (exam_date) {
+      const parsedExamDate = new Date(exam_date);
+      if (Number.isNaN(parsedExamDate.getTime()))
+        return res.status(400).json({ error: 'exam_date must be a valid date' });
+      updates.exam_date = parsedExamDate;
+    }
+    if (test_date !== undefined) {
+      const parsedTestDate = test_date ? new Date(test_date) : null;
+      if (parsedTestDate && Number.isNaN(parsedTestDate.getTime()))
+        return res.status(400).json({ error: 'test_date must be a valid date' });
+      updates.test_date = parsedTestDate;
+    }
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 120)
+        return res.status(400).json({ error: 'name must be between 1 and 120 characters' });
+      updates.name = name.trim();
+    }
+    if (Object.keys(updates).length === 0)
+      return res.status(400).json({ error: 'exam_date, test_date, or name required' });
+
+    const effectiveExamDate = updates.exam_date || (existingGoal.exam_date ? new Date(existingGoal.exam_date) : null);
+    const effectiveTestDate = Object.prototype.hasOwnProperty.call(updates, 'test_date')
+      ? updates.test_date
+      : (existingGoal.test_date ? new Date(existingGoal.test_date) : null);
+    if (effectiveTestDate && effectiveExamDate && effectiveTestDate > effectiveExamDate)
+      return res.status(400).json({ error: 'test_date cannot be after exam_date' });
+
+    // G2: Transition DORMANT → active when exam_date is set for the first time [DESIGN: §12.1]
+    if (exam_date && existingGoal.status === 'dormant') updates.status = 'active';
+    const goal = await db.masteryGoals.update(req.user.id, req.params.id, updates);
+    await updateBubbleTrajectory(req.user.id, req.params.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    res.json(goal);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update bubble', details: e.message });
+  }
+});
+
+// ── DELETE /api/bubbles/:id — archive by default; permanent when requested ──
+bubbleRouter.delete('/:id', async (req, res) => {
+  try {
+    const permanent =
+      String(req.query?.permanent || '').toLowerCase() === 'true' ||
+      String(req.query?.permanent || '') === '1';
+
+    if (!permanent) {
+      const result = await closeMasteryGoal(req.user.id, req.params.id, 'archived');
+      if (!result) return res.status(404).json({ error: 'Bubble not found' });
+      return res.json(result);
+    }
+
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+
+    const affectedCardIds = Array.isArray(goal.card_ids) ? goal.card_ids.filter(Boolean) : [];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM goal_history WHERE goal_id = $1', [goal.id]);
+      await client.query('DELETE FROM concept_clusters WHERE goal_id = $1', [goal.id]);
+      // Legacy deployments used mastery_clusters before concept_clusters became
+      // the active Bubble cluster store. Clean both so permanent deletion is
+      // actually permanent across upgraded accounts.
+      await client.query('DELETE FROM mastery_clusters WHERE goal_id = $1', [goal.id]);
+      await client.query(
+        'DELETE FROM bubble_sessions WHERE bubble_id = $1 AND user_id = $2',
+        [goal.id, req.user.id]
+      );
+      const deleted = await client.query(
+        'DELETE FROM mastery_goals WHERE id = $1 AND user_id = $2 RETURNING id',
+        [goal.id, req.user.id]
+      );
+      if (!deleted.rows[0]) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Bubble not found' });
+      }
+
+      if (affectedCardIds.length > 0) {
+        await client.query(
+          `WITH affected(card_id) AS (
+             SELECT UNNEST($2::text[])
+           ),
+           remaining AS (
+             SELECT
+               a.card_id,
+               COALESCE(
+                 jsonb_agg(mg.id ORDER BY mg.created_at) FILTER (WHERE mg.id IS NOT NULL),
+                 '[]'::jsonb
+               ) AS bubble_ids,
+               COUNT(mg.id) > 1 AS cross_bubble
+             FROM affected a
+             LEFT JOIN mastery_goals mg
+               ON mg.user_id = $1
+              AND mg.status = 'active'
+              AND COALESCE(mg.card_ids, '[]'::jsonb) ? a.card_id
+             GROUP BY a.card_id
+           )
+           UPDATE card_states cs
+              SET bubble_ids = remaining.bubble_ids,
+                  cross_bubble = remaining.cross_bubble,
+                  updated_at = NOW()
+             FROM remaining
+            WHERE cs.user_id = $1
+              AND cs.card_id = remaining.card_id`,
+          [req.user.id, affectedCardIds]
+        );
+      }
+
+      // Recompute shared-card lists on every remaining active goal so deleting
+      // one overlapping goal cannot leave stale cross_bubble_card_ids behind.
+      await client.query(
+        `WITH active_card_counts AS (
+           SELECT elem.card_id, COUNT(*) AS goal_count
+           FROM mastery_goals mg
+           CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(mg.card_ids, '[]'::jsonb)) AS elem(card_id)
+           WHERE mg.user_id = $1 AND mg.status = 'active'
+           GROUP BY elem.card_id
+         ),
+         shared_by_goal AS (
+           SELECT
+             mg.id AS goal_id,
+             COALESCE(
+               jsonb_agg(elem.card_id ORDER BY elem.card_id)
+                 FILTER (WHERE counts.goal_count > 1),
+               '[]'::jsonb
+             ) AS shared_ids
+           FROM mastery_goals mg
+           LEFT JOIN LATERAL jsonb_array_elements_text(COALESCE(mg.card_ids, '[]'::jsonb)) AS elem(card_id)
+             ON TRUE
+           LEFT JOIN active_card_counts counts ON counts.card_id = elem.card_id
+           WHERE mg.user_id = $1 AND mg.status = 'active'
+           GROUP BY mg.id
+         )
+         UPDATE mastery_goals mg
+            SET cross_bubble_card_ids = shared_by_goal.shared_ids,
+                updated_at = NOW()
+           FROM shared_by_goal
+          WHERE mg.id = shared_by_goal.goal_id
+            AND mg.user_id = $1`,
+        [req.user.id]
+      );
+
+      await client.query('COMMIT');
+    } catch (deleteErr) {
+      await client.query('ROLLBACK').catch(() => null);
+      throw deleteErr;
+    } finally {
+      client.release();
+    }
+
+    // Refresh pressure after deletion so Bubble-derived pressure sources do not
+    // linger. This cannot remove an already-created Reckoning session.
+    if (goal.subject_id) {
+      await calculateSubjectPressure(req.user.id, goal.subject_id)
+        .catch((e) => console.error('[KIWI] Bubble delete pressure refresh failed:', e.message));
+    }
+
+    return res.json({
+      deleted: true,
+      id: goal.id,
+      cards_preserved: true,
+      study_history_preserved: true,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete bubble', details: e.message });
+  }
+});
+
+// ── GET /api/bubbles/:id/trajectory [DESIGN: §14, §3.3] ──────────────────
+bubbleRouter.get('/:id/trajectory', async (req, res) => {
+  try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+    const now          = new Date();
+    const examDate     = goal.exam_date ? new Date(goal.exam_date) : null;
+    const daysRemaining = examDate ? Math.max(0, Math.ceil((examDate - now) / 86400000)) : 0;
+    const currentKS    = Number(goal.current_ks) || 0;
+    const velocity     = Number(computeVelocityFromGoal(goal)) || 0;
+    const required     = Number(goal.required_ks_per_day) || 0;
+    const targetKS     = Number(goal.target_ks) || 100;
+    const projections  = computeProjections(goal, currentKS, velocity, now);
+    res.json({
+      days_remaining:         daysRemaining,
+      current_ks:             currentKS,
+      target_ks:              targetKS,
+      velocity,
+      required_ks_per_day:    required,
+      trajectory_status:      goal.trajectory_status || 'ON_TRACK',
+      trajectory_gap:         goal.trajectory_gap || 0,
+      phase:                  goal.phase,
+      // Three projection lines [DESIGN: §3.3]
+      projections: {
+        best_case:      projections.bestCase      ? projections.bestCase.toISOString()      : null,
+        current_pace:   projections.currentPace   ? projections.currentPace.toISOString()   : null,
+        minimum_viable: projections.minimumViable ? projections.minimumViable.toISOString() : null,
+        min_viable_rate: projections.minViableRate || 0,
+      },
+      // ⚠ MISS-3 FIX: flat aliases so frontend can read trajectory.projected_* directly
+      // Frontend reads these at openBubbleDetailPanel lines: trajectory.projected_best_case etc.
+      projected_best_case:       projections.bestCase      ? projections.bestCase.toISOString()      : null,
+      projected_completion_date: projections.currentPace   ? projections.currentPace.toISOString()   : null,
+      projected_minimum_viable:  projections.minimumViable ? projections.minimumViable.toISOString() : null,
+      velocity_samples:  goal.velocity_samples || [],
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch trajectory', details: e.message });
+  }
+});
+
+// ── GET /api/bubbles/:id/contract [DESIGN: §14, §9] ──────────────────────
+bubbleRouter.get('/:id/contract', async (req, res) => {
+  try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+    if (!['active', 'dormant'].includes(goal.status)) {
+      return res.status(409).json({ error: 'Daily contracts are available only for active exam goals' });
+    }
+    const contract = await generateDailyContract(req.user.id, req.params.id);
+    if (!contract) return res.status(409).json({ error: 'A daily contract could not be generated for this goal' });
+    // F-16 FIX: batch card + state fetch instead of 2N individual queries
+    const _bubbleCardIds = contract.cards || [];
+    let _bubbleCardMap = new Map(), _bubbleStateMap = new Map();
+    if (_bubbleCardIds.length > 0) {
+      const [_bcRows, _bsRows] = await Promise.all([
+        query('SELECT id, front_content FROM cards WHERE user_id = $1 AND id = ANY($2)', [req.user.id, _bubbleCardIds]).then(r => r.rows).catch(() => []),
+        query('SELECT card_id, state FROM card_states WHERE user_id = $1 AND card_id = ANY($2)', [req.user.id, _bubbleCardIds]).then(r => r.rows).catch(() => []),
+      ]);
+      _bubbleCardMap  = new Map(_bcRows.map(c => [c.id, c]));
+      _bubbleStateMap = new Map(_bsRows.map(s => [s.card_id, s]));
+    }
+    const enriched = _bubbleCardIds.map(cardId => {
+      const card     = _bubbleCardMap.get(cardId);
+      const stateDoc = _bubbleStateMap.get(cardId);
+      return card ? { id: cardId, front: card.front_content || '', state: stateDoc?.state || 'SEEDLING' } : null;
+    });
+    res.json({
+      ...contract,
+      cards:            enriched.filter(Boolean),
+      breakdown:        contract.daily_contract_breakdown,
+      estimated_minutes: contract.daily_contract_minutes,
+      consequence:      contract.daily_contract_consequence,
+      miss_consequence: contract.miss_consequence,
+      // ⚠ MISS-4 FIX: priority_cards — STUCK/FRAGILE/AVOIDED/DANGEROUS cards with names
+      // Frontend reads contract.priority_cards to build "Cards Blocking Progress" panel
+      // in CRITICAL/RESCUE state. Without this, named card rows never render.
+      priority_cards: enriched.filter(Boolean).filter(
+        (c) => ['STUCK','FRAGILE','AVOIDED','DANGEROUS'].includes(c.state)
+      ),
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch contract', details: e.message });
+  }
+});
+
+// ── GET /api/bubbles/:id/history [DESIGN: §14] ───────────────────────────
+// ⚠ NEW in v2.0 — endpoint was missing from v1.0 plan
+bubbleRouter.get('/:id/history', async (req, res) => {
+  try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+    const history = await db.masteryGoals.getHistory(req.params.id, 90);
+    res.json({ history });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch history', details: e.message });
+  }
+});
+
+// ── GET /api/bubbles/:id/clusters [DESIGN: §14, §7] ──────────────────────
+bubbleRouter.get('/:id/clusters', async (req, res) => {
+  try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+    const clusters = await db.masteryGoals.getClusters(req.params.id).catch(() => []);
+    const enriched = await Promise.all(clusters.map(async (c) => {
+      const ks     = await computeClusterKS(req.user.id, c).catch(() => c.cluster_ks || 0);
+      const status = ks >= 80 ? 'MASTERED' : ks >= 60 ? 'STRONG' : ks >= 30 ? 'DEVELOPING' : 'WEAK';
+      return { ...c, cluster_ks: ks, cluster_status: status };
+    }));
+    res.json({ clusters: enriched });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch clusters', details: e.message });
+  }
+});
+
+// ── GET /api/bubbles/:id/autopsy [DESIGN: §14, §11] ──────────────────────
+bubbleRouter.get('/:id/autopsy', async (req, res) => {
+  try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+    if (goal.status === 'active')
+      return res.status(400).json({ error: 'Autopsy only available after bubble closes' });
+    // [DESIGN: §11.1] Autopsy generated 24–48h after close
+    if (goal.completed_at) {
+      const hoursSinceClose = (new Date() - new Date(goal.completed_at)) / 3600000;
+      if (hoursSinceClose < 24)
+        return res.status(425).json({ error: 'Autopsy available 24 hours after bubble closes', available_in_hours: Math.ceil(24 - hoursSinceClose) });
+    }
+    const autopsy = await generateBubbleAutopsy(req.user.id, goal);
+    // Mark autopsy as generated [DESIGN: §12.1]
+    if (!goal.autopsy_generated) {
+      await db.masteryGoals.update(req.user.id, req.params.id, {
+        autopsy_generated:    true,
+        autopsy_generated_at: new Date(),
+      }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    }
+    res.json({ autopsy });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to generate autopsy', details: e.message });
+  }
+});
+
+// ── POST /api/bubbles/:id/advisory — AI advisory, day-level cache [DESIGN: §14, §16.1] ──
+bubbleRouter.post('/:id/advisory', async (req, res) => {
+  try {
+    const goal = await db.masteryGoals.findById(req.user.id, req.params.id);
+    if (!goal) return res.status(404).json({ error: 'Bubble not found' });
+    const todayStr = new Date().toISOString().split('T')[0];
+    const cacheKey = `bubble_advisory_${req.params.id}`;
+    const cached   = await db.dailyRitualCache
+      .get(req.user.id, cacheKey, todayStr).catch(() => null);
+    if (cached?.data) return res.json({ advisory: cached.data, cached: true });
+    const subject  = await db.subjects.findById(goal.subject_id).catch(() => null);
+    const advisory = await generateBubbleAdvisory(req.user.id, goal, subject?.name || 'this subject');
+    await db.dailyRitualCache
+      .set(req.user.id, cacheKey, todayStr, { data: advisory }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    res.json({ advisory, cached: false });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to generate advisory', details: e.message });
+  }
+});
+
+// ── Biome Routes (Phase 5) ─────────────────────────────────────────────────
+const biomeRouter = express.Router();
+
+biomeRouter.use(authenticate);
+
+biomeRouter.use(reckoningLockout);
+
+biomeRouter.get(['/', ''], async (req, res) => {
+try {
+const biome = await buildBiomeData(req.user.id);
+const globalKSScore = biome.global_knowledge_score || 0;
+// Dashboard and Biome now share one TreeState contract. Keep globalTreeState as
+// the frontend compatibility name until the PixiJS renderer migration.
+const globalTreeState = biome.treeState || buildTreeState({
+stage: biome.tree_stage || 1,
+vitality: biome.tree_health ?? 100,
+growthPoints: biome.growth_points || 0,
+nextStage: biome.next_tree_stage || null,
+knowledgeScore: globalKSScore,
+fruits: (biome.subjects || []).reduce((sum, s) => sum + (Number(s.fruit_count) || 0), 0),
+milestones: biome.streak_milestones || [],
+streak: biome.current_streak || 0,
+});
+// Add frontend-compatible aliases
+const enriched = {
+...biome,
+// Frontend-expected fields
+globalKS: globalKSScore,
+globalTreeState,
+zones: (biome.subjects || []).map((s) => ({
+id: s.subject_id,
+name: s.subject_name,
+knowledgeScore: s.knowledge_score,
+pressure: s.pressure_score,
+fruits: s.fruit_count || 0,
+rareFlora: s.rare_flora === true,
+cardCount: s.card_count,
+// P5.1 FIX: stateClass now comes directly from buildBiomeData (not remapped here)
+stateClass: s.stateClass || 'zone-growing',
+// P5.5 FIX: droughtDays from days_since_last_session (drought starts after 3+ days)
+droughtDays: (s.days_since_last_session || 0) >= 3 ? s.days_since_last_session : 0,
+last_session_date: s.last_studied_at || null,
+days_since_last_session: s.days_since_last_session || 0,
+credential: s.credential_name || null,
+exam_date: s.exam_date || null,
+zone: s.zone,
+state_distribution: s.state_distribution || {},
+zone_description: s.zone_description || null,
+})),
+};
+res.json(enriched);
+} catch (e) {
+res.status(500).json({ error: 'Failed to build biome', details: e.message });
+}
+});
+
+biomeRouter.get('/zone-description', async (req, res) => {
+try {
+const { subject_id } = req.query;
+const description = await generateZoneDescription(req.user.id, subject_id || null);
+res.json({ description });
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate zone description', details: e.message });
+}
+});
+// Also support /biome/zone/:subjectId/description (frontend calling pattern)
+
+biomeRouter.get('/zone/:subjectId/description', async (req, res) => {
+try {
+const description = await generateZoneDescription(req.user.id, req.params.subjectId);
+res.json({ description });
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate zone description', details: e.message });
+}
+});
+// ── Ritual Routes (Phase 7) ────────────────────────────────────────────────
+const ritualRouter = express.Router();
+
+ritualRouter.use(authenticate);
+ritualRouter.use(reckoningLockout);
+
+// Reckoning global-lock policy intentionally includes ritual routes.
+// Spec P1.6 exempts all informational ritual routes. These endpoints are the
+// primary source of context during a Reckoning (morning brief names it,
+// pressure-explanation explains it). Locking them out removes context exactly
+// when the user needs it most. Only POST /dismiss-invitation remains debatable;
+// see individual route for intentional omission per audit finding C-4.
+
+// P7.6 FIX: GET kept for back-compat; POST /morning-brief added per spec
+ritualRouter.get('/morning-brief', async (req, res) => {
+try {
+if (checkAIRateLimit(req.user.id, 'morning_brief', 10))
+return res.status(429).json({ error: 'Rate limit: max 10 Morning Brief requests per hour' });
+const brief = await getMorningBrief(req.user.id);
+res.json({ brief });
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate morning brief', details: e.message });
+}
+});
+
+ritualRouter.post('/morning-brief', async (req, res) => {
+try {
+if (checkAIRateLimit(req.user.id, 'morning_brief', 10))
+return res.status(429).json({ error: 'Rate limit: max 10 Morning Brief requests per hour' });
+const brief = await getMorningBrief(req.user.id);
+res.json({ brief });
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate morning brief', details: e.message });
+}
+});
+
+// P7.6 FIX: GET /daily-invitations kept for back-compat; POST /invitations added per spec
+ritualRouter.get('/daily-invitations', async (req, res) => {
+try {
+if (checkAIRateLimit(req.user.id, 'daily_invitations', 10))
+return res
+.status(429)
+.json({ error: 'Rate limit: max 10 Daily Invitation requests per hour' });
+const invitations = await getDailyInvitations(req.user.id, req.query.local_date, req.query.timezone_offset_minutes);
+res.json({ invitations });
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate invitations', details: e.message });
+}
+});
+
+ritualRouter.post('/invitations', async (req, res) => {
+try {
+if (checkAIRateLimit(req.user.id, 'daily_invitations', 10))
+return res
+.status(429)
+.json({ error: 'Rate limit: max 10 Daily Invitation requests per hour' });
+const invitations = await getDailyInvitations(req.user.id, req.body?.local_date, req.body?.timezone_offset_minutes);
+res.json({ invitations });
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate invitations', details: e.message });
+}
+});
+
+ritualRouter.post('/dismiss-invitation', async (req, res) => {
+try {
+const { index, local_date } = req.body;
+if (index === undefined) return res.status(400).json({ error: 'index required' });
+const result = await dismissInvitation(req.user.id, parseInt(index), local_date);
+// L-5 FIX: Return spec-mandated acknowledgement string
+res.json({ ...result, message: "Noted — The Brain will not offer this again today." });
+} catch (e) {
+res.status(500).json({ error: 'Failed to dismiss invitation', details: e.message });
+}
+});
+
+ritualRouter.get('/return-greeting', async (req, res) => {
+try {
+const greeting = await getReturnGreeting(req.user.id);
+res.json(greeting || { greeting: null });
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate greeting', details: e.message });
+}
+});
+
+ritualRouter.get('/pressure-explanation', async (req, res) => {
+try {
+const { subject_id } = req.query;
+if (!subject_id) return res.status(400).json({ error: 'subject_id required' });
+// F5-1-P: getPressureExplanation now returns { explanation, sources } [DESIGN: §15.1]
+const { explanation, sources } = await getPressureExplanation(req.user.id, subject_id);
+res.json({ explanation, sources });
+} catch (e) {
+res.status(500).json({ error: 'Failed to explain pressure', details: e.message });
+}
+});
+
+// P7.6 FIX: GET /api/ritual/weekly-anchor — spec places this on ritualRouter.
+// Was only on narrativeRouter (/api/narrative/weekly-anchor). Adding correct route here.
+ritualRouter.get('/weekly-anchor', async (req, res) => {
+try {
+const anchor = await getWeeklyAnchor(req.user.id);
+res.json(anchor);
+} catch (e) {
+res.status(500).json({ error: 'Failed to get weekly anchor', details: e.message });
+}
+});
+// ── Marketplace Routes (Phase 8) ───────────────────────────────────────────
+const marketplaceRouter = express.Router();
+
+marketplaceRouter.use(authenticate);
+
+marketplaceRouter.use(reckoningLockout);
+
+marketplaceRouter.get('/catalog', async (req, res) => {
+try {
+const catalog = await getMarketplaceCatalog(req.user.id);
+res.json(catalog);
+} catch (e) {
+res.status(500).json({ error: 'Failed to load catalog', details: e.message });
+}
+});
+
+marketplaceRouter.post('/purchase', async (req, res) => {
+try {
+// P8.4b: accept subject_id for Deep Audit auto-trigger and Rare Flora per-zone gate
+const { item_code, subject_id } = req.body;
+if (!item_code) return res.status(400).json({ error: 'item_code required' });
+const result = await purchaseItem(req.user.id, item_code, subject_id || null);
+if (result.error) return res.status(400).json(result);
+res.json(result);
+} catch (e) {
+res.status(500).json({ error: 'Purchase failed', details: e.message });
+}
+});
+
+marketplaceRouter.get('/inventory', async (req, res) => {
+try {
+const inventory = await db.userInventory.findByUser(req.user.id);
+res.json(inventory);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch inventory' });
+}
+});
+
+marketplaceRouter.get('/transactions', async (req, res) => {
+try {
+const transactions = await db.seedlingTransactions.findByUser(req.user.id);
+res.json(transactions);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch transactions' });
+}
+});
+
+// ── REMOVED ROUTES (BUG 1, 2, 3 FIX) ─────────────────────────────────────
+// POST /marketplace/deep-audit       — REMOVED. Bypassed all gate + Seedling
+//   deduction logic. Use POST /api/marketplace/purchase {item_code:'deep_audit',
+//   subject_id} which routes through purchaseItem() with full gate enforcement.
+//
+// POST /marketplace/archive-expansion — REMOVED. Same problem: bypassed Gate 1
+//   (KS=100 + 15 Fruiting sessions in subject), Gate 2 (60 Seedlings), inventory
+//   write, and purchase_limit. Use POST /api/marketplace/purchase
+//   {item_code:'archive_expansion', subject_id}.
+//
+// POST /marketplace/consume-reckoning-buffer — REMOVED. reckoningLockout fires
+//   on every marketplaceRouter request during an active Reckoning, returning 403
+//   before this handler could ever run — making it unreachable at the only moment
+//   it matters. Buffer consumption is served exclusively by the brain router:
+//   POST /api/brain/reckoning/use-buffer (not subject to reckoningLockout).
+// ──────────────────────────────────────────────────────────────────────────
+// ── Narrative Routes (Phase 6) ─────────────────────────────────────────────
+const narrativeRouter = express.Router();
+
+narrativeRouter.use(authenticate);
+
+narrativeRouter.use(reckoningLockout);
+
+async function generateLivingPersona(userId, timezoneOffsetMinutes = 0) {
+const safeTimezoneOffset = Math.max(-840, Math.min(840, Number(timezoneOffsetMinutes) || 0));
+const toLocalClock = (value) => new Date(new Date(value).getTime() - safeTimezoneOffset * 60000);
+const now = new Date();
+const weekStart = new Date(now);
+weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+weekStart.setHours(0, 0, 0, 0);
+const weekKey = weekStart.toISOString().slice(0, 10);
+const localDayKey = toLocalClock(now).toISOString().slice(0, 10);
+const personaCacheKey = `${localDayKey}_tz${safeTimezoneOffset}`;
+const cached = await db.dailyRitualCache.get(userId, 'living_persona', personaCacheKey).catch(() => null);
+if (cached?.data?.name) return cached.data;
+
+const since = new Date(Date.now() - 28 * 86400000);
+const [stats, sessionResult, states, subjects, exams, pressures, reviews, latestChronicle] = await Promise.all([
+db.userStats.get(userId),
+db.sessions.findMany(userId, { session_completed: true, started_at_gte: since }, { limit: 500 }),
+db.cardStates.findByUser(userId),
+db.subjects.findManyWithDecks(userId),
+db.examSessions.findMany(userId, { started_at_gte: since }, { limit: 200 }).catch(() => []),
+db.brainPressure.findByUser(userId).catch(() => []),
+db.reviewLogs.findByUser(userId, since).catch(() => []),
+db.chronicleEntries.findLatest(userId).catch(() => null),
+]);
+const completedInteractions = sessionResult?.sessions || [];
+const sessions = completedInteractions.filter(sessionIsMeaningful);
+if (sessions.length < 3) {
+return {
+ready: false,
+sessions_observed: sessions.length,
+sessions_needed: 3 - sessions.length,
+short_interactions_observed: completedInteractions.length - sessions.length,
+message: `KIWI needs ${3 - sessions.length} more meaningful session${3 - sessions.length === 1 ? '' : 's'} before it can describe a real pattern. A meaningful session includes at least five distinct cards and five active minutes.`,
+};
+}
+
+const completedExams = (Array.isArray(exams) ? exams : exams?.exams || []).filter((e) => e.status === 'completed' || e.score_pct != null);
+const hourCounts = {};
+const dayCounts = {};
+for (const session of sessions) {
+const d = toLocalClock(session.started_at);
+hourCounts[d.getUTCHours()] = (hourCounts[d.getUTCHours()] || 0) + 1;
+const day = d.toISOString().slice(0, 10);
+dayCounts[day] = (dayCounts[day] || 0) + 1;
+}
+const peakHour = Number(Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1);
+const subjectEvidence = [];
+for (const subject of subjects) {
+const ks = await computeKnowledgeScore(userId, subject.id, states).catch(() => ({ score: 0 }));
+const pressure = pressures.find((p) => p.subject_id === subject.id);
+const deckIds = new Set((subject.decks || []).map((d) => d.id));
+const subjectSessions = sessions.filter((s) => s.subject_id === subject.id || deckIds.has(s.deck_id));
+const subjectStates = states.filter((s) => s.subject_id === subject.id);
+const subjectExams = completedExams.filter((e) => e.subject_id === subject.id);
+subjectEvidence.push({
+id: subject.id,
+name: subject.name,
+knowledge_score: Number(ks.score || 0).toFixed(1),
+sessions_28d: subjectSessions.length,
+avg_focus_quality: subjectSessions.length ? Math.round(subjectSessions.reduce((n, s) => n + (Number(s.session_quality) || 0), 0) / subjectSessions.length) : 0,
+again_responses: subjectSessions.reduce((n, s) => n + (Number(s.cards_again) || 0), 0),
+fruiting_sessions: subjectSessions.filter((s) => s.fruiting_achieved).length,
+problem_cards: subjectStates.filter((s) => ['GHOST','FRAGILE','STUCK','AVOIDED','DANGEROUS'].includes(s.state)).length,
+verified_cards: subjectStates.filter((s) => s.verified || s.state === 'VERIFIED').length,
+pressure: Number(pressure?.pressure_score) || 0,
+exam_scores: subjectExams.map((e) => Math.round(Number(e.score_pct ?? e.score_percentage) || 0)),
+});
+}
+const evidence = {
+window_days: 28,
+meaningful_sessions: sessions.length,
+short_interactions: completedInteractions.length - sessions.length,
+active_days: Object.keys(dayCounts).length,
+average_session_minutes: Math.round(sessions.reduce((n, s) => n + (Number(s.duration_seconds) || 0), 0) / Math.max(1, sessions.length) / 60),
+average_focus_quality: Math.round(sessions.reduce((n, s) => n + (Number(s.session_quality) || 0), 0) / Math.max(1, sessions.length)),
+peak_study_hour: peakHour >= 0 ? `${String(peakHour).padStart(2, '0')}:00` : 'unknown',
+again_responses: reviews.filter((r) => r.response === 'again').length,
+hard_responses: reviews.filter((r) => r.response === 'hard').length,
+current_streak: Number(stats?.current_streak) || 0,
+subjects: subjectEvidence,
+chronicle_excerpt: String(latestChronicle?.narrative || '').slice(0, 700),
+};
+
+let profile;
+try {
+const prompt = `
+ROLE
+You are KIWI's learning-pattern observer. Create a unique, evolving persona from the learner's verified 28-day data. You are not choosing from a list. You are naming the pattern you can actually prove.
+
+DATA
+${JSON.stringify(evidence, null, 2)}
+
+OUTPUT RULES
+- Return valid JSON only.
+- name: an original 2-5 word persona name that fits this learner, not a stock archetype.
+- emoji: one fitting emoji.
+- essence: 2-3 sentences describing the dominant study pattern without pretending it is permanent.
+- evidence: exactly 3 short statements, each naming a real number and subject where possible.
+- strengths: exactly 2 data-backed strengths.
+- friction: exactly 2 data-backed weaknesses or avoidance patterns.
+- experiments: exactly 2 specific seven-day experiments with measurable actions.
+- evolution: one sentence explaining how this persona changed or what KIWI needs to watch next.
+- confidence: integer 0-100 based on data quantity and consistency.
+- Never mention XP, levels, personality diagnosis, or facts absent from the data.
+
+FORMAT
+{"name":"...","emoji":"...","essence":"...","evidence":["..."],"strengths":["..."],"friction":["..."],"experiments":["..."],"evolution":"...","confidence":75}
+`;
+const result = await ai.run('LIVING_PERSONA', { content: prompt });
+const raw = result.text;
+const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
+profile = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw.replace(/```json|```/g, '').trim());
+} catch (e) {
+const strongest = [...subjectEvidence].sort((a, b) => b.sessions_28d - a.sessions_28d)[0];
+const weakest = [...subjectEvidence].sort((a, b) => b.pressure - a.pressure || a.knowledge_score - b.knowledge_score)[0];
+profile = {
+name: strongest ? `${strongest.name} Builder` : 'Emerging Pattern', emoji: '🌿',
+essence: `Across ${sessions.length} sessions, your current pattern is becoming visible. KIWI will rename it as your behavior changes.`,
+evidence: [`${sessions.length} sessions across ${Object.keys(dayCounts).length} active days`, `${evidence.average_focus_quality}/100 average Focus Quality`, strongest ? `${strongest.sessions_28d} sessions in ${strongest.name}` : 'Subject pattern still forming'],
+strengths: [strongest ? `You return most often to ${strongest.name}.` : 'You have begun building a repeatable study record.', `${states.filter((s) => s.verified).length} cards are exam-verified.`],
+friction: [weakest ? `${weakest.name} carries ${weakest.pressure} pressure.` : 'No strong friction signal yet.', `${evidence.again_responses} Again responses show where recall still breaks.`],
+experiments: [weakest ? `Complete two focused sessions in ${weakest.name} this week.` : 'Complete three focused sessions this week.', 'Take one subject exam after reviewing its weakest cards.'],
+evolution: 'KIWI will update this identity as new sessions and exam evidence accumulate.', confidence: Math.min(85, 35 + sessions.length * 3),
+};
+}
+profile = {
+ready: true,
+...profile,
+confidence: Math.max(0, Math.min(100, Number(profile.confidence) || 50)),
+observed_window: {
+start: since.toISOString(),
+end: now.toISOString(),
+meaningful_sessions: sessions.length,
+short_interactions: completedInteractions.length - sessions.length,
+},
+generated_at: now.toISOString(),
+};
+await db.dailyRitualCache.set(userId, 'living_persona', personaCacheKey, profile).catch(() => {});
+await db.userPersona.create(userId, {
+persona_code: `living_${weekKey}`,
+persona_label: String(profile.name || 'Living Persona').slice(0, 120),
+persona_icon: String(profile.emoji || '🌿').slice(0, 16),
+persona_description: String(profile.essence || '').slice(0, 1000),
+assigned_week_start: weekStart,
+}).catch(() => {});
+return profile;
+}
+
+narrativeRouter.get('/chronicle', async (req, res) => {
+try {
+const entries = await db.chronicleEntries.findByUser(req.user.id);
+res.json(entries);
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch chronicle' });
+}
+});
+
+narrativeRouter.post('/chronicle/generate', async (req, res) => {
+try {
+const force = req.body?.force === true;
+// BUG-8 FIX: only award seedlings when a NEW entry is actually created
+const existingBefore = await db.chronicleEntries.findLatest(req.user.id).catch(() => null);
+// One canonical Chronicle per week. Regeneration does not delete the current
+// entry, change its identity, or mint the same weekly reward more than once.
+const entry = await generateWeeklyChronicle(req.user.id, force, req.body?.timezone_offset_minutes);
+if (!entry) return res.status(429).json({ error: 'Chronicle limit reached. Try again later.' });
+const isNew = !existingBefore || existingBefore.id !== entry?.id;
+if (isNew) await hookSeedlingEarnings(req.user.id, 'weekly_chronicle', {});
+res.json(entry);
+} catch (e) {
+res.status(500).json({ error: 'Chronicle generation failed', details: e.message });
+}
+});
+
+narrativeRouter.get('/almanac', async (req, res) => {
+res.status(410).json({
+error: 'The Almanac has been retired.',
+replacement: '/api/achievements',
+message: 'Living Achievements now appear inside Progress.',
+});
+});
+
+narrativeRouter.get('/persona', async (req, res) => {
+try {
+const profile = await generateLivingPersona(req.user.id);
+res.json({
+currentPersona: profile?.ready ? {
+id: `living_${profile.generated_at}`,
+name: profile.name,
+emoji: profile.emoji,
+description: profile.essence,
+detectedAt: profile.generated_at,
+confidence: profile.confidence,
+evidence: profile.evidence || [],
+strengths: profile.strengths || [],
+friction: profile.friction || [],
+experiments: profile.experiments || [],
+evolution: profile.evolution || '',
+observedWindow: profile.observed_window,
+} : null,
+readiness: profile?.ready ? null : profile,
+weeklyUpdate: profile?.ready ? profile.evolution : null,
+allPersonas: [],
+});
+
+} catch (e) {
+res.status(500).json({ error: 'Failed to generate persona', details: e.message });
+}
+});
+
+narrativeRouter.get('/living-profile', async (req, res) => {
+try {
+const [persona, chronicle] = await Promise.all([
+generateLivingPersona(req.user.id, req.query.timezone_offset_minutes),
+db.chronicleEntries.findByUser(req.user.id),
+]);
+res.json({ persona, chronicle: Array.isArray(chronicle) ? chronicle : [] });
+} catch (e) {
+res.status(500).json({ error: 'Failed to build living profile', details: e.message });
+}
+});
+
+narrativeRouter.get('/weekly-anchor', async (req, res) => {
+try {
+const anchor = await getWeeklyAnchor(req.user.id);
+res.json(anchor);
+} catch (e) {
+res.status(500).json({ error: 'Failed to get weekly anchor', details: e.message });
+}
+});
+// ── Reckoning Routes (Phase 3) ────────────────────────────────────────────
+const reckoningRouter = express.Router();
+
+reckoningRouter.use(authenticate);
+
+reckoningRouter.post('/trigger', async (req, res) => {
+try {
+const { subject_id } = req.body;
+if (!subject_id) return res.status(400).json({ error: 'subject_id required' });
+const result = await triggerReckoning(req.user.id, subject_id);
+res.json(result);
+} catch (e) {
+res.status(500).json({ error: 'Failed to trigger reckoning', details: e.message });
+}
+});
+
+reckoningRouter.post('/:id/defer', async (req, res) => {
+try {
+const result = await deferReckoning(req.params.id, req.user.id);
+res.json(result);
+} catch (e) {
+res.status(500).json({ error: 'Failed to defer reckoning', details: e.message });
+}
+});
+
+reckoningRouter.post('/:id/complete', async (req, res) => {
+  return res.status(410).json({
+    error: 'Direct Reckoning completion is retired. Submit the linked Reckoning exam instead.',
+    code: 'RECKONING_COMPLETE_VIA_EXAM',
+  });
+});
+const brainRouter = express.Router();
+
+brainRouter.use(authenticate);
+
+brainRouter.use(reckoningLockout);
+// ── Brain-namespaced reckoning compat routes ──────────────────────────────
+// These mirror the /reckoning/ routes under /brain/reckoning/ for frontend compat.
+// Note: frontend accesses these via brainRouter which is mounted at /api/brain
+
+brainRouter.post('/reckoning/defer', async (req, res) => {
+try {
+const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (!active) return res.status(404).json({ error: 'No active reckoning to defer' });
+const result = await deferReckoning(active.id, req.user.id);
+if (result?.error) return res.status(400).json(result);
+res.json(result);
+} catch (e) {
+res.status(500).json({ error: 'Failed to defer reckoning', details: e.message });
+}
+});
+
+brainRouter.post('/reckoning/start', async (req, res) => {
+  try {
+    let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+    if (active) {
+      active = await reconcileActiveReckoning(req.user.id, active)
+        .catch(() => active);
+    }
+    if (!active) {
+      return res.status(404).json({ error: 'No active Reckoning to start.' });
+    }
+    if (Number(active.engine_version || 1) !== 2) {
+      return res.status(409).json({
+        error: 'This is a legacy Reckoning and must resume through the legacy exam path.',
+        code: 'RECKONING_LEGACY_RESUME',
+        legacy: true,
+        exam_session_id: active.exam_session_id || null,
+      });
+    }
+
+    if (active.status === 'in_progress' && active.exam_session_id) {
+      const state = await adaptiveReckoningEngine.getState({
+        examSessionId: active.exam_session_id,
+        userId: req.user.id,
+      });
+      return res.json(state);
+    }
+
+    if (active.generation_status === 'pending') {
+      const leaseExpiry = active.preparation_claim_expires_at
+        ? new Date(active.preparation_claim_expires_at).getTime()
+        : NaN;
+      const updatedAt = active.updated_at
+        ? new Date(active.updated_at).getTime()
+        : NaN;
+      const staleAfterMs =
+        Math.max(
+          1,
+          Number(DELIVERY_E_RECKONING_CONFIG.preparation.claimStaleMinutes) || 5
+        ) * 60 * 1000;
+      const explicitLeaseFresh =
+        Number.isFinite(leaseExpiry) &&
+        leaseExpiry > Date.now();
+      const legacyHeartbeatFresh =
+        !Number.isFinite(leaseExpiry) &&
+        Number.isFinite(updatedAt) &&
+        Date.now() - updatedAt < staleAfterMs;
+
+      if (explicitLeaseFresh || legacyHeartbeatFresh) {
+        return res.status(202).json({
+          status: 'preparing',
+          reckoning_id: active.id,
+          generation_status: 'pending',
+        });
+      }
+
+      console.warn('[KIWI] Reclaiming stale Reckoning V2 preparation', {
+        reckoningId: active.id,
+        userId: req.user.id,
+        claimId: active.preparation_claim_id || null,
+        claimExpiresAt: active.preparation_claim_expires_at || null,
+        heartbeatAt: active.preparation_heartbeat_at || null,
+        updatedAt: active.updated_at || null,
+      });
+    }
+
+    const jobId = randomUUID();
+    const startUserId = req.user.id;
+    const reckoningId = active.id;
+    _jobStoreSet(jobId, {
+      status: 'pending',
+      type: 'reckoning_v2_start',
+      result: { reckoning_id: reckoningId },
+    });
+    res.status(202).json({
+      job_id: jobId,
+      status: 'preparing',
+      reckoning_id: reckoningId,
+      generation_status: 'pending',
+      generation_error: null,
+    });
+
+    setImmediate(async () => {
+      try {
+        const state = await adaptiveReckoningEngine.start({
+          reckoningId,
+          userId: startUserId,
+        });
+        _jobStoreSet(jobId, {
+          status: 'done',
+          type: 'reckoning_v2_start',
+          result: state,
+        });
+        wsSend(startUserId, 'job_done', {
+          job_id: jobId,
+          type: 'reckoning_v2_start',
+          result: state,
+        });
+      } catch (error) {
+        const message = isAIAvailabilityError(error)
+          ? 'AI generation is temporarily busy. Your Reckoning is still safe and can be retried.'
+          : String(error?.message || 'Reckoning preparation failed.');
+        _jobStoreSet(jobId, {
+          status: 'failed',
+          type: 'reckoning_v2_start',
+          error: message,
+        });
+        wsSend(startUserId, 'job_failed', {
+          job_id: jobId,
+          type: 'reckoning_v2_start',
+          error: message,
+        });
+      }
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      status: 'error',
+      error: error.message || 'Failed to start adaptive Reckoning',
+      code: error.code || 'ERR_RECKONING_START',
+    });
+  }
+});
+
+
+async function submitReckoningHandler(req, res) {
+try {
+const { examId, answers } = req.body;
+if (!examId || !Array.isArray(answers))
+return res.status(400).json({ error: 'examId and answers required' });
+const exam = await db.examSessions.findByIdWithQuestions(req.user.id, examId);
+if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (!exam.is_reckoning) {
+  return res.status(409).json({ error: 'This exam is not the active Reckoning exam.' });
+}
+const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (Number(active?.engine_version || 1) === 2) {
+  return res.status(409).json({
+    error: 'Adaptive Reckoning answers must use the V2 answer endpoint.',
+    code: 'RECKONING_V2_USE_ADAPTIVE_ENDPOINT',
+  });
+}
+if (!active || active.status !== 'in_progress' || String(active.exam_session_id) !== String(examId)) {
+  return res.status(409).json({ error: 'This exam is not linked to the active Reckoning.' });
+}
+
+// Recovery for the historical split-brain state: older generation flows could
+// mark reckoning_sessions=in_progress while leaving the exact linked exam=ready.
+// Repair ONLY that exact server-linked exam; arbitrary ready exams remain blocked.
+if (exam.status === 'ready') {
+  // A ready-state Reckoning has not actually started, even though the production
+  // schema historically populated started_at at row creation. Recovery must use
+  // the moment we re-activate it, otherwise duration is measured from generation.
+  const recoveredStartedAt = new Date();
+  const recovered = await db.examSessions.update(req.user.id, examId, {
+    status: 'active',
+    started_at: recoveredStartedAt,
+  });
+  if (!recovered) {
+    return res.status(409).json({ error: 'The linked Reckoning exam could not be recovered. Please retry.' });
+  }
+  exam.status = 'active';
+  exam.started_at = recoveredStartedAt;
+  console.warn('[KIWI] Recovered linked Reckoning exam stuck in ready state before submit', {
+    examId,
+    reckoningId: active.id,
+  });
+}
+if (exam.status !== 'active' || !exam.started_at) {
+  return res.status(409).json({ error: 'Reckoning exam must be active before it can be submitted.' });
+}
+
+// Snapshot the genuine pre-attempt KS before any SRS mutation. Usually this was
+// already captured at /exams/:id/start; this fallback protects legacy active exams.
+const reckoningKsBefore = await ensureExamKsBaseline(req.user.id, exam).catch(() => null);
+
+let correct = 0;
+const total = exam.questions.length;
+const questionResults = [];
+const questionWrites = [];
+for (const q of exam.questions) {
+const answer = answers.find((a) => String(a.question_number ?? a.questionId) === String(q.question_number));
+const selected = answer ? (answer.selected_option ?? answer.selectedOptionId ?? null) : null;
+const isCorrect = !!answer && selected === q.correct_answer;
+q.is_correct = isCorrect;
+if (isCorrect) correct++;
+questionResults.push({
+question_number: q.question_number,
+selected: selected || null,
+correct: isCorrect,
+correct_answer: q.correct_answer,
+});
+questionWrites.push(db.examQuestions.update(req.user.id, q.id, {
+selected_option: selected,
+is_correct: isCorrect,
+time_spent_seconds: answer?.time_spent_seconds || 0,
+}).catch((e) => console.error('[KIWI] Reckoning answer persistence failed:', e.message)));
+}
+await Promise.all(questionWrites);
+
+const scorePct = total > 0 ? parseFloat(((correct / total) * 100).toFixed(2)) : 0;
+const now = new Date();
+const durationSec = exam.started_at ? Math.floor((now - new Date(exam.started_at)) / 1000) : 0;
+await db.examSessions.update(req.user.id, examId, {
+status: 'completed',
+score_pct: scorePct,
+correct_answers: correct,
+total_questions: total,
+completed_at: now,
+duration_seconds: durationSec,
+});
+await db.userStats.update(req.user.id, { total_exams_completed: { increment: 1 } });
+if (scorePct >= 80) {
+await hookSeedlingEarnings(req.user.id, 'exam_result', {
+  score_pct: scorePct,
+  exam_id: examId,
+});
+}
+
+let reckoningDebriefText = '';
+try {
+const wrong = questionResults.filter((qr) => !qr.correct);
+const survived = scorePct >= 70;
+const reckoningDebriefPrompt = `## ROLE
+You are KIWI's Reckoning Debrief Voice — unflinching, honest, but ultimately supportive. The student just survived (or failed) The Reckoning: a forced exam triggered because their academic pressure reached critical levels.
+RECKONING DATA
+Subject pressure had reached L4 (threshold: 20).
+Score: ${scorePct}% (${correct}/${total} correct)
+Outcome: ${survived ? 'SURVIVED — seven-day pressure relief applied' : 'FAILED — pressure remains elevated'}
+Incorrect questions: ${wrong.length}
+RULES
+- Write exactly 3 paragraphs.
+- Paragraph 1: Honest assessment. Name the outcome directly — survived or not. Reference the pressure that caused this.
+- Paragraph 2: What the score means for the ecosystem. If survived: explain the seven-day relief without claiming the underlying weak cards vanished. If failed: what the ongoing pressure means.
+- Paragraph 3: One precise instruction — the single most important thing to do next.
+- Tone: Unflinching but not punitive. The forest speaks plainly.
+- Total length: 120-200 words.
+OUTPUT
+Return only the debrief text.`;
+const aiResult = await ai.run('RECKONING_DEBRIEF', { content: reckoningDebriefPrompt });
+reckoningDebriefText = aiResult.text.trim();
+} catch (_) {
+const survived = scorePct >= 70;
+reckoningDebriefText =
+  `The Reckoning is complete. You scored ${scorePct}% — ${survived ? 'enough to lift the lockout and begin a seven-day recovery window' : 'not enough to clear the pressure. The forest remains under strain'}.` +
+  `\n\n${survived ? 'The flagged cards have been reclassified from your answers. KIWI applies bounded relief, but unresolved evidence and earlier penalties remain visible.' : 'Pressure remains at the L4 threshold. The flagged cards remain, and the Reckoning must be faced again.'}` +
+  `\n\n${survived ? 'Do not mistake survival for mastery. Return to the cards that cost you points and review them deliberately before the next session.' : 'Focus immediately on the cards that failed. Use targeted study sessions — not passive review — to drive the pressure down before the next Reckoning.'}`;
+}
+
+const completedReckoningExam = await db.examSessions.findByIdWithQuestions(req.user.id, examId).catch(() => null);
+if (completedReckoningExam) {
+  // Preserve in-memory grading results; the freshly fetched questions can race
+  // older DB replicas on some deployments.
+  const correctness = new Map(exam.questions.map((q) => [String(q.question_number), q.is_correct]));
+  completedReckoningExam.questions = (completedReckoningExam.questions || []).map((q) => ({
+    ...q,
+    is_correct: correctness.get(String(q.question_number)) ?? q.is_correct,
+  }));
+  await processExamVerification(req.user.id, completedReckoningExam)
+    .catch((e) => console.error('[KIWI] Reckoning verification failed:', e.message));
+  await applyExamSRSFeedback(req.user.id, completedReckoningExam)
+    .catch((e) => console.error('[KIWI] Reckoning SRS feedback failed:', e.message));
+
+  const cardIds = [...new Set((completedReckoningExam.questions || []).map((q) => q.card_id).filter(Boolean))];
+  await Promise.all(cardIds.map((cardId) =>
+    recomputeAndStoreCardState(req.user.id, cardId).catch(() => null)
+  ));
+}
+
+const ksOutcome = await finalizeExamKsOutcome(
+  req.user.id, exam, scorePct, reckoningKsBefore
+).catch((e) => {
+  console.error('[KIWI] Reckoning KS finalization failed:', e.message);
+  return { before: reckoningKsBefore, after: null, delta: null };
+});
+
+const reckoningResult = await completeReckoning(active.id, scorePct, reckoningDebriefText);
+await sendTelegramExamResult(req.user.id, exam.subject_id, scorePct, scorePct >= 70).catch(() => {});
+
+const responseKsAfter = reckoningResult?.failsafe?.ks_after ?? ksOutcome.after;
+res.json({
+score_pct: scorePct,
+correct_answers: correct,
+total_questions: total,
+duration_seconds: durationSec,
+question_results: questionResults,
+reckoning: reckoningResult,
+debrief: reckoningResult?.debrief_text || '',
+ksDelta: ksOutcome.delta,
+ks_after: responseKsAfter,
+failsafe: reckoningResult?.failsafe || null,
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to submit reckoning', details: e.message });
+}
+}
+
+brainRouter.post('/reckoning/submit', submitReckoningHandler);
+reckoningRouter.get('/active', async (req, res) => {
+try {
+let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (active) active = await reconcileActiveReckoning(req.user.id, active);
+res.json(active || { status: 'none' });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch active reckoning' });
+}
+});
+
+// ── POST /reckoning/submit (BUG 3 FIX) ───────────────────────────────────────
+// Previously only reachable at /brain/reckoning/submit. Now also available at
+// /reckoning/submit so both paths resolve correctly.
+reckoningRouter.post('/submit', submitReckoningHandler);
+
+// ── Brain / Pressure Routes (Phase 3) ─────────────────────────────────────
+// POST /brain/reckoning/use-buffer — spend seedling buffer to skip reckoning
+
+// P3-02 FIX: delegate to consumeReckoningBuffer() which has correct signature,
+// correct 24-hour duration, proper inventory handling, and correct status value.
+brainRouter.post('/reckoning/use-buffer', async (req, res) => {
+try {
+const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (!active) {
+return res.status(404).json({ error: 'No active reckoning to buffer' });
+}
+const result = await consumeReckoningBuffer(req.user.id, active.id);
+if (result?.error) return res.status(result.code === 'RECKONING_PREPARING' ? 409 : 400).json(result);
+res.json(result);
+} catch (e) {
+res.status(500).json({ error: 'Failed to use buffer', details: e.message });
+}
+});
+
+// Brain-scoped purchase exception for the 24-hour Reckoning Buffer. This does
+// not unlock Marketplace; it exposes only this one recovery product while the
+// Reckoning is still in a deferrable state.
+brainRouter.post('/reckoning/buffer/purchase', async (req, res) => {
+try {
+const active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (!active) return res.status(404).json({ error: 'No active Reckoning.' });
+if (active.status === 'in_progress' || active.generation_status === 'pending') {
+return res.status(409).json({
+error: 'The Reckoning has already begun preparing or is in progress. The 24-hour Buffer can no longer be purchased for this attempt.',
+code: 'RECKONING_ALREADY_STARTED',
+});
+}
+const result = await purchaseItem(req.user.id, 'reckoning_buffer', null, {
+allowDuringReckoning: true,
+});
+if (result?.error) return res.status(400).json(result);
+const buffer = await getReckoningBufferState(req.user.id).catch(() => null);
+res.json({ ...result, buffer });
+} catch (e) {
+res.status(500).json({ error: 'Failed to purchase Reckoning Buffer', details: e.message });
+}
+});
+
+
+// GET /api/brain/reckoning/active — P9.7-03 FIX-WIRE:
+// Frontend renderBrain() has a proactive fallback that calls this endpoint when
+// pendingReckoning is absent from the /brain/pressure response.
+// Previously this lived only on reckoningRouter which was never mounted.
+// Wired here so /api/brain/reckoning/active resolves correctly.
+brainRouter.get('/reckoning/active', async (req, res) => {
+try {
+let active = await db.reckoningSessions.findActiveByUser(req.user.id);
+if (active) active = await reconcileActiveReckoning(req.user.id, active);
+if (!active) return res.json({ status: 'none' });
+const shouldAnnounce = await db.reckoningSessions
+  .claimActivationAnnouncement(req.user.id, active.id)
+  .catch(() => active.activation_announced_at == null);
+const userStats = await db.userStats.get(req.user.id).catch(() => null);
+const reckoningBuffer = await getReckoningBufferState(req.user.id).catch(() => null);
+res.json({
+  ...active,
+  subjectId: active.subject_id,
+  subjectName: active.subject_name,
+  reason: `Pressure reached ${active.pressure_score || 20} in ${active.subject_name || 'this subject'}`,
+  requiredScore: Number(active.engine_version || 1) === 2 ? null : 70,
+  recoveryThreshold: Number(active.engine_version || 1) === 2 ? 75 : null,
+  rawAccuracyThreshold: Number(active.engine_version || 1) === 2 ? 65 : null,
+  adaptive: Number(active.engine_version || 1) === 2,
+  engineVersion: Number(active.engine_version || 1),
+  engineMode: active.engine_mode || 'LEGACY',
+  generationStatus: active.generation_status || null,
+  pressure: active.pressure_score || 0,
+  shields: userStats?.streak_shields_held || 0,
+  canDefer: !active.deferral_used,
+  can_defer: !active.deferral_used,
+  deferHours: 4,
+  deferPenalty: 5,
+  deferral_expires_at: active.deferred_until || null,
+  should_announce: shouldAnnounce,
+  reckoningBuffer,
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch active reckoning', details: e.message });
+}
+});
+
+brainRouter.get('/pressure', async (req, res) => {
+try {
+// P4-FIX-PRESSURE: Always recalculate before returning. The old code just read whatever
+// was stored — if the user had never completed a session, brain_pressure was empty and
+// the meter showed nothing. Now we recalculate all subjects fresh on every Brain page
+// load, so pressure sources (GHOST, STUCK, AVOIDED, no_exam, etc.) are always current.
+// calculateSubjectPressure writes to brain_pressure, then findByUser reads the fresh docs.
+await calculateAllSubjectPressures(req.user.id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+await ecosystemV2.refreshVitality(req.user.id)
+  .catch((e) => console.error('[KIWI] vitality refresh after pressure failed:', e.message));
+// Single JOIN instead of N+1 findById calls — also eliminates "Unknown Subject" for
+// orphaned brain_pressure rows (entries whose subject was deleted are filtered out).
+const { rows: rawPressures } = await query(
+  `SELECT bp.*, s.name AS subject_name
+   FROM brain_pressure bp
+   INNER JOIN subjects s ON bp.subject_id = s.id
+   WHERE bp.user_id = $1
+   ORDER BY bp.pressure_score DESC`,
+  [req.user.id]
+);
+const enriched = rawPressures.map((p) => {
+  // Normalise JSON-encoded names (legacy migration artefact from Firestore)
+  let name = p.subject_name || '';
+  if (name.trim().startsWith('{')) {
+    try { const parsed = JSON.parse(name); if (parsed?.name) name = parsed.name; } catch (_) {}
+  }
+  return {
+    ...p,
+    subjectName: name || 'Subject',
+    subjectId: p.subject_id,
+    pressure: p.pressure_score || 0,
+    level: p.intervention_level ? parseInt(p.intervention_level.replace('L', '')) : 0,
+    description: `${p.intervention_level || 'L0'} — ${p.pressure_score || 0} pressure points`,
+  };
+});
+const highestPressure =
+enriched.length > 0 ? Math.max(...enriched.map((p) => p.pressure_score || 0)) : 0;
+// P3.2-B1 FIX: filter for anything above L0, not L1 (L1 is never emitted).
+const interventions = enriched.filter((p) => p.intervention_level !== 'L0');
+// L4 has one meaning everywhere: a Reckoning is created immediately, not only
+// after an unrelated study/exam event happens to run an enrichment hook.
+let activeReckoning = await db.reckoningSessions
+.findActiveByUser(req.user.id)
+.catch(() => null);
+if (activeReckoning) {
+activeReckoning = await reconcileActiveReckoning(req.user.id, activeReckoning).catch(() => activeReckoning);
+}
+if (!activeReckoning) {
+const l4Subject = enriched.find((p) => p.intervention_level === 'L4');
+if (l4Subject) {
+const triggered = await triggerReckoning(req.user.id, l4Subject.subject_id).catch(() => null);
+if (triggered?.reckoning_id) {
+activeReckoning = await db.reckoningSessions.findById(triggered.reckoning_id).catch(() => null);
+}
+}
+}
+// BUG #2 FIX: fetch userStats only when a reckoning exists — needed for shields field
+const userStatsForBrain = activeReckoning
+? await db.userStats.get(req.user.id).catch(() => null)
+: null;
+const reckoningBufferForBrain = activeReckoning
+? await getReckoningBufferState(req.user.id).catch(() => null)
+: null;
+const shouldAnnounceReckoning = activeReckoning
+? await db.reckoningSessions.claimActivationAnnouncement(req.user.id, activeReckoning.id)
+    .catch(() => activeReckoning.activation_announced_at == null)
+: false;
+res.json({
+pressures: enriched,
+overallStatus:
+interventions.some((p) => p.intervention_level === 'L4') ? 'Reckoning' :
+interventions.some((p) => p.intervention_level === 'L3') ? 'Urgent' :
+interventions.some((p) => p.intervention_level === 'L2') ? 'Building' :
+interventions.some((p) => p.intervention_level === 'L1') ? 'Watch' : 'Calm',
+totalInterventions: interventions.length,
+highestPressure,
+interventions,
+pendingReckoning: activeReckoning
+? {
+id: activeReckoning.id,
+subject_id: activeReckoning.subject_id,
+// Provide both snake_case and camelCase to match lockout middleware shape
+subject_name: activeReckoning.subject_name,
+subjectName: activeReckoning.subject_name,
+status: activeReckoning.status,
+flagged_card_count: activeReckoning.flagged_card_count,
+question_count: activeReckoning.question_count,
+exam_session_id: activeReckoning.exam_session_id || null,
+generation_status: activeReckoning.generation_status || null,
+generationStatus: activeReckoning.generation_status || null,
+generation_error: activeReckoning.generation_error || null,
+generationError: activeReckoning.generation_error || null,
+engine_version: Number(activeReckoning.engine_version || 1),
+engineVersion: Number(activeReckoning.engine_version || 1),
+engine_mode: activeReckoning.engine_mode || 'LEGACY',
+engineMode: activeReckoning.engine_mode || 'LEGACY',
+engine_phase: activeReckoning.engine_phase || null,
+enginePhase: activeReckoning.engine_phase || null,
+// Both field names needed: overlay reads deferral_expires_at; legacy reads deferred_until
+deferred_until: activeReckoning.deferred_until || null,
+deferral_expires_at: activeReckoning.deferred_until || null,
+subjectId: activeReckoning.subject_id,
+reason: `Pressure reached ${activeReckoning.pressure_score || 20} in ${activeReckoning.subject_name || 'this subject'}`,
+pressure: activeReckoning.pressure_score || 0,
+shields: userStatsForBrain?.streak_shields_held || 0,
+canDefer: !activeReckoning.deferral_used,
+can_defer: !activeReckoning.deferral_used,
+deferHours: 4,
+deferPenalty: 5,
+should_announce: shouldAnnounceReckoning,
+reckoningBuffer: reckoningBufferForBrain,
+}
+: null,
+reckoningBuffer: reckoningBufferForBrain,
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch pressures', details: e.message });
+}
+});
+
+brainRouter.get('/pressure/:subjectId', async (req, res) => {
+try {
+const pressure = await calculateSubjectPressure(req.user.id, req.params.subjectId);
+res.json(pressure);
+} catch (e) {
+res.status(500).json({ error: 'Failed to calculate pressure', details: e.message });
+}
+});
+// GET /brain/pressure/:subjectId/explanation — alias for ritual/pressure-explanation
+
+brainRouter.get('/pressure/:subjectId/explanation', async (req, res) => {
+try {
+// F5-1-P: getPressureExplanation now returns { explanation, sources } [DESIGN: §15.1]
+const { explanation, sources } = await getPressureExplanation(req.user.id, req.params.subjectId);
+res.json({ explanation, sources });
+} catch (e) {
+res.status(500).json({ error: 'Failed to get pressure explanation', details: e.message });
+}
+});
+
+brainRouter.get('/credential/:subjectId', async (req, res) => {
+try {
+const credential = await evaluateCredential(req.user.id, req.params.subjectId);
+res.json(credential);
+} catch (e) {
+res.status(500).json({ error: 'Failed to evaluate credential', details: e.message });
+}
+});
+// ── Knowledge Score Routes (Phase 2) ───────────────────────────────────────
+const ksRouter = express.Router();
+
+ksRouter.use(authenticate);
+
+ksRouter.use(reckoningLockout);
+
+ksRouter.get('/global', async (req, res) => {
+try {
+const ks = await computeGlobalKnowledgeScore(req.user.id);
+res.json(ks);
+} catch (e) {
+res.status(500).json({ error: 'Failed to compute global KS', details: e.message });
+}
+});
+
+ksRouter.get('/subject/:subjectId', async (req, res) => {
+try {
+const ks = await computeKnowledgeScore(req.user.id, req.params.subjectId);
+res.json(ks);
+} catch (e) {
+res.status(500).json({ error: 'Failed to compute subject KS', details: e.message });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PROGRESS & SETTINGS ROUTES (B20)
+
+// ════════════════════════════════════════════════════════════════════════════
+const progressRouter = express.Router();
+
+progressRouter.use(authenticate);
+
+progressRouter.use(reckoningLockout);
+// GET /api/user/stats — lightweight stat summary (seedlings, streak, and tree)
+// Used by the dashboard header / seedlings fallback in the frontend.
+progressRouter.get('/user/stats', async (req, res) => {
+try {
+const stats = await db.userStats.get(req.user.id);
+if (!stats) return res.status(404).json({ error: 'Stats not found' });
+res.json({
+seedlings_balance: stats.seedlings_balance || 0,
+current_streak: stats.current_streak || 0,
+tree_health: stats.tree_health ?? 100,
+tree_stage: stats.tree_stage || 1,
+total_cards_reviewed: stats.total_cards_reviewed || 0,
+total_cards_mastered: stats.total_cards_mastered || 0,
+total_study_minutes: stats.total_study_minutes || 0,
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch user stats', details: e.message });
+}
+});
+
+// Living Achievements are evaluated from current study evidence on every load.
+// The fixed set provides stable milestones; the weekly AI set watches the
+// learner's actual habits but may only choose metrics the server can verify.
+async function buildLivingAchievements(userId, timezoneOffsetMinutes = 0) {
+const safeTimezoneOffset = Math.max(-840, Math.min(840, Number(timezoneOffsetMinutes) || 0));
+const toLocalClock = (value) => new Date(new Date(value).getTime() - safeTimezoneOffset * 60000);
+const now = new Date();
+const weekStart = new Date(now);
+weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+weekStart.setHours(0, 0, 0, 0);
+const weekKey = weekStart.toISOString().slice(0, 10);
+const achievementCacheKey = `${weekKey}_tz${safeTimezoneOffset}`;
+
+const [stats, sessionResult, states, subjects, exams, reckonings, reviewLogs] = await Promise.all([
+db.userStats.get(userId),
+db.sessions.findMany(userId, { session_completed: true }, { limit: 2000 }),
+db.cardStates.findByUser(userId),
+db.subjects.findManyWithDecks(userId),
+db.examSessions.findMany(userId, { status: 'completed' }, { limit: 500 }).catch(() => []),
+db.reckoningSessions.findByUser(userId).catch(() => []),
+db.reviewLogs.findByUser(userId, new Date(0)).catch(() => []),
+]);
+const completedInteractions = sessionResult?.sessions || [];
+const sessions = completedInteractions.filter(sessionIsMeaningful);
+const completedExams = Array.isArray(exams) ? exams : (exams?.exams || []);
+const deckToSubject = new Map();
+for (const subject of subjects) {
+for (const deck of (subject.decks || [])) deckToSubject.set(deck.id, subject.id);
+}
+const sessionSubject = (session) => session.subject_id || deckToSubject.get(session.deck_id) || null;
+const uniqueDays = new Set(sessions.map((s) => toLocalClock(s.started_at).toISOString().slice(0, 10)));
+const subjectSessionCounts = {};
+for (const session of sessions) {
+const sid = sessionSubject(session);
+if (sid) subjectSessionCounts[sid] = (subjectSessionCounts[sid] || 0) + 1;
+}
+const metrics = {
+sessions: sessions.length,
+streak: Number(stats?.current_streak) || 0,
+unique_study_days: uniqueDays.size,
+fruiting_sessions: sessions.filter((s) => s.fruiting_achieved).length,
+focus_quality: sessions.filter((s) => Number(s.session_quality) >= 75).length,
+honest_again: reviewLogs.filter((r) => r.response === 'again').length,
+verified_cards: states.filter((s) => s.verified || s.state === 'VERIFIED').length,
+mastered_cards: Number(stats?.total_cards_mastered) || states.filter((s) => Number(s.stage) >= 5).length,
+exam_passes: completedExams.filter((e) => Number(e.score_pct ?? e.score_percentage) >= 70).length,
+best_exam_score: completedExams.reduce((best, e) => Math.max(best, Number(e.score_pct ?? e.score_percentage) || 0), 0),
+reckoning_survivals: reckonings.filter((r) => r.status === 'completed' && Number(r.score_pct) >= 70).length,
+early_sessions: sessions.filter((s) => { const h = toLocalClock(s.started_at).getUTCHours(); return h >= 4 && h < 8; }).length,
+late_sessions: sessions.filter((s) => { const h = toLocalClock(s.started_at).getUTCHours(); return h >= 22 || h < 3; }).length,
+cross_subject_sessions: Object.values(subjectSessionCounts).filter((n) => n > 0).length,
+};
+
+const makeAchievement = (code, name, icon, description, metric, target, category, evidence) => {
+const current = Math.max(0, Number(metrics[metric]) || 0);
+return {
+code, name, icon_emoji: icon, description, category, metric,
+current, target, progress_pct: Math.min(100, Math.round((current / Math.max(1, target)) * 100)),
+unlocked: current >= target,
+evidence,
+is_personalized: false,
+};
+};
+const achievements = [
+makeAchievement('first_roots', 'First Roots', '🌱', 'Complete your first meaningful study session: five distinct cards and five active minutes.', 'sessions', 1, 'Beginning', `${metrics.sessions} meaningful session${metrics.sessions === 1 ? '' : 's'}`),
+makeAchievement('honest_mirror', 'The Honest Mirror', '🪞', 'Choose Again when recall is not there. Honest feedback strengthens scheduling.', 'honest_again', 25, 'Learning Character', `${metrics.honest_again} honest Again responses`),
+makeAchievement('focused_flame', 'Focused Flame', '🔥', 'Complete five sessions at Blooming quality or higher.', 'focus_quality', 5, 'Focus', `${metrics.focus_quality} high-focus sessions`),
+makeAchievement('first_fruit', 'Fruit Bearer', '🥝', 'Produce a permanent fruit through a genuine Fruiting session.', 'fruiting_sessions', 1, 'Ecosystem', `${metrics.fruiting_sessions} Fruiting sessions`),
+makeAchievement('rooted_week', 'Rooted Week', '🌳', 'Maintain a seven-day study streak.', 'streak', 7, 'Consistency', `${metrics.streak}-day current streak`),
+makeAchievement('verified_ground', 'Verified Ground', '✓', 'Prove ten cards in completed exams.', 'verified_cards', 10, 'Evidence', `${metrics.verified_cards} verified cards`),
+makeAchievement('exam_proof', 'Exam Proof', '📝', 'Pass your first completed CBT exam.', 'exam_passes', 1, 'Exams', `${metrics.exam_passes} passed exams`),
+makeAchievement('three_gardens', 'Keeper of Three Gardens', '🌿', 'Complete meaningful sessions across three different subjects.', 'cross_subject_sessions', 3, 'Breadth', `${metrics.cross_subject_sessions} subjects studied meaningfully`),
+makeAchievement('reckoning_return', 'Returned From Reckoning', '⚔️', 'Survive a Reckoning and earn a recovery window.', 'reckoning_survivals', 1, 'Resilience', `${metrics.reckoning_survivals} Reckonings survived`),
+makeAchievement('deep_canopy', 'Deep Canopy', '🍃', 'Bring fifty cards to mastery.', 'mastered_cards', 50, 'Mastery', `${metrics.mastered_cards} mastered cards`),
+];
+
+let personalized = [];
+const cached = await db.dailyRitualCache.get(userId, 'living_achievements', achievementCacheKey).catch(() => null);
+if (cached?.data && Array.isArray(cached.data)) {
+personalized = cached.data;
+} else if (sessions.length >= 3) {
+try {
+const subjectLines = subjects.map((s) => `${s.id}|${s.name}|sessions:${subjectSessionCounts[s.id] || 0}`).join('\n');
+const prompt = `
+ROLE
+You design three personal, measurable achievements for one learner. They should feel observant, specific, and attainable this week.
+
+CURRENT VERIFIED METRICS
+${JSON.stringify(metrics)}
+
+SUBJECTS
+${subjectLines || 'No subjects'}
+
+ALLOWED METRICS
+sessions, streak, unique_study_days, fruiting_sessions, focus_quality, honest_again, verified_cards, mastered_cards, exam_passes, best_exam_score, reckoning_survivals, early_sessions, late_sessions, cross_subject_sessions
+
+RULES
+- Return exactly 3 achievements as valid JSON only.
+- Each must use one allowed metric and an integer target greater than the current value but reachable within 7 days.
+- Personalize the title and description to an observed habit. Do not diagnose personality or invent facts.
+- No XP, levels, points, currencies, or generic motivational filler.
+- Subject names may appear in the wording, but the measurable metric must remain one of the allowed metrics.
+- Format: [{"code":"weekly_slug","name":"...","icon_emoji":"...","description":"...","metric":"sessions","target":5,"category":"Personal"}]
+`;
+const aiResult = await ai.run('LIVING_ACHIEVEMENTS', { content: prompt });
+const raw = aiResult.text;
+const start = raw.indexOf('['), end = raw.lastIndexOf(']');
+const parsed = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw.replace(/```json|```/g, '').trim());
+const allowed = new Set(Object.keys(metrics));
+const metricMaximums = {
+best_exam_score: 100,
+cross_subject_sessions: Math.max(0, subjects.length),
+verified_cards: states.length,
+mastered_cards: states.length,
+};
+personalized = (Array.isArray(parsed) ? parsed : [])
+.filter((a) => allowed.has(a.metric) && (metricMaximums[a.metric] == null || Number(metrics[a.metric]) < metricMaximums[a.metric]))
+.slice(0, 3).map((a, index) => ({
+code: String(a.code || `weekly_${index + 1}`).replace(/[^a-z0-9_]/gi, '_').toLowerCase(),
+name: String(a.name || 'Personal Challenge').slice(0, 80),
+icon_emoji: String(a.icon_emoji || '✦').slice(0, 8),
+description: String(a.description || '').slice(0, 240),
+metric: a.metric,
+target: Math.min(
+metricMaximums[a.metric] ?? Number.MAX_SAFE_INTEGER,
+Math.max((Number(metrics[a.metric]) || 0) + 1, Number(a.target) || 1)
+),
+category: 'AI Personal',
+is_personalized: true,
+}));
+} catch (e) {
+personalized = [];
+}
+}
+
+if (sessions.length >= 3 && personalized.length < 3) {
+const strongestSubject = subjects
+.map((subject) => ({ subject, count: subjectSessionCounts[subject.id] || 0 }))
+.sort((a, b) => b.count - a.count)[0]?.subject;
+const fallbackCandidates = [
+{
+code: 'weekly_focus_return', name: 'Turn Attention Into Proof', icon_emoji: '🎯',
+description: `You have ${metrics.focus_quality} high-focus sessions. Complete two more sessions at Blooming quality or higher${strongestSubject ? `, beginning with ${strongestSubject.name}` : ''}.`,
+metric: 'focus_quality', target: metrics.focus_quality + 2,
+},
+{
+code: 'weekly_show_up', name: 'Three More Returns', icon_emoji: '🌱',
+description: `Your record contains ${metrics.sessions} meaningful sessions. Add three deliberate sessions this week.`,
+metric: 'sessions', target: metrics.sessions + 3,
+},
+{
+code: 'weekly_active_days', name: 'Widen the Week', icon_emoji: '🗓️',
+description: `You have studied on ${metrics.unique_study_days} distinct days. Return on two additional days instead of concentrating everything into one sitting.`,
+metric: 'unique_study_days', target: metrics.unique_study_days + 2,
+},
+{
+code: 'weekly_exam_evidence', name: 'Put Recall on Record', icon_emoji: '📝',
+description: `You have ${metrics.exam_passes} passed exams. Prepare your weakest subject and add one evidence-backed pass.`,
+metric: 'exam_passes', target: metrics.exam_passes + 1,
+},
+];
+const usedMetrics = new Set(personalized.map((item) => item.metric));
+for (const candidate of fallbackCandidates) {
+if (personalized.length >= 3) break;
+if (usedMetrics.has(candidate.metric)) continue;
+personalized.push({ ...candidate, category: 'Personal', is_personalized: true });
+usedMetrics.add(candidate.metric);
+}
+}
+
+if (sessions.length >= 3) {
+await db.dailyRitualCache.set(userId, 'living_achievements', achievementCacheKey, personalized).catch(() => {});
+}
+
+personalized = personalized.map((a) => {
+const current = Math.max(0, Number(metrics[a.metric]) || 0);
+const target = Math.max(1, Number(a.target) || 1);
+return {
+...a, current, target,
+progress_pct: Math.min(100, Math.round((current / target) * 100)),
+unlocked: current >= target,
+evidence: `${current} of ${target} — measured from your current study record`,
+is_personalized: true,
+};
+});
+
+const strongestSignal = metrics.focus_quality > 0
+? `${metrics.focus_quality} high-focus session${metrics.focus_quality === 1 ? '' : 's'}`
+: metrics.sessions > 0 ? `${metrics.sessions} meaningful session${metrics.sessions === 1 ? '' : 's'}` : 'no meaningful sessions yet';
+return {
+achievements: [...personalized, ...achievements],
+observer_summary: `KIWI is currently watching ${strongestSignal}, ${metrics.verified_cards} verified cards, and study across ${metrics.cross_subject_sessions} subjects.`,
+generated_at: new Date().toISOString(),
+week_start: weekKey,
+};
+}
+
+progressRouter.get('/achievements', async (req, res) => {
+try {
+res.json(await buildLivingAchievements(req.user.id, req.query.timezone_offset_minutes));
+} catch (e) {
+res.status(500).json({ error: 'Failed to build living achievements', details: e.message });
+}
+});
+
+// Complete, user-owned export. The previous client-side export only contained
+// whatever happened to be cached in the current tab, which looked successful
+// while silently omitting cards, reviews, exams, and narrative history.
+progressRouter.get('/settings/export', async (req, res) => {
+try {
+const userId = req.user.id;
+const tableNames = [
+'subjects', 'decks', 'cards', 'card_states', 'sessions', 'review_logs',
+'exam_sessions', 'mastery_goals', 'brain_pressure', 'fruits',
+'chronicle_entries', 'user_inventory', 'seedling_transactions',
+];
+const rows = await Promise.all(tableNames.map(async (tableName) => {
+const result = await query(`SELECT * FROM ${tableName} WHERE user_id = $1 ORDER BY created_at NULLS LAST`, [userId])
+.catch(async () => query(`SELECT * FROM ${tableName} WHERE user_id = $1`, [userId]).catch(() => ({ rows: [] })));
+return [tableName, result.rows || []];
+}));
+const { password_hash, ...safeUser } = req.user;
+res.json({
+format: 'kiwi-user-export-v1',
+exported_at: new Date().toISOString(),
+user: safeUser,
+data: Object.fromEntries(rows),
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to export data', details: e.message });
+}
+});
+// GET /api/progress — aggregated progress overview
+
+progressRouter.get('/progress', async (req, res) => {
+try {
+// Fix #18: removed duplicate findByUser call
+// Fix #19: globalKS computed from per-subject results — no extra N findByUser scans
+const [stats, subjects, allStates] = await Promise.all([
+db.userStats.get(req.user.id),
+db.subjects.findManyWithDecks(req.user.id),
+db.cardStates.findByUser(req.user.id),
+]);
+// Build subject breakdown; share allStates with computeKnowledgeScore (Fix #20)
+const subjectBreakdown = [];
+let _globalWeightedSum = 0, _globalCardCount = 0;
+for (const s of subjects) {
+const [ks, healthScore] = await Promise.all([
+  computeKnowledgeScore(req.user.id, s.id, allStates).catch(() => ({ score: 0, totalCards: 0 })),
+  recalculateSubjectHealth(req.user.id, s.id).catch(() => null),
+]);
+subjectBreakdown.push({ id: s.id, name: s.name, ks: ks.score, cardCount: s.total_cards || 0, health_score: healthScore != null ? parseFloat(healthScore.toFixed(1)) : 0 });
+_globalWeightedSum += ks.score * (ks.totalCards || 0);
+_globalCardCount += (ks.totalCards || 0);
+}
+const globalKS = { score: _globalCardCount > 0 ? parseFloat((_globalWeightedSum / _globalCardCount).toFixed(2)) : 0 };
+// Fix #27: pre-load all cards + decks once; eliminate 2 Firestore reads per trouble card
+const TROUBLE_STATES = ['STUCK', 'AVOIDED', 'GHOST', 'DANGEROUS', 'FRAGILE'];
+const troubleStatesList = allStates.filter((s) => TROUBLE_STATES.includes(s.state) || s.learning_debt === true);
+const troubleCards = [];
+const [_allUserCards, _allUserDecksResult] = await Promise.all([
+db.cards.findAllForUser(req.user.id),
+db.decks.findMany(req.user.id),
+]);
+const _cardMap = new Map(_allUserCards.map(c => [c.id, c]));
+const _deckMap = new Map((_allUserDecksResult.decks || _allUserDecksResult).map(d => [d.id, d]));
+const _subjectMap = new Map((subjects || []).map(s => [s.id, s]));
+for (const st of troubleStatesList.slice(0, 30)) {
+const card = _cardMap.get(st.card_id);
+if (card) {
+const deck = _deckMap.get(card.deck_id);
+const subject = deck ? _subjectMap.get(deck.subject_id) : null;
+const resolvedDeckId = card.deck_id || st.deck_id || null;
+const resolvedSubjectId = deck?.subject_id || st.subject_id || null;
+troubleCards.push({
+id: st.card_id,
+card_id: st.card_id,
+state: st.state,
+learning_debt: st.learning_debt === true,
+front: card.front_content || '',
+back: card.back_content || '',
+subjectId: resolvedSubjectId,
+subject_id: resolvedSubjectId,
+subjectName: subject?.name || null,
+subject_name: subject?.name || null,
+deckId: resolvedDeckId,
+deck_id: resolvedDeckId,
+deckName: deck?.name || 'Deck',
+deck_name: deck?.name || 'Deck',
+});
+}
+}
+// Fix #48: single Firestore query for 12 weeks instead of 12 sequential queries
+const weeks = [];
+const now = new Date();
+const _twelveWeeksAgo = new Date(now);
+_twelveWeeksAgo.setDate(_twelveWeeksAgo.getDate() - 84);
+_twelveWeeksAgo.setHours(0, 0, 0, 0);
+const _allTrendLogs = await db.reviewLogs.findByUser(req.user.id, _twelveWeeksAgo).catch(() => []);
+for (let i = 11; i >= 0; i--) {
+const weekStart = new Date(now);
+weekStart.setDate(weekStart.getDate() - i * 7 - weekStart.getDay());
+weekStart.setHours(0, 0, 0, 0);
+const weekEnd = new Date(weekStart);
+weekEnd.setDate(weekEnd.getDate() + 7);
+const weekLogs = _allTrendLogs.filter(l => {
+const r = new Date(l.reviewed_at);
+return r >= weekStart && r < weekEnd;
+});
+const total = weekLogs.length;
+const goodOrEasy = weekLogs.filter(
+(l) => l.response === 'good' || l.response === 'easy'
+).length;
+weeks.push({
+week_start: weekStart.toISOString().split('T')[0],
+total_reviews: total,
+accuracy_pct: total > 0 ? parseFloat(((goodOrEasy / total) * 100).toFixed(1)) : null,
+});
+}
+const accuracyTrend = {
+labels: weeks.map((w) => w.week_start.slice(5)),
+data: weeks.map((w) => w.accuracy_pct),
+};
+res.json({
+overallKS: globalKS.score,
+subjectBreakdown,
+troubleCards,
+accuracyTrend,
+sessionHistory: [], // Fetched separately — see /study/history below
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to load progress', details: e.message });
+}
+});
+// GET /api/progress/trouble-cards — STUCK, AVOIDED, GHOST, DANGEROUS cards
+
+progressRouter.get('/progress/trouble-cards', async (req, res) => {
+try {
+const TROUBLE_STATES = ['STUCK', 'AVOIDED', 'GHOST', 'DANGEROUS', 'FRAGILE'];
+const allStates = await db.cardStates.findByUser(req.user.id);
+const troubleStates = allStates.filter((s) => TROUBLE_STATES.includes(s.state));
+// Return one complete study-ready contract. Legacy card_states rows can have
+// null deck_id/subject_id, so derive ownership from the canonical card + deck.
+const [_allCardsForTrouble, _allDecksForTroubleResult] = await Promise.all([
+db.cards.findAllForUser(req.user.id),
+db.decks.findMany(req.user.id),
+]);
+const _cardMapForTrouble = new Map(_allCardsForTrouble.map(c => [c.id, c]));
+const _deckMapForTrouble = new Map(
+  (_allDecksForTroubleResult.decks || _allDecksForTroubleResult).map(d => [d.id, d])
+);
+const enriched = [];
+for (const st of troubleStates.slice(0, 50)) {
+const card = _cardMapForTrouble.get(st.card_id);
+if (!card) continue;
+const deck = _deckMapForTrouble.get(card.deck_id);
+const resolvedDeckId = card.deck_id || st.deck_id || null;
+const resolvedSubjectId = deck?.subject_id || st.subject_id || null;
+enriched.push({
+...st,
+// card_states.id is the state document id (userId_cardId), not the card id.
+// Expose the canonical card id explicitly so focused-study actions cannot target
+// the wrong identifier.
+id: card.id,
+card_id: card.id,
+card_front: card.front_content || '',
+card_back: card.back_content || '',
+deckId: resolvedDeckId,
+deck_id: resolvedDeckId,
+deckName: deck?.name || 'Deck',
+deck_name: deck?.name || 'Deck',
+subjectId: resolvedSubjectId,
+subject_id: resolvedSubjectId,
+});
+}
+res.json({ trouble_cards: enriched, total: troubleStates.length });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch trouble cards', details: e.message });
+}
+});
+// GET /api/progress/accuracy-trend — 12-week weekly accuracy trend
+
+progressRouter.get('/progress/accuracy-trend', async (req, res) => {
+try {
+// F-15 FIX: single DB fetch + in-memory week filter (was 12 serial queries)
+const _twelveWeeksAgo = new Date();
+_twelveWeeksAgo.setDate(_twelveWeeksAgo.getDate() - 84);
+const allTrendLogs = await db.reviewLogs.findByUser(req.user.id, _twelveWeeksAgo);
+const weeks = [];
+const now = new Date();
+for (let i = 11; i >= 0; i--) {
+  const weekStart = new Date(now);
+  weekStart.setDate(weekStart.getDate() - i * 7 - weekStart.getDay());
+  weekStart.setHours(0, 0, 0, 0);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+  const weekLogs = allTrendLogs.filter(l => {
+    const t = new Date(l.reviewed_at);
+    return t >= weekStart && t < weekEnd;
+  });
+  const total = weekLogs.length;
+  const goodOrEasy = weekLogs.filter(l => l.response === 'good' || l.response === 'easy').length;
+  weeks.push({
+    week_start: weekStart.toISOString().split('T')[0],
+    total_reviews: total,
+    accuracy_pct: total > 0 ? parseFloat(((goodOrEasy / total) * 100).toFixed(1)) : null,
+  });
+}
+res.json({ trend: weeks });
+} catch (e) {
+res.status(500).json({ error: 'Failed to compute accuracy trend', details: e.message });
+}
+});
+// GET /api/settings — get user profile settings
+
+progressRouter.get('/settings', async (req, res) => {
+try {
+const user = await db.users.findById(req.user.id);
+if (!user) return res.status(404).json({ error: 'User not found' });
+const stats = await db.userStats.get(req.user.id);
+const { password_hash, ...safeUser } = user;
+res.json({ ...safeUser, stats: toPublicStats(stats) });
+} catch (e) {
+res.status(500).json({ error: 'Failed to fetch settings', details: e.message });
+}
+});
+// PUT /api/settings — update user profile settings
+
+progressRouter.put('/settings', async (req, res) => {
+try {
+const ALLOWED = [
+'full_name',
+'avatar_url',
+'bio',
+'theme',
+'notification_preferences',
+'exam_reminder_days',
+];
+const updates = {};
+for (const key of ALLOWED) {
+if (req.body[key] !== undefined) updates[key] = req.body[key];
+}
+const updated = await db.users.update(req.user.id, updates);
+const { password_hash, ...safeUser } = updated;
+res.json(safeUser);
+} catch (e) {
+res.status(500).json({ error: 'Failed to update settings', details: e.message });
+}
+});
+// GET /api/library — subject + deck overview for the library view
+// GET /api/dashboard — aggregated dashboard data
+
+// Phase 11: lightweight canonical renderer state for route-level vine continuity.
+// This avoids loading the full dashboard/biome just to decide whether a mature
+// organism may extend into Brain or Study setup.
+progressRouter.get('/tree-state', async (req, res) => {
+try {
+const [stats, subjectStats] = await Promise.all([
+db.userStats.get(req.user.id),
+db.subjectStats.findMany(req.user.id),
+]);
+const currentStreak = stats?.current_streak || 0;
+const earnedMilestones = stats?.streak_milestones_earned || [];
+const milestones = [...new Set([
+...earnedMilestones,
+...[7, 30, 100, 365].filter((m) => currentStreak >= m),
+])].sort((a, b) => a - b);
+const fruits = (subjectStats || []).reduce(
+(sum, row) => sum + (Number(row?.fruit_count) || 0),
+0
+);
+const treeState = buildTreeState({
+stage: stats?.tree_stage || 1,
+vitality: stats?.tree_health ?? 100,
+growthPoints: Number(stats?.growth_points) || 0,
+nextStage: ecosystemV2.nextTreeStage(stats || {}),
+knowledgeScore: Number(stats?.knowledge_score_global) || 0,
+fruits,
+milestones,
+streak: currentStreak,
+});
+res.json({ treeState });
+} catch (e) {
+res.status(500).json({ error: 'Failed to load tree state', details: e.message });
+}
+});
+
+progressRouter.get('/dashboard', async (req, res) => {
+try {
+// Refresh derived ecosystem telemetry while the dashboard's other independent
+// reads are in flight. Vitality depends on pressure and on the rolling activity
+// window, so persisting it only at session-end makes the tree look frozen.
+const _freshTelemetryPromise = (async () => {
+  const pressureMap = await calculateAllSubjectPressures(req.user.id);
+  const vitality = await ecosystemV2.refreshVitality(req.user.id);
+  return { pressureMap, vitality };
+})().catch((e) => {
+  console.error('[KIWI] dashboard telemetry refresh failed:', e.message);
+  return null;
+});
+const now = new Date();
+const todayStr = now.toISOString().split('T')[0];
+const weekStartStr = (() => {
+const d = new Date(now);
+// H-7 FIX: Monday-based key
+d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+d.setHours(0, 0, 0, 0);
+return d.toISOString().split('T')[0];
+})();
+
+// Round 1 — all independent queries in one parallel batch
+// PERF FIX: globalKS removed from this batch. computeGlobalKnowledgeScore()
+// was calling db.subjects, db.cards.findAllForUser, and db.cardStates.findByUser
+// again for EVERY subject — all data that Round 1 already fetches. We now derive
+// globalKS from stats.knowledge_score_global (persisted after every review) and
+// from the inline per-subject computation in Round 2 using already-loaded data.
+const [stats, subjects, allStates, allCards, storedPressures, activeReckoning, freshTelemetry] = await Promise.all([
+db.userStats.get(req.user.id),
+db.subjects.findManyWithDecks(req.user.id),
+db.cardStates.findByUser(req.user.id),
+db.cards.findAllForUser(req.user.id),
+db.brainPressure.findByUser(req.user.id),
+db.reckoningSessions.findActiveByUser(req.user.id),
+_freshTelemetryPromise,
+]);
+const pressures = freshTelemetry?.pressureMap
+  ? Object.values(freshTelemetry.pressureMap)
+  : storedPressures;
+if (freshTelemetry?.vitality?.vitality != null && stats) {
+  stats.tree_health = freshTelemetry.vitality.vitality;
+}
+const dueCount = allCards.filter((c) => isCardDue(c, now)).length;
+const stateDist = {};
+for (const s of allStates) stateDist[s.state] = (stateDist[s.state] || 0) + 1;
+// Build state map once — reused by inline per-subject KS below (no extra DB reads)
+const _dashStateMap = new Map(allStates.map(st => [st.card_id, st]));
+
+// Round 2 — all things that depend on Round 1, run in parallel
+const [subjectBreakdown, persona, returnStatus, morningCache, anchorCache, invitationsCache] = await Promise.all([
+Promise.all(subjects.map(async (s) => {
+const storedSubjectStat = await db.subjectStats.get(req.user.id, s.id).catch(() => null);
+// PERF FIX: Compute per-subject KS inline using already-loaded allCards + _dashStateMap.
+// Previously called computeKnowledgeScore() which re-fetched db.cards.findAllForUser
+// and db.cardStates.findByUser for EVERY subject — N duplicate round-trips to Supabase.
+// Now: use stored value if fresh, else derive from in-memory data (zero extra DB calls).
+const ksScore = (() => {
+const subjectDeckIds = new Set((s.decks || []).map(d => d.id));
+const subjectCards = allCards.filter(c => subjectDeckIds.has(c.deck_id));
+if (!subjectCards.length) return 0;
+let sumW = 0;
+for (const c of subjectCards) sumW += computeEffectiveWeight(_dashStateMap.get(c.id), c);
+return Math.min(100, parseFloat(((sumW / (subjectCards.length * 5)) * 100).toFixed(2)));
+})();
+const ks = { score: ksScore };
+if (Number(storedSubjectStat?.knowledge_score) !== Number(ksScore)) {
+db.subjectStats.upsert(req.user.id, s.id, { knowledge_score: ksScore }).catch(() => {});
+}
+const subjectDeckIds = (s.decks || []).map(d => d.id);
+const subjectCards = allCards.filter(c => subjectDeckIds.includes(c.deck_id));
+const subjectDueCount = subjectCards.filter(c => isCardDue(c)).length;
+return { id: s.id, name: s.name, ks: ks.score, dueCount: subjectDueCount, cardCount: subjectCards.length, _subjectStat: storedSubjectStat };
+})),
+db.userPersona.get(req.user.id).catch(() => null),                                   // Perf: was sequential
+computeReturnStatus(req.user.id).catch(() => null),                                  // Perf: was sequential
+db.dailyRitualCache.get(req.user.id, 'morning_brief', todayStr).catch(() => null),   // Perf: was sequential
+db.dailyRitualCache.get(req.user.id, 'weekly_anchor', weekStartStr).catch(() => null), // Perf: was sequential
+db.dailyRitualCache.get(req.user.id, 'daily_invitations', todayStr).catch(() => null), // Perf: was sequential
+]);
+// Tree state
+// M1 FIX: streak milestones — permanent, survive streak breaks (same logic as buildBiomeData)
+const dashStreak = stats?.current_streak || 0;
+const dashEarnedMilestones = stats?.streak_milestones_earned || [];
+const dashActiveMilestones = [...new Set([
+...dashEarnedMilestones,
+...[7, 30, 100, 365].filter(m => dashStreak >= m),
+])].sort((a, b) => a - b);
+// M1 FIX: fruits = sum of per-subject fruit_counts — reuse _subjectStat from Round 2 (no extra DB call)
+const dashTotalFruits = subjectBreakdown.reduce((sum, s) => sum + (s._subjectStat?.fruit_count || 0), 0);
+// PERF FIX: Derive globalKS from already-computed subject breakdown — no extra DB round-trip.
+// Weighted average by subject card count; falls back to stats.knowledge_score_global.
+const dashGlobalKS = (() => {
+// PATCH: always return a finite number — stats.knowledge_score_global may be
+// a string from the DB, and reduce can produce NaN when ks fields are undefined.
+if (!subjectBreakdown.length) return Number(stats?.knowledge_score_global) || 0;
+let totalW = 0, totalCards = 0;
+for (const s of subjectBreakdown) {
+const cardCount = Number(s.cardCount) || 0;
+totalW += (Number(s.ks) || 0) * cardCount;
+totalCards += cardCount;
+}
+const _ksResult = totalCards > 0
+  ? totalW / totalCards
+  : (subjectBreakdown.reduce((a, s) => a + (Number(s.ks) || 0), 0) / subjectBreakdown.length);
+return isFinite(_ksResult) ? _ksResult : 0;
+})();
+const globalKS = {
+score: parseFloat(dashGlobalKS.toFixed(2)),
+band: getBandName(dashGlobalKS),
+totalCards: allCards.length,
+};
+const treeState = buildTreeState({
+stage: stats?.tree_stage || 1,
+vitality: stats?.tree_health ?? 100,
+vitalityBreakdown: freshTelemetry?.vitality?.breakdown || null,
+growthPoints: Number(stats?.growth_points) || 0,
+nextStage: ecosystemV2.nextTreeStage(stats || {}),
+knowledgeScore: dashGlobalKS,
+fruits: dashTotalFruits,
+milestones: dashActiveMilestones,
+streak: dashStreak,
+});
+// Brain preview
+const brainPreview = {
+interventionCount: // P3.2-B1 FIX: L0 is the correct calm baseline.
+pressures.filter((p) => p.intervention_level !== 'L0').length,
+highestPressure:
+pressures.length > 0 ? Math.max(...pressures.map((p) => p.pressure_score || 0)) : 0,
+};
+// Return greeting — returnStatus already resolved in Round 2
+// PERF FIX: fire-and-forget on cache miss, same as morningBrief
+let returnGreeting = null;
+if (returnStatus && returnStatus.status !== 'active') {
+const cachedRG = await db.dailyRitualCache
+.get(req.user.id, 'return_greeting', todayStr)
+.catch(() => null);
+if (cachedRG?.data?.greeting) {
+returnGreeting = cachedRG.data.greeting;
+} else {
+getReturnGreeting(req.user.id).catch(() => {}); // generate in background
+}
+}
+// Never block the dashboard on Morning Brief generation. Delivery B gives
+// the frontend a single-flight lazy fetch for this exact miss. Do not also
+// fire-and-forget generation here or the dashboard request and ritual request
+// can race and spend two provider calls for the same user/day.
+const morningBrief = morningCache ? morningCache.data : null;
+// Weekly anchor — anchorCache already resolved in Round 2
+const weeklyAnchor = anchorCache?.data
+? anchorCache.data.anchor_text || anchorCache.data.message || null
+: null;
+// Invitations — return empty on miss, generate in background
+const invitations = invitationsCache ? invitationsCache.data : null;
+if (!invitationsCache) getDailyInvitations(req.user.id).catch(() => {});
+res.json({
+// Original fields
+user_stats: toPublicStats(stats),
+global_ks: globalKS,
+due_today: dueCount,
+total_subjects: subjects.length,
+state_distribution: stateDist,
+pressures: pressures.map((p) => ({
+subject_id: p.subject_id,
+score: p.pressure_score,
+level: p.intervention_level,
+})),
+active_reckoning: activeReckoning
+? {
+id: activeReckoning.id,
+subject_name: activeReckoning.subject_name,
+status: activeReckoning.status,
+}
+: null,
+subjects: subjects.map((s) => ({
+id: s.id,
+name: s.name,
+deck_count: s.deck_count,
+total_cards: s.total_cards,
+})),
+// Frontend-compatible fields
+user: req.user
+? (() => {
+const { password_hash, ...safe } = req.user;
+return safe;
+})()
+: null,
+overallKS: globalKS.score,
+subjectBreakdown,
+streak: { current: stats?.current_streak || 0, shields: stats?.streak_shields_held || 0 },
+invitations,
+tasks: [],
+brainPreview,
+weeklyAnchor,
+morningBrief,
+returnGreeting,  // C-1 FIX: populated above from getReturnGreeting
+treeState,
+persona: persona
+? {
+name: persona.persona_label || persona.persona_code,
+icon: persona.persona_icon || '🌿',
+description: persona.persona_description,
+}
+: null,
+achievements: [],
+});
+} catch (e) {
+res.status(500).json({ error: 'Failed to load dashboard', details: e.message });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  LIBRARY CONVENIENCE ROUTES (wrappers for frontend /library/ calls)
+
+// ════════════════════════════════════════════════════════════════════════════
+
+// RESET-KS-FIX: When resetting progress, also clear KS scores for the subject
+async function resetKnowledgeScores(userId, subjectId) {
+  try {
+    await db.subjectStats.upsert(userId, subjectId, {
+      knowledge_score: 0,
+      credential_tier: 0,
+      average_exam_score: 0,
+      total_exams: 0,
+    });
+    const globalKS = await computeGlobalKnowledgeScore(userId);
+    await db.userStats.update(userId, { knowledge_score_global: globalKS.score });
+    console.log(`[KIWI] KS scores reset for user ${userId}, subject ${subjectId}`);
+  } catch (e) {
+    console.error('[KIWI] Failed to reset KS scores:', e.message);
+  }
+}
+
+const libraryRouter = express.Router();
+
+// POST /library/reset-ks — reset KS scores for a subject
+libraryRouter.post('/reset-ks', async (req, res) => {
+  try {
+    const { subject_id } = req.body || {};
+    if (!subject_id) return res.status(400).json({ error: 'subject_id required' });
+    await resetKnowledgeScores(req.user.id, subject_id);
+    res.json({ success: true, message: 'KS scores reset' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to reset KS', details: e.message });
+  }
+});
+
+
+libraryRouter.use(authenticate);
+
+libraryRouter.use(reckoningLockout);
+// GET /api/library — subject overview (duplicate of progressRouter.get('/library'))
+
+libraryRouter.get('/', async (req, res) => {
+try {
+const subjects = await db.subjects.findManyWithDecks(req.user.id);
+// PERF: fetch ALL card states AND all cards for this user ONCE
+// Eliminates N full-table scans (one per subject via batchInitializeSeedlingStates + computeKnowledgeScore)
+const [_allUserStates, _allUserCards] = await Promise.all([
+  db.cardStates.findByUser(req.user.id).catch(() => []),
+  db.cards.findAllForUser(req.user.id).catch(() => []),
+]);
+const _allStatesMap = new Map(_allUserStates.map(s => [s.card_id, s]));
+const _allCardsMap = new Map(_allUserCards.map(c => [c.id, c]));
+// Build deck→cards map for quick per-subject lookup
+const _deckCardsMap = new Map();
+_allUserCards.forEach(c => {
+  if (!_deckCardsMap.has(c.deck_id)) _deckCardsMap.set(c.deck_id, []);
+  _deckCardsMap.get(c.deck_id).push(c);
+});
+
+// Inline KS computation using pre-loaded data — avoids per-subject DB calls
+function _computeSubjectKS(subjectDecks) {
+  const allCards = subjectDecks.flatMap(d => _deckCardsMap.get(d.id) || []);
+  if (allCards.length === 0) return 0;
+  let sumW = 0;
+  for (const card of allCards) {
+    const st = _allStatesMap.get(card.id) || { state: 'SEEDLING', stage: 1, verified: false };
+    sumW += computeEffectiveWeight(st, card);
+  }
+  return parseFloat(Math.min(100, Math.max(0, (sumW / (allCards.length * 5)) * 100)).toFixed(2));
+}
+
+const enriched = subjects.map((s) => {
+  const allCards = (s.decks || []).flatMap(d => _deckCardsMap.get(d.id) || []);
+  const ks = _computeSubjectKS(s.decks || []);
+  // stageDistribution
+  const stageDistribution = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  allCards.forEach((c) => {
+    stageDistribution[c.stage || 0] = (stageDistribution[c.stage || 0] || 0) + 1;
+  });
+  // dueCount
+  const _libNow = new Date();
+  const dueCount = allCards.filter((c) => isCardDue(c, _libNow)).length;
+  // stateDistribution
+  const stateDistribution = {};
+  for (const c of allCards) {
+    const _lsSt = (_allStatesMap.get(c.id)?.state) || 'SEEDLING';
+    stateDistribution[_lsSt] = (stateDistribution[_lsSt] || 0) + 1;
+  }
+  // recentCards (first 12)
+  const recentCards = allCards.slice(0, 12).map((c) => {
+    const _st = _allStatesMap.get(c.id);
+    return {
+      id: c.id,
+      front: c.front_content || c.front || '',
+      back: c.back_content || c.back || '',
+      stage: c.stage || 0,
+      isDue: !c.next_review_at || new Date(c.next_review_at) <= new Date(),
+      next_review_at: c.next_review_at || null,
+      reviewCount: c.review_count || c.reviewCount || 0,
+      cardState: _st?.state || 'SEEDLING',
+      verified: _st?.verified || false,
+    };
+  });
+  return {
+    id: s.id,
+    name: s.name,
+    color_hex: s.color_hex,
+    color: s.color || s.color_hex,
+    emoji: s.emoji,
+    icon: s.icon || s.emoji,
+    exam_date: s.exam_date || null,
+    deck_count: s.deck_count || 0,
+    cardCount: s.total_cards || 0,
+    total_cards: s.total_cards || 0,
+    ks,
+    recentCards,
+    stageDistribution,
+    stateDistribution,
+    dueCount,
+    decks: (s.decks || []).map((d) => ({
+      id: d.id,
+      name: d.name,
+      card_count: d.card_count || 0,
+      subject_id: d.subject_id,
+    })),
+  };
+});
+res.json({ subjects: enriched });
+} catch (e) {
+res.status(500).json({ error: 'Failed to load library', details: e.message });
+}
+});
+// GET /api/library/subjects/:id/cards — full card list for a subject
+// Supports: ?page=1&limit=50&filter=all|due|not_due|stuck|ghost|slipping|avoided|dangerous|fragile|verified|stable|growing|seedling&search=term
+const _CARD_STATE_FILTERS = new Set(['stuck','ghost','slipping','avoided','dangerous','fragile','verified','stable','growing','seedling']);
+libraryRouter.get('/subjects/:id/cards', async (req, res) => {
+  try {
+    const subject = await db.subjects.findById(req.params.id);
+    if (!subject) return res.status(404).json({ error: 'Subject not found' });
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(10, parseInt(req.query.limit) || 50));
+    const filter = req.query.filter || 'all';
+    const search = (req.query.search || '').toLowerCase().trim();
+    const now = new Date();
+    // Collect all cards across all decks for this subject
+    let allCards = [];
+    const subjectDecks = await db.decks.findBySubject(req.user.id, req.params.id).catch(() => []);
+    for (const d of subjectDecks) {
+      const deckCards = await db.cards.findByDeck(req.user.id, d.id).catch(() => []);
+      allCards.push(...deckCards);
+    }
+    // Fetch card states for ALL cards in one batch query — needed for state filter + badge display
+    const allCardIds = allCards.map(c => c.id);
+    const statesList = allCardIds.length > 0
+      ? await batchInitializeSeedlingStates(req.user.id, allCardIds).catch(() => [])
+      : [];
+    const statesMap = new Map(statesList.map(s => [s.card_id, s]));
+    // Apply filter
+    if (filter === 'due') {
+      allCards = allCards.filter((c) => isCardDue(c, now));
+    } else if (filter === 'resting' || filter === 'not_due') {
+      allCards = allCards.filter((c) => !isCardDue(c, now));
+    } else if (_CARD_STATE_FILTERS.has(filter)) {
+      // State-based filter — only keep cards whose stored state matches
+      const targetState = filter.toUpperCase();
+      allCards = allCards.filter(c => (statesMap.get(c.id)?.state || 'SEEDLING') === targetState);
+      // Return an honest error if no cards match (Fix #4)
+      if (allCards.length === 0) {
+        return res.status(400).json({
+          error: `No ${filter.toUpperCase()} cards found in this subject. Cards reach this state through review history — try a different filter or study more cards first.`,
+        });
+      }
+    }
+    // Apply search
+    if (search) {
+      allCards = allCards.filter((c) => {
+        const front = (c.front_content || c.front || '').toLowerCase();
+        const back = (c.back_content || c.back || '').toLowerCase();
+        return front.includes(search) || back.includes(search);
+      });
+    }
+    const total = allCards.length;
+    const totalPages = Math.ceil(total / limit);
+    const paginated = allCards.slice((page - 1) * limit, page * limit).map((c) => {
+      const stateDoc = statesMap.get(c.id);
+      return {
+        id: c.id,
+        front: c.front_content || c.front || '',
+        back: c.back_content || c.back || '',
+        stage: c.stage || 0,
+        isDue: isCardDue(c, now),
+        reviewCount: c.review_count || c.reviewCount || 0,
+        next_review_at: c.next_review_at || null,
+        deck_id: c.deck_id || null,
+        cardState: stateDoc?.state || 'SEEDLING',
+        verified: stateDoc?.verified || false,
+      };
+    });
+    res.json({ cards: paginated, total, page, totalPages, limit });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch cards', details: e.message });
+  }
+});
+
+// POST /api/library/subjects — create subject (maps to /subjects/)
+// Accepts: {name, color, icon, exam_date}
+
+libraryRouter.post('/subjects', async (req, res) => {
+try {
+const { name, color, icon, exam_date } = req.body;
+if (!name) return res.status(400).json({ error: 'Name required' });
+// DB columns are "color" and "icon" (confirmed from Render.com logs)
+const subjectData = { name, color: color || '#4F46E5', icon: icon || '📚' };
+if (exam_date) subjectData.exam_date = exam_date;
+const subject = await db.subjects.create(req.user.id, subjectData);
+// Best-effort deck creation — only pass columns guaranteed in the schema.
+// If this fails the subject is still returned successfully.
+let deckId = null;
+try {
+const deck = await db.decks.create(req.user.id, { name: `${name} — Main Deck`, subject_id: subject.id });
+deckId = deck.id;
+} catch (deckErr) {
+console.error('[KIWI] Auto-deck creation failed (non-fatal):', deckErr.message);
+}
+res.status(201).json({ ...subject, default_deck_id: deckId });
+} catch (e) {
+console.error('[KIWI] Subject creation error:', e.message);
+// Include DB error detail in the response so it surfaces in the UI for diagnosis.
+res.status(500).json({ error: e.message || 'Failed to create subject', details: e.message });
+}
+});
+// PUT /api/library/subjects/:id — update subject
+
+libraryRouter.put('/subjects/:id', async (req, res) => {
+try {
+const { name, color, icon, exam_date, test_date, color_hex, emoji } = req.body;
+const updates = {};
+if (name) updates.name = name;
+if (color) updates.color_hex = color;
+if (color_hex) updates.color_hex = color_hex;
+if (icon) updates.emoji = icon;
+if (emoji) updates.emoji = emoji;
+if (exam_date !== undefined) updates.exam_date = exam_date;
+if (test_date !== undefined) updates.test_date = test_date;
+const subject = await db.subjects.update(req.user.id, req.params.id, updates);
+res.json(subject);
+} catch (e) {
+res.status(500).json({ error: 'Failed to update subject', details: e.message });
+}
+});
+// DELETE /api/library/subjects/:id — delete subject
+
+libraryRouter.delete('/subjects/:id', async (req, res) => {
+try {
+await db.subjects.delete(req.user.id, req.params.id);
+res.json({ message: 'Subject deleted' });
+} catch (e) {
+res.status(500).json({ error: 'Failed to delete subject', details: e.message });
+}
+});
+// POST /api/library/cards — add a card to a subject\'s default deck
+// Accepts: {subjectId, front, back} — auto-resolves deck_id
+
+libraryRouter.post('/cards', async (req, res) => {
+try {
+const { subjectId, front, back, deck_id } = req.body;
+if (!subjectId || !front || !back)
+return res.status(400).json({ error: 'subjectId, front, and back required' });
+// Resolve deck_id: use provided or find/create default deck
+let targetDeckId = deck_id;
+if (!targetDeckId) {
+const decks = await db.decks.findBySubject(req.user.id, subjectId);
+if (decks.length > 0) {
+targetDeckId = decks[0].id;
+} else {
+// Create a default deck
+const subject = await db.subjects.findById(subjectId);
+const newDeck = await db.decks.create(req.user.id, {
+name: `${subject?.name || 'Subject'} — Main Deck`,
+description: 'Auto-created default deck',
+subject_id: subjectId,
+card_count: 0,
+is_public: false,
+});
+targetDeckId = newDeck.id;
+}
+}
+const ai_summary = await summarizeCard(front, back).catch(() => '');
+const card = await db.cards.create(req.user.id, {
+deck_id: targetDeckId,
+front_content: front,
+back_content: back,
+tags: [],
+ai_summary,
+});
+await db.decks.update(req.user.id, targetDeckId, { card_count: { increment: 1 } });
+await initializeCardState(req.user.id, card.id, CARD_STATES.SEEDLING);
+res.status(201).json(card);
+} catch (e) {
+res.status(500).json({ error: 'Failed to add card', details: e.message });
+}
+});
+// POST /api/library/import — bulk import cards to subject
+// Accepts: {subjectId, cards: [{front, back}]}
+
+libraryRouter.post('/import', async (req, res) => {
+try {
+const { subjectId, cards } = req.body;
+if (!subjectId || !Array.isArray(cards) || cards.length === 0) {
+return res.status(400).json({ error: 'subjectId and cards array required' });
+}
+// Resolve deck_id
+const decks = await db.decks.findBySubject(req.user.id, subjectId);
+let targetDeckId;
+if (decks.length > 0) {
+targetDeckId = decks[0].id;
+} else {
+const subject = await db.subjects.findById(subjectId);
+const newDeck = await db.decks.create(req.user.id, {
+name: `${subject?.name || 'Subject'} — Main Deck`,
+description: 'Auto-created default deck',
+subject_id: subjectId,
+card_count: 0,
+is_public: false,
+});
+targetDeckId = newDeck.id;
+}
+const cardsData = cards
+.map((c) => ({
+front_content: c.front || c.front_content || '',
+back_content: c.back || c.back_content || '',
+}))
+.filter((c) => c.front_content && c.back_content);
+if (cardsData.length === 0)
+return res.status(422).json({ error: 'No valid cards in import data' });
+const created = await db.cards.createMany(req.user.id, targetDeckId, cardsData);
+await db.decks.update(req.user.id, targetDeckId, {
+card_count: { increment: created.length },
+});
+await batchInitializeSeedlingStates(
+req.user.id,
+created.map((c) => c.id)
+);
+// FIX #4e: Recalculate KS after library bulk import
+const libDeck = await db.decks.findById(req.user.id, targetDeckId).catch(() => null);
+if (libDeck?.subject_id) {
+await persistKnowledgeScore(req.user.id, libDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+res.status(201).json({ cards: created, count: created.length, deck_id: targetDeckId });
+} catch (e) {
+res.status(500).json({ error: 'Import failed', details: e.message });
+}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MOUNT ROUTES
+
+// ════════════════════════════════════════════════════════════════════════════
+
+const tourRouter = express.Router();
+tourRouter.use(authenticate);
+tourRouter.use(reckoningLockout);
+
+tourRouter.get('/state', async (req, res) => {
+  try {
+    res.json(await getKiwiTourState(req.user.id));
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to load tour state', details: e.message });
+  }
+});
+
+tourRouter.put('/state', async (req, res) => {
+  try {
+    const status = String(req.body?.status || '');
+    const version = String(req.body?.version || KIWI_TOUR_VERSION);
+    const state = await setKiwiTourState(req.user.id, status, version);
+    res.json(state);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message || 'Failed to update tour state' });
+  }
+});
+
+app.use('/api/auth', authRouter);
+app.use('/api/tour', tourRouter);
+const teachingRouter = createTeachingRouter({
+  authenticate,
+  reckoningLockout,
+  env: process.env,
+  subjectSource: db.subjects,
+  query,
+  withTransaction,
+  randomUUID,
+  // D30 has not qualified Teaching model routes. D07/D08 intelligence remains
+  // wired through Teaching-Orchestrator contracts and therefore held.
+  d07Intelligence: null,
+  d08Intelligence: null,
+  d09Intelligence: null,
+  d11Intelligence: null,
+  d11PublishedEventRegistry: teachingPublishedEvents,
+  d12Intelligence: null,
+  d12PublishedEventRegistry: teachingPublishedEvents,
+  // D30 has not empirically qualified TPF-09/TPF-19 Teaching routes. D13
+  // deterministic SKM state is active; optional model interpretation is held.
+  d13Intelligence: null,
+  d13PublishedEventRegistry: teachingPublishedEvents,
+  teachingRuntimePlatform,
+});
+app.use('/api/teaching', teachingRouter);
+
+app.use('/api/subjects', subjectRouter);
+
+app.use('/api/library', libraryRouter);
+
+app.use('/api/decks', deckRouter);
+
+app.use('/api/cards', cardRouter);
+
+app.use('/api/study', studyRouter);
+
+app.use('/api/exams', examRouter);
+
+app.use('/api/tasks', taskRouter);
+
+app.use('/api/community', communityRouter);
+
+app.use('/api/admin', adminRouter);
+
+app.use('/api/biome', biomeRouter);
+
+app.use('/api/ritual', ritualRouter);
+
+app.use('/api/marketplace', marketplaceRouter);
+
+app.use('/api/narrative', narrativeRouter);
+
+
+// F-12 FIX: Real contact endpoint — replaces silent setTimeout stub in frontend
+// In-memory store for now; hook to email/Brevo in production via CONTACT_EMAIL env
+const _contactMessages = [];
+app.post('/api/contact', async (req, res) => {
+  try {
+    const { name, email, message } = req.body || {};
+    if (!name || !email || !message) {
+      return res.status(400).json({ error: 'name, email and message are required' });
+    }
+    if (!/^[^@]+@[^@]+\.[^@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+    const entry = { name, email, message, received_at: new Date().toISOString() };
+    _contactMessages.push(entry);
+    // Optional: forward via Brevo if configured
+    if (process.env.CONTACT_EMAIL) {
+      sendBrevoEmail(process.env.CONTACT_EMAIL, 'contact_form', entry).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    }
+    console.log('[CONTACT]', entry.received_at, email);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to send message', details: e.message });
+  }
+});
+
+// All reckoning routes are served via /api/brain/reckoning/* (brainRouter).
+// reckoningRouter was previously unmounted. GET /reckoning/active is wired below.
+
+app.use('/api/brain', brainRouter);
+app.use('/api/bubbles', bubbleRouter);
+
+app.use('/api/ks', ksRouter);
+// ── Backend self-health ping ─────────────────────────────────────────────────
+// A lightweight external GET against the public /api/health endpoint keeps the
+// Render service warm and continuously verifies that the public route is
+// reachable. It is explicitly configurable so local/test environments never
+// create accidental background traffic.
+const _selfPingState = {
+  enabled: false,
+  target: null,
+  interval_ms: null,
+  last_attempt_at: null,
+  last_success_at: null,
+  last_status: null,
+  last_error: null,
+  consecutive_failures: 0,
+};
+
+function _resolveSelfPingConfig() {
+  const explicitUrl = String(process.env.SELF_PING_URL || '').trim();
+  const renderBase = String(process.env.RENDER_EXTERNAL_URL || '').trim().replace(/\/$/, '');
+  const target = explicitUrl || (renderBase ? renderBase + '/api/health' : '');
+
+  const requestedInterval = Number.parseInt(process.env.SELF_PING_INTERVAL_MS || '600000', 10);
+  // Keep a sane floor so a bad environment value cannot create a request storm.
+  const intervalMs = Number.isFinite(requestedInterval)
+    ? Math.max(60000, requestedInterval)
+    : 600000;
+
+  const explicitlyDisabled = /^(0|false|off|no)$/i.test(
+    String(process.env.SELF_PING_ENABLED || '')
+  );
+
+  return {
+    enabled: !explicitlyDisabled && !!target && process.env.NODE_ENV !== 'test',
+    target,
+    intervalMs,
+  };
+}
+
+function startSelfHealthPing() {
+  const config = _resolveSelfPingConfig();
+  _selfPingState.enabled = config.enabled;
+  _selfPingState.target = config.target || null;
+  _selfPingState.interval_ms = config.intervalMs;
+
+  if (!config.enabled) {
+    console.log('[KIWI SELF-PING] Disabled (no target configured or explicitly disabled).');
+    return null;
+  }
+
+  let inFlight = false;
+  let hasLoggedSuccess = false;
+
+  const pingOnce = async () => {
+    if (inFlight) return;
+    inFlight = true;
+    _selfPingState.last_attempt_at = new Date().toISOString();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    timeout.unref?.();
+
+    try {
+      const response = await fetch(config.target, {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json',
+          'user-agent': 'KIWI-self-health-ping/1.0',
+          'x-kiwi-self-ping': '1',
+        },
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+
+      _selfPingState.last_status = response.status;
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      // Drain the response body so the underlying connection can be reused.
+      await response.text().catch(() => '');
+
+      const wasFailing = _selfPingState.consecutive_failures > 0;
+      _selfPingState.last_success_at = new Date().toISOString();
+      _selfPingState.last_error = null;
+      _selfPingState.consecutive_failures = 0;
+
+      if (!hasLoggedSuccess || wasFailing) {
+        console.log(
+          `[KIWI SELF-PING] Health check OK (${response.status}) -> ${config.target}`
+        );
+        hasLoggedSuccess = true;
+      }
+    } catch (error) {
+      const message = error?.name === 'AbortError'
+        ? 'Timed out after 10s'
+        : String(error?.message || error);
+      _selfPingState.last_error = message;
+      _selfPingState.consecutive_failures += 1;
+      console.warn(
+        `[KIWI SELF-PING] Health check failed (#${_selfPingState.consecutive_failures}): ${message}`
+      );
+    } finally {
+      clearTimeout(timeout);
+      inFlight = false;
+    }
+  };
+
+  // Do not compete with startup migrations/deploy warm-up. First probe runs
+  // after 60 seconds; subsequent probes use the configured interval.
+  const firstTimer = setTimeout(() => {
+    pingOnce().catch(() => {});
+  }, 60000);
+  firstTimer.unref?.();
+
+  const interval = setInterval(() => {
+    pingOnce().catch(() => {});
+  }, config.intervalMs);
+  interval.unref?.();
+
+  console.log(
+    `[KIWI SELF-PING] Enabled every ${Math.round(config.intervalMs / 60000)}m -> ${config.target}`
+  );
+
+  return { firstTimer, interval };
+}
+
+// Health check must be registered BEFORE progressRouter (which applies authenticate
+// to all /api/* routes, which would block this public endpoint)
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    version: '2.0.0-living-ecosystem',
+    self_ping: {
+      enabled: _selfPingState.enabled,
+      interval_ms: _selfPingState.interval_ms,
+      last_success_at: _selfPingState.last_success_at,
+      last_status: _selfPingState.last_status,
+      consecutive_failures: _selfPingState.consecutive_failures,
+    },
+  });
+});
+
+// Fixed: Use single mount point so sub-paths resolve correctly
+// /api/achievements  → progressRouter.get('/achievements', ...)
+// /api/progress/    → progressRouter.get('/trouble-cards', ...) etc.
+// /api/settings      → progressRouter.put('/settings', ...)
+// /api/dashboard     → progressRouter.get('/dashboard', ...)
+
+// ── Bug 2 Fix: Job polling endpoint — fallback for clients where WS is slow/unavailable ──
+// ROOT FIX: Falls back to PostgreSQL when in-memory job is missing (server restart / multi-instance).
+const _jobsRouter = express.Router();
+_jobsRouter.use(authenticate);
+_jobsRouter.get('/:id', async (req, res) => {
+  // 1. Fast path — check in-memory store
+  const memJob = _jobStore.get(req.params.id);
+  if (memJob && memJob.expiresAt > Date.now()) {
+    return res.json({
+      status: memJob.status,
+      type:   memJob.type,
+      result: memJob.result || null,
+      exam:   memJob.result || null,
+      error:  memJob.error  || null,
+    });
+  }
+  // 2. DB fallback — survives server restarts and multi-instance deployments
+  try {
+    const { rows } = await query(
+      'SELECT * FROM background_jobs WHERE id = $1 AND expires_at > NOW() LIMIT 1',
+      [req.params.id]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: 'Job not found or expired. Result may have already been delivered via WebSocket.' });
+    }
+    const row    = rows[0];
+    const result = row.result
+      ? (typeof row.result === 'object' ? row.result : JSON.parse(row.result))
+      : null;
+    // Repopulate in-memory cache so subsequent polls are fast
+    _jobStore.set(req.params.id, {
+      status: row.status, type: row.type, result, error: row.error,
+      expiresAt: new Date(row.expires_at).getTime(),
+    });
+    res.json({ status: row.status, type: row.type, result, exam: result, error: row.error || null });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to retrieve job status' });
+  }
+});
+app.use('/api/jobs', _jobsRouter);
+
+// ── POST /api/debug/exam-parse-test ─────────────────────────────────────────
+// Test endpoint: runs the full AI generation + parse pipeline and returns
+// detailed diagnostics without creating a real exam session in the DB.
+// Usage: POST /api/debug/exam-parse-test  { notes: "...", count: 10 }
+// Protected by authenticate — only signed-in users can call it.
+const _debugRouter = express.Router();
+_debugRouter.use(authenticate);
+_debugRouter.post('/exam-parse-test', async (req, res) => {
+  const { notes, count = 10 } = req.body || {};
+  if (!notes) return res.status(400).json({ error: 'notes is required' });
+  const _n = Math.max(1, Math.min(100, parseInt(count) || 10));
+  const startMs = Date.now();
+  try {
+    console.log(`[KIWI DEBUG] exam-parse-test: count=${_n}, notes_len=${notes.length}`);
+    const aiText = await generateCBTQuestions(notes, _n);
+    const parseStart = Date.now();
+    const questions = parseCBTResponse(aiText, 'debug-session', []);
+    const parseMs = Date.now() - parseStart;
+    const totalMs = Date.now() - startMs;
+    // Build per-question summary (stem preview + options check)
+    const qSummary = questions.map((q, i) => ({
+      n: i + 1,
+      stem: (q.stem || '').slice(0, 80) + ((q.stem || '').length > 80 ? '…' : ''),
+      hasAllOptions: !!(q.option_a && q.option_b && q.option_c && q.option_d),
+      correctAnswer: q.correct_answer,
+      hasExplanation: !!q.explanation && q.explanation !== 'No explanation provided.',
+    }));
+    res.json({
+      requested: _n,
+      generated: questions.length,
+      match: questions.length === _n,
+      shortfall: Math.max(0, _n - questions.length),
+      timings: { totalMs, parseMs, aiMs: totalMs - parseMs },
+      rawResponseChars: aiText.length,
+      questions: qSummary,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, timings: { totalMs: Date.now() - startMs } });
+  }
+});
+app.use('/api/debug', _debugRouter);
+
+app.use('/api', progressRouter);
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CRON JOBS
+
+// ════════════════════════════════════════════════════════════════════════════
+// ── CRON JOBS ────────────────────────────────────────────────────────────────
+if (process.env.NODE_ENV !== 'test') {
+// ── KS recompute batch — 60s drain ───────────────────────────────────────────
+cron.schedule('* * * * *', async () => {
+  if (_ksQueue.size === 0) return;
+  const batch = [..._ksQueue.values()];
+  _ksQueue.clear();
+  let n = 0;
+  for (const { userId, cardId } of batch) {
+    await recomputeAndStoreCardState(userId, cardId).catch((e) => console.error("[KIWI] silent catch:", e.message));
+    n++;
+  }
+  if (n > 0) console.log(`[KIWI KS] Batch: ${n} card state${n !== 1 ? 's' : ''} recomputed`);
+});
+
+// ── Every 10 minutes: auto-forfeit abandoned active exams ────────────────────
+// Catches any exam that went active but was never submitted (browser crash,
+// refresh without pagehide firing, mobile kill, etc).
+// Threshold: 30 minutes of inactivity after exam started.
+cron.schedule('*/10 * * * *', async () => {
+  try {
+    const { rows: abandoned } = await query(
+      `SELECT es.id, es.user_id, es.subject_id,
+              COALESCE(es.time_limit_seconds, 1800) AS time_limit_seconds
+       FROM exam_sessions es
+       WHERE es.status = 'active'
+         AND es.is_reckoning = false
+         AND es.started_at + (COALESCE(es.time_limit_seconds, 1800) + 300)
+             * INTERVAL '1 second' < NOW()`
+    );
+    if (abandoned.length === 0) return;
+    console.log(`[KIWI CRON] Auto-forfeiting ${abandoned.length} abandoned exam(s)`);
+    for (const es of abandoned) {
+      try {
+        // Capture pre-forfeit KS
+        const _preKs = await computeKnowledgeScore(es.user_id, es.subject_id).catch(() => ({ score: 0 }));
+        const _preKsScore = _preKs.score || 0;
+        // Mark forfeited
+        await query(
+          `UPDATE exam_sessions SET status = 'forfeited', completed_at = NOW() WHERE id = $1`,
+          [es.id]
+        );
+        // Downgrade all cards in this exam (treat as all wrong)
+        const { rows: questions } = await query(
+          `SELECT * FROM exam_questions WHERE exam_session_id = $1 AND user_id = $2`,
+          [es.id, es.user_id]
+        );
+        if (es.subject_id && questions.length > 0) {
+          const _examForSRS = { id: es.id, user_id: es.user_id, subject_id: es.subject_id,
+            deck_ids: [], questions: questions.map(q => ({ ...q, is_correct: false })) };
+          await applyExamSRSFeedback(es.user_id, _examForSRS).catch((e) => console.error('[KIWI CRON] SRS downgrade failed:', e.message));
+          await persistKnowledgeScore(es.user_id, es.subject_id).catch(() => {});
+          const _postKs = await computeKnowledgeScore(es.user_id, es.subject_id).catch(() => ({ score: _preKsScore }));
+          const _ksDelta = parseFloat(((_postKs.score || 0) - _preKsScore).toFixed(2));
+          await query(`UPDATE exam_sessions SET ks_delta = $1 WHERE id = $2`, [_ksDelta, es.id]);
+        }
+        // Brain pressure penalty
+        const bp = await db.brainPressure.get(es.user_id, es.subject_id).catch(() => null);
+        const cur = parseFloat(bp?.pressure_score) || 0; // PRESSURE-FIX: pg returns NUMERIC as string; without parseFloat, cur+15 becomes string concat "0.0015" not 15
+        await db.brainPressure.set(es.user_id, es.subject_id, {
+          pressure_score: Math.min(100, cur + 15),
+          intervention_level: computeInterventionLevel(Math.min(100, cur + 15)),
+          sources: {
+            ...(bp?.sources || {}),
+            manual_exam_forfeit: Math.min(20, (Number(bp?.sources?.manual_exam_forfeit) || 0) + 15),
+        manual_exam_forfeit_at: new Date().toISOString(),
+          },
+        }).catch(() => {});
+        wsSend(es.user_id, 'pressure_change', {
+          subject_id: es.subject_id,
+          pressure_score: Math.min(100, cur + 15),
+          delta: 15,
+          source: 'auto_forfeit',
+        });
+        if (es.subject_id) {
+          wsSend(es.user_id, 'ks_change', {
+            subject_id: es.subject_id,
+            ks_delta: _ksDelta,
+            source: 'auto_forfeit',
+          });
+        }
+        console.log(`[KIWI CRON] Auto-forfeited abandoned exam ${es.id} for user ${es.user_id}`);
+      } catch (_examErr) {
+        console.error(`[KIWI CRON] Failed to auto-forfeit exam ${es.id}:`, _examErr.message);
+      }
+    }
+  } catch (e) {
+    console.error('[KIWI CRON] Abandoned exam cleanup failed:', e.message);
+  }
+});
+
+
+
+cron.schedule('0 3 * * *', async () => {
+console.log('[KIWI CRON] Running daily maintenance...');
+let allUsers = [];
+try {
+allUsers = await getUsersWithCache(); // Fix #33: TTL cache
+} catch (e) {
+console.error('[KIWI CRON] Failed to fetch users:', e.message);
+return;
+}
+// 1. Vitality is derived; daily maintenance never applies a health penalty.
+// 2. Recalculate brain pressure for every subject of every user
+try {
+for (const user of allUsers) {
+try {
+await calculateAllSubjectPressures(user.id);
+await ecosystemV2.refreshVitality(user.id);
+} catch (e) {
+console.error(`[KIWI CRON] Pressure/Vitality recalc failed for ${user.id}:`, e.message);
+}
+}
+console.log(`[KIWI CRON] Pressure recalculated for ${allUsers.length} users`);
+} catch (e) {
+console.error('[KIWI CRON] Daily pressure cron failed:', e.message);
+}
+// 3. Pre-generate Morning Brief only for recently active learners.
+// Delivery B keeps this as an optional latency optimization because the frontend
+// can now hydrate on demand. It must never synthesize content for dormant users.
+try {
+let generated = 0;
+let skipped = 0;
+for (const user of allUsers) {
+if (
+user.is_guest ||
+!user.last_login_at ||
+daysSince(user.last_login_at) > 14
+) {
+skipped++;
+continue;
+}
+try {
+await getMorningBrief(user.id);
+generated++;
+} catch (e) {
+console.error(`[KIWI CRON] Morning brief failed for ${user.id}:`, e.message);
+}
+}
+console.log(`[KIWI CRON] Morning briefs prepared: ${generated}; skipped inactive/guest: ${skipped}`);
+} catch (e) {
+console.error('[KIWI CRON] Morning brief cron failed:', e.message);
+}
+// 4. Pre-generate study tasks only for the same recently active population.
+// Users can still explicitly refresh tasks through /api/tasks/refresh.
+try {
+let generated = 0;
+let skipped = 0;
+for (const user of allUsers) {
+if (
+user.is_guest ||
+!user.last_login_at ||
+daysSince(user.last_login_at) > 14
+) {
+skipped++;
+continue;
+}
+try {
+await generateTasksForUser(user.id);
+generated++;
+} catch (e) {
+console.error(`[KIWI CRON] Task gen failed for ${user.id}:`, e.message);
+}
+}
+console.log(`[KIWI CRON] Study tasks prepared: ${generated}; skipped inactive/guest: ${skipped}`);
+} catch (e) {
+console.error('[KIWI CRON] Daily task gen cron failed:', e.message);
+}
+// 5. Streak gaps are resolved by the idempotent active-day event.
+});
+// ── Daily at 8:00 AM: Morning login reminder (email + Telegram) ──────────────
+
+cron.schedule('0 8 * * *', async () => {
+// F-19 FIX: single pass — send streak_danger email if streak > 0, else plain reminder (not both)
+console.log('[KIWI CRON] Sending 8AM morning reminders (single-pass)...');
+const today8 = new Date().toISOString().slice(0, 10);
+try {
+  const allUsers = await getUsersWithCache();
+  let reminders = 0, danger = 0;
+  for (const user of allUsers) {
+    if (user.is_guest) continue;
+    try {
+      const prefs = user.notification_preferences || {};
+      const stats = await db.userStats.get(user.id).catch(() => null);
+      const lastStudy = stats?.last_study_date
+        ? new Date(stats.last_study_date).toISOString().slice(0, 10)
+        : null;
+      if (lastStudy === today8) continue; // already studied today — no email
+      const hasStreak = (stats?.current_streak || 0) > 0;
+      if (hasStreak) {
+        // User has an active streak at risk — send streak danger only
+        if (prefs.email !== false && user.email) {
+          await sendEmailNotification(user.id, 'streak_danger', { streak: stats.current_streak }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          danger++;
+        }
+      } else {
+        // No streak — send plain daily reminder
+        if (prefs.telegram !== false && user.telegram_chat_id) {
+          await sendTelegramDailyReminder(user.id);
+          reminders++;
+        }
+        if (prefs.email !== false && user.email) {
+          await sendBrevoEmail(user.email, 'daily_login_reminder', {
+            name: user.username || 'Learner',
+            streak: 0,
+            slot: 'morning',
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+        }
+      }
+    } catch (e) {
+      console.error(`[KIWI CRON] 8AM pass failed for ${user.id}:`, e.message);
+    }
+  }
+  console.log(`[KIWI CRON] 8AM done — reminders: ${reminders}, streak-danger: ${danger}`);
+} catch (e) {
+  console.error('[KIWI CRON] 8AM cron failed:', e.message);
+}
+});
+// ── Daily at 11:00 AM: Mid-morning login reminder (users who haven't studied today) ──
+cron.schedule('0 11 * * *', async () => {
+  console.log('[KIWI CRON] Sending 11AM login reminders...');
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const allUsers = await getUsersWithCache(); // Fix #33: TTL cache
+    let sentEmail = 0, sentTg = 0;
+    for (const user of allUsers) {
+      if (user.is_guest) continue;
+      try {
+        const stats = await db.userStats.get(user.id);
+        const lastStudy = stats?.last_study_date
+          ? new Date(stats.last_study_date).toISOString().slice(0, 10)
+          : null;
+        // Only notify users who haven't studied yet today
+        if (lastStudy === today) continue;
+        const prefs = user.notification_preferences || {};
+        // Email reminder
+        if (prefs.email !== false && user.email) {
+          await sendBrevoEmail(user.email, 'daily_login_reminder', {
+            name: user.username || 'Learner',
+            streak: stats?.current_streak || 0,
+            slot: 'morning',
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          sentEmail++;
+        }
+        // Telegram reminder
+        if (prefs.telegram !== false && user.telegram_chat_id) {
+          await sendTelegramMessage(
+            user.telegram_chat_id,
+            `☀️ *Good morning, ${user.username || 'Learner'}!*\nYour KIWI tree is waiting. ${stats?.current_streak > 0 ? `Keep your *${stats.current_streak}-day streak* alive!` : 'Start your streak today!'} 🌱`
+          ).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          sentTg++;
+        }
+      } catch (e) {
+        console.error(`[KIWI CRON] 11AM reminder failed for ${user.id}:`, e.message);
+      }
+    }
+    console.log(`[KIWI CRON] 11AM reminders — email: ${sentEmail}, telegram: ${sentTg}`);
+  } catch (e) {
+    console.error('[KIWI CRON] 11AM cron failed:', e.message);
+  }
+});
+
+// ── Daily at 2:00 PM: Afternoon login reminder (users who still haven't studied) ──
+cron.schedule('0 14 * * *', async () => {
+  console.log('[KIWI CRON] Sending 2PM login reminders...');
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const allUsers = await getUsersWithCache(); // Fix #33: TTL cache
+    let sentEmail = 0, sentTg = 0;
+    for (const user of allUsers) {
+      if (user.is_guest) continue;
+      try {
+        const stats = await db.userStats.get(user.id);
+        const lastStudy = stats?.last_study_date
+          ? new Date(stats.last_study_date).toISOString().slice(0, 10)
+          : null;
+        // Only notify users who still haven't studied today
+        if (lastStudy === today) continue;
+        const prefs = user.notification_preferences || {};
+        // Email reminder
+        if (prefs.email !== false && user.email) {
+          await sendBrevoEmail(user.email, 'daily_login_reminder', {
+            name: user.username || 'Learner',
+            streak: stats?.current_streak || 0,
+            slot: 'afternoon',
+          }).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          sentEmail++;
+        }
+        // Telegram reminder
+        if (prefs.telegram !== false && user.telegram_chat_id) {
+          const streakMsg = (stats?.current_streak || 0) > 1
+            ? `⚠️ Don't break your *${stats.current_streak}-day streak* — you still have time!`
+            : `📚 Afternoon check-in — a quick review keeps your tree growing!`;
+          await sendTelegramMessage(
+            user.telegram_chat_id,
+            `🕑 *2PM KIWI Reminder*\n${streakMsg}`
+          ).catch((e) => console.error("[KIWI] silent catch:", e.message));
+          sentTg++;
+        }
+      } catch (e) {
+        console.error(`[KIWI CRON] 2PM reminder failed for ${user.id}:`, e.message);
+      }
+    }
+    console.log(`[KIWI CRON] 2PM reminders — email: ${sentEmail}, telegram: ${sentTg}`);
+  } catch (e) {
+    console.error('[KIWI CRON] 2PM cron failed:', e.message);
+  }
+});
+
+// ── Weekly on Monday at 4:00 AM: Chronicles, personas, seedling awards ───────
+
+cron.schedule('0 0 * * 1', async () => {
+// P6.1 FIX: Changed from 4:00 AM to 00:00 UTC as per spec
+console.log('[KIWI CRON] Running weekly generation...');
+try {
+const users = await getUsersWithCache(); // Fix #33: TTL cache
+for (const user of users) {
+if (user.is_guest) continue;
+try {
+await generateWeeklyChronicle(user.id);
+await generateWeeklyPersona(user.id);
+await getWeeklyAnchor(user.id); // P6.7 FIX: generate and cache anchor every Monday
+// BUG-5b FIX: snapshot previous_week_ks so ks_gain/drop almanac entries can compare
+const subjectsForKsSnapshot = await db.subjects.findManyWithDecks(user.id).catch(() => []);
+for (const sub of subjectsForKsSnapshot) {
+const ks = await computeKnowledgeScore(user.id, sub.id).catch(() => ({ score: 0 }));
+await db.subjectStats.update(user.id, sub.id, {
+previous_week_ks: ks.score,
+previous_week_ks_recorded_at: new Date().toISOString(),
+}).catch((e) => console.error("[KIWI] silent catch:", e.message));
+}
+await hookSeedlingEarnings(user.id, 'weekly_chronicle', {});
+// Send weekly digest email — pull stats for the past 7 days
+try {
+  const weekStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const [weekSessions, weekExams, userStats] = await Promise.all([
+    db.sessions.findMany(user.id, { session_completed: true, started_at_gte: weekStart }, { limit: 200 }).catch(() => []),
+    db.examSessions.findMany(user.id, { status: 'completed', started_at_gte: weekStart }, { limit: 200 }).catch(() => []),
+    db.userStats.get(user.id).catch(() => null),
+  ]);
+  const reviews = weekSessions.reduce((sum, s) => sum + (s.cards_studied || 0), 0);
+  const exams = weekExams.length;
+  const ksDelta = userStats
+    ? Math.round((userStats.ks_score || 0) - (userStats.previous_week_ks || 0))
+    : 0;
+  await sendEmailNotification(user.id, 'weekly_digest', {
+    name: user.username || 'Learner',
+    reviews,
+    exams,
+    ksDelta,
+    streak: userStats?.current_streak || 0,
+  });
+} catch (e) {
+  console.error(`[KIWI CRON] Weekly digest email failed for ${user.id}:`, e.message);
+}
+} catch (e) {
+console.error(`[KIWI CRON] Weekly gen failed for ${user.id}:`, e.message);
+}
+}
+console.log(`[KIWI CRON] Weekly generation complete for ${users.length} users`);
+} catch (e) {
+console.error('[KIWI CRON] Weekly cron failed:', e.message);
+}
+});
+}
+
+// NOTE: 404 and error handlers moved inside startServer() so they are
+// registered AFTER the notification routes (which also live in startServer).
+// Express matches middleware in registration order — placing these here would
+// swallow every request to /api/notifications/* before the real handlers fire.
+
+// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  STARTUP RECOVERY — Complete any interrupted background KS calculations
+// ════════════════════════════════════════════════════════════════════════════
+async function recoverInterruptedExams() {
+  console.log('[KIWI] Checking for interrupted exam KS accounting...');
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const { rows: recentExams } = await query(
+      `SELECT * FROM exam_sessions
+       WHERE status IN ('completed','forfeited')
+         AND completed_at >= $1
+         AND ks_delta IS NULL
+         AND ks_processed_at IS NULL
+         AND total_questions > 0`,
+      [since]
+    );
+
+    for (const exam of recentExams) {
+      try {
+        // A server restart cannot reconstruct what portion of today's current KS
+        // was caused by this historical exam. Recompute the current canonical KS,
+        // store the after snapshot, and explicitly leave delta NULL rather than
+        // fabricating '+current KS' as the old recovery routine did.
+        const current = await persistKnowledgeScore(exam.user_id, exam.subject_id).catch(() => null);
+        await db.examSessions.update(exam.user_id, exam.id, {
+          ks_after: _finiteKsNumber(current?.score),
+          ks_delta: null,
+          ks_processed_at: new Date(),
+        });
+        console.warn(`[KIWI] Exam ${exam.id} recovered with KS delta unavailable; no historical delta was invented.`);
+      } catch (e) {
+        console.error(`[KIWI] Failed to reconcile exam ${exam.id}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[KIWI] Exam KS recovery failed:', e.message);
+  }
+}
+
+// Ensure ks_delta column exists (idempotent migration)
+async function ensureKSDeltaColumn() {
+  try {
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_delta NUMERIC`);
+    await query(`ALTER TABLE exam_sessions ALTER COLUMN ks_delta DROP DEFAULT`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_before NUMERIC`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_after NUMERIC`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS ks_processed_at timestamptz`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS forfeited_by VARCHAR(50) DEFAULT NULL`);
+    await query(`ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS forfeiture_token VARCHAR(100) DEFAULT NULL`);
+    console.log('[KIWI] ks_delta columns verified');
+  } catch (e) {
+    console.error('[KIWI] Column migration failed:', e.message);
+  }
+}
+
+// Ensures community_decks has an author_name column (the old schema only had author_id).
+// Safe to run on every startup — ADD COLUMN IF NOT EXISTS is idempotent.
+async function ensureCommunityDeckAuthorColumn() {
+  try {
+    await query(`ALTER TABLE community_decks ADD COLUMN IF NOT EXISTS author_name TEXT`);
+    // Back-fill rows that have no author_name yet (never overwrites existing display names).
+    await query(`UPDATE community_decks SET author_name = 'KIWI Team' WHERE author_name IS NULL`);
+    console.log('[KIWI] community_decks.author_name column verified');
+  } catch (e) {
+    console.error('[KIWI] community_decks author_name migration failed:', e.message);
+  }
+}
+
+//  SERVER STARTUP
+
+// ════════════════════════════════════════════════════════════════════════════
+const PORT = process.env.PORT || 8080;
+// ── Schema migrations — idempotent ALTER TABLE statements run at every boot ──
+// Adds columns that were absent from the initial schema.sql but required by the
+// application. ADD COLUMN IF NOT EXISTS is a no-op when the column already exists.
+async function runSchemaMigrations() {
+  // ── Step 1: Create base tables if they don't exist ──────────────────────────
+  const createTables = [
+    `CREATE TABLE IF NOT EXISTS users (
+      id text PRIMARY KEY,
+      username text UNIQUE,
+      email text UNIQUE,
+      password_hash text,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_stats (
+      user_id text PRIMARY KEY,
+      total_xp integer DEFAULT 0,
+      current_level integer DEFAULT 1,
+      xp_in_current_level integer DEFAULT 0,
+      current_streak integer DEFAULT 0,
+      longest_streak integer DEFAULT 0,
+      streak_grace_used boolean DEFAULT false,
+      tree_health integer DEFAULT 100,
+      tree_stage integer DEFAULT 1,
+      total_cards_reviewed integer DEFAULT 0,
+      total_cards_mastered integer DEFAULT 0,
+      total_study_minutes integer DEFAULT 0,
+      total_sessions_completed integer DEFAULT 0,
+      total_exams_completed integer DEFAULT 0,
+      last_study_date date,
+      seedlings_balance integer DEFAULT 0,
+      streak_shields_held integer DEFAULT 0,
+      streak_shields_earned integer DEFAULT 0,
+      knowledge_score_global numeric DEFAULT 0,
+      last_login_at timestamptz,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS refresh_tokens (
+      token_hash text PRIMARY KEY,
+      user_id text,
+      expires_at timestamptz,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS subjects (
+      id text PRIMARY KEY,
+      user_id text,
+      name text,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS topics (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      name text,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS decks (
+      id text PRIMARY KEY,
+      user_id text,
+      name text,
+      subject_id text,
+      topic_id text,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS cards (
+      id text PRIMARY KEY,
+      user_id text,
+      deck_id text,
+      front_content text,
+      back_content text,
+      stage integer DEFAULT 1,
+      interval_days numeric DEFAULT 1,
+      easiness_factor numeric DEFAULT 2.5,
+      repetition_count integer DEFAULT 0,
+      next_review_at timestamptz,
+      due text,
+      last_reviewed_at timestamptz,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS review_logs (
+      id text PRIMARY KEY,
+      user_id text,
+      card_id text,
+      reviewed_at timestamptz,
+      rating integer,
+      ease_factor numeric,
+      interval_days numeric,
+      new_stage integer,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS sessions (
+      id text PRIMARY KEY,
+      user_id text,
+      deck_id text,
+      started_at timestamptz,
+      ended_at timestamptz,
+      duration_seconds integer DEFAULT 0,
+      cards_reviewed integer DEFAULT 0,
+      cards_again integer DEFAULT 0,
+      cards_hard integer DEFAULT 0,
+      cards_good integer DEFAULT 0,
+      cards_easy integer DEFAULT 0,
+      accuracy_pct numeric DEFAULT 0,
+      xp_earned integer DEFAULT 0,
+      session_completed boolean DEFAULT false,
+      seed_survived boolean DEFAULT false,
+      focus_breaks integer DEFAULT 0,
+      focus_seed_stage text DEFAULT 'Dormant',
+      fruiting_achieved boolean DEFAULT false,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS exam_sessions (
+      id text PRIMARY KEY,
+      user_id text,
+      started_at timestamptz DEFAULT NOW(),
+      status text DEFAULT 'pending',
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS exam_questions (
+      id text PRIMARY KEY,
+      user_id text,
+      exam_session_id text,
+      question_number integer,
+      question text,
+      options jsonb,
+      correct_answer text,
+      user_answer text,
+      is_correct boolean,
+      created_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS subject_stats (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS achievements (
+      id text PRIMARY KEY,
+      code text UNIQUE,
+      name text,
+      description text,
+      xp_reward integer DEFAULT 0,
+      icon text,
+      icon_emoji text,
+      category text,
+      condition jsonb,
+      is_secret boolean DEFAULT false,
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_achievements (
+      id text PRIMARY KEY,
+      user_id text,
+      achievement_id text,
+      unlocked_at timestamptz DEFAULT NOW(),
+      shown_to_user boolean DEFAULT false
+    )`,
+    `CREATE TABLE IF NOT EXISTS tasks (
+      id text PRIMARY KEY,
+      user_id text,
+      type text,
+      title text,
+      status text DEFAULT 'active',
+      current_value integer DEFAULT 0,
+      target_value integer DEFAULT 0,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz
+    )`,
+    `CREATE TABLE IF NOT EXISTS community_decks (
+      id text PRIMARY KEY,
+      original_deck_id text,
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS community_ratings (
+      id text PRIMARY KEY,
+      community_deck_id text,
+      user_id text,
+      rating numeric,
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS knowledge_scores (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      score numeric DEFAULT 0,
+      band text,
+      recorded_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS card_states (
+      id text PRIMARY KEY,
+      user_id text,
+      card_id text,
+      state text DEFAULT 'SEEDLING',
+      stage integer DEFAULT 1,
+      deck_id text,
+      subject_id text,
+      verified boolean DEFAULT false,
+      verified_at timestamptz,
+      last_evaluated_at timestamptz DEFAULT NOW(),
+      created_at timestamptz DEFAULT NOW(),
+      updated_at timestamptz DEFAULT NOW(),
+      bubble_ids jsonb DEFAULT '[]',
+      learning_debt boolean DEFAULT false,
+      cross_bubble boolean DEFAULT false,
+      parking_expires_at timestamptz
+    )`,
+    `CREATE TABLE IF NOT EXISTS brain_pressure (
+      id text PRIMARY KEY,
+      user_id text,
+      subject_id text,
+      pressure_score integer DEFAULT 0,
+      intervention_level text DEFAULT 'L0',
+      sources jsonb DEFAULT '{}',
+      updated_at timestamptz DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS reckoning_sessions (
+      id text PRIMARY KEY,
       user_id text,
       subject_id text,
       status text DEFAULT 'triggered',
@@ -1811,12 +23104,6 @@ try {
   console.log('[KIWI Teaching] D13 Student Knowledge Model runtime verified; deterministic evidence/state contracts are ready and TPF-09/TPF-19 routes remain D30-held.');
 } catch (e) {
   console.error('[KIWI Teaching] D13 Student Knowledge Model runtime unavailable; SKM mutation remains fail-closed:', e.message);
-}
-try {
-  await teachingRouter.assertD14Ready();
-  console.log('[KIWI Teaching] D14 Classroom artifacts verified; TPF-19/TPF-20 routes and Study Pack publication remain held.');
-} catch (e) {
-  console.error('[KIWI Teaching] D14 Classroom artifacts unavailable; Classroom artifact routes remain fail-closed:', e.message);
 }
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }

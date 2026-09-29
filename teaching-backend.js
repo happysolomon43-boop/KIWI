@@ -475,7 +475,11 @@ function createTeachingRouter({
 
   const classroomService = foundation.d14?.service || null;
   if (classroomService) {
-    const requireD14Ready = (_req,res,next) => d14Ready ? next() : res.status(503).json({error:'Classroom artifacts are unavailable until the D14 schema is ready.',code:'TEACHING_D14_SCHEMA_NOT_READY'});
+    const requireD14Ready = async (_req,res,next) => {
+      if(d14Ready)return next();
+      try{await router.assertD14Ready();return next();}
+      catch{return res.status(503).json({error:'Classroom artifacts are unavailable until the D14 schema is ready.',code:'TEACHING_D14_SCHEMA_NOT_READY'});}
+    };
     router.get('/courses/:id/classes',requireD14Ready,async(req,res)=>{
       try{res.json(await classroomService.listClasses(req.user,req.params.id));}catch(error){sendError(res,error,'Could not load Classes.');}
     });
