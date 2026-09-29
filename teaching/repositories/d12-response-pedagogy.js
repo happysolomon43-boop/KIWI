@@ -123,7 +123,21 @@ function createD12ResponsePedagogyRepository({query,withTransaction,randomUUID,d
         " values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,$21::jsonb,$22,$23) returning *",
         [randomUUID(),studentId,response.response_id,classId,response.class_session_id,learningUnit.learning_unit_id,Number(context.session.state_version),Number(versions.rows[0].next_version),state,capabilityId,promptFamilyId,promptFamilyVersion,contractVersion,JSON.stringify(payload||{}),evaluatorConfidence||a.evaluator_confidence||null,evidenceStrength,JSON.stringify(assistanceState||payload?.assistance_and_independence||{}),JSON.stringify(exposureState||{}),candidateMisconception?JSON.stringify(candidateMisconception):(payload?.misconception?JSON.stringify(payload.misconception):null),prerequisiteHypothesis?JSON.stringify(prerequisiteHypothesis):(payload?.prerequisite?JSON.stringify(payload.prerequisite):null),JSON.stringify(provenanceRefs||[]),idempotencyKey,executionId]
       );
-      return inserted.rows[0];
+      const row=inserted.rows[0];
+      if(String(state)==='VALIDATED'){
+        const eventId='d13-response-evaluation:'+row.evaluation_id;
+        await outboxStore.appendUsing(tx.query.bind(tx),{
+          eventId,schemaVersion:1,eventType:TEACHING_EVENTS.RESPONSE_EVALUATION_COMMITTED,
+          eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,triggerType:'committed_domain_event',
+          source:'teaching.d12',origin:'d12',actorId:studentId,aggregateType:'RESPONSE_EVALUATION',
+          aggregateId:row.evaluation_id,aggregateVersion:Number(row.evaluation_version),occurredAt:row.created_at,
+          effectiveAt:row.created_at,dueAt:null,correlationId:eventId,causationId:'response:'+row.response_id,
+          idempotencyKey:eventId,
+          payload:{student_id:studentId,evaluation_id:row.evaluation_id,response_id:row.response_id,class_id:row.class_id,class_session_id:row.class_session_id,learning_unit_id:row.learning_unit_id,controller_version:Number(row.controller_version)},
+          auditRefs:[],provenanceRefs:['response-evaluation:'+row.evaluation_id,'response:'+row.response_id,'learning-unit:'+row.learning_unit_id],
+        });
+      }
+      return row;
     });
   }
 
