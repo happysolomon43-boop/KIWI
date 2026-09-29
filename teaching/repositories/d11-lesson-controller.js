@@ -49,10 +49,12 @@ function createD11LessonControllerRepository({
     const { rows } = await q(runner,
       "select c.*,co.lifecycle_state course_lifecycle_state,co.state_version course_state_version," +
       " co.subject_id,co.semester_id,a.course_plan_id activation_course_plan_id," +
-      " a.course_plan_version activation_course_plan_version,a.activation_id activation_snapshot_id" +
+      " a.course_plan_version activation_course_plan_version,a.activation_id activation_snapshot_id," +
+      " tv.version_no source_timetable_version_no,tv.timetable_state source_timetable_state" +
       " from public.teaching_classes c" +
       " join public.teaching_courses co on co.course_id=c.course_id and co.student_id=c.student_id" +
       " left join public.teaching_course_activations a on a.activation_id=c.activation_id" +
+      " left join public.teaching_timetable_versions tv on tv.timetable_version_id=c.source_timetable_version_id" +
       " where c.student_id=$1 and c.class_id=$2" + suffix,
       [studentId, classId]
     );
@@ -85,6 +87,15 @@ function createD11LessonControllerRepository({
       "join public.teaching_learning_units u on u.learning_unit_id=d.learning_unit_id " +
       "where d.student_id=$1 and u.course_plan_id=$2 order by d.learning_unit_id,d.prerequisite_learning_unit_id",
       [studentId,planId]
+    );
+    return rows || [];
+  }
+
+  async function loadPlanPrerequisites(studentId, planId, runner = null) {
+    if (!planId) return [];
+    const { rows } = await q(runner,
+      "select * from public.teaching_course_plan_prerequisites where student_id=$1 and course_plan_id=$2 order by prerequisite_id",
+      [studentId, planId]
     );
     return rows || [];
   }
@@ -123,14 +134,15 @@ function createD11LessonControllerRepository({
     const classRow = await loadClassBase(studentId, classId, runner, false);
     if (!classRow) return null;
     const plan = await loadCurrentPlan(studentId, classRow.course_id, runner, false);
-    const [learningUnits, learningUnitDependencies, blueprint, session, workspace] = await Promise.all([
+    const [learningUnits, learningUnitDependencies, planPrerequisites, blueprint, session, workspace] = await Promise.all([
       loadLearningUnits(studentId, plan?.course_plan_id, runner),
       loadLearningUnitDependencies(studentId, plan?.course_plan_id, runner),
+      loadPlanPrerequisites(studentId, plan?.course_plan_id, runner),
       latestBlueprint(studentId, classId, runner, false),
       getSession(studentId, classId, runner, false),
       getPreparationWorkspace(studentId, classId, runner, false),
     ]);
-    return Object.freeze({ classRow, plan, learningUnits, learningUnitDependencies, blueprint, session, workspace });
+    return Object.freeze({ classRow, plan, learningUnits, learningUnitDependencies, planPrerequisites, blueprint, session, workspace });
   }
 
   async function listClassesForCourse(studentId, courseId) {
@@ -247,8 +259,35 @@ function createD11LessonControllerRepository({
         dependency_kind: 'TIMETABLE',
         authoritative_owner_ref: 'Scheduler/Calendar',
         aggregate_ref: 'timetable:' + context.classRow.source_timetable_version_id,
-        version_ref: String(context.classRow.schedule_version),
+        version_ref: String(context.classRow.source_timetable_version_no ?? context.classRow.schedule_version),
         component_scope_key: context.classRow.class_id,
+      });
+    }
+    for (const diagnostic of signals?.diagnosticSignals || []) {
+      deps.push({
+        dependency_kind: 'DIAGNOSTIC_PLAN',
+        authoritative_owner_ref: 'Diagnostic / Validated Prior Knowledge',
+        aggregate_ref: 'diagnostic-plan:' + diagnostic.diagnostic_plan_id,
+        version_ref: String(diagnostic.plan_version),
+        component_scope_key: context.classRow.course_id,
+      });
+    }
+    for (const decision of signals?.validatedPriorKnowledgeSignals || []) {
+      deps.push({
+        dependency_kind: 'VALIDATED_PRIOR_KNOWLEDGE',
+        authoritative_owner_ref: 'Validated Prior Knowledge',
+        aggregate_ref: 'vpk:' + decision.vpk_decision_id,
+        version_ref: String(decision.decided_at || decision.policy_version || decision.vpk_decision_id),
+        component_scope_key: decision.target_ref || context.classRow.course_id,
+      });
+    }
+    for (const debt of signals?.pacingSignals?.scheduleDebtEntries || []) {
+      deps.push({
+        dependency_kind: 'SCHEDULE_DEBT',
+        authoritative_owner_ref: 'Scheduler/Calendar',
+        aggregate_ref: 'schedule-debt:' + debt.schedule_debt_entry_id,
+        version_ref: String(debt.recorded_at || debt.schedule_debt_entry_id),
+        component_scope_key: context.classRow.course_id,
       });
     }
     for (const prior of signals?.priorClassFacts || []) {
@@ -308,146 +347,152 @@ function createD11LessonControllerRepository({
     return deps;
   }
 
-  async function ensurePreparationWorkspace({ studentId, classId, correlationId = null } = {}) {
-    return withTransaction(async (tx) => {
-      const classRow = await loadClassBase(studentId, classId, tx, true);
-      if (!classRow) return null;
-      const plan = await loadCurrentPlan(studentId, classRow.course_id, tx, true);
-      if (!plan) {
-        const error = new Error('D11 preparation requires the current Course Plan.');
-        error.code = 'TEACHING_D11_COURSE_PLAN_REQUIRED';
-        error.status = 409;
-        throw error;
-      }
-      const signals = await getPlanningSignals(studentId, classRow);
-      const context = { classRow, plan };
-      const dependencies = dependenciesFor(context, signals);
-      const refs = dependencies.map((dep) => ({
-        kind: dep.dependency_kind,
-        owner: dep.authoritative_owner_ref,
-        ref: dep.aggregate_ref,
-        version: dep.version_ref,
-      }));
-      const digest = crypto.createHash('sha256').update(JSON.stringify(refs)).digest('hex');
+  async function ensurePreparationWorkspaceUsing(tx, { studentId, classId, correlationId = null } = {}) {
+    const classRow = await loadClassBase(studentId, classId, tx, true);
+    if (!classRow) return null;
+    const plan = await loadCurrentPlan(studentId, classRow.course_id, tx, true);
+    if (!plan) {
+      const error = new Error('D11 preparation requires the current Course Plan.');
+      error.code = 'TEACHING_D11_COURSE_PLAN_REQUIRED';
+      error.status = 409;
+      throw error;
+    }
+    const signals = await getPlanningSignals(studentId, classRow);
+    const context = { classRow, plan };
+    const dependencies = dependenciesFor(context, signals);
+    const refs = dependencies.map((dep) => ({
+      kind: dep.dependency_kind,
+      owner: dep.authoritative_owner_ref,
+      ref: dep.aggregate_ref,
+      version: dep.version_ref,
+    }));
+    const digest = crypto.createHash('sha256').update(JSON.stringify(refs)).digest('hex');
 
-      let workspace = await getPreparationWorkspace(studentId, classId, tx, true);
-      const createdWorkspace = !workspace;
-      if (!workspace) {
-        const workspaceId = randomUUID();
-        const inserted = await tx.query(
-          "insert into teaching_preparation.workspaces(" +
-          "workspace_id,student_id,workspace_type,target_kind,target_ref,authoritative_owner_ref," +
-          "preparation_profile_ref,lifecycle_state,maturity_stage,state_version,target_effective_at," +
-          "finalization_or_freeze_at,protected_content_class,trigger_policy_ref,cost_execution_budget_ref" +
-          ") values($1,$2,'LESSON_BLUEPRINT','next_class',$3,'Teaching Controller / Lesson Planner'," +
-          "'teaching.preparation.next_class@1.0','ACTIVE','SKELETON',0,$4,$4,'UNPROTECTED'," +
-          "'d11.class-materiality.v1','teaching.preparation.budget.next_class') returning *",
-          [workspaceId, studentId, classId, classRow.scheduled_start_at]
-        );
-        workspace = inserted.rows[0];
-      }
+    let workspace = await getPreparationWorkspace(studentId, classId, tx, true);
+    const createdWorkspace = !workspace;
+    if (!workspace) {
+      const workspaceId = randomUUID();
+      const inserted = await tx.query(
+        "insert into teaching_preparation.workspaces(" +
+        "workspace_id,student_id,workspace_type,target_kind,target_ref,authoritative_owner_ref," +
+        "preparation_profile_ref,lifecycle_state,maturity_stage,state_version,target_effective_at," +
+        "finalization_or_freeze_at,protected_content_class,trigger_policy_ref,cost_execution_budget_ref" +
+        ") values($1,$2,'LESSON_BLUEPRINT','next_class',$3,'Teaching Controller / Lesson Planner'," +
+        "'teaching.preparation.next_class@1.0','ACTIVE','SKELETON',0,$4,$4,'UNPROTECTED'," +
+        "'d11.class-materiality.v1','teaching.preparation.budget.next_class') returning *",
+        [workspaceId, studentId, classId, classRow.scheduled_start_at]
+      );
+      workspace = inserted.rows[0];
+    }
 
-      let currentBundle = null;
-      if (workspace.current_authoritative_input_bundle_ref) {
-        const loaded = await tx.query(
-          "select * from teaching_preparation.authoritative_input_bundles where input_bundle_id=$1 limit 1",
-          [workspace.current_authoritative_input_bundle_ref]
-        );
-        currentBundle = loaded.rows?.[0] || null;
-      }
-      if (currentBundle?.content_digest === digest) {
-        return Object.freeze({ workspace, bundle: currentBundle, dependencies: Object.freeze(dependencies), changed: false, correlationId });
-      }
-
-      const versionRows = await tx.query(
-        "select coalesce(max(bundle_version),0)+1 as next_version from teaching_preparation.authoritative_input_bundles where workspace_id=$1",
-        [workspace.workspace_id]
+    let currentBundle = null;
+    if (workspace.current_authoritative_input_bundle_ref) {
+      const loaded = await tx.query(
+        "select * from teaching_preparation.authoritative_input_bundles where input_bundle_id=$1 limit 1",
+        [workspace.current_authoritative_input_bundle_ref]
       );
-      const bundleVersion = Number(versionRows.rows[0].next_version);
-      const bundleId = randomUUID();
-      const bundleInsert = await tx.query(
-        "insert into teaching_preparation.authoritative_input_bundles(" +
-        "input_bundle_id,workspace_id,student_id,bundle_version,captured_at,authoritative_refs,preconditions,material_delta_summary,content_digest" +
-        ") values($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9) returning *",
-        [
-          bundleId,
-          workspace.workspace_id,
-          studentId,
-          bundleVersion,
-          clock(),
-          JSON.stringify(refs),
-          JSON.stringify({
-            course_lifecycle_state: classRow.course_lifecycle_state,
-            course_state_version: classRow.course_state_version,
-            class_schedule_version: classRow.schedule_version,
-            course_plan_id: plan.course_plan_id,
-            course_plan_version: plan.version_no,
-          }),
-          JSON.stringify({
-            changed_dependency_refs: dependencies.map((dep) => dep.aggregate_ref),
-            prior_bundle_ref: workspace.current_authoritative_input_bundle_ref || null,
-          }),
-          digest,
-        ]
-      );
-      for (const dep of dependencies) {
-        await tx.query(
-          "insert into teaching_preparation.input_bundle_dependencies(" +
-          "input_dependency_id,input_bundle_id,student_id,dependency_kind,authoritative_owner_ref,aggregate_ref,version_ref,component_scope_key" +
-          ") values($1,$2,$3,$4,$5,$6,$7,$8)",
-          [
-            randomUUID(), bundleId, studentId, dep.dependency_kind, dep.authoritative_owner_ref,
-            dep.aggregate_ref, dep.version_ref, dep.component_scope_key,
-          ]
-        );
-      }
-      const updated = await tx.query(
-        "update teaching_preparation.workspaces set current_authoritative_input_bundle_ref=$2," +
-        " target_effective_at=$3,finalization_or_freeze_at=$3,state_version=state_version+1,updated_at=now()" +
-        " where workspace_id=$1 returning *",
-        [workspace.workspace_id, bundleId, classRow.scheduled_start_at]
-      );
-      const nextWorkspace = updated.rows[0];
-      if (outboxStore && typeof outboxStore.appendUsing === 'function') {
-        const eventType = createdWorkspace
-          ? TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED
-          : TEACHING_EVENTS.PREPARATION_INPUT_CHANGED;
-        const eventId = 'd11-ppl-' + (createdWorkspace ? 'seed' : 'input') + ':' + workspace.workspace_id + ':bundle-v' + bundleVersion;
-        const occurred = clock().toISOString();
-        await outboxStore.appendUsing(tx.query.bind(tx), {
-          eventId,
-          schemaVersion:1,
-          eventType,
-          eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
-          triggerType:'committed_domain_event',
-          source:'teaching.d11',
-          origin:'d11',
-          actorId:studentId,
-          aggregateType:'PREPARATION_WORKSPACE',
-          aggregateId:workspace.workspace_id,
-          aggregateVersion:Number(nextWorkspace.state_version),
-          occurredAt:occurred,
-          effectiveAt:occurred,
-          dueAt:null,
-          correlationId:correlationId || eventId,
-          causationId:null,
-          idempotencyKey:eventId,
-          payload:createdWorkspace
-            ? { target_kind:'next_class', target_ref:classId, current_authoritative_input_bundle_ref:bundleId }
-            : { changedDependencyRefs:dependencies.map((dep)=>dep.aggregate_ref), current_authoritative_input_bundle_ref:bundleId },
-          auditRefs:[],
-          provenanceRefs:dependencies.map((dep)=>dep.aggregate_ref),
-        });
-      }
+      currentBundle = loaded.rows?.[0] || null;
+    }
+    if (currentBundle?.content_digest === digest) {
       return Object.freeze({
-        workspace: nextWorkspace,
-        bundle: bundleInsert.rows[0],
+        workspace,
+        bundle: currentBundle,
         dependencies: Object.freeze(dependencies),
-        changed: true,
-        created: createdWorkspace,
+        changed: false,
+        created: false,
         correlationId,
       });
+    }
+
+    const versionRows = await tx.query(
+      "select coalesce(max(bundle_version),0)+1 as next_version from teaching_preparation.authoritative_input_bundles where workspace_id=$1",
+      [workspace.workspace_id]
+    );
+    const bundleVersion = Number(versionRows.rows[0].next_version);
+    const bundleId = randomUUID();
+    const bundleInsert = await tx.query(
+      "insert into teaching_preparation.authoritative_input_bundles(" +
+      "input_bundle_id,workspace_id,student_id,bundle_version,captured_at,authoritative_refs,preconditions,material_delta_summary,content_digest" +
+      ") values($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9) returning *",
+      [
+        bundleId, workspace.workspace_id, studentId, bundleVersion, clock(), JSON.stringify(refs),
+        JSON.stringify({
+          course_lifecycle_state: classRow.course_lifecycle_state,
+          course_state_version: classRow.course_state_version,
+          class_schedule_version: classRow.schedule_version,
+          timetable_version_id: classRow.source_timetable_version_id || null,
+          timetable_version_no: classRow.source_timetable_version_no == null ? null : Number(classRow.source_timetable_version_no),
+          course_plan_id: plan.course_plan_id,
+          course_plan_version: plan.version_no,
+        }),
+        JSON.stringify({
+          changed_dependency_refs: dependencies.map((dep) => dep.aggregate_ref),
+          prior_bundle_ref: workspace.current_authoritative_input_bundle_ref || null,
+        }),
+        digest,
+      ]
+    );
+    for (const dep of dependencies) {
+      await tx.query(
+        "insert into teaching_preparation.input_bundle_dependencies(" +
+        "input_dependency_id,input_bundle_id,student_id,dependency_kind,authoritative_owner_ref,aggregate_ref,version_ref,component_scope_key" +
+        ") values($1,$2,$3,$4,$5,$6,$7,$8)",
+        [
+          randomUUID(), bundleId, studentId, dep.dependency_kind, dep.authoritative_owner_ref,
+          dep.aggregate_ref, dep.version_ref, dep.component_scope_key,
+        ]
+      );
+    }
+    const updated = await tx.query(
+      "update teaching_preparation.workspaces set current_authoritative_input_bundle_ref=$2," +
+      " state_version=state_version+1,updated_at=now() where workspace_id=$1 returning *",
+      [workspace.workspace_id, bundleId]
+    );
+    const nextWorkspace = updated.rows[0];
+
+    if (outboxStore && typeof outboxStore.appendUsing === 'function') {
+      const eventType = createdWorkspace
+        ? TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED
+        : TEACHING_EVENTS.PREPARATION_INPUT_CHANGED;
+      const eventId = 'd11-ppl-' + (createdWorkspace ? 'seed' : 'input') + ':' + workspace.workspace_id + ':bundle-v' + bundleVersion;
+      const occurred = clock().toISOString();
+      await outboxStore.appendUsing(tx.query.bind(tx), {
+        eventId,
+        schemaVersion:1,
+        eventType,
+        eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
+        triggerType:'committed_domain_event',
+        source:'teaching.d11',
+        origin:'d11',
+        actorId:studentId,
+        aggregateType:'preparation_workspace',
+        aggregateId:workspace.workspace_id,
+        aggregateVersion:Number(nextWorkspace.state_version),
+        occurredAt:occurred,
+        effectiveAt:occurred,
+        dueAt:null,
+        correlationId:correlationId || eventId,
+        causationId:null,
+        idempotencyKey:eventId,
+        payload:createdWorkspace
+          ? { target_kind:'next_class', target_ref:classId, current_authoritative_input_bundle_ref:bundleId }
+          : { changedDependencyRefs:dependencies.map((dep)=>dep.aggregate_ref), current_authoritative_input_bundle_ref:bundleId },
+        auditRefs:[],
+        provenanceRefs:dependencies.map((dep)=>dep.aggregate_ref),
+      });
+    }
+    return Object.freeze({
+      workspace: nextWorkspace,
+      bundle: bundleInsert.rows[0],
+      dependencies: Object.freeze(dependencies),
+      changed: true,
+      created: createdWorkspace,
+      correlationId,
     });
+  }
+
+  async function ensurePreparationWorkspace(args = {}) {
+    return withTransaction((tx) => ensurePreparationWorkspaceUsing(tx, args));
   }
 
   async function recordPreparationArtifact({
@@ -471,22 +516,31 @@ function createD11LessonControllerRepository({
       );
       const versionNo=Number(versions.rows[0].next_version);
       const artifactId=randomUUID();
-      const digest=crypto.createHash('sha256').update(JSON.stringify(blueprint)).digest('hex');
+      const digest=stableDigest(blueprint);
       const parent=workspace.current_artifact_version_ref || null;
       await tx.query(
         "insert into teaching_preparation.artifact_versions(" +
         "artifact_version_id,workspace_id,student_id,artifact_kind,version_no,input_bundle_id,parent_artifact_version_id," +
         "created_by_capability_id,prompt_family_ref,schema_version,artifact_digest,protected_content_class,validity_state,concise_rationale" +
         ") values($1,$2,$3,'LESSON_BLUEPRINT',$4,$5,$6,$7,$8,'d11.lesson-blueprint.v1',$9,'UNPROTECTED','CURRENT',$10)",
-        [artifactId,workspace.workspace_id,studentId,versionNo,workspace.current_authoritative_input_bundle_ref,parent,capabilityId,promptFamilyRef,digest,'Validated provisional Lesson Blueprint candidate']
+        [
+          artifactId,workspace.workspace_id,studentId,versionNo,workspace.current_authoritative_input_bundle_ref,
+          parent,capabilityId,promptFamilyRef,digest,'Validated provisional Lesson Blueprint candidate',
+        ]
+      );
+      await tx.query(
+        "insert into teaching_protected.prepared_artifact_payloads(" +
+        "artifact_version_id,student_id,protected_content_class,payload_schema_version,payload,payload_digest" +
+        ") values($1,$2,'UNPROTECTED','d11.lesson-blueprint.v1',$3::jsonb,$4)",
+        [artifactId,studentId,JSON.stringify(blueprint),digest]
       );
       const depRows=await tx.query(
         "select input_dependency_id,aggregate_ref from teaching_preparation.input_bundle_dependencies where input_bundle_id=$1 order by input_dependency_id",
         [workspace.current_authoritative_input_bundle_ref]
       );
       const components=[
-        ...(blueprint.objectives || []).map((item)=>({key:'objective:'+item.id,kind:'OBJECTIVE',digest:crypto.createHash('sha256').update(JSON.stringify(item)).digest('hex')})),
-        ...(blueprint.segments || []).map((item)=>({key:'segment:'+item.id,kind:'SEGMENT',digest:crypto.createHash('sha256').update(JSON.stringify(item)).digest('hex')})),
+        ...(blueprint.objectives || []).map((item)=>({key:'objective:'+item.id,kind:'OBJECTIVE',value:item})),
+        ...(blueprint.segments || []).map((item)=>({key:'segment:'+item.id,kind:'SEGMENT',value:item})),
       ];
       for (const component of components) {
         const componentId=randomUUID();
@@ -494,7 +548,7 @@ function createD11LessonControllerRepository({
           "insert into teaching_preparation.artifact_components(" +
           "artifact_component_id,artifact_version_id,student_id,component_key,component_kind,component_digest,stale" +
           ") values($1,$2,$3,$4,$5,$6,false)",
-          [componentId,artifactId,studentId,component.key,component.kind,component.digest]
+          [componentId,artifactId,studentId,component.key,component.kind,stableDigest(component.value)]
         );
         for (const dep of depRows.rows || []) {
           await tx.query(
@@ -523,6 +577,59 @@ function createD11LessonControllerRepository({
         componentCount:components.length,
       });
     });
+  }
+
+  async function getPreparationArtifactPayload(studentId, classId) {
+    const workspace=await getPreparationWorkspace(studentId,classId);
+    if(!workspace?.current_artifact_version_ref) return null;
+    const {rows}=await query(
+      "select av.*,p.payload,p.payload_schema_version,p.payload_digest from teaching_preparation.artifact_versions av" +
+      " join teaching_protected.prepared_artifact_payloads p on p.artifact_version_id=av.artifact_version_id" +
+      " where av.artifact_version_id=$1 and av.student_id=$2 limit 1",
+      [workspace.current_artifact_version_ref,studentId]
+    );
+    return rows?.[0] || null;
+  }
+
+  async function currentDependencyVersion(dependency) {
+    const ref=String(dependency?.aggregate_ref || '');
+    if (ref.startsWith('course:')) {
+      const {rows}=await query("select state_version from public.teaching_courses where course_id=$1 limit 1",[ref.slice(7)]);
+      return rows?.[0]?.state_version == null ? null : String(rows[0].state_version);
+    }
+    if (ref.startsWith('course-plan:')) {
+      const {rows}=await query("select version_no from public.teaching_course_plans where course_plan_id=$1 limit 1",[ref.slice(12)]);
+      return rows?.[0]?.version_no == null ? null : String(rows[0].version_no);
+    }
+    if (ref.startsWith('class:')) {
+      const {rows}=await query("select schedule_version from public.teaching_classes where class_id=$1 limit 1",[ref.slice(6)]);
+      return rows?.[0]?.schedule_version == null ? null : String(rows[0].schedule_version);
+    }
+    if (ref.startsWith('timetable:')) {
+      const {rows}=await query("select version_no from public.teaching_timetable_versions where timetable_version_id=$1 limit 1",[ref.slice(10)]);
+      return rows?.[0]?.version_no == null ? null : String(rows[0].version_no);
+    }
+    if (ref.startsWith('diagnostic-plan:')) {
+      const {rows}=await query("select plan_version from public.teaching_diagnostic_plans where diagnostic_plan_id=$1 limit 1",[ref.slice(16)]);
+      return rows?.[0]?.plan_version == null ? null : String(rows[0].plan_version);
+    }
+    if (ref.startsWith('vpk:')) {
+      const {rows}=await query("select decided_at,policy_version from public.teaching_validated_prior_knowledge_decisions where vpk_decision_id=$1 limit 1",[ref.slice(4)]);
+      return rows?.[0] ? String(rows[0].decided_at || rows[0].policy_version || ref.slice(4)) : null;
+    }
+    if (ref.startsWith('schedule-debt:')) {
+      const {rows}=await query("select recorded_at from public.teaching_schedule_debt_entries where schedule_debt_entry_id=$1 limit 1",[ref.slice(14)]);
+      return rows?.[0]?.recorded_at == null ? null : String(rows[0].recorded_at);
+    }
+    if (ref.startsWith('class-closure:')) {
+      const {rows}=await query("select fact_pack_version from public.teaching_class_closure_facts where closure_fact_id=$1 limit 1",[ref.slice(14)]);
+      return rows?.[0]?.fact_pack_version == null ? null : String(rows[0].fact_pack_version);
+    }
+    if (ref.startsWith('request:')) {
+      const {rows}=await query("select state_version from public.teaching_requests where request_id=$1 limit 1",[ref.slice(8)]);
+      return rows?.[0]?.state_version == null ? null : String(rows[0].state_version);
+    }
+    return null;
   }
 
   async function assertContextCurrentUsing(tx, expected) {
@@ -559,6 +666,7 @@ function createD11LessonControllerRepository({
     const klass = context.classRow;
     const plan = context.plan;
     if (String(klass.course_lifecycle_state) !== 'ACTIVE') mismatches.push('COURSE_LIFECYCLE');
+    if (String(klass.lifecycle_state) === 'CANCELLED') mismatches.push('CLASS_CANCELLED');
     if (String(session.source_course_state_version) !== String(klass.course_state_version)) mismatches.push('COURSE_VERSION');
     if (String(session.source_class_schedule_version) !== String(klass.schedule_version)) mismatches.push('CLASS_SCHEDULE_VERSION');
     if (String(session.source_timetable_version_id || '') !== String(klass.source_timetable_version_id || '')) mismatches.push('TIMETABLE_VERSION');
@@ -688,9 +796,15 @@ function createD11LessonControllerRepository({
     if (existing) return Object.freeze({ session:existing, inserted:false });
     const plan = await loadCurrentPlan(studentId,classRow.course_id,tx,true);
     const blueprint = await latestBlueprint(studentId,classId,tx,true);
-    if (!plan || !blueprint || (expectedBlueprintId && blueprint.lesson_blueprint_id !== expectedBlueprintId)) {
-      const error = new Error('Validated current Lesson Blueprint is required before Controller start.');
-      error.code = 'TEACHING_D11_BLUEPRINT_REQUIRED';
+    if (!plan) {
+      const error = new Error('Current Course Plan is required before Controller start.');
+      error.code = 'TEACHING_D11_COURSE_PLAN_REQUIRED';
+      error.status = 409;
+      throw error;
+    }
+    if (expectedBlueprintId && (!blueprint || blueprint.lesson_blueprint_id !== expectedBlueprintId)) {
+      const error = new Error('Expected Lesson Blueprint is no longer current.');
+      error.code = 'TEACHING_D11_BLUEPRINT_STALE';
       error.status = 409;
       throw error;
     }
@@ -711,7 +825,7 @@ function createD11LessonControllerRepository({
       ") values($1,$2,$3,$4,'ACTIVE','OPENING',1,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,1," +
       "'{\"completed_segment_refs\":[],\"completed_objective_refs\":[],\"evidence_event_refs\":[],\"independent_evidence_objective_refs\":[]}'::jsonb,'d11.controller.v1') returning *",
       [
-        sessionId,studentId,classId,blueprint.lesson_blueprint_id,now,classRow.course_id,plan.course_plan_id,
+        sessionId,studentId,classId,blueprint?.lesson_blueprint_id || null,now,classRow.course_id,plan.course_plan_id,
         classRow.course_state_version,plan.version_no,classRow.schedule_version,classRow.source_timetable_version_id || null,
         classRow.scheduled_start_at,classRow.scheduled_end_at,classRow.timezone,
       ]
@@ -720,7 +834,7 @@ function createD11LessonControllerRepository({
       studentId,classId,classSessionId:sessionId,controllerVersion:1,eventCursor:1,
       actionKind:'CONTROLLER_STARTED',fromState:null,toState:'OPENING',
       reason:'Server-authoritative Class start established live instructional state.',
-      sourceEventRef,idempotencyKey,safeMetadata:{lesson_blueprint_id:blueprint.lesson_blueprint_id},
+      sourceEventRef,idempotencyKey,safeMetadata:{lesson_blueprint_id:blueprint?.lesson_blueprint_id || null,route_degraded_without_blueprint:!blueprint},
     });
     return Object.freeze({ session:inserted.rows[0], inserted:true });
   }
@@ -882,99 +996,126 @@ function createD11LessonControllerRepository({
     return Object.freeze({...context,evidenceEvents:Object.freeze(evidence.rows || []),history:Object.freeze(history.rows || [])});
   }
 
-  async function commitClosure({
+  async function commitClosureUsing(tx, {
     studentId,classId,expectedVersion,reason='CONTROLLER_CLOSURE',sourceEventRef=null,idempotencyKey=null,
   } = {}) {
-    return withTransaction(async (tx) => {
-      const session = await getSession(studentId,classId,tx,true);
-      if (!session) {
-        const error = new Error('Controller has not started.');
-        error.code='TEACHING_D11_CONTROLLER_NOT_STARTED'; error.status=409; throw error;
-      }
-      const existingFact = await tx.query(
-        "select * from public.teaching_class_closure_facts where student_id=$1 and class_session_id=$2 limit 1",
-        [studentId,session.class_session_id]
-      );
-      if (existingFact.rows?.[0]) return Object.freeze({ session, closureFact:existingFact.rows[0], idempotent:true });
-      if (Number(session.state_version) !== Number(expectedVersion)) {
-        const error = new Error('Controller version changed before Closure.');
-        error.code='TEACHING_D11_STALE_CONTROLLER_VERSION'; error.status=409; throw error;
-      }
-      const classRow = await loadClassBase(studentId,classId,tx,true);
-      const blueprint = await latestBlueprint(studentId,classId,tx,false);
-      const evidence = await tx.query(
-        "select * from public.teaching_evidence_events where student_id=$1 and class_session_id=$2 order by occurred_at",
-        [studentId,session.class_session_id]
-      );
-      const history = await tx.query(
-        "select * from public.teaching_class_controller_history where student_id=$1 and class_session_id=$2 order by event_cursor",
-        [studentId,session.class_session_id]
-      );
-      const endedAt = clock();
-      const factPack = buildClosureFactPack({
-        session,classRow,blueprint,progressState:session.progress_state || {},
-        evidenceEvents:evidence.rows || [],history:history.rows || [],serverNow:endedAt,reason,
-      });
-      const transitioned = await transitionUsing(tx, {
-        studentId,classId,expectedVersion,toState:'CLOSURE',lifecycleState:'CLOSED',reason,
-        actionKind:'CLASS_CLOSED',sourceEventRef,idempotencyKey,
-        safeMetadata:{fact_pack_schema_version:factPack.schema_version},
-        extraUpdates:{closure_reason:reason,ended_at:endedAt},
-      });
-      const factId = randomUUID();
-      const fact = await tx.query(
-        "insert into public.teaching_class_closure_facts(" +
-        "closure_fact_id,student_id,course_id,class_id,class_session_id,lesson_blueprint_id,controller_version," +
-        "fact_pack_version,fact_pack,provenance_refs,closed_at" +
-        ") values($1,$2,$3,$4,$5,$6,$7,'d11.class-fact-pack.v1',$8::jsonb,$9::jsonb,$10) returning *",
-        [
-          factId,studentId,classRow.course_id,classId,session.class_session_id,blueprint?.lesson_blueprint_id || null,
-          transitioned.session.state_version,JSON.stringify(factPack),
-          JSON.stringify([
-            'class:' + classId,
-            ...(blueprint ? ['lesson-blueprint:' + blueprint.lesson_blueprint_id] : []),
-            ...((evidence.rows || []).map((row) => 'evidence:' + row.evidence_event_id)),
-          ]),
-          endedAt,
-        ]
-      );
-      return Object.freeze({session:transitioned.session,closureFact:fact.rows[0],idempotent:false});
+    const session = await getSession(studentId,classId,tx,true);
+    if (!session) {
+      const error = new Error('Controller has not started.');
+      error.code='TEACHING_D11_CONTROLLER_NOT_STARTED'; error.status=409; throw error;
+    }
+    const existingFact = await tx.query(
+      "select * from public.teaching_class_closure_facts where student_id=$1 and class_session_id=$2 limit 1",
+      [studentId,session.class_session_id]
+    );
+    if (existingFact.rows?.[0]) return Object.freeze({ session, closureFact:existingFact.rows[0], idempotent:true });
+    if (Number(session.state_version) !== Number(expectedVersion)) {
+      const error = new Error('Controller version changed before Closure.');
+      error.code='TEACHING_D11_STALE_CONTROLLER_VERSION'; error.status=409; throw error;
+    }
+    const classRow = await loadClassBase(studentId,classId,tx,true);
+    const blueprint = await latestBlueprint(studentId,classId,tx,false);
+    const evidence = await tx.query(
+      "select * from public.teaching_evidence_events where student_id=$1 and class_session_id=$2 order by occurred_at",
+      [studentId,session.class_session_id]
+    );
+    const history = await tx.query(
+      "select * from public.teaching_class_controller_history where student_id=$1 and class_session_id=$2 order by event_cursor",
+      [studentId,session.class_session_id]
+    );
+    const endedAt = clock();
+    const factPack = buildClosureFactPack({
+      session,classRow,blueprint,progressState:session.progress_state || {},
+      evidenceEvents:evidence.rows || [],history:history.rows || [],serverNow:endedAt,reason,
     });
+    const transitioned = await transitionUsing(tx, {
+      studentId,classId,expectedVersion,toState:'CLOSURE',lifecycleState:'CLOSED',reason,
+      actionKind:'CLASS_CLOSED',sourceEventRef,idempotencyKey,
+      safeMetadata:{fact_pack_schema_version:factPack.schema_version},
+      extraUpdates:{closure_reason:reason,ended_at:endedAt},
+    });
+    const factId = randomUUID();
+    const fact = await tx.query(
+      "insert into public.teaching_class_closure_facts(" +
+      "closure_fact_id,student_id,course_id,class_id,class_session_id,lesson_blueprint_id,controller_version," +
+      "fact_pack_version,fact_pack,provenance_refs,closed_at" +
+      ") values($1,$2,$3,$4,$5,$6,$7,'d11.class-fact-pack.v1',$8::jsonb,$9::jsonb,$10) returning *",
+      [
+        factId,studentId,classRow.course_id,classId,session.class_session_id,blueprint?.lesson_blueprint_id || null,
+        transitioned.session.state_version,JSON.stringify(factPack),
+        JSON.stringify([
+          'class:' + classId,
+          ...(blueprint ? ['lesson-blueprint:' + blueprint.lesson_blueprint_id] : []),
+          ...((evidence.rows || []).map((row) => 'evidence:' + row.evidence_event_id)),
+        ]),
+        endedAt,
+      ]
+    );
+    return Object.freeze({session:transitioned.session,closureFact:fact.rows[0],idempotent:false});
+  }
+
+  async function commitClosure(args = {}) {
+    return withTransaction((tx)=>commitClosureUsing(tx,args));
+  }
+
+  async function getClosureFact(studentId,classId) {
+    const {rows}=await query(
+      "select * from public.teaching_class_closure_facts where student_id=$1 and class_id=$2 limit 1",
+      [studentId,classId]
+    );
+    return rows?.[0] || null;
   }
 
   async function persistSummary({
-    studentId,classId,classSessionId,closureFactId,state,payload={},provenance={},
+    studentId,classId,classSessionId,closureFactId,state,payload={},provenance={},idempotencyKey=null,
   } = {}) {
     return withTransaction(async (tx) => {
+      if (idempotencyKey) {
+        const prior=await tx.query(
+          "select * from public.teaching_class_summaries where student_id=$1 and idempotency_key=$2 limit 1",
+          [studentId,idempotencyKey]
+        );
+        if(prior.rows?.[0]) return prior.rows[0];
+      }
       const versions = await tx.query(
         "select coalesce(max(version_no),0)+1 next_version from public.teaching_class_summaries where class_session_id=$1",
         [classSessionId]
       );
       const inserted = await tx.query(
         "insert into public.teaching_class_summaries(" +
-        "class_summary_id,student_id,class_id,class_session_id,closure_fact_id,version_no,summary_state,summary_payload,translation_provenance" +
-        ") values($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb) returning *",
-        [randomUUID(),studentId,classId,classSessionId,closureFactId,Number(versions.rows[0].next_version),state,JSON.stringify(payload || {}),JSON.stringify(provenance || {})]
+        "class_summary_id,student_id,class_id,class_session_id,closure_fact_id,version_no,summary_state,summary_payload,translation_provenance,idempotency_key" +
+        ") values($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10) returning *",
+        [
+          randomUUID(),studentId,classId,classSessionId,closureFactId,Number(versions.rows[0].next_version),
+          state,JSON.stringify(payload || {}),JSON.stringify(provenance || {}),idempotencyKey,
+        ]
       );
       return inserted.rows[0];
     });
   }
 
   async function persistTeacherNote({
-    studentId,courseId,classId,classSessionId,closureFactId,state,payload={},provenanceRefs=[],generationProvenance={},
+    studentId,courseId,classId,classSessionId,closureFactId,state,payload={},provenanceRefs=[],generationProvenance={},idempotencyKey=null,
   } = {}) {
     return withTransaction(async (tx) => {
+      if (idempotencyKey) {
+        const prior=await tx.query(
+          "select * from public.teaching_post_class_teacher_notes where student_id=$1 and idempotency_key=$2 limit 1",
+          [studentId,idempotencyKey]
+        );
+        if(prior.rows?.[0]) return prior.rows[0];
+      }
       const versions = await tx.query(
         "select coalesce(max(version_no),0)+1 next_version from public.teaching_post_class_teacher_notes where class_session_id=$1",
         [classSessionId]
       );
       const inserted = await tx.query(
         "insert into public.teaching_post_class_teacher_notes(" +
-        "teacher_note_id,student_id,course_id,class_id,class_session_id,closure_fact_id,version_no,note_state,note_payload,provenance_refs,generation_provenance" +
-        ") values($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb) returning *",
+        "teacher_note_id,student_id,course_id,class_id,class_session_id,closure_fact_id,version_no,note_state,note_payload,provenance_refs,generation_provenance,idempotency_key" +
+        ") values($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12) returning *",
         [
           randomUUID(),studentId,courseId,classId,classSessionId,closureFactId,Number(versions.rows[0].next_version),state,
-          JSON.stringify(payload || {}),JSON.stringify(provenanceRefs || []),JSON.stringify(generationProvenance || {}),
+          JSON.stringify(payload || {}),JSON.stringify(provenanceRefs || []),JSON.stringify(generationProvenance || {}),idempotencyKey,
         ]
       );
       return inserted.rows[0];
@@ -1011,7 +1152,10 @@ function createD11LessonControllerRepository({
     listClassesForCourse,
     getPlanningSignals,
     ensurePreparationWorkspace,
+    ensurePreparationWorkspaceUsing,
     recordPreparationArtifact,
+    getPreparationArtifactPayload,
+    currentDependencyVersion,
     assertContextCurrentUsing,
     assertLiveContextCurrent,
     saveBlueprint,
@@ -1023,6 +1167,8 @@ function createD11LessonControllerRepository({
     recordProgressUsing,
     closureContext,
     commitClosure,
+    commitClosureUsing,
+    getClosureFact,
     persistSummary,
     persistTeacherNote,
     getGovernedRequest,
