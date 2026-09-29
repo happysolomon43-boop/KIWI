@@ -3,6 +3,7 @@
 const TEACHING_EVENTS = Object.freeze({
   COURSE_ACTIVATED: 'teaching.course.activated',
   CLASS_START_DUE: 'teaching.class.start_due',
+  LESSON_PREPARATION_REFRESH_DUE: 'teaching.lesson.preparation_refresh_due',
   CLASS_JOINED: 'teaching.class.joined',
   STUDENT_RESPONSE_SUBMITTED: 'teaching.student.response_submitted',
   ACTIVITY_TIMER_EXPIRED: 'teaching.activity.timer_expired',
