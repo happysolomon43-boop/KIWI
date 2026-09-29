@@ -151,10 +151,8 @@ function registerD11Runtime({
       const kind=String(event.payload?.kind||reconciliation?.metadata?.kind||'SCHEDULED_END');
       if(kind==='SCHEDULED_END'&&context.session.overtime_ceiling_at&&new Date(context.session.overtime_ceiling_at)>new Date(context.classRow.scheduled_end_at)) {
         if(!context.session.overtime_started_at) {
-          const changed=await service.transition({id:event.actor_id},event.aggregate_id,{
+          const changed=await service.markOvertimeStarted({id:event.actor_id},event.aggregate_id,{
             expectedVersion:Number(context.session.state_version),
-            toState:context.session.instructional_substate,
-            reason:'Scheduled end reached; authorized overtime entered',
           });
           return {safeMetadata:{class_id:event.aggregate_id,overtime_started:true,controller_version:changed.controller.stateVersion}};
         }
