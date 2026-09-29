@@ -169,6 +169,16 @@ test('canonical Teaching module package boundaries remain explicit as later deli
       assert.equal(typeof descriptor.computeSchedule, 'function');
       continue;
     }
+    if (id === 'courses') {
+      assert.equal(descriptor.status, 'implemented-d10');
+      assert.equal(descriptor.authority, 'course_lifecycle');
+      continue;
+    }
+    if (id === 'requests') {
+      assert.equal(descriptor.status, 'implemented-d10');
+      assert.equal(descriptor.authority, 'request');
+      continue;
+    }
     assert.equal(descriptor.status, 'foundation-only');
     assert.equal(descriptor.authority, 'none-d01-foundation');
   }

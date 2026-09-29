@@ -26,6 +26,7 @@ function createTeachingRouter({
   d08Service = null,
   d09Intelligence = null,
   d09Service = null,
+  d10Service = null,
   teachingRuntimePlatform = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
@@ -46,11 +47,13 @@ function createTeachingRouter({
     d08Intelligence,
     d09Intelligence,
     d09TransactionalMutation: teachingRuntimePlatform?.transactionalMutation || null,
+    d10RuntimePlatform: teachingRuntimePlatform || null,
   });
   const router = express.Router();
   let d07Ready = Boolean(d07Service);
   let d08Ready = Boolean(d08Service);
   let d09Ready = Boolean(d09Service);
+  let d10Ready = Boolean(d10Service);
 
   router.assertD07Ready = async () => {
     if (!foundation.d07?.repository) {
@@ -69,6 +72,16 @@ function createTeachingRouter({
     }
     await foundation.d09.repository.assertReady();
     d09Ready = true;
+    return true;
+  };
+
+  router.assertD10Ready = async () => {
+    if (!foundation.d10?.repository) {
+      d10Ready = false;
+      return false;
+    }
+    await foundation.d10.repository.assertReady();
+    d10Ready = true;
     return true;
   };
 
@@ -261,6 +274,85 @@ function createTeachingRouter({
         currentTimeZone: req.query.currentTimeZone || 'UTC',
       })); }
       catch (error) { sendError(res, error, 'Failed to load Teaching Calendar.'); }
+    });
+  }
+
+
+  const lifecycleRequestService = d10Service || foundation.d10?.service || null;
+  if (lifecycleRequestService) {
+    const requireD10Ready = (req, res, next) => {
+      if (d10Ready) return next();
+      return res.status(503).json({
+        error: 'Teaching Course activation and Requests are unavailable until the D10 schema is ready.',
+        code: 'TEACHING_D10_SCHEMA_NOT_READY',
+      });
+    };
+
+    router.get('/teacher-identities', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.listTeacherIdentities(req.user)); }
+      catch (error) { sendError(res, error, 'Failed to load available Teacher identities.'); }
+    });
+
+    router.get('/courses/:id/academic-rules', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.getAcademicRules(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load academic rules and Teacher.'); }
+    });
+    router.post('/courses/:id/academic-rules/prepare', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.prepareAcademicRules(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Failed to prepare academic rules and Teacher.'); }
+    });
+    router.get('/courses/:id/activation-review', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.getActivationReview(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load final activation review.'); }
+    });
+    router.post('/courses/:id/ready', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.markReady(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Course could not become Ready.'); }
+    });
+    router.post('/courses/:id/activate', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.activateCourse(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Course activation failed safely.'); }
+    });
+    router.post('/courses/:id/incomplete/archive', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.archiveIncomplete(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Incomplete Course could not be administratively closed.'); }
+    });
+
+    router.get('/requests', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.listRequests(req.user, { courseId:req.query.courseId || null, state:req.query.state || null })); }
+      catch (error) { sendError(res, error, 'Failed to load Teaching Requests.'); }
+    });
+    router.post('/requests', requireD10Ready, async (req, res) => {
+      try { res.status(201).json(await lifecycleRequestService.createRequest(req.user, req.body || {})); }
+      catch (error) { sendError(res, error, 'Teaching Request could not be created.'); }
+    });
+    router.get('/requests/:id', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.getRequest(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to load Teaching Request.'); }
+    });
+    router.post('/requests/:id/submit', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.submitRequest(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Teaching Request could not be submitted.'); }
+    });
+    router.post('/requests/:id/review', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.reviewRequest(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Teaching Request review failed safely.'); }
+    });
+    router.post('/requests/:id/withdraw', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.withdrawRequest(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Teaching Request could not be withdrawn.'); }
+    });
+    router.post('/requests/:id/alternative/accept', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.acceptAlternative(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Alternative proposal could not be accepted.'); }
+    });
+    router.post('/requests/:id/alternative/decline', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.declineAlternative(req.user, req.params.id, req.body || {})); }
+      catch (error) { sendError(res, error, 'Alternative proposal could not be declined.'); }
+    });
+    router.post('/requests/:id/apply', requireD10Ready, async (req, res) => {
+      try { res.json(await lifecycleRequestService.applyRequest(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Approved Request could not be applied.'); }
     });
   }
 

@@ -43,6 +43,7 @@ const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 const { createTeachingRouter } = require('./teaching-backend');
 const { createTeachingD05RuntimePlatform } = require('./teaching/runtime');
 const { createTeachingEventSubscriberRegistry } = require('./teaching/events/dispatcher');
+const { TEACHING_EVENTS } = require('./teaching/events/names');
 const { requireRuntimeSecret, optionalRuntimeSecret } = require('./services/runtime-secrets');
 
 const DATABASE_URL = requireRuntimeSecret(process.env, 'DATABASE_URL', ['KIWI_DATABASE_URL']);
@@ -75,6 +76,14 @@ const ai = _aiRuntime.orchestrator;
 // durable committed-domain event outbox. It owns no academic-domain truth.
 const teachingAIRun = ai.run.bind(ai);
 const teachingPublishedEvents = createTeachingEventSubscriberRegistry();
+teachingPublishedEvents.register(TEACHING_EVENTS.REQUEST_DECIDED, {
+  subscriberId: 'd10-request-decision-audit',
+  handle: async (event) => Object.freeze({ accepted: true, requestId: event.aggregateId }),
+});
+teachingPublishedEvents.register(TEACHING_EVENTS.COURSE_ACTIVATED, {
+  subscriberId: 'd10-course-activation-followup',
+  handle: async (event) => Object.freeze({ accepted: true, courseId: event.aggregateId }),
+});
 const teachingRuntimePlatform = createTeachingD05RuntimePlatform({
   query,
   withTransaction,
@@ -23027,6 +23036,12 @@ try {
   console.log('[KIWI Teaching] D09 Semester/Scheduling runtime verified; Scheduler schema is ready.');
 } catch (e) {
   console.error('[KIWI Teaching] D09 Semester/Scheduling runtime unavailable; Stage 4/5 remains fail-closed:', e.message);
+}
+try {
+  await teachingRouter.assertD10Ready();
+  console.log('[KIWI Teaching] D10 Course Lifecycle/Request runtime verified; activation and formal Requests are ready.');
+} catch (e) {
+  console.error('[KIWI Teaching] D10 Course Lifecycle/Request runtime unavailable; activation/Requests remain fail-closed:', e.message);
 }
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }

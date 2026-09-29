@@ -1,0 +1,520 @@
+'use strict';
+
+const { TEACHING_EVENTS } = require('../events/names');
+const { EVENT_CATEGORIES } = require('../runtime/constants');
+const { normalizeScheduleInputs } = require('../d09/contracts');
+const { computeSchedule,validateEditedSchedule } = require('../d09/scheduler');
+const { normalizeCreateRequest,requestDefinition } = require('./contracts');
+
+function createD10Service({
+  repository,d09Repository,transactionalMutation,randomUUID,clock=()=>new Date(),
+}={}) {
+  if(!repository) throw new TypeError('D10 service requires repository.');
+  if(!d09Repository) throw new TypeError('D10 service requires the D09 Scheduler repository owner.');
+  if(!transactionalMutation||typeof transactionalMutation.mutateAndPublish!=='function') throw new TypeError('D10 service requires D05 transactional mutation infrastructure.');
+  if(typeof randomUUID!=='function') throw new TypeError('D10 service requires randomUUID().');
+
+  const serverNow=()=>{const value=clock();return value instanceof Date?value:new Date(value);};
+  function error(message,code,status=409,details=null){const e=new Error(message);e.code=code;e.status=status;if(details)e.details=details;return e;}
+
+  function publicPolicy(policy){
+    return Object.freeze({
+      policyVersion:policy.policy_version,
+      maximumConcurrentCourses:Number(policy.maximum_concurrent_courses),
+      structuralSchemaMaximum:false,
+      oneStudentIdentity:true,
+    });
+  }
+
+  function sanitizeRules(result){
+    const p=result.gradingPolicy,a=result.teacherAssignment;
+    return Object.freeze({
+      gradingPolicy:p?Object.freeze({
+        policyId:p.grading_policy_id,version:Number(p.version_no),kind:p.policy_kind,policyVersionRef:p.policy_version_ref,
+        categoryWeights:p.category_weights,locked:Boolean(p.locked_at),lockedAt:p.locked_at||null,
+        calculationOwner:'GRADEBOOK_D20',
+      }):null,
+      teacher:a?Object.freeze({
+        assignmentId:a.teacher_assignment_id,version:Number(a.version_no),teacherIdentityId:a.teacher_identity_id,
+        displayName:a.display_name||'KIWI Teacher',styleEnvelopeVersion:a.style_envelope_version||null,active:a.teacher_active!==false,
+        identityGeneration:'DETERMINISTIC_D10_SHELL_NO_MODEL',
+      }):null,
+      reviewItems:Object.freeze([
+        'Grading policy','Major assessment expectations','Attendance expectations','Schedule-change process',
+        'Academic Break rules','Academic integrity rules',
+      ]),
+      modelRouteUsed:false,
+    });
+  }
+
+  async function getAcademicRules(user,courseId){
+    return sanitizeRules(await repository.getAcademicRules(user.id,courseId));
+  }
+  async function prepareAcademicRules(user,courseId,input={}){
+    return sanitizeRules(await repository.prepareAcademicRules({
+      studentId:user.id,courseId,teacherIdentityId:input.teacherIdentityId||null,
+    }));
+  }
+
+  async function listTeacherIdentities(user){
+    const rows=await repository.listTeacherIdentities(user.id);
+    return Object.freeze(rows.map((row)=>Object.freeze({
+      teacherIdentityId:row.teacher_identity_id,
+      displayName:row.display_name,
+      styleEnvelopeVersion:row.style_envelope_version||null,
+      active:row.active!==false,
+    })));
+  }
+
+  function activationReviewFromFacts(facts){
+    const warnings=[];
+    if(facts.feasibility?.outcome==='AT_RISK') warnings.push('SCHEDULE_AT_RISK');
+    return Object.freeze({
+      serverNow:serverNow().toISOString(),
+      course:Object.freeze({
+        courseId:facts.course.course_id,title:facts.course.title,lifecycleState:facts.course.lifecycle_state,
+        stateVersion:Number(facts.course.state_version),statusOverlays:Object.freeze(facts.course.status_overlays||[]),
+        progressionOutcome:facts.course.progression_outcome||null,
+      }),
+      coursePlan:facts.plan?Object.freeze({
+        coursePlanId:facts.plan.course_plan_id,version:Number(facts.plan.version_no),
+        state:facts.plan.plan_state,currentSourceSnapshot:String(facts.plan.source_snapshot_ref||'')===String(facts.course.subject_snapshot_ref||''),
+      }):null,
+      coverage:Object.freeze({
+        allowed:Boolean(facts.coverage?.allowed),auditId:facts.coverageAudit?.coverage_audit_id||null,
+        auditOutcome:facts.coverageAudit?.outcome||null,diagnosticResolved:Boolean(facts.diagnostic?.resolved),
+      }),
+      semester:facts.semester?Object.freeze({
+        semesterId:facts.semester.semester_id,name:facts.semester.name,startsAt:facts.semester.starts_at,endsAt:facts.semester.ends_at,
+        timezone:facts.semester.timezone,stateVersion:Number(facts.semester.state_version),
+      }):null,
+      timetable:facts.timetable?Object.freeze({
+        timetableVersionId:facts.timetable.timetable_version_id,version:Number(facts.timetable.version_no),state:facts.timetable.timetable_state,
+      }):null,
+      feasibility:facts.feasibility?Object.freeze({
+        outcome:facts.feasibility.outcome,evaluatedAt:facts.feasibility.evaluated_at,reasons:facts.feasibility.reasons||[],
+        alternatives:facts.feasibility.alternatives||[],headroomPolicyVersion:facts.feasibility.headroom_policy_version,
+      }):null,
+      academicRules:sanitizeRules({gradingPolicy:facts.gradingPolicy,teacherAssignment:facts.teacherAssignment}),
+      admission:Object.freeze({
+        ...publicPolicy(facts.admission.policy),
+        concurrentCoursesBeforeTarget:facts.admission.counted.length,
+        allowed:Boolean(facts.admission.allowed),
+      }),
+      blockingReasons:Object.freeze(facts.blockers||[]),
+      warnings:Object.freeze(warnings),
+      canMarkReady:facts.course.lifecycle_state==='DRAFT'&&!(facts.blockers||[]).length,
+      canActivate:facts.course.lifecycle_state==='READY'&&!(facts.blockers||[]).length,
+      authority:Object.freeze({
+        courseLifecycle:'D10',coursePlanCoverage:'D08',schedulerCalendar:'D09',gradingCalculation:'D20',
+        attendance:'D15',progression:'D21',serverTimeAuthoritative:true,
+      }),
+    });
+  }
+
+  async function getActivationReview(user,courseId){
+    return activationReviewFromFacts(await repository.getActivationFacts(user.id,courseId));
+  }
+
+  async function markReady(user,courseId){
+    const review=await getActivationReview(user,courseId);
+    if(!review.canMarkReady) throw error('Course cannot become Ready until all activation prerequisites are current.','TEACHING_D10_ACTIVATION_BLOCKED',409,{blockers:review.blockingReasons});
+    await repository.markReady({studentId:user.id,courseId,expected:{
+      planId:review.coursePlan?.coursePlanId,timetableVersionId:review.timetable?.timetableVersionId,
+    }});
+    return getActivationReview(user,courseId);
+  }
+
+  async function activateCourse(user,courseId){
+    const review=await getActivationReview(user,courseId);
+    if(!review.canActivate) throw error('Course cannot activate until it is Ready and all prerequisites remain current.','TEACHING_D10_ACTIVATION_BLOCKED',409,{blockers:review.blockingReasons});
+    const correlationId=randomUUID();
+    const wrapped=await transactionalMutation.mutateAndPublish({
+      mutate:(tx)=>repository.activateCourseUsing(tx,{
+        studentId:user.id,courseId,
+        expected:{planId:review.coursePlan?.coursePlanId,timetableVersionId:review.timetable?.timetableVersionId},
+        activateScheduleUsing:async(tx,facts,activationId)=>{
+          const timetable=await d09Repository.approveTimetableUsing(tx,{studentId:user.id,timetableVersionId:facts.timetable.timetable_version_id});
+          const latest=await d09Repository.latestTimetable(user.id,facts.semester.semester_id,tx);
+          const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{
+            studentId:user.id,semesterId:facts.semester.semester_id,timetable,slots:latest.slots,activationId,requestId:null,
+          });
+          return {timetable,slots:latest.slots,classes};
+        },
+      }),
+      buildEvent:(result)=>({
+        eventId:randomUUID(),schemaVersion:1,eventType:TEACHING_EVENTS.COURSE_ACTIVATED,eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
+        triggerType:'committed_domain_event',source:'course_lifecycle',origin:'d10',actorId:user.id,
+        aggregateType:'COURSE',aggregateId:courseId,aggregateVersion:Number(result.course.state_version),
+        occurredAt:new Date(result.activatedAt).toISOString(),effectiveAt:new Date(result.activatedAt).toISOString(),dueAt:null,
+        correlationId,causationId:null,idempotencyKey:`d10-course-activated:${courseId}:${result.course.state_version}`,
+        payload:{course_id:courseId,activation_id:result.activationId,timetable_version_id:result.schedule.timetable.timetable_version_id},
+        auditRefs:[],provenanceRefs:[`course-plan:${result.facts.plan.course_plan_id}`,`timetable:${result.schedule.timetable.timetable_version_id}`],
+      }),
+    });
+    return getActivationReview(user,courseId);
+  }
+
+  function sanitizeRequest(row){
+    const def=requestDefinition(row.request_type);
+    return Object.freeze({
+      requestId:row.request_id,courseId:row.course_id,type:row.request_type,state:row.lifecycle_state,stateVersion:Number(row.state_version),
+      target:Object.freeze({owner:row.target_owner,type:row.target_type,ref:row.target_ref,versionRef:row.target_version_ref}),
+      requestedChange:row.requested_change,explanation:row.explanation||null,decision:row.decision||null,
+      effectiveAt:row.effective_at||null,
+      alternativeProposal:row.alternative_proposal?Object.freeze({...row.alternative_proposal,version:Number(row.alternative_version)}):null,
+      studentResponse:row.student_response||null,applicationRef:row.application_ref||null,appliedAt:row.applied_at||null,
+      closeReason:row.close_reason||null,closedAt:row.closed_at||null,createdAt:row.created_at,updatedAt:row.updated_at,
+      ownerImplementedInD10:Boolean(def.implementedOwner),requiresFutureOwner:!def.implementedOwner,
+      emergencyFastPath:Boolean(def.emergency),serverTimeAuthoritative:true,
+    });
+  }
+
+  async function listRequests(user,input={}){
+    const rows=await repository.listRequests(user.id,{courseId:input.courseId||null,state:input.state||null});
+    return Object.freeze(rows.map(sanitizeRequest));
+  }
+  async function getRequest(user,requestId){
+    const result=await repository.getRequest(user.id,requestId);
+    return Object.freeze({
+      ...sanitizeRequest(result.request),
+      history:Object.freeze((result.history||[]).map((h)=>Object.freeze({
+        version:Number(h.request_version),from:h.from_state,to:h.to_state,actorType:h.actor_type,authority:h.actor_authority,
+        reason:h.reason||null,explanation:h.explanation||null,applicationRef:h.application_ref||null,occurredAt:h.occurred_at,
+      }))),
+    });
+  }
+
+  async function createRequest(user,input={}){
+    const normalized=normalizeCreateRequest(input);
+    const row=await repository.createRequest({
+      studentId:user.id,courseId:input.courseId||null,normalized,idempotencyKey:input.idempotencyKey||null,
+    });
+    let request=row;
+    if(normalized.definition.emergency){
+      request=await repository.transitionRequest({studentId:user.id,requestId:row.request_id,toState:'SUBMITTED',reason:'Emergency fast path submitted immediately'});
+      request=await repository.transitionRequest({studentId:user.id,requestId:row.request_id,toState:'REVIEWING',reason:'Emergency fast path requires no proof interrogation',actorType:'SYSTEM'});
+      request=await decideRequest(user,request.request_id,{forceEmergency:true});
+    }
+    return sanitizeRequest(request);
+  }
+
+  async function submitRequest(user,requestId){
+    let {request}=await repository.getRequest(user.id,requestId);
+    if(request.lifecycle_state==='DRAFT') request=await repository.transitionRequest({studentId:user.id,requestId,toState:'SUBMITTED',reason:'Student submitted Request'});
+    if(request.lifecycle_state==='SUBMITTED') request=await repository.transitionRequest({studentId:user.id,requestId,toState:'REVIEWING',reason:'Request entered deterministic review',actorType:'SYSTEM'});
+    return sanitizeRequest(request);
+  }
+  async function withdrawRequest(user,requestId){
+    let {request}=await repository.getRequest(user.id,requestId);
+    if(!['DRAFT','SUBMITTED','REVIEWING','ALTERNATIVE_PROPOSED'].includes(request.lifecycle_state)) throw error('This Request can no longer be withdrawn.','TEACHING_D10_REQUEST_WITHDRAW_INVALID');
+    request=await repository.transitionRequest({studentId:user.id,requestId,toState:'WITHDRAWN',reason:'Student withdrew Request'});
+    request=await repository.transitionRequest({studentId:user.id,requestId,toState:'CLOSED',reason:'Withdrawn Request closed',actorType:'SYSTEM'});
+    return sanitizeRequest(request);
+  }
+
+  function activeScheduleContext(context,{includeCourseId=null}={}){
+    const blocked=new Set(['PAUSED','TEACHING_ENDED','FINALIZING','INCOMPLETE','COMPLETED','ARCHIVED']);
+    return {...context,courses:(context.courses||[]).filter((bundle)=>{
+      const id=String(bundle.course?.course_id||'');
+      if(includeCourseId&&id===String(includeCourseId)) return true;
+      return !blocked.has(String(bundle.course?.lifecycle_state||'DRAFT'));
+    })};
+  }
+
+  function inputsFromContext(context,{extraBlock=null}={}){
+    const t=(v)=>String(v||'').slice(0,5);
+    const blocks=(context.blocks||[]).map((b)=>({
+      courseId:b.course_id||null,kind:b.block_kind,startsAt:b.starts_at,endsAt:b.ends_at,label:b.label||null,reason:b.reason||null,
+    }));
+    if(extraBlock) blocks.push(extraBlock);
+    return {
+      semester:{
+        semesterId:context.semester.semester_id,name:context.semester.name,startsAt:context.semester.starts_at,
+        endsAt:context.semester.ends_at,timezone:context.semester.timezone,
+      },
+      availability:(context.availability||[]).map((a)=>({
+        dayOfWeek:Number(a.day_of_week),startLocal:t(a.local_start),endLocal:t(a.local_end),kind:a.kind,
+        preferenceWeight:Number(a.preference_weight)||0,effectiveStartDate:a.effective_start_date||null,effectiveEndDate:a.effective_end_date||null,label:a.label||null,
+      })),
+      blocks,
+      deadlines:(context.deadlines||[]).map((d)=>({courseId:d.course_id||null,kind:d.deadline_kind,deadlineAt:d.deadline_at,label:d.label||null})),
+      reserves:(context.reserves||[]).map((r)=>({courseId:r.course_id||null,kind:r.reserve_kind,minutes:Number(r.minutes)||0,
+        protectedStartAt:r.protected_start_at||null,protectedEndAt:r.protected_end_at||null})),
+      preferences:context.profile?.preferences||{},
+    };
+  }
+
+  async function previewReschedule(user,request){
+    const change=request.requested_change;
+    const klass=await repository.getClassTarget(user.id,change.classId);
+    const context=await d09Repository.getSchedulingContext(user.id,request.course_id);
+    const latest=await d09Repository.latestTimetable(user.id,context.semester.semester_id);
+    if(!latest.timetable||!klass.source_timetable_slot_id) return {state:'REJECTED',decision:{code:'CLASS_NOT_BOUND_TO_CURRENT_TIMETABLE',explanation:'The Class is no longer attached to the current timetable.'}};
+    const attempt=(startsAt,endsAt)=>{
+      try{
+        return validateEditedSchedule(activeScheduleContext(context),latest.slots,[{
+          slotId:klass.source_timetable_slot_id,startsAt,endsAt,exceptionReason:'Approved formal reschedule Request preview',
+        }],{now:serverNow().toISOString()});
+      }catch(e){return {outcome:'INFEASIBLE',reasons:[e.code||'HARD_CONSTRAINT'],alternatives:[]};}
+    };
+    const direct=attempt(change.startsAt,change.endsAt);
+    if(direct.outcome!=='INFEASIBLE') return {state:'APPROVED',decision:{code:'REQUEST_FEASIBLE',explanation:'The requested Class time remains feasible under the current authoritative timetable.'}};
+    const duration=Date.parse(change.endsAt)-Date.parse(change.startsAt);
+    for(const minutes of [-30,30,-60,60,-90,90,-120,120]){
+      const start=new Date(Date.parse(change.startsAt)+minutes*60000).toISOString();
+      const end=new Date(Date.parse(start)+duration).toISOString();
+      const candidate=attempt(start,end);
+      if(candidate.outcome!=='INFEASIBLE'){
+        return {state:'ALTERNATIVE_PROPOSED',decision:{code:'REQUEST_TIME_INFEASIBLE',explanation:'The requested time conflicts with the current timetable, but a nearby feasible alternative is available.'},
+          alternative:{requestedChange:{...change,startsAt:start,endsAt:end},schedulerOutcome:candidate.outcome,reason:'Nearest validated 30-minute-step alternative'}};
+      }
+    }
+    return {state:'REJECTED',decision:{code:'REQUEST_INFEASIBLE',explanation:'No nearby feasible reschedule preserves the current hard constraints and recovery capacity.',reasons:direct.reasons||[]}};
+  }
+
+  async function previewScheduleMutation(user,request){
+    const context=await d09Repository.getSchedulingContext(user.id,request.course_id);
+    let derived=activeScheduleContext(context);
+    if(request.request_type==='PERMANENT_AVAILABILITY_CHANGE'){
+      const normalized=normalizeScheduleInputs(request.requested_change.scheduleInputs);
+      if(normalized.semester.semesterId&&String(normalized.semester.semesterId)!==String(context.semester.semester_id)) throw error('Availability Request cannot move the Course to a different Semester.','TEACHING_D10_AVAILABILITY_SEMESTER_MISMATCH',422);
+      derived={...derived,semester:{...context.semester,name:normalized.semester.name,starts_at:normalized.semester.startsAt,ends_at:normalized.semester.endsAt,timezone:normalized.semester.timezone},
+        availability:normalized.availability.map((a)=>({day_of_week:a.dayOfWeek,local_start:a.startLocal,local_end:a.endLocal,kind:a.kind,preference_weight:a.preferenceWeight,effective_start_date:a.effectiveStartDate,effective_end_date:a.effectiveEndDate,label:a.label})),
+        blocks:normalized.blocks.map((b)=>({course_id:b.courseId,block_kind:b.kind,starts_at:b.startsAt,ends_at:b.endsAt,label:b.label,reason:b.reason})),
+        deadlines:normalized.deadlines.map((d)=>({course_id:d.courseId,deadline_kind:d.kind,deadline_at:d.deadlineAt,label:d.label})),
+        reserves:normalized.reserves.map((r)=>({course_id:r.courseId,reserve_kind:r.kind,minutes:r.minutes,protected_start_at:r.protectedStartAt,protected_end_at:r.protectedEndAt})),
+        profile:{...context.profile,preferences:normalized.preferences}};
+    } else if(request.request_type==='ACADEMIC_BREAK'){
+      const change=request.requested_change;
+      derived={...derived,blocks:[...(derived.blocks||[]),{course_id:request.course_id,block_kind:'BREAK',starts_at:change.startsAt,ends_at:change.endsAt,label:'Academic Break',reason:'Requested Academic Break'}]};
+    } else if(request.request_type==='COURSE_RESUME'){
+      derived=activeScheduleContext(context,{includeCourseId:request.course_id});
+    }
+    const result=computeSchedule(derived,{now:serverNow().toISOString()});
+    if(result.outcome==='INFEASIBLE') return {state:'REJECTED',decision:{code:'SCHEDULE_INFEASIBLE',explanation:'The requested change cannot preserve current academic commitments.',reasons:result.reasons,alternatives:result.alternatives}};
+    return {state:'APPROVED',decision:{code:result.outcome==='AT_RISK'?'SCHEDULE_AT_RISK_BUT_FEASIBLE':'SCHEDULE_FEASIBLE',
+      explanation:result.outcome==='AT_RISK'?'The change remains feasible but reduces recovery headroom.':'The change is feasible under the current authoritative schedule.'}};
+  }
+
+  async function evaluateDecision(user,request,{forceEmergency=false}={}){
+    const def=requestDefinition(request.request_type);
+    if(request.lifecycle_state!=='REVIEWING') throw error('Request must be Reviewing before a decision can be recorded.','TEACHING_D10_REQUEST_REVIEW_STATE_INVALID');
+    if(def.emergency||forceEmergency) return {state:'APPROVED',decision:{code:'EMERGENCY_RECORDED',explanation:'Emergency absence is recorded immediately without proof interrogation.',proofRequired:false,behaviorPenaltyAutomatic:false,learningRecoveryHandoffRequired:true,ownerHandoffPending:'D15_ATTENDANCE'}};
+    if(request.request_type==='SINGLE_CLASS_RESCHEDULE') return previewReschedule(user,request);
+    if(['PERMANENT_AVAILABILITY_CHANGE','ACADEMIC_BREAK','COURSE_RESUME'].includes(request.request_type)){
+      if(request.request_type==='COURSE_RESUME'){
+        const admission=await repository.admissionSnapshot(user.id,request.course_id);
+        if(!admission.allowed) return {state:'REJECTED',decision:{code:'CONCURRENT_COURSE_LIMIT',explanation:'Resuming this Course would exceed the current launch admission policy.',policyVersion:admission.policy.policy_version}};
+      }
+      return previewScheduleMutation(user,request);
+    }
+    if(request.request_type==='COURSE_PAUSE') return {state:'APPROVED',decision:{code:'COURSE_PAUSE_APPROVED',explanation:'The Course can be paused without erasing its existing academic history.'}};
+    if(request.request_type==='TEACHER_CHANGE') return {state:'APPROVED',decision:{code:'TEACHER_CHANGE_APPROVED',explanation:'The teacher assignment will change prospectively; prior teacher history remains unchanged.'}};
+    if(request.request_type==='COURSE_CANCELLATION') return {state:'APPROVED',decision:{code:'COURSE_CANCELLATION_APPROVED',explanation:'Teaching will end and the unresolved final record will be preserved as Incomplete unless later legitimately finalized.'}};
+    if(['ASSIGNMENT_EXTENSION','EARLY_DISMISSAL','ATTENDANCE_REVIEW_CORRECTION'].includes(request.request_type)){
+      return {state:'APPROVED',decision:{code:'OWNER_HANDOFF_PENDING',explanation:'The formal Request decision is recorded, but the authoritative target owner is implemented in a later delivery and no target state is fabricated.',ownerHandoffPending:def.owner}};
+    }
+    return {state:'REJECTED',decision:{code:'REQUEST_TYPE_NOT_APPLICABLE',explanation:'This Request type is not currently applicable.'}};
+  }
+
+  function decisionEvent(result,request){
+    const nowIso=serverNow().toISOString();
+    const approved=['APPROVED','APPROVED_WITH_ADJUSTMENT'].includes(result.lifecycle_state);
+    const def=requestDefinition(result.request_type);
+    const future=approved&&def.implementedOwner&&result.effective_at&&Date.parse(result.effective_at)>Date.parse(nowIso);
+    if(future){
+      return {
+        eventId:randomUUID(),schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_EFFECTIVE_DUE,eventCategory:EVENT_CATEGORIES.SCHEDULED_DUE_EVENT,
+        triggerType:'system_time',source:'request',origin:'d10',actorId:null,aggregateType:'REQUEST',aggregateId:result.request_id,
+        aggregateVersion:Number(result.state_version),occurredAt:nowIso,effectiveAt:result.effective_at,dueAt:result.effective_at,
+        correlationId:null,causationId:null,idempotencyKey:`d10-request-effective:${result.request_id}:${result.state_version}`,
+        payload:{request_id:result.request_id,student_id:result.student_id},auditRefs:[],provenanceRefs:[],
+      };
+    }
+    return {
+      eventId:randomUUID(),schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_DECIDED,eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
+      triggerType:'committed_domain_event',source:'request',origin:'d10',actorId:null,aggregateType:'REQUEST',aggregateId:result.request_id,
+      aggregateVersion:Number(result.state_version),occurredAt:nowIso,effectiveAt:result.effective_at||nowIso,dueAt:null,
+      correlationId:null,causationId:null,idempotencyKey:`d10-request-decided:${result.request_id}:${result.state_version}`,
+      payload:{request_id:result.request_id,decision_state:result.lifecycle_state,target_owner:result.target_owner},auditRefs:[],provenanceRefs:[],
+    };
+  }
+
+  async function decideRequest(user,requestId,options={}){
+    let {request}=await repository.getRequest(user.id,requestId);
+    if(request.lifecycle_state==='SUBMITTED') request=await repository.transitionRequest({studentId:user.id,requestId,toState:'REVIEWING',reason:'Request entered deterministic review',actorType:'SYSTEM'});
+    const evaluated=await evaluateDecision(user,request,options);
+    const wrapper=await transactionalMutation.mutateAndPublish({
+      mutate:(tx)=>repository.recordDecisionUsing(tx,{
+        studentId:user.id,requestId,decisionState:evaluated.state,decision:evaluated.decision,
+        alternativeProposal:evaluated.alternative||null,reason:evaluated.decision?.code||null,expectedVersion:request.state_version,
+      }),
+      buildEvent:(result)=>decisionEvent(result,request),
+    });
+    const decided=wrapper.mutationResult;
+    const def=requestDefinition(decided.request_type);
+    if(['APPROVED','APPROVED_WITH_ADJUSTMENT'].includes(decided.lifecycle_state)&&def.implementedOwner&&(!decided.effective_at||Date.parse(decided.effective_at)<=serverNow().getTime())){
+      const applied=await applyApprovedRequest(user,decided.request_id,{expectedVersion:decided.state_version});
+      return applied.request;
+    }
+    return decided;
+  }
+
+  async function reviewRequest(user,requestId){
+    const result=await decideRequest(user,requestId);
+    return sanitizeRequest(result);
+  }
+
+  async function acceptAlternative(user,requestId,input={}){
+    const version=Number(input.alternativeVersion);
+    if(!Number.isInteger(version)||version<1) throw error('alternativeVersion is required.','TEACHING_D10_ALTERNATIVE_VERSION_REQUIRED',400);
+    const current=(await repository.getRequest(user.id,requestId)).request;
+    const wrapper=await transactionalMutation.mutateAndPublish({
+      mutate:(tx)=>repository.acceptAlternativeUsing(tx,{studentId:user.id,requestId,alternativeVersion:version}),
+      buildEvent:(result)=>decisionEvent(result,current),
+    });
+    const accepted=wrapper.mutationResult;
+    const def=requestDefinition(accepted.request_type);
+    if(def.implementedOwner&&(!accepted.effective_at||Date.parse(accepted.effective_at)<=serverNow().getTime())){
+      const applied=await applyApprovedRequest(user,requestId,{expectedVersion:accepted.state_version});
+      return sanitizeRequest(applied.request);
+    }
+    return sanitizeRequest(accepted);
+  }
+
+  async function declineAlternative(user,requestId,input={}){
+    const version=Number(input.alternativeVersion);
+    if(!Number.isInteger(version)||version<1) throw error('alternativeVersion is required.','TEACHING_D10_ALTERNATIVE_VERSION_REQUIRED',400);
+    return sanitizeRequest(await repository.declineAlternative({studentId:user.id,requestId,alternativeVersion:version}));
+  }
+
+  function requestChange(request){
+    if(request.lifecycle_state==='APPROVED_WITH_ADJUSTMENT'&&request.student_response==='ACCEPTED'&&request.alternative_proposal?.requestedChange){
+      return request.alternative_proposal.requestedChange;
+    }
+    return request.requested_change;
+  }
+
+  async function applyScheduleRequestUsing(tx,request,change){
+    const studentId=request.student_id,courseId=request.course_id;
+    if(request.request_type==='SINGLE_CLASS_RESCHEDULE'){
+      const klass=await repository.getClassTargetUsing(tx,{studentId,classId:change.classId});
+      if(`class-schedule:${klass.schedule_version}`!==String(request.target_version_ref||'')) throw error('Class schedule changed before Request application.','TEACHING_D10_REQUEST_TARGET_STALE');
+      if(!klass.source_timetable_slot_id) throw error('Class is not bound to an authoritative timetable slot.','TEACHING_D10_REQUEST_TARGET_STALE');
+      const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+      const latest=await d09Repository.latestTimetable(studentId,context.semester.semester_id,tx);
+      const result=validateEditedSchedule(activeScheduleContext(context),latest.slots,[{
+        slotId:klass.source_timetable_slot_id,startsAt:change.startsAt,endsAt:change.endsAt,exceptionReason:'Approved formal reschedule Request',
+      }],{now:serverNow().toISOString()});
+      if(result.outcome==='INFEASIBLE') throw error('Approved reschedule became infeasible before application.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:result.reasons});
+      const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId,context:activeScheduleContext(context),result,source:'FORMAL_REQUEST_APPLIED'});
+      const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id});
+      return {targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,
+        safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length}};
+    }
+
+    let context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+    let normalized;
+    if(request.request_type==='PERMANENT_AVAILABILITY_CHANGE'){
+      normalized=normalizeScheduleInputs(change.scheduleInputs);
+      if(normalized.semester.semesterId&&String(normalized.semester.semesterId)!==String(context.semester.semester_id)) throw error('Availability Request cannot change Semester identity.','TEACHING_D10_AVAILABILITY_SEMESTER_MISMATCH');
+    } else if(request.request_type==='ACADEMIC_BREAK'){
+      normalized=normalizeScheduleInputs(inputsFromContext(context,{extraBlock:{
+        courseId,kind:'BREAK',startsAt:change.startsAt,endsAt:change.endsAt,label:'Academic Break',reason:'Approved Academic Break Request',
+      }}));
+    } else {
+      throw error('Unsupported Scheduler Request application.','TEACHING_D10_REQUEST_OWNER_APPLICATION_INVALID');
+    }
+    await d09Repository.saveScheduleInputsUsing(tx,{studentId,courseId,input:normalized,governedRequestRef:request.request_id});
+    context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+    const derived=activeScheduleContext(context);
+    const result=computeSchedule(derived,{now:serverNow().toISOString()});
+    if(result.outcome==='INFEASIBLE') throw error('Approved schedule change became infeasible before application.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:result.reasons});
+    const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId,context:derived,result,source:'FORMAL_REQUEST_APPLIED'});
+    const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id});
+    return {targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,
+      safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length,request_kind:request.request_type}};
+  }
+
+  async function applyApprovedRequest(user,requestId,{expectedVersion=null}={}){
+    const studentId=user.id;
+    const result=await repository.applyRequest({
+      studentId,requestId,expectedVersion,
+      applyTargetUsing:async(tx,request)=>{
+        const def=requestDefinition(request.request_type);
+        if(!def.implementedOwner) throw error('The authoritative target owner is not implemented in D10; Request remains a handoff record.','TEACHING_D10_REQUEST_OWNER_PENDING',409,{owner:def.owner});
+        const change=requestChange(request);
+        if(['SINGLE_CLASS_RESCHEDULE','PERMANENT_AVAILABILITY_CHANGE','ACADEMIC_BREAK'].includes(request.request_type)){
+          return applyScheduleRequestUsing(tx,request,change);
+        }
+        if(request.request_type==='COURSE_PAUSE'){
+          const course=await repository.ensureCourse(studentId,request.course_id,tx,true);
+          if(course.lifecycle_state!=='ACTIVE') throw error('Course changed before Pause application.','TEACHING_D10_REQUEST_TARGET_STALE');
+          const updated=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'PAUSED',reason:'Approved Course Pause',sourceRequestId:request.request_id,expectedVersion:course.state_version});
+          await d09Repository.markCurrentTimetableStaleUsing(tx,{studentId,semesterId:updated.semester_id});
+          if(typeof d09Repository.suspendCourseClassesUsing==='function') await d09Repository.suspendCourseClassesUsing(tx,{studentId,courseId:request.course_id,requestId:request.request_id});
+          return {targetVersionAfter:`course-state:${updated.state_version}`,safeMetadata:{lifecycle_state:'PAUSED',schedule_review_required:true}};
+        }
+        if(request.request_type==='COURSE_RESUME'){
+          const admission=await repository.currentAdmissionPolicy(tx);
+          const counted=await repository.countedCourses(studentId,{excludeCourseId:request.course_id,runner:tx,lock:true});
+          if(counted.length>=Number(admission.maximum_concurrent_courses)) throw error('Course resume now exceeds the concurrent-Course policy.','TEACHING_D10_CONCURRENT_COURSE_LIMIT');
+          let context=await d09Repository.getSchedulingContextUsing(tx,studentId,request.course_id);
+          const derived=activeScheduleContext(context,{includeCourseId:request.course_id});
+          const schedule=computeSchedule(derived,{now:serverNow().toISOString()});
+          if(schedule.outcome==='INFEASIBLE') throw error('Course resume is no longer schedule-feasible.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:schedule.reasons});
+          const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId:request.course_id,context:derived,result:schedule,source:'FORMAL_REQUEST_APPLIED'});
+          await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id});
+          const course=await repository.ensureCourse(studentId,request.course_id,tx,true);
+          if(course.lifecycle_state!=='PAUSED') throw error('Course is no longer Paused.','TEACHING_D10_REQUEST_TARGET_STALE');
+          const updated=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'ACTIVE',reason:'Approved Course Resume',sourceRequestId:request.request_id,policyVersion:admission.policy_version,expectedVersion:course.state_version});
+          await repository.recordAdmissionUsing(tx,{studentId,courseId:request.course_id,kind:'RESUME',policy:admission,countBefore:counted.length,outcome:'ALLOW',sourceRequestId:request.request_id});
+          return {targetVersionAfter:`course-state:${updated.state_version}`,safeMetadata:{lifecycle_state:'ACTIVE',timetable_version:Number(saved.timetable.version_no)}};
+        }
+        if(request.request_type==='TEACHER_CHANGE'){
+          const changed=await repository.changeTeacherUsing(tx,{studentId,courseId:request.course_id,teacherIdentityId:change.teacherIdentityId,sourceRequestId:request.request_id});
+          return {targetVersionAfter:`teacher-assignment:${changed.assignment.teacher_assignment_id}:version:${changed.assignment.version_no}`,
+            safeMetadata:{teacher_assignment_version:Number(changed.assignment.version_no),historical_teacher_records_preserved:true}};
+        }
+        if(request.request_type==='COURSE_CANCELLATION'){
+          let course=await repository.ensureCourse(studentId,request.course_id,tx,true);
+          if(!['ACTIVE','PAUSED'].includes(course.lifecycle_state)) throw error('Course can no longer follow the approved cancellation path.','TEACHING_D10_REQUEST_TARGET_STALE');
+          course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'TEACHING_ENDED',reason:'Approved Course cancellation',sourceRequestId:request.request_id,expectedVersion:course.state_version});
+          course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'FINALIZING',reason:'Cancellation finalization boundary',sourceRequestId:request.request_id,expectedVersion:course.state_version});
+          course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'INCOMPLETE',reason:'Cancellation preserves unresolved final determination as Incomplete',sourceRequestId:request.request_id,expectedVersion:course.state_version});
+          await repository.recordCancellationClosureUsing(tx,{studentId,courseId:request.course_id,reason:change.reason||'Approved Course cancellation',sourceRequestId:request.request_id});
+          await d09Repository.markCurrentTimetableStaleUsing(tx,{studentId,semesterId:course.semester_id});
+          if(typeof d09Repository.suspendCourseClassesUsing==='function') await d09Repository.suspendCourseClassesUsing(tx,{studentId,courseId:request.course_id,requestId:request.request_id});
+          return {targetVersionAfter:`course-state:${course.state_version}`,safeMetadata:{lifecycle_state:'INCOMPLETE',cancellation_closure_recorded:true}};
+        }
+        throw error('No D10 authoritative application path exists for this Request type.','TEACHING_D10_REQUEST_OWNER_PENDING');
+      },
+    });
+    return result;
+  }
+
+  async function applyRequest(user,requestId){
+    const result=await applyApprovedRequest(user,requestId,{});
+    return Object.freeze({...result,request:sanitizeRequest(result.request)});
+  }
+
+  async function applyDueRequest({requestId,expectedVersion=null}={}){
+    const row=await repository.getRequestById(requestId);
+    if(!row) return {idempotent:true,missing:true};
+    return applyApprovedRequest({id:row.student_id},requestId,{expectedVersion});
+  }
+
+  async function archiveIncomplete(user,courseId,input={}){
+    const closure=await repository.archiveIncomplete({studentId:user.id,courseId,reason:input.reason,sourceRequestId:input.requestId||null});
+    return Object.freeze({closureId:closure.closure_id,lifecycleStatePreserved:closure.lifecycle_state_at_closure,closedAt:closure.closed_at});
+  }
+
+  return Object.freeze({
+    getAcademicRules,prepareAcademicRules,listTeacherIdentities,getActivationReview,markReady,activateCourse,
+    listRequests,getRequest,createRequest,submitRequest,withdrawRequest,reviewRequest,acceptAlternative,declineAlternative,
+    applyRequest,applyDueRequest,archiveIncomplete,
+  });
+}
+
+module.exports={createD10Service};

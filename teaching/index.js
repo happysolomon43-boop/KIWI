@@ -4,7 +4,7 @@ const { createTeachingConfig } = require('./config');
 const { createKiwiSubjectReader } = require('./integrations/kiwi-subjects');
 const { createKiwiExamInterface } = require('./integrations/kiwi-exam-interface');
 const { createKiwiNotificationInterface } = require('./integrations/kiwi-notifications');
-const { createTeachingRepositories, createD07CourseIntakeRepository, createD08CoursePlanRepository, createD09SchedulingRepository } = require('./repositories');
+const { createTeachingRepositories, createD07CourseIntakeRepository, createD08CoursePlanRepository, createD09SchedulingRepository, createD10LifecycleRequestRepository } = require('./repositories');
 const { createTeachingService } = require('./services/teaching-service');
 const { modules } = require('./modules');
 const orchestrator = require('./orchestrator');
@@ -14,6 +14,7 @@ const policy = require('./policy');
 const d07 = require('./d07');
 const d08 = require('./d08');
 const d09 = require('./d09');
+const d10 = require('./d10');
 
 function createTeachingFoundation({
   env = process.env,
@@ -26,6 +27,7 @@ function createTeachingFoundation({
   d08Intelligence = null,
   d09Intelligence = null,
   d09TransactionalMutation = null,
+  d10RuntimePlatform = null,
 } = {}) {
   const config = createTeachingConfig(env);
   const subjectReader = createKiwiSubjectReader({ subjects: subjectSource });
@@ -55,6 +57,15 @@ function createTeachingFoundation({
   const d09Service = d09Repository && d09TransactionalMutation
     ? d09.createD09Service({ repository: d09Repository, transactionalMutation: d09TransactionalMutation, randomUUID, intelligence: d09Intelligence })
     : null;
+  const d10Repository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+    ? createD10LifecycleRequestRepository({ query, withTransaction, randomUUID })
+    : null;
+  const d10Service = d10Repository && d09Repository && d09TransactionalMutation
+    ? d10.createD10Service({ repository: d10Repository, d09Repository, transactionalMutation: d09TransactionalMutation, randomUUID })
+    : null;
+  if (d10Service && d10RuntimePlatform?.eventRuntime) {
+    d10.registerD10DueEventHandler({ eventRuntime: d10RuntimePlatform.eventRuntime, repository: d10Repository, service: d10Service });
+  }
   const service = createTeachingService({
     config,
     repositories,
@@ -74,6 +85,7 @@ function createTeachingFoundation({
     d07: d07Service ? Object.freeze({ repository: d07Repository, service: d07Service }) : null,
     d08: d08Service ? Object.freeze({ repository: d08Repository, service: d08Service }) : null,
     d09: d09Service ? Object.freeze({ repository: d09Repository, service: d09Service }) : null,
+    d10: d10Service ? Object.freeze({ repository: d10Repository, service: d10Service }) : null,
     policy,
   });
 }
@@ -87,4 +99,5 @@ module.exports = {
   d07,
   d08,
   d09,
+  d10,
 };

@@ -21,7 +21,8 @@
     "verify:teaching:d06": "node scripts/verify-teaching-d06-decisions.js",
     "verify:teaching:d07": "node scripts/verify-teaching-d07-course-intake.js",
     "verify:teaching:d08": "node scripts/verify-teaching-d08-course-plan.js",
-    "verify:teaching:d09": "node scripts/verify-teaching-d09-scheduling.js"
+    "verify:teaching:d09": "node scripts/verify-teaching-d09-scheduling.js",
+    "verify:teaching:d10": "node scripts/verify-teaching-d10-lifecycle-requests.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
