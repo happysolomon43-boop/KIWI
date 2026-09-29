@@ -1,0 +1,66 @@
+name: D12 Materialize Upload Bridge
+
+on:
+  push:
+    branches:
+      - teaching/d12-response-pedagogy
+    paths:
+      - '.d12-upload/bundle.b64.part7'
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize D12 implementation bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f .d12-upload/bundle.b64.part7 ]; then
+            echo "D12 upload bridge already consumed."
+            exit 0
+          fi
+
+          cat .d12-upload/bundle.b64.part{1..7} > /tmp/d12bundle.b64
+          printf '%s  %s\n' 'a3d30f123d2f87ced95be3e685afb8d75d04dec22ad600f1ad9b642ffdf1eb41' '/tmp/d12bundle.b64' | sha256sum -c -
+          base64 -d /tmp/d12bundle.b64 > /tmp/d12bundle.tar.gz
+          printf '%s  %s\n' '0c4009b787cca05bae26d4098b35b70501c29083478c3928a0b31e98d4128c51' '/tmp/d12bundle.tar.gz' | sha256sum -c -
+
+          rm -rf /tmp/d12-unpack
+          mkdir -p /tmp/d12-unpack
+          tar -xzf /tmp/d12bundle.tar.gz -C /tmp/d12-unpack
+
+          mkdir -p .github/workflows docs/teaching/migrations migrations scripts teaching/d12 teaching/repositories tests/teaching/integration tests/teaching/unit
+          cp /tmp/d12-unpack/.github/workflows/teaching-d12-response-pedagogy.yml .github/workflows/
+          cp /tmp/d12-unpack/docs/teaching/d12-response-evaluation-pedagogy.md docs/teaching/
+          cp /tmp/d12-unpack/docs/teaching/d12-source-resolution.md docs/teaching/
+          cp /tmp/d12-unpack/docs/teaching/migrations/d12-recovery.md docs/teaching/migrations/
+          cp /tmp/d12-unpack/migrations/20260929_teaching_d12_response_pedagogy.sql migrations/
+          cp /tmp/d12-unpack/scripts/verify-teaching-d12-response-pedagogy.js scripts/
+          cp /tmp/d12-unpack/teaching/d12/contracts.js teaching/d12/
+          cp /tmp/d12-unpack/teaching/d12/index.js teaching/d12/
+          cp /tmp/d12-unpack/teaching/d12/intelligence.js teaching/d12/
+          cp /tmp/d12-unpack/teaching/d12/runtime.js teaching/d12/
+          cp /tmp/d12-unpack/teaching/d12/service.js teaching/d12/
+          cp /tmp/d12-unpack/teaching/repositories/d12-response-pedagogy.js teaching/repositories/
+          cp /tmp/d12-unpack/tests/teaching/integration/d12-response-pedagogy-schema.test.js tests/teaching/integration/
+          cp /tmp/d12-unpack/tests/teaching/unit/d12-response-pedagogy.test.js tests/teaching/unit/
+
+          rm -rf .d12-upload
+          rm -f docs/teaching/d12-test-helper.txt
+          rm -f .github/workflows/d12-materialize.yml
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No D12 materialization changes."
+            exit 0
+          fi
+          git commit -m 'D12: materialize response evaluation and pedagogy implementation'
+          git push origin HEAD:teaching/d12-response-pedagogy
