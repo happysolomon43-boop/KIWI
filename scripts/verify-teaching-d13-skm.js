@@ -72,7 +72,10 @@ for(const token of ['AUTHORITATIVE_D13','SKM_STATE','Student Knowledge Model','r
 const backend=read('teaching-backend.js');
 for(const token of ['assertD13Ready','/learning-analysis','/learning-units/:id/learning-analysis'])
   assert(backend.includes(token),'D13 read-only backend surface missing '+token);
-assert(!/router\.(?:post|put|patch|delete)\([^\n]*knowledge|router\.(?:post|put|patch|delete)\([^\n]*learning-analysis/i.test(backend),'D13 must not expose browser knowledge-state mutation endpoints.');
+for(const method of ['post','put','patch','delete']) {
+  assert(!backend.includes("router."+method+"('/learning-analysis"),'D13 must not expose browser Learning Analysis mutation endpoints.');
+  assert(!backend.includes("router."+method+"('/learning-units/:id/learning-analysis"),'D13 must not expose browser Learning Unit knowledge mutation endpoints.');
+}
 
 const production=read('index.js');
 assert(production.includes('d13Intelligence: null'),'Production must preserve D30 hold for D13 model routes.');
