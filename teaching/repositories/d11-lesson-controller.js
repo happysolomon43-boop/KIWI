@@ -463,6 +463,81 @@ function createD11LessonControllerRepository({
     });
   }
 
+  async function recordPreparationArtifact({
+    studentId,
+    classId,
+    blueprint,
+    capabilityId='teaching.lesson.pre_class_lesson_planning',
+    promptFamilyRef='TPF-05',
+  } = {}) {
+    return withTransaction(async (tx) => {
+      const workspace = await getPreparationWorkspace(studentId,classId,tx,true);
+      if (!workspace || !workspace.current_authoritative_input_bundle_ref) {
+        const error = new Error('D11 preparation workspace/input bundle is required before prepared artifact capture.');
+        error.code = 'TEACHING_D11_PPL_WORKSPACE_REQUIRED';
+        error.status = 409;
+        throw error;
+      }
+      const versions = await tx.query(
+        "select coalesce(max(version_no),0)+1 next_version from teaching_preparation.artifact_versions where workspace_id=$1",
+        [workspace.workspace_id]
+      );
+      const versionNo=Number(versions.rows[0].next_version);
+      const artifactId=randomUUID();
+      const digest=crypto.createHash('sha256').update(JSON.stringify(blueprint)).digest('hex');
+      const parent=workspace.current_artifact_version_ref || null;
+      await tx.query(
+        "insert into teaching_preparation.artifact_versions(" +
+        "artifact_version_id,workspace_id,student_id,artifact_kind,version_no,input_bundle_id,parent_artifact_version_id," +
+        "created_by_capability_id,prompt_family_ref,schema_version,artifact_digest,protected_content_class,validity_state,concise_rationale" +
+        ") values($1,$2,$3,'LESSON_BLUEPRINT',$4,$5,$6,$7,$8,'d11.lesson-blueprint.v1',$9,'UNPROTECTED','CURRENT',$10)",
+        [artifactId,workspace.workspace_id,studentId,versionNo,workspace.current_authoritative_input_bundle_ref,parent,capabilityId,promptFamilyRef,digest,'Validated provisional Lesson Blueprint candidate']
+      );
+      const depRows=await tx.query(
+        "select input_dependency_id,aggregate_ref from teaching_preparation.input_bundle_dependencies where input_bundle_id=$1 order by input_dependency_id",
+        [workspace.current_authoritative_input_bundle_ref]
+      );
+      const components=[
+        ...(blueprint.objectives || []).map((item)=>({key:'objective:'+item.id,kind:'OBJECTIVE',digest:crypto.createHash('sha256').update(JSON.stringify(item)).digest('hex')})),
+        ...(blueprint.segments || []).map((item)=>({key:'segment:'+item.id,kind:'SEGMENT',digest:crypto.createHash('sha256').update(JSON.stringify(item)).digest('hex')})),
+      ];
+      for (const component of components) {
+        const componentId=randomUUID();
+        await tx.query(
+          "insert into teaching_preparation.artifact_components(" +
+          "artifact_component_id,artifact_version_id,student_id,component_key,component_kind,component_digest,stale" +
+          ") values($1,$2,$3,$4,$5,$6,false)",
+          [componentId,artifactId,studentId,component.key,component.kind,component.digest]
+        );
+        for (const dep of depRows.rows || []) {
+          await tx.query(
+            "insert into teaching_preparation.component_dependencies(" +
+            "component_dependency_id,artifact_component_id,input_dependency_id,student_id,dependency_role" +
+            ") values($1,$2,$3,$4,'AUTHORITATIVE_INPUT')",
+            [randomUUID(),componentId,dep.input_dependency_id,studentId]
+          );
+        }
+      }
+      const updated=await tx.query(
+        "update teaching_preparation.workspaces set current_artifact_version_ref=$2,last_material_review_at=$3," +
+        " state_version=state_version+1,updated_at=now() where workspace_id=$1 returning *",
+        [workspace.workspace_id,artifactId,clock()]
+      );
+      return Object.freeze({
+        workspace:updated.rows[0],
+        artifact:Object.freeze({
+          artifact_version_id:artifactId,
+          workspace_id:workspace.workspace_id,
+          version_no:versionNo,
+          input_bundle_id:workspace.current_authoritative_input_bundle_ref,
+          artifact_digest:digest,
+          parent_artifact_version_id:parent,
+        }),
+        componentCount:components.length,
+      });
+    });
+  }
+
   async function assertContextCurrentUsing(tx, expected) {
     const classRow = await loadClassBase(expected.studentId, expected.classId, tx, true);
     if (!classRow) {
