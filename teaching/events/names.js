@@ -5,6 +5,7 @@ const TEACHING_EVENTS = Object.freeze({
   CLASS_START_DUE: 'teaching.class.start_due',
   CLASS_JOINED: 'teaching.class.joined',
   STUDENT_RESPONSE_SUBMITTED: 'teaching.student.response_submitted',
+  RESPONSE_EVALUATION_COMMITTED: 'teaching.response_evaluation.committed',
   ACTIVITY_TIMER_EXPIRED: 'teaching.activity.timer_expired',
   BREAK_STARTED: 'teaching.break.started',
   BREAK_END_DUE: 'teaching.break.end_due',
