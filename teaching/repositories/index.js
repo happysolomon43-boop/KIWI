@@ -5,6 +5,7 @@ const { createPreparationRuntimeRepository } = require('./preparation-runtime');
 const { createD07CourseIntakeRepository } = require('./d07-course-intake');
 const { createD08CoursePlanRepository } = require('./d08-course-plan');
 const { createD09SchedulingRepository } = require('./d09-scheduling');
+const { createD10LifecycleRequestRepository } = require('./d10-lifecycle-requests');
 
 function requireMethod(value, name) {
   if (!value || typeof value[name] !== 'function') {
@@ -38,4 +39,5 @@ module.exports = {
   createD07CourseIntakeRepository,
   createD08CoursePlanRepository,
   createD09SchedulingRepository,
+  createD10LifecycleRequestRepository,
 };
