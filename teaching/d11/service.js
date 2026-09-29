@@ -10,6 +10,7 @@ const {
   computeOvertimeCeiling,
   nextInstructionCyclePhase,
   validateLessonBlueprintProposal,
+  validateLiveReplanProposal,
 } = require('./contracts');
 const { TEACHING_EVENTS } = require('../events/names');
 const { evaluateWorkspaceTransition, evaluateFinalizationReadiness } = require('../preparation/t0-handlers');
@@ -84,24 +85,42 @@ function createD11Service({
   if (typeof withTransaction !== 'function') throw new TypeError('D11 service requires withTransaction().');
   if (!dueEventStore || typeof dueEventStore.enqueueUsing !== 'function') throw new TypeError('D11 service requires the D02 due-event store.');
 
-  async function preparationReadiness(workspaceId) {
+  async function preparationReadiness(workspaceId, context) {
     if (!preparationRepository) return null;
     const snapshot=await preparationRepository.getFinalizationSnapshot(workspaceId);
     if(!snapshot?.workspace) fail('Preparation Workspace disappeared before finalization.','TEACHING_D11_PPL_WORKSPACE_NOT_FOUND',409);
-    const versions=(snapshot.dependencies||[]).map((dep)=>({id:dep.aggregate_ref,expected:dep.version_ref,current:dep.version_ref}));
+    const currentByRef=new Map([
+      ['course:'+context.classRow.course_id,String(context.classRow.course_state_version)],
+      ['course-plan:'+context.plan.course_plan_id,String(context.plan.version_no)],
+      ['class:'+context.classRow.class_id,String(context.classRow.schedule_version)],
+      ...(context.classRow.source_timetable_version_id
+        ? [['timetable:'+context.classRow.source_timetable_version_id,String(context.classRow.schedule_version)]]
+        : []),
+    ]);
+    const versions=(snapshot.dependencies||[])
+      .filter((dep)=>currentByRef.has(String(dep.aggregate_ref)))
+      .map((dep)=>({id:dep.aggregate_ref,expected:dep.version_ref,current:currentByRef.get(String(dep.aggregate_ref))}));
     const openFindings=(snapshot.findings||[]).map((finding)=>({
       id:finding.finding_id,
       status:finding.status,
-      blocksFinalization:String(finding.status).toUpperCase()==='OPEN',
+      blocksFinalization:String(finding.severity || '').toUpperCase()==='BLOCKING',
     }));
     return evaluateFinalizationReadiness({
       versions,
-      requiredValidations:[{id:'d11-blueprint-schema-domain-provenance',passed:true}],
+      requiredValidations:[
+        {id:'d11-blueprint-state',passed:context.blueprint?.blueprint_state==='VALIDATED',reason:'LESSON_BLUEPRINT_NOT_VALIDATED'},
+        {id:'d11-artifact-current',passed:snapshot.artifact?.validity_state==='CURRENT',reason:'PREPARED_ARTIFACT_NOT_CURRENT'},
+      ],
       openFindings,
-      protectionChecks:[{id:'unprotected-lesson-blueprint',passed:true}],
-      policyChecks:[{id:'owner-authority-boundary',passed:true}],
-      feasibilityChecks:[{id:'duration-reserve-minimum-safe-load',passed:true}],
-      ownerPreconditions:[{id:'current-course-plan-class-schedule',passed:true}],
+      protectionChecks:[{id:'unprotected-lesson-blueprint',passed:snapshot.workspace.protected_content_class==='UNPROTECTED'}],
+      policyChecks:[{id:'course-active',passed:context.classRow.course_lifecycle_state==='ACTIVE'}],
+      feasibilityChecks:[{id:'class-not-cancelled',passed:context.classRow.lifecycle_state!=='CANCELLED'}],
+      ownerPreconditions:[
+        {id:'artifact-bound-to-current-inputs',passed:snapshot.artifact?.input_bundle_id===snapshot.workspace.current_authoritative_input_bundle_ref},
+        {id:'blueprint-course-version',passed:String(context.blueprint?.source_course_state_version)==String(context.classRow.course_state_version)},
+        {id:'blueprint-plan-version',passed:String(context.blueprint?.source_course_plan_version)==String(context.plan.version_no)},
+        {id:'blueprint-class-schedule-version',passed:String(context.blueprint?.source_class_schedule_version)==String(context.classRow.schedule_version)},
+      ],
       deadlineAt:snapshot.workspace.finalization_or_freeze_at || null,
     });
   }
@@ -128,9 +147,11 @@ function createD11Service({
     });
   }
 
-  async function prepareCandidateForHandoff({studentId,classId,blueprint,workspaceId}) {
-    if(!preparationRepository||!workspaceId) return null;
-    await repository.recordPreparationArtifact({studentId,classId,blueprint});
+  async function advancePreparedCandidate({studentId,workspaceId,inputBundleId,blueprint,lessonBlueprintId}) {
+    if(!preparationRepository||!workspaceId||!inputBundleId) return null;
+    await repository.recordPreparationArtifact({
+      studentId,workspaceId,inputBundleId,blueprint,lessonBlueprintId,
+    });
     let snapshot=await preparationRepository.getWorkspaceSnapshot(workspaceId);
     if(snapshot.workspace.maturity_stage==='SKELETON') {
       await transitionPreparation(workspaceId,{nextMaturity:'STRUCTURED',reason:'D11 validated Blueprint structure'});
@@ -139,33 +160,46 @@ function createD11Service({
     if(snapshot.workspace.maturity_stage==='STRUCTURED') {
       await transitionPreparation(workspaceId,{nextMaturity:'CANDIDATE',reason:'D11 candidate passed deterministic lesson validation'});
     }
-    const readiness=await preparationReadiness(workspaceId);
-    await transitionPreparation(workspaceId,{
-      nextLifecycle:'FINALIZATION_DUE',
-      nextMaturity:'PRE_LOCK_READY',
-      routePosture:'final_reconciliation',
-      finalizationReadiness:readiness,
-      reason:'D11 prepared Lesson Blueprint reached current-state handoff gate',
-    });
-    return Object.freeze({workspaceId,readiness});
+    return preparationRepository.getWorkspaceSnapshot(workspaceId);
   }
 
-  async function handoffPreparedCandidate(workspaceId) {
+  async function handoffPreparedCandidate(workspaceId,context) {
     if(!preparationRepository||!workspaceId) return null;
-    let readiness=await preparationReadiness(workspaceId);
-    await transitionPreparation(workspaceId,{
-      nextLifecycle:'FINALIZED',
-      nextMaturity:'PRE_LOCK_READY',
-      finalizationReadiness:readiness,
-      reason:'D11 authoritative Blueprint commit completed',
-    });
-    readiness=await preparationReadiness(workspaceId);
-    await transitionPreparation(workspaceId,{
-      nextLifecycle:'HANDED_OFF',
-      nextMaturity:'PRE_LOCK_READY',
-      finalizationReadiness:readiness,
-      reason:'D11 prepared candidate handed to live Teaching Controller boundary',
-    });
+    let snapshot=await preparationRepository.getWorkspaceSnapshot(workspaceId);
+    const readiness=await preparationReadiness(workspaceId,context);
+    if(!readiness?.ready) fail('Prepared Lesson Blueprint failed current-state finalization.','TEACHING_D11_PPL_FINALIZATION_NOT_READY',409,readiness);
+    if(snapshot.workspace.maturity_stage==='CANDIDATE') {
+      await transitionPreparation(workspaceId,{
+        nextMaturity:'PRE_LOCK_READY',
+        routePosture:'final_reconciliation',
+        finalizationReadiness:readiness,
+        reason:'D11 immediate pre-Class current-state revalidation',
+      });
+      snapshot=await preparationRepository.getWorkspaceSnapshot(workspaceId);
+    }
+    if(snapshot.workspace.lifecycle_state==='ACTIVE') {
+      await transitionPreparation(workspaceId,{
+        nextLifecycle:'FINALIZATION_DUE',
+        finalizationReadiness:readiness,
+        reason:'D11 pre-Class finalization due',
+      });
+      snapshot=await preparationRepository.getWorkspaceSnapshot(workspaceId);
+    }
+    if(snapshot.workspace.lifecycle_state==='FINALIZATION_DUE') {
+      await transitionPreparation(workspaceId,{
+        nextLifecycle:'FINALIZED',
+        finalizationReadiness:readiness,
+        reason:'D11 authoritative Blueprint finalization completed',
+      });
+      snapshot=await preparationRepository.getWorkspaceSnapshot(workspaceId);
+    }
+    if(snapshot.workspace.lifecycle_state==='FINALIZED') {
+      await transitionPreparation(workspaceId,{
+        nextLifecycle:'HANDED_OFF',
+        finalizationReadiness:readiness,
+        reason:'D11 prepared candidate handed to live Teaching Controller',
+      });
+    }
     return true;
   }
 
@@ -275,8 +309,6 @@ function createD11Service({
       fail('Lesson Blueprint failed deterministic D11 validation.', validation.reason || 'TEACHING_D11_BLUEPRINT_INVALID', 422, validation);
     }
 
-    await prepareCandidateForHandoff({studentId:user.id,classId,blueprint:validation.value,workspaceId:prep?.workspace?.workspace_id || null});
-
     const saved = await repository.saveBlueprint({
       studentId:user.id,
       classId,
@@ -295,7 +327,13 @@ function createD11Service({
       },
       preparationRef:prep?.workspace?.workspace_id || null,
     });
-    await handoffPreparedCandidate(prep?.workspace?.workspace_id || null);
+    await advancePreparedCandidate({
+      studentId:user.id,
+      workspaceId:prep?.workspace?.workspace_id || null,
+      inputBundleId:prep?.bundle?.input_bundle_id || null,
+      blueprint:validation.value,
+      lessonBlueprintId:saved.blueprint.lesson_blueprint_id,
+    });
     return publicContext({ ...context, blueprint:saved.blueprint, session:saved.session || context.session });
   }
 
@@ -319,11 +357,27 @@ function createD11Service({
     if (!result?.accepted || !result.validatedResult) {
       fail('Live Lesson replan was not accepted.', 'TEACHING_D11_REPLAN_NOT_ACCEPTED', 422);
     }
+    let replanValue;
+    try {
+      replanValue=validateLiveReplanProposal(result.validatedResult,{
+        blueprintContext:{
+          learningUnits:context.learningUnits,
+          scheduledStartAt:time.server_now,
+          scheduledEndAt:time.authoritative_end_at,
+          minimumReserveMinutes,
+          currentBlueprint:context.blueprint.blueprint_payload || {},
+        },
+        remainingMinutes:time.remaining_minutes,
+        completedObjectiveRefs:context.session.progress_state?.completed_objective_refs || [],
+      });
+    } catch(e) {
+      fail('Live Lesson replan failed deterministic D11 validation.',e.code || 'TEACHING_D11_REPLAN_INVALID',422);
+    }
     const saved = await repository.saveBlueprint({
       studentId:user.id,
       classId,
       expected:expectedFromContext(context),
-      blueprint:result.validatedResult,
+      blueprint:replanValue,
       validationMetadata:{
         deterministic_validation:'PASS',
         remaining_minutes:time.remaining_minutes,
@@ -349,6 +403,12 @@ function createD11Service({
       fail('Only an Active Course may start a live Class Controller.', 'TEACHING_D11_COURSE_NOT_ACTIVE', 409);
     }
     if (!context.blueprint) fail('A current validated Lesson Blueprint is required before Class start.', 'TEACHING_D11_BLUEPRINT_REQUIRED', 409);
+    const prep=await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:sourceEventRef || null});
+    const refreshed=await repository.getClassContext(user.id,classId);
+    if(prep?.changed===true && refreshed.workspace?.current_artifact_version_ref) {
+      fail('Authoritative inputs changed after Lesson preparation; stale prepared artifact cannot start Class.','TEACHING_D11_PREPARED_ARTIFACT_STALE',409);
+    }
+    await handoffPreparedCandidate(refreshed.workspace?.workspace_id || null,refreshed);
     const now = clock();
     if (now.getTime() < new Date(context.classRow.scheduled_start_at).getTime()) {
       fail('Class cannot start before its authoritative scheduled time.', 'TEACHING_D11_CLASS_START_EARLY', 409);
@@ -360,9 +420,12 @@ function createD11Service({
   }
 
   async function transition(user, classId, input = {}) {
-    const context = await repository.getClassContext(user.id, classId);
+    const live=await repository.assertLiveContextCurrent(user.id,classId);
+    const context=live.context;
     if (!context?.session) fail('Controller has not started.', 'TEACHING_D11_CONTROLLER_NOT_STARTED', 409);
+    if(!live.ok) fail('Controller is stale against authoritative Course/Plan/Schedule state.','TEACHING_D11_STALE_LIVE_CONTEXT',409,live);
     const toState = String(input.toState || '').toUpperCase();
+    if(['BREAK','CLOSURE'].includes(toState)) fail('Use the dedicated Break/Closure command so durable time and closure facts cannot be bypassed.','TEACHING_D11_SPECIALIZED_TRANSITION_REQUIRED',409);
     assertTransitionAllowed({
       lifecycleState:context.session.lifecycle_state,
       fromState:context.session.instructional_substate,
@@ -420,6 +483,7 @@ function createD11Service({
   async function setEvidenceDescriptor(user,classId,input={}) {
     const context=await repository.getClassContext(user.id,classId);
     if(!context?.session) fail('Controller has not started.','TEACHING_D11_CONTROLLER_NOT_STARTED',409);
+    if(['ASSESSMENT','BREAK','INTERRUPTED','CLOSURE'].includes(context.session.instructional_substate)) fail('Evidence descriptor/assistance changes are blocked in the current substate.','TEACHING_D11_DESCRIPTOR_STATE_BLOCKED',409);
     const descriptor=input.descriptor==null?null:String(input.descriptor).toUpperCase();
     if(descriptor!==null&&!LEARNING_EVIDENCE_DESCRIPTORS.includes(descriptor)) {
       fail('Unknown learning/evidence descriptor.','TEACHING_D11_DESCRIPTOR_INVALID',422);
@@ -483,6 +547,7 @@ function createD11Service({
     const context=await repository.getClassContext(user.id,classId);
     if(!context?.session||context.session.lifecycle_state!=='ACTIVE') fail('Overtime requires an active Controller.','TEACHING_D11_CONTROLLER_NOT_ACTIVE',409);
     if(context.session.instructional_substate==='BREAK') fail('Overtime cannot be authorized during Break.','TEACHING_D11_OVERTIME_BREAK_FORBIDDEN',409);
+    if(context.session.overtime_ceiling_at) fail('Overtime ceiling is already fixed and cannot be reset or extended.','TEACHING_D11_OVERTIME_ALREADY_FIXED',409);
     const ceiling=computeOvertimeCeiling({scheduledEndAt:context.classRow.scheduled_end_at,requestedMinutes:Number(input.minutes),serverNow:clock()});
     const now=clock();
     const start=now.getTime()>=new Date(context.classRow.scheduled_end_at).getTime()?now:null;
