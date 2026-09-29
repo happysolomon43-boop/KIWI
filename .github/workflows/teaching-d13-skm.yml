@@ -1,0 +1,98 @@
+name: Teaching D13 Student Knowledge Model
+
+on:
+  pull_request:
+    paths:
+      - 'teaching/**'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'migrations/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'docs/teaching/**'
+      - 'package.json'
+      - '.github/workflows/teaching-d13-skm.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'teaching/**'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'migrations/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'docs/teaching/**'
+      - 'package.json'
+      - '.github/workflows/teaching-d13-skm.yml'
+
+jobs:
+  d13:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - name: D01-D13 canonical verifiers
+        run: |
+          npm run verify:teaching:d01
+          npm run verify:teaching:d02
+          npm run verify:teaching:d03
+          npm run verify:teaching:d04
+          npm run verify:teaching:d05
+          npm run verify:teaching:d06
+          npm run verify:teaching:d07
+          npm run verify:teaching:d08
+          npm run verify:teaching:d09
+          npm run verify:teaching:d10
+          npm run verify:teaching:d11
+          npm run verify:teaching:d12
+          npm run verify:teaching:d13
+      - name: D13 longitudinal and authority unit tests
+        run: node --test tests/teaching/unit/d13-skm.test.js
+      - name: Teaching unit regressions
+        run: npm run test:teaching
+      - name: Full KIWI unit regressions
+        run: npm test
+      - name: Teaching integration contracts
+        run: npm run test:teaching:integration
+      - name: Web build
+        run: npm run build:web
+
+  d13-isolated-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: kiwi_teaching_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiwi_teaching_test
+      TEACHING_TEST_PROJECT_REF: local-d13-ci
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - name: Rebuild isolated Teaching schema from migrations
+        run: node scripts/setup-teaching-integration-db.js
+      - name: D13 schema/security/replay integration
+        run: node --test tests/teaching/integration/d13-skm-schema.test.js
+      - name: All Teaching integration tests against isolated database
+        run: npm run test:teaching:integration
