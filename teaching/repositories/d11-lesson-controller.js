@@ -2,12 +2,15 @@
 
 const crypto = require('node:crypto');
 const { buildClosureFactPack } = require('../d11/contracts');
+const { TEACHING_EVENTS } = require('../events/names');
+const { EVENT_CATEGORIES } = require('../runtime/constants');
 
 function createD11LessonControllerRepository({
   query,
   withTransaction,
   randomUUID,
   clock = () => new Date(),
+  outboxStore = null,
 } = {}) {
   if (typeof query !== 'function') throw new TypeError('D11 repository requires query().');
   if (typeof withTransaction !== 'function') throw new TypeError('D11 repository requires withTransaction().');
@@ -258,6 +261,7 @@ function createD11LessonControllerRepository({
       const digest = crypto.createHash('sha256').update(JSON.stringify(refs)).digest('hex');
 
       let workspace = await getPreparationWorkspace(studentId, classId, tx, true);
+      const createdWorkspace = !workspace;
       if (!workspace) {
         const workspaceId = randomUUID();
         const inserted = await tx.query(
@@ -332,11 +336,44 @@ function createD11LessonControllerRepository({
         " state_version=state_version+1,updated_at=now() where workspace_id=$1 returning *",
         [workspace.workspace_id, bundleId]
       );
+      const nextWorkspace = updated.rows[0];
+      if (outboxStore && typeof outboxStore.appendUsing === 'function') {
+        const eventType = createdWorkspace
+          ? TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED
+          : TEACHING_EVENTS.PREPARATION_INPUT_CHANGED;
+        const eventId = 'd11-ppl-' + (createdWorkspace ? 'seed' : 'input') + ':' + workspace.workspace_id + ':bundle-v' + bundleVersion;
+        const occurred = clock().toISOString();
+        await outboxStore.appendUsing(tx.query.bind(tx), {
+          eventId,
+          schemaVersion:1,
+          eventType,
+          eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
+          triggerType:'committed_domain_event',
+          source:'teaching.d11',
+          origin:'d11',
+          actorId:studentId,
+          aggregateType:'PREPARATION_WORKSPACE',
+          aggregateId:workspace.workspace_id,
+          aggregateVersion:Number(nextWorkspace.state_version),
+          occurredAt:occurred,
+          effectiveAt:occurred,
+          dueAt:null,
+          correlationId:correlationId || eventId,
+          causationId:null,
+          idempotencyKey:eventId,
+          payload:createdWorkspace
+            ? { target_kind:'next_class', target_ref:classId, current_authoritative_input_bundle_ref:bundleId }
+            : { changedDependencyRefs:dependencies.map((dep)=>dep.aggregate_ref), current_authoritative_input_bundle_ref:bundleId },
+          auditRefs:[],
+          provenanceRefs:dependencies.map((dep)=>dep.aggregate_ref),
+        });
+      }
       return Object.freeze({
-        workspace: updated.rows[0],
+        workspace: nextWorkspace,
         bundle: bundleInsert.rows[0],
         dependencies: Object.freeze(dependencies),
         changed: true,
+        created: createdWorkspace,
         correlationId,
       });
     });
