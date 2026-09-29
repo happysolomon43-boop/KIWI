@@ -1,0 +1,51 @@
+name: Teaching D13 Student Knowledge
+
+on:
+  pull_request:
+    paths:
+      - 'teaching/**'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'migrations/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d13-student-knowledge.js'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'docs/teaching/**'
+      - 'package.json'
+      - '.github/workflows/teaching-d13-student-knowledge.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'teaching/**'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'migrations/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d13-student-knowledge.js'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'docs/teaching/**'
+      - 'package.json'
+      - '.github/workflows/teaching-d13-student-knowledge.yml'
+
+jobs:
+  d13:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - name: D13 canonical verifier
+        run: npm run verify:teaching:d13
+      - name: D13 unit tests
+        run: node --test tests/teaching/unit/d13-student-knowledge.test.js
+      - name: Teaching unit regressions
+        run: npm run test:teaching
+      - name: Full test regressions
+        run: npm test
+      - name: Teaching integration contract tests
+        run: npm run test:teaching:integration
+      - name: Web build
+        run: npm run build:web
