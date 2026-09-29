@@ -40,6 +40,7 @@ const {
   createPreparationWorkflowPlan,
   executePreparationWorkflow,
 } = require('../../../teaching/preparation/workflow');
+const { registerSchedulingPreparationPublishedEventSubscribers } = require('../../../teaching/preparation/published-event-subscribers');
 
 const T1 = 'teaching.lesson.student_facing_class_summary_generation';
 const T2 = 'teaching.curriculum.intake_signal_extraction';
@@ -879,4 +880,78 @@ test('D05 exact frozen family reaches the central provider transport without ent
     correlationId: 'corr' });
   assert.equal(JSON.stringify(envelope).includes(record.promptText), false);
   assert.equal(JSON.stringify(envelope).includes('prompt_text'), false);
+});
+
+
+test('PPL scheduling workspace_seeded has an explicit durable subscriber and no longer jams the D05 outbox', async () => {
+  const published = createTeachingEventSubscriberRegistry();
+  const audits = [];
+  registerSchedulingPreparationPublishedEventSubscribers({
+    registry: published,
+    query: async () => ({ rows: [] }),
+    repository: {
+      async getWorkspaceSnapshot(id) { return { workspace: { workspace_id:id,workspace_type:'SCHEDULING_HORIZON',target_kind:'multi_course_schedule' } }; },
+      async getMaterialitySnapshot() { throw new Error('not used'); },
+      async applyMaterialityDecision() { throw new Error('not used'); },
+      async auditNoop(input) { audits.push(input); return { ok:true }; },
+    },
+  });
+  const result = await published.publish({
+    eventId:'ppl-seed-1',schemaVersion:1,eventType:TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    eventCategory:'committed_domain_event',triggerType:'committed_domain_event',source:'teaching_preparation',origin:'teaching_preparation',
+    aggregateType:'preparation_workspace',aggregateId:'ws-schedule',aggregateVersion:1,
+    occurredAt:'2026-09-29T08:00:00Z',correlationId:'corr-ppl',causationId:null,idempotencyKey:'ppl-seed-1',
+    payload:{target_ref:'semester-schedule',changedDependencyRefs:['semester:s1']},auditRefs:[],provenanceRefs:[],
+  });
+  assert.equal(result.length,1);
+  assert.equal(result[0].subscriberId,'ppl-scheduling-workspace-seeded');
+  assert.equal(audits.length,1);
+  assert.equal(audits[0].action,'preparation.workspace_seeded.delivered');
+});
+
+test('PPL scheduling input_changed is materiality-gated and safely acknowledges changes before any artifact exists', async () => {
+  const published = createTeachingEventSubscriberRegistry();
+  const audits = [];
+  registerSchedulingPreparationPublishedEventSubscribers({
+    registry: published,
+    query: async () => ({ rows: [] }),
+    repository: {
+      async getWorkspaceSnapshot() { throw new Error('not used'); },
+      async getMaterialitySnapshot(id) {
+        return { workspace:{workspace_id:id,workspace_type:'SCHEDULING_HORIZON',target_kind:'multi_course_schedule',current_artifact_version_ref:null,state_version:3},artifact:null,dependencies:[],componentDependencies:[],componentIds:[] };
+      },
+      async applyMaterialityDecision() { throw new Error('must not mutate without an artifact'); },
+      async auditNoop(input) { audits.push(input); return { ok:true }; },
+    },
+  });
+  const result = await published.publish({
+    eventId:'ppl-change-1',schemaVersion:1,eventType:TEACHING_EVENTS.PREPARATION_INPUT_CHANGED,
+    eventCategory:'committed_domain_event',triggerType:'committed_domain_event',source:'teaching_preparation',origin:'teaching_preparation',
+    aggregateType:'preparation_workspace',aggregateId:'ws-schedule',aggregateVersion:3,
+    occurredAt:'2026-09-29T08:00:00Z',correlationId:'corr-ppl',causationId:null,idempotencyKey:'ppl-change-1',
+    payload:{changedDependencyRefs:['semester:s1']},auditRefs:[],provenanceRefs:[],
+  });
+  assert.equal(result[0].result.disposition,'NO_ARTIFACT_YET');
+  assert.equal(audits[0].action,'preparation.input_changed.no_artifact');
+});
+
+test('PPL baseline subscriber remains fail-closed for future non-scheduling workspaces', async () => {
+  const published = createTeachingEventSubscriberRegistry();
+  registerSchedulingPreparationPublishedEventSubscribers({
+    registry: published,
+    query: async () => ({ rows: [] }),
+    repository: {
+      async getWorkspaceSnapshot(id) { return { workspace:{workspace_id:id,workspace_type:'LESSON_PREPARATION',target_kind:'class'} }; },
+      async getMaterialitySnapshot() { throw new Error('not used'); },
+      async applyMaterialityDecision() { throw new Error('not used'); },
+      async auditNoop() { throw new Error('must not audit unknown owner as delivered'); },
+    },
+  });
+  await assert.rejects(() => published.publish({
+    eventId:'future-ppl',schemaVersion:1,eventType:TEACHING_EVENTS.PREPARATION_WORKSPACE_SEEDED,
+    eventCategory:'committed_domain_event',triggerType:'committed_domain_event',source:'teaching_preparation',origin:'teaching_preparation',
+    aggregateType:'preparation_workspace',aggregateId:'ws-future',aggregateVersion:1,
+    occurredAt:'2026-09-29T08:00:00Z',correlationId:'corr-future',causationId:null,idempotencyKey:'future-ppl',
+    payload:{},auditRefs:[],provenanceRefs:[],
+  }), (error) => error.code === 'TEACHING_PPL_PUBLISHED_EVENT_OWNER_NOT_IMPLEMENTED');
 });

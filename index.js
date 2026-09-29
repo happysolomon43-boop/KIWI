@@ -44,6 +44,8 @@ const { createTeachingRouter } = require('./teaching-backend');
 const { createTeachingD05RuntimePlatform } = require('./teaching/runtime');
 const { createTeachingEventSubscriberRegistry } = require('./teaching/events/dispatcher');
 const { TEACHING_EVENTS } = require('./teaching/events/names');
+const { createPreparationRuntimeRepository } = require('./teaching/repositories/preparation-runtime');
+const { registerSchedulingPreparationPublishedEventSubscribers } = require('./teaching/preparation/published-event-subscribers');
 const { requireRuntimeSecret, optionalRuntimeSecret } = require('./services/runtime-secrets');
 
 const DATABASE_URL = requireRuntimeSecret(process.env, 'DATABASE_URL', ['KIWI_DATABASE_URL']);
@@ -83,6 +85,12 @@ teachingPublishedEvents.register(TEACHING_EVENTS.REQUEST_DECIDED, {
 teachingPublishedEvents.register(TEACHING_EVENTS.COURSE_ACTIVATED, {
   subscriberId: 'd10-course-activation-followup',
   handle: async (event) => Object.freeze({ accepted: true, courseId: event.aggregateId }),
+});
+const teachingPreparationRuntimeRepository = createPreparationRuntimeRepository({ query, withTransaction, randomUUID });
+registerSchedulingPreparationPublishedEventSubscribers({
+  registry: teachingPublishedEvents,
+  repository: teachingPreparationRuntimeRepository,
+  query,
 });
 const teachingRuntimePlatform = createTeachingD05RuntimePlatform({
   query,
