@@ -275,14 +275,17 @@ function createD13StudentKnowledgeRepository({query,withTransaction,randomUUID,c
           json(computed.path_to_success),json(computed.confidence_calibration),liveDigest,causeEvidenceEventId,json(provenance),
         ]
       );
+      const causeEvent=liveEvents.find((row)=>String(row.evidence_event_id)===String(causeEvidenceEventId));
+      const applicationState=String(causeEvent?.evidence_validity||'UNKNOWN')==='INVALID'?'NO_STATE_EFFECT':'APPLIED';
       await tx.query(
         "insert into public.teaching_skm_evidence_applications("+
         "evidence_application_id,student_id,evidence_event_id,learning_unit_id,algorithm_id,algorithm_version,application_state,"+
         "information_gain,resulting_state_version_id,application_reason,created_at)"+
-        " values($1,$2,$3,$4,$5,$6,'APPLIED',$7,$8,$9,$10)",
-        [randomUUID(),studentId,causeEvidenceEventId,learningUnitId,SKM_ALGORITHM_ID,SKM_ALGORITHM_VERSION,
-          liveEvents.find((row)=>String(row.evidence_event_id)===String(causeEvidenceEventId))?.information_gain||'UNKNOWN',
-          versionId,'Deterministic replay-safe recomputation over all normalized evidence.',clock()]
+        " values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        [randomUUID(),studentId,causeEvidenceEventId,learningUnitId,SKM_ALGORITHM_ID,SKM_ALGORITHM_VERSION,applicationState,
+          causeEvent?.information_gain||'UNKNOWN',versionId,
+          applicationState==='NO_STATE_EFFECT'?'Invalid/protected evidence recorded without negative academic effect.':'Deterministic replay-safe recomputation over all normalized evidence.',
+          clock()]
       );
       const currentRows=await currentMisconceptions(studentId,learningUnitId,tx);
       const byId=new Map(currentRows.map((row)=>[String(row.misconception_record_id),row]));
