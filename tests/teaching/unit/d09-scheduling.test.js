@@ -146,6 +146,7 @@ test('D09 stale Semester, profile, Course or Course Plan versions invalidate a s
   assert.throws(()=>assertSchedulingContextCurrent(expected,{...current,profile:{...current.profile,version_no:2}}),{code:'TEACHING_D09_STALE_SCHEDULING_CONTEXT'});
   assert.throws(()=>assertSchedulingContextCurrent(expected,{...current,courses:[{...current.courses[0],course:{...current.courses[0].course,state_version:2}}]}),{code:'TEACHING_D09_STALE_SCHEDULING_CONTEXT'});
   assert.throws(()=>assertSchedulingContextCurrent(expected,{...current,courses:[{...current.courses[0],plan:{...current.courses[0].plan,version_no:2}}]}),{code:'TEACHING_D09_STALE_SCHEDULING_CONTEXT'});
+  assert.throws(()=>assertSchedulingContextCurrent(expected,{...current,courses:[...current.courses,{course:{...bundle('c2').course,semester_id:'sem1'},plan:bundle('c2').plan}]}),{code:'TEACHING_D09_STALE_SCHEDULING_CONTEXT'});
 });
 
 test('D09 canonical scheduling module seam exposes the implemented Scheduler authority',()=>{
@@ -206,7 +207,8 @@ test('D09 migration creates versioned Scheduler truth with RLS and no authentica
 
 test('D09 repository invalidates prior timetable state and revalidates authoritative versions inside proposal transaction',()=>{
   const src=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d09-scheduling.js'),'utf8');
-  assert.match(src,/TEACHING_D09_STALE_SCHEDULING_CONTEXT/);
+  const contracts=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d09/contracts.js'),'utf8');
+  assert.match(contracts,/TEACHING_D09_STALE_SCHEDULING_CONTEXT/);
   assert.match(src,/assertContextCurrentUsing\(tx,\{studentId,context\}\)/);
   assert.match(src,/timetable_state='STALE'/);
   assert.match(src,/priorChildrenFull=previous/);
