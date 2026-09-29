@@ -338,7 +338,7 @@ function createD11Service({
       learningUnits:context.learningUnits,
       scheduledStartAt:context.classRow.scheduled_start_at,
       scheduledEndAt:context.classRow.scheduled_end_at,
-      reservePolicy,
+      ...(reservePolicy ? { reservePolicy } : {}),
     });
     if(!validation.ok) {
       fail('Lesson Blueprint failed deterministic D11 validation.',validation.reason || 'TEACHING_D11_BLUEPRINT_INVALID',422,validation);
