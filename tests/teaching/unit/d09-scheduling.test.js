@@ -227,6 +227,27 @@ test('D09 Calendar is exposed through the Teaching side menu navigation registry
   assert.match(d09ui,/description:'Classes, timetable and proposals'/);
 });
 
+test('Teaching bottom dock stays hidden until four destinations exist and reserves slot five for Menu',()=>{
+  const shell=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching.js'),'utf8');
+  const html=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching.html'),'utf8');
+  assert.match(shell,/TEACHING_DOCK_LIMIT = 5/);
+  assert.match(shell,/TEACHING_DOCK_DESTINATION_SLOTS = TEACHING_DOCK_LIMIT - 1/);
+  assert.match(shell,/dockReady = destinations\.length === TEACHING_DOCK_DESTINATION_SLOTS/);
+  assert.match(shell,/shell\.hidden = !dockReady/);
+  assert.match(shell,/if \(!dockReady\) return/);
+  assert.match(shell,/id: 'menu'/);
+  assert.match(shell,/label: 'Menu'/);
+  assert.match(shell,/onSelect: \(\) => setMenuOpen\(true/);
+  assert.match(html,/grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(html,/body\[data-teaching-dock-visible="true"\] \.teaching-stage/);
+});
+
+test('Create Course remains an explicit side-menu destination while the dock is gated',()=>{
+  const shell=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching.js'),'utf8');
+  assert.match(shell,/id: 'intake', title: 'Create Course'/);
+  assert.match(shell,/description: 'Start from a KIWI Subject'/);
+});
+
 test('D09 implementation does not select providers, activate Courses, write SKM or delete curriculum',()=>{
   const dir=path.resolve(__dirname,'../../../teaching/d09');
   const src=fs.readdirSync(dir).filter((f)=>f.endsWith('.js')).map((f)=>fs.readFileSync(path.join(dir,f),'utf8')).join('\n');
