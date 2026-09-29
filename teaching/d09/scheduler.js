@@ -382,7 +382,8 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
   if(unscheduled>0) reasons.push('REQUIRED_INSTRUCTIONAL_LOAD_UNSCHEDULED');
   for(const w of work){
     const last=slots.filter((s)=>s.courseId===w.courseId).sort((a,b)=>Date.parse(b.endsAt)-Date.parse(a.endsAt))[0];
-    if(w.deadline.hard && (!last || Date.parse(last.endsAt)>Date.parse(w.deadline.hard))) reasons.push('HARD_DEADLINE_CANNOT_BE_MET:'+w.courseId);
+    const remaining=w.tasks.reduce((sum,task)=>sum+task.remaining,0);
+    if(w.deadline.hard && (remaining>0 || !last || Date.parse(last.endsAt)>Date.parse(w.deadline.hard))) reasons.push('HARD_DEADLINE_CANNOT_BE_MET:'+w.courseId);
     if(w.deadline.flexible && last && Date.parse(last.endsAt)>Date.parse(w.deadline.flexible)) reasons.push('FLEXIBLE_TARGET_PRESSURE:'+w.courseId);
   }
   const headroomRatio=totalCapacity===0?0:Math.max(0,(totalCapacity-scheduledTotal)/totalCapacity);
