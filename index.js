@@ -21530,6 +21530,10 @@ const teachingRouter = createTeachingRouter({
   d11PublishedEventRegistry: teachingPublishedEvents,
   d12Intelligence: null,
   d12PublishedEventRegistry: teachingPublishedEvents,
+  // D30 has not empirically qualified TPF-09/TPF-19 Teaching routes. D13
+  // deterministic SKM state is active; optional model interpretation is held.
+  d13Intelligence: null,
+  d13PublishedEventRegistry: teachingPublishedEvents,
   teachingRuntimePlatform,
 });
 app.use('/api/teaching', teachingRouter);
@@ -23094,6 +23098,12 @@ try {
   console.log('[KIWI Teaching] D12 Response Evaluation/Pedagogy runtime verified; durable response/event contracts are ready and model routes remain D30-held.');
 } catch (e) {
   console.error('[KIWI Teaching] D12 Response Evaluation/Pedagogy runtime unavailable; D12 response interpretation remains fail-closed:', e.message);
+}
+try {
+  await teachingRouter.assertD13Ready();
+  console.log('[KIWI Teaching] D13 Student Knowledge Model runtime verified; deterministic evidence/state contracts are ready and TPF-09/TPF-19 routes remain D30-held.');
+} catch (e) {
+  console.error('[KIWI Teaching] D13 Student Knowledge Model runtime unavailable; SKM mutation remains fail-closed:', e.message);
 }
 // Seed functions are best-effort — missing tables should never crash the server
 try { await seedAchievements(); } catch(e) { console.warn('[KIWI] Achievement seeding skipped:', e.message); }
