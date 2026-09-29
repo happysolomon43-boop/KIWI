@@ -144,6 +144,13 @@ function createD11LessonControllerRepository({
           [studentId, prior.rows.map((row) => row.class_id)]
         )
       : { rows: [] };
+    const governedRequests = await query(
+      "select request_id,request_type,lifecycle_state,state_version,target_owner,target_type,target_ref,target_version_ref," +
+      " effective_at,application_ref,updated_at from public.teaching_course_requests" +
+      " where student_id=$1 and course_id=$2 and lifecycle_state in ('REVIEWING','APPROVED','APPROVED_WITH_ADJUSTMENT')" +
+      " order by updated_at desc limit 20",
+      [studentId, classRow.course_id]
+    ).catch(() => ({ rows: [] }));
     return Object.freeze({
       priorClassFacts: Object.freeze((prior.rows || []).map((row) => Object.freeze({ ...row }))),
       teacherNotes: Object.freeze((notes.rows || []).map((row) => Object.freeze({ ...row }))),
@@ -157,6 +164,19 @@ function createD11LessonControllerRepository({
         signals: Object.freeze([]),
         negative_inference_forbidden: true,
       }),
+      governedRequestSignals: Object.freeze((governedRequests.rows || []).map((row) => Object.freeze({
+        request_id: row.request_id,
+        request_type: row.request_type,
+        lifecycle_state: row.lifecycle_state,
+        state_version: Number(row.state_version),
+        target_owner: row.target_owner,
+        target_type: row.target_type,
+        target_ref: row.target_ref,
+        target_version_ref: row.target_version_ref,
+        effective_at: row.effective_at,
+        application_ref: row.application_ref,
+        updated_at: row.updated_at,
+      }))),
       activeAssessmentAnswersIncluded: false,
     });
   }
@@ -201,6 +221,15 @@ function createD11LessonControllerRepository({
         aggregate_ref: 'class-closure:' + prior.closure_fact_id,
         version_ref: String(prior.fact_pack?.schema_version || 'd11.class-fact-pack.v1'),
         component_scope_key: prior.class_id,
+      });
+    }
+    for (const request of signals?.governedRequestSignals || []) {
+      deps.push({
+        dependency_kind: 'GOVERNED_REQUEST',
+        authoritative_owner_ref: String(request.target_owner || 'Course Lifecycle/Request'),
+        aggregate_ref: 'request:' + request.request_id,
+        version_ref: String(request.state_version),
+        component_scope_key: request.target_ref || context.classRow.course_id,
       });
     }
     return deps;
@@ -313,6 +342,90 @@ function createD11LessonControllerRepository({
     });
   }
 
+  async function recordPreparationArtifact({
+    studentId,
+    workspaceId,
+    inputBundleId,
+    blueprint,
+    lessonBlueprintId,
+    capabilityId = 'teaching.lesson.pre_class_lesson_planning',
+    promptFamilyRef = 'TPF-05',
+  } = {}) {
+    if (!workspaceId || !inputBundleId || !lessonBlueprintId) return null;
+    return withTransaction(async (tx) => {
+      const wsResult = await tx.query(
+        "select * from teaching_preparation.workspaces where workspace_id=$1 and student_id=$2 for update",
+        [workspaceId,studentId]
+      );
+      const workspace = wsResult.rows?.[0];
+      if (!workspace) {
+        const error = new Error('Preparation Workspace not found for Lesson Blueprint artifact.');
+        error.code = 'TEACHING_D11_PREPARATION_WORKSPACE_NOT_FOUND';
+        throw error;
+      }
+      if (workspace.current_authoritative_input_bundle_ref !== inputBundleId) {
+        const error = new Error('Preparation input bundle changed before artifact persistence.');
+        error.code = 'TEACHING_D11_PREPARATION_BUNDLE_STALE';
+        error.status = 409;
+        throw error;
+      }
+      const nextVersionResult = await tx.query(
+        "select coalesce(max(version_no),0)+1 next_version from teaching_preparation.artifact_versions where workspace_id=$1",
+        [workspaceId]
+      );
+      const artifactVersionId = randomUUID();
+      const digest = stableDigest(blueprint);
+      const versionNo = Number(nextVersionResult.rows[0].next_version);
+      await tx.query(
+        "insert into teaching_preparation.artifact_versions(" +
+        "artifact_version_id,workspace_id,student_id,artifact_kind,version_no,input_bundle_id,parent_artifact_version_id," +
+        "created_by_capability_id,prompt_family_ref,schema_version,artifact_digest,protected_content_class,validity_state,concise_rationale" +
+        ") values($1,$2,$3,'LESSON_BLUEPRINT',$4,$5,$6,$7,$8,'d11.lesson-blueprint.v1',$9,'UNPROTECTED','CURRENT',$10)",
+        [
+          artifactVersionId,workspaceId,studentId,versionNo,inputBundleId,
+          workspace.current_artifact_version_ref || null,capabilityId,promptFamilyRef,digest,
+          'Validated D11 Lesson Blueprint ' + lessonBlueprintId,
+        ]
+      );
+      const depResult = await tx.query(
+        "select input_dependency_id,aggregate_ref from teaching_preparation.input_bundle_dependencies where input_bundle_id=$1 order by input_dependency_id",
+        [inputBundleId]
+      );
+      const components = [
+        ...(blueprint.objectives || []).map((item) => ({ key:'objective:' + item.id, kind:'OBJECTIVE', value:item })),
+        ...(blueprint.segments || []).map((item) => ({ key:'segment:' + item.id, kind:'SEGMENT', value:item })),
+      ];
+      for (const component of components) {
+        const componentId = randomUUID();
+        await tx.query(
+          "insert into teaching_preparation.artifact_components(" +
+          "artifact_component_id,artifact_version_id,student_id,component_key,component_kind,component_digest,stale,stale_reason" +
+          ") values($1,$2,$3,$4,$5,$6,false,null)",
+          [componentId,artifactVersionId,studentId,component.key,component.kind,stableDigest(component.value)]
+        );
+        for (const dep of depResult.rows || []) {
+          await tx.query(
+            "insert into teaching_preparation.component_dependencies(" +
+            "component_dependency_id,artifact_component_id,input_dependency_id,student_id,dependency_role" +
+            ") values($1,$2,$3,$4,'AUTHORITATIVE_INPUT')",
+            [randomUUID(),componentId,dep.input_dependency_id,studentId]
+          );
+        }
+      }
+      const updated = await tx.query(
+        "update teaching_preparation.workspaces set current_artifact_version_ref=$2,state_version=state_version+1,updated_at=now()" +
+        " where workspace_id=$1 returning *",
+        [workspaceId,artifactVersionId]
+      );
+      return Object.freeze({
+        workspace: updated.rows[0],
+        artifactVersionId,
+        versionNo,
+        artifactDigest: digest,
+      });
+    });
+  }
+
   async function assertContextCurrentUsing(tx, expected) {
     const classRow = await loadClassBase(expected.studentId, expected.classId, tx, true);
     if (!classRow) {
@@ -337,6 +450,22 @@ function createD11LessonControllerRepository({
       throw error;
     }
     return { classRow, plan };
+  }
+
+  async function assertLiveContextCurrent(studentId,classId) {
+    const context = await getClassContext(studentId,classId);
+    if (!context?.session) return { ok:false, reason:'CONTROLLER_NOT_STARTED', context };
+    const mismatches = [];
+    const session = context.session;
+    const klass = context.classRow;
+    const plan = context.plan;
+    if (String(klass.course_lifecycle_state) !== 'ACTIVE') mismatches.push('COURSE_LIFECYCLE');
+    if (String(session.source_course_state_version) !== String(klass.course_state_version)) mismatches.push('COURSE_VERSION');
+    if (String(session.source_class_schedule_version) !== String(klass.schedule_version)) mismatches.push('CLASS_SCHEDULE_VERSION');
+    if (String(session.source_timetable_version_id || '') !== String(klass.source_timetable_version_id || '')) mismatches.push('TIMETABLE_VERSION');
+    if (String(session.course_plan_id || '') !== String(plan?.course_plan_id || '')) mismatches.push('COURSE_PLAN');
+    if (String(session.source_course_plan_version || '') !== String(plan?.version_no || '')) mismatches.push('COURSE_PLAN_VERSION');
+    return Object.freeze({ ok:mismatches.length===0, reason:mismatches.length?'STALE_LIVE_CONTEXT':null, mismatches:Object.freeze(mismatches), context });
   }
 
   async function saveBlueprint({
@@ -590,7 +719,6 @@ function createD11LessonControllerRepository({
       error.status = 422;
       throw error;
     }
-    let independentEvidenceRows = [];
     if (evidenceRefs.length) {
       const evidence = await tx.query(
         "select evidence_event_id from public.teaching_evidence_events where student_id=$1" +
@@ -603,7 +731,6 @@ function createD11LessonControllerRepository({
         error.status = 422;
         throw error;
       }
-      independentEvidenceRows = evidence.rows;
     }
     const independentRefs = [...new Set(independentEvidenceObjectiveRefs.map(String))];
     if (independentRefs.some((ref) => !validObjectives.has(ref))) {
@@ -755,6 +882,14 @@ function createD11LessonControllerRepository({
     });
   }
 
+  async function getGovernedRequest(requestId) {
+    const {rows}=await query(
+      "select * from public.teaching_course_requests where request_id=$1 limit 1",
+      [requestId]
+    );
+    return rows?.[0] || null;
+  }
+
   async function latestSummary(studentId,classId) {
     const {rows}=await query(
       "select * from public.teaching_class_summaries where student_id=$1 and class_id=$2 order by version_no desc limit 1",
@@ -777,7 +912,9 @@ function createD11LessonControllerRepository({
     listClassesForCourse,
     getPlanningSignals,
     ensurePreparationWorkspace,
+    recordPreparationArtifact,
     assertContextCurrentUsing,
+    assertLiveContextCurrent,
     saveBlueprint,
     saveBlueprintUsing,
     latestBlueprint,
@@ -789,6 +926,7 @@ function createD11LessonControllerRepository({
     commitClosure,
     persistSummary,
     persistTeacherNote,
+    getGovernedRequest,
     latestSummary,
     latestTeacherNote,
   });
