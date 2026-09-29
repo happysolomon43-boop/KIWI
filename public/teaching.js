@@ -8,6 +8,8 @@ if (typeof kiwiApiRequest !== 'function' || typeof hasKiwiSession !== 'function'
 // The normal KIWI dashboard owns only the mode-switch control; this module owns the Teaching shell.
 
 const KIWI_PATH = '/';
+const TEACHING_DOCK_LIMIT = 5;
+const TEACHING_DOCK_DESTINATION_SLOTS = TEACHING_DOCK_LIMIT - 1;
 const teachingNavigationItems = new Map();
 const teachingCourseSections = new Map();
 let activeTeachingView = 'overview';
@@ -136,29 +138,51 @@ function renderTeachingNavigation() {
 
   if (!shell || !dock || !(template instanceof HTMLTemplateElement)) return;
 
-  dock.replaceChildren();
+  const destinations = [...teachingNavigationItems.values()]
+    .slice(0, TEACHING_DOCK_DESTINATION_SLOTS);
+  const dockReady = destinations.length === TEACHING_DOCK_DESTINATION_SLOTS;
 
-  for (const item of teachingNavigationItems.values()) {
+  dock.replaceChildren();
+  shell.hidden = !dockReady;
+  document.body.dataset.teachingDockVisible = dockReady ? 'true' : 'false';
+
+  // Do not show a partially populated bottom dock. KIWI Teaching exposes it
+  // only when all four destination slots exist; Menu is always slot five.
+  if (!dockReady) return;
+
+  const appendDockItem = ({ id, label, icon, onSelect, isMenu = false }) => {
     const fragment = template.content.cloneNode(true);
     const control = fragment.querySelector('.teaching-dock__item');
-    const icon = fragment.querySelector('.teaching-dock__icon');
-    const label = fragment.querySelector('.teaching-dock__label');
+    const iconNode = fragment.querySelector('.teaching-dock__icon');
+    const labelNode = fragment.querySelector('.teaching-dock__label');
 
-    if (!control || !icon || !label) continue;
+    if (!control || !iconNode || !labelNode) return;
 
-    control.dataset.navId = item.id;
-    control.setAttribute('aria-label', item.label);
-    icon.textContent = item.icon || '';
-    label.textContent = item.label;
-
-    control.addEventListener('click', () => {
-      selectTeachingNavigationItem(item);
-    });
-
+    control.dataset.navId = id;
+    control.dataset.menu = isMenu ? 'true' : 'false';
+    control.setAttribute('aria-label', label);
+    iconNode.textContent = icon || '';
+    labelNode.textContent = label;
+    control.addEventListener('click', onSelect);
     dock.appendChild(fragment);
+  };
+
+  for (const item of destinations) {
+    appendDockItem({
+      id: item.id,
+      label: item.label,
+      icon: item.icon,
+      onSelect: () => selectTeachingNavigationItem(item),
+    });
   }
 
-  shell.hidden = teachingNavigationItems.size === 0;
+  appendDockItem({
+    id: 'menu',
+    label: 'Menu',
+    icon: '≡',
+    isMenu: true,
+    onSelect: () => setMenuOpen(true, { restoreFocus: false }),
+  });
 }
 
 function registerTeachingNavigationItem(item) {
