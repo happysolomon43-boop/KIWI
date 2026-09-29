@@ -403,8 +403,9 @@ function createD11LessonControllerRepository({
       }
       const updated = await tx.query(
         "update teaching_preparation.workspaces set current_authoritative_input_bundle_ref=$2," +
-        " state_version=state_version+1,updated_at=now() where workspace_id=$1 returning *",
-        [workspace.workspace_id, bundleId]
+        " target_effective_at=$3,finalization_or_freeze_at=$3,state_version=state_version+1,updated_at=now()" +
+        " where workspace_id=$1 returning *",
+        [workspace.workspace_id, bundleId, classRow.scheduled_start_at]
       );
       const nextWorkspace = updated.rows[0];
       if (outboxStore && typeof outboxStore.appendUsing === 'function') {
