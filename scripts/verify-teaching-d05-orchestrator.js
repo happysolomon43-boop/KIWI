@@ -37,7 +37,7 @@ const runtime = require('../teaching/runtime');
 const orchestrator = require('../teaching/orchestrator');
 
 const census = registry.assertRegistryIntegrity();
-assert(census.total === 169 && census.modelEligible === 147 && census.t0Promptless === 22 && census.promptFamilies === 19, 'Registry census drifted from 169/147/22/19.');
+assert(census.total === 170 && census.modelEligible === 148 && census.t0Promptless === 22 && census.promptFamilies === 20, 'Registry census drifted from successor 170/148/22/20.');
 for (const id of Object.values(preparation.PPL_T0_CAPABILITIES)) {
   const capability = registry.getCapability(id);
   assert(capability.authority_ceiling === 'T0', `${id} must remain T0.`);
@@ -93,6 +93,8 @@ const serverEntry = read('index.js');
 for (const fragment of [
   "createTeachingD05RuntimePlatform",
   "createTeachingEventSubscriberRegistry",
+  "registerPreparationPublishedEventSubscribers",
+  "ppl-d09-deterministic-gate",
   "eventPublisher: (event) => teachingPublishedEvents.publish(event)",
   "D05 runtime initialized; due-event and durable outbox workers started",
 ]) assert(serverEntry.includes(fragment), `Production server must wire D05 runtime fragment: ${fragment}`);
