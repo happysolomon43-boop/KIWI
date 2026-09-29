@@ -128,7 +128,7 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
   async function countedCourses(studentId,{excludeCourseId=null,runner=null,lock=false}={}){
     const {rows=[]}=await q(runner,`select c.course_id,c.lifecycle_state,
       exists(select 1 from public.teaching_course_closure_records cr
-        where cr.student_id=c.student_id and cr.course_id=c.course_id and cr.closure_kind='INCOMPLETE_ADMINISTRATIVE_ARCHIVE') incomplete_closed
+        where cr.student_id=c.student_id and cr.course_id=c.course_id and cr.closure_kind in ('INCOMPLETE_ADMINISTRATIVE_ARCHIVE','CANCELLATION')) incomplete_closed
       from public.teaching_courses c where c.student_id=$1 ${lock?'for update':''}`,[studentId]);
     return rows.filter((row)=>String(row.course_id)!==String(excludeCourseId||'') && admissionCountsState(row.lifecycle_state,{hasIncompleteClosure:Boolean(row.incomplete_closed)}));
   }
@@ -437,6 +437,12 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
     return rows[0];
   }
 
+  async function getClassTarget(studentId,classId){
+    const {rows}=await query('select * from public.teaching_classes where student_id=$1 and class_id=$2',[studentId,classId]);
+    if(!rows?.[0]) throw err('Teaching Class not found.','TEACHING_D10_REQUEST_CLASS_NOT_FOUND',404);
+    return rows[0];
+  }
+
   async function changeTeacherUsing(tx,{studentId,courseId,teacherIdentityId,sourceRequestId}){
     const course=await ensureCourse(studentId,courseId,tx,true);
     const {rows:teacherRows}=await q(tx,'select * from public.teaching_teacher_identities where student_id=$1 and teacher_identity_id=$2 and active=true for update',[studentId,teacherIdentityId]);
@@ -455,6 +461,22 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
     await auditUsing(tx,{studentId,action:'course.teacher.change',entityType:'COURSE',entityId:courseId,stateVersionRef:course.state_version,
       beforeRef:{teacher_assignment_id:current?.teacher_assignment_id||null},afterRef:{teacher_assignment_id:id},safeMetadata:{source_request_id:sourceRequestId}});
     return {assignment:rows[0],course};
+  }
+
+  async function recordCancellationClosureUsing(tx,{studentId,courseId,reason,sourceRequestId}){
+    const course=await ensureCourse(studentId,courseId,tx,true);
+    if(course.lifecycle_state!=='INCOMPLETE') throw err('Cancellation closure requires preserved Incomplete lifecycle state.','TEACHING_D10_CANCELLATION_CLOSURE_STATE_INVALID');
+    const {rows:existing}=await q(tx,`select * from public.teaching_course_closure_records where student_id=$1 and course_id=$2 and closure_kind='CANCELLATION' order by closed_at desc limit 1`,[studentId,courseId]);
+    if(existing?.[0]) return existing[0];
+    const id=randomUUID(), closedAt=now();
+    const {rows}=await q(tx,`insert into public.teaching_course_closure_records(
+      closure_id,student_id,course_id,lifecycle_state_at_closure,closure_kind,reason,source_request_id,closed_at
+    ) values($1,$2,$3,'INCOMPLETE','CANCELLATION',$4,$5,$6) returning *`,
+    [id,studentId,courseId,String(reason||'Course cancelled under approved Request'),sourceRequestId,closedAt]);
+    const policy=await currentAdmissionPolicy(tx);
+    const counted=await countedCourses(studentId,{excludeCourseId:courseId,runner:tx,lock:true});
+    await recordAdmissionUsing(tx,{studentId,courseId,kind:'CLOSURE',policy,countBefore:counted.length+1,outcome:'RELEASE',reason:'Approved Course cancellation closure',sourceRequestId});
+    return rows[0];
   }
 
   async function applyRequest({studentId,requestId,expectedVersion=null,applyTargetUsing}){
@@ -500,7 +522,7 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
     assertReady,ensureCourse,auditUsing,getAcademicRules,prepareAcademicRules,currentAdmissionPolicy,countedCourses,admissionSnapshot,
     getActivationFacts,markReady,activateCourse,transitionCourseUsing,archiveIncomplete,
     createRequest,getRequest,getRequestById,listRequests,transitionRequest,recordDecisionUsing,acceptAlternativeUsing,declineAlternative,
-    getClassTargetUsing,changeTeacherUsing,applyRequest,recordAdmissionUsing,
+    getClassTargetUsing,getClassTarget,changeTeacherUsing,recordCancellationClosureUsing,applyRequest,recordAdmissionUsing,
   });
 }
 module.exports={createD10LifecycleRequestRepository};
