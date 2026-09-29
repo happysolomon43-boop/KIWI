@@ -2,24 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Pool } = require('pg');
+const { PRODUCTION_PROJECT_REF, assertNonProductionDatabase, integrationConfig, createIntegrationPool } = require('./test-db');
 
-const PRODUCTION_PROJECT_REF = 'nqdwifqskxkblgdgeutn';
 
-function assertNonProductionDatabase({ connectionString, projectRef }) {
-  if (!connectionString) throw new Error('TEACHING_TEST_DATABASE_URL is required.');
-  if (!projectRef) throw new Error('TEACHING_TEST_PROJECT_REF is required.');
-  if (projectRef === PRODUCTION_PROJECT_REF || connectionString.includes(PRODUCTION_PROJECT_REF)) {
-    throw new Error('Teaching D04 integration tests refuse to run against production KIWI Supabase.');
-  }
-  return true;
-}
 
-const connectionString = process.env.TEACHING_TEST_DATABASE_URL;
-const projectRef = process.env.TEACHING_TEST_PROJECT_REF;
-const skipReason = (!connectionString || !projectRef)
-  ? 'No non-production Supabase branch/project configured for Teaching D04 integration tests.'
-  : false;
+const { connectionString, projectRef, skipReason } = integrationConfig('D04');
 
 test('D04 integration guard refuses production Supabase', () => {
   assert.throws(
@@ -27,18 +14,13 @@ test('D04 integration guard refuses production Supabase', () => {
       connectionString: `postgresql://example.${PRODUCTION_PROJECT_REF}@localhost/test`,
       projectRef: PRODUCTION_PROJECT_REF,
     }),
-    /refuse to run against production/
+    /production/
   );
 });
 
 test('D04 schema, RLS and protected preparation boundaries exist', { skip: skipReason }, async () => {
   assertNonProductionDatabase({ connectionString, projectRef });
-  const pool = new Pool({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
-    max: 1,
-    connectionTimeoutMillis: 5_000,
-  });
+  const pool = createIntegrationPool(connectionString);
 
   try {
     const { rows: publicTables } = await pool.query(`
@@ -145,16 +127,28 @@ test('D04 schema, RLS and protected preparation boundaries exist', { skip: skipR
        group by schemaname, cmd
        order by schemaname, cmd
     `);
-    assert.deepEqual(servicePolicyCounts, [
-      { schemaname: 'public', cmd: 'INSERT', count: 24 },
-      { schemaname: 'public', cmd: 'SELECT', count: 24 },
-      { schemaname: 'public', cmd: 'UPDATE', count: 17 },
-      { schemaname: 'teaching_preparation', cmd: 'INSERT', count: 22 },
-      { schemaname: 'teaching_preparation', cmd: 'SELECT', count: 22 },
-      { schemaname: 'teaching_preparation', cmd: 'UPDATE', count: 10 },
-      { schemaname: 'teaching_protected', cmd: 'INSERT', count: 1 },
-      { schemaname: 'teaching_protected', cmd: 'SELECT', count: 1 },
-    ]);
+    // D04 establishes minimum narrow-service policy coverage. Later accepted
+    // migrations may add owner-safe policies/tables, so a current-head
+    // integration database must not freeze the global policy census at the
+    // historical D04-only count.
+    const policyCount = new Map(
+      servicePolicyCounts.map((row) => [`${row.schemaname}:${row.cmd}`, row.count])
+    );
+    for (const [key, minimum] of [
+      ['public:INSERT', 24],
+      ['public:SELECT', 24],
+      ['public:UPDATE', 17],
+      ['teaching_preparation:INSERT', 22],
+      ['teaching_preparation:SELECT', 22],
+      ['teaching_preparation:UPDATE', 10],
+      ['teaching_protected:INSERT', 1],
+      ['teaching_protected:SELECT', 1],
+    ]) {
+      assert.ok(
+        (policyCount.get(key) || 0) >= minimum,
+        `current schema regressed D04 service-policy floor for ${key}`
+      );
+    }
 
   } finally {
     await pool.end();

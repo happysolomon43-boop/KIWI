@@ -1,17 +1,17 @@
 'use strict';
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {Pool}=require('pg');
-const PROD='nqdwifqskxkblgdgeutn';
-const url=process.env.TEACHING_TEST_DATABASE_URL;
-const ref=process.env.TEACHING_TEST_PROJECT_REF;
-const skip=(!url||!ref)?'No non-production Supabase branch/project configured for Teaching D10 integration tests.':false;
-function guard(){if(!url||!ref)throw new Error('Non-production database configuration required.');if(ref===PROD||url.includes(PROD))throw new Error('D10 integration refuses production Supabase.');}
+const {PRODUCTION_PROJECT_REF,assertNonProductionDatabase,integrationConfig,createIntegrationPool}=require('./test-db');
+const {connectionString:url,projectRef:ref,skipReason:skip}=integrationConfig('D10');
+function guard(){return assertNonProductionDatabase({connectionString:url,projectRef:ref});}
 
-test('D10 integration guard refuses production',()=>{assert.throws(()=>{if(PROD===PROD)throw new Error('D10 integration refuses production Supabase.');},/refuses production/);});
+test('D10 integration guard refuses production',()=>assert.throws(
+  ()=>assertNonProductionDatabase({connectionString:'postgresql://example@localhost/test',projectRef:PRODUCTION_PROJECT_REF}),
+  /production/
+));
 
 test('D10 schema has durable lifecycle/Request truth, RLS and browser read-only access',{skip},async()=>{
- guard();const pool=new Pool({connectionString:url,ssl:{rejectUnauthorized:false},max:1});
+ guard();const pool=createIntegrationPool(url);
  try{
   const names=['teaching_grading_policy_versions','teaching_course_teacher_assignments','teaching_course_activations','teaching_course_lifecycle_history','teaching_course_closure_records','teaching_course_admission_policies','teaching_course_admission_decisions','teaching_requests','teaching_request_history','teaching_request_applications'];
   const tables=await pool.query("select c.relname,c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname=any($1::text[])",[names]);

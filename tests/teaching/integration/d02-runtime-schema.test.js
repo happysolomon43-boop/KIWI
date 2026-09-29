@@ -2,24 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Pool } = require('pg');
+const { PRODUCTION_PROJECT_REF, assertNonProductionDatabase, integrationConfig, createIntegrationPool } = require('./test-db');
 
-const PRODUCTION_PROJECT_REF = 'nqdwifqskxkblgdgeutn';
 
-function assertNonProductionDatabase({ connectionString, projectRef }) {
-  if (!connectionString) throw new Error('TEACHING_TEST_DATABASE_URL is required.');
-  if (!projectRef) throw new Error('TEACHING_TEST_PROJECT_REF is required.');
-  if (projectRef === PRODUCTION_PROJECT_REF || connectionString.includes(PRODUCTION_PROJECT_REF)) {
-    throw new Error('Teaching D02 integration tests refuse to run against production KIWI Supabase.');
-  }
-  return true;
-}
 
-const connectionString = process.env.TEACHING_TEST_DATABASE_URL;
-const projectRef = process.env.TEACHING_TEST_PROJECT_REF;
-const skipReason = (!connectionString || !projectRef)
-  ? 'No non-production Supabase branch/project configured for Teaching D02 integration tests.'
-  : false;
+const { connectionString, projectRef, skipReason } = integrationConfig('D02');
 
 test('D02 integration guard refuses production Supabase', () => {
   assert.throws(
@@ -27,19 +14,14 @@ test('D02 integration guard refuses production Supabase', () => {
       connectionString: `postgresql://example.${PRODUCTION_PROJECT_REF}@localhost/test`,
       projectRef: PRODUCTION_PROJECT_REF,
     }),
-    /refuse to run against production/
+    /production/
   );
 });
 
 test('D02 private runtime schema exists and is not granted to browser roles', { skip: skipReason }, async () => {
   assertNonProductionDatabase({ connectionString, projectRef });
 
-  const pool = new Pool({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
-    max: 1,
-    connectionTimeoutMillis: 5_000,
-  });
+  const pool = createIntegrationPool(connectionString);
 
   try {
     const { rows: tables } = await pool.query(
