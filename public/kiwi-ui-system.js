@@ -1,9 +1,8 @@
 (function () {
   'use strict';
 
-  const SYSTEM_VERSION = '1.0.0';
+  const SYSTEM_VERSION = '1.0.1';
   const ENHANCED = 'kiwiSelectEnhanced';
-  const MOBILE_QUERY = '(max-width: 720px), (pointer: coarse)';
   let active = null;
   let portal = null;
   let searchInput = null;
@@ -308,30 +307,85 @@
     setActiveIndex(selectedVisibleIndex >= 0 ? selectedVisibleIndex : 0);
   }
 
-  function positionPanel() {
-    if (!active || !portal || window.matchMedia(MOBILE_QUERY).matches) return;
-    const rect = active.trigger.getBoundingClientRect();
-    const panel = portal.querySelector('.kiwi-select-panel');
-    const viewportPadding = 10;
-    const desiredWidth = Math.max(220, Math.min(440, rect.width));
-    const availableBelow = window.innerHeight - rect.bottom - viewportPadding;
-    const availableAbove = rect.top - viewportPadding;
-    const maxHeight = Math.max(190, Math.min(460, Math.max(availableBelow, availableAbove)));
-    let top = rect.bottom + 7;
+  function panelModeFor(select) {
+    return select?.dataset?.kiwiSelectMode === 'sheet' ? 'sheet' : 'anchored';
+  }
 
-    if (availableBelow < 220 && availableAbove > availableBelow) {
-      top = Math.max(viewportPadding, rect.top - maxHeight - 7);
+  function visualViewportMetrics() {
+    const visual = window.visualViewport;
+    if (!visual) {
+      return {
+        left: 0,
+        top: 0,
+        width: window.innerWidth,
+        height: window.innerHeight,
+      };
+    }
+    return {
+      left: visual.offsetLeft,
+      top: visual.offsetTop,
+      width: visual.width,
+      height: visual.height,
+    };
+  }
+
+  function clearPanelPosition(panel) {
+    for (const property of [
+      '--kiwi-select-left',
+      '--kiwi-select-top',
+      '--kiwi-select-width',
+      '--kiwi-select-max-height',
+    ]) panel.style.removeProperty(property);
+  }
+
+  function positionPanel() {
+    if (!active || !portal) return;
+    const panel = portal.querySelector('.kiwi-select-panel');
+    const mode = panelModeFor(active.select);
+    portal.dataset.mode = mode;
+
+    if (mode === 'sheet') {
+      delete portal.dataset.placement;
+      clearPanelPosition(panel);
+      return;
     }
 
-    const left = Math.max(
-      viewportPadding,
-      Math.min(rect.left, window.innerWidth - desiredWidth - viewportPadding),
+    const rect = active.trigger.getBoundingClientRect();
+    const viewport = visualViewportMetrics();
+    const viewportPadding = 10;
+    const gap = 7;
+    const viewportRight = viewport.left + viewport.width;
+    const viewportBottom = viewport.top + viewport.height;
+    const maxAllowedWidth = Math.max(180, viewport.width - (viewportPadding * 2));
+    const desiredWidth = Math.min(
+      maxAllowedWidth,
+      Math.max(Math.min(rect.width, maxAllowedWidth), Math.min(220, maxAllowedWidth)),
     );
+    const availableBelow = Math.max(0, viewportBottom - rect.bottom - viewportPadding - gap);
+    const availableAbove = Math.max(0, rect.top - viewport.top - viewportPadding - gap);
+    const preferredMinimum = Math.min(220, Math.max(140, viewport.height * 0.28));
+    const placeAbove = availableBelow < preferredMinimum && availableAbove > availableBelow;
+    const available = placeAbove ? availableAbove : availableBelow;
+    const maxHeight = Math.max(120, Math.min(460, available));
 
-    panel.style.setProperty('--kiwi-select-left', left + 'px');
-    panel.style.setProperty('--kiwi-select-top', top + 'px');
     panel.style.setProperty('--kiwi-select-width', desiredWidth + 'px');
     panel.style.setProperty('--kiwi-select-max-height', maxHeight + 'px');
+
+    const measuredHeight = Math.min(
+      maxHeight,
+      Math.max(0, panel.scrollHeight || panel.getBoundingClientRect().height || maxHeight),
+    );
+    const left = Math.max(
+      viewport.left + viewportPadding,
+      Math.min(rect.left, viewportRight - desiredWidth - viewportPadding),
+    );
+    const top = placeAbove
+      ? Math.max(viewport.top + viewportPadding, rect.top - gap - measuredHeight)
+      : Math.min(rect.bottom + gap, viewportBottom - viewportPadding - measuredHeight);
+
+    portal.dataset.placement = placeAbove ? 'above' : 'below';
+    panel.style.setProperty('--kiwi-select-left', left + 'px');
+    panel.style.setProperty('--kiwi-select-top', top + 'px');
   }
 
   function openSelect(state, { keyboard = false, direction = 1 } = {}) {
@@ -355,6 +409,7 @@
     positionPanel();
 
     requestAnimationFrame(() => {
+      positionPanel();
       if (!active) return;
       if (!searchWrap.hidden) {
         searchInput.focus({ preventScroll: true });
@@ -369,6 +424,7 @@
     const trigger = active.trigger;
     trigger.setAttribute('aria-expanded', 'false');
     portal.dataset.open = 'false';
+    delete portal.dataset.placement;
     delete document.body.dataset.kiwiSelectOpen;
     active = null;
     activeIndex = -1;
@@ -442,6 +498,8 @@
 
     window.addEventListener('resize', positionPanel, { passive: true });
     window.addEventListener('scroll', positionPanel, { passive: true, capture: true });
+    window.visualViewport?.addEventListener('resize', positionPanel, { passive: true });
+    window.visualViewport?.addEventListener('scroll', positionPanel, { passive: true });
 
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && active) {
