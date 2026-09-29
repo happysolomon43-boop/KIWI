@@ -1,185 +1,235 @@
 'use strict';
 
-const KNOWLEDGE_STATES = Object.freeze(['UNSEEN','INTRODUCED','ASSISTED','EMERGING','INDEPENDENT','SECURE','TRANSFERABLE']);
-const KNOWLEDGE_STATE_SET = Object.freeze(new Set(KNOWLEDGE_STATES));
-const OVERLAYS = Object.freeze(['FRAGILE','BLOCKED','REGRESSED']);
-const OVERLAY_SET = Object.freeze(new Set(OVERLAYS));
-const EVIDENCE_VALIDITY = Object.freeze(new Set(['VALID','REVIEW_NEEDED','INVALID','SYSTEM_PROTECTED']));
-const EVIDENCE_OUTCOMES = Object.freeze(new Set(['SUCCESS','PARTIAL','FAILURE','NO_EVIDENCE','INDETERMINATE','EXPOSURE_ONLY']));
-const EVIDENCE_QUALITY = Object.freeze(new Set(['STRONG','MODERATE','WEAK','UNUSABLE']));
-const CERTAINTY_STATES = Object.freeze(new Set(['UNKNOWN','LIMITED','MODERATE','HIGH','REVIEW_DUE']));
-const CONFIDENCE_BANDS = Object.freeze(new Set(['LOW','MEDIUM','HIGH','UNKNOWN']));
-const CONTROL_CONTEXTS = Object.freeze(new Set(['INSTRUCTIONAL','GUIDED_PRACTICE','INDEPENDENT_PRACTICE','CONTROLLED_ASSESSMENT','DIAGNOSTIC','HOMEWORK','UNKNOWN']));
-const ANSWER_EXPOSURE = Object.freeze(new Set(['NONE','PARTIAL','ESSENTIAL_METHOD','ANSWER','UNKNOWN']));
-const ASSISTANCE_LEVELS = Object.freeze(['none','attention','directional','conceptual','partial_step','strong_scaffold','worked_example','full_instruction','unknown']);
-const ASSISTANCE_RANK = Object.freeze(Object.fromEntries(ASSISTANCE_LEVELS.map((v,i)=>[v,i])));
-const DIMENSION_STATUSES = Object.freeze(new Set(['NOT_APPLICABLE','INSUFFICIENT_EVIDENCE','DEVELOPING','SUPPORTED','STRONG','CONTRADICTORY','REVIEW_NEEDED']));
-const LEARNING_ANALYSIS_LABELS = Object.freeze(new Set(['strong','improving','fragile','needs reinforcement','needs verification','not enough evidence']));
-const ALGORITHM_VERSION = 'skm-evidence-state-machine.v1';
-const EVIDENCE_SCHEMA_VERSION = 'd13.evidence-event.v1';
-const STATE_CONTRACT_VERSION = 'd13.skm-state.v1';
+const {
+  SKM_ALGORITHM_ID,
+  SKM_ALGORITHM_VERSION,
+  BASE_STATES,
+  OVERLAYS,
+} = require('./state-engine');
 
-function fail(message, code, status=422, details=null){
-  const e=new Error(message);e.code=code;e.status=status;if(details)e.details=details;throw e;
-}
-function isObject(v){return Boolean(v)&&typeof v==='object'&&!Array.isArray(v);}
-function str(v,code,{optional=false}={}){const s=String(v??'').trim();if(!s&&!optional)fail('Expected non-empty string.',code,400);return s||null;}
-function arr(v,code){if(!Array.isArray(v))fail('Expected array.',code,400);return v;}
-function obj(v,code){if(!isObject(v))fail('Expected object.',code,400);return v;}
-function enumVal(v,set,code,{optional=false}={}){if((v===null||v===undefined||v==='')&&optional)return null;const s=String(v).trim();if(!set.has(s))fail('Unsupported enum value.',code,422,{value:s});return s;}
-function bool(v,code,{optional=false}={}){if((v===null||v===undefined)&&optional)return null;if(typeof v!=='boolean')fail('Expected boolean.',code,400);return v;}
-function freezeDeep(value){
-  if(Array.isArray(value)){for(const item of value)freezeDeep(item);return Object.freeze(value);}
-  if(isObject(value)){for(const item of Object.values(value))freezeDeep(item);return Object.freeze(value);}
-  return value;
-}
-function uniqueStrings(values){return Object.freeze([...new Set((values||[]).map(v=>String(v).trim()).filter(Boolean))]);}
-function time(v,code,{optional=false}={}){if((v===null||v===undefined||v==='')&&optional)return null;const d=new Date(v);if(Number.isNaN(d.getTime()))fail('Invalid timestamp.',code,400);return d.toISOString();}
+const EVIDENCE_CLAIMS=new Set(['recall','reproduce','independent_performance','adapt_to_variation','select_method','retain_after_delay','integrate_or_transfer','other']);
+const VALIDITY=new Set(['VALID','LIMITED','CONTAMINATED','INVALID','UNKNOWN']);
+const STRENGTH=new Set(['STRONG','MODERATE','WEAK','UNUSABLE','INDETERMINATE']);
+const INFORMATION_GAIN=new Set(['LOW','MODERATE','HIGH','UNKNOWN']);
+const REDUNDANCY=new Set(['NEW_INFORMATION','PARTLY_REDUNDANT','HIGHLY_REDUNDANT','UNKNOWN']);
+const CONTROL=new Set(['CONTROLLED','PARTIALLY_CONTROLLED','UNCONTROLLED','UNKNOWN']);
+const ASSISTANCE=new Set(['none','attention','directional','conceptual','partial_step','strong_scaffold','worked_example','full_instruction','unknown']);
 
-function normalizeDemandContext(input={}){
-  const v=obj(input,'TEACHING_D13_DEMAND_CONTEXT_INVALID');
-  const familiarity=new Set(['exact_reuse','near_reuse','familiar_family','fresh_equivalent','new_representation','new_context_same_construct','integrated','unknown','not_applicable']);
-  const methodCueing=new Set(['explicit','partial','none','not_applicable','unknown']);
-  const representation=new Set(['same_representation','alternate_familiar_representation','new_legitimate_representation','cross_representation_connection','not_applicable','unknown']);
-  const integration=new Set(['isolated_construct','multi_step_same_construct','combine_eligible_constructs','embedded_in_broader_problem','not_applicable','unknown']);
-  const retention=new Set(['immediate','same_session_later','spaced','delayed','not_applicable','unknown']);
-  return freezeDeep({
-    familiarity: enumVal(v.familiarity??'unknown',familiarity,'TEACHING_D13_DEMAND_FAMILIARITY_INVALID'),
-    method_cueing: enumVal(v.method_cueing??'unknown',methodCueing,'TEACHING_D13_DEMAND_CUEING_INVALID'),
-    representation_demand: enumVal(v.representation_demand??'unknown',representation,'TEACHING_D13_DEMAND_REPRESENTATION_INVALID'),
-    integration_demand: enumVal(v.integration_demand??'unknown',integration,'TEACHING_D13_DEMAND_INTEGRATION_INVALID'),
-    retention_timing: enumVal(v.retention_timing??'unknown',retention,'TEACHING_D13_DEMAND_RETENTION_INVALID'),
-    transfer_eligible: v.transfer_eligible===true,
-    same_eligible_construct: v.same_eligible_construct!==false,
-    prerequisite_boundary_validated: v.prerequisite_boundary_validated!==false,
-  });
+function fail(message,code,status=422,details=null){const e=new Error(message);e.code=code;e.status=status;if(details)e.details=details;throw e;}
+function obj(value,code){if(!value||typeof value!=='object'||Array.isArray(value))fail('Expected structured object.',code);return value;}
+function arr(value,code){if(!Array.isArray(value))fail('Expected array.',code);return value;}
+function str(value,code){const out=String(value??'').trim();if(!out)fail('Expected non-empty string.',code);return out;}
+function boolOrNull(value,code){if(value!==true&&value!==false&&value!==null&&value!==undefined)fail('Expected boolean or null.',code);return value==null?null:value;}
+function enumValue(value,set,code,{upper=false}={}){const out=upper?String(value??'').trim().toUpperCase():String(value??'').trim().toLowerCase();if(!set.has(out))fail('Unsupported enum value.',code,422,{value:out});return out;}
+
+function forbiddenAuthorityPath(value,path=''){
+  if(Array.isArray(value)){for(let i=0;i<value.length;i+=1){const found=forbiddenAuthorityPath(value[i],path+'['+i+']');if(found)return found;}return null;}
+  if(!value||typeof value!=='object')return null;
+  const forbidden=new Set([
+    'official_mark','official_marks','grade','grades','gradebook_write',
+    'progression_outcome','mastery_probability','mastery_percentage',
+    'knowledge_probability','durable_mastery','ability_label','intelligence_label','personality_label',
+  ]);
+  for(const [key,child] of Object.entries(value)){
+    const here=path?path+'.'+key:key;
+    if(forbidden.has(key))return here;
+    if(['gradebook_changed','progression_decided','skm_state_committed','durable_state_committed'].includes(key) && child!==false)return here;
+    const found=forbiddenAuthorityPath(child,here);if(found)return found;
+  }
+  return null;
 }
 
-function normalizeSupportContext(input={}){
-  const v=isObject(input)?input:{};
-  const level=String(v.assistance_level??'unknown').trim().toLowerCase();
-  if(!(level in ASSISTANCE_RANK))fail('Invalid instructional assistance level.','TEACHING_D13_ASSISTANCE_INVALID');
-  return freezeDeep({
-    assistance_level:level,
-    instructional_support_refs:uniqueStrings(v.instructional_support_refs||[]),
-    answer_method_exposure:enumVal(String(v.answer_method_exposure??'UNKNOWN').toUpperCase(),ANSWER_EXPOSURE,'TEACHING_D13_EXPOSURE_INVALID'),
-    permitted_tools:uniqueStrings(v.permitted_tools||[]),
-    accessibility_support:uniqueStrings(v.accessibility_support||[]),
-    accessibility_support_is_instructional_assistance:false,
-  });
-}
-
-function validateNormalizedEvidenceEvent(input={}){
-  const v=obj(input,'TEACHING_D13_EVIDENCE_INVALID');
-  const demand=normalizeDemandContext(v.demand_context||{});
-  const support=normalizeSupportContext(v.support_context||{});
-  const validity=enumVal(String(v.evidence_validity??'VALID').toUpperCase(),EVIDENCE_VALIDITY,'TEACHING_D13_EVIDENCE_VALIDITY_INVALID');
-  const outcome=enumVal(String(v.outcome??'INDETERMINATE').toUpperCase(),EVIDENCE_OUTCOMES,'TEACHING_D13_EVIDENCE_OUTCOME_INVALID');
-  const confidenceSampled=v.confidence_sampled===true;
-  const studentConfidence=confidenceSampled
-    ? enumVal(String(v.student_confidence??'UNKNOWN').toUpperCase(),CONFIDENCE_BANDS,'TEACHING_D13_STUDENT_CONFIDENCE_INVALID')
-    : null;
-  if(!confidenceSampled && v.student_confidence!=null) fail('Student confidence may only be stored when explicitly sampled.','TEACHING_D13_CONFIDENCE_NOT_SAMPLED');
-  const normalized={
-    evidence_event_id:str(v.evidence_event_id,'TEACHING_D13_EVIDENCE_ID_REQUIRED'),
-    student_id:str(v.student_id,'TEACHING_D13_STUDENT_ID_REQUIRED'),
-    course_id:str(v.course_id,'TEACHING_D13_COURSE_ID_REQUIRED'),
-    learning_unit_id:str(v.learning_unit_id,'TEACHING_D13_LEARNING_UNIT_REQUIRED'),
-    source_response_id:str(v.source_response_id,'TEACHING_D13_SOURCE_RESPONSE_INVALID',{optional:true}),
-    source_evaluation_id:str(v.source_evaluation_id,'TEACHING_D13_SOURCE_EVALUATION_INVALID',{optional:true}),
-    source_owner:str(v.source_owner??'SKM/Evidence','TEACHING_D13_SOURCE_OWNER_REQUIRED'),
-    evidence_kind:str(v.evidence_kind,'TEACHING_D13_EVIDENCE_KIND_REQUIRED'),
-    evidence_purpose:str(v.evidence_purpose,'TEACHING_D13_EVIDENCE_PURPOSE_REQUIRED'),
-    formal_assessment:v.formal_assessment===true,
-    diagnostic:v.diagnostic===true,
-    task_ref:str(v.task_ref,'TEACHING_D13_TASK_REF_INVALID',{optional:true}),
-    construct_ref:str(v.construct_ref??v.learning_unit_id,'TEACHING_D13_CONSTRUCT_REF_REQUIRED'),
-    outcome,
-    response_quality:isObject(v.response_quality)?v.response_quality:{},
-    instructional_lineage_refs:uniqueStrings(v.instructional_lineage_refs||[]),
-    demand_context:demand,
-    support_context:support,
-    independent_performance:v.independent_performance===true,
-    control_context:enumVal(String(v.control_context??'UNKNOWN').toUpperCase(),CONTROL_CONTEXTS,'TEACHING_D13_CONTROL_CONTEXT_INVALID'),
-    observed_errors:Array.isArray(v.observed_errors)?v.observed_errors:[],
-    confidence_sampled:confidenceSampled,
-    student_confidence:studentConfidence,
-    comparability_group:str(v.comparability_group,'TEACHING_D13_COMPARABILITY_GROUP_INVALID',{optional:true}),
-    redundancy_key:str(v.redundancy_key,'TEACHING_D13_REDUNDANCY_KEY_INVALID',{optional:true}),
-    misconception_signal:isObject(v.misconception_signal)?v.misconception_signal:null,
-    path_signal:isObject(v.path_signal)?v.path_signal:null,
-    retention_review_due_at:time(v.retention_review_due_at,'TEACHING_D13_RETENTION_DUE_INVALID',{optional:true}),
-    system_failure_protected:v.system_failure_protected===true,
-    evidence_validity:validity,
-    occurred_at:time(v.occurred_at,'TEACHING_D13_EVIDENCE_OCCURRED_AT_REQUIRED'),
-    provenance_refs:uniqueStrings(v.provenance_refs||[]),
-    evidence_schema_version:str(v.evidence_schema_version??EVIDENCE_SCHEMA_VERSION,'TEACHING_D13_EVIDENCE_SCHEMA_VERSION_REQUIRED'),
+function validateDemandVector(value){
+  const v=obj(value,'TEACHING_D13_DEMAND_VECTOR_INVALID');
+  const sets={
+    familiarity:new Set(['exact_reuse','near_reuse','familiar_family','fresh_equivalent','new_representation','new_context_same_construct','integrated','unknown']),
+    method_cueing:new Set(['explicit','partial','none','not_applicable']),
+    representation_demand:new Set(['same_representation','alternate_familiar_representation','new_legitimate_representation','cross_representation_connection','not_applicable']),
+    integration_demand:new Set(['isolated_construct','multi_step_same_construct','combine_eligible_constructs','embedded_in_broader_problem','not_applicable']),
+    retention_timing:new Set(['immediate','same_session_later','spaced','delayed','not_applicable']),
   };
-  if(normalized.system_failure_protected && normalized.evidence_validity==='VALID') normalized.evidence_validity='SYSTEM_PROTECTED';
-  if(normalized.diagnostic && normalized.formal_assessment) fail('Diagnostic evidence cannot simultaneously be formal graded assessment evidence.','TEACHING_D13_EVIDENCE_PURPOSE_CONFLICT');
-  return freezeDeep(normalized);
+  return Object.freeze(Object.fromEntries(Object.entries(sets).map(([key,set])=>[key,enumValue(v[key],set,'TEACHING_D13_DEMAND_VECTOR_INVALID')])));
 }
 
-function assistanceIsMaterial(level){
-  const rank=ASSISTANCE_RANK[String(level||'unknown').toLowerCase()] ?? ASSISTANCE_RANK.unknown;
-  return rank>=ASSISTANCE_RANK.conceptual;
-}
-function answerOrMethodExposed(event){return ['ESSENTIAL_METHOD','ANSWER'].includes(event.support_context.answer_method_exposure);}
-function usableForState(event){return event.evidence_validity==='VALID'&&!event.system_failure_protected&&!answerOrMethodExposed(event);}
-function isSuccess(event){return event.outcome==='SUCCESS';}
-function isFailure(event){return event.outcome==='FAILURE';}
-function isIndependent(event){
-  return event.independent_performance===true && !assistanceIsMaterial(event.support_context.assistance_level) && !answerOrMethodExposed(event);
-}
-function isDelayed(event){return event.demand_context.retention_timing==='delayed';}
-function isTransferDemand(event){
-  const d=event.demand_context;
-  const varied=['new_representation','new_context_same_construct','integrated'].includes(d.familiarity)
-    || ['new_legitimate_representation','cross_representation_connection'].includes(d.representation_demand)
-    || ['combine_eligible_constructs','embedded_in_broader_problem'].includes(d.integration_demand);
-  return d.transfer_eligible===true && d.same_eligible_construct===true && d.prerequisite_boundary_validated===true && d.method_cueing==='none' && varied;
-}
-
-function classifyEvidenceQuality(input){
-  const event=validateNormalizedEvidenceEvent(input);
-  if(!usableForState(event)) return freezeDeep({quality:'UNUSABLE',reason:'INVALID_REVIEW_SYSTEM_PROTECTED_OR_EXPOSED',independent:false,information_gain:'NONE'});
-  const independent=isIndependent(event);
-  if(event.outcome==='NO_EVIDENCE'||event.outcome==='INDETERMINATE') return freezeDeep({quality:'UNUSABLE',reason:'NO_INTERPRETABLE_EVIDENCE',independent,information_gain:'NONE'});
-  const delayed=isDelayed(event);
-  const transfer=isTransferDemand(event);
-  const controlled=event.control_context==='CONTROLLED_ASSESSMENT';
-  const weakReuse=['exact_reuse','near_reuse'].includes(event.demand_context.familiarity);
-  let quality='WEAK';
-  if(independent && (controlled||delayed||transfer)) quality='STRONG';
-  else if(independent && !weakReuse) quality='MODERATE';
-  else if(independent) quality='WEAK';
-  else if(isSuccess(event) && !assistanceIsMaterial(event.support_context.assistance_level)) quality='WEAK';
-  else quality='WEAK';
-  const information_gain=quality==='STRONG'?'HIGH':quality==='MODERATE'?'MODERATE':'LOW';
-  return freezeDeep({quality,reason:'DETERMINISTIC_EVIDENCE_QUALITY_V1',independent,delayed,transfer,controlled,information_gain});
-}
-
-function evidenceContribution(input){
-  const event=validateNormalizedEvidenceEvent(input);
-  const quality=classifyEvidenceQuality(event);
-  const success=isSuccess(event);
-  const failure=isFailure(event);
-  const independent=quality.independent;
-  const materialSupport=assistanceIsMaterial(event.support_context.assistance_level);
-  const contribution= !usableForState(event) ? 'NO_STATE_EFFECT'
-    : event.outcome==='EXPOSURE_ONLY' ? 'INTRODUCTION_ONLY'
-    : success && independent && quality.transfer ? 'TRANSFER_SUCCESS'
-    : success && independent && quality.delayed ? 'DELAYED_INDEPENDENT_SUCCESS'
-    : success && independent ? 'INDEPENDENT_SUCCESS'
-    : success && materialSupport ? 'ASSISTED_SUCCESS'
-    : failure && independent && quality.delayed ? 'DELAYED_INDEPENDENT_FAILURE'
-    : failure && independent ? 'INDEPENDENT_FAILURE'
-    : failure ? 'ASSISTED_OR_UNCONTROLLED_FAILURE'
-    : 'NO_STATE_EFFECT';
-  const highConfidenceWrong=event.confidence_sampled&&event.student_confidence==='HIGH'&&failure;
-  const lowConfidenceCorrect=event.confidence_sampled&&event.student_confidence==='LOW'&&success;
-  return freezeDeep({event,quality,...quality,contribution,success,failure,materialSupport,highConfidenceWrong,lowConfidenceCorrect});
+function validateNormalizedEvidence(input){
+  const v=obj(input,'TEACHING_D13_EVIDENCE_SCHEMA_INVALID');
+  const forbidden=forbiddenAuthorityPath(v);if(forbidden)fail('Evidence ingress exceeded D13 authority.','TEACHING_D13_EVIDENCE_AUTHORITY_EXCEEDED',422,{field:forbidden});
+  const learningUnitRefs=arr(v.learningUnitRefs,'TEACHING_D13_EVIDENCE_LEARNING_UNITS_INVALID').map(String).filter(Boolean);
+  if(!learningUnitRefs.length)fail('At least one Learning Unit is required.','TEACHING_D13_EVIDENCE_LEARNING_UNIT_REQUIRED');
+  const claim=enumValue(v.evidenceClaim,EVIDENCE_CLAIMS,'TEACHING_D13_EVIDENCE_CLAIM_INVALID');
+  const demand=validateDemandVector(v.demandVector);
+  const validity=enumValue(v.evidenceValidity,VALIDITY,'TEACHING_D13_EVIDENCE_VALIDITY_INVALID',{upper:true});
+  const strength=enumValue(v.evidentialStrength,STRENGTH,'TEACHING_D13_EVIDENCE_STRENGTH_INVALID',{upper:true});
+  const info=enumValue(v.informationGain,INFORMATION_GAIN,'TEACHING_D13_EVIDENCE_INFO_GAIN_INVALID',{upper:true});
+  const redundancy=enumValue(v.redundancy,REDUNDANCY,'TEACHING_D13_EVIDENCE_REDUNDANCY_INVALID',{upper:true});
+  const control=enumValue(v.controlContext,CONTROL,'TEACHING_D13_EVIDENCE_CONTROL_INVALID',{upper:true});
+  const assistance=enumValue(v.assistanceLevel||'unknown',ASSISTANCE,'TEACHING_D13_EVIDENCE_ASSISTANCE_INVALID');
+  const occurred=new Date(v.occurredAt);if(!Number.isFinite(occurred.getTime()))fail('Evidence occurredAt must be authoritative server-compatible time.','TEACHING_D13_EVIDENCE_TIME_INVALID');
+  if(validity==='INVALID' && strength!=='UNUSABLE')fail('Invalid evidence must be unusable for state inference.','TEACHING_D13_INVALID_EVIDENCE_MUST_BE_UNUSABLE');
+  if(v.answerOrMethodExposed===true && strength!=='UNUSABLE')fail('Answer/method exposure cannot remain clean independent evidence.','TEACHING_D13_EXPOSED_EVIDENCE_MUST_BE_UNUSABLE');
+  return Object.freeze({
+    sourceOwner:str(v.sourceOwner,'TEACHING_D13_EVIDENCE_SOURCE_OWNER_REQUIRED'),
+    sourceRef:str(v.sourceRef,'TEACHING_D13_EVIDENCE_SOURCE_REF_REQUIRED'),
+    courseId:str(v.courseId,'TEACHING_D13_EVIDENCE_COURSE_REQUIRED'),
+    classSessionId:v.classSessionId==null?null:String(v.classSessionId),
+    sourceResponseId:v.sourceResponseId==null?null:String(v.sourceResponseId),
+    learningUnitRefs:Object.freeze([...new Set(learningUnitRefs)]),
+    evidenceKind:str(v.evidenceKind||'LEARNING_RESPONSE','TEACHING_D13_EVIDENCE_KIND_REQUIRED'),
+    evidencePurpose:str(v.evidencePurpose||'LEARNING','TEACHING_D13_EVIDENCE_PURPOSE_REQUIRED'),
+    formalAssessment:Boolean(v.formalAssessment),
+    independentPerformance:boolOrNull(v.independentPerformance,'TEACHING_D13_EVIDENCE_INDEPENDENCE_INVALID'),
+    assistanceLevel:assistance,
+    responseQuality:Object.freeze({...obj(v.responseQuality||{},'TEACHING_D13_RESPONSE_QUALITY_INVALID')}),
+    difficultyContext:Object.freeze({...obj(v.difficultyContext||{},'TEACHING_D13_DIFFICULTY_CONTEXT_INVALID')}),
+    noveltyContext:Object.freeze({...obj(v.noveltyContext||{},'TEACHING_D13_NOVELTY_CONTEXT_INVALID')}),
+    observedErrors:Object.freeze(arr(v.observedErrors||[],'TEACHING_D13_OBSERVED_ERRORS_INVALID').map((x)=>Object.freeze({...x}))),
+    occurredAt:occurred.toISOString(),
+    taskRef:v.taskRef==null?null:String(v.taskRef),
+    evidenceClaim:claim,
+    demandVector:demand,
+    instructionalLineageRefs:Object.freeze(arr(v.instructionalLineageRefs||[],'TEACHING_D13_LINEAGE_INVALID').map(String)),
+    supportContext:Object.freeze(arr(v.supportContext||[],'TEACHING_D13_SUPPORT_CONTEXT_INVALID').map((x)=>Object.freeze({...x}))),
+    answerOrMethodExposed:Boolean(v.answerOrMethodExposed),
+    permittedTools:Object.freeze(arr(v.permittedTools||[],'TEACHING_D13_PERMITTED_TOOLS_INVALID').map(String)),
+    accessibilitySupport:Object.freeze({...obj(v.accessibilitySupport||{},'TEACHING_D13_ACCESSIBILITY_SUPPORT_INVALID')}),
+    controlContext:control,
+    confidenceSample:Object.freeze({...obj(v.confidenceSample||{},'TEACHING_D13_CONFIDENCE_SAMPLE_INVALID')}),
+    misconceptionContext:Object.freeze({...obj(v.misconceptionContext||{},'TEACHING_D13_MISCONCEPTION_CONTEXT_INVALID')}),
+    prerequisiteContext:Object.freeze({...obj(v.prerequisiteContext||{},'TEACHING_D13_PREREQUISITE_CONTEXT_INVALID')}),
+    pathContext:Object.freeze({...obj(v.pathContext||{},'TEACHING_D13_PATH_CONTEXT_INVALID')}),
+    evidenceValidity:validity,
+    evidentialStrength:strength,
+    informationGain:info,
+    comparabilityGroup:v.comparabilityGroup==null?null:String(v.comparabilityGroup),
+    redundancy,
+    provenanceRefs:Object.freeze(arr(v.provenanceRefs||[],'TEACHING_D13_PROVENANCE_INVALID').map(String)),
+    normalizationVersion:String(v.normalizationVersion||'d13.evidence-normalization.v1'),
+  });
 }
 
-function strengthRank(q){return {UNUSABLE:0,WEAK:1,MODERATE:2,STRONG:3}[q]||0;}
-function deduplicateE
+function confidenceBand(input){
+  if(!input||input.provided!==true)return {provided:false,band:null};
+  const raw=String(input.band??input.value_or_band??input.value??'').trim().toLowerCase();
+  if(/high|very confident|certain/.test(raw))return {provided:true,band:'high'};
+  if(/medium|moderate/.test(raw))return {provided:true,band:'medium'};
+  if(/low|unsure|not confident/.test(raw))return {provided:true,band:'low'};
+  return {provided:true,band:'unknown'};
+}
+function evidenceValidityFromEvaluation(payload){
+  const item=payload.item_validity||{};
+  const status=String(item.status||'unknown').toLowerCase();
+  if(status==='invalid')return 'INVALID';
+  if(status==='concern')return 'LIMITED';
+  const use=String(item.evidence_use_limit||'none').toLowerCase();
+  if(use==='cannot_evaluate'||use==='do_not_use_negative_evidence')return 'LIMITED';
+  return status==='valid'?'VALID':'UNKNOWN';
+}
+function informationGainFromContract(contract,exposed){
+  if(exposed)return 'LOW';
+  const d=contract.demand_vector||{};
+  if(['delayed','spaced'].includes(String(d.retention_timing||'')))return 'HIGH';
+  if(['integrated','new_representation','new_context_same_construct'].includes(String(d.familiarity||'')))return 'HIGH';
+  if(['combine_eligible_constructs','embedded_in_broader_problem'].includes(String(d.integration_demand||'')))return 'HIGH';
+  if(['exact_reuse','near_reuse'].includes(String(d.familiarity||'')))return 'LOW';
+  return 'MODERATE';
+}
+function strengthFromEvaluation(bundle,validity,info,exposed){
+  if(validity==='INVALID'||exposed||String(bundle.evaluation.evidence_strength||'').toUpperCase()==='CONTAMINATED')return 'UNUSABLE';
+  const upstream=String(bundle.evaluation.evidence_strength||'UNKNOWN').toUpperCase();
+  const suff=String(bundle.evaluation.evaluation_payload?.response_assessment?.evidence_sufficiency||'').toLowerCase();
+  if(upstream==='FULL' && suff==='sufficient_for_requested_inference' && info==='HIGH')return 'STRONG';
+  if(upstream==='FULL' && suff==='sufficient_for_requested_inference')return 'MODERATE';
+  if(upstream==='LIMITED')return 'MODERATE';
+  if(upstream==='ASSISTED')return 'WEAK';
+  return 'INDETERMINATE';
+}
+function normalizeD12EvaluationBundle(bundle){
+  const evaluation=bundle?.evaluation;const response=bundle?.response;const unit=bundle?.learningUnit;const classRow=bundle?.classRow;
+  if(!evaluation||!response||!unit||!classRow)fail('D12 evaluation bundle is incomplete.','TEACHING_D13_D12_BUNDLE_INCOMPLETE',409);
+  if(String(evaluation.evaluation_state)!=='VALIDATED')fail('Only validated D12 evaluations may become D13 evidence.','TEACHING_D13_D12_EVALUATION_NOT_VALIDATED',409);
+  const payload=evaluation.evaluation_payload||{};
+  const claim=payload.evidence_claim_contract||{};
+  const assistance=payload.assistance_and_independence||{};
+  const exposure=evaluation.exposure_state||{};
+  const exposed=Boolean(exposure.answer_or_method_exposed || exposure.fresh_verification_needed || response.assistance_context?.answer_or_method_exposed);
+  const validity=evidenceValidityFromEvaluation(payload);
+  const info=informationGainFromContract(claim,exposed);
+  const upstreamIndependence=String(assistance.independence_interpretation||'').toLowerCase();
+  const independent=evaluation.evidence_strength==='FULL' && upstreamIndependence==='independent_supported' && !exposed ? true :
+    evaluation.evidence_strength==='CONTAMINATED' || exposed ? false : null;
+  const d=validateDemandVector(claim.demand_vector||{
+    familiarity:'unknown',method_cueing:'not_applicable',representation_demand:'not_applicable',integration_demand:'not_applicable',retention_timing:'not_applicable',
+  });
+  const redundancy=d.familiarity==='exact_reuse'?'HIGHLY_REDUNDANT':['near_reuse','familiar_family'].includes(d.familiarity)?'PARTLY_REDUNDANT':'NEW_INFORMATION';
+  const prior=bundle.priorPedagogy||[];
+  const path={
+    prior_pedagogy_refs:prior.map((row)=>'pedagogy-decision:'+row.pedagogy_decision_id),
+    prior_strategy_classes:[...new Set(prior.map((row)=>row.strategy_class).filter(Boolean).map(String))],
+    representation:null,
+    blocked_proposal_confirmed:prior.some((row)=>row.blocked_proposal===true) && String(payload.prerequisite?.status||'')==='investigation_needed',
+  };
+  const responseQuality=payload.response_assessment||{};
+  return validateNormalizedEvidence({
+    sourceOwner:'D12_RESPONSE_EVALUATOR',
+    sourceRef:'response-evaluation:'+evaluation.evaluation_id,
+    courseId:classRow.course_id,
+    classSessionId:evaluation.class_session_id,
+    sourceResponseId:evaluation.response_id,
+    learningUnitRefs:[evaluation.learning_unit_id],
+    evidenceKind:'CLASS_RESPONSE',
+    evidencePurpose:'LEARNING',
+    formalAssessment:false,
+    independentPerformance:independent,
+    assistanceLevel:String(response.assistance_context?.assistance_level||assistance.assistance_level||'unknown'),
+    responseQuality,
+    difficultyContext:{task_mode:'class_response',learning_stage_supported:responseQuality.learning_stage_supported||null},
+    noveltyContext:{familiarity:d.familiarity,reuse_policy:claim.reuse_policy||null},
+    observedErrors:payload.error_analysis||[],
+    occurredAt:response.server_received_at||response.submitted_at||evaluation.created_at,
+    taskRef:payload.task_ref||('response:'+evaluation.response_id),
+    evidenceClaim:claim.target_evidence_claim||'other',
+    demandVector:d,
+    instructionalLineageRefs:claim.instructional_lineage_refs||[],
+    supportContext:assistance.support_context||[],
+    answerOrMethodExposed:exposed,
+    permittedTools:response.assistance_context?.permitted_tools||[],
+    accessibilitySupport:response.assistance_context?.accessibility_support||{},
+    controlContext:'PARTIALLY_CONTROLLED',
+    confidenceSample:confidenceBand(payload.student_reported_confidence||{}),
+    misconceptionContext:evaluation.candidate_misconception||payload.misconception||{},
+    prerequisiteContext:evaluation.prerequisite_hypothesis||payload.prerequisite||{},
+    pathContext:path,
+    evidenceValidity:validity,
+    evidentialStrength:strengthFromEvaluation(bundle,validity,info,exposed),
+    informationGain:info,
+    comparabilityGroup:redundancy==='HIGHLY_REDUNDANT' ? [evaluation.learning_unit_id,claim.target_evidence_claim,d.familiarity,d.method_cueing].join(':') : null,
+    redundancy,
+    provenanceRefs:['response:'+evaluation.response_id,'response-evaluation:'+evaluation.evaluation_id,'learning-unit:'+evaluation.learning_unit_id,...(evaluation.provenance_refs||[])],
+  });
+}
+
+function validateTPF09Output(output,{expectedStateReference=null,taskMode=null,learningUnitRefs=[]}={}){
+  const v=obj(output,'TEACHING_D13_TPF09_SCHEMA_INVALID');
+  const forbidden=forbiddenAuthorityPath(v);if(forbidden)fail('TPF-09 output attempted an authoritative mutation.','TEACHING_D13_TPF09_AUTHORITY_EXCEEDED',422,{field:forbidden});
+  const statuses=new Set(['ok','insufficient_context','contradictory_evidence','evidence_invalid_or_contaminated','modality_limit','policy_block','further_evidence_needed']);
+  enumValue(v.status,statuses,'TEACHING_D13_TPF09_STATUS_INVALID');
+  if(expectedStateReference!=null&&String(v.input_state_reference)!==String(expectedStateReference))fail('TPF-09 state reference is stale/mismatched.','TEACHING_D13_TPF09_STATE_REF_MISMATCH',409);
+  const scope=obj(v.analysis_scope,'TEACHING_D13_TPF09_SCOPE_INVALID');
+  if(taskMode&&String(scope.task_mode)!==String(taskMode))fail('TPF-09 task mode mismatch.','TEACHING_D13_TPF09_TASK_MODE_MISMATCH');
+  const outputRefs=arr(scope.learning_unit_refs||[],'TEACHING_D13_TPF09_LU_REFS_INVALID').map(String);
+  if(learningUnitRefs.some((ref)=>!outputRefs.includes(String(ref))))fail('TPF-09 analysis omitted requested Learning Unit scope.','TEACHING_D13_TPF09_SCOPE_MISMATCH');
+  const boundaries=obj(v.official_record_boundaries||{},'TEACHING_D13_TPF09_BOUNDARIES_INVALID');
+  for(const key of ['gradebook_changed','skm_state_committed','vpk_certified','assessment_eligibility_changed','progression_decided']){
+    if(boundaries[key]!==false)fail('TPF-09 must leave official record mutations to owners.','TEACHING_D13_TPF09_AUTHORITY_EXCEEDED',422,{field:key});
+  }
+  for(const signal of arr(v.learning_findings?.state_signals||[],'TEACHING_D13_TPF09_STATE_SIGNALS_INVALID')){
+    if(signal?.candidate && signal.candidate!=='none' && !BASE_STATES.includes(String(signal.candidate)) && !OVERLAYS.includes(String(signal.candidate)))fail('TPF-09 emitted unsupported state signal.','TEACHING_D13_TPF09_STATE_SIGNAL_INVALID');
+  }
+  return Object.freeze(v);
+}
+
+module.exports={
+  SKM_ALGORITHM_ID,SKM_ALGORITHM_VERSION,
+  validateDemandVector,validateNormalizedEvidence,normalizeD12EvaluationBundle,validateTPF09Output,
+  forbiddenAuthorityPath,
+};
