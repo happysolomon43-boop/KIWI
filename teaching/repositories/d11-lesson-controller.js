@@ -149,7 +149,7 @@ function createD11LessonControllerRepository({
       : { rows: [] };
     const governedRequests = await query(
       "select request_id,request_type,lifecycle_state,state_version,target_owner,target_type,target_ref,target_version_ref," +
-      " effective_at,application_ref,updated_at from public.teaching_course_requests" +
+      " effective_at,application_ref,updated_at from public.teaching_requests" +
       " where student_id=$1 and course_id=$2 and lifecycle_state in ('REVIEWING','APPROVED','APPROVED_WITH_ADJUSTMENT')" +
       " order by updated_at desc limit 20",
       [studentId, classRow.course_id]
@@ -996,7 +996,7 @@ function createD11LessonControllerRepository({
 
   async function getGovernedRequest(requestId) {
     const {rows}=await query(
-      "select * from public.teaching_course_requests where request_id=$1 limit 1",
+      "select * from public.teaching_requests where request_id=$1 limit 1",
       [requestId]
     );
     return rows?.[0] || null;
