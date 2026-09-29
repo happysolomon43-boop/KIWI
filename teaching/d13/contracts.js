@@ -26,9 +26,12 @@ function forbiddenAuthorityPath(value,path=''){
   if(Array.isArray(value)){for(let i=0;i<value.length;i+=1){const found=forbiddenAuthorityPath(value[i],path+'['+i+']');if(found)return found;}return null;}
   if(!value||typeof value!=='object')return null;
   const forbidden=new Set([
-    'official_mark','official_marks','grade','grades','gradebook_write',
-    'progression_outcome','mastery_probability','mastery_percentage',
-    'knowledge_probability','durable_mastery','ability_label','intelligence_label','personality_label',
+    'official_mark','official_marks','official_grade','official_percentage','grade','grades',
+    'gradebook_write','gradebook_mark','gradebook_percentage',
+    'progression_outcome','progression_decision','pass_fail',
+    'mastery_state','knowledge_state','student_knowledge_state','skm_state','durable_state',
+    'mastery_probability','mastery_percentage','mastery_score','knowledge_probability','knowledge_score',
+    'durable_mastery','ability_label','intelligence_label','personality_label',
   ]);
   for(const [key,child] of Object.entries(value)){
     const here=path?path+'.'+key:key;
@@ -118,10 +121,15 @@ function confidenceBand(input){
 function evidenceValidityFromEvaluation(payload){
   const item=payload.item_validity||{};
   const status=String(item.status||'unknown').toLowerCase();
-  if(status==='invalid')return 'INVALID';
-  if(status==='concern')return 'LIMITED';
   const use=String(item.evidence_use_limit||'none').toLowerCase();
-  if(use==='cannot_evaluate'||use==='do_not_use_negative_evidence')return 'LIMITED';
+  const correctness=String(payload.response_assessment?.final_result_correctness||'').toLowerCase();
+  const systemFailure=payload.attempt_context?.known_system_or_network_interruption===true;
+  if(systemFailure)return 'INVALID';
+  if(status==='invalid'||use==='cannot_evaluate')return 'INVALID';
+  if(item.student_penalty_protection_required===true||use==='do_not_use_negative_evidence'){
+    return ['incorrect','partially_correct'].includes(correctness)?'INVALID':'LIMITED';
+  }
+  if(status==='concern')return 'LIMITED';
   return status==='valid'?'VALID':'UNKNOWN';
 }
 function informationGainFromContract(contract,exposed){
@@ -152,6 +160,7 @@ function normalizeD12EvaluationBundle(bundle){
   const assistance=payload.assistance_and_independence||{};
   const exposure=evaluation.exposure_state||{};
   const exposed=Boolean(exposure.answer_or_method_exposed || exposure.fresh_verification_needed || response.assistance_context?.answer_or_method_exposed);
+  const systemFailure=payload.attempt_context?.known_system_or_network_interruption===true;
   const validity=evidenceValidityFromEvaluation(payload);
   const info=informationGainFromContract(claim,exposed);
   const upstreamIndependence=String(assistance.independence_interpretation||'').toLowerCase();
@@ -182,7 +191,12 @@ function normalizeD12EvaluationBundle(bundle){
     independentPerformance:independent,
     assistanceLevel:String(response.assistance_context?.assistance_level||assistance.assistance_level||'unknown'),
     responseQuality,
-    difficultyContext:{task_mode:'class_response',learning_stage_supported:responseQuality.learning_stage_supported||null},
+    difficultyContext:{
+      task_mode:'class_response',
+      learning_stage_supported:responseQuality.learning_stage_supported||null,
+      kiwi_or_network_failure_protected:systemFailure,
+      student_penalty_protection_required:payload.item_validity?.student_penalty_protection_required===true,
+    },
     noveltyContext:{familiarity:d.familiarity,reuse_policy:claim.reuse_policy||null},
     observedErrors:payload.error_analysis||[],
     occurredAt:response.server_received_at||response.submitted_at||evaluation.created_at,
