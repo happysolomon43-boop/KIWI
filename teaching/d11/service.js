@@ -406,6 +406,7 @@ function createD11Service({
     if (String(context.classRow.course_lifecycle_state) !== 'ACTIVE') {
       fail('Only an Active Course may start a live Class Controller.', 'TEACHING_D11_COURSE_NOT_ACTIVE', 409);
     }
+    if (context.session) return publicContext(context);
     if (!context.blueprint) fail('A current validated Lesson Blueprint is required before Class start.', 'TEACHING_D11_BLUEPRINT_REQUIRED', 409);
     const prep=await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:sourceEventRef || null});
     const refreshed=await repository.getClassContext(user.id,classId);
