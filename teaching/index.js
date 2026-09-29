@@ -4,7 +4,7 @@ const { createTeachingConfig } = require('./config');
 const { createKiwiSubjectReader } = require('./integrations/kiwi-subjects');
 const { createKiwiExamInterface } = require('./integrations/kiwi-exam-interface');
 const { createKiwiNotificationInterface } = require('./integrations/kiwi-notifications');
-const { createTeachingRepositories, createD07CourseIntakeRepository, createD08CoursePlanRepository, createD09SchedulingRepository, createD10LifecycleRequestRepository, createD11LessonControllerRepository } = require('./repositories');
+const { createTeachingRepositories, createPreparationRuntimeRepository, createD07CourseIntakeRepository, createD08CoursePlanRepository, createD09SchedulingRepository, createD10LifecycleRequestRepository, createD11LessonControllerRepository } = require('./repositories');
 const { createTeachingService } = require('./services/teaching-service');
 const { modules } = require('./modules');
 const orchestrator = require('./orchestrator');
@@ -71,7 +71,10 @@ function createTeachingFoundation({
   }
 
   const d11Repository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
-    ? createD11LessonControllerRepository({ query, withTransaction, randomUUID })
+    ? createD11LessonControllerRepository({ query, withTransaction, randomUUID, outboxStore:d10RuntimePlatform?.outboxStore || null })
+    : null;
+  const d11PreparationRepository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+    ? createPreparationRuntimeRepository({ query, withTransaction, randomUUID })
     : null;
   const d11Service = d11Repository && d10RuntimePlatform?.eventStore
     ? d11.createD11Service({
@@ -79,6 +82,7 @@ function createTeachingFoundation({
         intelligence: d11Intelligence,
         withTransaction,
         dueEventStore: d10RuntimePlatform.eventStore,
+        preparationRepository: d11PreparationRepository,
       })
     : null;
   let d11Runtime = null;
