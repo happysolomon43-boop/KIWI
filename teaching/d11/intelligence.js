@@ -32,6 +32,7 @@ function baseRequest({
   declaredAuthorityLevel,
   validators,
   requestKey,
+  preparation = null,
 }) {
   return {
     trigger: {
@@ -88,6 +89,7 @@ function baseRequest({
     schemaValidator: validators.schema,
     domainValidator: validators.domain,
     provenanceValidator: validators.provenance,
+    preparation,
     commit: false,
   };
 }
@@ -123,6 +125,25 @@ function plannerInput(context, signals) {
         rationale:dep.rationale || null,
       }))),
     }),
+    plan_prerequisites: Object.freeze((context.planPrerequisites || []).map((item) => Object.freeze({
+      prerequisite_id: item.prerequisite_id,
+      prerequisite_ref: item.prerequisite_ref,
+      label: item.label,
+      description: item.description,
+      resolution_state: item.resolution_state,
+      vpk_decision_id: item.vpk_decision_id,
+      policy_version: item.policy_version,
+    }))),
+    learning_unit_dependencies: Object.freeze((context.learningUnitDependencies || []).map((item) => Object.freeze({
+      learning_unit_id: item.learning_unit_id,
+      prerequisite_learning_unit_id: item.prerequisite_learning_unit_id,
+      dependency_kind: item.dependency_kind,
+      rationale: item.rationale,
+    }))),
+    diagnostic_signals: Object.freeze(signals.diagnosticSignals || []),
+    validated_prior_knowledge_signals: Object.freeze(signals.validatedPriorKnowledgeSignals || []),
+    pacing_signals: signals.pacingSignals || Object.freeze({source_owner:'Scheduler/Calendar',scheduleDebtEntries:Object.freeze([])}),
+    governed_request_signals: Object.freeze(signals.governedRequestSignals || []),
     prior_class_facts: Object.freeze((signals.priorClassFacts || []).map((row) => Object.freeze({
       closure_fact_id: row.closure_fact_id,
       class_id: row.class_id,
@@ -148,16 +169,18 @@ function plannerInput(context, signals) {
   });
 }
 
-function lessonPlanRequest({ context, signals, requestKey = null }) {
+function lessonPlanRequest({ context, signals, requestKey = null, preparation = null, reservePolicy = undefined }) {
   const validate = async (out) => validateLessonBlueprintProposal(out, {
     learningUnits: context.learningUnits,
     scheduledStartAt: context.classRow.scheduled_start_at,
     scheduledEndAt: context.classRow.scheduled_end_at,
+    ...(reservePolicy ? { reservePolicy } : {}),
   });
   const outputSchema = schema(
     'd11.lesson-blueprint',
     ['status','review_required','review_reasons','objectives','segments','adaptive_reserve_minutes',
-      'stopping_conditions','prerequisite_checks','likely_misconceptions','homework_candidates','unresolved_items'],
+      'stopping_conditions','prerequisite_checks','likely_misconceptions','examples','guided_work',
+      'independent_evidence_opportunities','remediation_branches','homework_candidates','unresolved_items'],
     validate
   );
   const refs = [
@@ -183,6 +206,7 @@ function lessonPlanRequest({ context, signals, requestKey = null }) {
     provenanceRefs: refs,
     declaredAuthorityLevel: 'T3',
     requestKey,
+    preparation,
     validators: {
       schema: validate,
       domain: validate,
@@ -195,7 +219,7 @@ function lessonPlanRequest({ context, signals, requestKey = null }) {
   });
 }
 
-function liveReplanRequest({ context, signals, remainingMinutes, requestKey = null }) {
+function liveReplanRequest({ context, signals, remainingMinutes, requestKey = null, reservePolicy = undefined }) {
   const current = context.blueprint?.blueprint_payload || {};
   const completed = context.session?.progress_state?.completed_objective_refs || [];
   const blueprintContext = {
@@ -210,6 +234,7 @@ function liveReplanRequest({ context, signals, remainingMinutes, requestKey = nu
         blueprintContext,
         remainingMinutes,
         completedObjectiveRefs: completed,
+        ...(reservePolicy ? { reservePolicy } : {}),
       })};
     } catch (error) {
       return { ok:false, reason:error.code || 'TEACHING_D11_REPLAN_INVALID', message:error.message };
@@ -218,7 +243,8 @@ function liveReplanRequest({ context, signals, remainingMinutes, requestKey = nu
   const outputSchema = schema(
     'd11.live-replan',
     ['status','review_required','review_reasons','objectives','segments','adaptive_reserve_minutes',
-      'stopping_conditions','replan_basis','unresolved_items'],
+      'stopping_conditions','prerequisite_checks','likely_misconceptions','examples','guided_work',
+      'independent_evidence_opportunities','remediation_branches','homework_candidates','replan_basis','unresolved_items'],
     validate
   );
   const refs = [
@@ -317,7 +343,7 @@ function translationRequest({ context, closureFact, requestKey = null }) {
       context_kind:'class_summary',
       access_purpose:'student_facing_fact_translation',
     },
-    academicInput:{fact_pack:closureFact.fact_pack,translation_only:true},
+    academicInput:{fact_pack:closureFact.fact_pack?.student_translation_fact_pack || null,translation_only:true,source_fact_pack_ref:'class-closure:' + closureFact.closure_fact_id},
     outputSchema,
     provenanceRefs:['class-closure:' + closureFact.closure_fact_id],
     declaredAuthorityLevel:'T1',
@@ -350,7 +376,7 @@ function teacherNoteRequest({ context, closureFact, requestKey = null }) {
       context_kind:'private_teacher_note',
       access_purpose:'grounded_next_class_continuity',
     },
-    academicInput:{fact_pack:closureFact.fact_pack,private_internal_note:true},
+    academicInput:{fact_pack:closureFact.fact_pack,private_internal_note:true,not_gradebook:true,not_skm_state:true,not_behavior_ledger:true},
     outputSchema,
     provenanceRefs:['class-closure:' + closureFact.closure_fact_id],
     declaredAuthorityLevel:'T2',
