@@ -113,6 +113,30 @@ test('D11 Controller transition graph permits revisiting/remediation but blocks 
   assert.throws(()=>contracts.assertTransitionAllowed({lifecycleState:'ACTIVE',fromState:'ASSESSMENT',toState:'BREAK'}),{code:'TEACHING_D11_TRANSITION_FORBIDDEN'});
 });
 
+test('D11 transition QA exhaustively accepts exactly the legal next-state set for every Controller state',()=>{
+  const states=contracts.INSTRUCTIONAL_SUBSTATES;
+  const resumeByState={BREAK:'INSTRUCTION',INTERRUPTED:'GUIDED_PRACTICE'};
+  for(const fromState of states){
+    const lifecycleState=fromState==='CLOSURE'?'CLOSED':(fromState==='INTERRUPTED'?'INTERRUPTED':'ACTIVE');
+    const resumeState=resumeByState[fromState] || null;
+    const legal=new Set(contracts.legalNextStates({lifecycleState,fromState,resumeState}));
+    for(const toState of states){
+      if(legal.has(toState)){
+        assert.doesNotThrow(
+          ()=>contracts.assertTransitionAllowed({lifecycleState,fromState,toState,resumeState}),
+          fromState+' -> '+toState+' should be legal'
+        );
+      }else{
+        assert.throws(
+          ()=>contracts.assertTransitionAllowed({lifecycleState,fromState,toState,resumeState}),
+          {code:'TEACHING_D11_TRANSITION_FORBIDDEN'},
+          fromState+' -> '+toState+' should be forbidden'
+        );
+      }
+    }
+  }
+});
+
 test('D11 Break resumes only to the recorded pre-Break state and Closure is terminal',()=>{
   assert.doesNotThrow(()=>contracts.assertTransitionAllowed({lifecycleState:'ACTIVE',fromState:'BREAK',toState:'INSTRUCTION',resumeState:'INSTRUCTION'}));
   assert.throws(()=>contracts.assertTransitionAllowed({lifecycleState:'ACTIVE',fromState:'BREAK',toState:'GUIDED_PRACTICE',resumeState:'INSTRUCTION'}),{code:'TEACHING_D11_TRANSITION_FORBIDDEN'});
@@ -314,6 +338,9 @@ test('D11 model-outage path preserves T0 Class start as safe route-held Controll
   assert.match(repo,/academic_penalty_created:false/);
   assert.match(runtime,/model_route_required_for_t0_start:false/);
   assert.match(runtime,/disposition:RECONCILIATION_DISPOSITIONS.ACTIONABLE/);
+  assert.match(runtime,/allowRouteHeldStart:true/);
+  const service=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d11/service.js'),'utf8');
+  assert.match(service,/allowRouteHeldStart:options\.allowRouteHeldStart===true && !bindBlueprint/);
 });
 
 test('D11 source never selects provider/model IDs or creates future-domain authority',()=>{
