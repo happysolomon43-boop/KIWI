@@ -1,18 +1,39 @@
 'use strict';
 
-function buildProjectSlots(env = process.env, maxKeys = 15) {
-  const slots = [];
+const DEFAULT_MAX_PROVIDER_CREDENTIALS = 15;
 
-  for (let index = 1; index <= maxKeys; index++) {
-    const envName = index === 1 ? 'GEMINI_API_KEY' : `GEMINI_API_KEY_${index}`;
+function indexedEnvName(baseName, index) {
+  return index === 1 ? baseName : `${baseName}_${index}`;
+}
+
+function buildProviderCredentialSlots(env = process.env, {
+  envBaseName,
+  idPrefix,
+  secretField = 'credential',
+  provider = null,
+  maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
+} = {}) {
+  if (!envBaseName || !idPrefix) {
+    throw new Error('Provider credential slots require envBaseName and idPrefix');
+  }
+  if (!secretField) {
+    throw new Error('Provider credential slots require secretField');
+  }
+
+  const slots = [];
+  const safeMaxKeys = Math.max(1, Number(maxKeys) || DEFAULT_MAX_PROVIDER_CREDENTIALS);
+
+  for (let index = 1; index <= safeMaxKeys; index++) {
+    const envName = indexedEnvName(envBaseName, index);
     const raw = env?.[envName];
     if (!raw || !String(raw).trim()) continue;
 
     slots.push({
-      id: `gemini-project-${String(index).padStart(2, '0')}`,
+      id: `${idPrefix}-${String(index).padStart(2, '0')}`,
       index,
+      provider,
       envName,
-      apiKey: String(raw).trim(),
+      [secretField]: String(raw).trim(),
       enabled: true,
       disabledReason: null,
     });
@@ -21,12 +42,8 @@ function buildProjectSlots(env = process.env, maxKeys = 15) {
   return slots;
 }
 
-function createProjectPool({
-  env = process.env,
-  maxKeys = 15,
-  slots: suppliedSlots = null,
-} = {}) {
-  const slots = (suppliedSlots || buildProjectSlots(env, maxKeys)).map((slot) => ({
+function createRotatingCredentialPool({ slots: suppliedSlots = [] } = {}) {
+  const slots = suppliedSlots.map((slot) => ({
     ...slot,
     enabled: slot.enabled !== false,
     disabledReason: slot.disabledReason || null,
@@ -39,11 +56,11 @@ function createProjectPool({
     return slots.filter((slot) => slot.enabled && !excluded.has(slot.id));
   }
 
-  function orderForModel(modelId, { excludeSlotIds = [], advance = false } = {}) {
+  function orderForRoute(routeKey, { excludeSlotIds = [], advance = false } = {}) {
     const available = enabledSlots(excludeSlotIds);
     if (available.length === 0) return [];
 
-    const cursorKey = String(modelId || '__default__');
+    const cursorKey = String(routeKey || '__default__');
     const start = cursors.get(cursorKey) || 0;
     const normalizedStart = start % available.length;
     const ordered = [];
@@ -53,20 +70,18 @@ function createProjectPool({
     }
 
     if (advance) {
-      // Round-robin state is model-specific. Changing from 3.8 to 3.7 therefore
-      // starts from 3.7's own cursor rather than inheriting 3.8's position.
       cursors.set(cursorKey, (normalizedStart + 1) % available.length);
     }
 
     return ordered;
   }
 
-  function orderedSlots(modelId, options = {}) {
-    return orderForModel(modelId, { ...options, advance: true });
+  function orderedSlots(routeKey, options = {}) {
+    return orderForRoute(routeKey, { ...options, advance: true });
   }
 
-  function peekOrderedSlots(modelId, options = {}) {
-    return orderForModel(modelId, { ...options, advance: false });
+  function peekOrderedSlots(routeKey, options = {}) {
+    return orderForRoute(routeKey, { ...options, advance: false });
   }
 
   function disable(slotId, reason = 'disabled') {
@@ -111,7 +126,75 @@ function createProjectPool({
   });
 }
 
+function buildProjectSlots(env = process.env, maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS) {
+  return buildProviderCredentialSlots(env, {
+    envBaseName: 'GEMINI_API_KEY',
+    idPrefix: 'gemini-project',
+    secretField: 'apiKey',
+    provider: 'GEMINI',
+    maxKeys,
+  });
+}
+
+function createProjectPool({
+  env = process.env,
+  maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
+  slots: suppliedSlots = null,
+} = {}) {
+  return createRotatingCredentialPool({
+    slots: suppliedSlots || buildProjectSlots(env, maxKeys),
+  });
+}
+
+function buildGroqCredentialSlots(env = process.env, maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS) {
+  return buildProviderCredentialSlots(env, {
+    envBaseName: 'GROQ_API_KEY',
+    idPrefix: 'groq-key',
+    secretField: 'apiKey',
+    provider: 'GROQ',
+    maxKeys,
+  });
+}
+
+function createGroqCredentialPool({
+  env = process.env,
+  maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
+  slots: suppliedSlots = null,
+} = {}) {
+  return createRotatingCredentialPool({
+    slots: suppliedSlots || buildGroqCredentialSlots(env, maxKeys),
+  });
+}
+
+function buildCloudflareCredentialSlots(env = process.env, maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS) {
+  return buildProviderCredentialSlots(env, {
+    envBaseName: 'CLOUDFLARE_WORKERS_AI_API_TOKEN',
+    idPrefix: 'cloudflare-token',
+    secretField: 'apiToken',
+    provider: 'CLOUDFLARE',
+    maxKeys,
+  });
+}
+
+function createCloudflareCredentialPool({
+  env = process.env,
+  maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
+  slots: suppliedSlots = null,
+} = {}) {
+  return createRotatingCredentialPool({
+    slots: suppliedSlots || buildCloudflareCredentialSlots(env, maxKeys),
+  });
+}
+
 module.exports = {
+  DEFAULT_MAX_PROVIDER_CREDENTIALS,
+  indexedEnvName,
+  buildProviderCredentialSlots,
+  createRotatingCredentialPool,
   buildProjectSlots,
   createProjectPool,
+  buildGroqCredentialSlots,
+  createGroqCredentialPool,
+  buildCloudflareCredentialSlots,
+  createCloudflareCredentialPool,
 };
