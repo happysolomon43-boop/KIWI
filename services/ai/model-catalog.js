@@ -237,17 +237,22 @@ const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
   }),
 ]);
 
+// D02's qualification catalog is a frozen historical contract for the two
+// GPT-OSS models. Route-scoped preview experiments such as Qwen 3.8 must not
+// silently expand that catalog or inherit D02 qualification semantics.
 const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze(
-  GROQ_PRODUCTION_MODEL_CATALOG.map((model) => Object.freeze({
-    ...model,
-    status: MODEL_STATUS.QUALIFYING,
-    productionEligible: false,
-    qualityTier: null,
-    metadata: Object.freeze({
-      ...(model.metadata || {}),
-      qualificationLane: 'AIM_D02_ISOLATED',
-    }),
-  }))
+  GROQ_PRODUCTION_MODEL_CATALOG
+    .filter((model) => model.metadata?.controlledRouteOnly !== true)
+    .map((model) => Object.freeze({
+      ...model,
+      status: MODEL_STATUS.QUALIFYING,
+      productionEligible: false,
+      qualityTier: null,
+      metadata: Object.freeze({
+        ...(model.metadata || {}),
+        qualificationLane: 'AIM_D02_ISOLATED',
+      }),
+    }))
 );
 
 function _cloneModel(model) {
