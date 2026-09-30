@@ -32,7 +32,7 @@ const TEACHING_EVENTS = Object.freeze({
   PREPARATION_FINDING_RESOLVED: 'teaching.preparation.finding_resolved',
   PROTECTED_CANDIDATE_CONTAMINATED: 'teaching.preparation.protected_candidate_contaminated',
   PREPARATION_WORKSPACE_SUPERSEDED: 'teaching.preparation.workspace_superseded',
-  PREPARATION_WORKSPACE_CANCELLED: 'teaching.preparation.workspace.cancelled',
+  PREPARATION_WORKSPACE_CANCELLED: 'teaching.preparation.workspace_cancelled',
   PREPARATION_HANDOFF_READY: 'teaching.preparation.handoff_ready',
 });
 
