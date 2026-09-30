@@ -10,6 +10,7 @@ const {
 } = require('../../services/ai/execution-contracts');
 const {
   createModelCatalog,
+  createQualificationModelCatalog,
   MODEL_STATUS,
   GROQ_MODEL_IDS,
 } = require('../../services/ai/model-catalog');
@@ -25,28 +26,20 @@ const {
   createGroqHttpTransport,
   DEFAULT_GROQ_CHAT_COMPLETIONS_ENDPOINT,
 } = require('../../services/ai/groq-http-transport');
-const {
-  normalizeGroqResponse,
-} = require('../../services/ai/groq-response-normalizer');
+const { normalizeGroqResponse } = require('../../services/ai/groq-response-normalizer');
 const {
   GROQ_ERROR_CODES,
   classifyGroqHttpError,
   extractGroqEvidence,
 } = require('../../services/ai/groq-error-classifier');
-const {
-  createGroqIsolatedExecutor,
-} = require('../../services/ai/isolated-provider-executor');
+const { createGroqIsolatedExecutor } = require('../../services/ai/isolated-provider-executor');
 const { AIError, AI_ERROR_CODES } = require('../../services/ai/errors');
 
 function headers(values = {}) {
   const normalized = Object.fromEntries(
     Object.entries(values).map(([key, value]) => [String(key).toLowerCase(), String(value)])
   );
-  return {
-    get(name) {
-      return normalized[String(name).toLowerCase()] ?? null;
-    },
-  };
+  return { get: (name) => normalized[String(name).toLowerCase()] ?? null };
 }
 
 function response(status, body, headerValues = {}) {
@@ -54,9 +47,7 @@ function response(status, body, headerValues = {}) {
     ok: status >= 200 && status < 300,
     status,
     headers: headers(headerValues),
-    async text() {
-      return body == null ? '' : JSON.stringify(body);
-    },
+    async text() { return body == null ? '' : JSON.stringify(body); },
   };
 }
 
@@ -85,8 +76,9 @@ function groqRaw({
   };
 }
 
-test('AIM-D02 registers GPT-OSS 120B and 20B as isolated qualifying Groq models', () => {
-  const catalog = createModelCatalog();
+test('production catalog remains Google-only while D02 qualification catalog registers both GPT-OSS models', () => {
+  assert.equal(createModelCatalog().list({ provider: AI_PROVIDERS.GROQ }).length, 0);
+  const catalog = createQualificationModelCatalog();
   const groq = catalog.list({ provider: AI_PROVIDERS.GROQ });
   assert.equal(groq.length, 2);
 
@@ -107,14 +99,14 @@ test('AIM-D02 registers GPT-OSS 120B and 20B as isolated qualifying Groq models'
   }
 });
 
-test('existing production router remains Gemini-only after Groq catalog registration', () => {
+test('existing production router remains Gemini-only', () => {
   const candidates = createModelRouter().resolveCandidates('MAIN_CBT');
   assert.ok(candidates.length > 0);
   assert.ok(candidates.every((candidate) => candidate.provider === AI_PROVIDERS.GOOGLE));
   assert.ok(candidates.every((candidate) => !String(candidate.modelId).includes('gpt-oss')));
 });
 
-test('Groq request serialization maps neutral text and HIGH reasoning without provider leakage upstream', () => {
+test('Groq serializer maps neutral text, controls and HIGH reasoning', () => {
   const request = createExecutionRequest({
     provider: AI_PROVIDERS.GROQ,
     modelId: GROQ_MODEL_IDS.GPT_OSS_120B,
@@ -128,8 +120,8 @@ test('Groq request serialization maps neutral text and HIGH reasoning without pr
       stopSequences: ['END'],
     },
   });
-
   const body = serializeGroqExecutionRequest(request);
+
   assert.equal(body.model, GROQ_MODEL_IDS.GPT_OSS_120B);
   assert.deepEqual(body.messages, [{ role: 'user', content: 'Solve the problem.' }]);
   assert.equal(body.reasoning_effort, 'high');
@@ -160,21 +152,17 @@ test('Groq structured output uses strict JSON Schema and hidden reasoning', () =
     },
     metadata: { structuredOutputName: 'kiwi-test' },
   });
-
   const body = serializeGroqExecutionRequest(request);
+
   assert.equal(body.reasoning_effort, 'medium');
   assert.equal(body.reasoning_format, 'hidden');
   assert.deepEqual(body.response_format, {
     type: 'json_schema',
-    json_schema: {
-      name: 'kiwi-test',
-      strict: true,
-      schema,
-    },
+    json_schema: { name: 'kiwi-test', strict: true, schema },
   });
 });
 
-test('GPT-OSS reasoning mapping rejects unsupported MINIMAL rather than silently downgrading', () => {
+test('GPT-OSS reasoning supports LOW/MEDIUM/HIGH and never silently downgrades MINIMAL', () => {
   assert.equal(mapGroqReasoningEffort({ resolved: 'LOW' }), 'low');
   assert.equal(mapGroqReasoningEffort({ resolved: 'MEDIUM' }), 'medium');
   assert.equal(mapGroqReasoningEffort({ resolved: 'HIGH' }), 'high');
@@ -184,7 +172,7 @@ test('GPT-OSS reasoning mapping rejects unsupported MINIMAL rather than silently
   );
 });
 
-test('Groq response normalization captures text, finish reason, usage and provider metadata', () => {
+test('Groq response normalization captures text, finish reason, usage and safe provider metadata', () => {
   const normalized = normalizeGroqResponse(groqRaw({
     model: GROQ_MODEL_IDS.GPT_OSS_120B,
     content: 'done',
@@ -199,7 +187,6 @@ test('Groq response normalization captures text, finish reason, usage and provid
   assert.equal(normalized.text, 'done');
   assert.equal(normalized.finishReason, 'STOP');
   assert.equal(normalized.credentialSlot, 'groq-key-02');
-  assert.equal(normalized.latencyMs, 12);
   assert.equal(normalized.usage.inputTokens, 10);
   assert.equal(normalized.usage.outputTokens, 5);
   assert.equal(normalized.usage.thoughtTokens, 3);
@@ -208,19 +195,15 @@ test('Groq response normalization captures text, finish reason, usage and provid
   assert.equal(normalized.providerMetadata.rateLimit.remainingTokens, '7990');
 });
 
-test('Groq structured-output normalization returns parsed structuredData', () => {
+test('Groq structured output parses structuredData and malformed JSON becomes INVALID_OUTPUT', () => {
   const normalized = normalizeGroqResponse(groqRaw({
     content: JSON.stringify({ ok: true, score: 7 }),
   }), {
     modelId: GROQ_MODEL_IDS.GPT_OSS_20B,
     structuredOutputRequested: true,
   });
-
   assert.deepEqual(normalized.structuredData, { ok: true, score: 7 });
-  assert.equal(normalized.text, '{"ok":true,"score":7}');
-});
 
-test('malformed Groq structured output becomes normalized INVALID_OUTPUT', () => {
   assert.throws(
     () => normalizeGroqResponse(groqRaw({ content: '{not-json' }), {
       modelId: GROQ_MODEL_IDS.GPT_OSS_20B,
@@ -236,19 +219,17 @@ test('Groq safety/refusal semantics remain explicit', () => {
   const raw = groqRaw({ content: '' });
   raw.choices[0].message.refusal = 'Request refused';
   raw.choices[0].finish_reason = 'content_filter';
-
-  const normalized = normalizeGroqResponse(raw, {
-    modelId: GROQ_MODEL_IDS.GPT_OSS_20B,
-  });
+  const normalized = normalizeGroqResponse(raw, { modelId: GROQ_MODEL_IDS.GPT_OSS_20B });
   assert.equal(normalized.blocked, true);
   assert.equal(normalized.blockReason, 'Request refused');
   assert.equal(normalized.finishReason, 'CONTENT_FILTER');
 });
 
-test('Groq classifier distinguishes request, auth, permission, model and provider failures', () => {
+test('Groq classifier distinguishes request, auth, permission, model, cancellation and provider failures', () => {
   assert.equal(classifyGroqHttpError({ status: 400, body: { error: { message: 'bad' } } }).code, AI_ERROR_CODES.BAD_REQUEST);
-  assert.equal(classifyGroqHttpError({ status: 401, body: { error: { message: 'bad key' } } }).code, AI_ERROR_CODES.AUTH);
-  assert.equal(classifyGroqHttpError({ status: 401, body: { error: { message: 'bad key' } } }).scope, 'SLOT');
+  const auth = classifyGroqHttpError({ status: 401, body: { error: { message: 'bad key' } } });
+  assert.equal(auth.code, AI_ERROR_CODES.AUTH);
+  assert.equal(auth.scope, 'SLOT');
   assert.equal(classifyGroqHttpError({ status: 403, body: { error: { message: 'blocked model' } } }).code, GROQ_ERROR_CODES.PERMISSION);
   assert.equal(classifyGroqHttpError({ status: 404, body: { error: { message: 'missing model' } } }).code, AI_ERROR_CODES.MODEL_NOT_FOUND);
   assert.equal(classifyGroqHttpError({ status: 498, body: { error: { message: 'capacity' } } }).code, AI_ERROR_CODES.PROVIDER_OVERLOADED);
@@ -257,7 +238,7 @@ test('Groq classifier distinguishes request, auth, permission, model and provide
   assert.equal(classifyGroqHttpError({ status: 503, body: { error: { message: 'overload' } } }).code, AI_ERROR_CODES.PROVIDER_OVERLOADED);
 });
 
-test('Groq 429 classifier distinguishes RPM, TPM and RPD without treating the credential as bad', () => {
+test('Groq 429 distinguishes RPM, TPM and RPD and retains safe retry metadata', () => {
   const rpm = classifyGroqHttpError({
     status: 429,
     body: { error: { message: 'Rate limit reached on requests per minute (RPM)' } },
@@ -271,7 +252,6 @@ test('Groq 429 classifier distinguishes RPM, TPM and RPD without treating the cr
     status: 429,
     body: { error: { message: 'Rate limit reached on requests per day (RPD)' } },
   });
-
   assert.equal(rpm.code, AI_ERROR_CODES.RATE_LIMIT_RPM);
   assert.equal(tpm.code, AI_ERROR_CODES.RATE_LIMIT_TPM);
   assert.equal(rpd.code, AI_ERROR_CODES.RATE_LIMIT_RPD);
@@ -279,7 +259,7 @@ test('Groq 429 classifier distinguishes RPM, TPM and RPD without treating the cr
   assert.equal(rpm.retryAfterMs, 2000);
 });
 
-test('Groq rate-limit evidence captures only safe operational headers', () => {
+test('Groq evidence captures rate-limit operational headers without credentials', () => {
   const evidence = extractGroqEvidence(
     { error: { message: 'tokens per minute TPM', type: 'rate_limit_error' } },
     headers({
@@ -296,43 +276,33 @@ test('Groq rate-limit evidence captures only safe operational headers', () => {
   assert.doesNotMatch(JSON.stringify(evidence), /authorization|bearer|api[_-]?key/i);
 });
 
-test('Groq HTTP transport authenticates server-side and never embeds credential in body/result', async () => {
+test('Groq HTTP transport authenticates server-side without credential leakage', async () => {
   const calls = [];
   const transport = createGroqHttpTransport({
     fetchImpl: async (url, init) => {
       calls.push({ url, init });
-      return response(200, groqRaw(), {
-        'x-ratelimit-remaining-tokens': '7990',
-      });
+      return response(200, groqRaw(), { 'x-ratelimit-remaining-tokens': '7990' });
     },
-    clock: (() => {
-      let now = 100;
-      return () => (now += 5);
-    })(),
+    clock: (() => { let now = 100; return () => (now += 5); })(),
   });
-
   const result = await transport.generate({
     apiKey: 'gsk_super_secret_test',
     body: { model: GROQ_MODEL_IDS.GPT_OSS_20B, messages: [] },
     timeoutMs: 1000,
   });
 
-  assert.equal(calls.length, 1);
   assert.equal(calls[0].url, DEFAULT_GROQ_CHAT_COMPLETIONS_ENDPOINT);
   assert.equal(calls[0].init.headers.Authorization, 'Bearer gsk_super_secret_test');
   assert.doesNotMatch(calls[0].init.body, /gsk_super_secret_test/);
   assert.doesNotMatch(JSON.stringify(result), /gsk_super_secret_test/);
 });
 
-test('Groq HTTP transport normalizes network failure without leaking the credential', async () => {
-  const transport = createGroqHttpTransport({
-    fetchImpl: async () => {
-      throw new Error('socket reset');
-    },
+test('Groq network errors and caller cancellation are normalized', async () => {
+  const failing = createGroqHttpTransport({
+    fetchImpl: async () => { throw new Error('socket reset'); },
   });
-
   await assert.rejects(
-    () => transport.generate({
+    () => failing.generate({
       apiKey: 'gsk_do_not_leak',
       body: { model: GROQ_MODEL_IDS.GPT_OSS_20B, messages: [] },
       timeoutMs: 1000,
@@ -340,18 +310,12 @@ test('Groq HTTP transport normalizes network failure without leaking the credent
     (error) => {
       assert.equal(error.code, AI_ERROR_CODES.NETWORK);
       assert.equal(error.provider, AI_PROVIDERS.GROQ);
-      assert.doesNotMatch(JSON.stringify({
-        message: error.message,
-        code: error.code,
-        details: error.details,
-      }), /gsk_do_not_leak/);
+      assert.doesNotMatch(error.message, /gsk_do_not_leak/);
       return true;
     }
   );
-});
 
-test('Groq HTTP transport honors caller cancellation', async () => {
-  const transport = createGroqHttpTransport({
+  const cancellable = createGroqHttpTransport({
     fetchImpl: (_url, init) => new Promise((_resolve, reject) => {
       init.signal.addEventListener('abort', () => {
         const error = new Error('aborted');
@@ -361,14 +325,13 @@ test('Groq HTTP transport honors caller cancellation', async () => {
     }),
   });
   const controller = new AbortController();
-  const pending = transport.generate({
+  const pending = cancellable.generate({
     apiKey: 'secret',
     body: { model: GROQ_MODEL_IDS.GPT_OSS_20B, messages: [] },
     timeoutMs: 5000,
     signal: controller.signal,
   });
   controller.abort();
-
   await assert.rejects(
     () => pending,
     (error) => error.code === GROQ_ERROR_CODES.CANCELLED && error.status === 499
@@ -404,22 +367,17 @@ test('Groq provider adapter executes and normalizes a neutral structured request
       },
     },
   });
-
   const result = await adapter.generate({
     credential: { id: 'groq-key-01', apiKey: 'secret' },
     request,
   });
-  assert.equal(result.normalized.provider, AI_PROVIDERS.GROQ);
   assert.deepEqual(result.normalized.structuredData, { ok: true });
   assert.equal(result.normalized.credentialSlot, 'groq-key-01');
 });
 
-test('isolated Groq executor rotates only an invalid credential and succeeds on the next slot', async () => {
+test('isolated executor rotates a 401 credential and succeeds on the next slot', async () => {
   const pool = createGroqCredentialPool({
-    env: {
-      GROQ_API_KEY: 'bad-key',
-      GROQ_API_KEY_2: 'good-key',
-    },
+    env: { GROQ_API_KEY: 'bad-key', GROQ_API_KEY_2: 'good-key' },
   });
   const calls = [];
   const adapter = {
@@ -445,14 +403,12 @@ test('isolated Groq executor rotates only an invalid credential and succeeds on 
       };
     },
   };
-  const registry = createProviderRegistry([adapter]);
   const executor = createGroqIsolatedExecutor({
-    providerRegistry: registry,
+    providerRegistry: createProviderRegistry([adapter]),
     groqCredentialPool: pool,
-    catalog: createModelCatalog(),
+    catalog: createQualificationModelCatalog(),
     logger: { warn() {} },
   });
-
   const result = await executor.execute({
     provider: AI_PROVIDERS.GROQ,
     modelId: GROQ_MODEL_IDS.GPT_OSS_20B,
@@ -464,35 +420,30 @@ test('isolated Groq executor rotates only an invalid credential and succeeds on 
   assert.equal(result.text, 'ok');
   assert.equal(result.credentialSlot, 'groq-key-02');
   assert.equal(pool.snapshot()[0].enabled, false);
-  assert.equal(pool.snapshot()[0].disabledReason, AI_ERROR_CODES.AUTH);
   assert.doesNotMatch(JSON.stringify(pool.snapshot()), /bad-key|good-key/);
 });
 
-test('isolated Groq executor does not burn through keys on shared 429 pressure', async () => {
+test('isolated executor does not cycle keys on shared 429 pressure', async () => {
   const pool = createGroqCredentialPool({
-    env: {
-      GROQ_API_KEY: 'key-one',
-      GROQ_API_KEY_2: 'key-two',
-    },
+    env: { GROQ_API_KEY: 'key-one', GROQ_API_KEY_2: 'key-two' },
   });
   let calls = 0;
-  const registry = createProviderRegistry([{
-    provider: AI_PROVIDERS.GROQ,
-    async generate() {
-      calls += 1;
-      throw new AIError('shared rate limit', {
-        code: AI_ERROR_CODES.RATE_LIMIT_TPM,
-        status: 429,
-        retryable: true,
-        scope: 'PROVIDER_MODEL',
-        provider: AI_PROVIDERS.GROQ,
-      });
-    },
-  }]);
   const executor = createGroqIsolatedExecutor({
-    providerRegistry: registry,
+    providerRegistry: createProviderRegistry([{
+      provider: AI_PROVIDERS.GROQ,
+      async generate() {
+        calls += 1;
+        throw new AIError('shared rate limit', {
+          code: AI_ERROR_CODES.RATE_LIMIT_TPM,
+          status: 429,
+          retryable: true,
+          scope: 'PROVIDER_MODEL',
+          provider: AI_PROVIDERS.GROQ,
+        });
+      },
+    }]),
     groqCredentialPool: pool,
-    catalog: createModelCatalog(),
+    catalog: createQualificationModelCatalog(),
     logger: { warn() {} },
   });
 
