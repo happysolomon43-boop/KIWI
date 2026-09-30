@@ -35,8 +35,10 @@ create table if not exists public.teaching_assignment_submissions (
   accepted_event_at timestamptz not null default now(),
   policy_version_at_event text not null,
   prior_submission_id uuid references public.teaching_assignment_submissions(id),
+  idempotency_key text not null,
   created_at timestamptz not null default now(),
-  unique (assignment_id, student_id, version)
+  unique (assignment_id, student_id, version),
+  unique (student_id, idempotency_key)
 );
 
 create table if not exists public.teaching_assignment_integrity_reviews (
@@ -53,7 +55,9 @@ create table if not exists public.teaching_assignment_integrity_reviews (
   verification_method text,
   active_formal_assessment boolean not null default false,
   authoritative_outcome jsonb,
-  created_at timestamptz not null default now()
+  idempotency_key text not null,
+  created_at timestamptz not null default now(),
+  unique (student_id, idempotency_key)
 );
 
 create index if not exists teaching_assignments_student_course_due_idx on public.teaching_assignments(student_id, course_id, due_at);
