@@ -1,0 +1,27 @@
+name: AIM D02 Groq Smoke
+
+on:
+  push:
+    branches:
+      - aim-d02-groq-runtime-foundation
+    paths:
+      - .github/workflows/aim-d02-groq-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  groq-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Run centralized Groq smoke
+        run: npm run smoke:ai:groq
