@@ -3,11 +3,7 @@
 const {
   AI_PROVIDERS,
   GROQ_MODEL_IDS,
-  createQualificationModelCatalog,
-  createGroqCredentialPool,
-  createProviderRegistry,
-  createGroqProviderAdapter,
-  createGroqIsolatedExecutor,
+  createAIRuntime,
 } = require('../services/ai');
 
 const GROQ_SMOKE_MARKER = 'KIWI_GROQ_OK';
@@ -30,25 +26,31 @@ async function runGroqSmoke({
   logger = console,
   modelId = GROQ_MODEL_IDS.GPT_OSS_20B,
 } = {}) {
-  const credentialPool = createGroqCredentialPool({ env });
-  if (credentialPool.enabledCount() === 0) {
+  // The smoke must exercise the same centrally owned provider foundation that
+  // KIWI boots in production. It deliberately does not initialize the database
+  // or production task router because AIM-D02 is qualification-only.
+  const runtime = createAIRuntime({
+    query: async () => ({ rows: [], rowCount: 0 }),
+    randomUUID: () => 'aim-d02-groq-smoke',
+    env,
+    fetchImpl,
+    logger,
+    timers: {
+      setImmediate: globalThis.setImmediate,
+      setInterval: globalThis.setInterval,
+      clearInterval: globalThis.clearInterval,
+    },
+  });
+
+  const foundation = runtime.status().providerFoundation;
+  if (foundation.groqCredentialSlots.enabled === 0) {
     const error = new Error('No enabled Groq credential is configured for isolated smoke execution');
     error.code = 'CONFIG';
     error.provider = AI_PROVIDERS.GROQ;
     throw error;
   }
 
-  const catalog = createQualificationModelCatalog();
-  const adapter = createGroqProviderAdapter({ fetchImpl });
-  const providerRegistry = createProviderRegistry([adapter]);
-  const executor = createGroqIsolatedExecutor({
-    providerRegistry,
-    groqCredentialPool: credentialPool,
-    catalog,
-    logger,
-  });
-
-  const result = await executor.execute({
+  const result = await runtime.orchestrator.runIsolatedProvider({
     provider: AI_PROVIDERS.GROQ,
     modelId,
     taskId: 'AIM_D02_REAL_GROQ_SMOKE',
