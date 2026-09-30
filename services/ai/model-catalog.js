@@ -1,5 +1,7 @@
 'use strict';
 
+const { AI_PROVIDERS, assertProviderId } = require('./providers');
+
 const MODEL_FAMILIES = Object.freeze({
   FLASH: 'FLASH',
   FLASH_LITE: 'FLASH_LITE',
@@ -19,7 +21,6 @@ const MODEL_STATUS = Object.freeze({
   RETIRED: 'RETIRED',
   DENIED: 'DENIED',
 });
-
 
 function modelVersionRank(modelId) {
   const match = String(modelId || '').match(/^gemini-(\d+)\.(\d+)(?:\.(\d+))?-(?:flash|flash-lite)$/i);
@@ -43,11 +44,13 @@ const COMMON_TEXT_CAPABILITIES = Object.freeze([
 const GENERAL_EMERGENCY_FALLBACK_MODEL_ID = 'gemini-3.5-flash-lite';
 
 // Verified against the official Google Gemini model pages on 2026-09-22.
-// Discovery and automatic promotion are added in a later phase; Phase 2 keeps
-// a small, explicit production-safe seed catalog.
+// Provider identity is now explicit. The legacy FLASH/FLASH_LITE family names
+// remain intact in D01 so this foundation delivery does not alter route quality
+// semantics; AIM-D03 owns the provider-neutral quality-tier migration.
 const DEFAULT_MODEL_CATALOG = Object.freeze([
   Object.freeze({
     id: 'gemini-3.8-flash',
+    provider: AI_PROVIDERS.GOOGLE,
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
@@ -59,6 +62,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
   }),
   Object.freeze({
     id: 'gemini-3.7-flash',
+    provider: AI_PROVIDERS.GOOGLE,
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
@@ -70,6 +74,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
   }),
   Object.freeze({
     id: 'gemini-3.6-flash',
+    provider: AI_PROVIDERS.GOOGLE,
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
@@ -81,6 +86,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
   }),
   Object.freeze({
     id: 'gemini-3.5-flash',
+    provider: AI_PROVIDERS.GOOGLE,
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
@@ -92,6 +98,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
   }),
   Object.freeze({
     id: 'gemini-3.5-flash-lite',
+    provider: AI_PROVIDERS.GOOGLE,
     family: MODEL_FAMILIES.FLASH_LITE,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
@@ -103,6 +110,7 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
   }),
   Object.freeze({
     id: 'gemini-3.1-flash-lite',
+    provider: AI_PROVIDERS.GOOGLE,
     family: MODEL_FAMILIES.FLASH_LITE,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
@@ -117,16 +125,23 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
 function _cloneModel(model) {
   return {
     ...model,
+    provider: model.provider || AI_PROVIDERS.GOOGLE,
     supportedThinking: [...(model.supportedThinking || [])],
     capabilities: [...(model.capabilities || [])],
   };
 }
 
+function _normalizeModel(model) {
+  if (!model?.id) throw new Error('AI model catalog entry requires id');
+  const provider = assertProviderId(model.provider || AI_PROVIDERS.GOOGLE);
+  return _cloneModel({ ...model, provider });
+}
+
 function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
   const models = new Map();
   for (const model of seedModels) {
-    if (!model?.id) throw new Error('AI model catalog entry requires id');
-    models.set(model.id, _cloneModel(model));
+    const normalized = _normalizeModel(model);
+    models.set(normalized.id, normalized);
   }
 
   function get(modelId) {
@@ -135,12 +150,15 @@ function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
   }
 
   function list({
+    provider = null,
     family = null,
     channel = null,
     status = null,
     requiredCapabilities = [],
   } = {}) {
+    const normalizedProvider = provider ? assertProviderId(provider) : null;
     return [...models.values()]
+      .filter((model) => !normalizedProvider || model.provider === normalizedProvider)
       .filter((model) => !family || model.family === family)
       .filter((model) => !channel || model.channel === channel)
       .filter((model) => !status || model.status === status)
@@ -154,8 +172,13 @@ function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
   function upsert(model) {
     if (!model?.id) throw new Error('AI model catalog entry requires id');
     const prior = models.get(model.id) || {};
-    models.set(model.id, _cloneModel({ ...prior, ...model }));
-    return get(model.id);
+    const normalized = _normalizeModel({
+      ...prior,
+      ...model,
+      provider: model.provider || prior.provider || AI_PROVIDERS.GOOGLE,
+    });
+    models.set(normalized.id, normalized);
+    return get(normalized.id);
   }
 
   function setStatus(modelId, status) {
