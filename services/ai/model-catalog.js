@@ -39,14 +39,27 @@ const COMMON_TEXT_CAPABILITIES = Object.freeze([
   'structuredOutput',
 ]);
 
+const GROQ_TEXT_CAPABILITIES = Object.freeze([
+  'generateContent',
+  'thinking',
+  'longOutput',
+  'structuredOutput',
+  'jsonSchema',
+]);
+
+const GROQ_MODEL_IDS = Object.freeze({
+  GPT_OSS_120B: 'openai/gpt-oss-120b',
+  GPT_OSS_20B: 'openai/gpt-oss-20b',
+});
+
 // The final cross-class availability route. Keep the provider model ID in the
 // catalogue so feature code and task definitions remain provider-agnostic.
 const GENERAL_EMERGENCY_FALLBACK_MODEL_ID = 'gemini-3.5-flash-lite';
 
-// Verified against the official Google Gemini model pages on 2026-09-22.
-// Provider identity is now explicit. The legacy FLASH/FLASH_LITE family names
-// remain intact in D01 so this foundation delivery does not alter route quality
-// semantics; AIM-D03 owns the provider-neutral quality-tier migration.
+// Verified against the official provider model pages. Groq GPT-OSS entries are
+// deliberately QUALIFYING and family:null in AIM-D02: they are available to the
+// isolated qualification lane but cannot enter the legacy Gemini family router.
+// AIM-D03 owns provider-neutral quality tiers and production route preference.
 const DEFAULT_MODEL_CATALOG = Object.freeze([
   Object.freeze({
     id: 'gemini-3.8-flash',
@@ -120,6 +133,50 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     inputTokenLimit: 1048576,
     outputTokenLimit: 65536,
   }),
+  Object.freeze({
+    id: GROQ_MODEL_IDS.GPT_OSS_120B,
+    provider: AI_PROVIDERS.GROQ,
+    family: null,
+    channel: MODEL_CHANNELS.STABLE,
+    status: MODEL_STATUS.QUALIFYING,
+    rank: 0,
+    supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
+    capabilities: GROQ_TEXT_CAPABILITIES,
+    inputModalities: Object.freeze(['TEXT']),
+    outputModalities: Object.freeze(['TEXT']),
+    inputTokenLimit: 131072,
+    outputTokenLimit: 65536,
+    structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
+    reasoningControl: 'reasoning_effort',
+    qualityTier: null,
+    productionEligible: false,
+    metadata: Object.freeze({
+      providerReleaseStatus: 'ACTIVE',
+      qualificationLane: 'AIM_D02_ISOLATED',
+    }),
+  }),
+  Object.freeze({
+    id: GROQ_MODEL_IDS.GPT_OSS_20B,
+    provider: AI_PROVIDERS.GROQ,
+    family: null,
+    channel: MODEL_CHANNELS.STABLE,
+    status: MODEL_STATUS.QUALIFYING,
+    rank: 0,
+    supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
+    capabilities: GROQ_TEXT_CAPABILITIES,
+    inputModalities: Object.freeze(['TEXT']),
+    outputModalities: Object.freeze(['TEXT']),
+    inputTokenLimit: 131072,
+    outputTokenLimit: 65536,
+    structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
+    reasoningControl: 'reasoning_effort',
+    qualityTier: null,
+    productionEligible: false,
+    metadata: Object.freeze({
+      providerReleaseStatus: 'ACTIVE',
+      qualificationLane: 'AIM_D02_ISOLATED',
+    }),
+  }),
 ]);
 
 function _cloneModel(model) {
@@ -128,6 +185,12 @@ function _cloneModel(model) {
     provider: model.provider || AI_PROVIDERS.GOOGLE,
     supportedThinking: [...(model.supportedThinking || [])],
     capabilities: [...(model.capabilities || [])],
+    inputModalities: model.inputModalities ? [...model.inputModalities] : undefined,
+    outputModalities: model.outputModalities ? [...model.outputModalities] : undefined,
+    structuredOutputModes: model.structuredOutputModes
+      ? [...model.structuredOutputModes]
+      : undefined,
+    metadata: model.metadata ? { ...model.metadata } : undefined,
   };
 }
 
@@ -202,6 +265,8 @@ module.exports = {
   MODEL_STATUS,
   modelVersionRank,
   COMMON_TEXT_CAPABILITIES,
+  GROQ_TEXT_CAPABILITIES,
+  GROQ_MODEL_IDS,
   GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
   DEFAULT_MODEL_CATALOG,
   createModelCatalog,
