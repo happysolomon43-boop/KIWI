@@ -7,6 +7,7 @@ const TEACHING_EVENTS = Object.freeze({
   LESSON_PLAN_APPROVED: 'teaching.lesson.plan_approved',
   STUDENT_RESPONSE_SUBMITTED: 'teaching.student.response_submitted',
   ACTIVITY_TIMER_EXPIRED: 'teaching.activity.timer_expired',
+  ATTENDANCE_FINALIZATION_DUE: 'teaching.attendance.finalization_due',
   BREAK_STARTED: 'teaching.break.started',
   BREAK_END_DUE: 'teaching.break.end_due',
   BREAK_ENDED: 'teaching.break.ended',
@@ -31,7 +32,7 @@ const TEACHING_EVENTS = Object.freeze({
   PREPARATION_FINDING_RESOLVED: 'teaching.preparation.finding_resolved',
   PROTECTED_CANDIDATE_CONTAMINATED: 'teaching.preparation.protected_candidate_contaminated',
   PREPARATION_WORKSPACE_SUPERSEDED: 'teaching.preparation.workspace_superseded',
-  PREPARATION_WORKSPACE_CANCELLED: 'teaching.preparation.workspace_cancelled',
+  PREPARATION_WORKSPACE_CANCELLED: 'teaching.preparation.workspace.cancelled',
   PREPARATION_HANDOFF_READY: 'teaching.preparation.handoff_ready',
 });
 
