@@ -1,5 +1,7 @@
 'use strict';
 
+const { AI_PROVIDERS } = require('./providers');
+
 const AI_ERROR_CODES = Object.freeze({
   CONFIG: 'CONFIG',
   BAD_REQUEST: 'BAD_REQUEST',
@@ -30,7 +32,7 @@ class AIError extends Error {
     status = null,
     retryable = false,
     scope = 'REQUEST',
-    provider = 'gemini',
+    provider = null,
     details = null,
     retryAfterMs = null,
     providerEvidence = null,
@@ -174,7 +176,7 @@ function extractProviderEvidence(body, headers = null) {
   let quotaDimension = null;
   let classificationSource = null;
 
-  // The newer Gemini error contract exposes machine-readable 429 codes.
+  // Google's Gemini error contract exposes machine-readable 429 codes.
   // quota_exceeded is specifically daily quota; rate_limit_exceeded and
   // too_many_requests are short-window throttles but do not by themselves
   // distinguish request-rate from token-rate.
@@ -229,7 +231,7 @@ function _quotaCodeFromEvidence(evidence) {
   }
 }
 
-function extractProviderMessage(body, fallback = 'Gemini request failed') {
+function extractProviderMessage(body, fallback = 'AI provider request failed') {
   if (!body) return fallback;
   if (typeof body === 'string') return body.slice(0, 1000);
   const message = body?.error?.message || body?.message || body?.error_description;
@@ -307,13 +309,15 @@ function extractRetryDelayMs(body, headers = null) {
   return found;
 }
 
-function classifyGeminiHttpError({ status, body, headers = null }) {
-  const message = extractProviderMessage(body, `Gemini HTTP ${status}`);
+function classifyGoogleHttpError({ status, body, headers = null }) {
+  const message = extractProviderMessage(body, `Google AI HTTP ${status}`);
   const providerEvidence = extractProviderEvidence(body, headers);
   const retryAfterMs = providerEvidence.retryAfterMs;
+  const common = { provider: AI_PROVIDERS.GOOGLE };
 
   if (status === 400 || status === 422) {
     return new AIError(message, {
+      ...common,
       code: AI_ERROR_CODES.BAD_REQUEST,
       status,
       retryable: false,
@@ -324,6 +328,7 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
 
   if (status === 401 || status === 403) {
     return new AIError(message, {
+      ...common,
       code: AI_ERROR_CODES.AUTH,
       status,
       retryable: false,
@@ -334,6 +339,7 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
 
   if (status === 404) {
     return new AIError(message, {
+      ...common,
       code: AI_ERROR_CODES.MODEL_NOT_FOUND,
       status,
       retryable: false,
@@ -344,6 +350,7 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
 
   if (status === 408) {
     return new AIError(message, {
+      ...common,
       code: AI_ERROR_CODES.TIMEOUT,
       status,
       retryable: true,
@@ -354,6 +361,7 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
 
   if (status === 429) {
     return new AIError(message, {
+      ...common,
       code: _quotaCodeFromEvidence(providerEvidence),
       status,
       retryable: true,
@@ -366,6 +374,7 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
 
   if (status === 503) {
     return new AIError(message, {
+      ...common,
       code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
       status,
       retryable: true,
@@ -378,6 +387,7 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
 
   if (status >= 500 && status <= 599) {
     return new AIError(message, {
+      ...common,
       code: AI_ERROR_CODES.TRANSIENT,
       status,
       retryable: true,
@@ -389,6 +399,7 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
   }
 
   return new AIError(message, {
+    ...common,
     code: AI_ERROR_CODES.UNKNOWN,
     status,
     retryable: false,
@@ -397,25 +408,35 @@ function classifyGeminiHttpError({ status, body, headers = null }) {
   });
 }
 
-function timeoutError(timeoutMs, cause = null) {
+function timeoutError(timeoutMs, cause = null, {
+  provider = null,
+  providerLabel = 'AI provider',
+} = {}) {
   return new AIError(
-    `Gemini request timed out after ${Math.round(timeoutMs / 1000)}s`,
+    `${providerLabel} request timed out after ${Math.round(timeoutMs / 1000)}s`,
     {
       code: AI_ERROR_CODES.TIMEOUT,
       retryable: true,
       scope: 'ATTEMPT',
+      provider,
       cause,
     }
   );
 }
 
-function networkError(cause) {
+function networkError(cause, {
+  provider = null,
+  providerLabel = 'AI provider',
+} = {}) {
   return new AIError(
-    cause?.message ? `Gemini network error: ${cause.message}` : 'Gemini network error',
+    cause?.message
+      ? `${providerLabel} network error: ${cause.message}`
+      : `${providerLabel} network error`,
     {
       code: AI_ERROR_CODES.NETWORK,
       retryable: true,
       scope: 'ATTEMPT',
+      provider,
       cause,
     }
   );
@@ -444,11 +465,15 @@ function isAIAvailabilityError(error) {
   return Boolean(error && AVAILABILITY_ERROR_CODES.has(error.code));
 }
 
-function safetyError(details = null) {
-  return new AIError('Gemini blocked the response for safety reasons', {
+function safetyError(details = null, {
+  provider = null,
+  providerLabel = 'AI provider',
+} = {}) {
+  return new AIError(`${providerLabel} blocked the response for safety reasons`, {
     code: AI_ERROR_CODES.SAFETY,
     retryable: false,
     scope: 'REQUEST',
+    provider,
     details,
   });
 }
@@ -457,7 +482,8 @@ module.exports = {
   AI_ERROR_CODES,
   AIError,
   QUOTA_DIMENSIONS,
-  classifyGeminiHttpError,
+  classifyGoogleHttpError,
+  classifyGeminiHttpError: classifyGoogleHttpError,
   extractProviderEvidence,
   extractProviderMessage,
   extractRetryDelayMs,
