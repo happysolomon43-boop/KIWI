@@ -22,8 +22,6 @@ const MODEL_STATUS = Object.freeze({
   DENIED: 'DENIED',
 });
 
-// Provider-neutral quality language. Legacy FLASH/FLASH_LITE family labels are
-// retained only as compatibility metadata for the existing Google lifecycle.
 const MODEL_QUALITY_TIERS = Object.freeze({
   STANDARD: 'STANDARD',
   PREMIUM: 'PREMIUM',
@@ -155,10 +153,6 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
   }),
 ]);
 
-// D03 production candidates are deliberately separate from the frozen Google
-// seed. They are injected only when the provider-aware router is enabled, so
-// AI_TEXT_PROVIDER_MODE=GOOGLE_ONLY restores the accepted pre-D03 route graph
-// without code rollback.
 const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
   Object.freeze({
     id: GROQ_MODEL_IDS.GPT_OSS_120B,
@@ -166,7 +160,11 @@ const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
     family: null,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-    rank: 120000,
+    // Rank is an affinity ordering hint, not the provider's parameter count.
+    // Keep the Groq-first premium primary above the current Google fallback
+    // ranks so a successful cross-provider fallback can become the workflow's
+    // lower affinity ceiling instead of bouncing back to Groq on the next pass.
+    rank: 5000000,
     qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
     productionEligible: true,
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
@@ -188,7 +186,7 @@ const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
     family: null,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-    rank: 20000,
+    rank: 4900000,
     qualityTier: MODEL_QUALITY_TIERS.STANDARD,
     productionEligible: true,
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
@@ -206,9 +204,6 @@ const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
   }),
 ]);
 
-// The D02 isolated qualification lane remains distinct even after D03. This
-// keeps qualification tooling able to exercise a model independently of its
-// production eligibility and avoids conflating "callable" with "qualified".
 const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze(
   GROQ_PRODUCTION_MODEL_CATALOG.map((model) => Object.freeze({
     ...model,
