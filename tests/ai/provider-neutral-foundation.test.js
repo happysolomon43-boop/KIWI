@@ -100,6 +100,40 @@ test('neutral execution contract represents ordinary text without Google request
 });
 
 
+test('neutral structured-output contract contains no Google response fields', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      ok: { type: 'boolean' },
+    },
+    required: ['ok'],
+  };
+  const request = createExecutionRequest({
+    provider: AI_PROVIDERS.GOOGLE,
+    modelId: 'synthetic-model',
+    content: 'Return structured output',
+    generation: {
+      structuredOutput: {
+        mimeType: 'application/json',
+        schema,
+      },
+    },
+  });
+
+  assert.deepEqual(request.generation.structuredOutput, {
+    mimeType: 'application/json',
+    schema,
+  });
+  assert.equal('responseMimeType' in request.generation, false);
+  assert.equal('responseSchema' in request.generation, false);
+
+  const serialized = serializeGoogleExecutionRequest(request);
+  assert.equal(serialized.generationConfig.responseMimeType, 'application/json');
+  assert.deepEqual(serialized.generationConfig.responseSchema, schema);
+  assert.equal('structuredOutput' in serialized.generationConfig, false);
+});
+
+
 test('legacy provider-native content is quarantined explicitly instead of being mislabelled neutral', () => {
   const content = [{ parts: [{ text: 'legacy' }] }];
   const request = createExecutionRequest({
@@ -115,19 +149,31 @@ test('legacy provider-native content is quarantined explicitly instead of being 
 
 
 test('Gemini compatibility invocation enters neutral request before Google serialization', () => {
+  const schema = {
+    type: 'object',
+    properties: { answer: { type: 'string' } },
+  };
   const request = legacyInvocationToExecutionRequest({
     modelId: 'synthetic-model',
     content: 'hello',
     generationConfig: {
       temperature: 0.2,
       thinkingConfig: { thinkingLevel: 'high' },
+      responseMimeType: 'application/json',
+      responseSchema: schema,
     },
   });
 
   assert.equal(request.provider, AI_PROVIDERS.GOOGLE);
   assert.equal(request.content.kind, AI_CONTENT_KINDS.TEXT);
   assert.equal(request.generation.reasoning.resolved, 'HIGH');
+  assert.deepEqual(request.generation.structuredOutput, {
+    mimeType: 'application/json',
+    schema,
+  });
   assert.equal('thinkingConfig' in request.generation, false);
+  assert.equal('responseMimeType' in request.generation, false);
+  assert.equal('responseSchema' in request.generation, false);
 
   const serialized = serializeGoogleExecutionRequest(request);
   assert.deepEqual(serialized.contents, [{ parts: [{ text: 'hello' }] }]);
@@ -135,7 +181,10 @@ test('Gemini compatibility invocation enters neutral request before Google seria
   assert.deepEqual(serialized.generationConfig.thinkingConfig, {
     thinkingLevel: 'high',
   });
+  assert.equal(serialized.generationConfig.responseMimeType, 'application/json');
+  assert.deepEqual(serialized.generationConfig.responseSchema, schema);
   assert.equal('reasoning' in serialized.generationConfig, false);
+  assert.equal('structuredOutput' in serialized.generationConfig, false);
 });
 
 
