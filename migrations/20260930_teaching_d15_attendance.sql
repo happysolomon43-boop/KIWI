@@ -100,7 +100,7 @@ ALTER TABLE public.teaching_attendance_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.teaching_attendance_concerns ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.teaching_attendance_system_interruptions ENABLE ROW LEVEL SECURITY;
 
-REVOKE ALL ON public.teaching_attendance_records,public.teaching_attendance_concerns,public.teaching_attendance_system_interruptions FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON public.teaching_attendance_records,public.teaching_attendance_concerns,public.teaching_attendance_system_interruptions FROM PUBLIC,anon,authenticated,service_role;
 GRANT SELECT,INSERT ON public.teaching_attendance_records,public.teaching_attendance_concerns,public.teaching_attendance_system_interruptions TO service_role;
 
 COMMENT ON TABLE public.teaching_attendance_records IS 'D15 immutable versioned Attendance Ledger. Latest version is authoritative attendance/punctuality truth; no row may author Gradebook, SKM, Assessment Attempt, or Class Controller state.';
