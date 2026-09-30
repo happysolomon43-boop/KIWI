@@ -22,6 +22,18 @@ const MODEL_STATUS = Object.freeze({
   DENIED: 'DENIED',
 });
 
+const MODEL_QUALITY_TIERS = Object.freeze({
+  STANDARD: 'STANDARD',
+  PREMIUM: 'PREMIUM',
+  HIGH_STAKES: 'HIGH_STAKES',
+});
+
+const MODEL_QUALITY_RANK = Object.freeze({
+  [MODEL_QUALITY_TIERS.STANDARD]: 1,
+  [MODEL_QUALITY_TIERS.PREMIUM]: 2,
+  [MODEL_QUALITY_TIERS.HIGH_STAKES]: 3,
+});
+
 function modelVersionRank(modelId) {
   const match = String(modelId || '').match(/^gemini-(\d+)\.(\d+)(?:\.(\d+))?-(?:flash|flash-lite)$/i);
   if (!match) return 0;
@@ -52,13 +64,8 @@ const GROQ_MODEL_IDS = Object.freeze({
   GPT_OSS_20B: 'openai/gpt-oss-20b',
 });
 
-// The final cross-class availability route. Keep the provider model ID in the
-// catalogue so feature code and task definitions remain provider-agnostic.
 const GENERAL_EMERGENCY_FALLBACK_MODEL_ID = 'gemini-3.5-flash-lite';
 
-// Production seed remains byte-for-byte equivalent in routing semantics to the
-// accepted D01 baseline. AIM-D02 does not put Groq models into the live runtime
-// catalog; it registers them in a separate qualification catalog below.
 const DEFAULT_MODEL_CATALOG = Object.freeze([
   Object.freeze({
     id: 'gemini-3.8-flash',
@@ -67,6 +74,8 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
     rank: modelVersionRank('gemini-3.8-flash'),
+    qualityTier: MODEL_QUALITY_TIERS.HIGH_STAKES,
+    productionEligible: true,
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -79,6 +88,8 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
     rank: modelVersionRank('gemini-3.7-flash'),
+    qualityTier: MODEL_QUALITY_TIERS.HIGH_STAKES,
+    productionEligible: true,
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -91,6 +102,8 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
     rank: modelVersionRank('gemini-3.6-flash'),
+    qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
+    productionEligible: true,
     supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -103,6 +116,8 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
     rank: modelVersionRank('gemini-3.5-flash'),
+    qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
+    productionEligible: true,
     supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -115,6 +130,8 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
     rank: modelVersionRank('gemini-3.5-flash-lite'),
+    qualityTier: MODEL_QUALITY_TIERS.STANDARD,
+    productionEligible: true,
     supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -127,6 +144,8 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
     rank: modelVersionRank('gemini-3.1-flash-lite'),
+    qualityTier: MODEL_QUALITY_TIERS.STANDARD,
+    productionEligible: true,
     supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
     capabilities: COMMON_TEXT_CAPABILITIES,
     inputTokenLimit: 1048576,
@@ -134,17 +153,20 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
   }),
 ]);
 
-// Verified against Groq's official model documentation in AIM-D02. These
-// definitions are intentionally not part of DEFAULT_MODEL_CATALOG. The isolated
-// qualification lane opts into them explicitly; AIM-D03 owns production routing.
-const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze([
+const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
   Object.freeze({
     id: GROQ_MODEL_IDS.GPT_OSS_120B,
     provider: AI_PROVIDERS.GROQ,
     family: null,
     channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.QUALIFYING,
-    rank: 0,
+    status: MODEL_STATUS.APPROVED,
+    // Rank is an affinity ordering hint, not the provider's parameter count.
+    // Keep the Groq-first premium primary above the current Google fallback
+    // ranks so a successful cross-provider fallback can become the workflow's
+    // lower affinity ceiling instead of bouncing back to Groq on the next pass.
+    rank: 5000000,
+    qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
+    productionEligible: true,
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
     capabilities: GROQ_TEXT_CAPABILITIES,
     inputModalities: Object.freeze(['TEXT']),
@@ -153,11 +175,9 @@ const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze([
     outputTokenLimit: 65536,
     structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
     reasoningControl: 'reasoning_effort',
-    qualityTier: null,
-    productionEligible: false,
     metadata: Object.freeze({
       providerReleaseStatus: 'ACTIVE',
-      qualificationLane: 'AIM_D02_ISOLATED',
+      productionLane: 'AIM_D03_TEXT',
     }),
   }),
   Object.freeze({
@@ -165,8 +185,10 @@ const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze([
     provider: AI_PROVIDERS.GROQ,
     family: null,
     channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.QUALIFYING,
-    rank: 0,
+    status: MODEL_STATUS.APPROVED,
+    rank: 4900000,
+    qualityTier: MODEL_QUALITY_TIERS.STANDARD,
+    productionEligible: true,
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
     capabilities: GROQ_TEXT_CAPABILITIES,
     inputModalities: Object.freeze(['TEXT']),
@@ -175,14 +197,25 @@ const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze([
     outputTokenLimit: 65536,
     structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
     reasoningControl: 'reasoning_effort',
-    qualityTier: null,
+    metadata: Object.freeze({
+      providerReleaseStatus: 'ACTIVE',
+      productionLane: 'AIM_D03_TEXT',
+    }),
+  }),
+]);
+
+const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze(
+  GROQ_PRODUCTION_MODEL_CATALOG.map((model) => Object.freeze({
+    ...model,
+    status: MODEL_STATUS.QUALIFYING,
     productionEligible: false,
+    qualityTier: null,
     metadata: Object.freeze({
       providerReleaseStatus: 'ACTIVE',
       qualificationLane: 'AIM_D02_ISOLATED',
     }),
-  }),
-]);
+  }))
+);
 
 function _cloneModel(model) {
   return {
@@ -256,12 +289,7 @@ function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
     return get(modelId);
   }
 
-  return Object.freeze({
-    get,
-    list,
-    upsert,
-    setStatus,
-  });
+  return Object.freeze({ get, list, upsert, setStatus });
 }
 
 function createQualificationModelCatalog() {
@@ -271,17 +299,36 @@ function createQualificationModelCatalog() {
   ]);
 }
 
+function qualityRank(tier) {
+  return MODEL_QUALITY_RANK[tier] || 0;
+}
+
+function modelMeetsQuality(model, minimumTier) {
+  if (!minimumTier) return true;
+  return qualityRank(model?.qualityTier) >= qualityRank(minimumTier);
+}
+
+function groqProductionModel(modelId) {
+  return GROQ_PRODUCTION_MODEL_CATALOG.find((model) => model.id === modelId) || null;
+}
+
 module.exports = {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
   MODEL_STATUS,
+  MODEL_QUALITY_TIERS,
+  MODEL_QUALITY_RANK,
   modelVersionRank,
+  qualityRank,
+  modelMeetsQuality,
   COMMON_TEXT_CAPABILITIES,
   GROQ_TEXT_CAPABILITIES,
   GROQ_MODEL_IDS,
   GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
   DEFAULT_MODEL_CATALOG,
+  GROQ_PRODUCTION_MODEL_CATALOG,
   GROQ_QUALIFICATION_MODEL_CATALOG,
+  groqProductionModel,
   createModelCatalog,
   createQualificationModelCatalog,
 };
