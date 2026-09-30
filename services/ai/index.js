@@ -3,6 +3,8 @@
 const { createAIOrchestrator } = require('./orchestrator');
 const {
   createModelCatalog,
+  createQualificationModelCatalog,
+  GROQ_QUALIFICATION_MODEL_CATALOG,
   GROQ_MODEL_IDS,
   GROQ_TEXT_CAPABILITIES,
 } = require('./model-catalog');
@@ -56,6 +58,8 @@ const { createAIRuntime } = require('./runtime');
 module.exports = {
   createAIOrchestrator,
   createModelCatalog,
+  createQualificationModelCatalog,
+  GROQ_QUALIFICATION_MODEL_CATALOG,
   GROQ_MODEL_IDS,
   GROQ_TEXT_CAPABILITIES,
   createModelRouter,
