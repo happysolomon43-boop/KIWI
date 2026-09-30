@@ -1,6 +1,5 @@
 'use strict';
 
-const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const {
   AI_PROVIDERS,
@@ -155,6 +154,10 @@ async function runD03RoutingSmoke({
     throw error;
   }
 
+  // Load pg only for the real operational smoke. The AI unit workflow is
+  // intentionally dependency-light and must be able to import this module
+  // without installing production packages.
+  const { Pool } = require('pg');
   const pool = new Pool({
     connectionString: databaseUrl,
     ssl: { rejectUnauthorized: false },
