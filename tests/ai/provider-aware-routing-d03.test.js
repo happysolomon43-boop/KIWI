@@ -9,6 +9,7 @@ const { createProjectPool } = require('../../services/ai/project-pool');
 const { createAIOrchestrator } = require('../../services/ai/orchestrator');
 const { AI_PROVIDERS } = require('../../services/ai/providers');
 const { AIError, AI_ERROR_CODES } = require('../../services/ai/errors');
+const { AI_TASKS } = require('../../services/ai/task-registry');
 
 function groqFirstRouter() {
   const catalog = createModelCatalog();
@@ -17,6 +18,24 @@ function groqFirstRouter() {
     env: { AI_TEXT_PROVIDER_MODE: 'GROQ_FIRST' },
   });
   return { catalog, router };
+}
+
+function googleSuccess(modelId, text = 'ok') {
+  return {
+    latencyMs: 1,
+    raw: {
+      modelVersion: modelId,
+      candidates: [{
+        finishReason: 'STOP',
+        content: { parts: [{ text }] },
+      }],
+      usageMetadata: {
+        promptTokenCount: 1,
+        candidatesTokenCount: 1,
+        totalTokenCount: 2,
+      },
+    },
+  };
 }
 
 test('D03 routes premium ordinary text to GPT-OSS 120B before Gemini', () => {
@@ -28,6 +47,7 @@ test('D03 routes premium ordinary text to GPT-OSS 120B before Gemini', () => {
   assert.equal(candidates[0].qualityFloor, 'PREMIUM');
   assert.ok(candidates.some((candidate) => candidate.provider === AI_PROVIDERS.GOOGLE));
   assert.equal(candidates.some((candidate) => candidate.modelId === GROQ_MODEL_IDS.GPT_OSS_20B), false);
+  assert.equal(candidates.at(-1).modelId, 'gemini-3.5-flash-lite');
 });
 
 test('D03 routes low-risk/background text to GPT-OSS 20B then 120B before Google', () => {
@@ -81,7 +101,7 @@ test('D03 leaves legacy multimodal extraction on Google until D04', () => {
   assert.ok(candidates.every((candidate) => candidate.provider === AI_PROVIDERS.GOOGLE));
 });
 
-test('D03 GOOGLE_ONLY rollback reproduces the accepted pre-D03 CBT route', () => {
+test('D03 GOOGLE_ONLY rollback reproduces accepted pre-D03 route graphs', () => {
   const router = createModelRouter({
     catalog: createModelCatalog(),
     env: { AI_TEXT_PROVIDER_MODE: 'GOOGLE_ONLY' },
@@ -96,19 +116,52 @@ test('D03 GOOGLE_ONLY rollback reproduces the accepted pre-D03 CBT route', () =>
       'gemini-3.5-flash-lite',
     ]
   );
+  assert.deepEqual(
+    router.resolveCandidates('FLASHCARD_GENERATION').map((candidate) => candidate.modelId),
+    [
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
+      'gemini-3.5-flash-lite',
+    ]
+  );
+  assert.equal(
+    router.resolveCandidates('DEEP_AUDIT').at(-1).modelId,
+    'gemini-3.5-flash-lite'
+  );
 });
 
-test('D03 central credential pool selects credentials by candidate provider without exposing secrets', () => {
+test('D03 central credential pool selects provider credentials without exposing secrets', () => {
   const pool = createProjectPool({
     env: {
       GEMINI_API_KEY: 'google-secret',
-      GROQ_API_KEY: 'groq-secret',
+      GROQ_API_KEY: 'groq-secret-1',
+      GROQ_API_KEY_2: 'groq-secret-2',
     },
   });
 
   assert.equal(pool.peekOrderedSlots('gemini-3.8-flash')[0].id, 'gemini-project-01');
   assert.equal(pool.peekOrderedSlots(GROQ_MODEL_IDS.GPT_OSS_120B)[0].id, 'groq-key-01');
+  assert.equal(pool.peekOrderedSlots(GROQ_MODEL_IDS.GPT_OSS_120B).length, 1);
   assert.doesNotMatch(JSON.stringify(pool.snapshot()), /google-secret|groq-secret/);
+});
+
+test('D03 production Groq pool never sweeps multiple shared-quota credentials in one model attempt', () => {
+  const pool = createProjectPool({
+    env: {
+      GEMINI_API_KEY: 'google-secret',
+      GROQ_API_KEY: 'groq-secret-1',
+      GROQ_API_KEY_2: 'groq-secret-2',
+      GROQ_API_KEY_3: 'groq-secret-3',
+    },
+  });
+
+  const first = pool.orderedSlots(GROQ_MODEL_IDS.GPT_OSS_120B);
+  const second = pool.orderedSlots(GROQ_MODEL_IDS.GPT_OSS_120B);
+  assert.equal(first.length, 1);
+  assert.equal(second.length, 1);
+  assert.notEqual(first[0].id, second[0].id);
 });
 
 test('D03 central orchestrator falls from Groq to Gemini without feature-owned retry logic', async () => {
@@ -134,23 +187,13 @@ test('D03 central orchestrator falls from Groq to Gemini without feature-owned r
           provider: AI_PROVIDERS.GROQ,
         });
       }
-      return {
-        latencyMs: 1,
-        raw: {
-          modelVersion: modelId,
-          candidates: [{
-            finishReason: 'STOP',
-            content: { parts: [{ text: 'fallback-ok' }] },
-          }],
-          usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
-        },
-      };
+      return googleSuccess(modelId, 'fallback-ok');
     },
     async listModels() { return []; },
   };
 
   const orchestrator = createAIOrchestrator({
-    registry: require('../../services/ai/task-registry').AI_TASKS,
+    registry: AI_TASKS,
     catalog,
     router,
     projectPool,
@@ -163,4 +206,97 @@ test('D03 central orchestrator falls from Groq to Gemini without feature-owned r
   assert.equal(result.provider, AI_PROVIDERS.GOOGLE);
   assert.equal(attempted[0], GROQ_MODEL_IDS.GPT_OSS_120B);
   assert.ok(attempted.some((modelId) => modelId.startsWith('gemini-')));
+});
+
+test('D03 shared Groq rate limit falls to Gemini instead of cycling Groq keys', async () => {
+  const env = {
+    AI_TEXT_PROVIDER_MODE: 'GROQ_FIRST',
+    GEMINI_API_KEY: 'google-secret',
+    GROQ_API_KEY: 'groq-secret-1',
+    GROQ_API_KEY_2: 'groq-secret-2',
+  };
+  const catalog = createModelCatalog();
+  const router = createModelRouter({ catalog, env });
+  const projectPool = createProjectPool({ env });
+  const attempted = [];
+
+  const transport = {
+    async generate({ modelId, apiKey }) {
+      attempted.push({ modelId, apiKey });
+      if (modelId === GROQ_MODEL_IDS.GPT_OSS_120B) {
+        throw new AIError('synthetic shared Groq throttle', {
+          code: AI_ERROR_CODES.RATE_LIMIT_RPM,
+          status: 429,
+          retryable: true,
+          scope: 'PROVIDER_MODEL',
+          provider: AI_PROVIDERS.GROQ,
+          retryAfterMs: 1000,
+        });
+      }
+      return googleSuccess(modelId, 'quota-fallback-ok');
+    },
+    async listModels() { return []; },
+  };
+
+  const orchestrator = createAIOrchestrator({
+    registry: AI_TASKS,
+    catalog,
+    router,
+    projectPool,
+    transport,
+    env,
+  });
+  const result = await orchestrator.run('QUICK_QUESTIONS', { prompt: 'test' });
+
+  assert.equal(result.text, 'quota-fallback-ok');
+  const groqAttempts = attempted.filter((entry) => entry.modelId === GROQ_MODEL_IDS.GPT_OSS_120B);
+  assert.equal(groqAttempts.length, 1);
+  assert.ok(attempted.some((entry) => entry.modelId.startsWith('gemini-')));
+});
+
+test('D03 generation affinity stays on the successful Gemini fallback after Groq failure', async () => {
+  const env = {
+    AI_TEXT_PROVIDER_MODE: 'GROQ_FIRST',
+    GEMINI_API_KEY: 'google-secret',
+    GROQ_API_KEY: 'groq-secret',
+  };
+  const catalog = createModelCatalog();
+  const router = createModelRouter({ catalog, env });
+  const projectPool = createProjectPool({ env });
+  const attempted = [];
+
+  const transport = {
+    async generate({ modelId }) {
+      attempted.push(modelId);
+      if (modelId === GROQ_MODEL_IDS.GPT_OSS_120B) {
+        throw new AIError('synthetic Groq outage', {
+          code: AI_ERROR_CODES.PROVIDER_OVERLOADED,
+          status: 503,
+          retryable: true,
+          scope: 'PROVIDER_MODEL',
+          provider: AI_PROVIDERS.GROQ,
+        });
+      }
+      return googleSuccess(modelId, 'affinity-ok');
+    },
+    async listModels() { return []; },
+  };
+
+  const orchestrator = createAIOrchestrator({
+    registry: AI_TASKS,
+    catalog,
+    router,
+    projectPool,
+    transport,
+    env,
+  });
+
+  const generationGroupId = 'd03-affinity-test';
+  await orchestrator.run('FLASHCARD_GENERATION', { prompt: 'first' }, { generationGroupId });
+  const afterFirst = attempted.length;
+  await orchestrator.run('FLASHCARD_GENERATION', { prompt: 'second' }, { generationGroupId });
+
+  assert.equal(attempted[0], GROQ_MODEL_IDS.GPT_OSS_120B);
+  assert.ok(attempted.slice(0, afterFirst).some((modelId) => modelId.startsWith('gemini-')));
+  assert.equal(attempted[afterFirst], 'gemini-3.8-flash');
 });
