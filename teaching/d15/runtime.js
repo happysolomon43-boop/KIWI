@@ -14,6 +14,16 @@ function registerD15Runtime({eventRuntime,publishedEvents=null,repository,servic
       subscriberId:'d15-attendance-request-effects',
       handle:(event)=>service.onAttendanceRequestApplied(event),
     }));
+    registrations.push(publishedEvents.register(TEACHING_EVENTS.CLASS_ENDED,{
+      subscriberId:'d15-attendance-class-closure-reconciliation',
+      handle:async(event)=>{
+        const studentId=event.actorId||event.actor_id||event.payload?.student_id;
+        const classId=event.payload?.class_id||event.aggregateId||event.aggregate_id;
+        if(!studentId||!classId) return Object.freeze({accepted:true,noop:true,reason:'CLASS_ENDED_ATTENDANCE_CONTEXT_MISSING'});
+        const result=await service.finalizeClass({studentId,classId,sourceEventId:event.eventId||event.event_id});
+        return Object.freeze({accepted:true,attendanceRecordId:result.record?.attendanceRecordId||null,outcome:result.record?.outcome||null});
+      },
+    }));
   }
 
   eventRuntime.register(TEACHING_EVENTS.ATTENDANCE_FINALIZATION_DUE,{
