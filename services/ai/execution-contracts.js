@@ -105,6 +105,7 @@ function createExecutionResponse({
   requestedModel,
   providerModel = null,
   text = '',
+  structuredData = null,
   finishReason = 'UNKNOWN',
   blocked = false,
   blockReason = null,
@@ -113,13 +114,23 @@ function createExecutionResponse({
   credentialSlot = null,
   fallbackDepth = 0,
   generationGroupId = null,
+  providerMetadata = null,
 } = {}) {
   const model = createProviderModelRef({ provider, modelId: requestedModel });
+  const normalizedStructuredData = structuredData == null
+    ? null
+    : _cloneJsonCompatible(structuredData);
+  const normalizedProviderMetadata = providerMetadata == null
+    ? null
+    : _cloneJsonCompatible(providerMetadata);
 
   return Object.freeze({
     contractVersion: 1,
     provider: model.provider,
     text: String(text ?? ''),
+    structuredData: normalizedStructuredData == null
+      ? null
+      : Object.freeze(normalizedStructuredData),
     finishReason: finishReason || 'UNKNOWN',
     blocked: Boolean(blocked),
     blockReason: blockReason || null,
@@ -131,6 +142,9 @@ function createExecutionResponse({
     latencyMs,
     fallbackDepth: Number(fallbackDepth) || 0,
     generationGroupId: generationGroupId || null,
+    providerMetadata: normalizedProviderMetadata == null
+      ? null
+      : Object.freeze(normalizedProviderMetadata),
     usage: Object.freeze({
       inputTokens: Number(usage.inputTokens) || 0,
       outputTokens: Number(usage.outputTokens) || 0,

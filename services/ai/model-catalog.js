@@ -39,14 +39,26 @@ const COMMON_TEXT_CAPABILITIES = Object.freeze([
   'structuredOutput',
 ]);
 
+const GROQ_TEXT_CAPABILITIES = Object.freeze([
+  'generateContent',
+  'thinking',
+  'longOutput',
+  'structuredOutput',
+  'jsonSchema',
+]);
+
+const GROQ_MODEL_IDS = Object.freeze({
+  GPT_OSS_120B: 'openai/gpt-oss-120b',
+  GPT_OSS_20B: 'openai/gpt-oss-20b',
+});
+
 // The final cross-class availability route. Keep the provider model ID in the
 // catalogue so feature code and task definitions remain provider-agnostic.
 const GENERAL_EMERGENCY_FALLBACK_MODEL_ID = 'gemini-3.5-flash-lite';
 
-// Verified against the official Google Gemini model pages on 2026-09-22.
-// Provider identity is now explicit. The legacy FLASH/FLASH_LITE family names
-// remain intact in D01 so this foundation delivery does not alter route quality
-// semantics; AIM-D03 owns the provider-neutral quality-tier migration.
+// Production seed remains byte-for-byte equivalent in routing semantics to the
+// accepted D01 baseline. AIM-D02 does not put Groq models into the live runtime
+// catalog; it registers them in a separate qualification catalog below.
 const DEFAULT_MODEL_CATALOG = Object.freeze([
   Object.freeze({
     id: 'gemini-3.8-flash',
@@ -122,12 +134,68 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
   }),
 ]);
 
+// Verified against Groq's official model documentation in AIM-D02. These
+// definitions are intentionally not part of DEFAULT_MODEL_CATALOG. The isolated
+// qualification lane opts into them explicitly; AIM-D03 owns production routing.
+const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze([
+  Object.freeze({
+    id: GROQ_MODEL_IDS.GPT_OSS_120B,
+    provider: AI_PROVIDERS.GROQ,
+    family: null,
+    channel: MODEL_CHANNELS.STABLE,
+    status: MODEL_STATUS.QUALIFYING,
+    rank: 0,
+    supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
+    capabilities: GROQ_TEXT_CAPABILITIES,
+    inputModalities: Object.freeze(['TEXT']),
+    outputModalities: Object.freeze(['TEXT']),
+    inputTokenLimit: 131072,
+    outputTokenLimit: 65536,
+    structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
+    reasoningControl: 'reasoning_effort',
+    qualityTier: null,
+    productionEligible: false,
+    metadata: Object.freeze({
+      providerReleaseStatus: 'ACTIVE',
+      qualificationLane: 'AIM_D02_ISOLATED',
+    }),
+  }),
+  Object.freeze({
+    id: GROQ_MODEL_IDS.GPT_OSS_20B,
+    provider: AI_PROVIDERS.GROQ,
+    family: null,
+    channel: MODEL_CHANNELS.STABLE,
+    status: MODEL_STATUS.QUALIFYING,
+    rank: 0,
+    supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
+    capabilities: GROQ_TEXT_CAPABILITIES,
+    inputModalities: Object.freeze(['TEXT']),
+    outputModalities: Object.freeze(['TEXT']),
+    inputTokenLimit: 131072,
+    outputTokenLimit: 65536,
+    structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
+    reasoningControl: 'reasoning_effort',
+    qualityTier: null,
+    productionEligible: false,
+    metadata: Object.freeze({
+      providerReleaseStatus: 'ACTIVE',
+      qualificationLane: 'AIM_D02_ISOLATED',
+    }),
+  }),
+]);
+
 function _cloneModel(model) {
   return {
     ...model,
     provider: model.provider || AI_PROVIDERS.GOOGLE,
     supportedThinking: [...(model.supportedThinking || [])],
     capabilities: [...(model.capabilities || [])],
+    inputModalities: model.inputModalities ? [...model.inputModalities] : undefined,
+    outputModalities: model.outputModalities ? [...model.outputModalities] : undefined,
+    structuredOutputModes: model.structuredOutputModes
+      ? [...model.structuredOutputModes]
+      : undefined,
+    metadata: model.metadata ? { ...model.metadata } : undefined,
   };
 }
 
@@ -196,13 +264,24 @@ function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
   });
 }
 
+function createQualificationModelCatalog() {
+  return createModelCatalog([
+    ...DEFAULT_MODEL_CATALOG,
+    ...GROQ_QUALIFICATION_MODEL_CATALOG,
+  ]);
+}
+
 module.exports = {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
   MODEL_STATUS,
   modelVersionRank,
   COMMON_TEXT_CAPABILITIES,
+  GROQ_TEXT_CAPABILITIES,
+  GROQ_MODEL_IDS,
   GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
   DEFAULT_MODEL_CATALOG,
+  GROQ_QUALIFICATION_MODEL_CATALOG,
   createModelCatalog,
+  createQualificationModelCatalog,
 };

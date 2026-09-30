@@ -2,10 +2,19 @@
 
 const { AI_TASKS } = require('./task-registry');
 const { AIError, AI_ERROR_CODES } = require('./errors');
-const { createModelCatalog, DEFAULT_MODEL_CATALOG, MODEL_STATUS } = require('./model-catalog');
+const {
+  createModelCatalog,
+  createQualificationModelCatalog,
+  DEFAULT_MODEL_CATALOG,
+  MODEL_STATUS,
+} = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
-const { createProjectPool } = require('./project-pool');
+const { createProjectPool, createGroqCredentialPool } = require('./project-pool');
 const { createGeminiTransport } = require('./gemini-transport');
+const { createGroqProviderAdapter } = require('./groq-provider-adapter');
+const { createProviderRegistry } = require('./provider-registry');
+const { createIsolatedProviderExecutor } = require('./isolated-provider-executor');
+const { AI_PROVIDERS } = require('./providers');
 const { createPostgresAIStore } = require('./postgres-store');
 const { createQuotaManager } = require('./quota-manager');
 const { createTelemetry } = require('./telemetry');
@@ -62,7 +71,9 @@ function createAIRuntime({
 } = {}) {
   const store = createPostgresAIStore({ query, randomUUID });
   const catalog = createModelCatalog();
+  const qualificationCatalog = createQualificationModelCatalog();
   const projectPool = createProjectPool({ env });
+  const groqCredentialPool = createGroqCredentialPool({ env });
   const quotaManager = createQuotaManager({ store });
   const telemetry = createTelemetry({ store, logger });
   const modelLifecycle = createModelLifecycle({ catalog, store, logger });
@@ -100,6 +111,20 @@ function createAIRuntime({
     },
   });
   const transport = createGeminiTransport({ fetchImpl });
+
+  // AIM-D02 attaches Groq to the central AI runtime without changing the live
+  // task router. Production ai.run() continues through the accepted Gemini
+  // transport/pool. Only explicit runIsolatedProvider() calls can reach Groq.
+  const groqProviderAdapter = createGroqProviderAdapter({ fetchImpl });
+  const providerRegistry = createProviderRegistry([groqProviderAdapter]);
+  const isolatedProviderExecutor = createIsolatedProviderExecutor({
+    providerRegistry,
+    credentialPools: {
+      [AI_PROVIDERS.GROQ]: groqCredentialPool,
+    },
+    catalog: qualificationCatalog,
+    logger,
+  });
 
   const qualifier = createModelQualifier({
     transport,
@@ -147,7 +172,7 @@ function createAIRuntime({
     });
   }
 
-  const orchestrator = createAIOrchestrator({
+  const productionOrchestrator = createAIOrchestrator({
     assertReady,
     registry: AI_TASKS,
     catalog,
@@ -163,6 +188,10 @@ function createAIRuntime({
     transport,
     logger,
     env,
+  });
+  const orchestrator = Object.freeze({
+    ...productionOrchestrator,
+    runIsolatedProvider: isolatedProviderExecutor.execute,
   });
 
   let discoveryTimer = null;
@@ -461,8 +490,10 @@ function createAIRuntime({
 
   function status() {
     const slots = projectPool.snapshot();
+    const groqSlots = groqCredentialPool.snapshot();
     const quotaRows = quotaManager.snapshot();
     const catalogRows = catalog.list();
+    const qualificationRows = qualificationCatalog.list({ provider: AI_PROVIDERS.GROQ });
     const providerRows = providerHealth.snapshot();
     const trafficState = trafficController.snapshot();
     const recentTelemetry = telemetry.snapshot();
@@ -490,6 +521,20 @@ function createAIRuntime({
       projectSlots: Object.freeze({
         total: slots.length,
         enabled: slots.filter((slot) => slot.enabled).length,
+      }),
+      providerFoundation: Object.freeze({
+        registeredProviders: providerRegistry.list(),
+        groqCredentialSlots: Object.freeze({
+          total: groqSlots.length,
+          enabled: groqSlots.filter((slot) => slot.enabled).length,
+        }),
+        groqQualificationModels: Object.freeze(
+          qualificationRows.map((model) => Object.freeze({
+            id: model.id,
+            status: model.status,
+            productionEligible: Boolean(model.productionEligible),
+          }))
+        ),
       }),
       routes: Object.freeze({
         VVIP: Object.freeze(safePlan('MAIN_CBT')),
@@ -653,7 +698,11 @@ function createAIRuntime({
   return Object.freeze({
     store,
     catalog,
+    qualificationCatalog,
     projectPool,
+    groqCredentialPool,
+    providerRegistry,
+    isolatedProviderExecutor,
     quotaManager,
     telemetry,
     modelLifecycle,
