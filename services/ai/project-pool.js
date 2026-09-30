@@ -32,7 +32,7 @@ function buildProviderCredentialSlots(env = process.env, {
   const safeMaxKeys = Math.max(1, Number(maxKeys) || DEFAULT_MAX_PROVIDER_CREDENTIALS);
 
   for (let index = 1; index <= safeMaxKeys; index++) {
-    const envName = indexedEnvName(envBaseName, index);
+    const envName = indexedEnvName(baseNameOrThrow(envBaseName), index);
     const raw = env?.[envName];
     if (!raw || !String(raw).trim()) continue;
 
@@ -50,6 +50,11 @@ function buildProviderCredentialSlots(env = process.env, {
   }
 
   return slots;
+}
+
+function baseNameOrThrow(value) {
+  if (!value) throw new Error('Provider credential environment base name is required');
+  return value;
 }
 
 function createRotatingCredentialPool({
@@ -191,10 +196,6 @@ function providerForRoute(routeKey) {
   return GROQ_MODEL_ID_SET.has(modelId) ? AI_PROVIDERS.GROQ : AI_PROVIDERS.GOOGLE;
 }
 
-// Historical name retained because the orchestrator imports createProjectPool.
-// D03 turns it into the central production credential selector: candidate model
-// metadata determines which provider pool supplies the credential. Feature code
-// never sees or chooses a credential/provider.
 function createProjectPool({
   env = process.env,
   maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
@@ -219,11 +220,28 @@ function createProjectPool({
     return null;
   }
 
+  function productionSlots(routeKey, options = {}, advance = false) {
+    const provider = providerForRoute(routeKey);
+    const pool = poolForRoute(routeKey);
+    const ordered = advance
+      ? pool.orderedSlots(routeKey, options)
+      : pool.peekOrderedSlots(routeKey, options);
+
+    if (provider !== AI_PROVIDERS.GROQ) return ordered;
+
+    // Groq credentials commonly share organization/project rate limits. One
+    // provider attempt must therefore never sweep every configured key after a
+    // 429. Expose one rotating credential per model attempt; auth failures still
+    // disable that credential centrally, and subsequent model/request attempts
+    // naturally move to another enabled credential.
+    return ordered.slice(0, 1);
+  }
+
   return Object.freeze({
     count: () => googlePool.count() + groqPool.count(),
     enabledCount: () => googlePool.enabledCount() + groqPool.enabledCount(),
-    orderedSlots: (routeKey, options = {}) => poolForRoute(routeKey).orderedSlots(routeKey, options),
-    peekOrderedSlots: (routeKey, options = {}) => poolForRoute(routeKey).peekOrderedSlots(routeKey, options),
+    orderedSlots: (routeKey, options = {}) => productionSlots(routeKey, options, true),
+    peekOrderedSlots: (routeKey, options = {}) => productionSlots(routeKey, options, false),
     disable: (slotId, reason) => poolForSlot(slotId)?.disable(slotId, reason) || false,
     enable: (slotId) => poolForSlot(slotId)?.enable(slotId) || false,
     get: (slotId) => poolForSlot(slotId)?.get(slotId) || null,
