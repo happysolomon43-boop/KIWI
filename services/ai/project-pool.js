@@ -1,6 +1,7 @@
 'use strict';
 
 const { AI_PROVIDERS } = require('./providers');
+const { GROQ_MODEL_IDS } = require('./model-catalog');
 
 const DEFAULT_MAX_PROVIDER_CREDENTIALS = 15;
 
@@ -89,10 +90,7 @@ function createRotatingCredentialPool({
       ordered.push(available[(normalizedStart + offset) % available.length]);
     }
 
-    if (advance) {
-      cursors.set(cursorKey, (normalizedStart + 1) % available.length);
-    }
-
+    if (advance) cursors.set(cursorKey, (normalizedStart + 1) % available.length);
     return ordered;
   }
 
@@ -163,18 +161,6 @@ function buildProjectSlots(env = process.env, maxKeys = DEFAULT_MAX_PROVIDER_CRE
   });
 }
 
-function createProjectPool({
-  env = process.env,
-  maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
-  slots: suppliedSlots = null,
-  clock,
-} = {}) {
-  return createRotatingCredentialPool({
-    slots: suppliedSlots || buildProjectSlots(env, maxKeys),
-    clock,
-  });
-}
-
 function buildGroqCredentialSlots(env = process.env, maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS) {
   return buildProviderCredentialSlots(env, {
     envBaseName: 'GROQ_API_KEY',
@@ -194,6 +180,57 @@ function createGroqCredentialPool({
   return createRotatingCredentialPool({
     slots: suppliedSlots || buildGroqCredentialSlots(env, maxKeys),
     clock,
+  });
+}
+
+const GROQ_MODEL_ID_SET = new Set(Object.values(GROQ_MODEL_IDS));
+
+function providerForRoute(routeKey) {
+  const text = String(routeKey || '');
+  const modelId = text.includes('::') ? text.split('::').pop() : text;
+  return GROQ_MODEL_ID_SET.has(modelId) ? AI_PROVIDERS.GROQ : AI_PROVIDERS.GOOGLE;
+}
+
+// Historical name retained because the orchestrator imports createProjectPool.
+// D03 turns it into the central production credential selector: candidate model
+// metadata determines which provider pool supplies the credential. Feature code
+// never sees or chooses a credential/provider.
+function createProjectPool({
+  env = process.env,
+  maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
+  slots: suppliedSlots = null,
+  clock,
+} = {}) {
+  const googlePool = createRotatingCredentialPool({
+    slots: suppliedSlots || buildProjectSlots(env, maxKeys),
+    clock,
+  });
+  const groqPool = createGroqCredentialPool({ env, maxKeys, clock });
+
+  function poolForRoute(routeKey) {
+    return providerForRoute(routeKey) === AI_PROVIDERS.GROQ
+      ? groqPool
+      : googlePool;
+  }
+
+  function poolForSlot(slotId) {
+    if (groqPool.get(slotId)) return groqPool;
+    if (googlePool.get(slotId)) return googlePool;
+    return null;
+  }
+
+  return Object.freeze({
+    count: () => googlePool.count() + groqPool.count(),
+    enabledCount: () => googlePool.enabledCount() + groqPool.enabledCount(),
+    orderedSlots: (routeKey, options = {}) => poolForRoute(routeKey).orderedSlots(routeKey, options),
+    peekOrderedSlots: (routeKey, options = {}) => poolForRoute(routeKey).peekOrderedSlots(routeKey, options),
+    disable: (slotId, reason) => poolForSlot(slotId)?.disable(slotId, reason) || false,
+    enable: (slotId) => poolForSlot(slotId)?.enable(slotId) || false,
+    get: (slotId) => poolForSlot(slotId)?.get(slotId) || null,
+    snapshot: () => [...googlePool.snapshot(), ...groqPool.snapshot()],
+    providerSnapshot: (provider) => (
+      provider === AI_PROVIDERS.GROQ ? groqPool.snapshot() : googlePool.snapshot()
+    ),
   });
 }
 
@@ -229,6 +266,7 @@ module.exports = {
   createProjectPool,
   buildGroqCredentialSlots,
   createGroqCredentialPool,
+  providerForRoute,
   buildCloudflareCredentialSlots,
   createCloudflareCredentialPool,
 };
