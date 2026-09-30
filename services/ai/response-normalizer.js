@@ -1,5 +1,8 @@
 'use strict';
 
+const { AI_PROVIDERS } = require('./providers');
+const { createExecutionResponse } = require('./execution-contracts');
+
 const SAFETY_FINISH_REASONS = new Set([
   'SAFETY',
   'BLOCKLIST',
@@ -32,24 +35,25 @@ function normalizeGeminiResponse(raw, {
     SAFETY_FINISH_REASONS.has(String(finishReason).toUpperCase())
   );
 
-  return Object.freeze({
+  return createExecutionResponse({
+    provider: AI_PROVIDERS.GOOGLE,
+    requestedModel: modelId || 'unknown-google-model',
+    providerModel: raw?.modelVersion || modelId || null,
     text: visibleTextFromParts(parts),
     finishReason,
     blocked,
     blockReason: promptBlockReason || (blocked ? finishReason : null),
-    providerModel: raw?.modelVersion || modelId || null,
-    requestedModel: modelId || null,
-    projectSlot: slotId || null,
+    credentialSlot: slotId || null,
     latencyMs,
     fallbackDepth,
     generationGroupId,
-    usage: Object.freeze({
+    usage: {
       inputTokens: Number(usage.promptTokenCount) || 0,
       outputTokens: Number(usage.candidatesTokenCount) || 0,
       thoughtTokens: Number(usage.thoughtsTokenCount) || 0,
       totalTokens: Number(usage.totalTokenCount) || 0,
       cachedContentTokens: Number(usage.cachedContentTokenCount) || 0,
-    }),
+    },
   });
 }
 
