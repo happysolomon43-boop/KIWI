@@ -230,11 +230,13 @@ function createModelRouter({
       ).generationConfig;
     }
 
+    const routeOverrideApplies =
+      model.provider === AI_PROVIDERS.GROQ &&
+      requirement.routeOverride?.modelId === model.id;
     const routeGenerationConfig = {};
     const overrideBudget = Number(requirement.routeOverride?.maxCompletionTokens);
     if (
-      model.provider === AI_PROVIDERS.GROQ &&
-      requirement.routeOverride?.modelId === model.id &&
+      routeOverrideApplies &&
       Number.isFinite(overrideBudget) &&
       overrideBudget > 0
     ) {
@@ -243,6 +245,9 @@ function createModelRouter({
         Number(model.outputTokenLimit) || Math.floor(overrideBudget)
       );
     }
+
+    const overrideAttemptTimeoutMs = Number(requirement.routeOverride?.attemptTimeoutMs);
+    const overrideOperationTimeoutMs = Number(requirement.routeOverride?.operationTimeoutMs);
 
     const modelRef = createProviderModelRef({
       provider: model.provider,
@@ -260,6 +265,12 @@ function createModelRouter({
       reasoning: Object.freeze({ requested, resolved }),
       thinkingGenerationConfig: Object.freeze({ ...thinkingGenerationConfig }),
       routeGenerationConfig: Object.freeze({ ...routeGenerationConfig }),
+      routeAttemptTimeoutMs: routeOverrideApplies && Number.isFinite(overrideAttemptTimeoutMs)
+        ? Math.max(1, Math.floor(overrideAttemptTimeoutMs))
+        : null,
+      routeOperationTimeoutMs: routeOverrideApplies && Number.isFinite(overrideOperationTimeoutMs)
+        ? Math.max(1, Math.floor(overrideOperationTimeoutMs))
+        : null,
       timeoutMs: task.timeoutMs,
       retryPolicy: task.retryPolicy,
       class: task.class,
