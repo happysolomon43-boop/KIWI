@@ -24,6 +24,30 @@ function normalizeGeminiResponse(raw, {
   fallbackDepth = 0,
   generationGroupId = null,
 } = {}) {
+  // D03 keeps the public normalizer name for compatibility, but the central
+  // transport may already have produced the provider-neutral response. Rebind
+  // only orchestrator-owned execution metadata (slot/fallback/affinity); never
+  // expose credential material.
+  if (raw?.__kiwiExecutionResponse) {
+    const response = raw.__kiwiExecutionResponse;
+    return createExecutionResponse({
+      provider: response.provider,
+      requestedModel: response.requestedModel || modelId,
+      providerModel: response.providerModel || response.requestedModel || modelId,
+      text: response.text,
+      structuredData: response.structuredData,
+      finishReason: response.finishReason,
+      blocked: response.blocked,
+      blockReason: response.blockReason,
+      usage: response.usage,
+      latencyMs: latencyMs ?? response.latencyMs,
+      credentialSlot: slotId || response.credentialSlot || null,
+      fallbackDepth,
+      generationGroupId: generationGroupId || response.generationGroupId || null,
+      providerMetadata: response.providerMetadata,
+    });
+  }
+
   const candidate = raw?.candidates?.[0] || null;
   const parts = candidate?.content?.parts || [];
   const finishReason = candidate?.finishReason || 'UNKNOWN';
