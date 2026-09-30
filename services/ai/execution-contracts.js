@@ -42,17 +42,34 @@ function normalizeReasoningDirective(value = null) {
   return Object.freeze({ requested, resolved });
 }
 
+function normalizeStructuredOutputDirective(value = null) {
+  if (!value || typeof value !== 'object') return null;
+  const mimeType = String(value.mimeType || 'application/json').trim();
+  const schema = value.schema == null ? null : _cloneJsonCompatible(value.schema);
+  if (!mimeType && schema == null) return null;
+  return Object.freeze({
+    mimeType: mimeType || 'application/json',
+    schema,
+  });
+}
+
 function normalizeGenerationOptions(options = {}) {
   const source = options && typeof options === 'object' ? options : {};
   const reasoning = normalizeReasoningDirective(source.reasoning || null);
+  const structuredOutput = normalizeStructuredOutputDirective(source.structuredOutput || null);
   const normalized = {};
 
   for (const [key, value] of Object.entries(source)) {
-    if (key === 'reasoning' || value === undefined) continue;
+    if (
+      key === 'reasoning' ||
+      key === 'structuredOutput' ||
+      value === undefined
+    ) continue;
     normalized[key] = _cloneJsonCompatible(value);
   }
 
   if (reasoning) normalized.reasoning = reasoning;
+  if (structuredOutput) normalized.structuredOutput = structuredOutput;
   return Object.freeze(normalized);
 }
 
@@ -128,6 +145,7 @@ module.exports = {
   AI_CONTENT_KINDS,
   normalizeExecutionContent,
   normalizeReasoningDirective,
+  normalizeStructuredOutputDirective,
   normalizeGenerationOptions,
   createExecutionRequest,
   createExecutionResponse,
