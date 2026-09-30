@@ -1,7 +1,7 @@
 'use strict';
 
 const { AI_PROVIDERS } = require('./providers');
-const { MODEL_QUALITY_TIERS } = require('./model-catalog');
+const { MODEL_QUALITY_TIERS, GROQ_MODEL_IDS } = require('./model-catalog');
 const {
   AI_CLASSES,
   AI_EXECUTION_LANES,
@@ -13,6 +13,9 @@ const PROVIDER_MODES = Object.freeze({
   GOOGLE_FIRST: 'GOOGLE_FIRST',
   GOOGLE_ONLY: 'GOOGLE_ONLY',
 });
+
+const MAIN_CBT_PROVIDER_MODE_ENV = 'AI_MAIN_CBT_PROVIDER_MODE';
+const MAIN_CBT_GROQ_MODEL_ID = GROQ_MODEL_IDS.GPT_OSS_120B;
 
 const PROTECTED_ASSESSMENT_TASKS = Object.freeze(new Set([
   'MAIN_CBT',
@@ -41,7 +44,24 @@ function normalizeProviderMode(value, fallback = PROVIDER_MODES.GOOGLE_ONLY) {
     : fallback;
 }
 
-function requiredQualityTier(taskId, task) {
+function mainCbtProviderMode(env = process.env) {
+  return normalizeProviderMode(
+    env?.[MAIN_CBT_PROVIDER_MODE_ENV],
+    PROVIDER_MODES.GOOGLE_ONLY
+  );
+}
+
+function mainCbtGroqOverrideActive(env = process.env) {
+  return mainCbtProviderMode(env) !== PROVIDER_MODES.GOOGLE_ONLY;
+}
+
+function requiredQualityTier(taskId, task, env = process.env) {
+  // Explicit product-owner Main CBT override. This does not globally promote
+  // GPT-OSS 120B to HIGH_STAKES. It admits the already-approved PREMIUM 120B
+  // route only for MAIN_CBT while its dedicated provider switch is enabled.
+  if (taskId === 'MAIN_CBT' && mainCbtGroqOverrideActive(env)) {
+    return MODEL_QUALITY_TIERS.PREMIUM;
+  }
   if (PROTECTED_ASSESSMENT_TASKS.has(taskId)) {
     return MODEL_QUALITY_TIERS.HIGH_STAKES;
   }
@@ -59,6 +79,10 @@ function hasLegacyMultimodalRequirement(task) {
 }
 
 function providerModeForTask(taskId, task, env = process.env) {
+  // MAIN_CBT alone has an independent controlled activation switch. Default is
+  // GOOGLE_ONLY. Other protected assessment routes remain Google-only until
+  // they receive their own qualification/activation decision.
+  if (taskId === 'MAIN_CBT') return mainCbtProviderMode(env);
   if (PROTECTED_ASSESSMENT_TASKS.has(taskId)) return PROVIDER_MODES.GOOGLE_ONLY;
   // D04 owns neutral multimodal routing. D03 must not send provider-native
   // image payloads to a text-only Groq adapter.
@@ -85,23 +109,38 @@ function preferEfficientGroqModel(taskId, task) {
 
 function routingRequirement(taskId, task, env = process.env) {
   const mode = providerModeForTask(taskId, task, env);
+  const mainCbtOverride = taskId === 'MAIN_CBT' && mode !== PROVIDER_MODES.GOOGLE_ONLY;
   return Object.freeze({
     taskId,
     requiredCapabilities: Object.freeze([...(task?.capabilities || [])]),
-    requiredQualityTier: requiredQualityTier(taskId, task),
+    requiredQualityTier: requiredQualityTier(taskId, task, env),
     providerMode: mode,
     providerOrder: providerOrder(mode),
     preferEfficientGroqModel: preferEfficientGroqModel(taskId, task),
+    allowedGroqModelIds: mainCbtOverride
+      ? Object.freeze([MAIN_CBT_GROQ_MODEL_ID])
+      : null,
     assessmentProtected: PROTECTED_ASSESSMENT_TASKS.has(taskId),
     multimodalProtected: hasLegacyMultimodalRequirement(task),
+    routeOverride: mainCbtOverride
+      ? Object.freeze({
+          scope: 'MAIN_CBT',
+          modelId: MAIN_CBT_GROQ_MODEL_ID,
+          source: MAIN_CBT_PROVIDER_MODE_ENV,
+        })
+      : null,
   });
 }
 
 module.exports = {
   PROVIDER_MODES,
+  MAIN_CBT_PROVIDER_MODE_ENV,
+  MAIN_CBT_GROQ_MODEL_ID,
   PROTECTED_ASSESSMENT_TASKS,
   LOW_RISK_GROQ_20B_TASKS,
   normalizeProviderMode,
+  mainCbtProviderMode,
+  mainCbtGroqOverrideActive,
   requiredQualityTier,
   providerModeForTask,
   providerOrder,
