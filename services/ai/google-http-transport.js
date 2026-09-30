@@ -1,11 +1,17 @@
 'use strict';
 
+const { AI_PROVIDERS } = require('./providers');
 const {
   AIError,
-  classifyGeminiHttpError,
+  classifyGoogleHttpError,
   networkError,
   timeoutError,
 } = require('./errors');
+
+const GOOGLE_ERROR_CONTEXT = Object.freeze({
+  provider: AI_PROVIDERS.GOOGLE,
+  providerLabel: 'Google AI',
+});
 
 function normalizeGoogleContents(content) {
   if (typeof content === 'string') {
@@ -70,7 +76,7 @@ function createGoogleHttpTransport({
       const latencyMs = Date.now() - startedAt;
 
       if (!response.ok) {
-        throw classifyGeminiHttpError({
+        throw classifyGoogleHttpError({
           status: response.status,
           body: responseBody,
           headers: response.headers,
@@ -90,10 +96,10 @@ function createGoogleHttpTransport({
         controller.signal.aborted ||
         String(error?.message || '').toLowerCase().includes('aborted')
       ) {
-        throw timeoutError(timeoutMs, error);
+        throw timeoutError(timeoutMs, error, GOOGLE_ERROR_CONTEXT);
       }
 
-      throw networkError(error);
+      throw networkError(error, GOOGLE_ERROR_CONTEXT);
     } finally {
       clearTimeout(timer);
     }
@@ -126,7 +132,7 @@ function createGoogleHttpTransport({
         });
         const responseBody = await readResponseBody(response);
         if (!response.ok) {
-          throw classifyGeminiHttpError({
+          throw classifyGoogleHttpError({
             status: response.status,
             body: responseBody,
             headers: response.headers,
@@ -142,9 +148,9 @@ function createGoogleHttpTransport({
           controller.signal.aborted ||
           String(error?.message || '').toLowerCase().includes('aborted')
         ) {
-          throw timeoutError(timeoutMs, error);
+          throw timeoutError(timeoutMs, error, GOOGLE_ERROR_CONTEXT);
         }
-        throw networkError(error);
+        throw networkError(error, GOOGLE_ERROR_CONTEXT);
       } finally {
         clearTimeout(timer);
       }
@@ -160,6 +166,7 @@ function createGoogleHttpTransport({
 }
 
 module.exports = {
+  GOOGLE_ERROR_CONTEXT,
   normalizeGoogleContents,
   readResponseBody,
   createGoogleHttpTransport,
