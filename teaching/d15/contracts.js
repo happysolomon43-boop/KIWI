@@ -1,6 +1,6 @@
 'use strict';
 
-const decisionRegistry = require('../policy/decisions-v1.json');
+const decisionRegistry = require('../policy/d06-decision-registry.json');
 
 const ATTENDANCE_OUTCOMES = Object.freeze([
   'PENDING','ON_TIME','LATE','PARTIAL','UNEXCUSED_ABSENCE','EXCUSED_ABSENCE',
