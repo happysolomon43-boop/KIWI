@@ -34,7 +34,7 @@ function mapGroqReasoningEffort(reasoning) {
     .toUpperCase();
   if (!resolved) return null;
   if (!GROQ_SUPPORTED_REASONING.includes(resolved)) {
-    throw new AIError(`Groq GPT-OSS cannot satisfy reasoning level ${resolved}`, {
+    throw new AIError(`Groq model cannot satisfy reasoning level ${resolved}`, {
       code: AI_ERROR_CODES.BAD_REQUEST,
       retryable: false,
       scope: 'REQUEST',
@@ -194,6 +194,8 @@ function serializeGroqExecutionRequest(request) {
       // keep reasoning private while preserving the requested effort level.
       body.include_reasoning = false;
     } else {
+      // Qwen-family reasoning models use reasoning_format. Keep hidden
+      // reasoning private while preserving the requested effort level.
       body.reasoning_format = 'hidden';
     }
   }
