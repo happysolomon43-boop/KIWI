@@ -139,6 +139,11 @@ function createModelRouter({
       modelMeetsQuality(model, requirement.requiredQualityTier)
     ));
 
+    if (Array.isArray(requirement.allowedGroqModelIds)) {
+      const allowed = new Set(requirement.allowedGroqModelIds);
+      models = models.filter((model) => allowed.has(model.id));
+    }
+
     models = models.filter((model) => {
       if (task.reasoning === 'MINIMAL') return model.supportedThinking.includes('LOW');
       return model.supportedThinking.includes(task.reasoning);
