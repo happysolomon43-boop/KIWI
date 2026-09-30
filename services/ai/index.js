@@ -3,8 +3,25 @@
 const { createAIOrchestrator } = require('./orchestrator');
 const { createModelCatalog } = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
-const { createProjectPool } = require('./project-pool');
+const {
+  createProjectPool,
+  createGroqCredentialPool,
+  createCloudflareCredentialPool,
+} = require('./project-pool');
 const { createGeminiTransport } = require('./gemini-transport');
+const { createGoogleProviderAdapter } = require('./google-provider-adapter');
+const { createProviderRegistry } = require('./provider-registry');
+const { AI_PROVIDERS } = require('./providers');
+const {
+  createExecutionRequest,
+  createExecutionResponse,
+} = require('./execution-contracts');
+const {
+  QUOTA_SCOPES,
+  getProviderQuotaPolicy,
+  credentialFailureAction,
+  quotaScopeFromError,
+} = require('./quota-policy');
 const { normalizeGeminiResponse } = require('./response-normalizer');
 const { createQuotaManager } = require('./quota-manager');
 const { createTelemetry } = require('./telemetry');
@@ -21,7 +38,18 @@ module.exports = {
   createModelCatalog,
   createModelRouter,
   createProjectPool,
+  createGroqCredentialPool,
+  createCloudflareCredentialPool,
   createGeminiTransport,
+  createGoogleProviderAdapter,
+  createProviderRegistry,
+  AI_PROVIDERS,
+  createExecutionRequest,
+  createExecutionResponse,
+  QUOTA_SCOPES,
+  getProviderQuotaPolicy,
+  credentialFailureAction,
+  quotaScopeFromError,
   normalizeGeminiResponse,
   createQuotaManager,
   createTelemetry,
