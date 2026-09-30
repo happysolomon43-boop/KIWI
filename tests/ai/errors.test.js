@@ -3,13 +3,36 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const { AI_PROVIDERS } = require('../../services/ai/providers');
 const {
   AI_ERROR_CODES,
+  AIError,
   QUOTA_DIMENSIONS,
+  classifyGoogleHttpError,
   classifyGeminiHttpError,
   extractProviderEvidence,
   extractRetryDelayMs,
 } = require('../../services/ai/errors');
+
+test('generic AIError has no hidden provider identity', () => {
+  const error = new AIError('generic failure');
+  assert.equal(error.provider, null);
+});
+
+test('Google error adapter explicitly binds provider identity while preserving Gemini compatibility alias', () => {
+  const google = classifyGoogleHttpError({
+    status: 400,
+    body: { error: { message: 'Invalid generation config' } },
+  });
+  const legacy = classifyGeminiHttpError({
+    status: 400,
+    body: { error: { message: 'Invalid generation config' } },
+  });
+
+  assert.equal(google.provider, AI_PROVIDERS.GOOGLE);
+  assert.equal(legacy.provider, AI_PROVIDERS.GOOGLE);
+  assert.equal(google.code, legacy.code);
+});
 
 test('classifies bad requests as non-retryable request failures', () => {
   const error = classifyGeminiHttpError({
@@ -20,6 +43,7 @@ test('classifies bad requests as non-retryable request failures', () => {
   assert.equal(error.code, AI_ERROR_CODES.BAD_REQUEST);
   assert.equal(error.retryable, false);
   assert.equal(error.scope, 'REQUEST');
+  assert.equal(error.provider, AI_PROVIDERS.GOOGLE);
 });
 
 test('classifies auth failures as slot-scoped', () => {
