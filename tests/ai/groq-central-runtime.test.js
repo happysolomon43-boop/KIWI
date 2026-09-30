@@ -88,9 +88,10 @@ test('createAIRuntime owns isolated Groq execution without changing ai.run produ
 
   const productionPlan = runtime.orchestrator.plan('MAIN_CBT');
   assert.ok(productionPlan.candidates.length > 0);
-  assert.ok(productionPlan.candidates.every(
-    (candidate) => candidate.provider === AI_PROVIDERS.GOOGLE
-  ));
+  assert.ok(productionPlan.candidates.every((candidate) => {
+    const model = runtime.catalog.get(candidate.modelId);
+    return model?.provider === AI_PROVIDERS.GOOGLE;
+  }));
 
   const status = runtime.status();
   assert.deepEqual(status.providerFoundation.registeredProviders, [AI_PROVIDERS.GROQ]);
