@@ -13,6 +13,7 @@ const {
   GROQ_PRODUCTION_MODEL_CATALOG,
   GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
   modelMeetsQuality,
+  createModelCatalog,
 } = require('./model-catalog');
 const {
   buildGeminiThinkingConfig,
@@ -29,14 +30,10 @@ const {
 
 function createModelRouter({
   registry = AI_TASKS,
-  catalog,
+  catalog = createModelCatalog(),
   pins = {},
   env = process.env,
 } = {}) {
-  if (!catalog?.list || !catalog?.get || !catalog?.upsert) {
-    throw new Error('AI model router requires a model catalog');
-  }
-
   function getTask(taskId) {
     const task = registry[taskId];
     if (!task) {
@@ -52,7 +49,6 @@ function createModelRouter({
   function ensureGroqProductionCatalog() {
     for (const model of GROQ_PRODUCTION_MODEL_CATALOG) {
       const current = catalog.get(model.id);
-      // Never overwrite a runtime suspension/retirement/deny decision.
       if (current && current.status !== MODEL_STATUS.APPROVED) continue;
       catalog.upsert({
         ...model,
@@ -95,9 +91,6 @@ function createModelRouter({
     return models.concat(fallback);
   }
 
-  // This is the accepted pre-D03 Google route graph. Keeping it as a dedicated
-  // compatibility path makes AI_TEXT_PROVIDER_MODE=GOOGLE_ONLY a real rollback,
-  // not an approximation of the old behavior.
   function legacyGoogleModels(task) {
     const flash = eligibleFamily(MODEL_FAMILIES.FLASH, task);
     const lite = eligibleFamily(MODEL_FAMILIES.FLASH_LITE, task);
@@ -144,8 +137,6 @@ function createModelRouter({
       modelMeetsQuality(model, requirement.requiredQualityTier)
     ));
 
-    // GPT-OSS does not expose MINIMAL. Mapping MINIMAL -> LOW is an explicit
-    // upward reasoning translation; HIGH is never silently lowered.
     models = models.filter((model) => {
       if (task.reasoning === 'MINIMAL') return model.supportedThinking.includes('LOW');
       return model.supportedThinking.includes(task.reasoning);
@@ -162,8 +153,6 @@ function createModelRouter({
 
   function neutralGoogleModels(task, requirement) {
     const legacy = legacyGoogleModels(task);
-    // Protected assessment tasks intentionally preserve the historical Google
-    // emergency chain exactly until their independent route qualification closes.
     if (requirement.assessmentProtected) return legacy;
     return legacy.filter((model) =>
       modelMeetsQuality(model, requirement.requiredQualityTier) || task.degradationAllowed
@@ -186,18 +175,13 @@ function createModelRouter({
     if (model.provider === AI_PROVIDERS.GROQ) {
       resolved = requested === 'MINIMAL' ? 'LOW' : requested;
       if (!model.supportedThinking.includes(resolved)) {
-        throw new AIError(
-          `${model.id} cannot satisfy reasoning level ${requested}`,
-          {
-            code: AI_ERROR_CODES.CONFIG,
-            retryable: false,
-            scope: 'MODEL',
-            provider: model.provider,
-          }
-        );
+        throw new AIError(`${model.id} cannot satisfy reasoning level ${requested}`, {
+          code: AI_ERROR_CODES.CONFIG,
+          retryable: false,
+          scope: 'MODEL',
+          provider: model.provider,
+        });
       }
-      // Neutral internal directive. The provider-aware compatibility transport
-      // translates this into Groq reasoning_effort.
       thinkingGenerationConfig = {
         reasoning: Object.freeze({ requested, resolved }),
       };
@@ -281,13 +265,7 @@ function createModelRouter({
     return routingRequirement(taskId, task, env);
   }
 
-  return Object.freeze({
-    getTask,
-    resolveCandidates,
-    describeRequirement,
-  });
+  return Object.freeze({ getTask, resolveCandidates, describeRequirement });
 }
 
-module.exports = {
-  createModelRouter,
-};
+module.exports = { createModelRouter };
