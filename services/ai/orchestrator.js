@@ -127,23 +127,46 @@ function createAIOrchestrator({
     120000
   );
 
+  function operationTimeoutFor(task, candidates = []) {
+    if (task.executionLane === AI_EXECUTION_LANES.BACKGROUND) {
+      return task.timeoutMs;
+    }
+
+    const routeOverrideMs = candidates.reduce((maximum, candidate) => {
+      const value = Number(candidate?.routeOperationTimeoutMs);
+      return Number.isFinite(value) && value > maximum ? value : maximum;
+    }, 0);
+
+    if (routeOverrideMs <= 0) return interactiveOperationTimeoutMs;
+    return Math.max(
+      interactiveOperationTimeoutMs,
+      Math.min(routeOverrideMs, Number(task.timeoutMs) || routeOverrideMs)
+    );
+  }
+
   function attemptTimeoutFor(task, candidate, {
     confirmationProbe = false,
     requestStartedAt,
+    operationTimeoutMs = interactiveOperationTimeoutMs,
   } = {}) {
     if (task.executionLane === AI_EXECUTION_LANES.BACKGROUND) {
       return candidate.timeoutMs;
     }
 
     const elapsedMs = Math.max(0, nowMs() - requestStartedAt);
-    const remainingMs = interactiveOperationTimeoutMs - elapsedMs;
+    const remainingMs = operationTimeoutMs - elapsedMs;
     if (remainingMs <= 0) return 0;
+
+    const routeAttemptTimeoutMs = Number(candidate?.routeAttemptTimeoutMs);
+    const attemptCeilingMs = Number.isFinite(routeAttemptTimeoutMs) && routeAttemptTimeoutMs > 0
+      ? routeAttemptTimeoutMs
+      : interactiveAttemptTimeoutMs;
 
     return Math.max(1, Math.min(
       candidate.timeoutMs,
       confirmationProbe
         ? confirmationProbeTimeoutMs
-        : interactiveAttemptTimeoutMs,
+        : attemptCeilingMs,
       remainingMs
     ));
   }
@@ -309,6 +332,8 @@ function createAIOrchestrator({
         requestedReasoning: candidate.requestedReasoning,
         resolvedReasoning: candidate.resolvedReasoning,
         timeoutMs: candidate.timeoutMs,
+        routeAttemptTimeoutMs: candidate.routeAttemptTimeoutMs || null,
+        routeOperationTimeoutMs: candidate.routeOperationTimeoutMs || null,
         qualityFloor: candidate.qualityFloor,
         temporarilyUnavailable: !providerAvailability.available,
         providerCircuitState: providerAvailability.state,
@@ -396,6 +421,7 @@ function createAIOrchestrator({
       }
     }
 
+    const effectiveOperationTimeoutMs = operationTimeoutFor(task, routedCandidates);
     const firstAvailableCandidate = routedCandidates.find(
       (candidate) => resolvedProviderHealth.availability(candidate.modelId).available
     );
@@ -598,10 +624,11 @@ function createAIOrchestrator({
         const attemptTimeoutMs = attemptTimeoutFor(task, candidate, {
           confirmationProbe: ownsConfirmationProbe,
           requestStartedAt: requestStarted,
+          operationTimeoutMs: effectiveOperationTimeoutMs,
         });
         if (attemptTimeoutMs <= 0) {
           throw new AIError(
-            `Interactive AI operation exceeded its ${Math.round(interactiveOperationTimeoutMs / 1000)}s deadline`,
+            `Interactive AI operation exceeded its ${Math.round(effectiveOperationTimeoutMs / 1000)}s deadline`,
             {
               code: AI_ERROR_CODES.TIMEOUT,
               status: 504,
@@ -610,7 +637,7 @@ function createAIOrchestrator({
               details: {
                 taskId,
                 operationId,
-                timeoutMs: interactiveOperationTimeoutMs,
+                timeoutMs: effectiveOperationTimeoutMs,
               },
             }
           );
@@ -625,6 +652,7 @@ function createAIOrchestrator({
         const generationConfig = {
           ...featureGenerationConfig,
           ...candidate.thinkingGenerationConfig,
+          ...candidate.routeGenerationConfig,
         };
 
         try {

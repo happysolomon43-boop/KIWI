@@ -62,6 +62,7 @@ const GROQ_TEXT_CAPABILITIES = Object.freeze([
 const GROQ_MODEL_IDS = Object.freeze({
   GPT_OSS_120B: 'openai/gpt-oss-120b',
   GPT_OSS_20B: 'openai/gpt-oss-20b',
+  QWEN_3_8_27B: 'qwen/qwen3.8-27b',
 });
 
 const GENERAL_EMERGENCY_FALLBACK_MODEL_ID = 'gemini-3.5-flash-lite';
@@ -153,6 +154,9 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
   }),
 ]);
 
+// Models in this catalog are known to the production runtime. A model can still
+// be productionEligible:false when it is intentionally limited to an explicit
+// route override (for example a controlled preview qualification experiment).
 const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
   Object.freeze({
     id: GROQ_MODEL_IDS.GPT_OSS_120B,
@@ -202,19 +206,53 @@ const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
       productionLane: 'AIM_D03_TEXT',
     }),
   }),
+  Object.freeze({
+    id: GROQ_MODEL_IDS.QWEN_3_8_27B,
+    provider: AI_PROVIDERS.GROQ,
+    family: null,
+    channel: MODEL_CHANNELS.PREVIEW,
+    status: MODEL_STATUS.APPROVED,
+    // Controlled preview only. The explicit Main CBT route override may admit
+    // this model; ordinary Groq routing must continue to ignore it.
+    rank: 5100000,
+    qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
+    productionEligible: false,
+    supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
+    // Groq exposes vision for Qwen 3.8, but KIWI's neutral multimodal contract
+    // is owned by AIM-D04. Until then this catalog entry intentionally advertises
+    // only the capabilities qualified by the existing central text transport.
+    capabilities: GROQ_TEXT_CAPABILITIES,
+    inputModalities: Object.freeze(['TEXT', 'IMAGE']),
+    outputModalities: Object.freeze(['TEXT']),
+    inputTokenLimit: 131072,
+    outputTokenLimit: 16384,
+    structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
+    reasoningControl: 'reasoning_effort',
+    metadata: Object.freeze({
+      providerReleaseStatus: 'PREVIEW',
+      productionLane: 'MAIN_CBT_CONTROLLED_TEST',
+      controlledRouteOnly: true,
+      visionRuntimeQualified: false,
+    }),
+  }),
 ]);
 
+// D02's qualification catalog is a frozen historical contract for the two
+// GPT-OSS models. Route-scoped preview experiments such as Qwen 3.8 must not
+// silently expand that catalog or inherit D02 qualification semantics.
 const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze(
-  GROQ_PRODUCTION_MODEL_CATALOG.map((model) => Object.freeze({
-    ...model,
-    status: MODEL_STATUS.QUALIFYING,
-    productionEligible: false,
-    qualityTier: null,
-    metadata: Object.freeze({
-      providerReleaseStatus: 'ACTIVE',
-      qualificationLane: 'AIM_D02_ISOLATED',
-    }),
-  }))
+  GROQ_PRODUCTION_MODEL_CATALOG
+    .filter((model) => model.metadata?.controlledRouteOnly !== true)
+    .map((model) => Object.freeze({
+      ...model,
+      status: MODEL_STATUS.QUALIFYING,
+      productionEligible: false,
+      qualityTier: null,
+      metadata: Object.freeze({
+        ...(model.metadata || {}),
+        qualificationLane: 'AIM_D02_ISOLATED',
+      }),
+    }))
 );
 
 function _cloneModel(model) {

@@ -129,20 +129,35 @@ function createModelRouter({
 
   function eligibleGroqModels(taskId, task, requirement) {
     ensureGroqProductionCatalog();
-    let models = catalog.list({
-      provider: AI_PROVIDERS.GROQ,
-      channel: MODEL_CHANNELS.STABLE,
-      status: MODEL_STATUS.APPROVED,
-      requiredCapabilities: task.capabilities,
-    }).filter((model) => (
-      model.productionEligible !== false &&
-      modelSupportsCapabilities(model, task.capabilities) &&
-      modelMeetsQuality(model, requirement.requiredQualityTier)
-    ));
 
-    if (Array.isArray(requirement.allowedGroqModelIds)) {
-      const allowed = new Set(requirement.allowedGroqModelIds);
-      models = models.filter((model) => allowed.has(model.id));
+    const controlledOverride =
+      Array.isArray(requirement.allowedGroqModelIds) &&
+      requirement.routeOverride?.scope === taskId;
+    let models;
+
+    if (controlledOverride) {
+      // A route-scoped override may admit an explicitly named preview model
+      // without making that model generally production-eligible. This is the
+      // only path by which productionEligible:false Groq entries can route.
+      models = requirement.allowedGroqModelIds
+        .map((modelId) => catalog.get(modelId))
+        .filter(Boolean)
+        .filter((model) => model.provider === AI_PROVIDERS.GROQ)
+        .filter((model) => model.status === MODEL_STATUS.APPROVED)
+        .filter((model) => model.id === requirement.routeOverride.modelId)
+        .filter((model) => modelSupportsCapabilities(model, task.capabilities))
+        .filter((model) => modelMeetsQuality(model, requirement.requiredQualityTier));
+    } else {
+      models = catalog.list({
+        provider: AI_PROVIDERS.GROQ,
+        channel: MODEL_CHANNELS.STABLE,
+        status: MODEL_STATUS.APPROVED,
+        requiredCapabilities: task.capabilities,
+      }).filter((model) => (
+        model.productionEligible !== false &&
+        modelSupportsCapabilities(model, task.capabilities) &&
+        modelMeetsQuality(model, requirement.requiredQualityTier)
+      ));
     }
 
     const groqReasoning = reasoningForProvider(
@@ -157,8 +172,8 @@ function createModelRouter({
     });
 
     const preferred = requirement.preferEfficientGroqModel
-      ? [GROQ_MODEL_IDS.GPT_OSS_20B, GROQ_MODEL_IDS.GPT_OSS_120B]
-      : [GROQ_MODEL_IDS.GPT_OSS_120B, GROQ_MODEL_IDS.GPT_OSS_20B];
+      ? [GROQ_MODEL_IDS.GPT_OSS_20B, GROQ_MODEL_IDS.GPT_OSS_120B, GROQ_MODEL_IDS.QWEN_3_8_27B]
+      : [GROQ_MODEL_IDS.QWEN_3_8_27B, GROQ_MODEL_IDS.GPT_OSS_120B, GROQ_MODEL_IDS.GPT_OSS_20B];
     const rank = new Map(preferred.map((id, index) => [id, index]));
     return models.sort((a, b) =>
       (rank.get(a.id) ?? 99) - (rank.get(b.id) ?? 99) || b.rank - a.rank
@@ -215,6 +230,25 @@ function createModelRouter({
       ).generationConfig;
     }
 
+    const routeOverrideApplies =
+      model.provider === AI_PROVIDERS.GROQ &&
+      requirement.routeOverride?.modelId === model.id;
+    const routeGenerationConfig = {};
+    const overrideBudget = Number(requirement.routeOverride?.maxCompletionTokens);
+    if (
+      routeOverrideApplies &&
+      Number.isFinite(overrideBudget) &&
+      overrideBudget > 0
+    ) {
+      routeGenerationConfig.maxCompletionTokens = Math.min(
+        Math.floor(overrideBudget),
+        Number(model.outputTokenLimit) || Math.floor(overrideBudget)
+      );
+    }
+
+    const overrideAttemptTimeoutMs = Number(requirement.routeOverride?.attemptTimeoutMs);
+    const overrideOperationTimeoutMs = Number(requirement.routeOverride?.operationTimeoutMs);
+
     const modelRef = createProviderModelRef({
       provider: model.provider,
       modelId: model.id,
@@ -230,6 +264,13 @@ function createModelRouter({
       resolvedReasoning: resolved,
       reasoning: Object.freeze({ requested, resolved }),
       thinkingGenerationConfig: Object.freeze({ ...thinkingGenerationConfig }),
+      routeGenerationConfig: Object.freeze({ ...routeGenerationConfig }),
+      routeAttemptTimeoutMs: routeOverrideApplies && Number.isFinite(overrideAttemptTimeoutMs)
+        ? Math.max(1, Math.floor(overrideAttemptTimeoutMs))
+        : null,
+      routeOperationTimeoutMs: routeOverrideApplies && Number.isFinite(overrideOperationTimeoutMs)
+        ? Math.max(1, Math.floor(overrideOperationTimeoutMs))
+        : null,
       timeoutMs: task.timeoutMs,
       retryPolicy: task.retryPolicy,
       class: task.class,
