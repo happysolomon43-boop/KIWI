@@ -25,6 +25,7 @@ const MIGRATIONS = Object.freeze([
   'migrations/20260929_teaching_d13_student_knowledge_model.sql',
   'migrations/20260929_platform_security_rls_hardening.sql',
   'migrations/20260929_teaching_d14_classroom_artifacts.sql',
+  'migrations/20260930_teaching_d15_attendance.sql',
 ]);
 
 function requireNonProduction({ connectionString, projectRef }) {

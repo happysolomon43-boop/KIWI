@@ -7,6 +7,7 @@ const TEACHING_EVENTS = Object.freeze({
   LESSON_PLAN_APPROVED: 'teaching.lesson.plan_approved',
   STUDENT_RESPONSE_SUBMITTED: 'teaching.student.response_submitted',
   ACTIVITY_TIMER_EXPIRED: 'teaching.activity.timer_expired',
+  ATTENDANCE_FINALIZATION_DUE: 'teaching.attendance.finalization_due',
   BREAK_STARTED: 'teaching.break.started',
   BREAK_END_DUE: 'teaching.break.end_due',
   BREAK_ENDED: 'teaching.break.ended',

@@ -10,6 +10,7 @@ const { createD11LessonControllerRepository } = require('./d11-lesson-controller
 const { createD12ResponsePedagogyRepository } = require('./d12-response-pedagogy');
 const { createD13StudentKnowledgeRepository } = require('./d13-student-knowledge');
 const { createD14ClassroomRepository } = require('./d14-classroom');
+const { createD15AttendanceRepository } = require('./d15-attendance');
 
 function requireMethod(value, name) {
   if (!value || typeof value[name] !== 'function') {
@@ -48,4 +49,5 @@ module.exports = {
   createD12ResponsePedagogyRepository,
   createD13StudentKnowledgeRepository,
   createD14ClassroomRepository,
+  createD15AttendanceRepository,
 };

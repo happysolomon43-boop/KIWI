@@ -83,6 +83,7 @@ function registerD11Runtime({
   dueEventStore,
   repository,
   service,
+  attendanceService = null,
 }={}) {
   if(!publishedEvents||typeof publishedEvents.register!=='function') throw new TypeError('D11 runtime requires published-event registry.');
   if(!eventRuntime||typeof eventRuntime.register!=='function') throw new TypeError('D11 runtime requires durable event runtime.');
@@ -194,10 +195,15 @@ function registerD11Runtime({
         event.idempotency_key,
         {allowRouteHeldStart:true}
       );
+      const attendance = attendanceService && typeof attendanceService.onClassStarted === 'function'
+        ? await attendanceService.onClassStarted(event)
+        : null;
       return {safeMetadata:{
         class_id:classId,
         controller_version:state.controller?.stateVersion || null,
         lesson_blueprint_bound:Boolean(state.controller?.lessonBlueprintId),
+        attendance_record_id:attendance?.record?.attendanceRecordId || null,
+        attendance_owner:attendance ? 'D15' : null,
       }};
     },
   });

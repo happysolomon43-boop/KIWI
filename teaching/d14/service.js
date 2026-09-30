@@ -7,7 +7,7 @@ const MODES=Object.freeze({OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:
 const RESTRICTED=new Set(['ASSESSMENT','CLASSWORK']);
 const SIGNALS=new Set(['ASK_TEACHER','NEED_HELP','READY','FINISHED','BREAK_REQUEST','EARLY_DISMISSAL_REQUEST','TECHNICAL_ISSUE','LEAVE']);
 function fail(code,status=409){throw Object.assign(new Error(code),{code,status});}
-function createD14Service({repository,d11Repository,d11Service,d12Service,studyIntelligence=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
+function createD14Service({repository,d11Repository,d11Service,d12Service,attendanceService=null,studyIntelligence=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
   if(!repository||!d11Repository||!d11Service||!d12Service||!randomUUID)throw new TypeError('D14 requires the existing D11/D12 owners and its artifact repository.');
   async function context(studentId,classId){const value=await d11Repository.getClassContext(studentId,classId);if(!value)fail('TEACHING_D14_CLASS_NOT_FOUND',404);return value;}
   async function listClasses(user,courseId){const course=await repository.identity(user.id,courseId);if(!course)fail('TEACHING_D14_COURSE_NOT_FOUND',404);return {course,classes:await repository.listClasses(user.id,courseId)};}
@@ -34,13 +34,14 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,studyI
     const currentLu=source.session?.progress_state?.current_learning_unit_ref||null;
     const planned=Array.isArray(source.blueprint?.planned_learning_unit_refs)?source.blueprint.planned_learning_unit_refs:[];
     const objective=source.blueprint?.objective_summary||null;
-    const now=clock().getTime(),start=new Date(source.classRow.scheduled_start_at).getTime(),end=new Date(source.classRow.scheduled_end_at).getTime();
+    const serverNow=clock();
+    const now=serverNow.getTime(),start=new Date(source.classRow.scheduled_start_at).getTime(),end=new Date(source.classRow.scheduled_end_at).getTime();
     const arrived=firstEntry?new Date(firstEntry.created_at).getTime():null;
     const lateMinutes=arrived==null?0:Math.max(0,Math.floor((arrived-start)/60000));
     const coreMinimum=(source.blueprint?.blueprint_payload?.objectives||[]).filter((o)=>o.criticality==='CORE').reduce((n,o)=>n+Number(o.minimum_safe_minutes||0),0);
     const entry=source.session?.lifecycle_state==='CLOSED'?null:{lateMinutes,minutesRemaining:Math.max(0,Math.ceil((end-now)/60000)),veryLate:lateMinutes>0&&coreMinimum>0&&(end-arrived)/60000<coreMinimum,formalAttendanceDetermined:false};
     const interruption=source.session?.instructional_substate==='INTERRUPTED'?{cause:source.session.interruption_metadata?.cause==='SYSTEM'?'SYSTEM':'UNDETERMINED',academicPenalty:false}:null;
-    return Object.freeze({class:d11.class,controller:d11.controller,time:d11.time,serverNow:clock().toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
+    return Object.freeze({class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
       mode:MODES[mode]||'Before Class',modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,
       requiredMaterials:Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],
       learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
@@ -66,12 +67,18 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,studyI
     const body=input.body==null?null:String(input.body).trim();if(body?.length>2000)fail('TEACHING_D14_SIGNAL_TOO_LONG',400);
     const key=String(input.idempotencyKey||'');if(!key||key.length>160)fail('TEACHING_D14_IDEMPOTENCY_REQUIRED',400);
     const row=await repository.recordInteraction({studentId:user.id,classId,session:ctx.session,kind,body,idempotencyKey:key});
-    return {interactionId:row.interaction_id,kind:row.interaction_kind,acceptedAt:row.created_at,academicResponse:false,controllerMutation:false,status:'RECORDED_FOR_TEACHER'};
+    const attendance=attendanceService&&typeof attendanceService.observeInteraction==='function'
+      ? await attendanceService.observeInteraction(user,classId,{interactionId:row.interaction_id,kind:row.interaction_kind,occurredAt:row.created_at})
+      : null;
+    return {interactionId:row.interaction_id,kind:row.interaction_kind,acceptedAt:row.created_at,academicResponse:false,controllerMutation:false,status:'RECORDED_FOR_TEACHER',attendance};
   }
   async function enter(user,classId){
     const ctx=await context(user.id,classId);
     const row=await repository.recordInteraction({studentId:user.id,classId,session:ctx.session,kind:'JOIN',body:null,idempotencyKey:`d14-join:${classId}`});
-    return {enteredAt:row.created_at,formalAttendanceDetermined:false};
+    const attendance=attendanceService&&typeof attendanceService.observeJoin==='function'
+      ? await attendanceService.observeJoin(user,classId,{interactionId:row.interaction_id,occurredAt:row.created_at})
+      : null;
+    return {enteredAt:row.created_at,formalAttendanceDetermined:Boolean(attendance?.record),attendance};
   }
   async function respond(user,classId,input={}){
     if(!input.learningUnitId||!input.responsePayload)fail('TEACHING_D14_RESPONSE_INVALID',400);

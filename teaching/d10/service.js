@@ -7,7 +7,7 @@ const { computeSchedule,validateEditedSchedule } = require('../d09/scheduler');
 const { normalizeCreateRequest,requestDefinition } = require('./contracts');
 
 function createD10Service({
-  repository,d09Repository,transactionalMutation,randomUUID,outboxStore=null,clock=()=>new Date(),
+  repository,d09Repository,transactionalMutation,randomUUID,outboxStore=null,attendanceRequestOwner=null,clock=()=>new Date(),
 }={}) {
   if(!repository) throw new TypeError('D10 service requires repository.');
   if(!d09Repository) throw new TypeError('D10 service requires the D09 Scheduler repository owner.');
@@ -16,6 +16,7 @@ function createD10Service({
 
   const serverNow=()=>{const value=clock();return value instanceof Date?value:new Date(value);};
   function error(message,code,status=409,details=null){const e=new Error(message);e.code=code;e.status=status;if(details)e.details=details;return e;}
+  function ownerAvailable(def){return def.owner==='attendance'?Boolean(attendanceRequestOwner&&typeof attendanceRequestOwner.applyRequestUsing==='function'):Boolean(def.implementedOwner);}
 
   function publicPolicy(policy){
     return Object.freeze({
@@ -112,16 +113,11 @@ function createD10Service({
     });
   }
 
-  async function getActivationReview(user,courseId){
-    return activationReviewFromFacts(await repository.getActivationFacts(user.id,courseId));
-  }
-
+  async function getActivationReview(user,courseId){return activationReviewFromFacts(await repository.getActivationFacts(user.id,courseId));}
   async function markReady(user,courseId){
     const review=await getActivationReview(user,courseId);
     if(!review.canMarkReady) throw error('Course cannot become Ready until all activation prerequisites are current.','TEACHING_D10_ACTIVATION_BLOCKED',409,{blockers:review.blockingReasons});
-    await repository.markReady({studentId:user.id,courseId,expected:{
-      planId:review.coursePlan?.coursePlanId,timetableVersionId:review.timetable?.timetableVersionId,
-    }});
+    await repository.markReady({studentId:user.id,courseId,expected:{planId:review.coursePlan?.coursePlanId,timetableVersionId:review.timetable?.timetableVersionId}});
     return getActivationReview(user,courseId);
   }
 
@@ -131,14 +127,11 @@ function createD10Service({
     const correlationId=randomUUID();
     const wrapped=await transactionalMutation.mutateAndPublish({
       mutate:(tx)=>repository.activateCourseUsing(tx,{
-        studentId:user.id,courseId,
-        expected:{planId:review.coursePlan?.coursePlanId,timetableVersionId:review.timetable?.timetableVersionId},
+        studentId:user.id,courseId,expected:{planId:review.coursePlan?.coursePlanId,timetableVersionId:review.timetable?.timetableVersionId},
         activateScheduleUsing:async(tx,facts,activationId)=>{
           const timetable=await d09Repository.approveTimetableUsing(tx,{studentId:user.id,timetableVersionId:facts.timetable.timetable_version_id});
           const latest=await d09Repository.latestTimetable(user.id,facts.semester.semester_id,tx);
-          const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{
-            studentId:user.id,semesterId:facts.semester.semester_id,timetable,slots:latest.slots,activationId,requestId:null,
-          });
+          const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{studentId:user.id,semesterId:facts.semester.semester_id,timetable,slots:latest.slots,activationId,requestId:null});
           return {timetable,slots:latest.slots,classes};
         },
       }),
@@ -156,40 +149,31 @@ function createD10Service({
   }
 
   function sanitizeRequest(row){
-    const def=requestDefinition(row.request_type);
+    const def=requestDefinition(row.request_type);const available=ownerAvailable(def);
     return Object.freeze({
       requestId:row.request_id,courseId:row.course_id,type:row.request_type,state:row.lifecycle_state,stateVersion:Number(row.state_version),
       target:Object.freeze({owner:row.target_owner,type:row.target_type,ref:row.target_ref,versionRef:row.target_version_ref}),
-      requestedChange:row.requested_change,explanation:row.explanation||null,decision:row.decision||null,
-      effectiveAt:row.effective_at||null,
+      requestedChange:row.requested_change,explanation:row.explanation||null,decision:row.decision||null,effectiveAt:row.effective_at||null,
       alternativeProposal:row.alternative_proposal?Object.freeze({...row.alternative_proposal,version:Number(row.alternative_version)}):null,
       studentResponse:row.student_response||null,applicationRef:row.application_ref||null,appliedAt:row.applied_at||null,
       closeReason:row.close_reason||null,closedAt:row.closed_at||null,createdAt:row.created_at,updatedAt:row.updated_at,
-      ownerImplementedInD10:Boolean(def.implementedOwner),requiresFutureOwner:!def.implementedOwner,
+      ownerImplementedInD10:available,ownerImplemented:available,requiresFutureOwner:!available,
       emergencyFastPath:Boolean(def.emergency),serverTimeAuthoritative:true,
     });
   }
 
-  async function listRequests(user,input={}){
-    const rows=await repository.listRequests(user.id,{courseId:input.courseId||null,state:input.state||null});
-    return Object.freeze(rows.map(sanitizeRequest));
-  }
+  async function listRequests(user,input={}){const rows=await repository.listRequests(user.id,{courseId:input.courseId||null,state:input.state||null});return Object.freeze(rows.map(sanitizeRequest));}
   async function getRequest(user,requestId){
     const result=await repository.getRequest(user.id,requestId);
-    return Object.freeze({
-      ...sanitizeRequest(result.request),
-      history:Object.freeze((result.history||[]).map((h)=>Object.freeze({
-        version:Number(h.request_version),from:h.from_state,to:h.to_state,actorType:h.actor_type,authority:h.actor_authority,
-        reason:h.reason||null,explanation:h.explanation||null,applicationRef:h.application_ref||null,occurredAt:h.occurred_at,
-      }))),
-    });
+    return Object.freeze({...sanitizeRequest(result.request),history:Object.freeze((result.history||[]).map((h)=>Object.freeze({
+      version:Number(h.request_version),from:h.from_state,to:h.to_state,actorType:h.actor_type,authority:h.actor_authority,
+      reason:h.reason||null,explanation:h.explanation||null,applicationRef:h.application_ref||null,occurredAt:h.occurred_at,
+    })))});
   }
 
   async function createRequest(user,input={}){
     const normalized=normalizeCreateRequest(input);
-    const row=await repository.createRequest({
-      studentId:user.id,courseId:input.courseId||null,normalized,idempotencyKey:input.idempotencyKey||null,
-    });
+    const row=await repository.createRequest({studentId:user.id,courseId:input.courseId||null,normalized,idempotencyKey:input.idempotencyKey||null});
     let request=row;
     if(normalized.definition.emergency){
       request=await repository.transitionRequest({studentId:user.id,requestId:row.request_id,toState:'SUBMITTED',reason:'Emergency fast path submitted immediately'});
@@ -215,32 +199,17 @@ function createD10Service({
 
   function activeScheduleContext(context,{includeCourseId=null}={}){
     const blocked=new Set(['PAUSED','TEACHING_ENDED','FINALIZING','INCOMPLETE','COMPLETED','ARCHIVED']);
-    return {...context,courses:(context.courses||[]).filter((bundle)=>{
-      const id=String(bundle.course?.course_id||'');
-      if(includeCourseId&&id===String(includeCourseId)) return true;
-      return !blocked.has(String(bundle.course?.lifecycle_state||'DRAFT'));
-    })};
+    return {...context,courses:(context.courses||[]).filter((bundle)=>{const id=String(bundle.course?.course_id||'');if(includeCourseId&&id===String(includeCourseId)) return true;return !blocked.has(String(bundle.course?.lifecycle_state||'DRAFT'));})};
   }
-
   function inputsFromContext(context,{extraBlock=null}={}){
     const t=(v)=>String(v||'').slice(0,5);
-    const blocks=(context.blocks||[]).map((b)=>({
-      courseId:b.course_id||null,kind:b.block_kind,startsAt:b.starts_at,endsAt:b.ends_at,label:b.label||null,reason:b.reason||null,
-    }));
+    const blocks=(context.blocks||[]).map((b)=>({courseId:b.course_id||null,kind:b.block_kind,startsAt:b.starts_at,endsAt:b.ends_at,label:b.label||null,reason:b.reason||null}));
     if(extraBlock) blocks.push(extraBlock);
     return {
-      semester:{
-        semesterId:context.semester.semester_id,name:context.semester.name,startsAt:context.semester.starts_at,
-        endsAt:context.semester.ends_at,timezone:context.semester.timezone,
-      },
-      availability:(context.availability||[]).map((a)=>({
-        dayOfWeek:Number(a.day_of_week),startLocal:t(a.local_start),endLocal:t(a.local_end),kind:a.kind,
-        preferenceWeight:Number(a.preference_weight)||0,effectiveStartDate:a.effective_start_date||null,effectiveEndDate:a.effective_end_date||null,label:a.label||null,
-      })),
-      blocks,
-      deadlines:(context.deadlines||[]).map((d)=>({courseId:d.course_id||null,kind:d.deadline_kind,deadlineAt:d.deadline_at,label:d.label||null})),
-      reserves:(context.reserves||[]).map((r)=>({courseId:r.course_id||null,kind:r.reserve_kind,minutes:Number(r.minutes)||0,
-        protectedStartAt:r.protected_start_at||null,protectedEndAt:r.protected_end_at||null})),
+      semester:{semesterId:context.semester.semester_id,name:context.semester.name,startsAt:context.semester.starts_at,endsAt:context.semester.ends_at,timezone:context.semester.timezone},
+      availability:(context.availability||[]).map((a)=>({dayOfWeek:Number(a.day_of_week),startLocal:t(a.local_start),endLocal:t(a.local_end),kind:a.kind,preferenceWeight:Number(a.preference_weight)||0,effectiveStartDate:a.effective_start_date||null,effectiveEndDate:a.effective_end_date||null,label:a.label||null})),
+      blocks,deadlines:(context.deadlines||[]).map((d)=>({courseId:d.course_id||null,kind:d.deadline_kind,deadlineAt:d.deadline_at,label:d.label||null})),
+      reserves:(context.reserves||[]).map((r)=>({courseId:r.course_id||null,kind:r.reserve_kind,minutes:Number(r.minutes)||0,protectedStartAt:r.protected_start_at||null,protectedEndAt:r.protected_end_at||null})),
       preferences:context.profile?.preferences||{},
     };
   }
@@ -251,150 +220,75 @@ function createD10Service({
     const context=await d09Repository.getSchedulingContext(user.id,request.course_id);
     const latest=await d09Repository.latestTimetable(user.id,context.semester.semester_id);
     if(!latest.timetable||!klass.source_timetable_slot_id) return {state:'REJECTED',decision:{code:'CLASS_NOT_BOUND_TO_CURRENT_TIMETABLE',explanation:'The Class is no longer attached to the current timetable.'}};
-    const attempt=(startsAt,endsAt)=>{
-      try{
-        return validateEditedSchedule(activeScheduleContext(context),latest.slots,[{
-          slotId:klass.source_timetable_slot_id,startsAt,endsAt,exceptionReason:'Approved formal reschedule Request preview',
-        }],{now:serverNow().toISOString()});
-      }catch(e){return {outcome:'INFEASIBLE',reasons:[e.code||'HARD_CONSTRAINT'],alternatives:[]};}
-    };
+    const attempt=(startsAt,endsAt)=>{try{return validateEditedSchedule(activeScheduleContext(context),latest.slots,[{slotId:klass.source_timetable_slot_id,startsAt,endsAt,exceptionReason:'Approved formal reschedule Request preview'}],{now:serverNow().toISOString()});}catch(e){return {outcome:'INFEASIBLE',reasons:[e.code||'HARD_CONSTRAINT'],alternatives:[]};}};
     const direct=attempt(change.startsAt,change.endsAt);
     if(direct.outcome!=='INFEASIBLE') return {state:'APPROVED',decision:{code:'REQUEST_FEASIBLE',explanation:'The requested Class time remains feasible under the current authoritative timetable.'}};
     const duration=Date.parse(change.endsAt)-Date.parse(change.startsAt);
     for(const minutes of [-30,30,-60,60,-90,90,-120,120]){
-      const start=new Date(Date.parse(change.startsAt)+minutes*60000).toISOString();
-      const end=new Date(Date.parse(start)+duration).toISOString();
-      const candidate=attempt(start,end);
-      if(candidate.outcome!=='INFEASIBLE'){
-        return {state:'ALTERNATIVE_PROPOSED',decision:{code:'REQUEST_TIME_INFEASIBLE',explanation:'The requested time conflicts with the current timetable, but a nearby feasible alternative is available.'},
-          alternative:{requestedChange:{...change,startsAt:start,endsAt:end},schedulerOutcome:candidate.outcome,reason:'Nearest validated 30-minute-step alternative'}};
-      }
+      const start=new Date(Date.parse(change.startsAt)+minutes*60000).toISOString();const end=new Date(Date.parse(start)+duration).toISOString();const candidate=attempt(start,end);
+      if(candidate.outcome!=='INFEASIBLE') return {state:'ALTERNATIVE_PROPOSED',decision:{code:'REQUEST_TIME_INFEASIBLE',explanation:'The requested time conflicts with the current timetable, but a nearby feasible alternative is available.'},alternative:{requestedChange:{...change,startsAt:start,endsAt:end},schedulerOutcome:candidate.outcome,reason:'Nearest validated 30-minute-step alternative'}};
     }
     return {state:'REJECTED',decision:{code:'REQUEST_INFEASIBLE',explanation:'No nearby feasible reschedule preserves the current hard constraints and recovery capacity.',reasons:direct.reasons||[]}};
   }
 
   async function previewScheduleMutation(user,request){
-    const context=await d09Repository.getSchedulingContext(user.id,request.course_id);
-    let derived=activeScheduleContext(context);
+    const context=await d09Repository.getSchedulingContext(user.id,request.course_id);let derived=activeScheduleContext(context);
     if(request.request_type==='PERMANENT_AVAILABILITY_CHANGE'){
       const normalized=normalizeScheduleInputs(request.requested_change.scheduleInputs);
       if(normalized.semester.semesterId&&String(normalized.semester.semesterId)!==String(context.semester.semester_id)) throw error('Availability Request cannot move the Course to a different Semester.','TEACHING_D10_AVAILABILITY_SEMESTER_MISMATCH',422);
-      derived={...derived,semester:{...context.semester,name:normalized.semester.name,starts_at:normalized.semester.startsAt,ends_at:normalized.semester.endsAt,timezone:normalized.semester.timezone},
-        availability:normalized.availability.map((a)=>({day_of_week:a.dayOfWeek,local_start:a.startLocal,local_end:a.endLocal,kind:a.kind,preference_weight:a.preferenceWeight,effective_start_date:a.effectiveStartDate,effective_end_date:a.effectiveEndDate,label:a.label})),
-        blocks:normalized.blocks.map((b)=>({course_id:b.courseId,block_kind:b.kind,starts_at:b.startsAt,ends_at:b.endsAt,label:b.label,reason:b.reason})),
-        deadlines:normalized.deadlines.map((d)=>({course_id:d.courseId,deadline_kind:d.kind,deadline_at:d.deadlineAt,label:d.label})),
-        reserves:normalized.reserves.map((r)=>({course_id:r.courseId,reserve_kind:r.kind,minutes:r.minutes,protected_start_at:r.protectedStartAt,protected_end_at:r.protectedEndAt})),
-        profile:{...context.profile,preferences:normalized.preferences}};
+      derived={...derived,semester:{...context.semester,name:normalized.semester.name,starts_at:normalized.semester.startsAt,ends_at:normalized.semester.endsAt,timezone:normalized.semester.timezone},availability:normalized.availability.map((a)=>({day_of_week:a.dayOfWeek,local_start:a.startLocal,local_end:a.endLocal,kind:a.kind,preference_weight:a.preferenceWeight,effective_start_date:a.effectiveStartDate,effective_end_date:a.effectiveEndDate,label:a.label})),blocks:normalized.blocks.map((b)=>({course_id:b.courseId,block_kind:b.kind,starts_at:b.startsAt,ends_at:b.endsAt,label:b.label,reason:b.reason})),deadlines:normalized.deadlines.map((d)=>({course_id:d.courseId,deadline_kind:d.kind,deadline_at:d.deadlineAt,label:d.label})),reserves:normalized.reserves.map((r)=>({course_id:r.courseId,reserve_kind:r.kind,minutes:r.minutes,protected_start_at:r.protectedStartAt,protected_end_at:r.protectedEndAt})),profile:{...context.profile,preferences:normalized.preferences}};
     } else if(request.request_type==='ACADEMIC_BREAK'){
-      const change=request.requested_change;
-      derived={...derived,blocks:[...(derived.blocks||[]),{course_id:request.course_id,block_kind:'BREAK',starts_at:change.startsAt,ends_at:change.endsAt,label:'Academic Break',reason:'Requested Academic Break'}]};
-    } else if(request.request_type==='COURSE_RESUME'){
-      derived=activeScheduleContext(context,{includeCourseId:request.course_id});
-    }
+      const change=request.requested_change;derived={...derived,blocks:[...(derived.blocks||[]),{course_id:request.course_id,block_kind:'BREAK',starts_at:change.startsAt,ends_at:change.endsAt,label:'Academic Break',reason:'Requested Academic Break'}]};
+    } else if(request.request_type==='COURSE_RESUME') derived=activeScheduleContext(context,{includeCourseId:request.course_id});
     const result=computeSchedule(derived,{now:serverNow().toISOString()});
     if(result.outcome==='INFEASIBLE') return {state:'REJECTED',decision:{code:'SCHEDULE_INFEASIBLE',explanation:'The requested change cannot preserve current academic commitments.',reasons:result.reasons,alternatives:result.alternatives}};
-    return {state:'APPROVED',decision:{code:result.outcome==='AT_RISK'?'SCHEDULE_AT_RISK_BUT_FEASIBLE':'SCHEDULE_FEASIBLE',
-      explanation:result.outcome==='AT_RISK'?'The change remains feasible but reduces recovery headroom.':'The change is feasible under the current authoritative schedule.'}};
+    return {state:'APPROVED',decision:{code:result.outcome==='AT_RISK'?'SCHEDULE_AT_RISK_BUT_FEASIBLE':'SCHEDULE_FEASIBLE',explanation:result.outcome==='AT_RISK'?'The change remains feasible but reduces recovery headroom.':'The change is feasible under the current authoritative schedule.'}};
   }
 
   async function evaluateDecision(user,request,{forceEmergency=false}={}){
     const def=requestDefinition(request.request_type);
     if(request.lifecycle_state!=='REVIEWING') throw error('Request must be Reviewing before a decision can be recorded.','TEACHING_D10_REQUEST_REVIEW_STATE_INVALID');
-    if(def.emergency||forceEmergency) return {state:'APPROVED',decision:{code:'EMERGENCY_RECORDED',explanation:'Emergency absence is recorded immediately without proof interrogation.',proofRequired:false,behaviorPenaltyAutomatic:false,learningRecoveryHandoffRequired:true,ownerHandoffPending:'D15_ATTENDANCE'}};
+    if(def.emergency||forceEmergency) return {state:'APPROVED',decision:{code:'EMERGENCY_RECORDED',explanation:'Emergency absence is recorded immediately without proof interrogation.',proofRequired:false,behaviorPenaltyAutomatic:false,learningRecoveryHandoffRequired:true,owner:'attendance'}};
     if(request.request_type==='SINGLE_CLASS_RESCHEDULE') return previewReschedule(user,request);
     if(['PERMANENT_AVAILABILITY_CHANGE','ACADEMIC_BREAK','COURSE_RESUME'].includes(request.request_type)){
-      if(request.request_type==='COURSE_RESUME'){
-        const admission=await repository.admissionSnapshot(user.id,request.course_id);
-        if(!admission.allowed) return {state:'REJECTED',decision:{code:'CONCURRENT_COURSE_LIMIT',explanation:'Resuming this Course would exceed the current launch admission policy.',policyVersion:admission.policy.policy_version}};
-      }
+      if(request.request_type==='COURSE_RESUME'){const admission=await repository.admissionSnapshot(user.id,request.course_id);if(!admission.allowed) return {state:'REJECTED',decision:{code:'CONCURRENT_COURSE_LIMIT',explanation:'Resuming this Course would exceed the current launch admission policy.',policyVersion:admission.policy.policy_version}};}
       return previewScheduleMutation(user,request);
     }
     if(request.request_type==='COURSE_PAUSE') return {state:'APPROVED',decision:{code:'COURSE_PAUSE_APPROVED',explanation:'The Course can be paused without erasing its existing academic history.'}};
     if(request.request_type==='TEACHER_CHANGE') return {state:'APPROVED',decision:{code:'TEACHER_CHANGE_APPROVED',explanation:'The teacher assignment will change prospectively; prior teacher history remains unchanged.'}};
     if(request.request_type==='COURSE_CANCELLATION') return {state:'APPROVED',decision:{code:'COURSE_CANCELLATION_APPROVED',explanation:'Teaching will end and the unresolved final record will be preserved as Incomplete unless later legitimately finalized.'}};
-    if(['ASSIGNMENT_EXTENSION','EARLY_DISMISSAL','ATTENDANCE_REVIEW_CORRECTION'].includes(request.request_type)){
-      return {state:'APPROVED',decision:{code:'OWNER_HANDOFF_PENDING',explanation:'The formal Request decision is recorded, but the authoritative target owner is implemented in a later delivery and no target state is fabricated.',ownerHandoffPending:def.owner}};
-    }
+    if(['EARLY_DISMISSAL','ATTENDANCE_REVIEW_CORRECTION'].includes(request.request_type)) return {state:'APPROVED',decision:{code:'ATTENDANCE_OWNER_APPROVED',explanation:'The Request is approved for application by the authoritative Attendance Ledger.',owner:'attendance'}};
+    if(request.request_type==='ASSIGNMENT_EXTENSION') return {state:'APPROVED',decision:{code:'OWNER_HANDOFF_PENDING',explanation:'The formal Request decision is recorded, but the authoritative target owner is implemented in a later delivery and no target state is fabricated.',ownerHandoffPending:def.owner}};
     return {state:'REJECTED',decision:{code:'REQUEST_TYPE_NOT_APPLICABLE',explanation:'This Request type is not currently applicable.'}};
   }
 
   function decisionEvent(result,request){
-    const nowIso=serverNow().toISOString();
-    const approved=['APPROVED','APPROVED_WITH_ADJUSTMENT'].includes(result.lifecycle_state);
-    const def=requestDefinition(result.request_type);
-    const future=approved&&def.implementedOwner&&result.effective_at&&Date.parse(result.effective_at)>Date.parse(nowIso);
-    if(future){
-      return {
-        eventId:randomUUID(),schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_EFFECTIVE_DUE,eventCategory:EVENT_CATEGORIES.SCHEDULED_DUE_EVENT,
-        triggerType:'system_time',source:'request',origin:'d10',actorId:null,aggregateType:'REQUEST',aggregateId:result.request_id,
-        aggregateVersion:Number(result.state_version),occurredAt:nowIso,effectiveAt:result.effective_at,dueAt:result.effective_at,
-        correlationId:null,causationId:null,idempotencyKey:`d10-request-effective:${result.request_id}:${result.state_version}`,
-        payload:{request_id:result.request_id,student_id:result.student_id},auditRefs:[],provenanceRefs:[],
-      };
-    }
-    return {
-      eventId:randomUUID(),schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_DECIDED,eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
-      triggerType:'committed_domain_event',source:'request',origin:'d10',actorId:null,aggregateType:'REQUEST',aggregateId:result.request_id,
-      aggregateVersion:Number(result.state_version),occurredAt:nowIso,effectiveAt:result.effective_at||nowIso,dueAt:null,
-      correlationId:null,causationId:null,idempotencyKey:`d10-request-decided:${result.request_id}:${result.state_version}`,
-      payload:{request_id:result.request_id,decision_state:result.lifecycle_state,target_owner:result.target_owner},auditRefs:[],provenanceRefs:[],
-    };
+    const nowIso=serverNow().toISOString();const approved=['APPROVED','APPROVED_WITH_ADJUSTMENT'].includes(result.lifecycle_state);const def=requestDefinition(result.request_type);
+    const future=approved&&ownerAvailable(def)&&result.effective_at&&Date.parse(result.effective_at)>Date.parse(nowIso);
+    if(future) return {eventId:randomUUID(),schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_EFFECTIVE_DUE,eventCategory:EVENT_CATEGORIES.SCHEDULED_DUE_EVENT,triggerType:'system_time',source:'request',origin:'d10',actorId:null,aggregateType:'REQUEST',aggregateId:result.request_id,aggregateVersion:Number(result.state_version),occurredAt:nowIso,effectiveAt:result.effective_at,dueAt:result.effective_at,correlationId:null,causationId:null,idempotencyKey:`d10-request-effective:${result.request_id}:${result.state_version}`,payload:{request_id:result.request_id,student_id:result.student_id},auditRefs:[],provenanceRefs:[]};
+    return {eventId:randomUUID(),schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_DECIDED,eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,triggerType:'committed_domain_event',source:'request',origin:'d10',actorId:null,aggregateType:'REQUEST',aggregateId:result.request_id,aggregateVersion:Number(result.state_version),occurredAt:nowIso,effectiveAt:result.effective_at||nowIso,dueAt:null,correlationId:null,causationId:null,idempotencyKey:`d10-request-decided:${result.request_id}:${result.state_version}`,payload:{request_id:result.request_id,decision_state:result.lifecycle_state,target_owner:result.target_owner},auditRefs:[],provenanceRefs:[]};
   }
 
   async function decideRequest(user,requestId,options={}){
-    let {request}=await repository.getRequest(user.id,requestId);
-    if(request.lifecycle_state==='SUBMITTED') request=await repository.transitionRequest({studentId:user.id,requestId,toState:'REVIEWING',reason:'Request entered deterministic review',actorType:'SYSTEM'});
+    let {request}=await repository.getRequest(user.id,requestId);if(request.lifecycle_state==='SUBMITTED') request=await repository.transitionRequest({studentId:user.id,requestId,toState:'REVIEWING',reason:'Request entered deterministic review',actorType:'SYSTEM'});
     const evaluated=await evaluateDecision(user,request,options);
-    const wrapper=await transactionalMutation.mutateAndPublish({
-      mutate:(tx)=>repository.recordDecisionUsing(tx,{
-        studentId:user.id,requestId,decisionState:evaluated.state,decision:evaluated.decision,
-        alternativeProposal:evaluated.alternative||null,reason:evaluated.decision?.code||null,expectedVersion:request.state_version,
-      }),
-      buildEvent:(result)=>decisionEvent(result,request),
-    });
-    const decided=wrapper.mutationResult;
-    const def=requestDefinition(decided.request_type);
-    if(['APPROVED','APPROVED_WITH_ADJUSTMENT'].includes(decided.lifecycle_state)&&def.implementedOwner&&(!decided.effective_at||Date.parse(decided.effective_at)<=serverNow().getTime())){
-      const applied=await applyApprovedRequest(user,decided.request_id,{expectedVersion:decided.state_version});
-      return applied.request;
-    }
+    const wrapper=await transactionalMutation.mutateAndPublish({mutate:(tx)=>repository.recordDecisionUsing(tx,{studentId:user.id,requestId,decisionState:evaluated.state,decision:evaluated.decision,alternativeProposal:evaluated.alternative||null,reason:evaluated.decision?.code||null,expectedVersion:request.state_version}),buildEvent:(result)=>decisionEvent(result,request)});
+    const decided=wrapper.mutationResult;const def=requestDefinition(decided.request_type);
+    if(['APPROVED','APPROVED_WITH_ADJUSTMENT'].includes(decided.lifecycle_state)&&ownerAvailable(def)&&(!decided.effective_at||Date.parse(decided.effective_at)<=serverNow().getTime())) return (await applyApprovedRequest(user,decided.request_id,{expectedVersion:decided.state_version})).request;
     return decided;
   }
-
-  async function reviewRequest(user,requestId){
-    const result=await decideRequest(user,requestId);
-    return sanitizeRequest(result);
-  }
+  async function reviewRequest(user,requestId){return sanitizeRequest(await decideRequest(user,requestId));}
 
   async function acceptAlternative(user,requestId,input={}){
-    const version=Number(input.alternativeVersion);
-    if(!Number.isInteger(version)||version<1) throw error('alternativeVersion is required.','TEACHING_D10_ALTERNATIVE_VERSION_REQUIRED',400);
+    const version=Number(input.alternativeVersion);if(!Number.isInteger(version)||version<1) throw error('alternativeVersion is required.','TEACHING_D10_ALTERNATIVE_VERSION_REQUIRED',400);
     const current=(await repository.getRequest(user.id,requestId)).request;
-    const wrapper=await transactionalMutation.mutateAndPublish({
-      mutate:(tx)=>repository.acceptAlternativeUsing(tx,{studentId:user.id,requestId,alternativeVersion:version}),
-      buildEvent:(result)=>decisionEvent(result,current),
-    });
-    const accepted=wrapper.mutationResult;
-    const def=requestDefinition(accepted.request_type);
-    if(def.implementedOwner&&(!accepted.effective_at||Date.parse(accepted.effective_at)<=serverNow().getTime())){
-      const applied=await applyApprovedRequest(user,requestId,{expectedVersion:accepted.state_version});
-      return sanitizeRequest(applied.request);
-    }
+    const wrapper=await transactionalMutation.mutateAndPublish({mutate:(tx)=>repository.acceptAlternativeUsing(tx,{studentId:user.id,requestId,alternativeVersion:version}),buildEvent:(result)=>decisionEvent(result,current)});
+    const accepted=wrapper.mutationResult;const def=requestDefinition(accepted.request_type);
+    if(ownerAvailable(def)&&(!accepted.effective_at||Date.parse(accepted.effective_at)<=serverNow().getTime())) return sanitizeRequest((await applyApprovedRequest(user,requestId,{expectedVersion:accepted.state_version})).request);
     return sanitizeRequest(accepted);
   }
-
-  async function declineAlternative(user,requestId,input={}){
-    const version=Number(input.alternativeVersion);
-    if(!Number.isInteger(version)||version<1) throw error('alternativeVersion is required.','TEACHING_D10_ALTERNATIVE_VERSION_REQUIRED',400);
-    return sanitizeRequest(await repository.declineAlternative({studentId:user.id,requestId,alternativeVersion:version}));
-  }
-
-  function requestChange(request){
-    if(request.lifecycle_state==='APPROVED_WITH_ADJUSTMENT'&&request.student_response==='ACCEPTED'&&request.alternative_proposal?.requestedChange){
-      return request.alternative_proposal.requestedChange;
-    }
-    return request.requested_change;
-  }
+  async function declineAlternative(user,requestId,input={}){const version=Number(input.alternativeVersion);if(!Number.isInteger(version)||version<1) throw error('alternativeVersion is required.','TEACHING_D10_ALTERNATIVE_VERSION_REQUIRED',400);return sanitizeRequest(await repository.declineAlternative({studentId:user.id,requestId,alternativeVersion:version}));}
+  function requestChange(request){if(request.lifecycle_state==='APPROVED_WITH_ADJUSTMENT'&&request.student_response==='ACCEPTED'&&request.alternative_proposal?.requestedChange)return request.alternative_proposal.requestedChange;return request.requested_change;}
 
   async function applyScheduleRequestUsing(tx,request,change){
     const studentId=request.student_id,courseId=request.course_id;
@@ -402,155 +296,76 @@ function createD10Service({
       const klass=await repository.getClassTargetUsing(tx,{studentId,classId:change.classId});
       if(`class-schedule:${klass.schedule_version}`!==String(request.target_version_ref||'')) throw error('Class schedule changed before Request application.','TEACHING_D10_REQUEST_TARGET_STALE');
       if(!klass.source_timetable_slot_id) throw error('Class is not bound to an authoritative timetable slot.','TEACHING_D10_REQUEST_TARGET_STALE');
-      const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
-      const latest=await d09Repository.latestTimetable(studentId,context.semester.semester_id,tx);
-      const result=validateEditedSchedule(activeScheduleContext(context),latest.slots,[{
-        slotId:klass.source_timetable_slot_id,startsAt:change.startsAt,endsAt:change.endsAt,exceptionReason:'Approved formal reschedule Request',
-      }],{now:serverNow().toISOString()});
+      const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);const latest=await d09Repository.latestTimetable(studentId,context.semester.semester_id,tx);
+      const result=validateEditedSchedule(activeScheduleContext(context),latest.slots,[{slotId:klass.source_timetable_slot_id,startsAt:change.startsAt,endsAt:change.endsAt,exceptionReason:'Approved formal reschedule Request'}],{now:serverNow().toISOString()});
       if(result.outcome==='INFEASIBLE') throw error('Approved reschedule became infeasible before application.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:result.reasons});
       const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId,context:activeScheduleContext(context),result,source:'FORMAL_REQUEST_APPLIED'});
       const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id});
-      return {targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,
-        safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length}};
+      return {targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length}};
     }
-
-    let context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
-    let normalized;
+    let context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);let normalized;
     if(request.request_type==='PERMANENT_AVAILABILITY_CHANGE'){
-      normalized=normalizeScheduleInputs(change.scheduleInputs);
-      if(normalized.semester.semesterId&&String(normalized.semester.semesterId)!==String(context.semester.semester_id)) throw error('Availability Request cannot change Semester identity.','TEACHING_D10_AVAILABILITY_SEMESTER_MISMATCH');
-    } else if(request.request_type==='ACADEMIC_BREAK'){
-      normalized=normalizeScheduleInputs(inputsFromContext(context,{extraBlock:{
-        courseId,kind:'BREAK',startsAt:change.startsAt,endsAt:change.endsAt,label:'Academic Break',reason:'Approved Academic Break Request',
-      }}));
-    } else {
-      throw error('Unsupported Scheduler Request application.','TEACHING_D10_REQUEST_OWNER_APPLICATION_INVALID');
-    }
-    await d09Repository.saveScheduleInputsUsing(tx,{studentId,courseId,input:normalized,governedRequestRef:request.request_id});
-    context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
-    const derived=activeScheduleContext(context);
-    const result=computeSchedule(derived,{now:serverNow().toISOString()});
+      normalized=normalizeScheduleInputs(change.scheduleInputs);if(normalized.semester.semesterId&&String(normalized.semester.semesterId)!==String(context.semester.semester_id)) throw error('Availability Request cannot change Semester identity.','TEACHING_D10_AVAILABILITY_SEMESTER_MISMATCH');
+    } else if(request.request_type==='ACADEMIC_BREAK') normalized=normalizeScheduleInputs(inputsFromContext(context,{extraBlock:{courseId,kind:'BREAK',startsAt:change.startsAt,endsAt:change.endsAt,label:'Academic Break',reason:'Approved Academic Break Request'}}));
+    else throw error('Unsupported Scheduler Request application.','TEACHING_D10_REQUEST_OWNER_APPLICATION_INVALID');
+    await d09Repository.saveScheduleInputsUsing(tx,{studentId,courseId,input:normalized,governedRequestRef:request.request_id});context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+    const derived=activeScheduleContext(context);const result=computeSchedule(derived,{now:serverNow().toISOString()});
     if(result.outcome==='INFEASIBLE') throw error('Approved schedule change became infeasible before application.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:result.reasons});
     const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId,context:derived,result,source:'FORMAL_REQUEST_APPLIED'});
     const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id});
-    return {targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,
-      safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length,request_kind:request.request_type}};
+    return {targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length,request_kind:request.request_type}};
   }
 
   async function applyApprovedRequest(user,requestId,{expectedVersion=null}={}){
     const studentId=user.id;
-    const result=await repository.applyRequest({
+    return repository.applyRequest({
       studentId,requestId,expectedVersion,
-      onAppliedUsing:outboxStore&&typeof outboxStore.appendUsing==='function'
-        ? async(tx,{request,application,targetResult})=>{
-            const occurredAt=serverNow().toISOString();
-            const eventId=`d10-request-applied:${request.request_id}:${application.request_version}`;
-            await outboxStore.appendUsing(tx.query.bind(tx),{
-              eventId,
-              schemaVersion:1,
-              eventType:TEACHING_EVENTS.REQUEST_APPLIED,
-              eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
-              triggerType:'committed_domain_event',
-              source:'request',
-              origin:'d10',
-              actorId:request.student_id,
-              aggregateType:'REQUEST',
-              aggregateId:request.request_id,
-              aggregateVersion:Number(request.state_version),
-              occurredAt,
-              effectiveAt:request.applied_at ? new Date(request.applied_at).toISOString() : occurredAt,
-              dueAt:null,
-              correlationId:eventId,
-              causationId:null,
-              idempotencyKey:eventId,
-              payload:{
-                request_id:request.request_id,
-                course_id:request.course_id,
-                request_type:request.request_type,
-                target_owner:request.target_owner,
-                target_ref:request.target_ref,
-                application_ref:application.application_ref,
-                target_version_after:targetResult?.targetVersionAfter || null,
-              },
-              auditRefs:[],
-              provenanceRefs:[`request:${request.request_id}`,`request-application:${application.request_application_id}`],
-            });
-          }
-        : null,
+      onAppliedUsing:outboxStore&&typeof outboxStore.appendUsing==='function'?async(tx,{request,application,targetResult})=>{
+        const occurredAt=serverNow().toISOString();const eventId=`d10-request-applied:${request.request_id}:${application.request_version}`;
+        await outboxStore.appendUsing(tx.query.bind(tx),{eventId,schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_APPLIED,eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,triggerType:'committed_domain_event',source:'request',origin:'d10',actorId:request.student_id,aggregateType:'REQUEST',aggregateId:request.request_id,aggregateVersion:Number(request.state_version),occurredAt,effectiveAt:request.applied_at?new Date(request.applied_at).toISOString():occurredAt,dueAt:null,correlationId:eventId,causationId:null,idempotencyKey:eventId,payload:{request_id:request.request_id,course_id:request.course_id,request_type:request.request_type,target_owner:request.target_owner,target_ref:request.target_ref,application_ref:application.application_ref,target_version_after:targetResult?.targetVersionAfter||null},auditRefs:[],provenanceRefs:[`request:${request.request_id}`,`request-application:${application.request_application_id}`]});
+      }:null,
       applyTargetUsing:async(tx,request)=>{
-        const def=requestDefinition(request.request_type);
-        if(!def.implementedOwner) throw error('The authoritative target owner is not implemented in D10; Request remains a handoff record.','TEACHING_D10_REQUEST_OWNER_PENDING',409,{owner:def.owner});
-        const change=requestChange(request);
-        if(['SINGLE_CLASS_RESCHEDULE','PERMANENT_AVAILABILITY_CHANGE','ACADEMIC_BREAK'].includes(request.request_type)){
-          return applyScheduleRequestUsing(tx,request,change);
+        const def=requestDefinition(request.request_type);const change=requestChange(request);
+        if(def.owner==='attendance'){
+          if(!attendanceRequestOwner||typeof attendanceRequestOwner.applyRequestUsing!=='function') throw error('The D15 Attendance owner is not available for this approved Request.','TEACHING_D15_REQUEST_OWNER_UNAVAILABLE',503);
+          return attendanceRequestOwner.applyRequestUsing(tx,request,change);
         }
+        if(!def.implementedOwner) throw error('The authoritative target owner is not implemented in D10; Request remains a handoff record.','TEACHING_D10_REQUEST_OWNER_PENDING',409,{owner:def.owner});
+        if(['SINGLE_CLASS_RESCHEDULE','PERMANENT_AVAILABILITY_CHANGE','ACADEMIC_BREAK'].includes(request.request_type)) return applyScheduleRequestUsing(tx,request,change);
         if(request.request_type==='COURSE_PAUSE'){
-          const course=await repository.ensureCourse(studentId,request.course_id,tx,true);
-          if(course.lifecycle_state!=='ACTIVE') throw error('Course changed before Pause application.','TEACHING_D10_REQUEST_TARGET_STALE');
+          const course=await repository.ensureCourse(studentId,request.course_id,tx,true);if(course.lifecycle_state!=='ACTIVE') throw error('Course changed before Pause application.','TEACHING_D10_REQUEST_TARGET_STALE');
           const updated=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'PAUSED',reason:'Approved Course Pause',sourceRequestId:request.request_id,expectedVersion:course.state_version});
-          await d09Repository.markCurrentTimetableStaleUsing(tx,{studentId,semesterId:updated.semester_id});
-          if(typeof d09Repository.suspendCourseClassesUsing==='function') await d09Repository.suspendCourseClassesUsing(tx,{studentId,courseId:request.course_id,requestId:request.request_id});
+          await d09Repository.markCurrentTimetableStaleUsing(tx,{studentId,semesterId:updated.semester_id});if(typeof d09Repository.suspendCourseClassesUsing==='function') await d09Repository.suspendCourseClassesUsing(tx,{studentId,courseId:request.course_id,requestId:request.request_id});
           return {targetVersionAfter:`course-state:${updated.state_version}`,safeMetadata:{lifecycle_state:'PAUSED',schedule_review_required:true}};
         }
         if(request.request_type==='COURSE_RESUME'){
-          const admission=await repository.currentAdmissionPolicy(tx);
-          const counted=await repository.countedCourses(studentId,{excludeCourseId:request.course_id,runner:tx,lock:true});
-          if(counted.length>=Number(admission.maximum_concurrent_courses)) throw error('Course resume now exceeds the concurrent-Course policy.','TEACHING_D10_CONCURRENT_COURSE_LIMIT');
-          let context=await d09Repository.getSchedulingContextUsing(tx,studentId,request.course_id);
-          const derived=activeScheduleContext(context,{includeCourseId:request.course_id});
-          const schedule=computeSchedule(derived,{now:serverNow().toISOString()});
-          if(schedule.outcome==='INFEASIBLE') throw error('Course resume is no longer schedule-feasible.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:schedule.reasons});
-          const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId:request.course_id,context:derived,result:schedule,source:'FORMAL_REQUEST_APPLIED'});
-          await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id});
-          const course=await repository.ensureCourse(studentId,request.course_id,tx,true);
-          if(course.lifecycle_state!=='PAUSED') throw error('Course is no longer Paused.','TEACHING_D10_REQUEST_TARGET_STALE');
-          const updated=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'ACTIVE',reason:'Approved Course Resume',sourceRequestId:request.request_id,policyVersion:admission.policy_version,expectedVersion:course.state_version});
-          await repository.recordAdmissionUsing(tx,{studentId,courseId:request.course_id,kind:'RESUME',policy:admission,countBefore:counted.length,outcome:'ALLOW',sourceRequestId:request.request_id});
+          const admission=await repository.currentAdmissionPolicy(tx);const counted=await repository.countedCourses(studentId,{excludeCourseId:request.course_id,runner:tx,lock:true});if(counted.length>=Number(admission.maximum_concurrent_courses)) throw error('Course resume now exceeds the concurrent-Course policy.','TEACHING_D10_CONCURRENT_COURSE_LIMIT');
+          let context=await d09Repository.getSchedulingContextUsing(tx,studentId,request.course_id);const derived=activeScheduleContext(context,{includeCourseId:request.course_id});const schedule=computeSchedule(derived,{now:serverNow().toISOString()});if(schedule.outcome==='INFEASIBLE') throw error('Course resume is no longer schedule-feasible.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:schedule.reasons});
+          const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId:request.course_id,context:derived,result:schedule,source:'FORMAL_REQUEST_APPLIED'});await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id});
+          const course=await repository.ensureCourse(studentId,request.course_id,tx,true);if(course.lifecycle_state!=='PAUSED') throw error('Course is no longer Paused.','TEACHING_D10_REQUEST_TARGET_STALE');
+          const updated=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'ACTIVE',reason:'Approved Course Resume',sourceRequestId:request.request_id,policyVersion:admission.policy_version,expectedVersion:course.state_version});await repository.recordAdmissionUsing(tx,{studentId,courseId:request.course_id,kind:'RESUME',policy:admission,countBefore:counted.length,outcome:'ALLOW',sourceRequestId:request.request_id});
           return {targetVersionAfter:`course-state:${updated.state_version}`,safeMetadata:{lifecycle_state:'ACTIVE',timetable_version:Number(saved.timetable.version_no)}};
         }
         if(request.request_type==='TEACHER_CHANGE'){
           const changed=await repository.changeTeacherUsing(tx,{studentId,courseId:request.course_id,teacherIdentityId:change.teacherIdentityId,sourceRequestId:request.request_id});
-          return {targetVersionAfter:`teacher-assignment:${changed.assignment.teacher_assignment_id}:version:${changed.assignment.version_no}`,
-            safeMetadata:{teacher_assignment_version:Number(changed.assignment.version_no),historical_teacher_records_preserved:true}};
+          return {targetVersionAfter:`teacher-assignment:${changed.assignment.teacher_assignment_id}:version:${changed.assignment.version_no}`,safeMetadata:{teacher_assignment_version:Number(changed.assignment.version_no),historical_teacher_records_preserved:true}};
         }
         if(request.request_type==='COURSE_CANCELLATION'){
-          let course=await repository.ensureCourse(studentId,request.course_id,tx,true);
-          if(!['ACTIVE','PAUSED'].includes(course.lifecycle_state)) throw error('Course can no longer follow the approved cancellation path.','TEACHING_D10_REQUEST_TARGET_STALE');
-          course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'TEACHING_ENDED',reason:'Approved Course cancellation',sourceRequestId:request.request_id,expectedVersion:course.state_version});
-          course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'FINALIZING',reason:'Cancellation finalization boundary',sourceRequestId:request.request_id,expectedVersion:course.state_version});
-          course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'INCOMPLETE',reason:'Cancellation preserves unresolved final determination as Incomplete',sourceRequestId:request.request_id,expectedVersion:course.state_version});
-          await repository.recordCancellationClosureUsing(tx,{studentId,courseId:request.course_id,reason:change.reason||'Approved Course cancellation',sourceRequestId:request.request_id});
-          await d09Repository.markCurrentTimetableStaleUsing(tx,{studentId,semesterId:course.semester_id});
-          if(typeof d09Repository.suspendCourseClassesUsing==='function') await d09Repository.suspendCourseClassesUsing(tx,{studentId,courseId:request.course_id,requestId:request.request_id});
+          let course=await repository.ensureCourse(studentId,request.course_id,tx,true);if(!['ACTIVE','PAUSED'].includes(course.lifecycle_state)) throw error('Course can no longer follow the approved cancellation path.','TEACHING_D10_REQUEST_TARGET_STALE');
+          course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'TEACHING_ENDED',reason:'Approved Course cancellation',sourceRequestId:request.request_id,expectedVersion:course.state_version});course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'FINALIZING',reason:'Cancellation finalization boundary',sourceRequestId:request.request_id,expectedVersion:course.state_version});course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'INCOMPLETE',reason:'Cancellation preserves unresolved final determination as Incomplete',sourceRequestId:request.request_id,expectedVersion:course.state_version});
+          await repository.recordCancellationClosureUsing(tx,{studentId,courseId:request.course_id,reason:change.reason||'Approved Course cancellation',sourceRequestId:request.request_id});await d09Repository.markCurrentTimetableStaleUsing(tx,{studentId,semesterId:course.semester_id});if(typeof d09Repository.suspendCourseClassesUsing==='function') await d09Repository.suspendCourseClassesUsing(tx,{studentId,courseId:request.course_id,requestId:request.request_id});
           return {targetVersionAfter:`course-state:${course.state_version}`,safeMetadata:{lifecycle_state:'INCOMPLETE',cancellation_closure_recorded:true}};
         }
         throw error('No D10 authoritative application path exists for this Request type.','TEACHING_D10_REQUEST_OWNER_PENDING');
       },
     });
-    return result;
   }
 
-  async function applyRequest(user,requestId){
-    const result=await applyApprovedRequest(user,requestId,{});
-    return Object.freeze({...result,request:sanitizeRequest(result.request)});
-  }
+  async function applyRequest(user,requestId){const result=await applyApprovedRequest(user,requestId,{});return Object.freeze({...result,request:sanitizeRequest(result.request)});}
+  async function applyDueRequest({requestId,expectedVersion=null}={}){const row=await repository.getRequestById(requestId);if(!row) return {idempotent:true,missing:true};return applyApprovedRequest({id:row.student_id},requestId,{expectedVersion});}
+  async function archiveIncomplete(user,courseId,input={}){const closure=await repository.archiveIncomplete({studentId:user.id,courseId,reason:input.reason,sourceRequestId:input.requestId||null});return Object.freeze({closureId:closure.closure_id,lifecycleStatePreserved:closure.lifecycle_state_at_closure,closedAt:closure.closed_at});}
 
-  async function applyDueRequest({requestId,expectedVersion=null}={}){
-    const row=await repository.getRequestById(requestId);
-    if(!row) return {idempotent:true,missing:true};
-    return applyApprovedRequest({id:row.student_id},requestId,{expectedVersion});
-  }
-
-  async function archiveIncomplete(user,courseId,input={}){
-    const closure=await repository.archiveIncomplete({studentId:user.id,courseId,reason:input.reason,sourceRequestId:input.requestId||null});
-    return Object.freeze({closureId:closure.closure_id,lifecycleStatePreserved:closure.lifecycle_state_at_closure,closedAt:closure.closed_at});
-  }
-
-  return Object.freeze({
-    getAcademicRules,prepareAcademicRules,listTeacherIdentities,getActivationReview,markReady,activateCourse,
-    listRequests,getRequest,createRequest,submitRequest,withdrawRequest,reviewRequest,acceptAlternative,declineAlternative,
-    applyRequest,applyDueRequest,archiveIncomplete,
-  });
+  return Object.freeze({getAcademicRules,prepareAcademicRules,listTeacherIdentities,getActivationReview,markReady,activateCourse,listRequests,getRequest,createRequest,submitRequest,withdrawRequest,reviewRequest,acceptAlternative,declineAlternative,applyRequest,applyDueRequest,archiveIncomplete});
 }
 
 module.exports={createD10Service};

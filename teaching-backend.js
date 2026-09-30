@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { createTeachingFoundation } = require('./teaching');
+const { mountD15Routes } = require('./teaching/d15/routes');
 
 function sendError(res, error, fallbackMessage) {
   const status = Number(error?.status) || 500;
@@ -228,7 +229,6 @@ function createTeachingRouter({
     });
   }
 
-
   const coursePlanService = d08Service || foundation.d08?.service || null;
   if (coursePlanService) {
     const requireD08Ready = (req, res, next) => {
@@ -243,22 +243,18 @@ function createTeachingRouter({
       try { res.json(await coursePlanService.getPlanReview(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load Course Plan review.'); }
     });
-
     router.post('/courses/:id/course-plan', requireD08Ready, async (req, res) => {
       try { res.status(201).json(await coursePlanService.generateCoursePlan(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to prepare Course Plan.'); }
     });
-
     router.get('/courses/:id/coverage-report', requireD08Ready, async (req, res) => {
       try { res.json(await coursePlanService.getCoverageReport(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load Course Coverage Report.'); }
     });
-
     router.get('/courses/:id/activation-coverage-decision', requireD08Ready, async (req, res) => {
       try { res.json(await coursePlanService.getActivationCoverageDecision(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to evaluate Course Coverage readiness.'); }
     });
-
     router.post('/courses/:id/coverage-audit', requireD08Ready, async (req, res) => {
       try {
         const stage = String(req.body?.stage || 'END_OF_COURSE').toUpperCase();
@@ -271,28 +267,23 @@ function createTeachingRouter({
         return res.status(201).json(await coursePlanService.auditEndOfCourse(req.user, req.params.id));
       } catch (error) { return sendError(res, error, 'Failed to run Course Coverage Audit.'); }
     });
-
     router.post('/courses/:id/scope-review', requireD08Ready, async (req, res) => {
       try { res.status(201).json(await coursePlanService.detectScopeChange(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to review Course scope changes.'); }
     });
-
     router.post('/courses/:id/scope-review/:scopeChangeId/analyze', requireD08Ready, async (req, res) => {
       try { res.json(await coursePlanService.analyzeScopeChange(req.user, req.params.id, req.params.scopeChangeId)); }
       catch (error) { sendError(res, error, 'Failed to analyze reviewed Course scope change.'); }
     });
-
     router.post('/courses/:id/scope-review/:scopeChangeId/apply', requireD08Ready, async (req, res) => {
       try { res.json(await coursePlanService.adoptAuthoritativeScopeChange(req.user, req.params.id, req.params.scopeChangeId)); }
       catch (error) { sendError(res, error, 'Failed to adopt reviewed Course scope change.'); }
     });
-
     router.post('/courses/:id/validated-prior-knowledge/:decisionId/recheck', requireD08Ready, async (req, res) => {
       try { res.status(201).json(await coursePlanService.reconcileVpkContradiction(req.user, req.params.id, req.params.decisionId, req.body)); }
       catch (error) { sendError(res, error, 'Failed to recheck Validated Prior Knowledge.'); }
     });
   }
-
 
   const schedulingService = d09Service || foundation.d09?.service || null;
   if (schedulingService) {
@@ -303,7 +294,6 @@ function createTeachingRouter({
         code: 'TEACHING_D09_SCHEMA_NOT_READY',
       });
     };
-
     router.get('/semesters', requireD09Ready, async (req, res) => {
       try { res.json(await schedulingService.listSemesters(req.user)); }
       catch (error) { sendError(res, error, 'Failed to load Teaching Semesters.'); }
@@ -334,7 +324,6 @@ function createTeachingRouter({
     });
   }
 
-
   const lifecycleRequestService = d10Service || foundation.d10?.service || null;
   if (lifecycleRequestService) {
     const requireD10Ready = (req, res, next) => {
@@ -344,12 +333,10 @@ function createTeachingRouter({
         code: 'TEACHING_D10_SCHEMA_NOT_READY',
       });
     };
-
     router.get('/teacher-identities', requireD10Ready, async (req, res) => {
       try { res.json(await lifecycleRequestService.listTeacherIdentities(req.user)); }
       catch (error) { sendError(res, error, 'Failed to load available Teacher identities.'); }
     });
-
     router.get('/courses/:id/academic-rules', requireD10Ready, async (req, res) => {
       try { res.json(await lifecycleRequestService.getAcademicRules(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load academic rules and Teacher.'); }
@@ -374,7 +361,6 @@ function createTeachingRouter({
       try { res.json(await lifecycleRequestService.archiveIncomplete(req.user, req.params.id, req.body || {})); }
       catch (error) { sendError(res, error, 'Incomplete Course could not be administratively closed.'); }
     });
-
     router.get('/requests', requireD10Ready, async (req, res) => {
       try { res.json(await lifecycleRequestService.listRequests(req.user, { courseId:req.query.courseId || null, state:req.query.state || null })); }
       catch (error) { sendError(res, error, 'Failed to load Teaching Requests.'); }
@@ -422,7 +408,6 @@ function createTeachingRouter({
         code: 'TEACHING_D11_SCHEMA_NOT_READY',
       });
     };
-
     router.get('/classes/:id/controller', requireD11Ready, async (req, res) => {
       try { res.json(await lessonControllerService.getClass(req.user, req.params.id)); }
       catch (error) { sendError(res, error, 'Failed to load Teaching Controller state.'); }
@@ -500,6 +485,9 @@ function createTeachingRouter({
     });
   }
 
+  // D15 exposes reporting/recovery-inspection projections only. Attendance
+  // mutation remains behind the D10 Request owner or trusted server runtime.
+  mountD15Routes(router,{foundation,sendError});
 
   const studentKnowledgeModelService = d13Service || foundation.d13?.service || null;
   if (studentKnowledgeModelService) {
@@ -523,7 +511,6 @@ function createTeachingRouter({
     });
   }
 
-
   const responsePedagogyService = d12Service || foundation.d12?.service || null;
   if (responsePedagogyService) {
     const requireD12Ready = (req, res, next) => {
@@ -533,7 +520,6 @@ function createTeachingRouter({
         code: 'TEACHING_D12_SCHEMA_NOT_READY',
       });
     };
-
     router.post('/classes/:id/responses', requireD12Ready, async (req, res) => {
       try { res.status(201).json(await responsePedagogyService.captureResponse(req.user, req.params.id, req.body || {})); }
       catch (error) { sendError(res, error, 'Student response could not be captured safely.'); }

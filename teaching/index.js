@@ -4,7 +4,19 @@ const { createTeachingConfig } = require('./config');
 const { createKiwiSubjectReader } = require('./integrations/kiwi-subjects');
 const { createKiwiExamInterface } = require('./integrations/kiwi-exam-interface');
 const { createKiwiNotificationInterface } = require('./integrations/kiwi-notifications');
-const { createTeachingRepositories, createPreparationRuntimeRepository, createD07CourseIntakeRepository, createD08CoursePlanRepository, createD09SchedulingRepository, createD10LifecycleRequestRepository, createD11LessonControllerRepository, createD12ResponsePedagogyRepository, createD13StudentKnowledgeRepository, createD14ClassroomRepository } = require('./repositories');
+const {
+  createTeachingRepositories,
+  createPreparationRuntimeRepository,
+  createD07CourseIntakeRepository,
+  createD08CoursePlanRepository,
+  createD09SchedulingRepository,
+  createD10LifecycleRequestRepository,
+  createD11LessonControllerRepository,
+  createD12ResponsePedagogyRepository,
+  createD13StudentKnowledgeRepository,
+  createD14ClassroomRepository,
+  createD15AttendanceRepository,
+} = require('./repositories');
 const { createD14Service } = require('./d14/service');
 const { registerD14Runtime } = require('./d14/runtime');
 const { createTeachingService } = require('./services/teaching-service');
@@ -21,6 +33,7 @@ const d11 = require('./d11');
 const d12 = require('./d12');
 const d13 = require('./d13');
 const d14 = require('./d14');
+const d15 = require('./d15');
 
 function createTeachingFoundation({
   env = process.env,
@@ -44,45 +57,74 @@ function createTeachingFoundation({
   const config = createTeachingConfig(env);
   const subjectReader = createKiwiSubjectReader({ subjects: subjectSource });
   const examInterface = createKiwiExamInterface();
-  const notificationInterface = createKiwiNotificationInterface({
-    publish: notificationPublisher,
-  });
-  const repositories = createTeachingRepositories({
-    subjectReader,
-    notificationInterface,
-  });
-  const d07Repository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+  const notificationInterface = createKiwiNotificationInterface({ publish: notificationPublisher });
+  const repositories = createTeachingRepositories({ subjectReader, notificationInterface });
+  const persistentDepsReady = typeof query === 'function'
+    && typeof withTransaction === 'function'
+    && typeof randomUUID === 'function';
+
+  const d07Repository = persistentDepsReady
     ? createD07CourseIntakeRepository({ query, withTransaction, randomUUID })
     : null;
   const d07Service = d07Repository
     ? d07.createD07Service({ subjects: repositories.subjects, repository: d07Repository, intelligence: d07Intelligence })
     : null;
-  const d08Repository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+
+  const d08Repository = persistentDepsReady
     ? createD08CoursePlanRepository({ query, withTransaction, randomUUID })
     : null;
   const d08Service = d08Repository && d07Repository
     ? d08.createD08Service({ subjects: repositories.subjects, d07Repository, repository: d08Repository, intelligence: d08Intelligence })
     : null;
-  const d09Repository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+
+  const d09Repository = persistentDepsReady
     ? createD09SchedulingRepository({ query, withTransaction, randomUUID })
     : null;
   const d09Service = d09Repository && d09TransactionalMutation
     ? d09.createD09Service({ repository: d09Repository, transactionalMutation: d09TransactionalMutation, randomUUID, intelligence: d09Intelligence })
     : null;
-  const d10Repository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+  const d09AttendanceRecoveryOwner = persistentDepsReady && typeof d09.createD09AttendanceRecoveryOwner === 'function'
+    ? d09.createD09AttendanceRecoveryOwner({ query, withTransaction, randomUUID })
+    : null;
+
+  // D15's repository is constructed before D10 so the formal Request lifecycle
+  // can delegate approved attendance-owned mutations transactionally to D15.
+  // D15's service is constructed only after D11 exists because D11 retains
+  // Lesson Controller/replanning authority.
+  const d15Repository = persistentDepsReady
+    ? createD15AttendanceRepository({ query, withTransaction, randomUUID })
+    : null;
+
+  const d10Repository = persistentDepsReady
     ? createD10LifecycleRequestRepository({ query, withTransaction, randomUUID })
     : null;
   const d10Service = d10Repository && d09Repository && d09TransactionalMutation
-    ? d10.createD10Service({ repository: d10Repository, d09Repository, transactionalMutation: d09TransactionalMutation, randomUUID, outboxStore:d10RuntimePlatform?.outboxStore || null })
+    ? d10.createD10Service({
+        repository: d10Repository,
+        d09Repository,
+        transactionalMutation: d09TransactionalMutation,
+        randomUUID,
+        outboxStore:d10RuntimePlatform?.outboxStore || null,
+        attendanceRequestOwner:d15Repository,
+      })
     : null;
   if (d10Service && d10RuntimePlatform?.eventRuntime) {
-    d10.registerD10DueEventHandler({ eventRuntime: d10RuntimePlatform.eventRuntime, repository: d10Repository, service: d10Service });
+    d10.registerD10DueEventHandler({
+      eventRuntime: d10RuntimePlatform.eventRuntime,
+      repository: d10Repository,
+      service: d10Service,
+    });
   }
 
-  const d11Repository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
-    ? createD11LessonControllerRepository({ query, withTransaction, randomUUID, outboxStore:d10RuntimePlatform?.outboxStore || null })
+  const d11Repository = persistentDepsReady
+    ? createD11LessonControllerRepository({
+        query,
+        withTransaction,
+        randomUUID,
+        outboxStore:d10RuntimePlatform?.outboxStore || null,
+      })
     : null;
-  const d11PreparationRepository = typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+  const d11PreparationRepository = persistentDepsReady
     ? createPreparationRuntimeRepository({ query, withTransaction, randomUUID })
     : null;
   const d11Service = d11Repository && d10RuntimePlatform?.eventStore
@@ -95,12 +137,24 @@ function createTeachingFoundation({
         preparationRepository: d11PreparationRepository,
       })
     : null;
+
+  const d15Service = d15Repository && d11Repository && d11Service
+    ? d15.createD15Service({
+        repository:d15Repository,
+        d11Repository,
+        d11Service,
+        schedulerRecoveryOwner:d09AttendanceRecoveryOwner,
+        dueEventStore:d10RuntimePlatform?.eventStore || null,
+        randomUUID,
+      })
+    : null;
+
   let d11Runtime = null;
   if (
-    d11Service &&
-    d11PublishedEventRegistry &&
-    d10RuntimePlatform?.eventRuntime &&
-    d10RuntimePlatform?.eventStore
+    d11Service
+    && d11PublishedEventRegistry
+    && d10RuntimePlatform?.eventRuntime
+    && d10RuntimePlatform?.eventStore
   ) {
     d11Runtime = d11.registerD11Runtime({
       publishedEvents: d11PublishedEventRegistry,
@@ -108,9 +162,20 @@ function createTeachingFoundation({
       dueEventStore: d10RuntimePlatform.eventStore,
       repository: d11Repository,
       service: d11Service,
+      attendanceService:d15Service,
     });
   }
-  const d12Repository = d11Repository && typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+
+  const d15Runtime = d15Service && d10RuntimePlatform?.eventRuntime
+    ? d15.registerD15Runtime({
+        eventRuntime:d10RuntimePlatform.eventRuntime,
+        publishedEvents:d11PublishedEventRegistry,
+        repository:d15Repository,
+        service:d15Service,
+      })
+    : null;
+
+  const d12Repository = d11Repository && persistentDepsReady
     ? createD12ResponsePedagogyRepository({
         query,
         withTransaction,
@@ -120,49 +185,42 @@ function createTeachingFoundation({
       })
     : null;
   const d12Service = d12Repository
-    ? d12.createD12Service({
-        repository: d12Repository,
-        intelligence: d12Intelligence,
-        randomUUID,
-      })
+    ? d12.createD12Service({ repository: d12Repository, intelligence: d12Intelligence, randomUUID })
     : null;
   let d12Runtime = null;
   if (d12Service && d12PublishedEventRegistry) {
-    d12Runtime = d12.registerD12Runtime({
-      publishedEvents: d12PublishedEventRegistry,
-      service: d12Service,
-    });
+    d12Runtime = d12.registerD12Runtime({ publishedEvents: d12PublishedEventRegistry, service: d12Service });
   }
 
-  const d13Repository = d12Repository && typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
+  const d13Repository = d12Repository && persistentDepsReady
     ? createD13StudentKnowledgeRepository({ query, withTransaction, randomUUID })
     : null;
   const d13Service = d13Repository
-    ? d13.createD13Service({
-        repository: d13Repository,
-        intelligence: d13Intelligence,
+    ? d13.createD13Service({ repository: d13Repository, intelligence: d13Intelligence, randomUUID })
+    : null;
+  let d13Runtime = null;
+  if (d13Service && d13PublishedEventRegistry) {
+    d13Runtime = d13.registerD13Runtime({ publishedEvents: d13PublishedEventRegistry, service: d13Service });
+  }
+
+  const d14Repository = d11Repository && persistentDepsReady
+    ? createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository})
+    : null;
+  const d14Service = d14Repository && d11Service && d12Service
+    ? createD14Service({
+        repository:d14Repository,
+        d11Repository,
+        d11Service,
+        d12Service,
+        attendanceService:d15Service,
         randomUUID,
       })
     : null;
-  const d14Repository = d11Repository && typeof query === 'function' && typeof withTransaction === 'function' && typeof randomUUID === 'function'
-    ? createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository}) : null;
-  const d14Service = d14Repository && d11Service && d12Service
-    ? createD14Service({repository:d14Repository,d11Repository,d11Service,d12Service,randomUUID}) : null;
   const d14Runtime = d14Service && d11PublishedEventRegistry
-    ? registerD14Runtime({publishedEvents:d11PublishedEventRegistry,service:d14Service}) : null;
-  let d13Runtime = null;
-  if (d13Service && d13PublishedEventRegistry) {
-    d13Runtime = d13.registerD13Runtime({
-      publishedEvents: d13PublishedEventRegistry,
-      service: d13Service,
-    });
-  }
+    ? registerD14Runtime({publishedEvents:d11PublishedEventRegistry,service:d14Service})
+    : null;
 
-  const service = createTeachingService({
-    config,
-    repositories,
-    examInterface,
-  });
+  const service = createTeachingService({ config, repositories, examInterface });
 
   return Object.freeze({
     config,
@@ -176,12 +234,17 @@ function createTeachingFoundation({
     service,
     d07: d07Service ? Object.freeze({ repository: d07Repository, service: d07Service }) : null,
     d08: d08Service ? Object.freeze({ repository: d08Repository, service: d08Service }) : null,
-    d09: d09Service ? Object.freeze({ repository: d09Repository, service: d09Service }) : null,
+    d09: d09Service ? Object.freeze({
+      repository: d09Repository,
+      service: d09Service,
+      attendanceRecoveryOwner:d09AttendanceRecoveryOwner,
+    }) : null,
     d10: d10Service ? Object.freeze({ repository: d10Repository, service: d10Service }) : null,
     d11: d11Service ? Object.freeze({ repository: d11Repository, service: d11Service, runtime: d11Runtime }) : null,
     d12: d12Service ? Object.freeze({ repository: d12Repository, service: d12Service, runtime: d12Runtime }) : null,
     d13: d13Service ? Object.freeze({ repository: d13Repository, service: d13Service, runtime: d13Runtime }) : null,
     d14: d14Service ? Object.freeze({ repository: d14Repository, service: d14Service, runtime:d14Runtime }) : null,
+    d15: d15Service ? Object.freeze({ repository:d15Repository, service:d15Service, runtime:d15Runtime }) : null,
     policy,
   });
 }
@@ -200,4 +263,5 @@ module.exports = {
   d12,
   d13,
   d14,
+  d15,
 };
