@@ -16,8 +16,9 @@ const PROVIDER_MODES = Object.freeze({
 });
 
 const MAIN_CBT_PROVIDER_MODE_ENV = 'AI_MAIN_CBT_PROVIDER_MODE';
-const MAIN_CBT_GROQ_MODEL_ID = GROQ_MODEL_IDS.GPT_OSS_120B;
-const MAIN_CBT_GROQ_REASONING = REASONING_LEVELS.MEDIUM;
+const MAIN_CBT_GROQ_MODEL_ID = GROQ_MODEL_IDS.QWEN_3_8_27B;
+const MAIN_CBT_GROQ_REASONING = REASONING_LEVELS.HIGH;
+const MAIN_CBT_GROQ_MAX_COMPLETION_TOKENS = 16384;
 
 const PROTECTED_ASSESSMENT_TASKS = Object.freeze(new Set([
   'MAIN_CBT',
@@ -58,11 +59,10 @@ function mainCbtGroqOverrideActive(env = process.env) {
 }
 
 function reasoningForProvider(taskId, task, provider, env = process.env) {
-  // MAIN_CBT remains a HIGH-reasoning assessment task canonically. The Groq
-  // translation is deliberately MEDIUM while the controlled GPT-OSS 120B route
-  // is active because GPT-OSS HIGH can consume the entire completion allowance
-  // as internal reasoning before emitting any exam content. Google fallbacks
-  // therefore retain the task's original HIGH reasoning intent.
+  // MAIN_CBT remains a HIGH-reasoning assessment task canonically. During the
+  // controlled Qwen 3.8 route test, Groq receives the same HIGH intent rather
+  // than the previous GPT-OSS-specific MEDIUM translation. Google fallbacks
+  // also retain the task's original HIGH reasoning intent.
   if (
     taskId === 'MAIN_CBT' &&
     provider === AI_PROVIDERS.GROQ &&
@@ -75,8 +75,8 @@ function reasoningForProvider(taskId, task, provider, env = process.env) {
 
 function requiredQualityTier(taskId, task, env = process.env) {
   // Explicit product-owner Main CBT override. This does not globally promote
-  // GPT-OSS 120B to HIGH_STAKES. It admits the already-approved PREMIUM 120B
-  // route only for MAIN_CBT while its dedicated provider switch is enabled.
+  // Qwen 3.8 to HIGH_STAKES or make the preview model generally eligible. It
+  // admits the PREMIUM model only inside MAIN_CBT's dedicated provider switch.
   if (taskId === 'MAIN_CBT' && mainCbtGroqOverrideActive(env)) {
     return MODEL_QUALITY_TIERS.PREMIUM;
   }
@@ -149,6 +149,7 @@ function routingRequirement(taskId, task, env = process.env) {
           scope: 'MAIN_CBT',
           modelId: MAIN_CBT_GROQ_MODEL_ID,
           reasoning: MAIN_CBT_GROQ_REASONING,
+          maxCompletionTokens: MAIN_CBT_GROQ_MAX_COMPLETION_TOKENS,
           source: MAIN_CBT_PROVIDER_MODE_ENV,
         })
       : null,
@@ -160,6 +161,7 @@ module.exports = {
   MAIN_CBT_PROVIDER_MODE_ENV,
   MAIN_CBT_GROQ_MODEL_ID,
   MAIN_CBT_GROQ_REASONING,
+  MAIN_CBT_GROQ_MAX_COMPLETION_TOKENS,
   PROTECTED_ASSESSMENT_TASKS,
   LOW_RISK_GROQ_20B_TASKS,
   normalizeProviderMode,
