@@ -1,6 +1,13 @@
 'use strict';
 
+const { AI_PROVIDERS } = require('./providers');
+
 const DEFAULT_MAX_PROVIDER_CREDENTIALS = 15;
+
+const CREDENTIAL_STATES = Object.freeze({
+  READY: 'READY',
+  DISABLED: 'DISABLED',
+});
 
 function indexedEnvName(baseName, index) {
   return index === 1 ? baseName : `${baseName}_${index}`;
@@ -36,20 +43,33 @@ function buildProviderCredentialSlots(env = process.env, {
       [secretField]: String(raw).trim(),
       enabled: true,
       disabledReason: null,
+      disabledAt: null,
+      lastEnabledAt: null,
     });
   }
 
   return slots;
 }
 
-function createRotatingCredentialPool({ slots: suppliedSlots = [] } = {}) {
+function createRotatingCredentialPool({
+  slots: suppliedSlots = [],
+  clock = () => Date.now(),
+} = {}) {
   const slots = suppliedSlots.map((slot) => ({
     ...slot,
     enabled: slot.enabled !== false,
     disabledReason: slot.disabledReason || null,
+    disabledAt: slot.disabledAt || null,
+    lastEnabledAt: slot.lastEnabledAt || null,
   }));
 
   const cursors = new Map();
+
+  function nowIso() {
+    const raw = clock();
+    const value = raw instanceof Date ? raw.getTime() : Number(raw);
+    return new Date(Number.isFinite(value) ? value : Date.now()).toISOString();
+  }
 
   function enabledSlots(excludeSlotIds = []) {
     const excluded = new Set(excludeSlotIds);
@@ -89,6 +109,7 @@ function createRotatingCredentialPool({ slots: suppliedSlots = [] } = {}) {
     if (!slot) return false;
     slot.enabled = false;
     slot.disabledReason = reason;
+    slot.disabledAt = nowIso();
     return true;
   }
 
@@ -97,6 +118,8 @@ function createRotatingCredentialPool({ slots: suppliedSlots = [] } = {}) {
     if (!slot) return false;
     slot.enabled = true;
     slot.disabledReason = null;
+    slot.disabledAt = null;
+    slot.lastEnabledAt = nowIso();
     return true;
   }
 
@@ -108,9 +131,13 @@ function createRotatingCredentialPool({ slots: suppliedSlots = [] } = {}) {
     return slots.map((slot) => ({
       id: slot.id,
       index: slot.index,
+      provider: slot.provider || null,
       envName: slot.envName,
       enabled: slot.enabled,
+      state: slot.enabled ? CREDENTIAL_STATES.READY : CREDENTIAL_STATES.DISABLED,
       disabledReason: slot.disabledReason,
+      disabledAt: slot.disabledAt || null,
+      lastEnabledAt: slot.lastEnabledAt || null,
     }));
   }
 
@@ -131,7 +158,7 @@ function buildProjectSlots(env = process.env, maxKeys = DEFAULT_MAX_PROVIDER_CRE
     envBaseName: 'GEMINI_API_KEY',
     idPrefix: 'gemini-project',
     secretField: 'apiKey',
-    provider: 'GEMINI',
+    provider: AI_PROVIDERS.GOOGLE,
     maxKeys,
   });
 }
@@ -140,9 +167,11 @@ function createProjectPool({
   env = process.env,
   maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
   slots: suppliedSlots = null,
+  clock,
 } = {}) {
   return createRotatingCredentialPool({
     slots: suppliedSlots || buildProjectSlots(env, maxKeys),
+    clock,
   });
 }
 
@@ -151,7 +180,7 @@ function buildGroqCredentialSlots(env = process.env, maxKeys = DEFAULT_MAX_PROVI
     envBaseName: 'GROQ_API_KEY',
     idPrefix: 'groq-key',
     secretField: 'apiKey',
-    provider: 'GROQ',
+    provider: AI_PROVIDERS.GROQ,
     maxKeys,
   });
 }
@@ -160,9 +189,11 @@ function createGroqCredentialPool({
   env = process.env,
   maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
   slots: suppliedSlots = null,
+  clock,
 } = {}) {
   return createRotatingCredentialPool({
     slots: suppliedSlots || buildGroqCredentialSlots(env, maxKeys),
+    clock,
   });
 }
 
@@ -171,7 +202,7 @@ function buildCloudflareCredentialSlots(env = process.env, maxKeys = DEFAULT_MAX
     envBaseName: 'CLOUDFLARE_WORKERS_AI_API_TOKEN',
     idPrefix: 'cloudflare-token',
     secretField: 'apiToken',
-    provider: 'CLOUDFLARE',
+    provider: AI_PROVIDERS.CLOUDFLARE,
     maxKeys,
   });
 }
@@ -180,14 +211,17 @@ function createCloudflareCredentialPool({
   env = process.env,
   maxKeys = DEFAULT_MAX_PROVIDER_CREDENTIALS,
   slots: suppliedSlots = null,
+  clock,
 } = {}) {
   return createRotatingCredentialPool({
     slots: suppliedSlots || buildCloudflareCredentialSlots(env, maxKeys),
+    clock,
   });
 }
 
 module.exports = {
   DEFAULT_MAX_PROVIDER_CREDENTIALS,
+  CREDENTIAL_STATES,
   indexedEnvName,
   buildProviderCredentialSlots,
   createRotatingCredentialPool,
