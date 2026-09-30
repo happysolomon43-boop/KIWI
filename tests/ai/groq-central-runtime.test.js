@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -101,4 +103,18 @@ test('createAIRuntime owns isolated Groq execution without changing ai.run produ
     (model) => model.productionEligible === false
   ));
   assert.doesNotMatch(JSON.stringify(status), /google-test-key|groq-test-key/);
+});
+
+test('real Groq smoke delegates to the central AI runtime instead of rebuilding provider plumbing', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '../../scripts/smoke-groq-runtime.js'),
+    'utf8'
+  );
+
+  assert.match(source, /createAIRuntime/);
+  assert.match(source, /runtime\.orchestrator\.runIsolatedProvider/);
+  assert.doesNotMatch(source, /createGroqProviderAdapter/);
+  assert.doesNotMatch(source, /createProviderRegistry/);
+  assert.doesNotMatch(source, /createGroqIsolatedExecutor/);
+  assert.doesNotMatch(source, /createGroqCredentialPool/);
 });
