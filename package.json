@@ -9,6 +9,7 @@
     "test": "node --test tests/ai/*.test.js tests/teaching/unit/*.test.js",
     "test:ai": "node --test tests/ai/*.test.js",
     "smoke:ai:groq": "node scripts/smoke-groq-runtime.js",
+    "smoke:ai:d03": "node scripts/smoke-d03-routing.js",
     "postinstall": "node scripts/sync-pixi-vendor.js",
     "build": "node scripts/build-web.js",
     "build:web": "node scripts/build-web.js",
