@@ -9,8 +9,10 @@ const {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
   MODEL_STATUS,
+  GROQ_MODEL_IDS,
+  GROQ_PRODUCTION_MODEL_CATALOG,
   GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
-  createModelCatalog,
+  modelMeetsQuality,
 } = require('./model-catalog');
 const {
   buildGeminiThinkingConfig,
@@ -18,14 +20,23 @@ const {
   modelSupportsCapabilities,
   resolveThinkingLevel,
 } = require('./capability-adapter');
-const { createProviderModelRef } = require('./providers');
+const { createProviderModelRef, AI_PROVIDERS } = require('./providers');
 const { AIError, AI_ERROR_CODES } = require('./errors');
+const {
+  PROVIDER_MODES,
+  routingRequirement,
+} = require('./routing-policy');
 
 function createModelRouter({
   registry = AI_TASKS,
-  catalog = createModelCatalog(),
+  catalog,
   pins = {},
+  env = process.env,
 } = {}) {
+  if (!catalog?.list || !catalog?.get || !catalog?.upsert) {
+    throw new Error('AI model router requires a model catalog');
+  }
+
   function getTask(taskId) {
     const task = registry[taskId];
     if (!task) {
@@ -38,13 +49,31 @@ function createModelRouter({
     return task;
   }
 
+  function ensureGroqProductionCatalog() {
+    for (const model of GROQ_PRODUCTION_MODEL_CATALOG) {
+      const current = catalog.get(model.id);
+      // Never overwrite a runtime suspension/retirement/deny decision.
+      if (current && current.status !== MODEL_STATUS.APPROVED) continue;
+      catalog.upsert({
+        ...model,
+        status: current?.status || model.status,
+        metadata: {
+          ...(current?.metadata || {}),
+          ...(model.metadata || {}),
+        },
+      });
+    }
+  }
+
   function eligibleFamily(family, task) {
     return catalog.list({
+      provider: AI_PROVIDERS.GOOGLE,
       family,
       channel: MODEL_CHANNELS.STABLE,
       status: MODEL_STATUS.APPROVED,
       requiredCapabilities: task.capabilities,
     }).filter((model) => (
+      model.productionEligible !== false &&
       modelSupportsCapabilities(model, task.capabilities) &&
       resolveThinkingLevel(model, task.reasoning)
     ));
@@ -54,22 +83,7 @@ function createModelRouter({
     if (!modelId) return models;
     const index = models.findIndex((model) => model.id === modelId);
     if (index < 0) return models;
-
-    // A manual pin is an emergency ceiling, not just a preferred first hop.
-    // If a newest model is suspect and the class is pinned lower, fallbacks
-    // must continue downward rather than re-entering the stronger model.
     return models.slice(index);
-  }
-
-  function applyPreferredModel(candidates, preferredModelId) {
-    if (!preferredModelId) return candidates;
-    const index = candidates.findIndex((entry) => entry.model.id === preferredModelId);
-    if (index < 0) return candidates;
-
-    // Generation affinity is a ceiling: when a multi-call workflow has already
-    // settled on a lower model, later calls should prefer it and weaker approved
-    // fallbacks rather than unexpectedly upgrading.
-    return candidates.slice(index);
   }
 
   function appendGeneralEmergencyFallback(models, task) {
@@ -81,113 +95,196 @@ function createModelRouter({
     return models.concat(fallback);
   }
 
-  function resolveCandidates(taskId, { preferredModelId = null } = {}) {
-    const task = getTask(taskId);
+  // This is the accepted pre-D03 Google route graph. Keeping it as a dedicated
+  // compatibility path makes AI_TEXT_PROVIDER_MODE=GOOGLE_ONLY a real rollback,
+  // not an approximation of the old behavior.
+  function legacyGoogleModels(task) {
     const flash = eligibleFamily(MODEL_FAMILIES.FLASH, task);
     const lite = eligibleFamily(MODEL_FAMILIES.FLASH_LITE, task);
-
     let models = [];
 
     switch (task.modelPolicy) {
       case MODEL_POLICIES.TOP_STABLE_FLASH:
-        // Keep four approved stable Flash generations, then add the explicit
-        // high-thinking 3.5 Lite availability route as the final fallback.
         models = appendGeneralEmergencyFallback(
           pinAsCeiling(flash, pins.VVIP).slice(0, 4),
           task
         );
         break;
-
       case MODEL_POLICIES.VIP_STABLE_FLASH:
-        // VIP starts one generation below the VVIP primary so it cannot consume
-        // the newest model's normal capacity. An emergency VIP pin overrides
-        // only this starting point and still keeps bounded fallbacks.
-        if (pins.VIP) {
-          models = pinAsCeiling(flash, pins.VIP).slice(0, 3);
-        } else {
-          models = flash.length > 1 ? flash.slice(1, 4) : flash.slice(0, 3);
-        }
-        if (
-          task.degradationAllowed &&
-          task.qualityFloor === QUALITY_FLOORS.FLASH_LITE
-        ) {
+        if (pins.VIP) models = pinAsCeiling(flash, pins.VIP).slice(0, 3);
+        else models = flash.length > 1 ? flash.slice(1, 4) : flash.slice(0, 3);
+        if (task.degradationAllowed && task.qualityFloor === QUALITY_FLOORS.FLASH_LITE) {
           models = models.concat(lite.slice(0, 2));
         }
         models = appendGeneralEmergencyFallback(models, task);
         break;
-
       case MODEL_POLICIES.TOP_STABLE_FLASH_LITE:
         models = pinAsCeiling(lite, pins.IP).slice(0, 2);
         break;
-
       default:
-        throw new AIError(
-          `Unsupported model policy ${task.modelPolicy} for task ${taskId}`,
-          {
-            code: AI_ERROR_CODES.CONFIG,
-            retryable: false,
-            scope: 'REQUEST',
-          }
-        );
-    }
-
-    const routed = models.map((model) => {
-      // The 3.5 Lite availability route always retains HIGH thinking even for
-      // lower-class tasks; it is a last-resort model fallback, not a quality
-      // shortcut. Lite-native tasks use the same high-quality configuration.
-      const requestedReasoning = model.id === GENERAL_EMERGENCY_FALLBACK_MODEL_ID
-        ? 'HIGH'
-        : task.reasoning;
-      const reasoning = buildReasoningDirective(model, requestedReasoning);
-
-      // Compatibility bridge: the current orchestrator still merges this field
-      // into generationConfig before transport. The Google compatibility
-      // transport immediately re-normalizes it into the neutral execution
-      // contract before provider serialization. AIM-D03 removes this legacy
-      // field when provider-aware routing replaces Gemini-era family routing.
-      const thinking = buildGeminiThinkingConfig(model, requestedReasoning);
-      const modelRef = createProviderModelRef({
-        provider: model.provider,
-        modelId: model.id,
-      });
-
-      return Object.freeze({
-        model,
-        modelRef,
-        provider: modelRef.provider,
-        routeKey: modelRef.key,
-        modelId: model.id,
-        requestedReasoning: reasoning.requested,
-        resolvedReasoning: reasoning.resolved,
-        reasoning: Object.freeze({ ...reasoning }),
-        thinkingGenerationConfig: thinking.generationConfig,
-        timeoutMs: task.timeoutMs,
-        retryPolicy: task.retryPolicy,
-        class: task.class,
-        qualityFloor: task.qualityFloor,
-        affinityGroup: task.affinityGroup || null,
-      });
-    });
-
-    const preferred = applyPreferredModel(routed, preferredModelId);
-
-    if (preferred.length === 0) {
-      throw new AIError(
-        `No approved model satisfies task ${taskId}`,
-        {
+        throw new AIError(`Unsupported model policy ${task.modelPolicy}`, {
           code: AI_ERROR_CODES.CONFIG,
           retryable: false,
           scope: 'REQUEST',
-        }
-      );
+        });
+    }
+    return models;
+  }
+
+  function eligibleGroqModels(taskId, task, requirement) {
+    ensureGroqProductionCatalog();
+    let models = catalog.list({
+      provider: AI_PROVIDERS.GROQ,
+      channel: MODEL_CHANNELS.STABLE,
+      status: MODEL_STATUS.APPROVED,
+      requiredCapabilities: task.capabilities,
+    }).filter((model) => (
+      model.productionEligible !== false &&
+      modelSupportsCapabilities(model, task.capabilities) &&
+      modelMeetsQuality(model, requirement.requiredQualityTier)
+    ));
+
+    // GPT-OSS does not expose MINIMAL. Mapping MINIMAL -> LOW is an explicit
+    // upward reasoning translation; HIGH is never silently lowered.
+    models = models.filter((model) => {
+      if (task.reasoning === 'MINIMAL') return model.supportedThinking.includes('LOW');
+      return model.supportedThinking.includes(task.reasoning);
+    });
+
+    const preferred = requirement.preferEfficientGroqModel
+      ? [GROQ_MODEL_IDS.GPT_OSS_20B, GROQ_MODEL_IDS.GPT_OSS_120B]
+      : [GROQ_MODEL_IDS.GPT_OSS_120B, GROQ_MODEL_IDS.GPT_OSS_20B];
+    const rank = new Map(preferred.map((id, index) => [id, index]));
+    return models.sort((a, b) =>
+      (rank.get(a.id) ?? 99) - (rank.get(b.id) ?? 99) || b.rank - a.rank
+    );
+  }
+
+  function neutralGoogleModels(task, requirement) {
+    const legacy = legacyGoogleModels(task);
+    // Protected assessment tasks intentionally preserve the historical Google
+    // emergency chain exactly until their independent route qualification closes.
+    if (requirement.assessmentProtected) return legacy;
+    return legacy.filter((model) =>
+      modelMeetsQuality(model, requirement.requiredQualityTier) || task.degradationAllowed
+    );
+  }
+
+  function requestedReasoningFor(model, task) {
+    if (
+      model.provider === AI_PROVIDERS.GOOGLE &&
+      model.id === GENERAL_EMERGENCY_FALLBACK_MODEL_ID
+    ) return 'HIGH';
+    return task.reasoning;
+  }
+
+  function routeEntry(model, task, requirement) {
+    const requested = requestedReasoningFor(model, task);
+    let resolved;
+    let thinkingGenerationConfig;
+
+    if (model.provider === AI_PROVIDERS.GROQ) {
+      resolved = requested === 'MINIMAL' ? 'LOW' : requested;
+      if (!model.supportedThinking.includes(resolved)) {
+        throw new AIError(
+          `${model.id} cannot satisfy reasoning level ${requested}`,
+          {
+            code: AI_ERROR_CODES.CONFIG,
+            retryable: false,
+            scope: 'MODEL',
+            provider: model.provider,
+          }
+        );
+      }
+      // Neutral internal directive. The provider-aware compatibility transport
+      // translates this into Groq reasoning_effort.
+      thinkingGenerationConfig = {
+        reasoning: Object.freeze({ requested, resolved }),
+      };
+    } else {
+      const reasoning = buildReasoningDirective(model, requested);
+      resolved = reasoning.resolved;
+      thinkingGenerationConfig = buildGeminiThinkingConfig(
+        model,
+        requested
+      ).generationConfig;
     }
 
-    return preferred;
+    const modelRef = createProviderModelRef({
+      provider: model.provider,
+      modelId: model.id,
+    });
+
+    return Object.freeze({
+      model,
+      modelRef,
+      provider: modelRef.provider,
+      routeKey: modelRef.key,
+      modelId: model.id,
+      requestedReasoning: requested,
+      resolvedReasoning: resolved,
+      reasoning: Object.freeze({ requested, resolved }),
+      thinkingGenerationConfig: Object.freeze({ ...thinkingGenerationConfig }),
+      timeoutMs: task.timeoutMs,
+      retryPolicy: task.retryPolicy,
+      class: task.class,
+      qualityFloor: requirement.requiredQualityTier,
+      legacyQualityFloor: task.qualityFloor,
+      requiredCapabilities: requirement.requiredCapabilities,
+      providerMode: requirement.providerMode,
+      affinityGroup: task.affinityGroup || null,
+    });
+  }
+
+  function applyPreferredModel(candidates, preferredModelId) {
+    if (!preferredModelId) return candidates;
+    const index = candidates.findIndex((entry) => entry.modelId === preferredModelId);
+    if (index < 0) return candidates;
+    return candidates.slice(index);
+  }
+
+  function resolveCandidates(taskId, { preferredModelId = null } = {}) {
+    const task = getTask(taskId);
+    const requirement = routingRequirement(taskId, task, env);
+    const google = neutralGoogleModels(task, requirement);
+
+    let models;
+    if (requirement.providerMode === PROVIDER_MODES.GOOGLE_ONLY) {
+      models = google;
+    } else {
+      const groq = eligibleGroqModels(taskId, task, requirement);
+      models = requirement.providerMode === PROVIDER_MODES.GOOGLE_FIRST
+        ? [...google, ...groq]
+        : [...groq, ...google];
+    }
+
+    const candidates = models.map((model) => routeEntry(model, task, requirement));
+    const preferred = applyPreferredModel(candidates, preferredModelId);
+
+    if (preferred.length === 0) {
+      throw new AIError(`No approved model satisfies task ${taskId}`, {
+        code: AI_ERROR_CODES.CONFIG,
+        retryable: false,
+        scope: 'REQUEST',
+        details: {
+          requiredQualityTier: requirement.requiredQualityTier,
+          requiredCapabilities: requirement.requiredCapabilities,
+          providerMode: requirement.providerMode,
+        },
+      });
+    }
+    return Object.freeze(preferred);
+  }
+
+  function describeRequirement(taskId) {
+    const task = getTask(taskId);
+    return routingRequirement(taskId, task, env);
   }
 
   return Object.freeze({
     getTask,
     resolveCandidates,
+    describeRequirement,
   });
 }
 
