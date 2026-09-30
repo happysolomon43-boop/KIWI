@@ -1,0 +1,100 @@
+name: GPT OSS CBT API Experiment
+
+on:
+  push:
+    branches:
+      - exp-gptoss-cbt-api
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Generate disposable GPT-OSS CBT sample through KIWI API
+        shell: bash
+        run: |
+          node <<'NODE'
+          const crypto = require('crypto');
+          const API = 'https://kiwi-741i.onrender.com';
+
+          async function post(path, body, token) {
+            const response = await fetch(`${API}${path}`, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                ...(token ? { authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify(body),
+            });
+            const text = await response.text();
+            let data;
+            try { data = text ? JSON.parse(text) : null; }
+            catch { data = { raw: text }; }
+            if (!response.ok) {
+              throw new Error(`${path} -> ${response.status}: ${JSON.stringify(data).slice(0, 800)}`);
+            }
+            return data;
+          }
+
+          (async () => {
+            const stamp = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+            const email = `kiwi-gptoss-exp-${stamp}@example.com`;
+            const password = `KiwiExp_${crypto.randomUUID()}!A9`;
+            const name = `GPTOSS Experiment ${stamp.slice(-8)}`;
+
+            const auth = await post('/api/auth/register', { name, email, password });
+            const token = auth.accessToken;
+            const userId = auth.user?.id;
+            if (!token || !userId) throw new Error('registration did not return accessToken/user.id');
+
+            const subject = await post('/api/subjects', {
+              name: 'GPT-OSS Physics Experiment',
+              color: '#4F46E5',
+              icon: '🧪',
+            }, token);
+
+            const deck = await post('/api/decks', {
+              subject_id: subject.id,
+              name: 'Mechanics Experiment Deck',
+              description: 'Temporary GPT-OSS 120B CBT quality experiment',
+              is_public: false,
+            }, token);
+
+            const card = await post('/api/cards', {
+              deck_id: deck.id,
+              front_content: 'First-year university mechanics: kinematics, Newtonian dynamics, work-energy, momentum, circular motion and gravitation.',
+              back_content: 'Use SI units. Constant-acceleration relations: v=u+at, s=ut+1/2 at^2, v^2=u^2+2as. Newton second law: sum F=ma; weight=mg; friction f_s<=mu_s N and f_k=mu_k N. Work W=Fd cos(theta); kinetic energy K=1/2 mv^2; W_net=Delta K; gravitational potential near Earth U=mgh. Momentum p=mv; impulse J=Delta p; isolated-system momentum is conserved. Uniform circular motion a_c=v^2/r and F_c=mv^2/r. Newtonian gravity F=Gm1m2/r^2, g=GM/r^2, and circular orbital speed v=sqrt(GM/r). Questions should test conceptual reasoning and numerical application without requiring diagrams.',
+              tags: ['gpt-oss-experiment'],
+            }, token);
+
+            const batches = [];
+            for (let i = 0; i < 4; i += 1) {
+              const result = await post(`/api/cards/${card.id}/quick-questions`, {
+                count: 3,
+                calcOnly: false,
+              }, token);
+              batches.push(...(result.questions || []));
+            }
+
+            const questions = batches.slice(0, 10);
+            if (questions.length < 10) throw new Error(`expected 10 questions, got ${questions.length}`);
+
+            console.log('GPT_OSS_CBT_RESULT_BEGIN');
+            console.log(JSON.stringify({
+              userId,
+              email,
+              subjectId: subject.id,
+              deckId: deck.id,
+              cardId: card.id,
+              generatedCount: questions.length,
+              questions,
+            }, null, 2));
+            console.log('GPT_OSS_CBT_RESULT_END');
+          })().catch((error) => {
+            console.error('GPT_OSS_CBT_EXPERIMENT_FAILED', String(error?.message || error));
+            process.exitCode = 1;
+          });
+          NODE
