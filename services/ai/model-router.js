@@ -91,6 +91,8 @@ function createModelRouter({
     return models.concat(fallback);
   }
 
+  // Accepted pre-D03 Google graph. This function is intentionally kept intact
+  // so GOOGLE_ONLY is an exact operational rollback, not a best-effort rebuild.
   function legacyGoogleModels(task) {
     const flash = eligibleFamily(MODEL_FAMILIES.FLASH, task);
     const lite = eligibleFamily(MODEL_FAMILIES.FLASH_LITE, task);
@@ -154,8 +156,15 @@ function createModelRouter({
   function neutralGoogleModels(task, requirement) {
     const legacy = legacyGoogleModels(task);
     if (requirement.assessmentProtected) return legacy;
+
+    // The historical 3.5 Lite HIGH-thinking route is an explicit availability
+    // safety valve, not a statement that Lite meets a PREMIUM quality floor.
+    // Keep it at the very end while filtering ordinary Google candidates by the
+    // new neutral quality tier.
     return legacy.filter((model) =>
-      modelMeetsQuality(model, requirement.requiredQualityTier) || task.degradationAllowed
+      model.id === GENERAL_EMERGENCY_FALLBACK_MODEL_ID ||
+      modelMeetsQuality(model, requirement.requiredQualityTier) ||
+      task.degradationAllowed
     );
   }
 
@@ -230,12 +239,14 @@ function createModelRouter({
   function resolveCandidates(taskId, { preferredModelId = null } = {}) {
     const task = getTask(taskId);
     const requirement = routingRequirement(taskId, task, env);
-    const google = neutralGoogleModels(task, requirement);
+    const legacyGoogle = legacyGoogleModels(task);
 
     let models;
     if (requirement.providerMode === PROVIDER_MODES.GOOGLE_ONLY) {
-      models = google;
+      // Exact rollback path: do not apply D03 quality filtering here.
+      models = legacyGoogle;
     } else {
+      const google = neutralGoogleModels(task, requirement);
       const groq = eligibleGroqModels(taskId, task, requirement);
       models = requirement.providerMode === PROVIDER_MODES.GOOGLE_FIRST
         ? [...google, ...groq]
