@@ -23,13 +23,17 @@ test('provider model IDs are centralized in model-catalog.js', () => {
   }
 });
 
-test('Gemini HTTP endpoint exists only in gemini-transport.js', () => {
+test('Google provider HTTP endpoint exists only in google-http-transport.js', () => {
   for (const file of fs.readdirSync(aiDir).filter((name) => name.endsWith('.js'))) {
     const source = read(file);
-    if (file === 'gemini-transport.js') {
+    if (file === 'google-http-transport.js') {
       assert.match(source, /generativelanguage\.googleapis\.com/);
     } else {
-      assert.doesNotMatch(source, /generativelanguage\.googleapis\.com/);
+      assert.doesNotMatch(
+        source,
+        /generativelanguage\.googleapis\.com/,
+        `${file} must not bypass the raw Google HTTP transport`
+      );
     }
   }
 });

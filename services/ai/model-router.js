@@ -14,9 +14,11 @@ const {
 } = require('./model-catalog');
 const {
   buildGeminiThinkingConfig,
+  buildReasoningDirective,
   modelSupportsCapabilities,
   resolveThinkingLevel,
 } = require('./capability-adapter');
+const { createProviderModelRef } = require('./providers');
 const { AIError, AI_ERROR_CODES } = require('./errors');
 
 function createModelRouter({
@@ -48,15 +50,14 @@ function createModelRouter({
     ));
   }
 
-
   function pinAsCeiling(models, modelId) {
     if (!modelId) return models;
     const index = models.findIndex((model) => model.id === modelId);
     if (index < 0) return models;
 
     // A manual pin is an emergency ceiling, not just a preferred first hop.
-    // If 3.9 is suspect and VVIP is pinned to 3.8, fallbacks must continue
-    // downward to 3.7/3.6 rather than re-entering 3.9.
+    // If a newest model is suspect and the class is pinned lower, fallbacks
+    // must continue downward rather than re-entering the stronger model.
     return models.slice(index);
   }
 
@@ -66,8 +67,8 @@ function createModelRouter({
     if (index < 0) return candidates;
 
     // Generation affinity is a ceiling: when a multi-call workflow has already
-    // settled on 3.7, a repair/completion call should prefer 3.7 then weaker
-    // approved fallbacks rather than unexpectedly upgrading back to 3.8.
+    // settled on a lower model, later calls should prefer it and weaker approved
+    // fallbacks rather than unexpectedly upgrading.
     return candidates.slice(index);
   }
 
@@ -137,12 +138,28 @@ function createModelRouter({
       const requestedReasoning = model.id === GENERAL_EMERGENCY_FALLBACK_MODEL_ID
         ? 'HIGH'
         : task.reasoning;
+      const reasoning = buildReasoningDirective(model, requestedReasoning);
+
+      // Compatibility bridge: the current orchestrator still merges this field
+      // into generationConfig before transport. The Google compatibility
+      // transport immediately re-normalizes it into the neutral execution
+      // contract before provider serialization. AIM-D03 removes this legacy
+      // field when provider-aware routing replaces Gemini-era family routing.
       const thinking = buildGeminiThinkingConfig(model, requestedReasoning);
+      const modelRef = createProviderModelRef({
+        provider: model.provider,
+        modelId: model.id,
+      });
+
       return Object.freeze({
         model,
+        modelRef,
+        provider: modelRef.provider,
+        routeKey: modelRef.key,
         modelId: model.id,
-        requestedReasoning: thinking.requested,
-        resolvedReasoning: thinking.resolved,
+        requestedReasoning: reasoning.requested,
+        resolvedReasoning: reasoning.resolved,
+        reasoning: Object.freeze({ ...reasoning }),
         thinkingGenerationConfig: thinking.generationConfig,
         timeoutMs: task.timeoutMs,
         retryPolicy: task.retryPolicy,
