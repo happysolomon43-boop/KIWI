@@ -54,6 +54,7 @@ function response(status, body, headerValues = {}) {
 function groqRaw({
   model = GROQ_MODEL_IDS.GPT_OSS_20B,
   content = 'hello',
+  reasoning = undefined,
   finishReason = 'stop',
 } = {}) {
   return {
@@ -61,7 +62,11 @@ function groqRaw({
     model,
     choices: [{
       index: 0,
-      message: { role: 'assistant', content },
+      message: {
+        role: 'assistant',
+        content,
+        ...(reasoning === undefined ? {} : { reasoning }),
+      },
       finish_reason: finishReason,
     }],
     usage: {
@@ -106,7 +111,7 @@ test('existing production router remains Gemini-only', () => {
   assert.ok(candidates.every((candidate) => !String(candidate.modelId).includes('gpt-oss')));
 });
 
-test('Groq serializer maps neutral text, controls and HIGH reasoning', () => {
+test('Groq serializer maps neutral text, controls and HIGH GPT-OSS reasoning without unsupported reasoning_format', () => {
   const request = createExecutionRequest({
     provider: AI_PROVIDERS.GROQ,
     modelId: GROQ_MODEL_IDS.GPT_OSS_120B,
@@ -125,7 +130,8 @@ test('Groq serializer maps neutral text, controls and HIGH reasoning', () => {
   assert.equal(body.model, GROQ_MODEL_IDS.GPT_OSS_120B);
   assert.deepEqual(body.messages, [{ role: 'user', content: 'Solve the problem.' }]);
   assert.equal(body.reasoning_effort, 'high');
-  assert.equal(body.reasoning_format, 'hidden');
+  assert.equal(body.include_reasoning, false);
+  assert.equal('reasoning_format' in body, false);
   assert.equal(body.max_completion_tokens, 2048);
   assert.equal(body.temperature, 0.3);
   assert.equal(body.top_p, 0.9);
@@ -135,7 +141,7 @@ test('Groq serializer maps neutral text, controls and HIGH reasoning', () => {
   assert.equal('thinkingConfig' in body, false);
 });
 
-test('Groq structured output uses strict JSON Schema and hidden reasoning', () => {
+test('Groq structured output uses strict JSON Schema and private GPT-OSS reasoning', () => {
   const schema = {
     type: 'object',
     properties: { answer: { type: 'string' } },
@@ -155,7 +161,8 @@ test('Groq structured output uses strict JSON Schema and hidden reasoning', () =
   const body = serializeGroqExecutionRequest(request);
 
   assert.equal(body.reasoning_effort, 'medium');
-  assert.equal(body.reasoning_format, 'hidden');
+  assert.equal(body.include_reasoning, false);
+  assert.equal('reasoning_format' in body, false);
   assert.deepEqual(body.response_format, {
     type: 'json_schema',
     json_schema: { name: 'kiwi-test', strict: true, schema },
@@ -343,7 +350,8 @@ test('Groq provider adapter executes and normalizes a neutral structured request
     fetchImpl: async (_url, init) => {
       const body = JSON.parse(init.body);
       assert.equal(body.reasoning_effort, 'high');
-      assert.equal(body.reasoning_format, 'hidden');
+      assert.equal(body.include_reasoning, false);
+      assert.equal('reasoning_format' in body, false);
       assert.equal(body.response_format.type, 'json_schema');
       return response(200, groqRaw({
         model: GROQ_MODEL_IDS.GPT_OSS_120B,
@@ -373,6 +381,61 @@ test('Groq provider adapter executes and normalizes a neutral structured request
   });
   assert.deepEqual(result.normalized.structuredData, { ok: true });
   assert.equal(result.normalized.credentialSlot, 'groq-key-01');
+});
+
+test('Groq empty response records safe budget diagnostics without logging reasoning text', async () => {
+  const warnings = [];
+  const hiddenReasoning = 'do-not-log-this-hidden-reasoning';
+  const adapter = createGroqProviderAdapter({
+    httpTransport: {
+      async generate() {
+        return {
+          raw: groqRaw({
+            model: GROQ_MODEL_IDS.GPT_OSS_120B,
+            content: '',
+            reasoning: hiddenReasoning,
+            finishReason: 'stop',
+          }),
+          latencyMs: 18100,
+          rateLimit: null,
+        };
+      },
+    },
+    logger: {
+      warn(message, payload) { warnings.push({ message, payload }); },
+      info() {},
+    },
+  });
+  const request = createExecutionRequest({
+    provider: AI_PROVIDERS.GROQ,
+    modelId: GROQ_MODEL_IDS.GPT_OSS_120B,
+    content: 'Generate CBT.',
+    generation: {
+      reasoning: { requested: 'HIGH', resolved: 'HIGH' },
+      maxCompletionTokens: 8000,
+    },
+  });
+
+  const result = await adapter.generate({
+    credential: { id: 'groq-key-01', apiKey: 'secret' },
+    request,
+    timeoutMs: 19000,
+  });
+
+  assert.equal(result.normalized.text, '');
+  assert.equal(result.diagnostic.attemptTimeoutMs, 19000);
+  assert.equal(result.diagnostic.latencyMs, 18100);
+  assert.equal(result.diagnostic.remainingBudgetMs, 900);
+  assert.equal(result.diagnostic.budgetUtilizationPct, 95.3);
+  assert.equal(result.diagnostic.nearAttemptDeadline, true);
+  assert.equal(result.diagnostic.transportTimedOut, false);
+  assert.equal(result.diagnostic.contentCharacters, 0);
+  assert.equal(result.diagnostic.reasoningPresent, true);
+  assert.equal(result.diagnostic.reasoningCharacters, hiddenReasoning.length);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].message, /empty-response diagnostic/);
+  assert.doesNotMatch(JSON.stringify(warnings[0]), new RegExp(hiddenReasoning));
+  assert.doesNotMatch(JSON.stringify(warnings[0]), /secret|api[_-]?key|authorization|bearer/i);
 });
 
 test('isolated executor rotates a 401 credential and succeeds on the next slot', async () => {
