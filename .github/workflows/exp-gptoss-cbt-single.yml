@@ -1,0 +1,85 @@
+name: GPT OSS Single Item CBT Experiment
+
+on:
+  push:
+    branches:
+      - exp-gptoss-cbt-single
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Exercise KIWI Quick Questions one item at a time
+        shell: bash
+        run: |
+          node <<'NODE'
+          const crypto = require('crypto');
+          const API = 'https://kiwi-741i.onrender.com';
+
+          async function post(path, body, token) {
+            const response = await fetch(`${API}${path}`, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                ...(token ? { authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify(body),
+            });
+            const text = await response.text();
+            let data;
+            try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+            return { ok: response.ok, status: response.status, data };
+          }
+
+          function must(result, label) {
+            if (!result.ok) throw new Error(`${label} -> ${result.status}: ${JSON.stringify(result.data).slice(0, 800)}`);
+            return result.data;
+          }
+
+          (async () => {
+            const stamp = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+            const reg = must(await post('/api/auth/register', {
+              name: `GPTOSS Format Test ${stamp.slice(-8)}`,
+              email: `kiwi-gptoss-single-${stamp}@example.com`,
+              password: `KiwiTest_${crypto.randomUUID()}!A9`,
+            }), 'register');
+            const token = reg.accessToken;
+            const userId = reg.user?.id;
+
+            const subject = must(await post('/api/subjects', {
+              name: 'Physics Format Test', color: '#4F46E5', icon: 'P'
+            }, token), 'subject');
+            const deck = must(await post('/api/decks', {
+              subject_id: subject.id,
+              name: 'Mechanics Format Test',
+              description: 'Temporary model-format experiment',
+              is_public: false,
+            }, token), 'deck');
+            const card = must(await post('/api/cards', {
+              deck_id: deck.id,
+              front_content: 'First-year mechanics: motion, forces, work-energy, momentum, circular motion, gravity.',
+              back_content: 'Use SI units. For constant acceleration use v=u+at, s=ut+1/2at^2 and v^2=u^2+2as. Use sum F=ma, K=1/2mv^2, W_net=Delta K, p=mv, impulse=Delta p, a_c=v^2/r, F_c=mv^2/r, F=Gm1m2/r^2 and v_orbit=sqrt(GM/r). Test both concepts and calculations.',
+              tags: ['format-test'],
+            }, token), 'card');
+
+            const questions = [];
+            const attempts = [];
+            for (let i = 1; i <= 10; i += 1) {
+              const r = await post(`/api/cards/${card.id}/quick-questions`, { count: 1, calcOnly: false }, token);
+              attempts.push({ attempt: i, status: r.status, accepted: r.ok, error: r.ok ? null : r.data?.error || null });
+              if (r.ok && Array.isArray(r.data?.questions) && r.data.questions[0]) questions.push(r.data.questions[0]);
+            }
+
+            console.log('GPT_OSS_SINGLE_RESULT_BEGIN');
+            console.log(JSON.stringify({ userId, email: reg.user?.email || null, subjectId: subject.id, deckId: deck.id, cardId: card.id, successfulQuestions: questions.length, attempts, questions }, null, 2));
+            console.log('GPT_OSS_SINGLE_RESULT_END');
+            if (!questions.length) process.exitCode = 2;
+          })().catch((error) => {
+            console.error('GPT_OSS_SINGLE_EXPERIMENT_FAILED', String(error?.message || error));
+            process.exitCode = 1;
+          });
+          NODE
