@@ -17,6 +17,19 @@ function _reasoningFromLegacyThinkingConfig(thinkingConfig) {
   return Object.freeze({ requested: level, resolved: level });
 }
 
+function _structuredOutputFromLegacyGeneration(generationConfig = {}) {
+  const hasMimeType = generationConfig.responseMimeType != null;
+  const hasSchema = generationConfig.responseSchema != null;
+  if (!hasMimeType && !hasSchema) return null;
+
+  return Object.freeze({
+    mimeType: hasMimeType
+      ? String(generationConfig.responseMimeType)
+      : 'application/json',
+    schema: hasSchema ? generationConfig.responseSchema : null,
+  });
+}
+
 function legacyInvocationToExecutionRequest({
   modelId,
   content,
@@ -25,13 +38,21 @@ function legacyInvocationToExecutionRequest({
 } = {}) {
   const {
     thinkingConfig = null,
+    responseMimeType = undefined,
+    responseSchema = undefined,
     ...restGeneration
   } = generationConfig || {};
 
   const reasoning = _reasoningFromLegacyThinkingConfig(thinkingConfig);
-  const generation = reasoning
-    ? { ...restGeneration, reasoning }
-    : restGeneration;
+  const structuredOutput = _structuredOutputFromLegacyGeneration({
+    responseMimeType,
+    responseSchema,
+  });
+  const generation = {
+    ...restGeneration,
+    ...(reasoning ? { reasoning } : {}),
+    ...(structuredOutput ? { structuredOutput } : {}),
+  };
 
   return createExecutionRequest({
     provider: AI_PROVIDERS.GOOGLE,
@@ -69,6 +90,7 @@ function serializeGoogleExecutionRequest(request) {
   const generation = request.generation || {};
   const {
     reasoning = null,
+    structuredOutput = null,
     ...generationConfig
   } = generation;
 
@@ -76,6 +98,13 @@ function serializeGoogleExecutionRequest(request) {
     generationConfig.thinkingConfig = {
       thinkingLevel: String(reasoning.resolved).toLowerCase(),
     };
+  }
+
+  if (structuredOutput) {
+    generationConfig.responseMimeType = structuredOutput.mimeType || 'application/json';
+    if (structuredOutput.schema != null) {
+      generationConfig.responseSchema = structuredOutput.schema;
+    }
   }
 
   return Object.freeze({
