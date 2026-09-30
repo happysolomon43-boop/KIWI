@@ -19,8 +19,7 @@ function normalizeReasoning(value) {
 /**
  * KIWI reasoning levels are minimum intent, not exact provider strings.
  * We never silently downgrade below the requested level. If the exact level is
- * unsupported, use the next stronger level. This is what lets MINIMAL safely
- * become LOW on Gemini 3.8/3.7 while HIGH remains HIGH-only.
+ * unsupported, use the next stronger level.
  */
 function resolveThinkingLevel(model, requestedReasoning) {
   const requested = normalizeReasoning(requestedReasoning);
@@ -35,13 +34,9 @@ function resolveThinkingLevel(model, requestedReasoning) {
   return null;
 }
 
-function modelSupportsCapabilities(model, requiredCapabilities = []) {
-  const supported = new Set(model?.capabilities || []);
-  return requiredCapabilities.every((capability) => supported.has(capability));
-}
-
-function buildGeminiThinkingConfig(model, requestedReasoning) {
-  const resolved = resolveThinkingLevel(model, requestedReasoning);
+function buildReasoningDirective(model, requestedReasoning) {
+  const requested = normalizeReasoning(requestedReasoning);
+  const resolved = resolveThinkingLevel(model, requested);
   if (!resolved) {
     throw new AIError(
       `Model ${model?.id || 'unknown'} cannot satisfy reasoning level ${requestedReasoning}`,
@@ -54,11 +49,32 @@ function buildGeminiThinkingConfig(model, requestedReasoning) {
   }
 
   return Object.freeze({
-    requested: normalizeReasoning(requestedReasoning),
+    requested,
     resolved,
+  });
+}
+
+function modelSupportsCapabilities(model, requiredCapabilities = []) {
+  const supported = new Set(model?.capabilities || []);
+  return requiredCapabilities.every((capability) => supported.has(capability));
+}
+
+/**
+ * Compatibility serializer for the current Gemini route. New provider logic
+ * must consume buildReasoningDirective() and serialize provider-specific
+ * controls inside that provider's adapter. This function remains only so D01
+ * can preserve every existing Gemini route while the router is migrated in
+ * later deliveries.
+ */
+function buildGeminiThinkingConfig(model, requestedReasoning) {
+  const directive = buildReasoningDirective(model, requestedReasoning);
+
+  return Object.freeze({
+    requested: directive.requested,
+    resolved: directive.resolved,
     generationConfig: Object.freeze({
       thinkingConfig: Object.freeze({
-        thinkingLevel: resolved.toLowerCase(),
+        thinkingLevel: directive.resolved.toLowerCase(),
       }),
     }),
   });
@@ -68,6 +84,7 @@ module.exports = {
   REASONING_ORDER,
   normalizeReasoning,
   resolveThinkingLevel,
+  buildReasoningDirective,
   modelSupportsCapabilities,
   buildGeminiThinkingConfig,
 };
