@@ -39,18 +39,18 @@ test('Gemini model IDs remain centralized in the model catalog', () => {
   }
 });
 
-test('only the Gemini transport knows the provider HTTP endpoint', () => {
+test('only the raw Google HTTP transport knows the provider HTTP endpoint', () => {
   for (const file of productionJs) {
     const relative = rel(file);
     const source = fs.readFileSync(file, 'utf8');
 
-    if (relative === 'services/ai/gemini-transport.js') {
+    if (relative === 'services/ai/google-http-transport.js') {
       assert.match(source, /generativelanguage\.googleapis\.com/);
     } else {
       assert.doesNotMatch(
         source,
         /generativelanguage\.googleapis\.com/,
-        `${relative} must not call Gemini directly`
+        `${relative} must not call the Google provider endpoint directly`
       );
     }
   }
