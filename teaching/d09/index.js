@@ -2,4 +2,5 @@
 const contracts=require('./contracts');
 const scheduler=require('./scheduler');
 const {createD09Service}=require('./service');
-module.exports={...contracts,...scheduler,createD09Service};
+const {createD09AttendanceRecoveryOwner}=require('./attendance-recovery');
+module.exports={...contracts,...scheduler,createD09Service,createD09AttendanceRecoveryOwner};
