@@ -7,6 +7,9 @@ const { createGroqHttpTransport } = require('./groq-http-transport');
 const { normalizeGroqResponse } = require('./groq-response-normalizer');
 
 const GROQ_SUPPORTED_REASONING = Object.freeze(['LOW', 'MEDIUM', 'HIGH']);
+const GPT_OSS_MODEL_PREFIX = 'openai/gpt-oss-';
+const NEAR_ATTEMPT_DEADLINE_RATIO = 0.9;
+const NEAR_ATTEMPT_DEADLINE_REMAINING_MS = 1500;
 
 const GROQ_QUOTA_POLICY = Object.freeze({
   provider: AI_PROVIDERS.GROQ,
@@ -19,6 +22,10 @@ const GROQ_QUOTA_POLICY = Object.freeze({
   rotateOnPermissionFailure: false,
   rateLimitScope: 'PROVIDER_MODEL',
 });
+
+function isGptOssModel(modelId) {
+  return String(modelId || '').startsWith(GPT_OSS_MODEL_PREFIX);
+}
 
 function mapGroqReasoningEffort(reasoning) {
   if (!reasoning) return null;
@@ -59,6 +66,72 @@ function _textContent(request) {
       provider: AI_PROVIDERS.GROQ,
     }
   );
+}
+
+function _safeValueLength(value) {
+  if (typeof value === 'string') return value.length;
+  if (!Array.isArray(value)) return 0;
+  return value.reduce((total, part) => {
+    if (typeof part === 'string') return total + part.length;
+    if (part && typeof part === 'object') {
+      if (typeof part.text === 'string') return total + part.text.length;
+      if (typeof part.content === 'string') return total + part.content.length;
+    }
+    return total;
+  }, 0);
+}
+
+function buildGroqAttemptDiagnostic({
+  raw,
+  normalized,
+  modelId,
+  latencyMs,
+  timeoutMs,
+} = {}) {
+  const allocationMs = Number(timeoutMs);
+  const elapsedMs = Number(latencyMs);
+  const hasAllocation = Number.isFinite(allocationMs) && allocationMs > 0;
+  const hasElapsed = Number.isFinite(elapsedMs) && elapsedMs >= 0;
+  const remainingBudgetMs = hasAllocation && hasElapsed
+    ? Math.max(0, Math.round(allocationMs - elapsedMs))
+    : null;
+  const budgetUtilizationRatio = hasAllocation && hasElapsed
+    ? elapsedMs / allocationMs
+    : null;
+  const message = raw?.choices?.[0]?.message || {};
+  const reasoningCharacters = _safeValueLength(message.reasoning);
+  const contentCharacters = String(normalized?.text || '').length;
+  const nearAttemptDeadline = Boolean(
+    budgetUtilizationRatio != null &&
+    (
+      budgetUtilizationRatio >= NEAR_ATTEMPT_DEADLINE_RATIO ||
+      remainingBudgetMs <= NEAR_ATTEMPT_DEADLINE_REMAINING_MS
+    )
+  );
+
+  return Object.freeze({
+    provider: AI_PROVIDERS.GROQ,
+    modelId: modelId || raw?.model || null,
+    providerModel: raw?.model || modelId || null,
+    requestId: raw?.id || null,
+    providerFinishReason: raw?.choices?.[0]?.finish_reason || null,
+    normalizedFinishReason: normalized?.finishReason || null,
+    latencyMs: hasElapsed ? Math.round(elapsedMs) : null,
+    attemptTimeoutMs: hasAllocation ? Math.round(allocationMs) : null,
+    remainingBudgetMs,
+    budgetUtilizationPct: budgetUtilizationRatio == null
+      ? null
+      : Math.round(budgetUtilizationRatio * 1000) / 10,
+    nearAttemptDeadline,
+    transportTimedOut: false,
+    contentCharacters,
+    reasoningPresent: reasoningCharacters > 0,
+    reasoningCharacters,
+    inputTokens: Number(normalized?.usage?.inputTokens) || 0,
+    outputTokens: Number(normalized?.usage?.outputTokens) || 0,
+    thoughtTokens: Number(normalized?.usage?.thoughtTokens) || 0,
+    totalTokens: Number(normalized?.usage?.totalTokens) || 0,
+  });
 }
 
 function serializeGroqExecutionRequest(request) {
@@ -114,9 +187,15 @@ function serializeGroqExecutionRequest(request) {
   const reasoningEffort = mapGroqReasoningEffort(reasoning);
   if (reasoningEffort) {
     body.reasoning_effort = reasoningEffort;
-    // KIWI requires result/provenance, not hidden chain-of-thought. Groq's
-    // hidden mode preserves that boundary while still enabling GPT-OSS reasoning.
-    body.reasoning_format = 'hidden';
+    if (isGptOssModel(request.model.modelId)) {
+      // GPT-OSS reasoning is controlled with reasoning_effort and
+      // include_reasoning. Groq explicitly documents reasoning_format as
+      // unsupported for GPT-OSS. KIWI does not need chain-of-thought text, so
+      // keep reasoning private while preserving the requested effort level.
+      body.include_reasoning = false;
+    } else {
+      body.reasoning_format = 'hidden';
+    }
   }
 
   if (structuredOutput) {
@@ -141,6 +220,7 @@ function createGroqProviderAdapter({
   fetchImpl = globalThis.fetch,
   endpoint,
   httpTransport = null,
+  logger = console,
 } = {}) {
   const transport = httpTransport || createGroqHttpTransport({
     fetchImpl,
@@ -181,10 +261,26 @@ function createGroqProviderAdapter({
       structuredOutputRequested: Boolean(request.generation?.structuredOutput),
       rateLimit: transportResult.rateLimit,
     });
+    const diagnostic = buildGroqAttemptDiagnostic({
+      raw: transportResult.raw,
+      normalized,
+      modelId: request.model.modelId,
+      latencyMs: transportResult.latencyMs,
+      timeoutMs,
+    });
+
+    // Preserve a safe forensic record for the exact failure mode without ever
+    // logging prompt text, answer text, hidden reasoning, or credentials.
+    if (!normalized.text && !normalized.blocked && typeof logger?.warn === 'function') {
+      logger.warn('[KIWI AI] Groq empty-response diagnostic', diagnostic);
+    } else if (diagnostic.nearAttemptDeadline && typeof logger?.info === 'function') {
+      logger.info('[KIWI AI] Groq near-attempt-deadline diagnostic', diagnostic);
+    }
 
     return Object.freeze({
       ...transportResult,
       normalized,
+      diagnostic,
     });
   }
 
@@ -200,7 +296,9 @@ function createGroqProviderAdapter({
 module.exports = {
   GROQ_SUPPORTED_REASONING,
   GROQ_QUOTA_POLICY,
+  isGptOssModel,
   mapGroqReasoningEffort,
+  buildGroqAttemptDiagnostic,
   serializeGroqExecutionRequest,
   createGroqProviderAdapter,
 };
