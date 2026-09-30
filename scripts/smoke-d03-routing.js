@@ -33,13 +33,16 @@ function smokeTimers() {
   };
 }
 
-function runtimeEnv(env, mode) {
+function smokeEnv(env) {
   return {
     ...env,
-    AI_TEXT_PROVIDER_MODE: mode,
     AI_AUTO_DISCOVERY: 'false',
     AI_AUTO_PROMOTE: 'false',
   };
+}
+
+function deployedMode(env) {
+  return String(env.AI_TEXT_PROVIDER_MODE || 'GOOGLE_ONLY').trim().toUpperCase();
 }
 
 function createSmokeRuntime({ env, query, fetchImpl, logger }) {
@@ -110,6 +113,24 @@ function syntheticGroqOutageFetch(realFetch) {
   };
 }
 
+function assertProtectedAssessmentPlans(runtime) {
+  for (const protectedTask of [
+    'MAIN_CBT',
+    'RECKONING_CBT',
+    'CBT_COMPLETION',
+    'CBT_QUESTION_AUDIT',
+  ]) {
+    const plan = runtime.orchestrator.plan(protectedTask);
+    const modelIds = plan.candidates.map((candidate) => candidate.modelId);
+    if (modelIds.some((modelId) =>
+      modelId === GROQ_MODEL_IDS.GPT_OSS_120B ||
+      modelId === GROQ_MODEL_IDS.GPT_OSS_20B
+    )) {
+      throw new Error(`Protected assessment task ${protectedTask} unexpectedly includes Groq`);
+    }
+  }
+}
+
 async function runD03RoutingSmoke({
   env = process.env,
   fetchImpl = globalThis.fetch,
@@ -121,8 +142,15 @@ async function runD03RoutingSmoke({
     error.code = 'CONFIG';
     throw error;
   }
-  if (!String(env.GROQ_API_KEY || '').trim()) {
-    const error = new Error('D03 routing smoke requires an enabled Groq credential');
+
+  const mode = deployedMode(env);
+  if (!['GOOGLE_ONLY', 'GROQ_FIRST'].includes(mode)) {
+    const error = new Error(`D03 qualification smoke does not accept routing mode ${mode}`);
+    error.code = 'CONFIG';
+    throw error;
+  }
+  if (mode === 'GROQ_FIRST' && !String(env.GROQ_API_KEY || '').trim()) {
+    const error = new Error('D03 GROQ_FIRST smoke requires an enabled Groq credential');
     error.code = 'CONFIG';
     throw error;
   }
@@ -138,14 +166,37 @@ async function runD03RoutingSmoke({
   const query = (text, params) => pool.query(text, params);
 
   try {
-    const groqEnv = runtimeEnv(env, 'GROQ_FIRST');
+    const effectiveEnv = smokeEnv(env);
     const runtime = createSmokeRuntime({
-      env: groqEnv,
+      env: effectiveEnv,
       query,
       fetchImpl,
       logger,
     });
     await runtime.initialize();
+    assertProtectedAssessmentPlans(runtime);
+
+    if (mode === 'GOOGLE_ONLY') {
+      const rollbackPlan = runtime.orchestrator.plan('QUICK_QUESTIONS');
+      if (!String(rollbackPlan.plannedPrimaryModel || '').startsWith('gemini-')) {
+        throw new Error('D03 GOOGLE_ONLY deployment did not restore a Gemini primary');
+      }
+      if (rollbackPlan.candidates.some((candidate) =>
+        candidate.modelId === GROQ_MODEL_IDS.GPT_OSS_120B ||
+        candidate.modelId === GROQ_MODEL_IDS.GPT_OSS_20B
+      )) {
+        throw new Error('D03 GOOGLE_ONLY deployment still exposed a Groq candidate');
+      }
+
+      const result = Object.freeze({
+        ok: true,
+        mode,
+        rollbackPrimary: rollbackPlan.plannedPrimaryModel,
+        protectedAssessments: true,
+      });
+      logger?.log?.('[KIWI AIM-D03] GOOGLE_ONLY rollback smoke succeeded', result);
+      return result;
+    }
 
     const premiumPlan = runtime.orchestrator.plan('QUICK_QUESTIONS');
     if (premiumPlan.plannedPrimaryModel !== GROQ_MODEL_IDS.GPT_OSS_120B) {
@@ -178,21 +229,8 @@ async function runD03RoutingSmoke({
       GROQ_MODEL_IDS.GPT_OSS_20B
     );
 
-    for (const protectedTask of [
-      'MAIN_CBT',
-      'RECKONING_CBT',
-      'CBT_COMPLETION',
-      'CBT_QUESTION_AUDIT',
-    ]) {
-      const plan = runtime.orchestrator.plan(protectedTask);
-      const modelIds = plan.candidates.map((candidate) => candidate.modelId);
-      if (modelIds.some((modelId) => modelId === GROQ_MODEL_IDS.GPT_OSS_120B || modelId === GROQ_MODEL_IDS.GPT_OSS_20B)) {
-        throw new Error(`Protected assessment task ${protectedTask} unexpectedly includes Groq`);
-      }
-    }
-
     const fallbackRuntime = createSmokeRuntime({
-      env: groqEnv,
+      env: effectiveEnv,
       query,
       fetchImpl: syntheticGroqOutageFetch(fetchImpl),
       logger,
@@ -208,33 +246,15 @@ async function runD03RoutingSmoke({
       AI_PROVIDERS.GOOGLE
     );
 
-    const rollbackRuntime = createSmokeRuntime({
-      env: runtimeEnv(env, 'GOOGLE_ONLY'),
-      query,
-      fetchImpl,
-      logger,
-    });
-    await rollbackRuntime.initialize();
-    const rollbackPlan = rollbackRuntime.orchestrator.plan('QUICK_QUESTIONS');
-    if (!String(rollbackPlan.plannedPrimaryModel || '').startsWith('gemini-')) {
-      throw new Error('D03 GOOGLE_ONLY rollback did not restore a Gemini primary');
-    }
-    if (rollbackPlan.candidates.some((candidate) =>
-      candidate.modelId === GROQ_MODEL_IDS.GPT_OSS_120B ||
-      candidate.modelId === GROQ_MODEL_IDS.GPT_OSS_20B
-    )) {
-      throw new Error('D03 GOOGLE_ONLY rollback still exposed a Groq candidate');
-    }
-
     const result = Object.freeze({
       ok: true,
+      mode,
       premium: premiumSafe,
       background: backgroundSafe,
       protectedAssessments: true,
       fallback: fallbackSafe,
-      rollbackPrimary: rollbackPlan.plannedPrimaryModel,
     });
-    logger?.log?.('[KIWI AIM-D03] provider-aware routing smoke succeeded', result);
+    logger?.log?.('[KIWI AIM-D03] GROQ_FIRST routing smoke succeeded', result);
     return result;
   } finally {
     await pool.end().catch(() => null);
@@ -253,6 +273,7 @@ if (require.main === module) {
 module.exports = {
   MARKERS,
   safeError,
+  deployedMode,
   syntheticGroqOutageFetch,
   runD03RoutingSmoke,
 };
