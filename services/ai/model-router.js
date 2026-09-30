@@ -26,6 +26,7 @@ const { AIError, AI_ERROR_CODES } = require('./errors');
 const {
   PROVIDER_MODES,
   routingRequirement,
+  reasoningForProvider,
 } = require('./routing-policy');
 
 function createModelRouter({
@@ -144,9 +145,15 @@ function createModelRouter({
       models = models.filter((model) => allowed.has(model.id));
     }
 
+    const groqReasoning = reasoningForProvider(
+      taskId,
+      task,
+      AI_PROVIDERS.GROQ,
+      env
+    );
     models = models.filter((model) => {
-      if (task.reasoning === 'MINIMAL') return model.supportedThinking.includes('LOW');
-      return model.supportedThinking.includes(task.reasoning);
+      if (groqReasoning === 'MINIMAL') return model.supportedThinking.includes('LOW');
+      return model.supportedThinking.includes(groqReasoning);
     });
 
     const preferred = requirement.preferEfficientGroqModel
@@ -173,16 +180,16 @@ function createModelRouter({
     );
   }
 
-  function requestedReasoningFor(model, task) {
+  function requestedReasoningFor(model, task, taskId) {
     if (
       model.provider === AI_PROVIDERS.GOOGLE &&
       model.id === GENERAL_EMERGENCY_FALLBACK_MODEL_ID
     ) return 'HIGH';
-    return task.reasoning;
+    return reasoningForProvider(taskId, task, model.provider, env);
   }
 
-  function routeEntry(model, task, requirement) {
-    const requested = requestedReasoningFor(model, task);
+  function routeEntry(model, task, requirement, taskId) {
+    const requested = requestedReasoningFor(model, task, taskId);
     let resolved;
     let thinkingGenerationConfig;
 
@@ -258,7 +265,7 @@ function createModelRouter({
         : [...groq, ...google];
     }
 
-    const candidates = models.map((model) => routeEntry(model, task, requirement));
+    const candidates = models.map((model) => routeEntry(model, task, requirement, taskId));
     const preferred = applyPreferredModel(candidates, preferredModelId);
 
     if (preferred.length === 0) {

@@ -16,6 +16,7 @@ const { AI_TASKS } = require('../../services/ai/task-registry');
 const {
   MAIN_CBT_PROVIDER_MODE_ENV,
   MAIN_CBT_GROQ_MODEL_ID,
+  MAIN_CBT_GROQ_REASONING,
 } = require('../../services/ai/routing-policy');
 
 function routerFor(env = {}) {
@@ -54,30 +55,44 @@ test('Main CBT stays Google-only unless its dedicated provider switch is explici
   assert.equal(requirement.providerMode, 'GOOGLE_ONLY');
   assert.equal(requirement.requiredQualityTier, 'HIGH_STAKES');
   assert.equal(requirement.routeOverride, null);
+  assert.equal(requirement.providerReasoning.GOOGLE, 'HIGH');
+  assert.equal(requirement.providerReasoning.GROQ, 'HIGH');
   assert.ok(candidates.every((candidate) => candidate.provider === AI_PROVIDERS.GOOGLE));
+  assert.ok(candidates.every((candidate) => candidate.requestedReasoning === 'HIGH'));
 });
 
-test('explicit Main CBT activation routes GPT-OSS 120B first with HIGH reasoning and Gemini fallback', () => {
+test('explicit Main CBT activation keeps canonical HIGH intent while translating GPT-OSS 120B to MEDIUM and Gemini fallback to HIGH', () => {
   const router = routerFor({
     [MAIN_CBT_PROVIDER_MODE_ENV]: 'GROQ_FIRST',
   });
   const requirement = router.describeRequirement('MAIN_CBT');
   const candidates = router.resolveCandidates('MAIN_CBT');
 
+  assert.equal(AI_TASKS.MAIN_CBT.reasoning, 'HIGH');
   assert.equal(requirement.assessmentProtected, true);
   assert.equal(requirement.providerMode, 'GROQ_FIRST');
   assert.equal(requirement.requiredQualityTier, 'PREMIUM');
   assert.deepEqual(requirement.allowedGroqModelIds, [GROQ_MODEL_IDS.GPT_OSS_120B]);
+  assert.equal(requirement.providerReasoning.GROQ, MAIN_CBT_GROQ_REASONING);
+  assert.equal(requirement.providerReasoning.GROQ, 'MEDIUM');
+  assert.equal(requirement.providerReasoning.GOOGLE, 'HIGH');
   assert.equal(requirement.routeOverride.scope, 'MAIN_CBT');
   assert.equal(requirement.routeOverride.modelId, MAIN_CBT_GROQ_MODEL_ID);
+  assert.equal(requirement.routeOverride.reasoning, 'MEDIUM');
 
   assert.equal(candidates[0].provider, AI_PROVIDERS.GROQ);
   assert.equal(candidates[0].modelId, GROQ_MODEL_IDS.GPT_OSS_120B);
-  assert.equal(candidates[0].requestedReasoning, 'HIGH');
-  assert.equal(candidates[0].resolvedReasoning, 'HIGH');
+  assert.equal(candidates[0].requestedReasoning, 'MEDIUM');
+  assert.equal(candidates[0].resolvedReasoning, 'MEDIUM');
   assert.equal(candidates.some((candidate) => candidate.modelId === GROQ_MODEL_IDS.GPT_OSS_20B), false);
-  assert.ok(candidates.slice(1).some((candidate) => candidate.provider === AI_PROVIDERS.GOOGLE));
-  assert.equal(candidates.slice(1).find((candidate) => candidate.provider === AI_PROVIDERS.GOOGLE)?.modelId, 'gemini-3.8-flash');
+
+  const googleFallback = candidates.slice(1).find(
+    (candidate) => candidate.provider === AI_PROVIDERS.GOOGLE
+  );
+  assert.ok(googleFallback);
+  assert.equal(googleFallback.modelId, 'gemini-3.8-flash');
+  assert.equal(googleFallback.requestedReasoning, 'HIGH');
+  assert.equal(googleFallback.resolvedReasoning, 'HIGH');
 });
 
 test('Main CBT activation does not migrate Reckoning, CBT completion or question audit', () => {
@@ -91,17 +106,19 @@ test('Main CBT activation does not migrate Reckoning, CBT completion or question
     assert.equal(requirement.providerMode, 'GOOGLE_ONLY', taskId);
     assert.equal(requirement.requiredQualityTier, 'HIGH_STAKES', taskId);
     assert.equal(requirement.routeOverride, null, taskId);
+    assert.equal(requirement.providerReasoning.GOOGLE, 'HIGH', taskId);
     assert.ok(candidates.every((candidate) => candidate.provider === AI_PROVIDERS.GOOGLE), taskId);
   }
 });
 
-test('Main CBT GOOGLE_ONLY rollback restores the exact legacy Google chain', () => {
+test('Main CBT GOOGLE_ONLY rollback restores the exact legacy Google chain and HIGH reasoning', () => {
   const router = routerFor({
     [MAIN_CBT_PROVIDER_MODE_ENV]: 'GOOGLE_ONLY',
   });
+  const candidates = router.resolveCandidates('MAIN_CBT');
 
   assert.deepEqual(
-    router.resolveCandidates('MAIN_CBT').map((candidate) => candidate.modelId),
+    candidates.map((candidate) => candidate.modelId),
     [
       'gemini-3.8-flash',
       'gemini-3.7-flash',
@@ -110,6 +127,7 @@ test('Main CBT GOOGLE_ONLY rollback restores the exact legacy Google chain', () 
       'gemini-3.5-flash-lite',
     ]
   );
+  assert.ok(candidates.every((candidate) => candidate.requestedReasoning === 'HIGH'));
 });
 
 test('Main CBT centrally falls from GPT-OSS 120B to Gemini when Groq is unavailable', async () => {

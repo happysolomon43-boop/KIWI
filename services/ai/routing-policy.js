@@ -6,6 +6,7 @@ const {
   AI_CLASSES,
   AI_EXECUTION_LANES,
   QUALITY_FLOORS,
+  REASONING_LEVELS,
 } = require('./task-registry');
 
 const PROVIDER_MODES = Object.freeze({
@@ -16,6 +17,7 @@ const PROVIDER_MODES = Object.freeze({
 
 const MAIN_CBT_PROVIDER_MODE_ENV = 'AI_MAIN_CBT_PROVIDER_MODE';
 const MAIN_CBT_GROQ_MODEL_ID = GROQ_MODEL_IDS.GPT_OSS_120B;
+const MAIN_CBT_GROQ_REASONING = REASONING_LEVELS.MEDIUM;
 
 const PROTECTED_ASSESSMENT_TASKS = Object.freeze(new Set([
   'MAIN_CBT',
@@ -53,6 +55,22 @@ function mainCbtProviderMode(env = process.env) {
 
 function mainCbtGroqOverrideActive(env = process.env) {
   return mainCbtProviderMode(env) !== PROVIDER_MODES.GOOGLE_ONLY;
+}
+
+function reasoningForProvider(taskId, task, provider, env = process.env) {
+  // MAIN_CBT remains a HIGH-reasoning assessment task canonically. The Groq
+  // translation is deliberately MEDIUM while the controlled GPT-OSS 120B route
+  // is active because GPT-OSS HIGH can consume the entire completion allowance
+  // as internal reasoning before emitting any exam content. Google fallbacks
+  // therefore retain the task's original HIGH reasoning intent.
+  if (
+    taskId === 'MAIN_CBT' &&
+    provider === AI_PROVIDERS.GROQ &&
+    mainCbtGroqOverrideActive(env)
+  ) {
+    return MAIN_CBT_GROQ_REASONING;
+  }
+  return task?.reasoning || null;
 }
 
 function requiredQualityTier(taskId, task, env = process.env) {
@@ -117,6 +135,10 @@ function routingRequirement(taskId, task, env = process.env) {
     providerMode: mode,
     providerOrder: providerOrder(mode),
     preferEfficientGroqModel: preferEfficientGroqModel(taskId, task),
+    providerReasoning: Object.freeze({
+      [AI_PROVIDERS.GROQ]: reasoningForProvider(taskId, task, AI_PROVIDERS.GROQ, env),
+      [AI_PROVIDERS.GOOGLE]: reasoningForProvider(taskId, task, AI_PROVIDERS.GOOGLE, env),
+    }),
     allowedGroqModelIds: mainCbtOverride
       ? Object.freeze([MAIN_CBT_GROQ_MODEL_ID])
       : null,
@@ -126,6 +148,7 @@ function routingRequirement(taskId, task, env = process.env) {
       ? Object.freeze({
           scope: 'MAIN_CBT',
           modelId: MAIN_CBT_GROQ_MODEL_ID,
+          reasoning: MAIN_CBT_GROQ_REASONING,
           source: MAIN_CBT_PROVIDER_MODE_ENV,
         })
       : null,
@@ -136,11 +159,13 @@ module.exports = {
   PROVIDER_MODES,
   MAIN_CBT_PROVIDER_MODE_ENV,
   MAIN_CBT_GROQ_MODEL_ID,
+  MAIN_CBT_GROQ_REASONING,
   PROTECTED_ASSESSMENT_TASKS,
   LOW_RISK_GROQ_20B_TASKS,
   normalizeProviderMode,
   mainCbtProviderMode,
   mainCbtGroqOverrideActive,
+  reasoningForProvider,
   requiredQualityTier,
   providerModeForTask,
   providerOrder,
