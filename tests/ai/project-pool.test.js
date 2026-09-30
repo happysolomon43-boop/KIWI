@@ -6,6 +6,10 @@ const assert = require('node:assert/strict');
 const {
   buildProjectSlots,
   createProjectPool,
+  buildGroqCredentialSlots,
+  createGroqCredentialPool,
+  buildCloudflareCredentialSlots,
+  createCloudflareCredentialPool,
 } = require('../../services/ai/project-pool');
 
 test('buildProjectSlots discovers GEMINI_API_KEY through GEMINI_API_KEY_15', () => {
@@ -20,6 +24,62 @@ test('buildProjectSlots discovers GEMINI_API_KEY through GEMINI_API_KEY_15', () 
     'gemini-project-02',
     'gemini-project-04',
   ]);
+});
+
+test('Groq credentials support numbered rotation slots without exposing values', () => {
+  const slots = buildGroqCredentialSlots({
+    GROQ_API_KEY: 'groq-a',
+    GROQ_API_KEY_2: 'groq-b',
+    GROQ_API_KEY_15: 'groq-o',
+  });
+
+  assert.deepEqual(slots.map((slot) => slot.id), [
+    'groq-key-01',
+    'groq-key-02',
+    'groq-key-15',
+  ]);
+  assert.equal(slots[0].apiKey, 'groq-a');
+
+  const pool = createGroqCredentialPool({ slots });
+  assert.deepEqual(pool.orderedSlots('openai/gpt-oss-120b').map((slot) => slot.id), [
+    'groq-key-01',
+    'groq-key-02',
+    'groq-key-15',
+  ]);
+  assert.deepEqual(pool.orderedSlots('openai/gpt-oss-120b').map((slot) => slot.id), [
+    'groq-key-02',
+    'groq-key-15',
+    'groq-key-01',
+  ]);
+  assert.doesNotMatch(JSON.stringify(pool.snapshot()), /groq-a|groq-b|groq-o/);
+});
+
+test('Cloudflare credentials support numbered token rotation slots without exposing values', () => {
+  const slots = buildCloudflareCredentialSlots({
+    CLOUDFLARE_WORKERS_AI_API_TOKEN: 'cf-a',
+    CLOUDFLARE_WORKERS_AI_API_TOKEN_2: 'cf-b',
+    CLOUDFLARE_WORKERS_AI_API_TOKEN_4: 'cf-d',
+  });
+
+  assert.deepEqual(slots.map((slot) => slot.id), [
+    'cloudflare-token-01',
+    'cloudflare-token-02',
+    'cloudflare-token-04',
+  ]);
+  assert.equal(slots[0].apiToken, 'cf-a');
+
+  const pool = createCloudflareCredentialPool({ slots });
+  assert.deepEqual(pool.orderedSlots('flux-2-klein-4b').map((slot) => slot.id), [
+    'cloudflare-token-01',
+    'cloudflare-token-02',
+    'cloudflare-token-04',
+  ]);
+  assert.equal(pool.disable('cloudflare-token-01', 'AUTH'), true);
+  assert.deepEqual(pool.orderedSlots('flux-2-klein-4b').map((slot) => slot.id), [
+    'cloudflare-token-04',
+    'cloudflare-token-02',
+  ]);
+  assert.doesNotMatch(JSON.stringify(pool.snapshot()), /cf-a|cf-b|cf-d/);
 });
 
 test('round-robin cursors are independent per model', () => {
@@ -61,5 +121,7 @@ test('public pool snapshot never exposes API key values', () => {
   const snapshot = pool.snapshot();
   assert.equal(snapshot[0].id, 'p1');
   assert.equal('apiKey' in snapshot[0], false);
+  assert.equal('apiToken' in snapshot[0], false);
+  assert.equal('credential' in snapshot[0], false);
   assert.doesNotMatch(JSON.stringify(snapshot), /super-secret/);
 });
