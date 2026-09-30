@@ -26,4 +26,15 @@
     apiBaseUrl: `${backendOrigin}/api`,
     webSocketBaseUrl,
   });
+
+  // D15 is a read-only projection inside the Teaching Course Results/global
+  // Record surfaces. Load it only for the Teaching document and only after
+  // the deferred Teaching shell modules have established their registries.
+  if (global.document?.documentElement?.dataset?.app === 'kiwi-teaching') {
+    global.addEventListener('DOMContentLoaded', () => {
+      import('/teaching-d15.js').catch((error) => {
+        console.error('[KIWI Teaching D15] Record projection failed to load.', error);
+      });
+    }, { once: true });
+  }
 })(window);
