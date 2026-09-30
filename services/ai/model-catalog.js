@@ -56,10 +56,9 @@ const GROQ_MODEL_IDS = Object.freeze({
 // catalogue so feature code and task definitions remain provider-agnostic.
 const GENERAL_EMERGENCY_FALLBACK_MODEL_ID = 'gemini-3.5-flash-lite';
 
-// Verified against the official provider model pages. Groq GPT-OSS entries are
-// deliberately QUALIFYING and family:null in AIM-D02: they are available to the
-// isolated qualification lane but cannot enter the legacy Gemini family router.
-// AIM-D03 owns provider-neutral quality tiers and production route preference.
+// Production seed remains byte-for-byte equivalent in routing semantics to the
+// accepted D01 baseline. AIM-D02 does not put Groq models into the live runtime
+// catalog; it registers them in a separate qualification catalog below.
 const DEFAULT_MODEL_CATALOG = Object.freeze([
   Object.freeze({
     id: 'gemini-3.8-flash',
@@ -133,6 +132,12 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     inputTokenLimit: 1048576,
     outputTokenLimit: 65536,
   }),
+]);
+
+// Verified against Groq's official model documentation in AIM-D02. These
+// definitions are intentionally not part of DEFAULT_MODEL_CATALOG. The isolated
+// qualification lane opts into them explicitly; AIM-D03 owns production routing.
+const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze([
   Object.freeze({
     id: GROQ_MODEL_IDS.GPT_OSS_120B,
     provider: AI_PROVIDERS.GROQ,
@@ -259,6 +264,13 @@ function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
   });
 }
 
+function createQualificationModelCatalog() {
+  return createModelCatalog([
+    ...DEFAULT_MODEL_CATALOG,
+    ...GROQ_QUALIFICATION_MODEL_CATALOG,
+  ]);
+}
+
 module.exports = {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
@@ -269,5 +281,7 @@ module.exports = {
   GROQ_MODEL_IDS,
   GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
   DEFAULT_MODEL_CATALOG,
+  GROQ_QUALIFICATION_MODEL_CATALOG,
   createModelCatalog,
+  createQualificationModelCatalog,
 };
