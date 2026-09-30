@@ -65,10 +65,14 @@ function createD15AttendanceRepository({ query, withTransaction, randomUUID, clo
   }
 
   async function latestRecord(studentId, attendanceObligationId, runner = null, lock = false) {
-    const suffix = lock ? ' for update' : '';
+    if (lock) {
+      await q(runner, 'select pg_advisory_xact_lock(hashtextextended($1,0))', [
+        `${studentId}:${attendanceObligationId}`,
+      ]);
+    }
     const { rows } = await q(runner, `select * from public.teaching_attendance_records
       where student_id=$1 and attendance_obligation_id=$2
-      order by version_no desc limit 1${suffix}`, [studentId, attendanceObligationId]);
+      order by version_no desc limit 1`, [studentId, attendanceObligationId]);
     return rows?.[0] || null;
   }
 
@@ -229,7 +233,7 @@ function createD15AttendanceRepository({ query, withTransaction, randomUUID, clo
 
   async function latestConcern(studentId, courseId, runner = null) {
     const { rows } = await q(runner, `select * from public.teaching_attendance_concerns
-      where student_id=$1 and course_id=$2 order by opened_at desc,created_at desc limit 1`, [studentId,courseId]);
+      where student_id=$1 and course_id=$2 order by opened_at desc,attendance_concern_id desc limit 1`, [studentId,courseId]);
     return rows?.[0] || null;
   }
 
