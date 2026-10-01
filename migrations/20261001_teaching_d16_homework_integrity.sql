@@ -67,6 +67,7 @@ CREATE TABLE public.teaching_assignment_history (
   UNIQUE(student_id,idempotency_key)
 );
 CREATE INDEX teaching_assignment_history_assignment_idx ON public.teaching_assignment_history(student_id,assignment_id,version_no DESC);
+CREATE INDEX teaching_assignment_history_assignment_fk_idx ON public.teaching_assignment_history(assignment_id);
 CREATE INDEX teaching_assignment_history_request_fk_idx ON public.teaching_assignment_history(source_request_id);
 
 CREATE TABLE public.teaching_assignment_submissions (
@@ -120,6 +121,8 @@ CREATE TABLE public.teaching_assignment_integrity_reviews (
 );
 CREATE INDEX teaching_assignment_integrity_submission_idx ON public.teaching_assignment_integrity_reviews(student_id,submission_id,review_version DESC);
 CREATE INDEX teaching_assignment_integrity_assignment_idx ON public.teaching_assignment_integrity_reviews(student_id,assignment_id,created_at DESC);
+CREATE INDEX teaching_assignment_integrity_submission_fk_idx ON public.teaching_assignment_integrity_reviews(submission_id);
+CREATE INDEX teaching_assignment_integrity_assignment_fk_idx ON public.teaching_assignment_integrity_reviews(assignment_id);
 
 CREATE TABLE public.teaching_assignment_evaluations (
   assignment_evaluation_id text PRIMARY KEY,
@@ -144,6 +147,8 @@ CREATE TABLE public.teaching_assignment_evaluations (
 );
 CREATE INDEX teaching_assignment_evaluations_submission_idx ON public.teaching_assignment_evaluations(student_id,submission_id,evaluation_version DESC);
 CREATE INDEX teaching_assignment_evaluations_assignment_idx ON public.teaching_assignment_evaluations(student_id,assignment_id,created_at DESC);
+CREATE INDEX teaching_assignment_evaluations_submission_fk_idx ON public.teaching_assignment_evaluations(submission_id);
+CREATE INDEX teaching_assignment_evaluations_assignment_fk_idx ON public.teaching_assignment_evaluations(assignment_id);
 
 -- Solution/answer material is isolated from ordinary Assignment projections.
 CREATE TABLE public.teaching_assignment_solution_material (
@@ -157,6 +162,7 @@ CREATE TABLE public.teaching_assignment_solution_material (
   UNIQUE(student_id,assignment_id,version_no)
 );
 CREATE INDEX teaching_assignment_solution_assignment_idx ON public.teaching_assignment_solution_material(student_id,assignment_id,version_no DESC);
+CREATE INDEX teaching_assignment_solution_assignment_fk_idx ON public.teaching_assignment_solution_material(assignment_id);
 
 ALTER TABLE public.teaching_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.teaching_assignment_history ENABLE ROW LEVEL SECURITY;
