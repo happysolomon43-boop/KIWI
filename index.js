@@ -22865,6 +22865,11 @@ async function runSchemaMigrations() {
     `ALTER TABLE cards ADD COLUMN IF NOT EXISTS fsrs_difficulty numeric DEFAULT NULL`,
     `ALTER TABLE cards ADD COLUMN IF NOT EXISTS avg_response_time_ms numeric DEFAULT NULL`,
     `ALTER TABLE review_logs ADD COLUMN IF NOT EXISTS fsrs_stability_after numeric DEFAULT NULL`,
+
+    // Provider-neutral catalog: capability-only models (speech/image/diagram)
+    // intentionally have no inference family. Phase-3 made family NOT NULL,
+    // so converge the live schema before AI runtime initialization.
+    `ALTER TABLE IF EXISTS ai_model_catalog ALTER COLUMN family DROP NOT NULL`,
   ];
   for (const sql of migrations) {
     try {
