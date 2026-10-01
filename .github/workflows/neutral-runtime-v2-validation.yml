@@ -32,5 +32,13 @@ jobs:
       - name: Check backend syntax
         run: node --check index.js
 
-      - name: Run AI suite
-        run: npm run test:ai
+      - name: Run AI suite with compact failure summary
+        shell: bash
+        run: |
+          set +e
+          npm run test:ai 2>&1 | tee /tmp/kiwi-ai-tests.log
+          status=${PIPESTATUS[0]}
+          echo
+          echo '===== KIWI AI COMPACT FAILURE SUMMARY ====='
+          grep -E '^not ok|^# (tests|pass|fail|cancelled|skipped|todo|duration_ms)|AssertionError|ReferenceError|TypeError|ERR_ASSERTION|ERR_TEST_FAILURE' /tmp/kiwi-ai-tests.log | tail -n 300 || true
+          exit "$status"
