@@ -59,22 +59,31 @@ const GROQ_TEXT_CAPABILITIES = Object.freeze([
   'jsonSchema',
 ]);
 
+const GOOGLE_MODEL_IDS = Object.freeze({
+  GEMINI_3_8_FLASH: 'gemini-3.8-flash',
+});
+
 const GROQ_MODEL_IDS = Object.freeze({
   GPT_OSS_120B: 'openai/gpt-oss-120b',
   GPT_OSS_20B: 'openai/gpt-oss-20b',
   QWEN_3_8_27B: 'qwen/qwen3.8-27b',
 });
 
+const GROQ_SPEECH_MODEL_IDS = Object.freeze({
+  ORPHEUS_ENGLISH: 'canopylabs/orpheus-v1-english',
+  ORPHEUS_ARABIC_SAUDI: 'canopylabs/orpheus-arabic-saudi',
+});
+
 const GENERAL_EMERGENCY_FALLBACK_MODEL_ID = 'gemini-3.5-flash-lite';
 
 const DEFAULT_MODEL_CATALOG = Object.freeze([
   Object.freeze({
-    id: 'gemini-3.8-flash',
+    id: GOOGLE_MODEL_IDS.GEMINI_3_8_FLASH,
     provider: AI_PROVIDERS.GOOGLE,
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-    rank: modelVersionRank('gemini-3.8-flash'),
+    rank: modelVersionRank(GOOGLE_MODEL_IDS.GEMINI_3_8_FLASH),
     qualityTier: MODEL_QUALITY_TIERS.HIGH_STAKES,
     productionEligible: true,
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
@@ -218,9 +227,8 @@ const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
     qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
     productionEligible: false,
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
-    // Groq exposes vision for Qwen 3.8, but KIWI's neutral multimodal contract
-    // is owned by AIM-D04. Until then this catalog entry intentionally advertises
-    // only the capabilities qualified by the existing central text transport.
+    // AIM-D04 owns neutral multimodal execution while this production catalog
+    // remains the single source of provider model identity.
     capabilities: GROQ_TEXT_CAPABILITIES,
     inputModalities: Object.freeze(['TEXT', 'IMAGE']),
     outputModalities: Object.freeze(['TEXT']),
@@ -361,7 +369,9 @@ module.exports = {
   modelMeetsQuality,
   COMMON_TEXT_CAPABILITIES,
   GROQ_TEXT_CAPABILITIES,
+  GOOGLE_MODEL_IDS,
   GROQ_MODEL_IDS,
+  GROQ_SPEECH_MODEL_IDS,
   GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
   DEFAULT_MODEL_CATALOG,
   GROQ_PRODUCTION_MODEL_CATALOG,
