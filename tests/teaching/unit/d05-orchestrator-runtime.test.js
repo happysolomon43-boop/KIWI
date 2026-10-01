@@ -1141,7 +1141,7 @@ test('D05 exact frozen family reaches the central neutral provider boundary with
   assert.equal(captured.length, 1);
   assert.equal(captured[0].request.contractVersion, 2);
   assert.equal(captured[0].request.capability, 'INFERENCE');
-  assert.equal(typeof captured[0].request.model.id, 'string');
+  assert.equal(typeof captured[0].request.model.modelId, 'string');
   assert.equal(typeof captured[0].credentialSlotId, 'string');
 
   const content = captured[0].request.content.text;
