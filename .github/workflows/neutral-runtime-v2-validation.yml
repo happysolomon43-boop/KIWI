@@ -1,0 +1,37 @@
+name: Neutral Runtime V2 Branch Validation
+
+on:
+  push:
+    branches:
+      - aim/model-neutral-runtime-v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ai-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Branch B
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check neutral AI module syntax
+        run: |
+          find services/ai -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Check backend syntax
+        run: node --check index.js
+
+      - name: Run AI suite
+        run: npm run test:ai
