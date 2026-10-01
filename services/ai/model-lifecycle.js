@@ -31,8 +31,12 @@ function rowToModel(row) {
     rank: Number(row.rank) || 0,
     supportedReasoning: Array.isArray(row.supported_thinking) ? row.supported_thinking : [],
     capabilities: Array.isArray(row.capabilities) ? row.capabilities : [],
-    inputModalities: Array.isArray(metadata.inputModalities) ? metadata.inputModalities : [],
-    outputModalities: Array.isArray(metadata.outputModalities) ? metadata.outputModalities : [],
+    ...(Array.isArray(metadata.inputModalities)
+      ? { inputModalities: [...metadata.inputModalities] }
+      : {}),
+    ...(Array.isArray(metadata.outputModalities)
+      ? { outputModalities: [...metadata.outputModalities] }
+      : {}),
     inputTokenLimit: row.input_token_limit == null ? null : Number(row.input_token_limit),
     outputTokenLimit: row.output_token_limit == null ? null : Number(row.output_token_limit),
     metadata,
@@ -94,8 +98,23 @@ function createModelLifecycle({
   async function hydratePersistedCatalog() {
     if (!store?.loadCatalogModels) return 0;
     const rows = await store.loadCatalogModels();
-    for (const row of rows || []) catalog.upsert(rowToModel(row));
-    return rows?.length || 0;
+    const byRoute = new Map();
+
+    // During migration an old provider-less row and a new composite-key row may
+    // coexist. Prefer the composite record without destructively rewriting the
+    // production table; legacy rows remain historical evidence only.
+    for (const row of rows || []) {
+      const model = rowToModel(row);
+      if (!model.routeKey) continue;
+      const current = byRoute.get(model.routeKey);
+      const composite = String(row.model_id || '').includes('::');
+      if (!current || (composite && !current.composite)) {
+        byRoute.set(model.routeKey, { model, composite });
+      }
+    }
+
+    for (const { model } of byRoute.values()) catalog.upsert(model);
+    return byRoute.size;
   }
 
   function isAutoPromoted(ref, provider = null) {
