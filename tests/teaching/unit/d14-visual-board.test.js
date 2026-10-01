@@ -2,7 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AI_PROVIDERS } = require('../../../services/ai/providers');
+const { AI_CAPABILITIES } = require('../../../services/ai/capabilities');
+const { createModelCatalog } = require('../../../services/ai/model-catalog');
 const {
   AI_VISUAL_CAPABILITIES,
   VISUAL_AUTHORITY,
@@ -13,12 +14,14 @@ const {
   imageGenerationCacheKey,
   diagramCacheKey,
 } = require('../../../services/ai/visual-contracts');
-const { IMAGE_GENERATION_ROUTE } = require('../../../services/ai/visual-model-catalog');
 const {
   createGenerativeImageBoardBlock,
   createStructuredDiagramBoardBlock,
   createVisualBoardFallback,
 } = require('../../../teaching/d14/visual-board-contract');
+
+const IMAGE_GENERATION_ROUTE = createModelCatalog()
+  .firstApprovedCapability(AI_CAPABILITIES.IMAGE_GENERATION);
 
 function jpegBase64() {
   return Buffer.from([
@@ -34,6 +37,9 @@ function jpegBase64() {
 }
 
 test('D05 Board generative image contract remains explicitly illustrative and local-asset-only', () => {
+  assert.ok(IMAGE_GENERATION_ROUTE);
+  assert.ok(IMAGE_GENERATION_ROUTE.capabilities.includes(AI_CAPABILITIES.IMAGE_GENERATION));
+
   const request = createImageGenerationRequest({
     prompt: 'Illustrate the phospholipid bilayer without labels',
     altText: 'Illustration of a phospholipid bilayer',
@@ -41,10 +47,10 @@ test('D05 Board generative image contract remains explicitly illustrative and lo
   });
   const visual = createGeneratedImageResponse({
     request,
-    provider: AI_PROVIDERS.CLOUDFLARE,
-    modelId: IMAGE_GENERATION_ROUTE.modelId,
+    provider: IMAGE_GENERATION_ROUTE.provider,
+    modelId: IMAGE_GENERATION_ROUTE.id,
     data: jpegBase64(),
-    cacheKey: imageGenerationCacheKey(request, IMAGE_GENERATION_ROUTE.modelId),
+    cacheKey: imageGenerationCacheKey(request, IMAGE_GENERATION_ROUTE.id),
   });
   const block = createGenerativeImageBoardBlock({
     visual,
@@ -77,7 +83,7 @@ test('D05 Board structured diagram contract preserves exact/deterministic/saniti
   });
   const visual = createDiagramRenderResponse({
     request,
-    provider: AI_PROVIDERS.KROKI,
+    provider: 'KROKI',
     rendererId: 'KROKI',
     svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>mono to di</text></svg>',
     cacheKey: diagramCacheKey(request),
@@ -106,7 +112,7 @@ test('D05 Board refuses degraded diagram as visual but preserves a normal text f
   });
   const degraded = createDiagramRenderResponse({
     request,
-    provider: AI_PROVIDERS.KROKI,
+    provider: 'KROKI',
     rendererId: 'KROKI',
     cacheKey: diagramCacheKey(request),
     degraded: true,
