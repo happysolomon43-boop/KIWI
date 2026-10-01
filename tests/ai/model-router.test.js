@@ -3,103 +3,55 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const { AI_PROVIDERS } = require('../../services/ai/providers');
+const { MODEL_IDS, MODEL_STATUS, createModelCatalog } = require('../../services/ai/model-catalog');
 const { createModelRouter } = require('../../services/ai/model-router');
+const { createTextContentPart, createImageContentPart, createMultimodalContent } = require('../../services/ai/execution-contracts');
 
-test('VVIP routes through four stable Flash models then the high-thinking Lite emergency fallback', () => {
-  const router = createModelRouter();
-  const ids = router.resolveCandidates('MAIN_CBT').map((entry) => entry.modelId);
+const TINY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl7lT8AAAAASUVORK5CYII=';
 
+test('ordinary inference uses the single global model-neutral route', () => {
+  const ids = createModelRouter().resolveCandidates('MAIN_CBT').map((entry) => entry.modelId);
   assert.deepEqual(ids, [
-    'gemini-3.8-flash',
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
+    MODEL_IDS.GEMINI_3_5_FLASH_LITE,
+    MODEL_IDS.GEMINI_3_1_FLASH_LITE,
+    MODEL_IDS.QWEN_3_8_27B,
+    MODEL_IDS.GEMINI_3_8_FLASH,
   ]);
 });
 
-test('flashcard generation receives the same VVIP model chain as main CBT', () => {
+test('flashcard generation is the only task with a distinct model order', () => {
   const router = createModelRouter();
-  const ids = router.resolveCandidates('FLASHCARD_GENERATION').map((entry) => entry.modelId);
+  const ordinary = router.resolveCandidates('MAIN_CBT').map((entry) => entry.routeKey);
+  const flashcards = router.resolveCandidates('FLASHCARD_GENERATION').map((entry) => entry.routeKey);
+  assert.notDeepEqual(flashcards, ordinary);
+  assert.equal(flashcards[0], `${AI_PROVIDERS.GOOGLE}::${MODEL_IDS.GEMINI_3_8_FLASH}`);
+  assert.equal(flashcards.at(-1), `${AI_PROVIDERS.GOOGLE}::${MODEL_IDS.GEMINI_3_5_FLASH}`);
+});
 
-  assert.deepEqual(ids, [
-    'gemini-3.8-flash',
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
+test('multimodal inference automatically excludes text-only routes', () => {
+  const content = createMultimodalContent([
+    createTextContentPart('Describe this image.'),
+    createImageContentPart({ mimeType: 'image/png', data: TINY_PNG_BASE64 }),
   ]);
+  const candidates = createModelRouter().resolveCandidates('IMPORT_IMAGE_EXTRACTION', { content });
+  assert.ok(candidates.length > 0);
+  assert.equal(candidates.some((entry) => entry.modelId === MODEL_IDS.QWEN_3_8_27B), false);
+  assert.ok(candidates.every((entry) => entry.provider === AI_PROVIDERS.GOOGLE));
 });
 
-test('VIP starts one stable Flash generation below VVIP primary', () => {
+test('preferred route creates an affinity ceiling only after eligibility filtering', () => {
   const router = createModelRouter();
-  const ids = router.resolveCandidates('DEEP_AUDIT').map((entry) => entry.modelId);
-
-  assert.deepEqual(ids, [
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-  ]);
+  const preferredRouteKey = `${AI_PROVIDERS.GROQ}::${MODEL_IDS.QWEN_3_8_27B}`;
+  const ids = router.resolveCandidates('MAIN_CBT', { preferredRouteKey }).map((entry) => entry.modelId);
+  assert.deepEqual(ids, [MODEL_IDS.QWEN_3_8_27B, MODEL_IDS.GEMINI_3_8_FLASH]);
 });
 
-test('confirmed background tasks with a Flash-Lite floor stay Lite-first', () => {
-  const router = createModelRouter();
-
-  for (const taskId of ['MORNING_BRIEF', 'STUDY_TASK_GENERATION']) {
-    const ids = router.resolveCandidates(taskId).map((entry) => entry.modelId);
-    assert.deepEqual(ids, [
-      'gemini-3.5-flash-lite',
-      'gemini-3.1-flash-lite',
-    ], taskId);
-  }
-});
-
-test('Gemini 3.5 Lite always uses HIGH thinking, including lower-class native Lite tasks', () => {
-  const router = createModelRouter();
-  for (const taskId of ['MAIN_CBT', 'RECKONING_CBT', 'DEEP_AUDIT', 'CARD_EXPLANATION']) {
-    const fallback = router.resolveCandidates(taskId)
-      .find((entry) => entry.modelId === 'gemini-3.5-flash-lite');
-    assert.ok(fallback, taskId);
-    assert.equal(fallback.requestedReasoning, 'HIGH', taskId);
-    assert.equal(fallback.resolvedReasoning, 'HIGH', taskId);
-    assert.equal(fallback.thinkingGenerationConfig.thinkingConfig.thinkingLevel, 'high', taskId);
-  }
-});
-
-test('interactive degradable VIP tasks still preserve their Flash-first policy', () => {
-  const router = createModelRouter();
-  const ids = router.resolveCandidates('DAILY_INVITATIONS').map((entry) => entry.modelId);
-
-  assert.deepEqual(ids, [
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
-  ]);
-});
-
-test('IP tasks stay on the Flash-Lite family', () => {
-  const router = createModelRouter();
-  const ids = router.resolveCandidates('CARD_EXPLANATION').map((entry) => entry.modelId);
-
-  assert.deepEqual(ids, [
-    'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
-  ]);
-});
-
-test('preferred model creates an affinity ceiling instead of upgrading unexpectedly', () => {
-  const router = createModelRouter();
-  const ids = router.resolveCandidates('MAIN_CBT', {
-    preferredModelId: 'gemini-3.7-flash',
-  }).map((entry) => entry.modelId);
-
-  assert.deepEqual(ids, [
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-  ]);
+test('suspended or non-production models cannot be resurrected by preferredRouteKey', () => {
+  const catalog = createModelCatalog();
+  const routeKey = `${AI_PROVIDERS.GROQ}::${MODEL_IDS.QWEN_3_8_27B}`;
+  catalog.setStatus(routeKey, MODEL_STATUS.SUSPENDED);
+  const router = createModelRouter({ catalog });
+  const candidates = router.resolveCandidates('MAIN_CBT', { preferredRouteKey: routeKey });
+  assert.equal(candidates.some((entry) => entry.routeKey === routeKey), false);
 });

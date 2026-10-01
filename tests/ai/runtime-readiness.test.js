@@ -4,6 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createAIRuntime } = require('../../services/ai/runtime');
 const { createAIOrchestrator } = require('../../services/ai/orchestrator');
+const { AI_PROVIDERS } = require('../../services/ai/providers');
+const { createProviderRegistry } = require('../../services/ai/provider-registry');
+const { createCredentialRegistry } = require('../../services/ai/credential-registry');
 const { isAIAvailabilityError, AI_ERROR_CODES } = require('../../services/ai/errors');
 
 function harness(failPattern = null) {
@@ -92,25 +95,35 @@ test('route status reports unavailable when all configured slots are exhausted',
   const h = harness();
   await h.runtime.initialize();
   for (const model of h.runtime.catalog.list()) {
-    await h.runtime.quotaManager.markFailure('gemini-project-01', model.id, {
+    if (model.provider !== AI_PROVIDERS.GOOGLE) continue;
+    await h.runtime.quotaManager.markFailure('google-key-01', model.routeKey, {
       code: AI_ERROR_CODES.RATE_LIMIT_RPD,
     });
   }
   for (const route of Object.values(h.runtime.status().routes)) {
     assert.equal(route.available, false);
-    assert.equal(route.primaryProjectSlot, null);
+    assert.equal(route.primaryCredentialSlot, null);
   }
 });
 
 test('generation affinity expires unused entries and remains bounded', async () => {
   let now = Date.now();
+  const providerRegistry = createProviderRegistry([{
+    provider: AI_PROVIDERS.GOOGLE,
+    async generate() { return { normalized: { text: 'ok', usage: {} }, latencyMs: 1 }; },
+  }]);
+  const credentialRegistry = createCredentialRegistry({ env: { GEMINI_API_KEY: 'test-key' } });
   const ai = createAIOrchestrator({
-    env: { GEMINI_API_KEY: 'test-key' }, clock: () => now,
+    clock: () => now,
+    providerRegistry,
+    credentialRegistry,
     logger: { warn() {} },
-    transport: { async generate() { return { raw: { candidates: [{ content: { parts: [{ text: 'ok' }] } }] }, latencyMs: 1 }; } },
   });
   for (let i = 0; i < 2000; i++) {
-    ai.generationAffinity.set(`ASSESSMENT_GENERATION::old-${i}`, { modelId: 'gemini-3.8-flash', updatedAt: now });
+    ai.generationAffinity.set(`ASSESSMENT_GENERATION::old-${i}`, {
+      routeKey: 'GOOGLE::gemini-3.8-flash',
+      updatedAt: now,
+    });
   }
   await ai.run('MAIN_CBT', { content: 'test' }, { generationGroupId: 'new' });
   assert.equal(ai.generationAffinity.size, 2000);
@@ -127,34 +140,44 @@ test('route-store failure releases a recovery probe and records one terminal fai
   let failLease = true;
   let generated = 0;
   const finished = [];
+  const routeKey = 'GOOGLE::gemini-3.5-flash-lite';
+  const credentialSlotId = 'google-key-01';
   const health = createProviderHealth({ clock: () => now, openCooldownMs: 5000 });
-  health.recordFailure('gemini-3.8-flash', 'gemini-project-01', {
+  health.recordFailure(routeKey, credentialSlotId, {
     code: AI_ERROR_CODES.PROVIDER_OVERLOADED, status: 503,
   }, { totalEligibleSlots: 1 });
   now += 5001;
+
+  const providerRegistry = createProviderRegistry([{
+    provider: AI_PROVIDERS.GOOGLE,
+    async generate() {
+      generated += 1;
+      return { normalized: { text: 'recovered', usage: {} }, latencyMs: 1 };
+    },
+  }]);
+  const credentialRegistry = createCredentialRegistry({ env: { GEMINI_API_KEY: 'test-key' } });
   const ai = createAIOrchestrator({
-    env: { GEMINI_API_KEY: 'test-key' }, clock: () => now, providerHealth: health,
+    clock: () => now,
+    providerHealth: health,
+    providerRegistry,
+    credentialRegistry,
     logger: { warn() {} },
     routeScheduler: {
-      orderSlots: (model, slots) => slots,
+      orderSlots: (_routeKey, slots) => slots,
       async acquire() {
         if (failLease) throw new Error('private-lease-database-details');
-        return { available: true, async release() {} };
+        return { available: true, pacingWaitMs: 0, routeStateBefore: {}, async release() {} };
       },
       async recordSuccess() {},
+      async recordFailure() {},
     },
     telemetry: {
       async beginRequest() { return 'request-1'; },
       async recordAttempt() {},
       async finishRequest(id, result) { finished.push(result); },
     },
-    transport: {
-      async generate() {
-        generated += 1;
-        return { raw: { candidates: [{ content: { parts: [{ text: 'recovered' }] } }] }, latencyMs: 1 };
-      },
-    },
   });
+
   await assert.rejects(ai.run('MAIN_CBT', { content: 'test' }), (error) => {
     assert.equal(error.code, AI_ERROR_CODES.RUNTIME_UNAVAILABLE);
     assert.equal(error.status, 503);
@@ -163,10 +186,11 @@ test('route-store failure releases a recovery probe and records one terminal fai
     return true;
   });
   assert.equal(generated, 0);
-  assert.equal(health.availability('gemini-3.8-flash').available, true);
+  assert.equal(health.availability(routeKey).available, true);
   assert.equal(ai.trafficController.snapshot().active, 0);
   assert.equal(finished.length, 1);
   assert.equal(finished[0].attemptCount, 0);
+
   failLease = false;
   assert.equal((await ai.run('MAIN_CBT', { content: 'test' })).text, 'recovered');
   assert.equal(generated, 1);

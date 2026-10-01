@@ -48,15 +48,15 @@ test('short-window throttling paces subsequent project probes and success clears
     retryable: true,
   }));
 
-  assert.equal(scheduler.modelWaitMs('m1'), 75);
+  assert.equal(scheduler.routeWaitMs('m1'), 75);
   const lease = await scheduler.acquire('m1', { id: 'p2' });
   assert.equal(lease.available, true);
   assert.deepEqual(sleeps, [75]);
   await lease.release();
 
   await scheduler.recordSuccess('m1', 'p2');
-  assert.equal(scheduler.modelWaitMs('m1'), 0);
-  assert.equal(scheduler.snapshotModel('m1').shortRateLimitStreak, 0);
+  assert.equal(scheduler.routeWaitMs('m1'), 0);
+  assert.equal(scheduler.snapshotRoute('m1').shortRateLimitStreak, 0);
 });
 
 test('daily quota exhaustion never creates model-wide short-window pacing', async () => {
@@ -70,8 +70,8 @@ test('daily quota exhaustion never creates model-wide short-window pacing', asyn
     retryable: true,
   }));
 
-  assert.equal(scheduler.modelWaitMs('m1'), 0);
-  assert.equal(scheduler.snapshotModel('m1').shortRateLimitStreak, 0);
+  assert.equal(scheduler.routeWaitMs('m1'), 0);
+  assert.equal(scheduler.snapshotRoute('m1').shortRateLimitStreak, 0);
 });
 
 test('distributed lease denial is reported as route contention, not provider capacity loss', async () => {

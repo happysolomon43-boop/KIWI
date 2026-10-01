@@ -3,109 +3,48 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const { AI_CAPABILITIES, AI_INPUT_MODALITIES } = require('../../services/ai/capabilities');
 const {
   AI_CLASSES,
   AI_EXECUTION_LANES,
-  AI_TASKS,
-  MODEL_POLICIES,
-  CANONICAL_AI_TASK_IDS,
-  QUALITY_FLOORS,
   REASONING_LEVELS,
+  AI_TASKS,
+  CANONICAL_AI_TASK_IDS,
   validateTaskRegistry,
 } = require('../../services/ai/task-registry');
 
-test('AI task registry is structurally valid', () => {
+test('canonical task registry validates without provider/model knowledge', () => {
   assert.deepEqual(validateTaskRegistry(), []);
-  assert.equal(CANONICAL_AI_TASK_IDS.length, 28);
+  assert.deepEqual(CANONICAL_AI_TASK_IDS, Object.keys(AI_TASKS));
 });
 
-test('AI task classes match the accepted Phase 1 inventory', () => {
-  const counts = Object.values(AI_TASKS).reduce((acc, task) => {
-    acc[task.class] = (acc[task.class] || 0) + 1;
-    return acc;
-  }, {});
-
-  assert.deepEqual(counts, {
-    [AI_CLASSES.VVIP]: 6,
-    [AI_CLASSES.VIP]: 15,
-    [AI_CLASSES.IP]: 7,
-  });
-});
-
-test('core assessment and knowledge creation tasks are VVIP with a Flash quality floor', () => {
-  for (const taskId of [
-    'MAIN_CBT',
-    'RECKONING_CBT',
-    'CBT_COMPLETION',
-    'CBT_QUESTION_AUDIT',
-    'FLASHCARD_GENERATION',
-    'IMPORT_IMAGE_EXTRACTION',
-  ]) {
+test('high-stakes assessment and knowledge-creation tasks keep VVIP class and required capabilities', () => {
+  for (const taskId of ['MAIN_CBT', 'RECKONING_CBT', 'CBT_COMPLETION', 'CBT_QUESTION_AUDIT', 'FLASHCARD_GENERATION', 'IMPORT_IMAGE_EXTRACTION']) {
     const task = AI_TASKS[taskId];
     assert.equal(task.class, AI_CLASSES.VVIP, taskId);
-    assert.equal(task.qualityFloor, QUALITY_FLOORS.FLASH, taskId);
+    assert.ok(task.capabilities.includes(AI_CAPABILITIES.INFERENCE), taskId);
+    assert.ok(task.capabilities.includes(AI_CAPABILITIES.REASONING), taskId);
     assert.equal(task.degradationAllowed, false, taskId);
   }
 });
 
-test('main CBT, Reckoning CBT, completion, and flashcard generation retain high reasoning', () => {
-  for (const taskId of [
-    'MAIN_CBT',
-    'RECKONING_CBT',
-    'CBT_COMPLETION',
-    'CBT_QUESTION_AUDIT',
-    'FLASHCARD_GENERATION',
-  ]) {
+test('assessment reasoning requirements remain explicit and provider-neutral', () => {
+  for (const taskId of ['MAIN_CBT', 'RECKONING_CBT', 'CBT_COMPLETION', 'CBT_QUESTION_AUDIT', 'FLASHCARD_GENERATION']) {
     assert.equal(AI_TASKS[taskId].reasoning, REASONING_LEVELS.HIGH, taskId);
   }
+  assert.equal(AI_TASKS.IMPORT_IMAGE_EXTRACTION.reasoning, REASONING_LEVELS.MEDIUM);
+  assert.deepEqual(AI_TASKS.IMPORT_IMAGE_EXTRACTION.inputModalities, [AI_INPUT_MODALITIES.TEXT, AI_INPUT_MODALITIES.IMAGE]);
 });
 
-test('Reckoning declares a non-AI emergency fallback rather than silent model degradation', () => {
-  assert.equal(
-    AI_TASKS.RECKONING_CBT.emergencyFallback,
-    'DETERMINISTIC_RECKONING_EXAM'
-  );
-  assert.equal(AI_TASKS.RECKONING_CBT.degradationAllowed, false);
-});
-
-test('IP presentation tasks use the Flash-Lite quality floor', () => {
-  const ipTasks = Object.entries(AI_TASKS)
-    .filter(([, task]) => task.class === AI_CLASSES.IP);
-
-  assert.ok(ipTasks.length > 0);
-  for (const [taskId, task] of ipTasks) {
-    assert.equal(task.qualityFloor, QUALITY_FLOORS.FLASH_LITE, taskId);
+test('presentation tasks remain low-cost policy requests without selecting a model family', () => {
+  for (const taskId of ['CARD_EXPLANATION', 'RECLASSIFICATION_ALERT', 'MASTERY_MOMENT', 'ZONE_DESCRIPTION', 'HIDDEN_DISCOVERY', 'RETURN_GREETING', 'CHRONICLE_ARTIFACT']) {
+    assert.equal(AI_TASKS[taskId].class, AI_CLASSES.IP, taskId);
   }
 });
 
-
-test('critical assessment stays critical while confirmed scheduled generation is background', () => {
-  for (const taskId of ['MAIN_CBT', 'RECKONING_CBT', 'CBT_COMPLETION']) {
-    assert.equal(
-      AI_TASKS[taskId].executionLane,
-      AI_EXECUTION_LANES.CRITICAL,
-      taskId
-    );
-  }
-
-  assert.equal(
-    AI_TASKS.MORNING_BRIEF.executionLane,
-    AI_EXECUTION_LANES.BACKGROUND
-  );
-  assert.equal(
-    AI_TASKS.STUDY_TASK_GENERATION.executionLane,
-    AI_EXECUTION_LANES.BACKGROUND
-  );
-  assert.equal(
-    AI_TASKS.MORNING_BRIEF.modelPolicy,
-    MODEL_POLICIES.TOP_STABLE_FLASH_LITE
-  );
-  assert.equal(
-    AI_TASKS.STUDY_TASK_GENERATION.modelPolicy,
-    MODEL_POLICIES.TOP_STABLE_FLASH_LITE
-  );
-  assert.equal(
-    AI_TASKS.DAILY_INVITATIONS.executionLane,
-    AI_EXECUTION_LANES.INTERACTIVE
-  );
+test('scheduled synthesis stays background while assessment stays critical', () => {
+  assert.equal(AI_TASKS.MAIN_CBT.executionLane, AI_EXECUTION_LANES.CRITICAL);
+  assert.equal(AI_TASKS.RECKONING_CBT.executionLane, AI_EXECUTION_LANES.CRITICAL);
+  assert.equal(AI_TASKS.MORNING_BRIEF.executionLane, AI_EXECUTION_LANES.BACKGROUND);
+  assert.equal(AI_TASKS.STUDY_TASK_GENERATION.executionLane, AI_EXECUTION_LANES.BACKGROUND);
 });

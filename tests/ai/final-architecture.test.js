@@ -28,7 +28,7 @@ const productionJs = walk(root);
 test('versioned Gemini model IDs remain centralized in the active model catalog', () => {
   for (const file of productionJs) {
     const relative = rel(file);
-    if (relative === 'services/ai/model-catalog.js') continue;
+    if (['services/ai/model-catalog.js', 'services/ai/model-history.js'].includes(relative)) continue;
     const source = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(
       source,
@@ -93,6 +93,26 @@ test('the public AI module does not export migration-era runtimes', () => {
     'createDefaultVisualCapabilityRuntime',
   ]) {
     assert.doesNotMatch(source, new RegExp(`\\b${forbidden}\\b`), `public AI index still exposes ${forbidden}`);
+  }
+});
+
+
+test('migration-era runtime modules are physically retired from production source', () => {
+  for (const relative of [
+    'services/ai/capability-adapter.js',
+    'services/ai/gemini-transport.js',
+    'services/ai/isolated-provider-executor.js',
+    'services/ai/media-capability-factory.js',
+    'services/ai/media-capability-runtime.js',
+    'services/ai/media-model-catalog.js',
+    'services/ai/media-telemetry.js',
+    'services/ai/project-pool.js',
+    'services/ai/visual-capability-factory.js',
+    'services/ai/visual-capability-runtime.js',
+    'services/ai/visual-model-catalog.js',
+    'services/ai/visual-telemetry.js',
+  ]) {
+    assert.equal(fs.existsSync(path.join(root, relative)), false, `${relative} must remain retired`);
   }
 });
 

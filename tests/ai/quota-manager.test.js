@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  PROJECT_MODEL_STATES,
+  ROUTE_QUOTA_STATES,
   pacificDayKey,
   extractObservedQuotaLimit,
   createQuotaManager,
@@ -40,7 +40,7 @@ test('daily RPD exhaustion resets automatically on the next Pacific quota day', 
     details: { quotaValue: 20 },
   }));
 
-  assert.equal(manager.get('p1', 'gemini-3.8-flash').state, PROJECT_MODEL_STATES.EXHAUSTED_RPD);
+  assert.equal(manager.get('p1', 'gemini-3.8-flash').state, ROUTE_QUOTA_STATES.EXHAUSTED_RPD);
   assert.equal(manager.get('p1', 'gemini-3.8-flash').observedQuotaLimit, 20);
   assert.equal(manager.get('p1', 'gemini-3.8-flash').observedQuotaDimension, 'RPD');
   assert.equal(manager.isEligible('p1', 'gemini-3.8-flash'), false);
@@ -63,7 +63,7 @@ test('RPM and TPM produce temporary cooldowns instead of daily exhaustion', asyn
     status: 429,
     retryable: true,
   }));
-  assert.equal(manager.get('p1', 'm1').state, PROJECT_MODEL_STATES.COOLDOWN_RPM);
+  assert.equal(manager.get('p1', 'm1').state, ROUTE_QUOTA_STATES.COOLDOWN_RPM);
   assert.equal(manager.isEligible('p1', 'm1'), false);
 
   now = new Date('2026-09-22T20:01:01Z');
@@ -74,7 +74,7 @@ test('RPM and TPM produce temporary cooldowns instead of daily exhaustion', asyn
     status: 429,
     retryable: true,
   }));
-  assert.equal(manager.get('p1', 'm1').state, PROJECT_MODEL_STATES.COOLDOWN_TPM);
+  assert.equal(manager.get('p1', 'm1').state, ROUTE_QUOTA_STATES.COOLDOWN_TPM);
 });
 
 test('quota state is model-specific within the same project slot', async () => {
@@ -142,7 +142,7 @@ test('unknown 429 responses enter cooldown instead of remaining READY', async ()
     retryable: true,
   }));
 
-  assert.equal(manager.get('p1', 'm1').state, PROJECT_MODEL_STATES.COOLDOWN_RPM);
+  assert.equal(manager.get('p1', 'm1').state, ROUTE_QUOTA_STATES.COOLDOWN_RPM);
   assert.equal(manager.isEligible('p1', 'm1'), false);
 
   now = new Date('2026-09-22T20:01:01Z');
@@ -223,7 +223,7 @@ test('refresh reconciles persisted quota state for another runtime instance', as
   assert.equal(manager.isEligible('p1', 'gemini-3.8-flash'), false);
   assert.equal(
     manager.get('p1', 'gemini-3.8-flash').state,
-    PROJECT_MODEL_STATES.EXHAUSTED_RPD
+    ROUTE_QUOTA_STATES.EXHAUSTED_RPD
   );
 });
 
@@ -270,7 +270,7 @@ test('refresh never overwrites a fresher local quota transition with a stale dat
   );
   assert.equal(
     manager.get('p1', 'gemini-3.8-flash').state,
-    PROJECT_MODEL_STATES.EXHAUSTED_RPD
+    ROUTE_QUOTA_STATES.EXHAUSTED_RPD
   );
 
   // Simulate a refresh that read the older READY row while the local write was
@@ -278,7 +278,7 @@ test('refresh never overwrites a fresher local quota transition with a stale dat
   assert.equal(await manager.refresh(), 0);
   assert.equal(
     manager.get('p1', 'gemini-3.8-flash').state,
-    PROJECT_MODEL_STATES.EXHAUSTED_RPD
+    ROUTE_QUOTA_STATES.EXHAUSTED_RPD
   );
 
   // A genuinely newer row from another runtime must still converge locally.
@@ -317,5 +317,5 @@ test('provider evidence preserves the quota dimension paired with an observed li
   const state = manager.get('p-evidence', 'm-evidence');
   assert.equal(state.observedQuotaLimit, 20);
   assert.equal(state.observedQuotaDimension, 'RPM');
-  assert.equal(state.state, PROJECT_MODEL_STATES.COOLDOWN_RPM);
+  assert.equal(state.state, ROUTE_QUOTA_STATES.COOLDOWN_RPM);
 });

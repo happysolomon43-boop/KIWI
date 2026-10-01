@@ -11,11 +11,14 @@ const {
   modelVersionRank,
 } = require('../../services/ai/model-catalog');
 const { createModelLifecycle } = require('../../services/ai/model-lifecycle');
+const { AI_PROVIDERS } = require('../../services/ai/providers');
 const { AI_ERROR_CODES, AIError } = require('../../services/ai/errors');
 
 function autoModel() {
   return {
     id: 'gemini-3.9-flash',
+    provider: AI_PROVIDERS.GOOGLE,
+    productionEligible: true,
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
@@ -44,7 +47,7 @@ test('persisted promoted models hydrate back into the runtime catalog', async ()
           capabilities: ['generateContent', 'thinking', 'vision', 'structuredOutput', 'longOutput'],
           input_token_limit: 1048576,
           output_token_limit: 65536,
-          metadata: { autoPromoted: true },
+          metadata: { provider: AI_PROVIDERS.GOOGLE, modelId: 'gemini-3.9-flash', routeKey: 'GOOGLE::gemini-3.9-flash', productionEligible: true, autoPromoted: true },
         }];
       },
       async upsertCatalogModel() {},
@@ -56,6 +59,7 @@ test('persisted promoted models hydrate back into the runtime catalog', async ()
   assert.equal(count, 1);
   assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.APPROVED);
   assert.equal(catalog.get('gemini-3.9-flash').metadata.autoPromoted, true);
+  assert.equal(catalog.get('gemini-3.9-flash').productionEligible, true);
 });
 
 test('quota failures do not trip the model circuit breaker', async () => {

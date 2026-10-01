@@ -3,65 +3,68 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const { AI_PROVIDERS } = require('../../services/ai/providers');
 const {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
   MODEL_STATUS,
+  MODEL_IDS,
+  isProductionRoutableModel,
   createModelCatalog,
 } = require('../../services/ai/model-catalog');
 
-test('stable Flash catalog is ordered newest to oldest', () => {
+test('active stable Gemini families contain only current production entries', () => {
   const catalog = createModelCatalog();
-  const ids = catalog.list({
+  assert.deepEqual(catalog.list({
+    provider: AI_PROVIDERS.GOOGLE,
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-  }).map((model) => model.id);
-
-  assert.deepEqual(ids, [
-    'gemini-3.8-flash',
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
+  }).map((model) => model.id), [
+    MODEL_IDS.GEMINI_3_8_FLASH,
+    MODEL_IDS.GEMINI_3_5_FLASH,
   ]);
-});
-
-test('stable Flash-Lite catalog is ordered newest to oldest', () => {
-  const catalog = createModelCatalog();
-  const ids = catalog.list({
+  assert.deepEqual(catalog.list({
+    provider: AI_PROVIDERS.GOOGLE,
     family: MODEL_FAMILIES.FLASH_LITE,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.APPROVED,
-  }).map((model) => model.id);
-
-  assert.deepEqual(ids, [
-    'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
+  }).map((model) => model.id), [
+    MODEL_IDS.GEMINI_3_5_FLASH_LITE,
+    MODEL_IDS.GEMINI_3_1_FLASH_LITE,
   ]);
 });
 
-test('3.8 and 3.7 reject MINIMAL while 3.6 and Flash-Lite support it', () => {
+test('reasoning support is catalogued per current model rather than inferred from family names', () => {
   const catalog = createModelCatalog();
-
-  assert.deepEqual(catalog.get('gemini-3.8-flash').supportedThinking, ['LOW', 'MEDIUM', 'HIGH']);
-  assert.deepEqual(catalog.get('gemini-3.7-flash').supportedThinking, ['LOW', 'MEDIUM', 'HIGH']);
-  assert.ok(catalog.get('gemini-3.6-flash').supportedThinking.includes('MINIMAL'));
-  assert.ok(catalog.get('gemini-3.5-flash-lite').supportedThinking.includes('MINIMAL'));
+  assert.deepEqual(catalog.get(MODEL_IDS.GEMINI_3_8_FLASH, AI_PROVIDERS.GOOGLE).supportedReasoning, ['LOW', 'MEDIUM', 'HIGH']);
+  assert.ok(catalog.get(MODEL_IDS.GEMINI_3_5_FLASH, AI_PROVIDERS.GOOGLE).supportedReasoning.includes('MINIMAL'));
+  assert.ok(catalog.get(MODEL_IDS.GEMINI_3_5_FLASH_LITE, AI_PROVIDERS.GOOGLE).supportedReasoning.includes('MINIMAL'));
 });
 
-test('catalog supports future discovery updates without mutating seed constants', () => {
+test('future discovery entries require explicit provider identity and are non-routable until approved for production', () => {
   const catalog = createModelCatalog();
-  catalog.upsert({
+  assert.throws(() => catalog.upsert({ id: 'gemini-3.9-flash' }), /provider and id/);
+
+  const discovered = catalog.upsert({
+    provider: AI_PROVIDERS.GOOGLE,
     id: 'gemini-3.9-flash',
     family: MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     status: MODEL_STATUS.DISCOVERED,
-    rank: 390,
-    supportedThinking: ['LOW', 'MEDIUM', 'HIGH'],
-    capabilities: ['generateContent', 'thinking'],
+    productionEligible: false,
+    rank: 3009000,
+    supportedReasoning: ['LOW', 'MEDIUM', 'HIGH'],
+    capabilities: ['INFERENCE', 'REASONING'],
+    inputModalities: ['TEXT'],
+    outputModalities: ['TEXT'],
   });
+  assert.equal(isProductionRoutableModel(discovered), false);
 
-  assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.DISCOVERED);
-  catalog.setStatus('gemini-3.9-flash', MODEL_STATUS.APPROVED);
-  assert.equal(catalog.get('gemini-3.9-flash').status, MODEL_STATUS.APPROVED);
+  const approvedButNotEligible = catalog.setStatus(discovered.routeKey, MODEL_STATUS.APPROVED);
+  assert.equal(isProductionRoutableModel(approvedButNotEligible), false);
+
+  const eligible = catalog.upsert({ ...approvedButNotEligible, productionEligible: true });
+  assert.equal(isProductionRoutableModel(eligible), true);
+  assert.equal(catalog.latestApproved(MODEL_FAMILIES.FLASH, { provider: AI_PROVIDERS.GOOGLE }).id, 'gemini-3.9-flash');
 });

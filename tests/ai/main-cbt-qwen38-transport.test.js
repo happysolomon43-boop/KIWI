@@ -5,13 +5,13 @@ const assert = require('node:assert/strict');
 
 const { AI_PROVIDERS } = require('../../services/ai/providers');
 const { createExecutionRequest } = require('../../services/ai/execution-contracts');
-const { GROQ_MODEL_IDS } = require('../../services/ai/model-catalog');
+const { MODEL_IDS } = require('../../services/ai/model-catalog');
 const { serializeGroqExecutionRequest } = require('../../services/ai/groq-provider-adapter');
 
 test('Qwen 3.8 Main CBT request serializes HIGH reasoning privately with full completion budget', () => {
   const request = createExecutionRequest({
     provider: AI_PROVIDERS.GROQ,
-    modelId: GROQ_MODEL_IDS.QWEN_3_8_27B,
+    modelId: MODEL_IDS.QWEN_3_8_27B,
     taskId: 'MAIN_CBT',
     content: 'Generate a controlled CBT examination.',
     generation: {
