@@ -1,7 +1,11 @@
 'use strict';
 
 const { AI_PROVIDERS } = require('./providers');
-const { GROQ_MODEL_IDS } = require('./model-catalog');
+const {
+  GOOGLE_MODEL_IDS,
+  GROQ_MODEL_IDS,
+  GROQ_SPEECH_MODEL_IDS,
+} = require('./model-catalog');
 const { AI_MEDIA_CAPABILITIES } = require('./execution-contracts');
 
 const MEDIA_MODEL_STATUS = Object.freeze({
@@ -30,7 +34,7 @@ const VISION_ROUTES = Object.freeze([
   Object.freeze({
     capability: AI_MEDIA_CAPABILITIES.VISION,
     provider: AI_PROVIDERS.GOOGLE,
-    modelId: 'gemini-3.8-flash',
+    modelId: GOOGLE_MODEL_IDS.GEMINI_3_8_FLASH,
     status: MEDIA_MODEL_STATUS.APPROVED_EXISTING,
     role: 'FALLBACK',
     maxImages: 3,
@@ -47,8 +51,8 @@ const VISION_ROUTES = Object.freeze([
 ]);
 
 const ORPHEUS_MODELS = Object.freeze({
-  ENGLISH: 'canopylabs/orpheus-v1-english',
-  ARABIC_SAUDI: 'canopylabs/orpheus-arabic-saudi',
+  ENGLISH: GROQ_SPEECH_MODEL_IDS.ORPHEUS_ENGLISH,
+  ARABIC_SAUDI: GROQ_SPEECH_MODEL_IDS.ORPHEUS_ARABIC_SAUDI,
 });
 
 const TEACHER_VOICE_PROFILES = Object.freeze({
