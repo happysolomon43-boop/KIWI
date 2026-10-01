@@ -25,11 +25,10 @@ function rel(file) {
 
 const productionJs = walk(root);
 
-test('Gemini model IDs remain centralized in the model catalog', () => {
+test('versioned Gemini model IDs remain centralized in the active model catalog', () => {
   for (const file of productionJs) {
     const relative = rel(file);
     if (relative === 'services/ai/model-catalog.js') continue;
-
     const source = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(
       source,
@@ -39,49 +38,61 @@ test('Gemini model IDs remain centralized in the model catalog', () => {
   }
 });
 
-test('only the raw Google HTTP transport knows the provider HTTP endpoint', () => {
+test('only the raw Google HTTP transport knows the Google provider endpoint', () => {
   for (const file of productionJs) {
     const relative = rel(file);
     const source = fs.readFileSync(file, 'utf8');
-
     if (relative === 'services/ai/google-http-transport.js') {
       assert.match(source, /generativelanguage\.googleapis\.com/);
     } else {
-      assert.doesNotMatch(
-        source,
-        /generativelanguage\.googleapis\.com/,
-        `${relative} must not call the Google provider endpoint directly`
-      );
+      assert.doesNotMatch(source, /generativelanguage\.googleapis\.com/, `${relative} bypasses the Google adapter boundary`);
     }
   }
 });
 
-test('only the project pool discovers Gemini API-key environment variables', () => {
+test('provider credential environment variables are discovered only by the credential registry', () => {
   for (const file of productionJs) {
     const relative = rel(file);
     const source = fs.readFileSync(file, 'utf8');
-
-    if (relative === 'services/ai/project-pool.js') {
-      assert.match(source, /GEMINI_API_KEY/);
-    } else {
-      assert.doesNotMatch(
-        source,
-        /GEMINI_API_KEY(?:_\d+)?/,
-        `${relative} must not read Gemini API keys`
-      );
-    }
+    const containsCredentialName = /GEMINI_API_KEY(?:_\d+)?|GROQ_API_KEY(?:_\d+)?|CLOUDFLARE_WORKERS_AI_API_TOKEN(?:_\d+)?/.test(source);
+    if (!containsCredentialName) continue;
+    assert.equal(
+      relative,
+      'services/ai/credential-registry.js',
+      `${relative} must not discover provider credentials directly`
+    );
   }
 });
 
-test('feature code cannot reintroduce provider thinking/model overrides or legacy wrapper calls', () => {
+test('feature code cannot inject provider-native payloads, providers, or model overrides', () => {
   for (const file of productionJs) {
     const relative = rel(file);
     if (relative.startsWith('services/ai/')) continue;
-
     const source = fs.readFileSync(file, 'utf8');
-    assert.doesNotMatch(source, /thinkingConfig/, `${relative} bypasses task reasoning policy`);
-    assert.doesNotMatch(source, /modelOverride/, `${relative} bypasses model routing policy`);
-    assert.doesNotMatch(source, /geminiModel\.generateContent/, `${relative} bypasses the orchestrator`);
+
+    assert.doesNotMatch(source, /thinkingConfig|reasoning_effort|max_completion_tokens/, `${relative} leaks provider-native reasoning`);
+    assert.doesNotMatch(source, /\binlineData\b/, `${relative} constructs Google image payloads directly`);
+    assert.doesNotMatch(source, /\bVISION_ROUTES\b/, `${relative} reintroduces a separate vision route`);
+    assert.doesNotMatch(source, /\bpreferredModelId\b|\bmodelOverride\b/, `${relative} bypasses central model routing`);
+    assert.doesNotMatch(source, /gemini-\d+(?:\.\d+)+|qwen\/qwen|@cf\/black-forest-labs/i, `${relative} hard-codes an AI model`);
+    assert.doesNotMatch(source, /createGeminiTransport|createProjectPool|runIsolatedProvider/, `${relative} imports migration-era execution architecture`);
+  }
+});
+
+test('the public AI module does not export migration-era runtimes', () => {
+  const source = fs.readFileSync(path.join(root, 'services/ai/index.js'), 'utf8');
+  for (const forbidden of [
+    'createProjectPool',
+    'createGroqCredentialPool',
+    'createGeminiTransport',
+    'runIsolatedProvider',
+    'VISION_ROUTES',
+    'createMediaCapabilityRuntime',
+    'createDefaultMediaCapabilityRuntime',
+    'createVisualCapabilityRuntime',
+    'createDefaultVisualCapabilityRuntime',
+  ]) {
+    assert.doesNotMatch(source, new RegExp(`\\b${forbidden}\\b`), `public AI index still exposes ${forbidden}`);
   }
 });
 
@@ -102,12 +113,7 @@ test('every statically referenced ai.run task is registered', () => {
 
 test('all canonical task IDs remain wired into production code', () => {
   const indexSource = fs.readFileSync(path.join(root, 'index.js'), 'utf8');
-
   for (const taskId of Object.keys(AI_TASKS)) {
-    assert.match(
-      indexSource,
-      new RegExp(`\\b${taskId}\\b`),
-      `${taskId} is registered but no longer wired into index.js`
-    );
+    assert.match(indexSource, new RegExp(`\\b${taskId}\\b`), `${taskId} is registered but no longer wired into index.js`);
   }
 });
