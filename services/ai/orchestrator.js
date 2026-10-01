@@ -14,7 +14,7 @@ const {
   normalizeExecutionContent,
   createExecutionRequest,
 } = require('./execution-contracts');
-const { createProviderHealth, MODEL_AVAILABILITY_CODES } = require('./provider-health');
+const { createProviderHealth, ROUTE_AVAILABILITY_CODES } = require('./provider-health');
 const { createAITrafficController } = require('./traffic-controller');
 const { createRouteScheduler } = require('./route-scheduler');
 const { createOperationBudget } = require('./operation-budget');
@@ -606,7 +606,7 @@ function createAIOrchestrator({
 
               const dailyQuota = DAILY_QUOTA_CODES.has(aiError.code);
               const shortRate = SHORT_RATE_LIMIT_CODES.has(aiError.code);
-              const availabilityFailure = MODEL_AVAILABILITY_CODES.has(aiError.code);
+              const availabilityFailure = ROUTE_AVAILABILITY_CODES.has(aiError.code);
               if (dailyQuota) dailyQuotaCount += 1;
               else if (shortRate) shortRateCount += 1;
               else routeAttemptCount += 1;
