@@ -54,7 +54,18 @@ for(const token of [
 assert(!/officialMarkCommitted\s*:\s*true/.test(service),'D16 service must not commit official Gradebook marks.');
 
 const intelligence=read('teaching/d16/intelligence.js');
-for(const token of ['getCapability','orchestrator.execute','commit: false','teaching.homework','TPF-'])assert(intelligence.includes(token),`D16 intelligence must use canonical Teaching orchestration: ${token}`);
+for(const token of ['getCapability','orchestrator.execute','capabilityPromptFamily:capability.prompt_family_id'])assert(intelligence.includes(token),`D16 intelligence must use canonical Teaching orchestration: ${token}`);
+assert(/commit\s*:\s*false/.test(intelligence),'D16 intelligence requests must remain provisional/non-committing.');
+for(const capabilityId of [
+  'teaching.scheduling.purposeful_homework_selection_generation',
+  'teaching.scheduling.homework_workload_estimation',
+  'teaching.scheduling.homework_assistance_policy_interpretation',
+  'teaching.scheduling.homework_independent_work_evaluation',
+  'teaching.scheduling.long_form_authenticity_verification_task_generation',
+  'teaching.scheduling.similarity_plagiarism_interpretation',
+  'teaching.scheduling.homework_to_next_lesson_synthesis',
+])assert(intelligence.includes(capabilityId),`D16 intelligence missing canonical capability binding ${capabilityId}`);
+assert(!/@google\/generative-ai|openai|anthropic|gemini-/i.test(intelligence),'D16 intelligence must not select a provider/model directly.');
 
 const runtime=read('teaching/d16/runtime.js');
 for(const token of ['ASSIGNMENT_DUE','CLASS_ENDED','reconcileDueAssignment','prepareFromClass'])assert(runtime.includes(token),`D16 runtime missing ${token}`);
@@ -75,7 +86,7 @@ const foundation=read('teaching/index.js');
 for(const token of ['createD16AssignmentRepository','d16Intelligence','workRequestOwner:d16Repository','planningSignals','registerD16Runtime'])assert(foundation.includes(token),`Teaching foundation D16 wiring missing ${token}`);
 
 const ui=read('public/teaching-d16.js');
-for(const token of ["id:'work'","label:'Work'","id:'work'","Homework & independent work",'/teaching/work','/work`','/draft','/submit','/assistance','/correction','/extension-request','Signals and detector telemetry are not shown as guilt scores'])assert(ui.includes(token),`D16 UI missing ${token}`);
+for(const token of ["id:'work'","label:'Work'","Homework & independent work",'/teaching/work','/work`','/draft','/submit','/assistance','/correction','/extension-request','Signals and detector telemetry are not shown as guilt scores'])assert(ui.includes(token),`D16 UI missing ${token}`);
 assert(!/guiltProbability\s*=\s*[0-9]/i.test(ui),'D16 UI must not manufacture guilt probability.');
 const html=read('public/teaching.html');
 assert(html.includes('/teaching-d16.css')&&html.includes('/teaching-d16.js'),'Teaching shell does not load D16 Work UI assets.');
