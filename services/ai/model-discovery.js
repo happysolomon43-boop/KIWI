@@ -1,12 +1,11 @@
 'use strict';
 
 const { AI_PROVIDERS } = require('./providers');
+const { AI_CAPABILITIES, AI_INPUT_MODALITIES, AI_OUTPUT_MODALITIES } = require('./capabilities');
 const {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
   MODEL_STATUS,
-  MODEL_INPUT_MODALITIES,
-  MODEL_OUTPUT_MODALITIES,
   modelVersionRank,
 } = require('./model-catalog');
 const { AI_CLASSES } = require('./task-registry');
@@ -27,18 +26,19 @@ function classifyStableFlash(apiModel) {
   return {
     id,
     provider: AI_PROVIDERS.GOOGLE,
-    family: match[4].toLowerCase() === 'flash-lite' ? MODEL_FAMILIES.FLASH_LITE : MODEL_FAMILIES.FLASH,
+    family: match[4].toLowerCase() === 'flash-lite'
+      ? MODEL_FAMILIES.FLASH_LITE
+      : MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     rank: modelVersionRank(id),
     productionEligible: false,
     inputTokenLimit: Number(apiModel?.inputTokenLimit) || null,
     outputTokenLimit: Number(apiModel?.outputTokenLimit) || null,
-    supportedThinking: [],
-    capabilities: ['generateContent'],
-    inputModalities: [MODEL_INPUT_MODALITIES.TEXT, MODEL_INPUT_MODALITIES.IMAGE],
-    outputModalities: [MODEL_OUTPUT_MODALITIES.TEXT],
+    supportedReasoning: [],
+    capabilities: [AI_CAPABILITIES.INFERENCE],
+    inputModalities: [AI_INPUT_MODALITIES.TEXT, AI_INPUT_MODALITIES.IMAGE],
+    outputModalities: [AI_OUTPUT_MODALITIES.TEXT],
     metadata: {
-      provider: AI_PROVIDERS.GOOGLE,
       source: 'models.list',
       displayName: apiModel?.displayName || null,
       description: apiModel?.description || null,
@@ -63,10 +63,14 @@ function createModelDiscoveryManager({
 } = {}) {
   if (!providerRegistry?.require) throw new Error('Model discovery requires providerRegistry');
   if (!credentialRegistry?.ordered) throw new Error('Model discovery requires credentialRegistry');
-  if (!catalog || !lifecycle || !qualifier) throw new Error('Model discovery requires catalog, lifecycle and qualifier');
+  if (!catalog || !lifecycle || !qualifier) {
+    throw new Error('Model discovery requires catalog, lifecycle and qualifier');
+  }
 
-  const googleAdapter = providerRegistry.require(AI_PROVIDERS.GOOGLE);
-  const deniedNames = new Set(String(env.AI_MODEL_DENYLIST || '').split(',').map((v) => v.trim()).filter(Boolean));
+  const googleAdapter = providerRegistry.require(AI_PROVIDERS.GOOGLE, 'generate');
+  const deniedNames = new Set(
+    String(env.AI_MODEL_DENYLIST || '').split(',').map((value) => value.trim()).filter(Boolean)
+  );
 
   function autoDiscoveryEnabled() {
     return String(env.AI_AUTO_DISCOVERY ?? 'true').toLowerCase() !== 'false';
@@ -77,7 +81,7 @@ function createModelDiscoveryManager({
   }
 
   function latestApproved(family) {
-    return catalog.latestApproved(family);
+    return catalog.latestApproved(family, { provider: AI_PROVIDERS.GOOGLE });
   }
 
   async function fetchProviderModels() {
@@ -94,7 +98,11 @@ function createModelDiscoveryManager({
       let trafficLease = null;
       try {
         trafficLease = trafficController
-          ? await trafficController.acquire({ taskId: 'MODEL_DISCOVERY', taskClass: AI_CLASSES.IP, timeoutMs: 15000 })
+          ? await trafficController.acquire({
+              taskId: 'MODEL_DISCOVERY',
+              taskClass: AI_CLASSES.IP,
+              timeoutMs: 15000,
+            })
           : null;
         const models = await googleAdapter.listModels({ apiKey: credential.apiKey, timeoutMs: 15000 });
         trafficController?.noteSuccess?.();
@@ -105,9 +113,18 @@ function createModelDiscoveryManager({
         }
       } catch (error) {
         lastError = error;
-        trafficController?.noteFailure?.(error, { modelId: `${AI_PROVIDERS.GOOGLE}::__model_discovery__`, projectSlot: credential.id });
-        if (error?.code === 'AUTH') credentialRegistry.disable(AI_PROVIDERS.GOOGLE, credential.id, 'AUTH');
-        logger?.warn?.('[KIWI AI] model discovery credential failed', { credentialSlot: credential.id, code: error?.code || null, status: error?.status || null });
+        trafficController?.noteFailure?.(error, {
+          modelId: `${AI_PROVIDERS.GOOGLE}::__model_discovery__`,
+          projectSlot: credential.id,
+        });
+        if (error?.code === 'AUTH') {
+          credentialRegistry.disable(AI_PROVIDERS.GOOGLE, credential.id, 'AUTH');
+        }
+        logger?.warn?.('[KIWI AI] model discovery credential failed', {
+          credentialSlot: credential.id,
+          code: error?.code || null,
+          status: error?.status || null,
+        });
       } finally {
         trafficLease?.release?.();
       }
@@ -128,9 +145,7 @@ function createModelDiscoveryManager({
       skipped.push({ modelId: leader.id, family, reason: 'denylist' });
       return current;
     }
-    if (current && leader.rank <= current.rank) {
-      return current;
-    }
+    if (current && leader.rank <= current.rank) return current;
 
     let candidate = catalog.get(leader.id, AI_PROVIDERS.GOOGLE);
     if (!candidate) {
@@ -141,7 +156,11 @@ function createModelDiscoveryManager({
         ...candidate,
         ...leader,
         status: candidate.status,
-        metadata: { ...(candidate.metadata || {}), ...(leader.metadata || {}), lastSeenAt: new Date().toISOString() },
+        metadata: {
+          ...(candidate.metadata || {}),
+          ...(leader.metadata || {}),
+          lastSeenAt: new Date().toISOString(),
+        },
       });
     }
 
@@ -157,8 +176,6 @@ function createModelDiscoveryManager({
 
     const result = await qualifier.qualify(candidate);
     if (result.status === 'PASSED') {
-      // lifecycle.approve marks the candidate approved; make it routable only
-      // after the qualification gate has passed.
       const approved = catalog.upsert({ ...result.model, productionEligible: true });
       await lifecycle.discover(approved);
       promoted.push(leader.id);
@@ -169,7 +186,14 @@ function createModelDiscoveryManager({
 
   async function discoverOnce() {
     if (!autoDiscoveryEnabled()) {
-      return Object.freeze({ enabled: false, providerModels: 0, stableModels: 0, discovered: [], promoted: [], skipped: [] });
+      return Object.freeze({
+        enabled: false,
+        providerModels: 0,
+        stableModels: 0,
+        discovered: [],
+        promoted: [],
+        skipped: [],
+      });
     }
 
     const providerModels = await fetchProviderModels();
@@ -178,11 +202,13 @@ function createModelDiscoveryManager({
     const promoted = [];
     const skipped = [];
 
-    const latestFlashLite = await discoverFamilyLeader(MODEL_FAMILIES.FLASH_LITE, stable, discovered, promoted, skipped);
-    const latestFlash = await discoverFamilyLeader(MODEL_FAMILIES.FLASH, stable, discovered, promoted, skipped);
+    const latestFlashLite = await discoverFamilyLeader(
+      MODEL_FAMILIES.FLASH_LITE, stable, discovered, promoted, skipped
+    );
+    const latestFlash = await discoverFamilyLeader(
+      MODEL_FAMILIES.FLASH, stable, discovered, promoted, skipped
+    );
 
-    // Refresh metadata only for models already in the active catalog. Older
-    // provider-listed releases stay outside routing instead of being re-added.
     for (const model of stable) {
       const existing = catalog.get(model.id, AI_PROVIDERS.GOOGLE);
       if (!existing) continue;
@@ -190,7 +216,11 @@ function createModelDiscoveryManager({
         ...existing,
         inputTokenLimit: model.inputTokenLimit || existing.inputTokenLimit,
         outputTokenLimit: model.outputTokenLimit || existing.outputTokenLimit,
-        metadata: { ...(existing.metadata || {}), ...(model.metadata || {}), lastSeenAt: new Date().toISOString() },
+        metadata: {
+          ...(existing.metadata || {}),
+          ...(model.metadata || {}),
+          lastSeenAt: new Date().toISOString(),
+        },
       });
     }
 
@@ -208,7 +238,16 @@ function createModelDiscoveryManager({
     return summary;
   }
 
-  return Object.freeze({ discoverOnce, fetchProviderModels, autoDiscoveryEnabled, autoPromoteEnabled });
+  return Object.freeze({
+    discoverOnce,
+    fetchProviderModels,
+    autoDiscoveryEnabled,
+    autoPromoteEnabled,
+  });
 }
 
-module.exports = { normalizeModelId, classifyStableFlash, createModelDiscoveryManager };
+module.exports = {
+  normalizeModelId,
+  classifyStableFlash,
+  createModelDiscoveryManager,
+};
