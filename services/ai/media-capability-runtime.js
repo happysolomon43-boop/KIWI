@@ -21,10 +21,27 @@ const { normalizeGeminiResponse } = require('./response-normalizer');
 const DEFAULT_VISION_TIMEOUT_MS = 19000;
 const DEFAULT_SPEECH_TIMEOUT_MS = 15000;
 
+const VISION_PROVIDER_MODES = Object.freeze({
+  QWEN_FIRST: 'QWEN_FIRST',
+  GOOGLE_ONLY: 'GOOGLE_ONLY',
+});
+
+const TEACHER_VOICE_MODES = Object.freeze({
+  ORPHEUS: 'ORPHEUS',
+  DISABLED: 'DISABLED',
+});
+
+const VOICE_DISABLED_CODE = 'VOICE_DISABLED';
+
 function _boundedTimeout(value, fallback, min = 1000, max = 60000) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.max(min, Math.min(Math.floor(parsed), max));
+}
+
+function _enumMode(value, allowed, fallback) {
+  const normalized = String(value || '').trim().toUpperCase();
+  return Object.values(allowed).includes(normalized) ? normalized : fallback;
 }
 
 function _routeKey(route) {
@@ -34,6 +51,15 @@ function _routeKey(route) {
 function _isCredentialFailure(error) {
   return error?.code === AI_ERROR_CODES.AUTH ||
     error?.code === AI_ERROR_CODES.PERMISSION;
+}
+
+function _isTerminalVisionFailure(error, signal) {
+  return Boolean(
+    signal?.aborted ||
+    error?.code === AI_ERROR_CODES.CANCELLED ||
+    error?.code === AI_ERROR_CODES.BAD_REQUEST ||
+    error?.code === AI_ERROR_CODES.SAFETY
+  );
 }
 
 function _providerFailure(error, provider) {
@@ -96,6 +122,21 @@ function createMediaCapabilityRuntime({
   const speechTimeoutMs = _boundedTimeout(
     env.AI_SPEECH_ATTEMPT_TIMEOUT_MS,
     DEFAULT_SPEECH_TIMEOUT_MS
+  );
+  const visionProviderMode = _enumMode(
+    env.AI_VISION_PROVIDER_MODE,
+    VISION_PROVIDER_MODES,
+    VISION_PROVIDER_MODES.QWEN_FIRST
+  );
+  const teacherVoiceMode = _enumMode(
+    env.AI_TEACHER_VOICE_MODE,
+    TEACHER_VOICE_MODES,
+    TEACHER_VOICE_MODES.ORPHEUS
+  );
+  const activeVisionRoutes = Object.freeze(
+    visionProviderMode === VISION_PROVIDER_MODES.GOOGLE_ONLY
+      ? VISION_ROUTES.filter((route) => route.provider === AI_PROVIDERS.GOOGLE)
+      : [...VISION_ROUTES]
   );
 
   async function _executeGroqVision({
@@ -282,8 +323,8 @@ function createMediaCapabilityRuntime({
     const content = createMultimodalContent(parts);
     let primaryError = null;
 
-    for (let index = 0; index < VISION_ROUTES.length; index++) {
-      const route = VISION_ROUTES[index];
+    for (let index = 0; index < activeVisionRoutes.length; index++) {
+      const route = activeVisionRoutes[index];
       try {
         if (route.provider === AI_PROVIDERS.GROQ) {
           return await _executeGroqVision({
@@ -309,7 +350,7 @@ function createMediaCapabilityRuntime({
         }
       } catch (error) {
         if (!primaryError) primaryError = error;
-        if (error?.code === AI_ERROR_CODES.CANCELLED || signal?.aborted) throw error;
+        if (_isTerminalVisionFailure(error, signal)) throw error;
       }
     }
 
@@ -366,6 +407,32 @@ function createMediaCapabilityRuntime({
     });
 
     const chunks = splitSpeechTranscript(request.transcript);
+    if (teacherVoiceMode === TEACHER_VOICE_MODES.DISABLED) {
+      mediaTelemetry.record({
+        capability: AI_MEDIA_CAPABILITIES.SPEECH_SYNTHESIS,
+        outcome: 'DEGRADED',
+        provider: profile.provider,
+        modelId: profile.modelId,
+        voiceId: profile.id,
+        speechChunkCount: chunks.length,
+        degraded: true,
+        errorCode: VOICE_DISABLED_CODE,
+      });
+      return createSpeechSynthesisResponse({
+        transcript: request.transcript,
+        voiceId: profile.id,
+        provider: profile.provider,
+        modelId: profile.modelId,
+        segments: [],
+        degraded: true,
+        failure: {
+          code: VOICE_DISABLED_CODE,
+          provider: profile.provider,
+          retryable: false,
+        },
+      });
+    }
+
     const slots = groqCredentialPool.orderedSlots(`${AI_PROVIDERS.GROQ}::${profile.modelId}`);
     if (slots.length === 0) {
       mediaTelemetry.record({
@@ -476,8 +543,9 @@ function createMediaCapabilityRuntime({
   function status() {
     return Object.freeze({
       vision: Object.freeze({
+        mode: visionProviderMode,
         timeoutMs: visionTimeoutMs,
-        routes: Object.freeze(VISION_ROUTES.map((route) => Object.freeze({
+        routes: Object.freeze(activeVisionRoutes.map((route) => Object.freeze({
           provider: route.provider,
           modelId: route.modelId,
           role: route.role,
@@ -485,6 +553,7 @@ function createMediaCapabilityRuntime({
         }))),
       }),
       speech: Object.freeze({
+        mode: teacherVoiceMode,
         timeoutMs: speechTimeoutMs,
         defaultVoiceId: String(env.AI_TEACHER_VOICE_ID || 'KIWI_TEACHER_EN_PRIMARY'),
       }),
@@ -503,5 +572,8 @@ function createMediaCapabilityRuntime({
 module.exports = {
   DEFAULT_VISION_TIMEOUT_MS,
   DEFAULT_SPEECH_TIMEOUT_MS,
+  VISION_PROVIDER_MODES,
+  TEACHER_VOICE_MODES,
+  VOICE_DISABLED_CODE,
   createMediaCapabilityRuntime,
 };
