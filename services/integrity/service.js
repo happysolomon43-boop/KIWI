@@ -17,7 +17,7 @@ function createIntegrityService({repository,d16Repository=null,d16Intelligence=n
 
   async function resolveProfile(userId,ownerType,ownerRef){
     const owner=await repository.resolveOwner(userId,ownerType,ownerRef);
-    if(ownerType==='TEACHING_ASSIGNMENT')return deriveAssignmentSessionProfile(owner.row);
+    if(ownerType==='TEACHING_ASSIGNMENT'){const gate=await repository.gateByAssignment(userId,ownerRef);if(gate?.state==='VERIFICATION_ACTIVE')return 'CONTROLLED_TAKE_HOME';return deriveAssignmentSessionProfile(owner.row);}
     if(ownerType==='KIWI_EXAM')return owner.row.is_reckoning?'HIGH_STAKES_EXAM':'SCHEDULED_TEST';
     return 'HIGH_STAKES_EXAM';
   }
