@@ -5,6 +5,7 @@ const {
   AI_EXECUTION_LANES,
   RETRY_POLICY_CONFIG,
 } = require('./task-registry');
+const { AI_CAPABILITIES } = require('./capabilities');
 const { createModelCatalog, MODEL_STATUS } = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
 const { createCredentialRegistry } = require('./credential-registry');
@@ -44,6 +45,19 @@ const SHORT_RATE_LIMIT_CODES = new Set([
   AI_ERROR_CODES.RATE_LIMIT_UNKNOWN,
 ]);
 
+const PROVIDER_NATIVE_GENERATION_FIELDS = Object.freeze([
+  'thinkingConfig',
+  'thinking_level',
+  'thinkingLevel',
+  'reasoning_effort',
+  'reasoningEffort',
+  'include_reasoning',
+  'reasoning_format',
+  'max_completion_tokens',
+  'responseMimeType',
+  'responseSchema',
+]);
+
 const DEFAULT_RETRY_POLICY = Object.freeze({
   maxAttempts: 6,
   maxAttemptsPerRoute: 2,
@@ -52,40 +66,18 @@ const DEFAULT_RETRY_POLICY = Object.freeze({
   maxTransientAttemptsPerRoute: 1,
 });
 
-function validateFeatureGenerationConfig(generationConfig = {}) {
-  const source = generationConfig && typeof generationConfig === 'object'
-    ? generationConfig
-    : {};
-  const forbidden = [
-    'thinkingConfig',
-    'thinking_level',
-    'thinkingLevel',
-    'reasoning_effort',
-    'reasoningEffort',
-    'include_reasoning',
-    'reasoning_format',
-  ];
-  const leaked = forbidden.find((key) => Object.prototype.hasOwnProperty.call(source, key));
+function validateFeatureGenerationConfig(generation = {}) {
+  const source = generation && typeof generation === 'object' ? generation : {};
+  const leaked = PROVIDER_NATIVE_GENERATION_FIELDS.find((key) =>
+    Object.prototype.hasOwnProperty.call(source, key)
+  );
   if (leaked) {
     throw new AIError(
-      `Feature code cannot set provider reasoning field ${leaked}; use the AI task registry`,
+      `Feature code cannot set provider-native generation field ${leaked}; use neutral KIWI generation options`,
       { code: AI_ERROR_CODES.CONFIG, retryable: false, scope: 'REQUEST' }
     );
   }
-
-  const normalized = { ...source };
-  const responseMimeType = normalized.responseMimeType;
-  const responseSchema = normalized.responseSchema;
-  delete normalized.responseMimeType;
-  delete normalized.responseSchema;
-
-  if (responseMimeType || responseSchema) {
-    normalized.structuredOutput = {
-      mimeType: responseMimeType || 'application/json',
-      ...(responseSchema ? { schema: responseSchema } : {}),
-    };
-  }
-  return normalized;
+  return { ...source };
 }
 
 function createAIOrchestrator({
@@ -240,7 +232,7 @@ function createAIOrchestrator({
     return Object.freeze({
       credentialSlots: resolvedCredentials.enabledCount(),
       hydratedRouteQuotaStates: Number(hydratedQuotaStates) || 0,
-      hydratedProviderModelHealth: Number(hydratedProviderHealth) || 0,
+      hydratedRouteHealthStates: Number(hydratedProviderHealth) || 0,
     });
   }
 
@@ -254,12 +246,9 @@ function createAIOrchestrator({
     return resolvedRouteScheduler.orderSlots(candidate.routeKey, eligible, quotaManager);
   }
 
-  function plan(taskId, { content = null, preferredRouteKey = null } = {}) {
+  function plan(taskId, { content = null } = {}) {
     const normalizedContent = normalizeExecutionContent(content);
-    const candidates = resolvedRouter.resolveCandidates(taskId, {
-      content: normalizedContent,
-      preferredRouteKey,
-    });
+    const candidates = resolvedRouter.resolveCandidates(taskId, { content: normalizedContent });
     const routedCandidates = candidates.map((candidate) => {
       const availability = resolvedProviderHealth.availability(candidate.routeKey);
       const slots = availability.available
@@ -292,40 +281,36 @@ function createAIOrchestrator({
     });
   }
 
-  async function observe(taskId, { content = null, preferredRouteKey = null } = {}) {
+  async function observe(taskId, { content = null } = {}) {
     const task = resolvedRouter.getTask(taskId);
-    const shadowPlan = plan(taskId, { content, preferredRouteKey });
+    const shadowPlan = plan(taskId, { content });
     await sideEffect('shadow telemetry', () => telemetry?.recordShadowDecision({
       taskId,
       taskClass: task.class,
       requestedReasoning: task.reasoning,
-      candidateModels: shadowPlan.candidates,
-      plannedProjectSlot: shadowPlan.plannedPrimaryCredentialSlot,
+      candidateRoutes: shadowPlan.candidates,
+      plannedCredentialSlotId: shadowPlan.plannedPrimaryCredentialSlot,
     }));
     return shadowPlan;
   }
 
   async function run(taskId, request = {}, {
-    preferredRouteKey = null,
-    preferredModelId = null,
     generationGroupId = null,
     operationBudgetId = null,
   } = {}) {
     assertReady?.();
     const task = resolvedRouter.getTask(taskId);
     const content = normalizeExecutionContent(
-      request.content !== undefined ? request.content :
-      request.contents !== undefined ? request.contents :
-      request.prompt !== undefined ? request.prompt : ''
+      request.content !== undefined
+        ? request.content
+        : request.prompt !== undefined
+          ? request.prompt
+          : ''
     );
-    const explicitPreferred = preferredRouteKey || (
-      preferredModelId ? catalog.get(preferredModelId)?.routeKey : null
-    );
-    const storedAffinity = explicitPreferred ? null : getAffinity(task, generationGroupId);
-    const affinityRoute = explicitPreferred || storedAffinity;
+    const storedAffinity = getAffinity(task, generationGroupId);
     const affinityCandidates = resolvedRouter.resolveCandidates(taskId, {
       content,
-      preferredRouteKey: affinityRoute,
+      preferredRouteKey: storedAffinity,
     });
 
     let routedCandidates = affinityCandidates;
@@ -338,28 +323,30 @@ function createAIOrchestrator({
       }
     }
 
-    const featureGeneration = validateFeatureGenerationConfig(
-      request.generationConfig || request.generation || {}
-    );
+    const featureGeneration = validateFeatureGenerationConfig(request.generation || request.generationConfig || {});
     const generation = {
       ...(task.generationDefaults || {}),
       ...featureGeneration,
     };
-    if (task.capabilities?.includes('STRUCTURED_OUTPUT') && !generation.structuredOutput) {
+    if (task.capabilities?.includes(AI_CAPABILITIES.STRUCTURED_OUTPUT) && !generation.structuredOutput) {
       generation.structuredOutput = { mimeType: 'application/json' };
     }
 
     const operationTimeoutMs = operationTimeoutFor(task);
     const retryPolicy = retryPolicyFor(task);
-    const plannedModels = routedCandidates.map((candidate) => candidate.routeKey);
+    const plannedRoutes = routedCandidates.map((candidate) => ({
+      provider: candidate.provider,
+      modelId: candidate.modelId,
+      routeKey: candidate.routeKey,
+    }));
     const requestId = telemetry
       ? await sideEffect('telemetry begin', () => telemetry.beginRequest({
           taskId,
           taskClass: task.class,
           mode: 'LIVE',
           requestedReasoning: task.reasoning,
-          plannedModels,
-          plannedPrimaryModel: plannedModels[0] || null,
+          plannedRoutes,
+          plannedPrimaryRoute: plannedRoutes[0] || null,
           generationGroupId,
         }))
       : null;
@@ -389,7 +376,7 @@ function createAIOrchestrator({
         taskClass: task.class,
         mode: 'LIVE',
         outcome,
-        fallbackDepth: Math.max(0, new Set(attempts.map((a) => a.routeKey)).size - 1),
+        fallbackDepth: Math.max(0, new Set(attempts.map((attempt) => attempt.routeKey)).size - 1),
         attemptCount: attempts.length,
         latencyMs: nowMs() - requestStartedAt,
         usage: {},
@@ -455,7 +442,7 @@ function createAIOrchestrator({
             if (!routeLease.available) {
               locallyBlockedRoutes.push(Object.freeze({
                 routeKey: candidate.routeKey,
-                slotId: slot.id,
+                credentialSlotId: slot.id,
                 reason: routeLease.reason,
               }));
               continue;
@@ -541,13 +528,18 @@ function createAIOrchestrator({
                 await sideEffect('provider health recovery persistence', () => resolvedProviderHealth.persist?.(candidate.routeKey));
               }
               resolvedTrafficController.noteSuccess();
-              await sideEffect('model lifecycle success', () => modelLifecycle?.recordSuccess(candidate.modelId));
+              await sideEffect('model lifecycle success', () => modelLifecycle?.recordSuccess(candidate));
 
               await sideEffect('telemetry success attempt', () => telemetry?.recordAttempt({
                 requestId,
                 attemptNumber,
-                modelId: candidate.routeKey,
-                projectSlot: slot.id,
+                provider: candidate.provider,
+                modelId: candidate.modelId,
+                routeKey: candidate.routeKey,
+                credentialSlotId: slot.id,
+                requestedReasoning: candidate.reasoning?.requested || task.reasoning,
+                resolvedReasoning: candidate.reasoning?.resolved || null,
+                fallbackDepth: routeIndex,
                 outcome: 'SUCCESS',
                 finishReason: normalized.finishReason,
                 latencyMs: result?.latencyMs ?? normalized.latencyMs ?? (nowMs() - attemptStartedAt),
@@ -570,8 +562,8 @@ function createAIOrchestrator({
                 taskId,
                 taskClass: task.class,
                 mode: 'LIVE',
-                selectedModel: candidate.routeKey,
-                selectedProjectSlot: slot.id,
+                selectedRoute: candidate,
+                selectedCredentialSlotId: slot.id,
                 outcome: 'SUCCESS',
                 fallbackDepth: routeIndex,
                 attemptCount: attemptNumber,
@@ -591,9 +583,9 @@ function createAIOrchestrator({
                 modelId: candidate.modelId,
                 routeKey: candidate.routeKey,
                 credentialSlot: slot.id,
-                projectSlot: slot.id,
                 requestedReasoning: candidate.reasoning?.requested || task.reasoning,
                 resolvedReasoning: candidate.reasoning?.resolved || null,
+                fallbackDepth: routeIndex,
                 attempts: attemptNumber,
               });
             } catch (error) {
@@ -608,8 +600,8 @@ function createAIOrchestrator({
                   });
               lastError = aiError;
               resolvedTrafficController.noteFailure(aiError, {
-                modelId: candidate.routeKey,
-                projectSlot: slot.id,
+                routeKey: candidate.routeKey,
+                credentialSlotId: slot.id,
               });
 
               const dailyQuota = DAILY_QUOTA_CODES.has(aiError.code);
@@ -630,7 +622,7 @@ function createAIOrchestrator({
                 provider: candidate.provider,
                 modelId: candidate.modelId,
                 routeKey: candidate.routeKey,
-                slotId: slot.id,
+                credentialSlotId: slot.id,
                 code: aiError.code,
                 status: aiError.status,
               }));
@@ -641,8 +633,13 @@ function createAIOrchestrator({
               await sideEffect('telemetry failed attempt', () => telemetry?.recordAttempt({
                 requestId,
                 attemptNumber,
-                modelId: candidate.routeKey,
-                projectSlot: slot.id,
+                provider: candidate.provider,
+                modelId: candidate.modelId,
+                routeKey: candidate.routeKey,
+                credentialSlotId: slot.id,
+                requestedReasoning: candidate.reasoning?.requested || task.reasoning,
+                resolvedReasoning: candidate.reasoning?.resolved || null,
+                fallbackDepth: routeIndex,
                 outcome: aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED',
                 errorCode: aiError.code,
                 httpStatus: aiError.status,
@@ -660,14 +657,14 @@ function createAIOrchestrator({
                 provider: candidate.provider,
                 modelId: candidate.modelId,
                 routeKey: candidate.routeKey,
-                slotId: slot.id,
+                credentialSlotId: slot.id,
                 code: aiError.code,
                 status: aiError.status,
                 attempt: attemptNumber,
               });
 
               const lifecycleResult = await sideEffect('model lifecycle failure', () =>
-                modelLifecycle?.recordFailure(candidate.modelId, aiError)
+                modelLifecycle?.recordFailure(candidate, aiError)
               );
               if (lifecycleResult?.suspended && aiError.code !== AI_ERROR_CODES.SAFETY) break;
 
@@ -683,7 +680,9 @@ function createAIOrchestrator({
 
               if (aiError.code === AI_ERROR_CODES.MODEL_NOT_FOUND) {
                 if (modelLifecycle) {
-                  await sideEffect('model suspension', () => modelLifecycle.suspend(candidate.modelId, 'provider returned MODEL_NOT_FOUND'));
+                  await sideEffect('model suspension', () =>
+                    modelLifecycle.suspend(candidate, 'provider returned MODEL_NOT_FOUND')
+                  );
                 } else {
                   catalog.setStatus(candidate.routeKey, MODEL_STATUS.SUSPENDED);
                 }
@@ -806,6 +805,7 @@ function createAIOrchestrator({
 module.exports = {
   IMMEDIATE_FAILURE_CODES,
   FAST_ROUTE_FALLBACK_CODES,
+  PROVIDER_NATIVE_GENERATION_FIELDS,
   DEFAULT_RETRY_POLICY,
   validateFeatureGenerationConfig,
   createAIOrchestrator,
