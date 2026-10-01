@@ -1,11 +1,9 @@
 'use strict';
 
+const { AI_PROVIDERS } = require('./providers');
 const { MODEL_STATUS } = require('./model-catalog');
 const { AI_ERROR_CODES } = require('./errors');
 
-// Lifecycle suspension is for model incompatibility, not temporary provider
-// availability. Provider overload, timeouts and transport failures are handled
-// by the orchestrator's short-lived provider-health circuit instead.
 const CIRCUIT_BREAKER_CODES = new Set([
   AI_ERROR_CODES.BAD_REQUEST,
   AI_ERROR_CODES.MODEL_NOT_FOUND,
@@ -13,17 +11,19 @@ const CIRCUIT_BREAKER_CODES = new Set([
 ]);
 
 function rowToModel(row) {
+  const metadata = row.metadata || {};
   return {
     id: row.model_id,
+    provider: metadata.provider || AI_PROVIDERS.GOOGLE,
     family: row.family,
     channel: row.channel,
     status: row.status,
     rank: Number(row.rank) || 0,
-    supportedThinking: Array.isArray(row.supported_thinking) ? row.supported_thinking : [],
+    supportedReasoning: Array.isArray(row.supported_thinking) ? row.supported_thinking : [],
     capabilities: Array.isArray(row.capabilities) ? row.capabilities : [],
     inputTokenLimit: row.input_token_limit == null ? null : Number(row.input_token_limit),
     outputTokenLimit: row.output_token_limit == null ? null : Number(row.output_token_limit),
-    metadata: row.metadata || {},
+    metadata,
     firstSeenAt: row.first_seen_at || null,
     approvedAt: row.approved_at || null,
     suspendedAt: row.suspended_at || null,
@@ -41,33 +41,48 @@ function createModelLifecycle({
 
   const failures = new Map();
 
+  function modelKey(model) {
+    return model?.routeKey || `${model?.provider || AI_PROVIDERS.GOOGLE}::${model?.id || ''}`;
+  }
+
   async function persist(model) {
-    if (store?.upsertCatalogModel) {
-      await store.upsertCatalogModel(model);
-    }
+    if (!store?.upsertCatalogModel || !model) return null;
+    // The existing table column is named supported_thinking. Keep that schema
+    // stable while translating the neutral runtime field only at persistence.
+    return store.upsertCatalogModel({
+      ...model,
+      supportedThinking: model.supportedReasoning || [],
+      metadata: {
+        ...(model.metadata || {}),
+        provider: model.provider,
+      },
+    });
   }
 
   async function hydratePersistedCatalog() {
     if (!store?.loadCatalogModels) return 0;
     const rows = await store.loadCatalogModels();
-    for (const row of rows || []) {
-      catalog.upsert(rowToModel(row));
-    }
+    for (const row of rows || []) catalog.upsert(rowToModel(row));
     return rows?.length || 0;
   }
 
-  function isAutoPromoted(modelId) {
-    return Boolean(catalog.get(modelId)?.metadata?.autoPromoted);
+  function resolve(ref, provider = null) {
+    return catalog.get(ref, provider);
+  }
+
+  function isAutoPromoted(ref, provider = null) {
+    return Boolean(resolve(ref, provider)?.metadata?.autoPromoted);
   }
 
   async function discover(model) {
-    const existing = catalog.get(model.id);
+    const existing = catalog.get(model.id, model.provider);
     const merged = catalog.upsert({
       ...model,
       status: model.status || existing?.status || MODEL_STATUS.DISCOVERED,
       metadata: {
         ...(existing?.metadata || {}),
         ...(model.metadata || {}),
+        provider: model.provider,
       },
       firstSeenAt: existing?.firstSeenAt || model.firstSeenAt || new Date(),
     });
@@ -75,8 +90,8 @@ function createModelLifecycle({
     return merged;
   }
 
-  async function markQualifying(modelId) {
-    const current = catalog.get(modelId);
+  async function markQualifying(modelId, provider = AI_PROVIDERS.GOOGLE) {
+    const current = catalog.get(modelId, provider);
     if (!current) return null;
     const next = catalog.upsert({
       ...current,
@@ -91,17 +106,18 @@ function createModelLifecycle({
   }
 
   async function approve(modelId, {
-    supportedThinking,
+    provider = AI_PROVIDERS.GOOGLE,
+    supportedReasoning,
     capabilities,
     qualification = {},
   } = {}) {
-    const current = catalog.get(modelId);
+    const current = catalog.get(modelId, provider);
     if (!current) return null;
     const now = new Date();
     const next = catalog.upsert({
       ...current,
       status: MODEL_STATUS.APPROVED,
-      supportedThinking: supportedThinking || current.supportedThinking || [],
+      supportedReasoning: supportedReasoning || current.supportedReasoning || [],
       capabilities: capabilities || current.capabilities || [],
       approvedAt: now,
       suspendedAt: null,
@@ -112,13 +128,13 @@ function createModelLifecycle({
         approvedAt: now.toISOString(),
       },
     });
-    failures.delete(modelId);
+    failures.delete(modelKey(next));
     await persist(next);
     return next;
   }
 
-  async function deny(modelId, reason) {
-    const current = catalog.get(modelId);
+  async function deny(modelId, reason, provider = AI_PROVIDERS.GOOGLE) {
+    const current = catalog.get(modelId, provider);
     if (!current) return null;
     const next = catalog.upsert({
       ...current,
@@ -133,8 +149,8 @@ function createModelLifecycle({
     return next;
   }
 
-  async function suspend(modelId, reason) {
-    const current = catalog.get(modelId);
+  async function suspend(modelId, reason, provider = AI_PROVIDERS.GOOGLE) {
+    const current = catalog.get(modelId, provider);
     if (!current) return null;
     const now = new Date();
     const next = catalog.upsert({
@@ -148,17 +164,18 @@ function createModelLifecycle({
         suspendedAt: now.toISOString(),
       },
     });
-    failures.delete(modelId);
+    failures.delete(modelKey(next));
     await persist(next);
-    if (typeof logger?.warn === 'function') {
-      logger.warn('[KIWI AI] model suspended', { modelId, reason });
-    }
+    logger?.warn?.('[KIWI AI] model suspended', {
+      provider: next.provider,
+      modelId: next.id,
+      reason,
+    });
     return next;
   }
 
-
-  async function resume(modelId, reason = 'manual suspension cleared') {
-    const current = catalog.get(modelId);
+  async function resume(modelId, reason = 'manual suspension cleared', provider = AI_PROVIDERS.GOOGLE) {
+    const current = catalog.get(modelId, provider);
     if (!current || current.status !== MODEL_STATUS.SUSPENDED) return current;
 
     const resumeStatus = current.metadata?.preSuspendStatus || MODEL_STATUS.APPROVED;
@@ -175,65 +192,64 @@ function createModelLifecycle({
       suspendedAt: null,
       metadata,
     });
-    failures.delete(modelId);
+    failures.delete(modelKey(next));
     await persist(next);
     return next;
   }
 
-  function pruneFailures(modelId, now) {
-    const recent = (failures.get(modelId) || []).filter(
-      (entry) => now - entry.at <= failureWindowMs
-    );
-    failures.set(modelId, recent);
+  function pruneFailures(key, now) {
+    const recent = (failures.get(key) || []).filter((entry) => now - entry.at <= failureWindowMs);
+    failures.set(key, recent);
     return recent;
   }
 
-  async function recordSuccess(modelId) {
-    if (!isAutoPromoted(modelId)) return { suspended: false };
-    failures.delete(modelId);
+  async function recordSuccess(modelId, provider = AI_PROVIDERS.GOOGLE) {
+    const current = catalog.get(modelId, provider);
+    if (!current?.metadata?.autoPromoted) return { suspended: false };
+    failures.delete(modelKey(current));
     return { suspended: false };
   }
 
-  async function recordFailure(modelId, error) {
-    if (!isAutoPromoted(modelId)) return { suspended: false };
+  async function recordFailure(modelId, error, provider = AI_PROVIDERS.GOOGLE) {
+    const current = catalog.get(modelId, provider);
+    if (!current?.metadata?.autoPromoted) return { suspended: false };
     if (!CIRCUIT_BREAKER_CODES.has(error?.code)) return { suspended: false };
 
-    if (
-      error.code === AI_ERROR_CODES.MODEL_NOT_FOUND ||
-      error.code === AI_ERROR_CODES.BAD_REQUEST
-    ) {
-      await suspend(modelId, `automatic rollback after ${error.code}`);
+    if (error.code === AI_ERROR_CODES.MODEL_NOT_FOUND || error.code === AI_ERROR_CODES.BAD_REQUEST) {
+      await suspend(modelId, `automatic rollback after ${error.code}`, provider);
       return { suspended: true };
     }
 
+    const key = modelKey(current);
     const now = Date.now();
-    const recent = pruneFailures(modelId, now);
+    const recent = pruneFailures(key, now);
     recent.push({ at: now, code: error.code });
-    failures.set(modelId, recent);
+    failures.set(key, recent);
 
     if (recent.length >= failureThreshold) {
       await suspend(
         modelId,
-        `automatic rollback after ${recent.length} failures in ${Math.round(failureWindowMs / 60000)}m`
+        `automatic rollback after ${recent.length} failures in ${Math.round(failureWindowMs / 60000)}m`,
+        provider
       );
       return { suspended: true };
     }
-
     return { suspended: false };
   }
 
-  async function reportValidationFailure(modelId, reason = 'task validation failed') {
-    if (!isAutoPromoted(modelId)) return { suspended: false };
+  async function reportValidationFailure(modelId, reason = 'task validation failed', provider = AI_PROVIDERS.GOOGLE) {
+    const current = catalog.get(modelId, provider);
+    if (!current?.metadata?.autoPromoted) return { suspended: false };
+    const key = modelKey(current);
     const now = Date.now();
-    const recent = pruneFailures(modelId, now);
+    const recent = pruneFailures(key, now);
     recent.push({ at: now, code: 'VALIDATION' });
-    failures.set(modelId, recent);
+    failures.set(key, recent);
 
     if (recent.length >= Math.max(2, failureThreshold - 1)) {
-      await suspend(modelId, `automatic rollback: ${reason}`);
+      await suspend(modelId, `automatic rollback: ${reason}`, provider);
       return { suspended: true };
     }
-
     return { suspended: false };
   }
 
