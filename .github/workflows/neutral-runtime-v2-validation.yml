@@ -10,26 +10,12 @@ permissions:
   contents: read
 
 jobs:
-  ai-diagnostics:
+  neutral-runtime-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout Branch B
         uses: actions/checkout@v4
-
-      - name: Capture neutral runtime source snapshot
-        shell: bash
-        run: |
-          tar -czf neutral-runtime-source-snapshot.tgz services/ai tests/ai scripts index.js package.json package-lock.json 2>/dev/null || \
-            tar -czf neutral-runtime-source-snapshot.tgz services/ai tests/ai scripts index.js package.json
-
-      - name: Upload neutral runtime source snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: neutral-runtime-source-snapshot
-          path: neutral-runtime-source-snapshot.tgz
-          if-no-files-found: error
-          retention-days: 2
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -39,68 +25,51 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
 
-      - name: Run AI tests and capture exact failures
-        id: ai
-        shell: bash
-        run: |
-          set +e
-          : > neutral-runtime-ai-diagnostics.txt
-          failed=0
-          passed=0
-          total=0
-          while IFS= read -r file; do
-            total=$((total + 1))
-            tmp=$(mktemp)
-            node --test "$file" >"$tmp" 2>&1
-            code=$?
-            if [ "$code" -eq 0 ]; then
-              passed=$((passed + 1))
-            else
-              failed=$((failed + 1))
-              {
-                echo
-                echo "================================================================================"
-                echo "FAILED: $file"
-                echo "================================================================================"
-                cat "$tmp"
-              } >> neutral-runtime-ai-diagnostics.txt
-            fi
-            rm -f "$tmp"
-          done < <(find tests/ai -type f -name '*.test.js' -print | sort)
-          {
-            echo
-            echo "================================================================================"
-            echo "SUMMARY: total=$total passed=$passed failed=$failed"
-            echo "================================================================================"
-          } >> neutral-runtime-ai-diagnostics.txt
-          cat neutral-runtime-ai-diagnostics.txt
-          if [ "$failed" -ne 0 ]; then
-            exit 1
-          fi
-
-      - name: Upload AI diagnostic report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: neutral-runtime-ai-diagnostics
-          path: neutral-runtime-ai-diagnostics.txt
-          if-no-files-found: error
-          retention-days: 2
-
-  syntax:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout Branch B
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Check neutral AI module syntax
+      - name: Check AI module syntax
         run: find services/ai -name '*.js' -print0 | xargs -0 -n1 node --check
 
       - name: Check backend syntax
         run: node --check index.js
+
+      - name: Check tree renderer syntax
+        run: find public/tree -name '*.mjs' -print0 | xargs -0 -n1 node --check
+
+      - name: Enforce legacy runtime retirement
+        shell: bash
+        run: |
+          set -euo pipefail
+          retired=(
+            services/ai/capability-adapter.js
+            services/ai/gemini-transport.js
+            services/ai/isolated-provider-executor.js
+            services/ai/media-capability-factory.js
+            services/ai/media-capability-runtime.js
+            services/ai/media-model-catalog.js
+            services/ai/media-telemetry.js
+            services/ai/project-pool.js
+            services/ai/visual-capability-factory.js
+            services/ai/visual-capability-runtime.js
+            services/ai/visual-model-catalog.js
+            services/ai/visual-telemetry.js
+          )
+          for path in "${retired[@]}"; do
+            if [ -e "$path" ]; then
+              echo "Retired AI runtime path returned: $path" >&2
+              exit 1
+            fi
+          done
+          test -f services/ai/model-history.js
+
+      - name: Run complete unit regression suite
+        run: npm test
+
+      - name: Build production web artifact
+        run: npm run build
+
+      - name: Verify production build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/index.html
+          test -s dist/vendor/pixi/pixi.min.mjs
+          test -s dist/kiwi-build.json
