@@ -47,6 +47,16 @@ function _providerFailure(error, provider) {
   });
 }
 
+function _teacherLanguageFamily(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-');
+  if (normalized === 'en' || normalized.startsWith('en-')) return 'en';
+  if (normalized === 'ar' || normalized.startsWith('ar-')) return 'ar';
+  return null;
+}
+
 function _assertVisionOutput(response, provider) {
   if (response?.blocked) return response;
   if (String(response?.text || '').trim()) return response;
@@ -321,20 +331,39 @@ function createMediaCapabilityRuntime({
     metadata = {},
     signal = null,
   } = {}) {
-    const request = createSpeechSynthesisRequest({
-      transcript,
-      voiceId: voiceId || env.AI_TEACHER_VOICE_ID || 'KIWI_TEACHER_EN_PRIMARY',
-      language,
-      metadata,
-    });
-    const profile = resolveTeacherVoice(request.voiceId, env);
+    // Teacher voice identity is deployment/course-owned. Per-call voiceId is
+    // intentionally ignored so a feature cannot silently change the teacher.
+    void voiceId;
+    const profile = resolveTeacherVoice(null, env);
     if (!profile) {
-      throw new AIError(`Unknown KIWI teacher voice ${request.voiceId}`, {
+      throw new AIError('KIWI teacher voice configuration is invalid', {
+        code: AI_ERROR_CODES.CONFIG,
+        retryable: false,
+        scope: 'CAPABILITY',
+      });
+    }
+
+    const requestedLanguageFamily = _teacherLanguageFamily(language);
+    const profileLanguageFamily = _teacherLanguageFamily(profile.language);
+    if (!requestedLanguageFamily || requestedLanguageFamily !== profileLanguageFamily) {
+      throw new AIError('Requested speech language does not match the configured KIWI teacher voice', {
         code: AI_ERROR_CODES.BAD_REQUEST,
         retryable: false,
         scope: 'REQUEST',
+        details: {
+          requestedLanguage: String(language || ''),
+          configuredVoiceLanguage: profile.language,
+          configuredVoiceId: profile.id,
+        },
       });
     }
+
+    const request = createSpeechSynthesisRequest({
+      transcript,
+      voiceId: profile.id,
+      language: profile.language,
+      metadata,
+    });
 
     const chunks = splitSpeechTranscript(request.transcript);
     const slots = groqCredentialPool.orderedSlots(`${AI_PROVIDERS.GROQ}::${profile.modelId}`);
