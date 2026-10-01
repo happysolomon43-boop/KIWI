@@ -1,40 +1,44 @@
 'use strict';
 
+const { AI_PROVIDERS } = require('./providers');
 const {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
   MODEL_STATUS,
+  MODEL_INPUT_MODALITIES,
+  MODEL_OUTPUT_MODALITIES,
   modelVersionRank,
 } = require('./model-catalog');
 const { AI_CLASSES } = require('./task-registry');
 
 function normalizeModelId(apiModel) {
-  const raw = String(apiModel?.baseModelId || apiModel?.name || '').trim();
-  return raw.replace(/^models\//, '');
+  return String(apiModel?.baseModelId || apiModel?.name || '').trim().replace(/^models\//, '');
 }
 
 function classifyStableFlash(apiModel) {
   const id = normalizeModelId(apiModel);
   const match = id.match(/^gemini-(\d+)\.(\d+)(?:\.(\d+))?-(flash|flash-lite)$/i);
   if (!match) return null;
-
   const methods = Array.isArray(apiModel?.supportedGenerationMethods)
-    ? apiModel.supportedGenerationMethods.map((m) => String(m).toLowerCase())
+    ? apiModel.supportedGenerationMethods.map((method) => String(method).toLowerCase())
     : [];
   if (!methods.includes('generatecontent')) return null;
 
   return {
     id,
-    family: match[4].toLowerCase() === 'flash-lite'
-      ? MODEL_FAMILIES.FLASH_LITE
-      : MODEL_FAMILIES.FLASH,
+    provider: AI_PROVIDERS.GOOGLE,
+    family: match[4].toLowerCase() === 'flash-lite' ? MODEL_FAMILIES.FLASH_LITE : MODEL_FAMILIES.FLASH,
     channel: MODEL_CHANNELS.STABLE,
     rank: modelVersionRank(id),
+    productionEligible: false,
     inputTokenLimit: Number(apiModel?.inputTokenLimit) || null,
     outputTokenLimit: Number(apiModel?.outputTokenLimit) || null,
     supportedThinking: [],
     capabilities: ['generateContent'],
+    inputModalities: [MODEL_INPUT_MODALITIES.TEXT, MODEL_INPUT_MODALITIES.IMAGE],
+    outputModalities: [MODEL_OUTPUT_MODALITIES.TEXT],
     metadata: {
+      provider: AI_PROVIDERS.GOOGLE,
       source: 'models.list',
       displayName: apiModel?.displayName || null,
       description: apiModel?.description || null,
@@ -47,8 +51,8 @@ function classifyStableFlash(apiModel) {
 }
 
 function createModelDiscoveryManager({
-  transport,
-  projectPool,
+  providerRegistry,
+  credentialRegistry,
   catalog,
   lifecycle,
   qualifier,
@@ -57,18 +61,12 @@ function createModelDiscoveryManager({
   env = process.env,
   sampleSize = 3,
 } = {}) {
-  if (!transport?.listModels) throw new Error('Model discovery requires listModels transport');
-  if (!projectPool) throw new Error('Model discovery requires projectPool');
-  if (!catalog) throw new Error('Model discovery requires catalog');
-  if (!lifecycle) throw new Error('Model discovery requires lifecycle');
-  if (!qualifier) throw new Error('Model discovery requires qualifier');
+  if (!providerRegistry?.require) throw new Error('Model discovery requires providerRegistry');
+  if (!credentialRegistry?.ordered) throw new Error('Model discovery requires credentialRegistry');
+  if (!catalog || !lifecycle || !qualifier) throw new Error('Model discovery requires catalog, lifecycle and qualifier');
 
-  const deniedNames = new Set(
-    String(env.AI_MODEL_DENYLIST || '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)
-  );
+  const googleAdapter = providerRegistry.require(AI_PROVIDERS.GOOGLE);
+  const deniedNames = new Set(String(env.AI_MODEL_DENYLIST || '').split(',').map((v) => v.trim()).filter(Boolean));
 
   function autoDiscoveryEnabled() {
     return String(env.AI_AUTO_DISCOVERY ?? 'true').toLowerCase() !== 'false';
@@ -78,42 +76,27 @@ function createModelDiscoveryManager({
     return String(env.AI_AUTO_PROMOTE ?? 'true').toLowerCase() !== 'false';
   }
 
-  function highestApprovedRank(family) {
-    const approved = catalog.list({
-      family,
-      channel: MODEL_CHANNELS.STABLE,
-      status: MODEL_STATUS.APPROVED,
-    });
-    return approved[0]?.rank || 0;
+  function latestApproved(family) {
+    return catalog.latestApproved(family);
   }
 
   async function fetchProviderModels() {
-    const slots = projectPool.orderedSlots('__model_discovery__').slice(
-      0,
-      Math.max(1, Number(env.AI_DISCOVERY_PROJECT_SAMPLE) || sampleSize)
-    );
-
-    if (slots.length === 0) return [];
+    const credentials = credentialRegistry
+      .ordered(AI_PROVIDERS.GOOGLE, `${AI_PROVIDERS.GOOGLE}::__model_discovery__`)
+      .slice(0, Math.max(1, Number(env.AI_DISCOVERY_CREDENTIAL_SAMPLE || env.AI_DISCOVERY_PROJECT_SAMPLE) || sampleSize));
+    if (!credentials.length) return [];
 
     const union = new Map();
     let successCount = 0;
     let lastError = null;
 
-    for (const slot of slots) {
+    for (const credential of credentials) {
       let trafficLease = null;
       try {
         trafficLease = trafficController
-          ? await trafficController.acquire({
-              taskId: 'MODEL_DISCOVERY',
-              taskClass: AI_CLASSES.IP,
-              timeoutMs: 15000,
-            })
+          ? await trafficController.acquire({ taskId: 'MODEL_DISCOVERY', taskClass: AI_CLASSES.IP, timeoutMs: 15000 })
           : null;
-
-        const models = await transport.listModels({
-          apiKey: slot.apiKey,
-          timeoutMs: 15000,
-        });
+        const models = await googleAdapter.listModels({ apiKey: credential.apiKey, timeoutMs: 15000 });
         trafficController?.noteSuccess?.();
         successCount += 1;
         for (const model of models || []) {
@@ -122,137 +105,110 @@ function createModelDiscoveryManager({
         }
       } catch (error) {
         lastError = error;
-        trafficController?.noteFailure?.(error, {
-          projectSlot: slot.id,
-        });
-        if (error?.code === 'AUTH') {
-          projectPool.disable(slot.id, 'AUTH');
-        }
-        if (typeof logger?.warn === 'function') {
-          logger.warn('[KIWI AI] model discovery slot failed', {
-            slotId: slot.id,
-            code: error?.code || null,
-            status: error?.status || null,
-          });
-        }
+        trafficController?.noteFailure?.(error, { modelId: `${AI_PROVIDERS.GOOGLE}::__model_discovery__`, projectSlot: credential.id });
+        if (error?.code === 'AUTH') credentialRegistry.disable(AI_PROVIDERS.GOOGLE, credential.id, 'AUTH');
+        logger?.warn?.('[KIWI AI] model discovery credential failed', { credentialSlot: credential.id, code: error?.code || null, status: error?.status || null });
       } finally {
         trafficLease?.release?.();
       }
     }
 
-    if (successCount === 0 && lastError) throw lastError;
+    if (!successCount && lastError) throw lastError;
     return [...union.values()];
+  }
+
+  async function discoverFamilyLeader(family, candidates, discovered, promoted, skipped) {
+    const current = latestApproved(family);
+    const leader = candidates
+      .filter((model) => model.family === family)
+      .sort((a, b) => b.rank - a.rank)[0] || null;
+    if (!leader) return current;
+
+    if (deniedNames.has(leader.id)) {
+      skipped.push({ modelId: leader.id, family, reason: 'denylist' });
+      return current;
+    }
+    if (current && leader.rank <= current.rank) {
+      return current;
+    }
+
+    let candidate = catalog.get(leader.id, AI_PROVIDERS.GOOGLE);
+    if (!candidate) {
+      candidate = await lifecycle.discover({ ...leader, status: MODEL_STATUS.DISCOVERED });
+      discovered.push(leader.id);
+    } else if (![MODEL_STATUS.APPROVED, MODEL_STATUS.SUSPENDED, MODEL_STATUS.DENIED].includes(candidate.status)) {
+      candidate = await lifecycle.discover({
+        ...candidate,
+        ...leader,
+        status: candidate.status,
+        metadata: { ...(candidate.metadata || {}), ...(leader.metadata || {}), lastSeenAt: new Date().toISOString() },
+      });
+    }
+
+    if (candidate.status === MODEL_STATUS.APPROVED) return candidate;
+    if (candidate.status === MODEL_STATUS.SUSPENDED || candidate.status === MODEL_STATUS.DENIED) {
+      skipped.push({ modelId: leader.id, family, reason: candidate.status.toLowerCase() });
+      return current;
+    }
+    if (!autoPromoteEnabled()) {
+      skipped.push({ modelId: leader.id, family, reason: 'auto promotion disabled' });
+      return current;
+    }
+
+    const result = await qualifier.qualify(candidate);
+    if (result.status === 'PASSED') {
+      // lifecycle.approve marks the candidate approved; make it routable only
+      // after the qualification gate has passed.
+      const approved = catalog.upsert({ ...result.model, productionEligible: true });
+      await lifecycle.discover(approved);
+      promoted.push(leader.id);
+      return approved;
+    }
+    return current;
   }
 
   async function discoverOnce() {
     if (!autoDiscoveryEnabled()) {
-      return Object.freeze({
-        enabled: false,
-        providerModels: 0,
-        stableFlashModels: 0,
-        discovered: [],
-        promoted: [],
-      });
+      return Object.freeze({ enabled: false, providerModels: 0, stableModels: 0, discovered: [], promoted: [], skipped: [] });
     }
 
     const providerModels = await fetchProviderModels();
-    const stable = providerModels
-      .map(classifyStableFlash)
-      .filter(Boolean)
-      .sort((a, b) => b.rank - a.rank);
-
+    const stable = providerModels.map(classifyStableFlash).filter(Boolean);
     const discovered = [];
     const promoted = [];
     const skipped = [];
 
+    const latestFlashLite = await discoverFamilyLeader(MODEL_FAMILIES.FLASH_LITE, stable, discovered, promoted, skipped);
+    const latestFlash = await discoverFamilyLeader(MODEL_FAMILIES.FLASH, stable, discovered, promoted, skipped);
+
+    // Refresh metadata only for models already in the active catalog. Older
+    // provider-listed releases stay outside routing instead of being re-added.
     for (const model of stable) {
-      const existing = catalog.get(model.id);
-
-      let candidate = existing;
-
-      if (existing) {
-        candidate = catalog.upsert({
-          ...existing,
-          inputTokenLimit: model.inputTokenLimit || existing.inputTokenLimit,
-          outputTokenLimit: model.outputTokenLimit || existing.outputTokenLimit,
-          metadata: {
-            ...(existing.metadata || {}),
-            ...(model.metadata || {}),
-            lastSeenAt: new Date().toISOString(),
-          },
-        });
-        await lifecycle.discover(candidate);
-
-        if (
-          candidate.status === MODEL_STATUS.APPROVED ||
-          candidate.status === MODEL_STATUS.SUSPENDED ||
-          candidate.status === MODEL_STATUS.DENIED
-        ) {
-          continue;
-        }
-      } else {
-        candidate = await lifecycle.discover({
-          ...model,
-          status: deniedNames.has(model.id)
-            ? MODEL_STATUS.DENIED
-            : MODEL_STATUS.DISCOVERED,
-        });
-        discovered.push(candidate.id);
-      }
-
-      if (deniedNames.has(model.id)) {
-        skipped.push({ modelId: model.id, reason: 'denylist' });
-        continue;
-      }
-
-      const currentBestRank = highestApprovedRank(model.family);
-      if (model.rank <= currentBestRank) {
-        skipped.push({ modelId: model.id, reason: 'not newer than approved stable model' });
-        continue;
-      }
-
-      if (!autoPromoteEnabled()) {
-        skipped.push({ modelId: model.id, reason: 'auto promotion disabled' });
-        continue;
-      }
-
-      const result = await qualifier.qualify(candidate);
-      if (result.status === 'PASSED') {
-        promoted.push(model.id);
-      }
+      const existing = catalog.get(model.id, AI_PROVIDERS.GOOGLE);
+      if (!existing) continue;
+      await lifecycle.discover({
+        ...existing,
+        inputTokenLimit: model.inputTokenLimit || existing.inputTokenLimit,
+        outputTokenLimit: model.outputTokenLimit || existing.outputTokenLimit,
+        metadata: { ...(existing.metadata || {}), ...(model.metadata || {}), lastSeenAt: new Date().toISOString() },
+      });
     }
 
     const summary = Object.freeze({
       enabled: true,
       providerModels: providerModels.length,
-      stableFlashModels: stable.length,
+      stableModels: stable.length,
+      latestFlashLiteModel: latestFlashLite?.id || null,
+      latestFlashModel: latestFlash?.id || null,
       discovered: Object.freeze(discovered),
       promoted: Object.freeze(promoted),
       skipped: Object.freeze(skipped),
     });
-
-    if (typeof logger?.log === 'function') {
-      logger.log('[KIWI AI] model discovery complete', {
-        providerModels: summary.providerModels,
-        stableFlashModels: summary.stableFlashModels,
-        discovered: summary.discovered,
-        promoted: summary.promoted,
-      });
-    }
-
+    logger?.log?.('[KIWI AI] model discovery complete', summary);
     return summary;
   }
 
-  return Object.freeze({
-    discoverOnce,
-    fetchProviderModels,
-    autoDiscoveryEnabled,
-    autoPromoteEnabled,
-  });
+  return Object.freeze({ discoverOnce, fetchProviderModels, autoDiscoveryEnabled, autoPromoteEnabled });
 }
 
-module.exports = {
-  normalizeModelId,
-  classifyStableFlash,
-  createModelDiscoveryManager,
-};
+module.exports = { normalizeModelId, classifyStableFlash, createModelDiscoveryManager };
