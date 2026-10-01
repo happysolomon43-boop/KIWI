@@ -1,0 +1,64 @@
+name: Neutral Catalog Schema Repair
+
+on:
+  push:
+    branches:
+      - fix/neutral-catalog-family-nullable
+
+permissions:
+  contents: write
+
+jobs:
+  repair-verify-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply schema-contract repair
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          index = Path('index.js')
+          text = index.read_text()
+          anchor = "    `ALTER TABLE review_logs ADD COLUMN IF NOT EXISTS fsrs_stability_after numeric DEFAULT NULL`,\n"
+          addition = anchor + "\n    // Provider-neutral catalog: capability-only models (speech/image/diagram)\n    // intentionally have no inference family. Phase-3 made family NOT NULL,\n    // so converge the live schema before AI runtime initialization.\n    `ALTER TABLE IF EXISTS ai_model_catalog ALTER COLUMN family DROP NOT NULL`,\n"
+          if text.count(anchor) != 1:
+              raise SystemExit(f'expected exactly one schema migration anchor, found {text.count(anchor)}')
+          if 'ai_model_catalog ALTER COLUMN family DROP NOT NULL' not in text:
+              index.write_text(text.replace(anchor, addition))
+
+          migration = Path('migrations/20261001_ai_model_catalog_provider_neutral_capabilities.sql')
+          migration.write_text("""-- KIWI provider-neutral model catalog schema convergence.\n-- Inference families remain populated for family-routed text models.\n-- Capability-only models (speech synthesis, image generation, deterministic\n-- diagram rendering) are provider/capability addressed and intentionally have\n-- no inference family, so family must be nullable. Existing rows are unchanged.\n\nALTER TABLE IF EXISTS ai_model_catalog\n  ALTER COLUMN family DROP NOT NULL;\n""")
+
+          test = Path('tests/ai/model-catalog-schema-contract.test.js')
+          test.write_text("""'use strict';\n\nconst test = require('node:test');\nconst assert = require('node:assert/strict');\nconst fs = require('node:fs');\nconst path = require('node:path');\nconst { DEFAULT_MODEL_CATALOG } = require('../../services/ai/model-catalog');\nconst { AI_CAPABILITIES } = require('../../services/ai/capabilities');\n\nconst root = path.resolve(__dirname, '../..');\n\ntest('provider-neutral capability models intentionally do not require an inference family', () => {\n  const capabilityOnly = DEFAULT_MODEL_CATALOG.filter((model) =>\n    model.capabilities.some((capability) => [\n      AI_CAPABILITIES.SPEECH_SYNTHESIS,\n      AI_CAPABILITIES.IMAGE_GENERATION,\n      AI_CAPABILITIES.DIAGRAM_RENDER,\n    ].includes(capability))\n  );\n  assert.ok(capabilityOnly.length >= 3);\n  for (const model of capabilityOnly) {\n    assert.equal(model.family, null, `${model.routeKey} must remain family-neutral`);\n    assert.equal(typeof model.provider, 'string');\n    assert.equal(typeof model.routeKey, 'string');\n  }\n});\n\ntest('startup schema convergence makes ai_model_catalog.family nullable before AI initialization', () => {\n  const source = fs.readFileSync(path.join(root, 'index.js'), 'utf8');\n  const ddl = 'ALTER TABLE IF EXISTS ai_model_catalog ALTER COLUMN family DROP NOT NULL';\n  const ddlAt = source.indexOf(ddl);\n  const schemaRunAt = source.indexOf('await runSchemaMigrations();');\n  const aiInitAt = source.indexOf('await _aiRuntime.initialize();');\n  assert.ok(ddlAt >= 0, 'startup migration must contain the catalog family convergence DDL');\n  assert.ok(schemaRunAt >= 0 && aiInitAt >= 0);\n  assert.ok(schemaRunAt < aiInitAt, 'schema migrations must finish before AI runtime initialization');\n});\n\ntest('canonical SQL migration preserves data while relaxing only the family nullability constraint', () => {\n  const sql = fs.readFileSync(\n    path.join(root, 'migrations/20261001_ai_model_catalog_provider_neutral_capabilities.sql'),\n    'utf8'\n  );\n  assert.match(sql, /ALTER TABLE IF EXISTS ai_model_catalog[\\s\\S]*ALTER COLUMN family DROP NOT NULL/i);\n  assert.doesNotMatch(sql, /DROP TABLE|DELETE FROM|TRUNCATE/i);\n});\n""")
+          PY
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Verify syntax and schema contract
+        run: |
+          node --check index.js
+          node --test tests/ai/model-catalog-schema-contract.test.js
+          node --test tests/ai/model-catalog.test.js tests/ai/capability-runtime-neutral.test.js
+      - name: Run full neutral runtime and Teaching regression gate
+        run: |
+          node --test tests/ai/*.test.js tests/teaching/unit/*.test.js
+          npm run build:web
+      - name: Commit verified repair and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/neutral-catalog-schema-repair.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(ai): converge model catalog family nullability"
+          git push origin HEAD:fix/neutral-catalog-family-nullable
