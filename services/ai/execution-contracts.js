@@ -26,6 +26,7 @@ const AI_AUDIO_ENCODINGS = Object.freeze({
 const SUPPORTED_IMAGE_MIME_TYPES = Object.freeze([
   'image/jpeg',
   'image/png',
+  'image/webp',
 ]);
 
 const MAX_VISION_IMAGES = 3;
@@ -96,7 +97,11 @@ function createImageContentPart({
       bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) ||
     (normalizedMime === 'image/jpeg' &&
       bytes.length >= 3 &&
-      bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff);
+      bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) ||
+    (normalizedMime === 'image/webp' &&
+      bytes.length >= 12 &&
+      bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      bytes.subarray(8, 12).toString('ascii') === 'WEBP');
   if (!signatureValid) {
     throw _badRequest('Image bytes do not match the declared MIME type', {
       mimeType: normalizedMime,
