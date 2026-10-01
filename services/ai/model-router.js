@@ -276,7 +276,10 @@ function createModelRouter({
       Number.isFinite(overrideBudget) &&
       overrideBudget > 0
     ) {
-      routeGenerationConfig.maxCompletionTokens = Math.min(
+      // Route policy is provider-neutral. Google serializes maxOutputTokens
+      // directly, while the Groq adapter translates the same neutral field to
+      // max_completion_tokens. Never leak provider-native field names here.
+      routeGenerationConfig.maxOutputTokens = Math.min(
         Math.floor(overrideBudget),
         Number(model.outputTokenLimit) || Math.floor(overrideBudget)
       );
