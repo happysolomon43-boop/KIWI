@@ -108,6 +108,22 @@ function _abortController(signal, timeoutMs) {
   };
 }
 
+function _createFlux2MultipartBody(request) {
+  if (typeof globalThis.FormData !== 'function') {
+    throw new AIError('Cloudflare FLUX.2 requires FormData support in the runtime', {
+      code: AI_ERROR_CODES.CONFIG,
+      retryable: false,
+      scope: 'PROVIDER',
+      provider: AI_PROVIDERS.CLOUDFLARE,
+    });
+  }
+  const form = new globalThis.FormData();
+  form.append('prompt', request.prompt);
+  form.append('steps', String(request.steps));
+  if (request.seed != null) form.append('seed', String(request.seed));
+  return form;
+}
+
 function createCloudflareImageTransport({
   fetchImpl = globalThis.fetch,
   endpointBase = DEFAULT_CLOUDFLARE_AI_BASE_URL,
@@ -142,11 +158,7 @@ function createCloudflareImageTransport({
         provider: AI_PROVIDERS.CLOUDFLARE,
       });
     }
-    const body = {
-      prompt: request.prompt,
-      steps: request.steps,
-      ...(request.seed == null ? {} : { seed: request.seed }),
-    };
+    const body = _createFlux2MultipartBody(request);
     const abort = _abortController(signal, Math.max(1000, Number(timeoutMs) || 30000));
     const startedAt = Date.now();
     try {
@@ -156,10 +168,9 @@ function createCloudflareImageTransport({
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          body: JSON.stringify(body),
+          body,
           signal: abort.signal,
         }
       );

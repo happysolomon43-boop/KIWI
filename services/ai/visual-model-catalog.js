@@ -1,7 +1,12 @@
 'use strict';
 
 const { AI_PROVIDERS } = require('./providers');
-const { AI_VISUAL_CAPABILITIES, SUPPORTED_DIAGRAM_TYPES } = require('./visual-contracts');
+const {
+  AI_VISUAL_CAPABILITIES,
+  SUPPORTED_DIAGRAM_TYPES,
+  DEFAULT_IMAGE_GENERATION_STEPS,
+  MAX_IMAGE_GENERATION_STEPS,
+} = require('./visual-contracts');
 
 const VISUAL_MODEL_STATUS = Object.freeze({
   AVAILABLE: 'AVAILABLE',
@@ -9,20 +14,24 @@ const VISUAL_MODEL_STATUS = Object.freeze({
 });
 
 const CLOUDFLARE_IMAGE_MODELS = Object.freeze({
-  FLUX_1_SCHNELL: '@cf/black-forest-labs/flux-1-schnell',
+  FLUX_2_DEV: '@cf/black-forest-labs/flux-2-dev',
 });
 
 const IMAGE_GENERATION_ROUTE = Object.freeze({
   capability: AI_VISUAL_CAPABILITIES.IMAGE_GENERATION,
   provider: AI_PROVIDERS.CLOUDFLARE,
-  modelId: CLOUDFLARE_IMAGE_MODELS.FLUX_1_SCHNELL,
+  modelId: CLOUDFLARE_IMAGE_MODELS.FLUX_2_DEV,
   role: 'PRIMARY',
   status: VISUAL_MODEL_STATUS.AVAILABLE,
   maxPromptCharacters: 2048,
-  maxSteps: 8,
+  defaultSteps: DEFAULT_IMAGE_GENERATION_STEPS,
+  maxSteps: MAX_IMAGE_GENERATION_STEPS,
+  requestEncoding: 'multipart/form-data',
   responseFormats: Object.freeze(['image/jpeg', 'image/png']),
   metadata: Object.freeze({
     delivery: 'AIM_D05',
+    generation: 'FLUX_2',
+    variant: 'DEV',
     illustrativeOnly: true,
     isolatedFromTextRouting: true,
   }),

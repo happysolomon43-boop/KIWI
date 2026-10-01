@@ -4,6 +4,7 @@ const { AI_PROVIDERS } = require('./providers');
 const { AIError, AI_ERROR_CODES } = require('./errors');
 const {
   AI_VISUAL_CAPABILITIES,
+  DEFAULT_IMAGE_GENERATION_STEPS,
   createImageGenerationRequest,
   imageGenerationCacheKey,
   createGeneratedImageResponse,
@@ -14,10 +15,10 @@ const {
 const { IMAGE_GENERATION_ROUTE, KROKI_RENDER_ROUTE } = require('./visual-model-catalog');
 const { createVisualTelemetry } = require('./visual-telemetry');
 
-const DEFAULT_IMAGE_GENERATION_TIMEOUT_MS = 45000;
+const DEFAULT_IMAGE_GENERATION_TIMEOUT_MS = 90000;
 const DEFAULT_DIAGRAM_RENDER_TIMEOUT_MS = 12000;
 
-function boundedTimeout(value, fallback, min = 1000, max = 90000) {
+function boundedTimeout(value, fallback, min = 1000, max = 120000) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.max(min, Math.min(max, Math.floor(parsed)));
@@ -109,7 +110,7 @@ function createVisualCapabilityRuntime({
   async function generateIllustrativeImage({
     prompt,
     altText,
-    steps = 4,
+    steps = DEFAULT_IMAGE_GENERATION_STEPS,
     seed = null,
     metadata = {},
     signal = null,
@@ -328,6 +329,7 @@ function createVisualCapabilityRuntime({
         configured: Boolean(String(env.CLOUDFLARE_ACCOUNT_ID || '').trim()) && cloudflareCredentialPool.peekOrderedSlots?.('D05_STATUS')?.length > 0,
         provider: AI_PROVIDERS.CLOUDFLARE,
         modelId: IMAGE_GENERATION_ROUTE.modelId,
+        defaultSteps: IMAGE_GENERATION_ROUTE.defaultSteps,
         timeoutMs: imageTimeoutMs,
         quotaScope: 'ACCOUNT',
         cache: generatedImageCache.snapshot(),
