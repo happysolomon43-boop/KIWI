@@ -3,6 +3,7 @@
 const { AI_PROVIDERS } = require('./providers');
 const {
   AI_CONTENT_KINDS,
+  AI_CONTENT_PART_KINDS,
   createExecutionRequest,
 } = require('./execution-contracts');
 const {
@@ -67,6 +68,24 @@ function legacyInvocationToExecutionRequest({
   });
 }
 
+function _serializeGoogleMultimodal(content) {
+  const parts = content.parts.map((part) => {
+    if (part.kind === AI_CONTENT_PART_KINDS.TEXT) {
+      return { text: part.text };
+    }
+    if (part.kind === AI_CONTENT_PART_KINDS.IMAGE) {
+      return {
+        inlineData: {
+          mimeType: part.mimeType,
+          data: part.source.data,
+        },
+      };
+    }
+    throw new Error(`Unsupported Google multimodal part kind: ${part.kind}`);
+  });
+  return [{ role: 'user', parts }];
+}
+
 function serializeGoogleExecutionRequest(request) {
   if (!request || request.provider !== AI_PROVIDERS.GOOGLE) {
     throw new Error('Google provider adapter requires a GOOGLE execution request');
@@ -75,6 +94,8 @@ function serializeGoogleExecutionRequest(request) {
   let contents;
   if (request.content?.kind === AI_CONTENT_KINDS.TEXT) {
     contents = normalizeGoogleContents(request.content.text);
+  } else if (request.content?.kind === AI_CONTENT_KINDS.MULTIMODAL) {
+    contents = _serializeGoogleMultimodal(request.content);
   } else if (request.content?.kind === AI_CONTENT_KINDS.LEGACY_PROVIDER_CONTENT) {
     if (
       request.content.provider &&
@@ -143,10 +164,6 @@ function createGoogleProviderAdapter({
     return transport.listModels(args);
   }
 
-  // Compatibility bridge for the existing orchestrator and model lifecycle.
-  // Every production call still enters the neutral execution contract before
-  // provider serialization. This bridge can be removed after provider-aware
-  // routing is activated in AIM-D02/D03 without changing feature callers.
   const legacyTransport = Object.freeze({
     async generate({
       apiKey,
