@@ -121,23 +121,35 @@ function createImageContentPart({
   });
 }
 
+function _normalizeMultimodalPart(part) {
+  if (!part || typeof part !== 'object') {
+    throw _badRequest('Multimodal content part must be an object');
+  }
+
+  if (part.kind === AI_CONTENT_PART_KINDS.TEXT || part.type === 'text') {
+    return createTextContentPart(part.text);
+  }
+
+  if (part.kind === AI_CONTENT_PART_KINDS.IMAGE || part.type === 'image') {
+    const image = part.image || part;
+    return createImageContentPart({
+      mimeType: image.mimeType,
+      data: image.source?.kind === 'BASE64'
+        ? image.source.data
+        : (image.data ?? image.dataBase64),
+      name: image.name || null,
+    });
+  }
+
+  throw _badRequest(`Unsupported multimodal content part ${part.kind || part.type || 'UNKNOWN'}`);
+}
+
 function createMultimodalContent(parts = []) {
   if (!Array.isArray(parts) || parts.length === 0) {
     throw _badRequest('Multimodal content requires at least one content part');
   }
 
-  const normalized = parts.map((part) => {
-    if (!part || typeof part !== 'object') {
-      throw _badRequest('Multimodal content part must be an object');
-    }
-    if (part.kind === AI_CONTENT_PART_KINDS.TEXT || part.type === 'text') {
-      return createTextContentPart(part.text);
-    }
-    if (part.kind === AI_CONTENT_PART_KINDS.IMAGE || part.type === 'image') {
-      return createImageContentPart(part.image || part);
-    }
-    throw _badRequest(`Unsupported multimodal content part ${part.kind || part.type || 'UNKNOWN'}`);
-  });
+  const normalized = parts.map(_normalizeMultimodalPart);
 
   const images = normalized.filter((part) => part.kind === AI_CONTENT_PART_KINDS.IMAGE);
   if (images.length === 0) {
