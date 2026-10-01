@@ -8,6 +8,10 @@ ALTER TABLE public.teaching_assignment_submissions
   ADD CONSTRAINT teaching_assignment_submissions_submission_kind_check
   CHECK (submission_kind IN ('DRAFT','PENDING_FINAL','FINAL','PENDING_CORRECTION','CORRECTION','VERIFICATION'));
 
+-- Production Study/CBT has a richer legacy exam_sessions shape than the isolated
+-- Teaching integration database. Add only the shared fields required by the
+-- Integrity Session Guard so both environments converge without replacing Exam truth.
+ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS integrity_policy_version text;
 ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS integrity_session_state text NOT NULL DEFAULT 'NONE';
 ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS integrity_departure_count integer NOT NULL DEFAULT 0 CHECK (integrity_departure_count >= 0);
@@ -59,33 +63,6 @@ CREATE TABLE public.kiwi_integrity_session_events (
 CREATE INDEX kiwi_integrity_events_session_idx ON public.kiwi_integrity_session_events(user_id,integrity_session_id,accepted_at DESC);
 CREATE INDEX kiwi_integrity_events_departure_idx ON public.kiwi_integrity_session_events(integrity_session_id,counts_as_departure,accepted_at DESC);
 
-CREATE TABLE public.teaching_submission_verification_gates (
-  submission_gate_id text PRIMARY KEY,
-  user_id text NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-  assignment_id text NOT NULL REFERENCES public.teaching_assignments(assignment_id) ON DELETE CASCADE,
-  receipt_submission_id text NOT NULL REFERENCES public.teaching_assignment_submissions(assignment_submission_id) ON DELETE RESTRICT,
-  correction_of_submission_id text REFERENCES public.teaching_assignment_submissions(assignment_submission_id) ON DELETE RESTRICT,
-  policy_version text NOT NULL,
-  state text NOT NULL CHECK (state IN ('RECEIVED','CHECKING','VERIFICATION_REQUIRED','VERIFICATION_ACTIVE','FINALIZED','UNRESOLVED','SYSTEM_DEFERRED')),
-  verification_route text NOT NULL CHECK (verification_route IN ('NO_VERIFICATION','VERIFY_NOW','VERIFY_NEXT_CLASS','VERIFY_WITH_FRESH_EQUIVALENT_WORK','VERIFY_POST_ATTEMPT','SYSTEM_DEFERRED')),
-  accepted_event_at timestamptz NOT NULL,
-  blocking_deadline_at timestamptz,
-  final_submission_id text REFERENCES public.teaching_assignment_submissions(assignment_submission_id) ON DELETE RESTRICT,
-  verification_session_id text,
-  reason_codes jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(reason_codes)='array'),
-  system_deferred_reason text,
-  idempotency_key text NOT NULL,
-  state_version bigint NOT NULL DEFAULT 1 CHECK (state_version >= 1),
-  finalized_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE(user_id,idempotency_key),
-  UNIQUE(user_id,receipt_submission_id)
-);
-CREATE INDEX teaching_submission_gates_assignment_idx ON public.teaching_submission_verification_gates(user_id,assignment_id,created_at DESC);
-CREATE INDEX teaching_submission_gates_receipt_fk_idx ON public.teaching_submission_verification_gates(receipt_submission_id);
-CREATE INDEX teaching_submission_gates_final_fk_idx ON public.teaching_submission_verification_gates(final_submission_id);
-
 CREATE TABLE public.kiwi_verification_sessions (
   verification_session_id text PRIMARY KEY,
   user_id text NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
@@ -105,6 +82,34 @@ CREATE TABLE public.kiwi_verification_sessions (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX kiwi_verification_sessions_owner_idx ON public.kiwi_verification_sessions(user_id,owner_type,owner_ref,status);
+
+CREATE TABLE public.teaching_submission_verification_gates (
+  submission_gate_id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  assignment_id text NOT NULL REFERENCES public.teaching_assignments(assignment_id) ON DELETE CASCADE,
+  receipt_submission_id text NOT NULL REFERENCES public.teaching_assignment_submissions(assignment_submission_id) ON DELETE RESTRICT,
+  correction_of_submission_id text REFERENCES public.teaching_assignment_submissions(assignment_submission_id) ON DELETE RESTRICT,
+  policy_version text NOT NULL,
+  state text NOT NULL CHECK (state IN ('RECEIVED','CHECKING','VERIFICATION_REQUIRED','VERIFICATION_ACTIVE','FINALIZED','UNRESOLVED','SYSTEM_DEFERRED')),
+  verification_route text NOT NULL CHECK (verification_route IN ('NO_VERIFICATION','VERIFY_NOW','VERIFY_NEXT_CLASS','VERIFY_WITH_FRESH_EQUIVALENT_WORK','VERIFY_POST_ATTEMPT','SYSTEM_DEFERRED')),
+  accepted_event_at timestamptz NOT NULL,
+  blocking_deadline_at timestamptz,
+  final_submission_id text REFERENCES public.teaching_assignment_submissions(assignment_submission_id) ON DELETE RESTRICT,
+  verification_session_id text REFERENCES public.kiwi_verification_sessions(verification_session_id) ON DELETE SET NULL,
+  reason_codes jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(reason_codes)='array'),
+  system_deferred_reason text,
+  idempotency_key text NOT NULL,
+  state_version bigint NOT NULL DEFAULT 1 CHECK (state_version >= 1),
+  finalized_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(user_id,idempotency_key),
+  UNIQUE(user_id,receipt_submission_id)
+);
+CREATE INDEX teaching_submission_gates_assignment_idx ON public.teaching_submission_verification_gates(user_id,assignment_id,created_at DESC);
+CREATE INDEX teaching_submission_gates_receipt_fk_idx ON public.teaching_submission_verification_gates(receipt_submission_id);
+CREATE INDEX teaching_submission_gates_final_fk_idx ON public.teaching_submission_verification_gates(final_submission_id);
+CREATE INDEX teaching_submission_gates_verification_fk_idx ON public.teaching_submission_verification_gates(verification_session_id);
 
 CREATE TABLE public.kiwi_verification_items (
   verification_item_id text PRIMARY KEY,
