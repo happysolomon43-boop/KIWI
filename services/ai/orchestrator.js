@@ -7,9 +7,12 @@ const {
 } = require('./task-registry');
 const { createModelCatalog, MODEL_STATUS } = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
-const { createProjectPool } = require('./project-pool');
-const { createGeminiTransport } = require('./gemini-transport');
-const { normalizeGeminiResponse } = require('./response-normalizer');
+const { createCredentialRegistry } = require('./credential-registry');
+const { createProviderRegistry } = require('./provider-registry');
+const {
+  normalizeExecutionContent,
+  createExecutionRequest,
+} = require('./execution-contracts');
 const { createProviderHealth, MODEL_AVAILABILITY_CODES } = require('./provider-health');
 const { createAITrafficController } = require('./traffic-controller');
 const { createRouteScheduler } = require('./route-scheduler');
@@ -26,7 +29,7 @@ const IMMEDIATE_FAILURE_CODES = new Set([
   AI_ERROR_CODES.SAFETY,
 ]);
 
-const FAST_MODEL_FALLBACK_CODES = new Set([
+const FAST_ROUTE_FALLBACK_CODES = new Set([
   AI_ERROR_CODES.PROVIDER_OVERLOADED,
   AI_ERROR_CODES.TRANSIENT,
   AI_ERROR_CODES.TIMEOUT,
@@ -34,10 +37,7 @@ const FAST_MODEL_FALLBACK_CODES = new Set([
   AI_ERROR_CODES.EMPTY_RESPONSE,
 ]);
 
-const DAILY_QUOTA_CODES = new Set([
-  AI_ERROR_CODES.RATE_LIMIT_RPD,
-]);
-
+const DAILY_QUOTA_CODES = new Set([AI_ERROR_CODES.RATE_LIMIT_RPD]);
 const SHORT_RATE_LIMIT_CODES = new Set([
   AI_ERROR_CODES.RATE_LIMIT_RPM,
   AI_ERROR_CODES.RATE_LIMIT_TPM,
@@ -46,34 +46,54 @@ const SHORT_RATE_LIMIT_CODES = new Set([
 
 const DEFAULT_RETRY_POLICY = Object.freeze({
   maxAttempts: 6,
-  maxAttemptsPerModel: 2,
-  maxTransientAttemptsPerModel: 1,
+  maxAttemptsPerRoute: 2,
+  maxDailyQuotaAttemptsPerRoute: 4,
+  maxShortRateLimitAttemptsPerRoute: 2,
+  maxTransientAttemptsPerRoute: 1,
 });
 
 function validateFeatureGenerationConfig(generationConfig = {}) {
-  if (
-    Object.prototype.hasOwnProperty.call(generationConfig, 'thinkingConfig') ||
-    Object.prototype.hasOwnProperty.call(generationConfig, 'thinking_level') ||
-    Object.prototype.hasOwnProperty.call(generationConfig, 'thinkingLevel')
-  ) {
+  const source = generationConfig && typeof generationConfig === 'object'
+    ? generationConfig
+    : {};
+  const forbidden = [
+    'thinkingConfig',
+    'thinking_level',
+    'thinkingLevel',
+    'reasoning_effort',
+    'reasoningEffort',
+    'include_reasoning',
+    'reasoning_format',
+  ];
+  const leaked = forbidden.find((key) => Object.prototype.hasOwnProperty.call(source, key));
+  if (leaked) {
     throw new AIError(
-      'Feature code cannot set provider thinking configuration; use the AI task registry',
-      {
-        code: AI_ERROR_CODES.CONFIG,
-        retryable: false,
-        scope: 'REQUEST',
-      }
+      `Feature code cannot set provider reasoning field ${leaked}; use the AI task registry`,
+      { code: AI_ERROR_CODES.CONFIG, retryable: false, scope: 'REQUEST' }
     );
   }
 
-  return { ...generationConfig };
+  const normalized = { ...source };
+  const responseMimeType = normalized.responseMimeType;
+  const responseSchema = normalized.responseSchema;
+  delete normalized.responseMimeType;
+  delete normalized.responseSchema;
+
+  if (responseMimeType || responseSchema) {
+    normalized.structuredOutput = {
+      mimeType: responseMimeType || 'application/json',
+      ...(responseSchema ? { schema: responseSchema } : {}),
+    };
+  }
+  return normalized;
 }
 
 function createAIOrchestrator({
   registry = AI_TASKS,
   catalog = createModelCatalog(),
   router = null,
-  projectPool = null,
+  providerRegistry = null,
+  credentialRegistry = null,
   quotaManager = null,
   telemetry = null,
   modelLifecycle = null,
@@ -81,16 +101,14 @@ function createAIOrchestrator({
   trafficController = null,
   routeScheduler = null,
   operationBudget = null,
-  transport = null,
-  normalizer = normalizeGeminiResponse,
   logger = console,
   env = process.env,
   clock = () => Date.now(),
   assertReady = null,
 } = {}) {
   const resolvedRouter = router || createModelRouter({ registry, catalog });
-  const resolvedProjectPool = projectPool || createProjectPool({ env });
-  const resolvedTransport = transport || createGeminiTransport();
+  const resolvedProviders = providerRegistry || createProviderRegistry();
+  const resolvedCredentials = credentialRegistry || createCredentialRegistry({ env, clock });
 
   function boundedEnvNumber(name, fallback, min, max) {
     const parsed = Number(env?.[name]);
@@ -105,14 +123,11 @@ function createAIOrchestrator({
     return Number.isFinite(numeric) ? numeric : Date.now();
   }
 
-  // Student-facing calls must not inherit the very long timeout required by
-  // resumable/background generation. Explicit provider errors already fall
-  // through immediately; these ceilings protect only silent or hanging calls.
   const interactiveAttemptTimeoutMs = boundedEnvNumber(
     'AI_INTERACTIVE_ATTEMPT_TIMEOUT_MS',
     19000,
     5000,
-    60000
+    75000
   );
   const confirmationProbeTimeoutMs = boundedEnvNumber(
     'AI_CONFIRMATION_PROBE_TIMEOUT_MS',
@@ -120,116 +135,69 @@ function createAIOrchestrator({
     1000,
     15000
   );
-  const interactiveOperationTimeoutMs = boundedEnvNumber(
-    'AI_INTERACTIVE_OPERATION_TIMEOUT_MS',
-    40000,
-    10000,
-    120000
-  );
 
-  function operationTimeoutFor(task, candidates = []) {
-    if (task.executionLane === AI_EXECUTION_LANES.BACKGROUND) {
-      return task.timeoutMs;
-    }
-
-    const routeOverrideMs = candidates.reduce((maximum, candidate) => {
-      const value = Number(candidate?.routeOperationTimeoutMs);
-      return Number.isFinite(value) && value > maximum ? value : maximum;
-    }, 0);
-
-    if (routeOverrideMs <= 0) return interactiveOperationTimeoutMs;
-    return Math.max(
-      interactiveOperationTimeoutMs,
-      Math.min(routeOverrideMs, Number(task.timeoutMs) || routeOverrideMs)
-    );
+  function operationTimeoutFor(task) {
+    return Math.max(1000, Number(task.timeoutMs) || 60000);
   }
 
   function attemptTimeoutFor(task, candidate, {
     confirmationProbe = false,
     requestStartedAt,
-    operationTimeoutMs = interactiveOperationTimeoutMs,
+    operationTimeoutMs,
   } = {}) {
-    if (task.executionLane === AI_EXECUTION_LANES.BACKGROUND) {
-      return candidate.timeoutMs;
-    }
-
     const elapsedMs = Math.max(0, nowMs() - requestStartedAt);
     const remainingMs = operationTimeoutMs - elapsedMs;
     if (remainingMs <= 0) return 0;
 
-    const routeAttemptTimeoutMs = Number(candidate?.routeAttemptTimeoutMs);
-    const attemptCeilingMs = Number.isFinite(routeAttemptTimeoutMs) && routeAttemptTimeoutMs > 0
-      ? routeAttemptTimeoutMs
-      : interactiveAttemptTimeoutMs;
+    const configured = Number(candidate.attemptTimeoutMs || task.attemptTimeoutMs);
+    const attemptCeiling = Number.isFinite(configured) && configured > 0
+      ? configured
+      : task.executionLane === AI_EXECUTION_LANES.BACKGROUND
+        ? Number(task.timeoutMs) || operationTimeoutMs
+        : interactiveAttemptTimeoutMs;
 
     return Math.max(1, Math.min(
-      candidate.timeoutMs,
-      confirmationProbe
-        ? confirmationProbeTimeoutMs
-        : attemptCeilingMs,
+      confirmationProbe ? confirmationProbeTimeoutMs : attemptCeiling,
+      Number(candidate.timeoutMs) || Number(task.timeoutMs) || operationTimeoutMs,
       remainingMs
     ));
   }
 
-  // Provider/model availability is intentionally separate from persistent
-  // project+model quota state. A single 503 does not quarantine a model; the
-  // circuit opens only after independent project slots corroborate the outage.
   const resolvedProviderHealth = providerHealth || createProviderHealth({
     clock,
     failureEvidenceWindowMs: boundedEnvNumber(
-      'AI_PROVIDER_FAILURE_EVIDENCE_WINDOW_MS',
-      30000,
-      5000,
-      300000
+      'AI_PROVIDER_FAILURE_EVIDENCE_WINDOW_MS', 30000, 5000, 300000
     ),
     openCooldownMs: boundedEnvNumber(
-      'AI_MODEL_TRANSIENT_COOLDOWN_MS',
-      20000,
-      5000,
-      120000
+      'AI_MODEL_TRANSIENT_COOLDOWN_MS', 20000, 5000, 120000
     ),
     minDistinctFailureSlots: boundedEnvNumber(
-      'AI_PROVIDER_FAILURE_EVIDENCE_SLOTS',
-      2,
-      1,
-      5
+      'AI_PROVIDER_FAILURE_EVIDENCE_SLOTS', 2, 1, 5
     ),
   });
-  const resolvedTrafficController = trafficController || createAITrafficController({
-    env,
-    clock,
-  });
-  const resolvedRouteScheduler = routeScheduler || createRouteScheduler({
-    env,
-    clock,
-  });
-  const resolvedOperationBudget = operationBudget || createOperationBudget({
-    env,
-    clock,
-  });
+  const resolvedTrafficController = trafficController || createAITrafficController({ env, clock });
+  const resolvedRouteScheduler = routeScheduler || createRouteScheduler({ env, clock });
+  const resolvedOperationBudget = operationBudget || createOperationBudget({ env, clock });
+
+  const generationAffinity = new Map();
+  const AFFINITY_TTL_MS = 30 * 60 * 1000;
+  const AFFINITY_MAX_ENTRIES = 2000;
   let operationSequence = 0;
 
   function retryPolicyFor(task) {
     return RETRY_POLICY_CONFIG[task?.retryPolicy] || DEFAULT_RETRY_POLICY;
   }
 
-  // Multi-call workflows (CBT generation + completion/repair passes) should not
-  // bounce back up to a stronger model after already falling back. Affinity is
-  // process-local, bounded, and keyed only by an opaque generation group ID.
-  const generationAffinity = new Map();
-  const AFFINITY_TTL_MS = 30 * 60 * 1000;
-  const AFFINITY_MAX_ENTRIES = 2000;
+  function affinityKey(task, generationGroupId) {
+    if (!generationGroupId || !task?.affinityGroup) return null;
+    return `${task.affinityGroup}::${generationGroupId}`;
+  }
 
   function pruneAffinity() {
     const now = nowMs();
     for (const [key, entry] of generationAffinity) {
       if (now - entry.updatedAt >= AFFINITY_TTL_MS) generationAffinity.delete(key);
     }
-  }
-
-  function affinityKey(task, generationGroupId) {
-    if (!generationGroupId || !task?.affinityGroup) return null;
-    return `${task.affinityGroup}::${generationGroupId}`;
   }
 
   function getAffinity(task, generationGroupId) {
@@ -241,37 +209,17 @@ function createAIOrchestrator({
       generationAffinity.delete(key);
       return null;
     }
-    return entry.modelId;
+    return entry.routeKey;
   }
 
-  function setAffinity(task, generationGroupId, modelId) {
+  function setAffinity(task, generationGroupId, routeKey) {
     const key = affinityKey(task, generationGroupId);
-    if (!key || !modelId) return;
-
+    if (!key || !routeKey) return;
     pruneAffinity();
-    const current = generationAffinity.get(key);
-    if (!current) {
-      if (generationAffinity.size >= AFFINITY_MAX_ENTRIES) {
-        generationAffinity.delete(generationAffinity.keys().next().value);
-      }
-      generationAffinity.set(key, { modelId, updatedAt: nowMs() });
-      return;
+    if (!generationAffinity.has(key) && generationAffinity.size >= AFFINITY_MAX_ENTRIES) {
+      generationAffinity.delete(generationAffinity.keys().next().value);
     }
-
-    if (current.modelId === modelId) {
-      current.updatedAt = nowMs();
-      return;
-    }
-
-    const currentModel = catalog.get(current.modelId);
-    const nextModel = catalog.get(modelId);
-
-    // Once a multi-call workflow falls back, keep that lower model as the
-    // ceiling for later repair/completion calls. Parallel calls may finish out
-    // of order, so a late stronger-model success must not upgrade affinity.
-    if (!currentModel || !nextModel || nextModel.rank <= currentModel.rank) {
-      generationAffinity.set(key, { modelId, updatedAt: nowMs() });
-    }
+    generationAffinity.set(key, { routeKey, updatedAt: nowMs() });
   }
 
   async function sideEffect(label, fn) {
@@ -279,180 +227,131 @@ function createAIOrchestrator({
     try {
       return await fn();
     } catch (error) {
-      if (typeof logger?.warn === 'function') {
-        logger.warn(`[KIWI AI] ${label} failed`, {
-          error: error?.message || String(error),
-        });
-      }
+      logger?.warn?.(`[KIWI AI] ${label} failed`, { error: error?.message || String(error) });
       return null;
     }
   }
 
   async function initialize() {
-    const hydrated = quotaManager
-      ? await quotaManager.hydrate()
-      : 0;
+    const hydratedQuotaStates = quotaManager ? await quotaManager.hydrate() : 0;
     const hydratedProviderHealth = resolvedProviderHealth?.hydrate
       ? await resolvedProviderHealth.hydrate()
       : 0;
-
     return Object.freeze({
-      projectSlots: resolvedProjectPool.enabledCount(),
-      hydratedProjectModelStates: Number(hydrated) || 0,
+      credentialSlots: resolvedCredentials.enabledCount(),
+      hydratedRouteQuotaStates: Number(hydratedQuotaStates) || 0,
       hydratedProviderModelHealth: Number(hydratedProviderHealth) || 0,
     });
   }
 
-  function slotsForModel(modelId, { advance = false } = {}) {
-    const ordered = advance
-      ? resolvedProjectPool.orderedSlots(modelId)
-      : resolvedProjectPool.peekOrderedSlots(modelId);
-
-    const quotaEligible = quotaManager
-      ? quotaManager.filterEligibleSlots(modelId, ordered)
-      : ordered;
-
-    return resolvedRouteScheduler.orderSlots(
-      modelId,
-      quotaEligible,
-      quotaManager
-    );
+  function credentialSlotsFor(candidate, { advance = false } = {}) {
+    const base = advance
+      ? resolvedCredentials.ordered(candidate.provider, candidate.routeKey)
+      : resolvedCredentials.peek(candidate.provider, candidate.routeKey);
+    const eligible = quotaManager
+      ? quotaManager.filterEligibleSlots(candidate.routeKey, base)
+      : base;
+    return resolvedRouteScheduler.orderSlots(candidate.routeKey, eligible, quotaManager);
   }
 
-  function plan(taskId, { preferredModelId = null } = {}) {
-    const candidates = resolvedRouter.resolveCandidates(taskId, { preferredModelId });
+  function plan(taskId, { content = null, preferredRouteKey = null } = {}) {
+    const normalizedContent = normalizeExecutionContent(content);
+    const candidates = resolvedRouter.resolveCandidates(taskId, {
+      content: normalizedContent,
+      preferredRouteKey,
+    });
     const routedCandidates = candidates.map((candidate) => {
-      const providerAvailability = resolvedProviderHealth.availability(candidate.modelId);
-      const eligibleSlots = providerAvailability.available
-        ? slotsForModel(candidate.modelId, { advance: false })
+      const availability = resolvedProviderHealth.availability(candidate.routeKey);
+      const slots = availability.available
+        ? credentialSlotsFor(candidate, { advance: false })
         : [];
       return Object.freeze({
+        provider: candidate.provider,
         modelId: candidate.modelId,
-        class: candidate.class,
-        requestedReasoning: candidate.requestedReasoning,
-        resolvedReasoning: candidate.resolvedReasoning,
+        routeKey: candidate.routeKey,
+        taskClass: candidate.taskClass,
+        reasoning: candidate.reasoning,
         timeoutMs: candidate.timeoutMs,
-        routeAttemptTimeoutMs: candidate.routeAttemptTimeoutMs || null,
-        routeOperationTimeoutMs: candidate.routeOperationTimeoutMs || null,
-        qualityFloor: candidate.qualityFloor,
-        temporarilyUnavailable: !providerAvailability.available,
-        providerCircuitState: providerAvailability.state,
-        providerRetryAfterMs: providerAvailability.retryAfterMs,
-        transientCooldownUntil:
-          !providerAvailability.available && providerAvailability.retryAfterMs
-            ? new Date(nowMs() + providerAvailability.retryAfterMs).toISOString()
-            : null,
-        eligibleProjectSlots: Object.freeze(eligibleSlots.map((slot) => slot.id)),
+        temporarilyUnavailable: !availability.available,
+        providerCircuitState: availability.state,
+        providerRetryAfterMs: availability.retryAfterMs,
+        eligibleCredentialSlots: Object.freeze(slots.map((slot) => slot.id)),
       });
     });
-
-    const firstRoutable = routedCandidates.find((candidate) => candidate.eligibleProjectSlots.length > 0);
-
+    const primary = routedCandidates.find((candidate) => candidate.eligibleCredentialSlots.length > 0)
+      || routedCandidates[0]
+      || null;
     return Object.freeze({
       taskId,
       candidates: Object.freeze(routedCandidates),
-      plannedPrimaryModel: firstRoutable?.modelId || routedCandidates[0]?.modelId || null,
-      plannedPrimaryProjectSlot: firstRoutable?.eligibleProjectSlots?.[0] || null,
-      projectSlots: Object.freeze(resolvedProjectPool.snapshot()),
+      plannedPrimaryRoute: primary?.routeKey || null,
+      plannedPrimaryProvider: primary?.provider || null,
+      plannedPrimaryModel: primary?.modelId || null,
+      plannedPrimaryCredentialSlot: primary?.eligibleCredentialSlots?.[0] || null,
+      credentialSlots: Object.freeze(resolvedCredentials.snapshot()),
     });
   }
 
-  async function observe(taskId, {
-    legacyModel = null,
-    preferredModelId = null,
-  } = {}) {
+  async function observe(taskId, { content = null, preferredRouteKey = null } = {}) {
     const task = resolvedRouter.getTask(taskId);
-    const shadowPlan = plan(taskId, { preferredModelId });
-
+    const shadowPlan = plan(taskId, { content, preferredRouteKey });
     await sideEffect('shadow telemetry', () => telemetry?.recordShadowDecision({
       taskId,
       taskClass: task.class,
       requestedReasoning: task.reasoning,
       candidateModels: shadowPlan.candidates,
-      legacyModel,
-      plannedProjectSlot: shadowPlan.plannedPrimaryProjectSlot,
+      plannedProjectSlot: shadowPlan.plannedPrimaryCredentialSlot,
     }));
-
     return shadowPlan;
   }
 
   async function run(taskId, request = {}, {
+    preferredRouteKey = null,
     preferredModelId = null,
     generationGroupId = null,
     operationBudgetId = null,
   } = {}) {
-    const task = resolvedRouter.getTask(taskId);
     assertReady?.();
-    const explicitPreferredModelId = preferredModelId || null;
-    const storedAffinityModelId = explicitPreferredModelId
-      ? null
-      : getAffinity(task, generationGroupId);
-    const affinityModelId = explicitPreferredModelId || storedAffinityModelId;
-
+    const task = resolvedRouter.getTask(taskId);
+    const content = normalizeExecutionContent(
+      request.content !== undefined ? request.content :
+      request.contents !== undefined ? request.contents :
+      request.prompt !== undefined ? request.prompt : ''
+    );
+    const explicitPreferred = preferredRouteKey || (
+      preferredModelId ? catalog.get(preferredModelId)?.routeKey : null
+    );
+    const storedAffinity = explicitPreferred ? null : getAffinity(task, generationGroupId);
+    const affinityRoute = explicitPreferred || storedAffinity;
     const affinityCandidates = resolvedRouter.resolveCandidates(taskId, {
-      preferredModelId: affinityModelId,
+      content,
+      preferredRouteKey: affinityRoute,
     });
 
     let routedCandidates = affinityCandidates;
-
-    if (storedAffinityModelId) {
-      const unrestrictedCandidates = resolvedRouter.resolveCandidates(taskId);
-      const affinityIds = new Set(
-        affinityCandidates.map((candidate) => candidate.modelId)
-      );
-      const affinityModel = catalog.get(storedAffinityModelId);
-      const emergencyRecoveryCandidates = unrestrictedCandidates.filter((candidate) => {
-        if (affinityIds.has(candidate.modelId)) return false;
-        const candidateModel = catalog.get(candidate.modelId);
-        if (!affinityModel || !candidateModel) return false;
-
-        // Stored generation affinity preserves consistency by preferring the
-        // current/lower model chain. It must not become a permanent trap when
-        // that affinity model is temporarily unavailable. Higher approved
-        // models are appended only as emergency recovery candidates.
-        return candidateModel.rank > affinityModel.rank;
-      });
-
-      if (emergencyRecoveryCandidates.length > 0) {
-        routedCandidates = Object.freeze([
-          ...affinityCandidates,
-          ...emergencyRecoveryCandidates,
-        ]);
+    if (storedAffinity) {
+      const unrestricted = resolvedRouter.resolveCandidates(taskId, { content });
+      const present = new Set(affinityCandidates.map((candidate) => candidate.routeKey));
+      const emergencyRecovery = unrestricted.filter((candidate) => !present.has(candidate.routeKey));
+      if (emergencyRecovery.length) {
+        routedCandidates = Object.freeze([...affinityCandidates, ...emergencyRecovery]);
       }
     }
 
-    const effectiveOperationTimeoutMs = operationTimeoutFor(task, routedCandidates);
-    const firstAvailableCandidate = routedCandidates.find(
-      (candidate) => resolvedProviderHealth.availability(candidate.modelId).available
+    const featureGeneration = validateFeatureGenerationConfig(
+      request.generationConfig || request.generation || {}
     );
-    if (
-      !affinityModelId &&
-      generationGroupId &&
-      task.affinityGroup &&
-      firstAvailableCandidate
-    ) {
-      setAffinity(task, generationGroupId, firstAvailableCandidate.modelId);
-    }
-    const featureGenerationConfig = validateFeatureGenerationConfig(
-      request.generationConfig || {}
-    );
-
-    const content =
-      request.content !== undefined ? request.content :
-      request.contents !== undefined ? request.contents :
-      request.prompt !== undefined ? request.prompt :
-      '';
-
-    if (resolvedProjectPool.enabledCount() === 0) {
-      throw new AIError('No enabled Gemini project slots are configured', {
-        code: AI_ERROR_CODES.CONFIG,
-        retryable: false,
-        scope: 'REQUEST',
-      });
+    const generation = {
+      ...(task.generationDefaults || {}),
+      ...featureGeneration,
+    };
+    if (task.capabilities?.includes('STRUCTURED_OUTPUT') && !generation.structuredOutput) {
+      generation.structuredOutput = { mimeType: 'application/json' };
     }
 
-    const plannedModels = routedCandidates.map((candidate) => candidate.modelId);
+    const operationTimeoutMs = operationTimeoutFor(task);
     const retryPolicy = retryPolicyFor(task);
+    const plannedModels = routedCandidates.map((candidate) => candidate.routeKey);
     const requestId = telemetry
       ? await sideEffect('telemetry begin', () => telemetry.beginRequest({
           taskId,
@@ -466,22 +365,22 @@ function createAIOrchestrator({
       : null;
 
     const attempts = [];
-    const requestStarted = nowMs();
+    const requestStartedAt = nowMs();
     const operationId = operationBudgetId
       ? `${task.affinityGroup || taskId}::budget::${operationBudgetId}`
       : generationGroupId && task.affinityGroup
         ? `${task.affinityGroup}::${generationGroupId}`
-        : requestId || `request::${taskId}::${nowMs()}::${++operationSequence}`;
+        : requestId || `request::${taskId}::${requestStartedAt}::${++operationSequence}`;
     let lastError = null;
     let hadEligibleRoute = false;
-    const providerBlockedModels = [];
-    const routeBlockedRoutes = [];
+    const providerBlockedRoutes = [];
+    const locallyBlockedRoutes = [];
     let trafficLease = null;
     let queueWaitMs = 0;
     let admissionLimit = null;
     let congestionLevel = null;
-
     let requestFinished = false;
+
     async function finishFailure(error, outcome = 'FAILED') {
       if (requestFinished) return;
       requestFinished = true;
@@ -490,9 +389,9 @@ function createAIOrchestrator({
         taskClass: task.class,
         mode: 'LIVE',
         outcome,
-        fallbackDepth: Math.max(0, attempts.length ? (new Set(attempts.map((a) => a.modelId)).size - 1) : 0),
+        fallbackDepth: Math.max(0, new Set(attempts.map((a) => a.routeKey)).size - 1),
         attemptCount: attempts.length,
-        latencyMs: nowMs() - requestStarted,
+        latencyMs: nowMs() - requestStartedAt,
         usage: {},
         errorCode: error?.code || AI_ERROR_CODES.UNKNOWN,
         queueWaitMs,
@@ -511,593 +410,371 @@ function createAIOrchestrator({
       queueWaitMs = Number(trafficLease?.queueWaitMs) || 0;
       admissionLimit = trafficLease?.admissionLimit ?? null;
       congestionLevel = trafficLease?.congestionLevel || null;
-    } catch (error) {
-      queueWaitMs = Number(error?.details?.queueWaitMs) || 0;
-      const trafficState = resolvedTrafficController.snapshot();
-      admissionLimit = trafficState.effectiveConcurrency;
-      congestionLevel = trafficState.congestionLevel;
-      await finishFailure(error);
-      throw error;
-    }
 
-    try {
-    modelLoop:
-    for (let modelIndex = 0; modelIndex < routedCandidates.length; modelIndex++) {
-      const candidate = routedCandidates[modelIndex];
-      const slots = slotsForModel(candidate.modelId, { advance: true });
-      if (slots.length > 0) hadEligibleRoute = true;
-      if (slots.length === 0) continue;
-      if (attempts.length >= retryPolicy.maxAttempts) break modelLoop;
+      routeLoop:
+      for (let routeIndex = 0; routeIndex < routedCandidates.length; routeIndex++) {
+        const candidate = routedCandidates[routeIndex];
+        const slots = credentialSlotsFor(candidate, { advance: true });
+        if (slots.length) hadEligibleRoute = true;
+        if (!slots.length) continue;
+        if (attempts.length >= retryPolicy.maxAttempts) break;
 
-      const providerLease = resolvedProviderHealth.acquire(candidate.modelId);
-      if (!providerLease.available) {
-        providerBlockedModels.push(Object.freeze({
-          modelId: candidate.modelId,
-          state: providerLease.state,
-          retryAfterMs: providerLease.retryAfterMs,
-        }));
-        continue;
-      }
-
-      let skipRemainingSlotsForModel = false;
-      let modelAttemptCount = 0;
-      let modelDailyQuotaAttemptCount = 0;
-      let modelShortRateLimitAttemptCount = 0;
-      let modelTransientAttemptCount = 0;
-      let ownsConfirmationProbe = false;
-
-      try {
-        for (const slot of slots) {
-        if (attempts.length >= retryPolicy.maxAttempts) {
-          break modelLoop;
-        }
-
-        // Requests that entered while a model was healthy must re-check the
-        // circuit before each additional provider attempt. A half-open lease
-        // is exempt because this request owns the single recovery probe.
-        if (!providerLease.halfOpenProbe && !ownsConfirmationProbe) {
-          const liveProviderAvailability =
-            resolvedProviderHealth.availability(candidate.modelId);
-          if (!liveProviderAvailability.available) {
-            providerBlockedModels.push(Object.freeze({
-              modelId: candidate.modelId,
-              state: liveProviderAvailability.state,
-              retryAfterMs: liveProviderAvailability.retryAfterMs,
-            }));
-            skipRemainingSlotsForModel = true;
-            break;
-          }
-        }
-
-        const routeLease = await resolvedRouteScheduler.acquire(
-          candidate.modelId,
-          slot
-        );
-        if (!routeLease.available) {
-          routeBlockedRoutes.push(Object.freeze({
-            modelId: candidate.modelId,
-            slotId: slot.id,
-            reason: routeLease.reason,
+        const providerLease = resolvedProviderHealth.acquire(candidate.routeKey);
+        if (!providerLease.available) {
+          providerBlockedRoutes.push(Object.freeze({
+            routeKey: candidate.routeKey,
+            state: providerLease.state,
+            retryAfterMs: providerLease.retryAfterMs,
           }));
           continue;
         }
 
-        let budgetClaim;
-        try {
-          budgetClaim = await resolvedOperationBudget.claim({
-            operationId,
-            taskClass: task.class,
-          });
-        } catch (budgetStoreError) {
-          await sideEffect('route lease release', () => routeLease.release());
-          if (ownsConfirmationProbe) {
-            resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
-            ownsConfirmationProbe = false;
-          }
-          throw budgetStoreError;
-        }
-        if (!budgetClaim.allowed) {
-          await sideEffect('route lease release', () => routeLease.release());
-          if (ownsConfirmationProbe) {
-            resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
-            ownsConfirmationProbe = false;
-          }
-          const budgetError = new AIError(
-            `AI operation budget exhausted for task ${taskId}`,
-            {
-              code: AI_ERROR_CODES.OPERATION_BUDGET_EXHAUSTED,
-              retryable: false,
-              scope: 'OPERATION',
-              details: {
-                operationId,
-                taskId,
-                retryAuthority: 'ORCHESTRATOR',
-                limits: budgetClaim.limits,
-                state: budgetClaim.state,
-              },
-            }
-          );
-          await finishFailure(budgetError);
-          throw budgetError;
-        }
-
-        const attemptTimeoutMs = attemptTimeoutFor(task, candidate, {
-          confirmationProbe: ownsConfirmationProbe,
-          requestStartedAt: requestStarted,
-          operationTimeoutMs: effectiveOperationTimeoutMs,
-        });
-        if (attemptTimeoutMs <= 0) {
-          throw new AIError(
-            `Interactive AI operation exceeded its ${Math.round(effectiveOperationTimeoutMs / 1000)}s deadline`,
-            {
-              code: AI_ERROR_CODES.TIMEOUT,
-              status: 504,
-              retryable: true,
-              scope: 'OPERATION',
-              details: {
-                taskId,
-                operationId,
-                timeoutMs: effectiveOperationTimeoutMs,
-              },
-            }
-          );
-        }
-
-        const attemptNumber = attempts.length + 1;
-        const attemptStarted = nowMs();
-        const operationAttemptNumber = budgetClaim.attemptNumber;
-        const routeStateBefore = quotaManager?.get
-          ? quotaManager.get(slot.id, candidate.modelId).state
-          : 'READY';
-        const generationConfig = {
-          ...featureGenerationConfig,
-          ...candidate.thinkingGenerationConfig,
-          ...candidate.routeGenerationConfig,
-        };
+        let routeAttemptCount = 0;
+        let dailyQuotaCount = 0;
+        let shortRateCount = 0;
+        let transientCount = 0;
+        let ownsConfirmationProbe = false;
 
         try {
-          const transportResult = await resolvedTransport.generate({
-            apiKey: slot.apiKey,
-            modelId: candidate.modelId,
-            content,
-            generationConfig,
-            timeoutMs: attemptTimeoutMs,
-          });
+          for (const slot of slots) {
+            if (attempts.length >= retryPolicy.maxAttempts) break routeLoop;
 
-          const normalized = normalizer(transportResult.raw, {
-            modelId: candidate.modelId,
-            slotId: slot.id,
-            latencyMs: transportResult.latencyMs,
-            fallbackDepth: modelIndex,
-            generationGroupId,
-          });
+            if (!providerLease.halfOpenProbe && !ownsConfirmationProbe) {
+              const availability = resolvedProviderHealth.availability(candidate.routeKey);
+              if (!availability.available) {
+                providerBlockedRoutes.push(Object.freeze({
+                  routeKey: candidate.routeKey,
+                  state: availability.state,
+                  retryAfterMs: availability.retryAfterMs,
+                }));
+                break;
+              }
+            }
 
-          if (normalized.blocked) {
-            throw safetyError({
-              finishReason: normalized.finishReason,
-              blockReason: normalized.blockReason,
+            const routeLease = await resolvedRouteScheduler.acquire(candidate.routeKey, slot);
+            if (!routeLease.available) {
+              locallyBlockedRoutes.push(Object.freeze({
+                routeKey: candidate.routeKey,
+                slotId: slot.id,
+                reason: routeLease.reason,
+              }));
+              continue;
+            }
+
+            const budgetClaim = await resolvedOperationBudget.claim({
+              operationId,
+              taskClass: task.class,
             });
-          }
-
-          if (!normalized.text) {
-            throw new AIError('Gemini returned no visible text', {
-              code: AI_ERROR_CODES.EMPTY_RESPONSE,
-              retryable: true,
-              scope: 'ATTEMPT',
-            });
-          }
-
-          await sideEffect('quota success', () => quotaManager?.markSuccess(
-            slot.id,
-            candidate.modelId
-          ));
-          await sideEffect('route scheduler success', () =>
-            resolvedRouteScheduler.recordSuccess(candidate.modelId, slot.id)
-          );
-          await sideEffect('operation budget success', () =>
-            resolvedOperationBudget.recordOutcome(operationId)
-          );
-          const providerBeforeSuccess = resolvedProviderHealth.snapshot(candidate.modelId);
-          resolvedProviderHealth.recordSuccess(candidate.modelId);
-          resolvedTrafficController.noteSuccess();
-          if (
-            providerBeforeSuccess.state !== 'CLOSED' ||
-            providerBeforeSuccess.distinctFailureSlots > 0 ||
-            providerBeforeSuccess.lastErrorCode
-          ) {
-            await sideEffect('provider health recovery persistence', () =>
-              resolvedProviderHealth.persist?.(candidate.modelId)
-            );
-          }
-          await sideEffect('model lifecycle success', () => modelLifecycle?.recordSuccess(
-            candidate.modelId
-          ));
-
-          await sideEffect('telemetry success attempt', () => telemetry?.recordAttempt({
-            requestId,
-            attemptNumber,
-            modelId: candidate.modelId,
-            projectSlot: slot.id,
-            outcome: 'SUCCESS',
-            finishReason: normalized.finishReason,
-            latencyMs: transportResult.latencyMs,
-            inputTokens: normalized.usage.inputTokens,
-            outputTokens: normalized.usage.outputTokens,
-            thoughtTokens: normalized.usage.thoughtTokens,
-            totalTokens: normalized.usage.totalTokens,
-            routeStateBefore,
-            routeStateAfter: quotaManager?.get
-              ? quotaManager.get(slot.id, candidate.modelId).state
-              : 'READY',
-            operationId,
-            operationAttemptNumber,
-            startedAt: new Date(attemptStarted),
-            completedAt: new Date(),
-          }));
-
-          await sideEffect('route lease release', () => routeLease.release());
-          setAffinity(task, generationGroupId, candidate.modelId);
-
-          await sideEffect('telemetry finish success', () => telemetry?.finishRequest(requestId, {
-            taskId,
-            taskClass: task.class,
-            mode: 'LIVE',
-            selectedModel: candidate.modelId,
-            selectedProjectSlot: slot.id,
-            outcome: 'SUCCESS',
-            fallbackDepth: modelIndex,
-            attemptCount: attemptNumber,
-            latencyMs: nowMs() - requestStarted,
-            usage: normalized.usage,
-            finishReason: normalized.finishReason,
-            queueWaitMs,
-            admissionLimit,
-            congestionLevel,
-          }));
-
-          return Object.freeze({
-            ...normalized,
-            taskId,
-            class: task.class,
-            requestedReasoning: candidate.requestedReasoning,
-            resolvedReasoning: candidate.resolvedReasoning,
-            attempts: attemptNumber,
-          });
-        } catch (error) {
-          const aiError = error instanceof AIError
-            ? error
-            : new AIError(error?.message || 'Unknown AI failure', {
-                code: AI_ERROR_CODES.UNKNOWN,
+            if (!budgetClaim.allowed) {
+              await sideEffect('route lease release', () => routeLease.release());
+              throw new AIError(`AI operation budget exhausted for task ${taskId}`, {
+                code: AI_ERROR_CODES.OPERATION_BUDGET_EXHAUSTED,
                 retryable: false,
-                scope: 'REQUEST',
-                cause: error,
+                scope: 'OPERATION',
+                details: { operationId, taskId, limits: budgetClaim.limits, state: budgetClaim.state },
+              });
+            }
+
+            const attemptTimeoutMs = attemptTimeoutFor(task, candidate, {
+              confirmationProbe: ownsConfirmationProbe,
+              requestStartedAt,
+              operationTimeoutMs,
+            });
+            if (attemptTimeoutMs <= 0) {
+              await sideEffect('route lease release', () => routeLease.release());
+              throw new AIError(
+                `AI operation exceeded its ${Math.round(operationTimeoutMs / 1000)}s deadline`,
+                { code: AI_ERROR_CODES.TIMEOUT, status: 504, retryable: true, scope: 'OPERATION' }
+              );
+            }
+
+            const attemptNumber = attempts.length + 1;
+            const attemptStartedAt = nowMs();
+            const operationAttemptNumber = budgetClaim.attemptNumber;
+            const routeStateBefore = quotaManager?.get
+              ? quotaManager.get(slot.id, candidate.routeKey).state
+              : 'READY';
+            const executionRequest = createExecutionRequest({
+              provider: candidate.provider,
+              modelId: candidate.modelId,
+              taskId,
+              content,
+              generation: {
+                ...generation,
+                reasoning: candidate.reasoning,
+              },
+              metadata: { generationGroupId, operationId },
+            });
+
+            try {
+              const adapter = resolvedProviders.require(candidate.provider, 'generate');
+              const result = await adapter.generate({
+                credential: slot,
+                request: executionRequest,
+                timeoutMs: attemptTimeoutMs,
+                fallbackDepth: routeIndex,
+                generationGroupId,
+              });
+              const normalized = result?.normalized || result;
+
+              if (normalized?.blocked) {
+                throw safetyError({
+                  finishReason: normalized.finishReason,
+                  blockReason: normalized.blockReason,
+                });
+              }
+              if (!normalized?.text) {
+                throw new AIError('AI provider returned no visible text', {
+                  code: AI_ERROR_CODES.EMPTY_RESPONSE,
+                  retryable: true,
+                  scope: 'ATTEMPT',
+                  provider: candidate.provider,
+                });
+              }
+
+              await sideEffect('quota success', () => quotaManager?.markSuccess(slot.id, candidate.routeKey));
+              await sideEffect('route scheduler success', () => resolvedRouteScheduler.recordSuccess(candidate.routeKey, slot.id));
+              await sideEffect('operation budget success', () => resolvedOperationBudget.recordOutcome(operationId));
+              const healthBefore = resolvedProviderHealth.snapshot(candidate.routeKey);
+              resolvedProviderHealth.recordSuccess(candidate.routeKey);
+              if (healthBefore.state !== 'CLOSED' || healthBefore.distinctFailureSlots > 0 || healthBefore.lastErrorCode) {
+                await sideEffect('provider health recovery persistence', () => resolvedProviderHealth.persist?.(candidate.routeKey));
+              }
+              resolvedTrafficController.noteSuccess();
+              await sideEffect('model lifecycle success', () => modelLifecycle?.recordSuccess(candidate.modelId));
+
+              await sideEffect('telemetry success attempt', () => telemetry?.recordAttempt({
+                requestId,
+                attemptNumber,
+                modelId: candidate.routeKey,
+                projectSlot: slot.id,
+                outcome: 'SUCCESS',
+                finishReason: normalized.finishReason,
+                latencyMs: result?.latencyMs ?? normalized.latencyMs ?? (nowMs() - attemptStartedAt),
+                inputTokens: normalized.usage?.inputTokens || 0,
+                outputTokens: normalized.usage?.outputTokens || 0,
+                thoughtTokens: normalized.usage?.thoughtTokens || 0,
+                totalTokens: normalized.usage?.totalTokens || 0,
+                routeStateBefore,
+                routeStateAfter: quotaManager?.get ? quotaManager.get(slot.id, candidate.routeKey).state : 'READY',
+                operationId,
+                operationAttemptNumber,
+                startedAt: new Date(attemptStartedAt),
+                completedAt: new Date(),
+              }));
+
+              await sideEffect('route lease release', () => routeLease.release());
+              setAffinity(task, generationGroupId, candidate.routeKey);
+              requestFinished = true;
+              await sideEffect('telemetry finish success', () => telemetry?.finishRequest(requestId, {
+                taskId,
+                taskClass: task.class,
+                mode: 'LIVE',
+                selectedModel: candidate.routeKey,
+                selectedProjectSlot: slot.id,
+                outcome: 'SUCCESS',
+                fallbackDepth: routeIndex,
+                attemptCount: attemptNumber,
+                latencyMs: nowMs() - requestStartedAt,
+                usage: normalized.usage || {},
+                finishReason: normalized.finishReason,
+                queueWaitMs,
+                admissionLimit,
+                congestionLevel,
+              }));
+
+              return Object.freeze({
+                ...normalized,
+                taskId,
+                class: task.class,
+                provider: candidate.provider,
+                modelId: candidate.modelId,
+                routeKey: candidate.routeKey,
+                credentialSlot: slot.id,
+                projectSlot: slot.id,
+                requestedReasoning: candidate.reasoning?.requested || task.reasoning,
+                resolvedReasoning: candidate.reasoning?.resolved || null,
+                attempts: attemptNumber,
+              });
+            } catch (error) {
+              const aiError = error instanceof AIError
+                ? error
+                : new AIError(error?.message || 'Unknown AI failure', {
+                    code: AI_ERROR_CODES.UNKNOWN,
+                    retryable: false,
+                    scope: 'REQUEST',
+                    provider: candidate.provider,
+                    cause: error,
+                  });
+              lastError = aiError;
+              resolvedTrafficController.noteFailure(aiError, {
+                modelId: candidate.routeKey,
+                projectSlot: slot.id,
               });
 
-          lastError = aiError;
-          resolvedTrafficController.noteFailure(aiError, {
-            modelId: candidate.modelId,
-            projectSlot: slot.id,
-          });
-          const isDailyQuotaFailure = DAILY_QUOTA_CODES.has(aiError.code);
-          const isShortRateLimitFailure = SHORT_RATE_LIMIT_CODES.has(aiError.code);
-          const isProviderAvailabilityFailure = MODEL_AVAILABILITY_CODES.has(aiError.code);
-          if (isDailyQuotaFailure) modelDailyQuotaAttemptCount += 1;
-          else if (isShortRateLimitFailure) modelShortRateLimitAttemptCount += 1;
-          else modelAttemptCount += 1;
+              const dailyQuota = DAILY_QUOTA_CODES.has(aiError.code);
+              const shortRate = SHORT_RATE_LIMIT_CODES.has(aiError.code);
+              const availabilityFailure = MODEL_AVAILABILITY_CODES.has(aiError.code);
+              if (dailyQuota) dailyQuotaCount += 1;
+              else if (shortRate) shortRateCount += 1;
+              else routeAttemptCount += 1;
 
-          const providerState = isProviderAvailabilityFailure
-            ? resolvedProviderHealth.recordFailure(
-                candidate.modelId,
-                slot.id,
-                aiError,
-                { totalEligibleSlots: slots.length }
-              )
-            : null;
-          if (isProviderAvailabilityFailure) {
-            await sideEffect('provider health failure persistence', () =>
-              resolvedProviderHealth.persist?.(candidate.modelId)
-            );
-          }
-
-          if (
-            ownsConfirmationProbe &&
-            (
-              !isProviderAvailabilityFailure ||
-              providerState?.state === 'OPEN'
-            )
-          ) {
-            resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
-            ownsConfirmationProbe = false;
-          }
-
-          attempts.push(Object.freeze({
-            modelId: candidate.modelId,
-            slotId: slot.id,
-            code: aiError.code,
-            status: aiError.status,
-          }));
-
-          await sideEffect('quota failure', () => quotaManager?.markFailure(
-            slot.id,
-            candidate.modelId,
-            aiError
-          ));
-          await sideEffect('route scheduler failure', () =>
-            resolvedRouteScheduler.recordFailure(candidate.modelId, slot.id, aiError)
-          );
-          await sideEffect('operation budget failure', () =>
-            resolvedOperationBudget.recordOutcome(operationId, aiError)
-          );
-
-          const providerEvidence = aiError.providerEvidence || {};
-          const routeStateAfter = quotaManager?.get
-            ? quotaManager.get(slot.id, candidate.modelId).state
-            : routeStateBefore;
-
-          await sideEffect('telemetry failed attempt', () => telemetry?.recordAttempt({
-            requestId,
-            attemptNumber,
-            modelId: candidate.modelId,
-            projectSlot: slot.id,
-            outcome: aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED',
-            errorCode: aiError.code,
-            httpStatus: aiError.status,
-            providerErrorCode: providerEvidence.providerErrorCode || null,
-            providerStatus: providerEvidence.providerStatus || null,
-            quotaDimension: providerEvidence.quotaDimension || null,
-            quotaMetric: providerEvidence.quotaMetric || null,
-            quotaLimitName: providerEvidence.quotaLimitName || null,
-            quotaLimitValue: providerEvidence.quotaLimitValue ?? null,
-            retryAfterMs: aiError.retryAfterMs,
-            classificationSource: providerEvidence.classificationSource || null,
-            routeStateBefore,
-            routeStateAfter,
-            operationId,
-            operationAttemptNumber,
-            latencyMs: nowMs() - attemptStarted,
-            startedAt: new Date(attemptStarted),
-            completedAt: new Date(),
-          }));
-
-          await sideEffect('route lease release', () => routeLease.release());
-
-          if (typeof logger?.warn === 'function') {
-            logger.warn('[KIWI AI] attempt failed', {
-              taskId,
-              modelId: candidate.modelId,
-              slotId: slot.id,
-              code: aiError.code,
-              status: aiError.status,
-              attempt: attemptNumber,
-            });
-          }
-
-          const lifecycleResult = await sideEffect(
-            'model lifecycle failure',
-            () => modelLifecycle?.recordFailure(candidate.modelId, aiError)
-          );
-
-          // A newly auto-promoted model may reveal an incompatibility that the
-          // synthetic qualification did not cover. If the lifecycle circuit
-          // breaker suspends it, fall through to the previous approved model
-          // instead of failing the learner's request.
-          if (lifecycleResult?.suspended && aiError.code !== AI_ERROR_CODES.SAFETY) {
-            skipRemainingSlotsForModel = true;
-            break;
-          }
-
-          if (IMMEDIATE_FAILURE_CODES.has(aiError.code)) {
-            if (ownsConfirmationProbe) {
-              resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
-              ownsConfirmationProbe = false;
-            }
-            await finishFailure(
-              aiError,
-              aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED'
-            );
-            throw aiError;
-          }
-
-          if (aiError.code === AI_ERROR_CODES.AUTH) {
-            // Authentication is key/project-wide, not model-specific.
-            resolvedProjectPool.disable(slot.id, aiError.code);
-            continue;
-          }
-
-          if (aiError.code === AI_ERROR_CODES.MODEL_NOT_FOUND) {
-            // A model-level 404 should not burn the remaining project pool.
-            if (modelLifecycle) {
-              await sideEffect('model suspension', () => modelLifecycle.suspend(
-                candidate.modelId,
-                'provider returned MODEL_NOT_FOUND'
-              ));
-            } else {
-              catalog.setStatus(candidate.modelId, MODEL_STATUS.SUSPENDED);
-            }
-            skipRemainingSlotsForModel = true;
-            break;
-          }
-
-          if (
-            aiError.retryable ||
-            aiError.code === AI_ERROR_CODES.EMPTY_RESPONSE
-          ) {
-            if (isDailyQuotaFailure) {
-              // A confirmed daily quota failure is route-specific. It is safe
-              // to continue through independent projects for this model.
-              if (
-                modelDailyQuotaAttemptCount >=
-                (retryPolicy.maxDailyQuotaAttemptsPerModel ||
-                 retryPolicy.maxQuotaAttemptsPerModel ||
-                 retryPolicy.maxAttemptsPerModel)
-              ) {
-                skipRemainingSlotsForModel = true;
-                break;
+              const providerState = availabilityFailure
+                ? resolvedProviderHealth.recordFailure(candidate.routeKey, slot.id, aiError, { totalEligibleSlots: slots.length })
+                : null;
+              if (availabilityFailure) {
+                await sideEffect('provider health failure persistence', () => resolvedProviderHealth.persist?.(candidate.routeKey));
               }
-              continue;
-            }
 
-            if (isShortRateLimitFailure) {
-              // RPM/TPM/unknown 429s are intentionally different from RPD:
-              // pace and probe only a few independent routes rather than
-              // sweeping the whole project pool in milliseconds.
-              if (
-                modelShortRateLimitAttemptCount >=
-                (retryPolicy.maxShortRateLimitAttemptsPerModel || 2)
-              ) {
-                skipRemainingSlotsForModel = true;
-                break;
+              attempts.push(Object.freeze({
+                provider: candidate.provider,
+                modelId: candidate.modelId,
+                routeKey: candidate.routeKey,
+                slotId: slot.id,
+                code: aiError.code,
+                status: aiError.status,
+              }));
+
+              await sideEffect('quota failure', () => quotaManager?.markFailure(slot.id, candidate.routeKey, aiError));
+              await sideEffect('route scheduler failure', () => resolvedRouteScheduler.recordFailure(candidate.routeKey, slot.id, aiError));
+              await sideEffect('operation budget failure', () => resolvedOperationBudget.recordOutcome(operationId, aiError));
+              await sideEffect('telemetry failed attempt', () => telemetry?.recordAttempt({
+                requestId,
+                attemptNumber,
+                modelId: candidate.routeKey,
+                projectSlot: slot.id,
+                outcome: aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED',
+                errorCode: aiError.code,
+                httpStatus: aiError.status,
+                retryAfterMs: aiError.retryAfterMs,
+                operationId,
+                operationAttemptNumber,
+                latencyMs: nowMs() - attemptStartedAt,
+                startedAt: new Date(attemptStartedAt),
+                completedAt: new Date(),
+              }));
+              await sideEffect('route lease release', () => routeLease.release());
+
+              logger?.warn?.('[KIWI AI] attempt failed', {
+                taskId,
+                provider: candidate.provider,
+                modelId: candidate.modelId,
+                routeKey: candidate.routeKey,
+                slotId: slot.id,
+                code: aiError.code,
+                status: aiError.status,
+                attempt: attemptNumber,
+              });
+
+              const lifecycleResult = await sideEffect('model lifecycle failure', () =>
+                modelLifecycle?.recordFailure(candidate.modelId, aiError)
+              );
+              if (lifecycleResult?.suspended && aiError.code !== AI_ERROR_CODES.SAFETY) break;
+
+              if (IMMEDIATE_FAILURE_CODES.has(aiError.code)) {
+                await finishFailure(aiError, aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED');
+                throw aiError;
               }
-              continue;
-            }
 
-            if (FAST_MODEL_FALLBACK_CODES.has(aiError.code)) {
-              modelTransientAttemptCount += 1;
+              if (aiError.code === AI_ERROR_CODES.AUTH) {
+                resolvedCredentials.disable(candidate.provider, slot.id, aiError.code);
+                continue;
+              }
 
-              if (
-                providerState?.state === 'OPEN' ||
-                modelTransientAttemptCount >=
-                  retryPolicy.maxTransientAttemptsPerModel
-              ) {
-                skipRemainingSlotsForModel = true;
+              if (aiError.code === AI_ERROR_CODES.MODEL_NOT_FOUND) {
+                if (modelLifecycle) {
+                  await sideEffect('model suspension', () => modelLifecycle.suspend(candidate.modelId, 'provider returned MODEL_NOT_FOUND'));
+                } else {
+                  catalog.setStatus(candidate.routeKey, MODEL_STATUS.SUSPENDED);
+                }
                 break;
               }
 
-              if (
-                isProviderAvailabilityFailure &&
-                providerState?.state === 'CLOSED' &&
-                providerState?.distinctFailureSlots === 1 &&
-                !ownsConfirmationProbe
-              ) {
-                ownsConfirmationProbe = Boolean(
-                  resolvedProviderHealth.beginConfirmationProbe?.(
-                    candidate.modelId
-                  )
-                );
-                if (!ownsConfirmationProbe) {
-                  // Another logical request owns the single independent
-                  // confirmation probe. Do not create a parallel probe wave.
-                  skipRemainingSlotsForModel = true;
-                  break;
+              if (dailyQuota) {
+                if (dailyQuotaCount >= (retryPolicy.maxDailyQuotaAttemptsPerRoute || retryPolicy.maxAttemptsPerRoute)) break;
+                continue;
+              }
+              if (shortRate) {
+                if (shortRateCount >= (retryPolicy.maxShortRateLimitAttemptsPerRoute || 2)) break;
+                continue;
+              }
+
+              if (FAST_ROUTE_FALLBACK_CODES.has(aiError.code)) {
+                transientCount += 1;
+                if (providerState?.state === 'OPEN' || transientCount >= retryPolicy.maxTransientAttemptsPerRoute) break;
+                if (
+                  availabilityFailure &&
+                  providerState?.state === 'CLOSED' &&
+                  providerState?.distinctFailureSlots === 1 &&
+                  !ownsConfirmationProbe
+                ) {
+                  ownsConfirmationProbe = Boolean(resolvedProviderHealth.beginConfirmationProbe?.(candidate.routeKey));
+                  if (!ownsConfirmationProbe) break;
                 }
               }
+
+              if (!aiError.retryable && aiError.code !== AI_ERROR_CODES.EMPTY_RESPONSE) {
+                await finishFailure(aiError);
+                throw aiError;
+              }
+              if (routeAttemptCount >= retryPolicy.maxAttemptsPerRoute) break;
             }
-
-            if (modelAttemptCount >= retryPolicy.maxAttemptsPerModel) {
-              skipRemainingSlotsForModel = true;
-              break;
-            }
-
-            continue;
           }
-
-          if (ownsConfirmationProbe) {
-            resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
-            ownsConfirmationProbe = false;
-          }
-          await finishFailure(aiError);
-          throw aiError;
+        } finally {
+          if (ownsConfirmationProbe) resolvedProviderHealth.endConfirmationProbe?.(candidate.routeKey);
+          resolvedProviderHealth.release(candidate.routeKey);
         }
-        }
-      } finally {
-        if (ownsConfirmationProbe) {
-          resolvedProviderHealth.endConfirmationProbe?.(candidate.modelId);
-          ownsConfirmationProbe = false;
-        }
-        resolvedProviderHealth.release(candidate.modelId);
       }
-      if (skipRemainingSlotsForModel) continue;
-    }
 
-    const blockedOnlyByProviderHealth =
-      attempts.length === 0 &&
-      hadEligibleRoute &&
-      providerBlockedModels.length > 0 &&
-      routeBlockedRoutes.length === 0;
-    const blockedOnlyByRouteContention =
-      attempts.length === 0 &&
-      hadEligibleRoute &&
-      routeBlockedRoutes.length > 0;
-    const providerRetryAfterMs = providerBlockedModels
-      .map((entry) => Number(entry.retryAfterMs))
-      .filter((value) => Number.isFinite(value) && value > 0)
-      .sort((a, b) => a - b)[0] || null;
-
-    const finalCode = lastError?.code || (
-      blockedOnlyByProviderHealth
-        ? AI_ERROR_CODES.PROVIDER_OVERLOADED
-        : blockedOnlyByRouteContention
-          ? AI_ERROR_CODES.ORCHESTRATOR_BUSY
-          : hadEligibleRoute
-            ? AI_ERROR_CODES.UNKNOWN
-            : AI_ERROR_CODES.CAPACITY_EXHAUSTED
-    );
-    const finalMessage = lastError
-      ? `All approved routes failed for AI task ${taskId}`
-      : blockedOnlyByProviderHealth
-        ? `Approved models are temporarily unavailable for AI task ${taskId}`
-        : blockedOnlyByRouteContention
-          ? `Healthy AI routes are temporarily busy for task ${taskId}`
-          : `No healthy project/model capacity is currently available for AI task ${taskId}`;
-    const finalError = new AIError(
-      finalMessage,
-      {
-        code: finalCode,
-        status: lastError?.status || (
-          blockedOnlyByProviderHealth || blockedOnlyByRouteContention ? 503 : null
-        ),
-        retryable: lastError
-          ? Boolean(lastError.retryable)
-          : (blockedOnlyByProviderHealth || blockedOnlyByRouteContention),
-        retryAfterMs: lastError?.retryAfterMs ||
-          providerRetryAfterMs ||
-          (blockedOnlyByRouteContention ? 100 : null),
-        scope: blockedOnlyByProviderHealth
-          ? 'PROVIDER'
-          : blockedOnlyByRouteContention
-            ? 'ORCHESTRATOR'
-            : 'REQUEST',
-        details: {
-          attempts,
-          lastErrorCode: lastError?.code || null,
-          hadEligibleRoute,
-          blockedOnlyByProviderHealth,
-          blockedOnlyByRouteContention,
-          providerBlockedModels,
-          routeBlockedRoutes,
-          operationId,
-          retryAuthority: 'ORCHESTRATOR',
-          providerAttemptsExhausted: attempts.length >= retryPolicy.maxAttempts,
-          retryPolicy: task.retryPolicy,
-          maxAttempts: retryPolicy.maxAttempts,
-          maxDailyQuotaAttemptsPerModel:
-            retryPolicy.maxDailyQuotaAttemptsPerModel ||
-            retryPolicy.maxQuotaAttemptsPerModel ||
-            null,
-          maxShortRateLimitAttemptsPerModel:
-            retryPolicy.maxShortRateLimitAttemptsPerModel || null,
-          maxQuotaAttemptsPerModel: retryPolicy.maxQuotaAttemptsPerModel || null,
-          maxTransientAttemptsPerModel: retryPolicy.maxTransientAttemptsPerModel || null,
-          temporarilyUnavailableModels: providerBlockedModels.map((entry) => entry.modelId),
-        },
-        cause: lastError,
-      }
-    );
-
-    await finishFailure(finalError);
-    throw finalError;
-    } catch (error) {
-      const failure = error instanceof AIError ? error : new AIError(
-        'KIWI AI runtime state is temporarily unavailable',
+      const blockedByProviderHealth = attempts.length === 0 && hadEligibleRoute && providerBlockedRoutes.length > 0 && locallyBlockedRoutes.length === 0;
+      const blockedByContention = attempts.length === 0 && hadEligibleRoute && locallyBlockedRoutes.length > 0;
+      const retryAfterMs = providerBlockedRoutes
+        .map((entry) => Number(entry.retryAfterMs))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .sort((a, b) => a - b)[0] || null;
+      const finalCode = lastError?.code || (
+        blockedByProviderHealth ? AI_ERROR_CODES.PROVIDER_OVERLOADED :
+        blockedByContention ? AI_ERROR_CODES.ORCHESTRATOR_BUSY :
+        hadEligibleRoute ? AI_ERROR_CODES.UNKNOWN : AI_ERROR_CODES.CAPACITY_EXHAUSTED
+      );
+      const finalError = new AIError(
+        lastError
+          ? `All approved routes failed for AI task ${taskId}`
+          : blockedByProviderHealth
+            ? `Approved AI routes are temporarily unavailable for task ${taskId}`
+            : blockedByContention
+              ? `Healthy AI routes are temporarily busy for task ${taskId}`
+              : `No healthy AI route capacity is currently available for task ${taskId}`,
         {
-          code: AI_ERROR_CODES.RUNTIME_UNAVAILABLE,
-          status: 503,
-          retryable: true,
-          retryAfterMs: 1000,
-          scope: 'ORCHESTRATOR',
-          cause: error,
+          code: finalCode,
+          status: lastError?.status || (blockedByProviderHealth || blockedByContention ? 503 : null),
+          retryable: lastError ? Boolean(lastError.retryable) : Boolean(blockedByProviderHealth || blockedByContention),
+          retryAfterMs: lastError?.retryAfterMs || retryAfterMs || (blockedByContention ? 100 : null),
+          scope: blockedByProviderHealth ? 'PROVIDER' : blockedByContention ? 'ORCHESTRATOR' : 'REQUEST',
+          details: {
+            attempts,
+            operationId,
+            retryAuthority: 'ORCHESTRATOR',
+            providerBlockedRoutes,
+            locallyBlockedRoutes,
+            maxAttempts: retryPolicy.maxAttempts,
+          },
+          cause: lastError,
         }
       );
+      await finishFailure(finalError);
+      throw finalError;
+    } catch (error) {
+      const failure = error instanceof AIError
+        ? error
+        : new AIError('KIWI AI runtime is temporarily unavailable', {
+            code: AI_ERROR_CODES.RUNTIME_UNAVAILABLE,
+            status: 503,
+            retryable: true,
+            retryAfterMs: 1000,
+            scope: 'ORCHESTRATOR',
+            cause: error,
+          });
       await finishFailure(failure);
       throw failure;
     } finally {
@@ -1113,7 +790,8 @@ function createAIOrchestrator({
     registry,
     catalog,
     router: resolvedRouter,
-    projectPool: resolvedProjectPool,
+    providerRegistry: resolvedProviders,
+    credentialRegistry: resolvedCredentials,
     quotaManager,
     telemetry,
     modelLifecycle,
@@ -1127,7 +805,7 @@ function createAIOrchestrator({
 
 module.exports = {
   IMMEDIATE_FAILURE_CODES,
-  FAST_MODEL_FALLBACK_CODES,
+  FAST_ROUTE_FALLBACK_CODES,
   DEFAULT_RETRY_POLICY,
   validateFeatureGenerationConfig,
   createAIOrchestrator,
