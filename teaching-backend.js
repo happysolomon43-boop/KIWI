@@ -3,6 +3,7 @@
 const express = require('express');
 const { createTeachingFoundation } = require('./teaching');
 const { mountD15Routes } = require('./teaching/d15/routes');
+const { mountD16Routes } = require('./teaching/d16/routes');
 
 function sendError(res, error, fallbackMessage) {
   const status = Number(error?.status) || 500;
@@ -37,6 +38,7 @@ function createTeachingRouter({
   d13Intelligence = null,
   d13Service = null,
   d13PublishedEventRegistry = null,
+  d16Intelligence = null,
   teachingRuntimePlatform = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
@@ -64,6 +66,7 @@ function createTeachingRouter({
     d12PublishedEventRegistry,
     d13Intelligence,
     d13PublishedEventRegistry,
+    d16Intelligence,
   });
   const router = express.Router();
   let d07Ready = Boolean(d07Service);
@@ -488,6 +491,11 @@ function createTeachingRouter({
   // D15 exposes reporting/recovery-inspection projections only. Attendance
   // mutation remains behind the D10 Request owner or trusted server runtime.
   mountD15Routes(router,{foundation,sendError});
+
+  // D16 mounts the authoritative Work projections and student intents. The
+  // Assignment/Submission owner remains server-side; browser state never owns
+  // deadlines, policy versions, integrity outcomes or final submission time.
+  mountD16Routes(router,{foundation,sendError});
 
   const studentKnowledgeModelService = d13Service || foundation.d13?.service || null;
   if (studentKnowledgeModelService) {

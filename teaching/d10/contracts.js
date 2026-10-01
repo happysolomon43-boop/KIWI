@@ -52,7 +52,7 @@ const REQUEST_TYPES = Object.freeze({
   COURSE_RESUME: Object.freeze({ owner:'course_lifecycle', target:'COURSE', implementedOwner:true }),
   REDUCED_LOAD_WEEK: Object.freeze({ owner:'scheduler', target:'COURSE', implementedOwner:false, releaseDecision:'UNRESOLVED' }),
   TEACHER_CHANGE: Object.freeze({ owner:'teacher_identity', target:'COURSE', implementedOwner:true }),
-  ASSIGNMENT_EXTENSION: Object.freeze({ owner:'work', target:'ASSIGNMENT', implementedOwner:false }),
+  ASSIGNMENT_EXTENSION: Object.freeze({ owner:'work', target:'ASSIGNMENT', implementedOwner:true }),
   EARLY_DISMISSAL: Object.freeze({ owner:'attendance', target:'CLASS', implementedOwner:true }),
   ATTENDANCE_REVIEW_CORRECTION: Object.freeze({ owner:'attendance', target:'CLASS', implementedOwner:true }),
   COURSE_CANCELLATION: Object.freeze({ owner:'course_lifecycle', target:'COURSE', implementedOwner:true }),
