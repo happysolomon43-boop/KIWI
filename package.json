@@ -29,7 +29,8 @@
     "verify:teaching:d12": "node scripts/verify-teaching-d12-response-pedagogy.js",
     "verify:teaching:d13": "node scripts/verify-teaching-d13-skm.js",
     "verify:teaching:d14": "node scripts/verify-teaching-d14-classroom.js",
-    "verify:teaching:d15": "node scripts/verify-teaching-d15-attendance.js"
+    "verify:teaching:d15": "node scripts/verify-teaching-d15-attendance.js",
+    "verify:teaching:d16": "node scripts/verify-teaching-d16-homework-integrity.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

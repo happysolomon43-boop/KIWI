@@ -24,7 +24,18 @@ for(const token of ['teaching_classes_source_timetable_version_fkey','teaching_c
 const repo=read('teaching/repositories/d10-lifecycle-requests.js');
 for(const token of ['activateCourseUsing','teaching_request_applications','idempotent:true','ALTERNATIVE_ACCEPTANCE_REQUIRED','REQUEST_NOT_EFFECTIVE_YET','recordCancellationClosureUsing'])if(!repo.includes(token))throw new Error('D10 repository invariant missing '+token);
 const service=read('teaching/d10/service.js');
-for(const token of ['COURSE_ACTIVATED','REQUEST_EFFECTIVE_DUE','behaviorPenaltyAutomatic:false','activateScheduleUsing','applyScheduleRequestUsing','OWNER_HANDOFF_PENDING'])if(!service.includes(token))throw new Error('D10 service boundary missing '+token);
+for(const token of ['COURSE_ACTIVATED','REQUEST_EFFECTIVE_DUE','behaviorPenaltyAutomatic:false','activateScheduleUsing','applyScheduleRequestUsing'])if(!service.includes(token))throw new Error('D10 service boundary missing '+token);
+// D10 originally retained Assignment Extension as an owner handoff. D16 is the
+// canonical successor that is allowed to close that handoff, but only through
+// D10's formal Request lifecycle and an injected Work owner. Either the old
+// pending posture or the complete successor seam is acceptable to this D10
+// predecessor verifier; direct Assignment mutation from D10 is not.
+const hasLegacyAssignmentHandoff=service.includes('OWNER_HANDOFF_PENDING');
+const hasD16SuccessorWorkOwner=[
+  'workRequestOwner','resolveRequestTarget','previewRequest','applyRequestUsing','observeAppliedRequestUsing',
+].every((token)=>service.includes(token));
+if(!hasLegacyAssignmentHandoff&&!hasD16SuccessorWorkOwner)throw new Error('D10 Assignment Extension must remain an explicit owner handoff or use the D16 successor Work owner through Requests.');
+if(hasD16SuccessorWorkOwner&&!/ASSIGNMENT_EXTENSION:[^\n]+owner:'work'/.test(contracts))throw new Error('D10 successor Work seam is not bound to the Assignment Extension Request type.');
 const runtime=read('teaching/d10/runtime.js');for(const token of ['REQUEST_EFFECTIVE_DUE','ALREADY_SATISFIED','SUPERSEDED','ACTIONABLE'])if(!runtime.includes(token))throw new Error('D10 effective-time reconciliation missing '+token);
 const d09=read('public/teaching-d09.js');for(const token of ['Request this availability change','Timetable locked after activation','Request new time','Emergency absence'])if(!d09.includes(token))throw new Error('D10/D09 post-activation UI boundary missing '+token);
 const ui=read('public/teaching-d10.js');for(const token of ['Course setup · Stage 6','Course setup · Stage 7',"id:'requests'",'requestAssignmentExtension','requestEarlyDismissal','requestTeacherChange','ALTERNATIVE_PROPOSED'])if(!ui.includes(token))throw new Error('D10 UI requirement missing '+token);

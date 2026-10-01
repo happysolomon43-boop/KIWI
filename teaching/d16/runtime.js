@@ -1,0 +1,15 @@
+'use strict';
+const {TEACHING_EVENTS}=require('../events/names');
+const {RECONCILIATION_DISPOSITIONS}=require('../runtime/constants');
+
+function registerD16Runtime({publishedEvents,eventRuntime,repository,service}={}){
+  if(!repository||!service)throw new TypeError('D16 runtime requires repository and service.');
+  const registrations=[];
+  if(publishedEvents&&typeof publishedEvents.register==='function')registrations.push(publishedEvents.register(TEACHING_EVENTS.CLASS_ENDED,{subscriberId:'d16-purposeful-homework-after-class',handle:async(event)=>service.prepareFromClass({studentId:event.actorId||event.payload?.student_id,classId:event.payload?.class_id||event.aggregateId,idempotencyKey:`d16-class-ended:${event.eventId||event.event_id||event.aggregateId}`})}));
+  if(eventRuntime&&typeof eventRuntime.register==='function')registrations.push(eventRuntime.register(TEACHING_EVENTS.ASSIGNMENT_DUE,{
+    reconcile:async(event)=>{const studentId=event.actorId||event.payload?.student_id,assignmentId=event.payload?.assignment_id||event.aggregateId,a=await repository.getAssignment(studentId,assignmentId);if(!a)return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'ASSIGNMENT_NO_LONGER_EXISTS'};if(a.lifecycle_state==='CLOSED')return {disposition:RECONCILIATION_DISPOSITIONS.ALREADY_SATISFIED,reason:'ASSIGNMENT_CLOSED'};const eventDue=new Date(event.dueAt||event.due_at||event.payload?.due_at),currentDue=new Date(a.due_at);if(!Number.isFinite(eventDue.getTime())||eventDue.getTime()!==currentDue.getTime())return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'ASSIGNMENT_DEADLINE_CHANGED'};if((a.orthogonal_conditions||[]).some((c)=>['EXCUSED','SYSTEM_PROTECTED','PAUSED'].includes(c)))return {disposition:RECONCILIATION_DISPOSITIONS.ALREADY_SATISFIED,reason:'ASSIGNMENT_OBLIGATION_PROTECTED'};const final=await repository.latestFinalSubmission(studentId,assignmentId);if(final&&new Date(final.accepted_event_at).getTime()<=currentDue.getTime())return {disposition:RECONCILIATION_DISPOSITIONS.ALREADY_SATISFIED,reason:'ASSIGNMENT_SUBMITTED_ON_TIME'};return {disposition:RECONCILIATION_DISPOSITIONS.ACTIONABLE,metadata:{deadline_type:a.deadline_type}};},
+    handle:async(event)=>{const result=await service.reconcileDueAssignment({studentId:event.actorId||event.payload?.student_id,assignmentId:event.payload?.assignment_id||event.aggregateId,eventDueAt:event.dueAt||event.due_at||event.payload?.due_at,idempotencyKey:`d16-due-handle:${event.eventId||event.event_id}`});return {safeMetadata:{state:result.state,missed:Boolean(result.missed)}};}
+  }));
+  return Object.freeze({registrations:Object.freeze(registrations)});
+}
+module.exports={registerD16Runtime};
