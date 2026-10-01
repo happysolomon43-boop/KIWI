@@ -1,19 +1,20 @@
 'use strict';
 
 const { AI_TASKS } = require('./task-registry');
+const { AI_CAPABILITIES } = require('./capabilities');
 const { AIError, AI_ERROR_CODES } = require('./errors');
 const {
   createModelCatalog,
-  createQualificationModelCatalog,
   DEFAULT_MODEL_CATALOG,
   MODEL_STATUS,
 } = require('./model-catalog');
 const { createModelRouter } = require('./model-router');
-const { createProjectPool, createGroqCredentialPool } = require('./project-pool');
-const { createGeminiTransport } = require('./gemini-transport');
+const { createCredentialRegistry } = require('./credential-registry');
+const { createGoogleProviderAdapter } = require('./google-provider-adapter');
 const { createGroqProviderAdapter } = require('./groq-provider-adapter');
+const { createCloudflareProviderAdapter } = require('./cloudflare-provider-adapter');
+const { createKrokiProviderAdapter } = require('./kroki-provider-adapter');
 const { createProviderRegistry } = require('./provider-registry');
-const { createIsolatedProviderExecutor } = require('./isolated-provider-executor');
 const { AI_PROVIDERS } = require('./providers');
 const { createPostgresAIStore } = require('./postgres-store');
 const { createQuotaManager } = require('./quota-manager');
@@ -26,6 +27,7 @@ const { createAITrafficController } = require('./traffic-controller');
 const { createRouteScheduler } = require('./route-scheduler');
 const { createOperationBudget } = require('./operation-budget');
 const { createAIOrchestrator } = require('./orchestrator');
+const { createCapabilityRuntime } = require('./capability-runtime');
 
 function parseIntervalMs(value, fallback = 15 * 60 * 1000) {
   const parsed = Number(value);
@@ -71,64 +73,46 @@ function createAIRuntime({
 } = {}) {
   const store = createPostgresAIStore({ query, randomUUID });
   const catalog = createModelCatalog();
-  const qualificationCatalog = createQualificationModelCatalog();
-  const projectPool = createProjectPool({ env });
-  const groqCredentialPool = createGroqCredentialPool({ env });
+  const credentialRegistry = createCredentialRegistry({ env });
   const quotaManager = createQuotaManager({ store });
   const telemetry = createTelemetry({ store, logger });
   const modelLifecycle = createModelLifecycle({ catalog, store, logger });
   const providerHealth = createProviderHealth({
     store,
     failureEvidenceWindowMs: parseBoundedNumber(
-      env.AI_PROVIDER_FAILURE_EVIDENCE_WINDOW_MS,
-      30000,
-      5000,
-      300000
+      env.AI_PROVIDER_FAILURE_EVIDENCE_WINDOW_MS, 30000, 5000, 300000
     ),
     openCooldownMs: parseBoundedNumber(
-      env.AI_MODEL_TRANSIENT_COOLDOWN_MS,
-      20000,
-      5000,
-      120000
+      env.AI_MODEL_TRANSIENT_COOLDOWN_MS, 20000, 5000, 120000
     ),
     minDistinctFailureSlots: parseBoundedNumber(
-      env.AI_PROVIDER_FAILURE_EVIDENCE_SLOTS,
-      2,
-      1,
-      5
+      env.AI_PROVIDER_FAILURE_EVIDENCE_SLOTS, 2, 1, 5
     ),
   });
   const trafficController = createAITrafficController({ env, logger });
   const routeScheduler = createRouteScheduler({ store, env });
   const operationBudget = createOperationBudget({ store, env });
-  const router = createModelRouter({
-    registry: AI_TASKS,
-    catalog,
-    pins: {
-      VVIP: String(env.AI_PIN_VVIP_MODEL || '').trim() || null,
-      VIP: String(env.AI_PIN_VIP_MODEL || '').trim() || null,
-      IP: String(env.AI_PIN_IP_MODEL || '').trim() || null,
-    },
-  });
-  const transport = createGeminiTransport({ fetchImpl });
+  const router = createModelRouter({ registry: AI_TASKS, catalog });
 
-  // AIM-D02 attaches Groq to the central AI runtime without changing the live
-  // task router. Production ai.run() continues through the accepted Gemini
-  // transport/pool. Only explicit runIsolatedProvider() calls can reach Groq.
-  const groqProviderAdapter = createGroqProviderAdapter({ fetchImpl });
-  const providerRegistry = createProviderRegistry([groqProviderAdapter]);
-  const isolatedProviderExecutor = createIsolatedProviderExecutor({
-    providerRegistry,
-    credentialPools: {
-      [AI_PROVIDERS.GROQ]: groqCredentialPool,
-    },
-    catalog: qualificationCatalog,
-    logger,
-  });
+  const adapters = [
+    createGoogleProviderAdapter({ fetchImpl }),
+    createGroqProviderAdapter({ fetchImpl, logger }),
+    createCloudflareProviderAdapter({
+      fetchImpl,
+      accountId: env.CLOUDFLARE_ACCOUNT_ID,
+    }),
+  ];
+  if (String(env.KROKI_BASE_URL || '').trim()) {
+    adapters.push(createKrokiProviderAdapter({
+      fetchImpl,
+      baseUrl: env.KROKI_BASE_URL,
+    }));
+  }
+  const providerRegistry = createProviderRegistry(adapters);
 
   const qualifier = createModelQualifier({
-    transport,
-    projectPool,
+    providerRegistry,
+    credentialRegistry,
     quotaManager,
     trafficController,
     lifecycle: modelLifecycle,
@@ -136,10 +120,9 @@ function createAIRuntime({
     logger,
     env,
   });
-
   const discovery = createModelDiscoveryManager({
-    transport,
-    projectPool,
+    providerRegistry,
+    credentialRegistry,
     catalog,
     lifecycle: modelLifecycle,
     qualifier,
@@ -172,12 +155,13 @@ function createAIRuntime({
     });
   }
 
-  const productionOrchestrator = createAIOrchestrator({
+  const inference = createAIOrchestrator({
     assertReady,
     registry: AI_TASKS,
     catalog,
     router,
-    projectPool,
+    providerRegistry,
+    credentialRegistry,
     quotaManager,
     telemetry,
     modelLifecycle,
@@ -185,13 +169,27 @@ function createAIRuntime({
     trafficController,
     routeScheduler,
     operationBudget,
-    transport,
     logger,
     env,
   });
+  const capabilities = createCapabilityRuntime({
+    env,
+    catalog,
+    providerRegistry,
+    credentialRegistry,
+    logger,
+  });
+
   const orchestrator = Object.freeze({
-    ...productionOrchestrator,
-    runIsolatedProvider: isolatedProviderExecutor.execute,
+    ...inference,
+    synthesizeSpeech: capabilities.synthesizeSpeech,
+    synthesizeTeacherVoice: capabilities.synthesizeSpeech,
+    generateImage: capabilities.generateImage,
+    generateIllustrativeImage: capabilities.generateImage,
+    renderDiagram: capabilities.renderDiagram,
+    renderStructuredDiagram: capabilities.renderDiagram,
+    executeCapability: capabilities.execute,
+    capabilityStatus: capabilities.status,
   });
 
   let discoveryTimer = null;
@@ -220,14 +218,15 @@ function createAIRuntime({
     if (discoveryRunning) return null;
     discoveryRunning = true;
     operationalState.lastDiscoveryStartedAt = new Date().toISOString();
-
     try {
       const result = await discovery.discoverOnce();
       operationalState.lastDiscoverySummary = result
         ? {
             enabled: result.enabled,
             providerModels: Number(result.providerModels) || 0,
-            stableFlashModels: Number(result.stableFlashModels) || 0,
+            stableModels: Number(result.stableModels) || 0,
+            latestFlashLiteModel: result.latestFlashLiteModel || null,
+            latestFlashModel: result.latestFlashModel || null,
             discovered: [...(result.discovered || [])],
             promoted: [...(result.promoted || [])],
           }
@@ -240,13 +239,11 @@ function createAIRuntime({
         status: error?.status || null,
         message: error?.message || String(error),
       };
-      if (typeof logger?.warn === 'function') {
-        logger.warn('[KIWI AI] automatic model discovery failed', {
-          code: error?.code || null,
-          status: error?.status || null,
-          error: error?.message || String(error),
-        });
-      }
+      logger?.warn?.('[KIWI AI] automatic model discovery failed', {
+        code: error?.code || null,
+        status: error?.status || null,
+        error: error?.message || String(error),
+      });
       return null;
     } finally {
       operationalState.lastDiscoveryCompletedAt = new Date().toISOString();
@@ -256,29 +253,18 @@ function createAIRuntime({
 
   function startDiscoveryScheduler() {
     if (!discovery.autoDiscoveryEnabled() || discoveryTimer) return false;
-
     const intervalMs = parseIntervalMs(env.AI_DISCOVERY_INTERVAL_MS);
-
-    if (typeof timers.setImmediate === 'function') {
-      timers.setImmediate(() => {
-        runDiscoveryCycle().catch(() => null);
-      });
-    }
-
+    timers.setImmediate?.(() => runDiscoveryCycle().catch(() => null));
     if (typeof timers.setInterval === 'function') {
       discoveryTimer = timers.setInterval(() => {
         runDiscoveryCycle().catch(() => null);
       }, intervalMs);
       discoveryTimer?.unref?.();
     }
-
-    if (typeof logger?.log === 'function') {
-      logger.log('[KIWI AI] automatic stable-model discovery scheduled', {
-        intervalMinutes: Math.round(intervalMs / 60000),
-        autoPromote: discovery.autoPromoteEnabled(),
-      });
-    }
-
+    logger?.log?.('[KIWI AI] automatic model-family discovery scheduled', {
+      intervalMinutes: Math.round(intervalMs / 60000),
+      autoPromote: discovery.autoPromoteEnabled(),
+    });
     return true;
   }
 
@@ -301,30 +287,19 @@ function createAIRuntime({
     if (retentionRunning) return null;
     retentionRunning = true;
     operationalState.lastRetentionStartedAt = new Date().toISOString();
-
     try {
       const result = await store.cleanupOperationalHistory(retentionPolicy());
       operationalState.lastRetentionSummary = result;
       operationalState.lastRetentionError = null;
-
-      if (
-        typeof logger?.log === 'function' &&
-        (result.requestsDeleted > 0 ||
-         result.qualificationsDeleted > 0 ||
-         result.rollupsDeleted > 0)
-      ) {
-        logger.log('[KIWI AI] operational history cleanup complete', result);
+      if (result.requestsDeleted > 0 || result.qualificationsDeleted > 0 || result.rollupsDeleted > 0) {
+        logger?.log?.('[KIWI AI] operational history cleanup complete', result);
       }
       return result;
     } catch (error) {
-      operationalState.lastRetentionError = {
-        message: error?.message || String(error),
-      };
-      if (typeof logger?.warn === 'function') {
-        logger.warn('[KIWI AI] operational history cleanup failed', {
-          error: error?.message || String(error),
-        });
-      }
+      operationalState.lastRetentionError = { message: error?.message || String(error) };
+      logger?.warn?.('[KIWI AI] operational history cleanup failed', {
+        error: error?.message || String(error),
+      });
       return null;
     } finally {
       operationalState.lastRetentionCompletedAt = new Date().toISOString();
@@ -335,13 +310,7 @@ function createAIRuntime({
   function startRetentionScheduler() {
     if (retentionTimer) return false;
     const intervalMs = parseCleanupIntervalMs(env.AI_RETENTION_CLEANUP_INTERVAL_MS);
-
-    if (typeof timers.setImmediate === 'function') {
-      timers.setImmediate(() => {
-        runRetentionCleanup().catch(() => null);
-      });
-    }
-
+    timers.setImmediate?.(() => runRetentionCleanup().catch(() => null));
     if (typeof timers.setInterval === 'function') {
       retentionTimer = timers.setInterval(() => {
         runRetentionCleanup().catch(() => null);
@@ -362,7 +331,6 @@ function createAIRuntime({
     if (healthSyncRunning) return null;
     healthSyncRunning = true;
     operationalState.lastHealthSyncStartedAt = new Date().toISOString();
-
     try {
       const [quotaRows, providerRows] = await Promise.all([
         quotaManager.refresh?.() || 0,
@@ -376,14 +344,10 @@ function createAIRuntime({
       operationalState.lastHealthSyncError = null;
       return result;
     } catch (error) {
-      operationalState.lastHealthSyncError = {
-        message: error?.message || String(error),
-      };
-      if (typeof logger?.warn === 'function') {
-        logger.warn('[KIWI AI] health-state synchronization failed', {
-          error: error?.message || String(error),
-        });
-      }
+      operationalState.lastHealthSyncError = { message: error?.message || String(error) };
+      logger?.warn?.('[KIWI AI] health-state synchronization failed', {
+        error: error?.message || String(error),
+      });
       return null;
     } finally {
       operationalState.lastHealthSyncCompletedAt = new Date().toISOString();
@@ -394,17 +358,13 @@ function createAIRuntime({
   function startHealthSyncScheduler() {
     if (healthSyncTimer || typeof timers.setInterval !== 'function') return false;
     const intervalMs = parseHealthSyncIntervalMs(env.AI_HEALTH_SYNC_INTERVAL_MS);
-
     healthSyncTimer = timers.setInterval(() => {
       runHealthSyncCycle().catch(() => null);
     }, intervalMs);
     healthSyncTimer?.unref?.();
-
-    if (typeof logger?.log === 'function') {
-      logger.log('[KIWI AI] persisted health synchronization scheduled', {
-        intervalSeconds: Math.round(intervalMs / 1000),
-      });
-    }
+    logger?.log?.('[KIWI AI] persisted health synchronization scheduled', {
+      intervalSeconds: Math.round(intervalMs / 1000),
+    });
     return true;
   }
 
@@ -417,13 +377,14 @@ function createAIRuntime({
 
   async function refreshSeedCatalogPreservingLifecycle() {
     for (const seed of DEFAULT_MODEL_CATALOG) {
-      const existing = catalog.get(seed.id);
+      const existing = catalog.get(seed.id, seed.provider);
       catalog.upsert({
         ...seed,
         status: existing?.status || seed.status,
         metadata: {
           ...(existing?.metadata || {}),
           ...(seed.metadata || {}),
+          provider: seed.provider,
           seeded: true,
         },
         approvedAt: existing?.approvedAt || seed.approvedAt || null,
@@ -444,27 +405,18 @@ function createAIRuntime({
       const manuallySuspended =
         model.status === MODEL_STATUS.SUSPENDED &&
         model.metadata?.suspendedReason === 'manual AI_MODEL_DENYLIST';
-
-      if (manuallySuspended && !denylist.has(model.id)) {
-        await modelLifecycle.resume(model.id, 'removed from AI_MODEL_DENYLIST');
+      if (manuallySuspended && !denylist.has(model.id) && !denylist.has(model.routeKey)) {
+        await modelLifecycle.resume(model.id, 'removed from AI_MODEL_DENYLIST', model.provider);
       }
     }
 
-    for (const modelId of denylist) {
-      const current = catalog.get(modelId);
-      if (!current) continue;
-
-      // Do not overwrite an automatic circuit-breaker suspension with a manual
-      // reason, otherwise removing the denylist could accidentally re-enable
-      // a model that was already unhealthy.
+    for (const model of catalog.list()) {
+      if (!denylist.has(model.id) && !denylist.has(model.routeKey)) continue;
       if (
-        current.status === MODEL_STATUS.SUSPENDED &&
-        current.metadata?.suspendedReason !== 'manual AI_MODEL_DENYLIST'
-      ) {
-        continue;
-      }
-
-      await modelLifecycle.suspend(modelId, 'manual AI_MODEL_DENYLIST');
+        model.status === MODEL_STATUS.SUSPENDED &&
+        model.metadata?.suspendedReason !== 'manual AI_MODEL_DENYLIST'
+      ) continue;
+      await modelLifecycle.suspend(model.id, 'manual AI_MODEL_DENYLIST', model.provider);
     }
   }
 
@@ -472,15 +424,19 @@ function createAIRuntime({
     try {
       const plan = orchestrator.plan(taskId);
       return {
+        primaryProvider: plan.plannedPrimaryProvider || null,
         primaryModel: plan.plannedPrimaryModel || null,
-        primaryProjectSlot: plan.plannedPrimaryProjectSlot || null,
-        available: Boolean(plan.plannedPrimaryProjectSlot),
-        candidates: plan.candidates.map((candidate) => candidate.modelId),
+        primaryRoute: plan.plannedPrimaryRoute || null,
+        primaryCredentialSlot: plan.plannedPrimaryCredentialSlot || null,
+        available: Boolean(plan.plannedPrimaryCredentialSlot),
+        candidates: plan.candidates.map((candidate) => candidate.routeKey),
       };
     } catch (error) {
       return {
+        primaryProvider: null,
         primaryModel: null,
-        primaryProjectSlot: null,
+        primaryRoute: null,
+        primaryCredentialSlot: null,
         available: false,
         candidates: [],
         error: error?.code || error?.message || 'UNKNOWN',
@@ -489,11 +445,9 @@ function createAIRuntime({
   }
 
   function status() {
-    const slots = projectPool.snapshot();
-    const groqSlots = groqCredentialPool.snapshot();
+    const credentials = credentialRegistry.snapshot();
     const quotaRows = quotaManager.snapshot();
     const catalogRows = catalog.list();
-    const qualificationRows = qualificationCatalog.list({ provider: AI_PROVIDERS.GROQ });
     const providerRows = providerHealth.snapshot();
     const trafficState = trafficController.snapshot();
     const recentTelemetry = telemetry.snapshot();
@@ -502,13 +456,24 @@ function createAIRuntime({
       acc[model.status] = (acc[model.status] || 0) + 1;
       return acc;
     }, {});
-
+    const catalogCapabilities = catalogRows.reduce((acc, model) => {
+      for (const capability of model.capabilities || []) {
+        acc[capability] = (acc[capability] || 0) + 1;
+      }
+      return acc;
+    }, {});
     const quotaStates = quotaRows.reduce((acc, row) => {
       acc[row.state] = (acc[row.state] || 0) + 1;
       return acc;
     }, {});
     const providerStates = providerRows.reduce((acc, row) => {
       acc[row.state] = (acc[row.state] || 0) + 1;
+      return acc;
+    }, {});
+    const credentialsByProvider = credentials.reduce((acc, slot) => {
+      acc[slot.provider] = acc[slot.provider] || { total: 0, enabled: 0 };
+      acc[slot.provider].total += 1;
+      if (slot.enabled !== false) acc[slot.provider].enabled += 1;
       return acc;
     }, {});
 
@@ -518,41 +483,28 @@ function createAIRuntime({
         retryScheduled: Boolean(initializationRetryTimer),
         retryIntervalMs: initializationRetryMs,
       }),
-      projectSlots: Object.freeze({
-        total: slots.length,
-        enabled: slots.filter((slot) => slot.enabled).length,
-      }),
-      providerFoundation: Object.freeze({
-        registeredProviders: providerRegistry.list(),
-        groqCredentialSlots: Object.freeze({
-          total: groqSlots.length,
-          enabled: groqSlots.filter((slot) => slot.enabled).length,
-        }),
-        groqQualificationModels: Object.freeze(
-          qualificationRows.map((model) => Object.freeze({
-            id: model.id,
-            status: model.status,
-            productionEligible: Boolean(model.productionEligible),
-          }))
-        ),
+      providers: Object.freeze({
+        registered: providerRegistry.list(),
+        credentials: Object.freeze(credentialsByProvider),
       }),
       routes: Object.freeze({
-        VVIP: Object.freeze(safePlan('MAIN_CBT')),
-        VIP: Object.freeze(safePlan('DEEP_AUDIT')),
-        IP: Object.freeze(safePlan('CARD_EXPLANATION')),
+        default: Object.freeze(safePlan('MAIN_CBT')),
+        cards: Object.freeze(safePlan('FLASHCARD_GENERATION')),
       }),
+      capabilities: capabilities.status(),
       catalog: Object.freeze({
         total: catalogRows.length,
         states: Object.freeze({ ...catalogStates }),
+        capabilities: Object.freeze({ ...catalogCapabilities }),
       }),
       quota: Object.freeze({
         trackedRoutes: quotaRows.length,
         states: Object.freeze({ ...quotaStates }),
       }),
       providerHealth: Object.freeze({
-        trackedModels: providerRows.length,
+        trackedRoutes: providerRows.length,
         states: Object.freeze({ ...providerStates }),
-        models: Object.freeze(providerRows),
+        routes: Object.freeze(providerRows),
       }),
       traffic: trafficState,
       routeScheduler: routeScheduler.snapshot(),
@@ -588,24 +540,16 @@ function createAIRuntime({
     });
   }
 
-  async function operationalReport({
-    windowMinutes = 15,
-  } = {}) {
+  async function operationalReport({ windowMinutes = 15 } = {}) {
     const live = status();
     let persistent = null;
     let persistentError = null;
-
     try {
       persistent = await store.recentOperationalSummary({ windowMinutes });
     } catch (error) {
       persistentError = error?.message || String(error);
-      if (typeof logger?.warn === 'function') {
-        logger.warn('[KIWI AI] durable operational report failed', {
-          error: persistentError,
-        });
-      }
+      logger?.warn?.('[KIWI AI] durable operational report failed', { error: persistentError });
     }
-
     return Object.freeze({
       generatedAt: new Date().toISOString(),
       live,
@@ -615,26 +559,22 @@ function createAIRuntime({
   }
 
   async function initializeOnce() {
-    // Load persisted discovered/promoted/suspended models before refreshing the
-    // built-in seed metadata. This preserves lifecycle state across restarts.
     const hydratedCatalogModels = await modelLifecycle.hydratePersistedCatalog();
     await refreshSeedCatalogPreservingLifecycle();
     await applyManualDenylist();
     await store.seedCatalog(catalog.list());
 
-    const state = await orchestrator.initialize();
+    const state = await inference.initialize();
     startDiscoveryScheduler();
     startRetentionScheduler();
     startHealthSyncScheduler();
 
-    if (typeof logger?.log === 'function') {
-      logger.log(
-        `[KIWI AI] orchestrator initialized: ${state.projectSlots} project slot(s), ` +
-        `${state.hydratedProjectModelStates} persisted model-state record(s), ` +
-        `${state.hydratedProviderModelHealth} persisted provider-health record(s), ` +
-        `${hydratedCatalogModels} persisted catalog model(s)`
-      );
-    }
+    logger?.log?.(
+      `[KIWI AI] runtime initialized: ${state.credentialSlots} credential slot(s), ` +
+      `${state.hydratedRouteQuotaStates} persisted route-state record(s), ` +
+      `${state.hydratedProviderModelHealth} persisted provider-health record(s), ` +
+      `${hydratedCatalogModels} persisted catalog model(s)`
+    );
 
     return Object.freeze({
       ...state,
@@ -676,8 +616,6 @@ function createAIRuntime({
     }).catch((error) => {
       readiness.state = 'NOT_READY';
       readiness.lastFailureAt = new Date().toISOString();
-      // Database error messages may contain connection details; public status
-      // exposes a stable classification only.
       readiness.lastErrorCode = 'INITIALIZATION_FAILED';
       scheduleInitializationRecovery();
       logger?.warn?.('[KIWI AI] runtime initialization failed; AI admission paused', {
@@ -691,18 +629,15 @@ function createAIRuntime({
     return initializationPromise;
   }
 
-  function reportValidationFailure(modelId, reason) {
-    return modelLifecycle.reportValidationFailure(modelId, reason);
+  function reportValidationFailure(modelId, reason, provider = AI_PROVIDERS.GOOGLE) {
+    return modelLifecycle.reportValidationFailure(modelId, reason, provider);
   }
 
   return Object.freeze({
     store,
     catalog,
-    qualificationCatalog,
-    projectPool,
-    groqCredentialPool,
+    credentialRegistry,
     providerRegistry,
-    isolatedProviderExecutor,
     quotaManager,
     telemetry,
     modelLifecycle,
