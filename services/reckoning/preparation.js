@@ -192,45 +192,43 @@ function resolveFamilyConcurrency(snapshot, config) {
   }
 
   const routeScheduler = snapshot.routeScheduler || {};
-  const routeModels = Array.isArray(routeScheduler.models)
-    ? routeScheduler.models
-    : [];
-  const routeRows = Array.isArray(routeScheduler.routes)
+  const routes = Array.isArray(routeScheduler.routes)
     ? routeScheduler.routes
     : [];
-  const pacedModelCount = Math.max(
+  const credentialRoutes = Array.isArray(routeScheduler.credentialRoutes)
+    ? routeScheduler.credentialRoutes
+    : [];
+  const pacedRouteCount = Math.max(
     0,
-    Number(snapshot.pacedModelCount) ||
-      routeModels.filter((model) => (Number(model.waitMs) || 0) > 0).length
+    Number(snapshot.pacedRouteCount) ||
+      routes.filter((route) => (Number(route.waitMs) || 0) > 0).length
   );
-  const maxRouteInFlight = Math.max(
+  const maxCredentialRouteInFlight = Math.max(
     1,
-    Number(routeScheduler.maxInFlightPerRoute) || 1
+    Number(routeScheduler.maxInFlightPerCredentialRoute) || 1
   );
   const busyRouteCount = Math.max(
     0,
     Number(snapshot.busyRouteCount) ||
-      routeRows.filter(
-        (route) => (Number(route.inFlight) || 0) >= maxRouteInFlight
+      credentialRoutes.filter(
+        (route) => (Number(route.inFlight) || 0) >= maxCredentialRouteInFlight
       ).length
   );
-  const eligibleRouteCount = Math.max(
-    routeRows.length,
-    Number(snapshot.eligibleRouteCount) ||
-      Number(routeScheduler.eligibleRouteCount) ||
+  const eligibleCredentialRouteCount = Math.max(
+    credentialRoutes.length,
+    Number(snapshot.eligibleCredentialRouteCount) ||
+      Number(routeScheduler.eligibleCredentialRouteCount) ||
       0
   );
-  const routeBusyRatio = eligibleRouteCount > 0
-    ? busyRouteCount / eligibleRouteCount
+  const routeBusyRatio = eligibleCredentialRouteCount > 0
+    ? busyRouteCount / eligibleCredentialRouteCount
     : 0;
   const criticalQueued = Math.max(
     0,
     Number(snapshot.queuedByLane?.CRITICAL) || 0
   );
 
-  // Delivery B: local family fan-out must react to Delivery A's route-level
-  // pacing, not only the global provider congestion score.
-  if (pacedModelCount > 0 || routeBusyRatio >= 0.75 || criticalQueued > 0) {
+  if (pacedRouteCount > 0 || routeBusyRatio >= 0.75 || criticalQueued > 0) {
     return Math.min(
       maxConcurrency,
       Math.max(1, Number(config?.preparation?.severeFamilyConcurrency) || 1)
@@ -242,7 +240,6 @@ function resolveFamilyConcurrency(snapshot, config) {
       Math.max(1, Number(config?.preparation?.elevatedFamilyConcurrency) || 2)
     );
   }
-
   if ((Number(snapshot.queued) || 0) > 0) return 1;
 
   const effective = Math.max(
