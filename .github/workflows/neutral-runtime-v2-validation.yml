@@ -10,7 +10,48 @@ permissions:
   contents: read
 
 jobs:
-  ai-tests:
+  discover-ai-tests:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.tests.outputs.matrix }}
+    steps:
+      - name: Checkout Branch B
+        uses: actions/checkout@v4
+
+      - id: tests
+        name: Discover AI test files
+        shell: bash
+        run: |
+          matrix=$(find tests/ai -type f -name '*.test.js' -print | sort | jq -R -s -c 'split("\n")[:-1]')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "$matrix" | jq -r '.[]'
+
+  ai-test-file:
+    needs: discover-ai-tests
+    name: AI — ${{ matrix.file }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        file: ${{ fromJSON(needs.discover-ai-tests.outputs.matrix) }}
+    steps:
+      - name: Checkout Branch B
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run ${{ matrix.file }}
+        run: node --test "${{ matrix.file }}"
+
+  syntax:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -22,23 +63,8 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install dependencies
-        run: npm install --ignore-scripts --no-audit --no-fund
-
       - name: Check neutral AI module syntax
-        run: |
-          find services/ai -name '*.js' -print0 | xargs -0 -n1 node --check
+        run: find services/ai -name '*.js' -print0 | xargs -0 -n1 node --check
 
       - name: Check backend syntax
         run: node --check index.js
-
-      - name: Run AI suite with compact failure summary
-        shell: bash
-        run: |
-          set +e
-          npm run test:ai 2>&1 | tee /tmp/kiwi-ai-tests.log
-          status=${PIPESTATUS[0]}
-          echo
-          echo '===== KIWI AI COMPACT FAILURE SUMMARY ====='
-          grep -E '^not ok|^# (tests|pass|fail|cancelled|skipped|todo|duration_ms)|AssertionError|ReferenceError|TypeError|ERR_ASSERTION|ERR_TEST_FAILURE' /tmp/kiwi-ai-tests.log | tail -n 300 || true
-          exit "$status"
