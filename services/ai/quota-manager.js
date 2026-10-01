@@ -4,7 +4,7 @@ const { AI_ERROR_CODES } = require('./errors');
 
 const PACIFIC_TIME_ZONE = 'America/Los_Angeles';
 
-const PROJECT_MODEL_STATES = Object.freeze({
+const ROUTE_QUOTA_STATES = Object.freeze({
   READY: 'READY',
   COOLDOWN_RPM: 'COOLDOWN_RPM',
   COOLDOWN_TPM: 'COOLDOWN_TPM',
@@ -21,27 +21,21 @@ function pacificDayKey(date = new Date()) {
     month: '2-digit',
     day: '2-digit',
   }).formatToParts(date);
-
   const byType = Object.fromEntries(
     parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value])
   );
-
   return `${byType.year}-${byType.month}-${byType.day}`;
 }
 
 function extractObservedQuotaLimit(details) {
   let found = null;
-
   function walk(value) {
     if (found != null || value == null) return;
-
     if (Array.isArray(value)) {
       for (const item of value) walk(item);
       return;
     }
-
     if (typeof value !== 'object') return;
-
     for (const [key, item] of Object.entries(value)) {
       if (/quota(value|limit)/i.test(key)) {
         const parsed = Number(item);
@@ -53,7 +47,6 @@ function extractObservedQuotaLimit(details) {
       walk(item);
     }
   }
-
   walk(details);
   return found;
 }
@@ -73,15 +66,15 @@ function createQuotaManager({
 } = {}) {
   const cache = new Map();
 
-  function key(projectSlot, modelId) {
-    return `${projectSlot}::${modelId}`;
+  function key(credentialSlotId, routeKey) {
+    return `${credentialSlotId}::${routeKey}`;
   }
 
-  function baseState(projectSlot, modelId, now = clock()) {
+  function baseState(credentialSlotId, routeKey, now = clock()) {
     return {
-      projectSlot,
-      modelId,
-      state: PROJECT_MODEL_STATES.READY,
+      credentialSlotId,
+      routeKey,
+      state: ROUTE_QUOTA_STATES.READY,
       quotaDay: pacificDayKey(now),
       attemptsToday: 0,
       successesToday: 0,
@@ -98,9 +91,9 @@ function createQuotaManager({
 
   function fromRow(row) {
     return {
-      projectSlot: row.project_slot,
-      modelId: row.model_id,
-      state: row.state || PROJECT_MODEL_STATES.READY,
+      credentialSlotId: row.project_slot,
+      routeKey: row.model_id,
+      state: row.state || ROUTE_QUOTA_STATES.READY,
       quotaDay: row.quota_day ? String(row.quota_day).slice(0, 10) : null,
       attemptsToday: Number(row.attempts_today) || 0,
       successesToday: Number(row.successes_today) || 0,
@@ -125,13 +118,12 @@ function createQuotaManager({
       state.successesToday = 0;
       state.observedQuotaLimit = null;
       state.observedQuotaDimension = null;
-
       if (
-        state.state === PROJECT_MODEL_STATES.EXHAUSTED_RPD ||
-        state.state === PROJECT_MODEL_STATES.COOLDOWN_RPM ||
-        state.state === PROJECT_MODEL_STATES.COOLDOWN_TPM
+        state.state === ROUTE_QUOTA_STATES.EXHAUSTED_RPD ||
+        state.state === ROUTE_QUOTA_STATES.COOLDOWN_RPM ||
+        state.state === ROUTE_QUOTA_STATES.COOLDOWN_TPM
       ) {
-        state.state = PROJECT_MODEL_STATES.READY;
+        state.state = ROUTE_QUOTA_STATES.READY;
         state.cooldownUntil = null;
         state.lastErrorCode = null;
         state.lastHttpStatus = null;
@@ -140,26 +132,27 @@ function createQuotaManager({
     }
 
     if (
-      (state.state === PROJECT_MODEL_STATES.COOLDOWN_RPM ||
-       state.state === PROJECT_MODEL_STATES.COOLDOWN_TPM) &&
+      (state.state === ROUTE_QUOTA_STATES.COOLDOWN_RPM || state.state === ROUTE_QUOTA_STATES.COOLDOWN_TPM) &&
       state.cooldownUntil &&
       new Date(state.cooldownUntil).getTime() <= now.getTime()
     ) {
-      state.state = PROJECT_MODEL_STATES.READY;
+      state.state = ROUTE_QUOTA_STATES.READY;
       state.cooldownUntil = null;
       changed = true;
     }
-
     return changed;
   }
 
   async function persist(state) {
     if (!store?.upsertProjectModelState) return null;
-    const row = await store.upsertProjectModelState(state);
+    const row = await store.upsertProjectModelState({
+      ...state,
+      // Historical SQL column names are translated here and nowhere above.
+      projectSlot: state.credentialSlotId,
+      modelId: state.routeKey,
+    });
     const persistedAt = timestampMs(row?.updated_at);
-    if (persistedAt) {
-      state.updatedAt = Math.max(Number(state.updatedAt) || 0, persistedAt);
-    }
+    if (persistedAt) state.updatedAt = Math.max(Number(state.updatedAt) || 0, persistedAt);
     return row;
   }
 
@@ -170,47 +163,30 @@ function createQuotaManager({
 
     for (const row of rows || []) {
       const state = fromRow(row);
-      const cacheKey = key(state.projectSlot, state.modelId);
+      const cacheKey = key(state.credentialSlotId, state.routeKey);
       const existing = cache.get(cacheKey);
-
-      // During the periodic Delivery B convergence cycle, never let a database
-      // snapshot that predates a local in-flight route update roll the runtime
-      // backward. Startup hydration is forceful because no request should have
-      // mutated route health before initialization completes.
-      if (
-        !force &&
-        existing &&
-        state.updatedAt &&
-        existing.updatedAt &&
-        state.updatedAt <= existing.updatedAt
-      ) {
+      if (!force && existing && state.updatedAt && existing.updatedAt && state.updatedAt <= existing.updatedAt) {
         continue;
       }
 
       let changed = normalize(state);
       const now = clock();
-
-      // Older KIWI builds recorded unclassified 429 responses while leaving
-      // the route READY. Repair those rows during hydration so a deploy does
-      // not immediately replay the same rate-limited project/model pair.
       if (
-        state.state === PROJECT_MODEL_STATES.READY &&
+        state.state === ROUTE_QUOTA_STATES.READY &&
         state.lastErrorCode === AI_ERROR_CODES.RATE_LIMIT_UNKNOWN &&
         state.lastHttpStatus === 429 &&
         state.lastFailureAt
       ) {
-        const cooldownUntil = new Date(
-          new Date(state.lastFailureAt).getTime() + unknownRateLimitCooldownMs
-        );
+        const cooldownUntil = new Date(new Date(state.lastFailureAt).getTime() + unknownRateLimitCooldownMs);
         if (cooldownUntil.getTime() > now.getTime()) {
-          state.state = PROJECT_MODEL_STATES.COOLDOWN_RPM;
+          state.state = ROUTE_QUOTA_STATES.COOLDOWN_RPM;
           state.cooldownUntil = cooldownUntil;
           changed = true;
         }
       }
 
       cache.set(cacheKey, state);
-      count++;
+      count += 1;
       if (changed) {
         state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
         await persist(state);
@@ -223,35 +199,30 @@ function createQuotaManager({
     return reconcileFromStore({ force: true });
   }
 
-  // Project/model quota health is persisted, so periodic refresh lets future
-  // multi-instance deployments converge without stale reads undoing a fresher
-  // local route transition.
   async function refresh() {
     return reconcileFromStore({ force: false });
   }
 
-  function get(projectSlot, modelId) {
-    const cacheKey = key(projectSlot, modelId);
+  function get(credentialSlotId, routeKey) {
+    const cacheKey = key(credentialSlotId, routeKey);
     let state = cache.get(cacheKey);
     if (!state) {
-      state = baseState(projectSlot, modelId);
+      state = baseState(credentialSlotId, routeKey);
       cache.set(cacheKey, state);
     }
     normalize(state);
     return state;
   }
 
-  function isEligible(projectSlot, modelId) {
-    const state = get(projectSlot, modelId);
-    return state.state === PROJECT_MODEL_STATES.READY;
+  function isEligible(credentialSlotId, routeKey) {
+    return get(credentialSlotId, routeKey).state === ROUTE_QUOTA_STATES.READY;
   }
 
-  function slotHealthScore(projectSlot, modelId, now = clock()) {
-    const state = get(projectSlot, modelId);
+  function slotHealthScore(credentialSlotId, routeKey, now = clock()) {
+    const state = get(credentialSlotId, routeKey);
     const attempts = Math.max(0, Number(state.attemptsToday) || 0);
     const successes = Math.max(0, Number(state.successesToday) || 0);
     const failures = Math.max(0, attempts - successes);
-
     let score = (successes * 6) - (failures * 2);
     const nowMs = now.getTime();
 
@@ -260,23 +231,21 @@ function createQuotaManager({
       if (ageMs <= 5 * 60 * 1000) score += 20;
       else if (ageMs <= 30 * 60 * 1000) score += 8;
     }
-
     if (state.lastFailureAt) {
       const ageMs = Math.max(0, nowMs - new Date(state.lastFailureAt).getTime());
       if (ageMs <= 15 * 1000) score -= 12;
       else if (ageMs <= 60 * 1000) score -= 5;
     }
-
     return score;
   }
 
-  function filterEligibleSlots(modelId, slots) {
+  function filterEligibleSlots(routeKey, slots) {
     return (slots || [])
       .map((slot, index) => ({
         slot,
         index,
-        eligible: isEligible(slot.id, modelId),
-        score: slotHealthScore(slot.id, modelId),
+        eligible: isEligible(slot.id, routeKey),
+        score: slotHealthScore(slot.id, routeKey),
       }))
       .filter((entry) => entry.eligible)
       .sort((a, b) => b.score - a.score || a.index - b.index)
@@ -286,18 +255,16 @@ function createQuotaManager({
   function cooldownDuration(error, fallbackMs) {
     const providerDelay = Number(error?.retryAfterMs);
     if (Number.isFinite(providerDelay) && providerDelay >= 0) {
-      // Respect provider RetryInfo/Retry-After while bounding pathological
-      // values so a malformed response cannot quarantine a route indefinitely.
       return Math.max(1000, Math.min(providerDelay, 10 * 60 * 1000));
     }
     return fallbackMs;
   }
 
-  async function markSuccess(projectSlot, modelId) {
+  async function markSuccess(credentialSlotId, routeKey) {
     const now = clock();
-    const state = get(projectSlot, modelId);
+    const state = get(credentialSlotId, routeKey);
     state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
-    state.state = PROJECT_MODEL_STATES.READY;
+    state.state = ROUTE_QUOTA_STATES.READY;
     state.quotaDay = pacificDayKey(now);
     state.attemptsToday += 1;
     state.successesToday += 1;
@@ -309,9 +276,9 @@ function createQuotaManager({
     return state;
   }
 
-  async function markFailure(projectSlot, modelId, error) {
+  async function markFailure(credentialSlotId, routeKey, error) {
     const now = clock();
-    const state = get(projectSlot, modelId);
+    const state = get(credentialSlotId, routeKey);
     state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
     state.quotaDay = pacificDayKey(now);
     state.attemptsToday += 1;
@@ -328,51 +295,37 @@ function createQuotaManager({
       state.observedQuotaDimension = evidence?.quotaDimension || (
         error?.code === AI_ERROR_CODES.RATE_LIMIT_RPD ? 'RPD' :
         error?.code === AI_ERROR_CODES.RATE_LIMIT_RPM ? 'RPM' :
-        error?.code === AI_ERROR_CODES.RATE_LIMIT_TPM ? 'TPM' :
-        'UNKNOWN'
+        error?.code === AI_ERROR_CODES.RATE_LIMIT_TPM ? 'TPM' : 'UNKNOWN'
       );
     }
 
     switch (error?.code) {
       case AI_ERROR_CODES.RATE_LIMIT_RPD:
-        state.state = PROJECT_MODEL_STATES.EXHAUSTED_RPD;
+        state.state = ROUTE_QUOTA_STATES.EXHAUSTED_RPD;
         state.cooldownUntil = null;
         break;
       case AI_ERROR_CODES.RATE_LIMIT_RPM:
-        state.state = PROJECT_MODEL_STATES.COOLDOWN_RPM;
-        state.cooldownUntil = new Date(
-          now.getTime() + cooldownDuration(error, rpmCooldownMs)
-        );
+        state.state = ROUTE_QUOTA_STATES.COOLDOWN_RPM;
+        state.cooldownUntil = new Date(now.getTime() + cooldownDuration(error, rpmCooldownMs));
         break;
       case AI_ERROR_CODES.RATE_LIMIT_TPM:
-        state.state = PROJECT_MODEL_STATES.COOLDOWN_TPM;
-        state.cooldownUntil = new Date(
-          now.getTime() + cooldownDuration(error, tpmCooldownMs)
-        );
+        state.state = ROUTE_QUOTA_STATES.COOLDOWN_TPM;
+        state.cooldownUntil = new Date(now.getTime() + cooldownDuration(error, tpmCooldownMs));
         break;
       case AI_ERROR_CODES.RATE_LIMIT_UNKNOWN:
-        // Unknown 429s must never remain READY. Treat them conservatively as
-        // a short request-rate cooldown unless the provider supplies a more
-        // precise RetryInfo/Retry-After delay.
-        state.state = PROJECT_MODEL_STATES.COOLDOWN_RPM;
-        state.cooldownUntil = new Date(
-          now.getTime() + cooldownDuration(error, unknownRateLimitCooldownMs)
-        );
+        state.state = ROUTE_QUOTA_STATES.COOLDOWN_RPM;
+        state.cooldownUntil = new Date(now.getTime() + cooldownDuration(error, unknownRateLimitCooldownMs));
         break;
       case AI_ERROR_CODES.AUTH:
-        state.state = PROJECT_MODEL_STATES.KEY_INVALID;
+        state.state = ROUTE_QUOTA_STATES.KEY_INVALID;
         state.cooldownUntil = null;
         break;
       case AI_ERROR_CODES.MODEL_NOT_FOUND:
-        state.state = PROJECT_MODEL_STATES.MODEL_UNAVAILABLE;
+        state.state = ROUTE_QUOTA_STATES.MODEL_UNAVAILABLE;
         state.cooldownUntil = null;
         break;
       default:
-        // Transient/network/request failures do not poison persistent quota state.
-        if (
-          state.state === PROJECT_MODEL_STATES.COOLDOWN_RPM ||
-          state.state === PROJECT_MODEL_STATES.COOLDOWN_TPM
-        ) {
+        if (state.state === ROUTE_QUOTA_STATES.COOLDOWN_RPM || state.state === ROUTE_QUOTA_STATES.COOLDOWN_TPM) {
           normalize(state, now);
         }
         break;
@@ -382,21 +335,21 @@ function createQuotaManager({
     return state;
   }
 
-  async function disable(projectSlot, modelId) {
+  async function disable(credentialSlotId, routeKey) {
     const now = clock();
-    const state = get(projectSlot, modelId);
+    const state = get(credentialSlotId, routeKey);
     state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
-    state.state = PROJECT_MODEL_STATES.DISABLED;
+    state.state = ROUTE_QUOTA_STATES.DISABLED;
     state.cooldownUntil = null;
     await persist(state);
     return state;
   }
 
-  async function enable(projectSlot, modelId) {
+  async function enable(credentialSlotId, routeKey) {
     const now = clock();
-    const state = get(projectSlot, modelId);
+    const state = get(credentialSlotId, routeKey);
     state.updatedAt = Math.max(Number(state.updatedAt) || 0, now.getTime());
-    state.state = PROJECT_MODEL_STATES.READY;
+    state.state = ROUTE_QUOTA_STATES.READY;
     state.cooldownUntil = null;
     state.lastErrorCode = null;
     state.lastHttpStatus = null;
@@ -408,9 +361,9 @@ function createQuotaManager({
     const rows = [];
     for (const state of cache.values()) {
       normalize(state);
-      rows.push({
-        projectSlot: state.projectSlot,
-        modelId: state.modelId,
+      rows.push(Object.freeze({
+        credentialSlotId: state.credentialSlotId,
+        routeKey: state.routeKey,
         state: state.state,
         quotaDay: state.quotaDay,
         attemptsToday: state.attemptsToday,
@@ -423,9 +376,9 @@ function createQuotaManager({
         lastSuccessAt: state.lastSuccessAt,
         lastFailureAt: state.lastFailureAt,
         updatedAt: state.updatedAt ? new Date(state.updatedAt) : null,
-      });
+      }));
     }
-    return rows;
+    return Object.freeze(rows);
   }
 
   return Object.freeze({
@@ -445,7 +398,7 @@ function createQuotaManager({
 
 module.exports = {
   PACIFIC_TIME_ZONE,
-  PROJECT_MODEL_STATES,
+  ROUTE_QUOTA_STATES,
   pacificDayKey,
   extractObservedQuotaLimit,
   timestampMs,
