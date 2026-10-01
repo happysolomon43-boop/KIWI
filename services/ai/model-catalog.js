@@ -34,6 +34,10 @@ const MODEL_IDS = Object.freeze({
   GEMINI_3_5_FLASH_LITE: 'gemini-3.5-flash-lite',
   GEMINI_3_1_FLASH_LITE: 'gemini-3.1-flash-lite',
   QWEN_3_8_27B: 'qwen/qwen3.8-27b',
+  ORPHEUS_ENGLISH: 'canopylabs/orpheus-v1-english',
+  ORPHEUS_ARABIC_SAUDI: 'canopylabs/orpheus-arabic-saudi',
+  FLUX_2_DEV: '@cf/black-forest-labs/flux-2-dev',
+  KROKI: 'kroki',
 });
 
 function modelVersionRank(modelId) {
@@ -79,6 +83,36 @@ function inferenceModel({
     outputModalities: Object.freeze([AI_OUTPUT_MODALITIES.TEXT]),
     inputTokenLimit,
     outputTokenLimit,
+    metadata: Object.freeze({ ...metadata }),
+  });
+}
+
+function capabilityModel({
+  provider,
+  id,
+  capability,
+  inputModalities = [AI_INPUT_MODALITIES.TEXT],
+  outputModalities = [],
+  rank = 1,
+  channel = MODEL_CHANNELS.STABLE,
+  metadata = {},
+} = {}) {
+  const normalizedProvider = assertProviderId(provider);
+  return Object.freeze({
+    id,
+    provider: normalizedProvider,
+    routeKey: providerModelKey(normalizedProvider, id),
+    family: null,
+    channel,
+    status: MODEL_STATUS.APPROVED,
+    rank: Number(rank) || 1,
+    productionEligible: true,
+    supportedReasoning: Object.freeze([]),
+    capabilities: Object.freeze([capability]),
+    inputModalities: Object.freeze([...inputModalities]),
+    outputModalities: Object.freeze([...outputModalities]),
+    inputTokenLimit: null,
+    outputTokenLimit: null,
     metadata: Object.freeze({ ...metadata }),
   });
 }
@@ -129,6 +163,40 @@ const DEFAULT_MODEL_CATALOG = Object.freeze([
     inputModalities: [AI_INPUT_MODALITIES.TEXT, AI_INPUT_MODALITIES.IMAGE],
     inputTokenLimit: 1048576,
     outputTokenLimit: 65536,
+  }),
+  capabilityModel({
+    provider: AI_PROVIDERS.GROQ,
+    id: MODEL_IDS.ORPHEUS_ENGLISH,
+    capability: AI_CAPABILITIES.SPEECH_SYNTHESIS,
+    outputModalities: [AI_OUTPUT_MODALITIES.AUDIO],
+    metadata: { language: 'en', responseFormat: 'wav' },
+  }),
+  capabilityModel({
+    provider: AI_PROVIDERS.GROQ,
+    id: MODEL_IDS.ORPHEUS_ARABIC_SAUDI,
+    capability: AI_CAPABILITIES.SPEECH_SYNTHESIS,
+    outputModalities: [AI_OUTPUT_MODALITIES.AUDIO],
+    metadata: { language: 'ar-SA', responseFormat: 'wav' },
+  }),
+  capabilityModel({
+    provider: AI_PROVIDERS.CLOUDFLARE,
+    id: MODEL_IDS.FLUX_2_DEV,
+    capability: AI_CAPABILITIES.IMAGE_GENERATION,
+    outputModalities: [AI_OUTPUT_MODALITIES.IMAGE],
+    metadata: {
+      generation: 'FLUX_2',
+      variant: 'DEV',
+      defaultSteps: 33,
+      maxSteps: 50,
+      illustrativeOnly: true,
+    },
+  }),
+  capabilityModel({
+    provider: AI_PROVIDERS.KROKI,
+    id: MODEL_IDS.KROKI,
+    capability: AI_CAPABILITIES.DIAGRAM_RENDER,
+    outputModalities: [AI_OUTPUT_MODALITIES.SVG],
+    metadata: { deterministic: true, responseFormat: 'svg' },
   }),
 ]);
 
@@ -217,8 +285,19 @@ function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
     }).find((model) => !excluded.has(model.id)) || null;
   }
 
+  function firstApprovedCapability(capability, { provider = null } = {}) {
+    return list({
+      provider,
+      status: MODEL_STATUS.APPROVED,
+      productionEligible: true,
+      requiredCapabilities: [capability],
+    })[0] || null;
+  }
+
   function upsert(model) {
-    if (!model?.id || !model?.provider) throw new Error('AI model catalog entry requires provider and id');
+    if (!model?.id || !model?.provider) {
+      throw new Error('AI model catalog entry requires provider and id');
+    }
     const prior = get(model.id, model.provider) || {};
     return cloneModel(store({ ...prior, ...model }));
   }
@@ -229,7 +308,14 @@ function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
     return upsert({ ...current, status });
   }
 
-  return Object.freeze({ get, list, latestApproved, upsert, setStatus });
+  return Object.freeze({
+    get,
+    list,
+    latestApproved,
+    firstApprovedCapability,
+    upsert,
+    setStatus,
+  });
 }
 
 module.exports = {
@@ -241,5 +327,6 @@ module.exports = {
   DEFAULT_MODEL_CATALOG,
   modelVersionRank,
   inferenceModel,
+  capabilityModel,
   createModelCatalog,
 };
