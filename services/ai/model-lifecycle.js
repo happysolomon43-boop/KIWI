@@ -1,6 +1,6 @@
 'use strict';
 
-const { AI_PROVIDERS } = require('./providers');
+const { AI_PROVIDERS, providerModelKey } = require('./providers');
 const { MODEL_STATUS } = require('./model-catalog');
 const { AI_ERROR_CODES } = require('./errors');
 
@@ -10,17 +10,29 @@ const CIRCUIT_BREAKER_CODES = new Set([
   AI_ERROR_CODES.EMPTY_RESPONSE,
 ]);
 
+function storedModelIdentity(row, metadata = {}) {
+  const stored = String(row?.model_id || '').trim();
+  const provider = metadata.provider || (stored.includes('::') ? stored.split('::', 1)[0] : AI_PROVIDERS.GOOGLE);
+  const modelId = metadata.modelId || (stored.includes('::') ? stored.slice(stored.indexOf('::') + 2) : stored);
+  const routeKey = metadata.routeKey || (provider && modelId ? providerModelKey(provider, modelId) : null);
+  return { provider, modelId, routeKey };
+}
+
 function rowToModel(row) {
   const metadata = row.metadata || {};
+  const identity = storedModelIdentity(row, metadata);
   return {
-    id: row.model_id,
-    provider: metadata.provider || AI_PROVIDERS.GOOGLE,
+    id: identity.modelId,
+    provider: identity.provider,
+    routeKey: identity.routeKey,
     family: row.family,
     channel: row.channel,
     status: row.status,
     rank: Number(row.rank) || 0,
     supportedReasoning: Array.isArray(row.supported_thinking) ? row.supported_thinking : [],
     capabilities: Array.isArray(row.capabilities) ? row.capabilities : [],
+    inputModalities: Array.isArray(metadata.inputModalities) ? metadata.inputModalities : [],
+    outputModalities: Array.isArray(metadata.outputModalities) ? metadata.outputModalities : [],
     inputTokenLimit: row.input_token_limit == null ? null : Number(row.input_token_limit),
     outputTokenLimit: row.output_token_limit == null ? null : Number(row.output_token_limit),
     metadata,
@@ -41,20 +53,40 @@ function createModelLifecycle({
 
   const failures = new Map();
 
+  function resolve(ref, provider = null) {
+    if (!ref) return null;
+    if (typeof ref === 'object') {
+      if (ref.routeKey) return catalog.get(ref.routeKey);
+      if (ref.provider && (ref.modelId || ref.id)) {
+        return catalog.get(ref.modelId || ref.id, ref.provider);
+      }
+    }
+    return catalog.get(ref, provider);
+  }
+
   function modelKey(model) {
-    return model?.routeKey || `${model?.provider || AI_PROVIDERS.GOOGLE}::${model?.id || ''}`;
+    return model?.routeKey || (model?.provider && model?.id
+      ? providerModelKey(model.provider, model.id)
+      : null);
   }
 
   async function persist(model) {
     if (!store?.upsertCatalogModel || !model) return null;
-    // The existing table column is named supported_thinking. Keep that schema
-    // stable while translating the neutral runtime field only at persistence.
+    const routeKey = modelKey(model);
+    // The database still calls this column model_id. Persist the composite
+    // route identity there so different providers can never collide, while
+    // preserving the existing production schema during this cleanup.
     return store.upsertCatalogModel({
       ...model,
+      id: routeKey,
       supportedThinking: model.supportedReasoning || [],
       metadata: {
         ...(model.metadata || {}),
         provider: model.provider,
+        modelId: model.id,
+        routeKey,
+        inputModalities: [...(model.inputModalities || [])],
+        outputModalities: [...(model.outputModalities || [])],
       },
     });
   }
@@ -64,10 +96,6 @@ function createModelLifecycle({
     const rows = await store.loadCatalogModels();
     for (const row of rows || []) catalog.upsert(rowToModel(row));
     return rows?.length || 0;
-  }
-
-  function resolve(ref, provider = null) {
-    return catalog.get(ref, provider);
   }
 
   function isAutoPromoted(ref, provider = null) {
@@ -90,8 +118,8 @@ function createModelLifecycle({
     return merged;
   }
 
-  async function markQualifying(modelId, provider = AI_PROVIDERS.GOOGLE) {
-    const current = catalog.get(modelId, provider);
+  async function markQualifying(ref, provider = null) {
+    const current = resolve(ref, provider);
     if (!current) return null;
     const next = catalog.upsert({
       ...current,
@@ -105,13 +133,13 @@ function createModelLifecycle({
     return next;
   }
 
-  async function approve(modelId, {
-    provider = AI_PROVIDERS.GOOGLE,
+  async function approve(ref, {
+    provider = null,
     supportedReasoning,
     capabilities,
     qualification = {},
   } = {}) {
-    const current = catalog.get(modelId, provider);
+    const current = resolve(ref, provider);
     if (!current) return null;
     const now = new Date();
     const next = catalog.upsert({
@@ -133,8 +161,8 @@ function createModelLifecycle({
     return next;
   }
 
-  async function deny(modelId, reason, provider = AI_PROVIDERS.GOOGLE) {
-    const current = catalog.get(modelId, provider);
+  async function deny(ref, reason, provider = null) {
+    const current = resolve(ref, provider);
     if (!current) return null;
     const next = catalog.upsert({
       ...current,
@@ -149,8 +177,8 @@ function createModelLifecycle({
     return next;
   }
 
-  async function suspend(modelId, reason, provider = AI_PROVIDERS.GOOGLE) {
-    const current = catalog.get(modelId, provider);
+  async function suspend(ref, reason, provider = null) {
+    const current = resolve(ref, provider);
     if (!current) return null;
     const now = new Date();
     const next = catalog.upsert({
@@ -166,16 +194,17 @@ function createModelLifecycle({
     });
     failures.delete(modelKey(next));
     await persist(next);
-    logger?.warn?.('[KIWI AI] model suspended', {
+    logger?.warn?.('[KIWI AI] model route suspended', {
       provider: next.provider,
       modelId: next.id,
+      routeKey: next.routeKey,
       reason,
     });
     return next;
   }
 
-  async function resume(modelId, reason = 'manual suspension cleared', provider = AI_PROVIDERS.GOOGLE) {
-    const current = catalog.get(modelId, provider);
+  async function resume(ref, reason = 'manual suspension cleared', provider = null) {
+    const current = resolve(ref, provider);
     if (!current || current.status !== MODEL_STATUS.SUSPENDED) return current;
 
     const resumeStatus = current.metadata?.preSuspendStatus || MODEL_STATUS.APPROVED;
@@ -203,20 +232,20 @@ function createModelLifecycle({
     return recent;
   }
 
-  async function recordSuccess(modelId, provider = AI_PROVIDERS.GOOGLE) {
-    const current = catalog.get(modelId, provider);
+  async function recordSuccess(ref, provider = null) {
+    const current = resolve(ref, provider);
     if (!current?.metadata?.autoPromoted) return { suspended: false };
     failures.delete(modelKey(current));
     return { suspended: false };
   }
 
-  async function recordFailure(modelId, error, provider = AI_PROVIDERS.GOOGLE) {
-    const current = catalog.get(modelId, provider);
+  async function recordFailure(ref, error, provider = null) {
+    const current = resolve(ref, provider);
     if (!current?.metadata?.autoPromoted) return { suspended: false };
     if (!CIRCUIT_BREAKER_CODES.has(error?.code)) return { suspended: false };
 
     if (error.code === AI_ERROR_CODES.MODEL_NOT_FOUND || error.code === AI_ERROR_CODES.BAD_REQUEST) {
-      await suspend(modelId, `automatic rollback after ${error.code}`, provider);
+      await suspend(current, `automatic rollback after ${error.code}`);
       return { suspended: true };
     }
 
@@ -228,17 +257,16 @@ function createModelLifecycle({
 
     if (recent.length >= failureThreshold) {
       await suspend(
-        modelId,
-        `automatic rollback after ${recent.length} failures in ${Math.round(failureWindowMs / 60000)}m`,
-        provider
+        current,
+        `automatic rollback after ${recent.length} failures in ${Math.round(failureWindowMs / 60000)}m`
       );
       return { suspended: true };
     }
     return { suspended: false };
   }
 
-  async function reportValidationFailure(modelId, reason = 'task validation failed', provider = AI_PROVIDERS.GOOGLE) {
-    const current = catalog.get(modelId, provider);
+  async function reportValidationFailure(ref, reason = 'task validation failed', provider = null) {
+    const current = resolve(ref, provider);
     if (!current?.metadata?.autoPromoted) return { suspended: false };
     const key = modelKey(current);
     const now = Date.now();
@@ -247,7 +275,7 @@ function createModelLifecycle({
     failures.set(key, recent);
 
     if (recent.length >= Math.max(2, failureThreshold - 1)) {
-      await suspend(modelId, `automatic rollback: ${reason}`, provider);
+      await suspend(current, `automatic rollback: ${reason}`);
       return { suspended: true };
     }
     return { suspended: false };
@@ -270,6 +298,7 @@ function createModelLifecycle({
 
 module.exports = {
   CIRCUIT_BREAKER_CODES,
+  storedModelIdentity,
   rowToModel,
   createModelLifecycle,
 };
