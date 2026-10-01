@@ -63,6 +63,8 @@ const TEACHER_VOICE_PROFILES = Object.freeze({
     providerVoice: 'hannah',
     language: 'en',
     responseFormat: 'wav',
+    systemOwned: true,
+    immutable: true,
   }),
   KIWI_TEACHER_EN_ALT: Object.freeze({
     id: 'KIWI_TEACHER_EN_ALT',
@@ -71,6 +73,8 @@ const TEACHER_VOICE_PROFILES = Object.freeze({
     providerVoice: 'daniel',
     language: 'en',
     responseFormat: 'wav',
+    systemOwned: true,
+    immutable: true,
   }),
   KIWI_TEACHER_AR_SA_PRIMARY: Object.freeze({
     id: 'KIWI_TEACHER_AR_SA_PRIMARY',
@@ -79,16 +83,21 @@ const TEACHER_VOICE_PROFILES = Object.freeze({
     providerVoice: 'noura',
     language: 'ar-SA',
     responseFormat: 'wav',
+    systemOwned: true,
+    immutable: true,
   }),
 });
 
-function resolveTeacherVoice(voiceId, env = process.env) {
-  const requested = String(
-    voiceId ||
-    env?.AI_TEACHER_VOICE_ID ||
-    'KIWI_TEACHER_EN_PRIMARY'
-  ).trim();
-  return TEACHER_VOICE_PROFILES[requested] || null;
+function configuredTeacherVoiceId(env = process.env) {
+  return String(env?.AI_TEACHER_VOICE_ID || 'KIWI_TEACHER_EN_PRIMARY').trim();
+}
+
+function resolveTeacherVoice(_requestedVoiceId = null, env = process.env) {
+  // Teacher-mode voice identity is system-owned. Feature/user input cannot
+  // select a different voice; only deployment configuration may choose the
+  // active KIWI profile. This keeps the Teacher Identity stable across calls.
+  const configured = configuredTeacherVoiceId(env);
+  return TEACHER_VOICE_PROFILES[configured] || null;
 }
 
 module.exports = {
@@ -96,5 +105,6 @@ module.exports = {
   VISION_ROUTES,
   ORPHEUS_MODELS,
   TEACHER_VOICE_PROFILES,
+  configuredTeacherVoiceId,
   resolveTeacherVoice,
 };
