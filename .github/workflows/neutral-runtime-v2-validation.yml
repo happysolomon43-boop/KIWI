@@ -10,31 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  discover-ai-tests:
+  ai-diagnostics:
     runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.tests.outputs.matrix }}
-    steps:
-      - name: Checkout Branch B
-        uses: actions/checkout@v4
-
-      - id: tests
-        name: Discover AI test files
-        shell: bash
-        run: |
-          matrix=$(find tests/ai -type f -name '*.test.js' -print | sort | jq -R -s -c 'split("\n")[:-1]')
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "$matrix" | jq -r '.[]'
-
-  ai-test-file:
-    needs: discover-ai-tests
-    name: AI — ${{ matrix.file }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        file: ${{ fromJSON(needs.discover-ai-tests.outputs.matrix) }}
+    timeout-minutes: 20
     steps:
       - name: Checkout Branch B
         uses: actions/checkout@v4
@@ -47,8 +25,53 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
 
-      - name: Run ${{ matrix.file }}
-        run: node --test "${{ matrix.file }}"
+      - name: Run AI tests and capture exact failures
+        id: ai
+        shell: bash
+        run: |
+          set +e
+          : > neutral-runtime-ai-diagnostics.txt
+          failed=0
+          passed=0
+          total=0
+          while IFS= read -r file; do
+            total=$((total + 1))
+            tmp=$(mktemp)
+            node --test "$file" >"$tmp" 2>&1
+            code=$?
+            if [ "$code" -eq 0 ]; then
+              passed=$((passed + 1))
+            else
+              failed=$((failed + 1))
+              {
+                echo
+                echo "================================================================================"
+                echo "FAILED: $file"
+                echo "================================================================================"
+                cat "$tmp"
+              } >> neutral-runtime-ai-diagnostics.txt
+            fi
+            rm -f "$tmp"
+          done < <(find tests/ai -type f -name '*.test.js' -print | sort)
+          {
+            echo
+            echo "================================================================================"
+            echo "SUMMARY: total=$total passed=$passed failed=$failed"
+            echo "================================================================================"
+          } >> neutral-runtime-ai-diagnostics.txt
+          cat neutral-runtime-ai-diagnostics.txt
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload AI diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neutral-runtime-ai-diagnostics
+          path: neutral-runtime-ai-diagnostics.txt
+          if-no-files-found: error
+          retention-days: 2
 
   syntax:
     runs-on: ubuntu-latest
