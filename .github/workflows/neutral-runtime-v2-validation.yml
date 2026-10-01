@@ -17,6 +17,20 @@ jobs:
       - name: Checkout Branch B
         uses: actions/checkout@v4
 
+      - name: Capture neutral runtime source snapshot
+        shell: bash
+        run: |
+          tar -czf neutral-runtime-source-snapshot.tgz services/ai tests/ai scripts index.js package.json package-lock.json 2>/dev/null || \
+            tar -czf neutral-runtime-source-snapshot.tgz services/ai tests/ai scripts index.js package.json
+
+      - name: Upload neutral runtime source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: neutral-runtime-source-snapshot
+          path: neutral-runtime-source-snapshot.tgz
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
