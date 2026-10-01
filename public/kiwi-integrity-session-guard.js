@@ -3,19 +3,19 @@
   if(global.KIWIIntegritySessionGuard)return;
   const state={active:null,listeners:[],heartbeat:null,lastHiddenAt:null,deviceRef:null,onState:null,onWarning:null,onLock:null};
   const uid=(prefix='ig')=>`${prefix}-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
-  function apiBase(){const configured=global.KIWI_RUNTIME_CONFIG?.apiBase||global.KIWI_API_BASE||'';return String(configured||'').replace(/\/$/,'');}
-  function authHeaders(){const token=localStorage.getItem('kiwi_token')||localStorage.getItem('token')||sessionStorage.getItem('kiwi_token')||'';return token?{Authorization:`Bearer ${token}`}:{ };}
+  function apiBase(){const configured=global.KIWI_RUNTIME_CONFIG?.apiBase||global.KIWI_API_BASE||global.API_BASE_URL||'';return String(configured||'').replace(/\/$/,'');}
+  function authHeaders(){const token=localStorage.getItem('kiwi_auth_token')||localStorage.getItem('kiwi_token')||localStorage.getItem('token')||sessionStorage.getItem('kiwi_token')||'';return token?{Authorization:`Bearer ${token}`}:{ };}
   async function request(path,{method='GET',body=null,keepalive=false}={}){
-    if(global.KIWI_API_CLIENT?.kiwiApiRequest)return global.KIWI_API_CLIENT.kiwiApiRequest(path,{method,body,keepalive});
+    if(global.KIWI_API_CLIENT?.kiwiApiRequest&&!keepalive)return global.KIWI_API_CLIENT.kiwiApiRequest(path,{method,body});
     const res=await fetch(`${apiBase()}${path}`,{method,headers:{'Content-Type':'application/json',...authHeaders()},body:body==null?undefined:JSON.stringify(body),credentials:'include',keepalive});
     const payload=await res.json().catch(()=>({}));if(!res.ok){const error=new Error(payload.error||`Request failed (${res.status})`);error.code=payload.code;throw error;}return payload;
   }
   function notify(snapshot){state.active=snapshot;if(typeof state.onState==='function')state.onState(snapshot);if(snapshot?.action==='WARN'&&typeof state.onWarning==='function')state.onWarning(snapshot);if((snapshot?.action==='LOCK'||snapshot?.status==='LOCKED')&&typeof state.onLock==='function')state.onLock(snapshot);global.dispatchEvent(new CustomEvent('kiwi:integrity-session-state',{detail:snapshot}));}
-  async function send(kind,metadata={}){if(!state.active?.sessionId||state.active.status==='LOCKED'||state.active.status==='CLOSED')return state.active;const observedAt=new Date().toISOString();const durationMs=kind==='VISIBILITY_VISIBLE'&&state.lastHiddenAt?Math.max(0,Date.now()-state.lastHiddenAt):0;try{const snapshot=await request(`/api/teaching/integrity/sessions/${encodeURIComponent(state.active.sessionId)}/events`,{method:'POST',body:{kind,observedAt,durationMs,clientEventId:uid('evt'),metadata}});notify(snapshot);return snapshot;}catch(error){global.dispatchEvent(new CustomEvent('kiwi:integrity-session-error',{detail:{code:error.code||'CLIENT_EVENT_FAILED',message:error.message}}));return state.active;}}
+  async function send(kind,metadata={}){if(!state.active?.sessionId||state.active.status==='LOCKED'||state.active.status==='CLOSED')return state.active;const observedAt=new Date().toISOString();const durationMs=kind==='VISIBILITY_VISIBLE'&&state.lastHiddenAt?Math.max(0,Date.now()-state.lastHiddenAt):0,keepalive=kind==='PAGEHIDE'||kind==='NAVIGATION_AWAY';try{const snapshot=await request(`/api/teaching/integrity/sessions/${encodeURIComponent(state.active.sessionId)}/events`,{method:'POST',body:{kind,observedAt,durationMs,clientEventId:uid('evt'),metadata},keepalive});notify(snapshot);return snapshot;}catch(error){global.dispatchEvent(new CustomEvent('kiwi:integrity-session-error',{detail:{code:error.code||'CLIENT_EVENT_FAILED',message:error.message}}));return state.active;}}
   function bind(target,event,handler,options){target.addEventListener(event,handler,options);state.listeners.push(()=>target.removeEventListener(event,handler,options));}
   function installListeners({requireFullscreen=false}={}){
     const onVisibility=()=>{if(document.visibilityState==='hidden'){state.lastHiddenAt=Date.now();send('VISIBILITY_HIDDEN',{visibilityState:'hidden'});}else{send('VISIBILITY_VISIBLE',{visibilityState:'visible'});state.lastHiddenAt=null;}};
-    const onPageHide=()=>send('PAGEHIDE',{persisted:false});
+    const onPageHide=(event)=>send('PAGEHIDE',{persisted:Boolean(event.persisted)});
     const onPageShow=(event)=>send('PAGESHOW',{persisted:Boolean(event.persisted)});
     const onOffline=()=>send('NETWORK_LOST',{online:false});
     const onOnline=()=>send('NETWORK_RESTORED',{online:true});
