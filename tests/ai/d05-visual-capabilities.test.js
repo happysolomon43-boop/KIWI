@@ -8,6 +8,8 @@ const {
   AI_VISUAL_CAPABILITIES,
   VISUAL_AUTHORITY,
   MAX_IMAGE_PROMPT_CHARACTERS,
+  DEFAULT_IMAGE_GENERATION_STEPS,
+  MAX_IMAGE_GENERATION_STEPS,
   SUPPORTED_DIAGRAM_TYPES,
   createImageGenerationRequest,
   inspectGeneratedImage,
@@ -118,16 +120,23 @@ test('D05 image request is illustrative-only, bounded, and provider-neutral', ()
   const request = createImageGenerationRequest({
     prompt: 'An educational illustration of osmosis across a cell membrane',
     altText: 'Water moving across a cell membrane by osmosis',
-    steps: 8,
     seed: 42,
   });
   assert.equal(request.capability, AI_VISUAL_CAPABILITIES.IMAGE_GENERATION);
   assert.equal(request.authority, VISUAL_AUTHORITY.ILLUSTRATIVE);
-  assert.equal(request.steps, 8);
+  assert.equal(request.steps, 33);
+  assert.equal(request.steps, DEFAULT_IMAGE_GENERATION_STEPS);
+  assert.equal(IMAGE_GENERATION_ROUTE.defaultSteps, 33);
+  assert.equal(IMAGE_GENERATION_ROUTE.maxSteps, MAX_IMAGE_GENERATION_STEPS);
+  assert.equal(IMAGE_GENERATION_ROUTE.modelId, '@cf/black-forest-labs/flux-2-dev');
   assert.equal(request.seed, 42);
   assert.equal(Object.prototype.hasOwnProperty.call(request, 'modelId'), false);
   assert.throws(
     () => createImageGenerationRequest({ prompt: 'x'.repeat(MAX_IMAGE_PROMPT_CHARACTERS + 1) }),
+    (error) => error.code === AI_ERROR_CODES.BAD_REQUEST
+  );
+  assert.throws(
+    () => createImageGenerationRequest({ prompt: 'Too many steps', steps: MAX_IMAGE_GENERATION_STEPS + 1 }),
     (error) => error.code === AI_ERROR_CODES.BAD_REQUEST
   );
 });
@@ -149,7 +158,7 @@ test('D05 generated image validation checks base64, MIME signature, and dimensio
   );
 });
 
-test('D05 Cloudflare transport uses account/model endpoint and direct FLUX request body', async () => {
+test('D05 Cloudflare transport uses FLUX.2 Dev multipart form data with 33 inference steps', async () => {
   const calls = [];
   const transport = createCloudflareImageTransport({
     endpointBase: 'https://api.cloudflare.test/client/v4',
@@ -158,7 +167,7 @@ test('D05 Cloudflare transport uses account/model endpoint and direct FLUX reque
       return response(200, { success: true, result: { image: jpegBase64() } });
     },
   });
-  const request = createImageGenerationRequest({ prompt: 'A labelled-looking but text-free leaf illustration', steps: 4, seed: 7 });
+  const request = createImageGenerationRequest({ prompt: 'A labelled-looking but text-free leaf illustration', seed: 7 });
   const result = await transport.generate({
     accountId: '0123456789abcdef0123456789abcdef',
     apiToken: 'top-secret-token',
@@ -168,9 +177,13 @@ test('D05 Cloudflare transport uses account/model endpoint and direct FLUX reque
   });
   assert.equal(result.imageBase64, jpegBase64());
   assert.equal(calls.length, 1);
-  assert.match(calls[0].url, /\/accounts\/0123456789abcdef0123456789abcdef\/ai\/run\/@cf\/black-forest-labs\/flux-1-schnell$/);
+  assert.match(calls[0].url, /\/accounts\/0123456789abcdef0123456789abcdef\/ai\/run\/@cf\/black-forest-labs\/flux-2-dev$/);
   assert.equal(calls[0].options.headers.Authorization, 'Bearer top-secret-token');
-  assert.deepEqual(JSON.parse(calls[0].options.body), { prompt: request.prompt, steps: 4, seed: 7 });
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[0].options.headers, 'Content-Type'), false);
+  assert.ok(calls[0].options.body instanceof FormData);
+  assert.equal(calls[0].options.body.get('prompt'), request.prompt);
+  assert.equal(calls[0].options.body.get('steps'), '33');
+  assert.equal(calls[0].options.body.get('seed'), '7');
 });
 
 test('D05 Cloudflare account quota is classified account-wide and must not trigger token sweeping', async () => {
@@ -193,6 +206,7 @@ test('D05 Cloudflare account quota is classified account-wide and must not trigg
     (error) => error.code === AI_ERROR_CODES.RATE_LIMIT_RPD
   );
   assert.equal(calls.cloudflare.length, 1);
+  assert.equal(calls.cloudflare[0].request.steps, 33);
   assert.equal(pool.disabled.size, 0);
 });
 
@@ -214,9 +228,11 @@ test('D05 Cloudflare auth failure rotates token, then generated-image cache avoi
   });
   const first = await runtime.generateIllustrativeImage({ prompt: 'A clean illustration of a mitochondrion', seed: 9 });
   assert.equal(first.provider, AI_PROVIDERS.CLOUDFLARE);
+  assert.equal(first.modelId, '@cf/black-forest-labs/flux-2-dev');
   assert.equal(first.authority, VISUAL_AUTHORITY.ILLUSTRATIVE);
   assert.equal(first.cacheHit, false);
   assert.equal(calls.cloudflare.length, 2);
+  assert.equal(calls.cloudflare[0].request.steps, 33);
   assert.ok(pool.disabled.has('cf-01'));
 
   const second = await runtime.generateIllustrativeImage({ prompt: 'A clean illustration of a mitochondrion', seed: 9 });
@@ -319,6 +335,8 @@ test('D05 factory keeps FLUX and Kroki configuration independent', () => {
   });
   const status = runtime.status();
   assert.equal(status.imageGeneration.configured, true);
+  assert.equal(status.imageGeneration.modelId, '@cf/black-forest-labs/flux-2-dev');
+  assert.equal(status.imageGeneration.defaultSteps, 33);
   assert.equal(status.diagramRender.configured, false);
 });
 
