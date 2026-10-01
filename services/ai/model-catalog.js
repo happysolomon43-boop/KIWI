@@ -1,6 +1,6 @@
 'use strict';
 
-const { AI_PROVIDERS, assertProviderId } = require('./providers');
+const { AI_PROVIDERS, assertProviderId, providerModelKey } = require('./providers');
 
 const MODEL_FAMILIES = Object.freeze({
   FLASH: 'FLASH',
@@ -28,30 +28,42 @@ const MODEL_QUALITY_TIERS = Object.freeze({
   HIGH_STAKES: 'HIGH_STAKES',
 });
 
-const MODEL_QUALITY_RANK = Object.freeze({
-  [MODEL_QUALITY_TIERS.STANDARD]: 1,
-  [MODEL_QUALITY_TIERS.PREMIUM]: 2,
-  [MODEL_QUALITY_TIERS.HIGH_STAKES]: 3,
+const MODEL_IDS = Object.freeze({
+  GEMINI_3_8_FLASH: 'gemini-3.8-flash',
+  GEMINI_3_5_FLASH: 'gemini-3.5-flash',
+  GEMINI_3_5_FLASH_LITE: 'gemini-3.5-flash-lite',
+  GEMINI_3_1_FLASH_LITE: 'gemini-3.1-flash-lite',
+  QWEN_3_8_27B: 'qwen/qwen3.8-27b',
+  ORPHEUS_ENGLISH: 'canopylabs/orpheus-v1-english',
+  ORPHEUS_ARABIC_SAUDI: 'canopylabs/orpheus-arabic-saudi',
+});
+
+const MODEL_INPUT_MODALITIES = Object.freeze({
+  TEXT: 'TEXT',
+  IMAGE: 'IMAGE',
+});
+
+const MODEL_OUTPUT_MODALITIES = Object.freeze({
+  TEXT: 'TEXT',
+  AUDIO: 'AUDIO',
 });
 
 function modelVersionRank(modelId) {
   const match = String(modelId || '').match(/^gemini-(\d+)\.(\d+)(?:\.(\d+))?-(?:flash|flash-lite)$/i);
   if (!match) return 0;
-  const major = Number(match[1]) || 0;
-  const minor = Number(match[2]) || 0;
-  const patch = Number(match[3]) || 0;
-  return (major * 1000000) + (minor * 1000) + patch;
+  return ((Number(match[1]) || 0) * 1000000) +
+    ((Number(match[2]) || 0) * 1000) +
+    (Number(match[3]) || 0);
 }
 
-const COMMON_TEXT_CAPABILITIES = Object.freeze([
+const GOOGLE_INFERENCE_CAPABILITIES = Object.freeze([
   'generateContent',
   'thinking',
   'longOutput',
-  'vision',
   'structuredOutput',
 ]);
 
-const GROQ_TEXT_CAPABILITIES = Object.freeze([
+const QWEN_INFERENCE_CAPABILITIES = Object.freeze([
   'generateContent',
   'thinking',
   'longOutput',
@@ -59,241 +71,123 @@ const GROQ_TEXT_CAPABILITIES = Object.freeze([
   'jsonSchema',
 ]);
 
-const GOOGLE_MODEL_IDS = Object.freeze({
-  GEMINI_3_8_FLASH: 'gemini-3.8-flash',
-});
-
-const GROQ_MODEL_IDS = Object.freeze({
-  GPT_OSS_120B: 'openai/gpt-oss-120b',
-  GPT_OSS_20B: 'openai/gpt-oss-20b',
-  QWEN_3_8_27B: 'qwen/qwen3.8-27b',
-});
-
-const GROQ_SPEECH_MODEL_IDS = Object.freeze({
-  ORPHEUS_ENGLISH: 'canopylabs/orpheus-v1-english',
-  ORPHEUS_ARABIC_SAUDI: 'canopylabs/orpheus-arabic-saudi',
-});
-
-const GENERAL_EMERGENCY_FALLBACK_MODEL_ID = 'gemini-3.5-flash-lite';
+function googleModel({ id, family, qualityTier, supportedThinking }) {
+  return Object.freeze({
+    id,
+    provider: AI_PROVIDERS.GOOGLE,
+    family,
+    channel: MODEL_CHANNELS.STABLE,
+    status: MODEL_STATUS.APPROVED,
+    rank: modelVersionRank(id),
+    qualityTier,
+    productionEligible: true,
+    supportedThinking: Object.freeze([...supportedThinking]),
+    capabilities: GOOGLE_INFERENCE_CAPABILITIES,
+    inputModalities: Object.freeze([MODEL_INPUT_MODALITIES.TEXT, MODEL_INPUT_MODALITIES.IMAGE]),
+    outputModalities: Object.freeze([MODEL_OUTPUT_MODALITIES.TEXT]),
+    inputTokenLimit: 1048576,
+    outputTokenLimit: 65536,
+    metadata: Object.freeze({ provider: AI_PROVIDERS.GOOGLE }),
+  });
+}
 
 const DEFAULT_MODEL_CATALOG = Object.freeze([
-  Object.freeze({
-    id: GOOGLE_MODEL_IDS.GEMINI_3_8_FLASH,
-    provider: AI_PROVIDERS.GOOGLE,
-    family: MODEL_FAMILIES.FLASH,
-    channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.APPROVED,
-    rank: modelVersionRank(GOOGLE_MODEL_IDS.GEMINI_3_8_FLASH),
-    qualityTier: MODEL_QUALITY_TIERS.HIGH_STAKES,
-    productionEligible: true,
-    supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
-    capabilities: COMMON_TEXT_CAPABILITIES,
-    inputTokenLimit: 1048576,
-    outputTokenLimit: 65536,
-  }),
-  Object.freeze({
-    id: 'gemini-3.7-flash',
-    provider: AI_PROVIDERS.GOOGLE,
-    family: MODEL_FAMILIES.FLASH,
-    channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.APPROVED,
-    rank: modelVersionRank('gemini-3.7-flash'),
-    qualityTier: MODEL_QUALITY_TIERS.HIGH_STAKES,
-    productionEligible: true,
-    supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
-    capabilities: COMMON_TEXT_CAPABILITIES,
-    inputTokenLimit: 1048576,
-    outputTokenLimit: 65536,
-  }),
-  Object.freeze({
-    id: 'gemini-3.6-flash',
-    provider: AI_PROVIDERS.GOOGLE,
-    family: MODEL_FAMILIES.FLASH,
-    channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.APPROVED,
-    rank: modelVersionRank('gemini-3.6-flash'),
-    qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
-    productionEligible: true,
-    supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
-    capabilities: COMMON_TEXT_CAPABILITIES,
-    inputTokenLimit: 1048576,
-    outputTokenLimit: 65536,
-  }),
-  Object.freeze({
-    id: 'gemini-3.5-flash',
-    provider: AI_PROVIDERS.GOOGLE,
-    family: MODEL_FAMILIES.FLASH,
-    channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.APPROVED,
-    rank: modelVersionRank('gemini-3.5-flash'),
-    qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
-    productionEligible: true,
-    supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
-    capabilities: COMMON_TEXT_CAPABILITIES,
-    inputTokenLimit: 1048576,
-    outputTokenLimit: 65536,
-  }),
-  Object.freeze({
-    id: 'gemini-3.5-flash-lite',
-    provider: AI_PROVIDERS.GOOGLE,
+  googleModel({
+    id: MODEL_IDS.GEMINI_3_5_FLASH_LITE,
     family: MODEL_FAMILIES.FLASH_LITE,
-    channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.APPROVED,
-    rank: modelVersionRank('gemini-3.5-flash-lite'),
     qualityTier: MODEL_QUALITY_TIERS.STANDARD,
-    productionEligible: true,
-    supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
-    capabilities: COMMON_TEXT_CAPABILITIES,
-    inputTokenLimit: 1048576,
-    outputTokenLimit: 65536,
+    supportedThinking: ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'],
   }),
-  Object.freeze({
-    id: 'gemini-3.1-flash-lite',
-    provider: AI_PROVIDERS.GOOGLE,
+  googleModel({
+    id: MODEL_IDS.GEMINI_3_1_FLASH_LITE,
     family: MODEL_FAMILIES.FLASH_LITE,
-    channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.APPROVED,
-    rank: modelVersionRank('gemini-3.1-flash-lite'),
     qualityTier: MODEL_QUALITY_TIERS.STANDARD,
-    productionEligible: true,
-    supportedThinking: Object.freeze(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']),
-    capabilities: COMMON_TEXT_CAPABILITIES,
-    inputTokenLimit: 1048576,
-    outputTokenLimit: 65536,
-  }),
-]);
-
-// Models in this catalog are known to the production runtime. A model can still
-// be productionEligible:false when it is intentionally limited to an explicit
-// route override (for example a controlled preview qualification experiment).
-const GROQ_PRODUCTION_MODEL_CATALOG = Object.freeze([
-  Object.freeze({
-    id: GROQ_MODEL_IDS.GPT_OSS_120B,
-    provider: AI_PROVIDERS.GROQ,
-    family: null,
-    channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.APPROVED,
-    // Rank is an affinity ordering hint, not the provider's parameter count.
-    // Keep the Groq-first premium primary above the current Google fallback
-    // ranks so a successful cross-provider fallback can become the workflow's
-    // lower affinity ceiling instead of bouncing back to Groq on the next pass.
-    rank: 5000000,
-    qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
-    productionEligible: true,
-    supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
-    capabilities: GROQ_TEXT_CAPABILITIES,
-    inputModalities: Object.freeze(['TEXT']),
-    outputModalities: Object.freeze(['TEXT']),
-    inputTokenLimit: 131072,
-    outputTokenLimit: 65536,
-    structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
-    reasoningControl: 'reasoning_effort',
-    metadata: Object.freeze({
-      providerReleaseStatus: 'ACTIVE',
-      productionLane: 'AIM_D03_TEXT',
-    }),
+    supportedThinking: ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'],
   }),
   Object.freeze({
-    id: GROQ_MODEL_IDS.GPT_OSS_20B,
-    provider: AI_PROVIDERS.GROQ,
-    family: null,
-    channel: MODEL_CHANNELS.STABLE,
-    status: MODEL_STATUS.APPROVED,
-    rank: 4900000,
-    qualityTier: MODEL_QUALITY_TIERS.STANDARD,
-    productionEligible: true,
-    supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
-    capabilities: GROQ_TEXT_CAPABILITIES,
-    inputModalities: Object.freeze(['TEXT']),
-    outputModalities: Object.freeze(['TEXT']),
-    inputTokenLimit: 131072,
-    outputTokenLimit: 65536,
-    structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
-    reasoningControl: 'reasoning_effort',
-    metadata: Object.freeze({
-      providerReleaseStatus: 'ACTIVE',
-      productionLane: 'AIM_D03_TEXT',
-    }),
-  }),
-  Object.freeze({
-    id: GROQ_MODEL_IDS.QWEN_3_8_27B,
+    id: MODEL_IDS.QWEN_3_8_27B,
     provider: AI_PROVIDERS.GROQ,
     family: null,
     channel: MODEL_CHANNELS.PREVIEW,
     status: MODEL_STATUS.APPROVED,
-    // Controlled preview only. The explicit Main CBT route override may admit
-    // this model; ordinary Groq routing must continue to ignore it.
-    rank: 5100000,
+    rank: 1,
     qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
-    productionEligible: false,
+    productionEligible: true,
     supportedThinking: Object.freeze(['LOW', 'MEDIUM', 'HIGH']),
-    // AIM-D04 owns neutral multimodal execution while this production catalog
-    // remains the single source of provider model identity.
-    capabilities: GROQ_TEXT_CAPABILITIES,
-    inputModalities: Object.freeze(['TEXT', 'IMAGE']),
-    outputModalities: Object.freeze(['TEXT']),
+    capabilities: QWEN_INFERENCE_CAPABILITIES,
+    // Qwen is deliberately TEXT-only in active routing. Image-bearing requests
+    // therefore remain on Gemini through ordinary capability filtering; there
+    // is no separate vision route or provider policy.
+    inputModalities: Object.freeze([MODEL_INPUT_MODALITIES.TEXT]),
+    outputModalities: Object.freeze([MODEL_OUTPUT_MODALITIES.TEXT]),
     inputTokenLimit: 131072,
     outputTokenLimit: 16384,
-    structuredOutputModes: Object.freeze(['JSON_OBJECT', 'JSON_SCHEMA_STRICT']),
-    reasoningControl: 'reasoning_effort',
-    metadata: Object.freeze({
-      providerReleaseStatus: 'PREVIEW',
-      productionLane: 'MAIN_CBT_CONTROLLED_TEST',
-      controlledRouteOnly: true,
-      visionRuntimeQualified: false,
-    }),
+    metadata: Object.freeze({ provider: AI_PROVIDERS.GROQ }),
+  }),
+  googleModel({
+    id: MODEL_IDS.GEMINI_3_8_FLASH,
+    family: MODEL_FAMILIES.FLASH,
+    qualityTier: MODEL_QUALITY_TIERS.HIGH_STAKES,
+    supportedThinking: ['LOW', 'MEDIUM', 'HIGH'],
+  }),
+  googleModel({
+    id: MODEL_IDS.GEMINI_3_5_FLASH,
+    family: MODEL_FAMILIES.FLASH,
+    qualityTier: MODEL_QUALITY_TIERS.PREMIUM,
+    supportedThinking: ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'],
   }),
 ]);
 
-// D02's qualification catalog is a frozen historical contract for the two
-// GPT-OSS models. Route-scoped preview experiments such as Qwen 3.8 must not
-// silently expand that catalog or inherit D02 qualification semantics.
-const GROQ_QUALIFICATION_MODEL_CATALOG = Object.freeze(
-  GROQ_PRODUCTION_MODEL_CATALOG
-    .filter((model) => model.metadata?.controlledRouteOnly !== true)
-    .map((model) => Object.freeze({
-      ...model,
-      status: MODEL_STATUS.QUALIFYING,
-      productionEligible: false,
-      qualityTier: null,
-      metadata: Object.freeze({
-        ...(model.metadata || {}),
-        qualificationLane: 'AIM_D02_ISOLATED',
-      }),
-    }))
-);
-
-function _cloneModel(model) {
+function cloneModel(model) {
+  if (!model) return null;
   return {
     ...model,
-    provider: model.provider || AI_PROVIDERS.GOOGLE,
     supportedThinking: [...(model.supportedThinking || [])],
     capabilities: [...(model.capabilities || [])],
-    inputModalities: model.inputModalities ? [...model.inputModalities] : undefined,
-    outputModalities: model.outputModalities ? [...model.outputModalities] : undefined,
-    structuredOutputModes: model.structuredOutputModes
-      ? [...model.structuredOutputModes]
-      : undefined,
-    metadata: model.metadata ? { ...model.metadata } : undefined,
+    inputModalities: [...(model.inputModalities || [MODEL_INPUT_MODALITIES.TEXT])],
+    outputModalities: [...(model.outputModalities || [MODEL_OUTPUT_MODALITIES.TEXT])],
+    structuredOutputModes: model.structuredOutputModes ? [...model.structuredOutputModes] : undefined,
+    metadata: { ...(model.metadata || {}) },
   };
 }
 
-function _normalizeModel(model) {
+function normalizeModel(model) {
   if (!model?.id) throw new Error('AI model catalog entry requires id');
-  const provider = assertProviderId(model.provider || AI_PROVIDERS.GOOGLE);
-  return _cloneModel({ ...model, provider });
+  const provider = assertProviderId(model.provider || model.metadata?.provider || AI_PROVIDERS.GOOGLE);
+  return cloneModel({
+    ...model,
+    provider,
+    metadata: { ...(model.metadata || {}), provider },
+  });
 }
 
 function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
   const models = new Map();
-  for (const model of seedModels) {
-    const normalized = _normalizeModel(model);
-    models.set(normalized.id, normalized);
+  const idIndex = new Map();
+
+  function store(model) {
+    const normalized = normalizeModel(model);
+    const key = providerModelKey(normalized.provider, normalized.id);
+    models.set(key, normalized);
+    if (!idIndex.has(normalized.id)) idIndex.set(normalized.id, new Set());
+    idIndex.get(normalized.id).add(key);
+    return normalized;
   }
 
-  function get(modelId) {
-    const model = models.get(modelId);
-    return model ? _cloneModel(model) : null;
+  for (const model of seedModels) store(model);
+
+  function get(modelOrRef, provider = null) {
+    if (modelOrRef && typeof modelOrRef === 'object') {
+      const key = providerModelKey(modelOrRef.provider, modelOrRef.modelId || modelOrRef.id);
+      return cloneModel(models.get(key));
+    }
+    const id = String(modelOrRef || '').trim();
+    if (!id) return null;
+    if (provider) return cloneModel(models.get(providerModelKey(provider, id)));
+    if (id.includes('::') && models.has(id)) return cloneModel(models.get(id));
+    const keys = [...(idIndex.get(id) || [])];
+    if (keys.length !== 1) return null;
+    return cloneModel(models.get(keys[0]));
   }
 
   function list({
@@ -302,6 +196,8 @@ function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
     channel = null,
     status = null,
     requiredCapabilities = [],
+    requiredInputModalities = [],
+    productionEligible = null,
   } = {}) {
     const normalizedProvider = provider ? assertProviderId(provider) : null;
     return [...models.values()]
@@ -309,74 +205,74 @@ function createModelCatalog(seedModels = DEFAULT_MODEL_CATALOG) {
       .filter((model) => !family || model.family === family)
       .filter((model) => !channel || model.channel === channel)
       .filter((model) => !status || model.status === status)
-      .filter((model) => requiredCapabilities.every(
-        (capability) => model.capabilities.includes(capability)
-      ))
+      .filter((model) => productionEligible == null || Boolean(model.productionEligible) === Boolean(productionEligible))
+      .filter((model) => requiredCapabilities.every((capability) => model.capabilities.includes(capability)))
+      .filter((model) => requiredInputModalities.every((modality) => model.inputModalities.includes(modality)))
       .sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id))
-      .map(_cloneModel);
+      .map(cloneModel);
+  }
+
+  function latestApproved(family, { excludeIds = [] } = {}) {
+    const excluded = new Set(excludeIds);
+    return list({
+      family,
+      channel: MODEL_CHANNELS.STABLE,
+      status: MODEL_STATUS.APPROVED,
+      productionEligible: true,
+    }).find((model) => !excluded.has(model.id)) || null;
   }
 
   function upsert(model) {
     if (!model?.id) throw new Error('AI model catalog entry requires id');
-    const prior = models.get(model.id) || {};
-    const normalized = _normalizeModel({
-      ...prior,
-      ...model,
-      provider: model.provider || prior.provider || AI_PROVIDERS.GOOGLE,
-    });
-    models.set(normalized.id, normalized);
-    return get(normalized.id);
+    const provider = assertProviderId(model.provider || model.metadata?.provider || AI_PROVIDERS.GOOGLE);
+    const prior = get(model.id, provider) || {};
+    store({ ...prior, ...model, provider });
+    return get(model.id, provider);
   }
 
-  function setStatus(modelId, status) {
-    const current = models.get(modelId);
+  function setStatus(modelOrRef, status, provider = null) {
+    const current = get(modelOrRef, provider);
     if (!current) return null;
-    current.status = status;
-    return get(modelId);
+    return upsert({ ...current, status });
   }
 
-  return Object.freeze({ get, list, upsert, setStatus });
+  return Object.freeze({ get, list, latestApproved, upsert, setStatus });
 }
 
-function createQualificationModelCatalog() {
-  return createModelCatalog([
-    ...DEFAULT_MODEL_CATALOG,
-    ...GROQ_QUALIFICATION_MODEL_CATALOG,
-  ]);
+function modelMeetsCapabilities(model, capabilities = [], inputModalities = []) {
+  return Boolean(model) &&
+    capabilities.every((capability) => model.capabilities?.includes(capability)) &&
+    inputModalities.every((modality) => model.inputModalities?.includes(modality));
 }
 
-function qualityRank(tier) {
-  return MODEL_QUALITY_RANK[tier] || 0;
-}
-
-function modelMeetsQuality(model, minimumTier) {
-  if (!minimumTier) return true;
-  return qualityRank(model?.qualityTier) >= qualityRank(minimumTier);
-}
-
-function groqProductionModel(modelId) {
-  return GROQ_PRODUCTION_MODEL_CATALOG.find((model) => model.id === modelId) || null;
-}
+// Compatibility names retained only for non-routing consumers while they are
+// migrated. They point at the neutral identifiers and do not define routing.
+const GOOGLE_MODEL_IDS = Object.freeze({
+  GEMINI_3_8_FLASH: MODEL_IDS.GEMINI_3_8_FLASH,
+});
+const GROQ_MODEL_IDS = Object.freeze({
+  QWEN_3_8_27B: MODEL_IDS.QWEN_3_8_27B,
+});
+const GROQ_SPEECH_MODEL_IDS = Object.freeze({
+  ORPHEUS_ENGLISH: MODEL_IDS.ORPHEUS_ENGLISH,
+  ORPHEUS_ARABIC_SAUDI: MODEL_IDS.ORPHEUS_ARABIC_SAUDI,
+});
 
 module.exports = {
   MODEL_FAMILIES,
   MODEL_CHANNELS,
   MODEL_STATUS,
   MODEL_QUALITY_TIERS,
-  MODEL_QUALITY_RANK,
-  modelVersionRank,
-  qualityRank,
-  modelMeetsQuality,
-  COMMON_TEXT_CAPABILITIES,
-  GROQ_TEXT_CAPABILITIES,
+  MODEL_IDS,
+  MODEL_INPUT_MODALITIES,
+  MODEL_OUTPUT_MODALITIES,
+  GOOGLE_INFERENCE_CAPABILITIES,
+  QWEN_INFERENCE_CAPABILITIES,
+  DEFAULT_MODEL_CATALOG,
   GOOGLE_MODEL_IDS,
   GROQ_MODEL_IDS,
   GROQ_SPEECH_MODEL_IDS,
-  GENERAL_EMERGENCY_FALLBACK_MODEL_ID,
-  DEFAULT_MODEL_CATALOG,
-  GROQ_PRODUCTION_MODEL_CATALOG,
-  GROQ_QUALIFICATION_MODEL_CATALOG,
-  groqProductionModel,
+  modelVersionRank,
+  modelMeetsCapabilities,
   createModelCatalog,
-  createQualificationModelCatalog,
 };
