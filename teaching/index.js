@@ -16,6 +16,7 @@ const {
   createD13StudentKnowledgeRepository,
   createD14ClassroomRepository,
   createD15AttendanceRepository,
+  createD16AssignmentRepository,
 } = require('./repositories');
 const { createD14Service } = require('./d14/service');
 const { registerD14Runtime } = require('./d14/runtime');
@@ -34,6 +35,7 @@ const d12 = require('./d12');
 const d13 = require('./d13');
 const d14 = require('./d14');
 const d15 = require('./d15');
+const d16 = require('./d16');
 
 function createTeachingFoundation({
   env = process.env,
@@ -53,6 +55,7 @@ function createTeachingFoundation({
   d12PublishedEventRegistry = null,
   d13Intelligence = null,
   d13PublishedEventRegistry = null,
+  d16Intelligence = null,
 } = {}) {
   const config = createTeachingConfig(env);
   const subjectReader = createKiwiSubjectReader({ subjects: subjectSource });
@@ -87,12 +90,19 @@ function createTeachingFoundation({
     ? d09.createD09AttendanceRecoveryOwner({ query, withTransaction, randomUUID })
     : null;
 
-  // D15's repository is constructed before D10 so the formal Request lifecycle
-  // can delegate approved attendance-owned mutations transactionally to D15.
-  // D15's service is constructed only after D11 exists because D11 retains
-  // Lesson Controller/replanning authority.
+  // D15 and D16 repositories are constructed before D10 so D10 can retain
+  // formal Request authority while delegating approved target mutations to the
+  // authoritative Attendance/Work owners in the same transaction.
   const d15Repository = persistentDepsReady
     ? createD15AttendanceRepository({ query, withTransaction, randomUUID })
+    : null;
+  const d16Repository = persistentDepsReady
+    ? createD16AssignmentRepository({
+        query,
+        withTransaction,
+        randomUUID,
+        dueEventStore:d10RuntimePlatform?.eventStore || null,
+      })
     : null;
 
   const d10Repository = persistentDepsReady
@@ -106,6 +116,7 @@ function createTeachingFoundation({
         randomUUID,
         outboxStore:d10RuntimePlatform?.outboxStore || null,
         attendanceRequestOwner:d15Repository,
+        workRequestOwner:d16Repository,
       })
     : null;
   if (d10Service && d10RuntimePlatform?.eventRuntime) {
@@ -116,7 +127,7 @@ function createTeachingFoundation({
     });
   }
 
-  const d11Repository = persistentDepsReady
+  const d11RepositoryBase = persistentDepsReady
     ? createD11LessonControllerRepository({
         query,
         withTransaction,
@@ -124,6 +135,31 @@ function createTeachingFoundation({
         outboxStore:d10RuntimePlatform?.outboxStore || null,
       })
     : null;
+  const d11Repository = d11RepositoryBase && d16Repository
+    ? Object.freeze({
+        ...d11RepositoryBase,
+        getPlanningSignals: async (studentId,classRow) => {
+          const base = await d11RepositoryBase.getPlanningSignals(studentId,classRow);
+          try {
+            return Object.freeze({
+              ...base,
+              workSignals: await d16Repository.planningSignals(studentId,classRow.course_id),
+            });
+          } catch (error) {
+            return Object.freeze({
+              ...base,
+              workSignals:Object.freeze({
+                status:'D16_UNAVAILABLE',
+                signals:Object.freeze([]),
+                negative_inference_forbidden:true,
+                official_marks_included:false,
+                reason:error?.code || 'D16_WORK_OWNER_UNAVAILABLE',
+              }),
+            });
+          }
+        },
+      })
+    : d11RepositoryBase;
   const d11PreparationRepository = persistentDepsReady
     ? createPreparationRuntimeRepository({ query, withTransaction, randomUUID })
     : null;
@@ -203,6 +239,23 @@ function createTeachingFoundation({
     d13Runtime = d13.registerD13Runtime({ publishedEvents: d13PublishedEventRegistry, service: d13Service });
   }
 
+  const d16Service = d16Repository
+    ? d16.createD16Service({
+        repository:d16Repository,
+        intelligence:d16Intelligence,
+        d13Service,
+        randomUUID,
+      })
+    : null;
+  const d16Runtime = d16Service && d10RuntimePlatform?.eventRuntime
+    ? d16.registerD16Runtime({
+        publishedEvents:d11PublishedEventRegistry,
+        eventRuntime:d10RuntimePlatform.eventRuntime,
+        repository:d16Repository,
+        service:d16Service,
+      })
+    : null;
+
   const d14Repository = d11Repository && persistentDepsReady
     ? createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository})
     : null;
@@ -234,17 +287,14 @@ function createTeachingFoundation({
     service,
     d07: d07Service ? Object.freeze({ repository: d07Repository, service: d07Service }) : null,
     d08: d08Service ? Object.freeze({ repository: d08Repository, service: d08Service }) : null,
-    d09: d09Service ? Object.freeze({
-      repository: d09Repository,
-      service: d09Service,
-      attendanceRecoveryOwner:d09AttendanceRecoveryOwner,
-    }) : null,
+    d09: d09Service ? Object.freeze({ repository: d09Repository, service: d09Service, attendanceRecoveryOwner:d09AttendanceRecoveryOwner }) : null,
     d10: d10Service ? Object.freeze({ repository: d10Repository, service: d10Service }) : null,
     d11: d11Service ? Object.freeze({ repository: d11Repository, service: d11Service, runtime: d11Runtime }) : null,
     d12: d12Service ? Object.freeze({ repository: d12Repository, service: d12Service, runtime: d12Runtime }) : null,
     d13: d13Service ? Object.freeze({ repository: d13Repository, service: d13Service, runtime: d13Runtime }) : null,
     d14: d14Service ? Object.freeze({ repository: d14Repository, service: d14Service, runtime:d14Runtime }) : null,
     d15: d15Service ? Object.freeze({ repository:d15Repository, service:d15Service, runtime:d15Runtime }) : null,
+    d16: d16Service ? Object.freeze({ repository:d16Repository, service:d16Service, runtime:d16Runtime }) : null,
     policy,
   });
 }
@@ -264,4 +314,5 @@ module.exports = {
   d13,
   d14,
   d15,
+  d16,
 };
