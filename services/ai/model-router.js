@@ -180,6 +180,42 @@ function createModelRouter({
     );
   }
 
+  function explicitGoogleOverrideModels(taskId, task, requirement, legacy) {
+    const controlledOverride =
+      Array.isArray(requirement.allowedGoogleModelIds) &&
+      requirement.routeOverride?.scope === taskId &&
+      requirement.routeOverride?.provider === AI_PROVIDERS.GOOGLE;
+    if (!controlledOverride) return null;
+
+    const requestedReasoning = reasoningForProvider(
+      taskId,
+      task,
+      AI_PROVIDERS.GOOGLE,
+      env
+    );
+    const pinned = requirement.allowedGoogleModelIds
+      .map((modelId) => catalog.get(modelId))
+      .filter(Boolean)
+      .filter((model) => model.provider === AI_PROVIDERS.GOOGLE)
+      .filter((model) => model.status === MODEL_STATUS.APPROVED)
+      .filter((model) => model.id === requirement.routeOverride.modelId)
+      .filter((model) => model.productionEligible !== false)
+      .filter((model) => modelSupportsCapabilities(model, task.capabilities))
+      .filter((model) => resolveThinkingLevel(model, requestedReasoning));
+
+    if (pinned.length === 0) {
+      throw new AIError(`Main CBT Google override model is unavailable: ${requirement.routeOverride.modelId}`, {
+        code: AI_ERROR_CODES.CONFIG,
+        retryable: false,
+        scope: 'MODEL',
+        provider: AI_PROVIDERS.GOOGLE,
+      });
+    }
+
+    const pinnedIds = new Set(pinned.map((model) => model.id));
+    return pinned.concat(legacy.filter((model) => !pinnedIds.has(model.id)));
+  }
+
   function neutralGoogleModels(task, requirement) {
     const legacy = legacyGoogleModels(task);
     if (requirement.assessmentProtected) return legacy;
@@ -231,8 +267,8 @@ function createModelRouter({
     }
 
     const routeOverrideApplies =
-      model.provider === AI_PROVIDERS.GROQ &&
-      requirement.routeOverride?.modelId === model.id;
+      requirement.routeOverride?.modelId === model.id &&
+      (!requirement.routeOverride?.provider || requirement.routeOverride.provider === model.provider);
     const routeGenerationConfig = {};
     const overrideBudget = Number(requirement.routeOverride?.maxCompletionTokens);
     if (
@@ -293,13 +329,21 @@ function createModelRouter({
     const task = getTask(taskId);
     const requirement = routingRequirement(taskId, task, env);
     const legacyGoogle = legacyGoogleModels(task);
+    const googleOverride = explicitGoogleOverrideModels(
+      taskId,
+      task,
+      requirement,
+      legacyGoogle
+    );
 
     let models;
     if (requirement.providerMode === PROVIDER_MODES.GOOGLE_ONLY) {
-      // Exact rollback path: do not apply D03 quality filtering here.
-      models = legacyGoogle;
+      // Exact rollback path remains unchanged unless an explicit task-scoped
+      // Google model override is active. The override is prepended only for
+      // that task, followed by the accepted legacy Google fallback chain.
+      models = googleOverride || legacyGoogle;
     } else {
-      const google = neutralGoogleModels(task, requirement);
+      const google = googleOverride || neutralGoogleModels(task, requirement);
       const groq = eligibleGroqModels(taskId, task, requirement);
       models = requirement.providerMode === PROVIDER_MODES.GOOGLE_FIRST
         ? [...google, ...groq]
