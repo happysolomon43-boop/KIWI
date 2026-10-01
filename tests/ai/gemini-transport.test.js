@@ -70,6 +70,8 @@ test('transport sends one generateContent request with caller model and centrali
   const body = JSON.parse(calls[0].options.body);
   assert.deepEqual(body.contents, [{ parts: [{ text: 'hello' }] }]);
   assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, 'high');
+  assert.equal(body.generationConfig.maxOutputTokens, 100);
+  assert.equal(body.generationConfig.maxCompletionTokens, undefined);
   assert.equal(result.raw.candidates[0].content.parts[0].text, 'ok');
 });
 
