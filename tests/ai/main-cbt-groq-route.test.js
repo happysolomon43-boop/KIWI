@@ -119,7 +119,8 @@ test('explicit Main CBT activation routes only Qwen 3.8 at HIGH reasoning with t
   assert.equal(candidates[0].modelId, GROQ_MODEL_IDS.QWEN_3_8_27B);
   assert.equal(candidates[0].requestedReasoning, 'HIGH');
   assert.equal(candidates[0].resolvedReasoning, 'HIGH');
-  assert.equal(candidates[0].routeGenerationConfig.maxCompletionTokens, 16384);
+  assert.equal(candidates[0].routeGenerationConfig.maxOutputTokens, 16384);
+  assert.equal(candidates[0].routeGenerationConfig.maxCompletionTokens, undefined);
   assert.equal(candidates[0].routeAttemptTimeoutMs, 75000);
   assert.equal(candidates[0].routeOperationTimeoutMs, 180000);
   assert.equal(candidates.some((candidate) => candidate.modelId === GROQ_MODEL_IDS.GPT_OSS_120B), false);
@@ -219,7 +220,7 @@ test('Main CBT sends Qwen the full token budget and extended attempt timeout thr
 
   const result = await orchestrator.run('MAIN_CBT', {
     prompt: 'generate controlled exam sample',
-    generationConfig: { maxCompletionTokens: 1024 },
+    generationConfig: { maxOutputTokens: 1024 },
   });
 
   assert.equal(result.text, 'qwen-budget-ok');
@@ -228,7 +229,8 @@ test('Main CBT sends Qwen the full token budget and extended attempt timeout thr
   assert.equal(attempts[0].modelId, GROQ_MODEL_IDS.QWEN_3_8_27B);
   assert.equal(attempts[0].generationConfig.reasoning.requested, 'HIGH');
   assert.equal(attempts[0].generationConfig.reasoning.resolved, 'HIGH');
-  assert.equal(attempts[0].generationConfig.maxCompletionTokens, 16384);
+  assert.equal(attempts[0].generationConfig.maxOutputTokens, 16384);
+  assert.equal(attempts[0].generationConfig.maxCompletionTokens, undefined);
   assert.equal(attempts[0].timeoutMs, 75000);
 });
 
