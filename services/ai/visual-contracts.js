@@ -17,6 +17,8 @@ const GENERATED_IMAGE_MIME_TYPES = Object.freeze(['image/jpeg', 'image/png']);
 const DIAGRAM_OUTPUT_MIME_TYPE = 'image/svg+xml';
 const MAX_IMAGE_PROMPT_CHARACTERS = 2048;
 const MAX_IMAGE_ALT_CHARACTERS = 300;
+const DEFAULT_IMAGE_GENERATION_STEPS = 33;
+const MAX_IMAGE_GENERATION_STEPS = 50;
 const MAX_GENERATED_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_GENERATED_IMAGE_DIMENSION = 4096;
 const MAX_DIAGRAM_SOURCE_CHARACTERS = 50000;
@@ -78,7 +80,7 @@ function cleanText(value, { name, max }) {
 function createImageGenerationRequest({
   prompt,
   altText,
-  steps = 4,
+  steps = DEFAULT_IMAGE_GENERATION_STEPS,
   seed = null,
   metadata = {},
 } = {}) {
@@ -91,8 +93,8 @@ function createImageGenerationRequest({
     max: MAX_IMAGE_ALT_CHARACTERS,
   });
   const normalizedSteps = Number(steps);
-  if (!Number.isInteger(normalizedSteps) || normalizedSteps < 1 || normalizedSteps > 8) {
-    throw bad('Image generation steps must be an integer from 1 to 8');
+  if (!Number.isInteger(normalizedSteps) || normalizedSteps < 1 || normalizedSteps > MAX_IMAGE_GENERATION_STEPS) {
+    throw bad(`Image generation steps must be an integer from 1 to ${MAX_IMAGE_GENERATION_STEPS}`);
   }
   let normalizedSeed = null;
   if (seed != null) {
@@ -388,6 +390,8 @@ module.exports = {
   DIAGRAM_OUTPUT_MIME_TYPE,
   MAX_IMAGE_PROMPT_CHARACTERS,
   MAX_IMAGE_ALT_CHARACTERS,
+  DEFAULT_IMAGE_GENERATION_STEPS,
+  MAX_IMAGE_GENERATION_STEPS,
   MAX_GENERATED_IMAGE_BYTES,
   MAX_GENERATED_IMAGE_DIMENSION,
   MAX_DIAGRAM_SOURCE_CHARACTERS,
