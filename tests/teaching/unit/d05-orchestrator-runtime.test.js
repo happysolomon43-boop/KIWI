@@ -1097,60 +1097,84 @@ test('D05/D09 PPL published-event handler rejects version gaps and safely no-ops
   );
 });
 
-test('D05 exact frozen family reaches the central provider transport without entering durable state', async () => {
+function createCapturedNeutralInferenceRuntime(captured) {
   const { createAIOrchestrator } = require('../../../services/ai/orchestrator');
-  const { createProjectPool } = require('../../../services/ai/project-pool');
+  const { createProviderRegistry } = require('../../../services/ai/provider-registry');
+  const { AI_PROVIDERS } = require('../../../services/ai/providers');
+
+  const providerRegistry = createProviderRegistry([{
+    provider: AI_PROVIDERS.GOOGLE,
+    async generate({ request, credential }) {
+      captured.push({
+        request,
+        credentialSlotId: credential.id,
+      });
+      return {
+        text: 'ok',
+        finishReason: 'STOP',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        latencyMs: 1,
+      };
+    },
+  }]);
+
+  return createAIOrchestrator({
+    providerRegistry,
+    env: { GEMINI_API_KEY: 'test-key' },
+    logger: { warn() {} },
+  });
+}
+
+test('D05 exact frozen family reaches the central neutral provider boundary without entering durable state', async () => {
   const { getPromptBody } = require('../../../teaching/prompt-runtime/prompt-catalog');
   const captured = [];
-  const ai = createAIOrchestrator({
-    projectPool: createProjectPool({ slots: [{ id: 'p1', index: 1, envName: 'K1', apiKey: 'test-key' }] }),
-    logger: { warn() {} },
-    transport: { async generate(args) {
-      captured.push(args);
-      return { raw: { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'ok' }] } }] }, latencyMs: 1, httpStatus: 200 };
-    } },
+  const ai = createCapturedNeutralInferenceRuntime(captured);
+  const { orchestrator } = harness({
+    capabilityId: T2,
+    aiRun: (_taskId, request) => ai.run('MAIN_CBT', request),
   });
-  const { orchestrator } = harness({ capabilityId: T2,
-    aiRun: (_taskId, request) => ai.run('MAIN_CBT', request) });
-  await orchestrator.execute(baseRequest(T2, { academicInput: { signal: 'STUDENT_SENTINEL' } }));
+
+  await orchestrator.execute(baseRequest(T2, {
+    academicInput: { signal: 'STUDENT_SENTINEL' },
+  }));
+
   assert.equal(captured.length, 1);
-  const content = captured[0].content;
+  assert.equal(captured[0].request.contractVersion, 2);
+  assert.equal(captured[0].request.capability, 'INFERENCE');
+  assert.equal(typeof captured[0].request.model.id, 'string');
+  assert.equal(typeof captured[0].credentialSlotId, 'string');
+
+  const content = captured[0].request.content.text;
   const family = registry.getCapability(T2).prompt_family_id;
-  const record = getPromptBody(family, registry.getCapability(T2).prompt_family_version || '1.0');
-  const body = content.split('<KIWI_TEACHING_FROZEN_PROMPT>\n')[1].split('</KIWI_TEACHING_FROZEN_PROMPT>')[0];
+  const record = getPromptBody(
+    family,
+    registry.getCapability(T2).prompt_family_version || '1.0'
+  );
+  const body = content
+    .split('<KIWI_TEACHING_FROZEN_PROMPT>\n')[1]
+    .split('</KIWI_TEACHING_FROZEN_PROMPT>')[0];
   assert.equal(crypto.createHash('sha256').update(body).digest('hex'), record.promptSha256);
   assert.equal(body, record.promptText);
   assert.ok(content.includes('STUDENT_SENTINEL'));
   assert.ok(content.includes('KIWI_TEACHING_RUNTIME_CONTRACT_JSON'));
-  assert.equal(captured[0].modelId, 'gemini-3.8-flash');
-  const envelope = createExecutionEnvelope({ executionId: 'no-body', capabilityId: T2,
+
+  const envelope = createExecutionEnvelope({
+    executionId: 'no-body',
+    capabilityId: T2,
     trigger: { type: 'committed_domain_event', ref: 'event', source: 'domain' },
     stateReference: freshSnapshot.stateReference,
     resultContract: { output_schema_id: 'test', output_schema_version: '1', validator_ids: [] },
-    correlationId: 'corr' });
+    correlationId: 'corr',
+  });
   assert.equal(JSON.stringify(envelope).includes(record.promptText), false);
   assert.equal(JSON.stringify(envelope).includes('prompt_text'), false);
 });
 
-
-test('TCH-0919 TPF-20 exact body reaches central AI transport and is absent from durable execution envelope', async () => {
-  const { createAIOrchestrator } = require('../../../services/ai/orchestrator');
-  const { createProjectPool } = require('../../../services/ai/project-pool');
+test('TCH-0919 TPF-20 exact body reaches central neutral AI boundary and is absent from durable execution envelope', async () => {
   const { getPromptBody } = require('../../../teaching/prompt-runtime/prompt-catalog');
   const capabilityId = 'teaching.study.class_grounded_note_generation';
   const captured = [];
-  const ai = createAIOrchestrator({
-    projectPool: createProjectPool({ slots: [{ id: 'p1', index: 1, envName: 'K1', apiKey: 'test-key' }] }),
-    logger: { warn() {} },
-    transport: { async generate(args) {
-      captured.push(args);
-      return {
-        raw: { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'ok' }] } }] },
-        latencyMs: 1,
-        httpStatus: 200,
-      };
-    } },
-  });
+  const ai = createCapturedNeutralInferenceRuntime(captured);
 
   const { orchestrator } = harness({
     capabilityId,
@@ -1166,7 +1190,10 @@ test('TCH-0919 TPF-20 exact body reaches central AI transport and is absent from
   }));
 
   assert.equal(captured.length, 1);
-  const content = captured[0].content;
+  assert.equal(captured[0].request.contractVersion, 2);
+  assert.equal(captured[0].request.capability, 'INFERENCE');
+
+  const content = captured[0].request.content.text;
   const record = getPromptBody('TPF-20', '1.0');
   const body = content
     .split('<KIWI_TEACHING_FROZEN_PROMPT>\n')[1]
@@ -1180,7 +1207,11 @@ test('TCH-0919 TPF-20 exact body reaches central AI transport and is absent from
     capabilityId,
     trigger: { type: 'committed_domain_event', ref: 'event-tpf20', source: 'teaching-study' },
     stateReference: freshSnapshot.stateReference,
-    resultContract: { output_schema_id: 'study.note.test', output_schema_version: '1', validator_ids: ['study-note-validator'] },
+    resultContract: {
+      output_schema_id: 'study.note.test',
+      output_schema_version: '1',
+      validator_ids: ['study-note-validator'],
+    },
     correlationId: 'corr-tpf20-no-body',
   });
   const serialized = JSON.stringify(envelope);
