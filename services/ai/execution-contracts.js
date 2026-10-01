@@ -209,7 +209,6 @@ function createExecutionResponse({
     providerModel: providerModel || requestedModel || null,
     requestedModel: requestedModel || null,
     model,
-    projectSlot: credentialSlot || null,
     credentialSlot: credentialSlot || null,
     latencyMs,
     fallbackDepth: Number(fallbackDepth) || 0,
