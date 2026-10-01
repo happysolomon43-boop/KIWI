@@ -2,7 +2,7 @@
 
 const { AI_TASKS } = require('./task-registry');
 const { AI_INPUT_MODALITIES, modelSatisfies } = require('./capabilities');
-const { MODEL_STATUS, createModelCatalog } = require('./model-catalog');
+const { isProductionRoutableModel, createModelCatalog } = require('./model-catalog');
 const { createProviderModelRef } = require('./providers');
 const { resolveReasoning } = require('./reasoning');
 const { routeSlotsForTask, ROUTE_SLOT_KINDS } = require('./routing-policy');
@@ -45,7 +45,7 @@ function createModelRouter({ registry = AI_TASKS, catalog = createModelCatalog()
   }
 
   function candidateFor(model, task, taskId, inputModalities) {
-    if (!model || model.status !== MODEL_STATUS.APPROVED || model.productionEligible !== true) return null;
+    if (!isProductionRoutableModel(model)) return null;
     if (!modelSatisfies({
       model,
       capabilities: task.capabilities,
