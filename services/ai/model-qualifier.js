@@ -1,6 +1,7 @@
 'use strict';
 
 const { AI_PROVIDERS } = require('./providers');
+const { AI_CAPABILITIES } = require('./capabilities');
 const { AIError, AI_ERROR_CODES } = require('./errors');
 const { AI_CLASSES } = require('./task-registry');
 const {
@@ -10,12 +11,16 @@ const {
   createExecutionRequest,
 } = require('./execution-contracts');
 
-const QUALIFICATION_VERSION = 2;
+const QUALIFICATION_VERSION = 3;
 const TINY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl7lT8AAAAASUVORK5CYII=';
 
 function qualificationCapabilities(model) {
-  const capabilities = ['generateContent', 'thinking', 'structuredOutput'];
-  if (Number(model.outputTokenLimit) >= 24000) capabilities.push('longOutput');
+  const capabilities = [
+    AI_CAPABILITIES.INFERENCE,
+    AI_CAPABILITIES.REASONING,
+    AI_CAPABILITIES.STRUCTURED_OUTPUT,
+  ];
+  if (Number(model.outputTokenLimit) >= 24000) capabilities.push(AI_CAPABILITIES.LONG_OUTPUT);
   return capabilities;
 }
 
@@ -33,7 +38,7 @@ function createModelQualifier({
   if (!credentialRegistry?.snapshot) throw new Error('Model qualifier requires credentialRegistry');
   if (!lifecycle) throw new Error('Model qualifier requires lifecycle');
 
-  const googleAdapter = providerRegistry.require(AI_PROVIDERS.GOOGLE);
+  const googleAdapter = providerRegistry.require(AI_PROVIDERS.GOOGLE, 'generate');
 
   function candidateSlots(routeKey) {
     const configured = credentialRegistry
@@ -41,7 +46,9 @@ function createModelQualifier({
       .filter((slot) => slot.enabled !== false);
     if (!configured.length) return [];
 
-    const preferred = String(env.AI_QUALIFICATION_CREDENTIAL_SLOT || env.AI_QUALIFICATION_PROJECT_SLOT || '').trim();
+    const preferred = String(
+      env.AI_QUALIFICATION_CREDENTIAL_SLOT || env.AI_QUALIFICATION_PROJECT_SLOT || ''
+    ).trim();
     const ordered = [...configured].sort((a, b) => {
       if (preferred) {
         const aPreferred = a.id === preferred || a.envName === preferred;
@@ -58,7 +65,13 @@ function createModelQualifier({
   }
 
   async function record(record) {
-    return store?.recordModelQualification ? store.recordModelQualification(record) : null;
+    if (!store?.recordModelQualification) return null;
+    // Existing persistence columns retain their historical names. Translate at
+    // this boundary only; runtime contracts remain supportedReasoning.
+    return store.recordModelQualification({
+      ...record,
+      supportedThinking: record.supportedReasoning || [],
+    });
   }
 
   async function probe(model, { content, generation = {}, timeoutMs = 45000 }) {
@@ -70,7 +83,11 @@ function createModelQualifier({
       let trafficLease = null;
       try {
         trafficLease = trafficController
-          ? await trafficController.acquire({ taskId: 'MODEL_QUALIFICATION', taskClass: AI_CLASSES.IP, timeoutMs })
+          ? await trafficController.acquire({
+              taskId: 'MODEL_QUALIFICATION',
+              taskClass: AI_CLASSES.IP,
+              timeoutMs,
+            })
           : null;
         const request = createExecutionRequest({
           provider: AI_PROVIDERS.GOOGLE,
@@ -91,7 +108,9 @@ function createModelQualifier({
           credentialRegistry.disable(AI_PROVIDERS.GOOGLE, credential.id, 'AUTH');
           continue;
         }
-        if (error?.code === AI_ERROR_CODES.BAD_REQUEST || error?.code === AI_ERROR_CODES.MODEL_NOT_FOUND) throw error;
+        if (error?.code === AI_ERROR_CODES.BAD_REQUEST || error?.code === AI_ERROR_CODES.MODEL_NOT_FOUND) {
+          throw error;
+        }
         if (!error?.retryable) throw error;
       } finally {
         trafficLease?.release?.();
@@ -114,14 +133,26 @@ function createModelQualifier({
     const startedAt = new Date();
     let probeCount = 0;
     let credentialSlot = null;
-    await lifecycle.markQualifying(model.id);
-    await record({ modelId: model.id, status: 'STARTED', qualificationVersion: QUALIFICATION_VERSION, startedAt });
+    await lifecycle.markQualifying(model.id, AI_PROVIDERS.GOOGLE);
+    await record({
+      modelId: model.id,
+      status: 'STARTED',
+      qualificationVersion: QUALIFICATION_VERSION,
+      startedAt,
+    });
 
     try {
       if (!model?.metadata?.thinkingAdvertised) {
-        const reason = 'models.list does not advertise thinking support';
-        await lifecycle.deny(model.id, reason);
-        await record({ modelId: model.id, status: 'FAILED', qualificationVersion: QUALIFICATION_VERSION, reason, startedAt, completedAt: new Date() });
+        const reason = 'models.list does not advertise reasoning support';
+        await lifecycle.deny(model.id, reason, AI_PROVIDERS.GOOGLE);
+        await record({
+          modelId: model.id,
+          status: 'FAILED',
+          qualificationVersion: QUALIFICATION_VERSION,
+          reason,
+          startedAt,
+          completedAt: new Date(),
+        });
         return { status: 'FAILED', reason };
       }
 
@@ -149,7 +180,7 @@ function createModelQualifier({
         });
       }
 
-      let supportedThinking;
+      let supportedReasoning;
       probeCount += 1;
       try {
         await probe(model, {
@@ -159,7 +190,7 @@ function createModelQualifier({
             reasoning: { requested: 'MINIMAL', resolved: 'MINIMAL' },
           },
         });
-        supportedThinking = ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'];
+        supportedReasoning = ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'];
       } catch (error) {
         if (error?.code !== AI_ERROR_CODES.BAD_REQUEST) throw error;
         probeCount += 1;
@@ -170,12 +201,13 @@ function createModelQualifier({
             reasoning: { requested: 'LOW', resolved: 'LOW' },
           },
         });
-        supportedThinking = ['LOW', 'MEDIUM', 'HIGH'];
+        supportedReasoning = ['LOW', 'MEDIUM', 'HIGH'];
       }
 
       const capabilities = qualificationCapabilities(model);
       const approved = await lifecycle.approve(model.id, {
-        supportedThinking,
+        provider: AI_PROVIDERS.GOOGLE,
+        supportedReasoning,
         capabilities,
         qualification: {
           version: QUALIFICATION_VERSION,
@@ -191,15 +223,23 @@ function createModelQualifier({
         status: 'PASSED',
         projectSlot: credentialSlot,
         qualificationVersion: QUALIFICATION_VERSION,
-        supportedThinking,
+        supportedReasoning,
         capabilities,
         probeCount,
-        metadata: { outputTokenLimit: model.outputTokenLimit, inputTokenLimit: model.inputTokenLimit, multimodalInput: true },
+        metadata: {
+          outputTokenLimit: model.outputTokenLimit,
+          inputTokenLimit: model.inputTokenLimit,
+          multimodalInput: true,
+        },
         startedAt,
         completedAt: new Date(),
       });
-      logger?.log?.('[KIWI AI] model qualification passed', { modelId: model.id, supportedThinking, capabilities });
-      return { status: 'PASSED', model: approved, supportedThinking, capabilities };
+      logger?.log?.('[KIWI AI] model qualification passed', {
+        modelId: model.id,
+        supportedReasoning,
+        capabilities,
+      });
+      return { status: 'PASSED', model: approved, supportedReasoning, capabilities };
     } catch (error) {
       const transient = Boolean(error?.retryable || [
         AI_ERROR_CODES.RATE_LIMIT_RPD,
@@ -228,7 +268,7 @@ function createModelQualifier({
           },
         });
       } else {
-        await lifecycle.deny(model.id, reason);
+        await lifecycle.deny(model.id, reason, AI_PROVIDERS.GOOGLE);
       }
 
       await record({
@@ -236,7 +276,7 @@ function createModelQualifier({
         status,
         projectSlot: credentialSlot,
         qualificationVersion: QUALIFICATION_VERSION,
-        supportedThinking: [],
+        supportedReasoning: [],
         capabilities: [],
         probeCount,
         errorCode: error?.code || null,
@@ -244,7 +284,12 @@ function createModelQualifier({
         startedAt,
         completedAt: new Date(),
       });
-      logger?.warn?.('[KIWI AI] model qualification did not pass', { modelId: model.id, status, code: error?.code || null, reason });
+      logger?.warn?.('[KIWI AI] model qualification did not pass', {
+        modelId: model.id,
+        status,
+        code: error?.code || null,
+        reason,
+      });
       return { status, reason, error };
     }
   }
