@@ -91,7 +91,8 @@ test('Main CBT Gemini 3.5 Lite override wins over stale Groq activation and pres
   assert.equal(candidates[0].provider, AI_PROVIDERS.GOOGLE);
   assert.equal(candidates[0].requestedReasoning, 'HIGH');
   assert.equal(candidates[0].resolvedReasoning, 'HIGH');
-  assert.equal(candidates[0].routeGenerationConfig.maxCompletionTokens, 16384);
+  assert.equal(candidates[0].routeGenerationConfig.maxOutputTokens, 16384);
+  assert.equal(candidates[0].routeGenerationConfig.maxCompletionTokens, undefined);
   assert.equal(candidates[0].routeAttemptTimeoutMs, 75000);
   assert.equal(candidates[0].routeOperationTimeoutMs, 180000);
 });
@@ -138,14 +139,15 @@ test('Main CBT sends Gemini 3.5 Lite HIGH reasoning and the controlled test budg
 
   const result = await orchestrator.run('MAIN_CBT', {
     prompt: 'generate controlled exam sample',
-    generationConfig: { maxCompletionTokens: 1024 },
+    generationConfig: { maxOutputTokens: 1024 },
   });
 
   assert.equal(result.text, 'gemini-lite-main-cbt-ok');
   assert.equal(result.provider, AI_PROVIDERS.GOOGLE);
   assert.equal(attempts.length, 1);
   assert.equal(attempts[0].modelId, MAIN_CBT_GEMINI_LITE_MODEL_ID);
-  assert.equal(attempts[0].generationConfig.maxCompletionTokens, 16384);
+  assert.equal(attempts[0].generationConfig.maxOutputTokens, 16384);
+  assert.equal(attempts[0].generationConfig.maxCompletionTokens, undefined);
   assert.equal(attempts[0].timeoutMs, 75000);
   assert.ok(attempts[0].generationConfig.thinkingConfig);
 });
