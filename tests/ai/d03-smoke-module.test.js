@@ -2,35 +2,43 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
-const {
-  MARKERS,
-  syntheticGroqOutageFetch,
-  runD03RoutingSmoke,
-} = require('../../scripts/smoke-d03-routing');
+const smokePath = path.join(__dirname, '..', '..', 'scripts', 'smoke-d03-routing.js');
 
-test('D03 operational smoke module loads without executing provider traffic', () => {
-  assert.equal(typeof runD03RoutingSmoke, 'function');
-  assert.equal(MARKERS.PREMIUM, 'KIWI_D03_120B_OK');
-  assert.equal(MARKERS.BACKGROUND, 'KIWI_D03_20B_OK');
-  assert.equal(MARKERS.FALLBACK, 'KIWI_D03_GEMINI_FALLBACK_OK');
+test('D03 compatibility smoke validates neutral routing without provider traffic', () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const logs = [];
+  globalThis.fetch = async () => {
+    throw new Error('neutral routing smoke must not execute provider traffic');
+  };
+  console.log = (...args) => logs.push(args);
+
+  try {
+    delete require.cache[require.resolve(smokePath)];
+    assert.doesNotThrow(() => require(smokePath));
+  } finally {
+    console.log = originalLog;
+    globalThis.fetch = originalFetch;
+    delete require.cache[require.resolve(smokePath)];
+  }
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0][0], '[KIWI AI] neutral routing smoke passed');
+  assert.ok(Array.isArray(logs[0][1]));
+  assert.ok(logs[0][1].length > 0);
+  assert.ok(logs[0][1].every((routeKey) => /^[A-Z_]+::.+/.test(routeKey)));
 });
 
-test('D03 synthetic outage intercepts only Groq and leaves fallback provider fetch intact', async () => {
-  const forwarded = [];
-  const realFetch = async (url) => {
-    forwarded.push(String(url));
-    return new Response('google-ok', { status: 200 });
-  };
-  const wrapped = syntheticGroqOutageFetch(realFetch);
+test('D03 smoke source cannot reintroduce provider-specific outage or routing logic', () => {
+  const source = fs.readFileSync(smokePath, 'utf8');
 
-  const groq = await wrapped('https://api.groq.com/openai/v1/chat/completions', {});
-  assert.equal(groq.status, 503);
-  assert.equal(forwarded.length, 0);
-
-  const google = await wrapped('https://generativelanguage.googleapis.com/v1beta/models/test', {});
-  assert.equal(google.status, 200);
-  assert.deepEqual(forwarded, [
-    'https://generativelanguage.googleapis.com/v1beta/models/test',
-  ]);
+  assert.match(source, /createModelRouter/);
+  assert.match(source, /resolveCandidates\(['"]MAIN_CBT['"]\)/);
+  assert.match(source, /candidate\.routeKey/);
+  assert.doesNotMatch(source, /syntheticGroqOutageFetch|runD03RoutingSmoke|MARKERS/);
+  assert.doesNotMatch(source, /api\.groq\.com|generativelanguage\.googleapis\.com/);
+  assert.doesNotMatch(source, /GROQ_MODEL_IDS|AI_TEXT_PROVIDER_MODE/);
 });
