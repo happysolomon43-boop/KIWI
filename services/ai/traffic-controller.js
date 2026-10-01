@@ -23,9 +23,9 @@ const LANE_PRIORITY = Object.freeze([
 ]);
 
 const CONGESTION_SIGNAL_WEIGHTS = Object.freeze({
-  // Project/model quota failures are deliberately excluded. Delivery A keeps
-  // 429 health route-scoped; global backpressure reacts only to provider or
-  // transport instability that can affect concurrent work across the pool.
+  // Credential-route quota failures are deliberately excluded. Global
+  // backpressure reacts only to provider or transport instability that can
+  // affect concurrent work across the runtime.
   [AI_ERROR_CODES.PROVIDER_OVERLOADED]: 2,
   [AI_ERROR_CODES.TRANSIENT]: 1,
   [AI_ERROR_CODES.TIMEOUT]: 1,
@@ -406,8 +406,8 @@ function createAITrafficController({
       weight,
       code: error.code,
       status: error.status ?? null,
-      modelId: context.modelId || null,
-      projectSlot: context.projectSlot || null,
+      routeKey: context.routeKey || null,
+      credentialSlotId: context.credentialSlotId || null,
     });
     providerSignalsTotal += 1;
     pruneSignals();

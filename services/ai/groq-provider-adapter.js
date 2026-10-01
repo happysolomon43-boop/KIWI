@@ -1,10 +1,10 @@
 'use strict';
 
 const { AI_PROVIDERS } = require('./providers');
+const { AI_CAPABILITIES } = require('./capabilities');
 const {
   AI_CONTENT_KINDS,
   AI_CONTENT_PART_KINDS,
-  AI_MEDIA_CAPABILITIES,
 } = require('./execution-contracts');
 const { AIError, AI_ERROR_CODES } = require('./errors');
 const { createGroqHttpTransport } = require('./groq-http-transport');
@@ -12,7 +12,6 @@ const { createGroqSpeechTransport } = require('./groq-speech-transport');
 const { normalizeGroqResponse } = require('./groq-response-normalizer');
 
 const GROQ_SUPPORTED_REASONING = Object.freeze(['LOW', 'MEDIUM', 'HIGH']);
-const GPT_OSS_MODEL_PREFIX = 'openai/gpt-oss-';
 const NEAR_ATTEMPT_DEADLINE_RATIO = 0.9;
 const NEAR_ATTEMPT_DEADLINE_REMAINING_MS = 1500;
 
@@ -24,10 +23,6 @@ const GROQ_QUOTA_POLICY = Object.freeze({
   rotateOnPermissionFailure: false,
   rateLimitScope: 'PROVIDER_MODEL',
 });
-
-function isGptOssModel(modelId) {
-  return String(modelId || '').startsWith(GPT_OSS_MODEL_PREFIX);
-}
 
 function mapGroqReasoningEffort(reasoning) {
   if (!reasoning) return null;
@@ -46,7 +41,7 @@ function mapGroqReasoningEffort(reasoning) {
   return resolved.toLowerCase();
 }
 
-function _schemaName(value) {
+function schemaName(value) {
   const normalized = String(value || 'kiwi_response')
     .trim()
     .replace(/[^A-Za-z0-9_-]/g, '_')
@@ -54,7 +49,7 @@ function _schemaName(value) {
   return normalized || 'kiwi_response';
 }
 
-function _groqMessageContent(request) {
+function groqMessageContent(request) {
   if (request.content?.kind === AI_CONTENT_KINDS.TEXT) {
     return request.content.text;
   }
@@ -66,12 +61,10 @@ function _groqMessageContent(request) {
       if (part.kind === AI_CONTENT_PART_KINDS.IMAGE) {
         return {
           type: 'image_url',
-          image_url: {
-            url: `data:${part.mimeType};base64,${part.source.data}`,
-          },
+          image_url: { url: `data:${part.mimeType};base64,${part.source.data}` },
         };
       }
-      throw new AIError(`Unsupported Groq multimodal part ${part.kind || 'UNKNOWN'}`, {
+      throw new AIError(`Unsupported Groq content part ${part.kind || 'UNKNOWN'}`, {
         code: AI_ERROR_CODES.BAD_REQUEST,
         retryable: false,
         scope: 'REQUEST',
@@ -79,7 +72,6 @@ function _groqMessageContent(request) {
       });
     });
   }
-
   throw new AIError(
     `Groq adapter does not support content kind ${request.content?.kind || 'UNKNOWN'}`,
     {
@@ -91,7 +83,7 @@ function _groqMessageContent(request) {
   );
 }
 
-function _safeValueLength(value) {
+function safeValueLength(value) {
   if (typeof value === 'string') return value.length;
   if (!Array.isArray(value)) return 0;
   return value.reduce((total, part) => {
@@ -104,13 +96,7 @@ function _safeValueLength(value) {
   }, 0);
 }
 
-function buildGroqAttemptDiagnostic({
-  raw,
-  normalized,
-  modelId,
-  latencyMs,
-  timeoutMs,
-} = {}) {
+function buildGroqAttemptDiagnostic({ raw, normalized, modelId, latencyMs, timeoutMs } = {}) {
   const allocationMs = Number(timeoutMs);
   const elapsedMs = Number(latencyMs);
   const hasAllocation = Number.isFinite(allocationMs) && allocationMs > 0;
@@ -122,14 +108,11 @@ function buildGroqAttemptDiagnostic({
     ? elapsedMs / allocationMs
     : null;
   const message = raw?.choices?.[0]?.message || {};
-  const reasoningCharacters = _safeValueLength(message.reasoning);
+  const reasoningCharacters = safeValueLength(message.reasoning);
   const contentCharacters = String(normalized?.text || '').length;
   const nearAttemptDeadline = Boolean(
     budgetUtilizationRatio != null &&
-    (
-      budgetUtilizationRatio >= NEAR_ATTEMPT_DEADLINE_RATIO ||
-      remainingBudgetMs <= NEAR_ATTEMPT_DEADLINE_REMAINING_MS
-    )
+    (budgetUtilizationRatio >= NEAR_ATTEMPT_DEADLINE_RATIO || remainingBudgetMs <= NEAR_ATTEMPT_DEADLINE_REMAINING_MS)
   );
 
   return Object.freeze({
@@ -176,10 +159,7 @@ function serializeGroqExecutionRequest(request) {
 
   const body = {
     model: request.model.modelId,
-    messages: [{
-      role: 'user',
-      content: _groqMessageContent(request),
-    }],
+    messages: [{ role: 'user', content: groqMessageContent(request) }],
     stream: false,
   };
 
@@ -202,41 +182,33 @@ function serializeGroqExecutionRequest(request) {
   }
 
   if (stopSequences !== undefined) {
-    body.stop = Array.isArray(stopSequences)
-      ? [...stopSequences]
-      : stopSequences;
+    body.stop = Array.isArray(stopSequences) ? [...stopSequences] : stopSequences;
   }
 
   const reasoningEffort = mapGroqReasoningEffort(reasoning);
   if (reasoningEffort) {
     body.reasoning_effort = reasoningEffort;
-    if (isGptOssModel(request.model.modelId)) {
-      body.include_reasoning = false;
-    } else {
-      body.reasoning_format = 'hidden';
-    }
+    body.reasoning_format = 'hidden';
   }
 
   if (structuredOutput) {
-    if (structuredOutput.schema != null) {
-      body.response_format = {
-        type: 'json_schema',
-        json_schema: {
-          name: _schemaName(request.metadata?.structuredOutputName),
-          strict: true,
-          schema: structuredOutput.schema,
-        },
-      };
-    } else {
-      body.response_format = { type: 'json_object' };
-    }
+    body.response_format = structuredOutput.schema != null
+      ? {
+          type: 'json_schema',
+          json_schema: {
+            name: schemaName(request.metadata?.structuredOutputName),
+            strict: true,
+            schema: structuredOutput.schema,
+          },
+        }
+      : { type: 'json_object' };
   }
 
   return Object.freeze(body);
 }
 
 function serializeGroqSpeechRequest({ request, voiceProfile, input } = {}) {
-  if (request?.capability !== AI_MEDIA_CAPABILITIES.SPEECH_SYNTHESIS) {
+  if (request?.capability !== AI_CAPABILITIES.SPEECH_SYNTHESIS) {
     throw new AIError('Groq speech adapter requires a speech synthesis request', {
       code: AI_ERROR_CODES.BAD_REQUEST,
       retryable: false,
@@ -254,7 +226,7 @@ function serializeGroqSpeechRequest({ request, voiceProfile, input } = {}) {
   }
   const chunk = String(input ?? '');
   if (!chunk || chunk.length > 200) {
-    throw new AIError('Orpheus speech chunk must contain 1-200 characters', {
+    throw new AIError('Speech chunk must contain 1-200 characters', {
       code: AI_ERROR_CODES.BAD_REQUEST,
       retryable: false,
       scope: 'REQUEST',
@@ -277,10 +249,7 @@ function createGroqProviderAdapter({
   speechTransport = null,
   logger = console,
 } = {}) {
-  const transport = httpTransport || createGroqHttpTransport({
-    fetchImpl,
-    endpoint,
-  });
+  const transport = httpTransport || createGroqHttpTransport({ fetchImpl, endpoint });
   const resolvedSpeechTransport = speechTransport || createGroqSpeechTransport({
     fetchImpl,
     endpoint: speechEndpoint,
@@ -298,16 +267,12 @@ function createGroqProviderAdapter({
     if (request.provider !== AI_PROVIDERS.GROQ) {
       throw new Error('Groq provider adapter cannot execute another provider request');
     }
-
-    const apiKey = typeof credential === 'string'
-      ? credential
-      : credential?.apiKey;
+    const apiKey = typeof credential === 'string' ? credential : credential?.apiKey;
     if (!apiKey) throw new Error('Groq provider adapter requires credential apiKey');
 
-    const body = serializeGroqExecutionRequest(request);
     const transportResult = await transport.generate({
       apiKey,
-      body,
+      body: serializeGroqExecutionRequest(request),
       timeoutMs,
       signal,
     });
@@ -328,17 +293,13 @@ function createGroqProviderAdapter({
       timeoutMs,
     });
 
-    if (!normalized.text && !normalized.blocked && typeof logger?.warn === 'function') {
-      logger.warn('[KIWI AI] Groq empty-response diagnostic', diagnostic);
-    } else if (diagnostic.nearAttemptDeadline && typeof logger?.info === 'function') {
-      logger.info('[KIWI AI] Groq near-attempt-deadline diagnostic', diagnostic);
+    if (!normalized.text && !normalized.blocked) {
+      logger?.warn?.('[KIWI AI] Groq empty-response diagnostic', diagnostic);
+    } else if (diagnostic.nearAttemptDeadline) {
+      logger?.info?.('[KIWI AI] Groq near-attempt-deadline diagnostic', diagnostic);
     }
 
-    return Object.freeze({
-      ...transportResult,
-      normalized,
-      diagnostic,
-    });
+    return Object.freeze({ ...transportResult, normalized, diagnostic });
   }
 
   async function synthesizeSpeech({
@@ -349,14 +310,11 @@ function createGroqProviderAdapter({
     timeoutMs = 15000,
     signal = null,
   } = {}) {
-    const apiKey = typeof credential === 'string'
-      ? credential
-      : credential?.apiKey;
+    const apiKey = typeof credential === 'string' ? credential : credential?.apiKey;
     if (!apiKey) throw new Error('Groq speech adapter requires credential apiKey');
-    const body = serializeGroqSpeechRequest({ request, voiceProfile, input });
     return resolvedSpeechTransport.synthesize({
       apiKey,
-      body,
+      body: serializeGroqSpeechRequest({ request, voiceProfile, input }),
       timeoutMs,
       signal,
     });
@@ -376,7 +334,6 @@ function createGroqProviderAdapter({
 module.exports = {
   GROQ_SUPPORTED_REASONING,
   GROQ_QUOTA_POLICY,
-  isGptOssModel,
   mapGroqReasoningEffort,
   buildGroqAttemptDiagnostic,
   serializeGroqExecutionRequest,

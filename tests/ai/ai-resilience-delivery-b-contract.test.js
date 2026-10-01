@@ -57,72 +57,55 @@ test('route-level pressure lowers Reckoning family concurrency before new provid
       severeFamilyConcurrency: 1,
     },
   };
-
-  const route = (inFlight) => ({ inFlight });
+  const credentialRoute = (inFlight) => ({ inFlight });
 
   assert.equal(resolveFamilyConcurrency({
-    congestionLevel: 'NORMAL',
-    effectiveConcurrency: 6,
-    active: 0,
-    queued: 0,
+    congestionLevel: 'NORMAL', effectiveConcurrency: 6, active: 0, queued: 0,
     routeScheduler: {
-      maxInFlightPerRoute: 1,
-      routes: [route(1), route(1), route(0), route(0)],
-      models: [],
+      maxInFlightPerCredentialRoute: 1,
+      credentialRoutes: [credentialRoute(1), credentialRoute(1), credentialRoute(0), credentialRoute(0)],
+      routes: [],
     },
   }, config), 2);
 
   assert.equal(resolveFamilyConcurrency({
-    congestionLevel: 'NORMAL',
-    effectiveConcurrency: 6,
-    active: 0,
-    queued: 0,
+    congestionLevel: 'NORMAL', effectiveConcurrency: 6, active: 0, queued: 0,
     routeScheduler: {
-      maxInFlightPerRoute: 1,
-      routes: [route(1), route(1), route(1), route(0)],
-      models: [],
+      maxInFlightPerCredentialRoute: 1,
+      credentialRoutes: [credentialRoute(1), credentialRoute(1), credentialRoute(1), credentialRoute(0)],
+      routes: [],
     },
   }, config), 1);
 
   assert.equal(resolveFamilyConcurrency({
-    congestionLevel: 'NORMAL',
-    effectiveConcurrency: 6,
-    active: 0,
-    queued: 0,
+    congestionLevel: 'NORMAL', effectiveConcurrency: 6, active: 0, queued: 0,
     routeScheduler: {
-      maxInFlightPerRoute: 1,
-      routes: [route(0), route(0)],
-      models: [{ waitMs: 250 }],
+      maxInFlightPerCredentialRoute: 1,
+      credentialRoutes: [credentialRoute(0), credentialRoute(0)],
+      routes: [{ waitMs: 250 }],
     },
   }, config), 1);
 
   assert.equal(resolveFamilyConcurrency({
-    congestionLevel: 'NORMAL',
-    effectiveConcurrency: 6,
-    active: 0,
-    queued: 0,
+    congestionLevel: 'NORMAL', effectiveConcurrency: 6, active: 0, queued: 0,
     queuedByLane: { CRITICAL: 1 },
     routeScheduler: {
-      maxInFlightPerRoute: 1,
-      routes: [route(0), route(0)],
-      models: [],
+      maxInFlightPerCredentialRoute: 1,
+      credentialRoutes: [credentialRoute(0), credentialRoute(0)],
+      routes: [],
     },
   }, config), 1);
 
-  // Two touched routes being busy must not look like 100% route saturation
-  // when Reckoning still has a much larger eligible Flash route pool.
+  // Two busy credential-routes must not look saturated when Reckoning has a
+  // much larger eligible provider+credential route pool.
   assert.equal(resolveFamilyConcurrency({
-    congestionLevel: 'NORMAL',
-    effectiveConcurrency: 6,
-    active: 0,
-    queued: 0,
+    congestionLevel: 'NORMAL', effectiveConcurrency: 6, active: 0, queued: 0,
     busyRouteCount: 2,
-    eligibleRouteCount: 60,
+    eligibleCredentialRouteCount: 60,
     routeScheduler: {
-      maxInFlightPerRoute: 1,
-      eligibleRouteCount: 60,
-      routes: [route(1), route(1)],
-      models: [],
+      maxInFlightPerCredentialRoute: 1,
+      credentialRoutes: [credentialRoute(1), credentialRoute(1)],
+      routes: [],
     },
   }, config), 4);
 });
@@ -135,10 +118,13 @@ test('Reckoning concurrency telemetry is scoped to RECKONING_CBT eligible routes
   const block = source.slice(start, end);
 
   assert.match(block, /orchestrator\.plan\(['"]RECKONING_CBT['"]\)/);
+  assert.match(block, /eligibleCredentialRouteKeys/);
   assert.match(block, /eligibleRouteKeys/);
-  assert.match(block, /eligibleModelIds/);
+  assert.match(block, /candidate\.routeKey/);
+  assert.match(block, /eligibleCredentialSlots/);
+  assert.match(block, /eligibleCredentialRouteKeys\.has/);
   assert.match(block, /eligibleRouteKeys\.has/);
-  assert.match(block, /eligibleModelIds\.has/);
+  assert.match(block, /eligibleCredentialRouteCount:\s*eligibleCredentialRouteKeys\.size/);
   assert.match(block, /eligibleRouteCount:\s*eligibleRouteKeys\.size/);
 });
 
@@ -347,30 +333,32 @@ test('dashboard ritual hydration is asynchronous, single-flight and preserves hy
   assert.doesNotMatch(dashboardBrief, /getMorningBrief\(req\.user\.id\)/);
 });
 
-test('Morning Brief and Study Task background generation are Lite-first without downgrading assessment quality', () => {
-  const { AI_TASKS, AI_EXECUTION_LANES, MODEL_POLICIES, QUALITY_FLOORS } =
-    require('../../services/ai/task-registry');
+test('background generation stays lane-specific while model selection remains globally neutral', () => {
+  const { AI_TASKS, AI_EXECUTION_LANES } = require('../../services/ai/task-registry');
+  const { createModelRouter } = require('../../services/ai/model-router');
 
   for (const taskId of ['MORNING_BRIEF', 'STUDY_TASK_GENERATION']) {
     const task = AI_TASKS[taskId];
     assert.equal(task.executionLane, AI_EXECUTION_LANES.BACKGROUND, taskId);
-    assert.equal(task.modelPolicy, MODEL_POLICIES.TOP_STABLE_FLASH_LITE, taskId);
-    assert.equal(task.qualityFloor, QUALITY_FLOORS.FLASH_LITE, taskId);
+    assert.equal(task.degradationAllowed, true, taskId);
   }
 
   for (const taskId of ['MAIN_CBT', 'RECKONING_CBT', 'CBT_COMPLETION']) {
-    assert.equal(AI_TASKS[taskId].qualityFloor, QUALITY_FLOORS.FLASH, taskId);
-    assert.equal(AI_TASKS[taskId].modelPolicy, MODEL_POLICIES.TOP_STABLE_FLASH, taskId);
+    assert.equal(AI_TASKS[taskId].executionLane, AI_EXECUTION_LANES.CRITICAL, taskId);
+    assert.equal(AI_TASKS[taskId].reasoning, 'HIGH', taskId);
   }
 
-  assert.equal(
-    AI_TASKS.DAILY_INVITATIONS.executionLane,
-    AI_EXECUTION_LANES.INTERACTIVE
-  );
-  assert.equal(
-    AI_TASKS.DAILY_INVITATIONS.modelPolicy,
-    MODEL_POLICIES.VIP_STABLE_FLASH
-  );
+  assert.equal(AI_TASKS.DAILY_INVITATIONS.executionLane, AI_EXECUTION_LANES.INTERACTIVE);
+
+  const router = createModelRouter();
+  const baseline = router.resolveCandidates('MAIN_CBT').map((candidate) => candidate.routeKey);
+  for (const taskId of ['MORNING_BRIEF', 'STUDY_TASK_GENERATION', 'DAILY_INVITATIONS']) {
+    assert.deepEqual(
+      router.resolveCandidates(taskId).map((candidate) => candidate.routeKey),
+      baseline,
+      `${taskId} must use the global neutral model order`
+    );
+  }
 });
 
 test('nightly AI synthesis skips dormant and guest accounts for both background features', () => {

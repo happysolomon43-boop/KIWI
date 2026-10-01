@@ -134,7 +134,7 @@ async function withTransaction(fn) {
 }
 
 // Delivery E: V2 preparation and execution use the same centralized AI
-// orchestrator as the rest of KIWI. Gemini writes questions; KIWI owns the plan,
+// orchestrator as the rest of KIWI. The selected AI route writes questions; KIWI owns the plan,
 // validation, evidence state, scheduling and outcome.
 const adaptiveSemanticReview = createAISemanticReviewer({
   aiRun: (taskId, input, context) => ai.run(taskId, input, context),
@@ -154,49 +154,49 @@ function getReckoningGenerationConcurrencyState() {
   // Only pressure on routes that RECKONING_CBT is actually allowed to use may
   // reduce Reckoning family fan-out. Background/Lite traffic must not make an
   // otherwise healthy Flash Reckoning unnecessarily serialize itself.
+  const eligibleCredentialRouteKeys = new Set();
   const eligibleRouteKeys = new Set();
-  const eligibleModelIds = new Set();
   for (const candidate of plan.candidates || []) {
-    const slots = candidate.eligibleProjectSlots || [];
+    const slots = candidate.eligibleCredentialSlots || [];
     if (!slots.length) continue;
-    eligibleModelIds.add(candidate.modelId);
-    for (const slotId of slots) {
-      eligibleRouteKeys.add(`${slotId}::${candidate.modelId}`);
+    eligibleRouteKeys.add(candidate.routeKey);
+    for (const credentialSlotId of slots) {
+      eligibleCredentialRouteKeys.add(`${credentialSlotId}::${candidate.routeKey}`);
     }
   }
 
+  const eligibleCredentialRoutes = (rawRouteScheduler.credentialRoutes || []).filter(
+    (route) => eligibleCredentialRouteKeys.has(`${route.credentialSlotId}::${route.routeKey}`)
+  );
   const eligibleRoutes = (rawRouteScheduler.routes || []).filter(
-    (route) => eligibleRouteKeys.has(`${route.projectSlot}::${route.modelId}`)
+    (route) => eligibleRouteKeys.has(route.routeKey)
   );
-  const eligibleModels = (rawRouteScheduler.models || []).filter(
-    (model) => eligibleModelIds.has(model.modelId)
-  );
-  const maxInFlightPerRoute = Math.max(
+  const maxInFlightPerCredentialRoute = Math.max(
     1,
-    Number(rawRouteScheduler.maxInFlightPerRoute) || 1
+    Number(rawRouteScheduler.maxInFlightPerCredentialRoute) || 1
   );
-  const busyRouteCount = eligibleRoutes.filter(
-    (route) => (Number(route.inFlight) || 0) >= maxInFlightPerRoute
+  const busyRouteCount = eligibleCredentialRoutes.filter(
+    (route) => (Number(route.inFlight) || 0) >= maxInFlightPerCredentialRoute
   ).length;
-  const pacedModelCount = eligibleModels.filter(
-    (model) => (Number(model.waitMs) || 0) > 0
+  const pacedRouteCount = eligibleRoutes.filter(
+    (route) => (Number(route.waitMs) || 0) > 0
   ).length;
 
   const routeScheduler = Object.freeze({
     ...rawRouteScheduler,
+    credentialRoutes: Object.freeze(eligibleCredentialRoutes),
     routes: Object.freeze(eligibleRoutes),
-    models: Object.freeze(eligibleModels),
+    eligibleCredentialRouteCount: eligibleCredentialRouteKeys.size,
     eligibleRouteCount: eligibleRouteKeys.size,
-    eligibleModelCount: eligibleModelIds.size,
   });
 
   return Object.freeze({
     ...traffic,
     routeScheduler,
     busyRouteCount,
-    pacedModelCount,
+    pacedRouteCount,
+    eligibleCredentialRouteCount: eligibleCredentialRouteKeys.size,
     eligibleRouteCount: eligibleRouteKeys.size,
-    eligibleModelCount: eligibleModelIds.size,
   });
 }
 
@@ -5720,7 +5720,7 @@ const result = await ai.run(
   _taskId,
   {
     content: prompt,
-    generationConfig: { maxOutputTokens: scaledTokens },
+    generation: { maxOutputTokens: scaledTokens },
   },
   { generationGroupId: _generationGroupId }
 );
@@ -5779,7 +5779,7 @@ async function generateCBTCompletionQuestions(notes, existingQuestions, needed, 
     'CBT_COMPLETION',
     {
       content: completionPrompt,
-      generationConfig: { maxOutputTokens: completionTokens },
+      generation: { maxOutputTokens: completionTokens },
     },
     { generationGroupId: completionGroupId }
   );
@@ -5856,7 +5856,7 @@ async function auditCBTQuestion(userId, exam, question) {
 
       const result = await ai.run('CBT_QUESTION_AUDIT', {
         content: prompt,
-        generationConfig: { maxOutputTokens: 1600 },
+        generation: { maxOutputTokens: 1600 },
       });
       const audit = _parseCBTQuestionAudit(result.text);
       const bonusAwarded =
@@ -5960,7 +5960,7 @@ FLASHCARD_PROMPT.replace('[NOTES]', notes) +
 (subjectHint ? `\nSubject hint: ${subjectHint}` : '');
 const result = await ai.run('FLASHCARD_GENERATION', {
   content: prompt,
-  generationConfig: { maxOutputTokens: 15000 },
+  generation: { maxOutputTokens: 15000 },
 });
 return result.text;
 }
@@ -5993,16 +5993,14 @@ const prompt =
 'Extract all question-answer pairs or key-value pairs from this image. Return as JSON array of {front, back} objects. If no pairs found, return the raw text.';
 try {
 const result = await ai.run('IMPORT_IMAGE_EXTRACTION', {
-  content: {
-    contents: [
-      {
-        parts: [
-          { text: prompt },
-          { inlineData: { mimeType: mimeType || 'image/jpeg', data: base64Image } },
-        ],
-      },
-    ],
-  },
+  content: [
+    { kind: 'TEXT', text: prompt },
+    {
+      kind: 'IMAGE',
+      mimeType: mimeType || 'image/jpeg',
+      data: base64Image,
+    },
+  ],
 });
 return result.text;
 } catch (e) {
@@ -14906,7 +14904,7 @@ try {
   console.log(`[KIWI QQ] generating ${count} question(s) — calcOnly=${calcOnly} — routed by KIWI AI Orchestrator`);
   const result = await ai.run('QUICK_QUESTIONS', {
     content: prompt,
-    generationConfig: { maxOutputTokens: Math.max(4000, count * 900) },
+    generation: { maxOutputTokens: Math.max(4000, count * 900) },
   });
   const aiText = result.text;
   const questions = parseCBTResponse(aiText, null, []);
@@ -17774,7 +17772,7 @@ Return only the debrief text.`;
             // Output stays compact; model, reasoning and timeout are owned by the task registry.
             const aiResult = await ai.run('EXAM_DEBRIEF', {
               content: aiDebriefPrompt,
-              generationConfig: { maxOutputTokens: 512 },
+              generation: { maxOutputTokens: 512 },
             });
             debriefText = aiResult.text.trim();
           } catch (_) {

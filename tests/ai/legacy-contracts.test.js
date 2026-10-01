@@ -70,8 +70,9 @@ test('image extraction uses the VVIP orchestrator vision path', () => {
   );
 
   assert.match(body, /ai\.run\(['"]IMPORT_IMAGE_EXTRACTION['"]/);
-  assert.match(body, /inlineData/);
+  assert.match(body, /kind:\s*['"]IMAGE['"]/);
   assert.match(body, /mimeType/);
+  assert.doesNotMatch(body, /inlineData/);
   assert.doesNotMatch(body, /geminiModel\.generateContent/);
 });
 

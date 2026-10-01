@@ -21,7 +21,7 @@ function createRouteScheduler({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   random = Math.random,
 } = {}) {
-  const maxInFlightPerRoute = Math.floor(
+  const maxInFlightPerCredentialRoute = Math.floor(
     boundedNumber(env.AI_ROUTE_MAX_IN_FLIGHT, 1, 1, 8)
   );
   const routeLeaseMs = boundedNumber(
@@ -43,8 +43,8 @@ function createRouteScheduler({
     30000
   );
 
-  const routes = new Map();
-  const models = new Map();
+  const credentialRoutes = new Map();
+  const routePacing = new Map();
 
   function nowMs() {
     const value = clock();
@@ -53,64 +53,64 @@ function createRouteScheduler({
     return Number.isFinite(numeric) ? numeric : Date.now();
   }
 
-  function routeKey(projectSlot, modelId) {
-    return `${projectSlot}::${modelId}`;
+  function credentialRouteKey(credentialSlotId, routeKey) {
+    return `${credentialSlotId}::${routeKey}`;
   }
 
-  function ensureRoute(projectSlot, modelId) {
-    const key = routeKey(projectSlot, modelId);
-    let state = routes.get(key);
+  function ensureCredentialRoute(credentialSlotId, routeKey) {
+    const key = credentialRouteKey(credentialSlotId, routeKey);
+    let state = credentialRoutes.get(key);
     if (!state) {
       state = {
-        projectSlot,
-        modelId,
+        credentialSlotId,
+        routeKey,
         inFlight: 0,
         lastSelectedAt: 0,
         lastSuccessAt: 0,
         lastFailureAt: 0,
         lastErrorCode: null,
       };
-      routes.set(key, state);
+      credentialRoutes.set(key, state);
     }
     return state;
   }
 
-  function ensureModel(modelId) {
-    let state = models.get(modelId);
+  function ensureRoutePacing(routeKey) {
+    let state = routePacing.get(routeKey);
     if (!state) {
       state = {
-        modelId,
+        routeKey,
         shortRateLimitStreak: 0,
         nextDispatchAt: 0,
         lastShortRateLimitAt: 0,
       };
-      models.set(modelId, state);
+      routePacing.set(routeKey, state);
     }
     return state;
   }
 
-  function quotaScore(quotaManager, projectSlot, modelId) {
+  function quotaScore(quotaManager, credentialSlotId, routeKey) {
     if (!quotaManager?.slotHealthScore) return 0;
     try {
-      return Number(quotaManager.slotHealthScore(projectSlot, modelId)) || 0;
+      return Number(quotaManager.slotHealthScore(credentialSlotId, routeKey)) || 0;
     } catch (_) {
       return 0;
     }
   }
 
-  function orderSlots(modelId, slots, quotaManager = null) {
+  function orderSlots(routeKey, slots, quotaManager = null) {
     return (slots || [])
       .map((slot, index) => {
-        const route = ensureRoute(slot.id, modelId);
+        const route = ensureCredentialRoute(slot.id, routeKey);
         const quotaEligible = quotaManager?.isEligible
-          ? quotaManager.isEligible(slot.id, modelId)
+          ? quotaManager.isEligible(slot.id, routeKey)
           : true;
         return {
           slot,
           index,
           route,
           quotaEligible,
-          score: quotaScore(quotaManager, slot.id, modelId),
+          score: quotaScore(quotaManager, slot.id, routeKey),
         };
       })
       .filter((entry) => entry.quotaEligible)
@@ -130,43 +130,35 @@ function createRouteScheduler({
     return Math.max(25, Math.round(raw * jitterFactor));
   }
 
-  function modelWaitMs(modelId) {
-    const state = ensureModel(modelId);
+  function routeWaitMs(routeKey) {
+    const state = ensureRoutePacing(routeKey);
     return Math.max(0, state.nextDispatchAt - nowMs());
   }
 
-  async function waitForModel(modelId) {
-    const waitMs = modelWaitMs(modelId);
+  async function waitForRoute(routeKey) {
+    const waitMs = routeWaitMs(routeKey);
     if (waitMs > 0) await sleep(waitMs);
     return waitMs;
   }
 
-  async function acquire(modelId, slot) {
-    const pacingWaitMs = await waitForModel(modelId);
-    const route = ensureRoute(slot.id, modelId);
+  async function acquire(routeKey, credential) {
+    const pacingWaitMs = await waitForRoute(routeKey);
+    const route = ensureCredentialRoute(credential.id, routeKey);
 
-    if (route.inFlight >= maxInFlightPerRoute) {
-      return Object.freeze({
-        available: false,
-        reason: 'LOCAL_ROUTE_BUSY',
-        pacingWaitMs,
-      });
+    if (route.inFlight >= maxInFlightPerCredentialRoute) {
+      return Object.freeze({ available: false, reason: 'LOCAL_ROUTE_BUSY', pacingWaitMs });
     }
 
     let remoteLease = null;
     if (store?.acquireRouteRuntimeLease) {
       remoteLease = await store.acquireRouteRuntimeLease({
-        projectSlot: slot.id,
-        modelId,
+        projectSlot: credential.id,
+        modelId: routeKey,
         leaseMs: routeLeaseMs,
-        maxInFlight: maxInFlightPerRoute,
+        maxInFlight: maxInFlightPerCredentialRoute,
       });
       if (!remoteLease) {
-        return Object.freeze({
-          available: false,
-          reason: 'DISTRIBUTED_ROUTE_BUSY',
-          pacingWaitMs,
-        });
+        return Object.freeze({ available: false, reason: 'DISTRIBUTED_ROUTE_BUSY', pacingWaitMs });
       }
     }
 
@@ -187,49 +179,47 @@ function createRouteScheduler({
         released = true;
         route.inFlight = Math.max(0, route.inFlight - 1);
         if (store?.releaseRouteRuntimeLease && remoteLease) {
-          await store.releaseRouteRuntimeLease(slot.id, modelId);
+          await store.releaseRouteRuntimeLease(credential.id, routeKey);
         }
         return true;
       },
     });
   }
 
-  async function recordSuccess(modelId, projectSlot) {
+  async function recordSuccess(routeKey, credentialSlotId) {
     const now = nowMs();
-    const route = ensureRoute(projectSlot, modelId);
-    const model = ensureModel(modelId);
-
+    const route = ensureCredentialRoute(credentialSlotId, routeKey);
+    const pacing = ensureRoutePacing(routeKey);
     route.lastSuccessAt = now;
     route.lastErrorCode = null;
-    model.shortRateLimitStreak = 0;
-    model.nextDispatchAt = 0;
+    pacing.shortRateLimitStreak = 0;
+    pacing.nextDispatchAt = 0;
 
     if (store?.recordRouteRuntimeOutcome) {
       await store.recordRouteRuntimeOutcome({
-        projectSlot,
-        modelId,
+        projectSlot: credentialSlotId,
+        modelId: routeKey,
         success: true,
         shortRateLimitStreak: 0,
         nextEligibleAt: null,
       });
     }
-
-    return snapshotRoute(projectSlot, modelId);
+    return snapshotCredentialRoute(credentialSlotId, routeKey);
   }
 
-  async function recordFailure(modelId, projectSlot, error) {
+  async function recordFailure(routeKey, credentialSlotId, error) {
     const now = nowMs();
-    const route = ensureRoute(projectSlot, modelId);
-    const model = ensureModel(modelId);
+    const route = ensureCredentialRoute(credentialSlotId, routeKey);
+    const pacing = ensureRoutePacing(routeKey);
     route.lastFailureAt = now;
     route.lastErrorCode = error?.code || AI_ERROR_CODES.UNKNOWN;
 
     let pacingDelayMs = 0;
     if (SHORT_WINDOW_RATE_CODES.has(error?.code)) {
-      model.shortRateLimitStreak += 1;
-      model.lastShortRateLimitAt = now;
-      pacingDelayMs = shortBackoffMs(model.shortRateLimitStreak);
-      model.nextDispatchAt = Math.max(model.nextDispatchAt, now + pacingDelayMs);
+      pacing.shortRateLimitStreak += 1;
+      pacing.lastShortRateLimitAt = now;
+      pacingDelayMs = shortBackoffMs(pacing.shortRateLimitStreak);
+      pacing.nextDispatchAt = Math.max(pacing.nextDispatchAt, now + pacingDelayMs);
     }
 
     if (store?.recordRouteRuntimeOutcome) {
@@ -238,29 +228,27 @@ function createRouteScheduler({
         ? providerDelay
         : pacingDelayMs;
       await store.recordRouteRuntimeOutcome({
-        projectSlot,
-        modelId,
+        projectSlot: credentialSlotId,
+        modelId: routeKey,
         success: false,
         errorCode: route.lastErrorCode,
-        shortRateLimitStreak: model.shortRateLimitStreak,
-        nextEligibleAt: routeDelay > 0
-          ? new Date(now + routeDelay)
-          : null,
+        shortRateLimitStreak: pacing.shortRateLimitStreak,
+        nextEligibleAt: routeDelay > 0 ? new Date(now + routeDelay) : null,
       });
     }
 
     return Object.freeze({
-      route: snapshotRoute(projectSlot, modelId),
-      model: snapshotModel(modelId),
+      credentialRoute: snapshotCredentialRoute(credentialSlotId, routeKey),
+      route: snapshotRoute(routeKey),
       pacingDelayMs,
     });
   }
 
-  function snapshotRoute(projectSlot, modelId) {
-    const state = ensureRoute(projectSlot, modelId);
+  function snapshotCredentialRoute(credentialSlotId, routeKey) {
+    const state = ensureCredentialRoute(credentialSlotId, routeKey);
     return Object.freeze({
-      projectSlot: state.projectSlot,
-      modelId: state.modelId,
+      credentialSlotId: state.credentialSlotId,
+      routeKey: state.routeKey,
       inFlight: state.inFlight,
       lastSelectedAt: state.lastSelectedAt ? new Date(state.lastSelectedAt) : null,
       lastSuccessAt: state.lastSuccessAt ? new Date(state.lastSuccessAt) : null,
@@ -269,30 +257,27 @@ function createRouteScheduler({
     });
   }
 
-  function snapshotModel(modelId) {
-    const state = ensureModel(modelId);
+  function snapshotRoute(routeKey) {
+    const state = ensureRoutePacing(routeKey);
     return Object.freeze({
-      modelId: state.modelId,
+      routeKey: state.routeKey,
       shortRateLimitStreak: state.shortRateLimitStreak,
       nextDispatchAt: state.nextDispatchAt ? new Date(state.nextDispatchAt) : null,
-      waitMs: modelWaitMs(modelId),
-      lastShortRateLimitAt: state.lastShortRateLimitAt
-        ? new Date(state.lastShortRateLimitAt)
-        : null,
+      waitMs: routeWaitMs(routeKey),
+      lastShortRateLimitAt: state.lastShortRateLimitAt ? new Date(state.lastShortRateLimitAt) : null,
     });
   }
 
   function snapshot() {
     return Object.freeze({
-      maxInFlightPerRoute,
+      maxInFlightPerCredentialRoute,
       routeLeaseMs,
       shortBackoffBaseMs,
       shortBackoffMaxMs,
-      routes: Object.freeze(Array.from(routes.values()).map((state) => snapshotRoute(
-        state.projectSlot,
-        state.modelId
-      ))),
-      models: Object.freeze(Array.from(models.keys()).map(snapshotModel)),
+      credentialRoutes: Object.freeze(Array.from(credentialRoutes.values()).map((state) =>
+        snapshotCredentialRoute(state.credentialSlotId, state.routeKey)
+      )),
+      routes: Object.freeze(Array.from(routePacing.keys()).map(snapshotRoute)),
     });
   }
 
@@ -301,9 +286,9 @@ function createRouteScheduler({
     acquire,
     recordSuccess,
     recordFailure,
-    modelWaitMs,
+    routeWaitMs,
+    snapshotCredentialRoute,
     snapshotRoute,
-    snapshotModel,
     snapshot,
   });
 }

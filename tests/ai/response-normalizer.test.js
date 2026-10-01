@@ -48,7 +48,7 @@ test('normalizer preserves model, slot, finish reason, latency and usage metadat
   assert.equal(result.text, 'final');
   assert.equal(result.providerModel, 'gemini-3.8-flash-001');
   assert.equal(result.requestedModel, 'gemini-3.8-flash');
-  assert.equal(result.projectSlot, 'p2');
+  assert.equal(result.credentialSlot, 'p2');
   assert.equal(result.finishReason, 'STOP');
   assert.equal(result.latencyMs, 1234);
   assert.equal(result.fallbackDepth, 1);

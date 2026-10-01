@@ -1,0 +1,75 @@
+name: Neutral Runtime V2 Branch Validation
+
+on:
+  push:
+    branches:
+      - aim/model-neutral-runtime-v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  neutral-runtime-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Branch B
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Check AI module syntax
+        run: find services/ai -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Check backend syntax
+        run: node --check index.js
+
+      - name: Check tree renderer syntax
+        run: find public/tree -name '*.mjs' -print0 | xargs -0 -n1 node --check
+
+      - name: Enforce legacy runtime retirement
+        shell: bash
+        run: |
+          set -euo pipefail
+          retired=(
+            services/ai/capability-adapter.js
+            services/ai/gemini-transport.js
+            services/ai/isolated-provider-executor.js
+            services/ai/media-capability-factory.js
+            services/ai/media-capability-runtime.js
+            services/ai/media-model-catalog.js
+            services/ai/media-telemetry.js
+            services/ai/project-pool.js
+            services/ai/visual-capability-factory.js
+            services/ai/visual-capability-runtime.js
+            services/ai/visual-model-catalog.js
+            services/ai/visual-telemetry.js
+          )
+          for path in "${retired[@]}"; do
+            if [ -e "$path" ]; then
+              echo "Retired AI runtime path returned: $path" >&2
+              exit 1
+            fi
+          done
+          test -f services/ai/model-history.js
+
+      - name: Run complete unit regression suite
+        run: npm test
+
+      - name: Build production web artifact
+        run: npm run build
+
+      - name: Verify production build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/index.html
+          test -s dist/vendor/pixi/pixi.min.mjs
+          test -s dist/kiwi-build.json

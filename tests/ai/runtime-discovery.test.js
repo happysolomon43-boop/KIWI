@@ -15,16 +15,24 @@ test('discovery interval is bounded to a safe range', () => {
 test('runtime hydrates a previously auto-promoted model before routing', async () => {
   const queries = [];
   const persisted39 = {
-    model_id: 'gemini-3.9-flash',
+    model_id: 'GOOGLE::gemini-3.9-flash',
     family: 'FLASH',
     channel: 'STABLE',
     status: 'APPROVED',
     rank: modelVersionRank('gemini-3.9-flash'),
     supported_thinking: ['LOW', 'MEDIUM', 'HIGH'],
-    capabilities: ['generateContent', 'thinking', 'vision', 'structuredOutput', 'longOutput'],
+    capabilities: ['INFERENCE', 'REASONING', 'STRUCTURED_OUTPUT', 'LONG_OUTPUT'],
     input_token_limit: 1048576,
     output_token_limit: 65536,
-    metadata: { autoPromoted: true },
+    metadata: {
+      provider: 'GOOGLE',
+      modelId: 'gemini-3.9-flash',
+      routeKey: 'GOOGLE::gemini-3.9-flash',
+      productionEligible: true,
+      autoPromoted: true,
+      inputModalities: ['TEXT', 'IMAGE'],
+      outputModalities: ['TEXT'],
+    },
     approved_at: new Date().toISOString(),
   };
 
@@ -66,9 +74,9 @@ test('runtime hydrates a previously auto-promoted model before routing', async (
 
   assert.equal(state.hydratedCatalogModels, 1);
   assert.equal(intervalScheduled, true);
-  assert.equal(
-    runtime.orchestrator.plan('MAIN_CBT').plannedPrimaryModel,
-    'gemini-3.9-flash'
-  );
+  const plan = runtime.orchestrator.plan('MAIN_CBT');
+  assert.equal(plan.plannedPrimaryModel, 'gemini-3.5-flash-lite');
+  assert.ok(plan.candidates.some((candidate) => candidate.routeKey === 'GOOGLE::gemini-3.9-flash'));
+  assert.equal(runtime.catalog.get('GOOGLE::gemini-3.9-flash').productionEligible, true);
   assert.ok(queries.some((sql) => /INSERT INTO ai_model_catalog/i.test(sql)));
 });

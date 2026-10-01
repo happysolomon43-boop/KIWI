@@ -1,6 +1,30 @@
 'use strict';
 
 const { pacificDayKey } = require('./quota-manager');
+const { providerModelKey } = require('./providers');
+
+function routeIdentity(value = {}) {
+  if (typeof value === 'string') {
+    const routeKey = String(value).trim();
+    const splitAt = routeKey.indexOf('::');
+    return Object.freeze({
+      routeKey: routeKey || null,
+      provider: splitAt > 0 ? routeKey.slice(0, splitAt) : null,
+      modelId: splitAt > 0 ? routeKey.slice(splitAt + 2) : null,
+    });
+  }
+
+  const provider = value?.provider || null;
+  const modelId = value?.modelId || value?.id || null;
+  const routeKey = value?.routeKey || (provider && modelId ? providerModelKey(provider, modelId) : null);
+  return Object.freeze({ routeKey, provider, modelId });
+}
+
+function routeKeys(values = []) {
+  return (values || [])
+    .map((value) => routeIdentity(value).routeKey)
+    .filter(Boolean);
+}
 
 function createTelemetry({
   store = null,
@@ -31,8 +55,13 @@ function createTelemetry({
     const now = nowDate();
     recentAttempts.push({
       at: now.getTime(),
+      routeKey: record.routeKey || null,
+      provider: record.provider || null,
       modelId: record.modelId || null,
-      projectSlot: record.projectSlot || null,
+      credentialSlotId: record.credentialSlotId || null,
+      requestedReasoning: record.requestedReasoning || null,
+      resolvedReasoning: record.resolvedReasoning || null,
+      fallbackDepth: Number(record.fallbackDepth) || 0,
       outcome: record.outcome || null,
       errorCode: record.errorCode || null,
       httpStatus: record.httpStatus ?? null,
@@ -65,11 +94,9 @@ function createTelemetry({
     try {
       return await fn();
     } catch (error) {
-      if (typeof logger?.warn === 'function') {
-        logger.warn(`[KIWI AI] telemetry ${label} failed`, {
-          error: error?.message || String(error),
-        });
-      }
+      logger?.warn?.(`[KIWI AI] telemetry ${label} failed`, {
+        error: error?.message || String(error),
+      });
       return null;
     }
   }
@@ -79,36 +106,58 @@ function createTelemetry({
     taskClass,
     mode,
     requestedReasoning = null,
-    plannedModels = [],
-    plannedPrimaryModel = null,
-    legacyModel = null,
+    plannedRoutes = null,
+    plannedPrimaryRoute = null,
     generationGroupId = null,
+    // Transitional input aliases are accepted only here while callers are
+    // migrated. Persistence receives route keys, never provider-less identity.
+    plannedModels = null,
+    plannedPrimaryModel = null,
   }) {
+    const normalizedPlannedRoutes = routeKeys(plannedRoutes || plannedModels || []);
+    const primary = routeIdentity(plannedPrimaryRoute || plannedPrimaryModel || normalizedPlannedRoutes[0] || null);
     return safe('beginRequest', () => store.createRequest({
       taskId,
       class: taskClass,
       mode,
       requestedReasoning,
-      plannedModels,
-      plannedPrimaryModel,
-      legacyModel,
+      plannedModels: normalizedPlannedRoutes,
+      plannedPrimaryModel: primary.routeKey,
+      legacyModel: null,
       generationGroupId,
       outcome: 'PENDING',
       startedAt: nowDate(),
     }));
   }
 
-  async function recordAttempt(record) {
-    rememberAttempt(record);
-    return safe('recordAttempt', () => store.recordAttempt(record));
+  async function recordAttempt(record = {}) {
+    const identity = routeIdentity(record.routeKey || {
+      provider: record.provider,
+      modelId: record.modelId,
+    });
+    const credentialSlotId = record.credentialSlotId || record.projectSlot || null;
+    const normalized = {
+      ...record,
+      ...identity,
+      credentialSlotId,
+    };
+    rememberAttempt(normalized);
+
+    return safe('recordAttempt', () => store.recordAttempt({
+      ...record,
+      // Existing storage columns are historical names. The values written are
+      // neutral: composite route identity + provider-owned credential slot.
+      modelId: identity.routeKey,
+      projectSlot: credentialSlotId,
+    }));
   }
 
   async function finishRequest(requestId, {
     taskId,
     taskClass,
     mode,
-    selectedModel = null,
-    selectedProjectSlot = null,
+    selectedRoute = null,
+    selectedCredentialSlotId = null,
     outcome,
     fallbackDepth = 0,
     attemptCount = 0,
@@ -119,8 +168,13 @@ function createTelemetry({
     queueWaitMs = 0,
     admissionLimit = null,
     congestionLevel = null,
+    // Transitional aliases; converted immediately at the storage boundary.
+    selectedModel = null,
+    selectedProjectSlot = null,
   }) {
     const completedAt = nowDate();
+    const selected = routeIdentity(selectedRoute || selectedModel || null);
+    const credentialSlotId = selectedCredentialSlotId || selectedProjectSlot || null;
 
     rememberRequest({
       outcome,
@@ -134,8 +188,8 @@ function createTelemetry({
     if (!requestId) return null;
 
     await safe('finishRequest', () => store.finishRequest(requestId, {
-      selectedModel,
-      selectedProjectSlot,
+      selectedModel: selected.routeKey,
+      selectedProjectSlot: credentialSlotId,
       outcome,
       fallbackDepth,
       attemptCount,
@@ -170,23 +224,26 @@ function createTelemetry({
     taskId,
     taskClass,
     requestedReasoning,
-    candidateModels,
-    legacyModel = null,
+    candidateRoutes = null,
+    plannedCredentialSlotId = null,
+    // Transitional aliases while the orchestrator call site is migrated.
+    candidateModels = null,
     plannedProjectSlot = null,
   }) {
-    const plannedModels = (candidateModels || []).map((candidate) =>
-      typeof candidate === 'string' ? candidate : candidate.modelId
-    );
-    const primary = plannedModels[0] || null;
+    const candidates = candidateRoutes || candidateModels || [];
+    const plannedRoutes = candidates.map((candidate) => routeIdentity(
+      typeof candidate === 'string' ? candidate : candidate.routeKey || candidate
+    )).filter((identity) => identity.routeKey);
+    const primary = plannedRoutes[0] || null;
+    const credentialSlotId = plannedCredentialSlotId || plannedProjectSlot || null;
 
     const requestId = await beginRequest({
       taskId,
       taskClass,
       mode: 'SHADOW',
       requestedReasoning,
-      plannedModels,
-      plannedPrimaryModel: primary,
-      legacyModel,
+      plannedRoutes,
+      plannedPrimaryRoute: primary,
     });
 
     if (!requestId) return null;
@@ -194,8 +251,11 @@ function createTelemetry({
     await recordAttempt({
       requestId,
       attemptNumber: 1,
-      modelId: primary,
-      projectSlot: plannedProjectSlot || null,
+      ...(primary || {}),
+      credentialSlotId,
+      requestedReasoning,
+      resolvedReasoning: primary?.resolvedReasoning || null,
+      fallbackDepth: 0,
       outcome: 'SHADOW_PLAN',
       startedAt: nowDate(),
       completedAt: nowDate(),
@@ -205,8 +265,8 @@ function createTelemetry({
       taskId,
       taskClass,
       mode: 'SHADOW',
-      selectedModel: primary,
-      selectedProjectSlot: plannedProjectSlot || null,
+      selectedRoute: primary,
+      selectedCredentialSlotId: credentialSlotId,
       outcome: 'SHADOW_ONLY',
       fallbackDepth: 0,
       attemptCount: 0,
@@ -228,6 +288,8 @@ function createTelemetry({
 
     const errorsByCode = {};
     const httpStatuses = {};
+    const attemptsByRoute = {};
+    const attemptsByProvider = {};
     const attemptsByModel = {};
     const quotaDimensions = {};
     const classificationSources = {};
@@ -244,16 +306,20 @@ function createTelemetry({
         const status = String(attempt.httpStatus);
         httpStatuses[status] = (httpStatuses[status] || 0) + 1;
       }
+      if (attempt.routeKey) {
+        attemptsByRoute[attempt.routeKey] = (attemptsByRoute[attempt.routeKey] || 0) + 1;
+      }
+      if (attempt.provider) {
+        attemptsByProvider[attempt.provider] = (attemptsByProvider[attempt.provider] || 0) + 1;
+      }
       if (attempt.modelId) {
         attemptsByModel[attempt.modelId] = (attemptsByModel[attempt.modelId] || 0) + 1;
       }
       if (attempt.quotaDimension) {
-        quotaDimensions[attempt.quotaDimension] =
-          (quotaDimensions[attempt.quotaDimension] || 0) + 1;
+        quotaDimensions[attempt.quotaDimension] = (quotaDimensions[attempt.quotaDimension] || 0) + 1;
       }
       if (attempt.classificationSource) {
-        classificationSources[attempt.classificationSource] =
-          (classificationSources[attempt.classificationSource] || 0) + 1;
+        classificationSources[attempt.classificationSource] = (classificationSources[attempt.classificationSource] || 0) + 1;
       }
     }
 
@@ -277,16 +343,16 @@ function createTelemetry({
       failedAttempts,
       errorsByCode: Object.freeze(errorsByCode),
       httpStatuses: Object.freeze(httpStatuses),
+      attemptsByRoute: Object.freeze(attemptsByRoute),
+      attemptsByProvider: Object.freeze(attemptsByProvider),
       attemptsByModel: Object.freeze(attemptsByModel),
+      quotaDimensions: Object.freeze(quotaDimensions),
+      classificationSources: Object.freeze(classificationSources),
       requests: requests.length,
       requestOutcomes: Object.freeze(requestOutcomes),
       fallbackRequests,
-      averageLatencyMs: requests.length
-        ? Math.round(totalLatencyMs / requests.length)
-        : 0,
-      averageQueueWaitMs: requests.length
-        ? Math.round(totalQueueWaitMs / requests.length)
-        : 0,
+      averageLatencyMs: requests.length ? Math.round(totalLatencyMs / requests.length) : 0,
+      averageQueueWaitMs: requests.length ? Math.round(totalQueueWaitMs / requests.length) : 0,
     });
   }
 
@@ -300,5 +366,6 @@ function createTelemetry({
 }
 
 module.exports = {
+  routeIdentity,
   createTelemetry,
 };

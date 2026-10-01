@@ -81,11 +81,12 @@ test('runtime status exposes routing health without keys or prompt content', () 
   const status = runtime.status();
   const serialized = JSON.stringify(status);
 
-  assert.equal(status.projectSlots.total, 2);
-  assert.equal(status.projectSlots.enabled, 2);
-  assert.equal(status.routes.VVIP.primaryModel, 'gemini-3.8-flash');
-  assert.equal(status.routes.VIP.primaryModel, 'gemini-3.7-flash');
-  assert.equal(status.routes.IP.primaryModel, 'gemini-3.5-flash-lite');
+  assert.equal(status.providers.credentials.GOOGLE.total, 2);
+  assert.equal(status.providers.credentials.GOOGLE.enabled, 2);
+  assert.equal(status.routes.default.primaryProvider, 'GOOGLE');
+  assert.equal(status.routes.default.primaryModel, 'gemini-3.5-flash-lite');
+  assert.equal(status.routes.cards.primaryProvider, 'GOOGLE');
+  assert.equal(status.routes.cards.primaryModel, 'gemini-3.8-flash');
   assert.equal(status.discovery.enabled, true);
   assert.equal(status.discovery.autoPromote, true);
   assert.doesNotMatch(serialized, /secret-one|secret-two/);

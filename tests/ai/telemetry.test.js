@@ -33,18 +33,18 @@ test('shadow telemetry stores routing metadata only', async () => {
     taskId: 'MAIN_CBT',
     taskClass: 'VVIP',
     requestedReasoning: 'HIGH',
-    candidateModels: [
-      { modelId: 'gemini-3.8-flash' },
-      { modelId: 'gemini-3.7-flash' },
+    candidateRoutes: [
+      { provider: 'GOOGLE', modelId: 'gemini-3.8-flash', routeKey: 'GOOGLE::gemini-3.8-flash' },
+      { provider: 'GOOGLE', modelId: 'gemini-3.5-flash', routeKey: 'GOOGLE::gemini-3.5-flash' },
     ],
-    legacyModel: 'legacy-preview',
-    plannedProjectSlot: 'gemini-project-03',
+    plannedCredentialSlotId: 'google-key-03',
   });
 
   const serialized = JSON.stringify(writes);
   assert.match(serialized, /MAIN_CBT/);
   assert.match(serialized, /gemini-3\.8-flash/);
-  assert.match(serialized, /gemini-project-03/);
+  assert.match(serialized, /GOOGLE::gemini-3\.8-flash/);
+  assert.match(serialized, /google-key-03/);
   assert.doesNotMatch(serialized, /prompt|study notes|secret-key/i);
 });
 
@@ -84,8 +84,10 @@ test('live telemetry exposes recent provider errors, fallbacks and queue wait wi
   await telemetry.recordAttempt({
     requestId: '22222222-2222-4222-8222-222222222222',
     attemptNumber: 1,
+    provider: 'GOOGLE',
     modelId: 'gemini-3.8-flash',
-    projectSlot: 'gemini-project-01',
+    routeKey: 'GOOGLE::gemini-3.8-flash',
+    credentialSlotId: 'google-key-01',
     outcome: 'FAILED',
     errorCode: 'PROVIDER_OVERLOADED',
     httpStatus: 503,
@@ -94,8 +96,10 @@ test('live telemetry exposes recent provider errors, fallbacks and queue wait wi
   await telemetry.recordAttempt({
     requestId: '22222222-2222-4222-8222-222222222222',
     attemptNumber: 2,
-    modelId: 'gemini-3.7-flash',
-    projectSlot: 'gemini-project-02',
+    provider: 'GOOGLE',
+    modelId: 'gemini-3.5-flash',
+    routeKey: 'GOOGLE::gemini-3.5-flash',
+    credentialSlotId: 'google-key-02',
     outcome: 'SUCCESS',
     latencyMs: 900,
   });
@@ -105,8 +109,8 @@ test('live telemetry exposes recent provider errors, fallbacks and queue wait wi
       taskId: 'RECKONING_CBT',
       taskClass: 'VVIP',
       mode: 'LIVE',
-      selectedModel: 'gemini-3.7-flash',
-      selectedProjectSlot: 'gemini-project-02',
+      selectedRoute: { provider: 'GOOGLE', modelId: 'gemini-3.5-flash', routeKey: 'GOOGLE::gemini-3.5-flash' },
+      selectedCredentialSlotId: 'google-key-02',
       outcome: 'SUCCESS',
       fallbackDepth: 1,
       attemptCount: 2,
