@@ -1,0 +1,47 @@
+name: Neutral Runtime V2 Contract Cleanup
+
+on:
+  push:
+    branches:
+      - aim/model-neutral-runtime-v2
+    paths:
+      - 'scripts/finalize-neutral-runtime-contracts.js'
+      - '.github/workflows/neutral-runtime-v2-contract-cleanup.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout Branch B
+        uses: actions/checkout@v4
+        with:
+          ref: aim/model-neutral-runtime-v2
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply guarded contract cleanup
+        run: node scripts/finalize-neutral-runtime-contracts.js
+
+      - name: Validate syntax and diff
+        run: |
+          node --check services/ai/traffic-controller.js
+          node --check services/ai/execution-contracts.js
+          git diff --check
+
+      - name: Commit cleanup and remove temporary tooling
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/ai/traffic-controller.js services/ai/execution-contracts.js
+          git rm scripts/finalize-neutral-runtime-contracts.js .github/workflows/neutral-runtime-v2-contract-cleanup.yml
+          git commit -m 'refactor(ai): finalize neutral runtime diagnostics contracts'
+          git push origin HEAD:aim/model-neutral-runtime-v2
