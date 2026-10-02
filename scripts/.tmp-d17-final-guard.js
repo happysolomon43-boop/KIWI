@@ -1,0 +1,11 @@
+'use strict';
+const fs=require('node:fs');
+const path='teaching/d17/service.js';
+let s=fs.readFileSync(path,'utf8');
+s=s.replace("code:'UNTaught_DEPENDENCY_DETECTED'","code:'UNTAUGHT_DEPENDENCY_DETECTED'");
+const from="async function reconcileAndLock(user,assessmentId,input={}){const sid=userId(user),assessment=await repository.requireAssessment(sid,assessmentId),bp=await repository.blueprint(sid,input.blueprintId)||await repository.latestBlueprint(sid,assessmentId);if(!bp)throw fail('Assessment Blueprint not found.','TEACHING_D17_BLUEPRINT_NOT_FOUND',404);const [currentEligibility,versions,validations,contamination,courseAudit]=await Promise.all([repository.currentEligibility(sid,assessment.course_id),repository.candidateVersions(sid,assessmentId,bp.assessment_blueprint_id),repository.validations(sid,assessmentId),repository.contamination(sid,assessmentId),repository.courseAuditView(sid,assessment.course_id)]);";
+const to="async function reconcileAndLock(user,assessmentId,input={}){const sid=userId(user),assessment=await repository.requireAssessment(sid,assessmentId),bp=await repository.blueprint(sid,input.blueprintId)||await repository.latestBlueprint(sid,assessmentId);if(!bp)throw fail('Assessment Blueprint not found.','TEACHING_D17_BLUEPRINT_NOT_FOUND',404);const workspace=await repository.pplWorkspace(sid,assessmentId,'ELIGIBLE_CANDIDATE');if(!workspace)throw fail('Assessment PPL candidate workspace is missing; Package lock must fail closed.','TEACHING_D17_PPL_WORKSPACE_REQUIRED',409);if(!['CANDIDATE','PRE_LOCK_READY'].includes(String(workspace.maturity||'')))throw fail('Assessment PPL candidate workspace is not mature enough for final reconciliation.','TEACHING_D17_PPL_WORKSPACE_NOT_READY',409,{maturity:workspace.maturity});const [currentEligibility,versions,validations,contamination,courseAudit]=await Promise.all([repository.currentEligibility(sid,assessment.course_id),repository.candidateVersions(sid,assessmentId,bp.assessment_blueprint_id),repository.validations(sid,assessmentId),repository.contamination(sid,assessmentId),repository.courseAuditView(sid,assessment.course_id)]);";
+if(!s.includes(from)) throw new Error('reconcileAndLock anchor not found');
+s=s.replace(from,to);
+fs.writeFileSync(path,s);
+console.log('D17 final lock guard applied');
