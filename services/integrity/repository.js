@@ -45,18 +45,27 @@ function createIntegrityRepository({query,withTransaction,randomUUID}={}){
     return withTransaction(async(tx)=>{
       let session=await requireSession(userId,sessionId,tx,true);
       const prior=await eventByClientId(userId,sessionId,raw.clientEventId,tx);if(prior)return {session,event:prior,idempotent:true};
-      const {rows}=await q(tx,"insert into public.kiwi_integrity_session_events(integrity_event_id,integrity_session_id,user_id,client_event_id,raw_kind,normalized_kind,counts_as_departure,permitted,kiwi_caused,observed_at,duration_ms,safe_metadata,policy_version) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13) returning *",[randomUUID(),sessionId,userId,raw.clientEventId,raw.kind,decision.normalizedKind,Boolean(decision.counts),Boolean(permitted),Boolean(kiwiCaused),raw.observedAt,raw.durationMs,json(raw.metadata),session.policy_version]);
-      if(decision.counts){const updated=await q(tx,"update public.kiwi_integrity_sessions set confirmed_departure_count=confirmed_departure_count+1,state_version=state_version+1,updated_at=now() where user_id=$1 and integrity_session_id=$2 returning *",[userId,sessionId]);session=updated.rows[0];}
-      return {session,event:rows[0],idempotent:false};
+      let effectiveDecision=decision;
+      if(decision.counts){
+        const recent=await q(tx,"select integrity_event_id from public.kiwi_integrity_session_events where user_id=$1 and integrity_session_id=$2 and counts_as_departure=true and accepted_at>=now()-interval '1500 milliseconds' order by accepted_at desc limit 1",[userId,sessionId]);
+        if(recent.rows?.[0])effectiveDecision={normalizedKind:'DUPLICATE_NOOP',counts:false,confirmedProhibited:false,reason:'SERVER_DEDUPLICATED'};
+      }
+      const {rows}=await q(tx,"insert into public.kiwi_integrity_session_events(integrity_event_id,integrity_session_id,user_id,client_event_id,raw_kind,normalized_kind,counts_as_departure,permitted,kiwi_caused,observed_at,duration_ms,safe_metadata,policy_version) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13) returning *",[randomUUID(),sessionId,userId,raw.clientEventId,raw.kind,effectiveDecision.normalizedKind,Boolean(effectiveDecision.counts),Boolean(permitted),Boolean(kiwiCaused),raw.observedAt,raw.durationMs,json(raw.metadata),session.policy_version]);
+      if(effectiveDecision.counts){const updated=await q(tx,"update public.kiwi_integrity_sessions set confirmed_departure_count=confirmed_departure_count+1,state_version=state_version+1,updated_at=now() where user_id=$1 and integrity_session_id=$2 returning *",[userId,sessionId]);session=updated.rows[0];}
+      return {session,event:rows[0],effectiveDecision,idempotent:false};
     });
   }
   async function applySessionConsequence({userId,sessionId,action,outcome}){
     return withTransaction(async(tx)=>{
-      let session=await requireSession(userId,sessionId,tx,true);
-      if(action==='WARN'&&!session.warning_issued_at){const {rows}=await q(tx,"update public.kiwi_integrity_sessions set status='WARNING',warning_issued_at=now(),state_version=state_version+1,updated_at=now() where user_id=$1 and integrity_session_id=$2 returning *",[userId,sessionId]);session=rows[0];}
-      if(action==='LOCK'&&session.status!=='LOCKED'){const {rows}=await q(tx,"update public.kiwi_integrity_sessions set status='LOCKED',locked_at=now(),lock_outcome=$3,state_version=state_version+1,updated_at=now() where user_id=$1 and integrity_session_id=$2 returning *",[userId,sessionId,outcome]);session=rows[0];}
-      if(session.owner_type==='KIWI_EXAM'&&['WARN','LOCK'].includes(action)){
-        if(action==='WARN')await q(tx,"update public.exam_sessions set integrity_policy_version=$3,integrity_session_state='WARNING',integrity_departure_count=$4,integrity_warning_at=coalesce(integrity_warning_at,now()),updated_at=now() where user_id=$1 and id=$2",[userId,session.owner_ref,session.policy_version,session.confirmed_departure_count]);
+      let session=await requireSession(userId,sessionId,tx,true),appliedAction=null;
+      if(action==='WARN'&&!session.warning_issued_at&&!['LOCKED','CLOSED'].includes(session.status)){
+        const {rows}=await q(tx,"update public.kiwi_integrity_sessions set status='WARNING',warning_issued_at=now(),state_version=state_version+1,updated_at=now() where user_id=$1 and integrity_session_id=$2 returning *",[userId,sessionId]);session=rows[0];appliedAction='WARN';
+      }
+      if(action==='LOCK'&&!['LOCKED','CLOSED'].includes(session.status)){
+        const {rows}=await q(tx,"update public.kiwi_integrity_sessions set status='LOCKED',locked_at=now(),lock_outcome=$3,state_version=state_version+1,updated_at=now() where user_id=$1 and integrity_session_id=$2 returning *",[userId,sessionId,outcome]);session=rows[0];appliedAction='LOCK';
+      }
+      if(session.owner_type==='KIWI_EXAM'&&appliedAction){
+        if(appliedAction==='WARN')await q(tx,"update public.exam_sessions set integrity_policy_version=$3,integrity_session_state='WARNING',integrity_departure_count=$4,integrity_warning_at=coalesce(integrity_warning_at,now()),updated_at=now() where user_id=$1 and id=$2",[userId,session.owner_ref,session.policy_version,session.confirmed_departure_count]);
         else await q(tx,"update public.exam_sessions set integrity_policy_version=$3,integrity_session_state='LOCKED',integrity_departure_count=$4,integrity_locked_at=coalesce(integrity_locked_at,now()),integrity_lock_reason=$5,verification_pending=($5='POST_ATTEMPT_VERIFICATION_REQUIRED'),status=case when $5='ATTEMPT_INVALIDATED_RULE_BREACH' then 'invalidated' else status end,updated_at=now() where user_id=$1 and id=$2",[userId,session.owner_ref,session.policy_version,session.confirmed_departure_count,outcome]);
       }
       return session;
