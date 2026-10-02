@@ -2,61 +2,61 @@ TAP version 13
 # Subtest: D17 keeps forecast scope separate from authoritative eligibility
 ok 1 - D17 keeps forecast scope separate from authoritative eligibility
   ---
-  duration_ms: 1.497091
+  duration_ms: 1.257859
   type: 'test'
   ...
 # Subtest: D17 requires academic justification for single-mode major cumulative assessment
 ok 2 - D17 requires academic justification for single-mode major cumulative assessment
   ---
-  duration_ms: 0.895452
+  duration_ms: 0.743314
   type: 'test'
   ...
 # Subtest: D17 deterministic MCQ contract owns option count and stable IDs
 ok 3 - D17 deterministic MCQ contract owns option count and stable IDs
   ---
-  duration_ms: 0.661743
+  duration_ms: 0.718926
   type: 'test'
   ...
 # Subtest: D17 rubric criteria preserve mark lineage to Blueprint Learning Units
 ok 4 - D17 rubric criteria preserve mark lineage to Blueprint Learning Units
   ---
-  duration_ms: 0.326974
+  duration_ms: 0.238853
   type: 'test'
   ...
 # Subtest: D17 protected candidate pools expand only with a bounded risk reason
 ok 5 - D17 protected candidate pools expand only with a bounded risk reason
   ---
-  duration_ms: 0.333256
+  duration_ms: 0.326225
   type: 'test'
   ...
 # Subtest: D17 timing budget must cover predicted work plus review capacity
 ok 6 - D17 timing budget must cover predicted work plus review capacity
   ---
-  duration_ms: 0.255289
+  duration_ms: 0.209518
   type: 'test'
   ...
 # Subtest: D17 finalization blocks when item pass exists but whole-package pass is absent
 ok 7 - D17 finalization blocks when item pass exists but whole-package pass is absent
   ---
-  duration_ms: 0.47379
+  duration_ms: 0.349882
   type: 'test'
   ...
 # Subtest: D17 finalization fails closed on current-state eligibility loss
 ok 8 - D17 finalization fails closed on current-state eligibility loss
   ---
-  duration_ms: 0.18132
+  duration_ms: 0.120966
   type: 'test'
   ...
 # Subtest: D17 finalization rejects contaminated or retired candidates even after an old PASS
 ok 9 - D17 finalization rejects contaminated or retired candidates even after an old PASS
   ---
-  duration_ms: 0.402296
+  duration_ms: 0.276729
   type: 'test'
   ...
 # Subtest: D17 clarification gate deterministically blocks content help
 not ok 10 - D17 clarification gate deterministically blocks content help
   ---
-  duration_ms: 1.685686
+  duration_ms: 1.579089
   type: 'test'
   location: '/home/runner/work/KIWI/KIWI/tests/teaching/unit/d17-assessment-domain.test.js:60:1'
   failureType: 'testCodeFailure'
@@ -84,25 +84,25 @@ not ok 10 - D17 clarification gate deterministically blocks content help
 # Subtest: D17 attempt expiry includes approved time accommodation without changing the standard
 ok 11 - D17 attempt expiry includes approved time accommodation without changing the standard
   ---
-  duration_ms: 0.446208
+  duration_ms: 0.375545
   type: 'test'
   ...
 # Subtest: D17 missed final is incomplete rather than academic failure, and KIWI failure is protected
 ok 12 - D17 missed final is incomplete rather than academic failure, and KIWI failure is protected
   ---
-  duration_ms: 0.196018
+  duration_ms: 0.162798
   type: 'test'
   ...
 # Subtest: D17 frozen prompt bindings resolve current successor manifest versions
 ok 13 - D17 frozen prompt bindings resolve current successor manifest versions
   ---
-  duration_ms: 0.204545
+  duration_ms: 0.14142
   type: 'test'
   ...
 # Subtest: D17 package hash is deterministic and content-addressed
 ok 14 - D17 package hash is deterministic and content-addressed
   ---
-  duration_ms: 0.399591
+  duration_ms: 0.287823
   type: 'test'
   ...
 1..14
@@ -113,5 +113,5 @@ ok 14 - D17 package hash is deterministic and content-addressed
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 87.121895
+# duration_ms 95.22932
 exit_code=1
