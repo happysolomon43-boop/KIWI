@@ -287,8 +287,12 @@ CREATE TABLE IF NOT EXISTS public.teaching_assessment_contamination_events (
   action text NOT NULL,
   selective_recheck_required boolean NOT NULL DEFAULT true,
   idempotency_key text NOT NULL,
-  provenance_refs jsonb NOT NULL DEFAULT '[]'::jsonb
+  provenance_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
+  resolved_at timestamptz NULL,
+  resolution_ref text NULL
 );
+ALTER TABLE public.teaching_assessment_contamination_events ADD COLUMN IF NOT EXISTS resolved_at timestamptz NULL;
+ALTER TABLE public.teaching_assessment_contamination_events ADD COLUMN IF NOT EXISTS resolution_ref text NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS teaching_assessment_contamination_idempotency_uidx ON public.teaching_assessment_contamination_events(student_id,idempotency_key);
 
 CREATE TABLE IF NOT EXISTS public.teaching_assessment_ppl_workspaces (
@@ -355,6 +359,15 @@ BEGIN
   RETURN NEW;
 END $$;
 
+CREATE OR REPLACE FUNCTION public.teaching_d17_guard_contamination_resolution()
+RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $
+BEGIN
+  IF NEW.contamination_event_id IS DISTINCT FROM OLD.contamination_event_id OR NEW.assessment_id IS DISTINCT FROM OLD.assessment_id OR NEW.student_id IS DISTINCT FROM OLD.student_id OR NEW.candidate_version_id IS DISTINCT FROM OLD.candidate_version_id OR NEW.exposure_kind IS DISTINCT FROM OLD.exposure_kind OR NEW.source_ref IS DISTINCT FROM OLD.source_ref OR NEW.detected_at IS DISTINCT FROM OLD.detected_at OR NEW.action IS DISTINCT FROM OLD.action OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key OR NEW.provenance_refs IS DISTINCT FROM OLD.provenance_refs THEN RAISE EXCEPTION 'Contamination evidence is immutable'; END IF;
+  IF OLD.selective_recheck_required=false AND NEW.selective_recheck_required=true THEN RAISE EXCEPTION 'Resolved contamination cannot be reopened by mutation'; END IF;
+  IF OLD.selective_recheck_required=true AND NEW.selective_recheck_required=false AND (NEW.resolved_at IS NULL OR NEW.resolution_ref IS NULL) THEN RAISE EXCEPTION 'Contamination resolution requires timestamp and resolution reference'; END IF;
+  RETURN NEW;
+END $;
+
 CREATE OR REPLACE FUNCTION public.teaching_d17_guard_locked_package_item()
 RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
 DECLARE locked boolean;
@@ -380,6 +393,8 @@ DROP TRIGGER IF EXISTS teaching_d17_responses_append_only ON public.teaching_ass
 CREATE TRIGGER teaching_d17_responses_append_only BEFORE UPDATE OR DELETE ON public.teaching_assessment_responses FOR EACH ROW EXECUTE FUNCTION public.teaching_d17_reject_append_only_mutation();
 DROP TRIGGER IF EXISTS teaching_d17_attempt_events_append_only ON public.teaching_assessment_attempt_events;
 CREATE TRIGGER teaching_d17_attempt_events_append_only BEFORE UPDATE OR DELETE ON public.teaching_assessment_attempt_events FOR EACH ROW EXECUTE FUNCTION public.teaching_d17_reject_append_only_mutation();
+DROP TRIGGER IF EXISTS teaching_d17_contamination_resolution_guard ON public.teaching_assessment_contamination_events;
+CREATE TRIGGER teaching_d17_contamination_resolution_guard BEFORE UPDATE ON public.teaching_assessment_contamination_events FOR EACH ROW EXECUTE FUNCTION public.teaching_d17_guard_contamination_resolution();
 DROP TRIGGER IF EXISTS teaching_d17_locked_package_guard ON public.teaching_assessment_packages;
 CREATE TRIGGER teaching_d17_locked_package_guard BEFORE UPDATE ON public.teaching_assessment_packages FOR EACH ROW EXECUTE FUNCTION public.teaching_d17_guard_locked_package();
 DROP TRIGGER IF EXISTS teaching_d17_locked_package_item_guard ON public.teaching_assessment_package_items;
@@ -402,6 +417,7 @@ BEGIN
   END LOOP;
 END $$;
 GRANT UPDATE ON public.teaching_assessments,public.teaching_assessment_candidates,public.teaching_assessment_packages,public.teaching_assessment_package_items,public.teaching_assessment_attempts,public.teaching_assessment_item_challenges,public.teaching_assessment_ppl_workspaces TO service_role;
-REVOKE UPDATE,DELETE,TRUNCATE ON public.teaching_assessment_blueprints,public.teaching_assessment_eligibility_entries,public.teaching_assessment_candidate_versions,public.teaching_assessment_validations,public.teaching_assessment_attempt_events,public.teaching_assessment_responses,public.teaching_assessment_invalidations,public.teaching_assessment_contamination_events FROM service_role;
+REVOKE UPDATE,DELETE,TRUNCATE ON public.teaching_assessment_blueprints,public.teaching_assessment_eligibility_entries,public.teaching_assessment_candidate_versions,public.teaching_assessment_validations,public.teaching_assessment_attempt_events,public.teaching_assessment_responses,public.teaching_assessment_invalidations FROM service_role;
+GRANT UPDATE ON public.teaching_assessment_contamination_events TO service_role;
 
 COMMIT;
