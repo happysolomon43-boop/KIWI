@@ -6470,51 +6470,16 @@ body.kiwi-tour-active { overscroll-behavior: none; }
       var _examIsReckoning = false;     // true if current exam is a Reckoning (no forfeit)
       var _studyPageLocked = false;     // true while a smart study session is active
 
-      function _renderIntegrityExamLock(snapshot) {
-        var existing = document.getElementById('kiwiIntegrityExamLock');
-        if (existing) existing.remove();
-        var overlay = document.createElement('div');
-        overlay.id = 'kiwiIntegrityExamLock';
-        overlay.setAttribute('role', 'alertdialog');
-        overlay.setAttribute('aria-modal', 'true');
-        overlay.style.cssText = 'position:fixed;inset:0;z-index:10050;background:rgba(3,13,11,.97);display:grid;place-items:center;padding:24px;';
-        var outcome = snapshot && snapshot.lockOutcome;
-        var reason = outcome === 'ATTEMPT_INVALIDATED_RULE_BREACH'
-          ? 'This controlled attempt was invalidated after a second confirmed prohibited departure. Your latest server-saved responses have been preserved.'
-          : 'This controlled attempt was locked after a second confirmed prohibited departure. Your latest server-saved responses have been preserved for the governed next step.';
-        overlay.innerHTML = '<div style="width:min(620px,100%);border:1px solid rgba(248,113,113,.3);border-radius:22px;background:#071812;padding:28px;box-shadow:0 24px 80px rgba(0,0,0,.5);"><div style="font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--red-bright);">Controlled assessment</div><h2 style="margin:10px 0 10px;font-family:var(--font-display);">Attempt locked</h2><p style="color:var(--text-2);line-height:1.7;">'+reason+'</p><p style="margin-top:14px;color:var(--text-3);font-size:12px;line-height:1.6;">KIWI records the rule event itself. This screen does not declare a cheating probability or misconduct finding.</p></div>';
-        document.body.appendChild(overlay);
-      }
-      function _startExamIntegrityGuard() {
-        var examId = AppState && AppState.tempExam && AppState.tempExam.examId;
-        if (!examId || !window.KIWIIntegritySessionGuard) return;
-        window.KIWIIntegritySessionGuard.activate({
-          ownerType: 'KIWI_EXAM',
-          ownerRef: String(examId),
-          onWarning: function(snapshot) {
-            if (typeof showToast === 'function') showToast('Warning: you left the controlled assessment. Another prohibited departure may lock this attempt.', 'warning', 7000);
-            window.dispatchEvent(new CustomEvent('kiwi:exam-integrity-warning', { detail: snapshot }));
-          },
-          onLock: function(snapshot) {
-            _renderIntegrityExamLock(snapshot);
-            window.dispatchEvent(new CustomEvent('kiwi:exam-integrity-lock', { detail: snapshot }));
-          }
-        }).then(function(snapshot) {
-          if (snapshot && snapshot.status === 'LOCKED') _renderIntegrityExamLock(snapshot);
-        }).catch(function(error) {
-          console.warn('[KIWI integrity] exam guard unavailable:', error && error.message);
-        });
-      }
       function _lockExamPage(isReckoning) {
         _examPageLocked = true;
         _examIsReckoning = !!isReckoning;
-        setTimeout(_startExamIntegrityGuard, 0);
       }
       function _unlockExamPage() {
         _examPageLocked = false;
         _examIsReckoning = false;
-        document.getElementById('kiwiIntegrityExamLock')?.remove();
-        if (window.KIWIIntegritySessionGuard) window.KIWIIntegritySessionGuard.deactivate({ close: true }).catch(function(){});
+        const _endedExam = (typeof AppState !== 'undefined' && AppState) ? AppState.tempExam : null;
+        const _endedExamId = _endedExam && (_endedExam.examId || _endedExam.exam_id || _endedExam.id || _endedExam.sessionId || _endedExam.session_id);
+        window.dispatchEvent(new CustomEvent('kiwi:exam-ended', { detail: { examId: _endedExamId ? String(_endedExamId) : null } }));
       }
       function _lockStudyPage() {
         _studyPageLocked = !!(AppState && AppState.tempStudy);
@@ -6530,7 +6495,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         const _hasLiveStudy = _studyPageLocked && !!(AppState && AppState.tempStudy);
         if (_examPageLocked || _hasLiveStudy) {
           var msg = _examPageLocked
-            ? 'You have an active exam. Leaving will forfeit it.'
+            ? 'You have an active exam. Leaving may be recorded as a prohibited departure.'
             : 'You have an active study session. Your latest saved snapshot can be resumed.';
           e.preventDefault();
           e.returnValue = msg;
@@ -6538,8 +6503,9 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         }
       });
 
-      // Integrity Session Guard owns pagehide/background recording. A first
-      // confirmed prohibited departure warns; policy handles a later lock.
+      // Integrity Session Guard owns exam integrity activation, pagehide/background
+      // recording, warning/lock consequences, and session closure. This shell only
+      // emits the neutral kiwi:exam-ended lifecycle signal when its navigation lock ends.
       // Deliberate user-selected Forfeit remains a separate explicit action.
 
       // Modal shown when navigateTo is intercepted during an active exam/session

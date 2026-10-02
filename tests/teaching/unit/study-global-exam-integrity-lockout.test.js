@@ -33,11 +33,27 @@ test('shared browser guard auto-binds every Study AppState exam and ignores ordi
   assert.match(src,/if\(!examId\)return null/);
 });
 
-test('legacy Study shell still loads the shared guard and has no first-pagehide auto-forfeit',()=>{
+test('Study shell delegates integrity lifecycle ownership to the shared guard',()=>{
   const src=html();
   assert.match(src,/\/kiwi-integrity-session-guard\.js/);
-  assert.match(src,/Integrity Session Guard owns pagehide\/background recording/);
+  assert.match(src,/Integrity Session Guard owns exam integrity activation/);
+  assert.match(src,/kiwi:exam-ended/);
+  assert.doesNotMatch(src,/_startExamIntegrityGuard/);
+  assert.doesNotMatch(src,/_renderIntegrityExamLock/);
+  assert.doesNotMatch(src,/KIWIIntegritySessionGuard\.activate/);
+  assert.doesNotMatch(src,/KIWIIntegritySessionGuard\.deactivate/);
   assert.doesNotMatch(src,/pagehide — fires after the user confirms leaving[\s\S]{0,900}\/forfeit/);
+  assert.match(src,/\/exams\/.*\/forfeit/);
+});
+
+test('shared guard owns Study exam closure without watcher reactivation races',()=>{
+  const src=guard();
+  assert.match(src,/function closeStudyExamGuard\(event\)/);
+  assert.match(src,/endedStudyExamId/);
+  assert.match(src,/studyExamActivation/);
+  assert.match(src,/global\.addEventListener\('kiwi:exam-ended'/);
+  assert.match(src,/if\(state\.endedStudyExamId===id\)return null/);
+  assert.match(src,/if\(state\.studyExamActivation\?\.id===id\)return state\.studyExamActivation\.promise/);
 });
 
 test('all active Study exam mutation families retain server-side terminal lock enforcement',()=>{
