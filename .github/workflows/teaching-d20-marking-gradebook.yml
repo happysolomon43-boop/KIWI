@@ -1,0 +1,99 @@
+name: Teaching D20 Formal Marking and Gradebook
+
+on:
+  pull_request:
+    paths:
+      - 'teaching/d20/**'
+      - 'teaching/repositories/d20-gradebook.js'
+      - 'teaching/repositories/index.js'
+      - 'teaching/foundation.js'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'migrations/20261002_teaching_d20_*.sql'
+      - 'docs/teaching/d20*'
+      - 'package.json'
+      - '.github/workflows/teaching-d20-marking-gradebook.yml'
+  push:
+    branches: [main, 'teaching/d20-formal-marking-gradebook']
+    paths:
+      - 'teaching/d20/**'
+      - 'teaching/repositories/d20-gradebook.js'
+      - 'teaching/repositories/index.js'
+      - 'teaching/foundation.js'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'migrations/20261002_teaching_d20_*.sql'
+      - 'docs/teaching/d20*'
+      - 'package.json'
+      - '.github/workflows/teaching-d20-marking-gradebook.yml'
+
+jobs:
+  d20:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: D20 runtime syntax checks
+        run: |
+          node --check teaching/d20/contracts.js
+          node --check teaching/d20/intelligence.js
+          node --check teaching/d20/service.js
+          node --check teaching/d20/authority-service.js
+          node --check teaching/d20/routes.js
+          node --check teaching/d20/ui.js
+          node --check teaching/d20/task-accounting.js
+          node --check teaching/d20/index.js
+          node --check teaching/repositories/d20-gradebook.js
+          node --check scripts/verify-teaching-d20-marking-gradebook.js
+          node --check tests/teaching/unit/d20-marking-gradebook.test.js
+          node --check tests/teaching/unit/d20-authority-reflow.test.js
+          node --check tests/teaching/unit/d20-appeal-recalculation.test.js
+          node --check tests/teaching/unit/d20-moderation-escalation.test.js
+          node --check tests/teaching/integration/d20-marking-gradebook-schema.test.js
+      - name: D01-D20 canonical verifiers
+        run: for n in $(seq -w 1 20); do npm run verify:teaching:d$n; done
+      - name: D20 focused authority and QA tests
+        run: |
+          node --test tests/teaching/unit/d20-marking-gradebook.test.js \
+            tests/teaching/unit/d20-authority-reflow.test.js \
+            tests/teaching/unit/d20-appeal-recalculation.test.js \
+            tests/teaching/unit/d20-moderation-escalation.test.js
+      - name: Teaching unit regressions
+        run: npm run test:teaching
+      - name: Full unit regressions
+        run: npm test
+      - name: Web build
+        run: npm run build:web
+
+  d20-isolated-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_PASSWORD: postgres, POSTGRES_USER: postgres, POSTGRES_DB: kiwi_teaching_test}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiwi_teaching_test
+      TEACHING_TEST_PROJECT_REF: local-d20-ci
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: Reconstruct Teaching database through D20
+        run: node scripts/setup-teaching-integration-db.js
+      - name: Confirm predecessor Assessment authority remains intact
+        run: node --test tests/teaching/integration/d17-assessment-domain-schema.test.js tests/teaching/integration/d19-assessment-types-schema.test.js
+      - name: Confirm D20 schema, RLS, grants and lineage guards
+        run: node --test tests/teaching/integration/d20-marking-gradebook-schema.test.js
+      - name: Teaching integration regressions
+        run: npm run test:teaching:integration
