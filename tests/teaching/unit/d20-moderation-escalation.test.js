@@ -18,6 +18,7 @@ test('TCH-0763 material high-stakes moderation disagreement preserves judgments 
     sha:()=> 'test-digest',
     loadMarkingBundle:async()=>bundle,
     resultById:async()=>result,
+    assessmentResultDetail:async()=>({result,runs,appeals:[]}),
     runsForResult:async()=>runs,
     judgmentsForRun:async(_student,runId)=>judgmentByRun.get(runId)||[],
     appendRun:async(input)=>{const run={marking_run_id:`run-${runs.length+1}`,package_item_id:input.packageItemId,run_kind:input.runKind,run_status:input.runStatus,original_credit_visible:input.originalCreditVisible,raw_appeal_visible:input.rawAppealVisible,review_direction_visible:input.reviewDirectionVisible};runs.push(run);return {run,idempotent:false};},
