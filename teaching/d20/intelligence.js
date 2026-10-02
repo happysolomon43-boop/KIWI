@@ -1,7 +1,7 @@
 'use strict';
 
 const {getCapability}=require('../capability-registry');
-const {TPF15,TPF16,markingContextAllowlist,validateCriterionJudgments,fail}=require('./contracts');
+const {TPF15,TPF16,markingContextAllowlist,validateCriterionJudgments,assertNoForbiddenContext,fail}=require('./contracts');
 
 const CAPABILITIES=Object.freeze({
   mark:'teaching.assessment.constructed_response_rubric_marking',
@@ -11,6 +11,16 @@ const CAPABILITIES=Object.freeze({
   detect:'teaching.assessment.borderline_moderation_needed_detection',
   appeal:'teaching.assessment.appeal_re_evaluation',
 });
+
+const COMMON_INPUT_KEYS=Object.freeze(new Set([
+  'marking_context','context','rubric_ref','item_ref','submission_ref','directive','review_ref','review_scope',
+  'blind_first_policy','normalized_appeal_artifact','frozen_pass_a','original_marking',
+  'review_direction_policy','deterministic_comparison','raw_appeal_text_for_audit_only','raw_appeal_text'
+]));
+const BLIND_PASS_A_FORBIDDEN=Object.freeze(new Set([
+  'original_marking','review_direction_policy','raw_appeal_text','raw_appeal_text_for_audit_only',
+  'grade_consequence','grade_boundary_position','prior_marker_rationale','current_course_total','frozen_pass_a'
+]));
 
 function reject(reason,details=null){return {ok:false,reason,details:details||undefined};}
 function accepted(output){return {ok:true,value:output};}
@@ -76,9 +86,28 @@ function schema(id,family,{taskMode=null,reviewStage=null}={}){return Object.fre
   },
 });}
 function bindingFor(capability){if(capability.prompt_family_id==='TPF-15')return TPF15;if(capability.prompt_family_id==='TPF-16')return TPF16;throw fail('D20 capability prompt family is not TPF-15/TPF-16.','TEACHING_D20_PROMPT_BINDING_INVALID',500,{capability:capability.id,family:capability.prompt_family_id});}
-function makeRequest({capabilityId,taskMode,studentId,resultId,stateVersion,academicInput,requestKey,reviewStage=null,authority='T4'}){
+
+function sanitizeAcademicInput(input,reviewStage){
+  const source=input&&typeof input==='object'&&!Array.isArray(input)?input:{};
+  assertNoForbiddenContext(source,'academicInput');
+  if(reviewStage==='independent_pass_a'){
+    for(const key of BLIND_PASS_A_FORBIDDEN){
+      if(Object.prototype.hasOwnProperty.call(source,key))fail('Blind independent Pass A received prohibited prior-judgment context.','TEACHING_D20_BLIND_PASS_A_CONTEXT_FORBIDDEN',400,{field:key});
+    }
+  }
+  const out={};
+  for(const [key,value] of Object.entries(source)){
+    if(!COMMON_INPUT_KEYS.has(key))fail('D20 model input contains a field outside the formal marking allowlist.','TEACHING_D20_T4_INPUT_FIELD_FORBIDDEN',400,{field:key,reviewStage});
+    if(key==='raw_appeal_text_for_audit_only'||key==='raw_appeal_text'||key==='context')continue;
+    out[key]=value;
+  }
+  out.marking_context=markingContextAllowlist(source.marking_context||source.context||{});
+  return Object.freeze(out);
+}
+
+function makeRequest({capabilityId,taskMode,studentId,resultId,stateVersion,academicInput={},requestKey,reviewStage=null,authority='T4'}){
   const capability=getCapability(capabilityId),binding=bindingFor(capability),outputSchema=schema(`d20.${taskMode}`,binding.family,{taskMode,reviewStage});
-  const safeContext=markingContextAllowlist(academicInput.marking_context||academicInput.context||{});
+  const safeInput=sanitizeAcademicInput(academicInput,reviewStage),safeContext=safeInput.marking_context;
   return {
     trigger:{type:'workflow_continuation',ref:`assessment-result:${resultId}:${taskMode}:${reviewStage||'single'}`,source:'teaching.d20',actor_id:studentId},
     capabilityId,declaredAuthorityLevel:authority,idempotencyKey:String(requestKey),correlationId:String(requestKey),
@@ -89,7 +118,7 @@ function makeRequest({capabilityId,taskMode,studentId,resultId,stateVersion,acad
     taskMode,
     directive:{bounded_actions:['criterion-level academic judgment against the supplied immutable rubric only'],allowed_operations:['criterion judgment','explicit uncertainty','bounded evidence references','moderation/defect handoff'],prohibited_operations:['compute official total','apply rounding or category weights','write Gradebook truth','finalize Assessment result','inspect attendance/personality/GPA/history','select provider/model','invent rubric rules','average marker disagreement'],evidence_purpose:taskMode,downstream_handoff:{type:'d20_deterministic_aggregation_and_owner_commit',validator_ids:['schema','domain','provenance','current-state'],commit_owner_boundary:capability.authoritative_owner_boundary}},
     contextSpec:{authoritative_refs:(safeContext.provenance_refs||[]).map(ref=>({ref})),provenance_refs:[],untrusted_refs:[],context_kind:'d20_formal_marking',access_purpose:taskMode,forbidden_context:['student_identity','demographics','attendance','teacher_personality','previous_gpa','peer_performance','effort_history','current_course_total','grade_boundary_position','integrity_telemetry','unrelated_grades']},
-    academicInput:{...academicInput,marking_context:safeContext,prompt_contract:{family:binding.family,version:binding.version,sha256:binding.sha256},review_stage:reviewStage},
+    academicInput:{...safeInput,prompt_contract:{family:binding.family,version:binding.version,sha256:binding.sha256},review_stage:reviewStage},
     outputSchema,schemaValidator:outputSchema.validate,domainValidator:outputSchema.validate,provenanceValidator:async()=>({ok:true}),commit:false,capabilityPromptFamily:binding.family,
   };
 }
@@ -122,4 +151,4 @@ function validatedOutput(result,rubric,{family='TPF-15'}={}){
   return {output,judgments:[]};
 }
 
-module.exports={CAPABILITIES,makeRequest,createD20Intelligence,validatedOutput,validateTpf15Controls,validatePassAControls,validatePassBControls,normalizePassAJudgments};
+module.exports={CAPABILITIES,makeRequest,sanitizeAcademicInput,createD20Intelligence,validatedOutput,validateTpf15Controls,validatePassAControls,validatePassBControls,normalizePassAJudgments};
