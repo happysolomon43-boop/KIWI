@@ -1,0 +1,83 @@
+name: Temporary D17 Schema Convergence Finalizer
+on:
+  push:
+    branches: ['teaching/d17-assessment-domain']
+permissions:
+  contents: write
+jobs:
+  finalize:
+    if: ${{ !contains(github.event.head_commit.message, '[d17-schema-convergence-final]') }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: kiwi_teaching_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiwi_teaching_test
+      TEACHING_TEST_PROJECT_REF: local-d17-schema-convergence-final
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: teaching/d17-assessment-domain
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - name: Reuse the already-validated v2 source patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+          workflow=Path('.github/workflows/.tmp-d17-schema-convergence-v2.yml').read_text()
+          start=workflow.index("          python - <<'PY'\n")+len("          python - <<'PY'\n")
+          end=workflow.index("\n          PY\n      - name: Verify clean D17 reconstruction",start)
+          patch=textwrap.dedent(workflow[start:end])
+          Path('/tmp/d17_convergence_patch.py').write_text(patch)
+          PY
+          python /tmp/d17_convergence_patch.py
+      - name: Verify clean canonical D17 schema
+        run: |
+          npm run verify:teaching:d17
+          node scripts/setup-teaching-integration-db.js
+          node --test tests/teaching/integration/d17-assessment-domain-schema.test.js
+      - name: Verify exact D17 prototype-drift convergence
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const {Pool}=require('pg');
+          const tables=['teaching_assessments','teaching_assessment_blueprints','teaching_assessment_eligibility_entries','teaching_assessment_candidates','teaching_assessment_candidate_versions','teaching_assessment_validations','teaching_assessment_packages','teaching_assessment_package_items','teaching_assessment_attempts','teaching_assessment_attempt_events','teaching_assessment_responses','teaching_assessment_item_challenges','teaching_assessment_invalidations','teaching_assessment_contamination_events','teaching_assessment_ppl_workspaces'];
+          (async()=>{
+            const pool=new Pool({connectionString:process.env.TEACHING_TEST_DATABASE_URL});
+            try{
+              await pool.query(`alter table public.teaching_assessment_package_items add constraint teaching_assessment_package_i_assessment_package_id_slot_id_key unique(assessment_package_id,slot_id); alter table public.teaching_assessments add constraint teaching_assessments_student_id_assessment_id_key unique(student_id,assessment_id); create unique index teaching_assessment_packages_student_idempotency_uq on public.teaching_assessment_packages(student_id,idempotency_key); create unique index teaching_assessments_student_idempotency_uq on public.teaching_assessments(student_id,idempotency_key); alter table public.teaching_assessment_attempts drop constraint d17_attempts_student_fk;`);
+              await pool.query(fs.readFileSync('migrations/20261002_teaching_d17_assessment_domain.sql','utf8'));
+              const stale=await pool.query(`select count(*)::int n from pg_class where relnamespace='public'::regnamespace and relname in ('teaching_assessment_package_i_assessment_package_id_slot_id_key','teaching_assessments_student_id_assessment_id_key','teaching_assessment_packages_student_idempotency_uq','teaching_assessments_student_idempotency_uq')`);
+              if(stale.rows[0].n!==0) throw new Error('prototype D17 uniqueness artifacts survived convergence');
+              const fk=await pool.query(`with d17_tables as (select oid from pg_class where relnamespace='public'::regnamespace and relkind='r' and relname=any($1::text[])), fks as (select c.conrelid,c.conkey from pg_constraint c join d17_tables t on t.oid=c.conrelid where c.contype='f') select count(*)::int n from fks f where not exists(select 1 from pg_index i where i.indrelid=f.conrelid and i.indisvalid and i.indisready and (i.indkey::smallint[])[0:cardinality(f.conkey)-1]=f.conkey)`,[tables]);
+              if(fk.rows[0].n!==0) throw new Error(`canonical D17 foreign keys remain uncovered: ${fk.rows[0].n}`);
+              const semantics=await pool.query(`select confdeltype,count(*)::int n from pg_constraint c join pg_class t on t.oid=c.conrelid where t.relnamespace='public'::regnamespace and t.relname=any($1::text[]) and c.contype='f' group by confdeltype order by confdeltype`,[tables]);
+              const actual=JSON.stringify(semantics.rows),expected=JSON.stringify([{confdeltype:'a',n:3},{confdeltype:'c',n:37},{confdeltype:'n',n:1},{confdeltype:'r',n:7}]);
+              if(actual!==expected) throw new Error(`canonical D17 FK semantics mismatch: ${actual}`);
+              const dup=await pool.query(`select count(*)::int n from (select i.indrelid,i.indisunique,i.indkey::text,coalesce(pg_get_expr(i.indpred,i.indrelid),'') from pg_index i join pg_class t on t.oid=i.indrelid where t.relname=any($1::text[]) and i.indisvalid and i.indisready group by i.indrelid,i.indisunique,i.indkey::text,coalesce(pg_get_expr(i.indpred,i.indrelid),'') having count(*)>1) q`,[tables]);
+              if(dup.rows[0].n!==0) throw new Error(`D17 duplicate indexes remain after convergence: ${dup.rows[0].n}`);
+            } finally { await pool.end(); }
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+      - name: Commit canonical convergence and retire temporary workflows
+        shell: bash
+        run: |
+          git rm .github/workflows/.tmp-d17-schema-convergence-v2.yml .github/workflows/.tmp-d17-schema-convergence-finalize.yml
+          git add migrations/20261002_teaching_d17_assessment_domain.sql tests/teaching/integration/d17-assessment-domain-schema.test.js scripts/verify-teaching-d17-assessment-domain.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Converge D17 foreign keys and indexes [d17-schema-convergence-final]'
+          git push origin HEAD:teaching/d17-assessment-domain
