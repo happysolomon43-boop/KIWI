@@ -30,6 +30,6 @@ jobs:
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html public/teaching.html public/teaching-d16.js public/teaching-d16.css teaching/d16/contracts.js services/integrity/repository.js services/integrity/service.js
+          git add index.js index.html public/teaching.html public/teaching-d16.js public/teaching-d16.css teaching/d16/contracts.js services/integrity/repository.js services/integrity/service.js
           git commit -m 'Apply integrity session amendment repairs [integrity-ui-patched]'
           git push origin HEAD:teaching/integrity-session-guard-amendment
