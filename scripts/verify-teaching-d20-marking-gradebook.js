@@ -24,10 +24,14 @@ const migrations=[
   'migrations/20261002_teaching_d20_marking_gradebook.sql',
   'migrations/20261002_teaching_d20_gradebook_lineage_hardening.sql',
   'migrations/20261002_teaching_d20_policy_guards.sql',
+  'migrations/20261002_teaching_d20_service_role_grant_hardening.sql',
 ];
 for(const migration of migrations)assert(exists(migration),`missing migration ${migration}`);
 const setup=read('scripts/setup-teaching-integration-db.js');
 for(const migration of migrations)assert(setup.includes(migration),`isolated reconstruction omits ${migration}`);
+const grantHardening=read('migrations/20261002_teaching_d20_service_role_grant_hardening.sql');
+assert(grantHardening.includes('REVOKE UPDATE, DELETE, TRUNCATE ON'),'production default service-role mutation grants must be explicitly revoked');
+assert(grantHardening.includes('GRANT UPDATE ON public.teaching_assessment_results, public.teaching_grade_appeals TO service_role'),'only D20 result and appeal state carriers may retain service-role UPDATE');
 
 const contracts=read('teaching/d20/contracts.js');
 const intelligence=read('teaching/d20/intelligence.js');
@@ -69,10 +73,11 @@ assert(unit.includes('TPF-16 Pass A must be genuinely blind'),'TCH-0763 blind-fi
 assert(unit.includes('material marker disagreement escalates and is never averaged'),'TCH-0763 disagreement escalation regression test missing');
 assert(schemaTests.includes('teaching_gradebook_entries'),'D20 schema reconstruction test missing Gradebook coverage');
 assert(schemaTests.includes("grantee in ('anon','authenticated')"),'D20 schema/security test must exercise browser/authenticated authority boundaries');
+assert(schemaTests.includes("grantee='service_role'")&&schemaTests.includes("privilege_type in ('UPDATE','DELETE','TRUNCATE')"),'D20 schema/security test must enforce narrow service-role mutation grants');
 
 const workflow='.github/workflows/teaching-d20-marking-gradebook.yml';
 assert(exists(workflow),'D20 same-head CI workflow is missing');
 const ci=read(workflow);
 for(const required of ['verify:teaching:d20','d20-marking-gradebook.test.js','d20-authority-reflow.test.js','d20-appeal-recalculation.test.js','d20-moderation-escalation.test.js','test:teaching:integration','build:web'])assert(ci.includes(required),`D20 CI is missing ${required}`);
 
-console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 3 migrations, TPF-15/16 authority boundaries, QA invariants and same-head CI are registered.`);
+console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 4 migrations, TPF-15/16 authority boundaries, QA invariants, production grant hardening and same-head CI are registered.`);
