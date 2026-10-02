@@ -29,6 +29,7 @@ const MIGRATIONS = Object.freeze([
   'migrations/20261001_teaching_d16_homework_integrity.sql',
   'migrations/20261002_kiwi_integrity_session_guard.sql',
   'migrations/20261002_teaching_d17_assessment_domain.sql',
+  'migrations/20261002_teaching_d20_marking_gradebook.sql',
 ]);
 
 function requireNonProduction({ connectionString, projectRef }) {
