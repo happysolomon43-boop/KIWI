@@ -1,0 +1,78 @@
+name: Temporary D17 Repair Gate
+on:
+  push:
+    branches: ['teaching/d17-assessment-domain']
+permissions:
+  contents: write
+jobs:
+  repair:
+    if: ${{ !contains(github.event.head_commit.message, '[d17-repair-applied]') }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_PASSWORD: postgres, POSTGRES_USER: postgres, POSTGRES_DB: kiwi_teaching_test}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiwi_teaching_test
+      TEACHING_TEST_PROJECT_REF: local-d17-repair
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: teaching/d17-assessment-domain}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: Apply reviewed D17 fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          contracts = Path('teaching/d17/contracts.js')
+          text = contracts.read_text()
+          old = """function classifyClarification(text='') {
+            const value = String(text).trim();
+            const procedural = /\\b(time|timer|save|submit|navigation|calculator|formula sheet|resource|technical|connection|instructions? mean|format|where|how do i enter)\\b/i.test(value);
+            const content = /\\b(answer|solve|hint|correct|method|formula should|tell me|explain the concept|which option)\\b/i.test(value);
+            return content ? 'CONTENT_HELP_PROHIBITED' : procedural ? 'PROCEDURAL_CLARIFICATION' : 'REVIEW_REQUIRED';
+          }
+          """
+          new = """function classifyClarification(text='') {
+            const value = String(text).trim();
+            const procedural = /\\b(time|timer|save|submit|navigation|next question|previous question|calculator|formula sheet|allowed resource|resource|technical|connection|device|instructions? mean|format|where|how do i enter|flag this question)\\b/i.test(value);
+            const content = /\\b(which (?:option|answer)|what(?:'s| is) the (?:answer|solution)|give me (?:the )?(?:answer|solution)|tell me (?:the )?(?:answer|solution)|solve(?: this| it)?|hint|correct answer|is (?:this|my answer) correct|check my answer|which method|method should|which formula|formula should|explain the concept)\\b/i.test(value);
+            return content ? 'CONTENT_HELP_PROHIBITED' : procedural ? 'PROCEDURAL_CLARIFICATION' : 'REVIEW_REQUIRED';
+          }
+          """
+          if text.count(old) != 1:
+              raise SystemExit('expected exactly one D17 clarification classifier block')
+          contracts.write_text(text.replace(old, new))
+          migration = Path('migrations/20261002_teaching_d17_assessment_domain.sql')
+          sql = migration.read_text()
+          open_old = "RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $\nBEGIN\n  IF NEW.contamination_event_id"
+          open_new = "RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$\nBEGIN\n  IF NEW.contamination_event_id"
+          close_old = "  RETURN NEW;\nEND $;\n\nCREATE OR REPLACE FUNCTION public.teaching_d17_guard_locked_package_item()"
+          close_new = "  RETURN NEW;\nEND $$;\n\nCREATE OR REPLACE FUNCTION public.teaching_d17_guard_locked_package_item()"
+          if sql.count(open_old) != 1 or sql.count(close_old) != 1:
+              raise SystemExit('expected malformed D17 contamination function delimiters not found exactly once')
+          migration.write_text(sql.replace(open_old, open_new).replace(close_old, close_new))
+          PY
+      - name: Verify focused contract behavior
+        run: |
+          node --check teaching/d17/contracts.js
+          node --test tests/teaching/unit/d17-assessment-domain.test.js
+      - name: Verify clean D17 schema reconstruction
+        run: |
+          node scripts/setup-teaching-integration-db.js
+          node --test tests/teaching/integration/d17-assessment-domain-schema.test.js
+      - name: Commit reviewed repairs and retire diagnostics
+        shell: bash
+        run: |
+          git rm --ignore-unmatch .github/workflows/.tmp-d17-repair.yml .github/workflows/.tmp-d17-test-debug.yml .tmp-d17-test-output.txt
+          git add teaching/d17/contracts.js migrations/20261002_teaching_d17_assessment_domain.sql
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Fix D17 clarification gate and migration reconstruction [d17-repair-applied]'
+          git push origin HEAD:teaching/d17-assessment-domain
