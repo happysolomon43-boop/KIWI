@@ -360,13 +360,13 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION public.teaching_d17_guard_contamination_resolution()
-RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $
+RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
 BEGIN
   IF NEW.contamination_event_id IS DISTINCT FROM OLD.contamination_event_id OR NEW.assessment_id IS DISTINCT FROM OLD.assessment_id OR NEW.student_id IS DISTINCT FROM OLD.student_id OR NEW.candidate_version_id IS DISTINCT FROM OLD.candidate_version_id OR NEW.exposure_kind IS DISTINCT FROM OLD.exposure_kind OR NEW.source_ref IS DISTINCT FROM OLD.source_ref OR NEW.detected_at IS DISTINCT FROM OLD.detected_at OR NEW.action IS DISTINCT FROM OLD.action OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key OR NEW.provenance_refs IS DISTINCT FROM OLD.provenance_refs THEN RAISE EXCEPTION 'Contamination evidence is immutable'; END IF;
   IF OLD.selective_recheck_required=false AND NEW.selective_recheck_required=true THEN RAISE EXCEPTION 'Resolved contamination cannot be reopened by mutation'; END IF;
   IF OLD.selective_recheck_required=true AND NEW.selective_recheck_required=false AND (NEW.resolved_at IS NULL OR NEW.resolution_ref IS NULL) THEN RAISE EXCEPTION 'Contamination resolution requires timestamp and resolution reference'; END IF;
   RETURN NEW;
-END $;
+END $$;
 
 CREATE OR REPLACE FUNCTION public.teaching_d17_guard_locked_package_item()
 RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$

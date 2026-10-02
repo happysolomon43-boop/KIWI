@@ -227,8 +227,8 @@ function finalizationReadiness({blueprint,currentEligibilityRows=[],candidateVer
 }
 function classifyClarification(text='') {
   const value = String(text).trim();
-  const procedural = /\b(time|timer|save|submit|navigation|calculator|formula sheet|resource|technical|connection|instructions? mean|format|where|how do i enter)\b/i.test(value);
-  const content = /\b(answer|solve|hint|correct|method|formula should|tell me|explain the concept|which option)\b/i.test(value);
+  const procedural = /\b(time|timer|save|submit|navigation|next question|previous question|calculator|formula sheet|allowed resource|resource|technical|connection|device|instructions? mean|format|where|how do i enter|flag this question)\b/i.test(value);
+  const content = /\b(which (?:option|answer)|what(?:'s| is) the (?:answer|solution)|give me (?:the )?(?:answer|solution)|tell me (?:the )?(?:answer|solution)|solve(?: this| it)?|hint|correct answer|is (?:this|my answer) correct|check my answer|which method|method should|which formula|formula should|explain the concept)\b/i.test(value);
   return content ? 'CONTENT_HELP_PROHIBITED' : procedural ? 'PROCEDURAL_CLARIFICATION' : 'REVIEW_REQUIRED';
 }
 function assertAssessmentAction(action) {
