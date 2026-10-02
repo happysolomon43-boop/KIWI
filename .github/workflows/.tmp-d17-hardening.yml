@@ -1,0 +1,23 @@
+name: Temporary D17 Hardening
+on:
+  push:
+    branches: ['teaching/d17-assessment-domain']
+permissions:
+  contents: write
+jobs:
+  harden:
+    if: ${{ !contains(github.event.head_commit.message, '[d17-hardened]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: teaching/d17-assessment-domain}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: node scripts/.tmp-d17-hardening.js
+      - name: Commit hardening
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add teaching/repositories/d17-assessments.js teaching/d17/service.js migrations/20261002_teaching_d17_assessment_domain.sql teaching/integrations/kiwi-exam-interface.js
+          git commit -m 'Harden D17 Assessment contracts [d17-hardened]'
+          git push origin HEAD:teaching/d17-assessment-domain
