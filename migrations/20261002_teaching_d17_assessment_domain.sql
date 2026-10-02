@@ -384,6 +384,144 @@ ALTER TABLE public.teaching_assessment_invalidations
 ALTER TABLE public.teaching_assessment_invalidations
   ADD CONSTRAINT teaching_assessment_invalidations_no_penalty_check CHECK (student_penalty_allowed=false);
 
+-- Fully converge D17 foreign keys on databases that contain abandoned pre-freeze
+-- Assessment tables. CREATE TABLE IF NOT EXISTS cannot repair missing or differently
+-- configured REFERENCES clauses, so replace D17-owned FKs with this stable canonical set.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT c.conrelid::regclass AS table_name,c.conname
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid=c.conrelid
+    JOIN pg_namespace n ON n.oid=t.relnamespace
+    WHERE c.contype='f' AND n.nspname='public' AND t.relname = ANY(ARRAY[
+      'teaching_assessments','teaching_assessment_blueprints','teaching_assessment_eligibility_entries',
+      'teaching_assessment_candidates','teaching_assessment_candidate_versions','teaching_assessment_validations',
+      'teaching_assessment_packages','teaching_assessment_package_items','teaching_assessment_attempts',
+      'teaching_assessment_attempt_events','teaching_assessment_responses','teaching_assessment_item_challenges',
+      'teaching_assessment_invalidations','teaching_assessment_contamination_events','teaching_assessment_ppl_workspaces'
+    ])
+  LOOP
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',r.table_name,r.conname);
+  END LOOP;
+END $$;
+
+ALTER TABLE public.teaching_assessments
+  ADD CONSTRAINT d17_assessments_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_assessments_course_fk FOREIGN KEY(course_id) REFERENCES public.teaching_courses(course_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_assessments_supersedes_fk FOREIGN KEY(supersedes_assessment_id) REFERENCES public.teaching_assessments(assessment_id);
+ALTER TABLE public.teaching_assessment_blueprints
+  ADD CONSTRAINT d17_blueprints_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_blueprints_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_blueprints_supersedes_fk FOREIGN KEY(supersedes_blueprint_id) REFERENCES public.teaching_assessment_blueprints(assessment_blueprint_id);
+ALTER TABLE public.teaching_assessment_eligibility_entries
+  ADD CONSTRAINT d17_eligibility_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_eligibility_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_eligibility_course_fk FOREIGN KEY(course_id) REFERENCES public.teaching_courses(course_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_eligibility_learning_unit_fk FOREIGN KEY(learning_unit_id) REFERENCES public.teaching_learning_units(learning_unit_id) ON DELETE RESTRICT,
+  ADD CONSTRAINT d17_eligibility_course_plan_fk FOREIGN KEY(course_plan_id) REFERENCES public.teaching_course_plans(course_plan_id) ON DELETE RESTRICT,
+  ADD CONSTRAINT d17_eligibility_coverage_fk FOREIGN KEY(coverage_entry_id) REFERENCES public.teaching_course_coverage(coverage_entry_id) ON DELETE SET NULL;
+ALTER TABLE public.teaching_assessment_candidates
+  ADD CONSTRAINT d17_candidates_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_candidates_blueprint_fk FOREIGN KEY(assessment_blueprint_id) REFERENCES public.teaching_assessment_blueprints(assessment_blueprint_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_candidates_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE public.teaching_assessment_candidate_versions
+  ADD CONSTRAINT d17_candidate_versions_candidate_fk FOREIGN KEY(assessment_candidate_id) REFERENCES public.teaching_assessment_candidates(assessment_candidate_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_candidate_versions_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_candidate_versions_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_candidate_versions_supersedes_fk FOREIGN KEY(supersedes_candidate_version_id) REFERENCES public.teaching_assessment_candidate_versions(candidate_version_id);
+ALTER TABLE public.teaching_assessment_validations
+  ADD CONSTRAINT d17_validations_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_validations_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_validations_candidate_version_fk FOREIGN KEY(candidate_version_id) REFERENCES public.teaching_assessment_candidate_versions(candidate_version_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_validations_package_fk FOREIGN KEY(package_id) REFERENCES public.teaching_assessment_packages(assessment_package_id) ON DELETE CASCADE;
+ALTER TABLE public.teaching_assessment_packages
+  ADD CONSTRAINT d17_packages_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_packages_blueprint_fk FOREIGN KEY(assessment_blueprint_id) REFERENCES public.teaching_assessment_blueprints(assessment_blueprint_id) ON DELETE RESTRICT,
+  ADD CONSTRAINT d17_packages_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE public.teaching_assessment_package_items
+  ADD CONSTRAINT d17_package_items_package_fk FOREIGN KEY(assessment_package_id) REFERENCES public.teaching_assessment_packages(assessment_package_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_package_items_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_package_items_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_package_items_candidate_version_fk FOREIGN KEY(candidate_version_id) REFERENCES public.teaching_assessment_candidate_versions(candidate_version_id) ON DELETE RESTRICT;
+ALTER TABLE public.teaching_assessment_attempts
+  ADD CONSTRAINT d17_attempts_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_attempts_package_fk FOREIGN KEY(assessment_package_id) REFERENCES public.teaching_assessment_packages(assessment_package_id) ON DELETE RESTRICT,
+  ADD CONSTRAINT d17_attempts_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE public.teaching_assessment_attempt_events
+  ADD CONSTRAINT d17_attempt_events_attempt_fk FOREIGN KEY(assessment_attempt_id) REFERENCES public.teaching_assessment_attempts(assessment_attempt_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_attempt_events_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE public.teaching_assessment_responses
+  ADD CONSTRAINT d17_responses_attempt_fk FOREIGN KEY(assessment_attempt_id) REFERENCES public.teaching_assessment_attempts(assessment_attempt_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_responses_package_item_fk FOREIGN KEY(package_item_id) REFERENCES public.teaching_assessment_package_items(package_item_id) ON DELETE RESTRICT,
+  ADD CONSTRAINT d17_responses_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE public.teaching_assessment_item_challenges
+  ADD CONSTRAINT d17_item_challenges_attempt_fk FOREIGN KEY(assessment_attempt_id) REFERENCES public.teaching_assessment_attempts(assessment_attempt_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_item_challenges_package_item_fk FOREIGN KEY(package_item_id) REFERENCES public.teaching_assessment_package_items(package_item_id) ON DELETE RESTRICT,
+  ADD CONSTRAINT d17_item_challenges_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE public.teaching_assessment_invalidations
+  ADD CONSTRAINT d17_invalidations_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_invalidations_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE public.teaching_assessment_contamination_events
+  ADD CONSTRAINT d17_contamination_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_contamination_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_contamination_candidate_version_fk FOREIGN KEY(candidate_version_id) REFERENCES public.teaching_assessment_candidate_versions(candidate_version_id) ON DELETE CASCADE;
+ALTER TABLE public.teaching_assessment_ppl_workspaces
+  ADD CONSTRAINT d17_ppl_assessment_fk FOREIGN KEY(assessment_id) REFERENCES public.teaching_assessments(assessment_id) ON DELETE CASCADE,
+  ADD CONSTRAINT d17_ppl_student_fk FOREIGN KEY(student_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+-- Remove pre-freeze uniqueness artifacts that duplicate canonical indexes or add
+-- constraints absent from the frozen D17 owner model.
+ALTER TABLE public.teaching_assessment_attempt_events DROP CONSTRAINT IF EXISTS teaching_assessment_attempt_even_student_id_idempotency_key_key;
+ALTER TABLE public.teaching_assessment_attempts DROP CONSTRAINT IF EXISTS teaching_assessment_attempts_assessment_id_student_id_attem_key;
+ALTER TABLE public.teaching_assessment_blueprints DROP CONSTRAINT IF EXISTS teaching_assessment_blueprints_assessment_id_version_no_key;
+ALTER TABLE public.teaching_assessment_blueprints DROP CONSTRAINT IF EXISTS teaching_assessment_blueprints_student_id_idempotency_key_key;
+ALTER TABLE public.teaching_assessment_candidate_versions DROP CONSTRAINT IF EXISTS teaching_assessment_candidate_assessment_candidate_id_versi_key;
+ALTER TABLE public.teaching_assessment_candidates DROP CONSTRAINT IF EXISTS teaching_assessment_candidate_assessment_blueprint_id_slot__key;
+ALTER TABLE public.teaching_assessment_contamination_events DROP CONSTRAINT IF EXISTS teaching_assessment_contaminatio_student_id_idempotency_key_key;
+ALTER TABLE public.teaching_assessment_eligibility_entries DROP CONSTRAINT IF EXISTS teaching_assessment_eligibili_assessment_id_blueprint_versi_key;
+ALTER TABLE public.teaching_assessment_invalidations DROP CONSTRAINT IF EXISTS teaching_assessment_invalidation_student_id_idempotency_key_key;
+ALTER TABLE public.teaching_assessment_item_challenges DROP CONSTRAINT IF EXISTS teaching_assessment_item_challen_student_id_idempotency_key_key;
+ALTER TABLE public.teaching_assessment_package_items DROP CONSTRAINT IF EXISTS teaching_assessment_package_i_assessment_package_id_ordinal_key;
+ALTER TABLE public.teaching_assessment_package_items DROP CONSTRAINT IF EXISTS teaching_assessment_package_i_assessment_package_id_slot_id_key;
+ALTER TABLE public.teaching_assessment_packages DROP CONSTRAINT IF EXISTS teaching_assessment_packages_assessment_id_version_no_key;
+ALTER TABLE public.teaching_assessment_ppl_workspaces DROP CONSTRAINT IF EXISTS teaching_assessment_ppl_workspaces_assessment_id_lane_key;
+ALTER TABLE public.teaching_assessment_responses DROP CONSTRAINT IF EXISTS teaching_assessment_responses_assessment_attempt_id_package_key;
+ALTER TABLE public.teaching_assessment_responses DROP CONSTRAINT IF EXISTS teaching_assessment_responses_student_id_idempotency_key_key;
+ALTER TABLE public.teaching_assessment_validations DROP CONSTRAINT IF EXISTS teaching_assessment_validations_student_id_idempotency_key_key;
+ALTER TABLE public.teaching_assessments DROP CONSTRAINT IF EXISTS teaching_assessments_student_id_assessment_id_key;
+DROP INDEX IF EXISTS public.teaching_assessment_packages_student_idempotency_uq;
+DROP INDEX IF EXISTS public.teaching_assessments_student_idempotency_uq;
+
+-- Cover every canonical D17 foreign key whose column is not already the leading
+-- key of an existing canonical index.
+CREATE INDEX IF NOT EXISTS teaching_assessment_blueprints_supersedes_idx ON public.teaching_assessment_blueprints(supersedes_blueprint_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_candidate_versions_supersedes_idx ON public.teaching_assessment_candidate_versions(supersedes_candidate_version_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_candidate_versions_assessment_fk_idx ON public.teaching_assessment_candidate_versions(assessment_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_candidates_assessment_fk_idx ON public.teaching_assessment_candidates(assessment_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_contamination_candidate_version_idx ON public.teaching_assessment_contamination_events(candidate_version_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_contamination_assessment_idx ON public.teaching_assessment_contamination_events(assessment_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_invalidations_assessment_idx ON public.teaching_assessment_invalidations(assessment_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_item_challenges_attempt_idx ON public.teaching_assessment_item_challenges(assessment_attempt_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_item_challenges_package_item_idx ON public.teaching_assessment_item_challenges(package_item_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_package_items_assessment_idx ON public.teaching_assessment_package_items(assessment_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_package_items_candidate_version_idx ON public.teaching_assessment_package_items(candidate_version_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_packages_blueprint_idx ON public.teaching_assessment_packages(assessment_blueprint_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_responses_package_item_idx ON public.teaching_assessment_responses(package_item_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_validations_candidate_version_idx ON public.teaching_assessment_validations(candidate_version_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_validations_package_idx ON public.teaching_assessment_validations(package_id);
+CREATE INDEX IF NOT EXISTS teaching_assessments_course_idx ON public.teaching_assessments(course_id);
+CREATE INDEX IF NOT EXISTS teaching_assessments_supersedes_idx ON public.teaching_assessments(supersedes_assessment_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_attempts_student_idx ON public.teaching_assessment_attempts(student_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_eligibility_course_idx ON public.teaching_assessment_eligibility_entries(course_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_eligibility_course_plan_idx ON public.teaching_assessment_eligibility_entries(course_plan_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_eligibility_coverage_idx ON public.teaching_assessment_eligibility_entries(coverage_entry_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_eligibility_learning_unit_idx ON public.teaching_assessment_eligibility_entries(learning_unit_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_package_items_student_idx ON public.teaching_assessment_package_items(student_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_ppl_student_idx ON public.teaching_assessment_ppl_workspaces(student_id);
+CREATE INDEX IF NOT EXISTS teaching_assessment_validations_assessment_fk_idx ON public.teaching_assessment_validations(assessment_id);
+
 -- Remove abandoned pre-freeze D17 package guards before installing the canonical freeze model.
 -- These prototype triggers conflict with the canonical ASSEMBLING -> LOCKED transaction and
 -- their functions also lack a fixed search_path.
