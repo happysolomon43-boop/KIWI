@@ -124,6 +124,10 @@
     const invalidated=snapshot?.lockOutcome==='ATTEMPT_INVALIDATED_RULE_BREACH'||snapshot?.outcome==='ATTEMPT_INVALIDATED_RULE_BREACH';
     overlay.innerHTML='<div style="width:min(620px,100%);border:1px solid rgba(248,113,113,.3);border-radius:22px;background:#071812;padding:28px;box-shadow:0 24px 80px rgba(0,0,0,.5);"><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#fb7185;">Controlled examination</div><h2 style="margin:10px 0;">Attempt locked</h2><p style="line-height:1.7;color:#cbd5e1;">'+(invalidated?'This controlled attempt was invalidated after a second confirmed prohibited departure.':'This controlled attempt was locked after a second confirmed prohibited departure. Your latest server-saved responses have been preserved for the governed next step.')+'</p><p style="margin-top:14px;color:#94a3b8;font-size:12px;line-height:1.6;">KIWI records the rule event itself. This does not declare a cheating probability or misconduct finding.</p></div>';
   }
+  function clearDefaultStudyExamLock(){
+    if(typeof document==='undefined')return;
+    document.getElementById('kiwiIntegrityGlobalExamLock')?.remove();
+  }
   function defaultStudyWarning(snapshot){
     if(typeof global.showToast==='function')global.showToast('Warning: you left the controlled examination. Another prohibited departure may lock this attempt.','warning',7000);
     global.dispatchEvent(new CustomEvent('kiwi:exam-integrity-warning',{detail:snapshot}));
@@ -137,9 +141,12 @@
     const currentId=studyExamId();
     const endedId=detail.examId||detail.ownerRef||currentId||state.active?.ownerRef||null;
     if(endedId)state.endedStudyExamId=String(endedId);
-    if(state.active?.ownerType!=='KIWI_EXAM')return state.active;
-    if(endedId&&state.active.ownerRef!==String(endedId))return state.active;
-    return deactivate({close:true});
+    if(state.active&&state.active.ownerType!=='KIWI_EXAM')return state.active;
+    if(state.active&&endedId&&state.active.ownerRef!==String(endedId))return state.active;
+    if(!state.active){clearDefaultStudyExamLock();return null;}
+    const current=await deactivate({close:true});
+    clearDefaultStudyExamLock();
+    return current;
   }
   async function ensureStudyExamGuard(){
     const examId=studyExamId();
@@ -156,6 +163,7 @@
         const snapshot=await activate({ownerType:'KIWI_EXAM',ownerRef:id,onWarning:defaultStudyWarning,onLock:defaultStudyLock});
         if(state.endedStudyExamId===id){
           await deactivate({close:true});
+          clearDefaultStudyExamLock();
           return null;
         }
         return snapshot;
