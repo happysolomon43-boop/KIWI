@@ -46,7 +46,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git rm .github/workflows/_legacy-integrity-cleanup-once.yml scripts/cleanup-legacy-exam-integrity-once.py
-          git add index.html public/kiwi-integrity-session-guard.js tests/teaching/unit/study-global-exam-integrity-lockout.test.js
+          git add index.html public/kiwi-integrity-session-guard.js tests/teaching/unit/study-global-exam-integrity-lockout.test.js tests/teaching/unit/integrity-session-guard-amendment.test.js
           git diff --cached --check
           git commit -m 'refactor(study): centralize exam integrity lifecycle ownership'
           git push origin HEAD:study/remove-legacy-exam-integrity
