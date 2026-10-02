@@ -1,0 +1,78 @@
+name: Teaching D19 Assessment Types
+on:
+  pull_request:
+    paths:
+      - 'teaching/d17/routes.js'
+      - 'teaching/d19/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'docs/teaching/d19*'
+      - 'package.json'
+      - '.github/workflows/teaching-d19-assessment-types.yml'
+  push:
+    branches: [main, 'teaching/d19-assessment-types']
+    paths:
+      - 'teaching/d17/routes.js'
+      - 'teaching/d19/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'docs/teaching/d19*'
+      - 'package.json'
+      - '.github/workflows/teaching-d19-assessment-types.yml'
+
+jobs:
+  d19:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: D19 runtime syntax checks
+        run: |
+          node --check teaching/d19/contracts.js
+          node --check teaching/d19/service.js
+          node --check teaching/d19/index.js
+          node --check teaching/d17/routes.js
+          node --check scripts/verify-teaching-d19-assessment-types.js
+          node --check tests/teaching/unit/d19-assessment-types.test.js
+          node --check tests/teaching/integration/d19-assessment-types-schema.test.js
+      - name: D01-D19 canonical verifiers
+        run: for n in $(seq -w 1 19); do npm run verify:teaching:d$n; done
+      - name: D19 focused assessment-type tests
+        run: node --test tests/teaching/unit/d19-assessment-types.test.js
+      - name: Teaching unit regressions
+        run: npm run test:teaching
+      - name: Full unit regressions
+        run: npm test
+      - name: Web build
+        run: npm run build:web
+
+  d19-isolated-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_PASSWORD: postgres, POSTGRES_USER: postgres, POSTGRES_DB: kiwi_teaching_test}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiwi_teaching_test
+      TEACHING_TEST_PROJECT_REF: local-d19-ci
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: Reconstruct Teaching database through D17
+        run: node scripts/setup-teaching-integration-db.js
+      - name: Confirm D17 authority remains intact
+        run: node --test tests/teaching/integration/d17-assessment-domain-schema.test.js
+      - name: Confirm D19 reuses existing Assessment persistence carriers
+        run: node --test tests/teaching/integration/d19-assessment-types-schema.test.js
+      - name: Teaching integration regressions
+        run: npm run test:teaching:integration
