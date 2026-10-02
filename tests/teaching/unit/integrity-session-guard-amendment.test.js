@@ -141,6 +141,11 @@ test('amendment source keeps Exam lock server-side and removes first-pagehide au
   assert.match(backend,/EXAM_INTEGRITY_ATTEMPT_INVALIDATED/);
   assert.match(repo,/verification_pending=\(\$5 in \('LOCKED_FOR_REVIEW','POST_ATTEMPT_VERIFICATION_REQUIRED'\)\)/);
   assert.match(repo,/where\.push\(`route=\$\$\{params\.length\}`\)/);
-  assert.match(html,/Integrity Session Guard owns pagehide\/background recording/);
+  assert.match(html,/Integrity Session Guard owns exam integrity activation/);
+  assert.match(html,/kiwi:exam-ended/);
+  assert.doesNotMatch(html,/_startExamIntegrityGuard/);
+  assert.doesNotMatch(html,/_renderIntegrityExamLock/);
+  assert.doesNotMatch(html,/KIWIIntegritySessionGuard\.activate/);
+  assert.doesNotMatch(html,/KIWIIntegritySessionGuard\.deactivate/);
   assert.doesNotMatch(html,/pagehide — fires after the user confirms leaving[\s\S]{0,900}\/forfeit/);
 });

@@ -1,7 +1,7 @@
 (function(global){
   'use strict';
   if(global.KIWIIntegritySessionGuard)return;
-  const state={active:null,listeners:[],heartbeat:null,lastHiddenAt:null,deviceRef:null,onState:null,onWarning:null,onLock:null,studyExamWatcher:null,lastStudyExamId:null};
+  const state={active:null,listeners:[],heartbeat:null,lastHiddenAt:null,deviceRef:null,onState:null,onWarning:null,onLock:null,studyExamWatcher:null,lastStudyExamId:null,endedStudyExamId:null,studyExamActivation:null};
   const uid=(prefix='ig')=>`${prefix}-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
   function apiBase(){
     const configured=global.KIWI_RUNTIME_CONFIG?.apiBaseUrl||global.KIWI_RUNTIME_CONFIG?.apiBase||global.API_BASE_URL||global.KIWI_API_BASE||'';
@@ -124,6 +124,10 @@
     const invalidated=snapshot?.lockOutcome==='ATTEMPT_INVALIDATED_RULE_BREACH'||snapshot?.outcome==='ATTEMPT_INVALIDATED_RULE_BREACH';
     overlay.innerHTML='<div style="width:min(620px,100%);border:1px solid rgba(248,113,113,.3);border-radius:22px;background:#071812;padding:28px;box-shadow:0 24px 80px rgba(0,0,0,.5);"><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#fb7185;">Controlled examination</div><h2 style="margin:10px 0;">Attempt locked</h2><p style="line-height:1.7;color:#cbd5e1;">'+(invalidated?'This controlled attempt was invalidated after a second confirmed prohibited departure.':'This controlled attempt was locked after a second confirmed prohibited departure. Your latest server-saved responses have been preserved for the governed next step.')+'</p><p style="margin-top:14px;color:#94a3b8;font-size:12px;line-height:1.6;">KIWI records the rule event itself. This does not declare a cheating probability or misconduct finding.</p></div>';
   }
+  function clearDefaultStudyExamLock(){
+    if(typeof document==='undefined')return;
+    document.getElementById('kiwiIntegrityGlobalExamLock')?.remove();
+  }
   function defaultStudyWarning(snapshot){
     if(typeof global.showToast==='function')global.showToast('Warning: you left the controlled examination. Another prohibited departure may lock this attempt.','warning',7000);
     global.dispatchEvent(new CustomEvent('kiwi:exam-integrity-warning',{detail:snapshot}));
@@ -132,29 +136,59 @@
     renderDefaultStudyExamLock(snapshot);
     global.dispatchEvent(new CustomEvent('kiwi:exam-integrity-lock',{detail:snapshot}));
   }
+  async function closeStudyExamGuard(event){
+    const detail=event&&event.detail&&typeof event.detail==='object'?event.detail:{};
+    const currentId=studyExamId();
+    const endedId=detail.examId||detail.ownerRef||currentId||state.active?.ownerRef||null;
+    if(endedId)state.endedStudyExamId=String(endedId);
+    if(state.active&&state.active.ownerType!=='KIWI_EXAM')return state.active;
+    if(state.active&&endedId&&state.active.ownerRef!==String(endedId))return state.active;
+    if(!state.active){clearDefaultStudyExamLock();return null;}
+    const current=await deactivate({close:true});
+    clearDefaultStudyExamLock();
+    return current;
+  }
   async function ensureStudyExamGuard(){
     const examId=studyExamId();
     if(!examId)return null;
     const id=String(examId);
+    if(state.endedStudyExamId===id)return null;
+    if(state.endedStudyExamId&&state.endedStudyExamId!==id)state.endedStudyExamId=null;
     if(state.active?.ownerType==='KIWI_EXAM'&&state.active?.ownerRef===id&&state.active?.status!=='CLOSED')return state.active;
-    try{
-      state.lastStudyExamId=id;
-      return await activate({ownerType:'KIWI_EXAM',ownerRef:id,onWarning:defaultStudyWarning,onLock:defaultStudyLock});
-    }catch(error){
-      global.dispatchEvent(new CustomEvent('kiwi:integrity-session-error',{detail:{code:error.code||'STUDY_EXAM_AUTO_GUARD_FAILED',message:error.message}}));
-      return null;
-    }
+    if(state.studyExamActivation?.id===id)return state.studyExamActivation.promise;
+    let pending;
+    pending=(async()=>{
+      try{
+        state.lastStudyExamId=id;
+        const snapshot=await activate({ownerType:'KIWI_EXAM',ownerRef:id,onWarning:defaultStudyWarning,onLock:defaultStudyLock});
+        if(state.endedStudyExamId===id){
+          await deactivate({close:true});
+          clearDefaultStudyExamLock();
+          return null;
+        }
+        return snapshot;
+      }catch(error){
+        global.dispatchEvent(new CustomEvent('kiwi:integrity-session-error',{detail:{code:error.code||'STUDY_EXAM_AUTO_GUARD_FAILED',message:error.message}}));
+        return null;
+      }finally{
+        if(state.studyExamActivation?.promise===pending)state.studyExamActivation=null;
+      }
+    })();
+    state.studyExamActivation={id,promise:pending};
+    return pending;
   }
   function enableStudyExamAutoGuard(){
     if(state.studyExamWatcher)return;
     const tick=()=>{void ensureStudyExamGuard();};
+    const restart=()=>{const examId=studyExamId();if(examId)state.endedStudyExamId=null;void ensureStudyExamGuard();};
     tick();
     state.studyExamWatcher=setInterval(tick,750);
-    global.addEventListener('kiwi:exam-started',tick);
-    global.addEventListener('kiwi:exam-resumed',tick);
+    global.addEventListener('kiwi:exam-started',restart);
+    global.addEventListener('kiwi:exam-resumed',restart);
+    global.addEventListener('kiwi:exam-ended',(event)=>{void closeStudyExamGuard(event);});
   }
 
-  global.KIWIIntegritySessionGuard=Object.freeze({activate,deactivate,refresh,current,sendEvent:send,ensureStudyExamGuard,enableStudyExamAutoGuard});
+  global.KIWIIntegritySessionGuard=Object.freeze({activate,deactivate,refresh,current,sendEvent:send,ensureStudyExamGuard,closeStudyExamGuard,enableStudyExamAutoGuard});
   if(typeof document!=='undefined'){
     if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',enableStudyExamAutoGuard,{once:true});
     else enableStudyExamAutoGuard();
