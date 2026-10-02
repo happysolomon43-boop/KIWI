@@ -1,6 +1,7 @@
 'use strict';
 
 const {createD20Service}=require('./service');
+const {renderCourseResults,renderTopicResult,renderAssessmentReview}=require('./ui');
 
 function mountD20Routes(router,{foundation,sendError,d19Service,requireD17Ready}={}){
   const repository=foundation?.d20?.repository;if(!repository)return null;let ready=false;
@@ -15,10 +16,13 @@ function mountD20Routes(router,{foundation,sendError,d19Service,requireD17Ready}
     res.json(await service.ensurePolicy(req.user,req.params.courseId,body));
   }catch(e){sendError(res,e,'Failed to lock Course Grading Policy.');}});
   router.get('/gradebook/courses/:courseId',async(req,res)=>{try{res.json(await service.courseResults(req.user,req.params.courseId));}catch(e){sendError(res,e,'Failed to load Course Results.');}});
+  router.get('/gradebook/courses/:courseId/view',async(req,res)=>{try{const model=await service.courseResults(req.user,req.params.courseId);res.type('html').send(renderCourseResults(model));}catch(e){sendError(res,e,'Failed to load Course Results view.');}});
+  router.get('/gradebook/courses/:courseId/topics/:topicId/view',async(req,res)=>{try{const model=await service.courseResults(req.user,req.params.courseId),topic=model.topics.find(t=>String(t.topicId)===String(req.params.topicId));if(!topic)return res.status(404).type('html').send(renderTopicResult({topic:{topicId:req.params.topicId,state:'PROVISIONAL_INSUFFICIENT_EVIDENCE'}}));res.type('html').send(renderTopicResult({courseId:model.courseId,topic,policy:model.policy}));}catch(e){sendError(res,e,'Failed to load Topic Result view.');}});
   router.post('/gradebook/homework/:evaluationId/commit',async(req,res)=>{try{res.status(201).json(await service.commitHomeworkEvaluation(req.user,req.params.evaluationId,req.body||{}));}catch(e){sendError(res,e,'Failed to commit validated Homework evaluation.');}});
 
   router.post('/results/attempts/:attemptId/mark',async(req,res)=>{try{res.status(201).json(await service.markAttempt(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to mark Assessment Attempt.');}});
   router.get('/results/:resultId',async(req,res)=>{try{res.json(await service.assessmentReview(req.user,req.params.resultId));}catch(e){sendError(res,e,'Failed to load Assessment Result review.');}});
+  router.get('/results/:resultId/view',async(req,res)=>{try{res.type('html').send(renderAssessmentReview(await service.assessmentReview(req.user,req.params.resultId)));}catch(e){sendError(res,e,'Failed to load Assessment Result review view.');}});
   router.post('/results/:resultId/moderate',async(req,res)=>{try{res.json(await service.moderateResult(req.user,req.params.resultId,req.body||{}));}catch(e){sendError(res,e,'Failed to moderate Assessment Result.');}});
   router.post('/results/:resultId/transition',async(req,res)=>{try{res.json(await service.transitionResult(req.user,req.params.resultId,req.body||{}));}catch(e){sendError(res,e,'Failed to change Assessment Result lifecycle.');}});
   router.post('/results/:resultId/appeals',async(req,res)=>{try{
