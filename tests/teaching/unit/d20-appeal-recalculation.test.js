@@ -20,6 +20,7 @@ test('TCH-0425 successful appeal deterministically recalculates result and Grade
   let entries=[{gradebook_entry_id:'entry-v1',source_kind:'ASSESSMENT',source_ref:'attempt-1',source_result_id:'result-1',category_key:'CLASSWORK',category_weight:.10,within_category_weight:1,raw_earned_marks:5,raw_max_marks:10,raw_percentage:50,course_contribution:5,entry_state:'APPEALABLE',learning_unit_ids:['lu-1'],topic_ids:[],version_no:1}];
   const audits=[];
   const repository={
+    sha:()=> 'test-digest',
     loadMarkingBundle:async()=>bundle,
     resultById:async()=>result,
     appealById:async()=>appeal,
