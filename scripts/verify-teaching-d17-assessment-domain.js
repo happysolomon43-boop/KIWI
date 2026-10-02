@@ -39,6 +39,13 @@ for(const required of [
   /public_item_payload/,
 ]) assert.match(source,required);
 assert.doesNotMatch(fs.readFileSync('teaching/d17/routes.js','utf8'),/protected_marking_payload|protected_payload/,'D17 browser routes must not project protected marking/candidate material');
+const repositorySource=fs.readFileSync('teaching/repositories/d17-assessments.js','utf8');
+assert.match(repositorySource,/values\(\$1,\$2,\$3,\$4,\$5,'ASSEMBLING',null,null,null/,'D17 Package must assemble inside the transaction before lock');
+assert.match(repositorySource,/set package_state='LOCKED',package_hash=\$3/,'D17 Package lock must be an explicit final repository transition');
+const assemblingAt=repositorySource.indexOf("'ASSEMBLING',null,null,null");
+const itemInsertAt=repositorySource.indexOf('insert into public.teaching_assessment_package_items');
+const lockAt=repositorySource.indexOf("set package_state='LOCKED'");
+assert.ok(assemblingAt>=0&&itemInsertAt>assemblingAt&&lockAt>itemInsertAt,'D17 Package order must be ASSEMBLING -> item snapshot -> LOCKED');
 
 const migration=fs.readFileSync('migrations/20261002_teaching_d17_assessment_domain.sql','utf8');
 for(const table of ['teaching_assessments','teaching_assessment_blueprints','teaching_assessment_eligibility_entries','teaching_assessment_candidates','teaching_assessment_candidate_versions','teaching_assessment_validations','teaching_assessment_packages','teaching_assessment_package_items','teaching_assessment_attempts','teaching_assessment_attempt_events','teaching_assessment_responses','teaching_assessment_item_challenges','teaching_assessment_invalidations','teaching_assessment_contamination_events','teaching_assessment_ppl_workspaces'])assert.match(migration,new RegExp(`CREATE TABLE IF NOT EXISTS public\\.${table}`));
@@ -46,11 +53,21 @@ for(const required of [
   /REVOKE ALL ON TABLE public\.%I FROM anon, authenticated, public/,
   /teaching_assessment_attempts_one_active_uidx/,
   /Locked Assessment Package is immutable/,
+  /Locked Assessment Package cannot return to a mutable state/,
+  /Locked Assessment Package item membership is immutable/,
   /teaching_assessment_validations_independent_check/,
   /teaching_assessment_invalidations_no_penalty_check/,
   /teaching_d17_contamination_resolution_guard/,
   /resolved_at timestamptz/,
   /resolution_ref text/,
+  /DROP TRIGGER IF EXISTS teaching_d17_locked_package_update_guard/,
+  /DROP TRIGGER IF EXISTS teaching_d17_package_item_insert_guard/,
+  /DROP TRIGGER IF EXISTS teaching_d17_package_item_update_guard/,
+  /DROP TRIGGER IF EXISTS teaching_d17_package_item_delete_guard/,
+  /DROP FUNCTION IF EXISTS public\.teaching_d17_guard_locked_package_update\(\)/,
+  /DROP FUNCTION IF EXISTS public\.teaching_d17_guard_package_item_mutation\(\)/,
+  /CREATE TRIGGER teaching_d17_locked_package_item_guard BEFORE INSERT OR UPDATE OR DELETE/,
+  /RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public/,
 ]) assert.match(migration,required);
 
 const integrityRepo=fs.readFileSync('services/integrity/repository.js','utf8');
