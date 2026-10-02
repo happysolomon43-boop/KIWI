@@ -6,6 +6,7 @@ const {
   classifyClarification,attemptExpiry,packageHash,PROMPT_BINDINGS,missedAssessmentPathway,
 }=require('../../../teaching/d17/contracts');
 const {CAPABILITIES,generationCapability}=require('../../../teaching/d17/intelligence');
+const {createD17Service}=require('../../../teaching/d17/service');
 
 const eligible=[{learning_unit_id:'lu-1',eligibility_basis:'TAUGHT',course_plan_id:'cp-1',coverage_version:4,owner_ref:'eligibility:e1',policy_version:'v1'}];
 
@@ -89,4 +90,20 @@ test('D17 package hash is deterministic and content-addressed',()=>{
   const a=packageHash({blueprint:{assessment_blueprint_id:'b1',version_no:2,response_form_architecture:{mode:'mixed'},resource_policy:{notes:false},accommodation_policy:{}},items:[{ordinal:1,candidate_version_id:'cv1',item_hash:'abc'}],policySnapshot:{version:'v1'}});
   const b=packageHash({policySnapshot:{version:'v1'},items:[{item_hash:'abc',candidate_version_id:'cv1',ordinal:1}],blueprint:{accommodation_policy:{},resource_policy:{notes:false},response_form_architecture:{mode:'mixed'},version_no:2,assessment_blueprint_id:'b1'}});
   assert.equal(a,b);
+});
+
+
+test('D17 expiry forwards a stable string idempotency key to atomic finalization',async()=>{
+  let observed=null;
+  const repository={
+    createAssessment(){},
+    async finalizeAttempt(input){observed=input;return {attempt:{assessment_attempt_id:input.attemptId,attempt_state:input.mode}};}
+  };
+  const service=createD17Service({repository,randomUUID:()=> 'uuid-1',clock:()=>new Date('2026-10-02T10:00:00.000Z')});
+  await service.expire('student-1','attempt-1','expiry-event-1');
+  assert.equal(observed.idempotencyKey,'expiry-event-1');
+  assert.equal(observed.mode,'EXPIRED');
+  await service.expire('student-1','attempt-2');
+  assert.equal(observed.idempotencyKey,'d17-expiry:attempt-2');
+  assert.equal(typeof observed.idempotencyKey,'string');
 });

@@ -313,25 +313,76 @@ CREATE TABLE IF NOT EXISTS public.teaching_assessment_ppl_workspaces (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS teaching_assessment_ppl_lane_uidx ON public.teaching_assessment_ppl_workspaces(assessment_id,lane);
 
--- Canonical value guards. Existing provisional Integration tables are empty;
--- these constraints converge their shape without inventing new academic truth.
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='teaching_assessments_type_check') THEN
-    ALTER TABLE public.teaching_assessments ADD CONSTRAINT teaching_assessments_type_check CHECK (assessment_type IN ('DIAGNOSTIC','CLASSWORK','IMPROMPTU_TEST','SCHEDULED_TEST','MID_SEMESTER','FINAL_EXAMINATION','MAKE_UP','RESIT','VERIFICATION'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='teaching_assessment_blueprints_lane_check') THEN
-    ALTER TABLE public.teaching_assessment_blueprints ADD CONSTRAINT teaching_assessment_blueprints_lane_check CHECK (lane IN ('FORECAST_PLANNING','ELIGIBLE_CANDIDATE'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='teaching_assessment_eligibility_entries_basis_check') THEN
-    ALTER TABLE public.teaching_assessment_eligibility_entries ADD CONSTRAINT teaching_assessment_eligibility_entries_basis_check CHECK (eligibility_basis IN ('TAUGHT','VALIDATED_PRIOR_KNOWLEDGE','EXPLICIT_ASSUMED_PREREQUISITE'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='teaching_assessment_invalidations_no_penalty_check') THEN
-    ALTER TABLE public.teaching_assessment_invalidations ADD CONSTRAINT teaching_assessment_invalidations_no_penalty_check CHECK (student_penalty_allowed=false);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='teaching_assessment_validations_independent_check') THEN
-    ALTER TABLE public.teaching_assessment_validations ADD CONSTRAINT teaching_assessment_validations_independent_check CHECK (independent_from_generation=true);
-  END IF;
-END $$;
+-- Canonical value/state guards. Existing provisional Integration tables are empty;
+-- replace legacy pre-freeze checks explicitly because CREATE TABLE IF NOT EXISTS
+-- cannot converge same-named constraints whose old vocabularies reject D17 runtime states.
+ALTER TABLE public.teaching_assessments
+  DROP CONSTRAINT IF EXISTS teaching_assessments_assessment_type_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessments_type_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessments_definition_state_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessments_check;
+ALTER TABLE public.teaching_assessments
+  ADD CONSTRAINT teaching_assessments_type_check CHECK (assessment_type IN ('DIAGNOSTIC','CLASSWORK','IMPROMPTU_TEST','SCHEDULED_TEST','MID_SEMESTER','FINAL_EXAMINATION','MAKE_UP','RESIT','VERIFICATION')),
+  ADD CONSTRAINT teaching_assessments_definition_state_check CHECK (definition_state IN ('DRAFT','PLANNED','READY','CANCELLED','SUPERSEDED'));
+
+ALTER TABLE public.teaching_assessment_blueprints
+  DROP CONSTRAINT IF EXISTS teaching_assessment_blueprints_lane_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessment_blueprints_maturity_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessment_blueprints_timer_model_check;
+ALTER TABLE public.teaching_assessment_blueprints
+  ADD CONSTRAINT teaching_assessment_blueprints_lane_check CHECK (lane IN ('FORECAST_PLANNING','ELIGIBLE_CANDIDATE')),
+  ADD CONSTRAINT teaching_assessment_blueprints_maturity_check CHECK (maturity IN ('SKELETON','STRUCTURED','CANDIDATE','PRE_LOCK_READY')),
+  ADD CONSTRAINT teaching_assessment_blueprints_timer_model_check CHECK (timer_model IN ('OVERALL','PER_QUESTION_EXPLICIT_SKILL'));
+
+ALTER TABLE public.teaching_assessment_eligibility_entries
+  DROP CONSTRAINT IF EXISTS teaching_assessment_eligibility_entries_eligibility_basis_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessment_eligibility_entries_basis_check;
+ALTER TABLE public.teaching_assessment_eligibility_entries
+  ADD CONSTRAINT teaching_assessment_eligibility_entries_basis_check CHECK (eligibility_basis IN ('TAUGHT','VALIDATED_PRIOR_KNOWLEDGE','EXPLICIT_ASSUMED_PREREQUISITE'));
+
+ALTER TABLE public.teaching_assessment_candidates
+  DROP CONSTRAINT IF EXISTS teaching_assessment_candidates_candidate_state_check;
+ALTER TABLE public.teaching_assessment_candidates
+  ADD CONSTRAINT teaching_assessment_candidates_candidate_state_check CHECK (candidate_state IN ('GENERATED','VALIDATION_PENDING','VALIDATED','REPAIR_REQUIRED','REJECTED','RETIRED','CONTAMINATED'));
+
+ALTER TABLE public.teaching_assessment_validations
+  DROP CONSTRAINT IF EXISTS teaching_assessment_validations_outcome_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessment_validations_independent_check;
+ALTER TABLE public.teaching_assessment_validations
+  ADD CONSTRAINT teaching_assessment_validations_outcome_check CHECK (outcome IN ('PASS','FAIL','REPAIR','REVIEW_REQUIRED','STALE')),
+  ADD CONSTRAINT teaching_assessment_validations_independent_check CHECK (independent_from_generation=true);
+
+ALTER TABLE public.teaching_assessment_packages
+  DROP CONSTRAINT IF EXISTS teaching_assessment_packages_package_state_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessment_packages_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessment_packages_locked_complete_check;
+ALTER TABLE public.teaching_assessment_packages
+  ADD CONSTRAINT teaching_assessment_packages_package_state_check CHECK (package_state IN ('ASSEMBLING','VALIDATED','LOCKED','INVALIDATED','SUPERSEDED')),
+  ADD CONSTRAINT teaching_assessment_packages_locked_complete_check CHECK (package_state <> 'LOCKED' OR (locked_at IS NOT NULL AND package_hash IS NOT NULL));
+
+ALTER TABLE public.teaching_assessment_attempts
+  DROP CONSTRAINT IF EXISTS teaching_assessment_attempts_attempt_state_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessment_attempts_result_state_check;
+ALTER TABLE public.teaching_assessment_attempts
+  ADD CONSTRAINT teaching_assessment_attempts_attempt_state_check CHECK (attempt_state IN ('CREATED','ACTIVE','SUBMITTED','EXPIRED','INVALIDATED','CANCELLED')),
+  ADD CONSTRAINT teaching_assessment_attempts_result_state_check CHECK (result_state IN ('NOT_FINAL','AWAITING_MARKING','INVALIDATED','VOID'));
+
+ALTER TABLE public.teaching_assessment_package_items
+  DROP CONSTRAINT IF EXISTS teaching_assessment_package_items_item_state_check;
+ALTER TABLE public.teaching_assessment_package_items
+  ADD CONSTRAINT teaching_assessment_package_items_item_state_check CHECK (item_state IN ('ACTIVE','INVALIDATED','RETIRED_AS_CLEAN_EVIDENCE'));
+
+-- The abandoned Integration prototype constrained contamination.action to an
+-- obsolete vocabulary. Canonical D17 keeps action as auditable governed text;
+-- service behavior currently emits RETIRE_AND_RECHECK.
+ALTER TABLE public.teaching_assessment_contamination_events
+  DROP CONSTRAINT IF EXISTS teaching_assessment_contamination_events_action_check;
+
+ALTER TABLE public.teaching_assessment_invalidations
+  DROP CONSTRAINT IF EXISTS teaching_assessment_invalidations_student_penalty_allowed_check,
+  DROP CONSTRAINT IF EXISTS teaching_assessment_invalidations_no_penalty_check;
+ALTER TABLE public.teaching_assessment_invalidations
+  ADD CONSTRAINT teaching_assessment_invalidations_no_penalty_check CHECK (student_penalty_allowed=false);
 
 CREATE OR REPLACE FUNCTION public.teaching_d17_reject_append_only_mutation()
 RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
