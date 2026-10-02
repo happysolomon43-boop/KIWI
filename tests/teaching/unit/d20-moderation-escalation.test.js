@@ -15,6 +15,7 @@ test('TCH-0763 material high-stakes moderation disagreement preserves judgments 
   const judgmentByRun=new Map([['run-original',[{criterion_id:'c1',criterion_max_marks:10,proposed_credit:5,proposed_band_id:null,supported_credit_range:null,satisfaction:'partial',evidence_refs:['response-1'],evidence_summary:'Original rubric judgment',review_state:'ordinary',confidence:'high',alternative_valid_route_used:false,follow_through_applied:false,defect_flags:[]}]]]);
   let gradebookWrites=0;
   const repository={
+    sha:()=> 'test-digest',
     loadMarkingBundle:async()=>bundle,
     resultById:async()=>result,
     runsForResult:async()=>runs,
