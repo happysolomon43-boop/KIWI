@@ -1,0 +1,67 @@
+name: Temporary D17 Clarification Classifier Hardening
+on:
+  push:
+    branches: ['teaching/d17-assessment-domain']
+permissions:
+  contents: write
+jobs:
+  harden:
+    if: ${{ !contains(github.event.head_commit.message, '[d17-classifier-hardened]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: teaching/d17-assessment-domain
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply canonical clarification intent hardening
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('teaching/d17/contracts.js')
+          text = path.read_text()
+          old = """function classifyClarification(text='') {
+            const value = String(text).trim();
+            const procedural = /\\b(time|timer|save|submit|navigation|next question|previous question|calculator|formula sheet|allowed resource|resource|technical|connection|device|instructions? mean|format|where|how do i enter|flag this question)\\b/i.test(value);
+            const content = /\\b(which (?:option|answer)|what(?:'s| is) the (?:answer|solution)|give me (?:the )?(?:answer|solution)|tell me (?:the )?(?:answer|solution)|solve(?: this| it)?|hint|correct answer|is (?:this|my answer) correct|check my answer|which method|method should|which formula|formula should|explain the concept)\\b/i.test(value);
+            return content ? 'CONTENT_HELP_PROHIBITED' : procedural ? 'PROCEDURAL_CLARIFICATION' : 'REVIEW_REQUIRED';
+          }
+          """
+          new = """function classifyClarification(text='') {
+            const value = String(text).trim();
+            const procedural = /\\b(time|timer|save|submit|navigation|next question|previous question|calculator|formula sheet|allowed resource|resource|technical|connection|device|instructions? mean|format|where|how do i enter|flag this question|do i (?:answer|attempt|complete) (?:both|all|every|this|these)(?: parts?| questions?)?|can i (?:change|edit|save) (?:my |this )?answer)\\b/i.test(value);
+            const content = /\\b(which (?:option|answer)|what(?:'s| is) the (?:answer|solution)|give me (?:the )?(?:answer|solution)|tell me (?:the )?(?:answer|solution)|solve(?: this| it)?|hint|correct answer|is (?:option [a-z0-9]+|this|my answer) correct|check my answer|which method|method should|which formula|formula should|explain the concept)\\b/i.test(value);
+            return content ? 'CONTENT_HELP_PROHIBITED' : procedural ? 'PROCEDURAL_CLARIFICATION' : 'REVIEW_REQUIRED';
+          }
+          """
+          if text.count(old) != 1:
+              raise SystemExit('expected exactly one current D17 clarification classifier block')
+          path.write_text(text.replace(old, new))
+          PY
+      - name: Verify canonical clarification cases
+        run: |
+          node --check teaching/d17/contracts.js
+          node - <<'NODE'
+          const assert=require('node:assert/strict');
+          const {classifyClarification}=require('./teaching/d17/contracts');
+          assert.equal(classifyClarification('Where do I submit this answer?'),'PROCEDURAL_CLARIFICATION');
+          assert.equal(classifyClarification('Do I answer both parts?'),'PROCEDURAL_CLARIFICATION');
+          assert.equal(classifyClarification('How do I enter my answer?'),'PROCEDURAL_CLARIFICATION');
+          assert.equal(classifyClarification('Can I save my answer?'),'PROCEDURAL_CLARIFICATION');
+          assert.equal(classifyClarification('Which answer is correct?'),'CONTENT_HELP_PROHIBITED');
+          assert.equal(classifyClarification('Can you tell me the answer?'),'CONTENT_HELP_PROHIBITED');
+          assert.equal(classifyClarification('Which option is correct?'),'CONTENT_HELP_PROHIBITED');
+          assert.equal(classifyClarification('Where do I submit, and is option C correct?'),'CONTENT_HELP_PROHIBITED');
+          assert.equal(classifyClarification('Help me with this question'),'REVIEW_REQUIRED');
+          NODE
+      - name: Commit hardening and retire temporary workflow
+        shell: bash
+        run: |
+          git rm .github/workflows/.tmp-d17-classifier-hardening.yml
+          git add teaching/d17/contracts.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Harden D17 procedural clarification intent [d17-classifier-hardened]'
+          git push origin HEAD:teaching/d17-assessment-domain
