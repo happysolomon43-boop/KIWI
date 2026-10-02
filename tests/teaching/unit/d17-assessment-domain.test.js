@@ -57,9 +57,16 @@ test('D17 finalization rejects contaminated or retired candidates even after an 
   assert.equal(r.ready,false);assert.ok(r.reasons.includes('CANDIDATE_NOT_USABLE:cv1'));
 });
 
-test('D17 clarification gate deterministically blocks content help',()=>{
-  assert.equal(classifyClarification('Which option is correct?'),'CONTENT_HELP_PROHIBITED');
+test('D17 clarification gate distinguishes procedural support from substantive content help',()=>{
   assert.equal(classifyClarification('Where do I submit this answer?'),'PROCEDURAL_CLARIFICATION');
+  assert.equal(classifyClarification('Do I answer both parts?'),'PROCEDURAL_CLARIFICATION');
+  assert.equal(classifyClarification('How do I enter my answer?'),'PROCEDURAL_CLARIFICATION');
+  assert.equal(classifyClarification('Can I save my answer?'),'PROCEDURAL_CLARIFICATION');
+  assert.equal(classifyClarification('Which answer is correct?'),'CONTENT_HELP_PROHIBITED');
+  assert.equal(classifyClarification('Can you tell me the answer?'),'CONTENT_HELP_PROHIBITED');
+  assert.equal(classifyClarification('Which option is correct?'),'CONTENT_HELP_PROHIBITED');
+  assert.equal(classifyClarification('Where do I submit, and is option C correct?'),'CONTENT_HELP_PROHIBITED');
+  assert.equal(classifyClarification('Help me with this question'),'REVIEW_REQUIRED');
 });
 
 test('D17 attempt expiry includes approved time accommodation without changing the standard',()=>{
