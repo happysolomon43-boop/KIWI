@@ -1,13 +1,23 @@
 'use strict';
 
 const {mountD18Routes}=require('../d18/routes');
+const {createD19AssessmentTypeService}=require('../d19/service');
 
 function mountD17Routes(router,{foundation,sendError}={}){
-  const service=foundation?.d17?.service;if(!service)return null;let ready=false;
+  const d17=foundation?.d17?.service;if(!d17)return null;let ready=false;
+  const service=createD19AssessmentTypeService({
+    d17Service:d17,
+    d17Repository:foundation.d17.repository,
+    d08Repository:foundation.d08?.repository||null,
+    d11Repository:foundation.d11?.repository||null,
+    d14Service:foundation.d14?.service||null,
+    policy:foundation.policy,
+  });
   const requireReady=async(req,res,next)=>{try{if(!ready){await foundation.d17.repository.assertReady();ready=true;}return next();}catch(error){return res.status(503).json({error:'Teaching Assessment is unavailable until the D17 schema is ready.',code:error?.code||'TEACHING_D17_SCHEMA_NOT_READY'});}};
   router.use('/assessments',requireReady);
   router.get('/assessments',async(req,res)=>{try{res.json(await service.list(req.user,{courseId:req.query.courseId||null,limit:req.query.limit}));}catch(e){sendError(res,e,'Failed to load Teaching Assessments.');}});
   router.post('/assessments',async(req,res)=>{try{res.status(201).json(await service.createDefinition(req.user,req.body||{}));}catch(e){sendError(res,e,'Failed to create Assessment definition.');}});
+  router.get('/assessments/:id/measurement-policy',async(req,res)=>{try{res.json(await service.getMeasurementPolicy(req.user,req.params.id));}catch(e){sendError(res,e,'Failed to load Assessment measurement policy.');}});
   router.post('/assessments/:id/blueprints',async(req,res)=>{try{res.status(201).json(await service.prepareBlueprint(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Failed to prepare Assessment Blueprint.');}});
   router.post('/assessments/:id/candidates',async(req,res)=>{try{res.status(201).json(await service.generateCandidate(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Failed to generate protected Assessment candidate.');}});
   router.post('/assessments/:id/candidates/:candidateVersionId/validate',async(req,res)=>{try{res.json(await service.validateItem(req.user,req.params.id,req.params.candidateVersionId,req.body||{}));}catch(e){sendError(res,e,'Failed to validate Assessment item.');}});
@@ -21,9 +31,10 @@ function mountD17Routes(router,{foundation,sendError}={}){
   router.post('/assessments/attempts/:attemptId/challenges',async(req,res)=>{try{res.status(201).json(await service.challenge(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to record Assessment item challenge.');}});
   router.post('/assessments/attempts/:attemptId/clarification',async(req,res)=>{try{res.json(await service.clarify(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to classify Assessment clarification.');}});
 
-  // D18 is a browser-safe projection/interaction layer over D17 truth. It adds
-  // no second Assessment owner and reuses the same schema-readiness boundary.
+  // D18 remains the browser-safe attempt projection over D17 truth. D19 wraps
+  // definition/Blueprint/lock/exposure semantics only and creates no second
+  // Package, Attempt, Response, Gradebook, Scheduler or SKM owner.
   const d18=mountD18Routes(router,{foundation,sendError,requireD17Ready:requireReady});
-  return Object.freeze({requireReady,d18});
+  return Object.freeze({requireReady,d18,d19:service});
 }
 module.exports={mountD17Routes};
