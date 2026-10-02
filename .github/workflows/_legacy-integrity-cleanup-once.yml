@@ -19,7 +19,7 @@ jobs:
           ref: study/remove-legacy-exam-integrity
           fetch-depth: 0
 
-      - name: Remove duplicate page-local integrity lifecycle ownership
+      - name: Remove verified page-local integrity lifecycle residue
         shell: bash
         run: |
           python <<'PY'
@@ -30,16 +30,25 @@ jobs:
           src = path.read_text(encoding='utf-8')
           original = src
 
-          def require_count(label, needle, count=1):
-              actual = src.count(needle)
-              if actual != count:
-                  raise SystemExit(f'{label}: expected {count}, found {actual}')
+          probes = {
+              'page-local guard function': 'function _startExamIntegrityGuard()',
+              'page-local activation call': '_startExamIntegrityGuard();',
+              'page-local guard state field': 'integrityGuard: null,',
+              'page-local deactivate call': "examState.integrityGuard.deactivate('exam_unlocked');",
+              'render-lock helper references': '_renderIntegrityExamLock',
+              'shared guard script': '/kiwi-integrity-session-guard.js',
+          }
+          counts = {label: src.count(token) for label, token in probes.items()}
+          for label, count in counts.items():
+              print(f'{label}: {count}')
 
-          require_count('page-local guard function', 'function _startExamIntegrityGuard()', 1)
-          require_count('page-local guard activation call', '_startExamIntegrityGuard();', 1)
-          require_count('page-local guard state field', 'integrityGuard: null,', 1)
-          require_count('page-local guard deactivate call', "examState.integrityGuard.deactivate('exam_unlocked');", 1)
-          require_count('shared guard script', '/kiwi-integrity-session-guard.js', 1)
+          if counts['page-local guard function'] != 1:
+              raise SystemExit(f"page-local guard function expected exactly 1, found {counts['page-local guard function']}")
+          for label in ('page-local activation call', 'page-local guard state field', 'page-local deactivate call'):
+              if counts[label] > 1:
+                  raise SystemExit(f'{label}: expected at most 1, found {counts[label]}')
+          if counts['shared guard script'] != 1:
+              raise SystemExit(f"shared guard script expected exactly 1, found {counts['shared guard script']}")
           if "source: 'student_manual'" not in src or 'confirmed: true' not in src:
               raise SystemExit('manual confirmed forfeit contract missing before cleanup')
 
@@ -51,25 +60,41 @@ jobs:
           if n != 1:
               raise SystemExit(f'page-local guard function removal expected 1 replacement, found {n}')
 
-          src, n = re.subn(r'\n\s*_startExamIntegrityGuard\(\);', '', src, count=1)
-          if n != 1:
-              raise SystemExit(f'page-local activation removal expected 1 replacement, found {n}')
+          if counts['page-local activation call']:
+              src, n = re.subn(r'\n\s*_startExamIntegrityGuard\(\);', '', src, count=1)
+              if n != 1:
+                  raise SystemExit(f'page-local activation removal expected 1 replacement, found {n}')
 
-          state_pattern = re.compile(r'^\s*integrityGuard:\s*null,\s*\n', re.M)
-          src, n = state_pattern.subn('', src, count=1)
-          if n != 1:
-              raise SystemExit(f'page-local state removal expected 1 replacement, found {n}')
+          if counts['page-local guard state field']:
+              src, n = re.subn(r'^\s*integrityGuard:\s*null,\s*\n', '', src, count=1, flags=re.M)
+              if n != 1:
+                  raise SystemExit(f'page-local state removal expected 1 replacement, found {n}')
 
-          deactivate_pattern = re.compile(
-              r'\n\s*if \(examState\.integrityGuard\) \{\s*\n'
-              r'\s*examState\.integrityGuard\.deactivate\(\'exam_unlocked\'\);\s*\n'
-              r'\s*examState\.integrityGuard = null;\s*\n'
-              r'\s*\}',
-              re.M,
-          )
-          src, n = deactivate_pattern.subn('', src, count=1)
-          if n != 1:
-              raise SystemExit(f'page-local deactivate removal expected 1 replacement, found {n}')
+          if counts['page-local deactivate call']:
+              deactivate_pattern = re.compile(
+                  r'\n\s*if \(examState\.integrityGuard\) \{\s*\n'
+                  r'\s*examState\.integrityGuard\.deactivate\(\'exam_unlocked\'\);\s*\n'
+                  r'\s*examState\.integrityGuard = null;\s*\n'
+                  r'\s*\}',
+                  re.M,
+              )
+              src, n = deactivate_pattern.subn('', src, count=1)
+              if n != 1:
+                  raise SystemExit(f'page-local deactivate removal expected 1 replacement, found {n}')
+
+          # If the lock renderer was used only by the removed page-local guard,
+          # remove the now-dead helper too. Otherwise preserve it for server/UI use.
+          remaining_render_refs = src.count('_renderIntegrityExamLock')
+          print(f'render-lock helper references after lifecycle removal: {remaining_render_refs}')
+          if remaining_render_refs == 1 and 'function _renderIntegrityExamLock(reason)' in src:
+              render_pattern = re.compile(
+                  r'\n\s*function _renderIntegrityExamLock\(reason\) \{.*?\n\s*\}\n(?=\s*function _lockExamPage\(\))',
+                  re.S,
+              )
+              src, n = render_pattern.subn('\n', src, count=1)
+              if n != 1:
+                  raise SystemExit(f'dead render-lock helper removal expected 1 replacement, found {n}')
+              print('removed dead _renderIntegrityExamLock helper')
 
           forbidden = [
               '_startExamIntegrityGuard',
@@ -90,7 +115,7 @@ jobs:
               raise SystemExit('cleanup produced no change')
 
           path.write_text(src, encoding='utf-8')
-          print('Removed duplicate page-local integrity lifecycle ownership from index.html')
+          print('Removed verified duplicate page-local integrity lifecycle residue from index.html')
           PY
 
       - name: Verify root shell cleanup
