@@ -92,7 +92,7 @@
   async function deactivate({close=true}={}){
     teardown();
     const current=state.active;
-    if(close&&current?.sessionId&&current.status!=='CLOSED'){
+    if(close&&current?.sessionId&&!['LOCKED','CLOSED'].includes(current.status)){
       try{const snapshot=await request(`/teaching/integrity/sessions/${encodeURIComponent(current.sessionId)}/close`,{method:'POST'});notify(snapshot);}catch{}
     }
     state.active=null;state.onState=null;state.onWarning=null;state.onLock=null;
