@@ -4,6 +4,7 @@ const express = require('express');
 const { createTeachingFoundation } = require('./teaching');
 const { mountD15Routes } = require('./teaching/d15/routes');
 const { mountD16Routes } = require('./teaching/d16/routes');
+const { mountD17Routes } = require('./teaching/d17/routes');
 
 function sendError(res, error, fallbackMessage) {
   const status = Number(error?.status) || 500;
@@ -39,6 +40,7 @@ function createTeachingRouter({
   d13Service = null,
   d13PublishedEventRegistry = null,
   d16Intelligence = null,
+  d17Intelligence = null,
   teachingRuntimePlatform = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
@@ -67,6 +69,7 @@ function createTeachingRouter({
     d13Intelligence,
     d13PublishedEventRegistry,
     d16Intelligence,
+    d17Intelligence,
   });
   const router = express.Router();
   let d07Ready = Boolean(d07Service);
@@ -496,6 +499,10 @@ function createTeachingRouter({
   // Assignment/Submission owner remains server-side; browser state never owns
   // deadlines, policy versions, integrity outcomes or final submission time.
   mountD16Routes(router,{foundation,sendError});
+
+  // D17 mounts formal Assessment projections/intents only. Definition, eligibility, validation,
+  // Package and Attempt truth remain server-owned; D18 will own the full Assessment Shell UX.
+  mountD17Routes(router,{foundation,sendError});
 
   const studentKnowledgeModelService = d13Service || foundation.d13?.service || null;
   if (studentKnowledgeModelService) {

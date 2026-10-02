@@ -19,6 +19,7 @@ function createIntegrityService({repository,d16Repository=null,d16Intelligence=n
     const owner=await repository.resolveOwner(userId,ownerType,ownerRef);
     if(ownerType==='TEACHING_ASSIGNMENT'){const gate=await repository.gateByAssignment(userId,ownerRef);if(gate?.state==='VERIFICATION_ACTIVE')return 'CONTROLLED_TAKE_HOME';return deriveAssignmentSessionProfile(owner.row);}
     if(ownerType==='KIWI_EXAM')return owner.row.is_reckoning?'HIGH_STAKES_EXAM':'SCHEDULED_TEST';
+    if(ownerType==='TEACHING_ASSESSMENT_ATTEMPT')return ['MID_SEMESTER','FINAL_EXAMINATION','RESIT'].includes(String(owner.row.assessment_type||'').toUpperCase())?'HIGH_STAKES_EXAM':'SCHEDULED_TEST';
     return 'HIGH_STAKES_EXAM';
   }
 
