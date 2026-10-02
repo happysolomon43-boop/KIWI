@@ -1,0 +1,23 @@
+'use strict';
+
+function mountD17Routes(router,{foundation,sendError}={}){
+  const service=foundation?.d17?.service;if(!service)return null;let ready=false;
+  const requireReady=async(req,res,next)=>{try{if(!ready){await foundation.d17.repository.assertReady();ready=true;}return next();}catch(error){return res.status(503).json({error:'Teaching Assessment is unavailable until the D17 schema is ready.',code:error?.code||'TEACHING_D17_SCHEMA_NOT_READY'});}};
+  router.use('/assessments',requireReady);
+  router.get('/assessments',async(req,res)=>{try{res.json(await service.list(req.user,{courseId:req.query.courseId||null,limit:req.query.limit}));}catch(e){sendError(res,e,'Failed to load Teaching Assessments.');}});
+  router.post('/assessments',async(req,res)=>{try{res.status(201).json(await service.createDefinition(req.user,req.body||{}));}catch(e){sendError(res,e,'Failed to create Assessment definition.');}});
+  router.post('/assessments/:id/blueprints',async(req,res)=>{try{res.status(201).json(await service.prepareBlueprint(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Failed to prepare Assessment Blueprint.');}});
+  router.post('/assessments/:id/candidates',async(req,res)=>{try{res.status(201).json(await service.generateCandidate(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Failed to generate protected Assessment candidate.');}});
+  router.post('/assessments/:id/candidates/:candidateVersionId/validate',async(req,res)=>{try{res.json(await service.validateItem(req.user,req.params.id,req.params.candidateVersionId,req.body||{}));}catch(e){sendError(res,e,'Failed to validate Assessment item.');}});
+  router.post('/assessments/:id/validate-package',async(req,res)=>{try{res.json(await service.validateWholePackage(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Failed to validate Assessment package.');}});
+  router.post('/assessments/:id/lock',async(req,res)=>{try{res.json(await service.reconcileAndLock(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Assessment Package could not be locked.');}});
+  router.get('/assessments/packages/:packageId',async(req,res)=>{try{res.json(await service.getPackage(req.user,req.params.packageId));}catch(e){sendError(res,e,'Failed to load Assessment Package.');}});
+  router.post('/assessments/:id/attempts',async(req,res)=>{try{res.status(201).json(await service.startAttempt(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Failed to start Assessment Attempt.');}});
+  router.post('/assessments/attempts/:attemptId/responses',async(req,res)=>{try{res.status(201).json(await service.saveResponse(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to save Assessment response.');}});
+  router.post('/assessments/attempts/:attemptId/submit',async(req,res)=>{try{res.json(await service.submit(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to submit Assessment Attempt.');}});
+  router.post('/assessments/attempts/:attemptId/device-transfer',async(req,res)=>{try{res.json(await service.transferDevice(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to transfer Assessment Attempt device.');}});
+  router.post('/assessments/attempts/:attemptId/challenges',async(req,res)=>{try{res.status(201).json(await service.challenge(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to record Assessment item challenge.');}});
+  router.post('/assessments/attempts/:attemptId/clarification',async(req,res)=>{try{res.json(await service.clarify(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to classify Assessment clarification.');}});
+  return Object.freeze({requireReady});
+}
+module.exports={mountD17Routes};
