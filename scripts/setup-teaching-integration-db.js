@@ -32,6 +32,7 @@ const MIGRATIONS = Object.freeze([
   'migrations/20261002_teaching_d20_marking_gradebook.sql',
   'migrations/20261002_teaching_d20_gradebook_lineage_hardening.sql',
   'migrations/20261002_teaching_d20_policy_guards.sql',
+  'migrations/20261002_teaching_d20_service_role_grant_hardening.sql',
 ]);
 
 function requireNonProduction({ connectionString, projectRef }) {
