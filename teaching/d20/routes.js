@@ -1,6 +1,6 @@
 'use strict';
 
-const {createD20Service}=require('./service');
+const {createD20Service}=require('./authority-service');
 const {renderCourseResults,renderTopicResult,renderAssessmentReview}=require('./ui');
 
 function mountD20Routes(router,{foundation,sendError,d19Service,requireD17Ready}={}){
@@ -12,7 +12,7 @@ function mountD20Routes(router,{foundation,sendError,d19Service,requireD17Ready}
 
   router.put('/gradebook/courses/:courseId/policy',async(req,res)=>{try{
     const body=req.body||{},appeal=body.appealPolicy||body.appeal_policy||{};
-    if(appeal.default_review_direction&&!appeal.authority_ref&&!appeal.policy_ref){return res.status(400).json({error:'Appeal review direction must cite an explicit Course/institution policy authority.',code:'TEACHING_D20_APPEAL_DIRECTION_AUTHORITY_REQUIRED'});}
+    if((appeal.default_review_direction||appeal.defaultReviewDirection)&&!appeal.authority_ref&&!appeal.authorityRef&&!appeal.policy_ref&&!appeal.policyRef){return res.status(400).json({error:'Appeal review direction must cite an explicit Course/institution policy authority.',code:'TEACHING_D20_APPEAL_DIRECTION_AUTHORITY_REQUIRED'});}
     res.json(await service.ensurePolicy(req.user,req.params.courseId,body));
   }catch(e){sendError(res,e,'Failed to lock Course Grading Policy.');}});
   router.get('/gradebook/courses/:courseId',async(req,res)=>{try{res.json(await service.courseResults(req.user,req.params.courseId));}catch(e){sendError(res,e,'Failed to load Course Results.');}});
@@ -25,13 +25,8 @@ function mountD20Routes(router,{foundation,sendError,d19Service,requireD17Ready}
   router.get('/results/:resultId/view',async(req,res)=>{try{res.type('html').send(renderAssessmentReview(await service.assessmentReview(req.user,req.params.resultId)));}catch(e){sendError(res,e,'Failed to load Assessment Result review view.');}});
   router.post('/results/:resultId/moderate',async(req,res)=>{try{res.json(await service.moderateResult(req.user,req.params.resultId,req.body||{}));}catch(e){sendError(res,e,'Failed to moderate Assessment Result.');}});
   router.post('/results/:resultId/transition',async(req,res)=>{try{res.json(await service.transitionResult(req.user,req.params.resultId,req.body||{}));}catch(e){sendError(res,e,'Failed to change Assessment Result lifecycle.');}});
-  router.post('/results/:resultId/appeals',async(req,res)=>{try{
-    const studentId=String(req.user?.id||''),result=await repository.resultById(studentId,req.params.resultId);
-    if(!result)return res.status(404).json({error:'Assessment Result not found.',code:'TEACHING_D20_RESULT_NOT_FOUND'});
-    const policy=await repository.lockedPolicy(studentId,result.course_id),direction=policy?.appeal_policy?.default_review_direction||null;
-    if(!direction)return res.status(409).json({error:'This Course has no configured appeal review-direction policy. Appeal review cannot begin until an authorized versioned policy exists.',code:'TEACHING_D20_REVIEW_DIRECTION_REQUIRED'});
-    res.status(201).json(await service.createAppeal(req.user,req.params.resultId,{...(req.body||{}),reviewDirectionPolicy:direction}));
-  }catch(e){sendError(res,e,'Failed to create Grade appeal.');}});
+  router.post('/results/:resultId/recalculate-invalidation',async(req,res)=>{try{res.json(await service.recalculateAfterItemInvalidation(req.user,req.params.resultId,req.body||{}));}catch(e){sendError(res,e,'Failed to recalculate Assessment Result after item invalidation.');}});
+  router.post('/results/:resultId/appeals',async(req,res)=>{try{res.status(201).json(await service.createAppeal(req.user,req.params.resultId,req.body||{}));}catch(e){sendError(res,e,'Failed to create Grade appeal.');}});
   router.post('/results/appeals/:appealId/review',async(req,res)=>{try{res.json(await service.reviewAppeal(req.user,req.params.appealId,req.body||{}));}catch(e){sendError(res,e,'Failed to review Grade appeal.');}});
 
   return Object.freeze({service,requireReady});
