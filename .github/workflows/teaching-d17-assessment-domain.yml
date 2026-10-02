@@ -1,0 +1,92 @@
+name: Teaching D17 Assessment Domain
+on:
+  pull_request:
+    paths:
+      - 'teaching/**'
+      - 'services/integrity/**'
+      - 'public/teaching*'
+      - 'public/kiwi-runtime-config.js'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'migrations/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'docs/teaching/**'
+      - 'package.json'
+      - '.github/workflows/teaching-d17-assessment-domain.yml'
+  push:
+    branches: [main, 'teaching/d17-assessment-domain']
+    paths:
+      - 'teaching/**'
+      - 'services/integrity/**'
+      - 'public/teaching*'
+      - 'public/kiwi-runtime-config.js'
+      - 'teaching-backend.js'
+      - 'index.js'
+      - 'migrations/**'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'docs/teaching/**'
+      - 'package.json'
+      - '.github/workflows/teaching-d17-assessment-domain.yml'
+
+jobs:
+  d17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: D17 runtime syntax checks
+        run: |
+          node --check teaching/d17/contracts.js
+          node --check teaching/d17/intelligence.js
+          node --check teaching/d17/service.js
+          node --check teaching/d17/routes.js
+          node --check teaching/d17/runtime.js
+          node --check teaching/repositories/d17-assessments.js
+          node --check teaching/integrations/kiwi-exam-interface.js
+          node --check services/integrity/repository.js
+          node --check services/integrity/service.js
+          node --check teaching/index.js
+          node --check teaching-backend.js
+      - name: D01-D17 canonical verifiers
+        run: for n in $(seq -w 1 17); do npm run verify:teaching:d$n; done
+      - name: D17 focused authority and fairness tests
+        run: node --test tests/teaching/unit/d17-assessment-domain.test.js
+      - name: Teaching unit regressions
+        run: npm run test:teaching
+      - name: Full unit regressions
+        run: npm test
+      - name: Web build
+        run: npm run build:web
+
+  d17-isolated-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_PASSWORD: postgres, POSTGRES_USER: postgres, POSTGRES_DB: kiwi_teaching_test}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiwi_teaching_test
+      TEACHING_TEST_PROJECT_REF: local-d17-ci
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: Reconstruct Teaching database through D17
+        run: node scripts/setup-teaching-integration-db.js
+      - name: D17 schema security and authority tests
+        run: node --test tests/teaching/integration/d17-assessment-domain-schema.test.js
+      - name: D02-D17 integration regressions
+        run: npm run test:teaching:integration
