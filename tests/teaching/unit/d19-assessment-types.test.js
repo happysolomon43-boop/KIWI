@@ -114,7 +114,11 @@ test('D19 poor Impromptu performance can become a D13 retention-evidence candida
 });
 
 test('D19 service hides future Impromptu Assessments from student list projections',async()=>{
-  const future='2099-01-01T11:00:00Z',base={createDefinition(){},async list(){return [{assessment_id:'i',assessment_type:'IMPROMPTU_TEST,source_lineage:{d19_measurement:{intended_class_scheduled_end_at:future}}},{assessment_id:'s',assessment_type:'SCHEDULED_TEST'}];}};
+  const future='2099-01-01T11:00:00Z';
+  const base={createDefinition(){},async list(){return [
+    {assessment_id:'i',assessment_type:'IMPROMPTU_TEST',source_lineage:{d19_measurement:{intended_class_scheduled_end_at:future}}},
+    {assessment_id:'s',assessment_type:'SCHEDULED_TEST'},
+  ];}};
   const repo={requireAssessment(){},currentEligibility(){},latestBlueprint(){}};
   const svc=createD19AssessmentTypeService({d17Service:base,d17Repository:repo,policy,clock:()=>new Date('2026-10-02T10:00:00Z')});
   assert.deepEqual((await svc.list({id:'u'})).map(x=>x.assessment_id),['s']);
