@@ -60,7 +60,7 @@ test('T4 marking context excludes attendance personality GPA and unrelated histo
 });
 
 test('TPF-15 output cannot seize total or Gradebook authority',()=>{
-  assert.throws(()=>contracts.validateCriterionJudgments({family:'TPF-15',official_total:5,criterion_judgments:[]},rubric),/authority/i);
+  assert.throws(()=>contracts.validateCriterionJudgments({family:'TPF-15',official_total:5,criterion_judgments:[]},rubric),error=>error?.code==='TEACHING_D20_MODEL_AUTHORITY_EXCEEDED');
   assert.deepEqual(intelligence.validateTpf15Controls({aggregation_handoff:{deterministic_aggregation_required:true,official_total_not_committed:true,rounding_external:true,gradebook_commit_external:true}}),null);
   assert.equal(intelligence.validateTpf15Controls({aggregation_handoff:{deterministic_aggregation_required:true}}).ok,false);
 });
@@ -71,7 +71,7 @@ test('criterion aggregation obeys locked rubric and rejects fabricated precision
     {criterion_id:'answer',proposed_credit:2,criterion_max_marks:2},
   ],rubric,{roundingPolicy:{mode:'NONE'}});
   assert.equal(out.earned,4);assert.equal(out.max,5);assert.equal(out.percentage,80);
-  assert.throws(()=>contracts.validateCriterionJudgments({family:'TPF-15',criterion_judgments:[{criterion_id:'band',proposed_credit:3,satisfaction:'partial'}]},{criteria:[{criterion_id:'band',criterion_max_marks:5,credit_precision:'ranged_band'}]}),/precision/i);
+  assert.throws(()=>contracts.validateCriterionJudgments({family:'TPF-15',criterion_judgments:[{criterion_id:'band',proposed_credit:3,satisfaction:'partial'}]},{criteria:[{criterion_id:'band',criterion_max_marks:5,credit_precision:'ranged_band'}]}),error=>error?.code==='TEACHING_D20_RUBRIC_PRECISION_GAP');
 });
 
 test('Topic score stays provisional until diversity policy is satisfied',()=>{
@@ -114,7 +114,7 @@ test('appeal direction is deterministic and never model-invented',()=>{
   assert.equal(contracts.applyReviewDirection({originalCredit:3,reviewedCredit:4,policy:'upward_only'}),4);
   assert.equal(contracts.applyReviewDirection({originalCredit:3,reviewedCredit:1,policy:'two_way'}),1);
   assert.equal(contracts.applyReviewDirection({originalCredit:3,reviewedCredit:5,policy:'retain_or_escalate_only'}),3);
-  assert.throws(()=>contracts.applyReviewDirection({originalCredit:3,reviewedCredit:4,policy:null}),/review-direction policy/i);
+  assert.throws(()=>contracts.applyReviewDirection({originalCredit:3,reviewedCredit:4,policy:null}),error=>error?.code==='TEACHING_D20_REVIEW_DIRECTION_REQUIRED');
 });
 
 test('D20 UI projects authoritative state without protected marking payloads',()=>{
