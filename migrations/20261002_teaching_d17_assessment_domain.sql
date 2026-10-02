@@ -384,6 +384,16 @@ ALTER TABLE public.teaching_assessment_invalidations
 ALTER TABLE public.teaching_assessment_invalidations
   ADD CONSTRAINT teaching_assessment_invalidations_no_penalty_check CHECK (student_penalty_allowed=false);
 
+-- Remove abandoned pre-freeze D17 package guards before installing the canonical freeze model.
+-- These prototype triggers conflict with the canonical ASSEMBLING -> LOCKED transaction and
+-- their functions also lack a fixed search_path.
+DROP TRIGGER IF EXISTS teaching_d17_locked_package_update_guard ON public.teaching_assessment_packages;
+DROP TRIGGER IF EXISTS teaching_d17_package_item_insert_guard ON public.teaching_assessment_package_items;
+DROP TRIGGER IF EXISTS teaching_d17_package_item_update_guard ON public.teaching_assessment_package_items;
+DROP TRIGGER IF EXISTS teaching_d17_package_item_delete_guard ON public.teaching_assessment_package_items;
+DROP FUNCTION IF EXISTS public.teaching_d17_guard_locked_package_update();
+DROP FUNCTION IF EXISTS public.teaching_d17_guard_package_item_mutation();
+
 CREATE OR REPLACE FUNCTION public.teaching_d17_reject_append_only_mutation()
 RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
 BEGIN
@@ -393,11 +403,19 @@ END $$;
 CREATE OR REPLACE FUNCTION public.teaching_d17_guard_locked_package()
 RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
 BEGIN
-  IF OLD.package_state='LOCKED' AND (
+  IF OLD.package_state='LOCKED' AND NEW.package_state NOT IN ('LOCKED','INVALIDATED','SUPERSEDED') THEN
+    RAISE EXCEPTION 'Locked Assessment Package cannot return to a mutable state';
+  END IF;
+  IF OLD.package_state IN ('INVALIDATED','SUPERSEDED') AND NEW.package_state IS DISTINCT FROM OLD.package_state THEN
+    RAISE EXCEPTION 'Terminal Assessment Package state is immutable';
+  END IF;
+  IF OLD.package_state IN ('LOCKED','INVALIDATED','SUPERSEDED') AND (
     NEW.assessment_id IS DISTINCT FROM OLD.assessment_id OR
     NEW.assessment_blueprint_id IS DISTINCT FROM OLD.assessment_blueprint_id OR
     NEW.version_no IS DISTINCT FROM OLD.version_no OR
     NEW.package_hash IS DISTINCT FROM OLD.package_hash OR
+    NEW.locked_at IS DISTINCT FROM OLD.locked_at OR
+    NEW.locked_by IS DISTINCT FROM OLD.locked_by OR
     NEW.duration_minutes IS DISTINCT FROM OLD.duration_minutes OR
     NEW.timer_model IS DISTINCT FROM OLD.timer_model OR
     NEW.response_form_architecture IS DISTINCT FROM OLD.response_form_architecture OR
@@ -421,16 +439,29 @@ END $$;
 
 CREATE OR REPLACE FUNCTION public.teaching_d17_guard_locked_package_item()
 RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
-DECLARE locked boolean;
+DECLARE package_id text; frozen boolean;
 BEGIN
-  SELECT package_state='LOCKED' INTO locked FROM public.teaching_assessment_packages WHERE assessment_package_id=OLD.assessment_package_id;
-  IF locked AND (
-    NEW.assessment_package_id IS DISTINCT FROM OLD.assessment_package_id OR NEW.ordinal IS DISTINCT FROM OLD.ordinal OR
-    NEW.slot_id IS DISTINCT FROM OLD.slot_id OR NEW.candidate_version_id IS DISTINCT FROM OLD.candidate_version_id OR
-    NEW.response_family IS DISTINCT FROM OLD.response_family OR NEW.intended_marks IS DISTINCT FROM OLD.intended_marks OR
-    NEW.public_item_payload IS DISTINCT FROM OLD.public_item_payload OR NEW.protected_marking_payload IS DISTINCT FROM OLD.protected_marking_payload OR
-    NEW.demand_vector IS DISTINCT FROM OLD.demand_vector OR NEW.learning_unit_ids IS DISTINCT FROM OLD.learning_unit_ids OR NEW.item_hash IS DISTINCT FROM OLD.item_hash
-  ) THEN RAISE EXCEPTION 'Locked Assessment Package item content is immutable'; END IF;
+  IF TG_OP='INSERT' THEN package_id := NEW.assessment_package_id; ELSE package_id := OLD.assessment_package_id; END IF;
+  SELECT package_state IN ('LOCKED','INVALIDATED','SUPERSEDED') INTO frozen FROM public.teaching_assessment_packages WHERE assessment_package_id=package_id;
+  IF frozen THEN
+    IF TG_OP IN ('INSERT','DELETE') THEN RAISE EXCEPTION 'Locked Assessment Package item membership is immutable'; END IF;
+    IF NEW.assessment_package_id IS DISTINCT FROM OLD.assessment_package_id OR
+       NEW.assessment_id IS DISTINCT FROM OLD.assessment_id OR
+       NEW.student_id IS DISTINCT FROM OLD.student_id OR
+       NEW.ordinal IS DISTINCT FROM OLD.ordinal OR
+       NEW.slot_id IS DISTINCT FROM OLD.slot_id OR
+       NEW.candidate_version_id IS DISTINCT FROM OLD.candidate_version_id OR
+       NEW.response_family IS DISTINCT FROM OLD.response_family OR
+       NEW.intended_marks IS DISTINCT FROM OLD.intended_marks OR
+       NEW.public_item_payload IS DISTINCT FROM OLD.public_item_payload OR
+       NEW.protected_marking_payload IS DISTINCT FROM OLD.protected_marking_payload OR
+       NEW.demand_vector IS DISTINCT FROM OLD.demand_vector OR
+       NEW.learning_unit_ids IS DISTINCT FROM OLD.learning_unit_ids OR
+       NEW.item_hash IS DISTINCT FROM OLD.item_hash THEN
+      RAISE EXCEPTION 'Locked Assessment Package item content is immutable';
+    END IF;
+  END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
 END $$;
 
@@ -449,7 +480,7 @@ CREATE TRIGGER teaching_d17_contamination_resolution_guard BEFORE UPDATE ON publ
 DROP TRIGGER IF EXISTS teaching_d17_locked_package_guard ON public.teaching_assessment_packages;
 CREATE TRIGGER teaching_d17_locked_package_guard BEFORE UPDATE ON public.teaching_assessment_packages FOR EACH ROW EXECUTE FUNCTION public.teaching_d17_guard_locked_package();
 DROP TRIGGER IF EXISTS teaching_d17_locked_package_item_guard ON public.teaching_assessment_package_items;
-CREATE TRIGGER teaching_d17_locked_package_item_guard BEFORE UPDATE ON public.teaching_assessment_package_items FOR EACH ROW EXECUTE FUNCTION public.teaching_d17_guard_locked_package_item();
+CREATE TRIGGER teaching_d17_locked_package_item_guard BEFORE INSERT OR UPDATE OR DELETE ON public.teaching_assessment_package_items FOR EACH ROW EXECUTE FUNCTION public.teaching_d17_guard_locked_package_item();
 
 -- Server-only authority. Browser reads/writes occur through authenticated API projections.
 DO $$
