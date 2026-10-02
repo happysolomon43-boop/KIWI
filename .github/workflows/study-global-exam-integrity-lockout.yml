@@ -1,0 +1,41 @@
+name: Study Global Exam Integrity Lockout
+on:
+  pull_request:
+    paths:
+      - 'public/kiwi-integrity-session-guard.js'
+      - 'index.html'
+      - 'index.js'
+      - 'services/integrity/**'
+      - 'tests/teaching/unit/study-global-exam-integrity-lockout.test.js'
+      - '.github/workflows/study-global-exam-integrity-lockout.yml'
+  push:
+    branches: [study/global-exam-integrity-lockout]
+    paths:
+      - 'public/kiwi-integrity-session-guard.js'
+      - 'index.html'
+      - 'index.js'
+      - 'services/integrity/**'
+      - 'tests/teaching/unit/study-global-exam-integrity-lockout.test.js'
+      - '.github/workflows/study-global-exam-integrity-lockout.yml'
+
+jobs:
+  global-study-exam-lockout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: Syntax check shared guard
+        run: node --check public/kiwi-integrity-session-guard.js
+      - name: Global Study exam lockout tests
+        run: node --test tests/teaching/unit/study-global-exam-integrity-lockout.test.js tests/teaching/unit/integrity-session-guard-amendment.test.js
+      - name: D01-D16 canonical verifiers
+        run: for n in $(seq -w 1 16); do npm run verify:teaching:d$n; done
+      - name: Teaching regressions
+        run: npm run test:teaching
+      - name: Full regressions
+        run: npm test
+      - name: Web build
+        run: npm run build:web
