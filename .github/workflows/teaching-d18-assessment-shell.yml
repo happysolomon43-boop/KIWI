@@ -1,0 +1,79 @@
+name: Teaching D18 Assessment Shell
+on:
+  pull_request:
+    paths:
+      - 'teaching/d17/routes.js'
+      - 'teaching/d18/**'
+      - 'teaching/integrations/kiwi-exam-interface.js'
+      - 'public/assessment-shell*'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'package.json'
+      - '.github/workflows/teaching-d18-assessment-shell.yml'
+  push:
+    branches: [main, 'teaching/d18-assessment-shell']
+    paths:
+      - 'teaching/d17/routes.js'
+      - 'teaching/d18/**'
+      - 'teaching/integrations/kiwi-exam-interface.js'
+      - 'public/assessment-shell*'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'package.json'
+      - '.github/workflows/teaching-d18-assessment-shell.yml'
+
+jobs:
+  d18:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: D18 runtime syntax checks
+        run: |
+          node --check public/assessment-shell-core.js
+          node --check public/assessment-shell.js
+          node --check teaching/d18/service.js
+          node --check teaching/d18/routes.js
+          node --check teaching/d17/routes.js
+          node --check teaching/integrations/kiwi-exam-interface.js
+          node --check scripts/verify-teaching-d18-assessment-shell.js
+          node --check tests/teaching/unit/d18-assessment-shell.test.js
+      - name: D01-D18 canonical verifiers
+        run: for n in $(seq -w 1 18); do npm run verify:teaching:d$n; done
+      - name: D18 focused renderer, device, recovery and finalization tests
+        run: node --test tests/teaching/unit/d18-assessment-shell.test.js
+      - name: Teaching unit regressions
+        run: npm run test:teaching
+      - name: Full unit regressions
+        run: npm test
+      - name: Web build
+        run: npm run build:web
+
+  d18-isolated-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_PASSWORD: postgres, POSTGRES_USER: postgres, POSTGRES_DB: kiwi_teaching_test}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiwi_teaching_test
+      TEACHING_TEST_PROJECT_REF: local-d18-ci
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: Reconstruct Teaching database through D17
+        run: node scripts/setup-teaching-integration-db.js
+      - name: Confirm D18 introduces no parallel persistence and D17 authority remains intact
+        run: node --test tests/teaching/integration/d17-assessment-domain-schema.test.js
+      - name: D02-D17 integration regressions
+        run: npm run test:teaching:integration
