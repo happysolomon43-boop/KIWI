@@ -3,10 +3,12 @@ from pathlib import Path
 INDEX_PATH = Path('index.html')
 GUARD_PATH = Path('public/kiwi-integrity-session-guard.js')
 TEST_PATH = Path('tests/teaching/unit/study-global-exam-integrity-lockout.test.js')
+AMENDMENT_TEST_PATH = Path('tests/teaching/unit/integrity-session-guard-amendment.test.js')
 
 index = INDEX_PATH.read_text(encoding='utf-8')
 guard = GUARD_PATH.read_text(encoding='utf-8')
 test = TEST_PATH.read_text(encoding='utf-8')
+amendment_test = AMENDMENT_TEST_PATH.read_text(encoding='utf-8')
 
 
 def require_exact(text, token, label, count=1):
@@ -177,6 +179,18 @@ test('shared guard owns Study exam closure without watcher reactivation races',(
 require_exact(test, old_test, 'Study integrity regression test block')
 test = test.replace(old_test, new_test, 1)
 
+old_amendment_assert = "  assert.match(html,/Integrity Session Guard owns pagehide\\/background recording/);\n"
+new_amendment_assert = (
+    "  assert.match(html,/Integrity Session Guard owns exam integrity activation/);\n"
+    "  assert.match(html,/kiwi:exam-ended/);\n"
+    "  assert.doesNotMatch(html,/_startExamIntegrityGuard/);\n"
+    "  assert.doesNotMatch(html,/_renderIntegrityExamLock/);\n"
+    "  assert.doesNotMatch(html,/KIWIIntegritySessionGuard\\.activate/);\n"
+    "  assert.doesNotMatch(html,/KIWIIntegritySessionGuard\\.deactivate/);\n"
+)
+require_exact(amendment_test, old_amendment_assert, 'amendment shell ownership assertion')
+amendment_test = amendment_test.replace(old_amendment_assert, new_amendment_assert, 1)
+
 # Final source invariants.
 for token in (
     '_startExamIntegrityGuard',
@@ -202,4 +216,5 @@ if "state.studyExamActivation?.id===id" not in guard:
 INDEX_PATH.write_text(index, encoding='utf-8')
 GUARD_PATH.write_text(guard, encoding='utf-8')
 TEST_PATH.write_text(test, encoding='utf-8')
+AMENDMENT_TEST_PATH.write_text(amendment_test, encoding='utf-8')
 print('Legacy Study exam integrity lifecycle ownership removed cleanly.')
