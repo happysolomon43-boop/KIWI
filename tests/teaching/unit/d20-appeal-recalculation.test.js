@@ -24,6 +24,7 @@ test('TCH-0425 successful appeal deterministically recalculates result and Grade
     loadMarkingBundle:async()=>bundle,
     resultById:async()=>result,
     appealById:async()=>appeal,
+    assessmentResultDetail:async()=>({result,runs,appeals:[appeal]}),
     runsForResult:async()=>runs,
     judgmentsForRun:async(_student,runId)=>judgmentByRun.get(runId)||[],
     updateAppeal:async({patch})=>{appeal={...appeal,...patch};return appeal;},
