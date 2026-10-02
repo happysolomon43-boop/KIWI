@@ -12,6 +12,8 @@ ALTER TABLE public.teaching_assignment_submissions
 -- Teaching integration database. Add only the shared fields required by the
 -- Integrity Session Guard so both environments converge without replacing Exam truth.
 ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'in_progress';
+ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS is_reckoning boolean NOT NULL DEFAULT false;
 ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS integrity_policy_version text;
 ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS integrity_session_state text NOT NULL DEFAULT 'NONE';
 ALTER TABLE public.exam_sessions ADD COLUMN IF NOT EXISTS integrity_departure_count integer NOT NULL DEFAULT 0 CHECK (integrity_departure_count >= 0);
@@ -82,6 +84,7 @@ CREATE TABLE public.kiwi_verification_sessions (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX kiwi_verification_sessions_owner_idx ON public.kiwi_verification_sessions(user_id,owner_type,owner_ref,status);
+CREATE INDEX kiwi_verification_sessions_integrity_fk_idx ON public.kiwi_verification_sessions(integrity_session_id);
 
 CREATE TABLE public.teaching_submission_verification_gates (
   submission_gate_id text PRIMARY KEY,
@@ -107,7 +110,9 @@ CREATE TABLE public.teaching_submission_verification_gates (
   UNIQUE(user_id,receipt_submission_id)
 );
 CREATE INDEX teaching_submission_gates_assignment_idx ON public.teaching_submission_verification_gates(user_id,assignment_id,created_at DESC);
+CREATE INDEX teaching_submission_gates_assignment_fk_idx ON public.teaching_submission_verification_gates(assignment_id);
 CREATE INDEX teaching_submission_gates_receipt_fk_idx ON public.teaching_submission_verification_gates(receipt_submission_id);
+CREATE INDEX teaching_submission_gates_correction_fk_idx ON public.teaching_submission_verification_gates(correction_of_submission_id);
 CREATE INDEX teaching_submission_gates_final_fk_idx ON public.teaching_submission_verification_gates(final_submission_id);
 CREATE INDEX teaching_submission_gates_verification_fk_idx ON public.teaching_submission_verification_gates(verification_session_id);
 
@@ -127,6 +132,7 @@ CREATE TABLE public.kiwi_verification_items (
   UNIQUE(verification_session_id,sequence_no)
 );
 CREATE INDEX kiwi_verification_items_session_idx ON public.kiwi_verification_items(user_id,verification_session_id,sequence_no);
+CREATE INDEX kiwi_verification_items_verification_fk_idx ON public.kiwi_verification_items(verification_session_id);
 
 CREATE TABLE public.kiwi_verification_responses (
   verification_response_id text PRIMARY KEY,
@@ -144,6 +150,8 @@ CREATE TABLE public.kiwi_verification_responses (
   UNIQUE(user_id,verification_item_id)
 );
 CREATE INDEX kiwi_verification_responses_session_idx ON public.kiwi_verification_responses(user_id,verification_session_id,created_at DESC);
+CREATE INDEX kiwi_verification_responses_verification_fk_idx ON public.kiwi_verification_responses(verification_session_id);
+CREATE INDEX kiwi_verification_responses_item_fk_idx ON public.kiwi_verification_responses(verification_item_id);
 
 ALTER TABLE public.kiwi_integrity_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.kiwi_integrity_session_events ENABLE ROW LEVEL SECURITY;
@@ -157,7 +165,9 @@ REVOKE ALL ON public.kiwi_integrity_sessions,public.kiwi_integrity_session_event
   public.kiwi_verification_items,public.kiwi_verification_responses
   FROM PUBLIC,anon,authenticated,service_role;
 GRANT SELECT,INSERT,UPDATE ON public.kiwi_integrity_sessions,public.teaching_submission_verification_gates,
-  public.kiwi_verification_sessions,public.kiwi_verification_items TO service_role;
+  public.kiwi_verification_sessions TO service_role;
+GRANT SELECT,INSERT ON public.kiwi_verification_items TO service_role;
+GRANT UPDATE (started_at,expires_at) ON public.kiwi_verification_items TO service_role;
 GRANT SELECT,INSERT ON public.kiwi_integrity_session_events,public.kiwi_verification_responses TO service_role;
 
 COMMENT ON TABLE public.kiwi_integrity_sessions IS 'Global KIWI controlled-session state. Records observable rule/session facts; it is not a cheating or intent detector.';
