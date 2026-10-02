@@ -2,6 +2,7 @@
 
 const {mountD18Routes}=require('../d18/routes');
 const {createD19AssessmentTypeService}=require('../d19/service');
+const {mountD20Routes}=require('../d20/routes');
 
 function mountD17Routes(router,{foundation,sendError}={}){
   const d17=foundation?.d17?.service;if(!d17)return null;let ready=false;
@@ -35,6 +36,9 @@ function mountD17Routes(router,{foundation,sendError}={}){
   // definition/Blueprint/lock/exposure semantics only and creates no second
   // Package, Attempt, Response, Gradebook, Scheduler or SKM owner.
   const d18=mountD18Routes(router,{foundation,sendError,requireD17Ready:requireReady});
-  return Object.freeze({requireReady,d18,d19:service});
+  // D20 consumes the explicit D19 AWAITING_D20_MARKING boundary. It owns only
+  // marking/review/Gradebook truth and never rewrites D17 Package/Attempt/Response facts.
+  const d20=mountD20Routes(router,{foundation,sendError,d19Service:service,requireD17Ready:requireReady});
+  return Object.freeze({requireReady,d18,d19:service,d20});
 }
 module.exports={mountD17Routes};
