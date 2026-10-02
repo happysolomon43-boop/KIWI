@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const contracts=require('../teaching/d17/contracts');
 const {CAPABILITIES}=require('../teaching/d17/intelligence');
 const {getCapability}=require('../teaching/capability-registry');
+const {createKiwiExamInterface}=require('../teaching/integrations/kiwi-exam-interface');
 
 const TASKS=['TCH-0052','TCH-0053','TCH-0054','TCH-0055','TCH-0056',...Array.from({length:31},(_,i)=>`TCH-${String(326+i).padStart(4,'0')}`),'TCH-0676',...Array.from({length:9},(_,i)=>`TCH-${String(717+i).padStart(4,'0')}`),'TCH-0727','TCH-0733','TCH-0734',...Array.from({length:7},(_,i)=>`TCH-${String(891+i).padStart(4,'0')}`)];
 assert.equal(TASKS.length,56,'D17 must account for exactly 56 canonical tasks');
@@ -106,11 +107,24 @@ for(const required of [
 const integrityRepo=fs.readFileSync('services/integrity/repository.js','utf8');
 assert.match(integrityRepo,/ownerType==='TEACHING_ASSESSMENT_ATTEMPT'/);
 assert.doesNotMatch(integrityRepo,/KIWI_INTEGRITY_D17_OWNER_NOT_READY/);
-const shell=fs.readFileSync('teaching/integrations/kiwi-exam-interface.js','utf8');
-assert.match(shell,/SHARED_ASSESSMENT_SHELL_CONTRACT_VERSION = 'd17\.v1'/);
-assert.match(shell,/d18RendererImplementationDeferred:true/);
-assert.match(shell,/existingKiwiExamDataRewritten:false/);
-assert.match(shell,/serverAutosaveRequired:true/);
-assert.match(shell,/browserTimerProjectionOnly:true/);
+
+// D17 established the shared Assessment Shell compatibility seam. D18 is the
+// canonical successor that activates that seam, so this predecessor verifier
+// must validate D17's durable guarantees rather than freeze the temporary
+// "D18 deferred" posture forever.
+const exam=createKiwiExamInterface();
+assert.ok(['d17.v1','d18.v1'].includes(exam.assessmentShell.contractVersion),'D17 shell seam must remain d17-compatible or advance to the accepted D18 successor contract');
+assert.deepEqual([...exam.assessmentShell.supportedArchitectures],['mcq_only','constructed_only','mixed']);
+assert.equal(exam.assessmentShell.compatibility.existingKiwiExamDataRewritten,false);
+assert.equal(exam.assessmentShell.compatibility.legacyExamOwnerPreserved,true);
+assert.equal(exam.assessmentShell.responsePayload.serverAutosaveRequired,true);
+assert.equal(exam.assessmentShell.responsePayload.localDraftAuthoritative,false);
+assert.equal(exam.assessmentShell.timing.serverTimestampsAuthoritative,true);
+assert.equal(exam.assessmentShell.timing.browserTimerProjectionOnly,true);
+assert.equal(exam.assessmentShell.package.lockedBeforeExposure,true);
+assert.equal(exam.assessmentShell.package.browserMayNotChangeScope,true);
+assert.equal(exam.assessmentShell.package.browserMayNotChangeResponseArchitecture,true);
+if(exam.assessmentShell.contractVersion==='d17.v1')assert.equal(exam.assessmentShell.compatibility.d18RendererImplementationDeferred,true);
+if(exam.assessmentShell.contractVersion==='d18.v1')assert.equal(exam.assessmentShell.compatibility.d18RendererImplementationDeferred,false);
 
 console.log(JSON.stringify({delivery:'D17',taskCount:TASKS.length,promptBindings:contracts.PROMPT_BINDINGS,capabilities:Object.keys(CAPABILITIES).length,status:'PASS'},null,2));

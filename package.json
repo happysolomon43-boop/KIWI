@@ -31,7 +31,8 @@
     "verify:teaching:d14": "node scripts/verify-teaching-d14-classroom.js",
     "verify:teaching:d15": "node scripts/verify-teaching-d15-attendance.js",
     "verify:teaching:d16": "node scripts/verify-teaching-d16-homework-integrity.js",
-    "verify:teaching:d17": "node scripts/verify-teaching-d17-assessment-domain.js"
+    "verify:teaching:d17": "node scripts/verify-teaching-d17-assessment-domain.js",
+    "verify:teaching:d18": "node scripts/verify-teaching-d18-assessment-shell.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

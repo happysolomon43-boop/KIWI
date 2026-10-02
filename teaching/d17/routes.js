@@ -1,5 +1,7 @@
 'use strict';
 
+const {mountD18Routes}=require('../d18/routes');
+
 function mountD17Routes(router,{foundation,sendError}={}){
   const service=foundation?.d17?.service;if(!service)return null;let ready=false;
   const requireReady=async(req,res,next)=>{try{if(!ready){await foundation.d17.repository.assertReady();ready=true;}return next();}catch(error){return res.status(503).json({error:'Teaching Assessment is unavailable until the D17 schema is ready.',code:error?.code||'TEACHING_D17_SCHEMA_NOT_READY'});}};
@@ -18,6 +20,10 @@ function mountD17Routes(router,{foundation,sendError}={}){
   router.post('/assessments/attempts/:attemptId/device-transfer',async(req,res)=>{try{res.json(await service.transferDevice(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to transfer Assessment Attempt device.');}});
   router.post('/assessments/attempts/:attemptId/challenges',async(req,res)=>{try{res.status(201).json(await service.challenge(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to record Assessment item challenge.');}});
   router.post('/assessments/attempts/:attemptId/clarification',async(req,res)=>{try{res.json(await service.clarify(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to classify Assessment clarification.');}});
-  return Object.freeze({requireReady});
+
+  // D18 is a browser-safe projection/interaction layer over D17 truth. It adds
+  // no second Assessment owner and reuses the same schema-readiness boundary.
+  const d18=mountD18Routes(router,{foundation,sendError,requireD17Ready:requireReady});
+  return Object.freeze({requireReady,d18});
 }
 module.exports={mountD17Routes};
