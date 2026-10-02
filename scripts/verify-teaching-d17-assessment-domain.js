@@ -1,0 +1,36 @@
+'use strict';
+const fs=require('node:fs');
+const assert=require('node:assert/strict');
+const contracts=require('../teaching/d17/contracts');
+const {CAPABILITIES}=require('../teaching/d17/intelligence');
+const {getCapability}=require('../teaching/capability-registry');
+
+const TASKS=['TCH-0052','TCH-0053','TCH-0054','TCH-0055','TCH-0056',...Array.from({length:31},(_,i)=>`TCH-${String(326+i).padStart(4,'0')}`),'TCH-0676',...Array.from({length:9},(_,i)=>`TCH-${String(717+i).padStart(4,'0')}`),'TCH-0727','TCH-0733','TCH-0734',...Array.from({length:7},(_,i)=>`TCH-${String(891+i).padStart(4,'0')}`)];
+assert.equal(TASKS.length,56,'D17 must account for exactly 56 canonical tasks');
+assert.equal(new Set(TASKS).size,56,'D17 task IDs must be unique');
+assert.deepEqual(contracts.PROMPT_BINDINGS,{planning:{family:'TPF-12',version:'1.3'},generation:{family:'TPF-13',version:'1.3'},validation:{family:'TPF-14',version:'1.4'}});
+for(const [name,id] of Object.entries(CAPABILITIES)){const c=getCapability(id);assert.ok(c,`Missing capability ${name}:${id}`);assert.notEqual(c.authority_level,'T0',`D17 AI adapter must not invoke T0 capability ${id}`);assert.ok(['TPF-12','TPF-13','TPF-14'].includes(c.prompt_family_id),`Unexpected D17 prompt family for ${id}`);}
+const source=['teaching/d17/contracts.js','teaching/d17/intelligence.js','teaching/d17/service.js','teaching/d17/routes.js','teaching/d17/runtime.js','teaching/repositories/d17-assessments.js'].map(p=>fs.readFileSync(p,'utf8')).join('\n');
+for(const forbidden of ['@google/generative-ai','GoogleGenerativeAI','openai','anthropic','gemini-','gpt-','claude-'])assert.equal(source.toLowerCase().includes(forbidden.toLowerCase()),false,`D17 may not hard-code provider/model token ${forbidden}`);
+assert.match(source,/eligibility_is_authoritative:true/);
+assert.match(source,/package_lock_t0_only:true/);
+assert.match(source,/generator_validator_independence:true/);
+assert.match(source,/WHOLE_PACKAGE_NOT_VALIDATED/);
+assert.match(source,/CURRENT_ELIGIBILITY_FAILED/);
+assert.match(source,/student_penalty_allowed,false/);
+assert.match(source,/TEACHING_ASSESSMENT_ATTEMPT/);
+assert.match(source,/ASSESSMENT_EXPIRY_DUE/);
+assert.match(source,/CONTENT_HELP_PROHIBITED/);
+assert.match(source,/protected_marking_payload/);
+assert.match(source,/public_item_payload/);
+assert.doesNotMatch(fs.readFileSync('teaching/d17/routes.js','utf8'),/protected_marking_payload|protected_payload/,'D17 browser routes must not project protected marking/candidate material');
+const migration=fs.readFileSync('migrations/20261002_teaching_d17_assessment_domain.sql','utf8');
+for(const table of ['teaching_assessments','teaching_assessment_blueprints','teaching_assessment_eligibility_entries','teaching_assessment_candidates','teaching_assessment_candidate_versions','teaching_assessment_validations','teaching_assessment_packages','teaching_assessment_package_items','teaching_assessment_attempts','teaching_assessment_attempt_events','teaching_assessment_responses','teaching_assessment_item_challenges','teaching_assessment_invalidations','teaching_assessment_contamination_events','teaching_assessment_ppl_workspaces'])assert.match(migration,new RegExp(`CREATE TABLE IF NOT EXISTS public\\.${table}`));
+assert.match(migration,/REVOKE ALL ON TABLE public\.%I FROM anon, authenticated, public/);
+assert.match(migration,/teaching_assessment_attempts_one_active_uidx/);
+assert.match(migration,/Locked Assessment Package is immutable/);
+assert.match(migration,/student_penalty_allowed=false/);
+const integrityRepo=fs.readFileSync('services/integrity/repository.js','utf8');
+assert.match(integrityRepo,/ownerType==='TEACHING_ASSESSMENT_ATTEMPT'/);
+assert.doesNotMatch(integrityRepo,/KIWI_INTEGRITY_D17_OWNER_NOT_READY/);
+console.log(JSON.stringify({delivery:'D17',taskCount:TASKS.length,promptBindings:contracts.PROMPT_BINDINGS,capabilities:Object.keys(CAPABILITIES).length,status:'PASS'},null,2));
