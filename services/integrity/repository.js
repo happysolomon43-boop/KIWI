@@ -71,7 +71,14 @@ function createIntegrityRepository({query,withTransaction,randomUUID}={}){
       return session;
     });
   }
-  async function closeSession(userId,sessionId){const {rows}=await query("update public.kiwi_integrity_sessions set status='CLOSED',closed_at=coalesce(closed_at,now()),state_version=state_version+1,updated_at=now() where user_id=$1 and integrity_session_id=$2 returning *",[userId,sessionId]);return rows?.[0]||null;}
+  async function closeSession(userId,sessionId){
+    return withTransaction(async(tx)=>{
+      const session=await requireSession(userId,sessionId,tx,true);
+      if(['LOCKED','CLOSED'].includes(session.status))return session;
+      const {rows}=await q(tx,"update public.kiwi_integrity_sessions set status='CLOSED',closed_at=coalesce(closed_at,now()),state_version=state_version+1,updated_at=now() where user_id=$1 and integrity_session_id=$2 returning *",[userId,sessionId]);
+      return rows?.[0]||session;
+    });
+  }
   async function listSafeEvents(userId,sessionId){const {rows=[]}=await query('select normalized_kind,counts_as_departure,permitted,kiwi_caused,accepted_at from public.kiwi_integrity_session_events where user_id=$1 and integrity_session_id=$2 order by accepted_at',[userId,sessionId]);return rows;}
 
   async function createGate({userId,assignmentId,receiptSubmissionId,correctionOfSubmissionId=null,policyVersion,acceptedEventAt,blockingDeadlineAt=null,idempotencyKey}){const prior=await query('select * from public.teaching_submission_verification_gates where user_id=$1 and idempotency_key=$2 limit 1',[userId,idempotencyKey]);if(prior.rows?.[0])return {gate:prior.rows[0],idempotent:true};const {rows}=await query("insert into public.teaching_submission_verification_gates(submission_gate_id,user_id,assignment_id,receipt_submission_id,correction_of_submission_id,policy_version,state,verification_route,accepted_event_at,blocking_deadline_at,idempotency_key) values($1,$2,$3,$4,$5,$6,'RECEIVED','NO_VERIFICATION',$7,$8,$9) returning *",[randomUUID(),userId,assignmentId,receiptSubmissionId,correctionOfSubmissionId,policyVersion,acceptedEventAt,blockingDeadlineAt,idempotencyKey]);return {gate:rows[0],idempotent:false};}

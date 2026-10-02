@@ -46,7 +46,7 @@ function createIntegrityService({repository,d16Repository=null,d16Intelligence=n
     session=recorded.session;
     const consequence=sessionConsequence({sessionProfile:profile(session.profile),confirmedDepartureCount:session.confirmed_departure_count});
     if(consequence.action!=='CONTINUE')session=await repository.applySessionConsequence({userId:user.id,sessionId,action:consequence.action,outcome:consequence.outcome});
-    return Object.freeze({...studentSafeSessionProjection(session),action:consequence.action,outcome:consequence.outcome,event:Object.freeze({kind:decision.normalizedKind,countsAsDeparture:Boolean(decision.counts)}),idempotent:recorded.idempotent});
+    return Object.freeze({...studentSafeSessionProjection(session),action:consequence.action,outcome:consequence.outcome,event:Object.freeze({kind:recorded.event?.normalized_kind||recorded.effectiveDecision?.normalizedKind||decision.normalizedKind,countsAsDeparture:Boolean(recorded.event?.counts_as_departure??recorded.effectiveDecision?.counts??decision.counts)}),idempotent:recorded.idempotent});
   }
 
   async function projectGate(userId,gate){
