@@ -24,7 +24,11 @@ function createIntegrityRepository({query,withTransaction,randomUUID}={}){
       if(!rows?.[0])throw fail('Exam session not found for integrity session.','KIWI_INTEGRITY_OWNER_NOT_FOUND',404);
       return {kind:'KIWI_EXAM',row:rows[0]};
     }
-    if(ownerType==='TEACHING_ASSESSMENT_ATTEMPT')throw fail('Teaching Assessment Attempt binding is reserved for the D17 Assessment owner.','KIWI_INTEGRITY_D17_OWNER_NOT_READY',409);
+    if(ownerType==='TEACHING_ASSESSMENT_ATTEMPT'){
+      const {rows}=await q(runner,'select a.*,d.assessment_type from public.teaching_assessment_attempts a join public.teaching_assessments d on d.assessment_id=a.assessment_id where a.student_id=$1 and a.assessment_attempt_id=$2 limit 1',[userId,ownerRef]);
+      if(!rows?.[0])throw fail('Teaching Assessment Attempt not found for integrity session.','KIWI_INTEGRITY_OWNER_NOT_FOUND',404);
+      return {kind:'TEACHING_ASSESSMENT_ATTEMPT',row:rows[0]};
+    }
     throw fail('Unsupported integrity owner type.','KIWI_INTEGRITY_OWNER_INVALID',400);
   }
 

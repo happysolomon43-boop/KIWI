@@ -18,6 +18,7 @@ const {
   createD14ClassroomRepository,
   createD15AttendanceRepository,
   createD16AssignmentRepository,
+  createD17AssessmentRepository,
 } = require('./repositories');
 const { createD14Service } = require('./d14/service');
 const { registerD14Runtime } = require('./d14/runtime');
@@ -37,6 +38,7 @@ const d13 = require('./d13');
 const d14 = require('./d14');
 const d15 = require('./d15');
 const d16 = require('./d16');
+const d17 = require('./d17');
 
 function createTeachingFoundation({
   env = process.env,
@@ -57,6 +59,7 @@ function createTeachingFoundation({
   d13Intelligence = null,
   d13PublishedEventRegistry = null,
   d16Intelligence = null,
+  d17Intelligence = null,
 } = {}) {
   const config = createTeachingConfig(env);
   const subjectReader = createKiwiSubjectReader({ subjects: subjectSource });
@@ -104,6 +107,9 @@ function createTeachingFoundation({
         randomUUID,
         dueEventStore:d10RuntimePlatform?.eventStore || null,
       })
+    : null;
+  const d17Repository = persistentDepsReady
+    ? createD17AssessmentRepository({ query, withTransaction, randomUUID, dueEventStore:d10RuntimePlatform?.eventStore || null })
     : null;
   // Product-owner amendment: the global KIWI Integrity Session Guard stores
   // normalized session/verification facts while existing domain owners retain
@@ -271,6 +277,13 @@ function createTeachingFoundation({
       })
     : null;
 
+  const d17Service = d17Repository
+    ? d17.createD17Service({ repository:d17Repository, intelligence:d17Intelligence, integrityService, randomUUID })
+    : null;
+  const d17Runtime = d17Service && d10RuntimePlatform?.eventRuntime
+    ? d17.registerD17Runtime({ eventRuntime:d10RuntimePlatform.eventRuntime, repository:d17Repository, service:d17Service })
+    : null;
+
   const d14Repository = d11Repository && persistentDepsReady
     ? createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository})
     : null;
@@ -310,6 +323,7 @@ function createTeachingFoundation({
     d14: d14Service ? Object.freeze({ repository:d14Repository, service:d14Service, runtime:d14Runtime }) : null,
     d15: d15Service ? Object.freeze({ repository:d15Repository, service:d15Service, runtime:d15Runtime }) : null,
     d16: d16Service ? Object.freeze({ repository:d16Repository, service:d16Service, runtime:d16Runtime }) : null,
+    d17: d17Service ? Object.freeze({ repository:d17Repository, service:d17Service, runtime:d17Runtime }) : null,
     integrity: integrityService ? Object.freeze({ repository:integrityRepository, service:integrityService }) : null,
     policy,
   });
@@ -331,4 +345,5 @@ module.exports = {
   d14,
   d15,
   d16,
+  d17,
 };
