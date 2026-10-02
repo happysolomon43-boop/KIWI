@@ -4,6 +4,7 @@ on:
     branches: [teaching/integrity-session-guard-amendment]
     paths:
       - 'scripts/apply-integrity-session-ui-amendment.js'
+      - 'scripts/repair-integrity-session-ui-amendment.js'
       - '.github/workflows/apply-integrity-session-ui-amendment.yml'
 permissions:
   contents: write
@@ -20,14 +21,15 @@ jobs:
         with:
           node-version: '22'
       - run: node scripts/apply-integrity-session-ui-amendment.js
+      - run: node scripts/repair-integrity-session-ui-amendment.js
       - name: Commit generated source edits
         run: |
           if git diff --quiet; then
-            echo 'No integrity UI edits required.'
+            echo 'No integrity amendment edits required.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html public/teaching.html public/teaching-d16.js services/integrity/service.js
-          git commit -m 'Apply integrity session UI amendment [integrity-ui-patched]'
+          git add index.html public/teaching.html public/teaching-d16.js public/teaching-d16.css teaching/d16/contracts.js services/integrity/repository.js services/integrity/service.js
+          git commit -m 'Apply integrity session amendment repairs [integrity-ui-patched]'
           git push origin HEAD:teaching/integrity-session-guard-amendment
