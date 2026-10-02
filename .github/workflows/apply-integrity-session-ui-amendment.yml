@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/apply-integrity-session-ui-amendment.js'
       - 'scripts/repair-integrity-session-ui-amendment.js'
+      - 'scripts/finalize-integrity-session-amendment.js'
       - '.github/workflows/apply-integrity-session-ui-amendment.yml'
 permissions:
   contents: write
@@ -22,6 +23,7 @@ jobs:
           node-version: '22'
       - run: node scripts/apply-integrity-session-ui-amendment.js
       - run: node scripts/repair-integrity-session-ui-amendment.js
+      - run: node scripts/finalize-integrity-session-amendment.js
       - name: Commit generated source edits
         run: |
           if git diff --quiet; then
