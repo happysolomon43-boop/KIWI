@@ -39,9 +39,13 @@ CREATE TABLE public.kiwi_integrity_sessions (
   started_at timestamptz NOT NULL DEFAULT now(),
   closed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE(user_id,owner_type,owner_ref,policy_version)
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
+-- Exactly one live guard session may exist for an owner/policy. CLOSED sessions
+-- remain immutable historical evidence and do not prevent a legitimate later session.
+CREATE UNIQUE INDEX kiwi_integrity_sessions_live_owner_uq
+  ON public.kiwi_integrity_sessions(user_id,owner_type,owner_ref,policy_version)
+  WHERE status <> 'CLOSED';
 CREATE INDEX kiwi_integrity_sessions_owner_idx ON public.kiwi_integrity_sessions(user_id,owner_type,owner_ref,status);
 CREATE INDEX kiwi_integrity_sessions_active_idx ON public.kiwi_integrity_sessions(user_id,status,updated_at DESC);
 
