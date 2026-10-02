@@ -4,7 +4,6 @@ on:
     branches: [teaching/integrity-session-guard-amendment]
     paths:
       - 'scripts/apply-integrity-session-ui-amendment.js'
-      - 'scripts/repair-integrity-session-ui-amendment.js'
       - 'scripts/finalize-integrity-session-amendment.js'
       - '.github/workflows/apply-integrity-session-ui-amendment.yml'
 permissions:
@@ -22,7 +21,6 @@ jobs:
         with:
           node-version: '22'
       - run: node scripts/apply-integrity-session-ui-amendment.js
-      - run: node scripts/repair-integrity-session-ui-amendment.js
       - run: node scripts/finalize-integrity-session-amendment.js
       - name: Commit generated source edits
         run: |
