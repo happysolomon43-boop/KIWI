@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en" data-app="kiwi-assessment-shell">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#07110f" />
+  <meta name="color-scheme" content="dark" />
+  <title>KIWI Assessment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/kiwi-ui-system.css" />
+  <link rel="stylesheet" href="/assessment-shell.css" />
+</head>
+<body>
+  <div id="assessmentApp" class="assessment-app" aria-busy="true">
+    <header class="assessment-topbar" aria-label="Assessment controls">
+      <a id="returnLink" class="assessment-brand" href="/teaching.html" aria-label="Return to KIWI Teaching">
+        <span class="assessment-brand__mark">K</span>
+        <span>
+          <strong>KIWI</strong>
+          <small>Assessment</small>
+        </span>
+      </a>
+      <div class="assessment-topbar__center">
+        <span id="assessmentModePill" class="assessment-pill">Locked package</span>
+        <span id="saveState" class="save-state" data-state="loading" aria-live="polite">Loading…</span>
+      </div>
+      <div class="assessment-topbar__right">
+        <button id="toolsButton" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="toolsPanel" aria-label="Allowed tools and resources">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M7 4v6M17 4v6M5 14h14l-1 6H6l-1-6Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="timer" id="timer" data-state="normal" aria-live="off">
+          <span class="timer__label">Time left</span>
+          <strong id="timerValue">--:--</strong>
+        </div>
+      </div>
+    </header>
+
+    <main id="loadingView" class="loading-view">
+      <div class="loading-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
+      <p>Preparing your assessment workspace…</p>
+    </main>
+
+    <main id="launchView" class="launch-view" hidden>
+      <section class="launch-card" aria-labelledby="launchTitle">
+        <div class="launch-card__halo" aria-hidden="true"></div>
+        <div class="launch-card__eyebrow">Ready when you are</div>
+        <h1 id="launchTitle">Assessment workspace</h1>
+        <p id="launchSummary">Your package is locked. Starting creates one authoritative attempt and begins server timing.</p>
+        <div id="launchMeta" class="launch-meta"></div>
+        <div id="launchTools" class="launch-tools"></div>
+        <div class="launch-actions">
+          <a id="launchReturn" href="/teaching.html" class="button button--ghost">Not now</a>
+          <button id="startAttemptButton" type="button" class="button button--primary">Begin assessment</button>
+        </div>
+      </section>
+    </main>
+
+    <main id="workspaceView" class="workspace" hidden>
+      <aside class="navigator" aria-label="Question navigator">
+        <div class="navigator__header">
+          <div>
+            <span class="eyebrow">Assessment map</span>
+            <h2>Questions</h2>
+          </div>
+          <button id="navigatorClose" class="icon-button navigator__close" type="button" aria-label="Close question navigator">×</button>
+        </div>
+        <div id="questionGrid" class="question-grid" role="list"></div>
+        <div class="navigator-legend" aria-label="Question state legend">
+          <span><i data-state="unseen"></i>Unseen</span>
+          <span><i data-state="answered"></i>Answered</span>
+          <span><i data-state="partial"></i>Partial</span>
+          <span><i data-state="flagged"></i>Flagged</span>
+        </div>
+        <button id="reviewButton" class="button button--review" type="button">Review &amp; submit</button>
+      </aside>
+
+      <section class="question-stage">
+        <div class="question-stage__header">
+          <button id="navigatorOpen" class="icon-button navigator__open" type="button" aria-label="Open question navigator">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+          <div class="question-position">
+            <span id="questionPosition">Question 1 of 1</span>
+            <strong id="questionMarks">0 marks</strong>
+          </div>
+          <button id="flagButton" class="flag-button" type="button" aria-pressed="false">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 21V4m0 1h10l-2 4 2 4H6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Flag</span>
+          </button>
+        </div>
+
+        <article id="questionCard" class="question-card">
+          <div id="itemStateBanner" class="item-state-banner" hidden></div>
+          <div id="sourcePanel" class="source-panel" hidden></div>
+          <div id="questionPrompt" class="question-prompt"></div>
+          <div id="responseLayer" class="response-layer" aria-live="polite"></div>
+          <div id="inlineSaveState" class="inline-save-state" aria-live="polite"></div>
+        </article>
+
+        <footer class="question-actions">
+          <button id="previousButton" class="button button--ghost" type="button">Previous</button>
+          <div class="question-actions__center">
+            <button id="reportButton" class="text-button" type="button">Report a problem with this question</button>
+          </div>
+          <button id="nextButton" class="button button--primary" type="button">Next</button>
+        </footer>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="toolsPanel" class="sheet-dialog">
+    <form method="dialog" class="sheet-card">
+      <div class="sheet-card__header">
+        <div><span class="eyebrow">Package policy</span><h2>Allowed tools</h2></div>
+        <button class="icon-button" value="cancel" aria-label="Close">×</button>
+      </div>
+      <div id="toolsList" class="tools-list"></div>
+      <p class="sheet-note">These permissions come from the locked Assessment Package. This screen cannot change them.</p>
+    </form>
+  </dialog>
+
+  <dialog id="reviewDialog" class="review-dialog">
+    <section class="review-card" aria-labelledby="reviewTitle">
+      <div class="review-card__header">
+        <div><span class="eyebrow">Before you submit</span><h2 id="reviewTitle">Review your work</h2></div>
+        <button id="reviewClose" class="icon-button" type="button" aria-label="Close review">×</button>
+      </div>
+      <div id="reviewSummary" class="review-summary"></div>
+      <div id="reviewItems" class="review-items"></div>
+      <div id="submitWarning" class="submit-warning"></div>
+      <div class="review-actions">
+        <button id="returnToQuestionsButton" class="button button--ghost" type="button">Keep working</button>
+        <button id="submitAttemptButton" class="button button--danger" type="button">Submit final answers</button>
+      </div>
+    </section>
+  </dialog>
+
+  <dialog id="deviceDialog" class="device-dialog">
+    <section class="device-card" aria-labelledby="deviceTitle">
+      <div class="device-icon" aria-hidden="true">↔</div>
+      <span class="eyebrow">Attempt already active</span>
+      <h2 id="deviceTitle">Continue on this device?</h2>
+      <p>This attempt is currently owned by another device. Transfer is explicit so two devices cannot silently write at the same time.</p>
+      <div class="device-actions">
+        <a id="deviceReturn" href="/teaching.html" class="button button--ghost">Go back</a>
+        <button id="transferDeviceButton" class="button button--primary" type="button">Transfer attempt here</button>
+      </div>
+    </section>
+  </dialog>
+
+  <dialog id="reportDialog" class="sheet-dialog">
+    <form id="reportForm" class="sheet-card">
+      <div class="sheet-card__header">
+        <div><span class="eyebrow">Question challenge</span><h2>Report a problem</h2></div>
+        <button id="reportClose" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <label class="field-label" for="reportText">Describe the issue without asking for the answer.</label>
+      <textarea id="reportText" class="report-textarea" rows="5" required placeholder="For example: the graph label is missing, or two options appear identical."></textarea>
+      <div class="sheet-actions">
+        <button class="button button--ghost" id="reportCancel" type="button">Cancel</button>
+        <button class="button button--primary" type="submit">Send report</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="networkBanner" class="network-banner" hidden role="status"></div>
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="/kiwi-runtime-config.js"></script>
+  <script src="/kiwi-api-client.js"></script>
+  <script src="/assessment-shell-core.js"></script>
+  <script src="/assessment-shell.js"></script>
+</body>
+</html>
