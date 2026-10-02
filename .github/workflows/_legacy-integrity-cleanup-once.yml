@@ -1,0 +1,115 @@
+name: One-shot legacy Study integrity cleanup
+
+on:
+  push:
+    branches:
+      - study/remove-legacy-exam-integrity
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: study/remove-legacy-exam-integrity
+          fetch-depth: 0
+
+      - name: Remove duplicate page-local integrity lifecycle ownership
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('index.html')
+          src = path.read_text(encoding='utf-8')
+          original = src
+
+          def require_count(label, needle, count=1):
+              actual = src.count(needle)
+              if actual != count:
+                  raise SystemExit(f'{label}: expected {count}, found {actual}')
+
+          require_count('page-local guard function', 'function _startExamIntegrityGuard()', 1)
+          require_count('page-local guard activation call', '_startExamIntegrityGuard();', 1)
+          require_count('page-local guard state field', 'integrityGuard: null,', 1)
+          require_count('page-local guard deactivate call', "examState.integrityGuard.deactivate('exam_unlocked');", 1)
+          require_count('shared guard script', '/kiwi-integrity-session-guard.js', 1)
+          if "source: 'student_manual'" not in src or 'confirmed: true' not in src:
+              raise SystemExit('manual confirmed forfeit contract missing before cleanup')
+
+          fn_pattern = re.compile(
+              r'\n\s*function _startExamIntegrityGuard\(\) \{.*?\n\s*\}\n(?=\s*function _lockExamPage\(\))',
+              re.S,
+          )
+          src, n = fn_pattern.subn('\n', src, count=1)
+          if n != 1:
+              raise SystemExit(f'page-local guard function removal expected 1 replacement, found {n}')
+
+          src, n = re.subn(r'\n\s*_startExamIntegrityGuard\(\);', '', src, count=1)
+          if n != 1:
+              raise SystemExit(f'page-local activation removal expected 1 replacement, found {n}')
+
+          state_pattern = re.compile(r'^\s*integrityGuard:\s*null,\s*\n', re.M)
+          src, n = state_pattern.subn('', src, count=1)
+          if n != 1:
+              raise SystemExit(f'page-local state removal expected 1 replacement, found {n}')
+
+          deactivate_pattern = re.compile(
+              r'\n\s*if \(examState\.integrityGuard\) \{\s*\n'
+              r'\s*examState\.integrityGuard\.deactivate\(\'exam_unlocked\'\);\s*\n'
+              r'\s*examState\.integrityGuard = null;\s*\n'
+              r'\s*\}',
+              re.M,
+          )
+          src, n = deactivate_pattern.subn('', src, count=1)
+          if n != 1:
+              raise SystemExit(f'page-local deactivate removal expected 1 replacement, found {n}')
+
+          forbidden = [
+              '_startExamIntegrityGuard',
+              'examState.integrityGuard',
+              '_autoForfeitExamForNavigation',
+          ]
+          for token in forbidden:
+              if token in src:
+                  raise SystemExit(f'legacy integrity ownership residue remains: {token}')
+
+          if re.search(r'pagehide[^\n]{0,240}forfeit|beforeunload[^\n]{0,240}forfeit', src, re.I):
+              raise SystemExit('page lifecycle auto-forfeit residue remains')
+          if '/kiwi-integrity-session-guard.js' not in src:
+              raise SystemExit('shared global guard script was accidentally removed')
+          if "source: 'student_manual'" not in src or 'confirmed: true' not in src:
+              raise SystemExit('manual confirmed forfeit contract was accidentally removed')
+          if src == original:
+              raise SystemExit('cleanup produced no change')
+
+          path.write_text(src, encoding='utf-8')
+          print('Removed duplicate page-local integrity lifecycle ownership from index.html')
+          PY
+
+      - name: Verify root shell cleanup
+        shell: bash
+        run: |
+          ! grep -q '_startExamIntegrityGuard' index.html
+          ! grep -q 'examState\.integrityGuard' index.html
+          ! grep -q '_autoForfeitExamForNavigation' index.html
+          grep -q '/kiwi-integrity-session-guard.js' index.html
+          grep -q "source: 'student_manual'" index.html
+          grep -q 'confirmed: true' index.html
+
+      - name: Commit cleanup and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/_legacy-integrity-cleanup-once.yml
+          git add index.html
+          git diff --cached --check
+          git commit -m 'refactor(study): remove duplicate exam integrity lifecycle'
+          git push origin HEAD:study/remove-legacy-exam-integrity
