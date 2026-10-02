@@ -33,7 +33,8 @@
     "verify:teaching:d16": "node scripts/verify-teaching-d16-homework-integrity.js",
     "verify:teaching:d17": "node scripts/verify-teaching-d17-assessment-domain.js",
     "verify:teaching:d18": "node scripts/verify-teaching-d18-assessment-shell.js",
-    "verify:teaching:d19": "node scripts/verify-teaching-d19-assessment-types.js"
+    "verify:teaching:d19": "node scripts/verify-teaching-d19-assessment-types.js",
+    "verify:teaching:d20": "node scripts/verify-teaching-d20-marking-gradebook.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

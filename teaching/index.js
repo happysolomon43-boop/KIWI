@@ -19,6 +19,7 @@ const {
   createD15AttendanceRepository,
   createD16AssignmentRepository,
   createD17AssessmentRepository,
+  createD20GradebookRepository,
 } = require('./repositories');
 const { createD14Service } = require('./d14/service');
 const { registerD14Runtime } = require('./d14/runtime');
@@ -39,6 +40,7 @@ const d14 = require('./d14');
 const d15 = require('./d15');
 const d16 = require('./d16');
 const d17 = require('./d17');
+const d20 = require('./d20');
 
 function createTeachingFoundation({
   env = process.env,
@@ -60,6 +62,7 @@ function createTeachingFoundation({
   d13PublishedEventRegistry = null,
   d16Intelligence = null,
   d17Intelligence = null,
+  d20Intelligence = null,
 } = {}) {
   const config = createTeachingConfig(env);
   const subjectReader = createKiwiSubjectReader({ subjects: subjectSource });
@@ -94,9 +97,6 @@ function createTeachingFoundation({
     ? d09.createD09AttendanceRecoveryOwner({ query, withTransaction, randomUUID })
     : null;
 
-  // D15 and D16 repositories are constructed before D10 so D10 can retain
-  // formal Request authority while delegating approved target mutations to the
-  // authoritative Attendance/Work owners in the same transaction.
   const d15Repository = persistentDepsReady
     ? createD15AttendanceRepository({ query, withTransaction, randomUUID })
     : null;
@@ -111,9 +111,9 @@ function createTeachingFoundation({
   const d17Repository = persistentDepsReady
     ? createD17AssessmentRepository({ query, withTransaction, randomUUID, dueEventStore:d10RuntimePlatform?.eventStore || null })
     : null;
-  // Product-owner amendment: the global KIWI Integrity Session Guard stores
-  // normalized session/verification facts while existing domain owners retain
-  // Assignment and Exam truth. It deliberately shares the same trusted DB edge.
+  const d20Repository = persistentDepsReady
+    ? createD20GradebookRepository({ query, withTransaction, randomUUID })
+    : null;
   const integrityRepository = persistentDepsReady
     ? createIntegrityRepository({ query, withTransaction, randomUUID })
     : null;
@@ -324,6 +324,7 @@ function createTeachingFoundation({
     d15: d15Service ? Object.freeze({ repository:d15Repository, service:d15Service, runtime:d15Runtime }) : null,
     d16: d16Service ? Object.freeze({ repository:d16Repository, service:d16Service, runtime:d16Runtime }) : null,
     d17: d17Service ? Object.freeze({ repository:d17Repository, service:d17Service, runtime:d17Runtime }) : null,
+    d20: d20Repository ? Object.freeze({ repository:d20Repository, intelligence:d20Intelligence, randomUUID }) : null,
     integrity: integrityService ? Object.freeze({ repository:integrityRepository, service:integrityService }) : null,
     policy,
   });
@@ -346,4 +347,5 @@ module.exports = {
   d15,
   d16,
   d17,
+  d20,
 };

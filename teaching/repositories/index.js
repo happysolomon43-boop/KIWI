@@ -13,6 +13,7 @@ const { createD14ClassroomRepository } = require('./d14-classroom');
 const { createD15AttendanceRepository } = require('./d15-attendance');
 const { createD16AssignmentRepository } = require('./d16-assignments');
 const { createD17AssessmentRepository } = require('./d17-assessments');
+const { createD20GradebookRepository } = require('./d20-gradebook');
 
 function requireMethod(value, name) {
   if (!value || typeof value[name] !== 'function') {
@@ -54,4 +55,5 @@ module.exports = {
   createD15AttendanceRepository,
   createD16AssignmentRepository,
   createD17AssessmentRepository,
+  createD20GradebookRepository,
 };
