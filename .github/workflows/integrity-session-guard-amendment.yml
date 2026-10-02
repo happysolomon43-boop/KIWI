@@ -1,0 +1,116 @@
+name: Integrity Session Guard Amendment
+on:
+  pull_request:
+    paths:
+      - 'services/integrity/**'
+      - 'teaching/d16/**'
+      - 'public/kiwi-integrity-session-guard.js'
+      - 'public/teaching-d16.js'
+      - 'public/teaching-d16.css'
+      - 'public/teaching.html'
+      - 'index.js'
+      - 'index.html'
+      - 'migrations/20261002_kiwi_integrity_session_guard.sql'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'tests/teaching/**'
+      - '.github/workflows/integrity-session-guard-amendment.yml'
+  push:
+    branches: [teaching/integrity-session-guard-amendment]
+    paths:
+      - 'services/integrity/**'
+      - 'teaching/d16/**'
+      - 'public/kiwi-integrity-session-guard.js'
+      - 'public/teaching-d16.js'
+      - 'public/teaching-d16.css'
+      - 'public/teaching.html'
+      - 'index.js'
+      - 'index.html'
+      - 'migrations/20261002_kiwi_integrity_session_guard.sql'
+      - 'scripts/setup-teaching-integration-db.js'
+      - 'tests/teaching/**'
+      - '.github/workflows/integrity-session-guard-amendment.yml'
+
+jobs:
+  amendment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: Syntax check amendment runtime
+        run: |
+          node --check services/integrity/contracts.js
+          node --check services/integrity/repository.js
+          node --check services/integrity/service.js
+          node --check services/integrity/routes.js
+          node --check public/kiwi-integrity-session-guard.js
+          node --check public/teaching-d16.js
+          node --check index.js
+      - name: Verify final integrity source invariants
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const work = fs.readFileSync('public/teaching-d16.js', 'utf8');
+          const backend = fs.readFileSync('index.js', 'utf8');
+          const repository = fs.readFileSync('services/integrity/repository.js', 'utf8');
+          const service = fs.readFileSync('services/integrity/service.js', 'utf8');
+          const study = fs.readFileSync('index.html', 'utf8');
+          const helpers = [
+            'function guard(){return window.KIWIIntegritySessionGuard||null;}',
+            'async function ensureAssignmentGuard(',
+            'function verificationTimer(',
+            'async function showVerificationGate(',
+            'async function handleSubmissionGate('
+          ];
+          for (const helper of helpers) {
+            const count = work.split('\n').filter((line) => line.trimStart().startsWith(helper)).length;
+            if (count !== 1) throw new Error(`${helper} expected exactly once, found ${count}`);
+          }
+          if (!work.includes("if(result.status==='ACTIVE')")) throw new Error('Multi-step verification UI branch missing.');
+          if (!backend.includes('function respondToLockedExamMutation')) throw new Error('Exam owner lock enforcement helper missing.');
+          if (!repository.includes("verification_pending=($5 in ('LOCKED_FOR_REVIEW','POST_ATTEMPT_VERIFICATION_REQUIRED'))")) throw new Error('Scheduled-test review handoff mapping missing.');
+          if (!repository.includes("if(['LOCKED','CLOSED'].includes(session.status))return session;")) throw new Error('Terminal LOCKED close invariant missing.');
+          if (!service.includes("consequence.outcome==='LOCKED_FOR_REVIEW'")) throw new Error('Post-attempt verification handoff missing.');
+          if (!service.includes('generateFollowupVerification')) throw new Error('Fresh follow-up verification flow missing.');
+          if (!study.includes('/kiwi-integrity-session-guard.js')) throw new Error('Study shell guard script missing.');
+          if (study.includes('pagehide — fires after the user confirms leaving')) throw new Error('Legacy pagehide auto-forfeit residue remains.');
+          console.log('Final integrity source invariants verified.');
+          NODE
+      - name: Focused Integrity Session Guard behavior tests
+        run: node --test tests/teaching/unit/integrity-session-guard-amendment.test.js
+      - name: D01-D16 canonical verifiers
+        run: for n in $(seq -w 1 16); do npm run verify:teaching:d$n; done
+      - name: Teaching regressions
+        run: npm run test:teaching
+      - name: Full regressions
+        run: npm test
+      - name: Web build
+        run: npm run build:web
+
+  amendment-isolated-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_PASSWORD: postgres, POSTGRES_USER: postgres, POSTGRES_DB: kiwi_teaching_test}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiwi_teaching_test
+      TEACHING_TEST_PROJECT_REF: local-integrity-amendment-ci
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: Reconstruct Teaching database through Integrity amendment
+        run: node scripts/setup-teaching-integration-db.js
+      - name: Integrity amendment schema tests
+        run: node --test tests/teaching/integration/integrity-session-guard-schema.test.js
+      - name: D02-D16 integration regressions on amended schema
+        run: npm run test:teaching:integration

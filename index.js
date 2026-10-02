@@ -16387,6 +16387,36 @@ const examRouter = express.Router();
 examRouter.use(authenticate);
 
 examRouter.use(reckoningLockout);
+
+function respondToLockedExamMutation(exam, res) {
+  if (!exam) return false;
+  const locked = exam.integrity_session_state === 'LOCKED' || exam.status === 'invalidated';
+  if (!locked) return false;
+  const invalidated = exam.status === 'invalidated' || exam.integrity_lock_reason === 'ATTEMPT_INVALIDATED_RULE_BREACH';
+  res.status(423).json({
+    error: invalidated
+      ? 'This controlled attempt was invalidated after a terminal integrity-session rule breach.'
+      : 'This controlled attempt is locked. Server-saved responses are preserved for governed review.',
+    code: invalidated ? 'EXAM_INTEGRITY_ATTEMPT_INVALIDATED' : 'EXAM_INTEGRITY_SESSION_LOCKED',
+    status: exam.status,
+    integrity_session_state: 'LOCKED',
+    integrity_lock_reason: exam.integrity_lock_reason || null,
+    verification_pending: Boolean(exam.verification_pending),
+    misconduct_verdict: null,
+    cheating_probability: null,
+  });
+  return true;
+}
+
+async function loadMutableExamOrRespond(userId, examId, res) {
+  const exam = await db.examSessions.findByIdWithQuestions(userId, examId);
+  if (!exam) {
+    res.status(404).json({ error: 'Exam not found' });
+    return null;
+  }
+  if (respondToLockedExamMutation(exam, res)) return null;
+  return exam;
+}
 // POST /exams/generate — alias for POST /exams/ with camelCase body normalization
 
 examRouter.post('/generate', async (req, res) => {
@@ -16867,6 +16897,7 @@ examRouter.post('/:id/forfeit', async (req, res) => {
 try {
   const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
   if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (respondToLockedExamMutation(exam, res)) return;
   if (exam.is_reckoning) return res.status(403).json({ error: 'Reckoning exams cannot be forfeited' });
   if (exam.status === 'forfeited' || exam.status === 'completed') {
     return res.status(400).json({ error: 'Exam already ended' });
@@ -16961,6 +16992,7 @@ examRouter.post('/:id/auto-forfeit', async (req, res) => {
     // Load questions too — needed for SRS feedback
     const { rows: qRows } = await query('SELECT * FROM exam_questions WHERE exam_session_id = $1', [req.params.id]);
     const exam = { ...examRows[0], questions: qRows || [] };
+    if (respondToLockedExamMutation(exam, res)) return;
     
     // Allow auto-forfeit without full auth — token proves intent
     // Token is a one-time secret generated at exam start
@@ -17082,6 +17114,8 @@ examRouter.get('/:id/reckoning/state', async (req, res) => {
 
 examRouter.post('/:id/reckoning/answer', async (req, res) => {
   try {
+    const integrityExam = await loadMutableExamOrRespond(req.user.id, req.params.id, res);
+    if (!integrityExam) return;
     const questionId = req.body?.question_id ?? req.body?.questionId;
     const selectedOption = req.body?.selected_option ?? req.body?.selectedOption;
     const responseTimeMs =
@@ -17127,6 +17161,8 @@ examRouter.post('/:id/reckoning/answer', async (req, res) => {
 
 examRouter.post('/:id/reckoning/continue', async (req, res) => {
   try {
+    const integrityExam = await loadMutableExamOrRespond(req.user.id, req.params.id, res);
+    if (!integrityExam) return;
     const state = await adaptiveReckoningEngine.getState({
       examSessionId: req.params.id,
       userId: req.user.id,
@@ -17154,6 +17190,8 @@ examRouter.post('/:id/reckoning/continue', async (req, res) => {
 
 examRouter.post('/:id/reckoning/finalize', async (req, res) => {
   try {
+    const integrityExam = await loadMutableExamOrRespond(req.user.id, req.params.id, res);
+    if (!integrityExam) return;
     const result = await adaptiveReckoningEngine.finalize({
       examSessionId: req.params.id,
       userId: req.user.id,
@@ -17247,6 +17285,7 @@ examRouter.post('/:id/start', async (req, res) => {
 try {
 const existing = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!existing) return res.status(404).json({ error: 'Exam not found' });
+if (respondToLockedExamMutation(existing, res)) return;
 if (!['ready', 'active'].includes(existing.status)) {
 return res.status(409).json({ error: `Exam is already ${existing.status}` });
 }
@@ -17270,6 +17309,8 @@ res.status(500).json({ error: 'Failed to start exam' });
 // POST /exams/:id/start-token — store forfeiture token for auto-forfeit detection
 examRouter.post('/:id/start-token', async (req, res) => {
   try {
+    const exam = await loadMutableExamOrRespond(req.user.id, req.params.id, res);
+    if (!exam) return;
     const { forfeiture_token } = req.body || {};
     if (!forfeiture_token) return res.status(400).json({ error: 'forfeiture_token required' });
     await db.examSessions.update(req.user.id, req.params.id, { forfeiture_token });
@@ -17282,6 +17323,8 @@ examRouter.post('/:id/start-token', async (req, res) => {
 
 examRouter.get('/:id/question/:number', async (req, res) => {
 try {
+const exam = await loadMutableExamOrRespond(req.user.id, req.params.id, res);
+if (!exam) return;
 const question = await db.examQuestions.findByNumber(
 req.user.id,
 req.params.id,
@@ -17309,6 +17352,7 @@ try {
   }
   const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
   if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (respondToLockedExamMutation(exam, res)) return;
   if (
     exam.is_reckoning &&
     (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))
@@ -17348,6 +17392,7 @@ try {
   if (question_number == null) return res.status(400).json({ error: 'question_number is required' });
   const exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
   if (!exam) return res.status(404).json({ error: 'Exam not found' });
+  if (respondToLockedExamMutation(exam, res)) return;
   if (exam.status !== 'active' || !exam.started_at) {
     return res.status(409).json({ error: 'Only an active exam question can be flagged for review' });
   }
@@ -17417,6 +17462,7 @@ return res.status(400).json({ error: 'selected_option must be a single letter A-
 }
 let exam = await db.examSessions.findByIdWithQuestions(req.user.id, req.params.id);
 if (!exam) return res.status(404).json({ error: 'Exam not found' });
+if (respondToLockedExamMutation(exam, res)) return;
 if (
   exam.is_reckoning &&
   (exam.questions || []).some((question) => isAdaptiveReckoningQuestion(question))

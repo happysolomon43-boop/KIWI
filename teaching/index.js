@@ -4,6 +4,7 @@ const { createTeachingConfig } = require('./config');
 const { createKiwiSubjectReader } = require('./integrations/kiwi-subjects');
 const { createKiwiExamInterface } = require('./integrations/kiwi-exam-interface');
 const { createKiwiNotificationInterface } = require('./integrations/kiwi-notifications');
+const { createIntegrityRepository, createIntegrityService } = require('../services/integrity');
 const {
   createTeachingRepositories,
   createPreparationRuntimeRepository,
@@ -103,6 +104,12 @@ function createTeachingFoundation({
         randomUUID,
         dueEventStore:d10RuntimePlatform?.eventStore || null,
       })
+    : null;
+  // Product-owner amendment: the global KIWI Integrity Session Guard stores
+  // normalized session/verification facts while existing domain owners retain
+  // Assignment and Exam truth. It deliberately shares the same trusted DB edge.
+  const integrityRepository = persistentDepsReady
+    ? createIntegrityRepository({ query, withTransaction, randomUUID })
     : null;
 
   const d10Repository = persistentDepsReady
@@ -247,6 +254,14 @@ function createTeachingFoundation({
         randomUUID,
       })
     : null;
+  const integrityService = integrityRepository && d16Repository
+    ? createIntegrityService({
+        repository: integrityRepository,
+        d16Repository,
+        d16Intelligence,
+        randomUUID,
+      })
+    : null;
   const d16Runtime = d16Service && d10RuntimePlatform?.eventRuntime
     ? d16.registerD16Runtime({
         publishedEvents:d11PublishedEventRegistry,
@@ -292,9 +307,10 @@ function createTeachingFoundation({
     d11: d11Service ? Object.freeze({ repository: d11Repository, service: d11Service, runtime: d11Runtime }) : null,
     d12: d12Service ? Object.freeze({ repository: d12Repository, service: d12Service, runtime: d12Runtime }) : null,
     d13: d13Service ? Object.freeze({ repository: d13Repository, service: d13Service, runtime: d13Runtime }) : null,
-    d14: d14Service ? Object.freeze({ repository: d14Repository, service: d14Service, runtime:d14Runtime }) : null,
+    d14: d14Service ? Object.freeze({ repository:d14Repository, service:d14Service, runtime:d14Runtime }) : null,
     d15: d15Service ? Object.freeze({ repository:d15Repository, service:d15Service, runtime:d15Runtime }) : null,
     d16: d16Service ? Object.freeze({ repository:d16Repository, service:d16Service, runtime:d16Runtime }) : null,
+    integrity: integrityService ? Object.freeze({ repository:integrityRepository, service:integrityService }) : null,
     policy,
   });
 }
