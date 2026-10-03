@@ -104,7 +104,7 @@ function assertExactCriterionCoverage(actualIds,expectedIds,code,details={}){
   }
 }
 function acceptedOutput(result){return result?.accepted?(result?.validatedResult?.output||result?.output||null):null;}
-function assertAlternativeRoutesAuthorized(rubric,judgments){
+function assertAlternativeRoutesAuthorized(rubric,judgments,{requireNote=true}={}){
   const criteria=new Map(rubricCriteria(rubric).map(c=>[criterionId(c),c]));
   for(const judgment of asArray(judgments)){
     if(!judgment?.alternative_valid_route_used)continue;
@@ -112,8 +112,27 @@ function assertAlternativeRoutesAuthorized(rubric,judgments){
     if(!criterion)fail('Alternative-route credit refers to a criterion outside the locked rubric.','TEACHING_D20_ALTERNATIVE_ROUTE_NOT_AUTHORIZED',422,{criterionId:id});
     if(policy==='exhaustive')fail('A defensible answer excluded by an explicitly exhaustive rubric must be routed as a possible rubric defect, not silently credited as an alternative route.','TEACHING_D20_EXHAUSTIVE_RUBRIC_DEFECT_REVIEW_REQUIRED',409,{criterionId:id});
     if(!['illustrative','open_constrained'].includes(policy))fail('Alternative-route credit requires an explicit non-exhaustive answer-space policy.','TEACHING_D20_ALTERNATIVE_ROUTE_NOT_AUTHORIZED',422,{criterionId:id,answerSpacePolicy:policy||null});
-    if(!String(judgment.alternative_route_note||'').trim())fail('Alternative-route credit requires a rubric-grounded explanation.','TEACHING_D20_ALTERNATIVE_ROUTE_NOT_AUTHORIZED',422,{criterionId:id});
+    if(requireNote&&!String(judgment.alternative_route_note||'').trim())fail('Alternative-route credit requires a rubric-grounded explanation.','TEACHING_D20_ALTERNATIVE_ROUTE_NOT_AUTHORIZED',422,{criterionId:id});
   }
+}
+function assertCreditPrecisionRules(rubric,judgments){
+  const criteria=new Map(rubricCriteria(rubric).map(c=>[criterionId(c),c]));
+  for(const judgment of asArray(judgments)){
+    if(judgment?.proposed_credit==null)continue;
+    const id=String(judgment.criterion_id||''),criterion=criteria.get(id);if(!criterion)continue;
+    const credit=Number(judgment.proposed_credit),max=Number(criterion.criterion_max_marks??criterion.criterionMaxMarks);
+    const precision=String(criterion.credit_precision||criterion.creditPrecision||'exact_points').toLowerCase();
+    if(precision==='fixed_band_points'){
+      const declared=asArray(criterion.partial_credit_structure||criterion.partialCreditStructure);
+      const allowed=new Set([0,max]);
+      for(const row of declared){const value=Number(row?.credit);if(Number.isFinite(value))allowed.add(value);}
+      if(!allowed.has(credit))fail('Fixed-band rubric credit must equal a predeclared credit point.','TEACHING_D20_RUBRIC_PRECISION_GAP',409,{criterionId:id,credit,allowed:[...allowed].sort((a,b)=>a-b)});
+    }
+    if(precision==='ranged_band'&&credit!=null&&!String(criterion.within_band_selection_rule||criterion.withinBandSelectionRule||'').trim()){
+      fail('Exact credit cannot be invented inside a ranged band without a predeclared selection rule.','TEACHING_D20_RUBRIC_PRECISION_GAP',409,{criterionId:id});
+    }
+  }
+  return true;
 }
 function assertAggregationRulesSupported(rubric){
   for(const rule of asArray(rubric?.global_caps_or_dependencies)){
@@ -152,6 +171,7 @@ function assertTpf15Output(result,academicInput){
     fail('TPF-15 returned an unknown or missing marking status.','TEACHING_D20_TPF15_MARKING_STATUS_INVALID',422,{markingStatus:status||null});
   }
   assertAggregationRulesSupported(rubric);
+  assertCreditPrecisionRules(rubric,judgments);
   assertAlternativeRoutesAuthorized(rubric,judgments);
   assertDependencyChecks(rubric,judgments);
   assertFollowThroughAuthorized(rubric,judgments,{requireConditionalNote:true});
@@ -198,7 +218,10 @@ function guardedRepository(repository){
         const result=await target.resultById(input.studentId,input.resultId);if(!result)fail('Assessment Result not found while validating criterion persistence.','TEACHING_D20_RESULT_NOT_FOUND',404);
         const bundle=await target.loadMarkingBundle(input.studentId,result.assessment_attempt_id);assertFinalSnapshotIntegrity(bundle);
         const item=bundle.items.find(row=>String(row.package_item_id)===String(input.packageItemId));if(!item)fail('Criterion judgment item is outside the locked Assessment Package.','TEACHING_D20_CRITERION_OUT_OF_SCOPE',422,{packageItemId:input.packageItemId});
-        assertFollowThroughAuthorized(rubricFromItem(item),input.judgments);
+        const rubric=rubricFromItem(item);
+        assertCreditPrecisionRules(rubric,input.judgments);
+        assertAlternativeRoutesAuthorized(rubric,input.judgments,{requireNote:false});
+        assertFollowThroughAuthorized(rubric,input.judgments);
         return target.appendCriterionJudgments(input);
       };
       const value=Reflect.get(target,property,receiver);return typeof value==='function'?value.bind(target):value;
@@ -214,6 +237,6 @@ function createD20Service(options={}){
 
 module.exports={
   createD20Service,createD20AuthorityService:createD20Service,
-  assertFinalSnapshotIntegrity,normalizeBundleForMarking,assertFollowThroughAuthorized,assertAlternativeRoutesAuthorized,assertAggregationRulesSupported,assertTpf15Output,assertTpf16Scope,
+  assertFinalSnapshotIntegrity,normalizeBundleForMarking,assertFollowThroughAuthorized,assertAlternativeRoutesAuthorized,assertCreditPrecisionRules,assertAggregationRulesSupported,assertTpf15Output,assertTpf16Scope,
   wrapIntelligence,guardedRepository,
 };
