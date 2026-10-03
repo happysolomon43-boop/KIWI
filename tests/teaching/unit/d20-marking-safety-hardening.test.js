@@ -3,7 +3,8 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const contracts=require('../../../teaching/d20/contracts');
-const {assertAuthoritativeResponseCapture}=require('../../../teaching/d20/authority-service');
+const {assertAuthoritativeResponseCapture,newestFirstRuns}=require('../../../teaching/d20/authority-service');
+const {validateExactReviewScope}=require('../../../teaching/d20/intelligence');
 
 function captureBundle(overrides={}){
   const base={
@@ -164,4 +165,23 @@ test('TCH-0396 unsupported global rubric caps/dependencies fail closed instead o
   const capped={...oneCriterion(),global_caps_or_dependencies:[{type:'MAX_TOTAL',max_marks:1}]};
   const result=contracts.deterministicAggregateCriteria([{criterion_id:'c1',proposed_credit:2}],capped);
   assert.equal(result.earned,1);
+});
+
+test('TCH-0402 and TCH-0763 TPF-16 output must exactly cover the authorized criterion scope',()=>{
+  const passA={criterion_independent_judgments:[{criterion_id:'c1'}]};
+  assert.equal(validateExactReviewScope(passA,'independent_pass_a',['c1']),null);
+  assert.equal(validateExactReviewScope(passA,'independent_pass_a',['c1','c2']).reason,'TEACHING_D20_REVIEW_SCOPE_MISMATCH');
+  const passB={criterion_reviews:[{criterion_id:'c1'},{criterion_id:'c2'}]};
+  assert.equal(validateExactReviewScope(passB,'comparison_pass_b',['c1','c2']),null);
+  assert.equal(validateExactReviewScope(passB,'comparison_pass_b',['c1']).reason,'TEACHING_D20_REVIEW_SCOPE_MISMATCH');
+});
+
+test('TCH-0404 and TCH-0405 repeat appeal aggregation prefers the terminal authorized correction lineage',()=>{
+  const ordered=newestFirstRuns([
+    {marking_run_id:'initial',parent_run_id:null,run_kind:'TPF15_INITIAL',run_status:'ACCEPTED',created_at:'2026-10-03T09:00:00.000Z'},
+    {marking_run_id:'correction-1',parent_run_id:'initial',run_kind:'AUTHORIZED_CORRECTION',run_status:'ACCEPTED',created_at:'2026-10-03T10:00:00.000Z'},
+    {marking_run_id:'correction-2',parent_run_id:'correction-1',run_kind:'AUTHORIZED_CORRECTION',run_status:'ACCEPTED',created_at:'2026-10-03T11:00:00.000Z'},
+  ]);
+  assert.equal(ordered[0].marking_run_id,'correction-2');
+  assert.ok(ordered.findIndex(run=>run.marking_run_id==='correction-2')<ordered.findIndex(run=>run.marking_run_id==='correction-1'));
 });
