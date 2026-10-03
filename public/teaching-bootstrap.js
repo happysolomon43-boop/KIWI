@@ -1,46 +1,53 @@
 const BOOTSTRAP_KEY = '__KIWI_TEACHING_FEATURE_BOOTSTRAP__';
+const BOOTSTRAP_VERSION = '20261003-visible-features-1';
 
-async function waitForEstablishedTeachingShell() {
-  const deadline = Date.now() + 30000;
+async function waitForEstablishedTeachingRegistries() {
+  const deadline = Date.now() + 15000;
 
   while (Date.now() < deadline) {
+    const apiReady = typeof window.KIWI_API_CLIENT?.kiwiApiRequest === 'function';
     const navigationReady = typeof window.KIWITeachingNavigation?.register === 'function';
     const coursesReady = typeof window.KIWITeachingCourses?.registerSection === 'function';
-    const visibleShellReady = Boolean(document.querySelector('#teachingApp .teaching-view'));
-    const sessionFailed = Boolean(document.getElementById('teachingSessionBack'));
 
-    if (navigationReady && coursesReady && visibleShellReady) return true;
-    if (sessionFailed) return false;
-
-    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    if (apiReady && navigationReady && coursesReady) return true;
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
   }
 
-  throw new Error('Established Teaching shell did not become ready in time.');
+  throw new Error('Established Teaching registries did not become ready in time.');
 }
 
 async function bootstrapTeachingFeatures() {
   const state = window[BOOTSTRAP_KEY];
-  if (state === 'loading' || state === 'ready') return;
+  if (state === 'loading' || state === 'ready' || state === 'degraded') return;
 
   window[BOOTSTRAP_KEY] = 'loading';
+  document.documentElement.dataset.teachingFeatures = 'loading';
 
   try {
-    const shellReady = await waitForEstablishedTeachingShell();
-    if (!shellReady) {
-      window[BOOTSTRAP_KEY] = 'session-unavailable';
-      return;
+    await waitForEstablishedTeachingRegistries();
+
+    // Results is useful, but it must never be allowed to hide every other
+    // accepted Teaching information surface if its module has a local defect.
+    let resultsReady = true;
+    try {
+      await import(`/teaching-d15.js?v=${BOOTSTRAP_VERSION}`);
+    } catch (error) {
+      resultsReady = false;
+      console.error('[KIWI Teaching] Results module failed to load; continuing with the remaining Teaching surfaces.', error);
     }
 
-    // The original Teaching shell is the only presentation owner. Results and
-    // the D23 information surfaces extend its existing registries only after
-    // that shell is visibly ready.
-    await import('/teaching-d15.js');
-    await import('/teaching-original-bridge.js');
+    // This bridge only extends the established original-shell registries. It
+    // does not own or replace the Teaching shell.
+    await import(`/teaching-original-bridge.js?v=${BOOTSTRAP_VERSION}`);
 
-    window[BOOTSTRAP_KEY] = 'ready';
-    window.dispatchEvent(new CustomEvent('kiwi:teaching-features-ready'));
+    window[BOOTSTRAP_KEY] = resultsReady ? 'ready' : 'degraded';
+    document.documentElement.dataset.teachingFeatures = window[BOOTSTRAP_KEY];
+    window.dispatchEvent(new CustomEvent('kiwi:teaching-features-ready', {
+      detail: { resultsReady },
+    }));
   } catch (error) {
     window[BOOTSTRAP_KEY] = 'failed';
+    document.documentElement.dataset.teachingFeatures = 'failed';
     console.error('[KIWI Teaching] Original-shell feature bootstrap failed.', error);
   }
 }

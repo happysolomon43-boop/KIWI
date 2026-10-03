@@ -8,17 +8,18 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '../../..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('Teaching-only bootstrap loads Results before the original-shell information bridge', () => {
+test('Teaching-only bootstrap attempts Results before the original-shell information bridge', () => {
   const bootstrap = read('public/teaching-bootstrap.js');
-  const d15 = bootstrap.indexOf("import('/teaching-d15.js')");
-  const bridge = bootstrap.indexOf("import('/teaching-original-bridge.js')");
-  assert.ok(d15 >= 0, 'D15 Results/Record projection must load for Teaching');
-  assert.ok(bridge > d15, 'original-shell information bridge must load after D15');
+  const d15 = bootstrap.indexOf('`/teaching-d15.js?v=${BOOTSTRAP_VERSION}`');
+  const bridge = bootstrap.indexOf('`/teaching-original-bridge.js?v=${BOOTSTRAP_VERSION}`');
+  assert.ok(d15 >= 0, 'D15 Results/Record projection must remain part of Teaching');
+  assert.ok(bridge > d15, 'original-shell information bridge must load after the D15 attempt');
+  assert.match(bootstrap, /resultsReady = false/);
 
   const runtime = read('public/kiwi-runtime-config.js');
-  assert.match(runtime, /import\('\/teaching-bootstrap\.js'\)/);
-  assert.doesNotMatch(runtime, /import\('\/teaching-d15\.js'\)/);
-  assert.doesNotMatch(runtime, /import\('\/teaching-original-bridge\.js'\)/);
+  assert.match(runtime, /import\('\/teaching-bootstrap\.js\?v=20261003-visible-features-1'\)/);
+  assert.doesNotMatch(runtime, /import\('\/teaching-d15\.js/);
+  assert.doesNotMatch(runtime, /import\('\/teaching-original-bridge\.js/);
 });
 
 test('original Teaching shell exposes accepted secondary and Course surfaces without replacing the shell', () => {
