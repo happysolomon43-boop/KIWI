@@ -1,0 +1,18 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const root=path.resolve(__dirname,'..');const read=p=>fs.readFileSync(path.join(root,p),'utf8');
+const {D23_TASK_IDS,assertD23TaskAccounting}=require('../teaching/d23/task-accounting');
+const {PRIMARY_NAV,SECONDARY_NAV,COURSE_NAV}=require('../teaching/d23/contracts');
+assertD23TaskAccounting();
+assert.deepEqual(D23_TASK_IDS,[...Array.from({length:25},(_,i)=>`TCH-${String(479+i).padStart(4,'0')}`),'TCH-0911']);
+assert.deepEqual(PRIMARY_NAV.map(x=>x.label),['Today','Courses','Calendar','Work','Record']);
+assert.deepEqual(COURSE_NAV.map(x=>x.label),['Overview','Course Plan','Work','Results','Teacher']);
+assert.deepEqual(SECONDARY_NAV.map(x=>x.label),['Requests','Archived Courses','Create Course']);
+const contracts=read('teaching/d23/contracts.js');for(const marker of ['assembleStudentFactPack','TPF-19','UNQUALIFIED_UNTIL_D30','CONFLICTED_FACTS','SURFACE_CONFLICT_AND_HANDOFF','IMPROMPTU_TEST','studyPackCollection','notificationDeepLink'])assert.ok(contracts.includes(marker),marker);
+const service=read('teaching/d23/service.js');for(const marker of ['singleTeachingTimetable:true','hiddenImpromptuAssessmentsExcluded:true','teacherNotesExposed:false','D20_GRADEBOOK','D13_SKM','D21_PROGRESSION','mainKiwiStudyCollection:true','cardSelectionOwner:\'D27_NOT_D23\''])assert.ok(service.includes(marker),marker);
+assert.doesNotMatch(service,/insert\s+into|update\s+public\.|delete\s+from/i,'D23 may not become a persistence owner.');
+const ui=read('teaching/d23/ui.js');for(const marker of ['mobile-dock','The sole Teaching timetable','No second timetable','Nothing is pulling at you','Teacher notes and internal engines are deliberately absent','Learning Analysis is separate','Choose an existing KIWI Subject'])assert.ok(ui.includes(marker),marker);
+for(const hidden of ['Student Knowledge Model</a>','Pedagogy Engine</a>','Assessment Blueprint</a>','Evidence Event</a>'])assert.ok(!ui.includes(hidden),hidden);
+const routes=read('teaching/d23/routes.js'),d17=read('teaching/d17/routes.js');for(const marker of ['/today/view','/courses/view','/calendar/view','/work/view','/record/view','/requests/view','/archive/view','/study/view','/courses/:id/overview/view','/classes/:id/event/view'])assert.ok(routes.includes(marker),marker);assert.match(d17,/mountD23Routes/);assert.match(d17,/d22.*d23/s);
+const docs=read('docs/teaching/d23-information-architecture.md');assert.match(docs,/TCH-0479/);assert.match(docs,/TCH-0503/);assert.match(docs,/TCH-0911/);assert.match(docs,/no migration/i);
+console.log(JSON.stringify({delivery:'D23',taskCount:D23_TASK_IDS.length,status:'PASS',primaryNavigation:PRIMARY_NAV.map(x=>x.label),courseNavigation:COURSE_NAV.map(x=>x.label),authority:{calendar:'D09',coursePlan:'D08',work:'D16',assessment:'D17/D19',gradebook:'D20',progression:'D21',teacher:'D22',translation:'TPF-19 FACT PACK PATTERN; MODEL ROUTE HELD UNTIL D30'},persistence:'NONE'},null,2));
