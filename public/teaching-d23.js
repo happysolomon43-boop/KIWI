@@ -211,7 +211,18 @@ async function renderTeacher({ course, container }) {
         const prepare = action('Prepare Teacher', async () => { prepare.disabled = true; setStatus(note, 'Preparing Teacher…'); try { await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/teacher/ensure`, { method:'POST', body:{ broadStylePreference:select.value } }); await load(); } catch (error) { setStatus(note, error.message || 'Teacher could not be prepared.', 'error'); } finally { prepare.disabled = false; } }, { primary:true });
         card.append(add($('div', 'ti-form'), field, prepare, note)); page.append(card, teacherBoundaries()); return;
       }
-      page.append(add($('section', 'ti-teacher-identity'), add($('div'), $('div', 'ti-kicker', 'Your Course Teacher'), $('h2', '', data.teacher.displayName || 'KIWI Teacher'), $('p', '', `${data.teacher.styleDescription || 'KIWI Teacher'}. ${data.teacher.aiDisclosure || 'This is an AI Teacher in KIWI Teaching.'}`)), $('span', 'ti-ai-badge', 'AI Teacher'));
+      page.append(
+        add(
+          $('section', 'ti-teacher-identity'),
+          add(
+            $('div'),
+            $('div', 'ti-kicker', 'Your Course Teacher'),
+            $('h2', '', data.teacher.displayName || 'KIWI Teacher'),
+            $('p', '', `${data.teacher.styleDescription || 'KIWI Teacher'}. ${data.teacher.aiDisclosure || 'This is an AI Teacher in KIWI Teaching.'}`),
+          ),
+          $('span', 'ti-ai-badge', 'AI Teacher'),
+        ),
+      );
       const layout = $('div', 'ti-teacher-layout');
       const preferences = $('section', 'ti-card'); preferences.append($('div', 'ti-kicker', 'Interaction preferences'), $('h3', '', 'How your Teacher communicates'), $('p', '', 'These preferences adjust presentation without changing Teacher identity, pedagogy rules, marks or academic standard.'));
       const form = $('div', 'ti-form'); const profile = data.interactionProfile || {};
@@ -243,8 +254,40 @@ async function enhanceCourseOverview() {
   try {
     const data = await kiwiApiRequest(`/teaching/information/courses/${encodeURIComponent(courseId)}/overview`); if (!section.isConnected || request !== state.overviewRequest) return; section.replaceChildren();
     const grid = $('div', 'ti-overview__grid'); grid.append(overviewCell('Current topic', data.currentTopic || 'Course Plan', data.phase ? `Phase · ${human(data.phase)}` : ''), overviewCell('Next Class', data.nextClass?.title || 'No Class scheduled', data.nextClass?.startsAt ? dateTime(data.nextClass.startsAt) : ''), overviewCell('Teacher', data.teacher?.displayName || 'Teacher setup', data.teacher ? 'Open Teacher for style and interaction options.' : '')); section.append(grid);
-    const panels = $('div', 'ti-grid'); const assessment = $('article', 'ti-card'); assessment.append($('div', 'ti-kicker', 'Next assessment'), $('h3', '', data.nextAssessment?.title || 'No announced assessment'), $('p', '', data.nextAssessment?.startsAt ? dateTime(data.nextAssessment.startsAt) : 'Only legitimately visible assessments appear here. Hidden surprise assessments are not previewed.'));
-    const work = $('article', 'ti-card'); work.append($('div', 'ti-kicker', 'Important Work'), $('h3', '', data.importantWork?.length ? `${data.importantWork.length} active ${data.importantWork.length === 1 ? 'item' : 'items'}` : 'Nothing urgent')); const workRows = $('div'); (data.importantWork || []).slice(0,3).forEach((item) => workRows.append(add($('div', 'ti-work-row'), $('strong', '', item.title || 'Course Work'), $('span', '', item.deadline?.dueAt ? dateTime(item.deadline.dueAt) : human(item.lifecycleState || 'Active')))); if (!workRows.childElementCount) workRows.append($('p', '', 'No active Work currently requires attention.')); work.append(workRows); panels.append(assessment, work); section.append(panels);
+    const panels = $('div', 'ti-grid');
+    const assessment = $('article', 'ti-card');
+    assessment.append(
+      $('div', 'ti-kicker', 'Next assessment'),
+      $('h3', '', data.nextAssessment?.title || 'No announced assessment'),
+      $('p', '', data.nextAssessment?.startsAt
+        ? dateTime(data.nextAssessment.startsAt)
+        : 'Only legitimately visible assessments appear here. Hidden surprise assessments are not previewed.'),
+    );
+    const work = $('article', 'ti-card');
+    work.append(
+      $('div', 'ti-kicker', 'Important Work'),
+      $('h3', '', data.importantWork?.length
+        ? `${data.importantWork.length} active ${data.importantWork.length === 1 ? 'item' : 'items'}`
+        : 'Nothing urgent'),
+    );
+    const workRows = $('div');
+    (data.importantWork || []).slice(0, 3).forEach((item) => {
+      workRows.append(
+        add(
+          $('div', 'ti-work-row'),
+          $('strong', '', item.title || 'Course Work'),
+          $('span', '', item.deadline?.dueAt
+            ? dateTime(item.deadline.dueAt)
+            : human(item.lifecycleState || 'Active')),
+        ),
+      );
+    });
+    if (!workRows.childElementCount) {
+      workRows.append($('p', '', 'No active Work currently requires attention.'));
+    }
+    work.append(workRows);
+    panels.append(assessment, work);
+    section.append(panels);
     (data.warnings || []).forEach((warning) => section.append($('div', 'ti-warning', warning.message || 'This Course needs attention.')));
     section.append(add($('div', 'ti-actions'), action('Course Materials', () => showMaterials(courseId)), action('Study Packs', () => { state.studyCourseId = courseId; nav.open('study-packs'); }), action('Teacher', () => openCourse(courseId, 'teacher')), action('Requests', () => nav.open('requests'))));
   } catch (error) { section.replaceChildren($('div', 'ti-error', error.message || 'Current Course position is temporarily unavailable.')); }

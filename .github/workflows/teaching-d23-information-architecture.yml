@@ -37,6 +37,10 @@ jobs:
           node --check teaching/d23/ui.js
           node --check teaching/d23/task-accounting.js
           node --check teaching/d17/routes.js
+          node --check public/teaching-d09.js
+          node --check public/teaching-d15.js
+          node --check public/teaching-d16.js
+          node --check public/teaching-d23.js
           npm run verify:teaching:d23
       - name: D01-D22 predecessor verifiers
         run: for n in $(seq -w 1 22); do npm run verify:teaching:d$n; done
