@@ -9,14 +9,20 @@ const root = path.resolve(__dirname, '../../..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const exists = (relative) => fs.existsSync(path.join(root, relative));
 
-test('original Teaching module stack owns D23 information surfaces directly', () => {
+test('original Teaching module stack owns D15 and D23 surfaces directly in deterministic order', () => {
   const d16 = read('public/teaching-d16.js');
   const runtime = read('public/kiwi-runtime-config.js');
+  const d15Import = d16.indexOf("import('./teaching-d15.js')");
+  const d23Import = d16.indexOf("import('./teaching-d23.js')");
 
-  assert.match(d16, /import\('\.\/teaching-d23\.js'\)/);
-  assert.doesNotMatch(runtime, /teaching-bootstrap|teaching-original-bridge|teaching-d23\.js/);
+  assert.ok(d15Import >= 0, 'D15 Results/Record must load from the original Teaching module stack');
+  assert.ok(d23Import > d15Import, 'D23 must load after D15 so the native dock has a stable Record destination');
+  assert.match(d16, /if\(!window\.KIWITeachingD15\) await import\('\.\/teaching-d15\.js'\)/);
+  assert.match(d16, /await import\('\.\/teaching-d23\.js'\)/);
+  assert.doesNotMatch(runtime, /teaching-bootstrap|teaching-original-bridge|teaching-d15\.js|teaching-d23\.js/);
   assert.equal(exists('public/teaching-bootstrap.js'), false);
   assert.equal(exists('public/teaching-original-bridge.js'), false);
+  assert.equal(exists('public/teaching-d15.js'), true);
   assert.equal(exists('public/teaching-d23.js'), true);
 });
 

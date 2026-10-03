@@ -45,9 +45,18 @@ async function renderCourseSummary({course,container,openSection}){try{const dat
 nav.register({id:'work',label:'Work',description:'Homework, independent work and corrections',icon:'✓',menuIcon:'overview',onSelect:renderGlobal});
 courses.registerSection({id:'work',label:'Work',order:42,render:renderCourse,renderSummary:renderCourseSummary});
 
-// D23 is a first-class dependency of the original Teaching module stack.
-// Loading it here keeps the original shell as the sole UI owner and removes
-// any dependency on shared runtime bootstrap/bridge code.
-import('./teaching-d23.js').catch((error)=>{
-  console.error('[KIWI Teaching] D23 information surfaces failed to load.',error);
-});
+// Keep accepted Teaching feature surfaces inside the original module stack.
+// D15 must register Results/Record before D23 composes the final primary dock.
+async function loadNativeTeachingSurfaces(){
+  try{
+    if(!window.KIWITeachingD15) await import('./teaching-d15.js');
+  }catch(error){
+    console.error('[KIWI Teaching] D15 Results/Record surfaces failed to load.',error);
+  }
+  try{
+    await import('./teaching-d23.js');
+  }catch(error){
+    console.error('[KIWI Teaching] D23 information surfaces failed to load.',error);
+  }
+}
+loadNativeTeachingSurfaces();
