@@ -216,7 +216,7 @@ test('D09 repository invalidates prior timetable state and revalidates authorita
   assert.match(src,/priorChildrenFull=previous/);
 });
 
-test('D09 Calendar is exposed through the Teaching side menu navigation registry',()=>{
+test('D09 Calendar is exposed through the Teaching side menu navigation registry as the composed timetable',()=>{
   const shell=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching.js'),'utf8');
   const d09ui=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-d09.js'),'utf8');
   assert.match(shell,/\.\.\.\[\.\.\.teachingNavigationItems\.values\(\)\]/);
@@ -224,7 +224,10 @@ test('D09 Calendar is exposed through the Teaching side menu navigation registry
   assert.match(shell,/renderSectionMenu\(\)/);
   assert.match(d09ui,/id:'calendar'/);
   assert.match(d09ui,/menuIcon:'calendar'/);
-  assert.match(d09ui,/description:'Classes, timetable and proposals'/);
+  assert.match(d09ui,/description:'Classes and assessments in one timetable'/);
+  assert.match(d09ui,/\/teaching\/information\/calendar/);
+  assert.match(d09ui,/Classes and announced assessments share one timetable/);
+  assert.match(d09ui,/preactivationProposals/);
 });
 
 test('Teaching bottom dock stays hidden until four destinations exist and reserves slot five for Menu',()=>{
