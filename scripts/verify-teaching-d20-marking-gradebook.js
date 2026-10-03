@@ -25,6 +25,7 @@ const migrations=[
   'migrations/20261002_teaching_d20_gradebook_lineage_hardening.sql',
   'migrations/20261002_teaching_d20_policy_guards.sql',
   'migrations/20261002_teaching_d20_service_role_grant_hardening.sql',
+  'migrations/20261003_teaching_d20_corrective_academic_guards.sql',
 ];
 for(const migration of migrations)assert(exists(migration),`missing migration ${migration}`);
 const setup=read('scripts/setup-teaching-integration-db.js');
@@ -32,15 +33,23 @@ for(const migration of migrations)assert(setup.includes(migration),`isolated rec
 const grantHardening=read('migrations/20261002_teaching_d20_service_role_grant_hardening.sql');
 assert(grantHardening.includes('REVOKE UPDATE, DELETE, TRUNCATE ON'),'production default service-role mutation grants must be explicitly revoked');
 assert(grantHardening.includes('GRANT UPDATE ON public.teaching_assessment_results, public.teaching_grade_appeals TO service_role'),'only D20 result and appeal state carriers may retain service-role UPDATE');
+const academicGuards=read('migrations/20261003_teaching_d20_corrective_academic_guards.sql');
+assert(academicGuards.includes('teaching_d20_result_snapshot_integrity_guard'),'TCH-0396 final-response snapshot integrity database guard missing');
+assert(academicGuards.includes('teaching_d20_follow_through_authorization_guard'),'TCH-0397/TCH-0399 follow-through database guard missing');
+assert(academicGuards.includes('proposed_credit <= criterion_max_marks'),'criterion upper-bound database constraint missing');
 
 const contracts=read('teaching/d20/contracts.js');
 const intelligence=read('teaching/d20/intelligence.js');
 const authority=read('teaching/d20/authority-service.js');
+const corrected=read('teaching/d20/corrected-authority-service.js');
 const routes=read('teaching/d20/routes.js');
+const index=read('teaching/d20/index.js');
 const repository=read('teaching/repositories/d20-gradebook.js');
 const unit=read('tests/teaching/unit/d20-marking-gradebook.test.js');
+const correctiveTests=read('tests/teaching/unit/d20-corrective-hardening.test.js');
 const authorityTests=read('tests/teaching/unit/d20-authority-reflow.test.js');
 const schemaTests=read('tests/teaching/integration/d20-marking-gradebook-schema.test.js');
+const correctiveSchemaTests=read('tests/teaching/integration/d20-corrective-academic-guards-schema.test.js');
 
 assert(TPF15.family==='TPF-15'&&TPF15.sha256==='a088a74f044082abb126952939bc3fe627b273b1cfea166833fae87afbc8dcdb','TPF-15 frozen binding drifted');
 assert(TPF16.family==='TPF-16'&&TPF16.sha256==='278c45b97de8ceff9e6307543bea1072d51d244ccf21b7b16ca8a98d3c5daeda','TPF-16 frozen binding drifted');
@@ -56,13 +65,25 @@ assert(authority.includes('TEACHING_D20_APPEAL_DIRECTION_AUTHORITY_REQUIRED'),'c
 assert(authority.includes("item.item_state)==='INVALIDATED'"),'TCH-0425 reflow must bind to D17 INVALIDATED item state');
 assert(authority.includes('ITEM_INVALIDATION_RECALCULATION'),'invalidation reflow must emit an explicit correction reason');
 assert(authority.includes("owner:'D21'")&&authority.includes('gpaMutationByD20:false'),'D20 must hand corrected truth downstream without taking D21 GPA authority');
-assert(routes.includes("require('./authority-service')"),'runtime routes must use the authoritative D20 service boundary');
+
+assert(corrected.includes('TEACHING_D20_RESPONSE_CAPTURE_INTEGRITY_VIOLATION'),'TCH-0396 response-capture integrity fail-closed guard missing');
+assert(corrected.includes('TEACHING_D20_FOLLOW_THROUGH_NOT_AUTHORIZED'),'TCH-0397/TCH-0399 locked-rubric follow-through guard missing');
+assert(corrected.includes('TEACHING_D20_TPF15_CRITERION_COVERAGE_INVALID'),'TCH-0760 criterion coverage gate missing');
+assert(corrected.includes('TEACHING_D20_DEDUCTION_RESOLUTION_REQUIRED'),'TCH-0396 unresolved deduction fail-closed gate missing');
+assert(corrected.includes("run_kind==='AUTHORIZED_CORRECTION'")&&corrected.includes('sort(newestFirst)'),'repeat-appeal corrections must select the newest authorized correction');
+assert(routes.includes("require('./corrected-authority-service')"),'runtime routes must use the corrected authoritative D20 service boundary');
+assert(index.includes("require('./corrected-authority-service')"),'D20 public module must export the corrected authoritative service boundary');
 assert(routes.includes('/results/:resultId/recalculate-invalidation'),'runtime must expose the authoritative invalidation recalculation trigger');
 assert(!routes.includes('reviewDirectionPolicy:direction'),'routes must not inject request-owned appeal direction');
 
 for(const table of ['teaching_grading_policies','teaching_assessment_results','teaching_marking_runs','teaching_marking_criterion_judgments','teaching_grade_appeals','teaching_gradebook_entries','teaching_topic_score_snapshots','teaching_course_result_snapshots','teaching_grade_change_audit'])assert(repository.includes(table),`authoritative repository missing ${table}`);
 
 assert(unit.includes('assessment frequency cannot inflate a fixed category budget'),'TCH-0424 fixed-weight regression test missing');
+assert(correctiveTests.includes('lost/corrupted evidence'),'TCH-0396 corrupted-response regression test missing');
+assert(correctiveTests.includes('follow-through credit is accepted only'),'TCH-0397/TCH-0399 follow-through authorization regression test missing');
+assert(correctiveTests.includes('complete authorized locked-rubric scope'),'TCH-0760 exact criterion-coverage regression test missing');
+assert(correctiveTests.includes('negative-marking triggers fail closed'),'unresolved deterministic deduction regression test missing');
+assert(correctiveTests.includes('newest authorized correction first'),'repeat-appeal latest-correction regression test missing');
 assert(authorityTests.includes('TCH-0425 invalidated question recalculates'),'TCH-0425 invalidation recalculation regression test missing');
 const appealTests=read('tests/teaching/unit/d20-appeal-recalculation.test.js');
 const moderationTests=read('tests/teaching/unit/d20-moderation-escalation.test.js');
@@ -74,10 +95,12 @@ assert(unit.includes('material marker disagreement escalates and is never averag
 assert(schemaTests.includes('teaching_gradebook_entries'),'D20 schema reconstruction test missing Gradebook coverage');
 assert(schemaTests.includes("grantee in ('anon','authenticated')"),'D20 schema/security test must exercise browser/authenticated authority boundaries');
 assert(schemaTests.includes("grantee='service_role'")&&schemaTests.includes("privilege_type in ('UPDATE','DELETE','TRUNCATE')"),'D20 schema/security test must enforce narrow service-role mutation grants');
+assert(correctiveSchemaTests.includes('teaching_d20_result_snapshot_integrity_guard'),'corrective final-snapshot database guard integration test missing');
+assert(correctiveSchemaTests.includes('teaching_d20_follow_through_authorization_guard'),'corrective follow-through database guard integration test missing');
 
 const workflow='.github/workflows/teaching-d20-marking-gradebook.yml';
 assert(exists(workflow),'D20 same-head CI workflow is missing');
 const ci=read(workflow);
-for(const required of ['verify:teaching:d20','d20-marking-gradebook.test.js','d20-authority-reflow.test.js','d20-appeal-recalculation.test.js','d20-moderation-escalation.test.js','test:teaching:integration','build:web'])assert(ci.includes(required),`D20 CI is missing ${required}`);
+for(const required of ['verify:teaching:d20','d20-marking-gradebook.test.js','d20-corrective-hardening.test.js','d20-authority-reflow.test.js','d20-appeal-recalculation.test.js','d20-moderation-escalation.test.js','d20-corrective-academic-guards-schema.test.js','test:teaching:integration','build:web'])assert(ci.includes(required),`D20 CI is missing ${required}`);
 
-console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 4 migrations, TPF-15/16 authority boundaries, QA invariants, production grant hardening and same-head CI are registered.`);
+console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 5 migrations, TPF-15/16 authority boundaries, corrective academic guards, QA invariants, production grant hardening and same-head CI are registered.`);
