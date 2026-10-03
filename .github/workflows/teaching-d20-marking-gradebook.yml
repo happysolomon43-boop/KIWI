@@ -15,7 +15,7 @@ on:
       - 'package.json'
       - '.github/workflows/teaching-d20-marking-gradebook.yml'
   push:
-    branches: [main, 'teaching/d20-formal-marking-gradebook']
+    branches: [main, 'teaching/d20-formal-marking-gradebook', 'teaching/d20-canonical-marking-safety-hardening']
     paths:
       - 'teaching/d20/**'
       - 'teaching/repositories/d20-gradebook.js'
@@ -51,6 +51,7 @@ jobs:
           node --check teaching/repositories/d20-gradebook.js
           node --check scripts/verify-teaching-d20-marking-gradebook.js
           node --check tests/teaching/unit/d20-marking-gradebook.test.js
+          node --check tests/teaching/unit/d20-marking-safety-hardening.test.js
           node --check tests/teaching/unit/d20-authority-reflow.test.js
           node --check tests/teaching/unit/d20-appeal-recalculation.test.js
           node --check tests/teaching/unit/d20-moderation-escalation.test.js
@@ -62,6 +63,7 @@ jobs:
       - name: D20 focused authority and QA tests
         run: |
           node --test tests/teaching/unit/d20-marking-gradebook.test.js \
+            tests/teaching/unit/d20-marking-safety-hardening.test.js \
             tests/teaching/unit/d20-authority-reflow.test.js \
             tests/teaching/unit/d20-appeal-recalculation.test.js \
             tests/teaching/unit/d20-moderation-escalation.test.js

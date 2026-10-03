@@ -9,9 +9,9 @@ function policy(){return {grading_policy_id:'policy-1',version_no:1,category_wei
 test('TCH-0763 material high-stakes moderation disagreement preserves judgments and blocks finalization',async()=>{
   let result={assessment_result_id:'result-1',assessment_attempt_id:'attempt-1',assessment_id:'assessment-1',course_id:'course-1',category_key:'FINAL_EXAMINATION',marking_state:'MODERATING',release_state:'HELD',moderation_required:true,review_blocked:false,raw_earned_marks:null,raw_max_marks:null,raw_percentage:null,result_version:2};
   const item={package_item_id:'item-1',item_state:'ACTIVE',item_hash:'hash-1',response_family:'CONSTRUCTED',intended_marks:10,public_item_payload:{stem:'Explain.'},protected_marking_payload:{rubric:{rubric_ref:'rubric-1',criteria:[{criterion_id:'c1',criterion_max_marks:10,credit_precision:'exact_points'}]}}};
-  const response={assessment_response_id:'response-1',response_version:1,renderer_payload:{text:'Student answer'}};
-  const bundle={context:{assessment_type:'FINAL_EXAMINATION',assessment_id:'assessment-1',assessment_attempt_id:'attempt-1',assessment_package_id:'package-1',final_snapshot_ref:'attempt:1:final'},policy:policy(),items:[item],responseByItem:new Map([['item-1',response]])};
-  const runs=[{marking_run_id:'run-original',package_item_id:'item-1',run_kind:'TPF15_INITIAL',run_status:'ACCEPTED'}];
+  const response={assessment_response_id:'response-1',package_item_id:'item-1',response_version:1,renderer_payload:{text:'Student answer'}};
+  const bundle={context:{assessment_type:'FINAL_EXAMINATION',assessment_id:'assessment-1',assessment_attempt_id:'attempt-1',assessment_package_id:'package-1',attempt_state:'SUBMITTED',attempt_result_state:'AWAITING_MARKING',attempt_invalidation_reason:null,finalization_version:1,final_snapshot_ref:'attempt:1:final',final_snapshot:{finalized_by:'SUBMITTED',responses:[{package_item_id:'item-1',response_version:1,renderer_payload:{text:'Student answer'}}]}},policy:policy(),items:[item],responses:[response],responseByItem:new Map([['item-1',response]])};
+  const runs=[{marking_run_id:'run-original',package_item_id:'item-1',run_kind:'TPF15_INITIAL',run_status:'ACCEPTED',created_at:'2026-10-03T09:00:00.000Z'}];
   const judgmentByRun=new Map([['run-original',[{criterion_id:'c1',criterion_max_marks:10,proposed_credit:5,proposed_band_id:null,supported_credit_range:null,satisfaction:'partial',evidence_refs:['response-1'],evidence_summary:'Original rubric judgment',review_state:'ordinary',confidence:'high',alternative_valid_route_used:false,follow_through_applied:false,defect_flags:[]}]]]);
   let gradebookWrites=0;
   const repository={
@@ -21,7 +21,7 @@ test('TCH-0763 material high-stakes moderation disagreement preserves judgments 
     assessmentResultDetail:async()=>({result,runs,appeals:[]}),
     runsForResult:async()=>runs,
     judgmentsForRun:async(_student,runId)=>judgmentByRun.get(runId)||[],
-    appendRun:async(input)=>{const run={marking_run_id:`run-${runs.length+1}`,package_item_id:input.packageItemId,run_kind:input.runKind,run_status:input.runStatus,original_credit_visible:input.originalCreditVisible,raw_appeal_visible:input.rawAppealVisible,review_direction_visible:input.reviewDirectionVisible};runs.push(run);return {run,idempotent:false};},
+    appendRun:async(input)=>{const run={marking_run_id:`run-${runs.length+1}`,package_item_id:input.packageItemId,parent_run_id:input.parentRunId||null,run_kind:input.runKind,run_status:input.runStatus,created_at:`2026-10-03T09:00:0${runs.length+1}.000Z`,original_credit_visible:input.originalCreditVisible,raw_appeal_visible:input.rawAppealVisible,review_direction_visible:input.reviewDirectionVisible};runs.push(run);return {run,idempotent:false};},
     appendCriterionJudgments:async({runId,judgments})=>{judgmentByRun.set(runId,judgments);return judgments;},
     updateResult:async({patch})=>{result={...result,...patch,result_version:result.result_version+1};return result;},
     upsertGradebookVersion:async()=>{gradebookWrites+=1;throw new Error('must not write Gradebook while moderation is unresolved');},

@@ -28,7 +28,7 @@ test('D20 authority boundary never invents an appeal review direction while lock
   const projected=await service.ensurePolicy({id:'student-1'},'course-1',{});
   assert.equal(captured.appeal_policy.default_review_direction,null);
   assert.equal(projected.appealPolicy.default_review_direction,null);
-  assert.equal(service.authorityBoundary,'D20_POLICY_OWNED_APPEAL_AND_INVALIDATION_REFLOW_V1');
+  assert.equal(service.authorityBoundary,'D20_CANONICAL_MARKING_SAFETY_V2');
 });
 
 test('D20 rejects a configured appeal direction without explicit versioned authority',async()=>{
