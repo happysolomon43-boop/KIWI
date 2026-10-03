@@ -1,0 +1,65 @@
+.teaching-reliability-status {
+  position: fixed;
+  z-index: 10020;
+  left: 50%;
+  top: max(14px, env(safe-area-inset-top));
+  width: min(760px, calc(100vw - 28px));
+  transform: translateX(-50%);
+  padding: 12px 15px;
+  border: 1px solid rgba(223,245,235,.18);
+  border-radius: 14px;
+  background: rgba(9,23,17,.97);
+  color: #dcebe4;
+  box-shadow: 0 16px 44px rgba(0,0,0,.34);
+  font: 650 12px/1.5 Inter, system-ui, sans-serif;
+}
+.teaching-reliability-status[data-kind="offline"],
+.teaching-reliability-status[data-kind="error"] { border-left: 4px solid currentColor; }
+.teaching-reliability-status[data-kind="revalidating"],
+.teaching-reliability-status[data-kind="warning"] { border-left: 4px double currentColor; }
+.teaching-reliability-inline {
+  margin: 10px 18px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(223,245,235,.15);
+  border-radius: 12px;
+  background: rgba(0,0,0,.18);
+  color: #d8e8e0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.teaching-reliability-inline[data-kind="offline"] { border-left: 4px solid currentColor; }
+.teaching-recovery-draft {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid rgba(223,245,235,.14);
+  border-radius: 14px;
+  background: rgba(126,226,184,.055);
+}
+.teaching-recovery-draft strong { display: block; color: #dff3e9; font-size: 13px; }
+.teaching-recovery-draft p { margin: 4px 0 0; color: #93aaa0; font-size: 12px; line-height: 1.5; }
+.teaching-recovery-draft__actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.teaching-recovery-draft button {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(223,245,235,.14);
+  border-radius: 10px;
+  background: #7ee2b8;
+  color: #07140f;
+  font-weight: 750;
+  cursor: pointer;
+}
+.teaching-recovery-draft button:focus-visible { outline: 3px solid rgba(223,245,235,.72); outline-offset: 2px; }
+.teaching-recovery-draft .teaching-recovery-draft__discard { background: transparent; color: #cbdcd4; }
+@media (max-width: 640px) {
+  .teaching-recovery-draft { grid-template-columns: 1fr; }
+  .teaching-recovery-draft__actions { justify-content: stretch; }
+  .teaching-recovery-draft button { flex: 1 1 auto; }
+  .teaching-reliability-status { top: max(8px, env(safe-area-inset-top)); width: calc(100vw - 16px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .teaching-reliability-status, .teaching-recovery-draft { scroll-behavior: auto; }
+}
