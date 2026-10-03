@@ -9,11 +9,16 @@ const root = path.resolve(__dirname, '../../..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const exists = (relative) => fs.existsSync(path.join(root, relative));
 
-test('original Teaching module stack owns D23 information surfaces directly', () => {
-  const d16 = read('public/teaching-d16.js');
+test('original Teaching module stack hard-loads Work, Results and D23 information surfaces', () => {
+  const d16Entry = read('public/teaching-d16.js');
+  const d16Core = read('public/teaching-d16-core.js');
   const runtime = read('public/kiwi-runtime-config.js');
 
-  assert.match(d16, /import\('\.\/teaching-d23\.js'\)/);
+  assert.match(d16Entry, /import '\.\/teaching-d16-core\.js\?v=20261003-hard-load-1';/);
+  assert.match(d16Entry, /import '\.\/teaching-d15\.js\?v=20261003-hard-load-1';/);
+  assert.match(d16Entry, /import '\.\/teaching-d23\.js\?v=20261003-hard-load-1';/);
+  assert.doesNotMatch(d16Entry, /\bimport\s*\(/);
+  assert.match(d16Core, /nav\.register\(\{id:'work'/);
   assert.doesNotMatch(runtime, /teaching-bootstrap|teaching-original-bridge|teaching-d23\.js/);
   assert.equal(exists('public/teaching-bootstrap.js'), false);
   assert.equal(exists('public/teaching-original-bridge.js'), false);
