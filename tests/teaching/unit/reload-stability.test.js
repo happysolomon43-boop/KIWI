@@ -29,10 +29,15 @@ test('shared runtime config is presentation-neutral and never owns Teaching UI s
   assert.doesNotMatch(runtime, /\bimport\s*\(/);
 });
 
-test('original Teaching module stack loads D23 as a first-class dependency', () => {
-  const d16 = read('public/teaching-d16.js');
+test('original Teaching D16 entry hard-loads the accepted feature graph', () => {
+  const entry = read('public/teaching-d16.js');
+  const core = read('public/teaching-d16-core.js');
   const d23 = read('public/teaching-d23.js');
-  assert.match(d16, /import\('\.\/teaching-d23\.js'\)/);
+  assert.match(entry, /import '\.\/teaching-d16-core\.js\?v=20261003-hard-load-1';/);
+  assert.match(entry, /import '\.\/teaching-d15\.js\?v=20261003-hard-load-1';/);
+  assert.match(entry, /import '\.\/teaching-d23\.js\?v=20261003-hard-load-1';/);
+  assert.doesNotMatch(entry, /\bimport\s*\(/);
+  assert.match(core, /Teaching Work requires KIWI Teaching navigation and API client/);
   assert.match(d23, /window\.KIWITeachingNavigation/);
   assert.match(d23, /window\.KIWITeachingCourses/);
   assert.equal(exists('public/teaching-bootstrap.js'), false);
