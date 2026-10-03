@@ -13,6 +13,14 @@
   <link rel="stylesheet" href="/teaching-classroom.css" />
   <link rel="stylesheet" href="/teaching-d16.css" />
   <link rel="stylesheet" href="/teaching-d23-live.css" />
+  <style id="teachingPredecessorCompatibility">
+    /* D09 compatibility contract: the predecessor shell reserves mobile-dock space
+       when it temporarily owns a legacy .teaching-stage. D23 does not render that
+       stage as its primary workspace, so this selector is intentionally dormant. */
+    body[data-teaching-dock-visible="true"] .teaching-stage {
+      padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    }
+  </style>
 </head>
 <body>
   <div class="d23-shell">
