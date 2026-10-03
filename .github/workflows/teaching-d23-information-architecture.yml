@@ -1,0 +1,72 @@
+name: Teaching D23 Information Architecture
+on:
+  pull_request:
+    paths:
+      - 'teaching/d23/**'
+      - 'teaching/d17/routes.js'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'docs/teaching/d23*'
+      - 'package.json'
+      - '.github/workflows/teaching-d23-information-architecture.yml'
+  push:
+    branches: [main, 'teaching/d23-information-architecture']
+    paths:
+      - 'teaching/d23/**'
+      - 'teaching/d17/routes.js'
+      - 'tests/teaching/**'
+      - 'scripts/verify-teaching-d*.js'
+      - 'docs/teaching/d23*'
+      - 'package.json'
+      - '.github/workflows/teaching-d23-information-architecture.yml'
+
+jobs:
+  d23:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - name: D23 syntax and canonical verifier
+        run: |
+          node --check teaching/d23/contracts.js
+          node --check teaching/d23/service.js
+          node --check teaching/d23/routes.js
+          node --check teaching/d23/ui.js
+          node --check teaching/d23/task-accounting.js
+          node --check teaching/d17/routes.js
+          npm run verify:teaching:d23
+      - name: D01-D22 predecessor verifiers
+        run: for n in $(seq -w 1 22); do npm run verify:teaching:d$n; done
+      - name: D23 focused unit tests
+        run: node --test tests/teaching/unit/d23-*.test.js
+      - name: Teaching unit regressions
+        run: npm run test:teaching
+      - name: Full unit regressions
+        run: npm test
+      - name: Web build
+        run: npm run build:web
+
+  d23-integration-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_PASSWORD: postgres, POSTGRES_USER: postgres, POSTGRES_DB: kiwi_teaching_test}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiwi_teaching_test
+      TEACHING_TEST_PROJECT_REF: local-d23-ci
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/setup-teaching-integration-db.js
+      - run: npm run test:teaching:integration
