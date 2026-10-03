@@ -3,7 +3,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const {
-  normalizeItemForD20,normalizeBundleForD20,scalarSelectedKey,
+  normalizeItemForD20,normalizeBundleForD20,scalarSelectedKey,assessmentBoundaryRepository,
 }=require('../../../teaching/d20/assessment-boundary-service');
 const {deterministicMarkObjective}=require('../../../teaching/d20/contracts');
 
@@ -84,4 +84,27 @@ test('TCH-0395 D18 multipart STRUCTURED and multiple selection remain interpreti
   assert.equal(structured.response_family,'CONSTRUCTED');
   assert.equal(multi.response_family,'CONSTRUCTED');
   assert.equal(mcqMulti.response_family,'CONSTRUCTED');
+});
+
+test('production frozen D20 repository can be adapted without Proxy invariant failure',async()=>{
+  const rawItem={
+    package_item_id:'item-1',item_state:'ACTIVE',response_family:'MCQ',intended_marks:1,
+    public_item_payload:{response_contract:{selection_mode:'SINGLE'}},
+    protected_marking_payload:{correct_answer:'opt-a'},
+  };
+  const rawResponse={package_item_id:'item-1',assessment_response_id:'r1',response_version:1,renderer_payload:{selected_option_ids:['opt-a']}};
+  const rawBundle=bundle({item:rawItem,response:rawResponse});
+  const repository={
+    marker:'production-frozen-repository',
+    async loadMarkingBundle(){return rawBundle;},
+    markerValue(){return this.marker;},
+  };
+  Object.freeze(repository);
+
+  const adapted=assessmentBoundaryRepository(repository);
+  assert.equal(Object.isFrozen(adapted),true);
+  assert.equal(adapted.markerValue(),'production-frozen-repository','delegated methods stay bound to the original authority object');
+  const normalized=await adapted.loadMarkingBundle('student-1','attempt-1');
+  assert.equal(normalized.responseByItem.get('item-1').renderer_payload.answer,'opt-a');
+  assert.equal(normalized.items[0].response_family,'MCQ');
 });
