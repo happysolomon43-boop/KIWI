@@ -3,6 +3,7 @@ const {mountD18Routes}=require('../d18/routes');
 const {createD19AssessmentTypeService}=require('../d19/service');
 const {mountD20Routes}=require('../d20/routes');
 const {mountD21Routes}=require('../d21/routes');
+const {mountD22Routes}=require('../d22/routes');
 function mountD17Routes(router,{foundation,sendError}={}){
   const d17=foundation?.d17?.service;if(!d17)return null;let ready=false;
   const service=createD19AssessmentTypeService({d17Service:d17,d17Repository:foundation.d17.repository,d08Repository:foundation.d08?.repository||null,d11Repository:foundation.d11?.repository||null,d14Service:foundation.d14?.service||null,policy:foundation.policy});
@@ -26,6 +27,7 @@ function mountD17Routes(router,{foundation,sendError}={}){
   const d18=mountD18Routes(router,{foundation,sendError,requireD17Ready:requireReady});
   const d20=mountD20Routes(router,{foundation,sendError,d19Service:service,requireD17Ready:requireReady});
   const d21=mountD21Routes(router,{foundation,sendError,d17Service:service,d19Service:service,d20Service:d20?.service||null,requireD17Ready:requireReady});
-  return Object.freeze({requireReady,d18,d19:service,d20,d21});
+  const d22=mountD22Routes(router,{foundation,sendError});
+  return Object.freeze({requireReady,d18,d19:service,d20,d21,d22});
 }
 module.exports={mountD17Routes};
