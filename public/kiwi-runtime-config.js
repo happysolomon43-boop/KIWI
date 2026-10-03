@@ -27,21 +27,30 @@
     webSocketBaseUrl,
   });
 
-  // Teaching's established shell owns presentation. Load accepted read-only
-  // information surfaces only after the shell modules have established their
-  // registries. Results/Record is loaded first so the bridge can extend the
-  // same Course/global navigation without replacing it.
-  if (global.document?.documentElement?.dataset?.app === 'kiwi-teaching') {
-    global.addEventListener('DOMContentLoaded', () => {
-      import('/teaching-d15.js')
-        .catch((error) => {
-          console.error('[KIWI Teaching D15] Record projection failed to load.', error);
-          return null;
-        })
-        .then(() => import('/teaching-original-bridge.js'))
-        .catch((error) => {
-          console.error('[KIWI Teaching] Original-shell information surfaces failed to load.', error);
-        });
-    }, { once: true });
+  if (global.document?.documentElement?.dataset?.app !== 'kiwi-teaching') return;
+
+  // One-time escape hatch for browser tabs that restore the rejected D23
+  // replacement document from memory/cache. That document packaged two UI
+  // owners against the same Teaching DOM. Redirect it before either can mount.
+  const staleReplacementDocument = Boolean(
+    global.document.querySelector('.d23-shell') ||
+    global.document.querySelector('link[href*="teaching-d23-live.css"]') ||
+    global.document.querySelector('script[src*="teaching-d23-live.js"]')
+  );
+
+  if (staleReplacementDocument) {
+    const current = new URL(global.location.href);
+    if (current.searchParams.get('teaching-ui') !== 'original-20261003') {
+      const clean = new URL('/teaching.html', global.location.origin);
+      clean.searchParams.set('teaching-ui', 'original-20261003');
+      global.location.replace(clean.href);
+      return;
+    }
   }
+
+  // Teaching-specific feature startup lives in its own module. The shared
+  // runtime config does not own Teaching presentation or feature registration.
+  import('/teaching-bootstrap.js').catch((error) => {
+    console.error('[KIWI Teaching] Feature bootstrap module failed to load.', error);
+  });
 })(window);
