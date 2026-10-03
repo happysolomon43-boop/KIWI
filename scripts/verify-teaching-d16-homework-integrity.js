@@ -11,7 +11,7 @@ assert(tasks.length===33&&new Set(tasks).size===33,'D16 task census must remain 
 const required=[
   'teaching/d16/contracts.js','teaching/d16/service.js','teaching/d16/intelligence.js','teaching/d16/runtime.js','teaching/d16/routes.js','teaching/d16/index.js',
   'teaching/repositories/d16-assignments.js','migrations/20261001_teaching_d16_homework_integrity.sql',
-  'public/teaching-d16.js','public/teaching-d16.css','tests/teaching/unit/d16-homework-integrity.test.js',
+  'public/teaching-d16.js','public/teaching-d16-core.js','public/teaching-d16.css','tests/teaching/unit/d16-homework-integrity.test.js',
   'tests/teaching/integration/d16-homework-integrity-schema.test.js','docs/teaching/d16-homework-integrity.md',
   '.github/workflows/teaching-d16-homework-integrity.yml',
 ];
@@ -85,7 +85,7 @@ assert(/ASSIGNMENT_EXTENSION:[^\n]+owner:'work'[^\n]+implementedOwner:true/.test
 const foundation=read('teaching/index.js');
 for(const token of ['createD16AssignmentRepository','d16Intelligence','workRequestOwner:d16Repository','planningSignals','registerD16Runtime'])assert(foundation.includes(token),`Teaching foundation D16 wiring missing ${token}`);
 
-const ui=read('public/teaching-d16.js');
+const ui=read('public/teaching-d16.js')+'\n'+read('public/teaching-d16-core.js');
 for(const token of ["id:'work'","label:'Work'","Homework & independent work",'/teaching/work','/work`','/draft','/submit','/assistance','/correction','/extension-request','Signals and detector telemetry are not shown as guilt scores'])assert(ui.includes(token),`D16 UI missing ${token}`);
 assert(!/guiltProbability\s*=\s*[0-9]/i.test(ui),'D16 UI must not manufacture guilt probability.');
 const html=read('public/teaching.html');
