@@ -16,9 +16,18 @@ function mountD23Routes(router,{foundation,sendError,d19Service,d20Service,d21Se
 
   jsonRoute('/information/today',req=>service.today(req.user,{currentTimeZone:tz(req)}),'Failed to load Teaching Today.');
   jsonRoute('/information/courses',req=>service.courses(req.user),'Failed to load Teaching Courses workspace.');
+  jsonRoute('/information/archive',req=>service.archivedCourses(req.user),'Failed to load Archived Teaching Courses.');
   jsonRoute('/information/calendar',req=>service.calendar(req.user,{from:req.query.from||null,to:req.query.to||null,currentTimeZone:tz(req)}),'Failed to load Teaching Calendar workspace.');
+  jsonRoute('/information/work',req=>service.globalWork(req.user),'Failed to load Teaching Work workspace.');
   jsonRoute('/information/record',req=>service.record(req.user,{semesterId:req.query.semesterId||null}),'Failed to load Teaching Record workspace.');
+  jsonRoute('/information/requests',req=>service.requests(req.user),'Failed to load Teaching Requests workspace.');
   jsonRoute('/information/study',req=>service.study(req.user,{courseId:req.query.courseId||null,classId:req.query.classId||null}),'Failed to load Teaching Study collection.');
+  jsonRoute('/information/courses/:id/overview',req=>service.courseOverview(req.user,req.params.id),'Failed to load Course Overview.');
+  jsonRoute('/information/courses/:id/plan',req=>service.coursePlan(req.user,req.params.id),'Failed to load Course Plan.');
+  jsonRoute('/information/courses/:id/materials',req=>service.courseMaterials(req.user,req.params.id),'Failed to load Course Materials.');
+  jsonRoute('/information/courses/:id/work',req=>service.courseWork(req.user,req.params.id),'Failed to load Course Work.');
+  jsonRoute('/information/courses/:id/results',req=>service.courseResults(req.user,req.params.id),'Failed to load Course Results.');
+  jsonRoute('/information/classes/:id/event',req=>service.classEventDetail(req.user,req.params.id),'Failed to load Class Event.');
 
   htmlRoute('/today/view',ui.renderToday,req=>service.today(req.user,{currentTimeZone:tz(req)}),'Failed to render Teaching Today.');
   htmlRoute('/courses/view',ui.renderCourses,req=>service.courses(req.user),'Failed to render Teaching Courses.');
