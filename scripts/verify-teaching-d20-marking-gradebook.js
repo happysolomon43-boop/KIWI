@@ -65,6 +65,7 @@ assert(routes.includes("require('./authority-service')"),'runtime routes must us
 assert(routes.includes('/results/:resultId/recalculate-invalidation'),'runtime must expose the authoritative invalidation recalculation trigger');
 assert(!routes.includes('reviewDirectionPolicy:direction'),'routes must not inject request-owned appeal direction');
 
+assert(contracts.includes('BLANK_FINAL_RESPONSE')&&contracts.includes('isBlankResponseValue'),'TCH-0395/0396 must treat a final blank as zero evidence before numeric/string coercion');
 assert(contracts.includes('TEACHING_D20_PARTIAL_CREDIT_NOT_DECLARED'),'TCH-0397 must enforce declared rubric partial-credit points/ranges');
 assert(contracts.includes('TEACHING_D20_FOLLOW_THROUGH_NOT_AUTHORIZED'),'TCH-0397 must enforce locked follow-through/error-carried-forward authorization');
 assert(contracts.includes('TEACHING_D20_ALTERNATIVE_ROUTE_NOT_AUTHORIZED'),'TCH-0396/0398 must prevent alternative-answer logic from rewriting exhaustive answer spaces');
@@ -88,6 +89,7 @@ assert(unit.includes('TPF-16 Pass A must be genuinely blind'),'TCH-0763 blind-fi
 assert(unit.includes('material marker disagreement escalates and is never averaged'),'TCH-0763 disagreement escalation regression test missing');
 for(const required of [
   'authoritative response capture distinguishes a legitimate blank from lost evidence',
+  'blank objective responses never coerce into correct answers',
   'partial credit must be one of the locked rubric points or ranges',
   'follow-through is rejected unless the locked rubric authorizes it',
   'alternative valid routes cannot rewrite an exhaustive locked answer space',
