@@ -51,6 +51,7 @@ for(const forbidden of ['attendance','teacher_personality','previous_gpa','peer_
 assert(intelligence.includes('commit:false'),'AI orchestration must remain non-committing');
 assert(intelligence.includes('gradebook_commit_external'),'AI result contracts must keep Gradebook commit external');
 assert(intelligence.includes('original_credit_seen')&&intelligence.includes('freeze_before_comparison_required'),'TPF-16 blind Pass A controls are missing');
+assert(intelligence.includes('TEACHING_D20_REVIEW_SCOPE_MISMATCH')&&intelligence.includes('expectedReviewCriterionIds'),'TPF-16 moderation/appeal must enforce exact authorized criterion scope');
 
 assert(authority.includes('TEACHING_D20_APPEAL_DIRECTION_REQUEST_FORBIDDEN'),'appeal request cannot own review direction');
 assert(authority.includes('TEACHING_D20_APPEAL_DIRECTION_AUTHORITY_REQUIRED'),'configured appeal direction must cite authority');
@@ -59,6 +60,7 @@ assert(authority.includes('ITEM_INVALIDATION_RECALCULATION'),'invalidation reflo
 assert(authority.includes("owner:'D21'")&&authority.includes('gpaMutationByD20:false'),'D20 must hand corrected truth downstream without taking D21 GPA authority');
 assert(authority.includes('assertAuthoritativeResponseCapture'),'TCH-0396 must verify authoritative final-response capture before marking/review');
 assert(authority.includes('TEACHING_D20_RESPONSE_CAPTURE_CORRUPTED')&&authority.includes('blankItemIds'),'TCH-0396 must distinguish compromised captured evidence from legitimate final blanks');
+assert(authority.includes('newestFirstRuns')&&authority.includes('parentCorrectionIds'),'repeat appeal/recalculation must prefer the terminal accepted authorized correction lineage');
 assert(routes.includes("require('./authority-service')"),'runtime routes must use the authoritative D20 service boundary');
 assert(routes.includes('/results/:resultId/recalculate-invalidation'),'runtime must expose the authoritative invalidation recalculation trigger');
 assert(!routes.includes('reviewDirectionPolicy:direction'),'routes must not inject request-owned appeal direction');
@@ -78,7 +80,9 @@ assert(authorityTests.includes('TCH-0425 invalidated question recalculates'),'TC
 const appealTests=read('tests/teaching/unit/d20-appeal-recalculation.test.js');
 const moderationTests=read('tests/teaching/unit/d20-moderation-escalation.test.js');
 assert(appealTests.includes('TCH-0425 successful appeal deterministically recalculates'),'TCH-0425 successful-appeal recalculation regression test missing');
+assert(appealTests.includes("attempt_result_state:'AWAITING_MARKING'")&&appealTests.includes('final_snapshot'),'appeal regression must use authoritative D17 final-response lineage');
 assert(moderationTests.includes('TCH-0763 material high-stakes moderation disagreement'),'TCH-0763 service-level moderation escalation regression test missing');
+assert(moderationTests.includes("attempt_result_state:'AWAITING_MARKING'")&&moderationTests.includes('final_snapshot'),'moderation regression must use authoritative D17 final-response lineage');
 assert(unit.includes('T4 marking context excludes attendance personality GPA'),'TCH-0426 T4 context firewall regression test missing');
 assert(unit.includes('TPF-16 Pass A must be genuinely blind'),'TCH-0763 blind-first regression test missing');
 assert(unit.includes('material marker disagreement escalates and is never averaged'),'TCH-0763 disagreement escalation regression test missing');
@@ -91,6 +95,8 @@ for(const required of [
   'no-double-count rubric rule rejects shared evidence across criteria',
   'a markable TPF-15 output must cover every locked rubric criterion',
   'unsupported global rubric caps/dependencies fail closed instead of being ignored',
+  'TPF-16 output must exactly cover the authorized criterion scope',
+  'repeat appeal aggregation prefers the terminal authorized correction lineage',
 ])assert(safetyTests.includes(required),`D20 marking-safety regression missing: ${required}`);
 assert(schemaTests.includes('teaching_gradebook_entries'),'D20 schema reconstruction test missing Gradebook coverage');
 assert(schemaTests.includes("grantee in ('anon','authenticated')"),'D20 schema/security test must exercise browser/authenticated authority boundaries');
