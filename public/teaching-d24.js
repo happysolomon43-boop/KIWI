@@ -170,3 +170,21 @@ document.addEventListener('keydown', (event) => {
 });
 
 window.KIWITeachingAccessibility = Object.freeze({ announce, focusWorkspace, syncDrawer: () => drawerEntries.forEach(syncDrawer) });
+
+// D25 is deliberately layered after the accepted D24 accessibility system so
+// degraded/recovery states inherit the same focus, live-region and responsive
+// behavior without making D24 or browser state an academic owner.
+if (!document.querySelector('link[data-teaching-d25]')) {
+  const reliabilityStyles = document.createElement('link');
+  reliabilityStyles.rel = 'stylesheet';
+  reliabilityStyles.href = '/teaching-d25.css?v=20261003-d25-1';
+  reliabilityStyles.dataset.teachingD25 = 'true';
+  document.head.append(reliabilityStyles);
+}
+if (!document.querySelector('script[data-teaching-d25]')) {
+  const reliabilityScript = document.createElement('script');
+  reliabilityScript.src = '/teaching-d25-reliability.js?v=20261003-d25-1';
+  reliabilityScript.dataset.teachingD25 = 'true';
+  reliabilityScript.defer = true;
+  document.body.append(reliabilityScript);
+}
