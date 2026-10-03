@@ -10,12 +10,12 @@ on:
       - 'tests/teaching/**'
       - 'scripts/verify-teaching-d*.js'
       - 'scripts/setup-teaching-integration-db.js'
-      - 'migrations/20261002_teaching_d20_*.sql'
+      - 'migrations/*teaching_d20_*.sql'
       - 'docs/teaching/d20*'
       - 'package.json'
       - '.github/workflows/teaching-d20-marking-gradebook.yml'
   push:
-    branches: [main, 'teaching/d20-formal-marking-gradebook']
+    branches: [main, 'teaching/d20-formal-marking-gradebook', 'teaching/d20-corrective-hardening']
     paths:
       - 'teaching/d20/**'
       - 'teaching/repositories/d20-gradebook.js'
@@ -24,7 +24,7 @@ on:
       - 'tests/teaching/**'
       - 'scripts/verify-teaching-d*.js'
       - 'scripts/setup-teaching-integration-db.js'
-      - 'migrations/20261002_teaching_d20_*.sql'
+      - 'migrations/*teaching_d20_*.sql'
       - 'docs/teaching/d20*'
       - 'package.json'
       - '.github/workflows/teaching-d20-marking-gradebook.yml'
@@ -44,6 +44,7 @@ jobs:
           node --check teaching/d20/intelligence.js
           node --check teaching/d20/service.js
           node --check teaching/d20/authority-service.js
+          node --check teaching/d20/corrected-authority-service.js
           node --check teaching/d20/routes.js
           node --check teaching/d20/ui.js
           node --check teaching/d20/task-accounting.js
@@ -51,10 +52,12 @@ jobs:
           node --check teaching/repositories/d20-gradebook.js
           node --check scripts/verify-teaching-d20-marking-gradebook.js
           node --check tests/teaching/unit/d20-marking-gradebook.test.js
+          node --check tests/teaching/unit/d20-corrective-hardening.test.js
           node --check tests/teaching/unit/d20-authority-reflow.test.js
           node --check tests/teaching/unit/d20-appeal-recalculation.test.js
           node --check tests/teaching/unit/d20-moderation-escalation.test.js
           node --check tests/teaching/integration/d20-marking-gradebook-schema.test.js
+          node --check tests/teaching/integration/d20-corrective-academic-guards-schema.test.js
       - name: D01-D19 predecessor canonical verifiers
         run: for n in $(seq -w 1 19); do npm run verify:teaching:d$n; done
       - name: D20 canonical verifier
@@ -62,6 +65,7 @@ jobs:
       - name: D20 focused authority and QA tests
         run: |
           node --test tests/teaching/unit/d20-marking-gradebook.test.js \
+            tests/teaching/unit/d20-corrective-hardening.test.js \
             tests/teaching/unit/d20-authority-reflow.test.js \
             tests/teaching/unit/d20-appeal-recalculation.test.js \
             tests/teaching/unit/d20-moderation-escalation.test.js
@@ -95,7 +99,7 @@ jobs:
         run: node scripts/setup-teaching-integration-db.js
       - name: Confirm predecessor Assessment authority remains intact
         run: node --test tests/teaching/integration/d17-assessment-domain-schema.test.js tests/teaching/integration/d19-assessment-types-schema.test.js
-      - name: Confirm D20 schema, RLS, grants and lineage guards
-        run: node --test tests/teaching/integration/d20-marking-gradebook-schema.test.js
+      - name: Confirm D20 schema, RLS, grants, lineage and corrective academic guards
+        run: node --test tests/teaching/integration/d20-marking-gradebook-schema.test.js tests/teaching/integration/d20-corrective-academic-guards-schema.test.js
       - name: Teaching integration regressions
         run: npm run test:teaching:integration
