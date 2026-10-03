@@ -43,6 +43,57 @@ function gradeScaleOutcome(score,gradeScalePolicy={}){
   const match=bands.find(b=>n>=b.min&&(b.max==null||n<=b.max));if(!match)return null;return Object.freeze({grade:String(match.grade),gradePoint:match.gradePoint,score:n});
 }
 
-function authoritativeVersionDigest(snapshot={}){return stableValue({course_state_version:Number(snapshot.course?.state_version||0),course_result_id:snapshot.courseResult?.course_result_snapshot_id||null,course_result_version:Number(snapshot.courseResult?.version_no||0),gradebook_entry_ids:stableUnique(snapshot.courseResult?.source_gradebook_entry_ids||[]),progression_policy_id:snapshot.progressionPolicy?.progression_policy_id||null,progression_policy_version:Number(snapshot.progressionPolicy?.version_no||0),topic_versions:asArray(snapshot.topicScores).map(t=>[String(t.topic_id||''),Number(t.version_no||0)]).sort(),skm_versions:asArray(snapshot.knowledgeStates).map(s=>[String(s.learning_unit_id||''),Number(s.version_no||0)]).sort()});}
+function authoritativeVersionDigest(snapshot={}){
+  const coverage=asArray(snapshot.coverage).map(row=>[
+    String(row.coverage_entry_id||row.learning_unit_id||''),Number(row.coverage_version||0),
+    row.found_at||null,row.mapped_at||null,row.planned_at||null,row.taught_at||null,
+    row.validated_prior_knowledge_at||null,row.instructionally_complete_at||null,row.assessed_at||null,
+    row.excluded_at||null,row.exclusion_reason||null,row.instructional_completion_basis||null,
+  ]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  const learningUnits=asArray(snapshot.learningUnits).map(row=>[
+    String(row.learning_unit_id||''),String(row.topic_id||''),String(row.subtopic_id||''),
+    String(row.criticality||''),row.foundational===true,
+    row.metadata?.required===false?false:true,row.metadata?.optional===true,
+  ]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  const assessments=asArray(snapshot.assessments).map(row=>[
+    String(row.assessment_id||''),Number(row.state_version||0),upper(row.assessment_type),
+    upper(row.definition_state),row.graded===true,row.source_lineage?.required_for_completion===true,
+  ]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  const assessmentResults=asArray(snapshot.assessmentResults).map(row=>[
+    String(row.assessment_result_id||''),String(row.assessment_id||''),Number(row.result_version||0),
+    upper(row.marking_state),upper(row.release_state),row.review_blocked===true,
+    row.raw_percentage==null?null:Number(row.raw_percentage),
+  ]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  const openAppeals=asArray(snapshot.openAppeals).map(row=>[
+    String(row.grade_appeal_id||''),String(row.assessment_result_id||''),upper(row.appeal_state),
+  ]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  const invalidAttempts=asArray(snapshot.invalidAssessmentAttempts).map(row=>[
+    String(row.assessment_attempt_id||''),Number(row.state_version||0),Number(row.finalization_version||0),
+    upper(row.attempt_state),upper(row.result_state),String(row.invalidation_reason||''),
+  ]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  const integrity=asArray(snapshot.unresolvedIntegrityIssues).map(row=>[
+    String(row.integrity_review_id||row.submission_id||''),Number(row.review_version||0),
+    upper(row.rule_alignment),upper(row.capability_evidence),upper(row.verification_state),
+  ]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  return stableValue({
+    course_state_version:Number(snapshot.course?.state_version||0),
+    course_plan_id:snapshot.coursePlan?.course_plan_id||null,
+    course_plan_version:Number(snapshot.coursePlan?.version_no||0),
+    learning_units:learningUnits,
+    coverage,
+    course_result_id:snapshot.courseResult?.course_result_snapshot_id||null,
+    course_result_version:Number(snapshot.courseResult?.version_no||0),
+    gradebook_entry_ids:stableUnique(snapshot.courseResult?.source_gradebook_entry_ids||[]),
+    progression_policy_id:snapshot.progressionPolicy?.progression_policy_id||null,
+    progression_policy_version:Number(snapshot.progressionPolicy?.version_no||0),
+    topic_versions:asArray(snapshot.topicScores).map(t=>[String(t.topic_id||''),Number(t.version_no||0)]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))),
+    assessment_definitions:assessments,
+    assessment_results:assessmentResults,
+    open_appeals:openAppeals,
+    invalid_assessment_attempts:invalidAttempts,
+    unresolved_integrity:integrity,
+    skm_versions:asArray(snapshot.knowledgeStates).map(s=>[String(s.learning_unit_id||''),Number(s.version_no||0)]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))),
+  });
+}
 
 module.exports={OUTCOMES,PATHWAY_TYPES,PATHWAY_STATES,TPF17,TPF19,PASS_STATES,fail,asArray,asObject,upper,finite,stableUnique,stableValue,normalizeProgressionPolicy,assertCoursePolicyComplete,assertSemesterGpaPolicyComplete,gradeScaleOutcome,authoritativeVersionDigest};
