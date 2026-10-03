@@ -1,10 +1,10 @@
 name: Teaching D25 Reliability Recovery
 on:
   pull_request:
-    paths: ['teaching/d25/**','teaching/d17/routes.js','public/teaching-d24.js','public/teaching-d25*','public/assessment-shell*','tests/teaching/**','scripts/verify-teaching-d*.js','.github/workflows/teaching-d25-reliability.yml']
+    paths: ['teaching/d25/**','teaching/d17/routes.js','public/teaching-d24.js','public/teaching-d25*','public/assessment-shell*','tests/teaching/**','scripts/verify-teaching-d*.js','package.json','.github/workflows/teaching-d25-reliability.yml']
   push:
-    branches: [main, 'teaching/d25-reliability-recovery']
-    paths: ['teaching/d25/**','teaching/d17/routes.js','public/teaching-d24.js','public/teaching-d25*','public/assessment-shell*','tests/teaching/**','scripts/verify-teaching-d*.js','.github/workflows/teaching-d25-reliability.yml']
+    branches: [main, 'teaching/d25-reliability-recovery', 'teaching/d25-verifier-alias']
+    paths: ['teaching/d25/**','teaching/d17/routes.js','public/teaching-d24.js','public/teaching-d25*','public/assessment-shell*','tests/teaching/**','scripts/verify-teaching-d*.js','package.json','.github/workflows/teaching-d25-reliability.yml']
 jobs:
   d25:
     runs-on: ubuntu-latest
@@ -21,7 +21,7 @@ jobs:
           node --check teaching/d25/routes.js
           node --check public/teaching-d25-reliability.js
           node --check public/teaching-d24.js
-          node scripts/verify-teaching-d25-reliability.js
+          npm run verify:teaching:d25
       - name: D01-D24 predecessor verifiers
         run: for n in $(seq -w 1 24); do npm run verify:teaching:d$n; done
       - run: node --test tests/teaching/unit/d25-*.test.js
