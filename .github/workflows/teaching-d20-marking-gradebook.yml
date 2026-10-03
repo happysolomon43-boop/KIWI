@@ -45,6 +45,7 @@ jobs:
           node --check teaching/d20/service.js
           node --check teaching/d20/authority-service.js
           node --check teaching/d20/corrected-authority-service.js
+          node --check teaching/d20/assessment-boundary-service.js
           node --check teaching/d20/routes.js
           node --check teaching/d20/ui.js
           node --check teaching/d20/task-accounting.js
@@ -53,6 +54,7 @@ jobs:
           node --check scripts/verify-teaching-d20-marking-gradebook.js
           node --check tests/teaching/unit/d20-marking-gradebook.test.js
           node --check tests/teaching/unit/d20-corrective-hardening.test.js
+          node --check tests/teaching/unit/d20-assessment-boundary.test.js
           node --check tests/teaching/unit/d20-authority-reflow.test.js
           node --check tests/teaching/unit/d20-appeal-recalculation.test.js
           node --check tests/teaching/unit/d20-moderation-escalation.test.js
@@ -66,6 +68,7 @@ jobs:
         run: |
           node --test tests/teaching/unit/d20-marking-gradebook.test.js \
             tests/teaching/unit/d20-corrective-hardening.test.js \
+            tests/teaching/unit/d20-assessment-boundary.test.js \
             tests/teaching/unit/d20-authority-reflow.test.js \
             tests/teaching/unit/d20-appeal-recalculation.test.js \
             tests/teaching/unit/d20-moderation-escalation.test.js
