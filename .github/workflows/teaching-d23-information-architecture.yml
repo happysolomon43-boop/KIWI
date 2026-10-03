@@ -39,7 +39,7 @@ jobs:
           node --check teaching/d17/routes.js
           node --check public/teaching-d09.js
           node --check public/teaching-d15.js
-          node --check public/teaching-d16-core.js
+          node --check public/teaching-d16.js
           node --check public/teaching-d23.js
           npm run verify:teaching:d23
       - name: D01-D22 predecessor verifiers

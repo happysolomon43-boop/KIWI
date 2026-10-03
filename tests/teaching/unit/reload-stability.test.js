@@ -32,21 +32,20 @@ test('shared runtime config is presentation-neutral and never owns Teaching UI s
 test('original Teaching document loads independent native modules in dependency order', () => {
   const html = read('public/teaching.html');
   const entry = read('public/teaching-d16.js');
-  const core = read('public/teaching-d16-core.js');
   const d23 = read('public/teaching-d23.js');
-  const d16Import = html.indexOf('/teaching-d16.js?v=20261003-runtime-fix-1');
+  const d16Import = html.indexOf('/teaching-d16.js?v=20261003-runtime-fix-2');
   const d15Import = html.indexOf('/teaching-d15.js?v=20261003-runtime-fix-1');
   const d23Import = html.indexOf('/teaching-d23.js?v=20261003-runtime-fix-1');
   assert.ok(d16Import >= 0);
   assert.ok(d15Import > d16Import);
   assert.ok(d23Import > d15Import);
-  assert.match(entry, /import '\.\/teaching-d16-core\.js\?v=20261003-runtime-fix-1';/);
   assert.doesNotMatch(entry, /\bimport\s*\(/);
-  assert.match(core, /Teaching Work requires KIWI Teaching navigation and API client/);
+  assert.match(entry, /Teaching Work requires KIWI Teaching navigation and API client/);
   assert.match(d23, /window\.KIWITeachingNavigation/);
   assert.match(d23, /window\.KIWITeachingCourses/);
   assert.equal(exists('public/teaching-bootstrap.js'), false);
   assert.equal(exists('public/teaching-original-bridge.js'), false);
+  assert.equal(exists('public/teaching-d16-core.js'), false);
 });
 
 test('native D23 information module extends the established shell and cannot create a second UI owner', () => {

@@ -12,19 +12,17 @@ const exists = (relative) => fs.existsSync(path.join(root, relative));
 
 test('original Teaching document loads Work, Results and D23 as independent ordered modules', () => {
   const entry = read('public/teaching-d16.js');
-  const core = read('public/teaching-d16-core.js');
   const html = read('public/teaching.html');
   const runtime = read('public/kiwi-runtime-config.js');
 
-  assert.match(entry, /import '\.\/teaching-d16-core\.js\?v=20261003-runtime-fix-1';/);
   assert.doesNotMatch(entry, /\bimport\s*\(/);
-  const d16Import = html.indexOf('/teaching-d16.js?v=20261003-runtime-fix-1');
+  const d16Import = html.indexOf('/teaching-d16.js?v=20261003-runtime-fix-2');
   const d15Import = html.indexOf('/teaching-d15.js?v=20261003-runtime-fix-1');
   const d23Import = html.indexOf('/teaching-d23.js?v=20261003-runtime-fix-1');
   assert.ok(d16Import >= 0, 'Work module must be loaded by the Teaching document');
   assert.ok(d15Import > d16Import, 'Results must load after Work');
   assert.ok(d23Import > d15Import, 'D23 composition must load after Results');
-  assert.match(core, /nav\.register\(\{id:'work'/);
+  assert.match(entry, /nav\.register\(\{id:'work'/);
   assert.doesNotMatch(runtime, /teaching-bootstrap|teaching-original-bridge|teaching-d15\.js|teaching-d23\.js/);
   assert.equal(exists('public/teaching-bootstrap.js'), false);
   assert.equal(exists('public/teaching-original-bridge.js'), false);
@@ -38,7 +36,7 @@ test('every directly loaded Teaching feature module parses before deployment', (
     'public/teaching-d09.js',
     'public/teaching-d10.js',
     'public/teaching-classroom.js',
-    'public/teaching-d16-core.js',
+    'public/teaching-d16.js',
     'public/teaching-d15.js',
     'public/teaching-d23.js',
   ]) {
