@@ -4,22 +4,16 @@ on:
     paths:
       - 'teaching/d23/**'
       - 'teaching/d17/routes.js'
-      - 'public/teaching.html'
-      - 'public/teaching-d23-live.js'
-      - 'public/teaching-d23-live.css'
       - 'tests/teaching/**'
       - 'scripts/verify-teaching-d*.js'
       - 'docs/teaching/d23*'
       - 'package.json'
       - '.github/workflows/teaching-d23-information-architecture.yml'
   push:
-    branches: [main, 'teaching/d23-information-architecture', 'teaching/d23-visible-workspace-fix']
+    branches: [main, 'teaching/d23-information-architecture']
     paths:
       - 'teaching/d23/**'
       - 'teaching/d17/routes.js'
-      - 'public/teaching.html'
-      - 'public/teaching-d23-live.js'
-      - 'public/teaching-d23-live.css'
       - 'tests/teaching/**'
       - 'scripts/verify-teaching-d*.js'
       - 'docs/teaching/d23*'
@@ -43,7 +37,6 @@ jobs:
           node --check teaching/d23/ui.js
           node --check teaching/d23/task-accounting.js
           node --check teaching/d17/routes.js
-          node --check public/teaching-d23-live.js
           npm run verify:teaching:d23
       - name: D01-D22 predecessor verifiers
         run: for n in $(seq -w 1 22); do npm run verify:teaching:d$n; done
