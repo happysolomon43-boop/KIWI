@@ -36,10 +36,13 @@ assert(grantHardening.includes('GRANT UPDATE ON public.teaching_assessment_resul
 const contracts=read('teaching/d20/contracts.js');
 const intelligence=read('teaching/d20/intelligence.js');
 const authority=read('teaching/d20/authority-service.js');
+const assessmentBoundary=read('teaching/d20/assessment-boundary-service.js');
 const routes=read('teaching/d20/routes.js');
+const index=read('teaching/d20/index.js');
 const repository=read('teaching/repositories/d20-gradebook.js');
 const unit=read('tests/teaching/unit/d20-marking-gradebook.test.js');
 const safetyTests=read('tests/teaching/unit/d20-marking-safety-hardening.test.js');
+const boundaryTests=read('tests/teaching/unit/d20-assessment-boundary.test.js');
 const authorityTests=read('tests/teaching/unit/d20-authority-reflow.test.js');
 const schemaTests=read('tests/teaching/integration/d20-marking-gradebook-schema.test.js');
 
@@ -61,7 +64,12 @@ assert(authority.includes("owner:'D21'")&&authority.includes('gpaMutationByD20:f
 assert(authority.includes('assertAuthoritativeResponseCapture'),'TCH-0396 must verify authoritative final-response capture before marking/review');
 assert(authority.includes('TEACHING_D20_RESPONSE_CAPTURE_CORRUPTED')&&authority.includes('blankItemIds'),'TCH-0396 must distinguish compromised captured evidence from legitimate final blanks');
 assert(authority.includes('newestFirstRuns')&&authority.includes('parentCorrectionIds'),'repeat appeal/recalculation must prefer the terminal accepted authorized correction lineage');
-assert(routes.includes("require('./authority-service')"),'runtime routes must use the authoritative D20 service boundary');
+
+assert(assessmentBoundary.includes('assertAuthoritativeResponseCapture(rawBundle)'),'D17/D18 semantic adaptation must occur only after raw final-response integrity is proven');
+assert(assessmentBoundary.includes('selected_option_ids')&&assessmentBoundary.includes('provisional_key_option_ids'),'TCH-0395 must reconcile D18 selected responses with stable locked MCQ key IDs');
+assert(assessmentBoundary.includes("canonicalFamily='CONSTRUCTED'")&&assessmentBoundary.includes('unitRequired'),'unit-bearing numeric, multipart structured and unsupported multi-select semantics must not bypass rubric marking');
+assert(routes.includes("require('./assessment-boundary-service')"),'runtime routes must use the D17/D18-to-D20 response semantic boundary');
+assert(index.includes("require('./assessment-boundary-service')"),'D20 public module must export the response semantic boundary');
 assert(routes.includes('/results/:resultId/recalculate-invalidation'),'runtime must expose the authoritative invalidation recalculation trigger');
 assert(!routes.includes('reviewDirectionPolicy:direction'),'routes must not inject request-owned appeal direction');
 
@@ -100,6 +108,13 @@ for(const required of [
   'TPF-16 output must exactly cover the authorized criterion scope',
   'repeat appeal aggregation prefers the terminal authorized correction lineage',
 ])assert(safetyTests.includes(required),`D20 marking-safety regression missing: ${required}`);
+for(const required of [
+  'real D18 selected_option_ids payload',
+  'stable option key prefers validated distractor key IDs',
+  'raw D17 final-snapshot integrity is proved before semantic adaptation',
+  'unit-bearing D18 numeric work cannot bypass',
+  'multipart STRUCTURED and multiple selection remain interpretive',
+])assert(boundaryTests.includes(required),`D20 Assessment-boundary regression missing: ${required}`);
 assert(schemaTests.includes('teaching_gradebook_entries'),'D20 schema reconstruction test missing Gradebook coverage');
 assert(schemaTests.includes("grantee in ('anon','authenticated')"),'D20 schema/security test must exercise browser/authenticated authority boundaries');
 assert(schemaTests.includes("grantee='service_role'")&&schemaTests.includes("privilege_type in ('UPDATE','DELETE','TRUNCATE')"),'D20 schema/security test must enforce narrow service-role mutation grants');
@@ -107,6 +122,6 @@ assert(schemaTests.includes("grantee='service_role'")&&schemaTests.includes("pri
 const workflow='.github/workflows/teaching-d20-marking-gradebook.yml';
 assert(exists(workflow),'D20 same-head CI workflow is missing');
 const ci=read(workflow);
-for(const required of ['verify:teaching:d20','d20-marking-gradebook.test.js','d20-marking-safety-hardening.test.js','d20-authority-reflow.test.js','d20-appeal-recalculation.test.js','d20-moderation-escalation.test.js','test:teaching:integration','build:web'])assert(ci.includes(required),`D20 CI is missing ${required}`);
+for(const required of ['verify:teaching:d20','d20-marking-gradebook.test.js','d20-marking-safety-hardening.test.js','d20-assessment-boundary.test.js','d20-authority-reflow.test.js','d20-appeal-recalculation.test.js','d20-moderation-escalation.test.js','test:teaching:integration','build:web'])assert(ci.includes(required),`D20 CI is missing ${required}`);
 
-console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 4 migrations, TPF-15/16 authority boundaries, canonical marking-safety regressions, production grant hardening and same-head CI are registered.`);
+console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 4 migrations, TPF-15/16 authority boundaries, canonical marking-safety regressions, D17/D18 response semantics, production grant hardening and same-head CI are registered.`);
