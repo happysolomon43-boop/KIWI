@@ -56,17 +56,18 @@ function assertTpf16ReviewScope(result,args,stage){
 }
 function scopedIntelligence(intelligence){
   if(!intelligence)return intelligence;
-  const wrapped=Object.create(intelligence);
+  const wrapped={...intelligence};
   if(typeof intelligence.moderatePassA==='function')wrapped.moderatePassA=async args=>assertTpf16ReviewScope(await intelligence.moderatePassA(args),args,'PASS_A');
   if(typeof intelligence.moderatePassB==='function')wrapped.moderatePassB=async args=>assertTpf16ReviewScope(await intelligence.moderatePassB(args),args,'PASS_B');
-  return wrapped;
+  if(typeof intelligence.appealPassA==='function')wrapped.appealPassA=async args=>assertTpf16ReviewScope(await intelligence.appealPassA(args),args,'PASS_A');
+  if(typeof intelligence.appealPassB==='function')wrapped.appealPassB=async args=>assertTpf16ReviewScope(await intelligence.appealPassB(args),args,'PASS_B');
+  return Object.freeze(wrapped);
 }
 
 function createD20Service(options={}){
   const {repository}=options;
   if(!repository||typeof repository.loadMarkingBundle!=='function')throw new TypeError('D20 authority service requires the D20 Gradebook repository.');
-  const authorityRepository=Object.create(repository);
-  authorityRepository.runsForResult=async(...args)=>newestFirstRuns(await repository.runsForResult(...args));
+  const authorityRepository={...repository,runsForResult:async(...args)=>newestFirstRuns(await repository.runsForResult(...args))};
   const authorityIntelligence=scopedIntelligence(options.intelligence);
   const core=createCoreD20Service({...options,repository:authorityRepository,intelligence:authorityIntelligence});
   const studentIdFor=(user)=>{if(!user?.id)fail('Authenticated student is required.','TEACHING_D20_AUTH_REQUIRED',401);return String(user.id);};
