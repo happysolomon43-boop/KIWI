@@ -1,10 +1,10 @@
 name: Teaching D21 Progression and GPA
 on:
   pull_request:
-    paths: ['teaching/d21/**','teaching/d20/d21-resit-owner.js','teaching/d20/routes.js','teaching/repositories/d21-progression.js','teaching/repositories/index.js','teaching/index.js','teaching/d17/routes.js','tests/teaching/**','scripts/verify-teaching-d*.js','scripts/setup-teaching-integration-db.js','migrations/20261003_teaching_d21_*.sql','docs/teaching/d21*','package.json','.github/workflows/teaching-d21-progression-gpa.yml']
+    paths: ['teaching/d21/**','teaching/d20/d21-resit-owner.js','teaching/d20/routes.js','teaching/repositories/d21-progression.js','teaching/repositories/d21-progression/**','teaching/repositories/index.js','teaching/index.js','teaching/d17/routes.js','tests/teaching/**','scripts/verify-teaching-d*.js','scripts/setup-teaching-integration-db.js','migrations/20261003_teaching_d21_*.sql','docs/teaching/d21*','package.json','.github/workflows/teaching-d21-progression-gpa.yml']
   push:
     branches: [main, 'teaching/d21-progression-gpa']
-    paths: ['teaching/d21/**','teaching/d20/d21-resit-owner.js','teaching/d20/routes.js','teaching/repositories/d21-progression.js','teaching/repositories/index.js','teaching/index.js','teaching/d17/routes.js','tests/teaching/**','scripts/verify-teaching-d*.js','scripts/setup-teaching-integration-db.js','migrations/20261003_teaching_d21_*.sql','docs/teaching/d21*','package.json','.github/workflows/teaching-d21-progression-gpa.yml']
+    paths: ['teaching/d21/**','teaching/d20/d21-resit-owner.js','teaching/d20/routes.js','teaching/repositories/d21-progression.js','teaching/repositories/d21-progression/**','teaching/repositories/index.js','teaching/index.js','teaching/d17/routes.js','tests/teaching/**','scripts/verify-teaching-d*.js','scripts/setup-teaching-integration-db.js','migrations/20261003_teaching_d21_*.sql','docs/teaching/d21*','package.json','.github/workflows/teaching-d21-progression-gpa.yml']
 jobs:
   d21:
     runs-on: ubuntu-latest
@@ -25,6 +25,11 @@ jobs:
           node --check teaching/d21/ui.js
           node --check teaching/d20/d21-resit-owner.js
           node --check teaching/repositories/d21-progression.js
+          node --check teaching/repositories/d21-progression/core.js
+          node --check teaching/repositories/d21-progression/snapshot.js
+          node --check teaching/repositories/d21-progression/pathways.js
+          node --check teaching/repositories/d21-progression/preparation.js
+          node --check teaching/repositories/d21-progression/gpa.js
           npm run verify:teaching:d21
       - name: D01-D20 predecessor verifiers
         run: for n in $(seq -w 1 20); do npm run verify:teaching:d$n; done
