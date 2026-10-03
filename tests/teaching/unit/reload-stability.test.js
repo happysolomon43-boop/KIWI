@@ -29,14 +29,17 @@ test('shared runtime config is presentation-neutral and never owns Teaching UI s
   assert.doesNotMatch(runtime, /\bimport\s*\(/);
 });
 
-test('original Teaching module stack restores D15 before D23 so the dock cannot disappear while D23 attaches', () => {
-  const d16 = read('public/teaching-d16.js');
+test('original Teaching D16 entry statically hard-loads D15 before D23', () => {
+  const entry = read('public/teaching-d16.js');
+  const core = read('public/teaching-d16-core.js');
   const d23 = read('public/teaching-d23.js');
-  const d15Import = d16.indexOf("import('./teaching-d15.js')");
-  const d23Import = d16.indexOf("import('./teaching-d23.js')");
+  const d15Import = entry.indexOf("import './teaching-d15.js?v=20261003-hard-load-2';");
+  const d23Import = entry.indexOf("import './teaching-d23.js?v=20261003-hard-load-2';");
   assert.ok(d15Import >= 0);
   assert.ok(d23Import > d15Import);
-  assert.match(d16, /loadNativeTeachingSurfaces\(\)/);
+  assert.match(entry, /import '\.\/teaching-d16-core\.js\?v=20261003-hard-load-2';/);
+  assert.doesNotMatch(entry, /\bimport\s*\(/);
+  assert.match(core, /Teaching Work requires KIWI Teaching navigation and API client/);
   assert.match(d23, /window\.KIWITeachingNavigation/);
   assert.match(d23, /window\.KIWITeachingCourses/);
   assert.equal(exists('public/teaching-bootstrap.js'), false);
