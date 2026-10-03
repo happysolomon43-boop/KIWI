@@ -27,10 +27,48 @@ function assertAuthoritativeResponseCapture(bundle={}){
   return Object.freeze({state:'complete',responseState:attemptState==='EXPIRED'?'auto_finalized_on_expiry':'final_submitted',finalSnapshotRef:snapshotRef,finalizationVersion,blankItemIds:Object.freeze(blankItemIds),capturedItemIds:Object.freeze([...latest.keys()].sort())});
 }
 
+function newestFirstRuns(runs=[]){
+  const rows=[...runs],acceptedCorrections=rows.filter(run=>run.run_kind==='AUTHORIZED_CORRECTION'&&run.run_status==='ACCEPTED'),parentCorrectionIds=new Set(acceptedCorrections.map(run=>String(run.parent_run_id||'')).filter(Boolean));
+  return rows.sort((a,b)=>{
+    if(a.run_kind==='AUTHORIZED_CORRECTION'&&b.run_kind==='AUTHORIZED_CORRECTION'){
+      const aTerminal=!parentCorrectionIds.has(String(a.marking_run_id)),bTerminal=!parentCorrectionIds.has(String(b.marking_run_id));
+      if(aTerminal!==bTerminal)return aTerminal?-1:1;
+    }
+    const aTime=Date.parse(a.created_at||0)||0,bTime=Date.parse(b.created_at||0)||0;if(aTime!==bTime)return bTime-aTime;
+    return String(b.marking_run_id||'').localeCompare(String(a.marking_run_id||''));
+  });
+}
+
+function expectedReviewCriterionIds(args={}){
+  const input=asObject(args.academicInput),scope=asObject(input.review_scope),direct=stableUnique(scope.criterion_ids);
+  if(direct.length)return direct;
+  const original=asObject(input.original_marking),rows=Array.isArray(original.criterion_judgments)?original.criterion_judgments:[];
+  if(rows.length)return stableUnique(rows.map(row=>row?.criterion_id).filter(Boolean));
+  const frozen=asObject(input.frozen_pass_a),frozenRows=Array.isArray(frozen.criterion_judgments)?frozen.criterion_judgments:[];
+  return stableUnique(frozenRows.map(row=>row?.criterion_id).filter(Boolean));
+}
+function assertTpf16ReviewScope(result,args,stage){
+  if(!result?.accepted)return result;
+  const expected=expectedReviewCriterionIds(args);if(!expected.length)return result;
+  const output=result?.validatedResult?.output||result?.output||{},field=stage==='PASS_A'?'criterion_independent_judgments':'criterion_reviews',rows=Array.isArray(output[field])?output[field]:[],actual=stableUnique(rows.map(row=>row?.criterion_id).filter(Boolean));
+  if(JSON.stringify(actual)!==JSON.stringify(expected))fail('TPF-16 review output does not exactly cover the authorized criterion scope.','TEACHING_D20_REVIEW_SCOPE_MISMATCH',422,{stage,expectedCriterionIds:expected,actualCriterionIds:actual});
+  return result;
+}
+function scopedIntelligence(intelligence){
+  if(!intelligence)return intelligence;
+  const wrapped=Object.create(intelligence);
+  if(typeof intelligence.moderatePassA==='function')wrapped.moderatePassA=async args=>assertTpf16ReviewScope(await intelligence.moderatePassA(args),args,'PASS_A');
+  if(typeof intelligence.moderatePassB==='function')wrapped.moderatePassB=async args=>assertTpf16ReviewScope(await intelligence.moderatePassB(args),args,'PASS_B');
+  return wrapped;
+}
+
 function createD20Service(options={}){
   const {repository}=options;
   if(!repository||typeof repository.loadMarkingBundle!=='function')throw new TypeError('D20 authority service requires the D20 Gradebook repository.');
-  const core=createCoreD20Service(options);
+  const authorityRepository=Object.create(repository);
+  authorityRepository.runsForResult=async(...args)=>newestFirstRuns(await repository.runsForResult(...args));
+  const authorityIntelligence=scopedIntelligence(options.intelligence);
+  const core=createCoreD20Service({...options,repository:authorityRepository,intelligence:authorityIntelligence});
   const studentIdFor=(user)=>{if(!user?.id)fail('Authenticated student is required.','TEACHING_D20_AUTH_REQUIRED',401);return String(user.id);};
 
   function normalizePolicyInput(input={}){
@@ -73,7 +111,7 @@ function createD20Service(options={}){
   function responseFamilyConstructed(item){return !OBJECTIVE_FAMILIES.has(upper(item?.response_family));}
 
   async function selectedJudgments(studentId,resultId){
-    const runs=await repository.runsForResult(studentId,resultId),byItem=new Map();
+    const runs=await authorityRepository.runsForResult(studentId,resultId),byItem=new Map();
     for(const kind of ['AUTHORIZED_CORRECTION','TPF15_INITIAL','DETERMINISTIC']){
       for(const run of runs.filter(r=>r.run_kind===kind&&r.run_status==='ACCEPTED')){
         const itemId=String(run.package_item_id||'');if(!itemId||byItem.has(itemId))continue;
@@ -143,7 +181,7 @@ function createD20Service(options={}){
     const studentId=studentIdFor(user),result=await repository.resultById(studentId,resultId);
     if(!result)fail('Assessment Result not found.','TEACHING_D20_RESULT_NOT_FOUND',404);
     if(result.raw_percentage==null||!['PROVISIONAL','MODERATED'].includes(String(result.marking_state)))fail('Only an already-marked Assessment Result can be recalculated after item invalidation.','TEACHING_D20_INVALIDATION_REFLOW_STATE_INVALID',409,{markingState:result.marking_state});
-    const bundle=await repository.loadMarkingBundle(studentId,result.assessment_attempt_id);assertAuthoritativeResponseCapture(bundle);const invalidated=bundle.items.filter(item=>String(item.item_state)==='INVALIDATED');
+    const bundle=await repository.loadMarkingBundle(studentId,result.assessment_attempt_id),invalidated=bundle.items.filter(item=>String(item.item_state)==='INVALIDATED');
     if(packageItemId&&!invalidated.some(item=>String(item.package_item_id)===String(packageItemId)))fail('Requested Assessment item is not invalidated.','TEACHING_D20_ITEM_NOT_INVALIDATED',409,{packageItemId});
     if(!invalidated.length)fail('Assessment package contains no invalidated item requiring recalculation.','TEACHING_D20_NO_INVALIDATED_ITEMS',409);
     const aggregate=await aggregateAfterInvalidation(studentId,result,bundle),same=Math.abs(Number(result.raw_earned_marks)-aggregate.rawEarned)<1e-12&&Math.abs(Number(result.raw_max_marks)-aggregate.rawMax)<1e-12&&Math.abs(Number(result.raw_percentage)-aggregate.percentage)<1e-12;
@@ -155,4 +193,4 @@ function createD20Service(options={}){
   return Object.freeze({...core,ensurePolicy,markAttempt,moderateResult,transitionResult,createAppeal,reviewAppeal,recalculateAfterItemInvalidation,authorityBoundary:'D20_CANONICAL_MARKING_SAFETY_V2'});
 }
 
-module.exports={createD20Service,createD20AuthorityService:createD20Service,assertAuthoritativeResponseCapture};
+module.exports={createD20Service,createD20AuthorityService:createD20Service,assertAuthoritativeResponseCapture,newestFirstRuns,assertTpf16ReviewScope};
