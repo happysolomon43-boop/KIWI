@@ -1,0 +1,369 @@
+/*
+ * KIWI Teaching original-shell refinement.
+ * This layer deliberately preserves the established Teaching structure and
+ * shared KIWI visual language. It adds spacing, hierarchy, Calendar, Today,
+ * and Record presentation without introducing a replacement shell.
+ */
+
+:root {
+  --teaching-polish-surface: rgba(14, 27, 22, .92);
+  --teaching-polish-surface-soft: rgba(255, 255, 255, .018);
+  --teaching-polish-line: rgba(223, 245, 235, .085);
+  --teaching-polish-line-strong: rgba(126, 226, 184, .22);
+}
+
+.teaching-topbar {
+  border-bottom-color: rgba(223, 245, 235, .075);
+  background: rgba(8, 17, 14, .93);
+  box-shadow: 0 1px 0 rgba(255,255,255,.012);
+}
+
+.teaching-brand__kiwi { letter-spacing: .155em; }
+.teaching-brand__name { color: #d4e8df; }
+
+.teaching-stage {
+  width: min(1260px, 100%);
+}
+
+.teaching-menu-button,
+.teaching-icon-button {
+  background: rgba(255,255,255,.018);
+  border-color: var(--teaching-polish-line);
+}
+
+.teaching-menu-panel,
+.teaching-settings-panel {
+  background: linear-gradient(180deg, rgba(13, 29, 23, .995), rgba(8, 18, 14, .995));
+}
+
+.teaching-menu-link {
+  border-radius: 14px;
+}
+
+.teaching-menu-link:hover,
+.teaching-menu-link:focus-visible,
+.teaching-menu-link[data-active="true"] {
+  background: rgba(126,226,184,.065);
+}
+
+.teaching-dock {
+  border-color: rgba(223,245,235,.09);
+  background: rgba(8,18,14,.94);
+  box-shadow: 0 16px 44px rgba(0,0,0,.3);
+}
+
+.teaching-dock__item {
+  transition: background 150ms ease, color 150ms ease, transform 150ms ease;
+}
+
+.teaching-dock__item[data-active="true"] {
+  background: rgba(126,226,184,.10);
+  color: #dff7ec;
+}
+
+.teaching-dock__item[data-active="true"] .teaching-dock__icon {
+  color: var(--teaching-accent);
+}
+
+.teaching-hero,
+.teaching-course-overview-card,
+.teaching-course-card,
+.teaching-course-feature-card,
+.teaching-d09-card,
+.teaching-d10-card,
+.tw-panel,
+.tw-card {
+  border-color: var(--teaching-polish-line);
+}
+
+.teaching-course-card,
+.teaching-course-feature-card,
+.teaching-d09-calendar-item,
+.teaching-record-card,
+.teaching-today-card {
+  box-shadow: 0 12px 32px rgba(0,0,0,.12);
+}
+
+.teaching-course-card:hover,
+.teaching-course-feature-card:hover,
+.teaching-d09-calendar-item:hover,
+.teaching-today-card:hover {
+  border-color: var(--teaching-polish-line-strong);
+}
+
+.teaching-course-nav {
+  scrollbar-width: none;
+}
+.teaching-course-nav::-webkit-scrollbar { display: none; }
+
+/* Today lives inside the original Courses overview, not as a replacement home. */
+.teaching-today {
+  display: grid;
+  gap: 13px;
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid var(--teaching-polish-line);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(15,29,23,.86), rgba(10,20,16,.78));
+}
+
+.teaching-today__head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.teaching-today__head h2 {
+  margin: 4px 0 0;
+  font-family: var(--font-display);
+  font-size: 21px;
+  letter-spacing: -.025em;
+}
+
+.teaching-today__head p {
+  margin: 0;
+  color: var(--teaching-muted);
+  font-size: 11px;
+}
+
+.teaching-today__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+  gap: 9px;
+}
+
+.teaching-today-card {
+  min-width: 0;
+  min-height: 112px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 13px;
+  border: 1px solid var(--teaching-polish-line);
+  border-radius: 14px;
+  background: rgba(255,255,255,.018);
+  color: inherit;
+  text-align: left;
+}
+
+button.teaching-today-card {
+  cursor: pointer;
+}
+
+.teaching-today-card__label {
+  color: #7f948a;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.teaching-today-card strong {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #e4eee9;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.teaching-today-card small {
+  margin-top: auto;
+  color: var(--teaching-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.teaching-today__quiet {
+  padding: 13px 14px;
+  border: 1px solid rgba(126,226,184,.10);
+  border-radius: 13px;
+  background: rgba(126,226,184,.035);
+  color: #aac9bb;
+  font-size: 12px;
+}
+
+/* Calendar keeps the original D09 surface but composes Classes and Assessments. */
+.teaching-d09-calendar-section {
+  display: grid;
+  gap: 9px;
+}
+
+.teaching-d09-calendar-section + .teaching-d09-calendar-section {
+  margin-top: 8px;
+}
+
+.teaching-d09-calendar-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 2px 0;
+}
+
+.teaching-d09-calendar-section__head h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.teaching-d09-calendar-section__head span {
+  color: var(--teaching-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.teaching-d09-calendar-item {
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.teaching-d09-calendar-item:hover {
+  transform: translateY(-1px);
+  background: rgba(255,255,255,.022);
+}
+
+.teaching-d09-calendar-item__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.teaching-d09-calendar-kind {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 7px;
+  border: 1px solid var(--teaching-polish-line);
+  border-radius: 999px;
+  color: #a9c7b9;
+  background: rgba(255,255,255,.018);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.teaching-d09-calendar-kind[data-kind="ASSESSMENT"] {
+  border-color: rgba(231,190,109,.16);
+  color: #dfc68d;
+  background: rgba(231,190,109,.045);
+}
+
+.teaching-d09-calendar-time {
+  margin-top: 6px;
+  color: #9eb1a8;
+  font-size: 11px;
+}
+
+/* Formal Record follows the original card system and remains visually secondary. */
+.teaching-record {
+  display: grid;
+  gap: 16px;
+}
+
+.teaching-record__hero {
+  padding: clamp(22px,4vw,34px);
+  border: 1px solid var(--teaching-polish-line);
+  border-radius: 22px;
+  background: linear-gradient(145deg, rgba(16,31,25,.9), rgba(10,20,16,.86));
+}
+
+.teaching-record__hero h1 {
+  margin: 7px 0 7px;
+  font-family: var(--font-display);
+  font-size: clamp(30px,5vw,44px);
+  letter-spacing: -.045em;
+}
+
+.teaching-record__hero p {
+  max-width: 680px;
+  margin: 0;
+  color: var(--teaching-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.teaching-record-semester {
+  display: grid;
+  gap: 10px;
+}
+
+.teaching-record-semester__head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.teaching-record-semester__head h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+}
+
+.teaching-record-gpa {
+  color: var(--teaching-accent);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.teaching-record-grid {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 10px;
+}
+
+.teaching-record-card {
+  padding: 15px;
+  border: 1px solid var(--teaching-polish-line);
+  border-radius: 15px;
+  background: rgba(255,255,255,.016);
+}
+
+.teaching-record-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.teaching-record-card__outcome {
+  margin-top: 7px;
+  color: #bdd5ca;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.teaching-record-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.teaching-record-card__meta span {
+  padding: 5px 7px;
+  border: 1px solid var(--teaching-polish-line);
+  border-radius: 999px;
+  color: var(--teaching-muted);
+  font-size: 9px;
+}
+
+@media (max-width: 760px) {
+  .teaching-today__grid,
+  .teaching-record-grid { grid-template-columns: 1fr; }
+  .teaching-today__head,
+  .teaching-record-semester__head { align-items: flex-start; }
+}
+
+@media (max-width: 520px) {
+  .teaching-today { padding: 14px; border-radius: 17px; }
+  .teaching-record__hero { border-radius: 18px; }
+  .teaching-d09-calendar-item__top { display: grid; }
+  .teaching-d09-calendar-kind { width: max-content; }
+}
