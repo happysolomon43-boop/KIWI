@@ -14,7 +14,19 @@ test('Teaching production document keeps the established shell and does not load
   assert.doesNotMatch(html, /teaching-d23-live\.(?:js|css)/);
   assert.doesNotMatch(html, /class="d23-shell"/);
   assert.match(html, /id="teachingApp"/);
-  assert.match(html, /src="\/teaching\.js"/);
+  assert.match(html, /src="\/teaching\.js\?v=20261003-location-restore-1"/);
+});
+
+test('Teaching refresh restores the last valid destination and Course section', () => {
+  const shell = read('public/teaching.js');
+  assert.match(shell, /TEACHING_LOCATION_STORAGE_KEY = 'kiwi\.teaching\.location\.v1'/);
+  assert.match(shell, /window\.sessionStorage\.setItem\(TEACHING_LOCATION_STORAGE_KEY/);
+  assert.match(shell, /saved\.view === 'navigation'/);
+  assert.match(shell, /teachingNavigationItems\.get\(saved\.navigationId\)/);
+  assert.match(shell, /saved\.view === 'course'/);
+  assert.match(shell, /getTeachingCourse\(saved\.courseId\)/);
+  assert.match(shell, /teachingCourseSections\.has\(saved\.sectionId\)/);
+  assert.match(shell, /if \(restoreTeachingLocation\(\)\) return true/);
 });
 
 test('rejected D23 visible-shell implementation files are removed from production source', () => {

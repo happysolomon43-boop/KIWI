@@ -10,6 +10,7 @@ if (typeof kiwiApiRequest !== 'function' || typeof hasKiwiSession !== 'function'
 const KIWI_PATH = '/';
 const TEACHING_DOCK_LIMIT = 5;
 const TEACHING_DOCK_DESTINATION_SLOTS = TEACHING_DOCK_LIMIT - 1;
+const TEACHING_LOCATION_STORAGE_KEY = 'kiwi.teaching.location.v1';
 const teachingNavigationItems = new Map();
 const teachingCourseSections = new Map();
 let activeTeachingView = 'overview';
@@ -17,6 +18,72 @@ let activeTeachingNavigationId = null;
 let selectedTeachingCourseId = null;
 let activeTeachingCourseSection = 'overview';
 let teachingWorkspace = { subjects: [], courses: [] };
+
+function readTeachingLocation() {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(TEACHING_LOCATION_STORAGE_KEY) || 'null');
+    if (!value || typeof value !== 'object') return null;
+    return {
+      view: typeof value.view === 'string' ? value.view : 'overview',
+      navigationId: typeof value.navigationId === 'string' ? value.navigationId : null,
+      courseId: typeof value.courseId === 'string' || typeof value.courseId === 'number'
+        ? String(value.courseId)
+        : null,
+      sectionId: typeof value.sectionId === 'string' ? value.sectionId : 'overview',
+    };
+  } catch {
+    return null;
+  }
+}
+
+let pendingTeachingLocation = readTeachingLocation();
+
+function persistTeachingLocation() {
+  try {
+    window.sessionStorage.setItem(TEACHING_LOCATION_STORAGE_KEY, JSON.stringify({
+      view: activeTeachingView,
+      navigationId: activeTeachingNavigationId,
+      courseId: selectedTeachingCourseId == null ? null : String(selectedTeachingCourseId),
+      sectionId: activeTeachingCourseSection,
+    }));
+  } catch {
+    // Navigation remains functional when browser storage is unavailable.
+  }
+}
+
+function restoreTeachingLocation() {
+  const saved = pendingTeachingLocation;
+  pendingTeachingLocation = null;
+  if (!saved) return false;
+
+  if (saved.view === 'navigation' && saved.navigationId) {
+    const item = teachingNavigationItems.get(saved.navigationId);
+    if (item) {
+      selectTeachingNavigationItem(item, { scrollBehavior: 'auto' });
+      return true;
+    }
+  }
+
+  if (saved.view === 'course' && saved.courseId && getTeachingCourse(saved.courseId)) {
+    const sectionId = saved.sectionId === 'overview' || teachingCourseSections.has(saved.sectionId)
+      ? saved.sectionId
+      : 'overview';
+    navigateTeaching('course', {
+      courseId: saved.courseId,
+      sectionId,
+      preserveScroll: true,
+    });
+    return true;
+  }
+
+  if (saved.view === 'intake') {
+    navigateTeaching('intake', { preserveScroll: true });
+    return true;
+  }
+
+  persistTeachingLocation();
+  return false;
+}
 
 function isTeachingDocument() {
   return Boolean(document.getElementById('teachingApp'));
@@ -324,12 +391,13 @@ function renderSectionMenu() {
   }
 }
 
-function selectTeachingNavigationItem(item) {
+function selectTeachingNavigationItem(item, { scrollBehavior = 'smooth' } = {}) {
   if (!item) return;
   activeTeachingNavigationId = item.id;
   activeTeachingView = 'navigation';
   selectedTeachingCourseId = null;
   activeTeachingCourseSection = 'overview';
+  persistTeachingLocation();
   setMenuOpen(false, { restoreFocus: false });
   renderSectionMenu();
 
@@ -340,7 +408,7 @@ function selectTeachingNavigationItem(item) {
     return;
   }
 
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  window.scrollTo({ top: 0, behavior: scrollBehavior });
 }
 
 function getTeachingCourse(courseId) {
@@ -373,6 +441,8 @@ function navigateTeaching(view) {
     activeTeachingView = next;
     if (next !== 'course') activeTeachingCourseSection = 'overview';
   }
+
+  persistTeachingLocation();
 
   setMenuOpen(false, { restoreFocus: false });
   renderSectionMenu();
@@ -412,6 +482,7 @@ function openTeachingCourseSection(sectionId) {
   if (!selectedTeachingCourseId) return;
   if (sectionId !== 'overview' && !teachingCourseSections.has(sectionId)) return;
   activeTeachingCourseSection = sectionId;
+  persistTeachingLocation();
   renderCourseWorkspace();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -511,6 +582,8 @@ function renderCourseWorkspace() {
   if (!course) {
     activeTeachingView = 'overview';
     selectedTeachingCourseId = null;
+    activeTeachingCourseSection = 'overview';
+    persistTeachingLocation();
     renderSectionMenu();
     renderTeachingOverview();
     return;
@@ -827,6 +900,7 @@ async function refreshTeachingWorkspace({ preserveView = true } = {}) {
     selectedTeachingCourseId = null;
     activeTeachingCourseSection = 'overview';
     activeTeachingView = 'overview';
+    persistTeachingLocation();
   }
   renderSectionMenu();
   renderActiveTeachingView();
@@ -843,6 +917,7 @@ async function verifyTeachingSession() {
   try {
     await kiwiApiRequest('/teaching/status');
     await loadTeachingWorkspace();
+    if (restoreTeachingLocation()) return true;
     renderSectionMenu();
     renderActiveTeachingView();
     return true;
