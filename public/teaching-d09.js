@@ -158,12 +158,48 @@ async function renderSummary({course,container,openSection}) {
   const actions=el('div','teaching-course-feature-card__actions'), open=el('button','teaching-d08-link-button teaching-d08-link-button--primary','Open scheduling');open.type='button';open.addEventListener('click',openSection);actions.append(open);card.append(actions);container.replaceChildren(card);
   try{const data=await fetchReview(course.course_id);if(data.feasibility){const badge=el('span','teaching-course-feature-card__status',statusName(data.feasibility.outcome));card.insertBefore(badge,card.children[1]);}}catch(_){}
 }
+function displayCalendarTime(value,zone){
+  if(!value)return 'Time not set';
+  const date=new Date(value);if(!Number.isFinite(date.getTime()))return 'Time not set';
+  try{return new Intl.DateTimeFormat(undefined,{timeZone:zone,weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(date);}catch{return date.toLocaleString();}
+}
+function calendarEventCard(item,data){
+  const kind=String(item.kind||'CLASS').toUpperCase(),card=el('article','teaching-d09-calendar-item'),top=el('div','teaching-d09-calendar-item__top'),copy=el('div');
+  const kindLabel=kind==='ASSESSMENT'?statusName(item.assessmentType||'Assessment'):'Class';
+  copy.append(el('strong','',item.title||kindLabel),el('div','teaching-d09-note',kind==='ASSESSMENT'?'Announced assessment':'Approved timetable'));
+  const badge=el('span','teaching-d09-calendar-kind',kindLabel);badge.dataset.kind=kind;
+  top.append(copy,badge);card.append(top,el('div','teaching-d09-calendar-time',displayCalendarTime(item.startsAt,data.currentTimeZone)+(item.endsAt?' → '+displayCalendarTime(item.endsAt,data.currentTimeZone):'')+' · '+data.currentTimeZone));
+  if(kind==='CLASS'&&window.KIWITeachingD10){
+    const actions=el('div','teaching-d09-actions'),move=el('button','teaching-d08-link-button','Request new time'),absence=el('button','teaching-d08-link-button','Emergency absence');
+    move.type=absence.type='button';move.addEventListener('click',()=>window.KIWITeachingD10.requestClassReschedule(item));absence.addEventListener('click',()=>window.KIWITeachingD10.emergencyAbsence(item));actions.append(move,absence);card.append(actions);
+  }
+  return card;
+}
+function proposalCard(item,data){
+  const card=el('article','teaching-d09-calendar-item'),top=el('div','teaching-d09-calendar-item__top'),copy=el('div');
+  copy.append(el('strong','',item.course_title||item.title||'Proposed Class'),el('div','teaching-d09-note','Pre-activation proposal'));
+  const badge=el('span','teaching-d09-calendar-kind','Proposed');badge.dataset.kind='PROPOSAL';top.append(copy,badge);
+  const start=item.displayStart||displayCalendarTime(item.startsAt||item.starts_at,data.currentTimeZone),end=item.displayEnd||displayCalendarTime(item.endsAt||item.ends_at,data.currentTimeZone);
+  card.append(top,el('div','teaching-d09-calendar-time',start+(end?' → '+end:'')+' · '+data.currentTimeZone));return card;
+}
 async function renderCalendar() {
   installStyles(); const main=document.getElementById('teachingApp'); if(!main)return; const page=el('section','teaching-view teaching-d09-page'),zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
-  const head=el('div','teaching-d09-card');head.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Approved Class times are authoritative. Pre-activation proposals are separate. Current timezone is display-only and never changes lateness or schedule truth.'));
+  const head=el('div','teaching-d09-card');head.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Classes and announced assessments share one timetable. Proposed Course times remain separate until they are approved.'));
   const back=el('button','teaching-d08-link-button','Back to courses');back.type='button';back.addEventListener('click',()=>courseSurface.openOverview?courseSurface.openOverview():window.location.reload());head.append(back);page.append(head);main.replaceChildren(page);
-  try{const data=await kiwiApiRequest('/teaching/calendar?currentTimeZone='+encodeURIComponent(zone)),list=el('div','teaching-d09-calendar');[...data.authoritativeClasses,...data.preactivationProposals].forEach((item)=>{const card=el('article','teaching-d09-calendar-item');card.append(el('strong','',item.course_title||'Teaching Class'),el('div','teaching-d09-note',item.authoritative?'Approved timetable':'Pre-activation proposal'),el('p','',item.displayStart+' → '+item.displayEnd+' · '+data.currentTimeZone));if(item.authoritative&&window.KIWITeachingD10){const actions=el('div','teaching-d09-actions'),move=el('button','teaching-d08-link-button','Request new time'),absence=el('button','teaching-d08-link-button','Emergency absence');move.type=absence.type='button';move.addEventListener('click',()=>window.KIWITeachingD10.requestClassReschedule(item));absence.addEventListener('click',()=>window.KIWITeachingD10.emergencyAbsence(item));actions.append(move,absence);card.append(actions);}list.append(card);});if(!list.children.length)list.append(el('div','teaching-empty','No Teaching timetable items yet.'));page.append(list);}catch(error){page.append(el('div','teaching-message',error.message||'Calendar could not be loaded.'));}
+  try{
+    const data=await kiwiApiRequest('/teaching/information/calendar?currentTimeZone='+encodeURIComponent(zone));
+    const events=Array.isArray(data.events)?data.events:[],proposals=Array.isArray(data.preactivationProposals)?data.preactivationProposals:[];
+    if(events.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head'),list=el('div','teaching-d09-calendar');sectionHead.append(el('h3','','Scheduled'),el('span','',events.length+' item'+(events.length===1?'':'s')));events.forEach((item)=>list.append(calendarEventCard(item,data)));section.append(sectionHead,list);page.append(section);}
+    if(proposals.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head'),list=el('div','teaching-d09-calendar');sectionHead.append(el('h3','','Proposed course times'),el('span','',proposals.length+' item'+(proposals.length===1?'':'s')));proposals.forEach((item)=>list.append(proposalCard(item,data)));section.append(sectionHead,list);page.append(section);}
+    if(!events.length&&!proposals.length)page.append(el('div','teaching-empty','No Teaching timetable items yet.'));
+    if(data.issues?.length)page.append(el('div','teaching-message','Some calendar information is temporarily unavailable. The items shown above remain the authoritative visible timetable.'));
+  }catch(error){const message=el('div','teaching-message',error.message||'Calendar could not be loaded.');message.dataset.kind='error';page.append(message);}
+}
+function loadOriginalShellEnhancements(){
+  if(!document.querySelector('link[data-teaching-original-polish]')){const link=document.createElement('link');link.rel='stylesheet';link.href='/teaching-original-polish.css';link.dataset.teachingOriginalPolish='true';document.head.append(link);}
+  import('/teaching-original-bridge.js').catch((error)=>console.warn('[KIWI Teaching] original-shell enhancement unavailable:',error?.message));
 }
 courseSurface.registerSection({id:'schedule',label:'Schedule',order:30,render:renderSchedule,renderSummary});
-if(nav&&typeof nav.register==='function')nav.register({id:'calendar',label:'Calendar',description:'Classes, timetable and proposals',icon:'◷',menuIcon:'calendar',onSelect:renderCalendar});
+if(nav&&typeof nav.register==='function')nav.register({id:'calendar',label:'Calendar',description:'Classes and assessments in one timetable',icon:'◷',menuIcon:'calendar',onSelect:renderCalendar});
 window.KIWITeachingD09=Object.freeze({openSchedule:(courseId)=>courseSurface.openCourse(courseId,'schedule'),openCalendar:renderCalendar});
+loadOriginalShellEnhancements();
