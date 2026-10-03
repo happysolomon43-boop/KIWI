@@ -22,7 +22,7 @@ test('Teaching uses a standalone document instead of rendering inside the KIWI s
 
   assert.match(html, /data-app="kiwi-teaching"/);
   assert.match(html, /id="teachingApp"/);
-  assert.match(html, /src="\/teaching\.js"/);
+  assert.match(html, /src="\/teaching\.js(?:\?[^\"]+)?"/);
   assert.match(js, /window\.location\.assign\(KIWI_PATH\)/);
   assert.doesNotMatch(js, /renderTeachingPage/);
   assert.doesNotMatch(js, /main\.innerHTML/);
