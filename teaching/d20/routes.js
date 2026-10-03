@@ -1,6 +1,6 @@
 'use strict';
 
-const {createD20Service}=require('./authority-service');
+const {createD20Service}=require('./assessment-boundary-service');
 const {renderCourseResults,renderTopicResult,renderAssessmentReview}=require('./ui');
 
 function mountD20Routes(router,{foundation,sendError,d19Service,requireD17Ready}={}){
