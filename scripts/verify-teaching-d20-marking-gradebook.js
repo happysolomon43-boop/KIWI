@@ -39,6 +39,7 @@ const authority=read('teaching/d20/authority-service.js');
 const routes=read('teaching/d20/routes.js');
 const repository=read('teaching/repositories/d20-gradebook.js');
 const unit=read('tests/teaching/unit/d20-marking-gradebook.test.js');
+const safetyTests=read('tests/teaching/unit/d20-marking-safety-hardening.test.js');
 const authorityTests=read('tests/teaching/unit/d20-authority-reflow.test.js');
 const schemaTests=read('tests/teaching/integration/d20-marking-gradebook-schema.test.js');
 
@@ -56,9 +57,19 @@ assert(authority.includes('TEACHING_D20_APPEAL_DIRECTION_AUTHORITY_REQUIRED'),'c
 assert(authority.includes("item.item_state)==='INVALIDATED'"),'TCH-0425 reflow must bind to D17 INVALIDATED item state');
 assert(authority.includes('ITEM_INVALIDATION_RECALCULATION'),'invalidation reflow must emit an explicit correction reason');
 assert(authority.includes("owner:'D21'")&&authority.includes('gpaMutationByD20:false'),'D20 must hand corrected truth downstream without taking D21 GPA authority');
+assert(authority.includes('assertAuthoritativeResponseCapture'),'TCH-0396 must verify authoritative final-response capture before marking/review');
+assert(authority.includes('TEACHING_D20_RESPONSE_CAPTURE_CORRUPTED')&&authority.includes('blankItemIds'),'TCH-0396 must distinguish compromised captured evidence from legitimate final blanks');
 assert(routes.includes("require('./authority-service')"),'runtime routes must use the authoritative D20 service boundary');
 assert(routes.includes('/results/:resultId/recalculate-invalidation'),'runtime must expose the authoritative invalidation recalculation trigger');
 assert(!routes.includes('reviewDirectionPolicy:direction'),'routes must not inject request-owned appeal direction');
+
+assert(contracts.includes('TEACHING_D20_PARTIAL_CREDIT_NOT_DECLARED'),'TCH-0397 must enforce declared rubric partial-credit points/ranges');
+assert(contracts.includes('TEACHING_D20_FOLLOW_THROUGH_NOT_AUTHORIZED'),'TCH-0397 must enforce locked follow-through/error-carried-forward authorization');
+assert(contracts.includes('TEACHING_D20_ALTERNATIVE_ROUTE_NOT_AUTHORIZED'),'TCH-0396/0398 must prevent alternative-answer logic from rewriting exhaustive answer spaces');
+assert(contracts.includes('TEACHING_D20_NEGATIVE_MARKING_DETERMINISTIC_RULE_REQUIRED'),'TCH-0396 must fail closed rather than silently invent/omit triggered negative marking');
+assert(contracts.includes('TEACHING_D20_DOUBLE_COUNT_RULE_BREACH'),'TCH-0397 must enforce declared no-double-count dependencies');
+assert(contracts.includes('TEACHING_D20_AGGREGATION_RULE_UNSUPPORTED'),'deterministic aggregation must fail closed on unsupported locked cap/dependency rules rather than ignore them');
+assert(contracts.includes('TEACHING_D20_CRITERION_JUDGMENT_MISSING'),'TCH-0760 must require complete criterion coverage for fully markable TPF-15 output');
 
 for(const table of ['teaching_grading_policies','teaching_assessment_results','teaching_marking_runs','teaching_marking_criterion_judgments','teaching_grade_appeals','teaching_gradebook_entries','teaching_topic_score_snapshots','teaching_course_result_snapshots','teaching_grade_change_audit'])assert(repository.includes(table),`authoritative repository missing ${table}`);
 
@@ -71,6 +82,16 @@ assert(moderationTests.includes('TCH-0763 material high-stakes moderation disagr
 assert(unit.includes('T4 marking context excludes attendance personality GPA'),'TCH-0426 T4 context firewall regression test missing');
 assert(unit.includes('TPF-16 Pass A must be genuinely blind'),'TCH-0763 blind-first regression test missing');
 assert(unit.includes('material marker disagreement escalates and is never averaged'),'TCH-0763 disagreement escalation regression test missing');
+for(const required of [
+  'authoritative response capture distinguishes a legitimate blank from lost evidence',
+  'partial credit must be one of the locked rubric points or ranges',
+  'follow-through is rejected unless the locked rubric authorizes it',
+  'alternative valid routes cannot rewrite an exhaustive locked answer space',
+  'negative marking can never be silently invented or silently omitted',
+  'no-double-count rubric rule rejects shared evidence across criteria',
+  'a markable TPF-15 output must cover every locked rubric criterion',
+  'unsupported global rubric caps/dependencies fail closed instead of being ignored',
+])assert(safetyTests.includes(required),`D20 marking-safety regression missing: ${required}`);
 assert(schemaTests.includes('teaching_gradebook_entries'),'D20 schema reconstruction test missing Gradebook coverage');
 assert(schemaTests.includes("grantee in ('anon','authenticated')"),'D20 schema/security test must exercise browser/authenticated authority boundaries');
 assert(schemaTests.includes("grantee='service_role'")&&schemaTests.includes("privilege_type in ('UPDATE','DELETE','TRUNCATE')"),'D20 schema/security test must enforce narrow service-role mutation grants');
@@ -78,6 +99,6 @@ assert(schemaTests.includes("grantee='service_role'")&&schemaTests.includes("pri
 const workflow='.github/workflows/teaching-d20-marking-gradebook.yml';
 assert(exists(workflow),'D20 same-head CI workflow is missing');
 const ci=read(workflow);
-for(const required of ['verify:teaching:d20','d20-marking-gradebook.test.js','d20-authority-reflow.test.js','d20-appeal-recalculation.test.js','d20-moderation-escalation.test.js','test:teaching:integration','build:web'])assert(ci.includes(required),`D20 CI is missing ${required}`);
+for(const required of ['verify:teaching:d20','d20-marking-gradebook.test.js','d20-marking-safety-hardening.test.js','d20-authority-reflow.test.js','d20-appeal-recalculation.test.js','d20-moderation-escalation.test.js','test:teaching:integration','build:web'])assert(ci.includes(required),`D20 CI is missing ${required}`);
 
-console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 4 migrations, TPF-15/16 authority boundaries, QA invariants, production grant hardening and same-head CI are registered.`);
+console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 4 migrations, TPF-15/16 authority boundaries, canonical marking-safety regressions, production grant hardening and same-head CI are registered.`);
