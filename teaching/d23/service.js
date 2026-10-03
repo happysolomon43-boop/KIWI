@@ -46,11 +46,24 @@ function createD23Service({d07,d08,d09,d10,d14,d16,d19,d20,d21,d22,clock=()=>new
     return {map,issues};
   }
 
+  function eventIdentitySignature(event){
+    return JSON.stringify([event.kind,event.courseId,event.startsAt,event.endsAt,event.assessmentType||null,event.slotKind||null]);
+  }
+
   async function calendar(user,{from=null,to=null,currentTimeZone='UTC'}={}){
     const courses=await courseRows(user),base=await d09.getCalendar(user,{from,to,currentTimeZone}),assessmentData=await assessmentsByCourse(user,courses);
-    const events=(base.authoritativeClasses||[]).map(classEvent);
-    for(const rows of assessmentData.map.values())for(const row of rows){const event=assessmentEvent(row);if(event)events.push(event);}
-    events.sort(sortTime);
+    const eventById=new Map(),conflictedIds=new Set();
+    const addEvent=(event)=>{
+      if(!event||conflictedIds.has(event.id))return;
+      const existing=eventById.get(event.id);
+      if(!existing){eventById.set(event.id,event);return;}
+      if(eventIdentitySignature(existing)===eventIdentitySignature(event))return;
+      eventById.delete(event.id);conflictedIds.add(event.id);
+      assessmentData.issues.push(Object.freeze({code:'TEACHING_D23_EVENT_ID_CONFLICT',message:`Conflicting authoritative projections were returned for ${event.id}; the ambiguous event was withheld.`,status:409}));
+    };
+    for(const row of base.authoritativeClasses||[])addEvent(classEvent(row));
+    for(const rows of assessmentData.map.values())for(const row of rows)addEvent(assessmentEvent(row));
+    const events=[...eventById.values()].sort(sortTime);
     return Object.freeze({serverNow:base.serverNow,currentTimeZone:base.currentTimeZone,events:Object.freeze(events),preactivationProposals:Object.freeze(base.preactivationProposals||[]),sourceOwners:Object.freeze(['D09_SCHEDULER','D17_ASSESSMENT']),singleTeachingTimetable:true,hiddenImpromptuAssessmentsExcluded:true,issues:Object.freeze(assessmentData.issues)});
   }
 
@@ -121,7 +134,7 @@ function createD23Service({d07,d08,d09,d10,d14,d16,d19,d20,d21,d22,clock=()=>new
     return Object.freeze({groups:studyPackCollection(groups),courseFilter:courseId||null,classFilter:classId||null,mainKiwiStudyCollection:true,cardSelectionOwner:'D27_NOT_D23',notesDoNotCreateCards:true});
   }
 
-  async function createCourseEntry(user){const subjects=await d07.listCourses?null:null;return Object.freeze({href:'/teaching/create-course/view',sourceRequirement:'EXISTING_KIWI_SUBJECT',createEndpoint:'/teaching/courses',subjectPickerEndpoint:'/teaching/subjects'});}
+  async function createCourseEntry(){return Object.freeze({href:'/teaching/create-course/view',sourceRequirement:'EXISTING_KIWI_SUBJECT',createEndpoint:'/teaching/courses',subjectPickerEndpoint:'/teaching/subjects'});}
 
   return Object.freeze({today,courses,calendar,courseOverview,coursePlan,courseMaterials,courseWork,courseResults,globalWork,record,requests,archivedCourses,classEventDetail,study,createCourseEntry,notificationDeepLink});
 }
