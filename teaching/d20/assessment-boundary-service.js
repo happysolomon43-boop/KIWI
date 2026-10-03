@@ -109,13 +109,21 @@ function normalizeBundleForD20(rawBundle){
 }
 
 function assessmentBoundaryRepository(repository){
-  return new Proxy(repository,{
-    get(target,property,receiver){
-      if(property==='loadMarkingBundle')return async(...args)=>normalizeBundleForD20(await target.loadMarkingBundle(...args));
-      const value=Reflect.get(target,property,receiver);
-      return typeof value==='function'?value.bind(target):value;
-    },
-  });
+  if(!repository||typeof repository.loadMarkingBundle!=='function')throw new TypeError('D20 Assessment boundary repository requires loadMarkingBundle().');
+
+  // D20 repositories are intentionally frozen authority objects. A Proxy cannot
+  // legally substitute a different value for a frozen, non-configurable method,
+  // so build a concrete delegated adapter instead. Bind delegated functions to
+  // the original repository to remain safe if a future repository method uses
+  // `this`, while overriding only the marking-bundle read boundary.
+  const adapter={};
+  for(const key of Reflect.ownKeys(repository)){
+    if(key==='loadMarkingBundle')continue;
+    const value=repository[key];
+    adapter[key]=typeof value==='function'?value.bind(repository):value;
+  }
+  adapter.loadMarkingBundle=async(...args)=>normalizeBundleForD20(await repository.loadMarkingBundle(...args));
+  return Object.freeze(adapter);
 }
 
 function createD20Service(options={}){
