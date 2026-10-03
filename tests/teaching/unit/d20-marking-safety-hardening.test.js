@@ -101,6 +101,22 @@ test('TCH-0396 expiry auto-finalization is accepted only when final snapshot lin
   assert.equal(result.responseState,'auto_finalized_on_expiry');
 });
 
+test('TCH-0395 and TCH-0396 blank objective responses never coerce into correct answers',()=>{
+  const numericItem={response_family:'NUMERIC',intended_marks:3,protected_marking_payload:{correct_value:0,absolute_tolerance:0}};
+  const missing=contracts.deterministicMarkObjective(numericItem,null);
+  const empty=contracts.deterministicMarkObjective(numericItem,{renderer_payload:{value:'   '}});
+  const explicitZero=contracts.deterministicMarkObjective(numericItem,{renderer_payload:{value:0}});
+  assert.equal(missing.earned,0);
+  assert.equal(missing.method,'BLANK_FINAL_RESPONSE');
+  assert.equal(empty.earned,0);
+  assert.equal(empty.method,'BLANK_FINAL_RESPONSE');
+  assert.equal(explicitZero.earned,3);
+  assert.equal(explicitZero.method,'NUMERIC_TOLERANCE');
+  const blankMcq=contracts.deterministicMarkObjective({response_family:'MCQ',intended_marks:1,protected_marking_payload:{correct_answer:'A'}},{renderer_payload:{answer:''}});
+  assert.equal(blankMcq.earned,0);
+  assert.equal(blankMcq.method,'BLANK_FINAL_RESPONSE');
+});
+
 test('TCH-0397 partial credit must be one of the locked rubric points or ranges',()=>{
   const rubric=oneCriterion();
   assert.throws(()=>contracts.validateCriterionJudgments({family:'TPF-15',marking_status:'markable',criterion_judgments:[judgment({proposed_credit:3})]},rubric),error=>error?.code==='TEACHING_D20_PARTIAL_CREDIT_NOT_DECLARED');
