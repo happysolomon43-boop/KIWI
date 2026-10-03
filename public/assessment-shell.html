@@ -11,8 +11,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/kiwi-ui-system.css" />
   <link rel="stylesheet" href="/assessment-shell.css" />
+  <link rel="stylesheet" href="/teaching-d24.css?v=20261003-d24-1" />
 </head>
-<body>
+<body class="assessment-d24">
+  <a class="teaching-skip-link" href="#questionCard">Skip to current question</a>
   <div id="assessmentApp" class="assessment-app" aria-busy="true">
     <header class="assessment-topbar" aria-label="Assessment controls">
       <a id="returnLink" class="assessment-brand" href="/teaching.html" aria-label="Return to KIWI Teaching">
@@ -30,7 +32,7 @@
         <button id="toolsButton" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="toolsPanel" aria-label="Allowed tools and resources">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M7 4v6M17 4v6M5 14h14l-1 6H6l-1-6Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
-        <div class="timer" id="timer" data-state="normal" aria-live="off">
+        <div class="timer" id="timer" data-state="normal" role="timer" aria-label="Assessment time remaining" aria-live="off">
           <span class="timer__label">Time left</span>
           <strong id="timerValue">--:--</strong>
         </div>
@@ -58,7 +60,7 @@
     </main>
 
     <main id="workspaceView" class="workspace" hidden>
-      <aside class="navigator" aria-label="Question navigator">
+      <aside id="assessmentNavigator" class="navigator" aria-label="Question navigator" aria-describedby="navigatorHelp">
         <div class="navigator__header">
           <div>
             <span class="eyebrow">Assessment map</span>
@@ -67,6 +69,7 @@
           <button id="navigatorClose" class="icon-button navigator__close" type="button" aria-label="Close question navigator">×</button>
         </div>
         <div id="questionGrid" class="question-grid" role="list"></div>
+        <p id="navigatorHelp" class="teaching-visually-hidden">Use the question buttons to move through the assessment. Each button announces its response state.</p>
         <div class="navigator-legend" aria-label="Question state legend">
           <span><i data-state="unseen"></i>Unseen</span>
           <span><i data-state="answered"></i>Answered</span>
@@ -78,7 +81,7 @@
 
       <section class="question-stage">
         <div class="question-stage__header">
-          <button id="navigatorOpen" class="icon-button navigator__open" type="button" aria-label="Open question navigator">
+          <button id="navigatorOpen" class="icon-button navigator__open" type="button" aria-label="Open question navigator" aria-controls="assessmentNavigator" aria-expanded="false">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           </button>
           <div class="question-position">
@@ -91,7 +94,7 @@
           </button>
         </div>
 
-        <article id="questionCard" class="question-card">
+        <article id="questionCard" class="question-card" aria-labelledby="questionPosition questionMarks" tabindex="-1">
           <div id="itemStateBanner" class="item-state-banner" hidden></div>
           <div id="sourcePanel" class="source-panel" hidden></div>
           <div id="questionPrompt" class="question-prompt"></div>
@@ -167,11 +170,12 @@
 
   <div id="networkBanner" class="network-banner" hidden role="status"></div>
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <div id="assessmentA11yStatus" class="teaching-visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <script src="/kiwi-runtime-config.js"></script>
   <script src="/kiwi-api-client.js"></script>
   <script src="/kiwi-integrity-session-guard.js"></script>
   <script src="/assessment-shell-core.js"></script>
-  <script src="/assessment-shell.js"></script>
+  <script src="/assessment-shell.js?v=20261003-d24-1"></script>
 </body>
 </html>
