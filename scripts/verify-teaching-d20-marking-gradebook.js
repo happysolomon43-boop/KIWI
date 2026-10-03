@@ -42,11 +42,13 @@ const contracts=read('teaching/d20/contracts.js');
 const intelligence=read('teaching/d20/intelligence.js');
 const authority=read('teaching/d20/authority-service.js');
 const corrected=read('teaching/d20/corrected-authority-service.js');
+const assessmentBoundary=read('teaching/d20/assessment-boundary-service.js');
 const routes=read('teaching/d20/routes.js');
 const index=read('teaching/d20/index.js');
 const repository=read('teaching/repositories/d20-gradebook.js');
 const unit=read('tests/teaching/unit/d20-marking-gradebook.test.js');
 const correctiveTests=read('tests/teaching/unit/d20-corrective-hardening.test.js');
+const boundaryTests=read('tests/teaching/unit/d20-assessment-boundary.test.js');
 const authorityTests=read('tests/teaching/unit/d20-authority-reflow.test.js');
 const schemaTests=read('tests/teaching/integration/d20-marking-gradebook-schema.test.js');
 const correctiveSchemaTests=read('tests/teaching/integration/d20-corrective-academic-guards-schema.test.js');
@@ -71,8 +73,10 @@ assert(corrected.includes('TEACHING_D20_FOLLOW_THROUGH_NOT_AUTHORIZED'),'TCH-039
 assert(corrected.includes('TEACHING_D20_TPF15_CRITERION_COVERAGE_INVALID'),'TCH-0760 criterion coverage gate missing');
 assert(corrected.includes('TEACHING_D20_DEDUCTION_RESOLUTION_REQUIRED'),'TCH-0396 unresolved deduction fail-closed gate missing');
 assert(corrected.includes("run_kind==='AUTHORIZED_CORRECTION'")&&corrected.includes('sort(newestFirst)'),'repeat-appeal corrections must select the newest authorized correction');
-assert(routes.includes("require('./corrected-authority-service')"),'runtime routes must use the corrected authoritative D20 service boundary');
-assert(index.includes("require('./corrected-authority-service')"),'D20 public module must export the corrected authoritative service boundary');
+assert(assessmentBoundary.includes('selected_option_ids')&&assessmentBoundary.includes('provisional_answer_key'),'TCH-0395 D17/D18 objective response compatibility boundary missing');
+assert(assessmentBoundary.includes("canonicalFamily='CONSTRUCTED'")&&assessmentBoundary.includes('unitRequired'),'unsafe unit-bearing/structured renderer semantics must not bypass rubric marking');
+assert(routes.includes("require('./assessment-boundary-service')"),'runtime routes must use the D17/D18-to-D20 Assessment boundary');
+assert(index.includes("require('./assessment-boundary-service')"),'D20 public module must export the Assessment-boundary authority service');
 assert(routes.includes('/results/:resultId/recalculate-invalidation'),'runtime must expose the authoritative invalidation recalculation trigger');
 assert(!routes.includes('reviewDirectionPolicy:direction'),'routes must not inject request-owned appeal direction');
 
@@ -84,6 +88,9 @@ assert(correctiveTests.includes('follow-through credit is accepted only'),'TCH-0
 assert(correctiveTests.includes('complete authorized locked-rubric scope'),'TCH-0760 exact criterion-coverage regression test missing');
 assert(correctiveTests.includes('negative-marking triggers fail closed'),'unresolved deterministic deduction regression test missing');
 assert(correctiveTests.includes('newest authorized correction first'),'repeat-appeal latest-correction regression test missing');
+assert(boundaryTests.includes('real D18 selected_option_ids'),'TCH-0395 real Assessment Shell selected-response regression test missing');
+assert(boundaryTests.includes('unit-bearing numeric response does not bypass'),'TCH-0395 unit-bearing numeric safety regression test missing');
+assert(boundaryTests.includes('multipart STRUCTURED'),'D18 multipart response classification regression test missing');
 assert(authorityTests.includes('TCH-0425 invalidated question recalculates'),'TCH-0425 invalidation recalculation regression test missing');
 const appealTests=read('tests/teaching/unit/d20-appeal-recalculation.test.js');
 const moderationTests=read('tests/teaching/unit/d20-moderation-escalation.test.js');
@@ -101,6 +108,6 @@ assert(correctiveSchemaTests.includes('teaching_d20_follow_through_authorization
 const workflow='.github/workflows/teaching-d20-marking-gradebook.yml';
 assert(exists(workflow),'D20 same-head CI workflow is missing');
 const ci=read(workflow);
-for(const required of ['verify:teaching:d20','d20-marking-gradebook.test.js','d20-corrective-hardening.test.js','d20-authority-reflow.test.js','d20-appeal-recalculation.test.js','d20-moderation-escalation.test.js','d20-corrective-academic-guards-schema.test.js','test:teaching:integration','build:web'])assert(ci.includes(required),`D20 CI is missing ${required}`);
+for(const required of ['verify:teaching:d20','d20-marking-gradebook.test.js','d20-corrective-hardening.test.js','d20-assessment-boundary.test.js','d20-authority-reflow.test.js','d20-appeal-recalculation.test.js','d20-moderation-escalation.test.js','d20-corrective-academic-guards-schema.test.js','test:teaching:integration','build:web'])assert(ci.includes(required),`D20 CI is missing ${required}`);
 
-console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 5 migrations, TPF-15/16 authority boundaries, corrective academic guards, QA invariants, production grant hardening and same-head CI are registered.`);
+console.log(`[D20 verify] PASS — ${accounting.taskCount} frozen tasks, 5 migrations, TPF-15/16 authority boundaries, D17/D18 Assessment response reconciliation, corrective academic guards, QA invariants, production grant hardening and same-head CI are registered.`);
