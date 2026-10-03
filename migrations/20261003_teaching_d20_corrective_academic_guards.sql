@@ -131,8 +131,9 @@ DECLARE
   criterion jsonb;
   policy text;
   conditions jsonb;
+  answer_policy text;
 BEGIN
-  IF COALESCE(NEW.follow_through_applied,false)=false THEN
+  IF COALESCE(NEW.follow_through_applied,false)=false AND COALESCE(NEW.alternative_valid_route_used,false)=false THEN
     RETURN NEW;
   END IF;
 
@@ -160,7 +161,21 @@ BEGIN
    LIMIT 1;
 
   IF criterion IS NULL THEN
-    RAISE EXCEPTION 'D20 follow-through credit criterion is outside the locked rubric';
+    RAISE EXCEPTION 'D20 rubric-credit criterion is outside the locked rubric';
+  END IF;
+
+  IF COALESCE(NEW.alternative_valid_route_used,false)=true THEN
+    answer_policy:=lower(COALESCE(criterion->>'answer_space_policy',criterion->>'answerSpacePolicy',''));
+    IF answer_policy='exhaustive' THEN
+      RAISE EXCEPTION 'D20 exhaustive-rubric omitted valid answer requires rubric-defect review, not alternative-route credit';
+    END IF;
+    IF answer_policy NOT IN ('illustrative','open_constrained') THEN
+      RAISE EXCEPTION 'D20 alternative-route credit requires an explicit non-exhaustive answer-space policy';
+    END IF;
+  END IF;
+
+  IF COALESCE(NEW.follow_through_applied,false)=false THEN
+    RETURN NEW;
   END IF;
 
   policy:=lower(COALESCE(criterion->>'follow_through_policy',criterion->>'followThroughPolicy','not_applicable'));
