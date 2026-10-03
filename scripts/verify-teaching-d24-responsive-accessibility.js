@@ -13,8 +13,8 @@ const teachingHtml=read('public/teaching.html'),assessmentHtml=read('public/asse
 for(const marker of ['teaching-d24.css','teaching-d24.js','teaching-skip-link'])assert.ok(teachingHtml.includes(marker),marker);
 for(const marker of ['role="timer"','assessmentA11yStatus','aria-describedby="navigatorHelp"','teaching-d24.css'])assert.ok(assessmentHtml.includes(marker),marker);
 for(const marker of ['prefers-reduced-motion','prefers-contrast','forced-colors','min-width: 1100px','max-width: 699px'])assert.ok(css.includes(marker),marker);
-for(const marker of ['KIWITeachingAccessibility','MutationObserver','ArrowRight','Escape'])assert.ok(d24.includes(marker),marker);
+for(const marker of ['KIWITeachingAccessibility','MutationObserver','ArrowRight','Escape','trapDrawerFocus','setAttribute(\'inert\'','aria-modal','data-menu !== \'true\''])assert.ok(d24.includes(marker),marker);
 for(const marker of ['role','tabpanel','Previous Board scene','aria-live','trapClassroomFocus'])assert.ok(classroom.includes(marker),marker);
 for(const marker of ['aria-current','Approved timer setting','Five minutes remaining','spellcheck','altKey'])assert.ok(assessment.includes(marker),marker);
 const migrations=fs.readdirSync(path.join(root,'migrations'));assert.equal(migrations.some(name=>/d24/i.test(name)),false,'D24 must not add a persistence owner or migration.');
-console.log(JSON.stringify({delivery:'D24',taskCount:D24_TASK_IDS.length,status:'PASS',viewports:VIEWPORT_COMPOSITIONS,visualStates:VISUAL_STATE_COVERAGE.length,authority:AUTHORITY_BOUNDARIES,persistence:'NONE'},null,2));
+console.log(JSON.stringify({delivery:'D24',taskCount:D24_TASK_IDS.length,status:'PASS',viewports:VIEWPORT_COMPOSITIONS,visualStates:VISUAL_STATE_COVERAGE.length,authority:AUTHORITY_BOUNDARIES,persistence:'NONE',drawerKeyboardContainment:'PASS'},null,2));
