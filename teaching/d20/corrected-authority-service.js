@@ -56,6 +56,17 @@ function assertFinalSnapshotIntegrity(bundle){
   return Object.freeze({captureIntegrity:'complete',finalSnapshotRef:String(context.final_snapshot_ref),responseCount:snapshotByItem.size});
 }
 
+function normalizeBundleForMarking(bundle){
+  const responses=asArray(bundle?.responses).map(response=>{
+    const payload=asObject(response?.renderer_payload),selected=asArray(payload.selected_option_ids||payload.selectedOptionIds);
+    if(selected.length&&!Object.prototype.hasOwnProperty.call(payload,'answer')){
+      return {...response,renderer_payload:{...payload,answer:selected.length===1?String(selected[0]):selected.map(String)}};
+    }
+    return response;
+  });
+  return {...bundle,responses,responseByItem:new Map(responses.map(response=>[itemId(response),response]))};
+}
+
 function followThroughRule(criterion){
   const policy=String(criterion?.follow_through_policy??criterion?.followThroughPolicy??'not_applicable').toLowerCase();
   const conditions=asArray(criterion?.follow_through_conditions??criterion?.followThroughConditions);
@@ -93,6 +104,33 @@ function assertExactCriterionCoverage(actualIds,expectedIds,code,details={}){
   }
 }
 function acceptedOutput(result){return result?.accepted?(result?.validatedResult?.output||result?.output||null):null;}
+function assertAlternativeRoutesAuthorized(rubric,judgments){
+  const criteria=new Map(rubricCriteria(rubric).map(c=>[criterionId(c),c]));
+  for(const judgment of asArray(judgments)){
+    if(!judgment?.alternative_valid_route_used)continue;
+    const id=String(judgment.criterion_id||''),criterion=criteria.get(id),policy=String(criterion?.answer_space_policy||criterion?.answerSpacePolicy||'').toLowerCase();
+    if(!criterion)fail('Alternative-route credit refers to a criterion outside the locked rubric.','TEACHING_D20_ALTERNATIVE_ROUTE_NOT_AUTHORIZED',422,{criterionId:id});
+    if(policy==='exhaustive')fail('A defensible answer excluded by an explicitly exhaustive rubric must be routed as a possible rubric defect, not silently credited as an alternative route.','TEACHING_D20_EXHAUSTIVE_RUBRIC_DEFECT_REVIEW_REQUIRED',409,{criterionId:id});
+    if(!['illustrative','open_constrained'].includes(policy))fail('Alternative-route credit requires an explicit non-exhaustive answer-space policy.','TEACHING_D20_ALTERNATIVE_ROUTE_NOT_AUTHORIZED',422,{criterionId:id,answerSpacePolicy:policy||null});
+    if(!String(judgment.alternative_route_note||'').trim())fail('Alternative-route credit requires a rubric-grounded explanation.','TEACHING_D20_ALTERNATIVE_ROUTE_NOT_AUTHORIZED',422,{criterionId:id});
+  }
+}
+function assertAggregationRulesSupported(rubric){
+  for(const rule of asArray(rubric?.global_caps_or_dependencies)){
+    const type=String(rule?.type||'').toUpperCase();
+    if(type!=='MAX_TOTAL')fail('Locked rubric contains an aggregation/cap rule that D20 deterministic aggregation cannot safely apply.','TEACHING_D20_AGGREGATION_RULE_UNSUPPORTED',409,{ruleType:type||null});
+  }
+}
+function assertDependencyChecks(rubric,judgments){
+  const criteria=new Map(rubricCriteria(rubric).map(c=>[criterionId(c),c]));
+  for(const judgment of asArray(judgments)){
+    const criterion=criteria.get(String(judgment?.criterion_id||''));
+    if(String(criterion?.dependency_rule||criterion?.dependencyRule||'').toLowerCase()==='no_double_count'&&String(judgment?.double_count_check||'')!=='clear'){
+      fail('No-double-count rubric dependency is unresolved.','TEACHING_D20_DEPENDENCY_REVIEW_REQUIRED',409,{criterionId:String(judgment?.criterion_id||'')});
+    }
+  }
+}
+
 function assertNoUnresolvedDeduction(output){
   for(const judgment of asArray(output?.criterion_judgments)){
     if(judgment?.negative_marking_trigger?.triggered===true){
@@ -113,6 +151,9 @@ function assertTpf15Output(result,academicInput){
   }else if(!['not_markable','moderation_required'].includes(status)){
     fail('TPF-15 returned an unknown or missing marking status.','TEACHING_D20_TPF15_MARKING_STATUS_INVALID',422,{markingStatus:status||null});
   }
+  assertAggregationRulesSupported(rubric);
+  assertAlternativeRoutesAuthorized(rubric,judgments);
+  assertDependencyChecks(rubric,judgments);
   assertFollowThroughAuthorized(rubric,judgments,{requireConditionalNote:true});
   assertNoUnresolvedDeduction(output);
   return result;
@@ -148,7 +189,7 @@ function newestFirst(a,b){
 function guardedRepository(repository){
   return new Proxy(repository,{
     get(target,property,receiver){
-      if(property==='loadMarkingBundle')return async(...args)=>{const bundle=await target.loadMarkingBundle(...args);assertFinalSnapshotIntegrity(bundle);return bundle;};
+      if(property==='loadMarkingBundle')return async(...args)=>{const bundle=await target.loadMarkingBundle(...args);assertFinalSnapshotIntegrity(bundle);return normalizeBundleForMarking(bundle);};
       if(property==='runsForResult')return async(...args)=>{
         const rows=await target.runsForResult(...args),corrections=rows.filter(r=>r.run_kind==='AUTHORIZED_CORRECTION').sort(newestFirst),others=rows.filter(r=>r.run_kind!=='AUTHORIZED_CORRECTION');
         return [...corrections,...others];
@@ -173,6 +214,6 @@ function createD20Service(options={}){
 
 module.exports={
   createD20Service,createD20AuthorityService:createD20Service,
-  assertFinalSnapshotIntegrity,assertFollowThroughAuthorized,assertTpf15Output,assertTpf16Scope,
+  assertFinalSnapshotIntegrity,normalizeBundleForMarking,assertFollowThroughAuthorized,assertAlternativeRoutesAuthorized,assertAggregationRulesSupported,assertTpf15Output,assertTpf16Scope,
   wrapIntelligence,guardedRepository,
 };
