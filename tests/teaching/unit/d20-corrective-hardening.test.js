@@ -3,8 +3,9 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const {
-  assertFinalSnapshotIntegrity,assertFollowThroughAuthorized,assertTpf15Output,assertTpf16Scope,guardedRepository,
+  assertFinalSnapshotIntegrity,assertFollowThroughAuthorized,assertCreditPrecisionRules,assertTpf15Output,assertTpf16Scope,guardedRepository,
 }=require('../../../teaching/d20/corrected-authority-service');
+const {deterministicMarkObjective}=require('../../../teaching/d20/contracts');
 
 function bundle({snapshotResponses=[],currentResponses=snapshotResponses,attemptState='SUBMITTED',attemptResultState='AWAITING_MARKING'}={}){
   const items=[
@@ -93,4 +94,46 @@ test('TCH-0762 persistence guard rejects unauthorized follow-through even if an 
   };
   const guarded=guardedRepository(repository);
   await assert.rejects(()=>guarded.appendCriterionJudgments({studentId:'student-1',resultId:'result-1',packageItemId:'item-1',judgments:[{criterion_id:'c1',follow_through_applied:true}]}),error=>error?.code==='TEACHING_D20_FOLLOW_THROUGH_NOT_AUTHORIZED');
+});
+
+test('TCH-0395 D20 consumes the real D18 MCQ selected_option_ids response shape',async()=>{
+  const mcq={...response,renderer_payload:{selected_option_ids:['slot-1:opt:2']}};
+  const frozen=bundle({snapshotResponses:[mcq],currentResponses:[{...mcq}]});
+  const guarded=guardedRepository({loadMarkingBundle:async()=>frozen});
+  const normalized=await guarded.loadMarkingBundle('student-1','attempt-1');
+  const normalizedResponse=normalized.responseByItem.get('item-1');
+  assert.equal(normalizedResponse.renderer_payload.answer,'slot-1:opt:2');
+  const objectiveItem={response_family:'MCQ',intended_marks:2,protected_marking_payload:{correct_answer:'slot-1:opt:2'}};
+  assert.equal(deterministicMarkObjective(objectiveItem,normalizedResponse).earned,2,'real D18 MCQ response must score through D20 deterministic marking');
+  assert.deepEqual(frozen.responses[0].renderer_payload,{selected_option_ids:['slot-1:opt:2']},'authoritative frozen payload is not mutated');
+});
+
+test('TCH-0396/TCH-0398 exhaustive rubrics route omitted defensible alternatives to defect review instead of silent credit',()=>{
+  const input={marking_context:{locked_rubric:{criteria:[{criterion_id:'c1',answer_space_policy:'exhaustive'}]},item_validity:{}}};
+  const output={accepted:true,output:{family:'TPF-15',marking_status:'markable',review_state:'ordinary',criterion_judgments:[{criterion_id:'c1',alternative_valid_route_used:true,alternative_route_note:'Defensible omitted route',follow_through_applied:false}]}};
+  assert.throws(()=>assertTpf15Output(output,input),error=>error?.code==='TEACHING_D20_EXHAUSTIVE_RUBRIC_DEFECT_REVIEW_REQUIRED');
+});
+
+test('TCH-0396 deterministic aggregation fails closed on unsupported locked rubric cap/dependency rules',()=>{
+  const input={marking_context:{locked_rubric:{criteria:[{criterion_id:'c1'}],global_caps_or_dependencies:[{type:'CUSTOM_DEDUCTION'}]},item_validity:{}}};
+  const output={accepted:true,output:{family:'TPF-15',marking_status:'markable',review_state:'ordinary',criterion_judgments:[{criterion_id:'c1',follow_through_applied:false}]}};
+  assert.throws(()=>assertTpf15Output(output,input),error=>error?.code==='TEACHING_D20_AGGREGATION_RULE_UNSUPPORTED');
+});
+
+test('TCH-0397 fixed-band partial credit cannot invent undeclared point values',()=>{
+  const rubric={criteria:[{criterion_id:'c1',criterion_max_marks:5,credit_precision:'fixed_band_points',partial_credit_structure:[{credit:1},{credit:3},{credit:5}]}]};
+  assert.equal(assertCreditPrecisionRules(rubric,[{criterion_id:'c1',proposed_credit:3}]),true);
+  assert.throws(()=>assertCreditPrecisionRules(rubric,[{criterion_id:'c1',proposed_credit:2}]),error=>error?.code==='TEACHING_D20_RUBRIC_PRECISION_GAP');
+});
+
+test('TCH-0762 persistence guard rejects exhaustive-rubric alternative credit even if upstream validation is bypassed',async()=>{
+  const frozen=bundle({snapshotResponses:[response],currentResponses:[{...response}]});
+  frozen.items[0].protected_marking_payload.rubric.criteria[0].answer_space_policy='exhaustive';
+  const repository={
+    loadMarkingBundle:async()=>frozen,
+    resultById:async()=>({assessment_result_id:'result-1',assessment_attempt_id:'attempt-1'}),
+    appendCriterionJudgments:async()=>{throw new Error('must not persist');},
+  };
+  const guarded=guardedRepository(repository);
+  await assert.rejects(()=>guarded.appendCriterionJudgments({studentId:'student-1',resultId:'result-1',packageItemId:'item-1',judgments:[{criterion_id:'c1',proposed_credit:4,alternative_valid_route_used:true,follow_through_applied:false}]}),error=>error?.code==='TEACHING_D20_EXHAUSTIVE_RUBRIC_DEFECT_REVIEW_REQUIRED');
 });
