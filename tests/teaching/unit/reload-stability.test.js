@@ -29,15 +29,18 @@ test('shared runtime config is presentation-neutral and never owns Teaching UI s
   assert.doesNotMatch(runtime, /\bimport\s*\(/);
 });
 
-test('original Teaching D16 entry statically hard-loads D15 before D23', () => {
+test('original Teaching document loads independent native modules in dependency order', () => {
+  const html = read('public/teaching.html');
   const entry = read('public/teaching-d16.js');
   const core = read('public/teaching-d16-core.js');
   const d23 = read('public/teaching-d23.js');
-  const d15Import = entry.indexOf("import './teaching-d15.js?v=20261003-hard-load-2';");
-  const d23Import = entry.indexOf("import './teaching-d23.js?v=20261003-hard-load-2';");
-  assert.ok(d15Import >= 0);
+  const d16Import = html.indexOf('/teaching-d16.js?v=20261003-runtime-fix-1');
+  const d15Import = html.indexOf('/teaching-d15.js?v=20261003-runtime-fix-1');
+  const d23Import = html.indexOf('/teaching-d23.js?v=20261003-runtime-fix-1');
+  assert.ok(d16Import >= 0);
+  assert.ok(d15Import > d16Import);
   assert.ok(d23Import > d15Import);
-  assert.match(entry, /import '\.\/teaching-d16-core\.js\?v=20261003-hard-load-2';/);
+  assert.match(entry, /import '\.\/teaching-d16-core\.js\?v=20261003-runtime-fix-1';/);
   assert.doesNotMatch(entry, /\bimport\s*\(/);
   assert.match(core, /Teaching Work requires KIWI Teaching navigation and API client/);
   assert.match(d23, /window\.KIWITeachingNavigation/);

@@ -195,11 +195,6 @@ async function renderCalendar() {
     if(data.issues?.length)page.append(el('div','teaching-message','Some calendar information is temporarily unavailable. The items shown above remain the authoritative visible timetable.'));
   }catch(error){const message=el('div','teaching-message',error.message||'Calendar could not be loaded.');message.dataset.kind='error';page.append(message);}
 }
-function loadOriginalShellEnhancements(){
-  if(!document.querySelector('link[data-teaching-original-polish]')){const link=document.createElement('link');link.rel='stylesheet';link.href='/teaching-original-polish.css';link.dataset.teachingOriginalPolish='true';document.head.append(link);}
-  import('/teaching-original-bridge.js').catch((error)=>console.warn('[KIWI Teaching] original-shell enhancement unavailable:',error?.message));
-}
 courseSurface.registerSection({id:'schedule',label:'Schedule',order:30,render:renderSchedule,renderSummary});
 if(nav&&typeof nav.register==='function')nav.register({id:'calendar',label:'Calendar',description:'Classes and assessments in one timetable',icon:'◷',menuIcon:'calendar',onSelect:renderCalendar});
 window.KIWITeachingD09=Object.freeze({openSchedule:(courseId)=>courseSurface.openCourse(courseId,'schedule'),openCalendar:renderCalendar});
-loadOriginalShellEnhancements();
