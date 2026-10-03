@@ -20,6 +20,7 @@ const {
   createD16AssignmentRepository,
   createD17AssessmentRepository,
   createD20GradebookRepository,
+  createD21ProgressionRepository,
 } = require('./repositories');
 const { createD14Service } = require('./d14/service');
 const { registerD14Runtime } = require('./d14/runtime');
@@ -41,6 +42,7 @@ const d15 = require('./d15');
 const d16 = require('./d16');
 const d17 = require('./d17');
 const d20 = require('./d20');
+const d21 = require('./d21');
 
 function createTeachingFoundation({
   env = process.env,
@@ -63,6 +65,7 @@ function createTeachingFoundation({
   d16Intelligence = null,
   d17Intelligence = null,
   d20Intelligence = null,
+  d21Intelligence = null,
 } = {}) {
   const config = createTeachingConfig(env);
   const subjectReader = createKiwiSubjectReader({ subjects: subjectSource });
@@ -113,6 +116,10 @@ function createTeachingFoundation({
     : null;
   const d20Repository = persistentDepsReady
     ? createD20GradebookRepository({ query, withTransaction, randomUUID })
+    : null;
+  const d20DownstreamBridge = { reconcileGradeChange:null };
+  const d21Repository = persistentDepsReady
+    ? createD21ProgressionRepository({ query, withTransaction, randomUUID })
     : null;
   const integrityRepository = persistentDepsReady
     ? createIntegrityRepository({ query, withTransaction, randomUUID })
@@ -324,7 +331,8 @@ function createTeachingFoundation({
     d15: d15Service ? Object.freeze({ repository:d15Repository, service:d15Service, runtime:d15Runtime }) : null,
     d16: d16Service ? Object.freeze({ repository:d16Repository, service:d16Service, runtime:d16Runtime }) : null,
     d17: d17Service ? Object.freeze({ repository:d17Repository, service:d17Service, runtime:d17Runtime }) : null,
-    d20: d20Repository ? Object.freeze({ repository:d20Repository, intelligence:d20Intelligence, randomUUID }) : null,
+    d20: d20Repository ? Object.freeze({ repository:d20Repository, intelligence:d20Intelligence, randomUUID, downstreamBridge:d20DownstreamBridge }) : null,
+    d21: d21Repository ? Object.freeze({ repository:d21Repository, intelligence:d21Intelligence, randomUUID }) : null,
     integrity: integrityService ? Object.freeze({ repository:integrityRepository, service:integrityService }) : null,
     policy,
   });
@@ -348,4 +356,5 @@ module.exports = {
   d16,
   d17,
   d20,
+  d21,
 };

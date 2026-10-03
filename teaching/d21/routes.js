@@ -1,0 +1,33 @@
+'use strict';
+const {createD21Service}=require('./service');
+const {createD20D21ResitOwner}=require('../d20/d21-resit-owner');
+const ui=require('./ui');
+function mountD21Routes(router,{foundation,sendError,d17Service,d19Service=null,d20Service=null,requireD17Ready=null}={}){
+  const repository=foundation?.d21?.repository;if(!repository)return null;let ready=false;
+  const resitOwner=foundation.d20?.repository?createD20D21ResitOwner({repository:foundation.d20.repository,d17Repository:foundation.d17?.repository,d19Service,intelligence:foundation.d20?.intelligence||null,policy:foundation.policy,randomUUID:foundation.d21?.randomUUID||require('node:crypto').randomUUID}):null;
+  const service=createD21Service({repository,d17Service:d17Service||foundation.d17?.service||null,d13Service:foundation.d13?.service||null,d20ResitOwner:resitOwner,intelligence:foundation.d21?.intelligence||null,randomUUID:foundation.d21?.randomUUID||require('node:crypto').randomUUID});
+  if(foundation.d20?.downstreamBridge)foundation.d20.downstreamBridge.reconcileGradeChange=async(studentId,courseId)=>{const history=await repository.progressionHistory(String(studentId),String(courseId));if(!history.outcomes.length)return Object.freeze({reconciled:false,state:'NO_TRACKED_PROGRESSION',courseId:String(courseId)});return service.reconcileAfterGradeChange({id:String(studentId)},String(courseId));};
+  const requireReady=async(req,res,next)=>{try{if(typeof requireD17Ready==='function'){let passed=false;await requireD17Ready(req,res,()=>{passed=true;});if(!passed)return;}if(!ready){await repository.assertReady();ready=true;}return next();}catch(e){return res.status(503).json({error:'Teaching progression is unavailable until the D21 schema is ready.',code:e?.code||'TEACHING_D21_SCHEMA_NOT_READY'});}};
+  router.use('/progression',requireReady);router.use('/semesters',requireReady);router.use('/courses',requireReady);
+  router.put('/courses/:id/progression-policy',async(req,res)=>{try{res.json(await service.lockCoursePolicy(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Course Progression Policy could not be locked.');}});
+  router.put('/semesters/:id/gpa-policy',async(req,res)=>{try{res.json(await service.lockSemesterGpaPolicy(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Semester GPA Policy could not be locked.');}});
+  router.post('/courses/:id/progression/evaluate',async(req,res)=>{try{res.json(await service.evaluate(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Progression evaluation failed safely.');}});
+  router.get('/courses/:id/progression',async(req,res)=>{try{res.json(await service.courseProgression(req.user,req.params.id));}catch(e){sendError(res,e,'Course progression could not be loaded.');}});
+  router.get('/courses/:id/progression/view',async(req,res)=>{try{const model=await service.courseProgression(req.user,req.params.id);res.type('html').send(ui.renderCourseProgression(model));}catch(e){sendError(res,e,'Course progression could not be rendered.');}});
+  router.post('/courses/:id/progression/pathways',async(req,res)=>{try{res.status(201).json(await service.createPathwayForOutcome(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Progression pathway could not be created.');}});
+  router.post('/progression/pathways/:pathwayId/refine',async(req,res)=>{try{res.json(await service.refinePathwayPlan(req.user,req.params.pathwayId,req.body||{}));}catch(e){sendError(res,e,'Pathway refinement failed safely.');}});
+  router.post('/progression/pathways/:pathwayId/ready',async(req,res)=>{try{res.json(await service.markPathwayReady(req.user,req.params.pathwayId));}catch(e){sendError(res,e,'Pathway is not ready for verification.');}});
+  router.post('/progression/pathways/:pathwayId/assessment',async(req,res)=>{try{res.status(201).json(await service.requestVerificationAssessment(req.user,req.params.pathwayId,req.body||{}));}catch(e){sendError(res,e,'Verification Assessment could not be created.');}});
+  router.post('/progression/resit-attempts/:attemptId/mark',async(req,res)=>{try{res.status(201).json(await service.markResitAttempt(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Resit marking could not start.');}});
+  router.post('/progression/pathways/:pathwayId/resit-replacement',async(req,res)=>{try{res.json(await service.finalizeResitReplacement(req.user,req.params.pathwayId,req.body||{}));}catch(e){sendError(res,e,'Resit Gradebook replacement failed safely.');}});
+  router.get('/courses/:id/resit-eligibility',async(req,res)=>{try{res.json(await service.resitEligibility(req.user,req.params.id));}catch(e){sendError(res,e,'Resit eligibility could not be resolved.');}});
+  router.post('/courses/:id/repeat',async(req,res)=>{try{res.status(201).json(await service.createRepeat(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Repeat Course Attempt could not be created.');}});
+  router.post('/courses/:id/prerequisite-destination',async(req,res)=>{try{res.json(await service.destinationReadiness(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Prerequisite destination readiness could not be resolved.');}});
+  router.post('/courses/:id/progression/reconcile-grade-change',async(req,res)=>{try{res.json(await service.reconcileAfterGradeChange(req.user,req.params.id));}catch(e){sendError(res,e,'Progression reconciliation failed safely.');}});
+  router.post('/courses/:id/academic-narrative',async(req,res)=>{try{res.json(await service.academicNarrative(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Academic narrative could not be generated safely.');}});
+  router.post('/semesters/:id/gpa/recalculate',async(req,res)=>{try{res.json(await service.calculateGpa(req.user,req.params.id,req.body||{}));}catch(e){sendError(res,e,'Semester GPA recalculation failed safely.');}});
+  router.get('/semesters/:id/record',async(req,res)=>{try{res.json(await service.semesterRecord(req.user,req.params.id));}catch(e){sendError(res,e,'Semester Record could not be loaded.');}});
+  router.get('/semesters/:id/record/view',async(req,res)=>{try{res.type('html').send(ui.renderSemesterRecord(await service.semesterRecord(req.user,req.params.id)));}catch(e){sendError(res,e,'Semester Record could not be rendered.');}});
+  return Object.freeze({service,requireReady,resitOwner,d20Service});
+}
+module.exports={mountD21Routes};

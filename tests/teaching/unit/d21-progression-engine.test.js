@@ -1,0 +1,25 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');const {determineProgressionOutcome,certificationCheck}=require('../../../teaching/d21/engine');const {OUTCOMES}=require('../../../teaching/d21/contracts');
+const policy={policy_state:'LOCKED',version_no:1,certification_rules:{pass_threshold:50,require_trustworthy_topic_evidence:true},pathway_rules:{narrow_gap_max_units:2,distributed_gap_min_units:3,systemic_gap_ratio:.8},resit_policy:{max_standard_resits:1}};
+function base(score=49){const learningUnits=[1,2,3,4].map(n=>({learning_unit_id:`lu${n}`,topic_id:`t${n}`,metadata:{required:true}}));return {learningUnits,coverage:learningUnits.map(u=>({learning_unit_id:u.learning_unit_id,taught_at:'2026-10-01'})),assessments:[],assessmentResults:[],courseResult:{course_result_snapshot_id:'r1',version_no:1,score_percentage:score,result_state:'PROVISIONAL',essential_outcome_flags:[],source_gradebook_entry_ids:[]},topicScores:learningUnits.map((u,i)=>({topic_id:u.topic_id,score_percentage:i===0?40:70,score_state:'FINALIZED',version_no:1,essential_outcome_flags:[]})),openAppeals:[],invalidAssessmentAttempts:[]};}
+test('TCH-0732 one required Learning Unit neither taught nor VPK means Incomplete, never Fail',()=>{const s=base();s.coverage=s.coverage.slice(0,3);const d=determineProgressionOutcome(s,policy,{});assert.equal(d.outcome,OUTCOMES.INCOMPLETE);assert.ok(d.certification.incompleteRequiredLearningUnitIds.includes('lu4'));});
+test('TCH-0427 insufficient trustworthy Topic evidence blocks certification independently of score',()=>{const s=base(72);s.topicScores[2]={...s.topicScores[2],score_state:'PROVISIONAL_INSUFFICIENT_EVIDENCE'};const c=certificationCheck(s,policy);assert.equal(c.eligibleForAcademicOutcome,false);assert.ok(c.blockers.some(b=>b.code==='TRUSTWORTHY_EVIDENCE_INSUFFICIENT'));});
+test('TCH-0459 identical overall percentages can produce different pathways from weakness distribution',()=>{const narrow=base();narrow.topicScores=narrow.topicScores.map((t,i)=>({...t,score_percentage:i===0?40:70}));const distributed=base();distributed.topicScores=distributed.topicScores.map((t,i)=>({...t,score_percentage:i<3?40:70}));assert.equal(determineProgressionOutcome(narrow,policy,{}).outcome,OUTCOMES.RESIT_REQUIRED);assert.equal(determineProgressionOutcome(distributed,policy,{}).outcome,OUTCOMES.RECOVERY_REQUIRED);});
+test('TCH-0428 missing Gradebook result is Incomplete rather than a failing judgment',()=>{const s=base();s.courseResult=null;const c=certificationCheck(s,policy);assert.equal(c.eligibleForAcademicOutcome,false);assert.ok(c.blockers.some(b=>b.code==='COURSE_GRADEBOOK_RESULT_MISSING'));});
+test('TCH-0430 passing score with unresolved essential outcome requires Remediation',()=>{const s=base(72);s.courseResult.essential_outcome_flags=[{status:'UNMET',outcome_ref:'elo-1'}];assert.equal(determineProgressionOutcome(s,policy,{}).outcome,OUTCOMES.PASS_REMEDIATION_REQUIRED);});
+test('TCH-0442 failed reasonable Recovery escalates to Repeat Required',()=>{const s=base();assert.equal(determineProgressionOutcome(s,policy,{reasonableRecoveryFailed:true}).outcome,OUTCOMES.REPEAT_REQUIRED);});
+test('unresolved appeal keeps outcome Incomplete even when the numerical score passes',()=>{const s=base(72);s.openAppeals=[{grade_appeal_id:'ap1'}];assert.equal(determineProgressionOutcome(s,policy,{}).outcome,OUTCOMES.INCOMPLETE);});
+
+test('TCH-0427 unresolved integrity state blocks certification without converting it to Fail',()=>{const s=base(72);s.unresolvedIntegrityIssues=[{integrity_review_id:'ir1'}];const d=determineProgressionOutcome(s,policy,{});assert.equal(d.outcome,OUTCOMES.INCOMPLETE);assert.ok(d.certification.blockers.some(b=>b.code==='UNRESOLVED_INTEGRITY_STATE'));});
+
+test('D21 authoritative digest changes when non-score completion truth changes',()=>{
+  const {authoritativeVersionDigest}=require('../../../teaching/d21/contracts');
+  const base={course:{state_version:7},coursePlan:{course_plan_id:'plan-1',version_no:2},coverage:[{coverage_entry_id:'cov-1',coverage_version:1,taught_at:null}],courseResult:{course_result_snapshot_id:'cr-1',version_no:3,source_gradebook_entry_ids:['g1']},progressionPolicy:{progression_policy_id:'pp-1',version_no:1},topicScores:[],assessments:[],assessmentResults:[],openAppeals:[],invalidAssessmentAttempts:[],knowledgeStates:[],unresolvedIntegrityIssues:[]};
+  const a=JSON.stringify(authoritativeVersionDigest(base));
+  const coverage=JSON.stringify(authoritativeVersionDigest({...base,coverage:[{...base.coverage[0],coverage_version:2,taught_at:'2026-10-03T00:00:00Z'}]}));
+  const appeal=JSON.stringify(authoritativeVersionDigest({...base,openAppeals:[{grade_appeal_id:'ga-1',appeal_state:'SUBMITTED'}]}));
+  const integrity=JSON.stringify(authoritativeVersionDigest({...base,unresolvedIntegrityIssues:[{integrity_review_id:'ir-1',review_version:2,verification_state:'PENDING'}]}));
+  assert.notEqual(a,coverage);
+  assert.notEqual(a,appeal);
+  assert.notEqual(a,integrity);
+});
