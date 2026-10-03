@@ -112,6 +112,20 @@ function trapDrawerFocus(event, panel) {
   return false;
 }
 
+function handleClassroomTabs(event) {
+  const tab = event.target.closest('.tc-mobile-tabs [role="tab"]');
+  if (!tab || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return false;
+  const tablist = tab.closest('[role="tablist"]');
+  const tabs = [...(tablist?.querySelectorAll('[role="tab"]') || [])].filter((item) => !item.disabled);
+  if (!tabs.length) return false;
+  const current = Math.max(0, tabs.indexOf(tab));
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 :
+    (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  event.preventDefault();
+  tabs[next].click();
+  return true;
+}
+
 // Remove inert in the capture phase so the original shell can move focus into a
 // drawer synchronously when its own click handler opens it. MutationObserver
 // then keeps the state aligned for every subsequent open/close transition.
@@ -143,6 +157,7 @@ document.addEventListener('keydown', (event) => {
     if (drawerOpen(settings)) document.getElementById('teachingSettingsClose')?.click();
     else if (drawerOpen(menu)) document.getElementById('teachingMenuClose')?.click();
   }
+  if (handleClassroomTabs(event)) return;
   const nav = event.target.closest('.teaching-course-nav, .teaching-dock');
   if (!nav || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
   const items = [...nav.querySelectorAll('button:not(:disabled), a[href]')];
