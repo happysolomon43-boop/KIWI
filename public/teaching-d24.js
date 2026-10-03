@@ -38,18 +38,110 @@ const observer = new MutationObserver(decorate);
 observer.observe(app, { childList: true, subtree: true });
 decorate();
 
-document.addEventListener('click', (event) => {
-  if (event.target.closest('.teaching-dock__item, .teaching-menu-link, .teaching-course-nav__item')) {
-    window.setTimeout(focusWorkspace, 0);
+const menuPanel = document.getElementById('teachingMenuPanel');
+const settingsPanel = document.getElementById('teachingSettingsPanel');
+const menuTrigger = document.getElementById('teachingMenuButton');
+const drawerEntries = [
+  { panel: menuPanel, fallback: menuTrigger, returnFocus: menuTrigger },
+  { panel: settingsPanel, fallback: menuTrigger, returnFocus: menuTrigger },
+].filter((entry) => entry.panel);
+
+function drawerOpen(panel) {
+  return panel?.dataset?.open === 'true' && panel.getAttribute('aria-hidden') !== 'true';
+}
+
+function syncDrawer(entry) {
+  const { panel } = entry;
+  const open = drawerOpen(panel);
+  panel.setAttribute('role', 'dialog');
+  if (open) {
+    panel.removeAttribute('inert');
+    panel.setAttribute('aria-modal', 'true');
+    return;
   }
+  panel.removeAttribute('aria-modal');
+  if (panel.contains(document.activeElement)) {
+    const target = entry.returnFocus?.isConnected ? entry.returnFocus : entry.fallback;
+    target?.focus?.({ preventScroll: true });
+  }
+  panel.setAttribute('inert', '');
+}
+
+for (const entry of drawerEntries) syncDrawer(entry);
+
+const drawerObserver = new MutationObserver((records) => {
+  const changed = new Set(records.map((record) => record.target));
+  for (const entry of drawerEntries) if (changed.has(entry.panel)) syncDrawer(entry);
+});
+for (const entry of drawerEntries) {
+  drawerObserver.observe(entry.panel, { attributes: true, attributeFilter: ['data-open', 'aria-hidden'] });
+}
+
+function focusableWithin(panel) {
+  return [...panel.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])')]
+    .filter((node) => !node.hasAttribute('inert') && node.getClientRects().length > 0);
+}
+
+function trapDrawerFocus(event, panel) {
+  if (event.key !== 'Tab') return false;
+  const items = focusableWithin(panel);
+  if (!items.length) {
+    event.preventDefault();
+    panel.tabIndex = -1;
+    panel.focus({ preventScroll: true });
+    return true;
+  }
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+  if (!panel.contains(active)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+    return true;
+  }
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
+}
+
+// Remove inert in the capture phase so the original shell can move focus into a
+// drawer synchronously when its own click handler opens it. MutationObserver
+// then keeps the state aligned for every subsequent open/close transition.
+document.addEventListener('click', (event) => {
+  const menuOpener = event.target.closest('#teachingMenuButton, .teaching-dock__item[data-menu="true"]');
+  if (menuOpener && menuPanel) {
+    const entry = drawerEntries.find((candidate) => candidate.panel === menuPanel);
+    if (entry) entry.returnFocus = menuOpener;
+    menuPanel.removeAttribute('inert');
+  }
+  if (event.target.closest('#teachingSettingsButton') && settingsPanel) {
+    const entry = drawerEntries.find((candidate) => candidate.panel === settingsPanel);
+    if (entry) entry.returnFocus = menuTrigger;
+    settingsPanel.removeAttribute('inert');
+  }
+}, true);
+
+document.addEventListener('click', (event) => {
+  const control = event.target.closest('.teaching-dock__item, .teaching-menu-link, .teaching-course-nav__item');
+  if (control && control.dataset.menu !== 'true') window.setTimeout(focusWorkspace, 0);
 });
 
 document.addEventListener('keydown', (event) => {
   const menu = document.getElementById('teachingMenuPanel');
   const settings = document.getElementById('teachingSettingsPanel');
+  const openDrawer = drawerOpen(settings) ? settings : drawerOpen(menu) ? menu : null;
+  if (openDrawer && trapDrawerFocus(event, openDrawer)) return;
   if (event.key === 'Escape') {
-    if (settings?.dataset.open === 'true') document.getElementById('teachingSettingsClose')?.click();
-    else if (menu?.dataset.open === 'true') document.getElementById('teachingMenuClose')?.click();
+    if (drawerOpen(settings)) document.getElementById('teachingSettingsClose')?.click();
+    else if (drawerOpen(menu)) document.getElementById('teachingMenuClose')?.click();
   }
   const nav = event.target.closest('.teaching-course-nav, .teaching-dock');
   if (!nav || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -62,4 +154,4 @@ document.addEventListener('keydown', (event) => {
   items[next].focus();
 });
 
-window.KIWITeachingAccessibility = Object.freeze({ announce, focusWorkspace });
+window.KIWITeachingAccessibility = Object.freeze({ announce, focusWorkspace, syncDrawer: () => drawerEntries.forEach(syncDrawer) });
