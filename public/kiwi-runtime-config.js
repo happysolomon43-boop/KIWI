@@ -48,9 +48,10 @@
     }
   }
 
-  // Teaching-specific feature startup lives in its own module. The shared
-  // runtime config does not own Teaching presentation or feature registration.
-  import('/teaching-bootstrap.js').catch((error) => {
+  // Teaching owns its own feature bootstrap. The version marker ensures a
+  // browser that previously loaded the broken bootstrap cannot keep reusing it
+  // after the original Teaching shell has been repaired.
+  import('/teaching-bootstrap.js?v=20261003-visible-features-1').catch((error) => {
     console.error('[KIWI Teaching] Feature bootstrap module failed to load.', error);
   });
 })(window);
