@@ -27,14 +27,21 @@
     webSocketBaseUrl,
   });
 
-  // D15 is a read-only projection inside the Teaching Course Results/global
-  // Record surfaces. Load it only for the Teaching document and only after
-  // the deferred Teaching shell modules have established their registries.
+  // Teaching's established shell owns presentation. Load accepted read-only
+  // information surfaces only after the shell modules have established their
+  // registries. Results/Record is loaded first so the bridge can extend the
+  // same Course/global navigation without replacing it.
   if (global.document?.documentElement?.dataset?.app === 'kiwi-teaching') {
     global.addEventListener('DOMContentLoaded', () => {
-      import('/teaching-d15.js').catch((error) => {
-        console.error('[KIWI Teaching D15] Record projection failed to load.', error);
-      });
+      import('/teaching-d15.js')
+        .catch((error) => {
+          console.error('[KIWI Teaching D15] Record projection failed to load.', error);
+          return null;
+        })
+        .then(() => import('/teaching-original-bridge.js'))
+        .catch((error) => {
+          console.error('[KIWI Teaching] Original-shell information surfaces failed to load.', error);
+        });
     }, { once: true });
   }
 })(window);
