@@ -7,8 +7,9 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '../../..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+const exists = (relative) => fs.existsSync(path.join(root, relative));
 
-test('Teaching production document keeps the established shell and does not load the retired D23 visible UI', () => {
+test('Teaching production document keeps the established shell and does not load the rejected D23 visible UI', () => {
   const html = read('public/teaching.html');
   assert.doesNotMatch(html, /teaching-d23-live\.(?:js|css)/);
   assert.doesNotMatch(html, /class="d23-shell"/);
@@ -16,43 +17,38 @@ test('Teaching production document keeps the established shell and does not load
   assert.match(html, /src="\/teaching\.js"/);
 });
 
-test('runtime detects stale first-integration documents before feature bootstrap', () => {
+test('rejected D23 visible-shell implementation files are removed from production source', () => {
+  assert.equal(exists('public/teaching-d23-live.js'), false);
+  assert.equal(exists('public/teaching-d23-live.css'), false);
+});
+
+test('shared runtime only escapes stale replacement documents and delegates Teaching startup', () => {
   const runtime = read('public/kiwi-runtime-config.js');
   assert.match(runtime, /dataset\?\.app !== 'kiwi-teaching'/);
   assert.match(runtime, /querySelector\('\.d23-shell'\)/);
-  assert.match(runtime, /teaching-d23-live\.css/);
-  assert.match(runtime, /teaching-d23-live\.js/);
   assert.match(runtime, /location\.replace\(clean\.href\)/);
   assert.match(runtime, /original-20261003/);
-
-  const staleGuard = runtime.indexOf('legacyVisibleShell');
-  const featureBootstrap = runtime.indexOf('bootstrapTeachingFeatures');
-  assert.ok(staleGuard >= 0 && featureBootstrap > staleGuard, 'stale-shell guard must run before feature bootstrap');
+  assert.match(runtime, /import\('\/teaching-bootstrap\.js'\)/);
+  assert.doesNotMatch(runtime, /import\('\/teaching-d15\.js'\)/);
+  assert.doesNotMatch(runtime, /import\('\/teaching-original-bridge\.js'\)/);
 });
 
-test('Teaching features mount only after the established original shell is visibly ready', () => {
-  const runtime = read('public/kiwi-runtime-config.js');
-  assert.match(runtime, /waitForEstablishedTeachingShell/);
-  assert.match(runtime, /#teachingApp \.teaching-view/);
-  assert.match(runtime, /KIWITeachingNavigation\?\.register/);
-  assert.match(runtime, /KIWITeachingCourses\?\.registerSection/);
-  assert.match(runtime, /__KIWI_TEACHING_FEATURE_BOOTSTRAP__/);
+test('Teaching-only bootstrap waits for the original shell then mounts accepted feature surfaces', () => {
+  const bootstrap = read('public/teaching-bootstrap.js');
+  assert.match(bootstrap, /waitForEstablishedTeachingShell/);
+  assert.match(bootstrap, /#teachingApp \.teaching-view/);
+  assert.match(bootstrap, /KIWITeachingNavigation\?\.register/);
+  assert.match(bootstrap, /KIWITeachingCourses\?\.registerSection/);
+  assert.match(bootstrap, /__KIWI_TEACHING_FEATURE_BOOTSTRAP__/);
 
-  const d15 = runtime.indexOf("import('/teaching-d15.js')");
-  const bridge = runtime.indexOf("import('/teaching-original-bridge.js')");
+  const d15 = bootstrap.indexOf("import('/teaching-d15.js')");
+  const bridge = bootstrap.indexOf("import('/teaching-original-bridge.js')");
   assert.ok(d15 >= 0, 'Results must be part of the Teaching feature bootstrap');
   assert.ok(bridge > d15, 'the original-shell information bridge must load after Results');
 });
 
-test('retired D23 visible-shell assets cannot take ownership of Teaching again', () => {
-  const js = read('public/teaching-d23-live.js');
-  const css = read('public/teaching-d23-live.css');
-
-  assert.match(js, /Retired visible-shell compatibility guard/);
-  assert.match(js, /querySelector\('\.d23-shell'\)/);
-  assert.match(js, /location\.replace\(clean\.href\)/);
-  assert.doesNotMatch(js, /const PRIMARY|renderToday|renderCourses|renderRecord|d23-mobile-dock/);
-
-  assert.match(css, /Retired D23 replacement-shell stylesheet/);
-  assert.doesNotMatch(css, /\.d23-shell\s*\{|\.d23-nav\s*\{|\.d23-mobile-dock\s*\{/);
+test('feature bootstrap is idempotent and cannot create a second UI owner', () => {
+  const bootstrap = read('public/teaching-bootstrap.js');
+  assert.match(bootstrap, /state === 'loading' \|\| state === 'ready'/);
+  assert.doesNotMatch(bootstrap, /d23-shell|renderToday|renderCourses|renderRecord|d23-mobile-dock/);
 });
