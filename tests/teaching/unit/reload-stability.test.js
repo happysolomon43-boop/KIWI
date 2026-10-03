@@ -25,14 +25,18 @@ test('rejected D23 visible-shell implementation files are removed from productio
 test('shared runtime config is presentation-neutral and never owns Teaching UI startup', () => {
   const runtime = read('public/kiwi-runtime-config.js');
   assert.match(runtime, /KIWI_RUNTIME_CONFIG/);
-  assert.doesNotMatch(runtime, /teaching-bootstrap|teaching-original-bridge|teaching-d23|d23-shell|location\.replace/);
+  assert.doesNotMatch(runtime, /teaching-bootstrap|teaching-original-bridge|teaching-d15|teaching-d23|d23-shell|location\.replace/);
   assert.doesNotMatch(runtime, /\bimport\s*\(/);
 });
 
-test('original Teaching module stack loads D23 as a first-class dependency', () => {
+test('original Teaching module stack restores D15 before D23 so the dock cannot disappear while D23 attaches', () => {
   const d16 = read('public/teaching-d16.js');
   const d23 = read('public/teaching-d23.js');
-  assert.match(d16, /import\('\.\/teaching-d23\.js'\)/);
+  const d15Import = d16.indexOf("import('./teaching-d15.js')");
+  const d23Import = d16.indexOf("import('./teaching-d23.js')");
+  assert.ok(d15Import >= 0);
+  assert.ok(d23Import > d15Import);
+  assert.match(d16, /loadNativeTeachingSurfaces\(\)/);
   assert.match(d23, /window\.KIWITeachingNavigation/);
   assert.match(d23, /window\.KIWITeachingCourses/);
   assert.equal(exists('public/teaching-bootstrap.js'), false);
