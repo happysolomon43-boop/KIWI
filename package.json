@@ -37,7 +37,8 @@
     "verify:teaching:d20": "node scripts/verify-teaching-d20-marking-gradebook.js",
     "verify:teaching:d21": "node scripts/verify-teaching-d21-progression-gpa.js",
     "verify:teaching:d22": "node scripts/verify-teaching-d22-teacher-identity.js",
-    "verify:teaching:d23": "node scripts/verify-teaching-d23-information-architecture.js"
+    "verify:teaching:d23": "node scripts/verify-teaching-d23-information-architecture.js",
+    "verify:teaching:d24": "node scripts/verify-teaching-d24-responsive-accessibility.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

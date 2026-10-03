@@ -1,0 +1,63 @@
+.teaching-skip-link {
+  position: fixed; left: 12px; top: 12px; z-index: 20000; transform: translateY(-160%);
+  padding: 11px 15px; border-radius: 10px; background: #d6ffe9; color: #082318;
+  font-weight: 800; text-decoration: none;
+}
+.teaching-skip-link:focus { transform: translateY(0); }
+.teaching-visually-hidden {
+  position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important;
+  margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important;
+  white-space: nowrap !important; border: 0 !important;
+}
+.teaching-d24 :where(button, a[href], input, select, textarea, summary):focus-visible,
+.assessment-d24 :where(button, a[href], input, select, textarea, summary):focus-visible {
+  outline: 3px solid #b8f5d4 !important; outline-offset: 3px !important;
+}
+.teaching-d24 :where(button, a[href], summary) { touch-action: manipulation; }
+.teaching-d24 :where(.teaching-button, .teaching-menu-link, .teaching-menu-action, .teaching-course-nav__item) { min-height: 44px; }
+.teaching-d24 [data-state], .teaching-d24 [data-status], .teaching-d24 [data-kind],
+.assessment-d24 [data-state] { forced-color-adjust: auto; }
+
+@media (min-width: 1100px) {
+  body[data-teaching-dock-visible="true"] .teaching-stage { padding-left: 142px; padding-bottom: calc(38px + var(--safe-bottom)); }
+  .teaching-dock-shell { inset: 92px auto 24px 18px; width: 104px; padding: 0; }
+  .teaching-dock { width: 104px; min-height: 0; margin: 0; grid-template-columns: 1fr; gap: 6px; padding: 8px; border-radius: 20px; }
+  .teaching-dock__item { height: auto; min-height: 58px; flex-direction: column; gap: 5px; padding: 8px 4px; white-space: normal; }
+  .teaching-dock__label { overflow: visible; text-overflow: clip; }
+}
+
+@media (min-width: 700px) and (max-width: 1099px) {
+  .teaching-course-feature-grid, .ti-grid, .tw-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .teaching-stage { padding-inline: clamp(22px, 4vw, 38px); }
+}
+
+@media (max-width: 699px) {
+  .teaching-stage { padding-inline: 14px; }
+  .teaching-topbar { min-height: 62px; }
+  .teaching-hero, .teaching-course-overview-card, .ti-card, .tw-card { border-radius: 18px !important; }
+  .teaching-course-nav { overscroll-behavior-inline: contain; scroll-snap-type: x proximity; }
+  .teaching-course-nav__item { scroll-snap-align: start; flex: 0 0 auto; }
+  .teaching-dock__item { min-height: 44px; }
+}
+
+@media (max-width: 360px) {
+  .teaching-dock__icon { display: none; }
+  .teaching-dock__item { font-size: 10px; }
+}
+
+@media (prefers-contrast: more) {
+  :root { --teaching-border: rgba(220,255,238,.42); --teaching-border-strong: rgba(235,255,245,.76); }
+  .teaching-d24 :where(.teaching-course-card, .teaching-hero, .teaching-menu-link, .teaching-course-nav__item) { border-width: 2px; }
+}
+
+@media (forced-colors: active) {
+  .teaching-d24 *, .assessment-d24 * { box-shadow: none !important; }
+  .teaching-d24 :where(button, a, input, textarea, select), .assessment-d24 :where(button, a, input, textarea, select) { border: 1px solid ButtonText; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teaching-d24 *, .teaching-d24 *::before, .teaching-d24 *::after,
+  .assessment-d24 *, .assessment-d24 *::before, .assessment-d24 *::after {
+    animation: none !important; transition-duration: .01ms !important; scroll-behavior: auto !important;
+  }
+}

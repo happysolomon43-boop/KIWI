@@ -21,17 +21,18 @@ const els={
   questionGrid:byId('questionGrid'),questionPosition:byId('questionPosition'),questionMarks:byId('questionMarks'),flag:byId('flagButton'),prompt:byId('questionPrompt'),source:byId('sourcePanel'),response:byId('responseLayer'),inlineSave:byId('inlineSaveState'),itemBanner:byId('itemStateBanner'),
   previous:byId('previousButton'),next:byId('nextButton'),review:byId('reviewButton'),navigatorOpen:byId('navigatorOpen'),navigatorClose:byId('navigatorClose'),
   toolsButton:byId('toolsButton'),toolsPanel:byId('toolsPanel'),toolsList:byId('toolsList'),reviewDialog:byId('reviewDialog'),reviewClose:byId('reviewClose'),reviewSummary:byId('reviewSummary'),reviewItems:byId('reviewItems'),submitWarning:byId('submitWarning'),returnQuestions:byId('returnToQuestionsButton'),submit:byId('submitAttemptButton'),
-  deviceDialog:byId('deviceDialog'),transfer:byId('transferDeviceButton'),report:byId('reportButton'),reportDialog:byId('reportDialog'),reportForm:byId('reportForm'),reportText:byId('reportText'),reportClose:byId('reportClose'),reportCancel:byId('reportCancel'),network:byId('networkBanner'),toasts:byId('toastRegion'),
+  deviceDialog:byId('deviceDialog'),transfer:byId('transferDeviceButton'),report:byId('reportButton'),reportDialog:byId('reportDialog'),reportForm:byId('reportForm'),reportText:byId('reportText'),reportClose:byId('reportClose'),reportCancel:byId('reportCancel'),network:byId('networkBanner'),toasts:byId('toastRegion'),a11yStatus:byId('assessmentA11yStatus'),
 };
 
 const DEVICE_KEY='kiwi_assessment_device_id';
 const getDevice=()=>{let value=localStorage.getItem(DEVICE_KEY);if(!value){value=uid();localStorage.setItem(DEVICE_KEY,value);}return value;};
 const state={
   deviceId:getDevice(), package:null, items:[], attempt:null, responses:new Map(), drafts:new Map(), saveStates:new Map(), viewed:new Set(), flagged:new Set(), activeIndex:0,
-  serverOffsetMs:0, timerHandle:null, saveTimers:new Map(), queued:new Map(), replaying:false, submitting:false, readOnly:false, maxUnlocked:0,
+  serverOffsetMs:0, timerHandle:null, saveTimers:new Map(), queued:new Map(), replaying:false, submitting:false, readOnly:false, maxUnlocked:0, timerAnnouncements:new Set(),
 };
 
 function toast(message){const n=document.createElement('div');n.className='toast';n.textContent=String(message);els.toasts.append(n);window.setTimeout(()=>n.remove(),3600);}
+function announce(message){if(!els.a11yStatus)return;els.a11yStatus.textContent='';window.requestAnimationFrame(()=>{els.a11yStatus.textContent=String(message||'');});}
 function showDialog(dialog){if(!dialog.open)dialog.showModal();}
 function closeDialog(dialog){if(dialog.open)dialog.close();}
 function setSaveState(kind,label){els.save.dataset.state=kind;els.save.textContent=label;}
@@ -67,7 +68,8 @@ async function loadPackage(){
   core.assertBrowserSafe(data);
   els.mode.textContent=packageModeLabel();
   els.launchMeta.replaceChildren();
-  const facts=[['Questions',state.items.length],['Duration',`${state.package.duration_minutes} min`],['Navigation',state.package.navigation?.freeNavigation?'Free navigation':'Sequential']];
+  const adjusted=Number(state.package?.accommodation_policy?.extra_time_percent||0)>0;
+  const facts=[['Questions',state.items.length],['Duration',adjusted?'Approved timer setting':`${state.package.duration_minutes} min`],['Navigation',state.package.navigation?.freeNavigation?'Free navigation':'Sequential']];
   for(const [label,value] of facts){const box=document.createElement('div');box.className='launch-meta__item';const s=document.createElement('span');s.textContent=label;const b=document.createElement('strong');b.textContent=String(value);box.append(s,b);els.launchMeta.append(box);}
   renderTools(els.launchTools);renderTools();
   show('launch');setSaveState('loading','Not started');
@@ -129,18 +131,18 @@ function deriveUnlocked(){
 function canNavigate(index){return Boolean(state.package?.navigation?.freeNavigation)||index<=state.maxUnlocked;}
 function navigate(index){
   index=Math.max(0,Math.min(state.items.length-1,index));if(!canNavigate(index))return toast('This package uses sequential navigation. Complete the current required response before moving ahead.');
-  state.activeIndex=index;const item=currentItem();if(item)state.viewed.add(item.package_item_id);renderAll();
+  state.activeIndex=index;const item=currentItem();if(item)state.viewed.add(item.package_item_id);renderAll();els.prompt.focus({preventScroll:true});announce(`Question ${index+1} of ${state.items.length}`);
 }
 
 function navState(item){return core.questionState({viewed:state.viewed.has(item.package_item_id),flagged:state.flagged.has(item.package_item_id),descriptor:item.renderer,draft:state.drafts.get(item.package_item_id)});}
 function renderNavigator(){
   els.questionGrid.replaceChildren();
-  state.items.forEach((item,index)=>{const s=navState(item),b=document.createElement('button');b.type='button';b.className='question-nav-button';b.textContent=String(index+1);b.dataset.active=index===state.activeIndex?'true':'false';b.dataset.state=s.completion.toLowerCase();b.dataset.flagged=s.flagged?'true':'false';b.disabled=!canNavigate(index);b.setAttribute('aria-label',`Question ${index+1}: ${s.label.toLowerCase()}`);b.addEventListener('click',()=>{navigate(index);document.body.dataset.navigatorOpen='false';});els.questionGrid.append(b);});
+  state.items.forEach((item,index)=>{const s=navState(item),b=document.createElement('button');b.type='button';b.className='question-nav-button';b.textContent=String(index+1);b.dataset.active=index===state.activeIndex?'true':'false';b.dataset.state=s.completion.toLowerCase();b.dataset.flagged=s.flagged?'true':'false';b.disabled=!canNavigate(index);b.setAttribute('aria-label',`Question ${index+1}: ${s.label.toLowerCase()}`);if(index===state.activeIndex)b.setAttribute('aria-current','step');b.addEventListener('click',()=>{navigate(index);document.body.dataset.navigatorOpen='false';els.navigatorOpen.setAttribute('aria-expanded','false');});els.questionGrid.append(b);});
 }
 
 function writingPolicy(input){
   const policy=state.package?.resource_policy||{};input.autocomplete='off';input.setAttribute('autocapitalize','off');
-  if(policy.spellcheck===false){input.spellcheck=false;input.setAttribute('spellcheck','false');}
+  input.spellcheck=policy.spellcheck!==false;input.setAttribute('spellcheck',policy.spellcheck===false?'false':'true');
   if(policy.autocorrect===false)input.setAttribute('autocorrect','off');
   if(policy.paste===false)input.addEventListener('paste',(event)=>{event.preventDefault();toast('Paste is disabled by this Assessment Package.');});
 }
@@ -185,6 +187,7 @@ function wordCount(value){const s=String(value||'').trim();return s?s.split(/\s+
 function renderQuestion(){
   const item=currentItem();if(!item)return;
   const descriptor=item.renderer,draft=currentDraft(item),index=state.activeIndex;state.viewed.add(item.package_item_id);
+  els.prompt.tabIndex=-1;
   els.questionPosition.textContent=`Question ${index+1} of ${state.items.length}`;els.questionMarks.textContent=`${descriptor.marks} ${descriptor.marks===1?'mark':'marks'}`;els.prompt.textContent=descriptor.prompt||'Question prompt';
   els.flag.setAttribute('aria-pressed',state.flagged.has(item.package_item_id)?'true':'false');els.flag.querySelector('span').textContent=state.flagged.has(item.package_item_id)?'Flagged':'Flag';
   const source=descriptor.source;els.source.hidden=source==null;if(source!=null)els.source.textContent=typeof source==='string'?source:JSON.stringify(source,null,2);
@@ -280,7 +283,8 @@ async function submitAttempt(){
 
 function startTimer(){
   clearInterval(state.timerHandle);const expiry=Date.parse(state.attempt?.expires_at||'');if(!Number.isFinite(expiry)){els.timerValue.textContent='Server';return;}
-  const tick=()=>{const remaining=Math.max(0,expiry-(Date.now()+state.serverOffsetMs)),seconds=Math.ceil(remaining/1000),m=Math.floor(seconds/60),s=seconds%60;els.timerValue.textContent=`${m}:${String(s).padStart(2,'0')}`;els.timer.dataset.state=seconds<=60?'critical':seconds<=300?'warning':'normal';if(seconds<=0){clearInterval(state.timerHandle);if(!state.readOnly)onProjectedExpiry();}};tick();state.timerHandle=setInterval(tick,1000);
+  state.timerAnnouncements.clear();
+  const tick=()=>{const remaining=Math.max(0,expiry-(Date.now()+state.serverOffsetMs)),seconds=Math.ceil(remaining/1000),m=Math.floor(seconds/60),s=seconds%60;els.timerValue.textContent=`${m}:${String(s).padStart(2,'0')}`;els.timer.dataset.state=seconds<=60?'critical':seconds<=300?'warning':'normal';for(const [threshold,message] of [[300,'Five minutes remaining'],[60,'One minute remaining'],[0,'Time has ended']])if(seconds<=threshold&&!state.timerAnnouncements.has(threshold)){state.timerAnnouncements.add(threshold);announce(message);}if(seconds<=0){clearInterval(state.timerHandle);if(!state.readOnly)onProjectedExpiry();}};tick();state.timerHandle=setInterval(tick,1000);
 }
 async function onProjectedExpiry(){state.readOnly=true;setSaveState('saving','Server finalizing…');renderAll();setNetwork('Time has ended according to the server-synchronized timer. KIWI is finalizing the latest server-accepted response snapshot; this browser does not decide the finalization winner.');await deactivateIntegrityGuard();let checks=0;const poll=async()=>{checks++;try{await loadWorkspace({replay:false});if(state.attempt?.attempt_state!=='ACTIVE'){setNetwork(null);return;}}catch{}if(checks<12)setTimeout(poll,1500);};poll();}
 
@@ -299,10 +303,11 @@ async function reportIssue(event){event.preventDefault();const item=currentItem(
 
 function bind(){
   returnLinks();els.start.addEventListener('click',startAttempt);els.previous.addEventListener('click',()=>navigate(state.activeIndex-1));els.next.addEventListener('click',()=>navigate(state.activeIndex+1));els.flag.addEventListener('click',toggleFlag);els.review.addEventListener('click',openReview);els.reviewClose.addEventListener('click',()=>closeDialog(els.reviewDialog));els.returnQuestions.addEventListener('click',()=>closeDialog(els.reviewDialog));els.submit.addEventListener('click',submitAttempt);els.transfer.addEventListener('click',transferDevice);
-  els.navigatorOpen.addEventListener('click',()=>document.body.dataset.navigatorOpen='true');els.navigatorClose.addEventListener('click',()=>document.body.dataset.navigatorOpen='false');
+  els.navigatorOpen.addEventListener('click',()=>{document.body.dataset.navigatorOpen='true';els.navigatorOpen.setAttribute('aria-expanded','true');els.navigatorClose.focus();});els.navigatorClose.addEventListener('click',()=>{document.body.dataset.navigatorOpen='false';els.navigatorOpen.setAttribute('aria-expanded','false');els.navigatorOpen.focus();});
   els.toolsButton.addEventListener('click',()=>showDialog(els.toolsPanel));els.report.addEventListener('click',()=>showDialog(els.reportDialog));els.reportClose.addEventListener('click',()=>closeDialog(els.reportDialog));els.reportCancel.addEventListener('click',()=>closeDialog(els.reportDialog));els.reportForm.addEventListener('submit',reportIssue);
   window.addEventListener('online',()=>{setNetwork('Connection restored. Revalidating your attempt before sync…');replayQueue();});window.addEventListener('offline',()=>setNetwork('You are offline. Local recovery drafts can continue, but “Saved” will not appear until the server acknowledges them.'));
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&params.attemptId&&!state.readOnly)loadWorkspace({replay:true}).catch(()=>{});});
+  document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&document.body.dataset.navigatorOpen==='true'){document.body.dataset.navigatorOpen='false';els.navigatorOpen.setAttribute('aria-expanded','false');els.navigatorOpen.focus();return;}if(event.altKey&&event.key==='ArrowLeft'){event.preventDefault();navigate(state.activeIndex-1);}if(event.altKey&&event.key==='ArrowRight'){event.preventDefault();navigate(state.activeIndex+1);}if(event.target.closest?.('#questionGrid')&&event.key==='Home'){event.preventDefault();navigate(0);}if(event.target.closest?.('#questionGrid')&&event.key==='End'){event.preventDefault();navigate(state.items.length-1);}});
 }
 
 async function boot(){
