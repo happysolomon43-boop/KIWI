@@ -29,18 +29,16 @@
 
   if (global.document?.documentElement?.dataset?.app !== 'kiwi-teaching') return;
 
-  // The first D23 visible-shell experiment packaged the original Teaching shell
-  // and the replacement D23 shell together. A browser that restores that stale
-  // document can therefore run two UI owners against the same Teaching state.
-  // Detect that retired document before either UI module can take ownership and
-  // force one cache-busting navigation back to the established Teaching shell.
-  const legacyVisibleShell = Boolean(
+  // One-time escape hatch for browser tabs that restore the rejected D23
+  // replacement document from memory/cache. That document packaged two UI
+  // owners against the same Teaching DOM. Redirect it before either can mount.
+  const staleReplacementDocument = Boolean(
     global.document.querySelector('.d23-shell') ||
     global.document.querySelector('link[href*="teaching-d23-live.css"]') ||
     global.document.querySelector('script[src*="teaching-d23-live.js"]')
   );
 
-  if (legacyVisibleShell) {
+  if (staleReplacementDocument) {
     const current = new URL(global.location.href);
     if (current.searchParams.get('teaching-ui') !== 'original-20261003') {
       const clean = new URL('/teaching.html', global.location.origin);
@@ -50,56 +48,9 @@
     }
   }
 
-  const waitForEstablishedTeachingShell = async () => {
-    const deadline = Date.now() + 10000;
-    while (Date.now() < deadline) {
-      const navigationReady = typeof global.KIWITeachingNavigation?.register === 'function';
-      const coursesReady = typeof global.KIWITeachingCourses?.registerSection === 'function';
-      const visibleShellReady = Boolean(global.document.querySelector('#teachingApp .teaching-view'));
-      const sessionFailed = Boolean(global.document.getElementById('teachingSessionBack'));
-
-      if (navigationReady && coursesReady && visibleShellReady) return true;
-      if (sessionFailed) return false;
-      await new Promise((resolve) => global.setTimeout(resolve, 50));
-    }
-    throw new Error('Established Teaching shell did not become ready in time.');
-  };
-
-  const bootstrapTeachingFeatures = async () => {
-    const state = global.__KIWI_TEACHING_FEATURE_BOOTSTRAP__;
-    if (state === 'loading' || state === 'ready') return;
-
-    global.__KIWI_TEACHING_FEATURE_BOOTSTRAP__ = 'loading';
-    try {
-      const shellReady = await waitForEstablishedTeachingShell();
-      if (!shellReady) {
-        global.__KIWI_TEACHING_FEATURE_BOOTSTRAP__ = 'session-unavailable';
-        return;
-      }
-
-      // Results/Record registers first. The information bridge then extends the
-      // same original Course/global registries with Teacher, Archived Courses,
-      // Study Packs and contextual Materials. No replacement shell is mounted.
-      await import('/teaching-d15.js');
-      await import('/teaching-original-bridge.js');
-
-      global.__KIWI_TEACHING_FEATURE_BOOTSTRAP__ = 'ready';
-      global.dispatchEvent(new CustomEvent('kiwi:teaching-features-ready'));
-    } catch (error) {
-      global.__KIWI_TEACHING_FEATURE_BOOTSTRAP__ = 'failed';
-      console.error('[KIWI Teaching] Original-shell feature bootstrap failed.', error);
-    }
-  };
-
-  const scheduleBootstrap = () => {
-    global.setTimeout(() => {
-      bootstrapTeachingFeatures();
-    }, 0);
-  };
-
-  if (global.document.readyState === 'loading') {
-    global.addEventListener('DOMContentLoaded', scheduleBootstrap, { once: true });
-  } else {
-    scheduleBootstrap();
-  }
+  // Teaching-specific feature startup lives in its own module. The shared
+  // runtime config does not own Teaching presentation or feature registration.
+  import('/teaching-bootstrap.js').catch((error) => {
+    console.error('[KIWI Teaching] Feature bootstrap module failed to load.', error);
+  });
 })(window);
