@@ -13,9 +13,9 @@ test('TCH-0425 successful appeal deterministically recalculates result and Grade
   let appeal={grade_appeal_id:'appeal-1',assessment_result_id:'result-1',package_item_id:'item-1',criterion_id:'c1',appeal_state:'SUBMITTED',review_direction_policy:'two_way',rubric_ref:'rubric-1',normalized_artifact:{criterion_id:'c1',package_item_id:'item-1'},raw_appeal_text:'The rubric criterion was applied incorrectly.'};
   const policy=lockedPolicy();
   const item={package_item_id:'item-1',item_state:'ACTIVE',item_hash:'hash-1',response_family:'CONSTRUCTED',intended_marks:10,learning_unit_ids:['lu-1'],public_item_payload:{stem:'Explain.'},protected_marking_payload:{rubric:{rubric_ref:'rubric-1',criteria:[{criterion_id:'c1',criterion_max_marks:10,credit_precision:'exact_points'}]}}};
-  const response={assessment_response_id:'response-1',response_version:1,renderer_payload:{text:'Student answer'}};
-  const bundle={context:{graded:true,assessment_type:'CLASSWORK',assessment_id:'assessment-1',assessment_attempt_id:'attempt-1',assessment_package_id:'package-1',final_snapshot_ref:'attempt:1:final',policy_snapshot:{}},policy,items:[item],responseByItem:new Map([['item-1',response]])};
-  const runs=[{marking_run_id:'run-original',package_item_id:'item-1',run_kind:'TPF15_INITIAL',run_status:'ACCEPTED'}];
+  const response={assessment_response_id:'response-1',package_item_id:'item-1',response_version:1,renderer_payload:{text:'Student answer'}};
+  const bundle={context:{graded:true,assessment_type:'CLASSWORK',assessment_id:'assessment-1',assessment_attempt_id:'attempt-1',assessment_package_id:'package-1',attempt_state:'SUBMITTED',attempt_result_state:'AWAITING_MARKING',attempt_invalidation_reason:null,finalization_version:1,final_snapshot_ref:'attempt:1:final',final_snapshot:{finalized_by:'SUBMITTED',responses:[{package_item_id:'item-1',response_version:1,renderer_payload:{text:'Student answer'}}]},policy_snapshot:{}},policy,items:[item],responses:[response],responseByItem:new Map([['item-1',response]])};
+  const runs=[{marking_run_id:'run-original',package_item_id:'item-1',run_kind:'TPF15_INITIAL',run_status:'ACCEPTED',created_at:'2026-10-03T09:00:00.000Z'}];
   const judgmentByRun=new Map([['run-original',[{criterion_id:'c1',criterion_max_marks:10,proposed_credit:5,proposed_band_id:null,supported_credit_range:null,satisfaction:'partial',evidence_refs:[],evidence_summary:'Original rubric judgment',review_state:'ordinary',confidence:'high',alternative_valid_route_used:false,follow_through_applied:false,defect_flags:[]}]]]);
   let entries=[{gradebook_entry_id:'entry-v1',source_kind:'ASSESSMENT',source_ref:'attempt-1',source_result_id:'result-1',category_key:'CLASSWORK',category_weight:.10,within_category_weight:1,raw_earned_marks:5,raw_max_marks:10,raw_percentage:50,course_contribution:5,entry_state:'APPEALABLE',learning_unit_ids:['lu-1'],topic_ids:[],version_no:1}];
   const audits=[];
@@ -28,7 +28,7 @@ test('TCH-0425 successful appeal deterministically recalculates result and Grade
     runsForResult:async()=>runs,
     judgmentsForRun:async(_student,runId)=>judgmentByRun.get(runId)||[],
     updateAppeal:async({patch})=>{appeal={...appeal,...patch};return appeal;},
-    appendRun:async(input)=>{const run={marking_run_id:`run-${runs.length+1}`,package_item_id:input.packageItemId,run_kind:input.runKind,run_status:input.runStatus};runs.push(run);return {run,idempotent:false};},
+    appendRun:async(input)=>{const run={marking_run_id:`run-${runs.length+1}`,package_item_id:input.packageItemId,parent_run_id:input.parentRunId||null,run_kind:input.runKind,run_status:input.runStatus,created_at:`2026-10-03T09:00:0${runs.length+1}.000Z`};runs.push(run);return {run,idempotent:false};},
     appendCriterionJudgments:async({runId,judgments})=>{judgmentByRun.set(runId,judgments);return judgments;},
     updateResult:async({patch})=>{result={...result,...patch,result_version:result.result_version+1};return result;},
     activeGradebookEntries:async()=>entries,
