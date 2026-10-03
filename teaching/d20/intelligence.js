@@ -25,6 +25,18 @@ const BLIND_PASS_A_FORBIDDEN=Object.freeze(new Set([
 function reject(reason,details=null){return {ok:false,reason,details:details||undefined};}
 function accepted(output){return {ok:true,value:output};}
 function bool(value){return value===true;}
+function stableCriterionIds(values){return [...new Set((Array.isArray(values)?values:[]).map(value=>String(value||'')).filter(Boolean))].sort();}
+function expectedReviewCriterionIds(input={}){
+  const direct=stableCriterionIds(input?.review_scope?.criterion_ids);if(direct.length)return direct;
+  const original=Array.isArray(input?.original_marking?.criterion_judgments)?input.original_marking.criterion_judgments:[];if(original.length)return stableCriterionIds(original.map(row=>row?.criterion_id));
+  const frozen=Array.isArray(input?.frozen_pass_a?.criterion_judgments)?input.frozen_pass_a.criterion_judgments:[];return stableCriterionIds(frozen.map(row=>row?.criterion_id));
+}
+function validateExactReviewScope(output,reviewStage,expectedCriterionIds=[]){
+  const expected=stableCriterionIds(expectedCriterionIds);if(!expected.length)return null;
+  const field=reviewStage==='independent_pass_a'?'criterion_independent_judgments':'criterion_reviews',rows=Array.isArray(output?.[field])?output[field]:[],actual=stableCriterionIds(rows.map(row=>row?.criterion_id));
+  if(JSON.stringify(actual)!==JSON.stringify(expected))return reject('TEACHING_D20_REVIEW_SCOPE_MISMATCH',{reviewStage,expectedCriterionIds:expected,actualCriterionIds:actual});
+  return null;
+}
 
 function validateTpf15Controls(output){
   const handoff=output?.aggregation_handoff;
@@ -61,7 +73,7 @@ function validatePassBControls(output){
   return null;
 }
 
-function schema(id,family,{taskMode=null,reviewStage=null}={}){return Object.freeze({
+function schema(id,family,{taskMode=null,reviewStage=null,expectedCriterionIds=[]}={}){return Object.freeze({
   id,version:'d20.v1',uncertainty_states:Object.freeze(['borderline','rubric_precision_gap','material_ambiguity','possible_rubric_defect','possible_item_defect','insufficient_marking_context','moderation_required']),review_needed_field:'review_state',
   validate:async(output)=>{
     if(!output||typeof output!=='object'||Array.isArray(output))return reject('TEACHING_D20_AI_OUTPUT_INVALID');
@@ -75,11 +87,13 @@ function schema(id,family,{taskMode=null,reviewStage=null}={}){return Object.fre
     if(family==='TPF-16'&&reviewStage==='independent_pass_a'){
       const controlFailure=validatePassAControls(output);if(controlFailure)return controlFailure;
       if(String(output.review_stage||'')!=='independent_pass_a')return reject('TEACHING_D20_TPF16_PASS_A_STAGE_MISMATCH');
+      const scopeFailure=validateExactReviewScope(output,reviewStage,expectedCriterionIds);if(scopeFailure)return scopeFailure;
     }
     if(family==='TPF-16'&&reviewStage==='comparison_pass_b'){
       const controlFailure=validatePassBControls(output);if(controlFailure)return controlFailure;
       if(String(output.review_stage||'')!=='comparison_pass_b')return reject('TEACHING_D20_TPF16_PASS_B_STAGE_MISMATCH');
       if(!Array.isArray(output.criterion_reviews))return reject('TEACHING_D20_TPF16_PASS_B_CRITERIA_REQUIRED');
+      const scopeFailure=validateExactReviewScope(output,reviewStage,expectedCriterionIds);if(scopeFailure)return scopeFailure;
     }
     if(family==='TPF-16'&&taskMode==='borderline_moderation_needed_detection'&&output.full_remark_not_performed!==true)return reject('TEACHING_D20_TPF16_DETECTION_FULL_REMARK_FORBIDDEN');
     return accepted(output);
@@ -106,8 +120,7 @@ function sanitizeAcademicInput(input,reviewStage){
 }
 
 function makeRequest({capabilityId,taskMode,studentId,resultId,stateVersion,academicInput={},requestKey,reviewStage=null,authority='T4'}){
-  const capability=getCapability(capabilityId),binding=bindingFor(capability),outputSchema=schema(`d20.${taskMode}`,binding.family,{taskMode,reviewStage});
-  const safeInput=sanitizeAcademicInput(academicInput,reviewStage),safeContext=safeInput.marking_context;
+  const capability=getCapability(capabilityId),binding=bindingFor(capability),safeInput=sanitizeAcademicInput(academicInput,reviewStage),safeContext=safeInput.marking_context,expectedCriterionIds=expectedReviewCriterionIds(safeInput),outputSchema=schema(`d20.${taskMode}`,binding.family,{taskMode,reviewStage,expectedCriterionIds});
   return {
     trigger:{type:'workflow_continuation',ref:`assessment-result:${resultId}:${taskMode}:${reviewStage||'single'}`,source:'teaching.d20',actor_id:studentId},
     capabilityId,declaredAuthorityLevel:authority,idempotencyKey:String(requestKey),correlationId:String(requestKey),
@@ -151,4 +164,4 @@ function validatedOutput(result,rubric,{family='TPF-15'}={}){
   return {output,judgments:[]};
 }
 
-module.exports={CAPABILITIES,makeRequest,sanitizeAcademicInput,createD20Intelligence,validatedOutput,validateTpf15Controls,validatePassAControls,validatePassBControls,normalizePassAJudgments};
+module.exports={CAPABILITIES,makeRequest,sanitizeAcademicInput,createD20Intelligence,validatedOutput,validateTpf15Controls,validatePassAControls,validatePassBControls,validateExactReviewScope,expectedReviewCriterionIds,normalizePassAJudgments};
