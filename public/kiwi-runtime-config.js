@@ -26,32 +26,4 @@
     apiBaseUrl: `${backendOrigin}/api`,
     webSocketBaseUrl,
   });
-
-  if (global.document?.documentElement?.dataset?.app !== 'kiwi-teaching') return;
-
-  // One-time escape hatch for browser tabs that restore the rejected D23
-  // replacement document from memory/cache. That document packaged two UI
-  // owners against the same Teaching DOM. Redirect it before either can mount.
-  const staleReplacementDocument = Boolean(
-    global.document.querySelector('.d23-shell') ||
-    global.document.querySelector('link[href*="teaching-d23-live.css"]') ||
-    global.document.querySelector('script[src*="teaching-d23-live.js"]')
-  );
-
-  if (staleReplacementDocument) {
-    const current = new URL(global.location.href);
-    if (current.searchParams.get('teaching-ui') !== 'original-20261003') {
-      const clean = new URL('/teaching.html', global.location.origin);
-      clean.searchParams.set('teaching-ui', 'original-20261003');
-      global.location.replace(clean.href);
-      return;
-    }
-  }
-
-  // Teaching owns its own feature bootstrap. The version marker ensures a
-  // browser that previously loaded the broken bootstrap cannot keep reusing it
-  // after the original Teaching shell has been repaired.
-  import('/teaching-bootstrap.js?v=20261003-visible-features-1').catch((error) => {
-    console.error('[KIWI Teaching] Feature bootstrap module failed to load.', error);
-  });
 })(window);

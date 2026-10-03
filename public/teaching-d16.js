@@ -44,3 +44,10 @@ async function renderCourseSummary({course,container,openSection}){try{const dat
 
 nav.register({id:'work',label:'Work',description:'Homework, independent work and corrections',icon:'✓',menuIcon:'overview',onSelect:renderGlobal});
 courses.registerSection({id:'work',label:'Work',order:42,render:renderCourse,renderSummary:renderCourseSummary});
+
+// D23 is a first-class dependency of the original Teaching module stack.
+// Loading it here keeps the original shell as the sole UI owner and removes
+// any dependency on shared runtime bootstrap/bridge code.
+import('./teaching-d23.js').catch((error)=>{
+  console.error('[KIWI Teaching] D23 information surfaces failed to load.',error);
+});
