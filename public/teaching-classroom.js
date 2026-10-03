@@ -3,7 +3,7 @@ const courses=window.KIWITeachingCourses;
 if(typeof kiwiApiRequest!=='function'||!courses?.registerSection)throw new Error('Teaching Classroom requires the shared KIWI client and Course shell.');
 
 const $=(tag,className='',text=null)=>{const n=document.createElement(tag);if(className)n.className=className;if(text!==null)n.textContent=String(text);return n;};
-const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false};
+const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false,returnFocus:null};
 const MODE={PRE_CLASS:'Before Class',OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'};
 function when(value){return value?new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'—';}
 function date(value){return value?new Date(value).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'—';}
@@ -13,7 +13,7 @@ function button(label,handler,cls=''){const b=$('button',cls,label);b.type='butt
 function notice(title,body,kind=''){return add($('div',`tc-notice ${kind}`),$('strong','',title),$('p','',body));}
 function serverNow(){const s=state.snapshot;return Date.now()+(s?new Date(s.serverNow).getTime()-s._receivedAt:0);}
 function clearRuntime(){if(state.interval)clearInterval(state.interval);if(state.refresh)clearInterval(state.refresh);state.interval=state.refresh=null;}
-function close(){clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;}
+function close({restore=true}={}){clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
 async function fetchSnapshot(){
   if(!state.classId||state.busy)return;
   const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);
@@ -27,11 +27,13 @@ async function act(path,body){
 }
 async function fetchAfterAction(){const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);data._receivedAt=Date.now();state.snapshot=data;render();}
 async function open(classId){
-  close();state.classId=classId;state.host=$('div','tc-overlay');state.host.setAttribute('role','dialog');state.host.setAttribute('aria-modal','true');state.host.setAttribute('aria-label','KIWI Classroom');
+  const opener=document.activeElement;close({restore:false});state.returnFocus=opener;state.classId=classId;state.host=$('div','tc-overlay');state.host.setAttribute('role','dialog');state.host.setAttribute('aria-modal','true');state.host.setAttribute('aria-label','KIWI Classroom');
   document.body.append(state.host);document.body.classList.add('tc-active');state.host.append(notice('Opening Classroom','Connecting to the current Class record…'));
-  try{await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/enter`,{method:'POST',body:{}});await fetchSnapshot();state.interval=setInterval(updateClocks,1000);state.refresh=setInterval(()=>fetchSnapshot().catch(()=>{state.host?.querySelector('.tc-connection')?.replaceChildren($('span','','Reconnecting to Class…'));}),12000);}
+  state.host.addEventListener('keydown',trapClassroomFocus);state.host.tabIndex=-1;state.host.focus();
+  try{await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/enter`,{method:'POST',body:{}});await fetchSnapshot();state.host.querySelector('h1')?.focus?.({preventScroll:true});state.interval=setInterval(updateClocks,1000);state.refresh=setInterval(()=>fetchSnapshot().catch(()=>{state.host?.querySelector('.tc-connection')?.replaceChildren($('span','','Reconnecting to Class…'));}),12000);}
   catch(error){state.host.replaceChildren(notice('Classroom unavailable',error.message||'Please try again.','tc-error'),button('Return to Course',close,'tc-button tc-button--solid'));}
 }
+function trapClassroomFocus(event){if(event.key==='Escape'){const controls=state.host?.querySelector('.tc-controls[open]');if(controls){controls.open=false;controls.querySelector('summary')?.focus();}return;}if(event.key!=='Tab')return;const nodes=Array.from(state.host?.querySelectorAll('button:not([disabled]),a[href],textarea:not([disabled]),input:not([disabled]),summary,[tabindex]:not([tabindex="-1"])')||[]).filter((node)=>node.getClientRects().length);if(!nodes.length)return;const first=nodes[0],last=nodes[nodes.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}
 function updateClocks(){
   const s=state.snapshot;if(!s||!state.host)return;
   const now=serverNow(), end=new Date(s.class.scheduledEndAt).getTime();
@@ -40,8 +42,8 @@ function updateClocks(){
 }
 function renderHeader(s){
   const header=$('header','tc-header');const brand=add($('div','tc-brand'),$('span','tc-brand__mark','K'),$('span','','KIWI / TEACHING'));
-  const identity=add($('div','tc-header__identity'),$('div','tc-eyebrow','LIVE CLASSROOM'),$('h1','',s.identity.course_title),$('p','',s.identity.teacher_name||'KIWI Teacher'));
-  const mode=$('span','tc-mode',MODE[s.modeKey]||s.mode);mode.dataset.mode=s.modeKey;
+  const heading=$('h1','',s.identity.course_title);heading.tabIndex=-1;const identity=add($('div','tc-header__identity'),$('div','tc-eyebrow','LIVE CLASSROOM'),heading,$('p','',s.identity.teacher_name||'KIWI Teacher'));
+  const mode=$('span','tc-mode',MODE[s.modeKey]||s.mode);mode.dataset.mode=s.modeKey;mode.setAttribute('role','status');mode.setAttribute('aria-live','polite');mode.setAttribute('aria-label',`Current Class mode: ${MODE[s.modeKey]||s.mode}`);
   const clocks=add($('div','tc-header__clocks'),add($('div','tc-clock'),$('small','','CLASS TIME'),$('strong','',`Ends ${when(s.class.scheduledEndAt)}`),$('span','','')));
   clocks.querySelector('span').dataset.clock='class';
   if(s.modeKey==='BREAK'||s.modeKey==='INDEPENDENT_PRACTICE'){const activity=add($('div','tc-clock tc-clock--activity'),$('small','',s.modeKey==='BREAK'?'BREAK':'ACTIVITY'),$('strong','',s.modeKey==='BREAK'?'Teaching paused':'Work independently'),$('span','',''));activity.querySelector('span').dataset.clock='activity';clocks.append(activity);}
@@ -50,7 +52,7 @@ function renderHeader(s){
   add(header,brand,identity,mode,clocks,leave);return header;
 }
 function renderTeacher(s){
-  const panel=$('section','tc-teacher');panel.setAttribute('aria-label','Teacher Presence');
+  const panel=$('section','tc-teacher');panel.setAttribute('aria-label','Teacher Presence');panel.setAttribute('aria-live','polite');
   const avatar=$('div','tc-teacher__avatar','K');avatar.setAttribute('aria-hidden','true');
   let message='Follow the Board. Your workspace will appear when there is something to do.';
   if(!s.controller)message='Class will open at the scheduled time. Your teacher will lead the session.';
@@ -62,7 +64,7 @@ function renderTeacher(s){
 }
 function blockText(parent,value){parent.append($('p','',String(value||'')));}
 function graphBlock(c){
-  const wrap=$('div','tc-graph');const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 400 220');svg.setAttribute('role','img');svg.setAttribute('aria-label',c.alt||'Data graph');
+  const wrap=$('div','tc-graph');const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 400 220');svg.setAttribute('role','img');const description=c.description||c.alt||'Data graph';svg.setAttribute('aria-label',description);const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=description;svg.append(title);
   const pts=c.points||[];if(!pts.length){wrap.append($('p','','No data points'));return wrap;}
   const xs=pts.map((p)=>p[0]),ys=pts.map((p)=>p[1]),minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
   const coords=pts.map(([x,y])=>[30+340*(x-minX)/(maxX-minX||1),185-145*(y-minY)/(maxY-minY||1)]);
@@ -79,7 +81,7 @@ function renderBlock(item){
     case 'code':card.append(add($('pre','tc-code'),$('code','',c.text||'')));break;
     case 'worked_solution':(c.steps||[]).forEach((step,i)=>card.append(add($('div','tc-step'),$('span','',String(i+1).padStart(2,'0')),$('p','',step))));break;
     case 'graph':case 'data':card.append(graphBlock(c));break;
-    case 'image':case 'diagram':{const img=$('img','tc-visual');img.src=c.src;img.alt=c.alt;img.loading='lazy';card.append(img);break;}
+    case 'image':case 'diagram':{const img=$('img','tc-visual');img.src=c.src;img.alt=c.alt||`${label.toLowerCase()} shown on the Class Board`;img.loading='lazy';card.append(img);break;}
     case 'comparison':{const pair=$('div','tc-comparison');(c.columns||[]).forEach((col)=>pair.append(add($('div',''),$('strong','',col.title||''),$('p','',col.text))));card.append(pair);break;}
     case 'annotation':card.append($('p','tc-annotation',c.label||''));break;
   }
@@ -94,7 +96,7 @@ function renderBoard(s){
   if(!s.boardHistoryAllowed){panel.append(notice('Board history is unavailable','This activity restricts earlier teaching materials.'));return panel;}
   if(!s.board.length){panel.append(add($('div','tc-board-empty'),$('div','tc-board-empty__glyph','✧'),$('h3','','A clear space to think'),$('p','','The Board will hold the explanation, examples and comparisons for this Class.')));return panel;}
   state.scene=Math.min(state.scene,s.board.length-1);const scene=s.board[state.scene];
-  title.append(add($('div','tc-scene-nav'),button('←',()=>{state.scene=Math.max(0,state.scene-1);render();},'tc-icon'),$('span','',`${state.scene+1} / ${s.board.length}`),button('→',()=>{state.scene=Math.min(s.board.length-1,state.scene+1);render();},'tc-icon')));
+  const previous=button('←',()=>{state.scene=Math.max(0,state.scene-1);render();},'tc-icon');previous.setAttribute('aria-label','Previous Board scene');const next=button('→',()=>{state.scene=Math.min(s.board.length-1,state.scene+1);render();},'tc-icon');next.setAttribute('aria-label','Next Board scene');title.append(add($('div','tc-scene-nav'),previous,$('span','',`${state.scene+1} / ${s.board.length}`),next));
   title.querySelectorAll('button')[0].disabled=state.scene===0;title.querySelectorAll('button')[1].disabled=state.scene===s.board.length-1;
   if(scene.title)panel.append($('h3','tc-scene-title',scene.title));
   const blocks=$('div','tc-board-blocks');scene.items.forEach((item)=>blocks.append(renderBlock(item)));panel.append(blocks);return panel;
@@ -149,13 +151,14 @@ function render(){
   const left=$('div','tc-layout__main');left.append(renderTeacher(s));
   if(s.modeKey==='PRE_CLASS'){left.append(notice('Class begins soon',`Scheduled for ${date(s.class.scheduledStartAt)}. Expected duration: ${Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)} minutes.`,'tc-preclass'));}
   if(s.modeKey==='INTERRUPTED')left.append(notice('Your place is saved',s.interruption?.cause==='SYSTEM'?'KIWI interrupted the Class. This will not count as negative academic evidence.':'Return to this Class when the session resumes. The Controller will reassess the remaining time.','tc-error'));
-  const mobileNav=add($('nav','tc-mobile-tabs'),button('Board',()=>{state.tab='board';render();},state.tab==='board'?'is-active':''),button('Workspace',()=>{state.tab='workspace';render();},state.tab==='workspace'?'is-active':''),button('Notebook',()=>{state.tab='notebook';render();},state.tab==='notebook'?'is-active':''));mobileNav.setAttribute('aria-label','Classroom areas');left.append(mobileNav);
-  const board=renderBoard(s);board.classList.toggle('tc-mobile-hidden',state.tab!=='board');left.append(board);
-  const work=renderWorkspace(s);work.classList.toggle('tc-mobile-hidden',state.tab!=='workspace');
-  const note=renderNotebook(s);note.classList.toggle('tc-mobile-hidden',state.tab!=='notebook');
+  const selectTab=(tab)=>{state.tab=tab;render();state.host?.querySelector(`[data-classroom-tab="${tab}"]`)?.focus();};const tabs=['board','workspace','notebook'].map((tab)=>{const b=button(tab[0].toUpperCase()+tab.slice(1),()=>selectTab(tab),state.tab===tab?'is-active':'');b.dataset.classroomTab=tab;b.setAttribute('role','tab');b.setAttribute('aria-selected',state.tab===tab?'true':'false');b.setAttribute('aria-controls',`tc-panel-${tab}`);b.tabIndex=state.tab===tab?0:-1;return b;});
+  const mobileNav=add($('div','tc-mobile-tabs'),...tabs);mobileNav.setAttribute('role','tablist');mobileNav.setAttribute('aria-label','Classroom areas');left.append(mobileNav);
+  const board=renderBoard(s);board.id='tc-panel-board';board.setAttribute('role','tabpanel');board.classList.toggle('tc-mobile-hidden',state.tab!=='board');left.append(board);
+  const work=renderWorkspace(s);work.id='tc-panel-workspace';work.setAttribute('role','tabpanel');work.classList.toggle('tc-mobile-hidden',state.tab!=='workspace');
+  const note=renderNotebook(s);note.id='tc-panel-notebook';note.setAttribute('role','tabpanel');note.classList.toggle('tc-mobile-hidden',state.tab!=='notebook');
   const right=add($('aside','tc-layout__side'),work,note,renderControls(s));
   add(body,left,right);root.append(body);if(s.controller?.lifecycleState==='CLOSED')root.append(renderSummary(s));
-  root.append($('div','tc-message'));root.append($('div','tc-connection'));state.host.replaceChildren(root);updateClocks();
+  const message=$('div','tc-message');message.setAttribute('role','alert');const connection=$('div','tc-connection');connection.setAttribute('role','status');connection.setAttribute('aria-live','polite');root.append(message,connection);state.host.replaceChildren(root);updateClocks();
 }
 async function renderCourse({course,container}){
   const page=$('section','tc-course');add(page,$('div','tc-eyebrow','COURSE / CLASSROOM'),$('h2','','Enter the classroom'),$('p','','A focused place for the lesson, your work and the record you take away.'));
