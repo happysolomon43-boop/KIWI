@@ -73,6 +73,8 @@ test('C4 and explicitly consequential runs enter the independent human academic 
   const c4Queue = d30.buildHumanReviewQueue([c4, ordinary]);
   assert.equal(c4Queue.length, 1);
   assert.equal(c4Queue[0].caseId, c4.caseId);
+  assert.equal(c4Queue[0].runId,c4.runId);
+  assert.equal(c4Queue[0].attemptNo,c4.attemptNo);
   assert.equal(c4Queue[0].artifact.conclusion, 'bounded academic artifact');
   assert.match(c4Queue[0].rubric.independence, /automated semantic reviewer cannot satisfy/i);
 
@@ -96,6 +98,8 @@ test('automated or non-independent review cannot satisfy the C4 gate', () => {
   const [queueItem] = d30.buildHumanReviewQueue([record]);
   const common = {
     sessionId:record.sessionId,
+    runId:record.runId,
+    attemptNo:record.attemptNo,
     caseId:record.caseId,
     familyId:record.familyId,
     capabilityId:record.capabilityId,
@@ -129,23 +133,32 @@ test('automated or non-independent review cannot satisfy the C4 gate', () => {
   assert.equal(accepted.valid, true);
 });
 
-test('human review submissions are bound to the exact case, capability and route under review', () => {
+test('human review submissions are bound to the exact run, attempt, case, capability and route under review', () => {
   const record = reviewRecord();
   const [queueItem] = d30.buildHumanReviewQueue([record]);
-  const result = d30.validateHumanReviewSubmission({
+  const common={
     sessionId:record.sessionId,
+    runId:record.runId,
+    attemptNo:record.attemptNo,
     caseId:record.caseId,
     familyId:record.familyId,
-    capabilityId:'teaching.some.other.capability',
+    capabilityId:record.capabilityId,
     routeKey:record.routeKey,
     reviewerRef:'reviewer-2',
     reviewerKind:'HUMAN_ACADEMIC',
     independent:true,
     decision:'PASS',
     rubric:{ academicCorrectness:'PASS' },
-  }, queueItem);
-  assert.equal(result.valid, false);
-  assert.ok(result.errors.includes('CAPABILITY_ID_MISMATCH'));
+  };
+  const wrongCapability = d30.validateHumanReviewSubmission({...common,capabilityId:'teaching.some.other.capability'}, queueItem);
+  assert.equal(wrongCapability.valid, false);
+  assert.ok(wrongCapability.errors.includes('CAPABILITY_ID_MISMATCH'));
+  const wrongRun=d30.validateHumanReviewSubmission({...common,runId:'00000000-0000-4000-8000-000000000999'},queueItem);
+  assert.equal(wrongRun.valid,false);
+  assert.ok(wrongRun.errors.includes('RUNID_MISMATCH'));
+  const wrongAttempt=d30.validateHumanReviewSubmission({...common,attemptNo:2},queueItem);
+  assert.equal(wrongAttempt.valid,false);
+  assert.ok(wrongAttempt.errors.includes('ATTEMPT_NO_MISMATCH'));
 });
 
 test('review artifacts reject private reasoning fields before queueing or persistence', () => {
@@ -163,6 +176,8 @@ test('review artifacts reject private reasoning fields before queueing or persis
   assert.throws(
     () => d30.normalizeHumanReviewSubmission({
       sessionId:'00000000-0000-4000-8000-000000000101',
+      runId:'00000000-0000-4000-8000-000000000102',
+      attemptNo:1,
       caseId:'D30-HUMAN-REVIEW-001',
       familyId:'TPF-02',
       capabilityId:'teaching.course.curriculum_structure_analysis',
