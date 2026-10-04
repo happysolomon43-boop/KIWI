@@ -146,6 +146,22 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Preflight D30 integration runtime without provider calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run qualify:teaching:d30 -- preflight \
+            --source-sha "$GITHUB_SHA" \
+            --environment INTEGRATION \
+            --out d30-preflight-result.json
+      - name: Retain D30 preflight summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d30-integration-preflight-${{ github.run_id }}
+          path: d30-preflight-result.json
+          if-no-files-found: warn
+          retention-days: 30
       - name: Execute bounded D30 empirical batch
         shell: bash
         env:
