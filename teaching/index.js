@@ -23,6 +23,7 @@ const {
   createD21ProgressionRepository,
   createD22TeacherIdentityRepository,
   createD26CoordinationRepository,
+  createD27IntegrationRepository,
 } = require('./repositories');
 const { createD14Service } = require('./d14/service');
 const { registerD14Runtime } = require('./d14/runtime');
@@ -47,6 +48,7 @@ const d20 = require('./d20');
 const d21 = require('./d21');
 const d22 = require('./d22');
 const d26 = require('./d26');
+const d27 = require('./d27');
 
 function createTeachingFoundation({
   env = process.env,
@@ -71,6 +73,8 @@ function createTeachingFoundation({
   d20Intelligence = null,
   d21Intelligence = null,
   d22Intelligence = null,
+  d27OwnerAdapters = null,
+  d27IntegrationEventPublisher = null,
 } = {}) {
   const config = createTeachingConfig(env);
   const subjectReader = createKiwiSubjectReader({ subjects: subjectSource });
@@ -134,6 +138,12 @@ function createTeachingFoundation({
     : null;
   const d26Repository = persistentDepsReady
     ? createD26CoordinationRepository({query,withTransaction,randomUUID})
+    : null;
+  const d27Repository = persistentDepsReady
+    ? createD27IntegrationRepository({query,withTransaction,randomUUID})
+    : null;
+  const d27SourceVersionReader = persistentDepsReady
+    ? d27.createD27SourceVersionReader({query})
     : null;
 
   const d10Repository = persistentDepsReady
@@ -329,6 +339,24 @@ function createTeachingFoundation({
   const d26Runtime = d26Service && d10RuntimePlatform?.eventRuntime
     ? d26.registerD26Runtime({eventRuntime:d10RuntimePlatform.eventRuntime,service:d26Service,preparationRepository:d11PreparationRepository})
     : null;
+  const d27Service = d27Repository
+    ? d27.createD27Service({
+        repository:d27Repository,
+        subjectReader,
+        examInterface,
+        notificationInterface,
+        ownerAdapters:d27OwnerAdapters || {},
+        sourceVersionReader:d27SourceVersionReader,
+        integrationEventPublisher:d27IntegrationEventPublisher,
+        featureFlags:{
+          ksWrite:config.integrations?.d27?.ksWriteEnabled === true,
+          masteryWrite:config.integrations?.d27?.masteryWriteEnabled === true,
+          studyPromotion:config.integrations?.d27?.studyPromotionEnabled === true,
+        },
+        randomUUID,
+        clock:()=>new Date(),
+      })
+    : null;
 
   return Object.freeze({
     config,
@@ -355,6 +383,7 @@ function createTeachingFoundation({
     d21: d21Repository ? Object.freeze({ repository:d21Repository, intelligence:d21Intelligence, randomUUID }) : null,
     d22: d22Service ? Object.freeze({ repository:d22Repository, service:d22Service, intelligence:d22Intelligence, randomUUID }) : null,
     d26: d26Service ? Object.freeze({repository:d26Repository,service:d26Service,runtime:d26Runtime}) : null,
+    d27: d27Service ? Object.freeze({repository:d27Repository,service:d27Service}) : null,
     integrity: integrityService ? Object.freeze({ repository:integrityRepository, service:integrityService }) : null,
     policy,
   });
@@ -381,4 +410,5 @@ module.exports = {
   d21,
   d22,
   d26,
+  d27,
 };
