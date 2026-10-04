@@ -1,0 +1,20 @@
+name: Teaching D26 Coordination Notifications
+on:
+  push:
+    branches: [main, 'delivery/d26-*']
+    paths: ['teaching/**','tests/teaching/**','migrations/**','scripts/verify-teaching-d26-coordination.js','package.json','.github/workflows/teaching-d26-coordination.yml']
+  pull_request:
+    paths: ['teaching/**','tests/teaching/**','migrations/**','scripts/verify-teaching-d26-coordination.js','package.json','.github/workflows/teaching-d26-coordination.yml']
+jobs:
+  d26:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: npm install --ignore-scripts
+      - run: npm run verify:teaching:d26
+      - run: node --test tests/teaching/unit/d26-*.test.js tests/teaching/unit/d25-*.test.js
+      - run: npm run test:teaching
+      - run: npm test
+      - run: npm run build:web

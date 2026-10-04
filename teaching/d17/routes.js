@@ -7,6 +7,7 @@ const {mountD22Routes}=require('../d22/routes');
 const {mountD23Routes}=require('../d23/routes');
 const {createD25ReliabilityService}=require('../d25/service');
 const {mountD25Routes}=require('../d25/routes');
+const {mountD26Routes}=require('../d26/routes');
 function mountD17Routes(router,{foundation,sendError}={}){
   const d17=foundation?.d17?.service;if(!d17)return null;let ready=false;
   const service=createD19AssessmentTypeService({d17Service:d17,d17Repository:foundation.d17.repository,d08Repository:foundation.d08?.repository||null,d11Repository:foundation.d11?.repository||null,d14Service:foundation.d14?.service||null,policy:foundation.policy});
@@ -36,6 +37,7 @@ function mountD17Routes(router,{foundation,sendError}={}){
   const d22=mountD22Routes(router,{foundation,sendError});
   const d23=mountD23Routes(router,{foundation,sendError,d19Service:service,d20Service:d20?.service||null,d21Service:d21?.service||null,d22Service:d22?.service||null});
   const d25=reliability?mountD25Routes(router,{service:reliability,sendError}):null;
-  return Object.freeze({requireReady,d18,d19:service,d20,d21,d22,d23,d25});
+  const d26=foundation.d26?.service?mountD26Routes(router,{service:foundation.d26.service,repository:foundation.d26.repository,sendError}):null;
+  return Object.freeze({requireReady,d18,d19:service,d20,d21,d22,d23,d25,d26});
 }
 module.exports={mountD17Routes};

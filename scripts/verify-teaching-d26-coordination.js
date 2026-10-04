@@ -1,0 +1,6 @@
+'use strict';
+const fs=require('node:fs');const path=require('node:path');const root=path.resolve(__dirname,'..');const read=p=>fs.readFileSync(path.join(root,p),'utf8');
+const required=['teaching/d26/contracts.js','teaching/d26/scheduler.js','teaching/d26/notifications.js','teaching/d26/service.js','teaching/d26/runtime.js','teaching/d26/routes.js','teaching/d26/task-accounting.js','teaching/repositories/d26-coordination.js','migrations/20261004_teaching_d26_coordination_notifications_recovery.sql','migrations/20261004_teaching_d26_fk_index_hardening.sql'];for(const file of required)if(!fs.existsSync(path.join(root,file)))throw new Error(`Missing D26 artifact: ${file}`);
+const migration=read(required.at(-2));for(const token of ['ENABLE ROW LEVEL SECURITY','REVOKE ALL','service_role','teaching_recovery_case_sources','teaching_review_needs','teaching_notification_deliveries'])if(!migration.includes(token))throw new Error(`D26 migration missing ${token}`);
+const all=required.map(read).join('\n');for(const forbidden of ['openai','anthropic','gemini','service_role key'])if(new RegExp(forbidden,'i').test(all))throw new Error(`D26 artifact contains forbidden provider/secret coupling: ${forbidden}`);
+require('../teaching/d26/task-accounting').assertD26TaskAccounting();console.log('D26 canonical coordination verifier: PASS');
