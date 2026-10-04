@@ -5,6 +5,14 @@ const {
   CROSS_FAMILY_CORPUS,
 } = require('./corpus');
 const { buildQualificationPlan } = require('./qualification-plan');
+const {
+  PPL_COMPARISON_KEY,
+  buildPplQualificationPlan,
+  buildPplWorkItems,
+  pplWorkItemKey,
+  caseSpecForPplWorkItem,
+  compareEmpiricalPpl,
+} = require('./ppl-qualification');
 const { createD30QualificationRunner } = require('./runner');
 const {
   summarizeRouteQualification,
@@ -162,6 +170,20 @@ function consequentialReviewCaseIds(records = []) {
   ).map((record) => record.caseId)));
 }
 
+function pplHumanReviewRecords(records = []) {
+  const eligible=records.filter((record) =>
+    record.runKind === 'PPL_COMPARISON' &&
+    record.criticality === 'C4' &&
+    /-(ONE-SHOT|PROGRESSIVE)-FINAL$/.test(record.caseId || '')
+  );
+  return Object.freeze(eligible.filter((record) =>
+    Number(record.attemptNo) === 1 ||
+    record.validation?.pass !== true ||
+    record.semanticReview?.pass !== true ||
+    (record.defects || []).some((defect) => ['P0','P1'].includes(defect.severity))
+  ));
+}
+
 function selectedHumanReviewQueue({ plan, records, caseIndex = indexCases() } = {}) {
   const required = new Set();
   for (const target of plan.targets) {
@@ -173,6 +195,7 @@ function selectedHumanReviewQueue({ plan, records, caseIndex = indexCases() } = 
   for (const record of records.filter((item) => item.familyId === 'CROSS_FAMILY' && crossRequired.has(item.caseId))) required.add(record.runId);
   const consequential = new Set(consequentialReviewCaseIds(records));
   for (const record of records.filter((item) => consequential.has(item.caseId))) required.add(record.runId);
+  for (const record of pplHumanReviewRecords(records)) required.add(record.runId);
   return buildHumanReviewQueue(records.filter((record) => required.has(record.runId)), { consequentialCaseIds:[...consequential] });
 }
 
@@ -193,6 +216,21 @@ async function persistRunDefects(repository, record) {
       evidence:{runId:record.runId,attemptNo:record.attemptNo},
     });
   }
+}
+
+function storedPplComparison(rows = []) {
+  const row=rows.find((item)=>item.comparisonKey===PPL_COMPARISON_KEY) || null;
+  if (!row) return null;
+  if (row.evidence?.comparison && typeof row.evidence.comparison === 'object') return Object.freeze({...row.evidence.comparison});
+  return Object.freeze({
+    comparisonKey:row.comparisonKey,
+    decision:row.decision,
+    oneShot:row.oneShotSummary,
+    progressive:row.progressiveSummary,
+    ...(row.evidence || {}),
+    productionAuthorized:false,
+    authorizationGate:'D31',
+  });
 }
 
 function createD30QualificationCoordinator({
@@ -269,6 +307,60 @@ function createD30QualificationCoordinator({
     });
   }
 
+  async function executePplBatch({
+    sourceSha,
+    environment='INTEGRATION',
+    metadata={},
+    maxRuns=24,
+  }={}) {
+    if (!Number.isInteger(maxRuns) || maxRuns < 1 || maxRuns > 200) throw new Error('D30 PPL maxRuns must be an integer from 1 to 200.');
+    const session=await startOrResume({sourceSha,environment,metadata:{...metadata,pplComparisonVersion:'teaching-d30-ppl-comparison-v1'}});
+    const plan=buildPplQualificationPlan({orchestrator:baseOrchestrator});
+    const completed=await repository.listCompletedRunKeys(session.sessionId);
+    let records=await repository.listCaseResults(session.sessionId);
+    const workItems=buildPplWorkItems(plan);
+    const pending=workItems.filter((item)=>!completed.has(pplWorkItemKey(item)));
+    const batch=pending.slice(0,maxRuns);
+    const executed=[];
+    for (let index=0;index<batch.length;index+=1) {
+      const item=batch[index];
+      const caseSpec=caseSpecForPplWorkItem(item,{records});
+      logger?.log?.(`[D30:PPL] ${index+1}/${batch.length}: ${item.scenario.id}:${item.arm}:${item.stage}:a${item.attemptNo}`);
+      const record=await runner.executeCase({sessionId:session.sessionId,caseSpec,routeKey:item.routeKey,routeRole:'STAGE',attemptNo:item.attemptNo});
+      await persistRunDefects(repository,record);
+      records=[...records,record];
+      executed.push(record);
+    }
+    const remaining=Math.max(0,pending.length-executed.length);
+    let comparison=compareEmpiricalPpl({plan,records});
+    if (remaining===0 && comparison.complete) {
+      await repository.recordPplComparison({
+        sessionId:session.sessionId,
+        comparisonKey:PPL_COMPARISON_KEY,
+        oneShotSummary:comparison.oneShot,
+        progressiveSummary:comparison.progressive,
+        decision:comparison.decision,
+        evidence:{comparison,sourceSha,environment,calibration:comparison.thresholdCalibration},
+      });
+    }
+    const counts=await repository.sessionEvidenceCounts(session.sessionId);
+    return Object.freeze({
+      sessionId:session.sessionId,
+      resumed:session.resumed,
+      plan,
+      executed:Object.freeze(executed),
+      executedCount:executed.length,
+      expectedWorkItems:workItems.length,
+      pendingBeforeBatch:pending.length,
+      pendingAfterBatch:remaining,
+      pplExecutionComplete:remaining===0,
+      comparison,
+      counts,
+      productionAuthorized:false,
+      authorizationGate:'D31',
+    });
+  }
+
   async function status({ sessionId, plan = null, includeCrossFamily = true } = {}) {
     const resolvedPlan = plan || buildQualificationPlan({orchestrator:baseOrchestrator});
     const completed = await repository.listCompletedRunKeys(sessionId);
@@ -276,6 +368,41 @@ function createD30QualificationCoordinator({
     const pending = workItems.filter((item) => !completed.has(workItemKey(item)));
     const counts = await repository.sessionEvidenceCounts(sessionId);
     return Object.freeze({sessionId,expectedWorkItems:workItems.length,completedWorkItems:workItems.length-pending.length,pendingWorkItems:pending.length,empiricalExecutionComplete:pending.length===0,counts});
+  }
+
+  async function pplStatus({sessionId,plan=null}={}) {
+    const resolvedPlan=plan || buildPplQualificationPlan({orchestrator:baseOrchestrator});
+    const completed=await repository.listCompletedRunKeys(sessionId);
+    const workItems=buildPplWorkItems(resolvedPlan);
+    const pending=workItems.filter((item)=>!completed.has(pplWorkItemKey(item)));
+    const records=await repository.listCaseResults(sessionId);
+    const stored=storedPplComparison(await repository.listPplComparisons(sessionId));
+    const comparison=stored || compareEmpiricalPpl({plan:resolvedPlan,records});
+    return Object.freeze({
+      sessionId,
+      plan:resolvedPlan,
+      expectedWorkItems:workItems.length,
+      completedWorkItems:workItems.length-pending.length,
+      pendingWorkItems:pending.length,
+      pplExecutionComplete:pending.length===0,
+      comparisonPersisted:Boolean(stored),
+      comparison,
+    });
+  }
+
+  async function finalizePplComparison({sessionId,plan=null}={}) {
+    const resolvedPlan=plan || buildPplQualificationPlan({orchestrator:baseOrchestrator});
+    const state=await pplStatus({sessionId,plan:resolvedPlan});
+    if (!state.pplExecutionComplete || !state.comparison.complete) return state.comparison;
+    await repository.recordPplComparison({
+      sessionId,
+      comparisonKey:PPL_COMPARISON_KEY,
+      oneShotSummary:state.comparison.oneShot,
+      progressiveSummary:state.comparison.progressive,
+      decision:state.comparison.decision,
+      evidence:{comparison:state.comparison,calibration:state.comparison.thresholdCalibration},
+    });
+    return state.comparison;
   }
 
   async function reviewQueue({ sessionId, plan = null } = {}) {
@@ -297,20 +424,27 @@ function createD30QualificationCoordinator({
     const resolvedRecords=records || await repository.listCaseResults(sessionId);
     const resolvedReviews=humanReviews || await repository.listHumanReviews(sessionId);
     const completion=await status({sessionId,plan:resolvedPlan,includeCrossFamily});
+    let resolvedPplComparison=pplComparison;
+    if (resolvedPplComparison == null && repository.listPplComparisons) resolvedPplComparison=storedPplComparison(await repository.listPplComparisons(sessionId));
+    if (resolvedPplComparison == null && repository.listCompletedRunKeys) {
+      const state=await pplStatus({sessionId});
+      if (state.pplExecutionComplete && state.comparison.complete) resolvedPplComparison=await finalizePplComparison({sessionId,plan:state.plan});
+    }
     const summaries=[...buildTargetSummaries({plan:resolvedPlan,records:resolvedRecords,humanReviews:resolvedReviews,caseIndex})];
     const crossFamilySummary=includeCrossFamily ? buildCrossFamilySummary({records:resolvedRecords,humanReviews:resolvedReviews,caseIndex}) : null;
     for (const summary of summaries) await repository.recordRouteDecision({sessionId,summary});
     if (crossFamilySummary) await repository.recordRouteDecision({sessionId,summary:crossFamilySummary});
-    const report=buildProductionQualificationReport(summaries,pplComparison,{crossFamilySummary});
+    const report=buildProductionQualificationReport(summaries,resolvedPplComparison,{crossFamilySummary});
     const humanReviewQueue=selectedHumanReviewQueue({plan:resolvedPlan,records:resolvedRecords,caseIndex});
     const reviewKeys=new Set(resolvedReviews.filter((review)=>review.decision==='PASS').map((review)=>`${review.caseId}::${review.routeKey}::${review.capabilityId||''}`));
     const pendingHumanReviews=humanReviewQueue.filter((item)=>!reviewKeys.has(`${item.caseId}::${item.routeKey}::${item.capabilityId||''}`));
-    const evidenceComplete=completion.empiricalExecutionComplete && pendingHumanReviews.length===0 && pplComparison != null;
+    const evidenceComplete=completion.empiricalExecutionComplete && pendingHumanReviews.length===0 && resolvedPplComparison != null && resolvedPplComparison.decision !== 'INSUFFICIENT_EVIDENCE';
     const shouldClose=report.productionQualified || (closeBlocked && evidenceComplete);
     const sessionStatus=shouldClose ? await repository.completeSession(sessionId,report) : 'RUNNING';
     return Object.freeze({
       routeSummaries:Object.freeze(summaries),
       crossFamilySummary,
+      pplComparison:resolvedPplComparison,
       report,
       humanReviewQueue,
       pendingHumanReviews:Object.freeze(pendingHumanReviews),
@@ -324,7 +458,10 @@ function createD30QualificationCoordinator({
     startOrResume,
     executeWorkItem,
     executeBatch,
+    executePplBatch,
     status,
+    pplStatus,
+    finalizePplComparison,
     reviewQueue,
     finalize,
   });
@@ -343,6 +480,8 @@ module.exports = {
   workItemKey,
   buildWorkItems,
   consequentialReviewCaseIds,
+  pplHumanReviewRecords,
   selectedHumanReviewQueue,
+  storedPplComparison,
   createD30QualificationCoordinator,
 };
