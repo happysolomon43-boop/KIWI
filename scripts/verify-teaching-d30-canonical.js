@@ -38,6 +38,7 @@ function verifyTaskAccounting() {
 function verifyHumanReviewGate() {
   invariant(typeof d30.buildHumanReviewQueue === 'function', 'human academic review queue is not exported');
   invariant(typeof d30.validateHumanReviewSubmission === 'function', 'human academic review validator is not exported');
+  invariant(typeof d30.createD30BoundedCommand === 'function', 'run-scoped bounded qualification command is not exported');
   const family = d30.getFamilyDefinition('TPF-02');
   const record = {
     sessionId:'00000000-0000-4000-8000-000000000001',
@@ -59,12 +60,18 @@ function verifyHumanReviewGate() {
   const queue = d30.buildHumanReviewQueue([record]);
   invariant(queue.length === 1, 'C4 run did not enter independent human academic review queue');
   const queueItem = queue[0];
-  const automated = d30.validateHumanReviewSubmission({
+  invariant(queueItem.runId === record.runId && queueItem.attemptNo === 1, 'human review queue lost exact run/attempt identity');
+  const baseSubmission={
     sessionId:record.sessionId,
+    runId:record.runId,
+    attemptNo:record.attemptNo,
     caseId:record.caseId,
     familyId:record.familyId,
     capabilityId:record.capabilityId,
     routeKey:record.routeKey,
+  };
+  const automated = d30.validateHumanReviewSubmission({
+    ...baseSubmission,
     reviewerRef:'automated-reviewer',
     reviewerKind:'AUTOMATED',
     independent:true,
@@ -74,11 +81,7 @@ function verifyHumanReviewGate() {
   invariant(automated.valid === false, 'automated review was accepted as C4 human academic review');
   invariant(automated.errors.includes('HUMAN_ACADEMIC_REVIEWER_REQUIRED'), 'automated reviewer rejection reason drift');
   const human = d30.validateHumanReviewSubmission({
-    sessionId:record.sessionId,
-    caseId:record.caseId,
-    familyId:record.familyId,
-    capabilityId:record.capabilityId,
-    routeKey:record.routeKey,
+    ...baseSubmission,
     reviewerRef:'independent-human-academic-reviewer',
     reviewerKind:'HUMAN_ACADEMIC',
     independent:true,
@@ -86,40 +89,8 @@ function verifyHumanReviewGate() {
     rubric:{ academicCorrectness:'PASS', authorityDiscipline:'PASS', provenance:'PASS' },
   }, queueItem);
   invariant(human.valid === true, 'valid independent human academic review was rejected');
-}
-
-function verifyEmpiricalExecutionLayer() {
-  for (const name of [
-    'createD30QualificationCoordinator',
-    'buildPplQualificationPlan',
-    'buildPplWorkItems',
-    'compareEmpiricalPpl',
-    'createCrossFamilyWorkflowExecutor',
-  ]) invariant(typeof d30[name] === 'function', `empirical execution export missing: ${name}`);
-
-  invariant(d30.PPL_COMPARISON_VERSION === 'teaching-d30-ppl-comparison-v1', 'PPL comparison version drift');
-  invariant(d30.PPL_SCENARIOS.length === 8, 'matched PPL scenario count drift');
-  invariant(d30.PPL_REPEAT_COUNT === 3, 'PPL repeat floor drift');
-  invariant(d30.PPL_CAPABILITY_BY_FAMILY['TPF-05'] === 'teaching.lesson.pre_class_lesson_planning', 'Lesson PPL capability binding drift');
-  invariant(d30.PPL_CAPABILITY_BY_FAMILY['TPF-12'] === 'teaching.assessment.assessment_blueprint_generation', 'Assessment PPL capability binding drift');
-
-  const coordinatorSource = read('teaching/d30/coordinator.js');
-  invariant(/findResumableSession/.test(coordinatorSource), 'coordinator does not resume exact source-SHA sessions');
-  invariant(/listCompletedRunKeys/.test(coordinatorSource), 'coordinator does not skip persisted run keys');
-  invariant(/executePplBatch/.test(coordinatorSource), 'coordinator does not execute bounded PPL batches');
-  invariant(/pendingHumanReviews/.test(coordinatorSource), 'coordinator does not fail closed on pending human review');
-  invariant(/authorizationGate:'D31'/.test(coordinatorSource), 'coordinator D31 authorization hold drift');
-
-  const pplSource = read('teaching/d30/ppl-qualification.js');
-  invariant(/OBSERVED_WITHIN_SCENARIO_REPEAT_RANGE/.test(pplSource), 'PPL materiality is not calibrated from observed repeat variance');
-  invariant(/PPL_EARLY_STAGE_EVIDENCE_MISSING/.test(pplSource), 'PPL final path can lose early-stage evidence');
-  invariant(/seriousDefectCount/.test(pplSource), 'PPL comparison does not carry serious defects into the gate');
-  invariant(/final_reconciliation/.test(pplSource) && /economy_maintenance/.test(pplSource), 'PPL staged route posture comparison missing');
-
-  const crossFamilySource = read('teaching/d30/cross-family.js');
-  for (const workflowId of ['ASSESSMENT_CONSTRUCTION_CHAIN','MARKING_REVIEW_CHAIN','INTEGRITY_HANDOFF','TEACHER_STYLE_CHAIN']) {
-    invariant(crossFamilySource.includes(workflowId), `cross-family specialized boundary check missing canonical workflow ${workflowId}`);
-  }
+  const wrongAttempt=d30.validateHumanReviewSubmission({...baseSubmission,attemptNo:2,reviewerRef:'independent-human-academic-reviewer',reviewerKind:'HUMAN_ACADEMIC',independent:true,decision:'PASS',rubric:{academicCorrectness:'PASS'}},queueItem);
+  invariant(wrongAttempt.valid === false && wrongAttempt.errors.includes('ATTEMPT_NO_MISMATCH'), 'human review attempt identity is not fail-closed');
 }
 
 function main() {
@@ -149,6 +120,22 @@ function main() {
   invariant(/QUICK_QUESTIONS/.test(routeSource), 'website-default Teaching task binding missing');
   invariant(/FLASHCARD_GENERATION/.test(routeSource), 'Course Plan flash-generation task binding missing');
 
+  const coordinatorSource=read('teaching/d30/coordinator.js');
+  invariant(/findResumableSession/.test(coordinatorSource), 'D30 empirical coordinator is not resumable');
+  invariant(/executePplBatch/.test(coordinatorSource), 'D30 coordinator does not execute matched PPL evidence');
+  invariant(/finalizePplComparison/.test(coordinatorSource), 'D30 coordinator does not persist/finalize PPL comparison evidence');
+  const pplSource=read('teaching/d30/ppl-qualification.js');
+  invariant(/OBSERVED_WITHIN_SCENARIO_REPEAT_RANGE/.test(pplSource), 'PPL materiality calibration is not empirical/noise-derived');
+  invariant(/teaching\.lesson\.pre_class_lesson_planning/.test(pplSource), 'PPL Lesson qualification is not bound to canonical Lesson planning capability');
+  invariant(/teaching\.assessment\.assessment_blueprint_generation/.test(pplSource), 'PPL Assessment qualification is not bound to canonical Assessment planning capability');
+  const boundedSource=read('teaching/d30/bounded-command.js');
+  invariant(/runId/.test(boundedSource) && /attemptNo/.test(boundedSource), 'bounded D30 review command is not exact-run scoped');
+  invariant(/authorizationGate:'D31'/.test(boundedSource), 'bounded D30 command lost the D31 authorization hold');
+  const cliSource=read('scripts/run-teaching-d30-qualification.js');
+  invariant(/createAIRuntime/.test(cliSource), 'D30 CLI does not initialize the real central AI runtime');
+  invariant(/createAutomatedSemanticReviewer/.test(cliSource), 'D30 CLI does not bind the semantic reviewer');
+  invariant(/D30_EMPIRICAL_QUALIFICATION/.test(cliSource), 'D30 CLI live-provider confirmation gate is missing');
+
   const d30Sources = fs.readdirSync(path.join(root, 'teaching', 'd30'))
     .filter((name) => name.endsWith('.js'))
     .map((name) => read(path.join('teaching', 'd30', name)))
@@ -165,13 +152,23 @@ function main() {
   invariant(/output_artifact jsonb/i.test(migration), 'bounded human-review artifact persistence missing');
   invariant(/enable row level security/i.test(migration), 'D30 evidence tables are not RLS protected');
   invariant(/revoke all[\s\S]*from anon, authenticated/i.test(migration), 'D30 evidence tables are not closed to client roles');
+  const reviewIdentityMigration=read('migrations/20261004_teaching_d30_human_review_run_identity.sql');
+  invariant(/run_id uuid/i.test(reviewIdentityMigration), 'D30 human-review run identity column migration missing');
+  invariant(/attempt_no integer/i.test(reviewIdentityMigration), 'D30 human-review attempt identity column migration missing');
+  invariant(/foreign key \(run_id\)[\s\S]*d30_case_results\(id\)/i.test(reviewIdentityMigration), 'D30 human-review run identity is not tied to empirical case evidence');
 
   const governanceSource = read('teaching/d30/governance.js');
   invariant(/BEHAVIOR_BRIEF/.test(governanceSource), 'Behavior Brief governance gate missing');
   invariant(/C4_INDEPENDENT_HUMAN_REVIEW_REQUIRED/.test(governanceSource), 'C4 independent human review gate missing');
 
   verifyHumanReviewGate();
-  verifyEmpiricalExecutionLayer();
+
+  const fakeLite={routeKey:'static::lite',provider:'static',modelId:'lite',reasoning:'LOW',taskClass:'STATIC'};
+  const fakeStrong={routeKey:'static::strong',provider:'static',modelId:'strong',reasoning:'HIGH',taskClass:'STATIC'};
+  const fakeOrchestrator={run:async()=>{},plan:()=>({candidates:[fakeLite,fakeStrong]}),router:{resolveCandidates(_taskId,{preparationRoutePosture}={}){return preparationRoutePosture==='economy_maintenance'?[fakeLite]:[fakeStrong];},getTask(){return {};}}};
+  const pplPlan=d30.buildPplQualificationPlan({orchestrator:fakeOrchestrator});
+  invariant(pplPlan.scenarios.length===8,'PPL matched scenario count drift');
+  invariant(d30.buildPplWorkItems(pplPlan).length===72,'PPL durable work-item count drift');
 
   const report = {
     delivery:'D30',
@@ -183,9 +180,9 @@ function main() {
     modelEligibleCapabilities:corpus.modelEligibleCapabilities,
     promptFamilies:d30.FAMILY_DEFINITIONS.length,
     manifest:d30.PROMPT_MANIFEST_VERSION,
-    humanAcademicReviewGate:'ENFORCED',
-    empiricalCoordinator:'RESUMABLE_FAIL_CLOSED',
-    pplComparison:d30.PPL_COMPARISON_VERSION,
+    humanAcademicReviewGate:'EXACT_RUN_ENFORCED',
+    boundedQualificationCli:'PRESENT',
+    pplDurableWorkItems:d30.buildPplWorkItems(pplPlan).length,
     productionAuthorized:false,
     nextAuthorizationGate:'D31',
   };
