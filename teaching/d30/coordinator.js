@@ -57,6 +57,22 @@ function buildTargetSummaries({ plan, records, humanReviews = [] } = {}) {
   return Object.freeze(summaries);
 }
 
+function buildCrossFamilySummary({ records = [], humanReviews = [] } = {}) {
+  const crossRecords = records.filter((record) => record.familyId === 'CROSS_FAMILY' && record.routeKey === 'CROSS_FAMILY_WORKFLOW');
+  return summarizeRouteQualification({
+    routeKey:'CROSS_FAMILY_WORKFLOW',
+    routeRole:'STAGE',
+    familyId:'CROSS_FAMILY',
+    capabilityId:null,
+    requiredCaseIds:CROSS_FAMILY_CORPUS.map((item) => item.id),
+    repeatedCaseIds:[],
+    minimumRepeats:1,
+    records:crossRecords,
+    humanReviews:(humanReviews || []).filter((review) => review.familyId === 'CROSS_FAMILY'),
+    consequential:CROSS_FAMILY_CORPUS.some((item) => item.criticality === 'C4'),
+  });
+}
+
 function createD30QualificationCoordinator({
   baseOrchestrator,
   repository,
@@ -75,8 +91,7 @@ function createD30QualificationCoordinator({
     for (const caseId of target.requiredCaseIds) {
       const caseSpec = caseIndex.get(caseId);
       if (!caseSpec) throw new Error(`D30 target references unknown case ${caseId}.`);
-      const record = await runner.executeCase({ sessionId, caseSpec, routeKey:target.routeKey, routeRole:target.routeRole, attemptNo:1 });
-      records.push(record);
+      records.push(await runner.executeCase({ sessionId, caseSpec, routeKey:target.routeKey, routeRole:target.routeRole, attemptNo:1 }));
     }
     for (const caseId of target.repeatedCaseIds) {
       const caseSpec = caseIndex.get(caseId);
@@ -84,11 +99,15 @@ function createD30QualificationCoordinator({
         records.push(await runner.executeCase({ sessionId, caseSpec, routeKey:target.routeKey, routeRole:target.routeRole, attemptNo }));
       }
     }
-    return records;
+    return Object.freeze(records);
   }
 
   async function executeCrossFamily(sessionId) {
-    if (typeof crossFamilyExecutor !== 'function') return Object.freeze([]);
+    if (typeof crossFamilyExecutor !== 'function') {
+      const error = new Error('Full D30 qualification requires an executable cross-family workflow adapter.');
+      error.code = 'TEACHING_D30_CROSS_FAMILY_EXECUTOR_REQUIRED';
+      throw error;
+    }
     const records = [];
     for (const caseSpec of CROSS_FAMILY_CORPUS) {
       records.push(await runner.executeCrossFamilyCase({ sessionId, caseSpec, executeWorkflow:crossFamilyExecutor }));
@@ -96,32 +115,35 @@ function createD30QualificationCoordinator({
     return Object.freeze(records);
   }
 
-  async function execute({ sourceSha, environment = 'INTEGRATION', metadata = {}, targetPredicate = null } = {}) {
+  async function execute({ sourceSha, environment = 'INTEGRATION', metadata = {}, targetPredicate = null, includeCrossFamily = targetPredicate == null } = {}) {
     await repository.assertReady();
     const sessionId = await repository.beginSession({ sourceSha, environment, metadata });
     const plan = buildQualificationPlan({ orchestrator:baseOrchestrator });
     const targets = typeof targetPredicate === 'function' ? plan.targets.filter(targetPredicate) : plan.targets;
+    const executionPlan = Object.freeze({...plan,targets:Object.freeze(targets)});
     const records = [];
     for (let index = 0; index < targets.length; index += 1) {
       const target = targets[index];
       logger?.log?.(`[D30] qualifying ${index + 1}/${targets.length}: ${target.targetKey}`);
       records.push(...await executeTarget(sessionId,target));
     }
-    records.push(...await executeCrossFamily(sessionId));
+    if (includeCrossFamily) records.push(...await executeCrossFamily(sessionId));
     const humanReviewQueue = buildHumanReviewQueue(records);
-    const provisionalSummaries = buildTargetSummaries({ plan:{...plan,targets:Object.freeze(targets)}, records, humanReviews:[] });
+    const provisionalSummaries = [...buildTargetSummaries({ plan:executionPlan, records, humanReviews:[] })];
+    if (includeCrossFamily) provisionalSummaries.push(buildCrossFamilySummary({records,humanReviews:[]}));
     for (const summary of provisionalSummaries) await repository.recordRouteDecision({ sessionId, summary });
     const report = buildProductionQualificationReport(provisionalSummaries, null);
     await repository.completeSession(sessionId, report);
-    return Object.freeze({ sessionId, plan:Object.freeze({...plan,targets:Object.freeze(targets)}), records:Object.freeze(records), humanReviewQueue, routeSummaries:provisionalSummaries, report });
+    return Object.freeze({ sessionId, plan:executionPlan, records:Object.freeze(records), humanReviewQueue, routeSummaries:Object.freeze(provisionalSummaries), report });
   }
 
-  async function finalize({ sessionId, plan, records, humanReviews = [], pplComparison = null } = {}) {
-    const summaries = buildTargetSummaries({ plan, records, humanReviews });
+  async function finalize({ sessionId, plan, records, humanReviews = [], pplComparison = null, includeCrossFamily = true } = {}) {
+    const summaries = [...buildTargetSummaries({ plan, records, humanReviews })];
+    if (includeCrossFamily) summaries.push(buildCrossFamilySummary({records,humanReviews}));
     for (const summary of summaries) await repository.recordRouteDecision({ sessionId, summary });
     const report = buildProductionQualificationReport(summaries, pplComparison);
     await repository.completeSession(sessionId, report);
-    return Object.freeze({ routeSummaries:summaries, report, humanReviewQueue:buildHumanReviewQueue(records) });
+    return Object.freeze({ routeSummaries:Object.freeze(summaries), report, humanReviewQueue:buildHumanReviewQueue(records) });
   }
 
   return Object.freeze({ executeTarget, executeCrossFamily, execute, finalize });
@@ -132,5 +154,6 @@ module.exports = {
   recordsForTarget,
   reviewsForTarget,
   buildTargetSummaries,
+  buildCrossFamilySummary,
   createD30QualificationCoordinator,
 };
