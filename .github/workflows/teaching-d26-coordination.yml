@@ -1,3 +1,4 @@
+# Accepted-main gate for D26 canonical delivery closure.
 name: Teaching D26 Coordination Notifications
 on:
   push:
