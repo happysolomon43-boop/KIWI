@@ -22,7 +22,14 @@ The production Kiwi project did not contain either D27 migration at D27 recovery
 The recovered integration schema was treated as completed D27 work and reconstructed into repository migrations rather than reapplied or redesigned.
 
 ## Deployment topology
-Render workspace `My Workspace` contains service `KIWI` (`srv-d7p3k9gsfn5c73bh7rv0`), branch `main`, auto-deploy on commit, Node runtime. At D27 recovery start the service was still the accepted D26 deployment. No active KIWI Vercel deployment surface was required for D27.
+Render workspace `My Workspace` contains service `KIWI` (`srv-d7p3k9gsfn5c73bh7rv0`), branch `main`, auto-deploy on commit, Node runtime. At D27 recovery start the Render service was still the accepted D26 deployment.
+
+A fresh D27 inspection corrected an inherited D26-era assumption about Vercel. The Pro team `happysolomon43` (`team_6nfJK85Fs7QMFyOq0MYnPI47`) now has Vercel project `kiwi` (`prj_GKmy5gQjXx7uhEuVdhjCtqwSkN7I`) linked to `happysolomon43-boop/KIWI`. D27 recovery-branch commits receive Vercel preview deployments; the D27 verification head `287e474c4c51f627cf399d60619072997426f5d5` built successfully as READY deployment `dpl_7YDgjyvz5ZVL84uTv4dEbjWtpVsD`. Vercel preview deployment is therefore part of D27 verification, while Render remains the current backend production service.
+
+## Database advisor verification
+After the recovered D27 integration migration and its FK hardening migration, Supabase Integration security advisor reported only the established service-only `RLS Enabled No Policy` informational pattern for the new D27 tables. Browser roles are explicitly revoked and `service_role` retains server-side DML.
+
+The performance advisor no longer reports any D27-specific unindexed foreign key on `teaching_study_card_references` or `teaching_study_card_candidates`; the four interrupted-work findings for Class and Learning Unit foreign keys are covered by `teaching_d27_fk_index_hardening`. Other informational unindexed-FK and unused-index findings belong to pre-existing schemas and are not silently expanded into D27/D28 scope.
 
 ## Existing KIWI owner inspection
 D27 preserves these existing owners:
