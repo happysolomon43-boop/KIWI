@@ -1,0 +1,21 @@
+# Accepted-branch gate for D27 KIWI integration boundaries.
+name: Teaching D27 Integration Boundaries
+on:
+  push:
+    branches: [main, 'teaching/d27-*', 'delivery/d27-*']
+    paths: ['teaching/**','tests/teaching/**','migrations/**','scripts/verify-teaching-d27-integrations.js','docs/teaching/change-control/KIWI_Teaching_D27_Source_Resolution_v1.0.md','package.json','.github/workflows/teaching-d27-integrations.yml']
+  pull_request:
+    paths: ['teaching/**','tests/teaching/**','migrations/**','scripts/verify-teaching-d27-integrations.js','docs/teaching/change-control/KIWI_Teaching_D27_Source_Resolution_v1.0.md','package.json','.github/workflows/teaching-d27-integrations.yml']
+jobs:
+  d27:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: npm install --ignore-scripts
+      - run: npm run verify:teaching:d27
+      - run: node --test tests/teaching/unit/d27-*.test.js tests/teaching/unit/d26-*.test.js tests/teaching/unit/d25-*.test.js
+      - run: npm run test:teaching
+      - run: npm test
+      - run: npm run build:web
