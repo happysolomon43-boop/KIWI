@@ -1,4 +1,5 @@
 'use strict';
+const { getD28RuntimeService } = require('../d28/runtime-bridge');
 
 function mountD27Routes(router, { service, repository, sendError } = {}) {
   if (!router || !service || !repository) return null;
@@ -50,7 +51,11 @@ function mountD27Routes(router, { service, repository, sendError } = {}) {
     catch (error) { sendError(res, error, 'Failed to prepare Class Review Set.'); }
   });
   router.get('/integrations/study/review-set', async (req, res) => {
-    try { res.json(await service.getClassReviewSet(req.user, req.query || {})); }
+    try {
+      const reviewSet = await service.getClassReviewSet(req.user, req.query || {});
+      const d28 = getD28RuntimeService();
+      res.json(d28?.projectStudyReviewSet ? await d28.projectStudyReviewSet(req.user, reviewSet) : reviewSet);
+    }
     catch (error) { sendError(res, error, 'Failed to load Class Review Set.'); }
   });
   router.post('/integrations/study/candidates/:candidateId/dismiss', async (req, res) => {
