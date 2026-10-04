@@ -1,0 +1,178 @@
+name: Teaching D30 Canonical Qualification
+
+on:
+  push:
+    branches:
+      - main
+      - teaching/d30-canonical-rebuild
+    paths:
+      - 'teaching/d30/**'
+      - 'teaching/prompt-runtime/**'
+      - 'teaching/capability-registry/**'
+      - 'teaching/d20/**'
+      - 'services/ai/**'
+      - 'migrations/20261004_teaching_d30_canonical_qualification.sql'
+      - 'migrations/20261004_teaching_d30_human_review_run_identity.sql'
+      - 'migrations/20261004_teaching_d30_human_review_fk_index.sql'
+      - 'scripts/verify-teaching-d30-canonical.js'
+      - 'scripts/run-teaching-d30-qualification.js'
+      - 'tests/teaching/unit/d30-*.test.js'
+      - 'package.json'
+      - '.github/workflows/teaching-d30-canonical-qualification.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'teaching/d30/**'
+      - 'teaching/prompt-runtime/**'
+      - 'teaching/capability-registry/**'
+      - 'teaching/d20/**'
+      - 'services/ai/**'
+      - 'migrations/20261004_teaching_d30_canonical_qualification.sql'
+      - 'migrations/20261004_teaching_d30_human_review_run_identity.sql'
+      - 'migrations/20261004_teaching_d30_human_review_fk_index.sql'
+      - 'scripts/verify-teaching-d30-canonical.js'
+      - 'scripts/run-teaching-d30-qualification.js'
+      - 'tests/teaching/unit/d30-*.test.js'
+      - 'package.json'
+      - '.github/workflows/teaching-d30-canonical-qualification.yml'
+  workflow_dispatch:
+    inputs:
+      live_command:
+        description: 'Optional bounded empirical command. Leave none for verification-only.'
+        required: true
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - execute
+          - ppl
+      max_runs:
+        description: 'Maximum provider-backed runs in this manual batch (1-72).'
+        required: true
+        default: '12'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teaching-d30-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify-d30:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Verify canonical D30 contracts
+        run: npm run verify:teaching:d30
+      - name: Run complete D30 qualification unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/teaching/unit/d30-*.test.js 2>&1 | tee d30-unit-tests.log
+      - name: Retain D30 unit-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d30-unit-test-evidence
+          path: d30-unit-tests.log
+          if-no-files-found: error
+          retention-days: 14
+      - name: Verify D03 frozen prompt control regression
+        run: npm run verify:teaching:d03
+      - name: Verify D20 marking and blind-review regression
+        run: npm run verify:teaching:d20
+      - name: Run central AI orchestrator regression suite
+        run: npm run test:ai
+      - name: Verify web build
+        run: npm run build
+      - name: Enforce no live-provider qualification in ordinary CI
+        run: |
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const source=fs.readFileSync('teaching/d30/runner.js','utf8')+fs.readFileSync('teaching/d30/semantic-reviewer.js','utf8');
+          if(/process\.env\.(?:GROQ|GOOGLE|CLOUDFLARE)|fetch\(['"]https:\/\//i.test(source)) throw new Error('D30 CI must not call providers outside the central AI Orchestrator.');
+          if(String(process.env.D30_LIVE_QUALIFICATION||'').toLowerCase()==='true') throw new Error('Ordinary D30 verification must never enable live qualification.');
+          console.log('D30 central-route boundary verified; live empirical execution remains off.');
+          NODE
+
+  manual-integration-qualification:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_command != 'none' }}
+    needs: verify-d30
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      D30_LIVE_QUALIFICATION: 'true'
+      D30_QUALIFICATION_ENVIRONMENT: 'INTEGRATION'
+      DATABASE_URL: ${{ secrets.D30_INTEGRATION_DATABASE_URL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_WORKERS_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_AI_API_TOKEN }}
+    steps:
+      - name: Validate integration qualification configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$DATABASE_URL" || { echo 'Missing GitHub secret D30_INTEGRATION_DATABASE_URL.' >&2; exit 1; }
+          if [ -z "${GEMINI_API_KEY:-}" ] && [ -z "${GROQ_API_KEY:-}" ] && [ -z "${CLOUDFLARE_WORKERS_AI_API_TOKEN:-}" ]; then
+            echo 'No central KIWI AI provider credential is configured for the integration qualification lane.' >&2
+            exit 1
+          fi
+      - name: Checkout exact qualification SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Preflight D30 integration runtime without provider calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run qualify:teaching:d30 -- preflight \
+            --source-sha "$GITHUB_SHA" \
+            --environment INTEGRATION \
+            --out d30-preflight-result.json
+      - name: Retain D30 preflight summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d30-integration-preflight-${{ github.run_id }}
+          path: d30-preflight-result.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Execute bounded D30 empirical batch
+        shell: bash
+        env:
+          D30_COMMAND: ${{ inputs.live_command }}
+          D30_MAX_RUNS: ${{ inputs.max_runs }}
+        run: |
+          set -euo pipefail
+          npm run qualify:teaching:d30 -- "$D30_COMMAND" \
+            --source-sha "$GITHUB_SHA" \
+            --environment INTEGRATION \
+            --max-runs "$D30_MAX_RUNS" \
+            --out d30-qualification-result.json
+      - name: Retain bounded qualification summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d30-integration-${{ inputs.live_command }}-${{ github.run_id }}
+          path: d30-qualification-result.json
+          if-no-files-found: warn
+          retention-days: 30
