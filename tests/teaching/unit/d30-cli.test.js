@@ -28,6 +28,14 @@ test('provider commands require both the live environment flag and exact confirm
   }
 });
 
+test('D30 qualification runtime freezes automatic discovery and promotion for reproducible route evidence',()=>{
+  const env=cli.buildQualificationRuntimeEnv({AI_AUTO_DISCOVERY:'true',AI_AUTO_PROMOTE:'true',GEMINI_API_KEY:'masked-fixture'});
+  assert.equal(env.AI_AUTO_DISCOVERY,'false');
+  assert.equal(env.AI_AUTO_PROMOTE,'false');
+  assert.equal(env.GEMINI_API_KEY,'masked-fixture');
+  assert.equal(Object.isFrozen(env),true);
+});
+
 test('D30 CLI never treats D30 evidence as D31 production authorization',()=>{
   const summary=cli.summarizeFinalize({
     sessionStatus:'QUALIFIED',empiricalExecutionComplete:true,runScopedHumanReviewComplete:true,
