@@ -39,6 +39,7 @@ create table if not exists teaching_runtime.d30_case_results (
   attempt_no integer not null check (attempt_no >= 1),
   validation jsonb not null,
   semantic_review jsonb,
+  output_artifact jsonb,
   latency_ms numeric not null default 0 check (latency_ms >= 0),
   input_tokens bigint not null default 0 check (input_tokens >= 0),
   output_tokens bigint not null default 0 check (output_tokens >= 0),
@@ -90,6 +91,7 @@ create table if not exists teaching_runtime.d30_route_decisions (
   id uuid primary key,
   session_id uuid not null references teaching_runtime.d30_qualification_sessions(id) on delete cascade,
   family_id text not null,
+  capability_id text not null default '',
   route_key text not null,
   route_role text not null check (route_role in ('PRIMARY','FALLBACK','STAGE')),
   decision text not null check (decision in ('UNQUALIFIED','QUALIFIED','BLOCKED','INSUFFICIENT_EVIDENCE')),
@@ -100,7 +102,7 @@ create table if not exists teaching_runtime.d30_route_decisions (
   summary jsonb not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (session_id, family_id, route_key, route_role)
+  unique (session_id, family_id, capability_id, route_key, route_role)
 );
 
 create table if not exists teaching_runtime.d30_prompt_governance (
@@ -134,6 +136,7 @@ create index if not exists d30_case_results_capability_idx on teaching_runtime.d
 create index if not exists d30_case_results_case_idx on teaching_runtime.d30_case_results(session_id, case_id);
 create index if not exists d30_defects_open_idx on teaching_runtime.d30_defects(session_id, severity, resolved) where resolved = false;
 create index if not exists d30_human_reviews_family_route_idx on teaching_runtime.d30_human_reviews(session_id, family_id, route_key, decision);
+create index if not exists d30_route_decisions_capability_idx on teaching_runtime.d30_route_decisions(session_id, capability_id, route_key, route_role);
 
 alter table teaching_runtime.d30_qualification_sessions enable row level security;
 alter table teaching_runtime.d30_case_results enable row level security;
@@ -160,9 +163,9 @@ grant select, insert, update, delete on teaching_runtime.d30_prompt_governance t
 grant select, insert, update, delete on teaching_runtime.d30_ppl_comparisons to service_role;
 
 comment on table teaching_runtime.d30_qualification_sessions is 'D30 empirical Teaching-AI qualification session evidence. This is audit/qualification state, never academic truth.';
-comment on table teaching_runtime.d30_case_results is 'Versioned Phase-16/TPF-20 empirical run evidence. Hidden chain-of-thought is prohibited by application contract.';
+comment on table teaching_runtime.d30_case_results is 'Versioned Phase-16/TPF-20 empirical run evidence and bounded review artifact. Hidden chain-of-thought is prohibited by application contract.';
 comment on table teaching_runtime.d30_human_reviews is 'Independent human academic review decisions required for C4/consequential D30 qualification.';
-comment on table teaching_runtime.d30_route_decisions is 'D30 route qualification decisions. Production authorization remains false until D31.';
+comment on table teaching_runtime.d30_route_decisions is 'Capability-specific D30 route qualification decisions. Production authorization remains false until D31.';
 comment on table teaching_runtime.d30_ppl_comparisons is 'Matched one-shot versus progressive preparation empirical evidence for TCH-0902.';
 
 commit;
