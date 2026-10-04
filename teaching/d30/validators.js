@@ -2,6 +2,10 @@
 
 const { DEFECT_SEVERITIES, assertNoHiddenChainOfThought } = require('./contracts');
 
+const REQUIRED_SEMANTIC_FIELDS = Object.freeze([
+  'academicCorrectness','scopeDiscipline','uncertaintyCalibration','provenanceQuality','coverage','coherence','anchoringResistance',
+]);
+
 function defect(severity, code, message, details = {}) {
   if (!DEFECT_SEVERITIES.includes(severity)) throw new Error(`Invalid D30 defect severity: ${severity}`);
   return Object.freeze({ severity, code, message, details: Object.freeze({ ...details }) });
@@ -63,11 +67,10 @@ function evaluateSemanticReview({ caseSpec = {}, semanticReview = null } = {}) {
     return Object.freeze({ pass: false, complete: false, defects: Object.freeze([defect('P1','SEMANTIC_REVIEW_MISSING','Required semantic evaluation evidence is missing.')]) });
   }
   assertNoHiddenChainOfThought(semanticReview);
-  const required = ['academicCorrectness','scopeDiscipline','uncertaintyCalibration','provenanceQuality'];
-  const missing = required.filter((key) => typeof semanticReview[key] !== 'number');
+  const missing = REQUIRED_SEMANTIC_FIELDS.filter((key) => typeof semanticReview[key] !== 'number');
   if (missing.length) return Object.freeze({ pass:false, complete:false, defects:Object.freeze([defect('P1','SEMANTIC_RUBRIC_INCOMPLETE','Semantic rubric is incomplete.',{ missing })]) });
   const serious = Array.isArray(semanticReview.defects) ? semanticReview.defects.filter((item) => ['P0','P1'].includes(item.severity)) : [];
-  const pass = required.every((key) => semanticReview[key] >= 0 && semanticReview[key] <= 1) && serious.length === 0 && semanticReview.accepted === true;
+  const pass = REQUIRED_SEMANTIC_FIELDS.every((key) => semanticReview[key] >= 0 && semanticReview[key] <= 1) && serious.length === 0 && semanticReview.accepted === true;
   return Object.freeze({ pass, complete:true, defects:Object.freeze(serious.map((item) => defect(item.severity,item.code||'SEMANTIC_DEFECT',item.message||'Semantic review defect.',item.details||{}))) });
 }
 
@@ -97,6 +100,7 @@ function seriousDefects(defects = []) {
 }
 
 module.exports = {
+  REQUIRED_SEMANTIC_FIELDS,
   defect,
   validateArtifact,
   validateExecutionEvidence,
