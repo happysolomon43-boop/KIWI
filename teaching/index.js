@@ -348,7 +348,7 @@ function createTeachingFoundation({
         ownerAdapters:d27OwnerAdapters || {},
         sourceVersionReader:d27SourceVersionReader,
         integrationEventPublisher:d27IntegrationEventPublisher,
-        featureFlags:{
+        writeGates:{
           ksWrite:config.integrations?.d27?.ksWriteEnabled === true,
           masteryWrite:config.integrations?.d27?.masteryWriteEnabled === true,
           studyPromotion:config.integrations?.d27?.studyPromotionEnabled === true,
@@ -373,8 +373,8 @@ function createTeachingFoundation({
     d09: d09Service ? Object.freeze({ repository: d09Repository, service: d09Service, attendanceRecoveryOwner:d09AttendanceRecoveryOwner }) : null,
     d10: d10Service ? Object.freeze({ repository: d10Repository, service: d10Service }) : null,
     d11: d11Service ? Object.freeze({ repository: d11Repository, service: d11Service, runtime: d11Runtime }) : null,
-    d12: d12Service ? Object.freeze({ repository: d12Repository, service: d12Service, runtime: d12Runtime }) : null,
-    d13: d13Service ? Object.freeze({ repository: d13Repository, service: d13Service, runtime: d13Runtime }) : null,
+    d12: d12Service ? Object.freeze({ repository: d12Repository, service: d12Service, runtime:d12Runtime }) : null,
+    d13: d13Service ? Object.freeze({ repository:d13Repository, service:d13Service, runtime:d13Runtime }) : null,
     d14: d14Service ? Object.freeze({ repository:d14Repository, service:d14Service, runtime:d14Runtime }) : null,
     d15: d15Service ? Object.freeze({ repository:d15Repository, service:d15Service, runtime:d15Runtime }) : null,
     d16: d16Service ? Object.freeze({ repository:d16Repository, service:d16Service, runtime:d16Runtime }) : null,
