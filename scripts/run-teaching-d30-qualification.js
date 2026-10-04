@@ -65,6 +65,14 @@ function requireLiveConfirmation(args,environment){
   if(!LIVE_ENVIRONMENTS.has(environment))throw new Error(`Live D30 provider execution is not permitted in ${environment}.`);
 }
 
+function buildQualificationRuntimeEnv(env=process.env){
+  return Object.freeze({
+    ...env,
+    AI_AUTO_DISCOVERY:'false',
+    AI_AUTO_PROMOTE:'false',
+  });
+}
+
 function readReviewFile(path){
   if(!String(path||'').trim())throw new Error('record-review requires --review-file <path>.');
   const parsed=JSON.parse(fs.readFileSync(path,'utf8'));
@@ -131,7 +139,8 @@ async function main(argv=process.argv.slice(2)){
     application_name:'kiwi-d30-qualification-cli',
   });
   const query=(text,params)=>pool.query(text,params);
-  const runtime=createAIRuntime({query,randomUUID,env:process.env,fetchImpl:globalThis.fetch,logger:console});
+  const runtimeEnv=buildQualificationRuntimeEnv(process.env);
+  const runtime=createAIRuntime({query,randomUUID,env:runtimeEnv,fetchImpl:globalThis.fetch,logger:console});
   try{
     await runtime.initialize();
     const repository=createD30Repository({query,randomUUID});
@@ -154,7 +163,7 @@ async function main(argv=process.argv.slice(2)){
       const maxRuns=integerOption(args.maxRuns,24,{min:1,max:100});
       const result=await coordinator.executeBatch({
         sourceSha,environment,maxRuns,
-        metadata:{command:'execute',boundedCliVersion:'d30-bounded-cli-v1'},
+        metadata:{command:'execute',boundedCliVersion:'d30-bounded-cli-v1',modelDiscoveryFrozen:true},
       });
       writeResult(summarizeExecution(result),args);
       return;
@@ -164,7 +173,7 @@ async function main(argv=process.argv.slice(2)){
       const maxRuns=integerOption(args.maxRuns,24,{min:1,max:72});
       const result=await coordinator.executePplBatch({
         sourceSha,environment,maxRuns,
-        metadata:{command:'ppl',boundedCliVersion:'d30-bounded-cli-v1'},
+        metadata:{command:'ppl',boundedCliVersion:'d30-bounded-cli-v1',modelDiscoveryFrozen:true},
       });
       writeResult(summarizeExecution(result),args);
       return;
@@ -239,6 +248,7 @@ module.exports={
   resolveSourceSha,
   resolveEnvironment,
   requireLiveConfirmation,
+  buildQualificationRuntimeEnv,
   readReviewFile,
   summarizeExecution,
   summarizeFinalize,
