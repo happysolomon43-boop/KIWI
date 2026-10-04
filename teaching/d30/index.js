@@ -2,6 +2,7 @@
 
 module.exports = Object.freeze({
   ...require('./contracts'),
+  ...require('./completion-policy'),
   ...require('./task-accounting'),
   ...require('./family-matrix'),
   ...require('./corpus'),
