@@ -39,7 +39,8 @@
     "verify:teaching:d22": "node scripts/verify-teaching-d22-teacher-identity.js",
     "verify:teaching:d23": "node scripts/verify-teaching-d23-information-architecture.js",
     "verify:teaching:d24": "node scripts/verify-teaching-d24-responsive-accessibility.js",
-    "verify:teaching:d25": "node scripts/verify-teaching-d25-reliability.js"
+    "verify:teaching:d25": "node scripts/verify-teaching-d25-reliability.js",
+    "verify:teaching:d26": "node scripts/verify-teaching-d26-coordination.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

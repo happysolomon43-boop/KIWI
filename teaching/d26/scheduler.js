@@ -1,0 +1,13 @@
+'use strict';
+const {workloadItem}=require('./contracts');
+
+function dateKey(value,timeZone='UTC'){return new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));}
+function estimateWorkload(items,{dailyCapacityMinutes=480,timeZone='UTC'}={}){
+  const normalized=(items||[]).map(workloadItem);const days=new Map();
+  for(const item of normalized){const key=dateKey(item.startsAt,timeZone);const day=days.get(key)||{date:key,totalMinutes:0,byKind:{},byCourse:{},items:[]};day.totalMinutes+=item.minutes;day.byKind[item.kind]=(day.byKind[item.kind]||0)+item.minutes;day.byCourse[item.courseId]=(day.byCourse[item.courseId]||0)+item.minutes;day.items.push(item);days.set(key,day);}
+  const projections=[...days.values()].sort((a,b)=>a.date.localeCompare(b.date)).map(day=>Object.freeze({...day,remainingMinutes:Math.max(0,dailyCapacityMinutes-day.totalMinutes),overloadMinutes:Math.max(0,day.totalMinutes-dailyCapacityMinutes),feasible:day.totalMinutes<=dailyCapacityMinutes,items:Object.freeze(day.items)}));
+  return Object.freeze({dailyCapacityMinutes,timeZone,days:Object.freeze(projections),feasible:projections.every(day=>day.feasible),totalMinutes:normalized.reduce((sum,item)=>sum+item.minutes,0)});
+}
+function coordinate(items,options={}){const estimate=estimateWorkload(items,options);const conflicts=[];for(const day of estimate.days){if(day.feasible)continue;const ordered=[...day.items].sort((a,b)=>Number(b.hardDeadline)-Number(a.hardDeadline)||b.priority-a.priority||Date.parse(a.startsAt)-Date.parse(b.startsAt));conflicts.push(Object.freeze({date:day.date,overloadMinutes:day.overloadMinutes,protected:Object.freeze(ordered.filter(x=>x.hardDeadline)),movable:Object.freeze(ordered.filter(x=>!x.hardDeadline)),choices:Object.freeze(['INCREASE_AVAILABILITY','EXTEND_COURSE','REDUCE_PACE','MOVE_NON_HARD_WORK','REQUEST_DEADLINE_OR_SCOPE_REVIEW']),silentOverbooking:false}));}return Object.freeze({estimate,conflicts:Object.freeze(conflicts),requiresChoice:conflicts.length>0,perCourseTruthMutated:false,owner:'D26_GLOBAL_SCHEDULER_COORDINATOR'});}
+function rankRecoverySlots(candidates,{allowWeekend=false}={}){return Object.freeze((candidates||[]).filter(x=>allowWeekend||![0,6].includes(new Date(x.startsAt).getUTCDay())).sort((a,b)=>Number(b.hardDeadline)-Number(a.hardDeadline)||Number(b.priority)-Number(a.priority)||Date.parse(a.deadlineAt||'9999-12-31')-Date.parse(b.deadlineAt||'9999-12-31')).map((x,index)=>Object.freeze({...x,rank:index+1,schedulerApprovalRequired:true,weekend:[0,6].includes(new Date(x.startsAt).getUTCDay())})));}
+module.exports={dateKey,estimateWorkload,coordinate,rankRecoverySlots};

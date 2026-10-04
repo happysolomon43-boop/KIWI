@@ -53,6 +53,7 @@ function notificationDeepLink(kind,id,{courseId=null,semesterId=null}={}){
     case 'PROGRESSION': return courseId?`${courseHref(courseId,'results')}?progression=1`:'/teaching/record/view';
     case 'SEMESTER_RECORD': return semesterId?`/teaching/record/view?semesterId=${encodeURIComponent(String(semesterId))}`:'/teaching/record/view';
     case 'STUDY_PACK': return studyHref({courseId,classId:id});
+    case 'RECOVERY_CASE': return `/teaching/today/view?recoveryCase=${value}`;
     default: return '/teaching/today/view';
   }
 }
