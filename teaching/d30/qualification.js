@@ -12,6 +12,7 @@ const {
   RUN_KINDS,
   assertNoHiddenChainOfThought,
 } = require('./contracts');
+const { sanitizeOutputArtifact } = require('./evidence');
 const { requireIndependentHumanReview, seriousDefects } = require('./validators');
 
 function sha256Json(value) {
@@ -54,6 +55,7 @@ function normalizeRunRecord(input = {}) {
     attemptNo: Number(input.attemptNo || 1),
     validation: input.validation || {},
     semanticReview: input.semanticReview || null,
+    outputArtifact: input.outputArtifact == null ? null : sanitizeOutputArtifact(input.outputArtifact),
     latencyMs: Number(input.latencyMs || 0),
     inputTokens: Number(input.inputTokens || 0),
     outputTokens: Number(input.outputTokens || 0),
@@ -97,7 +99,7 @@ function summarizeRouteQualification({
   routeKey,
   routeRole,
   familyId,
-  capabilityIds = [],
+  capabilityId = null,
   requiredCaseIds = [],
   records = [],
   humanReviews = [],
@@ -108,26 +110,35 @@ function summarizeRouteQualification({
   if (!routeKey || !familyId) throw new Error('Route qualification requires routeKey and familyId.');
   const role = String(routeRole || '').toUpperCase();
   if (!ROUTE_ROLES.includes(role)) throw new Error(`Invalid route role: ${routeRole}`);
-  const normalized = records.map(normalizeRunRecord).filter((record) => record.routeKey === routeKey && record.familyId === familyId);
+  const normalized = records.map(normalizeRunRecord).filter((record) =>
+    record.routeKey === routeKey &&
+    record.familyId === familyId &&
+    (capabilityId == null || record.capabilityId === capabilityId)
+  );
   const coveredCases = new Set(normalized.map((record) => record.caseId));
-  const coveredCapabilities = new Set(normalized.map((record) => record.capabilityId).filter(Boolean));
   const missingCases = requiredCaseIds.filter((id) => !coveredCases.has(id));
-  const missingCapabilities = capabilityIds.filter((id) => !coveredCapabilities.has(id));
   const defects = normalized.flatMap((record) => record.defects || []);
   const blockingDefects = seriousDefects(defects);
   const semanticMissing = normalized.filter((record) => record.semanticReview?.pass !== true).map((record) => record.runId);
   const validationFailures = normalized.filter((record) => record.validation?.pass !== true).map((record) => record.runId);
   const criticality = normalized.find((record) => record.criticality)?.criticality || 'C3';
-  const human = requireIndependentHumanReview({ criticality, consequential, humanReviews });
+  const applicableHumanReviews = humanReviews.filter((review) =>
+    review &&
+    (review.familyId == null || review.familyId === familyId) &&
+    (review.routeKey == null || review.routeKey === routeKey) &&
+    (capabilityId == null || review.capabilityId == null || review.capabilityId === capabilityId)
+  );
+  const human = requireIndependentHumanReview({ criticality, consequential, humanReviews:applicableHumanReviews });
   const stability = evaluateStability(normalized, { repeatedCaseIds, minimumRepeats });
   const independentEvidence = role !== 'FALLBACK' || normalized.every((record) => record.routeRole === 'FALLBACK' && record.fallbackUsed !== true);
-  const evidenceComplete = normalized.length > 0 && !missingCases.length && !missingCapabilities.length;
+  const evidenceComplete = normalized.length > 0 && !missingCases.length && (capabilityId == null || normalized.every((record) => record.capabilityId === capabilityId));
   const qualified = evidenceComplete && !blockingDefects.length && !semanticMissing.length && !validationFailures.length && human.satisfied && stability.pass && independentEvidence;
   const decision = qualified ? 'QUALIFIED' : normalized.length === 0 ? 'INSUFFICIENT_EVIDENCE' : 'BLOCKED';
   return Object.freeze({
     routeKey,
     routeRole:role,
     familyId,
+    capabilityId,
     decision,
     specificationComplete:true,
     productionQualified:qualified,
@@ -135,7 +146,6 @@ function summarizeRouteQualification({
     authorizationGate:'D31',
     evidenceCount:normalized.length,
     missingCaseIds:Object.freeze(missingCases),
-    missingCapabilityIds:Object.freeze(missingCapabilities),
     blockingDefects:Object.freeze(blockingDefects),
     semanticReviewMissingRunIds:Object.freeze(semanticMissing),
     validationFailureRunIds:Object.freeze(validationFailures),
@@ -153,6 +163,8 @@ function assertFallbackIndependent(primarySummary, fallbackSummary) {
     throw error;
   }
   if (primarySummary?.routeKey === fallbackSummary.routeKey) throw new Error('Primary and fallback qualification cannot be the same route identity.');
+  if (primarySummary?.familyId && primarySummary.familyId !== fallbackSummary.familyId) throw new Error('Primary/fallback comparison must remain within the same prompt family.');
+  if ((primarySummary?.capabilityId || null) !== (fallbackSummary.capabilityId || null)) throw new Error('Fallback qualification cannot be borrowed from another capability.');
   return true;
 }
 
