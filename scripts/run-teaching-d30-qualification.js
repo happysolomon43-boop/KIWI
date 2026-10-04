@@ -13,12 +13,16 @@ const {
   createAutomatedSemanticReviewer,
   createD30QualificationCoordinator,
   createD30BoundedCommand,
+  buildQualificationPlan,
+  buildPplQualificationPlan,
+  buildPplWorkItems,
 }=require('../teaching/d30');
 
 const LIVE_CONFIRMATION='D30_EMPIRICAL_QUALIFICATION';
 const PROVIDER_COMMANDS=new Set(['execute','ppl']);
 const ALLOWED_ENVIRONMENTS=new Set(['LOCAL','CI','INTEGRATION','STAGING','PRODUCTION_SHADOW']);
 const LIVE_ENVIRONMENTS=new Set(['INTEGRATION','STAGING','PRODUCTION_SHADOW']);
+const REQUIRED_RUN_IDENTITY_MIGRATION='teaching_d30_human_review_run_identity';
 
 function parseArgs(argv){
   const args={_:[]};
@@ -119,11 +123,54 @@ function summarizeFinalize(result){
   });
 }
 
+function summarizePreflight({sourceSha,environment,runtimeStatus,plan,pplPlan,migrationPresent}={}){
+  const credentials=runtimeStatus?.providers?.credentials||{};
+  const enabledByProvider=Object.freeze(Object.fromEntries(Object.entries(credentials).map(([provider,state])=>[provider,Number(state?.enabled||0)])));
+  const routeProviders=[...new Set((plan?.targets||[]).map((target)=>target.provider).filter(Boolean))];
+  const uncredentialedProviders=routeProviders.filter((provider)=>Number(enabledByProvider[provider]||0)<1);
+  const uniqueRouteKeys=[...new Set((plan?.targets||[]).map((target)=>target.routeKey).filter(Boolean))];
+  const pplEarlyRoutes=[...new Set((pplPlan?.scenarios||[]).map((scenario)=>scenario.earlyRoute?.routeKey).filter(Boolean))];
+  const pplFinalRoutes=[...new Set((pplPlan?.scenarios||[]).map((scenario)=>scenario.finalRoute?.routeKey).filter(Boolean))];
+  const runtimeReady=runtimeStatus?.readiness?.state==='READY';
+  const readyForEmpiricalExecution=runtimeReady&&migrationPresent===true&&uncredentialedProviders.length===0&&uniqueRouteKeys.length>0;
+  return Object.freeze({
+    sourceSha,
+    environment,
+    runtimeReady,
+    modelDiscoveryFrozen:runtimeStatus?.discovery?.enabled===false,
+    automaticPromotionFrozen:true,
+    schemaReady:true,
+    requiredMigration:REQUIRED_RUN_IDENTITY_MIGRATION,
+    requiredMigrationPresent:migrationPresent===true,
+    credentialSlotsEnabledByProvider:enabledByProvider,
+    candidateRouteProviders:Object.freeze(routeProviders),
+    uncredentialedCandidateProviders:Object.freeze(uncredentialedProviders),
+    qualificationPlan:Object.freeze({
+      capabilityCount:plan?.capabilityCount||0,
+      targetCount:plan?.targetCount||0,
+      primaryTargetCount:plan?.primaryTargetCount||0,
+      fallbackTargetCount:plan?.fallbackTargetCount||0,
+      uniqueRouteCount:uniqueRouteKeys.length,
+      everyFallbackIndependent:plan?.everyFallbackIndependent===true,
+    }),
+    pplPlan:Object.freeze({
+      scenarioCount:pplPlan?.scenarios?.length||0,
+      durableWorkItems:pplPlan?buildPplWorkItems(pplPlan).length:0,
+      earlyRouteCount:pplEarlyRoutes.length,
+      finalRouteCount:pplFinalRoutes.length,
+    }),
+    providerCallsPerformed:false,
+    readyForEmpiricalExecution,
+    productionAuthorized:false,
+    authorizationGate:'D31',
+  });
+}
+
 async function main(argv=process.argv.slice(2)){
   const args=parseArgs(argv);
   const command=String(args._[0]||'').trim();
-  if(!['execute','ppl','status','review-queue','record-review','finalize'].includes(command)){
-    throw new Error('Usage: node scripts/run-teaching-d30-qualification.js <execute|ppl|status|review-queue|record-review|finalize> [options]');
+  if(!['preflight','execute','ppl','status','review-queue','record-review','finalize'].includes(command)){
+    throw new Error('Usage: node scripts/run-teaching-d30-qualification.js <preflight|execute|ppl|status|review-queue|record-review|finalize> [options]');
   }
   const environment=resolveEnvironment(args.environment);
   if(PROVIDER_COMMANDS.has(command))requireLiveConfirmation(args,environment);
@@ -158,6 +205,25 @@ async function main(argv=process.argv.slice(2)){
     const bounded=createD30BoundedCommand({coordinator,repository});
     const sessionId=String(args.sessionId||'').trim();
 
+    if(command==='preflight'){
+      const sourceSha=resolveSourceSha(args.sourceSha);
+      const [migrationResult]=await Promise.all([
+        query('select 1 as present from supabase_migrations.schema_migrations where name=$1 limit 1',[REQUIRED_RUN_IDENTITY_MIGRATION]),
+      ]);
+      const plan=buildQualificationPlan({orchestrator:runtime.orchestrator});
+      const pplPlan=buildPplQualificationPlan({orchestrator:runtime.orchestrator});
+      const result=summarizePreflight({
+        sourceSha,
+        environment,
+        runtimeStatus:runtime.status(),
+        plan,
+        pplPlan,
+        migrationPresent:Boolean(migrationResult.rows?.[0]?.present),
+      });
+      writeResult(result,args);
+      if(!result.readyForEmpiricalExecution)process.exitCode=2;
+      return;
+    }
     if(command==='execute'){
       const sourceSha=resolveSourceSha(args.sourceSha);
       const maxRuns=integerOption(args.maxRuns,24,{min:1,max:100});
@@ -243,6 +309,7 @@ module.exports={
   PROVIDER_COMMANDS,
   ALLOWED_ENVIRONMENTS,
   LIVE_ENVIRONMENTS,
+  REQUIRED_RUN_IDENTITY_MIGRATION,
   parseArgs,
   integerOption,
   resolveSourceSha,
@@ -252,5 +319,6 @@ module.exports={
   readReviewFile,
   summarizeExecution,
   summarizeFinalize,
+  summarizePreflight,
   main,
 };
