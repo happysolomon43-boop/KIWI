@@ -4,8 +4,13 @@ on:
   pull_request:
     paths:
       - 'index.html'
+      - 'public/kiwi-api-client.js'
       - 'public/kiwi-ui-system.css'
       - 'public/kiwi-ui-system.js'
+      - 'public/study-unified-upload.css'
+      - 'public/study-unified-upload.js'
+      - 'public/teaching-unified-upload.css'
+      - 'public/teaching-unified-upload.js'
       - 'public/teaching.html'
       - 'public/teaching-d10.js'
       - 'tests/ui/system-ui.test.js'
@@ -14,8 +19,13 @@ on:
     branches: [main]
     paths:
       - 'index.html'
+      - 'public/kiwi-api-client.js'
       - 'public/kiwi-ui-system.css'
       - 'public/kiwi-ui-system.js'
+      - 'public/study-unified-upload.css'
+      - 'public/study-unified-upload.js'
+      - 'public/teaching-unified-upload.css'
+      - 'public/teaching-unified-upload.js'
       - 'public/teaching.html'
       - 'public/teaching-d10.js'
       - 'tests/ui/system-ui.test.js'
@@ -35,8 +45,11 @@ jobs:
           node-version: 24
       - name: Syntax check UI JavaScript
         run: |
+          node --check public/kiwi-api-client.js
           node --check public/kiwi-ui-system.js
+          node --check public/study-unified-upload.js
+          node --check public/teaching-unified-upload.js
           node --check public/teaching-d10.js
           node --check public/kiwi_product_v3.js
-      - name: Verify responsive UI system and Request Center
+      - name: Verify responsive UI system and unified upload contracts
         run: node --test tests/ui/system-ui.test.js
