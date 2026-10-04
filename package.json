@@ -43,7 +43,8 @@
     "verify:teaching:d26": "node scripts/verify-teaching-d26-coordination.js",
     "verify:teaching:d27": "node scripts/verify-teaching-d27-integrations.js",
     "verify:teaching:d28": "node scripts/verify-teaching-d28-operational-hardening.js",
-    "verify:teaching:d29": "node scripts/verify-teaching-d29-academic-qa.js"
+    "verify:teaching:d29": "node scripts/verify-teaching-d29-academic-qa.js",
+    "verify:teaching:d30": "node scripts/verify-teaching-d30-canonical.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
