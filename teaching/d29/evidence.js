@@ -32,11 +32,15 @@ function evaluateReadiness({ evidence = [], defects = [], metrics = {} } = {}) {
   const latencyClaimSufficient = latencySamples.length >= PRODUCTION_READINESS_THRESHOLDS.minimumLatencySamplesForPercentileClaim;
   const liveClassP95Ms = percentile(latencySamples, 95);
   const metricFailures = [];
+  const requiredMetricKeys = ['liveClassLatencyMs', 'autosaveReliability', 'assessmentPersistence', 'schedulerFailureRate', 'gradingDisagreementsReviewed'];
+  const missingMetrics = requiredMetricKeys.filter((key) => metrics[key] == null);
+  if (!latencyClaimSufficient) metricFailures.push('LIVE_CLASS_LATENCY_SAMPLE_SIZE');
   if (latencyClaimSufficient && liveClassP95Ms > PRODUCTION_READINESS_THRESHOLDS.liveClassLatencyP95Ms) metricFailures.push('LIVE_CLASS_LATENCY_P95');
   if (metrics.autosaveReliability != null && metrics.autosaveReliability < PRODUCTION_READINESS_THRESHOLDS.autosaveReliabilityMinimum) metricFailures.push('AUTOSAVE_RELIABILITY');
   if (metrics.assessmentPersistence != null && metrics.assessmentPersistence < PRODUCTION_READINESS_THRESHOLDS.assessmentPersistenceMinimum) metricFailures.push('ASSESSMENT_PERSISTENCE');
   if (metrics.schedulerFailureRate != null && metrics.schedulerFailureRate > PRODUCTION_READINESS_THRESHOLDS.schedulerFailureRateMaximum) metricFailures.push('SCHEDULER_FAILURE_RATE');
-  const accepted = missingTasks.length === 0 && unresolvedCritical.length === 0 && failures.length === 0 && metricFailures.length === 0;
-  return Object.freeze({ accepted, missingTasks, unresolvedCritical, failures, metricFailures, latencyClaimSufficient, liveClassP95Ms, d30Qualified: false, d31ReleaseAuthorized: false });
+  if (metrics.gradingDisagreementsReviewed !== true) metricFailures.push('GRADING_DISAGREEMENT_REVIEW');
+  const accepted = missingTasks.length === 0 && unresolvedCritical.length === 0 && failures.length === 0 && missingMetrics.length === 0 && metricFailures.length === 0;
+  return Object.freeze({ accepted, missingTasks, unresolvedCritical, failures, missingMetrics, metricFailures, latencyClaimSufficient, liveClassP95Ms, d30Qualified: false, d31ReleaseAuthorized: false });
 }
 module.exports = { validateEvidence, evaluateReadiness, percentile };
