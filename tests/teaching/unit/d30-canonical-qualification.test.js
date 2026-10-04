@@ -215,7 +215,7 @@ test('qualification invocation uses the frozen prompt runtime and TPF-20 PPL met
   const invocation=d30.buildQualificationInvocation(control,sample);
   assert.equal(invocation.prompt.family_id,'TPF-20');
   assert.equal(invocation.prompt.family_version,'1.0');
-  assert.equal(invocation.prompt.frozen_binding.promptSha256,d30.getFamilyDefinition('TPF-20').promptSha256);
+  assert.equal(invocation.prompt.frozen_binding.promptSourceSha256,d30.getFamilyDefinition('TPF-20').promptSha256);
   assert.equal(invocation.preparation.route_posture,'bounded_interpretive');
   assert.equal(invocation.preparation.stage,'Active');
 });
