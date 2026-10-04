@@ -150,10 +150,35 @@ function hasKiwiSession() {
   return Boolean(token('kiwi_auth_token') || token('kiwi_refresh_token'));
 }
 
+function loadTeachingUnifiedUpload() {
+  if (!global.document?.getElementById('teachingApp')) return;
+
+  if (!global.document.querySelector('link[data-teaching-unified-upload]')) {
+    const stylesheet = global.document.createElement('link');
+    stylesheet.rel = 'stylesheet';
+    stylesheet.href = '/teaching-unified-upload.css?v=20261004-upload-1';
+    stylesheet.dataset.teachingUnifiedUpload = 'true';
+    global.document.head.append(stylesheet);
+  }
+
+  if (!global.document.querySelector('script[data-teaching-unified-upload]')) {
+    const script = global.document.createElement('script');
+    script.src = '/teaching-unified-upload.js?v=20261004-upload-1';
+    script.dataset.teachingUnifiedUpload = 'true';
+    script.defer = true;
+    global.document.body.append(script);
+  }
+}
 
 global.KIWI_API_CLIENT = Object.freeze({
   kiwiApiRequest,
   kiwiApiRawRequest,
   hasKiwiSession,
 });
+
+if (global.document?.readyState === 'loading') {
+  global.document.addEventListener('DOMContentLoaded', loadTeachingUnifiedUpload, { once: true });
+} else {
+  loadTeachingUnifiedUpload();
+}
 })(window);
