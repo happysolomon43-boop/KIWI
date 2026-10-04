@@ -55,7 +55,18 @@ jobs:
       - name: Verify canonical D30 contracts
         run: npm run verify:teaching:d30
       - name: Run complete D30 qualification unit tests
-        run: node --test tests/teaching/unit/d30-*.test.js
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/teaching/unit/d30-*.test.js 2>&1 | tee d30-unit-tests.log
+      - name: Retain D30 unit-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d30-unit-test-evidence
+          path: d30-unit-tests.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Verify D03 frozen prompt control regression
         run: npm run verify:teaching:d03
       - name: Verify D20 marking and blind-review regression
