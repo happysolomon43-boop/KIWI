@@ -18,7 +18,6 @@ const {
   buildPplWorkItems,
 }=require('../teaching/d30');
 
-const LIVE_CONFIRMATION='D30_EMPIRICAL_QUALIFICATION';
 const PROVIDER_COMMANDS=new Set(['execute','ppl']);
 const ALLOWED_ENVIRONMENTS=new Set(['LOCAL','CI','INTEGRATION','STAGING','PRODUCTION_SHADOW']);
 const LIVE_ENVIRONMENTS=new Set(['INTEGRATION','STAGING','PRODUCTION_SHADOW']);
@@ -62,10 +61,9 @@ function resolveEnvironment(value){
   return environment;
 }
 
-function requireLiveConfirmation(args,environment){
+function requireLiveExecutionEnabled(environment){
   const enabled=String(process.env.D30_LIVE_QUALIFICATION||'').toLowerCase()==='true';
-  if(!enabled)throw new Error('Live D30 provider execution is disabled. Set D30_LIVE_QUALIFICATION=true only for an approved empirical run.');
-  if(String(args.confirmLive||'')!==LIVE_CONFIRMATION)throw new Error(`Live D30 provider execution requires --confirm-live ${LIVE_CONFIRMATION}.`);
+  if(!enabled)throw new Error('Live D30 provider execution is disabled. Set D30_LIVE_QUALIFICATION=true only in the explicitly invoked integration qualification lane.');
   if(!LIVE_ENVIRONMENTS.has(environment))throw new Error(`Live D30 provider execution is not permitted in ${environment}.`);
 }
 
@@ -173,7 +171,7 @@ async function main(argv=process.argv.slice(2)){
     throw new Error('Usage: node scripts/run-teaching-d30-qualification.js <preflight|execute|ppl|status|review-queue|record-review|finalize> [options]');
   }
   const environment=resolveEnvironment(args.environment);
-  if(PROVIDER_COMMANDS.has(command))requireLiveConfirmation(args,environment);
+  if(PROVIDER_COMMANDS.has(command))requireLiveExecutionEnabled(environment);
   const databaseUrl=requireRuntimeSecret(process.env,'DATABASE_URL',['KIWI_DATABASE_URL']);
   const pool=new Pool({
     connectionString:databaseUrl,
@@ -305,7 +303,6 @@ if(require.main===module){
 }
 
 module.exports={
-  LIVE_CONFIRMATION,
   PROVIDER_COMMANDS,
   ALLOWED_ENVIRONMENTS,
   LIVE_ENVIRONMENTS,
@@ -314,7 +311,7 @@ module.exports={
   integerOption,
   resolveSourceSha,
   resolveEnvironment,
-  requireLiveConfirmation,
+  requireLiveExecutionEnabled,
   buildQualificationRuntimeEnv,
   readReviewFile,
   summarizeExecution,
