@@ -82,6 +82,28 @@ async function parseResponse(response, endpoint) {
   throw error;
 }
 
+async function requestWithSession(endpoint, requestOptions, timeoutMs) {
+  let response = await fetchWithTimeout(
+    `${config.apiBaseUrl}${endpoint}`,
+    requestOptions,
+    timeoutMs
+  );
+
+  if (response.status === 401 && !PUBLIC_AUTH_401.has(endpoint)) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      requestOptions.headers.Authorization = `Bearer ${token('kiwi_auth_token')}`;
+      response = await fetchWithTimeout(
+        `${config.apiBaseUrl}${endpoint}`,
+        requestOptions,
+        timeoutMs
+      );
+    }
+  }
+
+  return parseResponse(response, endpoint);
+}
+
 async function kiwiApiRequest(endpoint, options = {}) {
   if (typeof endpoint !== 'string' || !endpoint.startsWith('/')) {
     throw new TypeError('KIWI API endpoint must start with /.');
@@ -99,25 +121,29 @@ async function kiwiApiRequest(endpoint, options = {}) {
     ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
   };
 
-  let response = await fetchWithTimeout(
-    `${config.apiBaseUrl}${endpoint}`,
-    requestOptions,
-    options.timeoutMs
-  );
+  return requestWithSession(endpoint, requestOptions, options.timeoutMs);
+}
 
-  if (response.status === 401 && !PUBLIC_AUTH_401.has(endpoint)) {
-    const refreshed = await refreshAccessToken();
-    if (refreshed) {
-      requestOptions.headers.Authorization = `Bearer ${token('kiwi_auth_token')}`;
-      response = await fetchWithTimeout(
-        `${config.apiBaseUrl}${endpoint}`,
-        requestOptions,
-        options.timeoutMs
-      );
-    }
+// Raw authenticated requests are intentionally separate from kiwiApiRequest so
+// binary uploads never pass through JSON/base64 or inherit application/json.
+// Callers must provide an explicit safe Content-Type for binary bodies.
+async function kiwiApiRawRequest(endpoint, options = {}) {
+  if (typeof endpoint !== 'string' || !endpoint.startsWith('/')) {
+    throw new TypeError('KIWI API endpoint must start with /.');
   }
 
-  return parseResponse(response, endpoint);
+  const accessToken = token('kiwi_auth_token');
+  const requestOptions = {
+    method: options.method || 'POST',
+    headers: {
+      Accept: 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(options.headers || {}),
+    },
+    ...(options.body !== undefined ? { body: options.body } : {}),
+  };
+
+  return requestWithSession(endpoint, requestOptions, options.timeoutMs);
 }
 
 function hasKiwiSession() {
@@ -127,6 +153,7 @@ function hasKiwiSession() {
 
 global.KIWI_API_CLIENT = Object.freeze({
   kiwiApiRequest,
+  kiwiApiRawRequest,
   hasKiwiSession,
 });
 })(window);
