@@ -63,7 +63,7 @@ function createD27IntegrationRepository({ query, withTransaction, randomUUID, cl
 
   async function getCourseStudyContext(studentId, { courseId, classId, learningUnitId }) {
     const { rows = [] } = await query(`SELECT c.course_id,c.student_id,c.subject_id,c.lifecycle_state,c.subject_snapshot_ref,c.source_version_ref,
-      c.state_version course_state_version,cl.class_id,cl.state_version class_state_version,
+      c.state_version course_state_version,cl.class_id,cl.schedule_version class_state_version,
       lu.learning_unit_id,lu.title learning_unit_title,lu.intended_competence,lu.metadata learning_unit_metadata,
       cp.course_plan_id,cp.version_no course_plan_version
       FROM public.teaching_courses c
