@@ -4,7 +4,7 @@ const { createAIOrchestrator, AI_TASKS } = require('../../services/ai');
 const { getCapability, listCapabilities } = require('../capability-registry');
 const { getFamilyDefinition } = require('./contracts');
 
-const D30_ROUTE_POLICY_VERSION = 'teaching-d30-route-policy-v1';
+const D30_ROUTE_POLICY_VERSION = 'teaching-d30-route-policy-v1.1';
 const WEBSITE_DEFAULT_AI_TASK = 'QUICK_QUESTIONS';
 const COURSE_PLAN_AI_TASK = 'FLASHCARD_GENERATION';
 const COURSE_PLAN_FAMILY = 'TPF-03';
@@ -30,20 +30,40 @@ function routePostureFor({ familyId, stage = null } = {}) {
   return 'economy_maintenance';
 }
 
+function centrallyEligibleRouteKeys(orchestrator, taskId, routePosture) {
+  if (!orchestrator?.router?.resolveCandidates) return null;
+  const candidates = orchestrator.router.resolveCandidates(taskId, {
+    content:'',
+    preparationRoutePosture:routePosture,
+  });
+  return new Set(candidates.map((candidate) => candidate.routeKey));
+}
+
 function buildCandidateManifest(orchestrator, { capabilityId, familyId = null, stage = null } = {}) {
   if (!orchestrator?.plan) throw new TypeError('D30 candidate manifest requires central KIWI AI Orchestrator plan().');
   const capability = capabilityId ? getCapability(capabilityId) : null;
   const resolvedFamily = familyId || capability?.prompt_family_id;
   const taskId = centralTaskFor({ capabilityId, familyId: resolvedFamily });
+  const routePosture = routePostureFor({ familyId:resolvedFamily, stage });
+  const eligibleKeys = centrallyEligibleRouteKeys(orchestrator, taskId, routePosture);
   const plan = orchestrator.plan(taskId, { content: '' });
+  const postureCandidates = eligibleKeys
+    ? plan.candidates.filter((candidate) => eligibleKeys.has(candidate.routeKey))
+    : plan.candidates;
+  if (!postureCandidates.length) {
+    const error = new Error(`No centrally classified ${routePosture} route exists for ${capability?.id || resolvedFamily}.`);
+    error.code = 'TEACHING_D30_PREPARATION_ROUTE_UNAVAILABLE';
+    throw error;
+  }
   return Object.freeze({
     policyVersion: D30_ROUTE_POLICY_VERSION,
     capabilityId: capability?.id || null,
     familyId: resolvedFamily,
     stage,
-    routePosture: routePostureFor({ familyId: resolvedFamily, stage }),
+    routePosture,
     centralTaskId: taskId,
-    candidates: Object.freeze(plan.candidates.map((candidate, index) => Object.freeze({
+    centralPostureFilterApplied:Boolean(eligibleKeys),
+    candidates: Object.freeze(postureCandidates.map((candidate, index) => Object.freeze({
       routeKey: candidate.routeKey,
       provider: candidate.provider,
       modelId: candidate.modelId,
@@ -101,6 +121,7 @@ module.exports = {
   COURSE_PLAN_FAMILY,
   centralTaskFor,
   routePostureFor,
+  centrallyEligibleRouteKeys,
   buildCandidateManifest,
   createPinnedQualificationOrchestrator,
   enumerateModelEligibleTeachingCapabilities,
