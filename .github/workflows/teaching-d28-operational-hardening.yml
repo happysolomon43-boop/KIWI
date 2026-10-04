@@ -1,10 +1,10 @@
 name: Teaching D28 Operational Hardening
 on:
   pull_request:
-    paths: ['teaching/d28/**','teaching/ai/central-orchestrator-boundary.js','teaching/observability/postgres-execution-telemetry.js','teaching/runtime/index.js','migrations/20261004_teaching_d28_operational_hardening.sql','migrations/20261004_teaching_d28_fk_index_hardening.sql','tests/teaching/unit/d28-*.test.js','scripts/verify-teaching-d28-operational-hardening.js','package.json']
+    paths: ['teaching/d28/**','teaching/ai/central-orchestrator-boundary.js','teaching/observability/postgres-execution-telemetry.js','teaching/runtime/index.js','teaching/orchestrator/ai-adapter.js','teaching/d17/routes.js','teaching/d07/service.js','migrations/20261004_teaching_d28_runtime_activation_hardening.sql','teaching/d27/routes.js','migrations/20261004_teaching_d28_operational_hardening.sql','migrations/20261004_teaching_d28_fk_index_hardening.sql','migrations/20261004_teaching_d28_runtime_activation.sql','tests/teaching/unit/d28-*.test.js','scripts/verify-teaching-d28-operational-hardening.js','package.json']
   push:
     branches: [main]
-    paths: ['teaching/d28/**','teaching/ai/central-orchestrator-boundary.js','teaching/observability/postgres-execution-telemetry.js','teaching/runtime/index.js','migrations/20261004_teaching_d28_operational_hardening.sql','migrations/20261004_teaching_d28_fk_index_hardening.sql','tests/teaching/unit/d28-*.test.js','scripts/verify-teaching-d28-operational-hardening.js','package.json']
+    paths: ['teaching/d28/**','teaching/ai/central-orchestrator-boundary.js','teaching/observability/postgres-execution-telemetry.js','teaching/runtime/index.js','teaching/orchestrator/ai-adapter.js','teaching/d17/routes.js','teaching/d07/service.js','migrations/20261004_teaching_d28_runtime_activation_hardening.sql','teaching/d27/routes.js','migrations/20261004_teaching_d28_operational_hardening.sql','migrations/20261004_teaching_d28_fk_index_hardening.sql','migrations/20261004_teaching_d28_runtime_activation.sql','tests/teaching/unit/d28-*.test.js','scripts/verify-teaching-d28-operational-hardening.js','package.json']
 jobs:
   verify:
     runs-on: ubuntu-latest

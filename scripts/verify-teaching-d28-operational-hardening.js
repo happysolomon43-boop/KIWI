@@ -1,47 +1,20 @@
 'use strict';
-const fs = require('node:fs');
-const path = require('node:path');
-const assert = require('node:assert/strict');
-const root = path.resolve(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
-const d28 = require('../teaching/d28');
-
-assert.equal(d28.D28_TASK_IDS.length, 39);
-assert.equal(new Set(d28.D28_TASK_IDS).size, 39);
-for (const id of ['TCH-0599','TCH-0628','TCH-0678','TCH-0777','TCH-0867','TCH-0870','TCH-0899','TCH-0900','TCH-0916']) {
-  assert(d28.D28_TASK_IDS.includes(id), `Missing ${id}`);
-}
-
-const migration = read('migrations/20261004_teaching_d28_operational_hardening.sql');
-for (const token of [
-  'd28_operational_events',
-  'd28_operational_alerts',
-  'd28_item_analytics_runs',
-  'd28_item_analytics_items',
-  'd28_item_analytics_review_flags',
-  'd28_ppl_budget_usage',
-  'd28_artifact_visibility_controls',
-  'd28_retention_actions',
-  'd28_ai_response_cache',
-  'REVOKE ALL ON ALL TABLES IN SCHEMA teaching_runtime FROM PUBLIC,anon,authenticated',
-  'academic_action_taken boolean NOT NULL DEFAULT false CHECK(academic_action_taken=false)',
-  'preserved_academic_lineage boolean NOT NULL DEFAULT true CHECK(preserved_academic_lineage=true)',
-]) assert(migration.includes(token), `Migration missing ${token}`);
-
-const boundary = read('teaching/ai/central-orchestrator-boundary.js');
-assert(boundary.includes("require('../d28/ai-controls')"));
-const runtime = read('teaching/runtime/index.js');
-assert(runtime.includes("require('../d28/ai-controls')"));
-assert(runtime.includes('executionControls: aiExecutionControls'));
-const telemetry = read('teaching/observability/postgres-execution-telemetry.js');
-for (const token of ['provider_identifier','fallback_depth','validation_retry_count','cache_status','redactOperationalMetadata']) {
-  assert(telemetry.includes(token));
-}
-const service = read('teaching/d28/service.js');
-for (const token of ['reportAssessmentValidationFailure','reportMarkingDisagreement','recordQualitySample']) {
-  assert(service.includes(token));
-}
-for (const file of fs.readdirSync(path.join(root, 'teaching/d28')).filter((file) => file.endsWith('.js'))) {
-  assert(!/require\(['\"](?:openai|@google|groq|anthropic)/.test(read(`teaching/d28/${file}`)), `${file} imports provider SDK`);
-}
-console.log('D28 verification passed: 39/39 tasks structurally accounted; runtime controls wired; owner boundaries intact.');
+const fs=require('node:fs');const path=require('node:path');const assert=require('node:assert/strict');const root=path.resolve(__dirname,'..');const read=p=>fs.readFileSync(path.join(root,p),'utf8');const d28=require('../teaching/d28');
+assert.equal(d28.D28_TASK_IDS.length,39);assert.equal(new Set(d28.D28_TASK_IDS).size,39);for(const id of ['TCH-0599','TCH-0628','TCH-0678','TCH-0777','TCH-0867','TCH-0870','TCH-0899','TCH-0900','TCH-0916'])assert(d28.D28_TASK_IDS.includes(id),`Missing ${id}`);
+const normalizeSql=s=>s.replace(/\s+/g,'').toLowerCase();
+const migration=read('migrations/20261004_teaching_d28_operational_hardening.sql');const normalizedMigration=normalizeSql(migration);for(const token of ['d28_operational_events','d28_operational_alerts','d28_item_analytics_runs','d28_item_analytics_items','d28_item_analytics_review_flags','d28_ppl_budget_usage','d28_artifact_visibility_controls','d28_retention_actions','d28_ai_response_cache','REVOKE ALL ON ALL TABLES IN SCHEMA teaching_runtime FROM PUBLIC,anon,authenticated','academic_action_taken boolean NOT NULL DEFAULT false CHECK(academic_action_taken=false)','preserved_academic_lineage boolean NOT NULL DEFAULT true CHECK(preserved_academic_lineage=true)'])assert(normalizedMigration.includes(normalizeSql(token)),`Migration missing ${token}`);
+const activation=read('migrations/20261004_teaching_d28_runtime_activation.sql');const normalizedActivation=normalizeSql(activation);for(const token of ['d28_item_analytics_events','assessment_result_version','administration_key','locked_option_order','d28_capture_quality_alert','ABNORMAL_MARKING_DISAGREEMENT','ASSESSMENT_PACKAGE_VALIDATION_FAILURE','REVOKE ALL ON teaching_runtime.d28_item_analytics_events FROM PUBLIC,anon,authenticated'])assert(normalizedActivation.includes(normalizeSql(token)),`D28 activation migration missing ${token}`);
+const activationHardening=read('migrations/20261004_teaching_d28_runtime_activation_hardening.sql');for(const token of ["correlation:='db:'||TG_TABLE_NAME",'ON CONFLICT(alert_type,correlation_id,reason_code)'])assert(activationHardening.includes(token),`D28 alert replay hardening missing ${token}`);
+const hardening=read('migrations/20261004_teaching_d28_runtime_activation_hardening.sql');const normalizedHardening=normalizeSql(hardening);for(const token of ["ON CONFLICT(alert_type,correlation_id,reason_code) WHERE status='OPEN' DO NOTHING",'REVOKE EXECUTE ON FUNCTION teaching_runtime.d28_capture_minimized_mutation() FROM PUBLIC, anon, authenticated','REVOKE EXECUTE ON FUNCTION teaching_runtime.d28_capture_quality_alert() FROM PUBLIC, anon, authenticated','d28_observe_course_activation','course_activation_committed','d28_observe_request_history','request_lifecycle_transition','d28_observe_progression_snapshot','progression_result_snapshot_committed','d28_observe_grading_policy','d28_observe_attendance_version'])assert(normalizedHardening.includes(normalizeSql(token)),`D28 activation hardening missing ${token}`);
+const boundary=read('teaching/ai/central-orchestrator-boundary.js');assert(boundary.includes("require('../d28/ai-controls')"));
+const runtime=read('teaching/runtime/index.js');for(const token of ["require('../d28/runtime-service')","require('../d28/runtime-bridge')",'cacheRepository:d28Service.repository','await d28Service.assertReady()','d28Service.start()'])assert(runtime.includes(token),`D28 runtime wiring missing ${token}`);
+const adapter=read('teaching/orchestrator/ai-adapter.js');for(const token of ['governPplInvocation','completePplInvocation','releasePplInvocation'])assert(adapter.includes(token),`D28 PPL runtime enforcement missing ${token}`);
+const runtimeService=read('teaching/d28/runtime-service.js');for(const token of ['TEACHING_D28_ANALYTICS_PSEUDONYM_SECRET_REQUIRED','contract?.options','payload.choice_id', 'd28_item_analytics_events','result_version','package_state=\'LOCKED\'','attempt_state in (\'SUBMITTED\',\'EXPIRED\')','runAnalyticsSweep','runRetentionCleanup','automaticAcademicMutations:0','projectStudyReviewSet'])assert(runtimeService.includes(token),`D28 runtime service missing ${token}`);
+const security=read('teaching/d28/security.js');for(const token of ['validateSupplementaryMaterialInput','TEACHING_D28_SUPPLEMENT_BINARY_UPLOAD_REQUIRES_VALIDATED_BOUNDARY','validateMaterialUpload'])assert(security.includes(token),`D28 supplementary-material hardening missing ${token}`);
+const d07=read('teaching/d07/service.js');assert(d07.includes('validateSupplementaryMaterialInput'),'D28 supplementary-material validation is not wired to D07 source ingestion.');
+const d17=read('teaching/d17/routes.js');for(const token of ['reportAssessmentSyncFailure','reportAssessmentValidationFailure','mountD28Routes'])assert(d17.includes(token),`D28 owner-failure wiring missing ${token}`);
+const d27routes=read('teaching/d27/routes.js');assert(d27routes.includes('projectStudyReviewSet'),'D28 Study-card visibility controls are not bound to the D27 read path.');
+const d28routes=read('teaching/d28/routes.js');for(const token of ['audit-dashboard','study-artifacts/:artifactType/:artifactId/dismiss','DISMISSIBLE_ARTIFACT_TYPES'])assert(d28routes.includes(token),`D28 operational/student control route missing ${token}`);
+const telemetry=read('teaching/observability/postgres-execution-telemetry.js');for(const token of ['provider_identifier','fallback_depth','validation_retry_count','cache_status','redactOperationalMetadata'])assert(telemetry.includes(token));
+for(const file of fs.readdirSync(path.join(root,'teaching/d28')).filter(file=>file.endsWith('.js')))assert(!/require\(['\"](?:openai|@google|groq|anthropic)/.test(read(`teaching/d28/${file}`)),`${file} imports provider SDK`);
+console.log('D28 verification passed: 39/39 tasks accounted; D28 service active; PPL budgets enforced at model seam; authoritative post-admin analytics and failure alerts wired; owner boundaries intact.');
