@@ -6,7 +6,7 @@ const SOURCE_QUERIES = Object.freeze({
   GradebookEntry: Object.freeze({ table:'public.teaching_gradebook_entries', id:'gradebook_entry_id', version:'version_no' }),
   CourseResult: Object.freeze({ table:'public.teaching_course_result_snapshots', id:'course_result_snapshot_id', version:'version_no' }),
   Course: Object.freeze({ table:'public.teaching_courses', id:'course_id', version:'state_version' }),
-  Class: Object.freeze({ table:'public.teaching_classes', id:'class_id', version:'state_version' }),
+  Class: Object.freeze({ table:'public.teaching_classes', id:'class_id', version:'schedule_version' }),
   Assignment: Object.freeze({ table:'public.teaching_assignments', id:'assignment_id', version:'state_version' }),
 });
 
