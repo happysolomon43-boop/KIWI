@@ -1,0 +1,22 @@
+name: Teaching D28 Operational Hardening
+on:
+  pull_request:
+    paths: ['teaching/d28/**','teaching/ai/central-orchestrator-boundary.js','teaching/observability/postgres-execution-telemetry.js','migrations/20261004_teaching_d28_operational_hardening.sql','tests/teaching/unit/d28-*.test.js','scripts/verify-teaching-d28-operational-hardening.js','package.json']
+  push:
+    branches: [main]
+    paths: ['teaching/d28/**','teaching/ai/central-orchestrator-boundary.js','teaching/observability/postgres-execution-telemetry.js','migrations/20261004_teaching_d28_operational_hardening.sql','tests/teaching/unit/d28-*.test.js','scripts/verify-teaching-d28-operational-hardening.js','package.json']
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - run: npm run verify:teaching:d03
+      - run: npm run verify:teaching:d27
+      - run: npm run verify:teaching:d28
+      - run: node --test tests/teaching/unit/d28-*.test.js
+      - run: npm run test:teaching
+      - run: npm test
+      - run: npm run build:web
