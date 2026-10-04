@@ -20,10 +20,12 @@ function buildHumanReviewQueue(records = [], { consequentialCaseIds = [] } = {})
     if (!required) continue;
     if (!record.outputArtifact) throw new Error(`C4/consequential run ${record.runId || record.caseId} has no bounded review artifact.`);
     const family = record.familyId === 'CROSS_FAMILY' ? null : getFamilyDefinition(record.familyId);
+    const attemptNo = Number(record.attemptNo || 1);
     queue.push(Object.freeze({
-      reviewKey:[record.sessionId,record.caseId,record.capabilityId || '',record.routeKey,record.attemptNo].join('::'),
+      reviewKey:[record.sessionId,record.runId,record.caseId,record.capabilityId || '',record.routeKey,attemptNo].join('::'),
       sessionId:record.sessionId,
       runId:record.runId,
+      attemptNo,
       caseId:record.caseId,
       familyId:record.familyId,
       familyVersion:record.promptFamilyVersion,
@@ -55,11 +57,14 @@ function validateHumanReviewSubmission(submission = {}, queueItem = null) {
   if (submission.reviewerKind !== 'HUMAN_ACADEMIC') errors.push('HUMAN_ACADEMIC_REVIEWER_REQUIRED');
   if (submission.independent !== true) errors.push('INDEPENDENT_REVIEW_REQUIRED');
   if (!HUMAN_REVIEW_DECISIONS.includes(submission.decision)) errors.push('INVALID_REVIEW_DECISION');
+  if (!String(submission.runId || '').trim()) errors.push('RUN_ID_REQUIRED');
+  if (!Number.isInteger(Number(submission.attemptNo)) || Number(submission.attemptNo) < 1) errors.push('ATTEMPT_NO_REQUIRED');
   if (!submission.rubric || typeof submission.rubric !== 'object' || Array.isArray(submission.rubric)) errors.push('RUBRIC_REQUIRED');
   if (queueItem) {
-    for (const field of ['sessionId','caseId','familyId','routeKey']) {
+    for (const field of ['sessionId','runId','caseId','familyId','routeKey']) {
       if (String(submission[field] ?? '') !== String(queueItem[field] ?? '')) errors.push(`${field.toUpperCase()}_MISMATCH`);
     }
+    if (Number(submission.attemptNo) !== Number(queueItem.attemptNo)) errors.push('ATTEMPT_NO_MISMATCH');
     if (String(submission.capabilityId ?? '') !== String(queueItem.capabilityId ?? '')) errors.push('CAPABILITY_ID_MISMATCH');
   }
   assertNoHiddenChainOfThought(submission);
@@ -71,6 +76,8 @@ function normalizeHumanReviewSubmission(submission = {}, queueItem = null) {
   if (!validation.valid) throw new Error(`Invalid D30 human review submission: ${validation.errors.join(', ')}`);
   return Object.freeze({
     sessionId:String(submission.sessionId),
+    runId:String(submission.runId),
+    attemptNo:Number(submission.attemptNo),
     caseId:String(submission.caseId || ''),
     familyId:String(submission.familyId),
     capabilityId:submission.capabilityId == null ? '' : String(submission.capabilityId),
