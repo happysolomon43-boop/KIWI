@@ -6,19 +6,27 @@ function reviewGroupKey(item = {}) {
   return [item.caseId || '', item.routeKey || '', item.capabilityId || ''].join('::');
 }
 
+function resolvedPassingHumanReviewRunIds(reviews = []) {
+  const decisionsByRun=new Map();
+  for(const review of reviews){
+    if(review?.reviewerKind!=='HUMAN_ACADEMIC'||review?.independent!==true||!String(review?.runId||'').trim())continue;
+    const runId=String(review.runId);
+    if(!decisionsByRun.has(runId))decisionsByRun.set(runId,[]);
+    decisionsByRun.get(runId).push(String(review.decision||''));
+  }
+  const passed=new Set();
+  for(const [runId,decisions] of decisionsByRun){
+    if(decisions.length>0&&decisions.every((decision)=>decision==='PASS'))passed.add(runId);
+  }
+  return passed;
+}
+
 function passedHumanReviewRunIds(reviews = []) {
-  return new Set(reviews
-    .filter((review) =>
-      review?.reviewerKind === 'HUMAN_ACADEMIC' &&
-      review?.independent === true &&
-      review?.decision === 'PASS' &&
-      String(review?.runId || '').trim()
-    )
-    .map((review) => String(review.runId)));
+  return resolvedPassingHumanReviewRunIds(reviews);
 }
 
 function scopeReviewsToCompletedRunGroups(queue = [], reviews = []) {
-  const passedRunIds = passedHumanReviewRunIds(reviews);
+  const passedRunIds = resolvedPassingHumanReviewRunIds(reviews);
   const requiredByGroup = new Map();
   for (const item of queue) {
     const groupKey = reviewGroupKey(item);
@@ -131,6 +139,7 @@ function createD30BoundedCommand({ coordinator, repository } = {}) {
 
 module.exports = {
   reviewGroupKey,
+  resolvedPassingHumanReviewRunIds,
   passedHumanReviewRunIds,
   scopeReviewsToCompletedRunGroups,
   createD30BoundedCommand,
