@@ -20,4 +20,5 @@ module.exports = Object.freeze({
   ...require('./semantic-reviewer'),
   ...require('./repository'),
   ...require('./coordinator'),
+  ...require('./bounded-command'),
 });
