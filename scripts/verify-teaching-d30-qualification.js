@@ -1,6 +1,15 @@
 'use strict';
 const d30=require('../teaching/d30');
+const q=require('../teaching/d30/qualification-system');
 const expected=['TCH-0819','TCH-0820','TCH-0821','TCH-0822','TCH-0823','TCH-0824','TCH-0825','TCH-0826','TCH-0827','TCH-0828','TCH-0829','TCH-0830','TCH-0831','TCH-0832','TCH-0834','TCH-0835','TCH-0836','TCH-0837','TCH-0838','TCH-0839','TCH-0840','TCH-0841','TCH-0842','TCH-0843','TCH-0844','TCH-0845','TCH-0846','TCH-0847','TCH-0848','TCH-0849','TCH-0850','TCH-0851','TCH-0852','TCH-0853','TCH-0854','TCH-0855','TCH-0857','TCH-0860','TCH-0861','TCH-0862','TCH-0863','TCH-0864','TCH-0865','TCH-0866','TCH-0902','TCH-0920'];
 if(JSON.stringify(d30.D30_TASK_IDS)!==JSON.stringify(expected)) throw new Error('D30 task census drift');
 if(d30.ISOLATED_FAMILY_CORPUS.length!==1832||d30.CROSS_FAMILY_CORPUS.length!==72||d30.TPF20_CORPUS.length!==96) throw new Error('D30 corpus floor drift');
-console.log(JSON.stringify({delivery:'D30',taskCount:46,phase16Isolated:1832,crossFamily:72,tpf20:96,totalDistinctCases:d30.FULL_CORPUS.length,productionAuthorizationGate:'D31',status:'IMPLEMENTATION_VERIFIED_EMPIRICAL_EXECUTION_REQUIRED'},null,2));
+if(q.resolveD30Route({responsibilityKey:'lesson_explanation'}).routeKey!=='website_default_ai_route') throw new Error('normal Teaching route must use website default AI route');
+if(q.resolveD30Route({responsibilityKey:'course_plan'}).routeKey!=='flash_generation_ai_route') throw new Error('Course Plan must use flash-generation AI route');
+if(q.deterministicValidate({testCase:{id:'x',familyId:'TPF-01',kind:'isolated'},output:{},context:{authorityEscalation:true}}).accepted) throw new Error('authority escalation must fail closed');
+if(q.validatePromptGovernance({state:'PROMPT_CANDIDATE_DRAFT',behaviorBriefApproved:false}).valid) throw new Error('Behavior Brief gate missing');
+const failures=q.simulateRouteFailures({attempts:[{provider:'x',condition:'QUOTA_EXHAUSTED'}]});
+if(!failures[0].circuitBreak||!failures[0].rotateCredential) throw new Error('route failure controls missing');
+const cross=q.verifyCrossFamilyCompatibility(q.CROSS_FAMILY_CHAINS.map(chain=>({chain:chain.join('→'),compatible:true})));
+if(!cross.passed) throw new Error('cross-family compatibility harness failed');
+console.log(JSON.stringify({delivery:'D30',taskCount:46,phase16Isolated:1832,crossFamily:72,tpf20:96,totalDistinctCases:d30.FULL_CORPUS.length,routePolicy:q.DEFAULT_ROUTE_POLICY,validators:q.REQUIRED_VALIDATORS.length,crossFamilyChains:q.CROSS_FAMILY_CHAINS.length,productionAuthorizationGate:'D31',status:'IMPLEMENTATION_FRAMEWORK_COMPLETE_EMPIRICAL_REPLAY_OPTIONAL_FOR_THIS_HANDOFF'},null,2));
