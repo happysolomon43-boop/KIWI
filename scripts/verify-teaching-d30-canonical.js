@@ -197,7 +197,7 @@ function main() {
   invariant(/run_id uuid/i.test(reviewIdentityMigration), 'D30 human-review run identity column migration missing');
   invariant(/attempt_no integer/i.test(reviewIdentityMigration), 'D30 human-review attempt identity column migration missing');
   invariant(/foreign key \(run_id\)[\s\S]*d30_case_results\(id\)/i.test(reviewIdentityMigration), 'D30 human-review run identity is not tied to empirical case evidence');
-  const reviewIndexMigration=read('migrations/20261004_teaching_d30_human_review_run_fk_index.sql');
+  const reviewIndexMigration=read('migrations/20261004_teaching_d30_human_review_fk_index.sql');
   invariant(/d30_human_reviews_run_fk_idx/i.test(reviewIndexMigration), 'D30 human-review run FK index hardening missing');
 
   const governanceSource = read('teaching/d30/governance.js');
