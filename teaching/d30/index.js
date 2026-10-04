@@ -10,6 +10,7 @@ module.exports = Object.freeze({
   ...require('./evidence'),
   ...require('./human-review'),
   ...require('./structural-evidence'),
+  ...require('./cross-family'),
   ...require('./governance'),
   ...require('./maintenance-context'),
   ...require('./qualification'),
