@@ -49,11 +49,6 @@ on:
         required: true
         default: '12'
         type: string
-      confirmation:
-        description: 'For a live empirical batch, type exactly D30_EMPIRICAL_QUALIFICATION.'
-        required: false
-        default: ''
-        type: string
 
 permissions:
   contents: read
@@ -123,13 +118,10 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_WORKERS_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_AI_API_TOKEN }}
     steps:
-      - name: Validate explicit empirical-run authorization
+      - name: Validate integration qualification configuration
         shell: bash
-        env:
-          D30_CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
-          test "$D30_CONFIRMATION" = 'D30_EMPIRICAL_QUALIFICATION' || { echo 'Live D30 qualification requires the exact confirmation token.' >&2; exit 1; }
           test -n "$DATABASE_URL" || { echo 'Missing GitHub secret D30_INTEGRATION_DATABASE_URL.' >&2; exit 1; }
           if [ -z "${GEMINI_API_KEY:-}" ] && [ -z "${GROQ_API_KEY:-}" ] && [ -z "${CLOUDFLARE_WORKERS_AI_API_TOKEN:-}" ]; then
             echo 'No central KIWI AI provider credential is configured for the integration qualification lane.' >&2
@@ -167,14 +159,12 @@ jobs:
         env:
           D30_COMMAND: ${{ inputs.live_command }}
           D30_MAX_RUNS: ${{ inputs.max_runs }}
-          D30_CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
           npm run qualify:teaching:d30 -- "$D30_COMMAND" \
             --source-sha "$GITHUB_SHA" \
             --environment INTEGRATION \
             --max-runs "$D30_MAX_RUNS" \
-            --confirm-live "$D30_CONFIRMATION" \
             --out d30-qualification-result.json
       - name: Retain bounded qualification summary
         if: always()
