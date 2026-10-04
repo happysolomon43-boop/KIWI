@@ -55,19 +55,9 @@ function qualificationOutputSchema(caseSpec) {
   });
 }
 
-function buildQualificationInvocation(promptControl, caseSpec) {
-  const capability = getCapability(caseSpec.capabilityId);
-  const contextLanes = {
-    trustedAuthoritativeState:{ qualification_case_id:caseSpec.id, fixture_state_version:'1' },
-    permissionConstraints:{ evaluation_only:true, authoritative_commit:false },
-  };
-  const contextAllowlist = capability.authority_ceiling === 'T4' ? {
-    trustedAuthoritativeState:['qualification_case_id','fixture_state_version'],
-    permissionConstraints:['evaluation_only','authoritative_commit'],
-    provenanceLinkedAcademicContent:[],
-    untrustedContent:[],
-  } : null;
-  const preparation = caseSpec.familyId === 'TPF-20' ? {
+function defaultPreparationEnvelope(caseSpec) {
+  if (caseSpec.familyId !== 'TPF-20') return null;
+  return {
     workspace_ref:`d30:${caseSpec.id}`,
     workspace_version:'1',
     stage:caseSpec.stage === 'PRECLASS' ? 'Active' : 'Finalization Due',
@@ -82,7 +72,22 @@ function buildQualificationInvocation(promptControl, caseSpec) {
     route_posture:routePostureFor({ familyId:'TPF-20', stage:caseSpec.stage }),
     idempotency_key:`d30:${caseSpec.id}`,
     correlation_id:`d30:${caseSpec.id}`,
+  };
+}
+
+function buildQualificationInvocation(promptControl, caseSpec) {
+  const capability = getCapability(caseSpec.capabilityId);
+  const contextLanes = {
+    trustedAuthoritativeState:{ qualification_case_id:caseSpec.id, fixture_state_version:'1' },
+    permissionConstraints:{ evaluation_only:true, authoritative_commit:false },
+  };
+  const contextAllowlist = capability.authority_ceiling === 'T4' ? {
+    trustedAuthoritativeState:['qualification_case_id','fixture_state_version'],
+    permissionConstraints:['evaluation_only','authoritative_commit'],
+    provenanceLinkedAcademicContent:[],
+    untrustedContent:[],
   } : null;
+  const preparation = caseSpec.preparationOverride || defaultPreparationEnvelope(caseSpec);
   return promptControl.createInvocation({
     capabilityId:caseSpec.capabilityId,
     taskMode:`d30_empirical_${String(caseSpec.caseClass).replace(/[^a-z0-9_]+/gi,'_').toLowerCase()}`,
@@ -180,7 +185,7 @@ function createD30QualificationRunner({
     const defects = [...artifact.defects,...validation.defects,...semantic.defects];
     const record = normalizeRunRecord({
       sessionId, caseId:caseSpec.id, familyId:caseSpec.familyId, capabilityId:caseSpec.capabilityId,
-      routeKey, routeRole, routePosture:routePostureFor({familyId:caseSpec.familyId,stage:caseSpec.stage}),
+      routeKey, routeRole, routePosture:caseSpec.preparationOverride?.route_posture || routePostureFor({familyId:caseSpec.familyId,stage:caseSpec.stage}),
       modelId:result.modelId, provider:result.provider, centralTaskId:taskId,
       modelSettings:{requestedReasoning:result.requestedReasoning,resolvedReasoning:result.resolvedReasoning}, modelSettingsHash:sha256Json({requestedReasoning:result.requestedReasoning,resolvedReasoning:result.resolvedReasoning}),
       promptFamilyVersion:caseSpec.familyVersion,promptSha256:caseSpec.promptSha256,outputSchemaId:invocation.output_schema.id,outputSchemaVersion:invocation.output_schema.version,
@@ -222,6 +227,7 @@ module.exports = {
   SUBJECT_FIXTURES,
   buildAcademicFixture,
   qualificationOutputSchema,
+  defaultPreparationEnvelope,
   buildQualificationInvocation,
   parseCandidate,
   inferInvariantEvidence,
