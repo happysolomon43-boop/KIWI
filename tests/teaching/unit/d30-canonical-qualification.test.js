@@ -63,7 +63,7 @@ test('corpus spans adversarial, counterfactual, uncertainty, cross-subject, regr
   for (const item of ['negative','counterfactual','uncertainty','injection','authority_attack','source_conflict','cross_subject','metamorphic','regression']) assert.ok(classes.has(item), item);
   assert.equal(new Set(d30.HISTORICAL_FAMILY_CORPUS.map((item) => item.subject)).size, 10);
   const tpf20 = new Set(d30.TPF20_CORPUS.map((item) => item.caseClass));
-  for (const item of ['plan_actual_divergence','planned_card_change','final_card_change','unrelated_cards','conflicting_cards','newly_validated_cards','claim_provenance','card_coverage','partial_class','missed_class','correction','unsupported_bridge','protected_content','injection','stale_input','preclass_latency','reconciliation_latency','stability','academic_correctness','explanation_quality','accessibility','end_to_end_publication_gate']) assert.ok(tpf20.has(item), item);
+  for (const item of ['plan_actual_divergence','planned_card_change','final_card_change','relevant_cards','unrelated_cards','conflicting_cards','newly_validated_cards','claim_provenance','card_coverage','partial_class','missed_class','correction','unsupported_bridge','protected_content','injection','stale_input','preclass_latency','reconciliation_latency','stability','subject_knowledge_type_quality','academic_correctness','explanation_quality','accessibility','end_to_end_publication_gate']) assert.ok(tpf20.has(item), item);
   assert.deepEqual([...new Set(d30.TPF20_CORPUS.map((item) => item.stage))].sort(), ['END_TO_END','PRECLASS','RECONCILIATION']);
 });
 
@@ -129,7 +129,7 @@ test('semantic rubric is required and P0/P1 cannot be averaged away', () => {
   assert.equal(bad.pass, false);
 });
 
-test('route qualification is capability-specific, fail-closed, and C4 requires human academic review', () => {
+test('route qualification is capability-specific, fail-closed, and C4 requires case-bound human academic review', () => {
   const c = 'teaching.course.student_profile_interpretation';
   const passing = baseRun({capabilityId:c});
   const summary = d30.summarizeRouteQualification({routeKey:passing.routeKey,routeRole:'PRIMARY',familyId:'TPF-01',capabilityId:c,requiredCaseIds:[passing.caseId],records:[passing],minimumRepeats:1});
@@ -139,8 +139,22 @@ test('route qualification is capability-specific, fail-closed, and C4 requires h
   const c4 = baseRun({familyId:'TPF-02',capabilityId:'teaching.course.curriculum_structure_analysis',criticality:'C4',promptFamilyVersion:'1.0',promptSha256:d30.getFamilyDefinition('TPF-02').promptSha256});
   const blocked = d30.summarizeRouteQualification({routeKey:c4.routeKey,routeRole:'PRIMARY',familyId:'TPF-02',capabilityId:c4.capabilityId,requiredCaseIds:[c4.caseId],records:[c4],minimumRepeats:1});
   assert.equal(blocked.decision,'BLOCKED');
-  const human = [{familyId:'TPF-02',capabilityId:c4.capabilityId,routeKey:c4.routeKey,independent:true,reviewerKind:'HUMAN_ACADEMIC',decision:'PASS'}];
+  const human = [{caseId:c4.caseId,familyId:'TPF-02',capabilityId:c4.capabilityId,routeKey:c4.routeKey,independent:true,reviewerKind:'HUMAN_ACADEMIC',decision:'PASS'}];
   assert.equal(d30.summarizeRouteQualification({routeKey:c4.routeKey,routeRole:'PRIMARY',familyId:'TPF-02',capabilityId:c4.capabilityId,requiredCaseIds:[c4.caseId],records:[c4],humanReviews:human,minimumRepeats:1}).decision,'QUALIFIED');
+});
+
+test('C4 required human-review case coverage cannot be satisfied by one unrelated reviewed artifact', () => {
+  const family = d30.getFamilyDefinition('TPF-02');
+  const capabilityId = 'teaching.course.curriculum_structure_analysis';
+  const first = baseRun({familyId:'TPF-02',capabilityId,caseId:'D30-C4-REP',criticality:'C4',promptFamilyVersion:family.version,promptSha256:family.promptSha256});
+  const second = baseRun({familyId:'TPF-02',capabilityId,caseId:'D30-C4-EDGE',runId:'00000000-0000-4000-8000-000000000099',criticality:'C4',promptFamilyVersion:family.version,promptSha256:family.promptSha256});
+  const oneReview = [{caseId:first.caseId,familyId:'TPF-02',capabilityId,routeKey:first.routeKey,independent:true,reviewerKind:'HUMAN_ACADEMIC',decision:'PASS'}];
+  const blocked = d30.summarizeRouteQualification({routeKey:first.routeKey,routeRole:'PRIMARY',familyId:'TPF-02',capabilityId,requiredCaseIds:[first.caseId,second.caseId],requiredHumanReviewCaseIds:[first.caseId,second.caseId],records:[first,second],humanReviews:oneReview,minimumRepeats:1});
+  assert.equal(blocked.decision,'BLOCKED');
+  assert.deepEqual(blocked.humanReview.missingCaseIds,[second.caseId]);
+  const bothReviews = [...oneReview,{caseId:second.caseId,familyId:'TPF-02',capabilityId,routeKey:first.routeKey,independent:true,reviewerKind:'HUMAN_ACADEMIC',decision:'PASS'}];
+  const qualified = d30.summarizeRouteQualification({routeKey:first.routeKey,routeRole:'PRIMARY',familyId:'TPF-02',capabilityId,requiredCaseIds:[first.caseId,second.caseId],requiredHumanReviewCaseIds:[first.caseId,second.caseId],records:[first,second],humanReviews:bothReviews,minimumRepeats:1});
+  assert.equal(qualified.decision,'QUALIFIED');
 });
 
 test('fallback route cannot inherit evidence from a primary or another capability', () => {
@@ -155,6 +169,22 @@ test('stability gate requires repeated critical cases and rejects decision drift
   assert.equal(d30.evaluateStability(records,{repeatedCaseIds:['D30-TPF-01-001'],minimumRepeats:3}).pass,true);
   const drift = [...records.slice(0,2),d30.normalizeRunRecord(baseRun({attemptNo:3,runId:'00000000-0000-4000-8000-000000000003',validation:{pass:false}}))];
   assert.equal(d30.evaluateStability(drift,{repeatedCaseIds:['D30-TPF-01-001'],minimumRepeats:3}).pass,false);
+});
+
+test('cross-family qualification requires all workflow cases, deterministic compatibility evidence and C4 case review coverage', () => {
+  const base = {
+    sessionId:'00000000-0000-4000-8000-000000000001',
+    runId:'00000000-0000-4000-8000-000000000201',
+    caseId:'D30-XF-001',familyId:'CROSS_FAMILY',capabilityId:null,routeKey:'CROSS_FAMILY_WORKFLOW',routeRole:'STAGE',
+    modelId:'workflow-composite',provider:'central-kiwi',promptFamilyVersion:'v1',promptSha256:'0'.repeat(64),runKind:'CROSS_FAMILY',criticality:'C4',
+    attemptNo:1,validation:{pass:true},semanticReview:{pass:true},defects:[],outputArtifact:{handoffCompatible:true},
+  };
+  const record = d30.normalizeRunRecord(base);
+  const blocked = d30.summarizeCrossFamilyQualification({requiredCaseIds:[record.caseId],records:[record],requiredHumanReviewCaseIds:[record.caseId],minimumRepeats:1});
+  assert.equal(blocked.decision,'BLOCKED');
+  const human = [{caseId:record.caseId,familyId:'CROSS_FAMILY',routeKey:'CROSS_FAMILY_WORKFLOW',independent:true,reviewerKind:'HUMAN_ACADEMIC',decision:'PASS'}];
+  const qualified = d30.summarizeCrossFamilyQualification({requiredCaseIds:[record.caseId],records:[record],humanReviews:human,requiredHumanReviewCaseIds:[record.caseId],minimumRepeats:1});
+  assert.equal(qualified.decision,'QUALIFIED');
 });
 
 test('PPL empirical comparison is matched and gate-based rather than a fake scalar score', () => {
@@ -172,8 +202,13 @@ test('PPL empirical comparison is matched and gate-based rather than a fake scal
   assert.equal(d30.comparePplStrategies({matchedScenarioIds:ids,oneShotRecords:one,progressiveRecords:[progressive[0]]}).decision,'INSUFFICIENT_EVIDENCE');
 });
 
-test('production qualification report never pulls D31 authorization forward', () => {
-  const report=d30.buildProductionQualificationReport([{decision:'QUALIFIED',familyId:'TPF-01',capabilityId:'cap',routeKey:'p',routeRole:'PRIMARY'}],{decision:'PROGRESSIVE_QUALIFIED'});
+test('production qualification report requires route, PPL and cross-family evidence and never pulls D31 authorization forward', () => {
+  const routes=[{decision:'QUALIFIED',familyId:'TPF-01',capabilityId:'cap',routeKey:'p',routeRole:'PRIMARY'}];
+  const ppl={decision:'PROGRESSIVE_QUALIFIED'};
+  const missingCrossFamily=d30.buildProductionQualificationReport(routes,ppl);
+  assert.equal(missingCrossFamily.productionQualified,false);
+  assert.equal(missingCrossFamily.crossFamilyQualified,false);
+  const report=d30.buildProductionQualificationReport(routes,ppl,{crossFamilySummary:{decision:'QUALIFIED',familyId:'CROSS_FAMILY',routeKey:'CROSS_FAMILY_WORKFLOW',routeRole:'STAGE'}});
   assert.equal(report.productionQualified,true);
   assert.equal(report.productionAuthorized,false);
   assert.equal(report.authorizationGate,'D31');
