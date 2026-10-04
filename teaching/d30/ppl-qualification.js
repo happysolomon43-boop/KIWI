@@ -1,6 +1,6 @@
 'use strict';
 
-const { listCapabilities } = require('../capability-registry');
+const { getCapability, listCapabilities } = require('../capability-registry');
 const { EVALUATION_SUITE_VERSION, getFamilyDefinition } = require('./contracts');
 const { centralTaskFor, centrallyEligibleRouteKeys } = require('./route-policy');
 const { runKey } = require('./repository');
@@ -17,6 +17,11 @@ const PPL_SEMANTIC_DIMENSIONS = Object.freeze([
   'coherence',
   'anchoringResistance',
 ]);
+
+const PPL_CAPABILITY_BY_FAMILY = Object.freeze({
+  'TPF-05':'teaching.lesson.pre_class_lesson_planning',
+  'TPF-12':'teaching.assessment.assessment_blueprint_generation',
+});
 
 const PPL_SCENARIOS = Object.freeze([
   Object.freeze({
@@ -78,6 +83,16 @@ const PPL_SCENARIOS = Object.freeze([
 ]);
 
 function capabilityForFamily(familyId) {
+  const canonicalId=PPL_CAPABILITY_BY_FAMILY[familyId] || null;
+  if (canonicalId) {
+    const capability=getCapability(canonicalId);
+    if (capability.authority_ceiling === 'T0' || capability.prompt_family_id !== familyId) {
+      const error=new Error(`Canonical PPL capability binding drift for ${familyId}: ${canonicalId}.`);
+      error.code='TEACHING_D30_PPL_CAPABILITY_BINDING_DRIFT';
+      throw error;
+    }
+    return capability;
+  }
   const candidates = listCapabilities()
     .filter((item) => item.prompt_family_id === familyId && item.authority_ceiling !== 'T0')
     .sort((left,right) => left.id.localeCompare(right.id));
@@ -400,6 +415,7 @@ module.exports={
   PPL_COMPARISON_KEY,
   PPL_REPEAT_COUNT,
   PPL_SEMANTIC_DIMENSIONS,
+  PPL_CAPABILITY_BY_FAMILY,
   PPL_SCENARIOS,
   capabilityForFamily,
   candidatesForPosture,
