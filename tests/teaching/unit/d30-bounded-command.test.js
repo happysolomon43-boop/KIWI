@@ -15,16 +15,17 @@ function queueItem(runId,attemptNo=1){
     routeKey:'google::strong',
   });
 }
-function pass(item,reviewerRef='reviewer-1'){
+function review(item,decision='PASS',reviewerRef='reviewer-1'){
   return {
     ...item,
     reviewerRef,
     reviewerKind:'HUMAN_ACADEMIC',
     independent:true,
-    decision:'PASS',
-    rubric:{academicCorrectness:'PASS'},
+    decision,
+    rubric:{academicCorrectness:decision},
   };
 }
+function pass(item,reviewerRef='reviewer-1'){return review(item,'PASS',reviewerRef);}
 
 test('a PASS on attempt 1 cannot satisfy another queued replay of the same case',()=>{
   const first=queueItem('00000000-0000-4000-8000-000000000101',1);
@@ -39,6 +40,18 @@ test('a PASS on attempt 1 cannot satisfy another queued replay of the same case'
   assert.equal(complete.pendingQueue.length,0);
   assert.equal(complete.eligibleReviews.length,2);
   assert.equal(complete.completedGroups.length,1);
+});
+
+test('a human reviewer disagreement remains unresolved even when another reviewer passes the same run',()=>{
+  const item=queueItem('00000000-0000-4000-8000-000000000201',1);
+  const state=d30.scopeReviewsToCompletedRunGroups([item],[
+    pass(item,'reviewer-pass'),
+    review(item,'REVIEW_NEEDED','reviewer-disagree'),
+  ]);
+  assert.equal(state.passedRunIds.length,0);
+  assert.equal(state.pendingQueue.length,1);
+  assert.equal(state.eligibleReviews.length,0);
+  assert.equal(state.completedGroups.length,0);
 });
 
 test('bounded review recorder rejects a human decision for a run that is not currently queued',async()=>{
