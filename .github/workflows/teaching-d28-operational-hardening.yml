@@ -1,0 +1,27 @@
+name: Teaching D28 Operational Hardening
+
+on:
+  pull_request:
+    paths:
+      - 'teaching/**'
+      - 'migrations/**'
+      - 'scripts/verify-teaching-d28-operational-hardening.js'
+      - '.github/workflows/teaching-d28-operational-hardening.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'teaching/**'
+      - 'migrations/**'
+      - 'scripts/verify-teaching-d28-operational-hardening.js'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: node scripts/verify-teaching-d28-operational-hardening.js
