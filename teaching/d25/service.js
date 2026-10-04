@@ -105,6 +105,29 @@ function createD25ReliabilityService({
     return foundation.d17.service.submit(user, attemptId, { ...input, idempotencyKey:key });
   }
 
+  async function finalizeGradeResult(user, resultId, input = {}, gradebookService = null) {
+    if (!gradebookService || typeof gradebookService.transitionResult !== 'function' || typeof gradebookService.assessmentReview !== 'function') {
+      throw new TypeError('D25 grade-finalization recovery requires the accepted D20 Gradebook service.');
+    }
+    const target = String(input.to || '').toUpperCase();
+    if (target !== 'FINALIZED') return gradebookService.transitionResult(user, resultId, input);
+    const repository = foundation?.d20?.repository;
+    if (!repository || typeof repository.resultById !== 'function') throw new TypeError('D25 grade-finalization recovery requires the accepted D20 Gradebook repository.');
+    const studentId = String(user?.id || '');
+    if (!studentId) throw fail('Authenticated student is required.', 'TEACHING_D25_AUTH_REQUIRED', 401);
+    const key = requireIdempotencyKey(input.idempotencyKey || `d25-grade-finalize:${resultId}`, 'd25-grade-finalize');
+    const current = await repository.resultById(studentId, String(resultId));
+    if (!current) throw fail('Assessment Result not found.', 'TEACHING_D20_RESULT_NOT_FOUND', 404);
+    if (String(current.release_state) === 'FINALIZED') return gradebookService.assessmentReview(user, resultId);
+    try {
+      return await gradebookService.transitionResult(user, resultId, { ...input, to:'FINALIZED', idempotencyKey:key });
+    } catch (error) {
+      const after = await repository.resultById(studentId, String(resultId));
+      if (String(after?.release_state || '') === 'FINALIZED') return gradebookService.assessmentReview(user, resultId);
+      throw error;
+    }
+  }
+
   async function transferAssessmentDevice(user, attemptId, input = {}) {
     const deviceId = String(input.deviceId || '').trim();
     if (!deviceId) throw fail('New device ID is required.', 'TEACHING_D25_DEVICE_REQUIRED', 400);
@@ -173,10 +196,10 @@ function createD25ReliabilityService({
   }
 
   function status() {
-    return Object.freeze({ contractVersion:'d25.reliability.v1', serverNow:now().toISOString(), ownerPreserving:true, localDraftsAreNotAcademicTruth:true, centralAiOrchestratorOwnsModelRetryAndFallback:true, noStudentPenaltyForKiwiFailure:true, d26RecoveryCaseOwnershipClaimed:false });
+    return Object.freeze({ contractVersion:'d25.reliability.v1', serverNow:now().toISOString(), ownerPreserving:true, localDraftsAreNotAcademicTruth:true, centralAiOrchestratorOwnsModelRetryAndFallback:true, noStudentPenaltyForKiwiFailure:true, gradeFinalizationReplaySafe:true, d26RecoveryCaseOwnershipClaimed:false });
   }
 
-  return Object.freeze({ restoreClass, protectClassInterruption, resumeProtectedClass, recordStudentTechnicalIssue, assessmentStartReadiness, startAssessmentAttempt, saveAssessmentResponse, submitAssessmentAttempt, transferAssessmentDevice, assessmentRecovery, restoreAssignment, retryOwnerOperation, runTeacherOperationWithRecovery, status });
+  return Object.freeze({ restoreClass, protectClassInterruption, resumeProtectedClass, recordStudentTechnicalIssue, assessmentStartReadiness, startAssessmentAttempt, saveAssessmentResponse, submitAssessmentAttempt, finalizeGradeResult, transferAssessmentDevice, assessmentRecovery, restoreAssignment, retryOwnerOperation, runTeacherOperationWithRecovery, status });
 }
 
 module.exports = { createD25ReliabilityService };
