@@ -13,7 +13,7 @@ const {
   assertNoHiddenChainOfThought,
 } = require('./contracts');
 const { sanitizeOutputArtifact } = require('./evidence');
-const { requireIndependentHumanReview, seriousDefects } = require('./validators');
+const { seriousDefects } = require('./validators');
 
 function sha256Json(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value ?? {})).digest('hex');
@@ -95,6 +95,32 @@ function evaluateStability(records = [], { repeatedCaseIds = [], minimumRepeats 
   return Object.freeze({ pass:failures.length === 0, minimumRepeats, failures:Object.freeze(failures) });
 }
 
+function uniqueStrings(values = []) {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function humanReviewCoverage({ records = [], humanReviews = [], requiredCaseIds = [], consequential = false } = {}) {
+  const explicit = uniqueStrings(requiredCaseIds);
+  const inferred = explicit.length ? explicit : uniqueStrings(records
+    .filter((record) => String(record.criticality || '').toUpperCase() === 'C4' || consequential === true)
+    .map((record) => record.caseId));
+  if (!inferred.length) {
+    return Object.freeze({ required:false, satisfied:true, requiredCaseIds:Object.freeze([]), passedCaseIds:Object.freeze([]), missingCaseIds:Object.freeze([]) });
+  }
+  const passing = new Set(humanReviews
+    .filter((review) => review && review.independent === true && review.reviewerKind === 'HUMAN_ACADEMIC' && review.decision === 'PASS')
+    .map((review) => String(review.caseId || '')));
+  const passed = inferred.filter((caseId) => passing.has(caseId));
+  const missing = inferred.filter((caseId) => !passing.has(caseId));
+  return Object.freeze({
+    required:true,
+    satisfied:missing.length === 0,
+    requiredCaseIds:Object.freeze(inferred),
+    passedCaseIds:Object.freeze(passed),
+    missingCaseIds:Object.freeze(missing),
+  });
+}
+
 function summarizeRouteQualification({
   routeKey,
   routeRole,
@@ -103,6 +129,7 @@ function summarizeRouteQualification({
   requiredCaseIds = [],
   records = [],
   humanReviews = [],
+  requiredHumanReviewCaseIds = [],
   repeatedCaseIds = [],
   minimumRepeats = 3,
   consequential = false,
@@ -121,14 +148,18 @@ function summarizeRouteQualification({
   const blockingDefects = seriousDefects(defects);
   const semanticMissing = normalized.filter((record) => record.semanticReview?.pass !== true).map((record) => record.runId);
   const validationFailures = normalized.filter((record) => record.validation?.pass !== true).map((record) => record.runId);
-  const criticality = normalized.find((record) => record.criticality)?.criticality || 'C3';
   const applicableHumanReviews = humanReviews.filter((review) =>
     review &&
     (review.familyId == null || review.familyId === familyId) &&
     (review.routeKey == null || review.routeKey === routeKey) &&
     (capabilityId == null || review.capabilityId == null || review.capabilityId === capabilityId)
   );
-  const human = requireIndependentHumanReview({ criticality, consequential, humanReviews:applicableHumanReviews });
+  const human = humanReviewCoverage({
+    records:normalized,
+    humanReviews:applicableHumanReviews,
+    requiredCaseIds:requiredHumanReviewCaseIds,
+    consequential,
+  });
   const stability = evaluateStability(normalized, { repeatedCaseIds, minimumRepeats });
   const independentEvidence = role !== 'FALLBACK' || normalized.every((record) => record.routeRole === 'FALLBACK' && record.fallbackUsed !== true);
   const evidenceComplete = normalized.length > 0 && !missingCases.length && (capabilityId == null || normalized.every((record) => record.capabilityId === capabilityId));
@@ -166,6 +197,45 @@ function assertFallbackIndependent(primarySummary, fallbackSummary) {
   if (primarySummary?.familyId && primarySummary.familyId !== fallbackSummary.familyId) throw new Error('Primary/fallback comparison must remain within the same prompt family.');
   if ((primarySummary?.capabilityId || null) !== (fallbackSummary.capabilityId || null)) throw new Error('Fallback qualification cannot be borrowed from another capability.');
   return true;
+}
+
+function summarizeCrossFamilyQualification({
+  requiredCaseIds = [],
+  records = [],
+  humanReviews = [],
+  requiredHumanReviewCaseIds = [],
+  repeatedCaseIds = [],
+  minimumRepeats = 3,
+} = {}) {
+  const normalized = records.map(normalizeRunRecord).filter((record) => record.familyId === 'CROSS_FAMILY');
+  const covered = new Set(normalized.map((record) => record.caseId));
+  const missingCases = requiredCaseIds.filter((id) => !covered.has(id));
+  const blockingDefects = seriousDefects(normalized.flatMap((record) => record.defects || []));
+  const validationFailureRunIds = normalized.filter((record) => record.validation?.pass !== true).map((record) => record.runId);
+  const human = humanReviewCoverage({
+    records:normalized,
+    humanReviews:humanReviews.filter((review) => review?.familyId === 'CROSS_FAMILY'),
+    requiredCaseIds:requiredHumanReviewCaseIds,
+  });
+  const stability = evaluateStability(normalized, { repeatedCaseIds, minimumRepeats });
+  const evidenceComplete = normalized.length > 0 && missingCases.length === 0;
+  const qualified = evidenceComplete && blockingDefects.length === 0 && validationFailureRunIds.length === 0 && human.satisfied && stability.pass;
+  return Object.freeze({
+    familyId:'CROSS_FAMILY',
+    routeKey:'CROSS_FAMILY_WORKFLOW',
+    routeRole:'STAGE',
+    decision:qualified ? 'QUALIFIED' : normalized.length === 0 ? 'INSUFFICIENT_EVIDENCE' : 'BLOCKED',
+    specificationComplete:true,
+    productionQualified:qualified,
+    productionAuthorized:false,
+    authorizationGate:'D31',
+    evidenceCount:normalized.length,
+    missingCaseIds:Object.freeze(missingCases),
+    blockingDefects:Object.freeze(blockingDefects),
+    validationFailureRunIds:Object.freeze(validationFailureRunIds),
+    humanReview:human,
+    stability,
+  });
 }
 
 function sum(records, key) { return records.reduce((total, item) => total + Number(item[key] || 0), 0); }
@@ -217,21 +287,25 @@ function comparePplStrategies({ matchedScenarioIds = [], oneShotRecords = [], pr
   });
 }
 
-function buildProductionQualificationReport(routeSummaries = [], pplComparison = null) {
+function buildProductionQualificationReport(routeSummaries = [], pplComparison = null, { crossFamilySummary = null } = {}) {
   const invalid = routeSummaries.filter((summary) => !QUALIFICATION_DECISIONS.includes(summary.decision));
   if (invalid.length) throw new Error('Qualification report contains invalid decision status.');
+  if (crossFamilySummary && !QUALIFICATION_DECISIONS.includes(crossFamilySummary.decision)) throw new Error('Cross-family qualification summary has invalid decision status.');
   const unresolved = routeSummaries.filter((summary) => summary.decision !== 'QUALIFIED');
-  const pplQualified = pplComparison == null || pplComparison.decision === 'PROGRESSIVE_QUALIFIED';
+  const pplQualified = pplComparison != null && pplComparison.decision === 'PROGRESSIVE_QUALIFIED';
+  const crossFamilyQualified = crossFamilySummary != null && crossFamilySummary.decision === 'QUALIFIED';
   return Object.freeze({
     contractVersion:D30_CONTRACT_VERSION,
     evaluationSuiteVersion:EVALUATION_SUITE_VERSION,
     specificationComplete:true,
-    productionQualified:routeSummaries.length > 0 && unresolved.length === 0 && pplQualified,
+    productionQualified:routeSummaries.length > 0 && unresolved.length === 0 && pplQualified && crossFamilyQualified,
     productionAuthorized:false,
     authorizationGate:'D31',
     unresolvedRouteCount:unresolved.length,
     pplQualified,
+    crossFamilyQualified,
     routes:Object.freeze(routeSummaries),
+    crossFamilySummary,
     pplComparison,
     generatedAt:new Date().toISOString(),
   });
@@ -241,8 +315,10 @@ module.exports = {
   sha256Json,
   normalizeRunRecord,
   evaluateStability,
+  humanReviewCoverage,
   summarizeRouteQualification,
   assertFallbackIndependent,
+  summarizeCrossFamilyQualification,
   summarizePplArm,
   comparePplStrategies,
   buildProductionQualificationReport,
