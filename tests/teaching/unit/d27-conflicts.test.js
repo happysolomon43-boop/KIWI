@@ -5,7 +5,7 @@ const {D27_CONFLICT_POLICIES}=require('../../../teaching/d27/conflicts');
 const {createD27Service}=require('../../../teaching/d27/service');
 const {buildSourceInventory}=require('../../../teaching/d07/contracts');
 
-function minimalService({ownerAdapters={},sourceVersionReader=async()=>({exists:true,version:'2'}),featureFlags={}}={}){
+function minimalService({ownerAdapters={},sourceVersionReader=async()=>({exists:true,version:'2'}),writeGates={}}={}){
   const events=new Map();const audits=[];const refs=[{reference_id:'r1',student_id:'s',course_id:'co',class_id:'cl',learning_unit_id:'lu',subject_id:'sub',card_id:'missing-card',card_version:'v1',knowledge_type:'CONCEPTUAL',relevance_reason:'x'}];
   const subject={id:'sub',updated_at:'2026-10-01T00:00:00Z'};const corpus={subject,decks:[{id:'d',name:'Deck',updated_at:'2026-10-01T00:00:00Z'}],cards:[]};
   const primary=buildSourceInventory({corpus,supplementaryMaterials:[]}).items.map(x=>({source_ref:x.sourceRef,source_version_ref:x.sourceVersionRef,content_hash:x.contentHash}));
@@ -17,10 +17,9 @@ function minimalService({ownerAdapters={},sourceVersionReader=async()=>({exists:
     markEvent:async({eventId,status})=>{const row=events.get(eventId);row.status=status;return row;},
     recordAudit:async x=>(audits.push(x),x),
     listStudyReferences:async()=>refs,
-    ...{},
   };
   let n=0;
-  return {events,audits,service:createD27Service({repository,subjectReader:{getForUser:async()=>subject,getCorpusForUser:async()=>corpus},examInterface:{buildAssessmentShellHandoff:x=>x},notificationInterface:{send:async()=>({})},ownerAdapters,sourceVersionReader,featureFlags,randomUUID:()=>`e-${++n}`,clock:()=>new Date('2026-10-04T06:00:00Z')})};
+  return {events,audits,service:createD27Service({repository,subjectReader:{getForUser:async()=>subject,getCorpusForUser:async()=>corpus},examInterface:{buildAssessmentShellHandoff:x=>x},notificationInterface:{send:async()=>({})},ownerAdapters,sourceVersionReader,writeGates,randomUUID:()=>`e-${++n}`,clock:()=>new Date('2026-10-04T06:00:00Z')})};
 }
 
 test('strong Teaching evidence and weak FSRS signal remain separate truth domains',()=>{
@@ -42,7 +41,7 @@ test('deleted source card remains a missing reference and is not recreated by Te
 
 test('target owner rejection is audited and never fabricated as success',async()=>{
   const targetError=Object.assign(new Error('owner says no'),{code:'OWNER_REJECTED'});
-  const x=minimalService({featureFlags:{ksWrite:true},ownerAdapters:{knowledgeScore:{readState:async()=>({version:'k1'}),applyTeachingEvidence:async()=>{throw targetError;}}}});
+  const x=minimalService({writeGates:{ksWrite:true},ownerAdapters:{knowledgeScore:{readState:async()=>({version:'k1'}),applyTeachingEvidence:async()=>{throw targetError;}}}});
   const e=await x.service.publishEvent({id:'s'},{eventType:'learning_unit_verified',source:{owner:'D13_SKM',entityType:'StudentKnowledgeState',entityId:'ks',version:'2'},idempotencyKey:'reject',payload:{subjectId:'sub',evidenceType:'INDEPENDENT'}});
   await assert.rejects(()=>x.service.applyKnowledgeScore({id:'s'},e.event.event_id),err=>err.code==='OWNER_REJECTED');
   assert.equal(x.audits.at(-1).outcome,'OWNER_REJECTED');
