@@ -12,7 +12,9 @@ on:
       - 'teaching/d20/**'
       - 'services/ai/**'
       - 'migrations/20261004_teaching_d30_canonical_qualification.sql'
+      - 'migrations/20261004_teaching_d30_human_review_run_identity.sql'
       - 'scripts/verify-teaching-d30-canonical.js'
+      - 'scripts/run-teaching-d30-qualification.js'
       - 'tests/teaching/unit/d30-*.test.js'
       - 'package.json'
       - '.github/workflows/teaching-d30-canonical-qualification.yml'
@@ -25,18 +27,40 @@ on:
       - 'teaching/d20/**'
       - 'services/ai/**'
       - 'migrations/20261004_teaching_d30_canonical_qualification.sql'
+      - 'migrations/20261004_teaching_d30_human_review_run_identity.sql'
       - 'scripts/verify-teaching-d30-canonical.js'
+      - 'scripts/run-teaching-d30-qualification.js'
       - 'tests/teaching/unit/d30-*.test.js'
       - 'package.json'
       - '.github/workflows/teaching-d30-canonical-qualification.yml'
   workflow_dispatch:
+    inputs:
+      live_command:
+        description: 'Optional bounded empirical command. Leave none for verification-only.'
+        required: true
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - execute
+          - ppl
+      max_runs:
+        description: 'Maximum provider-backed runs in this manual batch (1-72).'
+        required: true
+        default: '12'
+        type: string
+      confirmation:
+        description: 'For a live empirical batch, type exactly D30_EMPIRICAL_QUALIFICATION.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: teaching-d30-${{ github.ref }}
-  cancel-in-progress: true
+  group: teaching-d30-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
 
 jobs:
   verify-d30:
@@ -81,5 +105,66 @@ jobs:
           const fs=require('node:fs');
           const source=fs.readFileSync('teaching/d30/runner.js','utf8')+fs.readFileSync('teaching/d30/semantic-reviewer.js','utf8');
           if(/process\.env\.(?:GROQ|GOOGLE|CLOUDFLARE)|fetch\(['"]https:\/\//i.test(source)) throw new Error('D30 CI must not call providers outside the central AI Orchestrator.');
-          console.log('D30 central-route boundary verified.');
+          if(String(process.env.D30_LIVE_QUALIFICATION||'').toLowerCase()==='true') throw new Error('Ordinary D30 verification must never enable live qualification.');
+          console.log('D30 central-route boundary verified; live empirical execution remains off.');
           NODE
+
+  manual-integration-qualification:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_command != 'none' }}
+    needs: verify-d30
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      D30_LIVE_QUALIFICATION: 'true'
+      D30_QUALIFICATION_ENVIRONMENT: 'INTEGRATION'
+      DATABASE_URL: ${{ secrets.D30_INTEGRATION_DATABASE_URL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_WORKERS_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_AI_API_TOKEN }}
+    steps:
+      - name: Validate explicit empirical-run authorization
+        shell: bash
+        env:
+          D30_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$D30_CONFIRMATION" = 'D30_EMPIRICAL_QUALIFICATION' || { echo 'Live D30 qualification requires the exact confirmation token.' >&2; exit 1; }
+          test -n "$DATABASE_URL" || { echo 'Missing GitHub secret D30_INTEGRATION_DATABASE_URL.' >&2; exit 1; }
+          if [ -z "${GEMINI_API_KEY:-}" ] && [ -z "${GROQ_API_KEY:-}" ] && [ -z "${CLOUDFLARE_WORKERS_AI_API_TOKEN:-}" ]; then
+            echo 'No central KIWI AI provider credential is configured for the integration qualification lane.' >&2
+            exit 1
+          fi
+      - name: Checkout exact qualification SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Execute bounded D30 empirical batch
+        shell: bash
+        env:
+          D30_COMMAND: ${{ inputs.live_command }}
+          D30_MAX_RUNS: ${{ inputs.max_runs }}
+          D30_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          npm run qualify:teaching:d30 -- "$D30_COMMAND" \
+            --source-sha "$GITHUB_SHA" \
+            --environment INTEGRATION \
+            --max-runs "$D30_MAX_RUNS" \
+            --confirm-live "$D30_CONFIRMATION" \
+            --out d30-qualification-result.json
+      - name: Retain bounded qualification summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d30-integration-${{ inputs.live_command }}-${{ github.run_id }}
+          path: d30-qualification-result.json
+          if-no-files-found: warn
+          retention-days: 30
