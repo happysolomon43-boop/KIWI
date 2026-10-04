@@ -6,6 +6,7 @@ module.exports = Object.freeze({
   ...require('./corpus'),
   ...require('./route-policy'),
   ...require('./validators'),
+  ...require('./evidence'),
   ...require('./governance'),
   ...require('./maintenance-context'),
   ...require('./qualification'),
