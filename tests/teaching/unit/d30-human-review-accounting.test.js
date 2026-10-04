@@ -73,6 +73,9 @@ test('automated semantic review is explicitly incapable of satisfying C4 human-r
     scopeDiscipline:1,
     uncertaintyCalibration:1,
     provenanceQuality:1,
+    coverage:1,
+    coherence:1,
+    anchoringResistance:1,
     defects:[],
     criterionFindings:['bounded'],
   });
