@@ -1,13 +1,12 @@
 'use strict';
 
-const { buildSourceInventory } = require('../d07/contracts');
+const { buildSourceInventory, digest } = require('../d07/contracts');
 const {
   D27_CONTRACT_VERSION,
   D27_KS_EVIDENCE_TYPES,
   D27_PROHIBITED_KS_SIGNALS,
   D27_INTEGRATION_CONTRACTS,
   buildD27EventEnvelope,
-  normalizeSourceRef,
 } = require('./contracts');
 const {
   normalizeKnowledgeType,
@@ -37,6 +36,15 @@ function rowSource(row) {
     entityId: String(row.source_entity_id),
     version: String(row.source_version),
   });
+}
+
+function primarySnapshotFingerprint(items = []) {
+  const normalized = (Array.isArray(items) ? items : []).map((item) => Object.freeze({
+    sourceRef:String(item.sourceRef ?? item.source_ref ?? ''),
+    sourceVersionRef:item.sourceVersionRef ?? item.source_version_ref ?? null,
+    contentHash:String(item.contentHash ?? item.content_hash ?? ''),
+  })).sort((a, b) => a.sourceRef.localeCompare(b.sourceRef) || a.contentHash.localeCompare(b.contentHash));
+  return digest(normalized);
 }
 
 function createD27Service({
@@ -83,23 +91,50 @@ function createD27Service({
   }
 
   async function subjectBoundary(user, courseId) {
-    const course = await repository.getCourseSubjectContext(String(user.id), text(courseId, 'courseId'));
+    const studentId = String(user.id);
+    const course = await repository.getCourseSubjectContext(studentId, text(courseId, 'courseId'));
     if (!course) fail('Teaching Course not found.', 'TEACHING_D27_COURSE_NOT_FOUND', 404);
-    const subject = await subjectReader.getForUser(String(user.id), course.subject_id);
+    const subject = await subjectReader.getForUser(studentId, course.subject_id);
     if (!subject) {
       return Object.freeze({
         courseId:course.course_id,subjectId:course.subject_id,state:'SUBJECT_MISSING_SNAPSHOT_PINNED',
         lifecycleState:course.lifecycle_state,subjectSnapshotRef:course.subject_snapshot_ref,
-        sourceVersionRef:course.source_version_ref,liveSubject:null,maySilentlyRebind:false,
+        sourceVersionRef:course.source_version_ref,liveSubject:null,liveVersion:null,pinnedPrimaryVersion:null,
+        maySilentlyRebind:false,
       });
     }
-    const corpus = await subjectReader.getCorpusForUser(String(user.id), course.subject_id);
-    const liveVersion = corpus ? buildSourceInventory({ corpus, supplementaryMaterials:[] }).snapshotDigest : null;
-    const changed = liveVersion != null && String(liveVersion) !== String(course.source_version_ref);
+    const corpus = await subjectReader.getCorpusForUser(studentId, course.subject_id);
+    if (!corpus) {
+      return Object.freeze({
+        courseId:course.course_id,subjectId:course.subject_id,state:'SUBJECT_CHANGED_SNAPSHOT_PINNED',
+        lifecycleState:course.lifecycle_state,subjectSnapshotRef:course.subject_snapshot_ref,
+        sourceVersionRef:course.source_version_ref,liveSubject:subject,liveVersion:null,pinnedPrimaryVersion:null,
+        conflictReason:'LIVE_SUBJECT_CORPUS_UNAVAILABLE',maySilentlyRebind:false,
+      });
+    }
+    let livePrimary;
+    try {
+      livePrimary = buildSourceInventory({ corpus, supplementaryMaterials:[] }).items;
+    } catch (error) {
+      return Object.freeze({
+        courseId:course.course_id,subjectId:course.subject_id,state:'SUBJECT_CHANGED_SNAPSHOT_PINNED',
+        lifecycleState:course.lifecycle_state,subjectSnapshotRef:course.subject_snapshot_ref,
+        sourceVersionRef:course.source_version_ref,liveSubject:subject,liveVersion:null,pinnedPrimaryVersion:null,
+        conflictReason:error?.code || 'LIVE_SUBJECT_CORPUS_INVALID',maySilentlyRebind:false,
+      });
+    }
+    if (typeof repository.getCoursePrimarySubjectSnapshot !== 'function') {
+      fail('D27 requires the pinned primary Subject snapshot reader.', 'TEACHING_D27_SUBJECT_SNAPSHOT_READER_UNAVAILABLE', 503);
+    }
+    const pinnedPrimary = await repository.getCoursePrimarySubjectSnapshot(studentId, course.course_id);
+    const liveVersion = primarySnapshotFingerprint(livePrimary);
+    const pinnedPrimaryVersion = primarySnapshotFingerprint(pinnedPrimary);
+    const changed = !pinnedPrimary.length || liveVersion !== pinnedPrimaryVersion;
     return Object.freeze({
       courseId:course.course_id,subjectId:course.subject_id,state:changed?'SUBJECT_CHANGED_SNAPSHOT_PINNED':'SUBJECT_CURRENT',
       lifecycleState:course.lifecycle_state,subjectSnapshotRef:course.subject_snapshot_ref,
-      sourceVersionRef:course.source_version_ref,liveVersion,liveSubject:subject,maySilentlyRebind:false,
+      sourceVersionRef:course.source_version_ref,liveVersion,pinnedPrimaryVersion,liveSubject:subject,
+      maySilentlyRebind:false,
     });
   }
 
@@ -386,4 +421,4 @@ function createD27Service({
   });
 }
 
-module.exports = { createD27Service };
+module.exports = { createD27Service, primarySnapshotFingerprint };
