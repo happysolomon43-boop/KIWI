@@ -61,8 +61,14 @@ test('PPL plan covers matched lesson and assessment scenarios with three repeate
   const plan=d30.buildPplQualificationPlan({orchestrator:fakeOrchestrator()});
   assert.equal(plan.scenarios.length,8);
   assert.equal(plan.repeatCount,3);
-  assert.equal(plan.scenarios.filter((item)=>item.familyId==='TPF-05').length,4);
-  assert.equal(plan.scenarios.filter((item)=>item.familyId==='TPF-12').length,4);
+  const lesson=plan.scenarios.filter((item)=>item.familyId==='TPF-05');
+  const assessment=plan.scenarios.filter((item)=>item.familyId==='TPF-12');
+  assert.equal(lesson.length,4);
+  assert.equal(assessment.length,4);
+  assert.equal(lesson.every((item)=>item.capabilityId==='teaching.lesson.pre_class_lesson_planning'),true);
+  assert.equal(assessment.every((item)=>item.capabilityId==='teaching.assessment.assessment_blueprint_generation'),true);
+  assert.equal(d30.PPL_CAPABILITY_BY_FAMILY['TPF-05'],'teaching.lesson.pre_class_lesson_planning');
+  assert.equal(d30.PPL_CAPABILITY_BY_FAMILY['TPF-12'],'teaching.assessment.assessment_blueprint_generation');
   assert.equal(d30.buildPplWorkItems(plan).length,72);
   assert.equal(plan.scenarios.every((item)=>item.earlyRoute.routeKey==='google::lite'),true);
   assert.equal(plan.scenarios.every((item)=>item.finalRoute.routeKey==='google::strong'),true);
