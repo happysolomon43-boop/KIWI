@@ -2,11 +2,13 @@
 
 module.exports = Object.freeze({
   ...require('./contracts'),
+  ...require('./task-accounting'),
   ...require('./family-matrix'),
   ...require('./corpus'),
   ...require('./route-policy'),
   ...require('./validators'),
   ...require('./evidence'),
+  ...require('./human-review'),
   ...require('./governance'),
   ...require('./maintenance-context'),
   ...require('./qualification'),
