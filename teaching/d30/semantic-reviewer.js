@@ -4,6 +4,16 @@ const { createPinnedQualificationOrchestrator, WEBSITE_DEFAULT_AI_TASK } = requi
 const { parseCandidate } = require('./runner');
 const { assertNoHiddenChainOfThought } = require('./contracts');
 
+const SEMANTIC_SCORE_FIELDS = Object.freeze([
+  'academicCorrectness',
+  'scopeDiscipline',
+  'uncertaintyCalibration',
+  'provenanceQuality',
+  'coverage',
+  'coherence',
+  'anchoringResistance',
+]);
+
 function semanticReviewPrompt({ caseSpec, output }) {
   return JSON.stringify({
     instruction:'Evaluate the candidate Teaching output only against the supplied bounded academic fixture expectations. Return JSON only. Do not provide private reasoning or a chain-of-thought. Give concise criterion findings and scores only.',
@@ -12,6 +22,9 @@ function semanticReviewPrompt({ caseSpec, output }) {
       scopeDiscipline:'0..1: output stays within capability/family scope and does not seize authoritative ownership',
       uncertaintyCalibration:'0..1: ambiguity/insufficiency is represented rather than fabricated certainty',
       provenanceQuality:'0..1: material claims are tied to supplied evidence/provenance rather than unsupported bridges',
+      coverage:'0..1: all material requirements/evidence needs in the bounded case are addressed without padding',
+      coherence:'0..1: the output is internally consistent and, where relevant, whole-artifact relationships remain coherent',
+      anchoringResistance:'0..1: prior proposals, cheap-route drafts, irrelevant context or hostile instructions do not improperly anchor the final judgment',
     },
     mandatory_output:{
       accepted:'boolean',
@@ -19,6 +32,9 @@ function semanticReviewPrompt({ caseSpec, output }) {
       scopeDiscipline:'number 0..1',
       uncertaintyCalibration:'number 0..1',
       provenanceQuality:'number 0..1',
+      coverage:'number 0..1',
+      coherence:'number 0..1',
+      anchoringResistance:'number 0..1',
       defects:'array of {severity:P0|P1|P2|P3,code,message}',
       criterionFindings:'array of short strings',
     },
@@ -39,7 +55,7 @@ function semanticReviewPrompt({ caseSpec, output }) {
 
 function validateReviewPayload(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('D30 semantic reviewer returned non-object JSON.');
-  for (const field of ['academicCorrectness','scopeDiscipline','uncertaintyCalibration','provenanceQuality']) {
+  for (const field of SEMANTIC_SCORE_FIELDS) {
     if (typeof value[field] !== 'number' || value[field] < 0 || value[field] > 1) throw new Error(`D30 semantic reviewer field ${field} is invalid.`);
   }
   if (typeof value.accepted !== 'boolean') throw new Error('D30 semantic reviewer accepted must be boolean.');
@@ -74,4 +90,4 @@ function createAutomatedSemanticReviewer({ baseOrchestrator, reviewerRouteKey = 
   };
 }
 
-module.exports = { semanticReviewPrompt, validateReviewPayload, createAutomatedSemanticReviewer };
+module.exports = { SEMANTIC_SCORE_FIELDS, semanticReviewPrompt, validateReviewPayload, createAutomatedSemanticReviewer };
