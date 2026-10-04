@@ -1,0 +1,1 @@
+D28 recovered runtime checkpoint established 2026-10-04. Core contracts, security, analytics, PPL governance, routes, cache/context/rollback controls are persisted in preceding commits. Remaining recovered files are being attached in subsequent commits.
