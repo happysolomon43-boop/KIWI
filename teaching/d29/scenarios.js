@@ -1,0 +1,61 @@
+'use strict';
+const { D29_TASK_IDS } = require('./contracts');
+const T='tests/teaching/unit/';
+const F=Object.freeze({intake:T+'d07-course-intake.test.js',plan:T+'d08-course-plan.test.js',schedule:T+'d09-scheduling.test.js',lifecycle:T+'d10-course-lifecycle-requests.test.js',lesson:T+'d11-lesson-controller.test.js',pedagogy:T+'d12-response-pedagogy.test.js',skm:T+'d13-skm.test.js',classroom:T+'d14-classroom.test.js',attendance:T+'d15-attendance.test.js',work:T+'d16-homework-integrity.test.js',assessment:T+'d17-assessment-domain.test.js',shell:T+'d18-assessment-shell.test.js',types:T+'d19-assessment-types.test.js',marks:T+'d20-marking-gradebook.test.js',appeal:T+'d20-appeal-recalculation.test.js',progression:T+'d21-progression-engine.test.js',progressionService:T+'d21-service.test.js',teacher:T+'d22-teacher-identity-contracts.test.js',ia:T+'d23-information-architecture.test.js',responsive:T+'d24-responsive-accessibility.test.js',reliability:T+'d25-reliability.test.js',chaos:T+'d25-chaos.test.js',recovery:T+'d26-service.test.js',study:T+'d27-contracts-study.test.js',conflicts:T+'d27-conflicts.test.js',security:T+'d28-security.test.js',ppl:T+'d05-orchestrator-runtime.test.js',runtime:T+'d02-runtime.test.js'});
+const s=(taskId,title,owner,assertion,invariants,extra={})=>Object.freeze({taskId,scenarioId:`D29-${taskId.slice(4)}`,title,anchors:Object.freeze([{file:F[owner],assertion}]),invariants:Object.freeze(invariants),authoritativeStateRequired:true,auditRequired:true,securityRequired:true,...extra});
+// Anchors intentionally execute predecessor owner tests: D29 observes truth; it
+// does not create a second implementation of academic policy.
+const SCENARIOS=Object.freeze([
+s('TCH-0069','realistic lifecycle dataset','lifecycle','canonical Course lifecycle',['INV-LIFECYCLE']),
+s('TCH-0629','major pedagogy reference courses','pedagogy','subject templates are explicitly default-only',['INV-PEDAGOGY']),
+s('TCH-0630','first entry through first Class Summary','intake','Course creation to an existing authenticated KIWI Subject',['INV-SUBJECT-OWNER']),
+s('TCH-0631','normal Class journey','lesson','instruction cycle is Teach',['INV-CONTROLLER']),
+s('TCH-0632','late Class journey','attendance','LATE',['INV-ATTENDANCE']),
+s('TCH-0633','in-Class help and hints','pedagogy','hints reduce evidence strength',['INV-ASSISTANCE']),
+s('TCH-0634','impromptu assessment journey','ia','never previews a hidden impromptu assessment',['INV-SURPRISE-HIDDEN']),
+s('TCH-0635','Homework extension marking correction','work','extension',['INV-WORK']),
+s('TCH-0636','Academic Break journey','lesson','Break resumes only',['INV-CONTROLLER']),
+s('TCH-0637','scheduled assessment journey','types','formal Scheduled Test',['INV-ASSESSMENT']),
+s('TCH-0638','network failure during Final','chaos','network loss does not invent attendance',['INV-NO-PENALTY']),
+s('TCH-0639','appeal recalculation journey','appeal','recalculates result and Gradebook',['INV-RECALCULATION']),
+s('TCH-0640','Pass with Remediation','progression','passing score with unresolved essential outcome requires Remediation',['INV-PROGRESSION']),
+s('TCH-0641','Resit journey','progression','RESIT_REQUIRED',['INV-RESIT']),
+s('TCH-0642','Recovery journey','recovery','Recovery Case requires source references',['INV-RECOVERY-REFERENCE']),
+s('TCH-0643','Repeat journey','progressionService','repeat creates a new linked attempt',['INV-REPEAT-LINEAGE']),
+s('TCH-0644','Incomplete Make-up and archival','progression','missing Gradebook result is Incomplete',['INV-INCOMPLETE-NOT-FAIL']),
+s('TCH-0645','multi-Course overload','schedule','eight-Course stress simulation surfaces infeasibility',['INV-NO-SILENT-DROP']),
+s('TCH-0646','timezone travel','schedule','timezone conversion is display-only',['INV-SERVER-TIME']),
+s('TCH-0647','KIWI outage no penalty','runtime','failure policy is non-punitive and fail-closed',['INV-NO-PENALTY']),
+s('TCH-0648','personality cannot alter marks','teacher','different personalities cannot change',['INV-STANDARDS']),
+s('TCH-0649','SKM cannot rewrite Gradebook','skm','rejects official Gradebook/progression mutation payloads',['INV-AUTHORITY']),
+s('TCH-0650','Gradebook history does not freeze SKM','skm','time beyond demonstrated retention horizon lowers certainty only',['INV-SEPARATION']),
+s('TCH-0651','surprise assessment secrecy','ia','never previews a hidden impromptu assessment',['INV-SURPRISE-HIDDEN']),
+s('TCH-0652','answer reveal invalidation','pedagogy','explicit answer exposure contaminates',['INV-INDEPENDENT-EVIDENCE']),
+s('TCH-0653','marker context minimization','marks','excludes attendance personality GPA',['INV-CONTEXT-MINIMIZATION']),
+s('TCH-0654','fixed category budget','marks','assessment frequency cannot inflate',['INV-CATEGORY-BUDGET']),
+s('TCH-0655','Topic scores not naively averaged','marks','Topic score stays provisional',['INV-TOPIC-SUFFICIENCY']),
+s('TCH-0656','Incomplete is not Fail','progression','Incomplete, never Fail',['INV-INCOMPLETE-NOT-FAIL']),
+s('TCH-0657','state-machine illegal transitions','lesson','exhaustively accepts exactly the legal next-state set',['INV-STATE-MACHINE']),
+s('TCH-0658','immutable audit histories','lifecycle','exactly one application per Request',['INV-AUDIT']),
+s('TCH-0659','Academic Separation Audit','conflicts','remain separate truth domains',['INV-SEPARATION']),
+s('TCH-0660','Assessment Integrity Audit','assessment','protected',['INV-ASSESSMENT-INTEGRITY']),
+s('TCH-0661','Grading Audit','marks','material marker disagreement escalates',['INV-GRADING']),
+s('TCH-0662','Scheduling Audit','schedule','hard/soft schedule input',['INV-SCHEDULER']),
+s('TCH-0663','Attendance Audit','attendance','attendance',['INV-ATTENDANCE']),
+s('TCH-0664','Teacher Behavior Audit','teacher','cannot mutate Teacher Identity or standards',['INV-TEACHER']),
+s('TCH-0665','Classroom Audit','classroom','Classroom',['INV-CLASSROOM']),
+s('TCH-0666','GUI Information Architecture Audit','responsive','keyboard operable',['INV-ACCESSIBILITY']),
+s('TCH-0667','Reliability Audit','reliability','idempotency key',['INV-REPLAY']),
+s('TCH-0668','Hidden-System Audit','lesson','private Teacher Note',['INV-HIDDEN-SYSTEM']),
+s('TCH-0669','Cross-KIWI Boundary Audit','conflicts','target owner rejection is audited',['INV-CROSS-KIWI']),
+s('TCH-0679','production readiness thresholds','reliability','server-owned',['INV-READINESS-METRICS'],{securityRequired:false}),
+s('TCH-0737','coverage VPK eligibility traceability','plan','end-of-Course Coverage accepts only',['INV-COVERAGE','INV-VPK','INV-ELIGIBILITY']),
+s('TCH-0765','prohibited cross-owner mutations','security','privileged academic mutations require trusted backend execution',['INV-AUTHORITY']),
+s('TCH-0766','invalid AI output fails closed','ppl','PPL finalization is fail-closed',['INV-AI-FAIL-CLOSED']),
+s('TCH-0787','event races and recovery','reliability','replay returns D20 authoritative final state',['INV-CAS','INV-REPLAY']),
+s('TCH-0901','PPL property race security suite','ppl','PPL protected-content isolation blocks',['INV-PPL','INV-PROTECTED-CONTENT']),
+s('TCH-0917','1/2/4/8 Course and recovery simulation','schedule','four Courses while respecting',['INV-SCHEDULING-LOAD','INV-RECOVERY']),
+s('TCH-0918','Class to PPL Study review loop','study','validated candidates require independent validation',['INV-STUDY-OWNERSHIP','INV-STALE-PUBLICATION']),
+]);
+if(SCENARIOS.length!==D29_TASK_IDS.length||SCENARIOS.some((x,i)=>x.taskId!==D29_TASK_IDS[i]))throw new Error('D29 scenario catalogue must preserve exact frozen task order.');
+module.exports={OWNER_TESTS:F,SCENARIOS};

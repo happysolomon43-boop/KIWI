@@ -1,0 +1,13 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {PRODUCTION_PROJECT_REF,assertNonProductionDatabase,integrationConfig,createIntegrationPool}=require('./test-db');
+const {connectionString:url,projectRef:ref,skipReason:skip}=integrationConfig('D29');
+const tables=['d29_qa_runs','d29_qa_evidence','d29_qa_defects'];
+
+test('D29 integration guard refuses production',()=>{assert.throws(()=>assertNonProductionDatabase({connectionString:'postgresql://x@localhost/x',projectRef:PRODUCTION_PROJECT_REF}),/production/);});
+
+test('D29 evidence tables are forced-RLS and unavailable to browser roles',{skip},async()=>{const pool=createIntegrationPool(url);try{const {rows}=await pool.query("select c.relname,c.relrowsecurity,c.relforcerowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='teaching_runtime' and c.relname=any($1::text[]) and c.relkind='r' order by c.relname",[tables]);assert.equal(rows.length,3);for(const row of rows){assert.equal(row.relrowsecurity,true,row.relname);assert.equal(row.relforcerowsecurity,true,row.relname)}const grants=await pool.query("select table_name,grantee,privilege_type from information_schema.role_table_grants where table_schema='teaching_runtime' and table_name=any($1::text[]) and grantee=any(array['anon','authenticated'])",[tables]);assert.deepEqual(grants.rows,[]);}finally{await pool.end();}});
+
+test('D29 evidence persistence cannot become academic truth',{skip},async()=>{const pool=createIntegrationPool(url);try{const columns=await pool.query("select table_name,column_name from information_schema.columns where table_schema='teaching_runtime' and table_name=any($1::text[]) order by table_name,ordinal_position",[tables]);const forbidden=['grade','mark','score','mastery','attendance_state','course_state','progression_outcome'];for(const row of columns.rows)assert(!forbidden.includes(row.column_name),`${row.table_name}.${row.column_name}`);const comment=await pool.query("select obj_description('teaching_runtime.d29_qa_evidence'::regclass) value");assert.match(comment.rows[0].value,/never an academic source of truth/i);}finally{await pool.end();}});
+
+test('D29 evidence and defect replay keys are unique within a run',{skip},async()=>{const pool=createIntegrationPool(url);try{const {rows}=await pool.query("select indexdef from pg_indexes where schemaname='teaching_runtime' and tablename=any($1::text[])",[tables]);const sql=rows.map(x=>x.indexdef).join('\n');assert.match(sql,/UNIQUE.*run_id, scenario_id/i);assert.match(sql,/UNIQUE.*run_id, defect_key/i);}finally{await pool.end();}});
