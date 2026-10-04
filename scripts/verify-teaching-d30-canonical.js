@@ -134,7 +134,8 @@ function main() {
   const cliSource=read('scripts/run-teaching-d30-qualification.js');
   invariant(/createAIRuntime/.test(cliSource), 'D30 CLI does not initialize the real central AI runtime');
   invariant(/createAutomatedSemanticReviewer/.test(cliSource), 'D30 CLI does not bind the semantic reviewer');
-  invariant(/D30_EMPIRICAL_QUALIFICATION/.test(cliSource), 'D30 CLI live-provider confirmation gate is missing');
+  invariant(/D30_LIVE_QUALIFICATION/.test(cliSource) && /LIVE_ENVIRONMENTS/.test(cliSource), 'D30 CLI live-provider execution guard is missing');
+  invariant(!/D30_EMPIRICAL_QUALIFICATION/.test(cliSource), 'noncanonical literal confirmation phrase must not gate D30 completion');
 
   const d30Sources = fs.readdirSync(path.join(root, 'teaching', 'd30'))
     .filter((name) => name.endsWith('.js'))
