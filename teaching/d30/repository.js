@@ -31,9 +31,10 @@ function mapCaseResult(row = {}) {
 }
 function mapHumanReview(row = {}) {
   return Object.freeze({
-    id:String(row.id), sessionId:String(row.session_id), caseId:String(row.case_id || ''), familyId:String(row.family_id),
-    capabilityId:row.capability_id ? String(row.capability_id) : null, routeKey:String(row.route_key), reviewerRef:String(row.reviewer_ref),
-    reviewerKind:String(row.reviewer_kind), independent:Boolean(row.independent), decision:String(row.decision), rubric:parseJson(row.rubric,{}),
+    id:String(row.id), sessionId:String(row.session_id), runId:String(row.run_id), attemptNo:Number(row.attempt_no),
+    caseId:String(row.case_id || ''), familyId:String(row.family_id), capabilityId:row.capability_id ? String(row.capability_id) : null,
+    routeKey:String(row.route_key), reviewerRef:String(row.reviewer_ref), reviewerKind:String(row.reviewer_kind),
+    independent:Boolean(row.independent), decision:String(row.decision), rubric:parseJson(row.rubric,{}),
     createdAt:row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
   });
 }
@@ -43,8 +44,8 @@ function createD30Repository({ query, randomUUID = crypto.randomUUID } = {}) {
   return Object.freeze({
     async assertReady() {
       await query('select 1 from teaching_runtime.d30_qualification_sessions limit 0');
+      await query('select run_id,attempt_no from teaching_runtime.d30_human_reviews limit 0');
       await query('select 1 from teaching_runtime.d30_case_results limit 0');
-      await query('select 1 from teaching_runtime.d30_human_reviews limit 0');
       return true;
     },
     async beginSession({ sessionId = randomUUID(), sourceSha, environment = 'INTEGRATION', metadata = {} } = {}) {
@@ -125,14 +126,16 @@ function createD30Repository({ query, randomUUID = crypto.randomUUID } = {}) {
        record.attemptNo,json(record.validation),record.semanticReview==null?null:json(record.semanticReview),outputArtifact==null?null:json(outputArtifact),record.latencyMs,record.inputTokens,
        record.outputTokens,record.estimatedCostUsd,record.retryCount,record.timedOut,record.fallbackUsed,json(record.defects),json(record.executionMetadata),record.createdAt]);
     },
-    async recordHumanReview({ id = randomUUID(), sessionId, caseId = '', familyId, capabilityId = '', routeKey, reviewerRef, decision, rubric = {}, independent = true } = {}) {
+    async recordHumanReview({ id = randomUUID(), sessionId, runId, attemptNo, caseId = '', familyId, capabilityId = '', routeKey, reviewerRef, decision, rubric = {}, independent = true } = {}) {
+      if (!String(runId || '').trim()) throw new Error('D30 human review requires the exact empirical runId.');
+      if (!Number.isInteger(Number(attemptNo)) || Number(attemptNo) < 1) throw new Error('D30 human review requires a positive attemptNo.');
       if (!['PASS','FAIL','REVIEW_NEEDED'].includes(decision)) throw new Error('Invalid D30 human review decision.');
       if (!String(reviewerRef || '').trim()) throw new Error('Human academic review requires a non-empty reviewer reference.');
       assertNoHiddenChainOfThought(rubric);
       await query(`insert into teaching_runtime.d30_human_reviews
-        (id,session_id,case_id,family_id,capability_id,route_key,reviewer_ref,reviewer_kind,independent,decision,rubric)
-        values ($1,$2,$3,$4,$5,$6,$7,'HUMAN_ACADEMIC',$8,$9,$10::jsonb)`,
-      [id,sessionId,key(caseId),familyId,key(capabilityId),routeKey,String(reviewerRef),independent===true,decision,json(rubric)]);
+        (id,session_id,run_id,attempt_no,case_id,family_id,capability_id,route_key,reviewer_ref,reviewer_kind,independent,decision,rubric)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'HUMAN_ACADEMIC',$10,$11,$12::jsonb)`,
+      [id,sessionId,String(runId),Number(attemptNo),key(caseId),familyId,key(capabilityId),routeKey,String(reviewerRef),independent===true,decision,json(rubric)]);
       return id;
     },
     async recordDefect({ id = randomUUID(), sessionId, caseId = '', familyId = '', capabilityId = '', routeKey = '', severity, code, rootCause = null, description, regressionAnchorId = null, resolved = false, evidence = {} } = {}) {
