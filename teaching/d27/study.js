@@ -41,6 +41,24 @@ function cardVersion(card) {
   return raw instanceof Date ? raw.toISOString() : requiredText(raw, 'card version');
 }
 
+function studyContentHash(frontContent, backContent) {
+  const front = requiredText(frontContent, 'frontContent');
+  const back = requiredText(backContent, 'backContent');
+  return crypto.createHash('sha256').update(`${front.trim()}\n---\n${back.trim()}`).digest('hex');
+}
+
+function findEquivalentCard(cards, frontContent, backContent) {
+  const wanted = studyContentHash(frontContent, backContent);
+  const match = (Array.isArray(cards) ? cards : []).find((card) => {
+    if (!card || card.archived === true) return false;
+    const front = card.front_content || card.front;
+    const back = card.back_content || card.back;
+    if (!front || !back) return false;
+    return studyContentHash(front, back) === wanted;
+  });
+  return match || null;
+}
+
 function selectExistingCardReferences({ cards, knowledgeType, learningUnitTitle, intendedCompetence, limit = 5 }) {
   const type = normalizeKnowledgeType(knowledgeType);
   if (FRESH_PRACTICE_KNOWLEDGE_TYPES.includes(type)) {
@@ -107,7 +125,7 @@ function buildValidatedCardCandidate(input) {
   }
   const frontContent = requiredText(input.frontContent, 'frontContent');
   const backContent = requiredText(input.backContent, 'backContent');
-  const contentHash = crypto.createHash('sha256').update(`${frontContent.trim()}\n---\n${backContent.trim()}`).digest('hex');
+  const contentHash = studyContentHash(frontContent, backContent);
   return Object.freeze({
     candidateId: requiredText(input.candidateId, 'candidateId'),
     studentId: requiredText(input.studentId, 'studentId'),
@@ -132,6 +150,8 @@ module.exports = {
   CARD_NATIVE_KNOWLEDGE_TYPES,
   FRESH_PRACTICE_KNOWLEDGE_TYPES,
   normalizeKnowledgeType,
+  studyContentHash,
+  findEquivalentCard,
   selectExistingCardReferences,
   buildValidatedCardCandidate,
 };
