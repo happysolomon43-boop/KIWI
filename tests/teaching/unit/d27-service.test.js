@@ -31,7 +31,7 @@ function harness(overrides={}){
   };
   const subjectReader={getForUser:async()=>subject,getCorpusForUser:async()=>corpus,...overrides.subjectReader};
   let id=0;
-  const service=createD27Service({repository,subjectReader,examInterface:{buildAssessmentShellHandoff:input=>({contractVersion:'d18.v1',targetAppPath:'/assessment-shell.html',...input})},notificationInterface:{send:async()=>({id:'n'})},ownerAdapters:overrides.ownerAdapters||{},sourceVersionReader:overrides.sourceVersionReader||null,integrationEventPublisher:overrides.integrationEventPublisher||null,featureFlags:overrides.featureFlags||{},randomUUID:()=>`id-${++id}`,clock:()=>new Date('2026-10-04T05:00:00Z')});
+  const service=createD27Service({repository,subjectReader,examInterface:{buildAssessmentShellHandoff:input=>({contractVersion:'d18.v1',targetAppPath:'/assessment-shell.html',...input})},notificationInterface:{send:async()=>({id:'n'})},ownerAdapters:overrides.ownerAdapters||{},sourceVersionReader:overrides.sourceVersionReader||null,integrationEventPublisher:overrides.integrationEventPublisher||null,writeGates:overrides.writeGates||{},randomUUID:()=>`id-${++id}`,clock:()=>new Date('2026-10-04T05:00:00Z')});
   return {service,repository,audits,refs,candidates,events,corpus};
 }
 
@@ -73,7 +73,7 @@ test('high-level integration event is durable and duplicate idempotency is safe'
   assert.equal(first.inserted,true);assert.equal(second.inserted,false);assert.equal(x.events.size,1);
 });
 
-test('KS write is feature-gated and audited with no owner mutation when disabled',async()=>{
+test('KS write is gated and audited with no owner mutation when disabled',async()=>{
   const x=harness();
   const published=await x.service.publishEvent({id:'student-1'},{eventType:'learning_unit_verified',source:{owner:'D13_SKM',entityType:'StudentKnowledgeState',entityId:'ks1',version:'2'},idempotencyKey:'ks-off',payload:{subjectId:'subject-1',evidenceType:'DELAYED_INDEPENDENT'}});
   await assert.rejects(()=>x.service.applyKnowledgeScore({id:'student-1'},published.event.event_id),e=>e.code==='TEACHING_D27_KS_WRITE_DISABLED');
@@ -82,7 +82,7 @@ test('KS write is feature-gated and audited with no owner mutation when disabled
 
 test('consequential KS write rejects stale source before target owner call',async()=>{
   let targetCalled=false;
-  const x=harness({featureFlags:{ksWrite:true},sourceVersionReader:async()=>({exists:true,version:'9'}),ownerAdapters:{knowledgeScore:{readState:async()=>({version:'1'}),applyTeachingEvidence:async()=>{targetCalled=true;}}}});
+  const x=harness({writeGates:{ksWrite:true},sourceVersionReader:async()=>({exists:true,version:'9'}),ownerAdapters:{knowledgeScore:{readState:async()=>({version:'1'}),applyTeachingEvidence:async()=>{targetCalled=true;}}}});
   const published=await x.service.publishEvent({id:'student-1'},{eventType:'learning_unit_verified',source:{owner:'D13_SKM',entityType:'StudentKnowledgeState',entityId:'ks1',version:'2'},idempotencyKey:'ks-stale',payload:{subjectId:'subject-1',evidenceType:'DELAYED_INDEPENDENT'}});
   await assert.rejects(()=>x.service.applyKnowledgeScore({id:'student-1'},published.event.event_id),e=>e.code==='TEACHING_D27_SOURCE_VERSION_STALE');
   assert.equal(targetCalled,false);
