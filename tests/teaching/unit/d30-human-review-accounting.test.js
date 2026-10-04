@@ -39,16 +39,20 @@ test('C4 and consequential evidence is selected for independent human academic r
   assert.equal(queue.length, 1);
   assert.equal(queue[0].criticality, 'C4');
   assert.equal(queue[0].routeKey, 'groq::candidate');
+  assert.equal(queue[0].runId, '00000000-0000-4000-8000-000000000101');
+  assert.equal(queue[0].attemptNo, 1);
   assert.equal(queue[0].artifact.output.status, 'REVIEW_NEEDED');
   assert.match(queue[0].rubric.independence, /automated semantic reviewer cannot satisfy/i);
   assert.equal(d30.requiresHumanAcademicReview({criticality:'C3',consequential:true}), true);
   assert.equal(d30.requiresHumanAcademicReview({criticality:'C3',consequential:false}), false);
 });
 
-test('human review submissions are identity-bound, independent, and cannot contain hidden reasoning', () => {
+test('human review submissions are exact-run bound, independent, and cannot contain hidden reasoning', () => {
   const item = d30.buildHumanReviewQueue([c4Record()])[0];
   const valid = {
     sessionId:item.sessionId,
+    runId:item.runId,
+    attemptNo:item.attemptNo,
     caseId:item.caseId,
     familyId:item.familyId,
     capabilityId:item.capabilityId,
@@ -60,7 +64,12 @@ test('human review submissions are identity-bound, independent, and cannot conta
     rubric:{academicCorrectness:'PASS',authorityDiscipline:'PASS',uncertaintyCalibration:'PASS',provenance:'PASS'},
   };
   assert.equal(d30.validateHumanReviewSubmission(valid,item).valid,true);
-  assert.equal(d30.normalizeHumanReviewSubmission(valid,item).decision,'PASS');
+  const normalized=d30.normalizeHumanReviewSubmission(valid,item);
+  assert.equal(normalized.decision,'PASS');
+  assert.equal(normalized.runId,item.runId);
+  assert.equal(normalized.attemptNo,item.attemptNo);
+  assert.equal(d30.validateHumanReviewSubmission({...valid,runId:'00000000-0000-4000-8000-000000000999'},item).valid,false);
+  assert.equal(d30.validateHumanReviewSubmission({...valid,attemptNo:2},item).valid,false);
   assert.equal(d30.validateHumanReviewSubmission({...valid,independent:false},item).valid,false);
   assert.equal(d30.validateHumanReviewSubmission({...valid,reviewerKind:'AUTOMATED_SEMANTIC_RUBRIC'},item).valid,false);
   assert.throws(()=>d30.validateHumanReviewSubmission({...valid,rubric:{chain_of_thought:'secret'}},item),/hidden|chain-of-thought/i);
