@@ -1,10 +1,7 @@
 'use strict';
-
-function mountD28Routes(app, { service, requireTeachingUser, sendError } = {}) {
-  if (!app || !service) return;
-  const auth = typeof requireTeachingUser === 'function' ? requireTeachingUser : (_req,_res,next)=>next();
-  const fail = typeof sendError === 'function' ? sendError : (res,error)=>res.status(error?.statusCode||500).json({ok:false,error:error?.code||'TEACHING_D28_FAILED'});
-  app.get('/api/teaching/d28/status', auth, async (req,res)=>{ try { res.json(await service.status(req.user)); } catch(error){ fail(res,error); } });
-  app.get('/api/teaching/d28/operations', auth, async (req,res)=>{ try { res.json(await service.operationsSnapshot(req.user)); } catch(error){ fail(res,error); } });
+function mountD28Routes(router,{service,sendError}={}){if(!router||!service)return null;
+ router.get('/operations/d28/audit-dashboard',async(req,res)=>{try{res.json(await service.auditDashboard(req.user,{limit:req.query.limit}));}catch(error){sendError(res,error,'D28 operational audit dashboard is unavailable.');}});
+ router.get('/operations/d28/status',async(req,res)=>{try{await service.auditDashboard(req.user,{limit:1});res.json(service.status());}catch(error){sendError(res,error,'D28 operational status is unavailable.');}});
+ return Object.freeze({readOnly:true,academicMutationRoutes:0});
 }
 module.exports={mountD28Routes};

@@ -1,17 +1,3 @@
 'use strict';
-
-const { text, freeze } = require('./contracts');
-
-const ACADEMIC_HISTORY_CLASSES = Object.freeze(new Set(['GRADEBOOK','EVIDENCE','AUDIT','ASSESSMENT_ATTEMPT','ASSESSMENT_RESULT','ATTENDANCE','PROGRESSION']));
-
-function rollbackDisposition({ artifactClass, studentFacing=true, academicEvidenceExists=false, requestedAction='SUPPRESS' }={}){
-  const cls=text(artifactClass,'artifactClass',100).toUpperCase();
-  const action=text(requestedAction,'requestedAction',100).toUpperCase();
-  if (academicEvidenceExists || ACADEMIC_HISTORY_CLASSES.has(cls)) {
-    return freeze({ allowed: action === 'SUPPRESS', action:'SUPPRESS', physicalDeleteAllowed:false, academicHistoryPreserved:true, studentFacingSuppressed:Boolean(studentFacing), reason:'ACADEMIC_HISTORY_MUST_BE_PRESERVED' });
-  }
-  if (action === 'DELETE') return freeze({ allowed:true, action:'DELETE', physicalDeleteAllowed:true, academicHistoryPreserved:true, studentFacingSuppressed:true, reason:'NON_ACADEMIC_EPHEMERAL_ARTIFACT' });
-  return freeze({ allowed:true, action:'SUPPRESS', physicalDeleteAllowed:false, academicHistoryPreserved:true, studentFacingSuppressed:Boolean(studentFacing), reason:'SAFE_REVERSIBLE_ROLLBACK' });
-}
-
-module.exports={ACADEMIC_HISTORY_CLASSES,rollbackDisposition};
+function rollbackPlan({kind,currentVersion,targetVersion,hasCommittedAcademicConsequences=false,ownerCorrectionWorkflow=null}={}){const k=String(kind||'').toUpperCase();if(!['CONFIGURATION','DEPLOYMENT','PROMPT','MODEL','POLICY','TARGET_OWNER_WRITE_GATE'].includes(k))throw Object.assign(new Error('Unsupported D28 rollback kind.'),{code:'TEACHING_D28_ROLLBACK_KIND_INVALID'});const academic=Boolean(hasCommittedAcademicConsequences);return Object.freeze({kind:k,currentVersion:currentVersion==null?null:String(currentVersion),targetVersion:targetVersion==null?null:String(targetVersion),operationalAction:k==='DEPLOYMENT'?'ROLL_BACK_DEPLOYMENT':k==='TARGET_OWNER_WRITE_GATE'?'DISABLE_WRITE_GATE':'RESTORE_APPROVED_VERSION_BINDING',academicHistoryAction:academic?'PRESERVE_AND_FORWARD_REPAIR_THROUGH_OWNER':'NO_ACADEMIC_REPAIR_REQUIRED',ownerCorrectionWorkflow:academic?(ownerCorrectionWorkflow||'AUTHORITATIVE_OWNER_REVIEW_REQUIRED'):null,mayDeleteHistoricalAcademicEvidence:false,requiresCurrentOwnerStateRevalidation:academic,auditable:true});}
+module.exports={rollbackPlan};

@@ -1,17 +1,8 @@
 'use strict';
-const { text, integer, freeze } = require('./contracts');
-
-const CACHEABLE_POSTURES = Object.freeze(new Set(['T0_DETERMINISTIC','T1_READ_ONLY','T1_ADVISORY']));
-const FORBIDDEN_CACHE_CLASSES = Object.freeze(new Set(['FORMAL_ASSESSMENT_RESPONSE','GRADE_MUTATION','ATTENDANCE_MUTATION','PROGRESSION_MUTATION','PPL_MATURITY_DECISION','PROTECTED_ASSESSMENT_CONTENT']));
-
-function cacheDecision({authorityLevel, executionClass, artifactClass='GENERAL', ttlSeconds=0, containsProtectedContent=false, stateVersionRef=null}={}){
-  const authority=text(authorityLevel,'authorityLevel',20).toUpperCase();
-  const exec=text(executionClass,'executionClass',100).toUpperCase();
-  const cls=text(artifactClass,'artifactClass',100).toUpperCase();
-  const ttl=integer(ttlSeconds,'ttlSeconds',{min:0,max:3600});
-  const posture=`${authority}_${exec}`;
-  const blocked=containsProtectedContent || FORBIDDEN_CACHE_CLASSES.has(cls) || !CACHEABLE_POSTURES.has(posture) || ttl===0;
-  return freeze({ cacheable:!blocked, ttlSeconds:blocked?0:ttl, stateVersionRef:stateVersionRef==null?null:String(stateVersionRef), protectedContentCached:false, academicMutationCached:false, reason:blocked?'CACHE_FORBIDDEN_OR_DISABLED':'SAFE_SHORT_LIVED_CACHE' });
-}
-
-module.exports={CACHEABLE_POSTURES,FORBIDDEN_CACHE_CLASSES,cacheDecision};
+const {stableHash,SAFE_CACHE_CLASSES}=require('./contracts');
+function createSafeResponseCache({maxEntries=200,ttlMs=5*60*1000,clock=()=>Date.now()}={}){const map=new Map();function keyOf(binding={}){if(binding.cacheClass!==SAFE_CACHE_CLASSES.REFERENCE)throw Object.assign(new Error('Only SAFE_REFERENCE_ONLY D28 responses are cacheable.'),{code:'TEACHING_D28_CACHE_CLASS_FORBIDDEN'});if(binding.studentId||binding.userId||binding.authoritativeJudgment===true||binding.personalized===true)throw Object.assign(new Error('Personalized or authoritative Teaching output cannot use the D28 response cache.'),{code:'TEACHING_D28_CACHE_PERSONALIZED_FORBIDDEN'});for(const req of ['capabilityId','promptVersion','schemaVersion','policyVersion','sourceVersion'])if(!String(binding[req]||'').trim())throw Object.assign(new Error(`D28 cache binding requires ${req}.`),{code:'TEACHING_D28_CACHE_BINDING_INCOMPLETE'});return stableHash(binding);}
+function get(binding){const k=keyOf(binding),e=map.get(k);if(!e)return null;if(Number(clock())-e.at>ttlMs){map.delete(k);return null;}return e.value;}
+function set(binding,value){const k=keyOf(binding);if(map.size>=maxEntries&&!map.has(k))map.delete(map.keys().next().value);map.set(k,{at:Number(clock()),value});return value;}
+function clear(){map.clear();}
+return Object.freeze({get,set,clear,size:()=>map.size});}
+module.exports={createSafeResponseCache};

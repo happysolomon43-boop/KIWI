@@ -1,34 +1,18 @@
 'use strict';
-
-const crypto = require('node:crypto');
-
-const D28_CONTRACT_VERSION = 'd28.operational-hardening.v1';
-const D28_EVENT_KINDS = Object.freeze(['AI_EXECUTION','OWNER_TRANSITION','FORMAL_ASSESSMENT_SYNC','PPL_STAGE','QUALITY_SIGNAL','SECURITY_EVENT','RETENTION_ACTION','ROLLOUT_ACTION']);
-const D28_ALERT_SEVERITIES = Object.freeze(['INFO','WARNING','CRITICAL']);
-const D28_ROLLOUT_MODES = Object.freeze(['OFF','SHADOW','CANARY','ON']);
-
-function fail(message, code='TEACHING_D28_CONTRACT_INVALID') { const e = new Error(message); e.code = code; throw e; }
-function text(value, field, max=500, required=true) { if (value == null && !required) return null; const v=String(value||'').trim(); if (required && !v) fail(`${field} is required.`); if (Buffer.byteLength(v,'utf8') > max) fail(`${field} exceeds ${max} bytes.`); return v || null; }
-function integer(value, field, {min=0,max=Number.MAX_SAFE_INTEGER}={}) { const n=Number(value); if (!Number.isInteger(n)||n<min||n>max) fail(`${field} must be an integer in [${min}, ${max}].`); return n; }
-function finite(value, field, {min=-Infinity,max=Infinity}={}) { const n=Number(value); if (!Number.isFinite(n)||n<min||n>max) fail(`${field} must be a finite number in [${min}, ${max}].`); return n; }
-function optionalIso(value, field) { if (value == null) return null; const d=value instanceof Date?value:new Date(value); if (Number.isNaN(d.getTime())) fail(`${field} must be ISO-compatible.`); return d.toISOString(); }
-function hash(value) { return crypto.createHash('sha256').update(String(value ?? '')).digest('hex'); }
-function stableHash(value) { const stable=(x)=>Array.isArray(x)?x.map(stable):x&&typeof x==='object'?Object.fromEntries(Object.keys(x).sort().map(k=>[k,stable(x[k])])):x; return hash(JSON.stringify(stable(value))); }
-function freeze(value){ if (value && typeof value==='object'){ if(Array.isArray(value)) return Object.freeze(value.map(freeze)); return Object.freeze(Object.fromEntries(Object.entries(value).map(([k,v])=>[k,freeze(v)]))); } return value; }
-function assertEnum(value, allowed, field){ const v=text(value,field,100); if(!allowed.includes(v)) fail(`${field} must be one of ${allowed.join(', ')}.`); return v; }
-function boundedMetadata(value={}, {maxBytes=16_384, forbiddenKeys=[]}={}) { if(!value||typeof value!=='object'||Array.isArray(value)) fail('metadata must be an object.'); const forbidden=new Set(forbiddenKeys.map(x=>String(x).toLowerCase())); const out={}; for(const [k,v] of Object.entries(value)){ if(forbidden.has(String(k).toLowerCase())) fail(`metadata field is forbidden: ${k}`,'TEACHING_D28_SENSITIVE_METADATA_FORBIDDEN'); out[k]=v; } if(Buffer.byteLength(JSON.stringify(out),'utf8')>maxBytes) fail(`metadata exceeds ${maxBytes} bytes.`); return freeze(out); }
-function normalizeCorrelation(value){ return text(value,'correlationId',200); }
-function normalizeOperationalEvent(input={}){ return freeze({
-  eventKind: assertEnum(input.eventKind,D28_EVENT_KINDS,'eventKind'),
-  source: text(input.source,'source',200),
-  correlationId: normalizeCorrelation(input.correlationId),
-  causationId: text(input.causationId,'causationId',200,false),
-  capabilityId: text(input.capabilityId,'capabilityId',200,false),
-  ownerBoundary: text(input.ownerBoundary,'ownerBoundary',200,false),
-  status: text(input.status,'status',100),
-  latencyMs: input.latencyMs == null ? null : integer(input.latencyMs,'latencyMs',{max:86_400_000}),
-  occurredAt: optionalIso(input.occurredAt || new Date(),'occurredAt'),
-  metadata: boundedMetadata(input.metadata||{}, { forbiddenKeys:['prompt','raw_prompt','raw_response','chain_of_thought','reasoning_trace','student_response','protected_payload','authorization','cookie','token','api_key','secret'] }),
-}); }
-
-module.exports={D28_CONTRACT_VERSION,D28_EVENT_KINDS,D28_ALERT_SEVERITIES,D28_ROLLOUT_MODES,fail,text,integer,finite,optionalIso,hash,stableHash,freeze,assertEnum,boundedMetadata,normalizeCorrelation,normalizeOperationalEvent};
+const crypto=require('node:crypto');
+const D28_CONTRACT_VERSION='d28.operational-hardening.v1';
+const ANALYTICS_METHOD_VERSION='kiwi-item-analytics-v1.0';
+const SUFFICIENCY=Object.freeze({INSUFFICIENT:'insufficient_data',DESCRIPTIVE:'descriptive_only',REVIEW:'review_signal',SUPPORTED:'analysis_supported',NOT_APPLICABLE:'not_applicable',CONTENT_ONLY:'content_comparable_not_empirically_equated'});
+const INTERACTION_SLOS_MS=Object.freeze({LIVE_TEACHER_RESPONSE:8000,CLASSROOM_TRANSITION:1500,ASSESSMENT_AUTOSAVE:1500,ASSESSMENT_SUBMIT:5000,SCHEDULE_RECALCULATION:10000,ASSESSMENT_GENERATION:60000,MARKING:60000,BACKGROUND_PREPARATION:120000});
+const RETENTION_CLASSES=Object.freeze({OPERATIONAL_EVENTS:90,OPERATIONAL_METRICS:180,QUALITY_SAMPLES:90,OPERATIONAL_ALERTS:365,AI_EXECUTION_AUDIT:365,ITEM_ANALYTICS:'ACADEMIC_QUALITY_LINEAGE',ACADEMIC_AUDIT:'OWNER_RETENTION_NO_D28_DELETE',STUDENT_CONVENIENCE:'SUPPRESS_NOT_ERASE_TRUTH'});
+const COST_SCOPES=Object.freeze(['CURRICULUM_AUDIT','LESSON','STUDENT_RESPONSE','ASSESSMENT_GENERATION','MARKING','COURSE','PPL','OTHER']);
+const SAFE_CACHE_CLASSES=Object.freeze({DENY:'DENY_PERSONALIZED_OR_AUTHORITATIVE',REFERENCE:'SAFE_REFERENCE_ONLY'});
+function stableHash(value){return crypto.createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');}
+function boundedText(value,max=256){const out=String(value??'').trim();return out.slice(0,max);}
+function sourceRef(input={}){const owner=boundedText(input.owner,96),entityType=boundedText(input.entityType||input.entity_type,96),entityId=boundedText(input.entityId||input.entity_id,160),version=boundedText(input.version??input.stateVersion??input.state_version,96);if(!owner||!entityType||!entityId||!version){const e=new TypeError('D28 operational evidence requires owner/entity/version identity.');e.code='TEACHING_D28_SOURCE_REF_REQUIRED';throw e;}return Object.freeze({owner,entityType,entityId,version});}
+function correlationRef(input={}){const correlationId=boundedText(input.correlationId||input.correlation_id,160),causationId=boundedText(input.causationId||input.causation_id,160)||null;if(!correlationId){const e=new TypeError('D28 evidence requires correlation identity.');e.code='TEACHING_D28_CORRELATION_REQUIRED';throw e;}return Object.freeze({correlationId,causationId});}
+function pseudonymousAdministrationKey(attemptId){return `adm_${stableHash(`d28:${String(attemptId||'')}`).slice(0,32)}`;}
+function normalizeOptionOrder(choiceSetContract={},publicItemPayload={}){const candidates=Array.isArray(choiceSetContract.options)?choiceSetContract.options:Array.isArray(publicItemPayload.options)?publicItemPayload.options:[];return Object.freeze(candidates.map((o,i)=>Object.freeze({optionId:boundedText(o?.option_id??o?.optionId??o?.id??`ordinal:${i}`,128),ordinal:i})));}
+function selectedOptionId(rendererPayload={}){const p=rendererPayload&&typeof rendererPayload==='object'?rendererPayload:{};const v=p.selectedOptionId??p.selected_option_id??p.optionId??p.option_id??p.choiceId??p.choice_id??(typeof p.selected==='string'?p.selected:null);return v==null?null:boundedText(v,128);}
+function explicitBoolean(v){return v===true?true:v===false?false:null;}
+module.exports={D28_CONTRACT_VERSION,ANALYTICS_METHOD_VERSION,SUFFICIENCY,INTERACTION_SLOS_MS,RETENTION_CLASSES,COST_SCOPES,SAFE_CACHE_CLASSES,stableHash,boundedText,sourceRef,correlationRef,pseudonymousAdministrationKey,normalizeOptionOrder,selectedOptionId,explicitBoolean};

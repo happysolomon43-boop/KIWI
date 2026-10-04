@@ -1,14 +1,6 @@
 'use strict';
-const { integer, freeze } = require('./contracts');
-
-function boundContext({messages=[],maxItems=24,maxChars=48_000,protectedContent=false}={}){
-  const itemLimit=integer(maxItems,'maxItems',{min:1,max:100});
-  const charLimit=integer(maxChars,'maxChars',{min:1000,max:200000});
-  if (protectedContent) return freeze({items:Object.freeze([]),truncated:Boolean(messages.length),protectedContentExcluded:true,totalChars:0});
-  const src=Array.isArray(messages)?messages:[]; const out=[]; let chars=0;
-  for(let i=Math.max(0,src.length-itemLimit);i<src.length;i+=1){ const value=String(src[i]?.content ?? src[i] ?? ''); const remaining=charLimit-chars; if(remaining<=0) break; const content=value.slice(0,remaining); out.push(Object.freeze({role:String(src[i]?.role||'context'),content})); chars+=content.length; }
-  return freeze({items:Object.freeze(out),truncated:out.length<src.length||chars>=charLimit,protectedContentExcluded:false,totalChars:chars});
-}
-
-function compactContext(summary,input){ const bounded=boundContext(input); return freeze({summary:summary==null?null:String(summary).slice(0,8000),...bounded}); }
-module.exports={boundContext,compactContext};
+const {sanitizeOperationalMetadata}=require('./security');
+const ROLE_CONTEXT_BUDGETS=Object.freeze({T1:12000,T2:18000,T3:24000,T4:32000,DEFAULT:16000});
+function policyFor({authorityLevel='T1',contextAllowlist=[]}={}){const maxChars=ROLE_CONTEXT_BUDGETS[authorityLevel]||ROLE_CONTEXT_BUDGETS.DEFAULT;return Object.freeze({authorityLevel,maxChars,allowlist:Object.freeze([...new Set(contextAllowlist.map(String))]),mustPreserve:Object.freeze(['authoritative_owner','aggregate_id','state_version','policy_version','provenance_refs']),summariesAreNonAuthoritative:true,hiddenReasoningForbidden:true});}
+function compactContext({authoritativeRefs={},lanes={},authorityLevel='T1',contextAllowlist=[]}={}){const p=policyFor({authorityLevel,contextAllowlist});const allowed={};for(const name of p.allowlist){if(Object.prototype.hasOwnProperty.call(lanes,name))allowed[name]=sanitizeOperationalMetadata(lanes[name]);}let serialized=JSON.stringify(allowed);let truncated=false;if(serialized.length>p.maxChars){serialized=serialized.slice(0,p.maxChars);truncated=true;}return Object.freeze({authoritativeRefs:sanitizeOperationalMetadata(authoritativeRefs),allowedLaneNames:Object.freeze(Object.keys(allowed)),boundedSummary:serialized,truncated,maxChars:p.maxChars,summaryIsAcademicTruth:false});}
+module.exports={ROLE_CONTEXT_BUDGETS,policyFor,compactContext};

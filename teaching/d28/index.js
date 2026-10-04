@@ -1,11 +1,11 @@
 'use strict';
-module.exports={
-  ...require('./contracts'),
-  ...require('./security'),
-  ...require('./analytics'),
-  ...require('./ppl-governance'),
-  ...require('./rollback'),
-  ...require('./caching'),
-  ...require('./context-policy'),
-  ...require('./task-accounting'),
-};
+const {createD28Service}=require('./service');
+const {createPplComputeGovernor}=require('./ppl-governance');
+const {createSafeResponseCache}=require('./caching');
+const analytics=require('./analytics');
+const security=require('./security');
+const contracts=require('./contracts');
+const taskAccounting=require('./task-accounting');
+const rollback=require('./rollback');
+const contextPolicy=require('./context-policy');
+module.exports={createD28Service,createPplComputeGovernor,createSafeResponseCache,...analytics,...security,...contracts,...taskAccounting,...rollback,...contextPolicy};

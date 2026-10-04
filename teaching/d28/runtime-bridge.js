@@ -1,10 +1,5 @@
 'use strict';
-
-function createD28RuntimeBridge(service){
-  if(!service) return null;
-  return Object.freeze({
-    recordOperationalEvent: (event)=>service.recordOperationalEvent(event),
-    raiseAlert: (alert)=>service.raiseAlert(alert),
-  });
-}
-module.exports={createD28RuntimeBridge};
+let activeService=null;
+function registerD28RuntimeService(service){activeService=service||null;return activeService;}
+function getD28RuntimeService(){return activeService;}
+module.exports={registerD28RuntimeService,getD28RuntimeService};
