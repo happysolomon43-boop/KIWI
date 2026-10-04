@@ -5,7 +5,11 @@ const { AI_INPUT_MODALITIES, modelSatisfies } = require('./capabilities');
 const { isProductionRoutableModel, createModelCatalog } = require('./model-catalog');
 const { createProviderModelRef } = require('./providers');
 const { resolveReasoning } = require('./reasoning');
-const { routeSlotsForTask, ROUTE_SLOT_KINDS } = require('./routing-policy');
+const {
+  routeSlotsForTask,
+  ROUTE_SLOT_KINDS,
+  modelFamiliesForPreparationPosture,
+} = require('./routing-policy');
 const { AIError, AI_ERROR_CODES } = require('./errors');
 
 function requiredInputModalities(task, content = null) {
@@ -75,15 +79,21 @@ function createModelRouter({ registry = AI_TASKS, catalog = createModelCatalog()
     });
   }
 
-  function resolveCandidates(taskId, { content = null, preferredRouteKey = null } = {}) {
+  function resolveCandidates(taskId, {
+    content = null,
+    preferredRouteKey = null,
+    preparationRoutePosture = null,
+  } = {}) {
     const task = getTask(taskId);
     const inputModalities = requiredInputModalities(task, content);
+    const allowedFamilies = modelFamiliesForPreparationPosture(preparationRoutePosture);
     const seen = new Set();
     const candidates = [];
 
     for (const slot of routeSlotsForTask(taskId)) {
       const candidate = candidateFor(resolveSlot(slot), task, taskId, inputModalities);
       if (!candidate || seen.has(candidate.routeKey)) continue;
+      if (allowedFamilies && !allowedFamilies.includes(candidate.model?.family)) continue;
       seen.add(candidate.routeKey);
       candidates.push(candidate);
     }
@@ -102,19 +112,23 @@ function createModelRouter({ registry = AI_TASKS, catalog = createModelCatalog()
         details: {
           requiredCapabilities: task.capabilities,
           requiredInputModalities: inputModalities,
+          preparationRoutePosture: preparationRoutePosture || null,
+          allowedModelFamilies: allowedFamilies || null,
         },
       });
     }
     return Object.freeze(ordered);
   }
 
-  function describeRequirement(taskId, { content = null } = {}) {
+  function describeRequirement(taskId, { content = null, preparationRoutePosture = null } = {}) {
     const task = getTask(taskId);
     return Object.freeze({
       taskId,
       capabilities: task.capabilities,
       inputModalities: requiredInputModalities(task, content),
       routeSlots: routeSlotsForTask(taskId),
+      preparationRoutePosture: preparationRoutePosture || null,
+      allowedModelFamilies: modelFamiliesForPreparationPosture(preparationRoutePosture),
     });
   }
 
