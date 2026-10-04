@@ -67,9 +67,9 @@ function createD27IntegrationRepository({ query, withTransaction, randomUUID, cl
       lu.learning_unit_id,lu.title learning_unit_title,lu.intended_competence,lu.metadata learning_unit_metadata,
       cp.course_plan_id,cp.version_no course_plan_version
       FROM public.teaching_courses c
-      JOIN public.teaching_classes cl ON cl.course_id=c.course_id AND cl.class_id=$3
+      JOIN public.teaching_classes cl ON cl.course_id=c.course_id AND cl.student_id=c.student_id AND cl.class_id=$3
       JOIN public.teaching_course_plans cp ON cp.course_id=c.course_id AND cp.student_id=c.student_id
-      JOIN public.teaching_learning_units lu ON lu.course_plan_id=cp.course_plan_id AND lu.learning_unit_id=$4
+      JOIN public.teaching_learning_units lu ON lu.course_plan_id=cp.course_plan_id AND lu.student_id=c.student_id AND lu.learning_unit_id=$4
       WHERE c.student_id=$1 AND c.course_id=$2
       ORDER BY cp.version_no DESC LIMIT 1`, [studentId,courseId,classId,learningUnitId]);
     return rows[0] || null;
@@ -79,6 +79,14 @@ function createD27IntegrationRepository({ query, withTransaction, randomUUID, cl
     const { rows = [] } = await query(`SELECT course_id,student_id,subject_id,lifecycle_state,subject_snapshot_ref,source_version_ref,state_version
       FROM public.teaching_courses WHERE student_id=$1 AND course_id=$2 LIMIT 1`, [studentId,courseId]);
     return rows[0] || null;
+  }
+
+  async function getCoursePrimarySubjectSnapshot(studentId, courseId) {
+    const { rows = [] } = await query(`SELECT source_ref,source_version_ref,locator,content_hash
+      FROM public.teaching_source_content_items
+      WHERE student_id=$1 AND course_id=$2 AND source_kind='PRIMARY_KIWI_SUBJECT' AND superseded_at IS NULL
+      ORDER BY source_ref,source_content_item_id`, [studentId,courseId]);
+    return rows;
   }
 
   async function upsertStudyReference(input) {
@@ -149,7 +157,7 @@ function createD27IntegrationRepository({ query, withTransaction, randomUUID, cl
   }
 
   return Object.freeze({
-    assertReady,enqueueEvent,getEvent,markEvent,recordAudit,getCourseStudyContext,getCourseSubjectContext,
+    assertReady,enqueueEvent,getEvent,markEvent,recordAudit,getCourseStudyContext,getCourseSubjectContext,getCoursePrimarySubjectSnapshot,
     upsertStudyReference,listStudyReferences,insertCandidate,getCandidate,transitionCandidate,
   });
 }
