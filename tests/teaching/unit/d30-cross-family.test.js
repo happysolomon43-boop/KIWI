@@ -18,17 +18,17 @@ test('all 72 cross-family cases execute against registered contracts without pro
     assert.ok(result.checks.familyNodes.length > 0, caseSpec.id);
   }
   assert.deepEqual([...workflowIds].sort(), [
-    'assessment_construction',
-    'integrity_handoff',
-    'marking_review',
-    'teacher_style',
-    'teaching_loop',
+    'ASSESSMENT_CONSTRUCTION_CHAIN',
+    'INTEGRITY_HANDOFF',
+    'MARKING_REVIEW_CHAIN',
+    'TEACHER_STYLE_CHAIN',
+    'TEACHING_EVIDENCE_CHAIN',
   ]);
 });
 
 test('assessment construction terminates at deterministic T0 package locking', async () => {
   const execute = d30.createCrossFamilyWorkflowExecutor();
-  const caseSpec = d30.CROSS_FAMILY_CORPUS.find((item) => item.workflow.id === 'assessment_construction');
+  const caseSpec = d30.CROSS_FAMILY_CORPUS.find((item) => item.workflow.id === 'ASSESSMENT_CONSTRUCTION_CHAIN');
   const result = await execute(caseSpec);
   assert.equal(result.checks.deterministicBoundary.capabilityId, 'teaching.assessment.assessment_package_locking');
   assert.equal(result.checks.deterministicBoundary.authorityCeiling, 'T0');
@@ -37,7 +37,7 @@ test('assessment construction terminates at deterministic T0 package locking', a
 
 test('marking review preserves deterministic aggregation, blind-first moderation and Gradebook ownership', async () => {
   const execute = d30.createCrossFamilyWorkflowExecutor();
-  const caseSpec = d30.CROSS_FAMILY_CORPUS.find((item) => item.workflow.id === 'marking_review');
+  const caseSpec = d30.CROSS_FAMILY_CORPUS.find((item) => item.workflow.id === 'MARKING_REVIEW_CHAIN');
   const result = await execute(caseSpec);
   assert.equal(result.checks.markingReview.deterministicAggregation, true);
   assert.equal(result.checks.markingReview.blindPassA, true);
@@ -48,7 +48,7 @@ test('marking review preserves deterministic aggregation, blind-first moderation
 
 test('integrity handoff never fabricates guilt and stays isolated during an active formal assessment', async () => {
   const execute = d30.createCrossFamilyWorkflowExecutor();
-  const caseSpec = d30.CROSS_FAMILY_CORPUS.find((item) => item.workflow.id === 'integrity_handoff');
+  const caseSpec = d30.CROSS_FAMILY_CORPUS.find((item) => item.workflow.id === 'INTEGRITY_HANDOFF');
   const result = await execute(caseSpec);
   assert.equal(result.checks.integrityHandoff.misconductVerdictOwned, false);
   assert.equal(result.checks.integrityHandoff.guiltProbabilityOwned, false);
@@ -57,7 +57,7 @@ test('integrity handoff never fabricates guilt and stays isolated during an acti
 
 test('TPF-18 teacher style envelope remains exactly compatible with TPF-08', async () => {
   const execute = d30.createCrossFamilyWorkflowExecutor();
-  const caseSpec = d30.CROSS_FAMILY_CORPUS.find((item) => item.workflow.id === 'teacher_style');
+  const caseSpec = d30.CROSS_FAMILY_CORPUS.find((item) => item.workflow.id === 'TEACHER_STYLE_CHAIN');
   const result = await execute(caseSpec);
   assert.equal(result.checks.teacherStyleEnvelope.version, 'tpf08.teacher-style-envelope.v1');
   assert.deepEqual(result.checks.teacherStyleEnvelope.fields, [
