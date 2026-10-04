@@ -170,6 +170,32 @@ function loadTeachingUnifiedUpload() {
   }
 }
 
+function loadStudyUnifiedUpload() {
+  if (global.document?.getElementById('teachingApp')) return;
+  if (!global.document?.getElementById('mainContent')) return;
+
+  if (!global.document.querySelector('link[data-study-unified-upload]')) {
+    const stylesheet = global.document.createElement('link');
+    stylesheet.rel = 'stylesheet';
+    stylesheet.href = '/study-unified-upload.css?v=20261004-upload-1';
+    stylesheet.dataset.studyUnifiedUpload = 'true';
+    global.document.head.append(stylesheet);
+  }
+
+  if (!global.document.querySelector('script[data-study-unified-upload]')) {
+    const script = global.document.createElement('script');
+    script.src = '/study-unified-upload.js?v=20261004-upload-1';
+    script.dataset.studyUnifiedUpload = 'true';
+    script.defer = true;
+    global.document.body.append(script);
+  }
+}
+
+function loadUnifiedUploadAssets() {
+  loadTeachingUnifiedUpload();
+  loadStudyUnifiedUpload();
+}
+
 global.KIWI_API_CLIENT = Object.freeze({
   kiwiApiRequest,
   kiwiApiRawRequest,
@@ -177,8 +203,8 @@ global.KIWI_API_CLIENT = Object.freeze({
 });
 
 if (global.document?.readyState === 'loading') {
-  global.document.addEventListener('DOMContentLoaded', loadTeachingUnifiedUpload, { once: true });
+  global.document.addEventListener('DOMContentLoaded', loadUnifiedUploadAssets, { once: true });
 } else {
-  loadTeachingUnifiedUpload();
+  loadUnifiedUploadAssets();
 }
 })(window);
