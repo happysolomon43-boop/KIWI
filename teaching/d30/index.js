@@ -15,6 +15,7 @@ module.exports = Object.freeze({
   ...require('./maintenance-context'),
   ...require('./qualification'),
   ...require('./qualification-plan'),
+  ...require('./ppl-qualification'),
   ...require('./runner'),
   ...require('./semantic-reviewer'),
   ...require('./repository'),
