@@ -55,7 +55,7 @@ function createD27Service({
   ownerAdapters = {},
   sourceVersionReader = null,
   integrationEventPublisher = null,
-  featureFlags = {},
+  writeGates = {},
   randomUUID,
   clock = () => new Date(),
 } = {}) {
@@ -71,10 +71,10 @@ function createD27Service({
   }
   if (typeof randomUUID !== 'function') throw new TypeError('D27 requires randomUUID().');
 
-  const flags = Object.freeze({
-    ksWrite: featureFlags.ksWrite === true,
-    masteryWrite: featureFlags.masteryWrite === true,
-    studyPromotion: featureFlags.studyPromotion === true,
+  const gates = Object.freeze({
+    ksWrite: writeGates.ksWrite === true,
+    masteryWrite: writeGates.masteryWrite === true,
+    studyPromotion: writeGates.studyPromotion === true,
   });
   const now = () => {
     const value = clock();
@@ -214,8 +214,8 @@ function createD27Service({
     const row = await repository.getEvent(String(user.id), text(eventId, 'eventId'));
     if (!row) fail('Integration event not found.', 'TEACHING_D27_EVENT_NOT_FOUND', 404);
     const source = rowSource(row);
-    if (!flags.ksWrite) {
-      await audit(user.id, 'KS', 'APPLY_TEACHING_EVIDENCE', { sourceRef:source,featureFlag:false,decision:'DENY_FEATURE_FLAG_OFF',outcome:'NO_WRITE' });
+    if (!gates.ksWrite) {
+      await audit(user.id, 'KS', 'APPLY_TEACHING_EVIDENCE', { sourceRef:source,featureFlag:false,decision:'DENY_WRITE_GATE_OFF',outcome:'NO_WRITE' });
       fail('Teaching→Knowledge Score writes are disabled.', 'TEACHING_D27_KS_WRITE_DISABLED', 409);
     }
     const evidenceType = String(row.payload?.evidenceType || '').toUpperCase();
@@ -249,8 +249,8 @@ function createD27Service({
     const row = await repository.getEvent(String(user.id), text(eventId, 'eventId'));
     if (!row) fail('Integration event not found.', 'TEACHING_D27_EVENT_NOT_FOUND', 404);
     const source = rowSource(row);
-    if (!flags.masteryWrite) {
-      await audit(user.id, 'MASTERY', 'APPLY_TEACHING_SIGNAL', { sourceRef:source,featureFlag:false,decision:'DENY_FEATURE_FLAG_OFF',outcome:'NO_WRITE' });
+    if (!gates.masteryWrite) {
+      await audit(user.id, 'MASTERY', 'APPLY_TEACHING_SIGNAL', { sourceRef:source,featureFlag:false,decision:'DENY_WRITE_GATE_OFF',outcome:'NO_WRITE' });
       fail('Teaching→Mastery writes are disabled.', 'TEACHING_D27_MASTERY_WRITE_DISABLED', 409);
     }
     await assertSourceCurrent(row);
@@ -370,8 +370,8 @@ function createD27Service({
     const candidate = await repository.getCandidate(studentId, text(candidateId,'candidateId'));
     if (!candidate) fail('Study card candidate not found.', 'TEACHING_D27_CANDIDATE_NOT_FOUND', 404);
     if (candidate.status === 'PROMOTED') return Object.freeze({ disposition:'ALREADY_PROMOTED',candidate });
-    if (!flags.studyPromotion) {
-      await audit(studentId, 'STUDY_FSRS', 'PROMOTE_VALIDATED_CANDIDATE', { sourceRef:{candidateId:candidate.candidate_id,version:candidate.version},featureFlag:false,decision:'DENY_FEATURE_FLAG_OFF',outcome:'NO_WRITE' });
+    if (!gates.studyPromotion) {
+      await audit(studentId, 'STUDY_FSRS', 'PROMOTE_VALIDATED_CANDIDATE', { sourceRef:{candidateId:candidate.candidate_id,version:candidate.version},featureFlag:false,decision:'DENY_WRITE_GATE_OFF',outcome:'NO_WRITE' });
       fail('Teaching→Study card promotion is disabled.', 'TEACHING_D27_STUDY_PROMOTION_DISABLED', 409);
     }
     if (candidate.status !== 'VALIDATED' || Number(candidate.version) !== Number(expectedVersion)) {
@@ -407,7 +407,7 @@ function createD27Service({
 
   function status() {
     return Object.freeze({
-      contractVersion:D27_CONTRACT_VERSION,taskCount:17,contracts:D27_INTEGRATION_CONTRACTS,featureFlags:flags,
+      contractVersion:D27_CONTRACT_VERSION,taskCount:17,contracts:D27_INTEGRATION_CONTRACTS,integrationWriteGates:gates,
       subjectTruthCopied:false,examTruthCopied:false,knowledgeScoreTruthCopied:false,masteryTruthCopied:false,
       fsrsTruthCopied:false,brainTruthCopied:false,biomeTruthCopied:false,notificationsRemainShared:true,
       brainWriteEnabled:false,biomeWriteEnabled:false,achievementWriteEnabled:false,
