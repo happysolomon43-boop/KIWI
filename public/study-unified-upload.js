@@ -91,6 +91,12 @@
     return option?.textContent?.trim() || 'Selected subject';
   }
 
+  function selectedDeckId() {
+    const select = document.getElementById('importSubject');
+    const option = select?.options?.[select.selectedIndex];
+    return option?.dataset?.deck || null;
+  }
+
   function announce(message) {
     const text = String(message || '').trim();
     if (!text) return;
@@ -106,9 +112,9 @@
   }
 
   function assignFileToLegacyInput(input, file) {
-    if (!input || !file) return false;
+    if (!input || !file || typeof global.DataTransfer !== 'function') return false;
     try {
-      const transfer = new DataTransfer();
+      const transfer = new global.DataTransfer();
       transfer.items.add(file);
       input.files = transfer.files;
       input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -201,6 +207,10 @@
     const subject = document.getElementById('importSubject');
     if (!tabs || !subject || !document.getElementById('tab-manual')) return;
     if (tabs.dataset.studyUnifiedUpload === 'true') return;
+    // The adapter relies on FileList assignment through DataTransfer. Browsers
+    // without that capability keep the legacy format tabs instead of being left
+    // with a unified control that cannot hand the selected File to Study.
+    if (typeof global.DataTransfer !== 'function') return;
 
     tabs.dataset.studyUnifiedUpload = 'true';
 
@@ -340,6 +350,10 @@
         setStatus(root, error, 'error');
         return;
       }
+      if (!selectedDeckId()) {
+        setStatus(root, `No deck exists for ${selectedSubjectName()} yet. Use Create & Use above or add a card first.`, 'error');
+        return;
+      }
 
       const format = formatForFile(selectedFile);
       const config = FORMAT_CONFIG[format];
@@ -353,7 +367,7 @@
         return;
       }
       if (!assignFileToLegacyInput(legacyInput, selectedFile)) {
-        setStatus(root, 'Your browser could not hand this file to the Study importer. Choose the file again after refreshing.', 'error');
+        setStatus(root, 'Your browser could not hand this file to the Study importer. Refresh and use the original format tab if the problem persists.', 'error');
         return;
       }
       if (legacyHint) legacyHint.value = hint.value.trim();
