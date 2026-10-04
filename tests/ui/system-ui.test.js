@@ -73,3 +73,43 @@ test('Teaching Request Center keeps D10 authority semantics while using the rede
   assert.match(source, /alternative\/decline/);
   assert.match(source, /\/teaching\/requests/);
 });
+
+test('Study unified file intake consolidates format tabs without duplicating generation contracts', () => {
+  const source = read('public/study-unified-upload.js');
+  const css = read('public/study-unified-upload.css');
+  const client = read('public/kiwi-api-client.js');
+
+  for (const token of [
+    "new Set(['image', 'pdf', 'docx', 'txt', 'md', 'pptx'])",
+    "const MAX_FILE_BYTES = 7 * 1024 * 1024",
+    "data-su-drop",
+    "data-su-generate",
+    "selectedDeckId()",
+    "typeof global.DataTransfer !== 'function'",
+    "importButton.click()",
+    "confirmButton.click()",
+    "localStorage.setItem('kiwi_last_import_tab', 'files')",
+    "Image Occlusion remains separate",
+  ]) {
+    assert.ok(source.includes(token), token);
+  }
+
+  // The unified layer must delegate into the existing Study import handlers;
+  // it is not allowed to invent another network/generation pipeline.
+  assert.doesNotMatch(source, /fetch\s*\(/);
+  assert.doesNotMatch(source, /kiwiApiRequest\s*\(/);
+  assert.doesNotMatch(source, /\/cards\/import\//);
+
+  assert.match(source, /\.pdf,\.docx,\.txt,\.md,\.markdown,\.pptx/);
+  assert.match(source, /image\/png,image\/jpeg,image\/webp,image\/heic,image\/heif/);
+  assert.match(css, /data-study-format-legacy="true"/);
+  assert.match(css, /\.su-upload__drop:focus-visible/);
+  assert.match(css, /@media \(max-width: 760px\)/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+
+  assert.match(client, /loadStudyUnifiedUpload/);
+  assert.match(client, /\/study-unified-upload\.css\?v=/);
+  assert.match(client, /\/study-unified-upload\.js\?v=/);
+  assert.match(client, /getElementById\('teachingApp'\)/);
+  assert.match(client, /getElementById\('mainContent'\)/);
+});

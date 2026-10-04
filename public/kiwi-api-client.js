@@ -82,6 +82,28 @@ async function parseResponse(response, endpoint) {
   throw error;
 }
 
+async function requestWithSession(endpoint, requestOptions, timeoutMs) {
+  let response = await fetchWithTimeout(
+    `${config.apiBaseUrl}${endpoint}`,
+    requestOptions,
+    timeoutMs
+  );
+
+  if (response.status === 401 && !PUBLIC_AUTH_401.has(endpoint)) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      requestOptions.headers.Authorization = `Bearer ${token('kiwi_auth_token')}`;
+      response = await fetchWithTimeout(
+        `${config.apiBaseUrl}${endpoint}`,
+        requestOptions,
+        timeoutMs
+      );
+    }
+  }
+
+  return parseResponse(response, endpoint);
+}
+
 async function kiwiApiRequest(endpoint, options = {}) {
   if (typeof endpoint !== 'string' || !endpoint.startsWith('/')) {
     throw new TypeError('KIWI API endpoint must start with /.');
@@ -99,34 +121,90 @@ async function kiwiApiRequest(endpoint, options = {}) {
     ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
   };
 
-  let response = await fetchWithTimeout(
-    `${config.apiBaseUrl}${endpoint}`,
-    requestOptions,
-    options.timeoutMs
-  );
+  return requestWithSession(endpoint, requestOptions, options.timeoutMs);
+}
 
-  if (response.status === 401 && !PUBLIC_AUTH_401.has(endpoint)) {
-    const refreshed = await refreshAccessToken();
-    if (refreshed) {
-      requestOptions.headers.Authorization = `Bearer ${token('kiwi_auth_token')}`;
-      response = await fetchWithTimeout(
-        `${config.apiBaseUrl}${endpoint}`,
-        requestOptions,
-        options.timeoutMs
-      );
-    }
+// Raw authenticated requests are intentionally separate from kiwiApiRequest so
+// binary uploads never pass through JSON/base64 or inherit application/json.
+// Callers must provide an explicit safe Content-Type for binary bodies.
+async function kiwiApiRawRequest(endpoint, options = {}) {
+  if (typeof endpoint !== 'string' || !endpoint.startsWith('/')) {
+    throw new TypeError('KIWI API endpoint must start with /.');
   }
 
-  return parseResponse(response, endpoint);
+  const accessToken = token('kiwi_auth_token');
+  const requestOptions = {
+    method: options.method || 'POST',
+    headers: {
+      Accept: 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(options.headers || {}),
+    },
+    ...(options.body !== undefined ? { body: options.body } : {}),
+  };
+
+  return requestWithSession(endpoint, requestOptions, options.timeoutMs);
 }
 
 function hasKiwiSession() {
   return Boolean(token('kiwi_auth_token') || token('kiwi_refresh_token'));
 }
 
+function loadTeachingUnifiedUpload() {
+  if (!global.document?.getElementById('teachingApp')) return;
+
+  if (!global.document.querySelector('link[data-teaching-unified-upload]')) {
+    const stylesheet = global.document.createElement('link');
+    stylesheet.rel = 'stylesheet';
+    stylesheet.href = '/teaching-unified-upload.css?v=20261004-upload-1';
+    stylesheet.dataset.teachingUnifiedUpload = 'true';
+    global.document.head.append(stylesheet);
+  }
+
+  if (!global.document.querySelector('script[data-teaching-unified-upload]')) {
+    const script = global.document.createElement('script');
+    script.src = '/teaching-unified-upload.js?v=20261004-upload-1';
+    script.dataset.teachingUnifiedUpload = 'true';
+    script.defer = true;
+    global.document.body.append(script);
+  }
+}
+
+function loadStudyUnifiedUpload() {
+  if (global.document?.getElementById('teachingApp')) return;
+  if (!global.document?.getElementById('mainContent')) return;
+
+  if (!global.document.querySelector('link[data-study-unified-upload]')) {
+    const stylesheet = global.document.createElement('link');
+    stylesheet.rel = 'stylesheet';
+    stylesheet.href = '/study-unified-upload.css?v=20261004-upload-1';
+    stylesheet.dataset.studyUnifiedUpload = 'true';
+    global.document.head.append(stylesheet);
+  }
+
+  if (!global.document.querySelector('script[data-study-unified-upload]')) {
+    const script = global.document.createElement('script');
+    script.src = '/study-unified-upload.js?v=20261004-upload-1';
+    script.dataset.studyUnifiedUpload = 'true';
+    script.defer = true;
+    global.document.body.append(script);
+  }
+}
+
+function loadUnifiedUploadAssets() {
+  loadTeachingUnifiedUpload();
+  loadStudyUnifiedUpload();
+}
 
 global.KIWI_API_CLIENT = Object.freeze({
   kiwiApiRequest,
+  kiwiApiRawRequest,
   hasKiwiSession,
 });
+
+if (global.document?.readyState === 'loading') {
+  global.document.addEventListener('DOMContentLoaded', loadUnifiedUploadAssets, { once: true });
+} else {
+  loadUnifiedUploadAssets();
+}
 })(window);
