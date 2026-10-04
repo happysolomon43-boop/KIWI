@@ -36,6 +36,56 @@ test('D30 qualification runtime freezes automatic discovery and promotion for re
   assert.equal(Object.isFrozen(env),true);
 });
 
+test('provider-free preflight reports route credential gaps without pretending to run empirical calls',()=>{
+  const summary=cli.summarizePreflight({
+    sourceSha:'a'.repeat(40),
+    environment:'INTEGRATION',
+    runtimeStatus:{
+      readiness:{state:'READY'},
+      discovery:{enabled:false},
+      providers:{credentials:{google:{total:1,enabled:1},groq:{total:0,enabled:0}}},
+    },
+    plan:{
+      capabilityCount:148,targetCount:2,primaryTargetCount:1,fallbackTargetCount:1,everyFallbackIndependent:true,
+      targets:[
+        {provider:'google',routeKey:'google::strong'},
+        {provider:'groq',routeKey:'groq::fallback'},
+      ],
+    },
+    pplPlan:{
+      scenarios:[
+        {earlyRoute:{routeKey:'google::lite'},finalRoute:{routeKey:'google::strong'},repeatCount:3},
+      ],
+    },
+    migrationPresent:true,
+  });
+  assert.deepEqual(summary.uncredentialedCandidateProviders,['groq']);
+  assert.equal(summary.providerCallsPerformed,false);
+  assert.equal(summary.readyForEmpiricalExecution,false);
+  assert.equal(summary.productionAuthorized,false);
+});
+
+test('provider-free preflight is ready only when runtime, migration and every candidate provider are executable',()=>{
+  const summary=cli.summarizePreflight({
+    sourceSha:'b'.repeat(40),
+    environment:'INTEGRATION',
+    runtimeStatus:{
+      readiness:{state:'READY'},
+      discovery:{enabled:false},
+      providers:{credentials:{google:{total:2,enabled:2}}},
+    },
+    plan:{
+      capabilityCount:148,targetCount:1,primaryTargetCount:1,fallbackTargetCount:0,everyFallbackIndependent:true,
+      targets:[{provider:'google',routeKey:'google::strong'}],
+    },
+    pplPlan:{scenarios:[{earlyRoute:{routeKey:'google::lite'},finalRoute:{routeKey:'google::strong'},repeatCount:3}]},
+    migrationPresent:true,
+  });
+  assert.equal(summary.readyForEmpiricalExecution,true);
+  assert.equal(summary.requiredMigration,cli.REQUIRED_RUN_IDENTITY_MIGRATION);
+  assert.equal(summary.providerCallsPerformed,false);
+});
+
 test('D30 CLI never treats D30 evidence as D31 production authorization',()=>{
   const summary=cli.summarizeFinalize({
     sessionStatus:'QUALIFIED',empiricalExecutionComplete:true,runScopedHumanReviewComplete:true,
