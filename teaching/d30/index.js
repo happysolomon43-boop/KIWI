@@ -10,6 +10,7 @@ module.exports = Object.freeze({
   ...require('./governance'),
   ...require('./maintenance-context'),
   ...require('./qualification'),
+  ...require('./qualification-plan'),
   ...require('./runner'),
   ...require('./repository'),
 });
