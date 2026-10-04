@@ -15,7 +15,13 @@ test('D28 runtime retries a structured T2 result only through the central aiRun 
       let n = 0;
       return () => `d28-runtime-${++n}`;
     })(),
-    aiRun: async () => ({ ok: ++aiCalls >= 2, modelId: 'central-model', provider: 'central-provider', routeKey: 'central-route', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }),
+    aiRun: async () => ({
+      ok: ++aiCalls >= 2,
+      modelId: 'central-model',
+      provider: 'central-provider',
+      routeKey: 'central-route',
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    }),
     env: { TEACHING_D28_AI_VALIDATION_ATTEMPTS: '2' },
   });
 
@@ -23,7 +29,7 @@ test('D28 runtime retries a structured T2 result only through the central aiRun 
     taskId: 'teaching.test.structured',
     responsibilityKey: 'teaching.test.structured',
     capabilityId: 'teaching.test.structured',
-    intelligenceClass: 'DIRECT_AI',
+    intelligenceClass: 'DIRECT-AI',
     authorityLevel: 'T2',
     authoritativeOwner: 'TEST_OWNER',
     schemaValidator: async (value) => value?.ok === true,
