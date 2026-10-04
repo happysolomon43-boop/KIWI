@@ -1,104 +1,76 @@
-# KIWI Teaching — D30 → D31 Handoff
+# KIWI Teaching — D30 → D31 Implementation Handoff
 
-**Delivery completed:** D30 — Teaching AI Empirical Qualification & Prompt Governance
-**Next delivery:** D31 — Final Release Readiness & Production Gate
-**Repository:** `happysolomon43-boop/KIWI`
-**Implementation branch:** `teaching/d30-empirical-qualification`
-**Pull request:** #209
-**Canonical baseline:** KIWI Teaching successor/frozen implementation baseline (Phase 22 v1.5 / Prompt Manifest v1.4 / Delivery Map v1.7)
+**Completed delivery:** D30 — Teaching AI Empirical Qualification & Prompt Governance  
+**Next delivery:** D31 — Final Release Readiness & Production Gate  
+**Repository:** `happysolomon43-boop/KIWI`  
+**Branch:** `teaching/d30-empirical-qualification`  
+**PR:** #209
 
-## 1. Delivery disposition
+## Delivery result
 
-D30 implementation work is closed for delivery progression and handed to D31. The D30 engineering scope provides the empirical-qualification and prompt-governance machinery required by the frozen architecture, including corpus construction, route-level qualification controls, provenance, defect gating, fallback independence, C4 review requirements, PPL comparison controls, and persistent qualification evidence structures.
+D30 implementation is complete for progression. All 46 assigned task IDs are explicitly represented: `TCH-0819–0832`, `TCH-0834–0855`, `TCH-0857`, `TCH-0860–0866`, `TCH-0902`, `TCH-0920`.
 
-This handoff does **not** claim that exhaustive real-world execution of every empirical case or every provider/model combination was performed by the implementation agent. Where canonical D30 acceptance requires external empirical execution or independent human academic review, the implementation preserves those requirements as explicit fail-closed qualification/release controls rather than fabricating evidence. D31 must therefore make the final release decision from actual available evidence and keep any route lacking required evidence disabled.
+The implementation preserves the frozen prompt/authority architecture and adds the executable qualification framework rather than reducing D30 to documentation. Exhaustive provider replay and independent human academic review are not falsely asserted; the system records and gates those evidence classes where required.
 
-## 2. Canonical D30 scope
+## Implemented qualification system
 
-The successor Delivery Task Map assigns D30 46 tasks:
+D30 now contains a versioned 2,000-case qualification corpus: 1,832 isolated-family cases, 72 cross-family cases and 96 TPF-20 cases. Coverage includes golden/negative/counterfactual/adversarial patterns, uncertainty, scope expansion, authority attacks, protected-content/injection behavior, cross-subject behavior, cross-family workflows, TPF-20 pre-Class preparation, post-Class reconciliation and end-to-end behavior.
 
-`TCH-0819–TCH-0832`, `TCH-0834–TCH-0855`, `TCH-0857`, `TCH-0860–TCH-0866`, `TCH-0902`, `TCH-0920`.
+`teaching/d30/qualification-system.js` adds the executable harness around the central KIWI AI Orchestrator, deterministic validation, run-record construction, route failure simulation, stability analysis, route qualification reporting, prompt-governance validation, cross-family compatibility verification and PPL one-shot/progressive qualification comparison.
 
-D30's governing objective is Teaching AI empirical qualification and prompt governance against Prompt Manifest v1.4, including the historical Phase-16 floor plus TPF-20/PPL qualification behavior. D30 does not own D31 production authorization.
+The canonical cross-family chains are explicitly represented: TPF-04→05→06→07→08→09; TPF-12→13→14→authoritative package lock; TPF-15→deterministic aggregation→TPF-16→Gradebook owner; TPF-11→assessment-integrity handoff; and TPF-18→TPF-08.
 
-## 3. Implemented D30 capability
+## AI route decision requested by product owner
 
-The implementation includes:
+D30 records the product-owner route posture without bypassing the central AI Orchestrator:
 
-- an exact D30 task census for the successor 46-task delivery;
-- deterministic construction of the Phase-16 corpus floor: 1,832 isolated-family cases and 72 cross-family cases;
-- 96 additional TPF-20 cases, giving a 2,000-case D30 corpus before replay runs;
-- adversarial, authority-boundary, uncertainty, injection, negative and cross-subject case classes;
-- explicit primary-route and fallback-route qualification separation;
-- prevention of fallback qualification inheritance;
-- P0/P1 defect blocking independent of aggregate score;
-- C4/consequential human academic review requirements;
-- repeated-run/stability and regression-gate semantics;
-- prompt-governance lifecycle controls and stop conditions;
-- prompt failure root-cause classification rather than automatic prompt rewriting;
-- route/model/settings governance outside frozen prompt wording;
-- one-shot versus progressive PPL comparison machinery;
-- TPF-20 pre-Class, post-Class reconciliation and combined-path qualification coverage;
-- protected-content and provenance-sensitive qualification behavior;
-- hidden-chain-of-thought non-requirement/protection;
-- durable Supabase structures for qualification runs, reviews and route decisions;
-- an explicit D31-only production-authorization boundary.
+- ordinary Teaching AI responsibilities use the website's default AI route;
+- Course Plan uses the same route class as flash generation;
+- route qualification remains independent and cannot raise academic authority;
+- fallbacks do not inherit qualification from the primary route.
 
-## 4. Persistence
+The verification script asserts this route policy so later changes cannot silently drift it.
 
-The D30 Supabase migration `teaching_d30_ai_qualification` was applied to the KIWI Teaching integration project.
+## Prompt governance
 
-The persistence layer records qualification provenance including route/case/model/prompt/schema/version evidence, run metrics, independent review evidence, defects and route-level decisions. D30 persistence is intentionally incapable of treating a D30 qualification decision as final D31 production authorization.
+The implementation preserves the frozen Phase-15 prompt baseline and Phase-14 revision process. Explicit lifecycle states are retained from `NOT_STARTED` through `FROZEN_VERSION`/`DEPRECATED`; Behavior Brief approval is enforced before candidate prompt authoring; failure-root-cause categories are explicit; silent mutation of frozen prompts is rejected; shared Constitution/runtime rules are not duplicated merely to improve benchmark performance.
 
-RLS is enabled/forced for the D30 qualification tables and ordinary client roles are not granted direct access. Existing project-wide Supabase advisor findings concerning RLS-enabled tables without policies predate/extend beyond D30 and should be considered by D31's final security review rather than silently treated as a D30 route qualification result.
+## Qualification and failure controls
 
-## 5. Production and authority boundary
+The D30 framework supports deterministic/schema/domain checks, semantic-review attachment, adversarial/metamorphic cases, primary/fallback separation, provider/quota/auth failure simulation, retry/circuit-break/credential-rotation posture, generation-affinity checks, repeated stochastic stability, immutable regression intent, P0/P1 fail-closed qualification, consequential/C4 human-review evidence, latency/token/cost/retry/timeout provenance and route-by-route reporting.
 
-D30 does not authorize Teaching AI for production merely because a route is configured, schema-valid, or represented in a qualification record.
+PPL qualification compares matched one-shot and progressive preparation and indicates when Preparation Profiles should be reduced because extra passes do not establish sufficient value.
 
-The following rules remain mandatory:
+## Persistence
 
-- primary and fallback routes are independent qualification subjects;
-- a critical invariant/P0/P1 failure cannot be hidden by aggregate scoring;
-- C4 cannot rely on an LLM judge as sole academic authority;
-- progressive preparation may only be enabled where evidence demonstrates required quality/reliability or equivalent quality with meaningful efficiency;
-- route configuration cannot raise a capability's authority ceiling;
-- authoritative domain mutation remains outside prompt output;
-- frozen prompt bodies must not be silently edited to make a benchmark pass;
-- D31 owns final production release authorization.
+Migration `teaching_d30_ai_qualification` has been applied to the KIWI Teaching integration Supabase project. Durable records exist for qualification runs, independent reviews and route decisions, including exact case/route/model/settings/prompt/schema/suite identity, validation, defects, latency, tokens, estimated cost, retries, timeout/fallback posture and D31 authorization boundary.
 
-## 6. Known execution limitation
+RLS is enabled/forced and ordinary client roles do not receive direct table access. `production_authorized` is structurally constrained to false at D30; D31 owns final production authorization.
 
-The implementation environment did not provide a credible mechanism for the implementation agent to execute and independently academically review every required live provider/model replay across the complete corpus. No synthetic statement of such execution has been inserted into the qualification record.
+## Verification
 
-This limitation is intentionally represented as a release-evidence concern, not as missing D30 architecture. Routes without sufficient empirical/human evidence must remain disabled at D31 until evidence exists. This preserves the canonical fail-closed behavior while allowing delivery progression.
+`npm run verify:teaching:d30` verifies the exact 46-task census, corpus floors, route policy, fail-closed authority validation, Behavior Brief governance gate, provider failure controls and all required cross-family compatibility chains.
 
-## 7. GitHub state
+The D30 implementation deliberately does not manufacture claims that every live provider/model replay or independent human C4 review was performed by this implementation session. Those are evidence inputs to the final route/release decision, not permission to omit the engineering machinery.
 
-D30 implementation is contained in PR #209 from `teaching/d30-empirical-qualification` into `main`.
+## Known limitations / deferred evidence
 
-D31 should inspect the actual merge state before starting. If PR #209 is not yet merged, merge/reconcile it first and then begin D31 from refreshed `main`. Do not reimplement D30 from scratch.
+Full live replay of every corpus item across every permitted provider/fallback/stage route and independent human academic adjudication of all consequential C4 cases were not exhaustively executed in this implementation session. The framework supports and records them. D31 must not authorize any route for which its required evidence remains insufficient.
 
-## 8. D31 instructions
+Existing project-wide Supabase advisor findings concerning RLS-enabled tables without policies are not silently attributed to or repaired by D30; D31's final privacy/security gate must review the current complete database posture.
 
-D31 is the final release-readiness and production gate. It should:
+## Architecture exceptions
 
-1. refresh GitHub `main`, Supabase migration/schema state and relevant Render/Vercel deployment state;
-2. verify D30 qualification evidence and distinguish implemented qualification machinery from externally executed empirical/human evidence;
-3. keep unqualified or insufficiently evidenced routes disabled;
-4. perform the canonical final privacy/security review;
-5. perform final visual/accessibility review;
-6. verify Blueprint/backlog/capability/invariant/delivery traceability;
-7. document honest limitations and deferred capabilities;
-8. authorize only the routes/features whose complete release evidence satisfies the frozen gates;
-9. make the final production decision without weakening D30's fail-closed controls.
+None. The requested route policy is implemented as route selection inside the existing central KIWI AI Orchestrator boundary; it does not create a second provider path or modify authority ownership.
 
-## 9. Handoff status
+## D31 prerequisites now satisfied
 
-**D30 DELIVERY IMPLEMENTATION: COMPLETE FOR HANDOFF**
+D31 can consume a concrete D30 corpus, executable qualification harness, route policy, prompt-governance controls, qualification persistence, stability/failure/PPL reporting and explicit release-evidence boundary. D31 remains responsible for final privacy/security, visual/accessibility, complete traceability, limitations review and production authorization.
 
-**EXHAUSTIVE EXTERNAL EMPIRICAL/HUMAN QUALIFICATION: NOT ASSERTED WHERE NOT ACTUALLY EXECUTED**
+## Handoff status
 
-**PRODUCTION AUTHORIZATION: DEFERRED TO D31 AS CANONICALLY REQUIRED**
+**D30 IMPLEMENTATION: COMPLETE FOR HANDOFF**  
+**EXHAUSTIVE EXTERNAL/HUMAN EVIDENCE: NOT FABRICATED**  
+**FINAL PRODUCTION AUTHORIZATION: D31 ONLY**
 
-Proceed to D31 from the current repository state; do not reopen or duplicate D30 implementation unless D31 discovers a concrete defect or missing canonical contract.
+Start D31 from the actual merged repository state. Do not reimplement D30 unless a concrete regression or canonical omission is discovered.
