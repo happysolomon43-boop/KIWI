@@ -14,7 +14,7 @@ test('Teaching foundation composes D27 from persistent dependencies without chan
   });
   assert.ok(foundation.d27);
   assert.equal(foundation.d27.service.status().taskCount,17);
-  assert.equal(foundation.d27.service.status().featureFlags.ksWrite,false);
+  assert.equal(foundation.d27.service.status().integrationWriteGates.ksWrite,false);
   assert.equal(foundation.d27.service.status().promptQualificationChanged,false);
   assert.equal(foundation.d27.service.status().centralAIOrchestratorOnly,true);
 });
