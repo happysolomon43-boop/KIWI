@@ -104,6 +104,19 @@ test('PPL materiality is calibrated from observed repeat noise and qualifies rea
   assert.equal(efficient.decision,'PROGRESSIVE_QUALIFIED');
 });
 
+test('a strong final pass cannot erase a serious defect from its cheap early PPL stage',()=>{
+  const plan=d30.buildPplQualificationPlan({orchestrator:fakeOrchestrator()});
+  const records=completeEvidence(plan);
+  const scenario=plan.scenarios[0];
+  const failed=record({scenario,arm:'PROGRESSIVE',stage:'EARLY',attemptNo:1,score:.7,cost:.2,latency:15,defects:[{severity:'P1',code:'EARLY_STAGE_AUTHORITY_DEFECT'}]});
+  const replaced=records.map((item)=>item.runId===failed.runId?failed:item);
+  const comparison=d30.compareEmpiricalPpl({plan,records:replaced});
+  assert.equal(comparison.progressive.seriousDefectCount,1);
+  assert.equal(comparison.progressive.gatePasses.validators,false);
+  assert.equal(comparison.activationAllowed,false);
+  assert.equal(comparison.decision,'REDUCE_PREPARATION_PROFILE');
+});
+
 test('PPL comparison stays insufficient until every matched repeated final arm is present and stable',()=>{
   const plan=d30.buildPplQualificationPlan({orchestrator:fakeOrchestrator()});
   const partial=completeEvidence(plan).slice(0,-1);
