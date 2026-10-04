@@ -35,7 +35,9 @@ function fakePlan() {
 function c4Records() {
   const cases = d30.HISTORICAL_FAMILY_CORPUS.filter((item) => item.familyId === 'TPF-02');
   const representative = cases.find((item) => item.caseClass === 'golden') || cases[0];
-  const edge = cases.find((item) => d30.EDGE_REVIEW_CLASSES.includes(item.caseClass) && item.id !== representative.id) || cases[1];
+  const sameCapability = cases.filter((item) => item.capabilityId === representative.capabilityId && item.id !== representative.id);
+  const edge = sameCapability.find((item) => d30.EDGE_REVIEW_CLASSES.includes(item.caseClass)) || sameCapability[0];
+  assert.ok(edge, 'TPF-02 fixture must expose an edge case for the same capability-bound route');
   const target = {
     targetKey:'c4-target',
     capabilityId:representative.capabilityId,
@@ -72,7 +74,7 @@ test('work plan keys are deterministic and include stability replay attempts', (
   assert.ok(keys[0].includes('::PRIMARY::'));
 });
 
-test('C4 human review selection includes representative, edge and disagreement evidence', () => {
+test('C4 human review selection includes representative, same-capability edge and disagreement evidence', () => {
   const {target,representative,edge,records} = c4Records();
   const selected = d30.requiredHumanReviewCaseIds(target,records);
   assert.ok(selected.includes(representative.id));
@@ -139,7 +141,10 @@ test('final report cannot close a session while empirical, human or PPL evidence
     repository,
     crossFamilyExecutor:async()=>({authorityPreserved:true,provenancePreserved:true,handoffCompatible:true}),
   });
-  const result=await coordinator.finalize({sessionId:'session',plan,records:[],humanReviews:[],pplComparison:null,includeCrossFamily:false});
+  const result=await coordinator.finalize({
+    sessionId:'session',plan,records:[],humanReviews:[],includeCrossFamily:false,
+    pplComparison:{decision:'INSUFFICIENT_EVIDENCE',productionAuthorized:false,authorizationGate:'D31'},
+  });
   assert.equal(result.empiricalExecutionComplete,false);
   assert.equal(result.evidenceComplete,false);
   assert.equal(result.report.productionQualified,false);
