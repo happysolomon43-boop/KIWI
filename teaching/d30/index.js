@@ -17,4 +17,5 @@ module.exports = Object.freeze({
   ...require('./runner'),
   ...require('./semantic-reviewer'),
   ...require('./repository'),
+  ...require('./coordinator'),
 });
