@@ -1,0 +1,74 @@
+name: Teaching D30 Canonical Qualification
+
+on:
+  push:
+    branches:
+      - main
+      - teaching/d30-canonical-rebuild
+    paths:
+      - 'teaching/d30/**'
+      - 'teaching/prompt-runtime/**'
+      - 'teaching/capability-registry/**'
+      - 'teaching/d20/**'
+      - 'services/ai/**'
+      - 'migrations/20261004_teaching_d30_canonical_qualification.sql'
+      - 'scripts/verify-teaching-d30-canonical.js'
+      - 'tests/teaching/unit/d30-canonical-qualification.test.js'
+      - 'package.json'
+      - '.github/workflows/teaching-d30-canonical-qualification.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'teaching/d30/**'
+      - 'teaching/prompt-runtime/**'
+      - 'teaching/capability-registry/**'
+      - 'teaching/d20/**'
+      - 'services/ai/**'
+      - 'migrations/20261004_teaching_d30_canonical_qualification.sql'
+      - 'scripts/verify-teaching-d30-canonical.js'
+      - 'tests/teaching/unit/d30-canonical-qualification.test.js'
+      - 'package.json'
+      - '.github/workflows/teaching-d30-canonical-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teaching-d30-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-d30:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Verify canonical D30 contracts
+        run: npm run verify:teaching:d30
+      - name: Run D30 qualification unit tests
+        run: node --test tests/teaching/unit/d30-canonical-qualification.test.js
+      - name: Verify D03 frozen prompt control regression
+        run: npm run verify:teaching:d03
+      - name: Verify D20 marking and blind-review regression
+        run: npm run verify:teaching:d20
+      - name: Run central AI orchestrator regression suite
+        run: npm run test:ai
+      - name: Verify web build
+        run: npm run build
+      - name: Enforce no live-provider qualification in ordinary CI
+        run: |
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const source=fs.readFileSync('teaching/d30/runner.js','utf8')+fs.readFileSync('teaching/d30/semantic-reviewer.js','utf8');
+          if(/process\.env\.(?:GROQ|GOOGLE|CLOUDFLARE)|fetch\(['"]https:\/\//i.test(source)) throw new Error('D30 CI must not call providers outside the central AI Orchestrator.');
+          console.log('D30 central-route boundary verified.');
+          NODE
