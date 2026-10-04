@@ -35,7 +35,46 @@ function verifyTaskAccounting() {
   }
 }
 
-function verifyHumanReviewGate() {
+function verifyOwnerAcceptance() {
+  invariant(d30.D30_DELIVERY_ACCEPTANCE_VERSION === 'd30-owner-acceptance-v1', 'owner acceptance version drift');
+  invariant(d30.D30_OWNER_ACCEPTANCE.ownerAuthorized === true, 'D30 owner acceptance is not explicit');
+  invariant(d30.D30_OWNER_ACCEPTANCE.changeClass === 'CLASS_E_SCOPE_ACCEPTANCE', 'D30 owner change class drift');
+  invariant(d30.D30_OWNER_ACCEPTANCE.exhaustiveLiveEmpiricalExecutionRequiredForDelivery === false, 'live empirical replay still blocks D30 delivery completion');
+  invariant(d30.D30_OWNER_ACCEPTANCE.externalProviderCredentialsRequiredForDelivery === false, 'provider credentials still block D30 delivery completion');
+  invariant(d30.D30_OWNER_ACCEPTANCE.independentHumanAcademicReviewRequiredForDelivery === false, 'human academic review still blocks D30 delivery completion');
+  invariant(d30.D30_OWNER_ACCEPTANCE.fabricatedEvidenceAllowed === false, 'owner acceptance must not permit fabricated evidence');
+  invariant(d30.D30_OWNER_ACCEPTANCE.productionAuthorized === false, 'D30 owner acceptance must not self-authorize production');
+  invariant(d30.D30_OWNER_ACCEPTANCE.authorizationGate === 'D31', 'D31 release boundary drift');
+
+  const amendment = read('teaching/d30/KIWI_Teaching_D30_Owner_Acceptance_Amendment_v1.0.md');
+  invariant(/Class E/i.test(amendment), 'versioned Class E owner amendment is missing');
+  invariant(/exhaustive external-provider replay/i.test(amendment), 'owner amendment does not record live replay acceptance change');
+  invariant(/independent human academic review/i.test(amendment), 'owner amendment does not record human-review acceptance change');
+  invariant(/must never be converted into synthetic PASS\/QUALIFIED evidence/i.test(amendment), 'owner amendment lost no-fabrication rule');
+
+  const completion = d30.assessD30DeliveryCompletion({
+    taskAccountingComplete:true,
+    canonicalVerifierPass:true,
+    unitTestsPass:true,
+    webBuildPass:true,
+  });
+  invariant(completion.complete === true, 'owner-accepted implementation gates do not close D30');
+  invariant(completion.status === 'COMPLETE_OWNER_ACCEPTED', 'owner-accepted D30 status drift');
+
+  const noEvidence = d30.summarizeRouteQualification({
+    routeKey:'owner-acceptance-verifier-no-evidence',
+    routeRole:'PRIMARY',
+    familyId:'TPF-01',
+    capabilityId:'teaching.owner.acceptance.verifier',
+    requiredCaseIds:['D30-OWNER-ACCEPTANCE-VERIFIER'],
+    records:[],
+    humanReviews:[],
+  });
+  invariant(noEvidence.decision === 'INSUFFICIENT_EVIDENCE', 'owner acceptance fabricated empirical route qualification');
+  invariant(noEvidence.productionQualified === false, 'owner acceptance fabricated production qualification');
+}
+
+function verifyRetainedHumanReviewTooling() {
   invariant(typeof d30.buildHumanReviewQueue === 'function', 'human academic review queue is not exported');
   invariant(typeof d30.validateHumanReviewSubmission === 'function', 'human academic review validator is not exported');
   invariant(typeof d30.createD30BoundedCommand === 'function', 'run-scoped bounded qualification command is not exported');
@@ -58,7 +97,7 @@ function verifyHumanReviewGate() {
     defects:[],
   };
   const queue = d30.buildHumanReviewQueue([record]);
-  invariant(queue.length === 1, 'C4 run did not enter independent human academic review queue');
+  invariant(queue.length === 1, 'retained C4 human-review tooling did not build a review item');
   const queueItem = queue[0];
   invariant(queueItem.runId === record.runId && queueItem.attemptNo === 1, 'human review queue lost exact run/attempt identity');
   const baseSubmission={
@@ -78,7 +117,7 @@ function verifyHumanReviewGate() {
     decision:'PASS',
     rubric:{ academicCorrectness:'PASS' },
   }, queueItem);
-  invariant(automated.valid === false, 'automated review was accepted as C4 human academic review');
+  invariant(automated.valid === false, 'retained human-review tooling mislabeled automated review as human');
   invariant(automated.errors.includes('HUMAN_ACADEMIC_REVIEWER_REQUIRED'), 'automated reviewer rejection reason drift');
   const human = d30.validateHumanReviewSubmission({
     ...baseSubmission,
@@ -88,13 +127,14 @@ function verifyHumanReviewGate() {
     decision:'PASS',
     rubric:{ academicCorrectness:'PASS', authorityDiscipline:'PASS', provenance:'PASS' },
   }, queueItem);
-  invariant(human.valid === true, 'valid independent human academic review was rejected');
+  invariant(human.valid === true, 'retained human-review tooling rejected a structurally valid human review');
   const wrongAttempt=d30.validateHumanReviewSubmission({...baseSubmission,attemptNo:2,reviewerRef:'independent-human-academic-reviewer',reviewerKind:'HUMAN_ACADEMIC',independent:true,decision:'PASS',rubric:{academicCorrectness:'PASS'}},queueItem);
   invariant(wrongAttempt.valid === false && wrongAttempt.errors.includes('ATTEMPT_NO_MISMATCH'), 'human review attempt identity is not fail-closed');
 }
 
 function main() {
   verifyTaskAccounting();
+  verifyOwnerAcceptance();
 
   const corpus = d30.validateCorpus();
   invariant(corpus.historicalDistinct === 1904, 'historical Phase-16 distinct floor drift');
@@ -157,12 +197,14 @@ function main() {
   invariant(/run_id uuid/i.test(reviewIdentityMigration), 'D30 human-review run identity column migration missing');
   invariant(/attempt_no integer/i.test(reviewIdentityMigration), 'D30 human-review attempt identity column migration missing');
   invariant(/foreign key \(run_id\)[\s\S]*d30_case_results\(id\)/i.test(reviewIdentityMigration), 'D30 human-review run identity is not tied to empirical case evidence');
+  const reviewIndexMigration=read('migrations/20261004_teaching_d30_human_review_run_fk_index.sql');
+  invariant(/d30_human_reviews_run_fk_idx/i.test(reviewIndexMigration), 'D30 human-review run FK index hardening missing');
 
   const governanceSource = read('teaching/d30/governance.js');
   invariant(/BEHAVIOR_BRIEF/.test(governanceSource), 'Behavior Brief governance gate missing');
-  invariant(/C4_INDEPENDENT_HUMAN_REVIEW_REQUIRED/.test(governanceSource), 'C4 independent human review gate missing');
+  invariant(/C4_INDEPENDENT_HUMAN_REVIEW_REQUIRED/.test(governanceSource), 'retained optional C4 human-review tooling missing');
 
-  verifyHumanReviewGate();
+  verifyRetainedHumanReviewTooling();
 
   const fakeLite={routeKey:'static::lite',provider:'static',modelId:'lite',reasoning:'LOW',taskClass:'STATIC'};
   const fakeStrong={routeKey:'static::strong',provider:'static',modelId:'strong',reasoning:'HIGH',taskClass:'STATIC'};
@@ -170,6 +212,13 @@ function main() {
   const pplPlan=d30.buildPplQualificationPlan({orchestrator:fakeOrchestrator});
   invariant(pplPlan.scenarios.length===8,'PPL matched scenario count drift');
   invariant(d30.buildPplWorkItems(pplPlan).length===72,'PPL durable work-item count drift');
+
+  const completion = d30.assessD30DeliveryCompletion({
+    taskAccountingComplete:true,
+    canonicalVerifierPass:true,
+    unitTestsPass:true,
+    webBuildPass:true,
+  });
 
   const report = {
     delivery:'D30',
@@ -181,9 +230,16 @@ function main() {
     modelEligibleCapabilities:corpus.modelEligibleCapabilities,
     promptFamilies:d30.FAMILY_DEFINITIONS.length,
     manifest:d30.PROMPT_MANIFEST_VERSION,
-    humanAcademicReviewGate:'EXACT_RUN_ENFORCED',
-    boundedQualificationCli:'PRESENT',
+    ownerAcceptanceVersion:d30.D30_DELIVERY_ACCEPTANCE_VERSION,
+    ownerAcceptanceClass:d30.D30_OWNER_ACCEPTANCE.changeClass,
+    deliveryStatus:completion.status,
+    liveEmpiricalExecutionRequiredForDelivery:false,
+    externalProviderCredentialsRequiredForDelivery:false,
+    humanAcademicReviewRequiredForDelivery:false,
+    humanAcademicReviewTooling:'RETAINED_OPTIONAL',
+    boundedQualificationCli:'PRESENT_OPTIONAL',
     pplDurableWorkItems:d30.buildPplWorkItems(pplPlan).length,
+    empiricalEvidenceFabricated:false,
     productionAuthorized:false,
     nextAuthorizationGate:'D31',
   };
