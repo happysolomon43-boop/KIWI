@@ -1,0 +1,17 @@
+BEGIN;
+CREATE SCHEMA IF NOT EXISTS teaching_runtime;
+CREATE TABLE IF NOT EXISTS teaching_runtime.d29_qa_runs (id uuid PRIMARY KEY,contract_version text NOT NULL,source_sha text NOT NULL CHECK(source_sha~'^[0-9a-f]{40}$'),fixture_version text NOT NULL,environment text NOT NULL CHECK(environment IN('LOCAL','CI','INTEGRATION','STAGING','PRODUCTION_SMOKE')),status text NOT NULL CHECK(status IN('RUNNING','PASSED','FAILED','BLOCKED')),metadata jsonb NOT NULL DEFAULT '{}'::jsonb,summary jsonb,started_at timestamptz NOT NULL DEFAULT now(),completed_at timestamptz);
+CREATE TABLE IF NOT EXISTS teaching_runtime.d29_qa_evidence (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,run_id uuid NOT NULL REFERENCES teaching_runtime.d29_qa_runs(id) ON DELETE CASCADE,scenario_id text NOT NULL,task_ids text[] NOT NULL CHECK(cardinality(task_ids)>0),invariant_ids text[] NOT NULL,result text NOT NULL CHECK(result IN('PASS','FAIL','EXPECTED_SKIP','BLOCKED')),reason_code text,evidence jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),UNIQUE(run_id,scenario_id),CHECK(result NOT IN('EXPECTED_SKIP','BLOCKED') OR reason_code IS NOT NULL));
+CREATE TABLE IF NOT EXISTS teaching_runtime.d29_qa_defects (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,run_id uuid NOT NULL REFERENCES teaching_runtime.d29_qa_runs(id) ON DELETE CASCADE,defect_key text NOT NULL,severity text NOT NULL CHECK(severity IN('P0','P1','P2','P3')),title text NOT NULL,details jsonb NOT NULL DEFAULT '{}'::jsonb,resolved boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),UNIQUE(run_id,defect_key));
+CREATE INDEX IF NOT EXISTS d29_qa_evidence_run_result_idx ON teaching_runtime.d29_qa_evidence(run_id,result);
+CREATE INDEX IF NOT EXISTS d29_qa_evidence_task_ids_idx ON teaching_runtime.d29_qa_evidence USING gin(task_ids);
+CREATE INDEX IF NOT EXISTS d29_qa_defects_run_severity_idx ON teaching_runtime.d29_qa_defects(run_id,severity) WHERE resolved=false;
+ALTER TABLE teaching_runtime.d29_qa_runs ENABLE ROW LEVEL SECURITY; ALTER TABLE teaching_runtime.d29_qa_runs FORCE ROW LEVEL SECURITY;
+ALTER TABLE teaching_runtime.d29_qa_evidence ENABLE ROW LEVEL SECURITY; ALTER TABLE teaching_runtime.d29_qa_evidence FORCE ROW LEVEL SECURITY;
+ALTER TABLE teaching_runtime.d29_qa_defects ENABLE ROW LEVEL SECURITY; ALTER TABLE teaching_runtime.d29_qa_defects FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON teaching_runtime.d29_qa_runs,teaching_runtime.d29_qa_evidence,teaching_runtime.d29_qa_defects FROM PUBLIC,anon,authenticated;
+GRANT USAGE ON SCHEMA teaching_runtime TO service_role;
+GRANT SELECT,INSERT,UPDATE ON teaching_runtime.d29_qa_runs,teaching_runtime.d29_qa_evidence,teaching_runtime.d29_qa_defects TO service_role;
+GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA teaching_runtime TO service_role;
+COMMENT ON TABLE teaching_runtime.d29_qa_evidence IS 'Privacy-minimized D29 verification evidence; never an academic source of truth.';
+COMMIT;
