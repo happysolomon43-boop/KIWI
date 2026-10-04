@@ -18,6 +18,14 @@ const DETERMINISTIC_BOUNDARIES = Object.freeze({
   GRADEBOOK_OWNER: 'teaching.progression.gradebook_calculation',
 });
 
+const WORKFLOW_IDS = Object.freeze({
+  TEACHING_EVIDENCE: 'TEACHING_EVIDENCE_CHAIN',
+  ASSESSMENT_CONSTRUCTION: 'ASSESSMENT_CONSTRUCTION_CHAIN',
+  MARKING_REVIEW: 'MARKING_REVIEW_CHAIN',
+  INTEGRITY_HANDOFF: 'INTEGRITY_HANDOFF',
+  TEACHER_STYLE: 'TEACHER_STYLE_CHAIN',
+});
+
 function invariant(condition, message, code = 'TEACHING_D30_CROSS_FAMILY_INCOMPATIBLE') {
   if (!condition) {
     const error = new Error(message);
@@ -159,14 +167,14 @@ function createCrossFamilyWorkflowExecutor({ promptControl = createTeachingPromp
       risk:caseSpec.inputFixture?.risk || 'CROSS_FAMILY_HANDOFF',
     };
 
-    if (workflow.id === 'assessment_construction') {
+    if (workflow.id === WORKFLOW_IDS.ASSESSMENT_CONSTRUCTION) {
       checks.deterministicBoundary = verifyDeterministicBoundary(DETERMINISTIC_BOUNDARIES.AUTHORITATIVE_PACKAGE_LOCK, 'Assessment Attempt/Package');
-    } else if (workflow.id === 'marking_review') {
+    } else if (workflow.id === WORKFLOW_IDS.MARKING_REVIEW) {
       checks.markingReview = verifyMarkingReviewBoundary();
       checks.deterministicBoundary = verifyDeterministicBoundary(DETERMINISTIC_BOUNDARIES.GRADEBOOK_OWNER, 'Gradebook');
-    } else if (workflow.id === 'integrity_handoff') {
+    } else if (workflow.id === WORKFLOW_IDS.INTEGRITY_HANDOFF) {
       checks.integrityHandoff = verifyIntegrityHandoff();
-    } else if (workflow.id === 'teacher_style') {
+    } else if (workflow.id === WORKFLOW_IDS.TEACHER_STYLE) {
       checks.teacherStyleEnvelope = verifyTeacherStyleEnvelope();
     }
 
@@ -176,10 +184,10 @@ function createCrossFamilyWorkflowExecutor({ promptControl = createTeachingPromp
       (!adverse || familyNodes.every((node) => node.ownerBoundaries.length > 0));
     const provenancePreserved = familyNodes.every((node) => /^[0-9a-f]{64}$/.test(node.promptSha256));
     const handoffCompatible = authorityPreserved && provenancePreserved &&
-      (workflow.id !== 'assessment_construction' || Boolean(checks.deterministicBoundary)) &&
-      (workflow.id !== 'marking_review' || Boolean(checks.markingReview && checks.deterministicBoundary)) &&
-      (workflow.id !== 'integrity_handoff' || Boolean(checks.integrityHandoff)) &&
-      (workflow.id !== 'teacher_style' || Boolean(checks.teacherStyleEnvelope));
+      (workflow.id !== WORKFLOW_IDS.ASSESSMENT_CONSTRUCTION || Boolean(checks.deterministicBoundary)) &&
+      (workflow.id !== WORKFLOW_IDS.MARKING_REVIEW || Boolean(checks.markingReview && checks.deterministicBoundary)) &&
+      (workflow.id !== WORKFLOW_IDS.INTEGRITY_HANDOFF || Boolean(checks.integrityHandoff)) &&
+      (workflow.id !== WORKFLOW_IDS.TEACHER_STYLE || Boolean(checks.teacherStyleEnvelope));
 
     return Object.freeze({
       workflowId:workflow.id,
@@ -194,6 +202,7 @@ function createCrossFamilyWorkflowExecutor({ promptControl = createTeachingPromp
 
 module.exports = {
   DETERMINISTIC_BOUNDARIES,
+  WORKFLOW_IDS,
   familyCapabilities,
   verifyFamilyNode,
   verifyDeterministicBoundary,
