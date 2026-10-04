@@ -4,6 +4,7 @@ const { createPostgresTeachingEventStore } = require('./postgres-event-store');
 const { createDurableTeachingEventRuntime } = require('./durable-event-runtime');
 const { createPostgresTeachingExecutionTelemetry } = require('../observability/postgres-execution-telemetry');
 const { createCentralAIExecutionBoundary } = require('../ai/central-orchestrator-boundary');
+const { createD28AiExecutionControls } = require('../d28/ai-controls');
 const { createTeachingPromptControlPlane } = require('../prompt-runtime');
 const { createPostgresOrchestrationStore } = require('./postgres-orchestration-store');
 const { createPostgresTeachingOutboxStore } = require('./postgres-outbox-store');
@@ -32,6 +33,9 @@ function createTeachingRuntimePlatform({
   const eventStore = createPostgresTeachingEventStore({ query, randomUUID });
   const executionTelemetry = createPostgresTeachingExecutionTelemetry({ query, randomUUID });
   const promptControl = createTeachingPromptControlPlane();
+  const aiExecutionControls = createD28AiExecutionControls({
+    maxValidationAttempts: parseBounded(env.TEACHING_D28_AI_VALIDATION_ATTEMPTS, 2, 1, 3),
+  });
   const workerId = `teaching-runtime:${randomUUID()}`;
   const eventRuntime = createDurableTeachingEventRuntime({
     store: eventStore,
@@ -45,7 +49,11 @@ function createTeachingRuntimePlatform({
     maxAttempts: parseBounded(env.TEACHING_RUNTIME_MAX_ATTEMPTS, 5, 1, 20),
     retryBaseMs: parseBounded(env.TEACHING_RUNTIME_RETRY_BASE_MS, 5_000, 1_000, 300_000),
   });
-  const aiBoundary = createCentralAIExecutionBoundary({ aiRun, telemetry: executionTelemetry });
+  const aiBoundary = createCentralAIExecutionBoundary({
+    aiRun,
+    telemetry: executionTelemetry,
+    executionControls: aiExecutionControls,
+  });
 
   let ready = false;
   let lastInitializationError = null;
@@ -86,6 +94,7 @@ function createTeachingRuntimePlatform({
     eventRuntime,
     executionTelemetry,
     aiBoundary,
+    aiExecutionControls,
     promptControl,
     initialize,
     start,
