@@ -156,7 +156,7 @@ function basePplCase(scenario,{arm,stage,previousArtifact=null}={}) {
       matchedFinalAuthoritativeInput:finalStage,
       authoritativeInput:bundle,
       materialDelta:finalStage ? scenario.delta : null,
-      earlyProposalAvailable:progressive && finalStage,
+      earlyProposalAvailable:progressive && finalStage && previousArtifact != null,
       strongFinalMayOverturnPriorProposal:progressive && finalStage,
       primaryAuthoritativeEvidenceSupplied:finalStage,
     }),
@@ -301,8 +301,18 @@ function progressivePathRecords(records,plan) {
   return Object.freeze(finalQuality.map((quality)=>{
     const scenario=plan.scenarios.find((item)=>item.id===quality.scenarioId);
     const early=records.find((record)=>record.caseId===pplCaseId(quality.scenarioId,'PROGRESSIVE','EARLY') && Number(record.attemptNo)===Number(quality.attemptNo) && record.routeKey===scenario?.earlyRoute.routeKey);
-    if (!early) return quality;
-    return Object.freeze({...quality,estimatedCostUsd:Number(quality.estimatedCostUsd||0)+Number(early.estimatedCostUsd||0),latencyMs:Number(quality.latencyMs||0)+Number(early.latencyMs||0),earlyRouteKey:early.routeKey});
+    if (!early) return Object.freeze({...quality,qualityGates:Object.freeze({...quality.qualityGates,validators:false}),defects:Object.freeze([...quality.defects,{severity:'P1',code:'PPL_EARLY_STAGE_EVIDENCE_MISSING',message:'Progressive path final result has no matching early-stage evidence.'}])});
+    const earlySerious=seriousDefects(early.defects||[]);
+    const earlyPass=early.validation?.pass===true && early.semanticReview?.pass===true && earlySerious.length===0;
+    return Object.freeze({
+      ...quality,
+      qualityGates:Object.freeze({...quality.qualityGates,validators:quality.qualityGates.validators && earlyPass}),
+      defects:Object.freeze([...(early.defects||[]),...quality.defects]),
+      estimatedCostUsd:Number(quality.estimatedCostUsd||0)+Number(early.estimatedCostUsd||0),
+      latencyMs:Number(quality.latencyMs||0)+Number(early.latencyMs||0),
+      earlyRouteKey:early.routeKey,
+      earlyStagePass:earlyPass,
+    });
   }));
 }
 
