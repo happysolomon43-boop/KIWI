@@ -88,6 +88,40 @@ function verifyHumanReviewGate() {
   invariant(human.valid === true, 'valid independent human academic review was rejected');
 }
 
+function verifyEmpiricalExecutionLayer() {
+  for (const name of [
+    'createD30QualificationCoordinator',
+    'buildPplQualificationPlan',
+    'buildPplWorkItems',
+    'compareEmpiricalPpl',
+    'createCrossFamilyWorkflowExecutor',
+  ]) invariant(typeof d30[name] === 'function', `empirical execution export missing: ${name}`);
+
+  invariant(d30.PPL_COMPARISON_VERSION === 'teaching-d30-ppl-comparison-v1', 'PPL comparison version drift');
+  invariant(d30.PPL_SCENARIOS.length === 8, 'matched PPL scenario count drift');
+  invariant(d30.PPL_REPEAT_COUNT === 3, 'PPL repeat floor drift');
+  invariant(d30.PPL_CAPABILITY_BY_FAMILY['TPF-05'] === 'teaching.lesson.pre_class_lesson_planning', 'Lesson PPL capability binding drift');
+  invariant(d30.PPL_CAPABILITY_BY_FAMILY['TPF-12'] === 'teaching.assessment.assessment_blueprint_generation', 'Assessment PPL capability binding drift');
+
+  const coordinatorSource = read('teaching/d30/coordinator.js');
+  invariant(/findResumableSession/.test(coordinatorSource), 'coordinator does not resume exact source-SHA sessions');
+  invariant(/listCompletedRunKeys/.test(coordinatorSource), 'coordinator does not skip persisted run keys');
+  invariant(/executePplBatch/.test(coordinatorSource), 'coordinator does not execute bounded PPL batches');
+  invariant(/pendingHumanReviews/.test(coordinatorSource), 'coordinator does not fail closed on pending human review');
+  invariant(/authorizationGate:'D31'/.test(coordinatorSource), 'coordinator D31 authorization hold drift');
+
+  const pplSource = read('teaching/d30/ppl-qualification.js');
+  invariant(/OBSERVED_WITHIN_SCENARIO_REPEAT_RANGE/.test(pplSource), 'PPL materiality is not calibrated from observed repeat variance');
+  invariant(/PPL_EARLY_STAGE_EVIDENCE_MISSING/.test(pplSource), 'PPL final path can lose early-stage evidence');
+  invariant(/seriousDefectCount/.test(pplSource), 'PPL comparison does not carry serious defects into the gate');
+  invariant(/final_reconciliation/.test(pplSource) && /economy_maintenance/.test(pplSource), 'PPL staged route posture comparison missing');
+
+  const crossFamilySource = read('teaching/d30/cross-family.js');
+  for (const workflowId of ['ASSESSMENT_CONSTRUCTION_CHAIN','MARKING_REVIEW_CHAIN','INTEGRITY_HANDOFF','TEACHER_STYLE_CHAIN']) {
+    invariant(crossFamilySource.includes(workflowId), `cross-family specialized boundary check missing canonical workflow ${workflowId}`);
+  }
+}
+
 function main() {
   verifyTaskAccounting();
 
@@ -137,6 +171,7 @@ function main() {
   invariant(/C4_INDEPENDENT_HUMAN_REVIEW_REQUIRED/.test(governanceSource), 'C4 independent human review gate missing');
 
   verifyHumanReviewGate();
+  verifyEmpiricalExecutionLayer();
 
   const report = {
     delivery:'D30',
@@ -149,6 +184,8 @@ function main() {
     promptFamilies:d30.FAMILY_DEFINITIONS.length,
     manifest:d30.PROMPT_MANIFEST_VERSION,
     humanAcademicReviewGate:'ENFORCED',
+    empiricalCoordinator:'RESUMABLE_FAIL_CLOSED',
+    pplComparison:d30.PPL_COMPARISON_VERSION,
     productionAuthorized:false,
     nextAuthorizationGate:'D31',
   };
