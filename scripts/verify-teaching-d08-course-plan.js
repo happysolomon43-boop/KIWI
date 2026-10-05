@@ -115,13 +115,14 @@ if (/insert into\s+public\.(gradebook|teaching_grade)/i.test(featureSource)) thr
 const ui = read('public/teaching-d08.js');
 const teachingUi = read('public/teaching.js');
 const teachingHtml = read('public/teaching.html');
-if (!ui.includes('Course setup · Stage 2') || !ui.includes('Required content stays accounted for')) throw new Error('D08 Stage 2 review UI missing.');
+if (!ui.includes('Academic plan') || !ui.includes('Required content stays accounted for')) throw new Error('D08 Course Plan review UI missing.');
 if (!ui.includes("courseSurface.registerSection") || !ui.includes("id: 'course-plan'") || !ui.includes('renderSummary: renderCoursePlanSummary')) {
   throw new Error('D08 Course Plan is not integrated as a course-scoped surface.');
 }
 if (/nav\.register|KIWITeachingNavigation/.test(ui)) throw new Error('D08 Course Plan must not register as global Teaching navigation.');
 if (!ui.includes('Quick view') || !ui.includes('View full Course Plan')) throw new Error('D08 course-scoped preview/full-plan entry points missing.');
 if (!ui.includes('Create Course Plan') || !ui.includes("method: 'POST'")) throw new Error('D08 Course Plan generation action is missing from the browser surface.');
+if (!ui.includes('Open course setup') || !ui.includes("id: 'setup'") || !ui.includes('Analyze course materials')) throw new Error('D08 guided Course preparation surface is missing.');
 if (ui.includes('Generation held until D30') || ui.includes('No Course Plan has been committed yet')) throw new Error('D08 browser surface still exposes stale release-gate wording.');
 if (!teachingUi.includes('window.KIWITeachingCourses') || !teachingUi.includes('teachingCourseSections')) throw new Error('Teaching course-context navigation API missing.');
 if (!teachingHtml.includes('teaching-course-nav__item') || !teachingHtml.includes('/teaching-d08.js')) throw new Error('D08 course-context browser integration is not packaged.');

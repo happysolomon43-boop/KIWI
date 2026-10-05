@@ -35,6 +35,10 @@ function installStyles() {
     .teaching-d08-link-button{min-height:42px;padding:0 14px;border:1px solid var(--teaching-border);border-radius:12px;background:rgba(255,255,255,.02);color:#cce6db;cursor:pointer;font-weight:700}
     .teaching-d08-link-button:hover,.teaching-d08-link-button:focus-visible{outline:none;border-color:var(--teaching-border-strong);background:var(--teaching-accent-soft)}
     .teaching-d08-link-button--primary{border-color:transparent;background:var(--teaching-accent);color:#032116}
+    .teaching-d08-setup-list{display:grid;gap:10px;margin-top:18px}
+    .teaching-d08-setup-step{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:12px;align-items:center;padding:14px;border:1px solid var(--teaching-border);border-radius:15px;background:rgba(1,12,9,.34)}
+    .teaching-d08-setup-step__mark{display:grid;place-items:center;width:36px;height:36px;border-radius:12px;background:var(--teaching-accent-soft);color:var(--teaching-accent);font-weight:900}
+    .teaching-d08-setup-step strong,.teaching-d08-setup-step small{display:block}.teaching-d08-setup-step small{margin-top:4px;color:var(--teaching-muted);line-height:1.45}
     .teaching-d08-page{display:grid;gap:18px}
     .teaching-d08-page__head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;padding:4px 2px 8px}
     .teaching-d08-page__head h2{margin:7px 0 0;font-family:var(--font-display);font-size:clamp(28px,4vw,42px);letter-spacing:-.045em}
@@ -78,6 +82,8 @@ function installStyles() {
       .teaching-d08-mini-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
       .teaching-d08-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
       .teaching-d08-preview__actions{grid-template-columns:1fr}
+      .teaching-d08-setup-step{grid-template-columns:38px minmax(0,1fr)}
+      .teaching-d08-setup-step>.teaching-d08-status{grid-column:2}
     }
     
     /* Teaching polish: keep D08 visually native to the course workspace. */
@@ -161,6 +167,10 @@ function metric(value, label, compact = false) {
 
 async function fetchReview(courseId) {
   return kiwiApiRequest(`/teaching/courses/${encodeURIComponent(courseId)}/plan-review`);
+}
+
+async function fetchSetup(courseId) {
+  return kiwiApiRequest(`/teaching/courses/${encodeURIComponent(courseId)}/setup`);
 }
 
 function ensurePreview() {
@@ -274,45 +284,54 @@ function renderPlanCard(course, review, refresh) {
   const head = el('div', 'teaching-d08-plan-head');
   const copy = el('div');
   copy.append(el('div', 'teaching-kicker', 'Course Plan'), el('h3', '', 'What this course will teach'));
-  const status = el('span', 'teaching-d08-status', review.plan
+  const needsSetup = !review.plan && review.generation?.ready === false;
+  const status = el(needsSetup ? 'button' : 'span', 'teaching-d08-status', review.plan
     ? `Version ${review.plan.version} · ${safeStatus(review.plan.state)}`
     : review.generation?.ready === false ? 'Setup required' : 'Ready to create');
+  if (needsSetup) {
+    status.type = 'button';
+    status.setAttribute('aria-label', 'Open course setup');
+    status.addEventListener('click', () => courseSurface.openCourse(course.course_id, 'setup'));
+  }
   head.append(copy, status);
   card.append(head);
 
   if (!review.plan) {
     card.append(el('p', '', 'Create a Course Plan to organize the topics and learning units for this course.'));
     const actions = el('div', 'teaching-d08-actions');
-    const generate = el('button', 'teaching-button', 'Create Course Plan');
-    generate.type = 'button';
-    generate.disabled = review.generation?.ready === false;
     const message = el('div');
     message.setAttribute('role', 'status');
     message.setAttribute('aria-live', 'polite');
-    if (review.generation?.available === false) {
-      message.textContent = 'Course Plan generation is temporarily unavailable.';
+    if (review.generation?.ready === false) {
+      const setup = el('button', 'teaching-button teaching-button--primary', 'Open course setup');
+      setup.type = 'button';
+      setup.addEventListener('click', () => courseSurface.openCourse(course.course_id, 'setup'));
+      actions.append(setup);
+      message.textContent = review.generation?.blockers?.includes('REQUIRED_DIAGNOSTIC_UNRESOLVED')
+        ? 'Complete the required learning check before creating the Course Plan.'
+        : 'Analyze the course materials first so KIWI can build the plan from the correct content.';
       message.className = 'teaching-message';
-    } else if (review.generation?.ready === false) {
-      message.textContent = 'Complete the required course setup before creating the plan.';
-      message.className = 'teaching-message';
-    }
-    generate.addEventListener('click', async () => {
-      generate.disabled = true;
-      message.textContent = 'Creating your Course Plan…';
-      message.className = 'teaching-message';
-      delete message.dataset.kind;
-      try {
-        await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/course-plan`, { method: 'POST', body: {} });
-        message.textContent = 'Course Plan created.';
-        await refresh();
-      } catch (error) {
-        message.textContent = error.message || 'Could not create the Course Plan.';
+    } else {
+      const generate = el('button', 'teaching-button teaching-button--primary', 'Create Course Plan');
+      generate.type = 'button';
+      generate.addEventListener('click', async () => {
+        generate.disabled = true;
+        message.textContent = 'Creating your Course Plan…';
         message.className = 'teaching-message';
-        message.dataset.kind = 'error';
-        generate.disabled = false;
-      }
-    });
-    actions.append(generate);
+        delete message.dataset.kind;
+        try {
+          await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/course-plan`, { method: 'POST', body: {} });
+          message.textContent = 'Course Plan created.';
+          await refresh();
+        } catch (error) {
+          message.textContent = error.message || 'Could not create the Course Plan.';
+          message.className = 'teaching-message';
+          message.dataset.kind = 'error';
+          generate.disabled = false;
+        }
+      });
+      actions.append(generate);
+    }
     card.append(actions, message);
     return card;
   }
@@ -464,7 +483,7 @@ async function renderCoursePlan({ course, container }) {
   const head = el('header', 'teaching-d08-page__head');
   const copy = el('div');
   copy.append(
-    el('div', 'teaching-kicker', 'Course setup · Stage 2'),
+    el('div', 'teaching-kicker', 'Academic plan'),
     el('h2', '', 'Course Plan'),
     el('p', '', 'Review what the course will teach, what is already accounted for, and the assumptions Teaching is carrying forward.')
   );
@@ -507,6 +526,115 @@ async function renderCoursePlan({ course, container }) {
   await load();
 }
 
+async function renderCourseSetup({ course, container }) {
+  installStyles();
+  const page = el('div', 'teaching-d08-page');
+  const head = el('header', 'teaching-d08-page__head');
+  const copy = el('div');
+  copy.append(
+    el('div', 'teaching-kicker', 'Course preparation'),
+    el('h2', '', 'Prepare your course'),
+    el('p', '', 'KIWI checks the saved materials before creating the Course Plan. Your learning preferences remain context—not proof of mastery.')
+  );
+  head.append(copy);
+  const status = el('div');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  const body = el('div');
+  page.append(head, status, body);
+  container.replaceChildren(page);
+
+  async function load() {
+    status.textContent = 'Checking course preparation…';
+    status.className = 'teaching-message';
+    try {
+      const setup = await fetchSetup(course.course_id);
+      const auditReady = setup.curriculumAudit?.status === 'VALIDATED_CANDIDATE'
+        && String(setup.curriculumAudit?.subject_snapshot_ref || '') === String(setup.course?.subject_snapshot_ref || '');
+      const sourcesReady = (setup.sources || []).length > 0 && (setup.sources || []).every((source) => Boolean(source.classification));
+      const diagnosticRequired = setup.diagnosticPlan?.requirement_state === 'REQUIRED';
+      const diagnosticResolved = !diagnosticRequired || (setup.diagnosticPlan?.target_refs || []).every((target) =>
+        (setup.vpkDecisions || []).some((decision) => String(decision.target_ref) === String(target)));
+      const readinessChecked = Boolean(setup.diagnosticPlan);
+      const card = el('section', 'teaching-d08-card');
+      card.append(el('div', 'teaching-kicker', 'What KIWI needs'), el('h3', '', 'A clear source foundation'));
+      const list = el('div', 'teaching-d08-setup-list');
+      const setupStep = (mark, title, description, state) => {
+        const row = el('div', 'teaching-d08-setup-step');
+        const text = el('div');
+        text.append(el('strong', '', title), el('small', '', description));
+        row.append(el('span', 'teaching-d08-setup-step__mark', mark), text, el('span', 'teaching-d08-status', state));
+        return row;
+      };
+      list.append(
+        setupStep((setup.sources || []).length ? '✓' : '•', 'Course materials', `${(setup.sources || []).length} saved source item${(setup.sources || []).length === 1 ? '' : 's'} will ground the plan.`, (setup.sources || []).length ? 'Ready' : 'Missing'),
+        setupStep(auditReady && sourcesReady ? '✓' : '•', 'Material analysis', auditReady && sourcesReady ? 'The current materials have been analyzed and classified.' : 'KIWI needs to identify the topics, requirements, and relevant source content.', auditReady && sourcesReady ? 'Ready' : 'Needed'),
+        setupStep(readinessChecked && diagnosticResolved ? '✓' : '•', 'Learning readiness', diagnosticRequired ? 'A focused, non-graded learning check is required before planning can continue.' : readinessChecked ? 'No additional learning check blocks the Course Plan.' : 'Check whether any prerequisite knowledge needs verification.', readinessChecked && diagnosticResolved ? 'Ready' : 'Action needed')
+      );
+      card.append(list);
+      const actions = el('div', 'teaching-d08-actions');
+      if (!auditReady || !sourcesReady) {
+        const analyze = el('button', 'teaching-button teaching-button--primary', 'Analyze course materials');
+        analyze.type = 'button';
+        analyze.addEventListener('click', async () => {
+          analyze.disabled = true;
+          status.textContent = 'Analyzing the course materials…';
+          status.className = 'teaching-message';
+          delete status.dataset.kind;
+          try {
+            await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/curriculum-audit`, { method: 'POST', body: {} });
+            await load();
+          } catch (error) {
+            status.textContent = error.message || 'The material analysis could not be completed.';
+            status.className = 'teaching-message';
+            status.dataset.kind = 'error';
+            analyze.disabled = false;
+          }
+        });
+        actions.append(analyze);
+      } else if (!readinessChecked) {
+        const check = el('button', 'teaching-button teaching-button--primary', 'Check learning readiness');
+        check.type = 'button';
+        check.addEventListener('click', async () => {
+          check.disabled = true;
+          status.textContent = 'Checking whether a learning check is needed…';
+          status.className = 'teaching-message';
+          delete status.dataset.kind;
+          try {
+            await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/diagnostic-plan`, { method: 'POST', body: {} });
+            await load();
+          } catch (error) {
+            status.textContent = error.message || 'Learning readiness could not be checked.';
+            status.dataset.kind = 'error';
+            check.disabled = false;
+          }
+        });
+        actions.append(check);
+      } else if (!diagnosticResolved) {
+        const blocked = el('div', 'teaching-message', 'Complete the required learning check before creating the Course Plan.');
+        blocked.dataset.kind = 'error';
+        card.append(blocked);
+      } else {
+        const continueButton = el('button', 'teaching-button teaching-button--primary', 'Continue to Course Plan');
+        continueButton.type = 'button';
+        continueButton.addEventListener('click', () => courseSurface.openCourse(course.course_id, 'course-plan'));
+        actions.append(continueButton);
+      }
+      card.append(actions);
+      body.replaceChildren(card);
+      status.textContent = '';
+      status.className = '';
+      delete status.dataset.kind;
+    } catch (error) {
+      body.replaceChildren();
+      status.textContent = error.message || 'Course preparation could not be loaded.';
+      status.className = 'teaching-message';
+      status.dataset.kind = 'error';
+    }
+  }
+  await load();
+}
+
 async function renderCoursePlanSummary({ course, container, openSection }) {
   installStyles();
   const loading = el('article', 'teaching-course-feature-card');
@@ -522,6 +650,13 @@ courseSurface.registerSection({
   order: 20,
   render: renderCoursePlan,
   renderSummary: renderCoursePlanSummary,
+});
+
+courseSurface.registerSection({
+  id: 'setup',
+  label: 'Setup',
+  order: 15,
+  render: renderCourseSetup,
 });
 
 window.KIWITeachingD08 = Object.freeze({

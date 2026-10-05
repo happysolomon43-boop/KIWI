@@ -426,8 +426,11 @@ function canonicalCourseRows(rows = []) {
     + Number(course.state_version || 0);
   for (const course of rows) {
     const draft = String(course.lifecycle_state || '').toUpperCase() === 'DRAFT';
-    const exactDraftKey = draft && course.subject_id && course.source_version_ref
-      ? [course.subject_id, course.source_version_ref, String(course.title || '').trim().toLowerCase()].join('\u0000')
+    const subjectIdentity = course.subject_id
+      || /^subject:([^:]+)/.exec(String(course.subject_snapshot_ref || ''))?.[1]
+      || null;
+    const exactDraftKey = draft && subjectIdentity
+      ? [subjectIdentity, String(course.title || '').trim().toLowerCase()].join('\u0000')
       : `course:${course.course_id}`;
     const current = selected.get(exactDraftKey);
     if (!current || score(course) > score(current)) selected.set(exactDraftKey, course);
@@ -762,7 +765,7 @@ function renderIntakeSuccess(course, extractionStatus, intakeSignals) {
     el('div', 'teaching-kicker', 'Draft course created'),
     el('h2', '', displayCourseName(course.title, 'Your course is ready for its next step')),
     el('p', '', extractionStatus === 'ROUTE_HELD_UNTIL_D30'
-      ? 'Your original Intake is preserved. AI interpretation remains safely held until Teaching routes complete qualification.'
+      ? 'Your original Intake is preserved. Course preparation is temporarily unavailable, but your draft is safe.'
       : 'Your Intake and its planning signals were saved without treating self-report as academic evidence.')
   );
   const openCourse = el('button', 'teaching-button teaching-button--primary', 'Open course');
@@ -796,7 +799,7 @@ function renderIntakeSuccess(course, extractionStatus, intakeSignals) {
         : 'A focused, non-graded Diagnostic is the next course step.');
     } catch (error) {
       showSetupMessage(message, error.code === 'TEACHING_ROUTE_UNQUALIFIED'
-        ? 'Course readiness is preserved, but Teaching AI execution remains held until D30 qualification.'
+        ? 'Your course is safe, but preparation is temporarily unavailable. Try again shortly.'
         : error.message, 'error');
     } finally {
       readiness.disabled = false;
@@ -816,7 +819,7 @@ function renderCourseIntake() {
   const page = el('section', 'teaching-view');
   const header = el('header', 'teaching-intake-header');
   header.append(
-    el('div', 'teaching-kicker', 'Stage 1 · Course Intake'),
+    el('div', 'teaching-kicker', 'Create course'),
     el('h1', 'teaching-title', 'Create a course.'),
     el('p', 'teaching-lead', 'Choose the KIWI Subject you want to learn and add any context that can help Teaching adapt how it explains, practises, and supports you.')
   );
@@ -931,7 +934,7 @@ function renderCourseIntake() {
         method: 'POST',
         body: intakeSignals,
       });
-      teachingWorkspace.courses.push(course);
+      teachingWorkspace.courses = canonicalCourseRows([...teachingWorkspace.courses, course]);
       renderIntakeSuccess(course, result.extractionStatus, intakeSignals);
     } catch (error) {
       showSetupMessage(message, error.message, 'error');
