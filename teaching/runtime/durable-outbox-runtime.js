@@ -1,5 +1,13 @@
 'use strict';
 
+const TERMINAL_PUBLICATION_CODES = new Set([
+  'TEACHING_AI_OUTPUT_TRUNCATED',
+  'TEACHING_D07_CURRICULUM_AUDIT_REJECTED',
+  'TEACHING_ACADEMIC_INPUT_INVALID',
+  'TEACHING_TPF02_SOURCE_INPUT_INVALID',
+  'TEACHING_TPF02_DIRECT_PROMPT_MISMATCH',
+]);
+
 function parseBounded(value, fallback, min, max) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
@@ -37,6 +45,11 @@ function toCanonicalEvent(row) {
     auditRefs: row.audit_refs || [],
     provenanceRefs: row.provenance_refs || [],
   });
+}
+
+function isTerminalPublicationFailure(error) {
+  const code = String(error?.code || '').trim();
+  return TERMINAL_PUBLICATION_CODES.has(code) || code.startsWith('TEACHING_TPF02_');
 }
 
 function createDurableTeachingOutboxRuntime({
@@ -88,12 +101,14 @@ function createDurableTeachingOutboxRuntime({
           publishedCount += 1;
           outcomes.push('PUBLISHED');
         } catch (error) {
-          if (Number(event.attempt_count) >= effectiveMaxAttempts) {
+          const terminal = isTerminalPublicationFailure(error);
+          if (terminal || Number(event.attempt_count) >= effectiveMaxAttempts) {
             await store.markCancelled(event, {
               errorCode: error?.code || 'TEACHING_EVENT_PUBLICATION_FAILED',
             });
-            logger?.error?.('[KIWI Teaching] outbox publication exhausted retry budget; terminal failure recorded', {
+            logger?.error?.('[KIWI Teaching] outbox publication recorded terminal failure', {
               eventId: event.event_id,
+              terminal,
               code: error?.code || null,
               message: error?.message || String(error),
             });
@@ -148,4 +163,4 @@ function createDurableTeachingOutboxRuntime({
   return Object.freeze({ tick, start, stop, status });
 }
 
-module.exports = { createDurableTeachingOutboxRuntime, toCanonicalEvent, canonicalTimestamp };
+module.exports = { createDurableTeachingOutboxRuntime, toCanonicalEvent, canonicalTimestamp, isTerminalPublicationFailure, TERMINAL_PUBLICATION_CODES };
