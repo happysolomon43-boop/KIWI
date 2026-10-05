@@ -77,7 +77,8 @@ test('Teaching uses the polished KIWI visual language and exposes Create Course 
   assert.match(html, /--font-mono: "JetBrains Mono"/);
   assert.match(js, /title: 'Overview'/);
   assert.match(js, /title: 'Create Course'/);
-  assert.match(js, /Stage 1 · Course Intake/);
+  assert.match(js, /Create course/);
+  assert.doesNotMatch(js, /Stage 1 · Course Intake/);
   assert.match(js, /function renderCourseIntake\(\)/);
   assert.match(js, /function navigateTeaching\(view\)/);
 });

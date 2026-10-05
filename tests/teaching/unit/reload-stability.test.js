@@ -14,7 +14,7 @@ test('Teaching production document keeps the established shell and does not load
   assert.doesNotMatch(html, /teaching-d23-live\.(?:js|css)/);
   assert.doesNotMatch(html, /class="d23-shell"/);
   assert.match(html, /id="teachingApp"/);
-  assert.match(html, /src="\/teaching\.js\?v=20261005-dedupe-actions-3"/);
+  assert.match(html, /src="\/teaching\.js\?v=20261005-course-flow-4"/);
 });
 
 test('Teaching refresh restores the last valid destination and Course section', () => {

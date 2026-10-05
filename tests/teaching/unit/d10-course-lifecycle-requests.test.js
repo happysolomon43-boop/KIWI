@@ -141,7 +141,7 @@ test('D10 post-activation UI removes direct timetable authority and exposes one 
   assert.match(d10,/requestEarlyDismissal/);
   assert.match(d10,/requestTeacherChange/);
   assert.match(d10,/ALTERNATIVE_PROPOSED/);
-  assert.match(html,/<script type="module" src="\/teaching-d10\.js"><\/script>/);
+  assert.match(html,/<script type="module" src="\/teaching-d10\.js(?:\?[^\"]*)?"><\/script>/);
   assert.doesNotMatch(html,/<\/script>\\n\s*<script type="module" src="\/teaching-d10\.js"/);
 });
 

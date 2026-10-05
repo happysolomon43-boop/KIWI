@@ -30,7 +30,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     return wrapped.mutationResult;
   }
   function requireReadyContext(context,requestedCourseId){
-    if(!context.semester){ const e=new Error('Stage 4 Semester and Availability must be completed before timetable feasibility.'); e.status=409; e.code='TEACHING_D09_SEMESTER_REQUIRED'; throw e; }
+    if(!context.semester){ const e=new Error('Save the semester and availability before creating a timetable.'); e.status=409; e.code='TEACHING_D09_SEMESTER_REQUIRED'; throw e; }
     if(!context.profile){ const e=new Error('A current availability/scheduling profile is required.'); e.status=409; e.code='TEACHING_D09_SCHEDULE_PROFILE_REQUIRED'; throw e; }
     const requested=context.courses.find((b)=>String(b.course.course_id)===String(requestedCourseId));
     if(!requested){ const e=new Error('The requested Course has no current Course Plan to schedule.'); e.status=409; e.code='TEACHING_D09_CURRENT_COURSE_PLAN_REQUIRED'; throw e; }
@@ -46,7 +46,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
   function sanitizeReview(review,serverNow){
     if(!review.semester) return Object.freeze({
       stage:'SEMESTER_AND_AVAILABILITY',semester:null,profile:null,feasibility:null,timetable:null,slots:[],
-      serverNow,routeQualification:'UNQUALIFIED_UNTIL_D30',
+      serverNow,routeQualification:'DETERMINISTIC_RUNTIME_READY',
     });
     const coverageByCourse=new Map();
     for(const bundle of review.courses||[]){
@@ -109,7 +109,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
         hardConstraintsMayBeViolated:false,requiredCurriculumMayBeDeletedToFit:false,serverTimeAuthoritative:true,
         scheduleDebtIsNotMastery:true,pplIsNotScheduler:true,activationOwnedByD10:true,
       }),
-      routeQualification:'UNQUALIFIED_UNTIL_D30',
+      routeQualification:'DETERMINISTIC_RUNTIME_READY',
     });
   }
   async function getScheduleReview(user,courseId){

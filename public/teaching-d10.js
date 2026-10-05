@@ -94,11 +94,11 @@ async function fetchActivation(courseId){return kiwiApiRequest('/teaching/course
 function gradingLabel(key){return ({CLASSWORK:'Classwork',HOMEWORK:'Homework',GRADED_IMPROMPTU:'Graded impromptu',SCHEDULED_TESTS:'Scheduled tests',MID_SEMESTER:'Mid-semester',FINAL_EXAMINATION:'Final examination'})[key]||words(key);}
 function renderStage6(course,rules,container,reload){
   const card=el('section','teaching-d10-card');
-  card.append(el('div','teaching-kicker','Course setup · Stage 6'),el('h3','','Academic Rules and Teacher'),
+  card.append(el('div','teaching-kicker','Course rules'),el('h3','','Academic rules and Teacher'),
     el('p','','Review the declared grading structure and Teacher assignment before the Course becomes an active academic commitment.'));
   if(!rules.gradingPolicy||!rules.teacher){
     card.append(el('p','teaching-d10-note','Academic rules or Teacher assignment have not been prepared yet.'));
-    const prepare=button('Prepare Stage 6',true);prepare.addEventListener('click',async()=>{prepare.disabled=true;try{await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/academic-rules/prepare',{method:'POST',body:{}});await reload();}catch(e){window.alert(e.message||'Stage 6 could not be prepared.');}finally{prepare.disabled=false;}});card.append(prepare);container.append(card);return;
+    const prepare=button('Prepare academic rules',true);prepare.addEventListener('click',async()=>{prepare.disabled=true;try{await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/academic-rules/prepare',{method:'POST',body:{}});await reload();}catch(e){window.alert(e.message||'Academic rules could not be prepared.');}finally{prepare.disabled=false;}});card.append(prepare);container.append(card);return;
   }
   const list=el('div','teaching-d10-list');
   const teacher=el('div','teaching-d10-row');teacher.append(el('span','','Teacher'),el('strong','',rules.teacher.displayName));list.append(teacher);
@@ -113,7 +113,7 @@ function readinessRow(label,value,ok){
 function quickCourseRequest(type,courseId,requestedChange={}){pendingRequestContext={type,courseId,requestedChange}; if(nav&&typeof nav.open==='function')nav.open('requests'); else renderRequestCenter();}
 function renderStage7(course,review,container,reload){
   const card=el('section','teaching-d10-card');
-  card.append(el('div','teaching-kicker','Course setup · Stage 7'),el('h3','','Final Review and Coverage Audit'),
+  card.append(el('div','teaching-kicker','Ready to begin'),el('h3','','Final review and coverage check'),
     el('p','','This page reads readiness from the authoritative Course Plan, Coverage, Scheduler, policy and lifecycle owners. The browser does not invent a separate readiness result.'));
   const list=el('div','teaching-d10-list');
   list.append(readinessRow('Course Plan',review.coursePlan?('Version '+review.coursePlan.version):'Missing',Boolean(review.coursePlan&&review.coursePlan.currentSourceSnapshot)));

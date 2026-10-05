@@ -16,7 +16,8 @@ test('Teaching renders one enriched active Course list without a late replacemen
   assert.match(shell, /restoredCourse\.information_overview/);
   assert.doesNotMatch(bridge, /grid\.replaceChildren\(\);\s*if \(!rows\.length\)/);
   assert.match(shell, /function canonicalCourseRows/);
-  assert.match(shell, /course\.source_version_ref/);
+  assert.match(shell, /const subjectIdentity = course\.subject_id/);
+  assert.doesNotMatch(shell, /\[course\.subject_id, course\.source_version_ref/);
 });
 
 test('Teaching normalizes display names and assigns stable Course accents', () => {
@@ -52,4 +53,21 @@ test('Create Course places the original-note upload beside the Subject selector'
   assert.match(upload, /subjectField\.insertAdjacentElement\('afterend',original\)/);
   assert.match(upload, /Upload original note/);
   assert.match(upload, /flashcards remain available as supplemental retrieval practice/);
+});
+
+test('Course setup and scheduling use clear actions without numbered stage labels or a save flicker', () => {
+  const plan = read('public/teaching-d08.js');
+  const schedule = read('public/teaching-d09.js');
+  const shell = read('public/teaching.html');
+  assert.match(plan, /id: 'setup'/);
+  assert.match(plan, /Open course setup/);
+  assert.match(plan, /Check learning readiness/);
+  assert.match(plan, /Analyze course materials/);
+  assert.match(schedule, /Save availability/);
+  assert.match(schedule, /Open Course Plan/);
+  assert.match(schedule, /input\.showPicker\?\.\(\)/);
+  assert.match(schedule, /await reload\(saved,/);
+  assert.match(schedule, /await reload\(updated,/);
+  assert.doesNotMatch(plan + schedule + read('public/teaching-d10.js'), /Course setup · Stage|Save Stage|Prepare Stage/);
+  assert.match(shell, /\.teaching-course-nav \{\s*position: relative;\s*top: auto;/);
 });
