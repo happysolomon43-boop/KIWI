@@ -49,6 +49,27 @@ test('TPF-03 Course Plan request carries the frozen structured response schema i
   );
 });
 
+test('TPF-03 provider schema mirrors the frozen nested planning artifacts instead of generic objects', () => {
+  const properties = TPF03_COURSE_PLAN_RESPONSE_SCHEMA.properties;
+
+  assert.deepEqual(
+    Object.keys(properties.prerequisite_repairs.items.properties).sort(),
+    ['blocks_units', 'prerequisite_ref', 'repair_goal', 'why_required'].sort()
+  );
+  assert.deepEqual(
+    properties.assessment_window_proposals.items.properties.purpose.enum,
+    ['diagnostic', 'classwork', 'test', 'midterm', 'final', 'other']
+  );
+  assert.deepEqual(
+    properties.infeasibility_or_pressure.items.properties.requires_downstream_decision.enum,
+    ['scheduling', 'deadline', 'scope_authority', 'other']
+  );
+  assert.deepEqual(
+    properties.course_sequence.items.properties.learning_units.items.properties.follow_up_treatments.items.enum,
+    ['review_retrieval', 'mixed_practice', 'synthesis', 'transfer_check', 'none']
+  );
+});
+
 test('central Google adapter converts the neutral TPF-03 schema to Gemini responseSchema', () => {
   const request = createExecutionRequest({
     provider: 'GOOGLE',
