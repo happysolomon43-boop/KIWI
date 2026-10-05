@@ -42,6 +42,7 @@ const { createShadowIntelligence, createReckoningEngine, createQuestionBank, cre
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 const { createTeachingRouter } = require('./teaching-backend');
 const { createTeachingD05RuntimePlatform } = require('./teaching/runtime');
+const { createD31ReleaseIntelligence } = require('./teaching/d31');
 const { createTeachingEventSubscriberRegistry } = require('./teaching/events/dispatcher');
 const { TEACHING_EVENTS } = require('./teaching/events/names');
 const { createPreparationRuntimeRepository } = require('./teaching/repositories/preparation-runtime');
@@ -107,6 +108,16 @@ const teachingRuntimePlatform = createTeachingD05RuntimePlatform({
   env: process.env,
   logger: console,
 });
+const teachingD31Release = createD31ReleaseIntelligence({
+  runtimePlatform: teachingRuntimePlatform,
+  env: process.env,
+});
+console.info(
+  '[KIWI Teaching D31] AI release authorization:',
+  teachingD31Release.authorization.releaseAuthorization,
+  'qualification:',
+  teachingD31Release.authorization.qualificationDisposition
+);
 
 // Reckoning V2 Delivery B runs intelligence in SHADOW only. This object may
 // persist risk/evidence telemetry, but it has no authority over legacy
@@ -21565,18 +21576,11 @@ const teachingRouter = createTeachingRouter({
   query,
   withTransaction,
   randomUUID,
-  // D30 has not qualified Teaching model routes. D07/D08 intelligence remains
-  // wired through Teaching-Orchestrator contracts and therefore held.
-  d07Intelligence: null,
-  d08Intelligence: null,
-  d09Intelligence: null,
-  d11Intelligence: null,
+  // D31 release composition remains fail-closed unless the exact owner-authorized
+  // server mode is active. Activation does not alter D30 empirical qualification.
+  ...teachingD31Release.intelligence,
   d11PublishedEventRegistry: teachingPublishedEvents,
-  d12Intelligence: null,
   d12PublishedEventRegistry: teachingPublishedEvents,
-  // D30 has not empirically qualified TPF-09/TPF-19 Teaching routes. D13
-  // deterministic SKM state is active; optional model interpretation is held.
-  d13Intelligence: null,
   d13PublishedEventRegistry: teachingPublishedEvents,
   teachingRuntimePlatform,
 });
