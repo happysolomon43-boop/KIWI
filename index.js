@@ -41,7 +41,9 @@ const { isAIAvailabilityError } = require('./services/ai/errors');
 const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 const { createTeachingRouter } = require('./teaching-backend');
+const { createStudyImportRouter } = require('./study-import');
 const { createTeachingD05RuntimePlatform } = require('./teaching/runtime');
+const { createD31ReleaseIntelligence } = require('./teaching/d31');
 const { createTeachingEventSubscriberRegistry } = require('./teaching/events/dispatcher');
 const { TEACHING_EVENTS } = require('./teaching/events/names');
 const { createPreparationRuntimeRepository } = require('./teaching/repositories/preparation-runtime');
@@ -107,6 +109,16 @@ const teachingRuntimePlatform = createTeachingD05RuntimePlatform({
   env: process.env,
   logger: console,
 });
+const teachingD31Release = createD31ReleaseIntelligence({
+  runtimePlatform: teachingRuntimePlatform,
+  env: process.env,
+});
+console.info(
+  '[KIWI Teaching D31] AI release authorization:',
+  teachingD31Release.authorization.releaseAuthorization,
+  'qualification:',
+  teachingD31Release.authorization.qualificationDisposition
+);
 
 // Reckoning V2 Delivery B runs intelligence in SHADOW only. This object may
 // persist risk/evidence telemetry, but it has no authority over legacy
@@ -13524,23 +13536,6 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
   }
 }));
-// ── Additional requires for file parsing ────────────────────────────────────
-let pdfParse, mammoth, officeparser;
-try {
-pdfParse = require('pdf-parse');
-} catch (e) {
-pdfParse = null;
-}
-try {
-mammoth = require('mammoth');
-} catch (e) {
-mammoth = null;
-}
-try {
-officeparser = require('officeparser');
-} catch (e) {
-officeparser = null;
-}
 // ── AI Rate Limiter (B5) ──────────────────────────────────────────────────────
 const aiCallTracker = new Map(); // key: `${userId}:${endpoint}` → {count, resetAt}
 
@@ -14986,482 +14981,21 @@ res.status(500).json({ error: 'Failed to generate mastery moment', details: e.me
 }
 });
 
-// Import routes with SEEDLING adaptation
-
-cardRouter.post('/import/ai', async (req, res) => {
-try {
-const { deck_id, notes, card_count = 10, subject_hint = '' } = req.body;
-if (!deck_id || !notes) return res.status(400).json({ error: 'deck_id and notes required' });
-// Resolve deck / subject metadata before forking to background
-const aiImportDeck      = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-const aiImportSubjectId = aiImportDeck?.subject_id || null;
-// ── Respond immediately with job_id; AI generation runs in background ────────
-const noteJobId = randomUUID();
-_jobStoreSet(noteJobId, { status: 'pending', type: 'note_generation' });
-res.status(202).json({ job_id: noteJobId, deck_id, subject_id: aiImportSubjectId, status: 'generating' });
-// ── Background: generate flashcards and push job_done via WebSocket ───────────
-const _noteUserId    = req.user.id;
-const _noteDeckId    = deck_id;
-const _noteNotes     = notes;
-const _noteHint      = subject_hint;
-const _noteSubjectId = aiImportSubjectId;
-setImmediate(async () => {
-  try {
-    const aiText = await generateFlashcards(_noteNotes, _noteHint);
-    const parsed = parseFlashcards(aiText);
-    if (parsed.length === 0) {
-      _jobStoreSet(noteJobId, { status: 'failed', type: 'note_generation', error: 'Could not parse flashcards from AI response' });
-      wsSend(_noteUserId, 'job_failed', { job_id: noteJobId, type: 'note_generation', error: 'Could not parse flashcards from AI response' });
-      return;
-    }
-    const cardsData = parsed.map((c) => ({ ...c, ai_summary: '' }));
-    const created   = await db.cards.createMany(_noteUserId, _noteDeckId, cardsData);
-    await db.decks.update(_noteUserId, _noteDeckId, { card_count: { increment: created.length } });
-    await batchInitializeSeedlingStates(_noteUserId, created.map(c => c.id));
-    const suggest_bubble = _noteSubjectId !== null && created.length >= 5;
-    _jobStoreSet(noteJobId, { status: 'done', type: 'note_generation', result: { cards: created, count: created.length, source: 'ai', deck_id: _noteDeckId, subject_id: _noteSubjectId, suggest_bubble } });
-    wsSend(_noteUserId, 'job_done', {
-      job_id: noteJobId,
-      type: 'note_generation',
-      result: { cards: created, count: created.length, source: 'ai', deck_id: _noteDeckId, subject_id: _noteSubjectId, suggest_bubble },
-    });
-  } catch (bgErr) {
-    console.error('[KIWI] Note import background failed:', bgErr.message);
-    _jobStoreSet(noteJobId, { status: 'failed', type: 'note_generation', error: bgErr.message || 'Flashcard generation failed' });
-    wsSend(_noteUserId, 'job_failed', { job_id: noteJobId, type: 'note_generation', error: bgErr.message || 'Flashcard generation failed' });
-  }
-});
-} catch (e) {
-res.status(500).json({ error: 'AI import failed', details: e.message });
-}
-});
-
-cardRouter.post('/import/text', async (req, res) => {
-try {
-const { deck_id, text, format = 'qa_pairs', delimiter = '::' } = req.body;
-if (!deck_id || !text) return res.status(400).json({ error: 'deck_id and text required' });
-const lines = text.split('\n').filter((l) => l.trim());
-const cardsData = [];
-if (format === 'qa_pairs') {
-for (const line of lines) {
-const [front, back] = line.split(delimiter);
-if (front && back)
-cardsData.push({ front_content: front.trim(), back_content: back.trim() });
-}
-} else if (format === 'csv') {
-// Simple CSV: front,back per line
-for (const line of lines) {
-const [front, back] = line.split(',');
-if (front && back)
-cardsData.push({ front_content: front.trim(), back_content: back.trim() });
-}
-}
-if (cardsData.length === 0)
-return res.status(422).json({ error: 'No valid cards found in text' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, {
-card_count: { increment: created.length },
-});
-await batchInitializeSeedlingStates(
-req.user.id,
-created.map((c) => c.id)
-);
-res.status(201).json({ cards: created, count: created.length });
-} catch (e) {
-res.status(500).json({ error: 'Text import failed', details: e.message });
-}
-});
-
-cardRouter.post('/import/image', async (req, res) => {
-try {
-const { deck_id, image_base64, mime_type = 'image/jpeg' } = req.body;
-if (!deck_id || !image_base64)
-return res.status(400).json({ error: 'deck_id and image_base64 required' });
-const extracted = await extractFromImage(Buffer.from(image_base64, 'base64'), mime_type);
-let cardsData = [];
-try {
-const parsed = JSON.parse(extracted);
-if (Array.isArray(parsed))
-cardsData = parsed
-.map((p) => ({
-front_content: p.front || p.question || '',
-back_content: p.back || p.answer || '',
-}))
-.filter((c) => c.front_content && c.back_content);
-} catch (e) {
-const lines = extracted.split('\n').filter((l) => l.includes(':') || l.includes('—'));
-for (const line of lines) {
-const parts = line.split(/[:—]/);
-if (parts.length >= 2)
-cardsData.push({ front_content: parts[0].trim(), back_content: parts[1].trim() });
-}
-}
-if (cardsData.length === 0)
-return res.status(422).json({ error: 'Could not extract cards from image' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, {
-card_count: { increment: created.length },
-});
-await batchInitializeSeedlingStates(
-req.user.id,
-created.map((c) => c.id)
-);
-res.status(201).json({ cards: created, count: created.length, source: 'image' });
-} catch (e) {
-res.status(500).json({ error: 'Image import failed', details: e.message });
-}
-});
-
-cardRouter.post('/import/pdf', async (req, res) => {
-try {
-const { deck_id, pdf_base64, mode = 'flashcard', subject_hint: pdf_subject_hint = '' } = req.body;
-if (!pdf_base64) return res.status(400).json({ error: 'pdf_base64 is required' });
-if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
-if (!pdfParse) return res.status(503).json({ error: 'PDF parsing is not available. The pdf-parse package is not installed on this server. Add "pdf-parse" to package.json dependencies and redeploy.' });
-const buffer = Buffer.from(pdf_base64, 'base64');
-const parsed = await pdfParse(buffer);
-let text = (parsed.text || '').trim();
-// Enforce 80,000-character limit
-if (text.length > 80000) text = text.slice(0, 80000);
-if (!text) return res.status(422).json({ error: 'No usable text extracted from PDF' });
-if (mode === 'cbt') {
-const count = estimateCBTCount(text);
-const aiText = await generateCBTQuestions(text, count);
-const questions = parseCBTResponse(aiText, null, []);
-if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
-return res.status(200).json({ questions, count: questions.length, source: 'pdf' });
-}
-// Chunk into <=12000-char segments and send each to Gemini
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-try {
-const aiText = await generateFlashcards(chunk, pdf_subject_hint);
-const parsed2 = parseFlashcards(aiText);
-cardsData.push(...parsed2);
-} catch (e) {
-// Fallback: pair consecutive lines as front/back
-const lines = chunk.split('\n').filter((l) => l.trim().length > 10);
-for (let i = 0; i < lines.length - 1; i += 2) {
-cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
-}
-}
-}
-if (cardsData.length === 0)
-return res.status(422).json({ error: 'No usable text extracted from PDF' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, {
-card_count: { increment: created.length },
-});
-await batchInitializeSeedlingStates(
-req.user.id,
-created.map((c) => c.id)
-);
-res.status(201).json({ cards: created, count: created.length, source: 'pdf' });
-} catch (e) {
-res.status(500).json({ error: 'PDF import failed', details: e.message });
-}
-});
-
-cardRouter.post('/import/docx', async (req, res) => {
-try {
-const { deck_id, docx_base64, mode = 'flashcard', subject_hint: docx_subject_hint = '' } = req.body;
-if (!docx_base64) return res.status(400).json({ error: 'docx_base64 is required' });
-if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
-if (!mammoth) return res.status(503).json({ error: 'DOCX parsing not available' });
-const buffer = Buffer.from(docx_base64, 'base64');
-const result = await mammoth.extractRawText({ buffer });
-let text = (result.value || '').trim();
-// Enforce 80,000-character limit
-if (text.length > 80000) text = text.slice(0, 80000);
-if (!text) return res.status(422).json({ error: 'No usable text extracted from DOCX' });
-if (mode === 'cbt') {
-const count = estimateCBTCount(text);
-const aiText = await generateCBTQuestions(text, count);
-const questions = parseCBTResponse(aiText, null, []);
-if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
-return res.status(200).json({ questions, count: questions.length, source: 'docx' });
-}
-// Chunk into <=12000-char segments and send each to Gemini
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-try {
-const aiText = await generateFlashcards(chunk, docx_subject_hint);
-const parsed2 = parseFlashcards(aiText);
-cardsData.push(...parsed2);
-} catch (e) {
-const lines = chunk.split('\n').filter((l) => l.trim().length > 10);
-for (let i = 0; i < lines.length - 1; i += 2) {
-cardsData.push({ front_content: lines[i].trim(), back_content: lines[i + 1].trim() });
-}
-}
-}
-if (cardsData.length === 0)
-return res.status(422).json({ error: 'No usable text extracted from DOCX' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, {
-card_count: { increment: created.length },
-});
-await batchInitializeSeedlingStates(
-req.user.id,
-created.map((c) => c.id)
-);
-// FIX #4a: Recalculate KS after DOCX import
-const docxDeck = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-if (docxDeck?.subject_id) {
-await persistKnowledgeScore(req.user.id, docxDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-}
-res.status(201).json({ cards: created, count: created.length, source: 'docx' });
-} catch (e) {
-res.status(500).json({ error: 'DOCX import failed', details: e.message });
-}
-});
-// POST /api/cards/import/txt — plain text file import (Issue-058)
-cardRouter.post('/import/txt', async (req, res) => {
-try {
-const { deck_id, txt_base64, subject_hint = '', mode = 'flashcard' } = req.body;
-if (!txt_base64) return res.status(400).json({ error: 'txt_base64 is required' });
-if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
-let text = Buffer.from(txt_base64, 'base64').toString('utf-8').trim();
-if (text.length > 80000) text = text.slice(0, 80000);
-if (!text) return res.status(422).json({ error: 'No usable text in file' });
-if (mode === 'cbt') {
-const count = estimateCBTCount(text);
-const aiText = await generateCBTQuestions(text, count);
-const questions = parseCBTResponse(aiText, null, []);
-if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
-return res.status(200).json({ questions, count: questions.length, source: 'txt' });
-}
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-const aiText = await generateFlashcards(chunk, subject_hint);
-cardsData.push(...parseFlashcards(aiText));
-}
-if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this text' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
-await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
-res.status(201).json({ cards: created, count: created.length, source: 'txt' });
-} catch (e) {
-res.status(500).json({ error: 'TXT import failed', details: e.message });
-}
-});
-
-// POST /api/cards/import/md — Markdown file import (Issue-059)
-cardRouter.post('/import/md', async (req, res) => {
-try {
-const { deck_id, md_base64, subject_hint = '', mode = 'flashcard' } = req.body;
-if (!md_base64) return res.status(400).json({ error: 'md_base64 is required' });
-if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
-let text = Buffer.from(md_base64, 'base64').toString('utf-8').trim();
-// Strip common markdown syntax so AI focuses on content, not formatting
-text = text
-  .replace(/^#{1,6}\s+/gm, '')
-  .replace(/\*\*([^*]+)\*\*/g, '$1')
-  .replace(/__([^_]+)__/g, '$1')
-  .replace(/\*([^*]+)\*/g, '$1')
-  .replace(/_([^_]+)_/g, '$1')
-  .replace(/~~([^~]+)~~/g, '$1')
-  .replace(/`{1,3}[^`]*`{1,3}/g, '')
-  .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-  .replace(/^\s*[-*+]\s+/gm, '')
-  .replace(/^\s*\d+\.\s+/gm, '');
-if (text.length > 80000) text = text.slice(0, 80000);
-if (!text) return res.status(422).json({ error: 'No usable text in markdown file' });
-if (mode === 'cbt') {
-const count = estimateCBTCount(text);
-const aiText = await generateCBTQuestions(text, count);
-const questions = parseCBTResponse(aiText, null, []);
-if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
-return res.status(200).json({ questions, count: questions.length, source: 'md' });
-}
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-const aiText = await generateFlashcards(chunk, subject_hint);
-cardsData.push(...parseFlashcards(aiText));
-}
-if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this markdown' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
-await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
-res.status(201).json({ cards: created, count: created.length, source: 'md' });
-} catch (e) {
-res.status(500).json({ error: 'Markdown import failed', details: e.message });
-}
-});
-
-// POST /api/cards/import/pptx — PowerPoint import (Issue-060)
-// Requires: add "officeparser" to package.json dependencies and redeploy
-cardRouter.post('/import/pptx', async (req, res) => {
-try {
-const { deck_id, pptx_base64, subject_hint = '', mode = 'flashcard' } = req.body;
-if (!officeparser) return res.status(503).json({ error: 'PPTX parsing not available. Add "officeparser" to package.json and redeploy.' });
-if (!pptx_base64) return res.status(400).json({ error: 'pptx_base64 is required' });
-if (mode !== 'cbt' && !deck_id) return res.status(400).json({ error: 'deck_id is required for flashcard mode' });
-const MAX_PPTX_BYTES = 20 * 1024 * 1024;
-const maxBase64Chars = Math.ceil(MAX_PPTX_BYTES * 4 / 3) + 8;
-if (pptx_base64.length > maxBase64Chars) {
-  return res.status(413).json({ error: 'PPTX is too large. Maximum upload size is 20 MB.' });
-}
-const buffer = Buffer.from(pptx_base64, 'base64');
-if (buffer.length > MAX_PPTX_BYTES) {
-  return res.status(413).json({ error: 'PPTX is too large. Maximum upload size is 20 MB.' });
-}
-const ast = await officeparser.parseOffice(buffer, {
-  fileType: 'pptx',
-  decompressionLimits: {
-    maxUncompressedBytes: 64 * 1024 * 1024,
-    maxZipEntries: 5000,
-    maxTableCells: 250000,
-  },
-});
-const rendered = await ast.to('text', {
-  includeImages: false,
-  textConfig: {
-    preserveLayout: false,
-    renderNotes: true,
-  },
-});
-let text = (rendered?.value || '').trim();
-if (text.length > 80000) text = text.slice(0, 80000);
-if (!text) return res.status(422).json({ error: 'No usable text extracted from PPTX' });
-if (mode === 'cbt') {
-const count = estimateCBTCount(text);
-const aiText = await generateCBTQuestions(text, count);
-const questions = parseCBTResponse(aiText, null, []);
-if (!questions.length) return res.status(422).json({ error: 'AI could not generate CBT questions from this content' });
-return res.status(200).json({ questions, count: questions.length, source: 'pptx' });
-}
-const chunks = [];
-for (let i = 0; i < text.length; i += 12000) chunks.push(text.slice(i, i + 12000));
-let cardsData = [];
-for (const chunk of chunks) {
-const aiText = await generateFlashcards(chunk, subject_hint);
-cardsData.push(...parseFlashcards(aiText));
-}
-if (cardsData.length === 0) return res.status(422).json({ error: 'AI could not generate cards from this presentation' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, { card_count: { increment: created.length } });
-await batchInitializeSeedlingStates(req.user.id, created.map((c) => c.id));
-res.status(201).json({ cards: created, count: created.length, source: 'pptx' });
-} catch (e) {
-res.status(500).json({ error: 'PPTX import failed', details: e.message });
-}
-});
-
-// Quizlet parser (B9 — accepts URL or plain text)
-
-cardRouter.post('/import/quizlet', async (req, res) => {
-try {
-const { deck_id, text, url } = req.body;
-if (!deck_id || (!text && !url))
-return res.status(400).json({ error: 'deck_id and either text or url required' });
-// P2.9: Rate limit - 5 Quizlet URL imports per day per user
-// FIX #6: Pass 24-hour window (86400000 ms) instead of default 1-hour
-if (url && checkAIRateLimit(req.user.id, 'quizlet_import', 5, 86400000)) {
-return res.status(429).json({ error: 'Rate limit: max 5 Quizlet URL imports per day' });
-}
-let cardsData = [];
-if (url) {
-// B9: Fetch Quizlet page and extract embedded JSON
-try {
-const https = require('https');
-const rawHtml = await new Promise((resolve, reject) => {
-const req2 = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (response) => {
-let body = '';
-response.on('data', (chunk) => (body += chunk));
-response.on('end', () => resolve(body));
-});
-req2.on('error', reject);
-req2.setTimeout(10000, () => {
-req2.destroy();
-reject(new Error('Timeout'));
-});
-});
-// Quizlet embeds card data in window.Quizlet["setData"] or similar JSON blobs
-// FIX #7: Use \s for zero-or-more whitespace around setData
-const jsonMatch = rawHtml.match(/"setData"\s:\s({[\s\S]?})\s[,}]/);
-if (jsonMatch) {
-const setData = JSON.parse(jsonMatch[1]);
-const terms = setData.terms || setData.studiableItems || [];
-for (const term of terms) {
-const front = term.word || term.term || (term.sides && term.sides[0]?.label) || '';
-const back = term.definition || (term.sides && term.sides[1]?.label) || '';
-if (front && back)
-cardsData.push({ front_content: front.trim(), back_content: back.trim() });
-}
-}
-if (cardsData.length === 0) {
-// Fallback: scan for any JSON array with word/definition pairs
-const allJsonMatch = rawHtml.match(/\{[^]?"word"[^]?\}/g);
-if (allJsonMatch) {
-for (const chunk of allJsonMatch) {
-try {
-const parsed = JSON.parse(chunk);
-for (const item of parsed) {
-if (item.word && item.definition) {
-cardsData.push({
-front_content: item.word.trim(),
-back_content: item.definition.trim(),
-});
-}
-}
-} catch (e) {}
-}
-}
-}
-} catch (fetchErr) {
-return res
-.status(422)
-.json({ error: 'Failed to fetch Quizlet URL', details: fetchErr.message });
-}
-} else {
-// Plain text path
-const lines = text.split('\n').filter((l) => l.trim());
-for (const line of lines) {
-let parts = line.split('\t');
-if (parts.length < 2) parts = line.split(/[—–]/);
-if (parts.length >= 2) {
-cardsData.push({
-front_content: parts[0].trim(),
-back_content: parts.slice(1).join(' — ').trim(),
-});
-}
-}
-}
-if (cardsData.length === 0)
-return res.status(422).json({ error: 'No valid Quizlet cards found' });
-const created = await db.cards.createMany(req.user.id, deck_id, cardsData);
-await db.decks.update(req.user.id, deck_id, {
-card_count: { increment: created.length },
-});
-await batchInitializeSeedlingStates(
-req.user.id,
-created.map((c) => c.id)
-);
-// FIX #4b: Recalculate KS after Quizlet import
-const quizletDeck = await db.decks.findById(req.user.id, deck_id).catch(() => null);
-if (quizletDeck?.subject_id) {
-await persistKnowledgeScore(req.user.id, quizletDeck.subject_id).catch((e) => console.error("[KIWI] silent catch:", e.message));
-}
-res
-.status(201)
-.json({
-cards: created,
-count: created.length,
-source: url ? 'quizlet_url' : 'quizlet_text',
-});
-} catch (e) {
-res.status(500).json({ error: 'Quizlet import failed', details: e.message });
-}
-});
+cardRouter.use('/import', createStudyImportRouter({
+  express,
+  db,
+  generateFlashcards,
+  parseFlashcards,
+  extractFromImage,
+  generateCBTQuestions,
+  parseCBTResponse,
+  estimateCBTCount,
+  batchInitializeSeedlingStates,
+  persistKnowledgeScore,
+  checkAIRateLimit,
+  jobStoreSet: _jobStoreSet,
+  wsSend,
+}));
 
 // ════════════════════════════════════════════════════════════════════════════
 //  STUDY ROUTES
@@ -21565,18 +21099,11 @@ const teachingRouter = createTeachingRouter({
   query,
   withTransaction,
   randomUUID,
-  // D30 has not qualified Teaching model routes. D07/D08 intelligence remains
-  // wired through Teaching-Orchestrator contracts and therefore held.
-  d07Intelligence: null,
-  d08Intelligence: null,
-  d09Intelligence: null,
-  d11Intelligence: null,
+  // D31 release composition remains fail-closed unless the exact owner-authorized
+  // server mode is active. Activation does not alter D30 empirical qualification.
+  ...teachingD31Release.intelligence,
   d11PublishedEventRegistry: teachingPublishedEvents,
-  d12Intelligence: null,
   d12PublishedEventRegistry: teachingPublishedEvents,
-  // D30 has not empirically qualified TPF-09/TPF-19 Teaching routes. D13
-  // deterministic SKM state is active; optional model interpretation is held.
-  d13Intelligence: null,
   d13PublishedEventRegistry: teachingPublishedEvents,
   teachingRuntimePlatform,
 });

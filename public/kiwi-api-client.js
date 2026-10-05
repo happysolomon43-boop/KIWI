@@ -182,13 +182,34 @@ function loadStudyUnifiedUpload() {
     global.document.head.append(stylesheet);
   }
 
-  if (!global.document.querySelector('script[data-study-unified-upload]')) {
+  const loadUnifiedLayer = () => {
+    if (global.document.querySelector('script[data-study-unified-upload]')) return;
     const script = global.document.createElement('script');
     script.src = '/study-unified-upload.js?v=20261004-upload-1';
     script.dataset.studyUnifiedUpload = 'true';
     script.defer = true;
     global.document.body.append(script);
+  };
+
+  if (typeof global.KIWIStudySourceImport === 'function') {
+    loadUnifiedLayer();
+    return;
   }
+
+  const existingAdapter = global.document.querySelector('script[data-study-source-import]');
+  if (existingAdapter) {
+    existingAdapter.addEventListener('load', loadUnifiedLayer, { once: true });
+    return;
+  }
+
+  const adapter = global.document.createElement('script');
+  adapter.src = '/study-source-import.js?v=20261005-import-1';
+  adapter.dataset.studySourceImport = 'true';
+  adapter.addEventListener('load', loadUnifiedLayer, { once: true });
+  adapter.addEventListener('error', () => {
+    console.error('[KIWI] Study source import adapter failed to load.');
+  }, { once: true });
+  global.document.body.append(adapter);
 }
 
 function loadUnifiedUploadAssets() {

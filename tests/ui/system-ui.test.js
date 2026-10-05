@@ -76,6 +76,7 @@ test('Teaching Request Center keeps D10 authority semantics while using the rede
 
 test('Study unified file intake consolidates format tabs without duplicating generation contracts', () => {
   const source = read('public/study-unified-upload.js');
+  const adapter = read('public/study-source-import.js');
   const css = read('public/study-unified-upload.css');
   const client = read('public/kiwi-api-client.js');
 
@@ -94,12 +95,19 @@ test('Study unified file intake consolidates format tabs without duplicating gen
     assert.ok(source.includes(token), token);
   }
 
-  // The unified layer delegates to the stable adapter owned by the existing
-  // Study client; it does not invent another network contract.
+  // The unified presentation layer delegates to one focused adapter. The
+  // adapter owns File -> base64 conversion and calls the established import
+  // routes through the shared authenticated API client; index.html stays free
+  // of duplicated import/network logic.
   assert.doesNotMatch(source, /fetch\s*\(/);
   assert.doesNotMatch(source, /kiwiApiRequest\s*\(/);
   assert.doesNotMatch(source, /\/cards\/import\//);
-  assert.match(read('index.html'), /window\.KIWIStudySourceImport/);
+  assert.match(adapter, /global\.KIWIStudySourceImport\s*=\s*importStudySource/);
+  assert.match(adapter, /client\.kiwiApiRequest/);
+  assert.match(adapter, /`\/cards\/import\/\$\{normalizedFormat\}`/);
+  assert.match(adapter, /image_base64/);
+  assert.match(adapter, /\[\`\$\{normalizedFormat\}_base64\`\]/);
+  assert.doesNotMatch(read('index.html'), /KIWIStudySourceImport/);
 
   assert.match(source, /\.pdf,\.docx,\.txt,\.md,\.markdown,\.pptx/);
   assert.match(source, /image\/png,image\/jpeg,image\/webp,image\/heic,image\/heif/);
@@ -109,6 +117,8 @@ test('Study unified file intake consolidates format tabs without duplicating gen
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
 
   assert.match(client, /loadStudyUnifiedUpload/);
+  assert.match(client, /\/study-source-import\.js\?v=/);
+  assert.match(client, /dataset\.studySourceImport/);
   assert.match(client, /\/study-unified-upload\.css\?v=/);
   assert.match(client, /\/study-unified-upload\.js\?v=/);
   assert.match(client, /getElementById\('teachingApp'\)/);

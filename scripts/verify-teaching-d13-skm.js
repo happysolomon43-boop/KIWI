@@ -79,7 +79,16 @@ for(const method of ['post','put','patch','delete']) {
 }
 
 const production=read('index.js');
-assert(production.includes('d13Intelligence: null'),'Production must preserve D30 hold for D13 model routes.');
+const d30Held=production.includes('d13Intelligence: null');
+const d31Released=production.includes('createD31ReleaseIntelligence')&&production.includes('...teachingD31Release.intelligence');
+assert(d30Held||d31Released,'Production D13 intelligence must remain D30-held or pass through the explicit D31 release composition.');
+if(d31Released){
+  const release=read('teaching/d31/release-intelligence.js');
+  const amendment=read('teaching/d31/KIWI_Teaching_D31_Owner_AI_Release_Authorization_Amendment_v1.0.md');
+  assert(release.includes('d13Intelligence: createD13Intelligence({ orchestrator })'),'D31 D13 release must use the canonical intelligence adapter.');
+  assert(release.includes('runtimePlatform?.aiBoundary'),'D31 D13 release must remain on the Teaching central AI boundary.');
+  assert(amendment.includes('does **not** convert missing D30 evidence into qualification evidence'),'D31 D13 release lost empirical-truth preservation.');
+}
 assert(production.includes('d13PublishedEventRegistry: teachingPublishedEvents'),'D13 durable subscriber must be registered.');
 
 const unit=read('tests/teaching/unit/d13-skm.test.js');

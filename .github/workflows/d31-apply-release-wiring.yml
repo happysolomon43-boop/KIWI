@@ -1,0 +1,111 @@
+name: D31 terminal release readiness
+
+on:
+  push:
+    branches:
+      - teaching/d31-final-release-readiness
+    paths:
+      - .github/workflows/d31-apply-release-wiring.yml
+      - package.json
+      - scripts/apply-teaching-d31-release-wiring.js
+      - scripts/apply-teaching-d31-limitations-ui.js
+      - scripts/reconcile-post-d30-study-import.js
+      - scripts/verify-teaching-d*.js
+      - teaching/d31/**
+      - tests/ai/study-import-module.test.js
+      - tests/ai/teaching-d31-owner-release.test.js
+      - tests/ai/teaching-d31-limitations.test.js
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  terminal-release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out D31 branch
+        uses: actions/checkout@v4
+        with:
+          ref: teaching/d31-final-release-readiness
+          fetch-depth: 0
+
+      - name: Use Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Reconcile intended post-D30 Study import extraction
+        run: node scripts/reconcile-post-d30-study-import.js
+
+      - name: Apply guarded D31 release composition
+        run: node scripts/apply-teaching-d31-release-wiring.js
+
+      - name: Apply guarded Academic Transparency surface
+        run: node scripts/apply-teaching-d31-limitations-ui.js
+
+      - name: Reconcile D24 navigation ARIA semantics
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'public/teaching-d24.js';
+          let source = fs.readFileSync(file, 'utf8');
+          const invalid = "  document.querySelectorAll('.teaching-course-nav, .teaching-dock').forEach((nav) => nav.setAttribute('aria-orientation', 'horizontal'));";
+          if (source.includes(invalid)) {
+            source = source.replace(
+              invalid,
+              "  // These containers remain navigation landmarks. Horizontal arrow-key behavior is implemented below without aria-orientation, which is not supported on the navigation role."
+            );
+            fs.writeFileSync(file, source, 'utf8');
+            console.log('[D31] Removed invalid aria-orientation from Teaching navigation landmarks.');
+          } else if (source.includes("aria-orientation', 'horizontal'")) {
+            throw new Error('[D31] Unexpected aria-orientation pattern remains; refusing unbounded accessibility rewrite.');
+          } else {
+            console.log('[D31] Teaching navigation ARIA semantics already reconciled.');
+          }
+          NODE
+
+      - name: Validate server entry syntax
+        run: node --check index.js
+
+      - name: Validate focused D31 contracts
+        run: node --test tests/ai/study-import-module.test.js tests/ai/teaching-d31-owner-release.test.js tests/ai/teaching-d31-limitations.test.js
+
+      - name: Execute accepted D01-D30 verifier chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in $(seq -w 1 30); do
+            echo "=== verify Teaching D${n} ==="
+            npm run "verify:teaching:d${n}"
+          done
+
+      - name: Verify D31 terminal release contract
+        run: npm run verify:teaching:d31
+
+      - name: Run full local test suite
+        run: npm test
+
+      - name: Validate web build
+        run: npm run build
+
+      - name: Validate diff hygiene
+        run: git diff --check
+
+      - name: Commit guarded reconciliation output
+        shell: bash
+        run: |
+          if git diff --quiet -- index.js public/teaching.html public/teaching-d24.js; then
+            echo "Guarded release, transparency, and accessibility transforms are already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.js public/teaching.html public/teaching-d24.js
+          git commit -m "D31: apply terminal release and accessibility reconciliation"
+          git push origin HEAD:teaching/d31-final-release-readiness
