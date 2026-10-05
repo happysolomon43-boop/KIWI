@@ -111,6 +111,8 @@ const teachingRuntimePlatform = createTeachingD05RuntimePlatform({
 });
 const teachingD31Release = createD31ReleaseIntelligence({
   runtimePlatform: teachingRuntimePlatform,
+  query,
+  randomUUID,
   env: process.env,
 });
 console.info(

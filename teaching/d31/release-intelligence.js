@@ -9,6 +9,7 @@ const { createD13Intelligence } = require('../d13/intelligence');
 const { createD16Intelligence } = require('../d16/intelligence');
 const { createD17Intelligence } = require('../d17/intelligence');
 const { resolveOwnerReleaseAuthorization } = require('./owner-release-override');
+const { createD31ReleaseOrchestrator } = require('./release-orchestrator');
 
 const ADAPTER_KEYS = Object.freeze([
   'd07Intelligence',
@@ -35,7 +36,7 @@ function assertCentralBoundary(runtimePlatform) {
   return boundary;
 }
 
-function createD31ReleaseIntelligence({ runtimePlatform, env = process.env } = {}) {
+function createD31ReleaseIntelligence({ runtimePlatform, query, randomUUID, env = process.env } = {}) {
   const authorization = resolveOwnerReleaseAuthorization(env);
   if (!authorization.enabled) {
     return Object.freeze({
@@ -45,7 +46,8 @@ function createD31ReleaseIntelligence({ runtimePlatform, env = process.env } = {
     });
   }
 
-  const orchestrator = assertCentralBoundary(runtimePlatform);
+  assertCentralBoundary(runtimePlatform);
+  const orchestrator = createD31ReleaseOrchestrator({ runtimePlatform, query, randomUUID });
   const intelligence = Object.freeze({
     d07Intelligence: createD07Intelligence({ orchestrator }),
     d08Intelligence: createD08Intelligence({ orchestrator }),
