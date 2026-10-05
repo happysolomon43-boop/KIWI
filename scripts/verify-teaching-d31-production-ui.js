@@ -9,7 +9,7 @@ const AXE_PATH = require.resolve('axe-core/axe.min.js');
 const OUT_DIR = path.resolve(process.env.D31_UI_ARTIFACT_DIR || 'artifacts/d31-production-ui');
 
 const targets = Object.freeze([
-  Object.freeze({ name: 'home', path: '/' }),
+  Object.freeze({ name: 'home', path: '/index.html' }),
   Object.freeze({ name: 'teaching', path: '/teaching.html' }),
 ]);
 
@@ -50,7 +50,7 @@ async function auditPage(browser, target, profile) {
   await page.waitForTimeout(1_500);
 
   if (!response) fail(`No HTTP response for ${target.path} (${profile.name}).`);
-  if (response.status() >= 500) fail(`Production returned ${response.status()} for ${target.path} (${profile.name}).`);
+  if (response.status() >= 400) fail(`Production returned ${response.status()} for ${target.path} (${profile.name}); refusing to audit an error document as product UI.`);
 
   const structural = await page.evaluate(() => {
     const ids = Array.from(document.querySelectorAll('[id]')).map((node) => node.id).filter(Boolean);
@@ -72,6 +72,7 @@ async function auditPage(browser, target, profile) {
     const undersizedControls = visibleControls.filter((item) => item.width < 24 || item.height < 24);
     return {
       title: document.title,
+      lang: document.documentElement.lang,
       duplicateIds,
       horizontalOverflow,
       reduceMotion,
@@ -80,6 +81,8 @@ async function auditPage(browser, target, profile) {
     };
   });
 
+  if (!structural.title.trim()) fail(`Served UI has no document title on ${target.path} (${profile.name}).`);
+  if (!structural.lang.trim()) fail(`Served UI has no document language on ${target.path} (${profile.name}).`);
   if (structural.duplicateIds.length) fail(`Duplicate DOM ids on ${target.path} (${profile.name}).`, structural.duplicateIds);
   if (structural.horizontalOverflow > 2) fail(`Horizontal overflow of ${structural.horizontalOverflow}px on ${target.path} (${profile.name}).`);
   if (!structural.reduceMotion) fail(`Reduced-motion media query was not active on ${target.path} (${profile.name}).`);
@@ -142,6 +145,7 @@ async function auditPage(browser, target, profile) {
     httpStatus: response.status(),
     finalUrl: page.url(),
     title: structural.title,
+    lang: structural.lang,
     visibleControlCount: structural.visibleControlCount,
     focusEvidence,
     seriousAccessibilityViolations: 0,
