@@ -8,6 +8,11 @@ if (!config || !config.apiBaseUrl) {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MAIN_CBT_OPERATION_TIMEOUT_MS = 180_000;
+const LONG_RUNNING_REQUEST_TIMEOUT_MS = MAIN_CBT_OPERATION_TIMEOUT_MS + 30_000;
+const LONG_RUNNING_ENDPOINTS = Object.freeze([
+  /^\/teaching\/courses\/[^/]+\/course-plan$/,
+]);
 const PUBLIC_AUTH_401 = new Set([
   '/auth/login',
   '/auth/register',
@@ -26,19 +31,74 @@ function setToken(name, value) {
   else global.localStorage.removeItem(name);
 }
 
+function normalizeTimeoutMs(value, fallback = DEFAULT_TIMEOUT_MS) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(1_000, Math.floor(parsed));
+}
+
+function requestTimeoutFor(endpoint, requestedTimeoutMs) {
+  if (requestedTimeoutMs != null) return normalizeTimeoutMs(requestedTimeoutMs);
+  return LONG_RUNNING_ENDPOINTS.some((pattern) => pattern.test(endpoint))
+    ? LONG_RUNNING_REQUEST_TIMEOUT_MS
+    : DEFAULT_TIMEOUT_MS;
+}
+
+function apiTimeoutError(timeoutMs) {
+  const error = new Error('KIWI request timed out before the server completed. Please try again.');
+  error.name = 'KiwiApiTimeoutError';
+  error.code = 'KIWI_API_TIMEOUT';
+  error.status = 408;
+  error.timeoutMs = timeoutMs;
+  return error;
+}
+
+function apiCancelledError() {
+  const error = new Error('KIWI request was cancelled. Please try again.');
+  error.name = 'KiwiApiCancelledError';
+  error.code = 'KIWI_API_CANCELLED';
+  return error;
+}
+
+function abortWithReason(controller, reason) {
+  if (controller.signal.aborted) return;
+  try {
+    controller.abort(reason);
+  } catch (_) {
+    controller.abort();
+  }
+}
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const effectiveTimeoutMs = normalizeTimeoutMs(timeoutMs);
   const controller = new AbortController();
   const externalSignal = options.signal;
+  let abortSource = null;
 
-  const forwardAbort = () => controller.abort();
-  externalSignal?.addEventListener('abort', forwardAbort, { once: true });
+  const forwardAbort = () => {
+    abortSource = 'external';
+    abortWithReason(controller, apiCancelledError());
+  };
+  if (externalSignal?.aborted) forwardAbort();
+  else externalSignal?.addEventListener('abort', forwardAbort, { once: true });
 
-  const timer = global.setTimeout(() => controller.abort(), Math.max(1_000, Number(timeoutMs) || DEFAULT_TIMEOUT_MS));
+  const timer = controller.signal.aborted
+    ? null
+    : global.setTimeout(() => {
+        abortSource = 'timeout';
+        abortWithReason(controller, apiTimeoutError(effectiveTimeoutMs));
+      }, effectiveTimeoutMs);
 
   try {
     return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (abortSource === 'timeout') throw apiTimeoutError(effectiveTimeoutMs);
+    if (abortSource === 'external' || (controller.signal.aborted && externalSignal?.aborted)) {
+      throw apiCancelledError();
+    }
+    throw error;
   } finally {
-    global.clearTimeout(timer);
+    if (timer != null) global.clearTimeout(timer);
     externalSignal?.removeEventListener('abort', forwardAbort);
   }
 }
@@ -83,10 +143,11 @@ async function parseResponse(response, endpoint) {
 }
 
 async function requestWithSession(endpoint, requestOptions, timeoutMs) {
+  const effectiveTimeoutMs = requestTimeoutFor(endpoint, timeoutMs);
   let response = await fetchWithTimeout(
     `${config.apiBaseUrl}${endpoint}`,
     requestOptions,
-    timeoutMs
+    effectiveTimeoutMs
   );
 
   if (response.status === 401 && !PUBLIC_AUTH_401.has(endpoint)) {
@@ -96,7 +157,7 @@ async function requestWithSession(endpoint, requestOptions, timeoutMs) {
       response = await fetchWithTimeout(
         `${config.apiBaseUrl}${endpoint}`,
         requestOptions,
-        timeoutMs
+        effectiveTimeoutMs
       );
     }
   }
@@ -119,6 +180,7 @@ async function kiwiApiRequest(endpoint, options = {}) {
       ...(options.headers || {}),
     },
     ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   };
 
   return requestWithSession(endpoint, requestOptions, options.timeoutMs);
@@ -141,6 +203,7 @@ async function kiwiApiRawRequest(endpoint, options = {}) {
       ...(options.headers || {}),
     },
     ...(options.body !== undefined ? { body: options.body } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   };
 
   return requestWithSession(endpoint, requestOptions, options.timeoutMs);

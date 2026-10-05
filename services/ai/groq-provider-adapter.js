@@ -2,6 +2,7 @@
 
 const { AI_PROVIDERS } = require('./providers');
 const { AI_CAPABILITIES } = require('./capabilities');
+const { DEFAULT_MODEL_CATALOG } = require('./model-catalog');
 const {
   AI_CONTENT_KINDS,
   AI_CONTENT_PART_KINDS,
@@ -47,6 +48,64 @@ function schemaName(value) {
     .replace(/[^A-Za-z0-9_-]/g, '_')
     .slice(0, 64);
   return normalized || 'kiwi_response';
+}
+
+function groqModelOutputTokenLimit(modelId) {
+  const model = DEFAULT_MODEL_CATALOG.find((entry) =>
+    entry.provider === AI_PROVIDERS.GROQ && entry.id === modelId
+  );
+  const limit = Number(model?.outputTokenLimit);
+  return Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : null;
+}
+
+function boundedGroqMaxOutputTokens(modelId, value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new AIError('Groq max output tokens must be a positive number', {
+      code: AI_ERROR_CODES.BAD_REQUEST,
+      retryable: false,
+      scope: 'REQUEST',
+      provider: AI_PROVIDERS.GROQ,
+    });
+  }
+  const requested = Math.floor(parsed);
+  const modelLimit = groqModelOutputTokenLimit(modelId);
+  return modelLimit == null ? requested : Math.min(requested, modelLimit);
+}
+
+function isGroqStrictJsonSchemaCompatible(schema) {
+  function visit(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+
+    if (Array.isArray(node.anyOf)) {
+      return node.anyOf.length > 0 && node.anyOf.every(visit);
+    }
+    if (Array.isArray(node.oneOf)) {
+      return node.oneOf.length > 0 && node.oneOf.every(visit);
+    }
+
+    const type = node.type;
+    if (Array.isArray(type)) {
+      return type.length > 0 && type.every((entry) => entry === 'null' || typeof entry === 'string');
+    }
+
+    if (type === 'array') {
+      return Boolean(node.items) && visit(node.items);
+    }
+
+    if (type === 'object' || node.properties) {
+      if (node.additionalProperties !== false) return false;
+      if (!node.properties || typeof node.properties !== 'object' || Array.isArray(node.properties)) return false;
+      const keys = Object.keys(node.properties);
+      const required = new Set(Array.isArray(node.required) ? node.required : []);
+      if (!keys.every((key) => required.has(key))) return false;
+      return keys.every((key) => visit(node.properties[key]));
+    }
+
+    return typeof type === 'string' && type.length > 0;
+  }
+
+  return visit(schema);
 }
 
 function groqMessageContent(request) {
@@ -169,16 +228,7 @@ function serializeGroqExecutionRequest(request) {
 
   const maxTokens = maxCompletionTokens ?? maxOutputTokens;
   if (maxTokens !== undefined) {
-    const parsed = Number(maxTokens);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      throw new AIError('Groq max output tokens must be a positive number', {
-        code: AI_ERROR_CODES.BAD_REQUEST,
-        retryable: false,
-        scope: 'REQUEST',
-        provider: AI_PROVIDERS.GROQ,
-      });
-    }
-    body.max_completion_tokens = Math.floor(parsed);
+    body.max_completion_tokens = boundedGroqMaxOutputTokens(request.model.modelId, maxTokens);
   }
 
   if (stopSequences !== undefined) {
@@ -197,7 +247,7 @@ function serializeGroqExecutionRequest(request) {
           type: 'json_schema',
           json_schema: {
             name: schemaName(request.metadata?.structuredOutputName),
-            strict: true,
+            strict: isGroqStrictJsonSchemaCompatible(structuredOutput.schema),
             schema: structuredOutput.schema,
           },
         }
@@ -234,7 +284,7 @@ function serializeGroqSpeechRequest({ request, voiceProfile, input } = {}) {
     });
   }
   return Object.freeze({
-    model: voiceProfile.modelId,
+    model: request.model.modelId,
     input: chunk,
     voice: voiceProfile.providerVoice,
     response_format: 'wav',
@@ -335,6 +385,9 @@ module.exports = {
   GROQ_SUPPORTED_REASONING,
   GROQ_QUOTA_POLICY,
   mapGroqReasoningEffort,
+  groqModelOutputTokenLimit,
+  boundedGroqMaxOutputTokens,
+  isGroqStrictJsonSchemaCompatible,
   buildGroqAttemptDiagnostic,
   serializeGroqExecutionRequest,
   serializeGroqSpeechRequest,

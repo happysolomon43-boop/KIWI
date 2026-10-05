@@ -5,6 +5,7 @@ const {
   validateTpf03ScopeImpactOutput,
 } = require('./canonical-plan');
 const { getCapability } = require('../capability-registry');
+const { TPF03_COURSE_PLAN_RESPONSE_SCHEMA } = require('./tpf03-provider-schema');
 
 function base({ capabilityId, course, taskMode, outputSchema, contextSpec, academicInput, provenanceRefs = [] }) {
   return {
@@ -145,7 +146,10 @@ function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions 
   });
   return {
     ...request,
-    generation: { maxOutputTokens: 48_000 },
+    generation: {
+      maxOutputTokens: 48_000,
+      structuredOutput: { schema: TPF03_COURSE_PLAN_RESPONSE_SCHEMA },
+    },
     declaredAuthorityLevel: 'T3',
     schemaValidator: validate,
     domainValidator: async (out) => {
