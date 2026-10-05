@@ -3,7 +3,12 @@
   padding: 11px 15px; border-radius: 10px; background: #d6ffe9; color: #082318;
   font-weight: 800; text-decoration: none;
 }
-.teaching-skip-link:focus { transform: translateY(0); }
+.teaching-skip-link:focus,
+.teaching-skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 3px solid #b8f5d4 !important;
+  outline-offset: 3px !important;
+}
 .teaching-visually-hidden {
   position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important;
   margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important;
