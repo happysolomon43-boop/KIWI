@@ -1,0 +1,57 @@
+name: Teaching D31 production UI gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - teaching/d31-final-release-readiness
+      - main
+    paths:
+      - public/**
+      - scripts/verify-teaching-d31-production-ui.js
+      - scripts/verify-teaching-d24-responsive-accessibility.js
+      - tests/ui/**
+      - .github/workflows/teaching-d31-production-ui.yml
+
+permissions:
+  contents: read
+
+jobs:
+  production-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      KIWI_PRODUCTION_URL: https://kiwi-741i.onrender.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install locked application dependencies
+        run: npm ci
+
+      - name: Install pinned browser-audit dependencies
+        run: npm install --no-save --package-lock=false --ignore-scripts playwright@1.55.0 axe-core@4.10.3
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify D24 responsive and accessibility contract
+        run: npm run verify:teaching:d24
+
+      - name: Audit actual production UI in Chromium
+        run: node scripts/verify-teaching-d31-production-ui.js
+
+      - name: Upload D31 production UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d31-production-ui-evidence
+          path: artifacts/d31-production-ui
+          if-no-files-found: warn
+          retention-days: 30
