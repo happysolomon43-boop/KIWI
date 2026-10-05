@@ -73,6 +73,41 @@ function boundedGroqMaxOutputTokens(modelId, value) {
   return modelLimit == null ? requested : Math.min(requested, modelLimit);
 }
 
+function isGroqStrictJsonSchemaCompatible(schema) {
+  function visit(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+
+    if (Array.isArray(node.anyOf)) {
+      return node.anyOf.length > 0 && node.anyOf.every(visit);
+    }
+    if (Array.isArray(node.oneOf)) {
+      return node.oneOf.length > 0 && node.oneOf.every(visit);
+    }
+
+    const type = node.type;
+    if (Array.isArray(type)) {
+      return type.length > 0 && type.every((entry) => entry === 'null' || typeof entry === 'string');
+    }
+
+    if (type === 'array') {
+      return Boolean(node.items) && visit(node.items);
+    }
+
+    if (type === 'object' || node.properties) {
+      if (node.additionalProperties !== false) return false;
+      if (!node.properties || typeof node.properties !== 'object' || Array.isArray(node.properties)) return false;
+      const keys = Object.keys(node.properties);
+      const required = new Set(Array.isArray(node.required) ? node.required : []);
+      if (!keys.every((key) => required.has(key))) return false;
+      return keys.every((key) => visit(node.properties[key]));
+    }
+
+    return typeof type === 'string' && type.length > 0;
+  }
+
+  return visit(schema);
+}
+
 function groqMessageContent(request) {
   if (request.content?.kind === AI_CONTENT_KINDS.TEXT) {
     return request.content.text;
@@ -212,7 +247,7 @@ function serializeGroqExecutionRequest(request) {
           type: 'json_schema',
           json_schema: {
             name: schemaName(request.metadata?.structuredOutputName),
-            strict: true,
+            strict: isGroqStrictJsonSchemaCompatible(structuredOutput.schema),
             schema: structuredOutput.schema,
           },
         }
@@ -249,7 +284,7 @@ function serializeGroqSpeechRequest({ request, voiceProfile, input } = {}) {
     });
   }
   return Object.freeze({
-    model: voiceProfile.modelId,
+    model: request.model.modelId,
     input: chunk,
     voice: voiceProfile.providerVoice,
     response_format: 'wav',
@@ -352,6 +387,7 @@ module.exports = {
   mapGroqReasoningEffort,
   groqModelOutputTokenLimit,
   boundedGroqMaxOutputTokens,
+  isGroqStrictJsonSchemaCompatible,
   buildGroqAttemptDiagnostic,
   serializeGroqExecutionRequest,
   serializeGroqSpeechRequest,
