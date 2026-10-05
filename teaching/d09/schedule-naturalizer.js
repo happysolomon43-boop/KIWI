@@ -7,6 +7,14 @@ const PREFERRED_INTERCLASS_GAP_MINUTES = 180;
 const PREFERRED_INTERCLASS_GAP_MAX_MINUTES = 480;
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
+const CLASS_BLOCK_KINDS = new Set([
+  'HARD_UNAVAILABLE',
+  'BREAK',
+  'HOLIDAY',
+  'TRAVEL',
+  'PROTECTED_REVISION',
+  'PROTECTED_ASSESSMENT',
+]);
 
 function value(row, snake, camel) {
   return row?.[snake] ?? row?.[camel] ?? null;
@@ -44,6 +52,19 @@ function flexibleTargetFor(context, courseId) {
     .map((row) => value(row, 'deadline_at', 'deadlineAt'))
     .filter(Boolean)
     .sort((a, b) => Date.parse(a) - Date.parse(b))[0] || null;
+}
+
+function conflictsWithClassBlock(context, courseId, start, end) {
+  return (context.blocks || []).some((block) => {
+    const blockCourse = value(block, 'course_id', 'courseId');
+    if (blockCourse && String(blockCourse) !== String(courseId)) return false;
+    const kind = String(value(block, 'block_kind', 'kind') || '').toUpperCase();
+    if (!CLASS_BLOCK_KINDS.has(kind)) return false;
+    const blockStart = value(block, 'starts_at', 'startsAt');
+    const blockEnd = value(block, 'ends_at', 'endsAt');
+    if (!blockStart || !blockEnd) return false;
+    return scheduler.overlap(start, end, blockStart, blockEnd);
+  });
 }
 
 function sameDayGapMinutes(start, end, placed, timeZone) {
@@ -208,6 +229,7 @@ function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}
           const end = new Date(startMs + duration * MINUTE_MS).toISOString();
           if (Date.parse(end) > Date.parse(piece.end)) continue;
           if (hardDeadline && Date.parse(end) > Date.parse(hardDeadline)) continue;
+          if (conflictsWithClassBlock(context, courseId, start, end)) continue;
           const localDate = scheduler.dateKey(new Date(start), timeZone);
           const score = scoreCandidate({
             start,
@@ -301,5 +323,6 @@ module.exports = {
   PREFERRED_INTERCLASS_GAP_MAX_MINUTES,
   stableJitter,
   dayDistance,
+  conflictsWithClassBlock,
   naturalizeScheduleResult,
 };
