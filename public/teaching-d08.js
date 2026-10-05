@@ -175,8 +175,18 @@ async function fetchSetup(courseId) {
 
 function backgroundAuditState(job) {
   const status = String(job?.status || '').toUpperCase();
+  const attempts = Number(job?.attempt_count || 0);
+  const exhausted = attempts >= 8;
+  if (status === 'CANCELLED' || exhausted) {
+    return {
+      active: false,
+      failed: true,
+      label: 'Needs attention',
+      message: 'The background analysis could not produce a valid result after several attempts. Your materials are safe. Try again when you are ready.',
+      errorCode: job?.last_error_code || null,
+    };
+  }
   if (status === 'PENDING' || status === 'CLAIMED' || status === 'RETRY_WAIT') {
-    const attempts = Number(job?.attempt_count || 0);
     const nextAttempt = job?.next_attempt_at ? new Date(job.next_attempt_at) : null;
     const retryTime = nextAttempt && Number.isFinite(nextAttempt.getTime())
       ? ` Next attempt ${nextAttempt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
@@ -188,15 +198,6 @@ function backgroundAuditState(job) {
       message: status === 'RETRY_WAIT'
         ? `The last attempt did not complete. KIWI will retry safely in the background${attempts ? ` (attempt ${attempts})` : ''}.${retryTime}`
         : 'KIWI is analyzing the materials in the background. You can safely leave this page.',
-    };
-  }
-  if (status === 'CANCELLED') {
-    return {
-      active: false,
-      failed: true,
-      label: 'Needs attention',
-      message: 'The background analysis could not produce a valid result after several attempts. Your materials are safe. Try again when you are ready.',
-      errorCode: job?.last_error_code || null,
     };
   }
   return { active: false, failed: false, label: null, message: null };

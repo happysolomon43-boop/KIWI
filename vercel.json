@@ -3,6 +3,14 @@
   "framework": null,
   "buildCommand": "npm run build:web",
   "outputDirectory": "dist",
+  "headers": [
+    {
+      "source": "/(.*)\\.(js|css)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    }
+  ],
   "routes": [
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
