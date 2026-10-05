@@ -300,6 +300,25 @@ test('central Teaching AI boundary delegates exactly once to KIWI AI Orchestrato
   assert.equal(result.modelMetadata.modelIdentifier, 'central-model');
 });
 
+test('central Teaching AI boundary validates JSON returned in the central response text', async () => {
+  const boundary = createCentralAIExecutionBoundary({
+    aiRun: async () => ({ text: '```json\n{"claim":"ok"}\n```', modelId: 'central-model' }),
+  });
+
+  const result = await boundary.execute({
+    taskId: 'TEST_CENTRAL_JSON_TEXT',
+    responsibilityKey: 'test.response_interpretation',
+    intelligenceClass: INTELLIGENCE_CLASSES.DIRECT_AI,
+    authorityLevel: AUTHORITY_LEVELS.T2,
+    authoritativeOwner: AUTHORITATIVE_OWNERS.STUDENT_KNOWLEDGE_MODEL,
+    schemaValidator: async (value) => ({ ok: value?.claim === 'ok', value }),
+    domainValidator: async () => true,
+  });
+
+  assert.equal(result.accepted, true);
+  assert.equal(result.validatedResult.output.claim, 'ok');
+});
+
 test('central Teaching AI boundary never sends T0 through model execution', async () => {
   let calls = 0;
   const boundary = createCentralAIExecutionBoundary({

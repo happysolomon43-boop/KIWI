@@ -4,6 +4,7 @@ const {
   validateTpf03CoursePlanOutput,
   validateTpf03ScopeImpactOutput,
 } = require('./canonical-plan');
+const { getCapability } = require('../capability-registry');
 
 function base({ capabilityId, course, taskMode, outputSchema, contextSpec, academicInput, provenanceRefs = [] }) {
   return {
@@ -19,7 +20,7 @@ function base({ capabilityId, course, taskMode, outputSchema, contextSpec, acade
       allowed_operations: ['return schema-valid provisional planning output'],
       prohibited_operations: ['mutate authoritative state','claim authoritative Coverage','activate or complete a Course','change Assessment Eligibility','select provider or model'],
       evidence_purpose: taskMode,
-      downstream_handoff: { type: 'validated_candidate', validator_ids: ['schema','domain','provenance'], commit_owner_boundary: 'Course Plan/Coverage domain service' },
+      downstream_handoff: { type: 'validated_candidate', validator_ids: ['schema','domain','provenance'], commit_owner_boundary: getCapability(capabilityId).authoritative_owner_boundary },
     },
     contextSpec,
     outputSchema,

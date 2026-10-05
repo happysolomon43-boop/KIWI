@@ -41,6 +41,8 @@ const platformAnchor = `const teachingRuntimePlatform = createTeachingD05Runtime
 const releaseComposition = `${platformAnchor}
 const teachingD31Release = createD31ReleaseIntelligence({
   runtimePlatform: teachingRuntimePlatform,
+  query,
+  randomUUID,
   env: process.env,
 });
 console.info(
