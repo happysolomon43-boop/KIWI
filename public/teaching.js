@@ -1,4 +1,6 @@
 const { kiwiApiRequest, hasKiwiSession } = window.KIWI_API_CLIENT || {};
+const teachingDisplay = window.KIWITeachingDisplay || {};
+const displayCourseName = teachingDisplay.displayName || ((value, fallback = 'Untitled course') => String(value || '').trim() || fallback);
 
 if (typeof kiwiApiRequest !== 'function' || typeof hasKiwiSession !== 'function') {
   throw new Error('KIWI shared API client must load before Teaching.');
@@ -474,7 +476,16 @@ function registerTeachingCourseSection(item) {
   };
 }
 
-function openTeachingCourse(courseId, sectionId = 'overview') {
+async function openTeachingCourse(courseId, sectionId = 'overview') {
+  const course = getTeachingCourse(courseId);
+  if (!course) return;
+  if (sectionId === 'overview' && !course.information_overview) {
+    try {
+      course.information_overview = await kiwiApiRequest(`/teaching/information/courses/${encodeURIComponent(courseId)}/overview`);
+    } catch {
+      // The core Course remains available when optional consolidated information is unavailable.
+    }
+  }
   navigateTeaching('course', { courseId, sectionId });
 }
 
@@ -496,17 +507,34 @@ function renderCourseCards(container) {
 
   for (const course of teachingWorkspace.courses) {
     const card = el('article', 'teaching-course-card');
+    teachingDisplay.decorateCourse?.(card, course);
     const copy = el('div', 'teaching-course-card__copy');
     copy.append(
       el('span', 'teaching-course-card__state', course.lifecycle_state || 'Draft'),
-      el('h3', '', course.title || 'Untitled course'),
-      el('p', '', `${course.source_item_count || 0} preserved source item${course.source_item_count === 1 ? '' : 's'}`)
+      el('h3', '', displayCourseName(course.title)),
     );
+    const details = el('p');
+    if (course.current_topic) details.append(el('span', 'teaching-course-card__line', `Current · ${course.current_topic}`));
+    if (course.teacher?.displayName) details.append(el('span', 'teaching-course-card__line', `Teacher · ${course.teacher.displayName}`));
+    if (!details.childElementCount) details.append(el('span', 'teaching-course-card__line', 'Course details are ready inside the workspace.'));
+    copy.append(details);
     const open = el('button', 'teaching-course-card__open', 'Open course →');
     open.type = 'button';
-    open.setAttribute('aria-label', `Open ${course.title || 'Teaching course'}`);
-    open.addEventListener('click', () => openTeachingCourse(course.course_id));
-    card.append(copy, open);
+    open.setAttribute('aria-label', `Open ${displayCourseName(course.title, 'Teaching course')}`);
+    open.addEventListener('click', async () => {
+      open.disabled = true;
+      await openTeachingCourse(course.course_id);
+      if (open.isConnected) open.disabled = false;
+    });
+    const actions = el('div', 'teaching-course-card__actions');
+    actions.append(open);
+    if (course.teacher) {
+      const teacher = el('button', 'teaching-course-card__teacher', 'Teacher');
+      teacher.type = 'button';
+      teacher.addEventListener('click', () => openTeachingCourse(course.course_id, 'teacher'));
+      actions.append(teacher);
+    }
+    card.append(copy, actions);
     container.append(card);
   }
 }
@@ -522,10 +550,25 @@ function renderCourseSectionNav(container, course) {
     button.addEventListener('click', () => openTeachingCourseSection(item.id));
     container.append(button);
   }
-  container.setAttribute('aria-label', `${course.title || 'Course'} navigation`);
+  container.setAttribute('aria-label', `${displayCourseName(course.title, 'Course')} navigation`);
 }
 
 function renderCourseOverview(course, container) {
+  const information = course.information_overview || {};
+  if (information.currentTopic || information.nextClass || information.teacher) {
+    const position = el('section', 'teaching-course-position');
+    const values = [
+      ['Current topic', information.currentTopic || 'Course plan'],
+      ['Next class', information.nextClass?.title || 'No class scheduled'],
+      ['Teacher', information.teacher?.displayName || course.teacher?.displayName || 'Teacher setup'],
+    ];
+    for (const [label, value] of values) {
+      const fact = el('div', 'teaching-course-position__item');
+      fact.append(el('small', '', label), el('strong', '', value));
+      position.append(fact);
+    }
+    container.append(position);
+  }
   const intro = el('section', 'teaching-course-overview-card');
   const head = el('div', 'teaching-course-overview-card__head');
   const title = el('div');
@@ -597,7 +640,7 @@ function renderCourseWorkspace() {
   const identity = el('div', 'teaching-course-context__identity');
   identity.append(
     el('div', 'teaching-kicker', 'Teaching course'),
-    el('h1', '', course.title || 'Untitled course'),
+    el('h1', '', displayCourseName(course.title)),
     el('p', '', `${course.source_item_count || 0} preserved source item${course.source_item_count === 1 ? '' : 's'} · ${String(course.lifecycle_state || 'Draft').replaceAll('_', ' ')}`)
   );
   context.append(back, identity);
@@ -699,7 +742,7 @@ function renderIntakeSuccess(course, extractionStatus, intakeSignals) {
   page.append(
     el('div', 'teaching-success__mark', '✓'),
     el('div', 'teaching-kicker', 'Draft course created'),
-    el('h2', '', course.title || 'Your course is ready for its next step'),
+    el('h2', '', displayCourseName(course.title, 'Your course is ready for its next step')),
     el('p', '', extractionStatus === 'ROUTE_HELD_UNTIL_D30'
       ? 'Your original Intake is preserved. AI interpretation remains safely held until Teaching routes complete qualification.'
       : 'Your Intake and its planning signals were saved without treating self-report as academic evidence.')
@@ -800,7 +843,7 @@ function renderCourseIntake() {
   select.required = true;
   select.append(new Option(teachingWorkspace.subjects.length ? 'Select a Subject' : 'Create a KIWI Subject first', ''));
   for (const subject of teachingWorkspace.subjects) {
-    select.append(new Option(`${subject.name} · ${subject.total_cards || 0} cards`, subject.id));
+    select.append(new Option(`${displayCourseName(subject.name, 'Untitled subject')} · ${subject.total_cards || 0} cards`, subject.id));
   }
   subjectField.append(subjectLabel, select, el('small', '', 'Need a new Subject? Create it in the KIWI study app first.'));
   subjectSection.append(subjectField);
@@ -886,11 +929,30 @@ function renderActiveTeachingView() {
 }
 
 async function loadTeachingWorkspace() {
-  const [subjects, courses] = await Promise.all([
+  const [subjects, baseCourses, information] = await Promise.all([
     kiwiApiRequest('/teaching/subjects'),
     kiwiApiRequest('/teaching/courses'),
+    kiwiApiRequest('/teaching/information/courses').catch(() => ({ courses: [] })),
   ]);
+  const details = new Map((information.courses || []).map((course) => [String(course.courseId), course]));
+  const courses = baseCourses.map((course) => {
+    const detail = details.get(String(course.course_id));
+    return detail ? {
+      ...course,
+      title: detail.title || course.title,
+      lifecycle_state: detail.lifecycleState || course.lifecycle_state,
+      current_topic: detail.currentTopic || null,
+      next_event: detail.nextEvent || null,
+      teacher: detail.teacher || null,
+    } : course;
+  });
   teachingWorkspace = { subjects, courses };
+  const restoredCourse = pendingTeachingLocation?.view === 'course'
+    ? getTeachingCourse(pendingTeachingLocation.courseId)
+    : null;
+  if (restoredCourse && pendingTeachingLocation.sectionId === 'overview') {
+    restoredCourse.information_overview = await kiwiApiRequest(`/teaching/information/courses/${encodeURIComponent(restoredCourse.course_id)}/overview`).catch(() => null);
+  }
 }
 
 async function refreshTeachingWorkspace({ preserveView = true } = {}) {

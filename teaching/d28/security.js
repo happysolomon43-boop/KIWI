@@ -9,6 +9,7 @@ const ALLOWED_UPLOADS = Object.freeze({
   'text/plain':['.txt','.md'],
   'text/markdown':['.md'],
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document':['.docx'],
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation':['.pptx'],
 });
 
 function cleanString(value, maxLength = 20_000) {
@@ -47,7 +48,7 @@ function extensionOf(name) {
 function magicMatches(mimeType, bytes) {
   if (!Buffer.isBuffer(bytes) || bytes.length < 4) return true;
   if (mimeType === 'application/pdf') return bytes.subarray(0, 5).toString('ascii') === '%PDF-';
-  if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+  if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
     return bytes[0] === 0x50 && bytes[1] === 0x4b;
   }
   return true;

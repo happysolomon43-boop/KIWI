@@ -156,14 +156,14 @@ function loadTeachingUnifiedUpload() {
   if (!global.document.querySelector('link[data-teaching-unified-upload]')) {
     const stylesheet = global.document.createElement('link');
     stylesheet.rel = 'stylesheet';
-    stylesheet.href = '/teaching-unified-upload.css?v=20261004-upload-1';
+    stylesheet.href = '/teaching-unified-upload.css?v=20261005-upload-2';
     stylesheet.dataset.teachingUnifiedUpload = 'true';
     global.document.head.append(stylesheet);
   }
 
   if (!global.document.querySelector('script[data-teaching-unified-upload]')) {
     const script = global.document.createElement('script');
-    script.src = '/teaching-unified-upload.js?v=20261004-upload-1';
+    script.src = '/teaching-unified-upload.js?v=20261005-upload-2';
     script.dataset.teachingUnifiedUpload = 'true';
     script.defer = true;
     global.document.body.append(script);
@@ -194,6 +194,13 @@ function loadStudyUnifiedUpload() {
 function loadUnifiedUploadAssets() {
   loadTeachingUnifiedUpload();
   loadStudyUnifiedUpload();
+  if (global.document && !global.document.querySelector('script[data-kiwi-math-renderer]')) {
+    const script = global.document.createElement('script');
+    script.src = '/kiwi-math-renderer.js?v=20261004-1';
+    script.dataset.kiwiMathRenderer = 'true';
+    script.defer = true;
+    global.document.body.append(script);
+  }
 }
 
 global.KIWI_API_CLIENT = Object.freeze({

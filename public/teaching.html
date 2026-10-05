@@ -1041,7 +1041,8 @@
       padding: 20px;
       border-color: rgba(223,245,235,.075);
       border-radius: 18px;
-      background: var(--teaching-surface-soft);
+      border-top-color: color-mix(in srgb,var(--course-accent,var(--teaching-accent)) 46%,transparent);
+      background: linear-gradient(145deg,color-mix(in srgb,var(--course-surface,#10261e) 55%,var(--teaching-surface-soft)),var(--teaching-surface-soft) 70%);
       box-shadow: none;
     }
     .teaching-course-card:hover {
@@ -1056,8 +1057,8 @@
       font-size: 9px;
       font-weight: 700;
       letter-spacing: .08em;
-      color: #92d9b9;
-      background: rgba(126,226,184,.08);
+      color: var(--course-accent,#92d9b9);
+      background: color-mix(in srgb,var(--course-accent,#92d9b9) 10%,transparent);
     }
     .teaching-course-card h3 {
       margin-top: 16px;
@@ -1070,6 +1071,16 @@
       color: #7f9289;
       font-size: 12px;
     }
+    .teaching-course-card__line { display:block; margin-top:5px; }
+    .teaching-course-card__actions { display:grid; gap:8px; margin-top:17px; }
+    .teaching-course-card__actions .teaching-course-card__open { margin-top:0; }
+    .teaching-course-card__teacher { min-height:40px; border:1px solid rgba(223,245,235,.075); border-radius:11px; background:transparent; color:#a9bbb2; font:inherit; font-size:12px; font-weight:700; cursor:pointer; }
+    .teaching-course-card__teacher:hover,.teaching-course-card__teacher:focus-visible { outline:none; border-color:color-mix(in srgb,var(--course-accent,#92d9b9) 35%,transparent); color:var(--course-accent,#92d9b9); }
+    .teaching-course-position { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; margin-bottom:14px; }
+    .teaching-course-position__item { padding:15px; border:1px solid var(--teaching-border); border-radius:14px; background:var(--teaching-surface-soft); }
+    .teaching-course-position__item small { display:block; color:var(--teaching-muted); font-size:9px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
+    .teaching-course-position__item strong { display:block; margin-top:6px; font-size:13px; line-height:1.35; }
+    @media(max-width:680px){.teaching-course-position{grid-template-columns:1fr}}
     .teaching-course-card__open {
       width: 100%;
       min-height: 42px;
@@ -1495,14 +1506,15 @@
   <script src="/kiwi-runtime-config.js"></script>
   <script src="/kiwi-api-client.js"></script>
   <script src="/kiwi-integrity-session-guard.js"></script>
-  <script type="module" src="/teaching.js?v=20261003-location-restore-1"></script>
+  <script type="module" src="/teaching-display.js?v=20261005-2"></script>
+  <script type="module" src="/teaching.js?v=20261004-stable-courses-1"></script>
   <script type="module" src="/teaching-d08.js"></script>
   <script type="module" src="/teaching-d09.js"></script>
   <script type="module" src="/teaching-d10.js"></script>
   <script type="module" src="/teaching-classroom.js"></script>
   <script type="module" src="/teaching-d16.js?v=20261003-runtime-fix-2"></script>
   <script type="module" src="/teaching-d15.js?v=20261003-runtime-fix-1"></script>
-  <script type="module" src="/teaching-d23.js?v=20261003-runtime-fix-1"></script>
+  <script type="module" src="/teaching-d23.js?v=20261005-materials-2"></script>
   <script type="module" src="/teaching-d24.js?v=20261003-d24-1"></script>
 </body>
 </html>

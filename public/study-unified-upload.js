@@ -5,48 +5,8 @@
   const MAX_FILE_BYTES = 7 * 1024 * 1024;
   const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.pptx,image/png,image/jpeg,image/webp,image/heic,image/heif';
   const FORMAT_CONFIG = Object.freeze({
-    image: {
-      label: 'IMAGE',
-      inputId: 'imageFileInput',
-      importButtonId: 'imageImportBtn',
-      confirmButtonId: 'imageConfirmBtn',
-      hintInputId: null,
-    },
-    pdf: {
-      label: 'PDF',
-      inputId: 'pdfFileInput',
-      importButtonId: 'pdfImportBtn',
-      confirmButtonId: 'pdfConfirmBtn',
-      hintInputId: 'pdfSubjectHint',
-    },
-    docx: {
-      label: 'DOCX',
-      inputId: 'docxFileInput',
-      importButtonId: 'docxImportBtn',
-      confirmButtonId: 'docxConfirmBtn',
-      hintInputId: 'docxSubjectHint',
-    },
-    txt: {
-      label: 'TXT',
-      inputId: 'txtFileInput',
-      importButtonId: 'txtImportBtn',
-      confirmButtonId: 'txtConfirmBtn',
-      hintInputId: 'txtSubjectHint',
-    },
-    md: {
-      label: 'MARKDOWN',
-      inputId: 'mdFileInput',
-      importButtonId: 'mdImportBtn',
-      confirmButtonId: 'mdConfirmBtn',
-      hintInputId: 'mdSubjectHint',
-    },
-    pptx: {
-      label: 'PPTX',
-      inputId: 'pptxFileInput',
-      importButtonId: 'pptxImportBtn',
-      confirmButtonId: 'pptxConfirmBtn',
-      hintInputId: 'pptxSubjectHint',
-    },
+    image: { label: 'IMAGE' }, pdf: { label: 'PDF' }, docx: { label: 'DOCX' },
+    txt: { label: 'TXT' }, md: { label: 'MARKDOWN' }, pptx: { label: 'PPTX' },
   });
 
   let scheduled = false;
@@ -111,19 +71,6 @@
     announce(message);
   }
 
-  function assignFileToLegacyInput(input, file) {
-    if (!input || !file || typeof global.DataTransfer !== 'function') return false;
-    try {
-      const transfer = new global.DataTransfer();
-      transfer.items.add(file);
-      input.files = transfer.files;
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return Boolean(input.files && input.files[0]);
-    } catch (_) {
-      return false;
-    }
-  }
-
   function buildPanel() {
     const panel = document.createElement('div');
     panel.className = 'import-tab-panel su-panel';
@@ -135,7 +82,7 @@
           <div>
             <div class="su-upload__eyebrow">Unified source intake</div>
             <h2 class="su-upload__title">Turn a file into study cards</h2>
-            <p class="su-upload__lede">Drop one supported source and KIWI will route it through the correct Study importer automatically. No format hunting, no duplicate upload flows.</p>
+            <p class="su-upload__lede">Drop supported sources together and KIWI will route every file through the correct Study importer automatically. No format hunting, no duplicate upload flows.</p>
           </div>
           <div class="su-upload__target" aria-live="polite">
             <span class="su-upload__target-label">Cards will go to</span>
@@ -145,10 +92,10 @@
 
         <div class="su-upload__body">
           <div class="su-upload__drop" data-su-drop role="button" tabindex="0" aria-label="Choose a supported study source file">
-            <input type="file" data-su-input hidden accept="${ACCEPT}">
+            <input type="file" data-su-input hidden multiple accept="${ACCEPT}">
             <div class="su-upload__mark" aria-hidden="true">＋</div>
             <strong>Drop a source here</strong>
-            <span class="su-upload__drop-copy">or choose a file from your device. KIWI detects the format and keeps the existing generation pipeline behind the scenes.</span>
+            <span class="su-upload__drop-copy">or choose several files from your device. KIWI detects each format and keeps one clear queue.</span>
             <span class="su-upload__browse">BROWSE FILES</span>
           </div>
 
@@ -165,7 +112,7 @@
               <label for="studyUnifiedSubjectHint">Subject hint · optional</label>
               <input class="input su-upload__hint" id="studyUnifiedSubjectHint" data-su-hint placeholder="e.g. Organic Chemistry" autocomplete="off">
             </div>
-            <div class="su-upload__limits">One source at a time · 7 MB max. Images support PNG, JPG, WEBP, HEIC and HEIF.</div>
+            <div class="su-upload__limits">Multiple mixed sources · 7 MB per file. Images support PNG, JPG, WEBP, HEIC and HEIF.</div>
           </aside>
         </div>
 
@@ -175,12 +122,12 @@
             <div class="su-upload__file-name" data-su-name></div>
             <div class="su-upload__file-meta" data-su-meta></div>
           </div>
-          <button class="su-upload__remove" type="button" data-su-remove>Remove</button>
+          <button class="su-upload__remove" type="button" data-su-remove>Clear all</button>
         </div>
 
         <div class="su-upload__footer">
           <div class="su-upload__status" data-su-status role="status" aria-live="polite">Choose a supported source to begin.</div>
-          <button class="btn btn-primary su-upload__generate" type="button" data-su-generate disabled>Generate cards</button>
+          <button class="btn btn-primary su-upload__generate" type="button" data-su-generate disabled>Generate cards from files</button>
         </div>
         <div class="su-upload__caption">Image Occlusion remains separate because it is an interactive mask editor, not a standard source-to-cards import.</div>
       </section>`;
@@ -207,11 +154,6 @@
     const subject = document.getElementById('importSubject');
     if (!tabs || !subject || !document.getElementById('tab-manual')) return;
     if (tabs.dataset.studyUnifiedUpload === 'true') return;
-    // The adapter relies on FileList assignment through DataTransfer. Browsers
-    // without that capability keep the legacy format tabs instead of being left
-    // with a unified control that cannot hand the selected File to Study.
-    if (typeof global.DataTransfer !== 'function') return;
-
     tabs.dataset.studyUnifiedUpload = 'true';
 
     const sectionSub = tabs.closest('.page-wrap')?.querySelector('.section-sub');
@@ -257,14 +199,14 @@
     const generate = root.querySelector('[data-su-generate]');
     const hint = root.querySelector('[data-su-hint]');
     const target = root.querySelector('[data-su-target]');
-    let selectedFile = null;
+    let selectedFiles = [];
 
     function syncTarget() {
       if (target) target.textContent = selectedSubjectName();
     }
 
     function clearFile({ quiet = false } = {}) {
-      selectedFile = null;
+      selectedFiles = [];
       input.value = '';
       selection.dataset.visible = 'false';
       badge.textContent = 'FILE';
@@ -274,22 +216,23 @@
       if (!quiet) setStatus(root, 'Choose a supported source to begin.');
     }
 
-    function selectFile(file) {
-      const error = validateFile(file);
+    function selectFiles(files) {
+      const incoming = Array.from(files || []);
+      const error = incoming.map(validateFile).find(Boolean);
       if (error) {
-        clearFile({ quiet: true });
         setStatus(root, error, 'error');
         return;
       }
-      selectedFile = file;
-      const format = formatForFile(file);
+      selectedFiles = [...selectedFiles, ...incoming];
+      if (!selectedFiles.length) return clearFile();
+      const file = selectedFiles[0],format = formatForFile(file);
       const config = FORMAT_CONFIG[format];
       selection.dataset.visible = 'true';
-      badge.textContent = config.label;
-      name.textContent = file.name;
-      meta.textContent = `${config.label} · ${prettyBytes(file.size)}`;
+      badge.textContent = selectedFiles.length === 1 ? config.label : String(selectedFiles.length);
+      name.textContent = selectedFiles.length === 1 ? file.name : `${selectedFiles.length} files ready`;
+      meta.textContent = selectedFiles.map(item => `${FORMAT_CONFIG[formatForFile(item)].label} · ${item.name}`).join('  •  ');
       generate.disabled = false;
-      setStatus(root, `${file.name} is ready. Generate cards into ${selectedSubjectName()}.`, 'ready');
+      setStatus(root, `${selectedFiles.length} source${selectedFiles.length===1?' is':'s are'} ready for ${selectedSubjectName()}.`, 'ready');
     }
 
     function chooseFile() {
@@ -299,7 +242,7 @@
     filesButton.addEventListener('click', () => activateFiles(tabs, panel));
     subject.addEventListener('change', () => {
       syncTarget();
-      if (selectedFile) setStatus(root, `${selectedFile.name} is ready. Generate cards into ${selectedSubjectName()}.`, 'ready');
+      if (selectedFiles.length) setStatus(root, `${selectedFiles.length} source${selectedFiles.length===1?' is':'s are'} ready for ${selectedSubjectName()}.`, 'ready');
     });
 
     drop.addEventListener('click', (event) => {
@@ -312,7 +255,8 @@
       }
     });
     input.addEventListener('change', () => {
-      selectFile(input.files?.[0] || null);
+      selectFiles(input.files);
+      input.value = '';
     });
 
     for (const eventName of ['dragenter', 'dragover']) {
@@ -330,22 +274,17 @@
       });
     }
     drop.addEventListener('drop', (event) => {
-      const files = Array.from(event.dataTransfer?.files || []);
-      if (files.length > 1) {
-        setStatus(root, 'Study generates from one source at a time. Choose the first file you want to use.', 'error');
-        return;
-      }
-      selectFile(files[0] || null);
+      selectFiles(event.dataTransfer?.files || []);
     });
 
     remove.addEventListener('click', () => {
-      const removedName = selectedFile?.name;
+      const removedName = selectedFiles.length ? `${selectedFiles.length} selected files` : '';
       clearFile();
       if (removedName) announce(`${removedName} removed.`);
     });
 
-    generate.addEventListener('click', () => {
-      const error = validateFile(selectedFile);
+    generate.addEventListener('click', async () => {
+      const error = selectedFiles.map(validateFile).find(Boolean) || (!selectedFiles.length ? 'Choose at least one source file.' : null);
       if (error) {
         setStatus(root, error, 'error');
         return;
@@ -355,34 +294,15 @@
         return;
       }
 
-      const format = formatForFile(selectedFile);
-      const config = FORMAT_CONFIG[format];
-      const legacyInput = document.getElementById(config.inputId);
-      const importButton = document.getElementById(config.importButtonId);
-      const confirmButton = document.getElementById(config.confirmButtonId);
-      const legacyHint = config.hintInputId ? document.getElementById(config.hintInputId) : null;
-
-      if (!legacyInput || !importButton || !confirmButton) {
-        setStatus(root, 'This importer is unavailable right now. Refresh the page and try again.', 'error');
-        return;
-      }
-      if (!assignFileToLegacyInput(legacyInput, selectedFile)) {
-        setStatus(root, 'Your browser could not hand this file to the Study importer. Refresh and use the original format tab if the problem persists.', 'error');
-        return;
-      }
-      if (legacyHint) legacyHint.value = hint.value.trim();
-
       generate.disabled = true;
-      setStatus(root, `Starting ${config.label} generation for ${selectedSubjectName()}…`, 'ready');
-
-      // Preserve the proven Study contracts: the legacy first-step click validates
-      // deck ownership and captures image state; the confirm click then performs
-      // the existing navigate-first generation, polling and failure handling.
-      importButton.click();
-      global.setTimeout(() => {
-        if (!document.documentElement.contains(confirmButton)) return;
-        confirmButton.click();
-      }, 0);
+      const queue=[...selectedFiles],deckId=selectedDeckId();let submitted=0;
+      try{
+        if(typeof global.KIWIStudySourceImport!=='function')throw new Error('Study importer is still loading. Try again in a moment.');
+        for(const file of queue){setStatus(root,`Importing ${submitted+1} of ${queue.length}: ${file.name}…`,'ready');await global.KIWIStudySourceImport({deckId,file,format:formatForFile(file),subjectHint:hint.value.trim()});submitted++;}
+        setStatus(root,`${submitted} source${submitted===1?'':'s'} submitted. KIWI is generating the cards.`,'ready');
+        clearFile({quiet:true});
+        global.setTimeout(()=>{ if(typeof global.navigateTo==='function')global.navigateTo('library'); },1200);
+      }catch(importError){setStatus(root,`${submitted} of ${queue.length} submitted. ${importError.message||'Import failed.'}`,'error');generate.disabled=false;}
     });
 
     syncTarget();

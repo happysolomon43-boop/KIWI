@@ -320,10 +320,11 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
   async function detectScopeChange(user, courseId) {
     const setup = await repository.getBaseSetup(user.id, courseId);
     const corpus = await subjects.getCorpusForUser(user.id, setup.course.subject_id);
-    const currentInventory = buildSourceInventory({ corpus, supplementaryMaterials: [] });
-    const activePrimary = setup.sources.filter((source) => source.source_kind === 'PRIMARY_KIWI_SUBJECT');
+    const subjectMaterialRole = setup.sources.some((source) => source.source_kind === 'KIWI_SUBJECT_FLASHCARDS') ? 'SUPPLEMENTAL_FLASHCARD' : null;
+    const currentInventory = buildSourceInventory({ corpus, supplementaryMaterials: [], subjectMaterialRole });
+    const activePrimary = setup.sources.filter((source) => ['PRIMARY_KIWI_SUBJECT','KIWI_SUBJECT_FLASHCARDS'].includes(source.source_kind));
     const oldByRef = new Map(activePrimary.map((source) => [String(source.source_ref), source]));
-    const newByRef = new Map(currentInventory.items.filter((item) => item.sourceKind === 'PRIMARY_KIWI_SUBJECT').map((item) => [String(item.sourceRef), item]));
+    const newByRef = new Map(currentInventory.items.filter((item) => ['PRIMARY_KIWI_SUBJECT','KIWI_SUBJECT_FLASHCARDS'].includes(item.sourceKind)).map((item) => [String(item.sourceRef), item]));
     const added = [...newByRef.keys()].filter((ref) => !oldByRef.has(ref));
     const removed = [...oldByRef.keys()].filter((ref) => !newByRef.has(ref));
     const changed = [...newByRef.keys()].filter((ref) => oldByRef.has(ref) && oldByRef.get(ref).content_hash !== newByRef.get(ref).contentHash);
@@ -369,7 +370,8 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
       const error = new Error('The scope change is not a validated material update ready for domain adoption.'); error.status = 409; error.code = 'TEACHING_D08_SCOPE_CHANGE_NOT_ADOPTABLE'; throw error;
     }
     const corpus = await subjects.getCorpusForUser(user.id, setup.course.subject_id);
-    const inventory = buildSourceInventory({ corpus, supplementaryMaterials: [] });
+    const subjectMaterialRole = setup.sources.some((source) => source.source_kind === 'KIWI_SUBJECT_FLASHCARDS') ? 'SUPPLEMENTAL_FLASHCARD' : null;
+    const inventory = buildSourceInventory({ corpus, supplementaryMaterials: [], subjectMaterialRole });
     if (`subject:${setup.course.subject_id}:${inventory.snapshotDigest}` !== candidate.observed_snapshot_ref) {
       const error = new Error('Subject content changed again after scope impact review; review must be repeated.'); error.status = 409; error.code = 'TEACHING_D08_SCOPE_CHANGE_STALE'; throw error;
     }
