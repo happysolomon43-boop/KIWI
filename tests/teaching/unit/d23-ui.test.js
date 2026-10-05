@@ -1,5 +1,5 @@
 'use strict';
-const test=require('node:test');const assert=require('node:assert/strict');
+const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');
 const ui=require('../../../teaching/d23/ui');
 
 test('D23 shell renders desktop rail and responsive mobile bottom navigation',()=>{
@@ -26,5 +26,5 @@ test('D23 Results visually preserves Gradebook versus progression versus learnin
 });
 
 test('D23 Create Course enters the existing Subject → Course pipeline rather than duplicating Subject truth',()=>{
-  const html=ui.renderCreateCourse();assert.match(html,/Choose an existing KIWI Subject/);assert.match(html,/fetch\('\/teaching\/subjects'/);assert.match(html,/fetch\('\/teaching\/courses'/);assert.match(html,/does not create a parallel subject universe/i);
+  const html=ui.renderCreateCourse(),client=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-course-intake.js'),'utf8');assert.match(html,/Choose the KIWI Subject/);assert.match(html,/fetch\('\/teaching\/subjects'/);assert.match(client,/fetch\('\/teaching\/courses'/);assert.match(html,/existing cards remain useful/i);
 });

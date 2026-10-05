@@ -82,9 +82,9 @@ function createD27IntegrationRepository({ query, withTransaction, randomUUID, cl
   }
 
   async function getCoursePrimarySubjectSnapshot(studentId, courseId) {
-    const { rows = [] } = await query(`SELECT source_ref,source_version_ref,locator,content_hash
+    const { rows = [] } = await query(`SELECT source_kind,source_ref,source_version_ref,locator,content_hash
       FROM public.teaching_source_content_items
-      WHERE student_id=$1 AND course_id=$2 AND source_kind='PRIMARY_KIWI_SUBJECT' AND superseded_at IS NULL
+      WHERE student_id=$1 AND course_id=$2 AND source_kind IN ('PRIMARY_KIWI_SUBJECT','KIWI_SUBJECT_FLASHCARDS') AND superseded_at IS NULL
       ORDER BY source_ref,source_content_item_id`, [studentId,courseId]);
     return rows;
   }

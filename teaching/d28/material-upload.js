@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
+const officeparser = require('officeparser');
 const { validateMaterialUpload } = require('./security');
 
 const EXTRACTED_CHUNK_MAX_BYTES = 60 * 1024;
@@ -43,7 +44,7 @@ function splitUtf8(text, maxBytes = EXTRACTED_CHUNK_MAX_BYTES) {
   return Object.freeze(chunks.filter(Boolean));
 }
 
-async function extractText(bytes, upload, { pdfParser = pdfParse, docxExtractor = mammoth.extractRawText } = {}) {
+async function extractText(bytes, upload, { pdfParser = pdfParse, docxExtractor = mammoth.extractRawText, presentationParser = officeparser } = {}) {
   if (upload.extension === '.pdf') {
     const parsed = await pdfParser(bytes);
     return normalizeExtractedText(parsed?.text);
@@ -54,6 +55,11 @@ async function extractText(bytes, upload, { pdfParser = pdfParse, docxExtractor 
   }
   if (upload.extension === '.txt' || upload.extension === '.md') {
     return normalizeExtractedText(bytes.toString('utf8'));
+  }
+  if (upload.extension === '.pptx') {
+    const ast = await presentationParser.parseOffice(bytes, { fileType:'pptx', decompressionLimits:{ maxUncompressedBytes:64 * 1024 * 1024, maxZipEntries:5000, maxTableCells:250000 } });
+    const parsed = await ast.to('text', { includeImages:false, textConfig:{ preserveLayout:false, renderNotes:true } });
+    return normalizeExtractedText(parsed?.value);
   }
   throw uploadError('Unsupported Teaching material type.', 'TEACHING_D28_UPLOAD_TYPE_FORBIDDEN', 415);
 }

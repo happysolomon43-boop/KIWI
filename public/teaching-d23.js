@@ -1,6 +1,8 @@
 const { kiwiApiRequest } = window.KIWI_API_CLIENT || {};
 const nav = window.KIWITeachingNavigation;
 const courses = window.KIWITeachingCourses;
+const teachingDisplay = window.KIWITeachingDisplay || {};
+const displayCourseName = teachingDisplay.displayName || ((value, fallback = 'Course') => String(value || '').trim() || fallback);
 
 if (typeof kiwiApiRequest !== 'function' || !nav?.register || !courses?.registerSection || !courses?.openOverview) {
   throw new Error('Original Teaching shell must load before its information bridge.');
@@ -48,9 +50,9 @@ function installStyles() {
     .ti-teacher{display:grid;gap:12px}.ti-teacher-identity{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;padding:22px;border:1px solid rgba(223,245,235,.075);border-radius:19px;background:linear-gradient(145deg,rgba(15,31,25,.9),rgba(9,20,16,.9))}.ti-teacher-identity h2{margin:6px 0 7px;font-family:var(--font-display);font-size:clamp(26px,4vw,38px);letter-spacing:-.04em}.ti-teacher-identity p{margin:0;color:#91a39a;font-size:12px;line-height:1.6}.ti-ai-badge{padding:6px 9px;border:1px solid rgba(126,226,184,.14);border-radius:999px;background:rgba(126,226,184,.06);color:#91dfbd;font-size:9px;font-weight:750;letter-spacing:.06em;text-transform:uppercase}.ti-teacher-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ti-form{display:grid;gap:10px}.ti-field{display:grid;gap:6px}.ti-field label{color:#a9bbb2;font-size:10px;font-weight:700}.ti-field select,.ti-field textarea,.ti-field input{width:100%;box-sizing:border-box;border:1px solid rgba(223,245,235,.08);border-radius:10px;background:#09130f;color:#edf5f1;padding:10px 11px;font:inherit;font-size:12px}.ti-field textarea{min-height:92px;resize:vertical;line-height:1.5}.ti-field select:focus,.ti-field textarea:focus,.ti-field input:focus{outline:none;border-color:rgba(126,226,184,.4);box-shadow:0 0 0 3px rgba(126,226,184,.055)}.ti-status{min-height:18px;color:#83968d;font-size:10px;line-height:1.5}.ti-status[data-kind="success"]{color:#93d9b9}.ti-status[data-kind="error"]{color:#eab0b0}.ti-boundaries{display:grid;gap:6px;margin-top:10px}.ti-boundaries span{padding:8px 9px;border:1px solid rgba(223,245,235,.055);border-radius:9px;background:rgba(255,255,255,.012);color:#83968d;font-size:10px;line-height:1.45}
     .ti-study-group{display:grid;gap:9px}.ti-study-group__head{display:flex;justify-content:space-between;align-items:end;gap:12px}.ti-study-group__head h3{margin:3px 0 0;font-size:18px}.ti-pack{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:15px;border:1px solid rgba(223,245,235,.065);border-radius:14px;background:rgba(255,255,255,.012)}.ti-pack h4{margin:0;font-size:13px}.ti-pack p{margin:5px 0 0;color:#75887f;font-size:10px}
     .ti-record-semester{display:grid;gap:11px;padding:18px;border:1px solid rgba(223,245,235,.07);border-radius:17px;background:var(--teaching-surface-soft)}.ti-record-semester__head{display:flex;align-items:center;justify-content:space-between;gap:12px}.ti-record-semester__head h2{margin:4px 0 0;font-size:20px}.ti-gpa{font-family:var(--font-display);font-size:18px;font-weight:750}.ti-record-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:8px}.ti-record-course{padding:13px;border:1px solid rgba(223,245,235,.06);border-radius:12px;background:rgba(255,255,255,.012)}.ti-record-course h3{margin:0;font-size:13px}.ti-record-course__outcome{margin-top:7px;color:#92d8ba;font-size:10px;font-weight:700}.ti-record-course__meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}.ti-record-course__meta span{padding:4px 7px;border-radius:999px;background:rgba(255,255,255,.018);color:#768980;font-size:9px}.ti-attendance{display:grid;gap:8px}.ti-attendance-course{padding:13px;border:1px solid rgba(223,245,235,.06);border-radius:12px;background:rgba(255,255,255,.01)}.ti-attendance-course__head{display:flex;justify-content:space-between;gap:12px}.ti-attendance-course strong{font-size:12px}.ti-attendance-course span{color:#74877e;font-size:10px}
-    .ti-dialog{width:min(680px,calc(100vw - 28px));max-height:min(820px,88dvh);overflow:auto;padding:0;border:1px solid rgba(223,245,235,.11);border-radius:20px;background:#0d1814;color:var(--teaching-text);box-shadow:0 30px 90px rgba(0,0,0,.44)}.ti-dialog::backdrop{background:rgba(1,7,5,.72);backdrop-filter:blur(5px)}.ti-dialog__inner{display:grid;gap:14px;padding:20px}.ti-dialog__head{display:flex;align-items:flex-start;justify-content:space-between;gap:13px}.ti-dialog__head h2{margin:5px 0 0;font-size:23px;letter-spacing:-.03em}.ti-dialog__close{width:36px;height:36px;display:grid;place-items:center;border:1px solid rgba(223,245,235,.08);border-radius:10px;background:rgba(255,255,255,.018);color:#d8e5df;cursor:pointer}.ti-material-list{display:grid;gap:8px}.ti-material{padding:13px;border:1px solid rgba(223,245,235,.06);border-radius:12px;background:rgba(255,255,255,.012)}.ti-material strong{display:block;font-size:12px}.ti-material p{margin:6px 0 0;color:#81948b;font-size:10.5px;line-height:1.55}
+    .ti-dialog{width:min(880px,calc(100vw - 28px));max-height:min(860px,90dvh);overflow:auto;padding:0;border:1px solid rgba(223,245,235,.11);border-radius:20px;background:#0d1814;color:var(--teaching-text);box-shadow:0 30px 90px rgba(0,0,0,.44)}.ti-dialog::backdrop{background:rgba(1,7,5,.72);backdrop-filter:blur(5px)}.ti-dialog__inner{display:grid;gap:14px;padding:20px}.ti-dialog__head{position:sticky;z-index:2;top:0;display:flex;align-items:flex-start;justify-content:space-between;gap:13px;margin:-20px -20px 0;padding:20px;border-bottom:1px solid rgba(223,245,235,.065);background:rgba(13,24,20,.96);backdrop-filter:blur(12px)}.ti-dialog__head h2{margin:5px 0 0;font-size:23px;letter-spacing:-.03em}.ti-dialog__close{width:36px;height:36px;display:grid;place-items:center;border:1px solid rgba(223,245,235,.08);border-radius:10px;background:rgba(255,255,255,.018);color:#d8e5df;cursor:pointer}.ti-material-hierarchy{padding:15px;border:1px solid rgba(126,226,184,.10);border-radius:14px;background:rgba(126,226,184,.035)}.ti-material-hierarchy h3{margin:5px 0 0;font-size:15px}.ti-material-hierarchy p{margin:6px 0 0;color:#81948b;font-size:10.5px;line-height:1.55}.ti-material-search{width:100%;box-sizing:border-box;padding:11px 13px;border:1px solid rgba(223,245,235,.09);border-radius:11px;background:#09130f;color:#edf5f1;font:inherit;font-size:12px}.ti-material-search:focus{outline:none;border-color:rgba(126,226,184,.4);box-shadow:0 0 0 3px rgba(126,226,184,.055)}.ti-material-results{color:#788b82;font-size:10px}.ti-material-group{border:1px solid rgba(223,245,235,.065);border-radius:15px;background:rgba(255,255,255,.009);overflow:hidden}.ti-material-group[open]{padding-bottom:10px}.ti-material-group__head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px;cursor:pointer;list-style:none}.ti-material-group__head::-webkit-details-marker{display:none}.ti-material-group__head h3{margin:4px 0 0;font-size:15px}.ti-material-group__head p{margin:4px 0 0;color:#788b82;font-size:10px}.ti-material-group__aside{display:flex;align-items:center;gap:8px}.ti-material-chevron{color:#6f8279;font-size:13px;transition:transform .16s ease}.ti-material-group[open] .ti-material-chevron{transform:rotate(180deg)}.ti-material-count{padding:4px 7px;border-radius:999px;background:rgba(126,226,184,.07);color:#8bdcb8;font-size:9px;font-weight:700}.ti-material-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0 10px}.ti-material{min-width:0;padding:13px;border:1px solid rgba(223,245,235,.06);border-radius:12px;background:rgba(255,255,255,.012)}.ti-material strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.ti-material p{margin:6px 0 0;color:#81948b;font-size:10.5px;line-height:1.55}
     @media(max-width:760px){.ti-hero{align-items:flex-start;flex-direction:column}.ti-overview__grid,.ti-teacher-layout{grid-template-columns:1fr}.ti-pack{grid-template-columns:1fr}.ti-teacher-identity{grid-template-columns:1fr}}
-    @media(max-width:540px){.teaching-today__head,.ti-section__head,.ti-record-semester__head{align-items:flex-start;flex-direction:column}.teaching-today__grid,.ti-grid,.ti-record-grid{grid-template-columns:1fr}.ti-actions,.ti-course-actions{display:grid;grid-template-columns:1fr;width:100%}.ti-actions>* ,.ti-course-actions>*{width:100%}}
+    @media(max-width:540px){.teaching-today__head,.ti-section__head,.ti-record-semester__head{align-items:flex-start;flex-direction:column}.teaching-today__grid,.ti-grid,.ti-record-grid,.ti-material-list{grid-template-columns:1fr}.ti-actions,.ti-course-actions{display:grid;grid-template-columns:1fr;width:100%}.ti-actions>* ,.ti-course-actions>*{width:100%}}
   `;
   document.head.append(style);
 }
@@ -68,7 +70,7 @@ function hero(kicker, title, lead, actions = []) {
   return node;
 }
 function setStatus(host, text, kind = '') { host.textContent = text || ''; host.dataset.kind = kind; }
-function courseTitle(courseId) { const course = courses.getCourse?.(courseId); return course?.title || course?.name || 'Course'; }
+function courseTitle(courseId) { const course = courses.getCourse?.(courseId); return displayCourseName(course?.title || course?.name, 'Course'); }
 function openCourse(courseId, section = 'overview') { if (!courses.getCourse?.(courseId)) return false; courses.openCourse(courseId, section); return true; }
 function overviewCell(label, value, detail = '') { const cell = $('div', 'ti-overview__cell'); cell.append($('small', '', label), $('strong', '', value || 'Not available')); if (detail) cell.append($('span', '', detail)); return cell; }
 
@@ -106,7 +108,8 @@ async function enhanceToday() {
 function courseCard(model, archived = false) {
   const card = $('article', 'teaching-course-card ti-course-card');
   const copy = $('div', 'teaching-course-card__copy');
-  copy.append($('span', 'teaching-course-card__state', human(model.lifecycleState || (archived ? 'Archived' : 'Active'))), $('h3', '', model.title || 'Course'));
+  copy.append($('span', 'teaching-course-card__state', human(model.lifecycleState || (archived ? 'Archived' : 'Active'))), $('h3', '', displayCourseName(model.title, 'Course')));
+  teachingDisplay.decorateCourse?.(card, model);
   const details = $('p');
   if (model.currentTopic) details.append(add($('span', 'ti-course-line'), $('strong', '', archived ? 'Last plan position · ' : 'Current · '), document.createTextNode(model.currentTopic)));
   if (model.teacher?.displayName) details.append(add($('span', 'ti-course-line'), $('strong', '', 'Teacher · '), document.createTextNode(model.teacher.displayName)));
@@ -119,24 +122,11 @@ function courseCard(model, archived = false) {
   card.append(copy, actions); return card;
 }
 async function enhanceCourses() {
-  const main = document.getElementById('teachingApp');
-  if (!main?.querySelector('.teaching-view > .teaching-hero') || main.querySelector('.teaching-course-shell')) return;
-  const grid = main.querySelector('.teaching-course-grid');
-  if (!grid || ['loading','ready'].includes(grid.dataset.informationCourses)) return;
-  const request = ++state.courseRequest; grid.dataset.informationCourses = 'loading';
-  try {
-    const data = await kiwiApiRequest('/teaching/information/courses');
-    if (!grid.isConnected || request !== state.courseRequest) return;
-    const rows = Array.isArray(data.courses) ? data.courses : [];
-    grid.replaceChildren();
-    if (!rows.length) grid.append($('div', 'teaching-empty', 'No active Courses right now. Create a Course or open Archived Courses to review completed learning.'));
-    else rows.forEach((row) => grid.append(courseCard(row)));
-    grid.dataset.informationCourses = 'ready';
-    const head = grid.closest('.teaching-section')?.querySelector('.teaching-section__head');
-    if (head && !head.querySelector('[data-open-archive]')) {
-      const button = $('button', 'ti-secondary-link', 'Archived Courses'); button.type = 'button'; button.dataset.openArchive = 'true'; button.addEventListener('click', () => nav.open('archive')); head.append(button);
-    }
-  } catch { if (grid.isConnected) grid.dataset.informationCourses = 'fallback'; }
+  const grid = document.querySelector('#teachingApp .teaching-course-grid');
+  const head = grid?.closest('.teaching-section')?.querySelector('.teaching-section__head');
+  if (head && !head.querySelector('[data-open-archive]')) {
+    const button = $('button', 'ti-secondary-link', 'Archived Courses'); button.type = 'button'; button.dataset.openArchive = 'true'; button.addEventListener('click', () => nav.open('archive')); head.append(button);
+  }
 }
 async function renderArchive() {
   installStyles(); const main = document.getElementById('teachingApp'); if (!main) return;
@@ -161,7 +151,26 @@ async function showMaterials(courseId) {
     const data = await kiwiApiRequest(`/teaching/information/courses/${encodeURIComponent(courseId)}/materials`); if (!dialog.isConnected) return;
     const materials = Array.isArray(data.materials) ? data.materials : [];
     if (!materials.length) { body.textContent = 'No Course materials are currently attached to this Course.'; return; }
-    const list = $('div', 'ti-material-list'); materials.forEach((material, index) => { const card = $('article', 'ti-material'); card.append($('strong', '', material.summary || `${human(material.kind || 'Course source')} ${index + 1}`), $('p', '', [human(material.kind || 'source'), human(material.classification || 'unresolved')].filter(Boolean).join(' · '))); list.append(card); }); body.replaceWith(list);
+    const content = $('div', 'ti-page');
+    const hierarchy = $('section', 'ti-material-hierarchy'); hierarchy.append($('div', 'ti-kicker', 'Material hierarchy'), $('h3', '', 'Original source first. Practice around it.'), $('p', '', 'Original notes anchor the Course. KIWI Subject flashcards and additional uploads remain clearly identified as supporting material.')); content.append(hierarchy);
+    const search = $('input', 'ti-material-search'); search.type = 'search'; search.placeholder = 'Search materials by name, type or description'; search.setAttribute('aria-label', 'Search Course materials');
+    const results = $('div', 'ti-material-results', `${materials.length} material${materials.length === 1 ? '' : 's'}`); content.append(search, results);
+    const groups = [
+      { title:'Original notes', copy:'The primary material this Course is grounded in.', kinds:['PRIMARY_STUDY_NOTE'] },
+      { title:'KIWI flashcards', copy:'Retrieval practice from the Subject; supplemental when an original note exists.', kinds:['KIWI_SUBJECT_FLASHCARDS','PRIMARY_KIWI_SUBJECT'] },
+      { title:'Additional materials', copy:'Student-added examples, references and supporting sources.', kinds:['STUDENT_SUPPLEMENT','AUTHORITATIVE_SCHOOL_SCOPE','AI_SUPPLEMENTATION'] },
+    ];
+    const sections = [];
+    groups.forEach((group, groupIndex) => {
+      const items = materials.filter((material) => group.kinds.includes(material.kind)); if (!items.length) return;
+      const section = $('details', 'ti-material-group'); section.open = groupIndex === 0 || items.length <= 6; const head = $('summary', 'ti-material-group__head'); const count = $('span', 'ti-material-count', items.length); head.append(add($('div'), $('div', 'ti-kicker', 'Source role'), $('h3', '', group.title), $('p', '', group.copy)), add($('span', 'ti-material-group__aside'), count, $('span', 'ti-material-chevron', '⌄'))); section.append(head);
+      const list = $('div', 'ti-material-list'); const cards = items.map((material, index) => { const title = material.filename || material.summary || `${human(material.kind || 'Course source')} ${index + 1}`; const description = [material.summary && material.filename ? material.summary : null, human(material.kind || 'source'), human(material.classification || 'unresolved')].filter(Boolean).join(' · '); const card = $('article', 'ti-material'); card.dataset.searchText = `${title} ${description}`.toLowerCase(); card.append($('strong', '', title), $('p', '', description)); list.append(card); return card; }); section.append(list); content.append(section); sections.push({ section, cards, count });
+    }); body.replaceWith(content);
+    search.addEventListener('input', () => {
+      const query = search.value.trim().toLowerCase(); let visible = 0;
+      sections.forEach(({ section, cards, count }) => { let groupVisible = 0; cards.forEach((card) => { const matches = !query || card.dataset.searchText.includes(query); card.hidden = !matches; if (matches) groupVisible += 1; }); count.textContent = groupVisible; section.hidden = groupVisible === 0; if (query && groupVisible) section.open = true; visible += groupVisible; });
+      results.textContent = query ? `${visible} of ${materials.length} materials shown` : `${materials.length} material${materials.length === 1 ? '' : 's'}`;
+    });
   } catch (error) { body.className = 'ti-error'; body.textContent = error.message || 'Course materials are temporarily unavailable.'; }
 }
 async function showStudyPack(pack, group) {
@@ -169,7 +178,7 @@ async function showStudyPack(pack, group) {
   try {
     const event = await kiwiApiRequest(`/teaching/information/classes/${encodeURIComponent(pack.classId)}/event`); if (!dialog.isConnected) return;
     const content = $('div', 'ti-page');
-    const facts = $('div', 'ti-grid'); facts.append(add($('article', 'ti-card'), $('div', 'ti-kicker', 'Class'), $('h3', '', event.course?.title || group.courseTitle || 'Course'), $('p', '', event.objective || 'The Class objective remains attached to its authoritative Class record.')), add($('article', 'ti-card'), $('div', 'ti-kicker', 'Study state'), $('h3', '', human(event.studyPack?.state || pack.state || 'Preparing')), $('p', '', event.studyPack ? 'This Study Pack is attached to the completed Class. Publication remains governed by the post-Class Study pipeline.' : 'No Study Pack has been published for this Class yet.'))); content.append(facts);
+    const facts = $('div', 'ti-grid'); facts.append(add($('article', 'ti-card'), $('div', 'ti-kicker', 'Class'), $('h3', '', displayCourseName(event.course?.title || group.courseTitle, 'Course')), $('p', '', event.objective || 'The Class objective remains attached to its authoritative Class record.')), add($('article', 'ti-card'), $('div', 'ti-kicker', 'Study state'), $('h3', '', human(event.studyPack?.state || pack.state || 'Preparing')), $('p', '', event.studyPack ? 'This Study Pack is attached to the completed Class. Publication remains governed by the post-Class Study pipeline.' : 'No Study Pack has been published for this Class yet.'))); content.append(facts);
     const summary = safeText(event.summary); if (summary) content.append(add($('article', 'ti-card'), $('div', 'ti-kicker', 'Class summary'), $('p', '', summary)));
     content.append(add($('div', 'ti-actions'), action('Open Course', () => { dialog.close(); openCourse(group.courseId); }))); body.replaceWith(content);
   } catch (error) { body.className = 'ti-error'; body.textContent = error.message || 'Study Pack detail is temporarily unavailable.'; }
@@ -184,7 +193,7 @@ async function renderStudyPacks({ courseId = null } = {}) {
     const groups = Array.isArray(data.groups) ? data.groups : []; if (!groups.length) { body.textContent = 'No post-Class Study Packs are available yet. Packs appear only after the governed Class Study pipeline has produced them.'; return; }
     const stack = $('div', 'ti-page');
     groups.forEach((group) => {
-      const section = $('section', 'ti-study-group'); const head = $('div', 'ti-study-group__head'); head.append(add($('div'), $('div', 'ti-kicker', 'Course'), $('h3', '', group.courseTitle || 'Course')));
+      const section = $('section', 'ti-study-group'); const head = $('div', 'ti-study-group__head'); head.append(add($('div'), $('div', 'ti-kicker', 'Course'), $('h3', '', displayCourseName(group.courseTitle, 'Course'))));
       const courseButton = action('Open Course', () => openCourse(group.courseId)); courseButton.classList.add('ti-secondary-link'); head.append(courseButton);
       const packs = $('div', 'ti-page'); (group.packs || []).forEach((pack) => { const card = $('article', 'ti-pack'); const copy = add($('div'), $('h4', '', pack.title || 'Class Study Pack'), $('p', '', `${pack.scheduledStartAt ? dateTime(pack.scheduledStartAt) : 'Class'} · ${human(pack.state || 'Available')}`)); card.append(copy, add($('div', 'ti-actions'), action('Open Pack', () => showStudyPack(pack, group)))); packs.append(card); });
       section.append(head, packs); stack.append(section);
@@ -241,7 +250,7 @@ async function renderTeacher({ course, container }) {
   await load();
 }
 async function renderTeacherSummary({ course, container, openSection }) {
-  installStyles(); const card = $('article', 'teaching-course-feature-card'); card.append($('div', 'ti-kicker', 'Teacher'), $('h3', '', 'Course Teacher'), $('p', '', 'Loading Teacher identity…')); container.replaceChildren(card);
+  installStyles(); const card = $('article', 'teaching-course-feature-card'); const known = course.teacher || course.information_overview?.teacher; card.append($('div', 'ti-kicker', 'Teacher'), $('h3', '', known?.displayName || 'Course Teacher'), $('p', '', known ? 'Open Teacher for style and interaction options.' : 'Teacher setup is ready inside this Course.')); const initialActions = $('div', 'teaching-course-feature-card__actions'); const initialOpen = $('button', 'teaching-d08-link-button', 'Open Teacher'); initialOpen.type = 'button'; initialOpen.addEventListener('click', openSection); initialActions.append(initialOpen); card.append(initialActions); container.replaceChildren(card);
   try { const data = await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/teacher`); if (!card.isConnected) return; card.replaceChildren($('div', 'ti-kicker', 'Teacher'), $('h3', '', data.teacher?.displayName || 'Course Teacher'), $('p', '', data.teacher ? `${data.teacher.styleDescription || 'KIWI Teacher'} · ${data.teacher.aiDisclosure || 'AI Teacher in KIWI Teaching'}` : 'Teacher setup is ready inside this Course.')); const actions = $('div', 'teaching-course-feature-card__actions'); const open = $('button', 'teaching-d08-link-button', 'Open Teacher'); open.type = 'button'; open.addEventListener('click', openSection); actions.append(open); card.append(actions); } catch (error) { card.replaceChildren($('div', 'ti-kicker', 'Teacher'), $('h3', '', 'Course Teacher'), $('p', '', error.message || 'Teacher summary is temporarily unavailable.')); }
 }
 
@@ -250,6 +259,7 @@ async function enhanceCourseOverview() {
   const active = shell.querySelector('.teaching-course-nav__item[data-active="true"]'); if (!active || active.textContent.trim() !== 'Overview') return;
   const content = shell.querySelector('.teaching-course-content'); if (!content || content.querySelector('[data-information-overview]')) return;
   const courseId = courses.currentCourseId?.(); if (!courseId) return;
+  if (courses.getCourse?.(courseId)?.information_overview) return;
   const request = ++state.overviewRequest; const section = $('section', 'ti-overview'); section.dataset.informationOverview = 'true'; section.append($('div', 'ti-empty', 'Loading current Course position…')); content.prepend(section);
   try {
     const data = await kiwiApiRequest(`/teaching/information/courses/${encodeURIComponent(courseId)}/overview`); if (!section.isConnected || request !== state.overviewRequest) return; section.replaceChildren();
@@ -298,7 +308,7 @@ function enhanceCoursePlanMaterials() {
 }
 
 function recordCourse(course) {
-  const card = $('article', 'ti-record-course'); card.append($('h3', '', course.title || 'Course'), $('div', 'ti-record-course__outcome', human(course.progression_outcome || 'Outcome pending'))); const meta = $('div', 'ti-record-course__meta'); if (course.score_percentage != null) meta.append($('span', '', `Official score ${course.score_percentage}%`)); if (course.academic_credits != null) meta.append($('span', '', `${course.academic_credits} credits`)); meta.append($('span', '', `Attempt ${course.attempt_no || 1}`)); if (course.attempt_kind) meta.append($('span', '', human(course.attempt_kind))); card.append(meta); return card;
+  const card = $('article', 'ti-record-course'); card.append($('h3', '', displayCourseName(course.title, 'Course')), $('div', 'ti-record-course__outcome', human(course.progression_outcome || 'Outcome pending'))); const meta = $('div', 'ti-record-course__meta'); if (course.score_percentage != null) meta.append($('span', '', `Official score ${course.score_percentage}%`)); if (course.academic_credits != null) meta.append($('span', '', `${course.academic_credits} credits`)); meta.append($('span', '', `Attempt ${course.attempt_no || 1}`)); if (course.attempt_kind) meta.append($('span', '', human(course.attempt_kind))); card.append(meta); return card;
 }
 async function renderRecord() {
   installStyles(); const main = document.getElementById('teachingApp'); if (!main) return; const page = $('section', 'teaching-view ti-page'); page.append(hero('Academic Record', 'Record', 'Semester results, Course outcomes and attendance history stay together here while remaining separate academic truths. Official marks, learning insight and attendance are not interchangeable.')); const body = $('div', 'ti-empty', 'Loading your academic Record…'); page.append(body); main.replaceChildren(page);

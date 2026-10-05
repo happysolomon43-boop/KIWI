@@ -92,7 +92,7 @@ function createScopeStore({ q, withTransaction, randomUUID, clock, json }) {
       const addedOrChanged = new Set([...(change.added_source_refs || []), ...(change.changed_source_refs || [])].map(String));
       if (changedOrRemoved.length) {
         await q(tx, `update public.teaching_source_content_items set superseded_at=$3
-          where student_id=$1 and course_id=$2 and source_kind='PRIMARY_KIWI_SUBJECT'
+          where student_id=$1 and course_id=$2 and source_kind in ('PRIMARY_KIWI_SUBJECT','KIWI_SUBJECT_FLASHCARDS')
             and superseded_at is null and source_ref=any($4::text[])`,
         [studentId, courseId, now, changedOrRemoved]);
       }

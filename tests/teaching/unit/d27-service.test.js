@@ -4,9 +4,9 @@ const assert=require('node:assert/strict');
 const {createD27Service}=require('../../../teaching/d27/service');
 const {buildSourceInventory}=require('../../../teaching/d07/contracts');
 
-function primaryRows(corpus){
-  return buildSourceInventory({corpus,supplementaryMaterials:[]}).items.map(item=>({
-    source_ref:item.sourceRef,source_version_ref:item.sourceVersionRef,locator:item.locator,content_hash:item.contentHash,
+function primaryRows(corpus, subjectMaterialRole=null){
+  return buildSourceInventory({corpus,supplementaryMaterials:[],subjectMaterialRole}).items.map(item=>({
+    source_kind:item.sourceKind,source_ref:item.sourceRef,source_version_ref:item.sourceVersionRef,locator:item.locator,content_hash:item.contentHash,
   }));
 }
 
@@ -47,6 +47,14 @@ test('unchanged Subject stays current even when Course source digest includes su
   const result=await x.service.subjectBoundary({id:'student-1'},'course-1');
   assert.equal(result.state,'SUBJECT_CURRENT');
   assert.equal(result.maySilentlyRebind,false);
+  assert.equal(result.liveVersion,result.pinnedPrimaryVersion);
+});
+
+test('unchanged Subject stays current when its flashcards are supplemental to an original note',async()=>{
+  const base=harness();
+  const x=harness({repository:{getCoursePrimarySubjectSnapshot:async()=>primaryRows(base.corpus,'SUPPLEMENTAL_FLASHCARD')}});
+  const result=await x.service.subjectBoundary({id:'student-1'},'course-1');
+  assert.equal(result.state,'SUBJECT_CURRENT');
   assert.equal(result.liveVersion,result.pinnedPrimaryVersion);
 });
 

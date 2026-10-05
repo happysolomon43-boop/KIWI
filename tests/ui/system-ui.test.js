@@ -85,20 +85,21 @@ test('Study unified file intake consolidates format tabs without duplicating gen
     "data-su-drop",
     "data-su-generate",
     "selectedDeckId()",
-    "typeof global.DataTransfer !== 'function'",
-    "importButton.click()",
-    "confirmButton.click()",
+    "multiple accept=\"${ACCEPT}\"",
+    "global.KIWIStudySourceImport",
+    "selectedFiles = [...selectedFiles, ...incoming]",
     "localStorage.setItem('kiwi_last_import_tab', 'files')",
     "Image Occlusion remains separate",
   ]) {
     assert.ok(source.includes(token), token);
   }
 
-  // The unified layer must delegate into the existing Study import handlers;
-  // it is not allowed to invent another network/generation pipeline.
+  // The unified layer delegates to the stable adapter owned by the existing
+  // Study client; it does not invent another network contract.
   assert.doesNotMatch(source, /fetch\s*\(/);
   assert.doesNotMatch(source, /kiwiApiRequest\s*\(/);
   assert.doesNotMatch(source, /\/cards\/import\//);
+  assert.match(read('index.html'), /window\.KIWIStudySourceImport/);
 
   assert.match(source, /\.pdf,\.docx,\.txt,\.md,\.markdown,\.pptx/);
   assert.match(source, /image\/png,image\/jpeg,image\/webp,image\/heic,image\/heif/);

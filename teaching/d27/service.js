@@ -112,9 +112,14 @@ function createD27Service({
         conflictReason:'LIVE_SUBJECT_CORPUS_UNAVAILABLE',maySilentlyRebind:false,
       });
     }
+    if (typeof repository.getCoursePrimarySubjectSnapshot !== 'function') {
+      fail('D27 requires the pinned primary Subject snapshot reader.', 'TEACHING_D27_SUBJECT_SNAPSHOT_READER_UNAVAILABLE', 503);
+    }
+    const pinnedPrimary = await repository.getCoursePrimarySubjectSnapshot(studentId, course.course_id);
+    const subjectMaterialRole = pinnedPrimary.some((item) => item.source_kind === 'KIWI_SUBJECT_FLASHCARDS') ? 'SUPPLEMENTAL_FLASHCARD' : null;
     let livePrimary;
     try {
-      livePrimary = buildSourceInventory({ corpus, supplementaryMaterials:[] }).items;
+      livePrimary = buildSourceInventory({ corpus, supplementaryMaterials:[], subjectMaterialRole }).items;
     } catch (error) {
       return Object.freeze({
         courseId:course.course_id,subjectId:course.subject_id,state:'SUBJECT_CHANGED_SNAPSHOT_PINNED',
@@ -123,10 +128,6 @@ function createD27Service({
         conflictReason:error?.code || 'LIVE_SUBJECT_CORPUS_INVALID',maySilentlyRebind:false,
       });
     }
-    if (typeof repository.getCoursePrimarySubjectSnapshot !== 'function') {
-      fail('D27 requires the pinned primary Subject snapshot reader.', 'TEACHING_D27_SUBJECT_SNAPSHOT_READER_UNAVAILABLE', 503);
-    }
-    const pinnedPrimary = await repository.getCoursePrimarySubjectSnapshot(studentId, course.course_id);
     const liveVersion = primarySnapshotFingerprint(livePrimary);
     const pinnedPrimaryVersion = primarySnapshotFingerprint(pinnedPrimary);
     const changed = !pinnedPrimary.length || liveVersion !== pinnedPrimaryVersion;
