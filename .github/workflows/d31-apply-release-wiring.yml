@@ -1,4 +1,4 @@
-name: D31 guarded owner-release wiring
+name: D31 terminal release readiness
 
 on:
   push:
@@ -6,18 +6,22 @@ on:
       - teaching/d31-final-release-readiness
     paths:
       - .github/workflows/d31-apply-release-wiring.yml
+      - package.json
       - scripts/apply-teaching-d31-release-wiring.js
+      - scripts/apply-teaching-d31-limitations-ui.js
       - scripts/reconcile-post-d30-study-import.js
+      - scripts/verify-teaching-d31-release-readiness.js
       - teaching/d31/**
       - tests/ai/study-import-module.test.js
       - tests/ai/teaching-d31-owner-release.test.js
+      - tests/ai/teaching-d31-limitations.test.js
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  wire-and-validate:
+  terminal-release-gate:
     runs-on: ubuntu-latest
     steps:
       - name: Check out D31 branch
@@ -41,11 +45,29 @@ jobs:
       - name: Apply guarded D31 release composition
         run: node scripts/apply-teaching-d31-release-wiring.js
 
-      - name: Validate index syntax
+      - name: Apply guarded Academic Transparency surface
+        run: node scripts/apply-teaching-d31-limitations-ui.js
+
+      - name: Validate server entry syntax
         run: node --check index.js
 
-      - name: Validate recovery and D31 owner-release contracts
-        run: node --test tests/ai/study-import-module.test.js tests/ai/teaching-d31-owner-release.test.js
+      - name: Validate focused D31 contracts
+        run: node --test tests/ai/study-import-module.test.js tests/ai/teaching-d31-owner-release.test.js tests/ai/teaching-d31-limitations.test.js
+
+      - name: Execute accepted D01-D30 verifier chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in $(seq -w 1 30); do
+            echo "=== verify Teaching D${n} ==="
+            npm run "verify:teaching:d${n}"
+          done
+
+      - name: Verify D31 terminal release contract
+        run: npm run verify:teaching:d31
+
+      - name: Run full local test suite
+        run: npm test
 
       - name: Validate web build
         run: npm run build
@@ -53,15 +75,15 @@ jobs:
       - name: Validate diff hygiene
         run: git diff --check
 
-      - name: Commit guarded index reconciliation
+      - name: Commit guarded reconciliation output
         shell: bash
         run: |
-          if git diff --quiet -- index.js; then
-            echo "index.js already has the reconciled post-D30 extraction and D31 release composition."
+          if git diff --quiet -- index.js public/teaching.html; then
+            echo "Guarded monolith and Academic Transparency transforms are already applied."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.js
-          git commit -m "D31: reconcile study import and owner AI release wiring"
+          git add index.js public/teaching.html
+          git commit -m "D31: apply terminal release composition and transparency UI"
           git push origin HEAD:teaching/d31-final-release-readiness
