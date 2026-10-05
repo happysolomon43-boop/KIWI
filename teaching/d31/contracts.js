@@ -2,6 +2,13 @@
 
 const D31_TASK_IDS = Object.freeze(['TCH-0680','TCH-0681','TCH-0682','TCH-0683']);
 
+const DELIVERY_TASK_COUNTS = Object.freeze({
+  D00:26,D01:20,D02:15,D03:37,D04:31,D05:30,D06:27,D07:23,
+  D08:33,D09:29,D10:30,D11:24,D12:24,D13:25,D14:38,D15:24,
+  D16:33,D17:56,D18:19,D19:20,D20:38,D21:39,D22:17,D23:26,
+  D24:35,D25:18,D26:27,D27:17,D28:39,D29:50,D30:46,D31:4,
+});
+
 const CANONICAL_RELEASE_BASELINE = Object.freeze({
   deliveryTaskMapVersion: '1.7',
   deliveryTaskMapSha256: '83a4430b96dfd1c59d43e2c1495aa8686f77b50d0730f03fca7c3bf158bd2481',
@@ -25,38 +32,20 @@ const CANONICAL_RELEASE_BASELINE = Object.freeze({
 });
 
 const D31_TASK_CONTRACTS = Object.freeze({
-  'TCH-0680': Object.freeze({
-    label: 'CORE',
-    requirement: 'Perform privacy/security review before production academic records are enabled.',
-  }),
-  'TCH-0681': Object.freeze({
-    label: 'CORE',
-    requirement: 'Perform final visual/accessibility review.',
-  }),
-  'TCH-0682': Object.freeze({
-    label: 'CORE',
-    requirement: 'Perform final blueprint traceability review: every settled blueprint requirement is implemented, explicitly deferred, or intentionally excluded with rationale.',
-  }),
-  'TCH-0683': Object.freeze({
-    label: 'CORE',
-    requirement: 'Document known limitations honestly in-product where they affect academic meaning, especially unobserved physical skills and imperfect control of external resources.',
-  }),
+  'TCH-0680': Object.freeze({ label:'CORE', requirement:'Perform privacy/security review before production academic records are enabled.' }),
+  'TCH-0681': Object.freeze({ label:'CORE', requirement:'Perform final visual/accessibility review.' }),
+  'TCH-0682': Object.freeze({ label:'CORE', requirement:'Perform final blueprint traceability review: every settled blueprint requirement is implemented, explicitly deferred, or intentionally excluded with rationale.' }),
+  'TCH-0683': Object.freeze({ label:'CORE', requirement:'Document known limitations honestly in-product where they affect academic meaning, especially unobserved physical skills and imperfect control of external resources.' }),
 });
 
 function assertD31CanonicalContract() {
   const ids = Object.keys(D31_TASK_CONTRACTS).sort();
-  if (JSON.stringify(ids) !== JSON.stringify([...D31_TASK_IDS].sort())) {
-    throw new Error('D31 canonical task contract drift.');
-  }
-  if (CANONICAL_RELEASE_BASELINE.taskCount !== 920 || CANONICAL_RELEASE_BASELINE.deliveryCount !== 32) {
-    throw new Error('D31 canonical delivery census drift.');
-  }
-  if (CANONICAL_RELEASE_BASELINE.capabilityCount !== 170 || CANONICAL_RELEASE_BASELINE.modelEligibleCapabilityCount !== 148 || CANONICAL_RELEASE_BASELINE.t0CapabilityCount !== 22) {
-    throw new Error('D31 canonical capability census drift.');
-  }
-  if (CANONICAL_RELEASE_BASELINE.promptFamilyCount !== 20 || CANONICAL_RELEASE_BASELINE.criticalInvariantCount !== 40) {
-    throw new Error('D31 canonical prompt/invariant census drift.');
-  }
+  if (JSON.stringify(ids) !== JSON.stringify([...D31_TASK_IDS].sort())) throw new Error('D31 canonical task contract drift.');
+  if (Object.keys(DELIVERY_TASK_COUNTS).length !== 32) throw new Error('D31 canonical delivery count drift.');
+  if (Object.values(DELIVERY_TASK_COUNTS).reduce((sum, count) => sum + count, 0) !== 920) throw new Error('D31 canonical 920-task census drift.');
+  if (DELIVERY_TASK_COUNTS.D31 !== 4) throw new Error('D31 canonical task count drift.');
+  if (CANONICAL_RELEASE_BASELINE.capabilityCount !== 170 || CANONICAL_RELEASE_BASELINE.modelEligibleCapabilityCount !== 148 || CANONICAL_RELEASE_BASELINE.t0CapabilityCount !== 22) throw new Error('D31 canonical capability census drift.');
+  if (CANONICAL_RELEASE_BASELINE.promptFamilyCount !== 20 || CANONICAL_RELEASE_BASELINE.criticalInvariantCount !== 40) throw new Error('D31 canonical prompt/invariant census drift.');
   return true;
 }
 
@@ -65,6 +54,7 @@ assertD31CanonicalContract();
 module.exports = Object.freeze({
   D31_TASK_IDS,
   D31_TASK_CONTRACTS,
+  DELIVERY_TASK_COUNTS,
   CANONICAL_RELEASE_BASELINE,
   assertD31CanonicalContract,
 });
