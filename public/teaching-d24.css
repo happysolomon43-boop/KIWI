@@ -15,6 +15,27 @@
   margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important;
   white-space: nowrap !important; border: 0 !important;
 }
+
+/* D24 is the shared Teaching presentation renderer. Feature modules own their
+   semantics; this layer keeps typography, controls, tabs and loading states
+   visually coherent across the whole application. */
+.teaching-d24,
+.teaching-d24 :where(button, input, select, textarea) {
+  font-family: var(--font-body, "Inter", ui-sans-serif, system-ui, sans-serif);
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+.teaching-d24 :where(h1, h2, h3, h4, h5, h6, .teaching-brand, .teaching-button, .teaching-course-nav__item, .teaching-dock__item, .tc-button) {
+  font-family: var(--font-display, "Manrope", ui-sans-serif, system-ui, sans-serif);
+}
+.teaching-d24 :where(h1, h2, h3) { letter-spacing: -.035em; }
+.teaching-d24 :where(p, li, label, small) { letter-spacing: -.005em; }
+.teaching-d24 :where(.teaching-kicker, .tf-eyebrow, .ti-kicker, .tc-eyebrow) {
+  font-family: var(--font-mono, "JetBrains Mono", ui-monospace, monospace);
+  letter-spacing: .11em;
+}
+
 .teaching-d24 :where(button, a[href], input, select, textarea, summary):focus-visible,
 .assessment-d24 :where(button, a[href], input, select, textarea, summary):focus-visible {
   outline: 3px solid #b8f5d4 !important; outline-offset: 3px !important;
@@ -23,6 +44,164 @@
 .teaching-d24 :where(.teaching-button, .teaching-menu-link, .teaching-menu-action, .teaching-course-nav__item) { min-height: 44px; }
 .teaching-d24 [data-state], .teaching-d24 [data-status], .teaching-d24 [data-kind],
 .assessment-d24 [data-state] { forced-color-adjust: auto; }
+
+/* Remove browser-grey controls. Disabled still looks intentionally unavailable. */
+.teaching-d24 :where(button, input, select, textarea) { -webkit-appearance: none; appearance: none; }
+.teaching-d24 input[type="checkbox"], .teaching-d24 input[type="radio"] { -webkit-appearance: auto; appearance: auto; accent-color: #7be2b5; }
+.teaching-d24 :where(button):disabled {
+  opacity: 1 !important;
+  cursor: not-allowed !important;
+  color: #6e8d80 !important;
+  border-color: rgba(120, 183, 155, .10) !important;
+  background: linear-gradient(180deg, rgba(19, 43, 34, .78), rgba(10, 29, 22, .78)) !important;
+  box-shadow: inset 0 1px rgba(255,255,255,.018) !important;
+  filter: saturate(.72);
+}
+.teaching-d24 :where(.teaching-button, .teaching-d08-link-button, .tf-button, .ti-button, .tc-button) {
+  border-radius: 13px;
+  font-weight: 760;
+  letter-spacing: -.015em;
+  transition: transform 140ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+.teaching-d24 :where(.teaching-button--primary, .teaching-d08-link-button--primary, .tf-button--primary, .ti-button--primary, .tc-button--solid):not(:disabled) {
+  border-color: rgba(153, 245, 203, .34) !important;
+  background: linear-gradient(135deg, #8be7bf 0%, #68dca9 48%, #8ce8c0 100%) !important;
+  color: #051811 !important;
+  box-shadow: 0 10px 28px rgba(75, 213, 156, .15), inset 0 1px rgba(255,255,255,.34);
+}
+.teaching-d24 :where(.teaching-button--primary, .teaching-d08-link-button--primary, .tf-button--primary, .ti-button--primary, .tc-button--solid):not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 36px rgba(75, 213, 156, .22), inset 0 1px rgba(255,255,255,.4);
+}
+.teaching-d24 :where(.teaching-d08-link-button, .tf-button:not(.tf-button--primary), .ti-button:not(.ti-button--primary), .tc-button--soft, .tc-button--quiet):not(:disabled) {
+  border-color: rgba(126, 226, 184, .14) !important;
+  background: linear-gradient(180deg, rgba(17, 50, 38, .62), rgba(8, 30, 23, .68)) !important;
+  color: #c6dfd4 !important;
+}
+.teaching-d24 :where(.teaching-d08-link-button, .tf-button:not(.tf-button--primary), .ti-button:not(.ti-button--primary), .tc-button--soft, .tc-button--quiet):not(:disabled):hover {
+  border-color: rgba(126, 226, 184, .3) !important;
+  background: rgba(126, 226, 184, .09) !important;
+  color: #edf8f3 !important;
+}
+
+/* Course tabs are a scrollable segmented navigation, never native-grey pills. */
+.teaching-d24 .teaching-course-nav {
+  display: flex;
+  gap: 7px;
+  padding: 7px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+  border: 1px solid rgba(126, 226, 184, .10) !important;
+  border-radius: 18px !important;
+  background: linear-gradient(180deg, rgba(5, 23, 17, .88), rgba(4, 19, 15, .78)) !important;
+  box-shadow: inset 0 1px rgba(255,255,255,.018), 0 14px 32px rgba(0,0,0,.08);
+}
+.teaching-d24 .teaching-course-nav::-webkit-scrollbar { display: none; }
+.teaching-d24 .teaching-course-nav__item {
+  flex: 0 0 auto;
+  min-height: 46px;
+  padding: 0 15px !important;
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  background: transparent !important;
+  color: #829e91 !important;
+  font-weight: 720 !important;
+  font-size: 12px !important;
+  letter-spacing: -.015em !important;
+  white-space: nowrap;
+}
+.teaching-d24 .teaching-course-nav__item:hover,
+.teaching-d24 .teaching-course-nav__item:focus-visible {
+  color: #d9eee5 !important;
+  border-color: rgba(126, 226, 184, .12) !important;
+  background: rgba(126, 226, 184, .045) !important;
+}
+.teaching-d24 .teaching-course-nav__item:is([aria-current="page"], [aria-selected="true"], [data-active="true"], .is-active, .active) {
+  color: #071b13 !important;
+  border-color: rgba(151, 240, 199, .34) !important;
+  background: linear-gradient(135deg, #93eac4, #69dbaa) !important;
+  box-shadow: 0 8px 24px rgba(77, 213, 157, .14), inset 0 1px rgba(255,255,255,.35) !important;
+}
+
+/* Shared surfaces look intentional even when their feature module uses the
+   older generic card/button vocabulary. */
+.teaching-d24 :where(.teaching-course-feature-card, .teaching-course-overview-card, .tf-card, .ti-card, .tw-card, .tc-course-summary) {
+  border-color: rgba(126, 226, 184, .09) !important;
+  background: linear-gradient(150deg, rgba(10, 34, 26, .91), rgba(5, 23, 17, .92)) !important;
+  box-shadow: inset 0 1px rgba(255,255,255,.018), 0 18px 52px rgba(0,0,0,.09);
+}
+.teaching-d24 .teaching-course-feature-card:has(button:disabled),
+.teaching-d24 .tw-card:has(button:disabled) {
+  opacity: .84;
+  background: linear-gradient(150deg, rgba(10, 30, 23, .82), rgba(5, 20, 16, .88)) !important;
+}
+.teaching-d24 :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  border-color: rgba(126,226,184,.12) !important;
+  background-color: rgba(4, 23, 17, .92) !important;
+  color: #edf8f3 !important;
+  border-radius: 12px !important;
+  box-shadow: inset 0 1px rgba(255,255,255,.018);
+}
+.teaching-d24 :where(input, select, textarea):focus {
+  border-color: rgba(126,226,184,.46) !important;
+  box-shadow: 0 0 0 3px rgba(98,217,165,.07) !important;
+}
+
+/* Main overview / final-review loading skeleton. The aria-live node remains in
+   the DOM for assistive technology while sighted users get stable geometry. */
+@keyframes teaching-skeleton-sweep { to { transform: translateX(115%); } }
+.teaching-d24 .tf-page > .tf-action-status:only-child:not(:empty),
+.teaching-d24 .teaching-experience-skeleton {
+  position: relative;
+  min-height: min(66vh, 640px);
+  overflow: hidden;
+  color: transparent !important;
+  border: 1px solid rgba(126,226,184,.065);
+  border-radius: 22px;
+  background:
+    linear-gradient(rgba(16,47,36,.74),rgba(16,47,36,.74)) 26px 28px/108px 12px no-repeat,
+    linear-gradient(rgba(27,63,49,.9),rgba(27,63,49,.9)) 26px 58px/62% 34px no-repeat,
+    linear-gradient(rgba(16,43,33,.78),rgba(16,43,33,.78)) 26px 110px/calc(100% - 52px) 80px no-repeat,
+    linear-gradient(rgba(14,40,31,.72),rgba(14,40,31,.72)) 26px 210px/calc(50% - 34px) 150px no-repeat,
+    linear-gradient(rgba(14,40,31,.72),rgba(14,40,31,.72)) calc(50% + 8px) 210px/calc(50% - 34px) 150px no-repeat,
+    linear-gradient(rgba(12,35,27,.72),rgba(12,35,27,.72)) 26px 382px/calc(100% - 52px) 164px no-repeat,
+    linear-gradient(145deg,rgba(8,29,22,.88),rgba(4,20,15,.92));
+}
+.teaching-d24 .tf-page > .tf-action-status:only-child:not(:empty)::after,
+.teaching-d24 .teaching-experience-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-115%);
+  background: linear-gradient(105deg, transparent 36%, rgba(161,241,204,.065) 48%, rgba(206,255,232,.10) 52%, transparent 64%);
+  animation: teaching-skeleton-sweep 1.45s ease-in-out infinite;
+}
+
+.teaching-request-authority {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+.teaching-request-authority__item {
+  padding: 10px 11px;
+  border: 1px solid rgba(126,226,184,.09);
+  border-radius: 11px;
+  background: rgba(126,226,184,.028);
+}
+.teaching-request-authority__item small {
+  display: block;
+  color: #739185;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 760;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.teaching-request-authority__item strong { display: block; margin-top: 5px; color: #cfe5db; font-size: 11px; line-height: 1.4; }
+.tc-entry-lock { margin-top: 12px; color: #7f9d90; font-size: 11px; line-height: 1.5; }
+.tc-class-card[data-entry-phase="LOCKED"] { opacity: .78; }
 
 @media (min-width: 1100px) {
   body[data-teaching-dock-visible="true"] .teaching-stage { padding-left: 142px; padding-bottom: calc(38px + var(--safe-bottom)); }
@@ -41,9 +220,20 @@
   .teaching-stage { padding-inline: 14px; }
   .teaching-topbar { min-height: 62px; }
   .teaching-hero, .teaching-course-overview-card, .ti-card, .tw-card { border-radius: 18px !important; }
-  .teaching-course-nav { overscroll-behavior-inline: contain; scroll-snap-type: x proximity; }
-  .teaching-course-nav__item { scroll-snap-align: start; flex: 0 0 auto; }
+  .teaching-course-nav { scroll-snap-type: x proximity; margin-inline: -2px; padding: 6px !important; }
+  .teaching-course-nav__item { scroll-snap-align: start; flex: 0 0 auto; min-height: 44px !important; padding-inline: 13px !important; }
   .teaching-dock__item { min-height: 44px; }
+  .teaching-request-authority { grid-template-columns: 1fr; }
+  .teaching-d24 .tf-page > .tf-action-status:only-child:not(:empty), .teaching-d24 .teaching-experience-skeleton {
+    min-height: 62vh;
+    background:
+      linear-gradient(rgba(16,47,36,.74),rgba(16,47,36,.74)) 18px 24px/96px 10px no-repeat,
+      linear-gradient(rgba(27,63,49,.9),rgba(27,63,49,.9)) 18px 51px/76% 31px no-repeat,
+      linear-gradient(rgba(16,43,33,.78),rgba(16,43,33,.78)) 18px 100px/calc(100% - 36px) 90px no-repeat,
+      linear-gradient(rgba(14,40,31,.72),rgba(14,40,31,.72)) 18px 210px/calc(100% - 36px) 132px no-repeat,
+      linear-gradient(rgba(12,35,27,.72),rgba(12,35,27,.72)) 18px 362px/calc(100% - 36px) 154px no-repeat,
+      linear-gradient(145deg,rgba(8,29,22,.88),rgba(4,20,15,.92));
+  }
 }
 
 @media (max-width: 360px) {
