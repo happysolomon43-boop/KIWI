@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const contracts = require('../../../teaching/d08/contracts');
 const canonical = require('../../../teaching/d08/canonical-plan');
-const { coursePlanRequest, scopeChangeImpactRequest, createD08Intelligence } = require('../../../teaching/d08/intelligence');
+const { boundedPlanningSignals, coursePlanRequest, scopeChangeImpactRequest, createD08Intelligence } = require('../../../teaching/d08/intelligence');
 const { createD08Service } = require('../../../teaching/d08/service');
 
 function sources() {
@@ -271,9 +271,22 @@ test('TPF-03 intelligence requests use exact registered capabilities and task mo
   assert.equal(plan.taskMode, 'course_plan_generation');
   assert.equal(plan.declaredAuthorityLevel, 'T3');
   assert.equal(plan.commit, false);
+  assert.deepEqual(plan.contextSpec.authoritative_refs, [{ ref: 'course:c1' }]);
+  assert.deepEqual(plan.contextSpec.provenance_refs, []);
+  assert.deepEqual(plan.contextSpec.untrusted_refs, []);
+  assert.equal(plan.academicInput.validated_planning_signals.curriculum.learning_units[0].id, 'u1');
   const scope = scopeChangeImpactRequest({ course, plan: { course_plan_id: 'p1', version_no: 1 }, candidate: { scope_change_id: 'sc1', added_source_refs: [], removed_source_refs: [], changed_source_refs: [] } });
   assert.equal(scope.capabilityId, 'teaching.curriculum.course_scope_change_impact_analysis');
   assert.equal(scope.taskMode, 'scope_change_impact_analysis');
+});
+
+test('TPF-03 uses bounded validated planning signals instead of reloading every source body', () => {
+  const input = sources().map((source) => ({ ...source, content_summary: 'x'.repeat(100_000), raw_content: 'y'.repeat(100_000) }));
+  const signals = boundedPlanningSignals({ audit: audit(), sources: input, vpkDecisions: [] });
+  const serialized = JSON.stringify(signals);
+  assert.equal(serialized.includes('raw_content'), false);
+  assert.equal(serialized.includes('content_summary'), false);
+  assert.ok(serialized.length < 10_000);
 });
 
 test('D08 intelligence delegates model work only through the Teaching Orchestrator', async () => {
