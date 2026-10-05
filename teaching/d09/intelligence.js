@@ -110,7 +110,11 @@ function structuralOutputSchema({ id, validate, taskMode }) {
     validate,
     uncertainty_states: STRUCTURAL_UNCERTAINTY_STATES,
     review_needed_field: 'review_required',
-    state_bearing_fields: Object.freeze(['status', 'review_required']),
+    // TPF-10 status/review flags describe an advisory candidate. They do not
+    // mutate LearningEvidence or any authoritative aggregate state. Marking
+    // them state-bearing incorrectly trips the global T2 no-evidence-mutation
+    // guard after a model result has otherwise validated successfully.
+    state_bearing_fields: Object.freeze(taskMode === 'instructional_load_estimation' ? [] : ['status', 'review_required']),
     student_facing_field: null,
     declared_fields: Object.freeze(declaredFields),
   });
