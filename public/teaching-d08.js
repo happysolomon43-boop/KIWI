@@ -582,10 +582,19 @@ async function renderCourseSetup({ course, container }) {
           status.className = 'teaching-message';
           delete status.dataset.kind;
           try {
-            await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/curriculum-audit`, { method: 'POST', body: {} });
+            await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/curriculum-audit`, {
+              method: 'POST',
+              body: {},
+              // A Curriculum Audit can ground dozens of saved materials. It is an
+              // intentional long-running action, not a normal page request.
+              timeoutMs: 120_000,
+            });
             await load();
           } catch (error) {
-            status.textContent = error.message || 'The material analysis could not be completed.';
+            const cancelled = error?.name === 'AbortError' || /signal is aborted|aborted without reason/i.test(String(error?.message || ''));
+            status.textContent = cancelled
+              ? 'The analysis took longer than expected. Your materials are still saved—please try again.'
+              : error.message || 'The material analysis could not be completed.';
             status.className = 'teaching-message';
             status.dataset.kind = 'error';
             analyze.disabled = false;
