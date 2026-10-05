@@ -217,36 +217,8 @@ function decorateD09Service(base, {
     });
   }
 
-  async function proposeTimetable(user, courseId) {
-    let context = await repository.getSchedulingContext(user.id, courseId);
-    requireReadyContext(context, courseId);
-    if (!PREACTIVATION_STATES.has(String(context.course.lifecycle_state || 'DRAFT'))) {
-      throw fail('Active Course timetables change only through governed Requests or KIWI system-failure recovery.', 'TEACHING_D09_PREACTIVATION_PROPOSAL_ONLY');
-    }
-    context = await ensureInstructionalLoads(user, courseId, context);
-    const nowIso = serverNow();
-    const derived = planningContextAt(context, nowIso);
-    const result = computeSchedule(derived, { now: nowIso });
-    const instructionalCount = instructionalUnits(context).length;
-    const classFacts = scheduleClassFacts(result.schedule, nowIso);
-    if (instructionalCount > 0 && classFacts.classCount === 0) {
-      throw fail('The Scheduler produced no instructional Classes for a Course that requires instruction.', 'TEACHING_D09_EMPTY_INSTRUCTIONAL_TIMETABLE', 422, { reasons: result.reasons || [] });
-    }
-    if (classFacts.elapsedClassCount > 0) {
-      throw fail('The proposed timetable contains elapsed Classes and must be recalculated from server time.', 'TEACHING_D09_ELAPSED_TIMETABLE_REJECTED', 422);
-    }
-    await commitWithPpl((tx) => repository.saveProposalUsing(tx, {
-      studentId: user.id,
-      courseId,
-      context,
-      result,
-      source: 'DETERMINISTIC_INITIAL',
-    }));
-    return getScheduleReview(user, courseId);
-  }
-
-  async function recoverSystemInvalidTimetable(user, courseId) {
-    let context = await repository.getSchedulingContext(user.id, courseId);
+  async function recoverSystemInvalidTimetable(user, courseId, existingContext = null) {
+    let context = existingContext || await repository.getSchedulingContext(user.id, courseId);
     requireReadyContext(context, courseId);
     if (String(context.course.lifecycle_state) !== 'ACTIVE') {
       throw fail('Timetable system-failure recovery is only for an Active Course.', 'TEACHING_D09_RECOVERY_ACTIVE_ONLY');
@@ -306,6 +278,43 @@ function decorateD09Service(base, {
         studentPenaltyAllowed: false,
       }),
     });
+  }
+
+  async function proposeTimetable(user, courseId) {
+    let context = await repository.getSchedulingContext(user.id, courseId);
+    requireReadyContext(context, courseId);
+    const lifecycle = String(context.course.lifecycle_state || 'DRAFT');
+    if (lifecycle === 'ACTIVE') {
+      const latest = await repository.latestTimetable(user.id, context.semester.semester_id);
+      const existingFacts = scheduleClassFacts(latest.slots || [], serverNow());
+      if (existingFacts.futureClassCount <= 0) {
+        return recoverSystemInvalidTimetable(user, courseId, context);
+      }
+      throw fail('This active Course already has a current future timetable. Use the formal Request workflow for schedule changes.', 'TEACHING_D09_ACTIVE_TIMETABLE_CHANGE_REQUIRES_REQUEST');
+    }
+    if (!PREACTIVATION_STATES.has(lifecycle)) {
+      throw fail('Course timetables in this lifecycle state change only through the governed Request workflow.', 'TEACHING_D09_PREACTIVATION_PROPOSAL_ONLY');
+    }
+    context = await ensureInstructionalLoads(user, courseId, context);
+    const nowIso = serverNow();
+    const derived = planningContextAt(context, nowIso);
+    const result = computeSchedule(derived, { now: nowIso });
+    const instructionalCount = instructionalUnits(context).length;
+    const classFacts = scheduleClassFacts(result.schedule, nowIso);
+    if (instructionalCount > 0 && classFacts.classCount === 0) {
+      throw fail('The Scheduler produced no instructional Classes for a Course that requires instruction.', 'TEACHING_D09_EMPTY_INSTRUCTIONAL_TIMETABLE', 422, { reasons: result.reasons || [] });
+    }
+    if (classFacts.elapsedClassCount > 0) {
+      throw fail('The proposed timetable contains elapsed Classes and must be recalculated from server time.', 'TEACHING_D09_ELAPSED_TIMETABLE_REJECTED', 422);
+    }
+    await commitWithPpl((tx) => repository.saveProposalUsing(tx, {
+      studentId: user.id,
+      courseId,
+      context,
+      result,
+      source: 'DETERMINISTIC_INITIAL',
+    }));
+    return getScheduleReview(user, courseId);
   }
 
   return Object.freeze({
