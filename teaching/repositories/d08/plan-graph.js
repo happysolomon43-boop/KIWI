@@ -22,7 +22,7 @@ async function materializePlanGraph(ctx, tx, { studentId, coursePlanId, setup, p
   }
 
   const unitIdMap = new Map();
-  for (const unit of plan.learning_units) {
+  for (const [sequenceNo, unit] of plan.learning_units.entries()) {
     const unitId = randomUUID();
     unitIdMap.set(String(unit.key), unitId);
     const metadata = {
@@ -40,13 +40,13 @@ async function materializePlanGraph(ctx, tx, { studentId, coursePlanId, setup, p
     };
     await q(tx, `
       insert into public.teaching_learning_units(
-        learning_unit_id,student_id,course_plan_id,topic_id,subtopic_id,title,intended_competence,
+        learning_unit_id,student_id,course_plan_id,topic_id,subtopic_id,sequence_no,title,intended_competence,
         exit_conditions,criticality,foundational,instructional_load_min_minutes,instructional_load_max_minutes,metadata
-      ) values($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13::jsonb)
+      ) values($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14::jsonb)
     `, [
       unitId, studentId, coursePlanId, topicIdMap.get(String(unit.topic_key)),
       unit.subtopic_key ? subtopicIdMap.get(String(unit.subtopic_key)) : null,
-      unit.title, unit.intended_competence, json(unit.exit_conditions), unit.criticality, unit.foundational,
+      sequenceNo, unit.title, unit.intended_competence, json(unit.exit_conditions), unit.criticality, unit.foundational,
       unit.instructional_load_min_minutes, unit.instructional_load_max_minutes, json(metadata),
     ]);
   }
