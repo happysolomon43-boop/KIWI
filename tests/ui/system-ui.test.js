@@ -118,7 +118,7 @@ test('Study unified file intake consolidates format tabs without duplicating gen
 
   assert.match(client, /loadStudyUnifiedUpload/);
   assert.match(client, /\/study-source-import\.js\?v=/);
-  assert.match(client, /data-study-source-import/);
+  assert.match(client, /dataset\.studySourceImport/);
   assert.match(client, /\/study-unified-upload\.css\?v=/);
   assert.match(client, /\/study-unified-upload\.js\?v=/);
   assert.match(client, /getElementById\('teachingApp'\)/);
