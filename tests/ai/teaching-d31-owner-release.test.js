@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createTeachingPromptControlPlane } = require('../../teaching/prompt-runtime');
 
 const {
   ADAPTER_KEYS,
@@ -40,9 +41,15 @@ test('D31 owner release override fails closed unless the exact server mode is pr
 });
 
 test('D31 exact owner release mode enables every existing production-mounted Teaching AI adapter through the central boundary', () => {
-  const runtimePlatform = { aiBoundary: { execute: async (request) => request } };
+  const runtimePlatform = {
+    aiBoundary: { execute: async (request) => request },
+    promptControl: createTeachingPromptControlPlane(),
+    orchestrationStore: { begin: async () => ({ inserted: true }), mark: async () => ({}) },
+  };
   const release = createD31ReleaseIntelligence({
     runtimePlatform,
+    query: async () => ({ rows: [] }),
+    randomUUID: () => 'execution-test',
     env: { [RELEASE_MODE_ENV]: OWNER_OVERRIDE_MODE },
   });
 
