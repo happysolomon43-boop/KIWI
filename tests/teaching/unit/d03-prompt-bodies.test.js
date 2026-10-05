@@ -15,6 +15,9 @@ const {
 } = require('../../../teaching/prompt-runtime/prompt-catalog');
 const { createTeachingPromptControlPlane } = require('../../../teaching/prompt-runtime');
 const { composeTeachingModelContent } = require('../../../teaching/prompt-runtime/prompt-composer');
+const { serializeAcademicInput, ACADEMIC_INPUT_LIMITS } = require('../../../teaching/prompt-runtime/academic-input');
+const { HISTORICAL_FAMILY_CORPUS, TPF20_CORPUS } = require('../../../teaching/d30/corpus');
+const { buildAcademicFixture, buildQualificationInvocation } = require('../../../teaching/d30/runner');
 
 const historicalDir = path.resolve(__dirname, '../../../teaching/prompt-runtime/frozen/v1.3');
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -210,4 +213,22 @@ test('TPF-20 can compose through the same central structural prompt path without
     .split('<KIWI_TEACHING_FROZEN_PROMPT>\n')[1]
     .split('</KIWI_TEACHING_FROZEN_PROMPT>')[0];
   assert.equal(hash(Buffer.from(body)), 'd8d13f679e6817c1c02935e6581f5fc6ad512812004b59eebcf9a7d85c962e67');
+});
+
+test('all 20 prompt families serialize and compose every isolated D30 input fixture within the shared academic-input limit', () => {
+  const control = createTeachingPromptControlPlane();
+  const cases = [...HISTORICAL_FAMILY_CORPUS, ...TPF20_CORPUS];
+  const families = new Set();
+  let largestAcademicInput = 0;
+  for (const caseSpec of cases) {
+    const academicInput = buildAcademicFixture(caseSpec);
+    const serialized = serializeAcademicInput(academicInput);
+    largestAcademicInput = Math.max(largestAcademicInput, Buffer.byteLength(serialized, 'utf8'));
+    const invocation = buildQualificationInvocation(control, caseSpec);
+    const content = composeTeachingModelContent({ invocation, academicInput });
+    assert.ok(content.includes(serialized), caseSpec.id);
+    families.add(caseSpec.familyId);
+  }
+  assert.equal(families.size, 20);
+  assert.ok(largestAcademicInput < ACADEMIC_INPUT_LIMITS.bytes);
 });
