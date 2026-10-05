@@ -1,5 +1,6 @@
 'use strict';
 
+const { getCapability } = require('../capability-registry');
 const { TPF10_INSTRUCTIONAL_LOAD_RESPONSE_SCHEMA } = require('./tpf10-provider-schema');
 
 const LOAD_OUTPUT_STATUSES = new Set([
@@ -10,6 +11,12 @@ const LOAD_OUTPUT_STATUSES = new Set([
   'impossible_or_overcommitted',
   'policy_block',
   'review_required',
+]);
+
+const STRUCTURAL_UNCERTAINTY_STATES = Object.freeze([
+  'INSUFFICIENT_EVIDENCE',
+  'UNRESOLVED_CONFLICT',
+  'REVIEW_NEEDED',
 ]);
 
 function unitTreatment(unit) {
@@ -79,6 +86,36 @@ function validateLoadEstimationOutput(output, targets, course = null) {
   return { ok: true, value: output };
 }
 
+function structuralOutputSchema({ id, validate, taskMode }) {
+  const declaredFields = taskMode === 'instructional_load_estimation'
+    ? [
+        'status',
+        'input_state_reference',
+        'capability_id',
+        'task_mode',
+        'review_required',
+        'review_reasons',
+        'planning_scope',
+        'constraints',
+        'capacity_analysis',
+        'proposal',
+        'inactivity_interpretation',
+        'validation_and_handoff',
+        'confidence',
+      ]
+    : ['status', 'review_required'];
+  return Object.freeze({
+    id,
+    version: '1',
+    validate,
+    uncertainty_states: STRUCTURAL_UNCERTAINTY_STATES,
+    review_needed_field: 'review_required',
+    state_bearing_fields: Object.freeze(['status', 'review_required']),
+    student_facing_field: null,
+    declared_fields: Object.freeze(declaredFields),
+  });
+}
+
 // D09 core feasibility/commit is deterministic. These request builders expose
 // only frozen model-eligible advisory seams. The Scheduler remains authoritative
 // for feasibility, placement, persistence, activation and recovery.
@@ -95,6 +132,7 @@ function schedulingRequest({course,context,taskMode='initial_timetable_proposal'
   };
   const capabilityId=capabilityByMode[taskMode];
   if(!capabilityId) throw new TypeError('Unsupported D09 scheduling task mode: '+taskMode);
+  const capability=getCapability(capabilityId);
   const promptFamilyId=taskMode==='rolling_planning_horizon_adjustment'?'TPF-05':'TPF-10';
   const promptFamilyVersion=promptFamilyId==='TPF-10'?'1.1':'1.3';
   const targets=taskMode==='instructional_load_estimation'?loadTargets(context):Object.freeze([]);
@@ -116,7 +154,11 @@ function schedulingRequest({course,context,taskMode='initial_timetable_proposal'
       allowed_operations:['return advisory candidate output for deterministic Scheduler validation'],
       prohibited_operations:['commit timetable','violate hard constraints','delete required curriculum','select provider or model','claim Attendance or SKM truth'],
       evidence_purpose:taskMode,
-      downstream_handoff:{type:'validated_candidate',commit_owner_boundary:'Scheduler/Calendar'},
+      downstream_handoff:{
+        type:'validated_candidate',
+        validator_ids:['schema','domain','provenance','state_revalidation'],
+        commit_owner_boundary:capability.authoritative_owner_boundary,
+      },
     },
     contextSpec:{authoritative_refs:[{ref:'course:'+course.course_id}],provenance_refs:[],untrusted_refs:[],context_kind:'scheduling',access_purpose:'bounded_schedule_advisory'},
     academicInput:taskMode==='instructional_load_estimation'
@@ -134,7 +176,7 @@ function schedulingRequest({course,context,taskMode='initial_timetable_proposal'
           do_not_commit_or_place_classes:true,
         }
       : {semester_ref:context.semester?.semester_id||null,profile_ref:context.profile?.profile_id||null,deterministic_feasibility_remains_authoritative:true},
-    outputSchema:{id:outputSchemaId,version:'1',validate},
+    outputSchema:structuralOutputSchema({id:outputSchemaId,validate,taskMode}),
     declaredAuthorityLevel:['schedule_debt_interpretation','behind_schedule_cause_diagnosis','instructional_load_estimation'].includes(taskMode)?'T2':'T3',
     commit:false,
     promptFamilyId,promptFamilyVersion,
