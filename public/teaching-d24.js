@@ -31,7 +31,7 @@ function decorate() {
     const state = node.dataset.state || node.dataset.status || node.dataset.kind;
     if (state && !node.getAttribute('aria-label') && !node.textContent.trim()) node.setAttribute('aria-label', String(state).replaceAll('_', ' '));
   });
-  document.querySelectorAll('.teaching-course-nav, .teaching-dock').forEach((nav) => nav.setAttribute('aria-orientation', 'horizontal'));
+  // These containers remain navigation landmarks. Horizontal arrow-key behavior is implemented below without aria-orientation, which is not supported on the navigation role.
 }
 
 const observer = new MutationObserver(decorate);
