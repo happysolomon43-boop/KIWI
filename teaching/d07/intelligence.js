@@ -45,7 +45,7 @@ function curriculumAuditRequest({course,sources}){
   const outputSchema={
     id:TPF02_OUTPUT_SCHEMA_ID,
     version:TPF02_OUTPUT_SCHEMA_VERSION,
-    uncertainty_states:['unresolved','blocked_insufficient_sources','blocked_authority_conflict'],
+    uncertainty_states:['INSUFFICIENT_EVIDENCE','UNRESOLVED_CONFLICT','REVIEW_NEEDED','unresolved','blocked_insufficient_sources','blocked_authority_conflict'],
     review_needed_field:'review_required',
     declared_fields:[...TPF02_TOP_LEVEL_FIELDS],
     validate:validateTpf02Schema,
