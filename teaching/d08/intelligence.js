@@ -44,10 +44,62 @@ function canonicalOutputSchema(id, validator) {
   };
 }
 
+function boundedPlanningSignals({ audit, diagnosticPlan = null, vpkDecisions = [], sources = [] } = {}) {
+  const output = audit?.audit_output || {};
+  return Object.freeze({
+    curriculum: Object.freeze({
+      audit_ref: audit?.curriculum_audit_id || null,
+      audit_version: audit?.audit_version || null,
+      subject_snapshot_ref: audit?.subject_snapshot_ref || null,
+      topics: (output.topics || []).map((topic) => ({
+        id: topic.id,
+        title: topic.title,
+        subtopics: (topic.subtopics || []).map((subtopic) => ({ id: subtopic.id, title: subtopic.title })),
+      })),
+      learning_units: (output.learning_units || []).map((unit) => ({
+        id: unit.id,
+        topic_id: unit.topic_id,
+        subtopic_id: unit.subtopic_id || null,
+        title: unit.title,
+        intended_competence: unit.intended_competence,
+        criticality: unit.criticality,
+        foundational: unit.foundational === true,
+        instructional_load_min_minutes: unit.instructional_load_min_minutes ?? null,
+        instructional_load_max_minutes: unit.instructional_load_max_minutes ?? null,
+        prerequisite_refs: unit.prerequisite_refs || [],
+      })),
+      dependencies: output.dependencies || [],
+      assumed_prerequisites: output.assumed_prerequisites || [],
+      source_accounting: (output.source_accounting || []).map((item) => ({
+        source_ref: item.source_ref,
+        classification: item.classification,
+        learning_unit_ids: item.learning_unit_ids || [],
+      })),
+    }),
+    diagnostic: diagnosticPlan ? {
+      ref: diagnosticPlan.diagnostic_plan_id,
+      requirement_state: diagnosticPlan.requirement_state,
+      target_refs: diagnosticPlan.target_refs || [],
+    } : null,
+    validated_prior_knowledge: vpkDecisions.map((decision) => ({
+      ref: decision.vpk_decision_id,
+      target_kind: decision.target_kind,
+      target_ref: decision.target_ref,
+      decision_status: decision.decision_status,
+    })),
+    source_classifications: sources.map((source) => ({
+      source_ref: source.source_ref,
+      classification: source.classification,
+      academically_meaningful: source.academically_meaningful === true,
+    })),
+  });
+}
+
 function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions = [], sources = [], previousPlanContext = null }) {
   const validate = async (out) => validateTpf03CoursePlanOutput(out, { course });
   const outputSchema = canonicalOutputSchema('tpf03.course-plan-scope-planning', validate);
   const sourceRefs = sources.map((source) => `source:${source.source_content_item_id}`);
+  const planningSignals = boundedPlanningSignals({ audit, diagnosticPlan, vpkDecisions, sources });
   const request = base({
     capabilityId: 'teaching.curriculum.course_plan_generation',
     course,
@@ -56,12 +108,9 @@ function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions 
     contextSpec: {
       authoritative_refs: [
         { ref: `course:${course.course_id}` },
-        { ref: `curriculum-audit:${audit.curriculum_audit_id}` },
-        ...(diagnosticPlan ? [{ ref: `diagnostic-plan:${diagnosticPlan.diagnostic_plan_id}` }] : []),
-        ...vpkDecisions.map((decision) => ({ ref: `vpk:${decision.vpk_decision_id}` })),
       ],
-      provenance_refs: sources.filter((source) => !['PRIMARY_STUDY_NOTE','STUDENT_SUPPLEMENT'].includes(source.source_kind)).map((source) => ({ ref: `source:${source.source_content_item_id}` })),
-      untrusted_refs: sources.filter((source) => ['PRIMARY_STUDY_NOTE','STUDENT_SUPPLEMENT'].includes(source.source_kind)).map((source) => ({ ref: `source:${source.source_content_item_id}` })),
+      provenance_refs: [],
+      untrusted_refs: [],
       context_kind: 'course_plan_generation',
       access_purpose: 'bounded_course_plan_proposal',
     },
@@ -73,12 +122,20 @@ function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions 
       vpk_decision_refs: vpkDecisions.map((decision) => decision.vpk_decision_id),
       source_refs: sourceRefs,
       previous_plan_context: previousPlanContext,
+      validated_planning_signals: planningSignals,
       authoritative_coverage_rule: 'official reconciliation occurs downstream; output may claim planned_only only',
+      output_requirements: {
+        return_one_json_object: true,
+        include_every_declared_top_level_field: true,
+        include_every_learning_unit_exactly_once: true,
+        use_learning_unit_ids_exactly_as_supplied: true,
+      },
     },
     provenanceRefs: [`curriculum-audit:${audit.curriculum_audit_id}`, ...sourceRefs, ...vpkDecisions.map((decision) => `vpk:${decision.vpk_decision_id}`)],
   });
   return {
     ...request,
+    generation: { maxOutputTokens: 48_000 },
     declaredAuthorityLevel: 'T3',
     schemaValidator: validate,
     domainValidator: async (out) => {
@@ -142,4 +199,4 @@ function createD08Intelligence({ orchestrator } = {}) {
   });
 }
 
-module.exports = { coursePlanRequest, scopeChangeImpactRequest, createD08Intelligence };
+module.exports = { boundedPlanningSignals, coursePlanRequest, scopeChangeImpactRequest, createD08Intelligence };
