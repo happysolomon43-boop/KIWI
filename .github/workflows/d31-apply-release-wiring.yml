@@ -48,6 +48,28 @@ jobs:
       - name: Apply guarded Academic Transparency surface
         run: node scripts/apply-teaching-d31-limitations-ui.js
 
+      - name: Reconcile D24 navigation ARIA semantics
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'public/teaching-d24.js';
+          let source = fs.readFileSync(file, 'utf8');
+          const invalid = "  document.querySelectorAll('.teaching-course-nav, .teaching-dock').forEach((nav) => nav.setAttribute('aria-orientation', 'horizontal'));";
+          if (source.includes(invalid)) {
+            source = source.replace(
+              invalid,
+              "  // These containers remain navigation landmarks. Horizontal arrow-key behavior is implemented below without aria-orientation, which is not supported on the navigation role."
+            );
+            fs.writeFileSync(file, source, 'utf8');
+            console.log('[D31] Removed invalid aria-orientation from Teaching navigation landmarks.');
+          } else if (source.includes("aria-orientation', 'horizontal'")) {
+            throw new Error('[D31] Unexpected aria-orientation pattern remains; refusing unbounded accessibility rewrite.');
+          } else {
+            console.log('[D31] Teaching navigation ARIA semantics already reconciled.');
+          }
+          NODE
+
       - name: Validate server entry syntax
         run: node --check index.js
 
@@ -78,12 +100,12 @@ jobs:
       - name: Commit guarded reconciliation output
         shell: bash
         run: |
-          if git diff --quiet -- index.js public/teaching.html; then
-            echo "Guarded monolith and Academic Transparency transforms are already applied."
+          if git diff --quiet -- index.js public/teaching.html public/teaching-d24.js; then
+            echo "Guarded release, transparency, and accessibility transforms are already applied."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.js public/teaching.html
-          git commit -m "D31: apply terminal release composition and transparency UI"
+          git add index.js public/teaching.html public/teaching-d24.js
+          git commit -m "D31: apply terminal release and accessibility reconciliation"
           git push origin HEAD:teaching/d31-final-release-readiness
