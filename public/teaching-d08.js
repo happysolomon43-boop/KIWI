@@ -173,6 +173,14 @@ async function fetchSetup(courseId) {
   return kiwiApiRequest(`/teaching/courses/${encodeURIComponent(courseId)}/setup`);
 }
 
+function backgroundAuditState(job) {
+  const status = String(job?.status || '').toUpperCase();
+  if (status === 'PENDING' || status === 'CLAIMED' || status === 'RETRY_WAIT') {
+    return { active: true, label: status === 'RETRY_WAIT' ? 'Retrying' : 'Running', message: status === 'RETRY_WAIT' ? 'KIWI is retrying the material analysis in the background.' : 'KIWI is analyzing the materials in the background. You can safely leave this page.' };
+  }
+  return { active: false, label: null, message: null };
+}
+
 function ensurePreview() {
   installStyles();
   let dialog = document.getElementById(D08_PREVIEW_ID);
@@ -552,6 +560,7 @@ async function renderCourseSetup({ course, container }) {
       const auditReady = setup.curriculumAudit?.status === 'VALIDATED_CANDIDATE'
         && String(setup.curriculumAudit?.subject_snapshot_ref || '') === String(setup.course?.subject_snapshot_ref || '');
       const sourcesReady = (setup.sources || []).length > 0 && (setup.sources || []).every((source) => Boolean(source.classification));
+      const backgroundAudit = backgroundAuditState(setup.backgroundAnalysis);
       const diagnosticRequired = setup.diagnosticPlan?.requirement_state === 'REQUIRED';
       const diagnosticResolved = !diagnosticRequired || (setup.diagnosticPlan?.target_refs || []).every((target) =>
         (setup.vpkDecisions || []).some((decision) => String(decision.target_ref) === String(target)));
@@ -568,39 +577,32 @@ async function renderCourseSetup({ course, container }) {
       };
       list.append(
         setupStep((setup.sources || []).length ? '✓' : '•', 'Course materials', `${(setup.sources || []).length} saved source item${(setup.sources || []).length === 1 ? '' : 's'} will ground the plan.`, (setup.sources || []).length ? 'Ready' : 'Missing'),
-        setupStep(auditReady && sourcesReady ? '✓' : '•', 'Material analysis', auditReady && sourcesReady ? 'The current materials have been analyzed and classified.' : 'KIWI needs to identify the topics, requirements, and relevant source content.', auditReady && sourcesReady ? 'Ready' : 'Needed'),
+        setupStep(auditReady && sourcesReady ? '✓' : '•', 'Material analysis', auditReady && sourcesReady ? 'The current materials have been analyzed and classified.' : backgroundAudit.message || 'KIWI needs to identify the topics, requirements, and relevant source content.', auditReady && sourcesReady ? 'Ready' : backgroundAudit.label || 'Needed'),
         setupStep(readinessChecked && diagnosticResolved ? '✓' : '•', 'Learning readiness', diagnosticRequired ? 'A focused, non-graded learning check is required before planning can continue.' : readinessChecked ? 'No additional learning check blocks the Course Plan.' : 'Check whether any prerequisite knowledge needs verification.', readinessChecked && diagnosticResolved ? 'Ready' : 'Action needed')
       );
       card.append(list);
       const actions = el('div', 'teaching-d08-actions');
       if (!auditReady || !sourcesReady) {
-        const analyze = el('button', 'teaching-button teaching-button--primary', 'Analyze course materials');
+        const analyze = el('button', 'teaching-button teaching-button--primary', backgroundAudit.active ? 'Analysis running in background' : 'Analyze course materials');
         analyze.type = 'button';
+        analyze.disabled = backgroundAudit.active;
         analyze.addEventListener('click', async () => {
           analyze.disabled = true;
-          status.textContent = 'Analyzing the course materials…';
+          status.textContent = 'Analysis started in the background. You can keep using KIWI while it finishes.';
           status.className = 'teaching-message';
           delete status.dataset.kind;
           try {
-            await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/curriculum-audit`, {
-              method: 'POST',
-              body: {},
-              // A Curriculum Audit can ground dozens of saved materials. It is an
-              // intentional long-running action, not a normal page request.
-              timeoutMs: 120_000,
-            });
+            await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/curriculum-audit`, { method: 'POST', body: {} });
             await load();
           } catch (error) {
-            const cancelled = error?.name === 'AbortError' || /signal is aborted|aborted without reason/i.test(String(error?.message || ''));
-            status.textContent = cancelled
-              ? 'The analysis took longer than expected. Your materials are still saved—please try again.'
-              : error.message || 'The material analysis could not be completed.';
+            status.textContent = error.message || 'The material analysis could not be started.';
             status.className = 'teaching-message';
             status.dataset.kind = 'error';
             analyze.disabled = false;
           }
         });
         actions.append(analyze);
+        if (backgroundAudit.active) window.setTimeout(() => load(), 3000);
       } else if (!readinessChecked) {
         const check = el('button', 'teaching-button teaching-button--primary', 'Check learning readiness');
         check.type = 'button';

@@ -21107,6 +21107,7 @@ const teachingRouter = createTeachingRouter({
   d11PublishedEventRegistry: teachingPublishedEvents,
   d12PublishedEventRegistry: teachingPublishedEvents,
   d13PublishedEventRegistry: teachingPublishedEvents,
+  publishedEventRegistry: teachingPublishedEvents,
   teachingRuntimePlatform,
 });
 app.use('/api/teaching', teachingRouter);

@@ -86,9 +86,9 @@ test('D30 family identities exactly match the frozen runtime prompt catalog', ()
 });
 
 test('normal Teaching uses website-default central task and Course Plan uses flashcard-generation central task', () => {
-  assert.equal(d30.centralTaskFor({familyId:'TPF-01'}), 'QUICK_QUESTIONS');
-  assert.equal(d30.centralTaskFor({familyId:'TPF-20'}), 'QUICK_QUESTIONS');
-  assert.equal(d30.centralTaskFor({familyId:'TPF-03'}), 'FLASHCARD_GENERATION');
+  assert.equal(d30.centralTaskFor({familyId:'TPF-01'}), 'MAIN_CBT');
+  assert.equal(d30.centralTaskFor({familyId:'TPF-20'}), 'MAIN_CBT');
+  assert.equal(d30.centralTaskFor({familyId:'TPF-03'}), 'MAIN_CBT');
 });
 
 test('PPL route postures remain metadata and do not hard-code model IDs', () => {
@@ -110,7 +110,7 @@ test('qualification plan covers all 148 capabilities and independently enumerate
   assert.equal(plan.everyFallbackIndependent, true);
   assert.equal(plan.targets.every((target) => target.productionAuthorized === false && target.authorizationGate === 'D31'), true);
   assert.equal(plan.targets.filter((target) => target.familyId === 'TPF-20' && target.stage).length, 6);
-  assert.equal(plan.targets.filter((target) => target.familyId === 'TPF-03').every((target) => target.centralTaskId === 'FLASHCARD_GENERATION'), true);
+  assert.equal(plan.targets.every((target) => target.centralTaskId === 'MAIN_CBT'), true);
 });
 
 test('deterministic validators fail closed on authority, injection, stale and protected-content violations', () => {

@@ -4,16 +4,19 @@ const { createAIOrchestrator, AI_TASKS } = require('../../services/ai');
 const { getCapability, listCapabilities } = require('../capability-registry');
 const { getFamilyDefinition } = require('./contracts');
 
-const D30_ROUTE_POLICY_VERSION = 'teaching-d30-route-policy-v1.1';
-const WEBSITE_DEFAULT_AI_TASK = 'QUICK_QUESTIONS';
-const COURSE_PLAN_AI_TASK = 'FLASHCARD_GENERATION';
+const D30_ROUTE_POLICY_VERSION = 'teaching-d30-route-policy-v1.2';
+// Teaching uses KIWI's long-running CBT route. This selects operational capacity
+// only; frozen Teaching prompts and authority boundaries remain unchanged.
+const TEACHING_AI_TASK = 'MAIN_CBT';
+const WEBSITE_DEFAULT_AI_TASK = TEACHING_AI_TASK;
+const COURSE_PLAN_AI_TASK = TEACHING_AI_TASK;
 const COURSE_PLAN_FAMILY = 'TPF-03';
 
 function centralTaskFor({ capabilityId = null, familyId = null } = {}) {
   const capability = capabilityId ? getCapability(capabilityId) : null;
   const resolvedFamily = familyId || capability?.prompt_family_id || null;
   if (resolvedFamily) getFamilyDefinition(resolvedFamily);
-  const taskId = resolvedFamily === COURSE_PLAN_FAMILY ? COURSE_PLAN_AI_TASK : WEBSITE_DEFAULT_AI_TASK;
+  const taskId = TEACHING_AI_TASK;
   if (!AI_TASKS[taskId]) throw new Error(`D30 central route task is not registered: ${taskId}`);
   return taskId;
 }
@@ -116,6 +119,7 @@ function enumerateModelEligibleTeachingCapabilities() {
 
 module.exports = {
   D30_ROUTE_POLICY_VERSION,
+  TEACHING_AI_TASK,
   WEBSITE_DEFAULT_AI_TASK,
   COURSE_PLAN_AI_TASK,
   COURSE_PLAN_FAMILY,
