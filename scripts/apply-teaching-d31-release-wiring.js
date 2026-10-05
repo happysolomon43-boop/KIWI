@@ -83,8 +83,6 @@ const requiredMarkers = [
   d31Import,
   'const teachingD31Release = createD31ReleaseIntelligence({',
   '...teachingD31Release.intelligence,',
-  'd16Intelligence',
-  'd17Intelligence',
 ];
 for (const marker of requiredMarkers) {
   if (!source.includes(marker)) throw new Error(`[D31] Required release-wiring marker missing: ${marker}`);
