@@ -54,6 +54,7 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
     validationContext = {},
     safeCommunicationFallback = null,
     cachePolicy = null,
+    centralRouteOptions = {},
   } = {}) {
     const klass = assertIntelligenceClass(intelligenceClass);
     const authority = assertAuthorityLevel(authorityLevel);
@@ -84,14 +85,14 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
           taskId, request, capabilityId: capabilityId || responsibilityKey, authorityLevel: authority,
           promptVersion: promptTemplateVersion || (promptFamilyId && promptFamilyVersion ? `${promptFamilyId}@${promptFamilyVersion}` : null),
           schemaVersion: outputSchemaVersion, cachePolicy,
-          executeCentral: (id, payload) => aiRun(id, payload, {}), validate,
+          executeCentral: (id, payload) => aiRun(id, payload, centralRouteOptions), validate,
         });
         centralResult = controlled.centralResult;
         validated = controlled.validated;
         validationRetryCount = controlled.validationRetryCount;
         cacheStatus = controlled.cacheStatus;
       } else {
-        centralResult = await aiRun(taskId, request, {});
+        centralResult = await aiRun(taskId, request, centralRouteOptions);
         validated = await validate(centralResult);
       }
 

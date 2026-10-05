@@ -885,6 +885,56 @@ test('D05 durable outbox publishes a Date-backed PostgreSQL row through canonica
   assert.equal(seen[0].occurredAt, '2026-09-29T05:38:45.106Z');
 });
 
+test('D05 durable outbox records terminal failure when retry budget is exhausted', async () => {
+  const { createDurableTeachingOutboxRuntime } = require('../../../teaching/runtime/durable-outbox-runtime');
+  const row = {
+    event_id: 'outbox-exhausted-1', schema_version: 1,
+    event_type: TEACHING_EVENTS.COURSE_ACTIVATED,
+    event_category: 'committed_domain_event', trigger_type: 'committed_domain_event',
+    source: 'course', origin: 'course', actor_id: 'student-1',
+    aggregate_type: 'course', aggregate_id: 'course-1', aggregate_version: 1,
+    occurred_at: new Date().toISOString(), effective_at: null,
+    correlation_id: 'corr-exhausted-1', causation_id: null,
+    idempotency_key: 'outbox-exhausted-1:key', payload: {}, audit_refs: [], provenance_refs: [],
+    attempt_count: 8, claim_token: 'claim-exhausted-1',
+  };
+  let cancelled = null;
+  const runtime = createDurableTeachingOutboxRuntime({
+    store: {
+      async releaseExpiredClaims() { return 0; },
+      async claimPending() { return [row]; },
+      async markPublished() { throw new Error('failed publication cannot be marked published'); },
+      async retry() { throw new Error('exhausted publication cannot return to retry wait'); },
+      async markCancelled(event, details) { cancelled = { event, details }; },
+    },
+    publish: async () => { throw Object.assign(new Error('invalid model result'), { code: 'TEACHING_D07_CURRICULUM_AUDIT_REJECTED' }); },
+    workerId: 'test-outbox-exhausted-worker',
+    logger: { error() {} },
+    timers: { setInterval() { return null; }, clearInterval() {} },
+    maxAttempts: 8,
+  });
+  const result = await runtime.tick();
+  assert.deepEqual(result.outcomes, ['CANCELLED']);
+  assert.equal(cancelled.event.event_id, row.event_id);
+  assert.equal(cancelled.details.errorCode, 'TEACHING_D07_CURRICULUM_AUDIT_REJECTED');
+});
+
+test('D05 central boundary forwards Teaching route posture to the shared AI runtime', async () => {
+  let observedOptions = null;
+  const boundary = createCentralAIExecutionBoundary({
+    aiRun: async (_taskId, _request, options) => {
+      observedOptions = options;
+      return { structured: { ok: true } };
+    },
+  });
+  await boundary.execute({
+    taskId: 'MAIN_CBT', request: { content: 'audit' }, responsibilityKey: 'teaching.test',
+    intelligenceClass: 'DIRECT-AI', authorityLevel: 'T1',
+    centralRouteOptions: { preparationRoutePosture: 'bounded_interpretive' },
+  });
+  assert.deepEqual(observedOptions, { preparationRoutePosture: 'bounded_interpretive' });
+});
+
 test('D05 durable published-event registry fails closed when no subscriber exists', async () => {
   const registry = createTeachingEventSubscriberRegistry();
   const event = {

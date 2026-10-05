@@ -2,7 +2,7 @@
 
 const { createTeachingAIAdapter, createTeachingOrchestrator, createOrchestratorPreflight, createAuthoritativeOwnerRouter } = require('../orchestrator');
 const { buildSeparatedContextLanes, asUntrustedData } = require('../security/context-lanes');
-const { centralTaskFor } = require('../d30/route-policy');
+const { centralTaskFor, routePostureFor } = require('../d30/route-policy');
 
 function fail(message, code = 'TEACHING_D31_RELEASE_CONTEXT_UNAVAILABLE') {
   const error = new Error(message);
@@ -81,7 +81,10 @@ function createD31ReleaseOrchestrator({ runtimePlatform, query, randomUUID } = {
     promptControl: runtimePlatform.promptControl,
     aiBoundary: runtimePlatform.aiBoundary,
     assertRouteExecutable: () => true, // The exact D31 owner mode authorizes execution; D30 qualification truth remains unchanged.
-    resolveCentralTaskId: async (route) => centralTaskFor({ capabilityId: route.capabilityId, familyId: route.familyId }),
+    resolveCentralTaskId: async (route) => Object.freeze({
+      taskId: centralTaskFor({ capabilityId: route.capabilityId, familyId: route.familyId }),
+      preparationRoutePosture: routePostureFor({ familyId: route.familyId }),
+    }),
   });
   const orchestrator = createTeachingOrchestrator({
     promptControl: runtimePlatform.promptControl,

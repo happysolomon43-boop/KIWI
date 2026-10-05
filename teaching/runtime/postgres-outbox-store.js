@@ -150,7 +150,23 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
     return rows[0];
   }
 
-  return Object.freeze({ assertReady, appendUsing, append, releaseExpiredClaims, claimPending, markPublished, retry });
+  async function markCancelled(event, { errorCode } = {}) {
+    const { rows } = await query(
+      `update teaching_runtime.event_outbox
+          set status='CANCELLED',last_error_code=$3,next_attempt_at=null,claim_token=null,
+              claimed_by=null,claimed_at=null,claim_expires_at=null,updated_at=now()
+        where event_id=$1 and status='CLAIMED' and claim_token=$2 returning *`,
+      [event.event_id,event.claim_token,String(errorCode || 'TEACHING_EVENT_RETRY_EXHAUSTED')]
+    );
+    if (!rows?.[0]) {
+      const error = new Error('Teaching outbox claim is stale while recording terminal failure.');
+      error.code = 'TEACHING_D05_STALE_OUTBOX_CLAIM';
+      throw error;
+    }
+    return rows[0];
+  }
+
+  return Object.freeze({ assertReady, appendUsing, append, releaseExpiredClaims, claimPending, markPublished, retry, markCancelled });
 }
 
 module.exports = { createPostgresTeachingOutboxStore };

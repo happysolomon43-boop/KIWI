@@ -89,16 +89,15 @@ function createDurableTeachingOutboxRuntime({
           outcomes.push('PUBLISHED');
         } catch (error) {
           if (Number(event.attempt_count) >= effectiveMaxAttempts) {
-            await store.retry(event, {
+            await store.markCancelled(event, {
               errorCode: error?.code || 'TEACHING_EVENT_PUBLICATION_FAILED',
-              retryAt: new Date(now.getTime() + 15 * 60_000),
             });
-            logger?.error?.('[KIWI Teaching] outbox publication exhausted current retry budget; retained durably', {
+            logger?.error?.('[KIWI Teaching] outbox publication exhausted retry budget; terminal failure recorded', {
               eventId: event.event_id,
               code: error?.code || null,
               message: error?.message || String(error),
             });
-            outcomes.push('RETAINED_FOR_RECOVERY');
+            outcomes.push('CANCELLED');
           } else {
             await store.retry(event, {
               errorCode: error?.code || 'TEACHING_EVENT_PUBLICATION_FAILED',

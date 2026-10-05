@@ -176,9 +176,30 @@ async function fetchSetup(courseId) {
 function backgroundAuditState(job) {
   const status = String(job?.status || '').toUpperCase();
   if (status === 'PENDING' || status === 'CLAIMED' || status === 'RETRY_WAIT') {
-    return { active: true, label: status === 'RETRY_WAIT' ? 'Retrying' : 'Running', message: status === 'RETRY_WAIT' ? 'KIWI is retrying the material analysis in the background.' : 'KIWI is analyzing the materials in the background. You can safely leave this page.' };
+    const attempts = Number(job?.attempt_count || 0);
+    const nextAttempt = job?.next_attempt_at ? new Date(job.next_attempt_at) : null;
+    const retryTime = nextAttempt && Number.isFinite(nextAttempt.getTime())
+      ? ` Next attempt ${nextAttempt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+      : '';
+    return {
+      active: true,
+      failed: false,
+      label: status === 'RETRY_WAIT' ? 'Retry scheduled' : status === 'PENDING' ? 'Queued' : 'Running',
+      message: status === 'RETRY_WAIT'
+        ? `The last attempt did not complete. KIWI will retry safely in the background${attempts ? ` (attempt ${attempts})` : ''}.${retryTime}`
+        : 'KIWI is analyzing the materials in the background. You can safely leave this page.',
+    };
   }
-  return { active: false, label: null, message: null };
+  if (status === 'CANCELLED') {
+    return {
+      active: false,
+      failed: true,
+      label: 'Needs attention',
+      message: 'The background analysis could not produce a valid result after several attempts. Your materials are safe. Try again when you are ready.',
+      errorCode: job?.last_error_code || null,
+    };
+  }
+  return { active: false, failed: false, label: null, message: null };
 }
 
 function ensurePreview() {
@@ -552,9 +573,20 @@ async function renderCourseSetup({ course, container }) {
   page.append(head, status, body);
   container.replaceChildren(page);
 
-  async function load() {
-    status.textContent = 'Checking course preparation…';
-    status.className = 'teaching-message';
+  let pollTimer = null;
+  let lastRenderKey = null;
+  const schedulePoll = () => {
+    window.clearTimeout(pollTimer);
+    pollTimer = window.setTimeout(() => {
+      if (container.isConnected) load({ silent: true });
+    }, 5000);
+  };
+
+  async function load({ silent = false } = {}) {
+    if (!silent) {
+      status.textContent = 'Checking course preparation…';
+      status.className = 'teaching-message';
+    }
     try {
       const setup = await fetchSetup(course.course_id);
       const auditReady = setup.curriculumAudit?.status === 'VALIDATED_CANDIDATE'
@@ -565,6 +597,22 @@ async function renderCourseSetup({ course, container }) {
       const diagnosticResolved = !diagnosticRequired || (setup.diagnosticPlan?.target_refs || []).every((target) =>
         (setup.vpkDecisions || []).some((decision) => String(decision.target_ref) === String(target)));
       const readinessChecked = Boolean(setup.diagnosticPlan);
+      const renderKey = JSON.stringify({
+        auditReady,
+        sourcesReady,
+        sourceCount: (setup.sources || []).length,
+        diagnosticRequired,
+        diagnosticResolved,
+        readinessChecked,
+        backgroundStatus: setup.backgroundAnalysis?.status || null,
+        backgroundAttempts: setup.backgroundAnalysis?.attempt_count || 0,
+        backgroundUpdatedAt: setup.backgroundAnalysis?.updated_at || null,
+      });
+      if (silent && renderKey === lastRenderKey) {
+        if (backgroundAudit.active) schedulePoll();
+        return;
+      }
+      lastRenderKey = renderKey;
       const card = el('section', 'teaching-d08-card');
       card.append(el('div', 'teaching-kicker', 'What KIWI needs'), el('h3', '', 'A clear source foundation'));
       const list = el('div', 'teaching-d08-setup-list');
@@ -581,9 +629,15 @@ async function renderCourseSetup({ course, container }) {
         setupStep(readinessChecked && diagnosticResolved ? '✓' : '•', 'Learning readiness', diagnosticRequired ? 'A focused, non-graded learning check is required before planning can continue.' : readinessChecked ? 'No additional learning check blocks the Course Plan.' : 'Check whether any prerequisite knowledge needs verification.', readinessChecked && diagnosticResolved ? 'Ready' : 'Action needed')
       );
       card.append(list);
+      if (backgroundAudit.failed) {
+        const failure = el('div', 'teaching-message', backgroundAudit.message);
+        failure.dataset.kind = 'error';
+        failure.setAttribute('role', 'alert');
+        card.append(failure);
+      }
       const actions = el('div', 'teaching-d08-actions');
       if (!auditReady || !sourcesReady) {
-        const analyze = el('button', 'teaching-button teaching-button--primary', backgroundAudit.active ? 'Analysis running in background' : 'Analyze course materials');
+        const analyze = el('button', 'teaching-button teaching-button--primary', backgroundAudit.active ? 'Analysis running in background' : backgroundAudit.failed ? 'Try analysis again' : 'Analyze course materials');
         analyze.type = 'button';
         analyze.disabled = backgroundAudit.active;
         analyze.addEventListener('click', async () => {
@@ -602,7 +656,7 @@ async function renderCourseSetup({ course, container }) {
           }
         });
         actions.append(analyze);
-        if (backgroundAudit.active) window.setTimeout(() => load(), 3000);
+        if (backgroundAudit.active) schedulePoll();
       } else if (!readinessChecked) {
         const check = el('button', 'teaching-button teaching-button--primary', 'Check learning readiness');
         check.type = 'button';
@@ -633,9 +687,11 @@ async function renderCourseSetup({ course, container }) {
       }
       card.append(actions);
       body.replaceChildren(card);
-      status.textContent = '';
-      status.className = '';
-      delete status.dataset.kind;
+      if (!silent || status.dataset.kind !== 'error') {
+        status.textContent = '';
+        status.className = '';
+        delete status.dataset.kind;
+      }
     } catch (error) {
       body.replaceChildren();
       status.textContent = error.message || 'Course preparation could not be loaded.';

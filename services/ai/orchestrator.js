@@ -297,6 +297,7 @@ function createAIOrchestrator({
   async function run(taskId, request = {}, {
     generationGroupId = null,
     operationBudgetId = null,
+    preparationRoutePosture = null,
   } = {}) {
     assertReady?.();
     const task = resolvedRouter.getTask(taskId);
@@ -311,11 +312,12 @@ function createAIOrchestrator({
     const affinityCandidates = resolvedRouter.resolveCandidates(taskId, {
       content,
       preferredRouteKey: storedAffinity,
+      preparationRoutePosture,
     });
 
     let routedCandidates = affinityCandidates;
     if (storedAffinity) {
-      const unrestricted = resolvedRouter.resolveCandidates(taskId, { content });
+      const unrestricted = resolvedRouter.resolveCandidates(taskId, { content, preparationRoutePosture });
       const present = new Set(affinityCandidates.map((candidate) => candidate.routeKey));
       const emergencyRecovery = unrestricted.filter((candidate) => !present.has(candidate.routeKey));
       if (emergencyRecovery.length) {
