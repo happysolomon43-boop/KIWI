@@ -18,7 +18,7 @@ test('original Teaching document loads Work, Results and D23 as independent orde
   assert.doesNotMatch(entry, /\bimport\s*\(/);
   const d16Import = html.indexOf('/teaching-d16.js?v=20261003-runtime-fix-2');
   const d15Import = html.indexOf('/teaching-d15.js?v=20261003-runtime-fix-1');
-  const d23Import = html.indexOf('/teaching-d23.js?v=20261005-materials-2');
+  const d23Import = html.indexOf('/teaching-d23.js?v=20261005-dedupe-actions-3');
   assert.ok(d16Import >= 0, 'Work module must be loaded by the Teaching document');
   assert.ok(d15Import > d16Import, 'Results must load after Work');
   assert.ok(d23Import > d15Import, 'D23 composition must load after Results');

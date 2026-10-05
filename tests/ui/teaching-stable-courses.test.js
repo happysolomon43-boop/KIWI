@@ -15,6 +15,8 @@ test('Teaching renders one enriched active Course list without a late replacemen
   assert.match(shell, /teacher: detail\.teacher/);
   assert.match(shell, /restoredCourse\.information_overview/);
   assert.doesNotMatch(bridge, /grid\.replaceChildren\(\);\s*if \(!rows\.length\)/);
+  assert.match(shell, /function canonicalCourseRows/);
+  assert.match(shell, /course\.source_version_ref/);
 });
 
 test('Teaching normalizes display names and assigns stable Course accents', () => {
@@ -35,6 +37,14 @@ test('Course materials overlay separates originals, flashcards and additional so
   assert.match(bridge, /supplemental when an original note exists/);
   assert.match(bridge, /Search materials by name, type or description/);
   assert.match(bridge, /\$\('details', 'ti-material-group'\)/);
+});
+
+test('preloaded Course overview still renders Materials and the other contextual actions', () => {
+  const bridge = read('public/teaching-d23.js');
+  assert.match(bridge, /const cachedOverview = courses\.getCourse/);
+  assert.match(bridge, /const data = cachedOverview \|\| await kiwiApiRequest/);
+  assert.doesNotMatch(bridge, /information_overview\) return;/);
+  for (const action of ['Course Materials', 'Study Packs', 'Teacher', 'Requests']) assert.match(bridge, new RegExp(`action\\('${action}'`));
 });
 
 test('Create Course places the original-note upload beside the Subject selector', () => {
