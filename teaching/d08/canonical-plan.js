@@ -51,9 +51,19 @@ function currentValidatedVpkRefsForAuditUnit(unitRef, { vpkDecisions = [], audit
   if (direct?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE') refs.push(String(direct.vpk_decision_id));
   const sourceAccounting = auditOutput?.source_accounting || [];
   const sourceByRef = new Map(sources.map((source) => [String(source.source_ref), source]));
+  const sourceByCanonicalRef = new Map(sources.map((source) => [`source:${source.source_content_item_id}`, source]));
   for (const account of sourceAccounting) {
     if (!(account.learning_unit_ids || []).map(String).includes(String(unitRef))) continue;
     const source = sourceByRef.get(String(account.source_ref));
+    if (!source) continue;
+    const byId = latest.get(`SOURCE_CONTENT_ITEM:${source.source_content_item_id}`);
+    const byRef = latest.get(`SOURCE_CONTENT_ITEM:${source.source_ref}`);
+    const decision = byId?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE' ? byId : byRef;
+    if (decision?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE') refs.push(String(decision.vpk_decision_id));
+  }
+  const canonicalUnit = (auditOutput?.learning_units || []).find((unit) => String(unit.learning_unit_id || unit.id) === String(unitRef));
+  for (const sourceItemRef of canonicalUnit?.source_item_refs || []) {
+    const source = sourceByCanonicalRef.get(String(sourceItemRef));
     if (!source) continue;
     const byId = latest.get(`SOURCE_CONTENT_ITEM:${source.source_content_item_id}`);
     const byRef = latest.get(`SOURCE_CONTENT_ITEM:${source.source_ref}`);
@@ -75,14 +85,18 @@ function normalizeAuditPrerequisite(item, index, unitIds) {
   };
 }
 
-function deriveLearningUnitLineage({ previousPlanContext = null, auditOutput }) {
+function deriveLearningUnitLineage({ previousPlanContext = null, auditOutput, sources = [] }) {
   if (!previousPlanContext?.units?.length || !previousPlanContext?.sourceMappings?.length) return [];
   const oldSourcesByUnit = new Map(previousPlanContext.units.map((unit) => [String(unit.key), new Set()]));
   for (const mapping of previousPlanContext.sourceMappings) {
     const set = oldSourcesByUnit.get(String(mapping.learning_unit_key));
     if (set) set.add(String(mapping.source_ref));
   }
-  const newSourcesByUnit = new Map((auditOutput.learning_units || []).map((unit) => [String(unit.id), new Set()]));
+  const sourceRefByCanonicalRef = new Map(sources.map((source) => [`source:${source.source_content_item_id}`, String(source.source_ref)]));
+  const newSourcesByUnit = new Map((auditOutput.learning_units || []).map((unit) => [
+    String(unit.learning_unit_id || unit.id),
+    new Set((unit.source_item_refs || []).map((ref) => sourceRefByCanonicalRef.get(String(ref))).filter(Boolean)),
+  ]));
   for (const account of auditOutput.source_accounting || []) {
     for (const unitRef of account.learning_unit_ids || []) {
       const set = newSourcesByUnit.get(String(unitRef));
@@ -119,7 +133,7 @@ function deriveLearningUnitLineage({ previousPlanContext = null, auditOutput }) 
 
 function materializeCoursePlanFromTpf03(output, { audit, sources = [], vpkDecisions = [], previousPlanContext = null } = {}) {
   const auditOutput = audit?.audit_output || audit;
-  if (!auditOutput || !Array.isArray(auditOutput.learning_units) || !Array.isArray(auditOutput.topics) || !Array.isArray(auditOutput.source_accounting)) return invalid('Validated Curriculum Audit structure is required.', 'TEACHING_D08_CURRICULUM_AUDIT_STRUCTURE_REQUIRED');
+  if (!auditOutput || !Array.isArray(auditOutput.learning_units) || !Array.isArray(auditOutput.topics) || (!Array.isArray(auditOutput.source_accounting) && !Array.isArray(auditOutput.source_inventory))) return invalid('Validated Curriculum Audit structure is required.', 'TEACHING_D08_CURRICULUM_AUDIT_STRUCTURE_REQUIRED');
   try {
   const validated = validateTpf03CoursePlanOutput(output);
   if (!validated.ok) return validated;
@@ -132,27 +146,33 @@ function materializeCoursePlanFromTpf03(output, { audit, sources = [], vpkDecisi
       treatmentByUnit.set(ref, item);
     }
   }
-  const auditUnitIds = new Set(auditOutput.learning_units.map((unit) => String(unit.id)));
+  const auditUnitIds = new Set(auditOutput.learning_units.map((unit) => String(unit.learning_unit_id || unit.id)));
   const missing = [...auditUnitIds].filter((id) => !treatmentByUnit.has(id));
   const unknown = [...treatmentByUnit.keys()].filter((id) => !auditUnitIds.has(id));
   if (missing.length) return invalid(`TPF-03 omitted required Learning Units: ${missing.join(', ')}`, 'TEACHING_D08_TPF03_REQUIRED_UNIT_OMITTED');
   if (unknown.length) return invalid(`TPF-03 referenced unknown Learning Units: ${unknown.join(', ')}`, 'TEACHING_D08_TPF03_UNKNOWN_UNIT');
 
   const topics = auditOutput.topics.map((topic, topicIndex) => ({
-    key: String(topic.id), title: String(topic.title), ordinal: topicIndex,
-    subtopics: (topic.subtopics || []).map((subtopic, subtopicIndex) => ({ key: String(subtopic.id), title: String(subtopic.title), ordinal: subtopicIndex })),
+    key: String(topic.topic_id || topic.id), title: String(topic.title), ordinal: topicIndex,
+    subtopics: (topic.subtopics || []).map((subtopic, subtopicIndex) => typeof subtopic === 'string'
+      ? ({ key: `${topic.topic_id || topic.id}:subtopic:${subtopicIndex + 1}`, title: subtopic, ordinal: subtopicIndex })
+      : ({ key: String(subtopic.subtopic_id || subtopic.id), title: String(subtopic.title), ordinal: subtopicIndex })),
   }));
   const learning_units = auditOutput.learning_units.map((unit) => {
-    const planning = treatmentByUnit.get(String(unit.id));
-    if (planning.initial_instruction_status === 'unresolved') throw Object.assign(new Error(`TPF-03 left Learning Unit ${unit.id} unresolved.`), { code: 'TEACHING_D08_TPF03_PLAN_BLOCKED' });
+    const unitId = String(unit.learning_unit_id || unit.id);
+    const planning = treatmentByUnit.get(unitId);
+    if (planning.initial_instruction_status === 'unresolved') throw Object.assign(new Error(`TPF-03 left Learning Unit ${unitId} unresolved.`), { code: 'TEACHING_D08_TPF03_PLAN_BLOCKED' });
     const treatment = TREATMENT_MAP[planning.initial_instruction_status];
-    const vpkRefs = currentValidatedVpkRefsForAuditUnit(String(unit.id), { vpkDecisions, auditOutput, sources });
-    if (treatment !== 'FULL_INSTRUCTION' && !vpkRefs.length) throw Object.assign(new Error(`TPF-03 compressed ${unit.id} without current validated prior knowledge.`), { code: 'TEACHING_D08_VPK_PROVENANCE_REQUIRED' });
+    const vpkRefs = currentValidatedVpkRefsForAuditUnit(unitId, { vpkDecisions, auditOutput, sources });
+    if (treatment !== 'FULL_INSTRUCTION' && !vpkRefs.length) throw Object.assign(new Error(`TPF-03 compressed ${unitId} without current validated prior knowledge.`), { code: 'TEACHING_D08_VPK_PROVENANCE_REQUIRED' });
+    const topicKey = String(unit.topic_id || unit.topic_refs?.[0] || topics[0]?.key || '');
+    const criticality = String(unit.criticality || 'MEDIUM').toUpperCase();
     return {
-      key: String(unit.id), topic_key: String(unit.topic_id), subtopic_key: unit.subtopic_id == null ? null : String(unit.subtopic_id),
-      title: String(unit.title), intended_competence: String(unit.intended_competence), exit_conditions: unit.exit_conditions,
-      criticality: String(unit.criticality), foundational: unit.foundational === true || String(unit.criticality).toUpperCase() === 'FOUNDATIONAL',
-      instructional_load_min_minutes: unit.instructional_load_min_minutes, instructional_load_max_minutes: unit.instructional_load_max_minutes,
+      key: unitId, topic_key: topicKey, subtopic_key: unit.subtopic_id == null ? null : String(unit.subtopic_id),
+      title: String(unit.title), intended_competence: String(unit.intended_competence),
+      exit_conditions: Array.isArray(unit.exit_conditions) ? unit.exit_conditions : [{ criterion: String(unit.proposed_exit_evidence || `Demonstrate ${unit.intended_competence}`), evidence_form: 'OBSERVABLE_PERFORMANCE', independence_required: ['HIGH','FOUNDATIONAL'].includes(criticality) }],
+      criticality, foundational: unit.foundational === true || criticality === 'FOUNDATIONAL',
+      instructional_load_min_minutes: Number(unit.instructional_load_min_minutes || 0), instructional_load_max_minutes: Number(unit.instructional_load_max_minutes || unit.instructional_load_min_minutes || 0),
       instructional_treatment: treatment, vpk_basis_refs: vpkRefs,
       pedagogy_profile: null,
       treatment_basis: planning.initial_treatment_basis || null,
@@ -163,14 +183,22 @@ function materializeCoursePlanFromTpf03(output, { audit, sources = [], vpkDecisi
       student_intake_accommodation_notes: planning.student_intake_accommodation_notes || null,
     };
   });
-  const dependencies = (auditOutput.dependencies || []).map((edge) => ({
+  const explicitDependencies = (auditOutput.dependencies || []).map((edge) => ({
     learning_unit_key: String(edge.learning_unit_id), prerequisite_learning_unit_key: String(edge.prerequisite_learning_unit_id), rationale: edge.rationale || null,
   }));
-  const source_mappings = auditOutput.source_accounting.map((account) => ({
-    source_ref: String(account.source_ref), learning_unit_keys: (account.learning_unit_ids || []).map(String),
-  }));
+  const unitIds = new Set(learning_units.map((unit) => unit.key));
+  const derivedDependencies = auditOutput.learning_units.flatMap((unit) => (unit.prerequisite_refs || [])
+    .map(String).filter((ref) => unitIds.has(ref)).map((ref) => ({ learning_unit_key: String(unit.learning_unit_id || unit.id), prerequisite_learning_unit_key: ref, rationale: unit.dependency_type_notes || null })));
+  const dependencies = explicitDependencies.length ? explicitDependencies : derivedDependencies;
+  const canonicalRefBySourceRef = new Map(sources.map((source) => [String(source.source_ref), `source:${source.source_content_item_id}`]));
+  const source_mappings = Array.isArray(auditOutput.source_accounting)
+    ? auditOutput.source_accounting.map((account) => ({ source_ref: String(account.source_ref), learning_unit_keys: (account.learning_unit_ids || []).map(String) }))
+    : sources.map((source) => ({
+        source_ref: String(source.source_ref),
+        learning_unit_keys: auditOutput.learning_units.filter((unit) => (unit.source_item_refs || []).map(String).includes(canonicalRefBySourceRef.get(String(source.source_ref)))).map((unit) => String(unit.learning_unit_id || unit.id)),
+      }));
   const assumed_prerequisites = (auditOutput.assumed_prerequisites || []).map((item, index) => normalizeAuditPrerequisite(item, index, auditUnitIds));
-  const learning_unit_lineage = deriveLearningUnitLineage({ previousPlanContext, auditOutput });
+  const learning_unit_lineage = deriveLearningUnitLineage({ previousPlanContext, auditOutput, sources });
   return { ok: true, value: {
     summary: output.student_facing_plan_summary_candidate || null,
     topics, learning_units, dependencies, source_mappings, assumed_prerequisites, learning_unit_lineage,
