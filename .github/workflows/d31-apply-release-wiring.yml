@@ -10,7 +10,7 @@ on:
       - scripts/apply-teaching-d31-release-wiring.js
       - scripts/apply-teaching-d31-limitations-ui.js
       - scripts/reconcile-post-d30-study-import.js
-      - scripts/verify-teaching-d31-release-readiness.js
+      - scripts/verify-teaching-d*.js
       - teaching/d31/**
       - tests/ai/study-import-module.test.js
       - tests/ai/teaching-d31-owner-release.test.js
