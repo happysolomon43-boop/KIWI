@@ -5,6 +5,8 @@ const { validateModelOutput } = require('./output-validation');
 const { authorityFailurePolicy } = require('./failure-policy');
 const { safeExecutionMetadata } = require('../d28/ai-controls');
 
+const TRUNCATED_FINISH_REASONS = new Set(['MAX_TOKENS','MAX_OUTPUT_TOKENS','LENGTH']);
+
 class TeachingAIExecutionError extends Error {
   constructor(message, { code = 'TEACHING_AI_EXECUTION_FAILED', disposition = null, cause = null } = {}) {
     super(message);
@@ -25,6 +27,16 @@ function candidateFromCentralResult(result) {
   } catch {
     return result;
   }
+}
+
+function assertCentralResultComplete(result) {
+  const finishReason = String(result?.finishReason || result?.finish_reason || '').trim().toUpperCase();
+  if (!TRUNCATED_FINISH_REASONS.has(finishReason)) return result;
+  const error = new Error(`Central KIWI AI returned an incomplete Teaching artifact (${finishReason}).`);
+  error.code = 'TEACHING_AI_OUTPUT_TRUNCATED';
+  error.retryable = false;
+  error.finishReason = finishReason;
+  throw error;
 }
 
 function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionControls = null } = {}) {
@@ -74,6 +86,7 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
       output: candidateFromCentralResult(output), authorityLevel: authority, schemaValidator,
       domainValidator, deterministicChecks, context: validationContext,
     });
+    const runCentral = async (id, payload) => assertCentralResultComplete(await aiRun(id, payload, centralRouteOptions));
 
     try {
       let centralResult;
@@ -85,14 +98,14 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
           taskId, request, capabilityId: capabilityId || responsibilityKey, authorityLevel: authority,
           promptVersion: promptTemplateVersion || (promptFamilyId && promptFamilyVersion ? `${promptFamilyId}@${promptFamilyVersion}` : null),
           schemaVersion: outputSchemaVersion, cachePolicy,
-          executeCentral: (id, payload) => aiRun(id, payload, centralRouteOptions), validate,
+          executeCentral: runCentral, validate,
         });
         centralResult = controlled.centralResult;
         validated = controlled.validated;
         validationRetryCount = controlled.validationRetryCount;
         cacheStatus = controlled.cacheStatus;
       } else {
-        centralResult = await aiRun(taskId, request, centralRouteOptions);
+        centralResult = await runCentral(taskId, request);
         validated = await validate(centralResult);
       }
 
@@ -133,4 +146,4 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
   return Object.freeze({ execute });
 }
 
-module.exports = { TeachingAIExecutionError, candidateFromCentralResult, createCentralAIExecutionBoundary };
+module.exports = { TeachingAIExecutionError, candidateFromCentralResult, assertCentralResultComplete, createCentralAIExecutionBoundary };
