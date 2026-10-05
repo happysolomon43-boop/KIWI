@@ -14,6 +14,15 @@ test('academic input accepts exact UTF-8 byte boundary and rejects overflow', ()
   assert.deepEqual(JSON.parse(serializeAcademicInput({ text: 'a\n"', list: [null, true, 2] })), { text: 'a\n"', list: [null, true, 2] });
 });
 
+test('academic input reports the actual violated limit instead of calling every failure oversized', () => {
+  const reason = (input) => { try { serializeAcademicInput(input); } catch (error) { return error.reason; } };
+  let deep = {}; for (let i = 0; i < 17; i++) deep = { child: deep };
+  assert.equal(reason({ text: 'a'.repeat(65526) }), 'BYTE_LIMIT_EXCEEDED');
+  assert.equal(reason(deep), 'DEPTH_LIMIT_EXCEEDED');
+  assert.equal(reason({ values: Array(4097).fill(0) }), 'ENTRY_LIMIT_EXCEEDED');
+  assert.equal(reason({ value: undefined }), 'UNSUPPORTED_VALUE');
+});
+
 test('academic input rejects unsafe shapes without invoking getters or toJSON', () => {
   const cycle = {}; cycle.self = cycle;
   let deep = {}; for (let i = 0; i < 17; i++) deep = { child: deep };
