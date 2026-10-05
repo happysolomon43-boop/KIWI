@@ -1,0 +1,292 @@
+:root{
+  --teaching-ui-radius-xs:10px;
+  --teaching-ui-radius-sm:14px;
+  --teaching-ui-radius:20px;
+  --teaching-ui-radius-lg:28px;
+  --teaching-ui-line:rgba(126,235,190,.14);
+  --teaching-ui-line-strong:rgba(126,235,190,.28);
+  --teaching-ui-glow:rgba(104,226,174,.15);
+  --teaching-ui-panel:linear-gradient(145deg,rgba(9,38,29,.92),rgba(4,23,17,.9));
+  --teaching-ui-panel-soft:linear-gradient(145deg,rgba(7,31,23,.72),rgba(4,20,15,.7));
+  --teaching-ui-shadow:0 24px 60px rgba(0,0,0,.24);
+}
+
+html[data-app="kiwi-teaching"] body,
+html[data-app="kiwi-teaching"] input,
+html[data-app="kiwi-teaching"] select,
+html[data-app="kiwi-teaching"] textarea,
+html[data-app="kiwi-teaching"] button{
+  font-family:var(--font-body,"Inter",sans-serif);
+  text-rendering:optimizeLegibility;
+  -webkit-font-smoothing:antialiased;
+}
+
+html[data-app="kiwi-teaching"] h1,
+html[data-app="kiwi-teaching"] h2,
+html[data-app="kiwi-teaching"] h3,
+html[data-app="kiwi-teaching"] .teaching-title,
+html[data-app="kiwi-teaching"] .teaching-course-nav__item,
+html[data-app="kiwi-teaching"] .teaching-button,
+html[data-app="kiwi-teaching"] .teaching-d08-link-button,
+html[data-app="kiwi-teaching"] .tc-button{
+  font-family:var(--font-display,"Manrope",sans-serif);
+}
+
+html[data-app="kiwi-teaching"] button,
+html[data-app="kiwi-teaching"] select,
+html[data-app="kiwi-teaching"] input,
+html[data-app="kiwi-teaching"] textarea{
+  -webkit-tap-highlight-color:transparent;
+}
+
+/* Course section rail: deliberate navigation, never browser-gray tabs. */
+.teaching-course-nav{
+  position:relative;
+  display:flex;
+  gap:8px;
+  width:100%;
+  padding:8px;
+  overflow-x:auto;
+  overscroll-behavior-inline:contain;
+  scrollbar-width:none;
+  border:1px solid var(--teaching-ui-line);
+  border-radius:22px;
+  background:
+    radial-gradient(circle at 12% 0%,rgba(98,217,165,.1),transparent 44%),
+    rgba(4,22,16,.82);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 16px 42px rgba(0,0,0,.18);
+  scroll-snap-type:x proximity;
+}
+.teaching-course-nav::-webkit-scrollbar{display:none}
+.teaching-course-nav__item{
+  flex:0 0 auto;
+  min-height:48px;
+  padding:0 18px;
+  border:1px solid transparent;
+  border-radius:15px;
+  background:transparent;
+  color:#88a89a;
+  font-size:13px;
+  font-weight:760;
+  letter-spacing:-.018em;
+  cursor:pointer;
+  scroll-snap-align:start;
+  transition:color 160ms ease,background 160ms ease,border-color 160ms ease,box-shadow 160ms ease,transform 160ms ease;
+}
+.teaching-course-nav__item:hover,
+.teaching-course-nav__item:focus-visible{
+  outline:none;
+  color:#dff7ec;
+  border-color:rgba(126,235,190,.12);
+  background:rgba(126,235,190,.055);
+}
+.teaching-course-nav__item:active{transform:translateY(1px)}
+.teaching-course-nav__item[data-active="true"]{
+  color:#04130d;
+  border-color:rgba(160,244,207,.48);
+  background:linear-gradient(135deg,#a5f2ce,#6fdfae);
+  box-shadow:0 10px 28px rgba(95,222,167,.16),inset 0 1px 0 rgba(255,255,255,.34);
+}
+
+/* Buttons keep semantic disabled state without looking like unstyled browser controls. */
+.teaching-button,
+.teaching-d08-link-button,
+.tc-button,
+.teaching-course-card__open,
+.teaching-course-back{
+  border-radius:14px;
+  font-weight:760;
+  letter-spacing:-.015em;
+  transition:transform 150ms ease,border-color 150ms ease,background 150ms ease,color 150ms ease,box-shadow 150ms ease,opacity 150ms ease;
+}
+.teaching-button:focus-visible,
+.teaching-d08-link-button:focus-visible,
+.tc-button:focus-visible,
+.teaching-course-card__open:focus-visible,
+.teaching-course-back:focus-visible{
+  outline:3px solid rgba(105,228,174,.18);
+  outline-offset:2px;
+}
+.teaching-button:disabled,
+.teaching-d08-link-button:disabled,
+.tc-button:disabled,
+.teaching-course-card__open:disabled{
+  opacity:1!important;
+  cursor:not-allowed!important;
+  color:#6f8e80!important;
+  border-color:rgba(125,197,166,.1)!important;
+  background:linear-gradient(145deg,rgba(34,61,50,.48),rgba(12,35,27,.62))!important;
+  box-shadow:none!important;
+  filter:none!important;
+}
+
+/* Shared loading skeletons. */
+.teaching-shell-skeleton{
+  display:grid;
+  gap:18px;
+  width:100%;
+  animation:teachingSkeletonFadeIn 180ms ease both;
+}
+.teaching-skeleton-card{
+  display:grid;
+  gap:13px;
+  min-height:160px;
+  padding:22px;
+  border:1px solid var(--teaching-ui-line);
+  border-radius:var(--teaching-ui-radius);
+  background:var(--teaching-ui-panel-soft);
+  overflow:hidden;
+}
+.teaching-skeleton-line,
+.teaching-skeleton-chip,
+.teaching-skeleton-block{
+  position:relative;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(143,190,169,.09);
+}
+.teaching-skeleton-line::after,
+.teaching-skeleton-chip::after,
+.teaching-skeleton-block::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  transform:translateX(-105%);
+  background:linear-gradient(90deg,transparent,rgba(158,239,203,.09),transparent);
+  animation:teachingSkeletonSweep 1.45s ease-in-out infinite;
+}
+.teaching-skeleton-line{height:14px;width:72%}
+.teaching-skeleton-line[data-size="title"]{height:32px;width:min(360px,72%)}
+.teaching-skeleton-line[data-size="short"]{width:42%}
+.teaching-skeleton-chip{height:34px;width:110px}
+.teaching-skeleton-block{height:92px;width:100%;border-radius:16px}
+@keyframes teachingSkeletonSweep{to{transform:translateX(105%)}}
+@keyframes teachingSkeletonFadeIn{from{opacity:0}to{opacity:1}}
+
+/* Schedule experience */
+.teaching-schedule-x{display:grid;gap:18px;min-width:0}
+.teaching-schedule-x__hero,
+.teaching-schedule-x__card{
+  position:relative;
+  overflow:hidden;
+  border:1px solid var(--teaching-ui-line);
+  border-radius:var(--teaching-ui-radius-lg);
+  background:var(--teaching-ui-panel);
+  box-shadow:var(--teaching-ui-shadow);
+}
+.teaching-schedule-x__hero{
+  display:grid;
+  grid-template-columns:minmax(0,1.3fr) minmax(210px,.7fr);
+  gap:18px;
+  align-items:end;
+  padding:clamp(22px,4vw,34px);
+  background:
+    radial-gradient(circle at 88% -18%,rgba(104,226,174,.18),transparent 42%),
+    linear-gradient(145deg,rgba(10,43,32,.98),rgba(4,22,16,.96));
+}
+.teaching-schedule-x__hero h2{margin:7px 0 8px;font-size:clamp(28px,5vw,42px);line-height:1.03;letter-spacing:-.04em}
+.teaching-schedule-x__hero p{max-width:680px;margin:0;color:#8ba99c;line-height:1.65;font-size:13px}
+.teaching-schedule-x__hero-meta{display:grid;gap:9px;justify-items:start}
+.teaching-schedule-x__signal{
+  display:inline-flex;align-items:center;gap:8px;min-height:34px;padding:7px 11px;
+  border:1px solid var(--teaching-ui-line);border-radius:999px;background:rgba(1,13,9,.34);
+  color:#acd1c1;font-size:11px;font-weight:700
+}
+.teaching-schedule-x__signal::before{content:"";width:7px;height:7px;border-radius:50%;background:#72e1b1;box-shadow:0 0 0 5px rgba(114,225,177,.08)}
+.teaching-schedule-x__grid{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(320px,.92fr);gap:16px}
+.teaching-schedule-x__card{padding:clamp(18px,3vw,26px);border-radius:22px;box-shadow:none}
+.teaching-schedule-x__card h3{margin:6px 0 7px;font-size:22px;letter-spacing:-.025em}
+.teaching-schedule-x__card>p{margin:0;color:#819f92;font-size:12px;line-height:1.62}
+.teaching-schedule-x__section{display:grid;gap:13px;margin-top:22px;padding-top:20px;border-top:1px solid rgba(126,235,190,.09)}
+.teaching-schedule-x__section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+.teaching-schedule-x__section-head h4{margin:0;font-family:var(--font-display);font-size:16px;letter-spacing:-.02em}
+.teaching-schedule-x__section-head p{margin:3px 0 0;color:#789489;font-size:11px}
+.teaching-schedule-x__fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.teaching-schedule-x__field{display:grid;gap:7px;min-width:0}
+.teaching-schedule-x__field>span{color:#9ab8aa;font-size:11px;font-weight:650}
+.teaching-schedule-x input,
+.teaching-schedule-x select{
+  width:100%;min-height:48px;padding:0 13px;border:1px solid var(--teaching-ui-line);border-radius:13px;
+  background:rgba(2,21,15,.74);color:#e9f8f1;font-size:14px;outline:none;color-scheme:dark
+}
+.teaching-schedule-x input:focus,
+.teaching-schedule-x select:focus{border-color:rgba(115,229,178,.54);box-shadow:0 0 0 3px rgba(98,217,165,.08)}
+.teaching-schedule-x__window-tabs{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;padding:2px 0}
+.teaching-schedule-x__window-tabs::-webkit-scrollbar{display:none}
+.teaching-schedule-x__window-tab{
+  flex:0 0 auto;min-height:38px;padding:0 13px;border:1px solid var(--teaching-ui-line);border-radius:12px;
+  background:rgba(4,25,18,.68);color:#86a99a;font-family:var(--font-display);font-size:11px;font-weight:760;cursor:pointer
+}
+.teaching-schedule-x__window-tab[data-active="true"]{color:#092018;background:#9becc7;border-color:#b9f4d9}
+.teaching-schedule-x__window-panel{display:grid;gap:13px;padding:15px;border:1px solid rgba(126,235,190,.1);border-radius:17px;background:rgba(2,18,13,.36)}
+.teaching-schedule-x__days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:7px}
+.teaching-schedule-x__day{position:relative;display:grid;place-items:center;min-height:42px;border:1px solid var(--teaching-ui-line);border-radius:12px;background:rgba(5,27,20,.64);color:#79998b;font-size:11px;font-weight:720;cursor:pointer}
+.teaching-schedule-x__day input{position:absolute;opacity:0;pointer-events:none}
+.teaching-schedule-x__day:has(input:checked){color:#071a12;border-color:#9cecc8;background:linear-gradient(135deg,#a7f2d0,#6fdfae);box-shadow:0 8px 22px rgba(98,217,165,.11)}
+.teaching-schedule-x__window-actions{display:flex;gap:8px;flex-wrap:wrap}
+.teaching-schedule-x__mini{
+  min-height:38px;padding:0 12px;border:1px solid var(--teaching-ui-line);border-radius:11px;background:rgba(116,229,180,.04);color:#a9cabd;font-size:11px;font-weight:700;cursor:pointer
+}
+.teaching-schedule-x__mini:hover,.teaching-schedule-x__mini:focus-visible{outline:none;border-color:var(--teaching-ui-line-strong);background:rgba(116,229,180,.08);color:#e4f6ee}
+.teaching-schedule-x__hint{padding:12px 13px;border:1px solid rgba(114,225,177,.1);border-radius:13px;background:rgba(114,225,177,.035);color:#84a596;font-size:11px;line-height:1.55}
+.teaching-schedule-x__actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:18px}
+.teaching-schedule-x__primary{
+  min-height:50px;padding:0 18px;border:1px solid #aef2d3;border-radius:15px;
+  background:linear-gradient(135deg,#aaf2d2,#72dfb0);color:#06150f;font-family:var(--font-display);font-weight:800;cursor:pointer;
+  box-shadow:0 12px 30px rgba(93,220,164,.14)
+}
+.teaching-schedule-x__primary:hover{transform:translateY(-1px)}
+.teaching-schedule-x__primary:disabled{cursor:wait;transform:none;opacity:.58}
+.teaching-schedule-x__message{min-height:20px;color:#8eaea0;font-size:11px;line-height:1.5}
+.teaching-schedule-x__message[data-kind="error"]{color:#f1a5a5}
+.teaching-schedule-x__metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:18px}
+.teaching-schedule-x__metric{padding:13px;border:1px solid var(--teaching-ui-line);border-radius:14px;background:rgba(2,17,12,.32)}
+.teaching-schedule-x__metric strong{display:block;font-family:var(--font-display);font-size:22px;letter-spacing:-.035em}
+.teaching-schedule-x__metric span{display:block;margin-top:3px;color:#6f8d80;font-size:10px}
+.teaching-schedule-x__day-group{display:grid;gap:8px;margin-top:15px}
+.teaching-schedule-x__day-title{display:flex;justify-content:space-between;gap:12px;padding:0 2px;color:#cfe9de;font-family:var(--font-display);font-size:14px;font-weight:780}
+.teaching-schedule-x__day-title small{color:#678779;font-family:var(--font-body);font-size:10px;font-weight:600}
+.teaching-schedule-x__slot{display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px;border:1px solid var(--teaching-ui-line);border-radius:15px;background:rgba(4,25,18,.56)}
+.teaching-schedule-x__slot-time{font-family:var(--font-mono);font-size:10px;color:#9fbeaf;line-height:1.45}
+.teaching-schedule-x__slot-copy strong{display:block;font-family:var(--font-display);font-size:14px}.teaching-schedule-x__slot-copy small{display:block;margin-top:3px;color:#708c7f;font-size:10px}
+.teaching-schedule-x__badge{display:inline-flex;align-items:center;min-height:26px;padding:4px 8px;border:1px solid var(--teaching-ui-line);border-radius:999px;background:rgba(104,226,174,.06);color:#8bdcb8;font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+
+/* Classroom eligibility */
+.tc-class-card{position:relative}
+.tc-class-entry-note{margin-top:10px;color:#78998a;font-size:11px;line-height:1.5}
+.tc-class-entry-note[data-state="waiting"]{color:#8dd8b6}
+.tc-class-entry-note[data-state="locked"]{color:#6d897d}
+.tc-button[data-entry-state="locked"]{pointer-events:none}
+
+/* Request ownership/expectation layer. */
+.teaching-request-authority{
+  display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;margin-top:11px;padding:10px 11px;
+  border:1px solid rgba(126,235,190,.1);border-radius:12px;background:rgba(3,21,15,.42)
+}
+.teaching-request-authority__badge{display:inline-flex;align-items:center;min-height:27px;padding:4px 8px;border-radius:999px;background:rgba(105,226,174,.1);color:#91dfbd;font-family:var(--font-mono);font-size:9px;font-weight:760;text-transform:uppercase;letter-spacing:.05em}
+.teaching-request-authority__copy{min-width:0;color:#83a194;font-size:10px;line-height:1.45}
+.teaching-request-authority__copy strong{color:#c7e3d6;font-weight:720}
+
+@media(max-width:820px){
+  .teaching-schedule-x__hero,.teaching-schedule-x__grid{grid-template-columns:1fr}
+  .teaching-schedule-x__hero-meta{display:flex;flex-wrap:wrap}
+}
+@media(max-width:600px){
+  .teaching-course-nav{border-radius:18px;padding:7px;margin-inline:0}
+  .teaching-course-nav__item{min-height:44px;padding:0 14px;font-size:12px}
+  .teaching-schedule-x{gap:13px}
+  .teaching-schedule-x__hero{padding:21px 17px;border-radius:21px}
+  .teaching-schedule-x__hero h2{font-size:30px}
+  .teaching-schedule-x__card{padding:17px 15px;border-radius:19px}
+  .teaching-schedule-x__fields{grid-template-columns:1fr}
+  .teaching-schedule-x__days{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .teaching-schedule-x__metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .teaching-schedule-x__slot{grid-template-columns:74px minmax(0,1fr)}
+  .teaching-schedule-x__slot>.teaching-schedule-x__badge{grid-column:2}
+  .teaching-shell-skeleton{gap:12px}
+}
+@media(prefers-reduced-motion:reduce){
+  .teaching-skeleton-line::after,.teaching-skeleton-chip::after,.teaching-skeleton-block::after{animation:none}
+  .teaching-shell-skeleton{animation:none}
+  .teaching-course-nav__item,.teaching-button,.teaching-d08-link-button,.tc-button{transition:none}
+}
