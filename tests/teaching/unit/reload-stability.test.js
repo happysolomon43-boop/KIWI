@@ -14,7 +14,7 @@ test('Teaching production document keeps the established shell and does not load
   assert.doesNotMatch(html, /teaching-d23-live\.(?:js|css)/);
   assert.doesNotMatch(html, /class="d23-shell"/);
   assert.match(html, /id="teachingApp"/);
-  assert.match(html, /src="\/teaching\.js\?v=20261004-stable-courses-1"/);
+  assert.match(html, /src="\/teaching\.js\?v=20261005-dedupe-actions-3"/);
 });
 
 test('Teaching refresh restores the last valid destination and Course section', () => {
@@ -47,7 +47,7 @@ test('original Teaching document loads independent native modules in dependency 
   const d23 = read('public/teaching-d23.js');
   const d16Import = html.indexOf('/teaching-d16.js?v=20261003-runtime-fix-2');
   const d15Import = html.indexOf('/teaching-d15.js?v=20261003-runtime-fix-1');
-  const d23Import = html.indexOf('/teaching-d23.js?v=20261005-materials-2');
+  const d23Import = html.indexOf('/teaching-d23.js?v=20261005-dedupe-actions-3');
   assert.ok(d16Import >= 0);
   assert.ok(d15Import > d16Import);
   assert.ok(d23Import > d15Import);

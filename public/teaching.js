@@ -417,6 +417,24 @@ function getTeachingCourse(courseId) {
   return teachingWorkspace.courses.find((course) => String(course.course_id) === String(courseId)) || null;
 }
 
+function canonicalCourseRows(rows = []) {
+  const selected = new Map();
+  const score = (course) =>
+    (course.teacher ? 1000 : 0)
+    + (course.semester_id ? 100 : 0)
+    + (course.current_topic ? 20 : 0)
+    + Number(course.state_version || 0);
+  for (const course of rows) {
+    const draft = String(course.lifecycle_state || '').toUpperCase() === 'DRAFT';
+    const exactDraftKey = draft && course.subject_id && course.source_version_ref
+      ? [course.subject_id, course.source_version_ref, String(course.title || '').trim().toLowerCase()].join('\u0000')
+      : `course:${course.course_id}`;
+    const current = selected.get(exactDraftKey);
+    if (!current || score(course) > score(current)) selected.set(exactDraftKey, course);
+  }
+  return [...selected.values()];
+}
+
 function sortedCourseSections() {
   return [...teachingCourseSections.values()].sort((a, b) => {
     const order = Number(a.order || 100) - Number(b.order || 100);
@@ -935,7 +953,7 @@ async function loadTeachingWorkspace() {
     kiwiApiRequest('/teaching/information/courses').catch(() => ({ courses: [] })),
   ]);
   const details = new Map((information.courses || []).map((course) => [String(course.courseId), course]));
-  const courses = baseCourses.map((course) => {
+  const courses = canonicalCourseRows(baseCourses.map((course) => {
     const detail = details.get(String(course.course_id));
     return detail ? {
       ...course,
@@ -945,7 +963,7 @@ async function loadTeachingWorkspace() {
       next_event: detail.nextEvent || null,
       teacher: detail.teacher || null,
     } : course;
-  });
+  }));
   teachingWorkspace = { subjects, courses };
   const restoredCourse = pendingTeachingLocation?.view === 'course'
     ? getTeachingCourse(pendingTeachingLocation.courseId)

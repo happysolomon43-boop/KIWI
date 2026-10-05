@@ -259,10 +259,10 @@ async function enhanceCourseOverview() {
   const active = shell.querySelector('.teaching-course-nav__item[data-active="true"]'); if (!active || active.textContent.trim() !== 'Overview') return;
   const content = shell.querySelector('.teaching-course-content'); if (!content || content.querySelector('[data-information-overview]')) return;
   const courseId = courses.currentCourseId?.(); if (!courseId) return;
-  if (courses.getCourse?.(courseId)?.information_overview) return;
+  const cachedOverview = courses.getCourse?.(courseId)?.information_overview || null;
   const request = ++state.overviewRequest; const section = $('section', 'ti-overview'); section.dataset.informationOverview = 'true'; section.append($('div', 'ti-empty', 'Loading current Course position…')); content.prepend(section);
   try {
-    const data = await kiwiApiRequest(`/teaching/information/courses/${encodeURIComponent(courseId)}/overview`); if (!section.isConnected || request !== state.overviewRequest) return; section.replaceChildren();
+    const data = cachedOverview || await kiwiApiRequest(`/teaching/information/courses/${encodeURIComponent(courseId)}/overview`); if (!section.isConnected || request !== state.overviewRequest) return; section.replaceChildren();
     const grid = $('div', 'ti-overview__grid'); grid.append(overviewCell('Current topic', data.currentTopic || 'Course Plan', data.phase ? `Phase · ${human(data.phase)}` : ''), overviewCell('Next Class', data.nextClass?.title || 'No Class scheduled', data.nextClass?.startsAt ? dateTime(data.nextClass.startsAt) : ''), overviewCell('Teacher', data.teacher?.displayName || 'Teacher setup', data.teacher ? 'Open Teacher for style and interaction options.' : '')); section.append(grid);
     const panels = $('div', 'ti-grid');
     const assessment = $('article', 'ti-card');
