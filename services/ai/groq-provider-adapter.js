@@ -2,6 +2,7 @@
 
 const { AI_PROVIDERS } = require('./providers');
 const { AI_CAPABILITIES } = require('./capabilities');
+const { DEFAULT_MODEL_CATALOG } = require('./model-catalog');
 const {
   AI_CONTENT_KINDS,
   AI_CONTENT_PART_KINDS,
@@ -47,6 +48,29 @@ function schemaName(value) {
     .replace(/[^A-Za-z0-9_-]/g, '_')
     .slice(0, 64);
   return normalized || 'kiwi_response';
+}
+
+function groqModelOutputTokenLimit(modelId) {
+  const model = DEFAULT_MODEL_CATALOG.find((entry) =>
+    entry.provider === AI_PROVIDERS.GROQ && entry.id === modelId
+  );
+  const limit = Number(model?.outputTokenLimit);
+  return Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : null;
+}
+
+function boundedGroqMaxOutputTokens(modelId, value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new AIError('Groq max output tokens must be a positive number', {
+      code: AI_ERROR_CODES.BAD_REQUEST,
+      retryable: false,
+      scope: 'REQUEST',
+      provider: AI_PROVIDERS.GROQ,
+    });
+  }
+  const requested = Math.floor(parsed);
+  const modelLimit = groqModelOutputTokenLimit(modelId);
+  return modelLimit == null ? requested : Math.min(requested, modelLimit);
 }
 
 function groqMessageContent(request) {
@@ -169,16 +193,7 @@ function serializeGroqExecutionRequest(request) {
 
   const maxTokens = maxCompletionTokens ?? maxOutputTokens;
   if (maxTokens !== undefined) {
-    const parsed = Number(maxTokens);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      throw new AIError('Groq max output tokens must be a positive number', {
-        code: AI_ERROR_CODES.BAD_REQUEST,
-        retryable: false,
-        scope: 'REQUEST',
-        provider: AI_PROVIDERS.GROQ,
-      });
-    }
-    body.max_completion_tokens = Math.floor(parsed);
+    body.max_completion_tokens = boundedGroqMaxOutputTokens(request.model.modelId, maxTokens);
   }
 
   if (stopSequences !== undefined) {
@@ -335,6 +350,8 @@ module.exports = {
   GROQ_SUPPORTED_REASONING,
   GROQ_QUOTA_POLICY,
   mapGroqReasoningEffort,
+  groqModelOutputTokenLimit,
+  boundedGroqMaxOutputTokens,
   buildGroqAttemptDiagnostic,
   serializeGroqExecutionRequest,
   serializeGroqSpeechRequest,
