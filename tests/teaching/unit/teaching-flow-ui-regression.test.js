@@ -34,10 +34,11 @@ test('Teaching flow bootstrap waits for D08 D09 and D10 before replacing registe
   assert.match(bootstrap, /teaching-flow-integrity\.css/);
 });
 
-test('Teaching flow stylesheet contains mobile and reduced-motion safeguards', () => {
+test('Teaching flow stylesheet contains responsive timetable and journey safeguards', () => {
   const css = read('public/teaching-flow-integrity.css');
-  assert.match(css, /@media\(max-width:720px\)/);
-  assert.match(css, /prefers-reduced-motion:reduce/);
+  assert.match(css, /@media\(max-width:820px\)/);
+  assert.match(css, /@media\(max-width:560px\)/);
   assert.match(css, /\.tf-journey/);
   assert.match(css, /\.tf-slot/);
+  assert.match(css, /\.tf-actions\{display:grid;grid-template-columns:1fr\}/);
 });
