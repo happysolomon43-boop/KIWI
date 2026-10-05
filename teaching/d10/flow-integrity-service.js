@@ -23,7 +23,8 @@ function decorateD10Service(base, { repository } = {}) {
       }) : null,
       reviewContract: Object.freeze({
         sequence: Object.freeze(['COURSE_PLAN', 'TIMETABLE', 'ACADEMIC_RULES', 'FINAL_REVIEW', 'ACTIVATION']),
-        activationIsFinalAcceptance: true,
+        readyIsFinalReviewAcceptance: true,
+        activationStartsOfficialAcademicObligations: true,
         serverTruthOnly: true,
       }),
     });
