@@ -11,20 +11,24 @@ function installStyles() {
   if (document.getElementById(STYLE_ID)) return;
   const style = el('style'); style.id = STYLE_ID;
   style.textContent =
-    '.teaching-d09-page{display:grid;gap:14px}.teaching-d09-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.72fr);gap:12px}' +
-    '.teaching-d09-card{padding:20px;border:1px solid rgba(223,245,235,.075);border-radius:18px;background:var(--teaching-surface-soft)}' +
-    '.teaching-d09-card h3{margin:7px 0 0;font-family:var(--font-display);font-size:20px}.teaching-d09-card p{color:#8b9e95;font-size:12px;line-height:1.65}' +
-    '.teaching-d09-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}.teaching-d09-field{display:grid;gap:6px}' +
-    '.teaching-d09-field label{font-size:11px;color:#91a69c}.teaching-d09-field input,.teaching-d09-field select{min-height:42px;padding:0 11px;border:1px solid var(--teaching-border);border-radius:10px;background:#061a14;color:var(--teaching-text)}' +
+    '.teaching-d09-page{display:grid;gap:16px}.teaching-d09-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.72fr);gap:14px}' +
+    '.teaching-d09-card{padding:20px;border:1px solid rgba(223,245,235,.09);border-radius:20px;background:linear-gradient(155deg,rgba(11,34,26,.94),rgba(6,23,18,.92));box-shadow:0 18px 45px rgba(0,0,0,.12)}' +
+    '.teaching-d09-card h3{margin:7px 0 0;font-family:var(--font-display);font-size:21px;letter-spacing:-.025em}.teaching-d09-card p{color:#8b9e95;font-size:12px;line-height:1.65}' +
+    '.teaching-d09-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}.teaching-d09-field{display:grid;gap:7px}' +
+    '.teaching-d09-field label{font-size:10px;font-weight:760;letter-spacing:.035em;color:#9fb9ad}.teaching-d09-field input,.teaching-d09-field select{min-height:46px;padding:0 12px;border:1px solid rgba(223,245,235,.11);border-radius:12px;background:#061a14;color:var(--teaching-text);font:inherit}' +
     '.teaching-d09-field input[type="date"],.teaching-d09-field input[type="time"],.teaching-d09-field input[type="datetime-local"]{color-scheme:dark;cursor:pointer;touch-action:manipulation}' +
-    '.teaching-d09-days{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}.teaching-d09-day{display:flex;gap:5px;align-items:center;padding:7px 9px;border:1px solid var(--teaching-border);border-radius:10px;font-size:11px}' +
-    '.teaching-d09-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-top:8px}.teaching-d09-row input,.teaching-d09-row select{min-height:38px;padding:0 8px;border:1px solid var(--teaching-border);border-radius:9px;background:#061a14;color:var(--teaching-text)}' +
-    '.teaching-d09-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:15px}.teaching-d09-status{padding:8px 10px;border-radius:999px;background:var(--teaching-accent-soft);color:var(--teaching-accent);font-size:10px;font-weight:700;display:inline-flex}' +
+    '.teaching-d09-window-card{margin-top:12px;padding:16px;border:1px solid rgba(126,226,184,.12);border-radius:16px;background:rgba(126,226,184,.025)}' +
+    '.teaching-d09-window-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.teaching-d09-window-head strong{font-family:var(--font-display);font-size:16px}.teaching-d09-window-head span{display:block;margin-top:4px;color:#789087;font-size:10px;line-height:1.45}' +
+    '.teaching-d09-days{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.teaching-d09-day{display:flex;gap:7px;align-items:center;padding:8px 10px;border:1px solid rgba(223,245,235,.1);border-radius:11px;background:rgba(255,255,255,.018);font-size:11px;font-weight:650}.teaching-d09-day:has(input:checked){border-color:rgba(126,226,184,.34);background:rgba(126,226,184,.08);color:#d7f4e6}' +
+    '.teaching-d09-ranges{display:grid;gap:9px;margin-top:12px}.teaching-d09-range{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) auto;gap:8px;align-items:end;padding:10px;border:1px solid rgba(223,245,235,.075);border-radius:13px;background:rgba(2,16,12,.38)}.teaching-d09-range__num{align-self:center;width:28px;height:28px;display:grid;place-items:center;border-radius:9px;background:rgba(126,226,184,.08);color:#87dfb8;font-family:var(--font-mono);font-size:9px;font-weight:800}.teaching-d09-range .teaching-d09-field{min-width:0}.teaching-d09-range .teaching-d08-link-button{min-height:46px}' +
+    '.teaching-d09-window-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}.teaching-d09-window-hint{color:#789087;font-size:10px;line-height:1.45}' +
+    '.teaching-d09-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-top:8px}.teaching-d09-row input,.teaching-d09-row select{min-height:42px;padding:0 9px;border:1px solid var(--teaching-border);border-radius:10px;background:#061a14;color:var(--teaching-text)}' +
+    '.teaching-d09-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:15px}.teaching-d09-status{padding:8px 10px;border-radius:999px;background:var(--teaching-accent-soft);color:var(--teaching-accent);font-size:10px;font-weight:760;display:inline-flex}' +
     '.teaching-d09-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}.teaching-d09-metric{padding:11px;border:1px solid var(--teaching-border);border-radius:11px}' +
-    '.teaching-d09-metric strong{display:block;font-size:18px}.teaching-d09-metric span{display:block;color:#74877e;font-size:10px}.teaching-d09-slot{padding:12px;border:1px solid var(--teaching-border);border-radius:12px;margin-top:8px}' +
+    '.teaching-d09-metric strong{display:block;font-family:var(--font-display);font-size:18px}.teaching-d09-metric span{display:block;color:#74877e;font-size:10px}.teaching-d09-slot{padding:12px;border:1px solid var(--teaching-border);border-radius:12px;margin-top:8px}' +
     '.teaching-d09-slot__top{display:flex;justify-content:space-between;gap:8px}.teaching-d09-slot small{display:block;margin-top:5px;color:#7e9288}.teaching-d09-note{font-size:11px;color:#74877e;line-height:1.55}' +
     '.teaching-d09-calendar{display:grid;gap:10px}.teaching-d09-calendar-item{padding:14px;border:1px solid var(--teaching-border);border-radius:12px;background:var(--teaching-surface-soft)}' +
-    '@media(max-width:760px){.teaching-d09-grid,.teaching-d09-fields{grid-template-columns:1fr}.teaching-d09-row{grid-template-columns:1fr}.teaching-d09-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}';
+    '@media(max-width:760px){.teaching-d09-grid,.teaching-d09-fields{grid-template-columns:1fr}.teaching-d09-row{grid-template-columns:1fr}.teaching-d09-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.teaching-d09-range{grid-template-columns:32px minmax(0,1fr) minmax(0,1fr)}.teaching-d09-range .teaching-d08-link-button{grid-column:2/4;width:100%}}';
   document.head.append(style);
 }
 function statusName(value) { return String(value || 'Pending').replaceAll('_',' ').toLowerCase().replace(/(^|\s)\S/g, (m) => m.toUpperCase()); }
@@ -56,7 +60,7 @@ function dayPicker(selected) {
 }
 function selectedDays(box) { return [...box.querySelectorAll('input:checked')].map((input)=>Number(input.value)); }
 function metric(value,label) { const box=el('div','teaching-d09-metric'); box.append(el('strong','',String(value == null ? '—' : value)),el('span','',label)); return box; }
-function addField(grid,label,input) { const field=el('div','teaching-d09-field'); field.append(el('label','',label),input); grid.append(field); }
+function addField(grid,label,input) { const field=el('div','teaching-d09-field'); field.append(el('label','',label),input); grid.append(field); return field; }
 function blockRow(block,zoneInput,courseId) {
   const row=el('div','teaching-d09-row'); row.dataset.block='true';
   const kind=el('select');
@@ -68,9 +72,35 @@ function blockRow(block,zoneInput,courseId) {
   row.readValue=()=>{ if (!start.value || !end.value) return null; const sv=start.value.split('T'), ev=end.value.split('T'),zone=zoneInput.value.trim(); return { kind:kind.value, startsAt:wallToIso(sv[0],sv[1],zone), endsAt:wallToIso(ev[0],ev[1],zone), courseId:kind.value.startsWith('PROTECTED_') ? courseId : null }; };
   return row;
 }
+function uniqueRanges(rows){
+  const seen=new Set(),out=[];
+  for(const row of rows){const key=`${row.startLocal}-${row.endLocal}`;if(!seen.has(key)){seen.add(key);out.push(row);}}
+  return out;
+}
+function availabilityWindowGroup({title,description,picker,existing=[],defaults=[],multiple=false}){
+  const sub=el('section','teaching-d09-window-card'),head=el('div','teaching-d09-window-head'),copy=el('div');
+  copy.append(el('strong','',title),el('span','',description));head.append(copy);sub.append(head,picker);
+  const list=el('div','teaching-d09-ranges');sub.append(list);
+  const source=uniqueRanges(existing.map((row)=>({startLocal:row.startLocal,endLocal:row.endLocal})).filter((row)=>row.startLocal&&row.endLocal));
+  const initial=source.length?source:defaults;
+  function addRange(range={startLocal:'09:00',endLocal:'12:00'}){
+    const row=el('div','teaching-d09-range'),num=el('span','teaching-d09-range__num',String(list.children.length+1).padStart(2,'0'));
+    const a=useNativePicker(el('input')),b=useNativePicker(el('input'));a.type='time';b.type='time';a.value=range.startLocal;b.value=range.endLocal;
+    const from=addField(el('div'),'From',a),to=addField(el('div'),'To',b),remove=el('button','teaching-d08-link-button','Remove');remove.type='button';
+    remove.addEventListener('click',()=>{if(list.children.length<=1)return;row.remove();[...list.children].forEach((item,index)=>item.querySelector('.teaching-d09-range__num').textContent=String(index+1).padStart(2,'0'));});
+    row.append(num,from,to,remove);row.readValue=()=>({startLocal:a.value,endLocal:b.value});list.append(row);
+  }
+  (initial.length?initial:[{startLocal:'09:00',endLocal:'12:00'}]).forEach(addRange);
+  if(multiple&&list.children.length===1)addRange(defaults[1]||{startLocal:'16:00',endLocal:'19:00'});
+  const actions=el('div','teaching-d09-window-actions');
+  if(multiple){const addRangeButton=el('button','teaching-d08-link-button','+ Add another time window');addRangeButton.type='button';addRangeButton.addEventListener('click',()=>addRange());actions.append(addRangeButton);}
+  actions.append(el('span','teaching-d09-window-hint',multiple?'Use separate windows when your day has a large break. KIWI will prefer spacing Classes instead of packing them back-to-back.':'This range repeats on each selected day.'));
+  sub.append(actions);
+  return {element:sub,readRanges(){return [...list.children].map((row)=>row.readValue()).filter((row)=>row.startLocal&&row.endLocal);}};
+}
 function stage4(course,data,container,reload) {
   const card=el('section','teaching-d09-card');
-  card.append(el('div','teaching-kicker','Scheduling preferences'),el('h3','','Semester and availability'),el('p','','Choose the academic period and the weekly times KIWI may use. You can also protect breaks, travel, revision, and assessment time.'));
+  card.append(el('div','teaching-kicker','Scheduling preferences'),el('h3','','Semester and availability'),el('p','','Tell KIWI when you are genuinely available. Multiple daily windows let the timetable preserve real breaks instead of treating your whole day as one continuous block.'));
   const sem=data.semester||{}, grid=el('div','teaching-d09-fields');
   const name=el('input'); name.value=sem.name||'Semester';
   const today=new Date(),defaultEnd=new Date(today);defaultEnd.setMonth(defaultEnd.getMonth()+4);
@@ -83,13 +113,10 @@ function stage4(course,data,container,reload) {
   const availDays=dayPicker(available.length?available.map((x)=>x.dayOfWeek):[1,2,3,4,5]);
   const recoveryDays=dayPicker(recovery.map((x)=>x.dayOfWeek));
   const hardDays=dayPicker(hard.map((x)=>x.dayOfWeek));
-  function windowGroup(title,picker,startValue,endValue) {
-    const sub=el('div','teaching-d09-card'); sub.style.marginTop='10px'; sub.append(el('strong','',title),picker);
-    const times=el('div','teaching-d09-fields'), a=useNativePicker(el('input')), b=useNativePicker(el('input')); a.type='time'; b.type='time'; a.value=startValue; b.value=endValue; addField(times,'From',a); addField(times,'To',b); sub.append(times); card.append(sub); return {start:a,end:b};
-  }
-  const availTime=windowGroup('Available days',availDays,available[0]?.startLocal||'09:00',available[0]?.endLocal||'12:00');
-  const recoveryTime=windowGroup('Recovery-only days',recoveryDays,recovery[0]?.startLocal||'10:00',recovery[0]?.endLocal||'12:00');
-  const hardTime=windowGroup('Recurring hard-unavailable days',hardDays,hard[0]?.startLocal||'13:00',hard[0]?.endLocal||'14:00');
+  const availWindows=availabilityWindowGroup({title:'Available days',description:'Choose the weekdays, then give KIWI one or more time windows that are normally usable.',picker:availDays,existing:available,defaults:[{startLocal:'09:00',endLocal:'12:00'},{startLocal:'16:00',endLocal:'19:00'}],multiple:true});
+  const recoveryWindows=availabilityWindowGroup({title:'Recovery-only days',description:'Protected catch-up capacity. Normal Classes will not consume these windows.',picker:recoveryDays,existing:recovery,defaults:[{startLocal:'10:00',endLocal:'12:00'}]});
+  const hardWindows=availabilityWindowGroup({title:'Recurring hard-unavailable days',description:'A repeating period KIWI must never schedule through.',picker:hardDays,existing:hard,defaults:[{startLocal:'13:00',endLocal:'14:00'}]});
+  card.append(availWindows.element,recoveryWindows.element,hardWindows.element);
 
   const blocks=el('div');
   (data.profile?.blocks||[]).filter((b)=>!b.courseId||String(b.courseId)===String(course.course_id)).forEach((b)=>blocks.append(blockRow(b,zone,course.course_id)));
@@ -110,21 +137,23 @@ function stage4(course,data,container,reload) {
     save.disabled=true;
     try {
       const tz=zone.value.trim(); if(!name.value.trim()) throw new Error('Enter a semester name.'); if(!start.value||!end.value) throw new Error('Semester start and end dates are required.');
-      const availability=[];
-      selectedDays(availDays).forEach((day)=>availability.push({dayOfWeek:day,startLocal:availTime.start.value,endLocal:availTime.end.value,kind:'AVAILABLE'}));
-      selectedDays(recoveryDays).forEach((day)=>availability.push({dayOfWeek:day,startLocal:recoveryTime.start.value,endLocal:recoveryTime.end.value,kind:'RECOVERY_ONLY'}));
-      selectedDays(hardDays).forEach((day)=>availability.push({dayOfWeek:day,startLocal:hardTime.start.value,endLocal:hardTime.end.value,kind:'HARD_UNAVAILABLE'}));
-      if(!availability.some((item)=>item.kind==='AVAILABLE')) throw new Error('Choose at least one available day.');
+      const availability=[],availableRanges=availWindows.readRanges(),recoveryRanges=recoveryWindows.readRanges(),hardRanges=hardWindows.readRanges();
+      const validateRange=(range,label)=>{if(range.endLocal<=range.startLocal)throw new Error(`${label} end time must be after its start time.`);};
+      availableRanges.forEach((range)=>validateRange(range,'Available window'));recoveryRanges.forEach((range)=>validateRange(range,'Recovery window'));hardRanges.forEach((range)=>validateRange(range,'Hard-unavailable window'));
+      selectedDays(availDays).forEach((day)=>availableRanges.forEach((range)=>availability.push({dayOfWeek:day,...range,kind:'AVAILABLE'})));
+      selectedDays(recoveryDays).forEach((day)=>recoveryRanges.forEach((range)=>availability.push({dayOfWeek:day,...range,kind:'RECOVERY_ONLY'})));
+      selectedDays(hardDays).forEach((day)=>hardRanges.forEach((range)=>availability.push({dayOfWeek:day,...range,kind:'HARD_UNAVAILABLE'})));
+      if(!availability.some((item)=>item.kind==='AVAILABLE')) throw new Error('Choose at least one available day and time window.');
       const blockValues=[...blocks.children].map((row)=>row.readValue?.()).filter(Boolean), deadlines=[];
       if(deadline.value){const parts=deadline.value.split('T');deadlines.push({kind:deadlineKind.value,deadlineAt:wallToIso(parts[0],parts[1],tz)});}
-      const body={semester:{semesterId:sem.semesterId||null,name:name.value,startsAt:wallToIso(start.value,'00:00',tz),endsAt:wallToIso(end.value,'23:59',tz),timezone:tz},availability,blocks:blockValues,deadlines,reserves:[{kind:'REVISION',minutes:Number(revision.value)||0},{kind:'ASSESSMENT',minutes:Number(assessment.value)||0}],preferences:{avoidConsecutiveSameCourseDays:true,preferredStartTimes:[availTime.start.value]}};
+      const body={semester:{semesterId:sem.semesterId||null,name:name.value,startsAt:wallToIso(start.value,'00:00',tz),endsAt:wallToIso(end.value,'23:59',tz),timezone:tz},availability,blocks:blockValues,deadlines,reserves:[{kind:'REVISION',minutes:Number(revision.value)||0},{kind:'ASSESSMENT',minutes:Number(assessment.value)||0}],preferences:{avoidConsecutiveSameCourseDays:true,preferredStartTimes:availableRanges.map((range)=>range.startLocal)}};
       if(postActivation){
         if(!window.KIWITeachingD10?.createScheduleRequest) throw new Error('Formal Request Center is unavailable.');
         await window.KIWITeachingD10.createScheduleRequest(course.course_id,body);
         message.textContent='A formal availability-change Request was created. The current timetable remains authoritative until approval/application.';
       }else{
         const saved=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body});
-        await reload(saved,'Availability saved. You can now create a proposed timetable after the Course Plan is ready.');
+        await reload(saved,'Availability saved. KIWI will use the separate windows and natural spacing preferences when it builds the timetable.');
       }
       message.className='teaching-message';
     } catch(error) { message.textContent=error.message||'Availability could not be saved.'; message.className='teaching-message'; message.dataset.kind='error'; }
@@ -134,7 +163,7 @@ function stage4(course,data,container,reload) {
 }
 function stage5(course,data,container,reload) {
   const card=el('section','teaching-d09-card');
-  card.append(el('div','teaching-kicker','Timetable'),el('h3','','Proposed timetable and feasibility'),el('p','','KIWI uses the Course Plan, your availability, and protected time to build a realistic timetable. Required learning is never removed just to make the calendar fit.'));
+  card.append(el('div','teaching-kicker','Timetable'),el('h3','','Proposed timetable and feasibility'),el('p','','KIWI uses the Course Plan, your availability, protected time, retention spacing and workload pressure to build a stable but natural timetable. One Course does not automatically fill every available day.'));
   const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
   const missingInputs=!data.semester||!data.profile;
   const missingPlan=(data.unresolvedSemesterCourses||[]).some((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
@@ -154,7 +183,7 @@ function stage5(course,data,container,reload) {
   });
   card.append(slotList);
   const proposalMessage=el('div');proposalMessage.setAttribute('role','status');proposalMessage.setAttribute('aria-live','polite');card.append(proposalMessage);
-  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Building a timetable from your plan and availability…';proposalMessage.className='teaching-message';try{const updated=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});await reload(updated,'Proposed timetable created.');}catch(error){proposalMessage.textContent=error.message||'Timetable feasibility could not be calculated.';proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
+  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Building a spaced timetable from your plan, workload and availability…';proposalMessage.className='teaching-message';try{const updated=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});await reload(updated,'Proposed timetable created.');}catch(error){proposalMessage.textContent=error.message||'Timetable feasibility could not be calculated.';proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
   container.append(card);
 }
 async function renderSchedule({course,container}) {
