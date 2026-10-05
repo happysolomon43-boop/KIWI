@@ -2,7 +2,7 @@
 
 const { createTeachingAIAdapter, createTeachingOrchestrator, createOrchestratorPreflight, createAuthoritativeOwnerRouter } = require('../orchestrator');
 const { buildSeparatedContextLanes, asUntrustedData } = require('../security/context-lanes');
-const { centralTaskFor, routePostureFor } = require('../d30/route-policy');
+const { centralTaskFor } = require('../d30/route-policy');
 
 function fail(message, code = 'TEACHING_D31_RELEASE_CONTEXT_UNAVAILABLE') {
   const error = new Error(message);
@@ -81,9 +81,13 @@ function createD31ReleaseOrchestrator({ runtimePlatform, query, randomUUID } = {
     promptControl: runtimePlatform.promptControl,
     aiBoundary: runtimePlatform.aiBoundary,
     assertRouteExecutable: () => true, // The exact D31 owner mode authorizes execution; D30 qualification truth remains unchanged.
-    resolveCentralTaskId: async (route) => Object.freeze({
-      taskId: centralTaskFor({ capabilityId: route.capabilityId, familyId: route.familyId }),
-      preparationRoutePosture: routePostureFor({ familyId: route.familyId }),
+    // Production Teaching execution intentionally shares the exact MAIN_CBT
+    // candidate order and provider fallback behaviour. Preparation posture is
+    // qualification metadata; applying it here silently narrows MAIN_CBT to a
+    // different model family than the working CBT route.
+    resolveCentralTaskId: async (route) => centralTaskFor({
+      capabilityId: route.capabilityId,
+      familyId: route.familyId,
     }),
   });
   const orchestrator = createTeachingOrchestrator({

@@ -941,6 +941,12 @@ test('D05 central boundary forwards Teaching route posture to the shared AI runt
   assert.deepEqual(observedOptions, { preparationRoutePosture: 'bounded_interpretive' });
 });
 
+test('D31 production release preserves the exact MAIN_CBT candidate route', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../../../teaching/d31/release-orchestrator'), 'utf8');
+  assert.match(source, /resolveCentralTaskId:\s*async \(route\) => centralTaskFor\(/);
+  assert.doesNotMatch(source, /resolveCentralTaskId:[\s\S]*preparationRoutePosture:\s*routePostureFor/);
+});
+
 test('D05 durable published-event registry fails closed when no subscriber exists', async () => {
   const registry = createTeachingEventSubscriberRegistry();
   const event = {
