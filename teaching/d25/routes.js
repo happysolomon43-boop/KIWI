@@ -11,6 +11,10 @@ function mountD25Routes(router, { service, sendError } = {}) {
     try { res.status(201).json(await service.recordStudentTechnicalIssue(req.user, req.params.classId, req.body || {})); }
     catch (error) { sendError(res, error, 'Failed to record the technical issue.'); }
   });
+  router.post('/reliability/courses/:courseId/timetable-recovery', async (req, res) => {
+    try { res.status(200).json(await service.recoverInvalidCourseTimetable(req.user, req.params.courseId)); }
+    catch (error) { sendError(res, error, 'Failed to repair the invalid Course timetable.'); }
+  });
   router.get('/reliability/attempts/:attemptId', async (req, res) => {
     try {
       res.json(await service.assessmentRecovery(req.user, req.params.attemptId, {
