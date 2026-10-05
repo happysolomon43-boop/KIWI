@@ -74,7 +74,7 @@ function verifyOwnerReleaseBoundary() {
     read('index.js'),
   ].join('\n');
   assert.match(serverSources, /TEACHING_D31_AI_RELEASE_MODE/);
-  assert.match(serverSources, /teachingRuntimePlatform\.aiBoundary|runtimePlatform\.aiBoundary/);
+  assert.match(serverSources, /teachingRuntimePlatform\??\.aiBoundary|runtimePlatform\??\.aiBoundary/);
 
   for (const client of ['public/teaching.html','public/teaching.js']) {
     const source = read(client);
