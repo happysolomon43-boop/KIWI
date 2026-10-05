@@ -919,6 +919,12 @@ test('D05 durable outbox records terminal failure when retry budget is exhausted
   assert.equal(cancelled.details.errorCode, 'TEACHING_D07_CURRICULUM_AUDIT_REJECTED');
 });
 
+test('D05 terminal outbox update preserves the required next-attempt timestamp', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../../../teaching/runtime/postgres-outbox-store'), 'utf8');
+  assert.match(source, /status='CANCELLED'.*next_attempt_at=coalesce\(next_attempt_at,now\(\)\)/s);
+  assert.doesNotMatch(source, /status='CANCELLED'.*next_attempt_at=null/s);
+});
+
 test('D05 central boundary forwards Teaching route posture to the shared AI runtime', async () => {
   let observedOptions = null;
   const boundary = createCentralAIExecutionBoundary({
