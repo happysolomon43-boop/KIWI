@@ -8,9 +8,31 @@ const TREATMENT_MAP = Object.freeze({
   teach_compressed: 'COMPRESSED_INSTRUCTION',
   validated_prior_knowledge_no_initial_instruction: 'VALIDATED_PRIOR_KNOWLEDGE_NO_INITIAL_INSTRUCTION',
 });
+const AUDIT_CRITICALITY_TO_PLAN = Object.freeze({
+  foundational: 'FOUNDATIONAL',
+  major: 'HIGH',
+  supporting: 'MEDIUM',
+  enrichment: 'LOW',
+});
+const PLAN_CRITICALITIES = new Set(['LOW','MEDIUM','HIGH','FOUNDATIONAL']);
 
 function invalid(message, reason = 'TEACHING_D08_TPF03_OUTPUT_INVALID') {
   return { ok: false, reason, message };
+}
+
+function normalizeAuditCriticality(value, unitId) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    throw Object.assign(new Error(`Learning Unit ${unitId} is missing criticality.`), { code: 'TEACHING_D08_CRITICALITY_REQUIRED' });
+  }
+  const canonical = raw.toLowerCase();
+  if (canonical === 'unresolved') {
+    throw Object.assign(new Error(`Learning Unit ${unitId} has unresolved criticality.`), { code: 'TEACHING_D08_CRITICALITY_UNRESOLVED' });
+  }
+  if (AUDIT_CRITICALITY_TO_PLAN[canonical]) return AUDIT_CRITICALITY_TO_PLAN[canonical];
+  const legacy = raw.toUpperCase();
+  if (PLAN_CRITICALITIES.has(legacy)) return legacy;
+  throw Object.assign(new Error(`Learning Unit ${unitId} has invalid criticality.`), { code: 'TEACHING_D08_CRITICALITY_INVALID' });
 }
 
 function validateTpf03CoursePlanOutput(output, { course } = {}) {
@@ -166,7 +188,7 @@ function materializeCoursePlanFromTpf03(output, { audit, sources = [], vpkDecisi
     const vpkRefs = currentValidatedVpkRefsForAuditUnit(unitId, { vpkDecisions, auditOutput, sources });
     if (treatment !== 'FULL_INSTRUCTION' && !vpkRefs.length) throw Object.assign(new Error(`TPF-03 compressed ${unitId} without current validated prior knowledge.`), { code: 'TEACHING_D08_VPK_PROVENANCE_REQUIRED' });
     const topicKey = String(unit.topic_id || unit.topic_refs?.[0] || topics[0]?.key || '');
-    const criticality = String(unit.criticality || 'MEDIUM').toUpperCase();
+    const criticality = normalizeAuditCriticality(unit.criticality, unitId);
     return {
       key: unitId, topic_key: topicKey, subtopic_key: unit.subtopic_id == null ? null : String(unit.subtopic_id),
       title: String(unit.title), intended_competence: String(unit.intended_competence),
