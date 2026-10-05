@@ -46,35 +46,45 @@ function canonicalOutputSchema(id, validator) {
 
 function boundedPlanningSignals({ audit, diagnosticPlan = null, vpkDecisions = [], sources = [] } = {}) {
   const output = audit?.audit_output || {};
+  const sourceRefByCanonicalRef = new Map(sources.map((source) => [
+    `source:${source.source_content_item_id}`,
+    String(source.source_ref),
+  ]));
   return Object.freeze({
     curriculum: Object.freeze({
       audit_ref: audit?.curriculum_audit_id || null,
       audit_version: audit?.audit_version || null,
       subject_snapshot_ref: audit?.subject_snapshot_ref || null,
       topics: (output.topics || []).map((topic) => ({
-        id: topic.id,
-        title: topic.title,
-        subtopics: (topic.subtopics || []).map((subtopic) => ({ id: subtopic.id, title: subtopic.title })),
+        id: String(topic.topic_id || topic.id),
+        title: String(topic.title || topic.topic_id || topic.id),
+        subtopics: (topic.subtopics || []).map((subtopic, index) => typeof subtopic === 'string'
+          ? { id: `${topic.topic_id || topic.id}:subtopic:${index + 1}`, title: subtopic }
+          : { id: String(subtopic.subtopic_id || subtopic.id), title: String(subtopic.title || subtopic.subtopic_id || subtopic.id) }),
       })),
-      learning_units: (output.learning_units || []).map((unit) => ({
-        id: unit.id,
-        topic_id: unit.topic_id,
-        subtopic_id: unit.subtopic_id || null,
-        title: unit.title,
-        intended_competence: unit.intended_competence,
-        criticality: unit.criticality,
-        foundational: unit.foundational === true,
-        instructional_load_min_minutes: unit.instructional_load_min_minutes ?? null,
-        instructional_load_max_minutes: unit.instructional_load_max_minutes ?? null,
-        prerequisite_refs: unit.prerequisite_refs || [],
-      })),
-      dependencies: output.dependencies || [],
+      learning_units: (output.learning_units || []).map((unit) => {
+        const unitId = String(unit.learning_unit_id || unit.id);
+        const prerequisiteRefs = new Set((unit.prerequisite_refs || []).map(String));
+        for (const edge of output.dependencies || []) {
+          if (String(edge.learning_unit_id) === unitId) prerequisiteRefs.add(String(edge.prerequisite_learning_unit_id));
+        }
+        const sourceRefs = new Set((unit.source_item_refs || []).map((ref) => sourceRefByCanonicalRef.get(String(ref))).filter(Boolean));
+        for (const account of output.source_accounting || []) {
+          if ((account.learning_unit_ids || []).map(String).includes(unitId)) sourceRefs.add(String(account.source_ref));
+        }
+        return {
+          id: unitId,
+          topic_refs: (unit.topic_refs || (unit.topic_id ? [unit.topic_id] : [])).map(String),
+          title: String(unit.title || unit.learning_unit_id || unit.id),
+          intended_competence: String(unit.intended_competence || ''),
+          criticality: String(unit.criticality || 'MEDIUM'),
+          foundational: unit.foundational === true,
+          prerequisite_refs: [...prerequisiteRefs],
+          exit_evidence: String(unit.proposed_exit_evidence || unit.exit_conditions?.[0]?.criterion || ''),
+          source_refs: [...sourceRefs],
+        };
+      }),
       assumed_prerequisites: output.assumed_prerequisites || [],
-      source_accounting: (output.source_accounting || []).map((item) => ({
-        source_ref: item.source_ref,
-        classification: item.classification,
-        learning_unit_ids: item.learning_unit_ids || [],
-      })),
     }),
     diagnostic: diagnosticPlan ? {
       ref: diagnosticPlan.diagnostic_plan_id,
@@ -145,7 +155,7 @@ function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions 
       return result;
     },
     provenanceValidator: async (out) => {
-      const knownUnits = new Set((audit.audit_output?.learning_units || []).map((unit) => String(unit.id)));
+      const knownUnits = new Set((audit.audit_output?.learning_units || []).map((unit) => String(unit.learning_unit_id || unit.id)));
       const used = (out.course_sequence || []).flatMap((group) => group.learning_units || []).map((unit) => String(unit.learning_unit_ref));
       return { ok: used.every((ref) => knownUnits.has(ref)), reason: 'TEACHING_D08_TPF03_UNIT_PROVENANCE_INVALID' };
     },

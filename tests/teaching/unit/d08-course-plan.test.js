@@ -9,6 +9,7 @@ const contracts = require('../../../teaching/d08/contracts');
 const canonical = require('../../../teaching/d08/canonical-plan');
 const { boundedPlanningSignals, coursePlanRequest, scopeChangeImpactRequest, createD08Intelligence } = require('../../../teaching/d08/intelligence');
 const { createD08Service } = require('../../../teaching/d08/service');
+const { serializeAcademicInput } = require('../../../teaching/prompt-runtime/academic-input');
 
 function sources() {
   return [
@@ -57,6 +58,35 @@ function audit() {
       ],
       assumed_prerequisites: [],
       likely_misconceptions: [],
+    },
+  };
+}
+
+function canonicalTpf02Audit(sourceCount = 54) {
+  const sourceRows = Array.from({ length: sourceCount }, (_, index) => ({
+    source_content_item_id: `canonical-source-${index + 1}`,
+    source_ref: `stored-source-${index + 1}`,
+    source_kind: 'PRIMARY_KIWI_SUBJECT',
+    classification: 'ACADEMICALLY_MEANINGFUL',
+    academically_meaningful: true,
+  }));
+  const sourceItemRefs = sourceRows.map((source) => `source:${source.source_content_item_id}`);
+  return {
+    sources: sourceRows,
+    audit: {
+      curriculum_audit_id: 'canonical-audit-1',
+      audit_version: 1,
+      subject_snapshot_ref: 'snapshot:canonical',
+      audit_output: {
+        source_inventory: sourceItemRefs.map((source_item_ref) => ({ source_item_ref })),
+        topics: [{ topic_id: 'topic-1', title: 'Canonical topic', source_item_refs: sourceItemRefs, subtopics: ['Foundation'] }],
+        learning_units: [{
+          learning_unit_id: 'unit-1', title: 'Canonical unit', intended_competence: 'Explain and apply the canonical foundation independently.',
+          source_item_refs: sourceItemRefs, topic_refs: ['topic-1'], prerequisite_refs: [], dependency_type_notes: '',
+          criticality: 'foundational', criticality_basis: 'Required foundation.', proposed_exit_evidence: 'Explain and apply it independently.', uncertainties: [],
+        }],
+        assumed_prerequisites: [],
+      },
     },
   };
 }
@@ -287,6 +317,29 @@ test('TPF-03 uses bounded validated planning signals instead of reloading every 
   assert.equal(serialized.includes('raw_content'), false);
   assert.equal(serialized.includes('content_summary'), false);
   assert.ok(serialized.length < 10_000);
+  assert.deepEqual(signals.curriculum.learning_units[0].source_refs, ['source:1']);
+});
+
+test('TPF-03 accepts the canonical TPF-02 schema, stays below the input limit, and materializes stored source refs', () => {
+  const fixture = canonicalTpf02Audit();
+  const course = { course_id: 'c1', student_id: 'u1', state_version: 1, lifecycle_state: 'DRAFT', subject_snapshot_ref: 'snapshot:canonical' };
+  const request = coursePlanRequest({ course, audit: fixture.audit, sources: fixture.sources });
+  const serialized = serializeAcademicInput(request.academicInput);
+  assert.ok(Buffer.byteLength(serialized, 'utf8') < 65_536);
+  assert.equal(serialized.includes('undefined'), false);
+  assert.equal(request.academicInput.validated_planning_signals.curriculum.learning_units[0].id, 'unit-1');
+  assert.deepEqual(request.academicInput.validated_planning_signals.curriculum.learning_units[0].source_refs, fixture.sources.map((source) => source.source_ref));
+
+  const output = tpf03Output({
+    input_state_reference: { aggregate_type: 'teaching_course', aggregate_id: 'c1', state_version: '1' },
+    course_sequence: [{ sequence_group: 1, topic_or_phase: 'Canonical topic', learning_units: [{
+      ...tpf03Output().course_sequence[0].learning_units[0], learning_unit_ref: 'unit-1', prerequisite_refs: [],
+    }] }],
+  });
+  const result = canonical.materializeCoursePlanFromTpf03(output, { audit: fixture.audit, sources: fixture.sources });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.source_mappings.map((mapping) => mapping.source_ref), fixture.sources.map((source) => source.source_ref));
+  assert.ok(result.value.source_mappings.every((mapping) => mapping.learning_unit_keys[0] === 'unit-1'));
 });
 
 test('D08 intelligence delegates model work only through the Teaching Orchestrator', async () => {
