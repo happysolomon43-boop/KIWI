@@ -3,9 +3,17 @@
 const ACADEMIC_INPUT_LIMITS = Object.freeze({ bytes: 65_536, depth: 16, entries: 4096 });
 
 function serializeAcademicInput(input) {
-  const fail = () => {
-    const error = new TypeError('Teaching academic input must be plain JSON within the 64 KiB, 16-level and 4096-entry limits.');
+  const fail = (reason = 'INVALID_JSON_SHAPE') => {
+    const messages = {
+      BYTE_LIMIT_EXCEEDED: 'Teaching academic input exceeds the 64 KiB limit and must be reduced before model execution.',
+      DEPTH_LIMIT_EXCEEDED: 'Teaching academic input exceeds the 16-level nesting limit.',
+      ENTRY_LIMIT_EXCEEDED: 'Teaching academic input exceeds the 4096-entry limit.',
+      UNSUPPORTED_VALUE: 'Teaching academic input contains a non-JSON value.',
+      INVALID_JSON_SHAPE: 'Teaching academic input must contain plain JSON objects and arrays only.',
+    };
+    const error = new TypeError(messages[reason] || messages.INVALID_JSON_SHAPE);
     error.code = 'TEACHING_ACADEMIC_INPUT_INVALID';
+    error.reason = reason;
     throw error;
   };
   const root = input == null ? {} : input;
@@ -15,36 +23,38 @@ function serializeAcademicInput(input) {
   let bytes = 0;
   function add(text) {
     bytes += Buffer.byteLength(text, 'utf8');
-    if (bytes > ACADEMIC_INPUT_LIMITS.bytes) fail();
+    if (bytes > ACADEMIC_INPUT_LIMITS.bytes) fail('BYTE_LIMIT_EXCEEDED');
     return text;
   }
   function visit(value, depth) {
-    if (depth > ACADEMIC_INPUT_LIMITS.depth) fail();
+    if (depth > ACADEMIC_INPUT_LIMITS.depth) fail('DEPTH_LIMIT_EXCEEDED');
     if (value === null || typeof value === 'boolean') return add(JSON.stringify(value));
     if (typeof value === 'string') {
-      if (value.length > ACADEMIC_INPUT_LIMITS.bytes) fail();
+      if (value.length > ACADEMIC_INPUT_LIMITS.bytes) fail('BYTE_LIMIT_EXCEEDED');
       return add(JSON.stringify(value));
     }
     if (typeof value === 'number' && Number.isFinite(value)) return add(JSON.stringify(value));
-    if (typeof value !== 'object' || ancestors.has(value)) fail();
+    if (typeof value !== 'object') fail('UNSUPPORTED_VALUE');
+    if (ancestors.has(value)) fail('INVALID_JSON_SHAPE');
     const array = Array.isArray(value);
-    if (!array && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) fail();
-    if (array && value.length > ACADEMIC_INPUT_LIMITS.entries) fail();
+    if (!array && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) fail('INVALID_JSON_SHAPE');
+    if (array && value.length > ACADEMIC_INPUT_LIMITS.entries) fail('ENTRY_LIMIT_EXCEEDED');
     ancestors.add(value);
     const parts = [];
     add(array ? '[' : '{');
     for (const key of Reflect.ownKeys(value)) {
       if (array && key === 'length') continue;
-      if (typeof key !== 'string' || ++entries > ACADEMIC_INPUT_LIMITS.entries) fail();
+      if (typeof key !== 'string') fail('INVALID_JSON_SHAPE');
+      if (++entries > ACADEMIC_INPUT_LIMITS.entries) fail('ENTRY_LIMIT_EXCEEDED');
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) fail();
-      if (array && key !== String(parts.length)) fail();
+      if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) fail('INVALID_JSON_SHAPE');
+      if (array && key !== String(parts.length)) fail('INVALID_JSON_SHAPE');
       if (parts.length) add(',');
-      if (key.length > ACADEMIC_INPUT_LIMITS.bytes) fail();
+      if (key.length > ACADEMIC_INPUT_LIMITS.bytes) fail('BYTE_LIMIT_EXCEEDED');
       const prefix = array ? '' : add(JSON.stringify(key)) + add(':');
       parts.push(prefix + visit(descriptor.value, depth + 1));
     }
-    if (array && parts.length !== value.length) fail();
+    if (array && parts.length !== value.length) fail('INVALID_JSON_SHAPE');
     ancestors.delete(value);
     add(array ? ']' : '}');
     return (array ? '[' : '{') + parts.join(',') + (array ? ']' : '}');
