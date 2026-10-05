@@ -1,0 +1,58 @@
+name: D31 guarded owner-release wiring
+
+on:
+  push:
+    branches:
+      - teaching/d31-final-release-readiness
+    paths:
+      - .github/workflows/d31-apply-release-wiring.yml
+      - scripts/apply-teaching-d31-release-wiring.js
+      - teaching/d31/**
+      - tests/ai/teaching-d31-owner-release.test.js
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out D31 branch
+        uses: actions/checkout@v4
+        with:
+          ref: teaching/d31-final-release-readiness
+          fetch-depth: 0
+
+      - name: Use Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Apply guarded index composition
+        run: node scripts/apply-teaching-d31-release-wiring.js
+
+      - name: Validate index syntax
+        run: node --check index.js
+
+      - name: Validate D31 owner-release contract
+        run: node --test tests/ai/teaching-d31-owner-release.test.js
+
+      - name: Validate web build
+        run: node scripts/build-web.js
+
+      - name: Validate diff hygiene
+        run: git diff --check
+
+      - name: Commit guarded index composition
+        shell: bash
+        run: |
+          if git diff --quiet -- index.js; then
+            echo "index.js already has the guarded D31 release composition."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.js
+          git commit -m "D31: wire owner-authorized Teaching AI release"
+          git push origin HEAD:teaching/d31-final-release-readiness
