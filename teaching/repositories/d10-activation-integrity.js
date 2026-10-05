@@ -2,23 +2,33 @@
 
 const { createD10LifecycleRequestRepository: createBaseD10LifecycleRequestRepository } = require('./d10-lifecycle-requests');
 
+function activationIntegrityBlockers(integrity = {}) {
+  const blockers = [];
+  if (Number(integrity.instructionalUnitCount) > 0 && Number(integrity.estimatedInstructionalMinutes) <= 0) {
+    blockers.push('INSTRUCTIONAL_LOAD_ESTIMATION_REQUIRED');
+  }
+  if (Number(integrity.instructionalUnitCount) > 0 && Number(integrity.classSlotCount) <= 0) {
+    blockers.push('TIMETABLE_REQUIRES_INSTRUCTIONAL_CLASSES');
+  }
+  if (Number(integrity.classSlotCount) > 0 && Number(integrity.futureClassSlotCount) <= 0) {
+    blockers.push('TIMETABLE_REQUIRES_FUTURE_CLASS');
+  }
+  if (Number(integrity.elapsedSlotCount) > 0) {
+    blockers.push('TIMETABLE_ELAPSED_REPLAN_REQUIRED');
+  }
+  return Object.freeze(blockers);
+}
+
 function createD10LifecycleRequestRepository(options = {}) {
   const base = createBaseD10LifecycleRequestRepository(options);
-  const {
-    query,
-    withTransaction,
-    clock = () => new Date(),
-  } = options;
+  const { query, withTransaction, clock = () => new Date() } = options;
   if (typeof query !== 'function' || typeof withTransaction !== 'function') {
     throw new TypeError('D10 activation-integrity wrapper requires query and withTransaction.');
   }
   const q = (runner, sql, params = []) => runner
     ? (typeof runner === 'function' ? runner(sql, params) : runner.query(sql, params))
     : query(sql, params);
-  const now = () => {
-    const value = clock();
-    return value instanceof Date ? value : new Date(value);
-  };
+  const now = () => { const value = clock(); return value instanceof Date ? value : new Date(value); };
 
   function blocked(message, blockers, integrity = null) {
     const error = new Error(message);
@@ -28,11 +38,7 @@ function createD10LifecycleRequestRepository(options = {}) {
     return error;
   }
 
-  async function timetableIntegrityUsing(runner, {
-    studentId,
-    coursePlanId,
-    timetableVersionId,
-  } = {}) {
+  async function timetableIntegrityUsing(runner, { studentId, coursePlanId, timetableVersionId } = {}) {
     if (!coursePlanId || !timetableVersionId) return Object.freeze({
       instructionalUnitCount: 0,
       estimatedInstructionalMinutes: 0,
@@ -72,20 +78,7 @@ function createD10LifecycleRequestRepository(options = {}) {
       elapsedSlotCount: Number(slot.elapsed_slot_count) || 0,
       serverNow: at,
     };
-    const blockers = [];
-    if (integrity.instructionalUnitCount > 0 && integrity.estimatedInstructionalMinutes <= 0) {
-      blockers.push('INSTRUCTIONAL_LOAD_ESTIMATION_REQUIRED');
-    }
-    if (integrity.instructionalUnitCount > 0 && integrity.classSlotCount <= 0) {
-      blockers.push('TIMETABLE_REQUIRES_INSTRUCTIONAL_CLASSES');
-    }
-    if (integrity.classSlotCount > 0 && integrity.futureClassSlotCount <= 0) {
-      blockers.push('TIMETABLE_REQUIRES_FUTURE_CLASS');
-    }
-    if (integrity.elapsedSlotCount > 0) {
-      blockers.push('TIMETABLE_ELAPSED_REPLAN_REQUIRED');
-    }
-    return Object.freeze({ ...integrity, blockers: Object.freeze(blockers) });
+    return Object.freeze({ ...integrity, blockers: activationIntegrityBlockers(integrity) });
   }
 
   async function getActivationFacts(studentId, courseId) {
@@ -119,18 +112,9 @@ function createD10LifecycleRequestRepository(options = {}) {
     await assertActivationTimetableUsing(tx, input);
     return base.activateCourseUsing(tx, input);
   }
+  async function activateCourse(input = {}) { return withTransaction((tx) => activateCourseUsing(tx, input)); }
 
-  async function activateCourse(input = {}) {
-    return withTransaction((tx) => activateCourseUsing(tx, input));
-  }
-
-  return Object.freeze({
-    ...base,
-    timetableIntegrityUsing,
-    getActivationFacts,
-    activateCourseUsing,
-    activateCourse,
-  });
+  return Object.freeze({ ...base, timetableIntegrityUsing, getActivationFacts, activateCourseUsing, activateCourse });
 }
 
-module.exports = { createD10LifecycleRequestRepository };
+module.exports = { activationIntegrityBlockers, createD10LifecycleRequestRepository };
