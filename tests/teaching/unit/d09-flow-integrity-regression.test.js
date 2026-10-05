@@ -12,6 +12,8 @@ const {
   validateLoadEstimationOutput,
   schedulingRequest,
 } = require('../../../teaching/d09/intelligence');
+const { createTeachingPromptControlPlane } = require('../../../teaching/prompt-runtime');
+const { getCapability } = require('../../../teaching/capability-registry');
 const { activationIntegrityBlockers } = require('../../../teaching/repositories/d10-activation-integrity');
 
 function context() {
@@ -119,6 +121,23 @@ function canonicalOutput(target) {
   };
 }
 
+function structuralInvocationArgs(request, course, directive = request.directive) {
+  return {
+    capabilityId: request.capabilityId,
+    taskMode: request.taskMode,
+    directive,
+    contextLanes: {
+      trustedAuthoritativeState: { course_id: course.course_id, state_version: course.state_version },
+      permissionConstraints: { commit_allowed: false },
+      provenanceLinkedAcademicContent: {},
+      untrustedContent: [],
+    },
+    stateReference: request.stateReference,
+    outputSchema: request.outputSchema,
+    audit: { correlation_id: 'd09-tpf10-handoff-regression' },
+  };
+}
+
 test('D09 instructional-load estimation uses frozen TPF-10 authority and canonical output contract', async () => {
   const ctx = context();
   const targets = loadTargets(ctx);
@@ -135,6 +154,40 @@ test('D09 instructional-load estimation uses frozen TPF-10 authority and canonic
   assert.ok(request.generation.structuredOutput.schema.properties.validation_and_handoff);
   const output = canonicalOutput(targets[0]);
   assert.deepEqual(validateLoadEstimationOutput(output, targets, ctx.courses[0].course), { ok: true, value: output });
+});
+
+test('D09 instructional-load estimation passes the frozen D03 structural invocation boundary', () => {
+  const ctx = context();
+  const course = ctx.courses[0].course;
+  const request = schedulingRequest({ course, context: ctx, taskMode: 'instructional_load_estimation' });
+  const capability = getCapability(request.capabilityId);
+
+  assert.equal(capability.authoritative_owner_boundary, 'Curriculum/Scheduler');
+  assert.equal(request.directive.downstream_handoff.commit_owner_boundary, capability.authoritative_owner_boundary);
+  assert.deepEqual(request.outputSchema.uncertainty_states, [
+    'INSUFFICIENT_EVIDENCE',
+    'UNRESOLVED_CONFLICT',
+    'REVIEW_NEEDED',
+  ]);
+  assert.equal(request.outputSchema.review_needed_field, 'review_required');
+
+  const promptControl = createTeachingPromptControlPlane();
+  const invocation = promptControl.createInvocation(structuralInvocationArgs(request, course));
+  assert.equal(invocation.prompt.family_id, 'TPF-10');
+  assert.equal(invocation.prompt.family_version, '1.1');
+  assert.equal(invocation.directive.downstream_handoff.commit_owner_boundary, 'Curriculum/Scheduler');
+
+  const forgedDirective = {
+    ...request.directive,
+    downstream_handoff: {
+      ...request.directive.downstream_handoff,
+      commit_owner_boundary: 'Scheduler/Calendar',
+    },
+  };
+  assert.throws(
+    () => promptControl.createInvocation(structuralInvocationArgs(request, course, forgedDirective)),
+    (error) => error?.code === 'TEACHING_PROMPT_HANDOFF_OWNER_MISMATCH'
+  );
 });
 
 test('D09 rejects missing, zero or authority-breaking workload estimates', () => {
