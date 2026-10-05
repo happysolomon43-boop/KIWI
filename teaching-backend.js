@@ -41,6 +41,7 @@ function createTeachingRouter({
   d13PublishedEventRegistry = null,
   d16Intelligence = null,
   d17Intelligence = null,
+  publishedEventRegistry = null,
   teachingRuntimePlatform = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
@@ -72,6 +73,20 @@ function createTeachingRouter({
     d17Intelligence,
   });
   const router = express.Router();
+  const backgroundAuditService = d07Service || foundation.d07?.service || null;
+  if (backgroundAuditService && publishedEventRegistry && typeof publishedEventRegistry.register === 'function') {
+    publishedEventRegistry.register('teaching.curriculum.audit_requested', {
+      subscriberId: 'd07-curriculum-audit-background-worker',
+      handle: async (event) => {
+        const setup = await backgroundAuditService.getSetup({ id: event.actorId }, event.aggregateId);
+        if (String(setup.course.state_version) !== String(event.payload?.expected_state_version || event.aggregate_version)) {
+          return Object.freeze({ accepted: true, stale: true, safeMetadata: { reason: 'COURSE_STATE_CHANGED' } });
+        }
+        const audit = await backgroundAuditService.runAudit({ id: event.actorId }, event.aggregateId);
+        return Object.freeze({ accepted: true, auditId: audit.curriculum_audit_id, safeMetadata: { audit_id: audit.curriculum_audit_id } });
+      },
+    });
+  }
   let d07Ready = Boolean(d07Service);
   let d08Ready = Boolean(d08Service);
   let d09Ready = Boolean(d09Service);
@@ -222,8 +237,8 @@ function createTeachingRouter({
       catch (error) { sendError(res, error, 'Failed to update interaction preferences.'); }
     });
     router.post('/courses/:id/curriculum-audit', async (req, res) => {
-      try { res.status(201).json(await courseIntakeService.runAudit(req.user, req.params.id)); }
-      catch (error) { sendError(res, error, 'Failed to run Curriculum Audit.'); }
+      try { res.status(202).json(await courseIntakeService.queueAudit(req.user, req.params.id)); }
+      catch (error) { sendError(res, error, 'Failed to queue Curriculum Audit.'); }
     });
     router.post('/courses/:id/diagnostic-plan', async (req, res) => {
       try { res.status(201).json(await courseIntakeService.planDiagnostic(req.user, req.params.id, req.body)); }

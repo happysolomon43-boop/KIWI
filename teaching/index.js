@@ -89,7 +89,7 @@ function createTeachingFoundation({
     ? createD07CourseIntakeRepository({ query, withTransaction, randomUUID })
     : null;
   const d07Service = d07Repository
-    ? d07.createD07Service({ subjects: repositories.subjects, repository: d07Repository, intelligence: d07Intelligence })
+    ? d07.createD07Service({ subjects: repositories.subjects, repository: d07Repository, intelligence: d07Intelligence, outboxStore:d10RuntimePlatform?.outboxStore || null, randomUUID })
     : null;
 
   const d08Repository = persistentDepsReady
