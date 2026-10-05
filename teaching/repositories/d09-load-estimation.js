@@ -12,36 +12,26 @@ function fail(message, code, status = 409, details = null) {
 
 function createD09SchedulingRepository(options = {}) {
   const base = createBaseD09SchedulingRepository(options);
-  const {
-    query,
-    withTransaction,
-    randomUUID,
-    clock = () => new Date(),
-  } = options;
+  const { query, withTransaction, randomUUID, clock = () => new Date() } = options;
   if (typeof query !== 'function' || typeof withTransaction !== 'function' || typeof randomUUID !== 'function') {
     throw new TypeError('D09 load-estimation persistence requires query, withTransaction and randomUUID.');
   }
   const q = (runner, sql, params = []) => runner
     ? (typeof runner === 'function' ? runner(sql, params) : runner.query(sql, params))
     : query(sql, params);
-  const at = () => {
-    const value = clock();
-    return value instanceof Date ? value : new Date(value);
-  };
+  const at = () => { const value = clock(); return value instanceof Date ? value : new Date(value); };
 
-  async function saveInstructionalLoadEstimatesUsing(runner, {
-    studentId,
-    estimates = [],
-    sourceExecutionRef = null,
-  } = {}) {
+  async function saveInstructionalLoadEstimatesUsing(runner, { studentId, estimates = [], sourceExecutionRef = null } = {}) {
     if (!Array.isArray(estimates) || !estimates.length) return Object.freeze([]);
     const saved = [];
     for (const estimate of estimates) {
+      const courseId = String(estimate?.courseId || '').trim();
       const coursePlanId = String(estimate?.coursePlanId || '').trim();
+      const coursePlanVersion = Number(estimate?.coursePlanVersion);
       const learningUnitId = String(estimate?.learningUnitId || '').trim();
       const minMinutes = Math.ceil(Number(estimate?.minMinutes));
       const maxMinutes = Math.ceil(Number(estimate?.maxMinutes));
-      if (!coursePlanId || !learningUnitId || !Number.isFinite(minMinutes) || !Number.isFinite(maxMinutes) || minMinutes <= 0 || maxMinutes < minMinutes) {
+      if (!courseId || !coursePlanId || !Number.isInteger(coursePlanVersion) || coursePlanVersion < 1 || !learningUnitId || !Number.isFinite(minMinutes) || !Number.isFinite(maxMinutes) || minMinutes <= 0 || maxMinutes < minMinutes) {
         throw fail('Instructional-load estimate is malformed.', 'TEACHING_D09_LOAD_ESTIMATE_INVALID', 422);
       }
       const { rows: currentRows = [] } = await q(runner, `
@@ -49,10 +39,15 @@ function createD09SchedulingRepository(options = {}) {
           from public.teaching_learning_units u
           join public.teaching_course_plans p on p.course_plan_id=u.course_plan_id and p.student_id=u.student_id
          where u.student_id=$1 and u.course_plan_id=$2 and u.learning_unit_id=$3
+           and p.course_id=$4 and p.version_no=$5
+           and p.version_no=(
+             select max(p2.version_no) from public.teaching_course_plans p2
+              where p2.student_id=p.student_id and p2.course_id=p.course_id
+           )
          for update
-      `, [studentId, coursePlanId, learningUnitId]);
+      `, [studentId, coursePlanId, learningUnitId, courseId, coursePlanVersion]);
       const current = currentRows[0];
-      if (!current) throw fail('Instructional-load target no longer exists in the current Course Plan.', 'TEACHING_D09_LOAD_TARGET_STALE', 409);
+      if (!current) throw fail('Instructional-load target is stale for the current Course Plan.', 'TEACHING_D09_LOAD_TARGET_STALE', 409);
       if (String(current.metadata?.instructional_treatment || 'FULL_INSTRUCTION') === 'VALIDATED_PRIOR_KNOWLEDGE_NO_INITIAL_INSTRUCTION') {
         throw fail('Validated prior-knowledge units cannot receive initial instructional load.', 'TEACHING_D09_LOAD_TARGET_VPK_INVALID', 409);
       }
@@ -80,6 +75,7 @@ function createD09SchedulingRepository(options = {}) {
          returning *
       `, [studentId, coursePlanId, learningUnitId, minMinutes, maxMinutes, JSON.stringify(provenance)]);
       const row = rows[0];
+      if (!row) throw fail('Instructional-load target changed before persistence.', 'TEACHING_D09_LOAD_TARGET_STALE', 409);
       saved.push(row);
       await q(runner, `
         insert into public.teaching_academic_audit_log(
@@ -111,18 +107,9 @@ function createD09SchedulingRepository(options = {}) {
     `, [studentId, courseId]);
     return rows[0] || null;
   }
+  async function getCourseActivation(studentId, courseId) { return getCourseActivationUsing(null, studentId, courseId); }
 
-  async function getCourseActivation(studentId, courseId) {
-    return getCourseActivationUsing(null, studentId, courseId);
-  }
-
-  return Object.freeze({
-    ...base,
-    saveInstructionalLoadEstimates,
-    saveInstructionalLoadEstimatesUsing,
-    getCourseActivation,
-    getCourseActivationUsing,
-  });
+  return Object.freeze({ ...base, saveInstructionalLoadEstimates, saveInstructionalLoadEstimatesUsing, getCourseActivation, getCourseActivationUsing });
 }
 
 module.exports = { createD09SchedulingRepository };
