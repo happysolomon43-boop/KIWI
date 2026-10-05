@@ -289,7 +289,11 @@ function unregisterTeachingNavigationItem(id) {
   renderSectionMenu();
 }
 
-function renderTeachingSessionProblem(message) {
+function renderTeachingAccessProblem({
+  title = 'KIWI sign-in required',
+  message,
+  retry = null,
+} = {}) {
   const main = document.getElementById('teachingApp');
   if (!main) return;
 
@@ -299,27 +303,61 @@ function renderTeachingSessionProblem(message) {
   const card = document.createElement('div');
   card.style.cssText = 'width:min(520px,100%);text-align:center;';
 
-  const title = document.createElement('div');
-  title.style.cssText = 'font-size:18px;font-weight:800;letter-spacing:-0.02em;margin-bottom:10px;';
-  title.textContent = 'KIWI sign-in required';
+  const heading = document.createElement('div');
+  heading.style.cssText = 'font-size:18px;font-weight:800;letter-spacing:-0.02em;margin-bottom:10px;';
+  heading.textContent = title;
 
   const detail = document.createElement('div');
   detail.style.cssText = 'font-size:14px;line-height:1.65;color:var(--teaching-muted);margin-bottom:20px;';
   detail.textContent = message || 'Sign in to KIWI first, then open Teaching from the KIWI dashboard.';
 
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap;';
+
+  if (typeof retry === 'function') {
+    const retryButton = document.createElement('button');
+    retryButton.id = 'teachingSessionRetry';
+    retryButton.className = 'teaching-menu-action';
+    retryButton.type = 'button';
+    retryButton.style.cssText = 'width:auto;margin:0;';
+    retryButton.textContent = 'Try again';
+    retryButton.addEventListener('click', async () => {
+      retryButton.disabled = true;
+      retryButton.textContent = 'Checking…';
+      await retry();
+    });
+    actions.append(retryButton);
+  }
+
   const back = document.createElement('button');
   back.id = 'teachingSessionBack';
   back.className = 'teaching-menu-action';
   back.type = 'button';
-  back.style.cssText = 'width:auto;margin:0 auto;';
+  back.style.cssText = 'width:auto;margin:0;';
   back.textContent = 'Back to KIWI';
   back.addEventListener('click', () => {
     window.location.assign(KIWI_PATH);
   });
 
-  card.append(title, detail, back);
+  actions.append(back);
+  card.append(heading, detail, actions);
   section.appendChild(card);
   main.replaceChildren(section);
+}
+
+function renderTeachingSessionProblem(message) {
+  renderTeachingAccessProblem({ message });
+}
+
+function renderTeachingWorkspaceProblem(error) {
+  const detail = error?.message && error.message !== 'Failed to fetch'
+    ? error.message
+    : 'Teaching could not load your Courses right now. Your KIWI session is still signed in.';
+  renderTeachingAccessProblem({
+    title: 'Teaching is temporarily unavailable',
+    message: detail,
+    retry: verifyTeachingSession,
+  });
 }
 
 function el(tag, className, text) {
@@ -999,17 +1037,31 @@ async function verifyTeachingSession() {
 
   try {
     await kiwiApiRequest('/teaching/status');
+  } catch (error) {
+    if (error?.status === 401) {
+      renderTeachingSessionProblem('Your KIWI session has expired. Return to KIWI and sign in again.');
+    } else {
+      renderTeachingAccessProblem({
+        title: 'KIWI connection interrupted',
+        message: 'KIWI could not check your session right now. Your sign-in has not been cleared.',
+        retry: verifyTeachingSession,
+      });
+    }
+    return false;
+  }
+
+  try {
     await loadTeachingWorkspace();
     if (restoreTeachingLocation()) return true;
     renderSectionMenu();
     renderActiveTeachingView();
     return true;
   } catch (error) {
-    renderTeachingSessionProblem(
-      error?.status === 401
-        ? 'Your KIWI session has expired. Return to KIWI and sign in again.'
-        : 'KIWI could not verify your session. Return to KIWI and try again.'
-    );
+    if (error?.status === 401) {
+      renderTeachingSessionProblem('Your KIWI session has expired. Return to KIWI and sign in again.');
+    } else {
+      renderTeachingWorkspaceProblem(error);
+    }
     return false;
   }
 }
