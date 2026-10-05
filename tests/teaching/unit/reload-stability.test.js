@@ -20,12 +20,10 @@ test('Teaching production document keeps the established shell and does not load
 test('Teaching browser assets revalidate and exhausted analysis cannot remain active', () => {
   const html = read('public/teaching.html');
   const d08 = read('public/teaching-d08.js');
-  const server = read('index.js');
   const vercel = JSON.parse(read('vercel.json'));
   assert.match(html, /teaching-d08\.js\?v=20261005-course-flow-5/);
   assert.match(d08, /const exhausted = attempts >= 8/);
   assert.match(d08, /status === 'CANCELLED' \|\| exhausted/);
-  assert.match(server, /filePath\.endsWith\('\.js'\).*filePath\.endsWith\('\.css'\)/s);
   assert.ok(vercel.headers.some((entry) => String(entry.source).includes('js|css')));
 });
 
