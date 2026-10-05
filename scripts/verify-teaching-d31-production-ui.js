@@ -99,7 +99,11 @@ async function auditPage(browser, target, profile) {
       id: violation.id,
       impact: violation.impact,
       help: violation.help,
-      nodes: violation.nodes.slice(0, 10).map((node) => node.target),
+      nodes: violation.nodes.slice(0, 10).map((node) => ({
+        target: node.target,
+        html: node.html,
+        failureSummary: node.failureSummary,
+      })),
     }));
   });
   const consequentialA11y = axe.filter((violation) => ['critical', 'serious'].includes(violation.impact));
