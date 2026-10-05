@@ -1,4 +1,5 @@
-import './teaching-ui-system.js?v=20261005-1';
+import './teaching-ui-system.js?v=20261005-2';
+import './teaching-ui-accessibility.js?v=20261005-1';
 
 const SMALL_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'into', 'nor', 'of', 'on', 'or', 'the', 'to', 'with']);
 const COURSE_TONES = [
