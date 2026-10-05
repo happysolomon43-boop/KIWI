@@ -20,7 +20,7 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
   if (!repository) throw new TypeError('D08 service requires its D04/D05/D08-backed repository.');
 
   function held() {
-    const error = new Error('Teaching AI routes remain UNQUALIFIED pending D30.');
+    const error = new Error('Course Plan generation is temporarily unavailable.');
     error.status = 503;
     error.code = 'TEACHING_ROUTE_UNQUALIFIED';
     throw error;
@@ -92,6 +92,12 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
       unitsByTopic.get(unit.topic_id).push(unit);
     }
     const scopeState = currentPlanScopeState(setup);
+    const diagnostic = assessRequiredDiagnostic({ diagnosticPlan: setup.diagnosticPlan, vpkDecisions: setup.vpkDecisions });
+    const generationBlockers = [];
+    if (!setup.curriculumAudit || setup.curriculumAudit.status !== 'VALIDATED_CANDIDATE') generationBlockers.push('CURRICULUM_AUDIT_REQUIRED');
+    else if (String(setup.curriculumAudit.subject_snapshot_ref || '') !== String(setup.course.subject_snapshot_ref || '')) generationBlockers.push('CURRICULUM_AUDIT_STALE_FOR_SCOPE');
+    if ((setup.sources || []).some((source) => !source.classification)) generationBlockers.push('SOURCE_CLASSIFICATION_INCOMPLETE');
+    if (!diagnostic.resolved) generationBlockers.push('REQUIRED_DIAGNOSTIC_UNRESOLVED');
     const auditOutput = setup.curriculumAudit?.audit_output || {};
     const meaningfulSources = (setup.sources || []).filter((source) => source.classification === 'ACADEMICALLY_MEANINGFUL' && source.academically_meaningful !== false);
     const excludedSources = (setup.sources || []).filter((source) => source.classification && source.classification !== 'ACADEMICALLY_MEANINGFUL');
@@ -123,7 +129,12 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
         stateVersion: Number(setup.course.state_version),
       }),
       stage: 'COURSE_PLAN_AND_COVERAGE_REVIEW',
-      routeQualification: 'UNQUALIFIED_UNTIL_D30',
+      routeQualification: intelligence ? 'QUALIFIED_BY_RUNTIME_INJECTION' : 'ROUTE_UNAVAILABLE',
+      generation: Object.freeze({
+        available: Boolean(intelligence),
+        ready: Boolean(intelligence) && generationBlockers.length === 0,
+        blockers: Object.freeze(generationBlockers),
+      }),
       sourceAnalysis,
       plan: setup.plan ? Object.freeze({
         version: Number(setup.plan.version_no),

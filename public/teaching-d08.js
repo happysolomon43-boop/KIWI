@@ -269,19 +269,51 @@ function renderSummaryCard(course, review, container, openSection) {
   container.replaceChildren(card);
 }
 
-function renderPlanCard(review) {
+function renderPlanCard(course, review, refresh) {
   const card = el('section', 'teaching-d08-card');
   const head = el('div', 'teaching-d08-plan-head');
   const copy = el('div');
   copy.append(el('div', 'teaching-kicker', 'Course Plan'), el('h3', '', 'What this course will teach'));
   const status = el('span', 'teaching-d08-status', review.plan
     ? `Version ${review.plan.version} · ${safeStatus(review.plan.state)}`
-    : review.routeQualification === 'UNQUALIFIED_UNTIL_D30' ? 'Generation held until D30' : 'Plan pending');
+    : review.generation?.ready === false ? 'Setup required' : 'Ready to create');
   head.append(copy, status);
   card.append(head);
 
   if (!review.plan) {
-    card.append(el('p', '', 'No Course Plan has been committed yet. The validated source analysis remains authoritative for what must eventually be accounted for.'));
+    card.append(el('p', '', 'Create a Course Plan to organize the topics and learning units for this course.'));
+    const actions = el('div', 'teaching-d08-actions');
+    const generate = el('button', 'teaching-button', 'Create Course Plan');
+    generate.type = 'button';
+    generate.disabled = review.generation?.ready === false;
+    const message = el('div');
+    message.setAttribute('role', 'status');
+    message.setAttribute('aria-live', 'polite');
+    if (review.generation?.available === false) {
+      message.textContent = 'Course Plan generation is temporarily unavailable.';
+      message.className = 'teaching-message';
+    } else if (review.generation?.ready === false) {
+      message.textContent = 'Complete the required course setup before creating the plan.';
+      message.className = 'teaching-message';
+    }
+    generate.addEventListener('click', async () => {
+      generate.disabled = true;
+      message.textContent = 'Creating your Course Plan…';
+      message.className = 'teaching-message';
+      delete message.dataset.kind;
+      try {
+        await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/course-plan`, { method: 'POST', body: {} });
+        message.textContent = 'Course Plan created.';
+        await refresh();
+      } catch (error) {
+        message.textContent = error.message || 'Could not create the Course Plan.';
+        message.className = 'teaching-message';
+        message.dataset.kind = 'error';
+        generate.disabled = false;
+      }
+    });
+    actions.append(generate);
+    card.append(actions, message);
     return card;
   }
   if (!review.plan.currentForCourseScope) {
@@ -455,7 +487,7 @@ async function renderCoursePlan({ course, container }) {
       const grid = el('div', 'teaching-d08-grid');
       const primary = el('div', 'teaching-d08-stack');
       const secondary = el('aside', 'teaching-d08-stack');
-      primary.append(renderPlanCard(review), renderCoverageCard(review));
+      primary.append(renderPlanCard(course, review, load), renderCoverageCard(review));
       secondary.append(renderAnalysisCard(review), renderAssumptionsCard(review), renderScopeCard(course, review, load));
       grid.append(primary, secondary);
       body.replaceChildren(grid);

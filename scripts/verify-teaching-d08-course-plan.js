@@ -121,7 +121,9 @@ if (!ui.includes("courseSurface.registerSection") || !ui.includes("id: 'course-p
 }
 if (/nav\.register|KIWITeachingNavigation/.test(ui)) throw new Error('D08 Course Plan must not register as global Teaching navigation.');
 if (!ui.includes('Quick view') || !ui.includes('View full Course Plan')) throw new Error('D08 course-scoped preview/full-plan entry points missing.');
+if (!ui.includes('Create Course Plan') || !ui.includes("method: 'POST'")) throw new Error('D08 Course Plan generation action is missing from the browser surface.');
+if (ui.includes('Generation held until D30') || ui.includes('No Course Plan has been committed yet')) throw new Error('D08 browser surface still exposes stale release-gate wording.');
 if (!teachingUi.includes('window.KIWITeachingCourses') || !teachingUi.includes('teachingCourseSections')) throw new Error('Teaching course-context navigation API missing.');
 if (!teachingHtml.includes('teaching-course-nav__item') || !teachingHtml.includes('/teaching-d08.js')) throw new Error('D08 course-context browser integration is not packaged.');
 
-console.log('[Teaching D08 verify] PASS — 33 tasks accounted for; frozen TPF-03 planning is provisional, Course Plan/Coverage authority is deterministic and versioned, scope inheritance is explicit, and routes remain held until D30.');
+console.log('[Teaching D08 verify] PASS — 33 tasks accounted for; frozen TPF-03 planning is provisional, Course Plan/Coverage authority is deterministic and versioned, scope inheritance is explicit, and runtime qualification is reported without stale release labels.');

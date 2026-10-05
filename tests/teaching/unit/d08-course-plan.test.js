@@ -285,7 +285,7 @@ test('D08 intelligence delegates model work only through the Teaching Orchestrat
   assert.equal(calls[0].capabilityId, 'teaching.curriculum.course_plan_generation');
 });
 
-test('D08 service keeps unqualified model-backed plan generation held until D30', async () => {
+test('D08 service reports unavailable model-backed plan generation without stale release wording', async () => {
   const service = createD08Service({
     subjects: { async getCorpusForUser() { return {}; } },
     repository: {
@@ -296,6 +296,22 @@ test('D08 service keeps unqualified model-backed plan generation held until D30'
     intelligence: null,
   });
   await assert.rejects(service.generateCoursePlan({ id: 'u1' }, 'c1'), { code: 'TEACHING_ROUTE_UNQUALIFIED' });
+});
+
+test('D08 plan review exposes current generation readiness instead of a historical D30 gate', async () => {
+  const base = {
+    course: { course_id: 'c1', title: 'Course', state_version: 1, lifecycle_state: 'DRAFT', subject_snapshot_ref: 'snapshot:1' },
+    curriculumAudit: audit(), sources: sources(), diagnosticPlan: { requirement_state: 'NOT_REQUIRED' }, vpkDecisions: [],
+    coverageAudits: [], scopeChanges: [], learningUnits: [], topics: [], subtopics: [], coverage: [], coverageMappings: [], assumedPrerequisites: [],
+  };
+  const service = createD08Service({
+    subjects: { async getCorpusForUser() { return {}; } },
+    repository: { async getPlanReview() { return base; } },
+    intelligence: { async generateCoursePlan() {} },
+  });
+  const review = await service.getPlanReview({ id: 'u1' }, 'c1');
+  assert.equal(review.routeQualification, 'QUALIFIED_BY_RUNTIME_INJECTION');
+  assert.deepEqual(review.generation, { available: true, ready: true, blockers: [] });
 });
 
 test('D08 service rejects stale Curriculum Audit after authoritative scope change', async () => {
@@ -351,6 +367,9 @@ test('Course Plan is course-scoped with quick preview instead of global Teaching
   assert.match(d08, /id: 'course-plan'/);
   assert.match(d08, /Quick view/);
   assert.match(d08, /View full Course Plan/);
+  assert.match(d08, /Create Course Plan/);
+  assert.match(d08, /\/course-plan/);
+  assert.doesNotMatch(d08, /Generation held until D30|No Course Plan has been committed yet/);
   assert.doesNotMatch(d08, /nav\.register|KIWITeachingNavigation/);
   assert.match(html, /teaching-course-nav__item/);
 });
