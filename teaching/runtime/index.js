@@ -3,6 +3,7 @@ const {createPostgresTeachingEventStore}=require('./postgres-event-store');
 const {createDurableTeachingEventRuntime}=require('./durable-event-runtime');
 const {createPostgresTeachingExecutionTelemetry}=require('../observability/postgres-execution-telemetry');
 const {createCentralAIExecutionBoundary}=require('../ai/central-orchestrator-boundary');
+const {setActiveTeachingAIBoundary}=require('../ai/runtime-bridge');
 const {createD28AiExecutionControls}=require('../d28/ai-controls');
 const {createD28RuntimeService}=require('../d28/runtime-service');
 const {setD28RuntimeService}=require('../d28/runtime-bridge');
@@ -23,6 +24,7 @@ function createTeachingRuntimePlatform({query,randomUUID,aiRun,env=process.env,l
  const workerId=`teaching-runtime:${randomUUID()}`;
  const eventRuntime=createDurableTeachingEventRuntime({store:eventStore,workerId,logger,clock,timers,pollMs:parseBounded(env.TEACHING_RUNTIME_POLL_MS,5000,1000,60000),leaseMs:parseBounded(env.TEACHING_RUNTIME_LEASE_MS,30000,5000,300000),batchSize:parseBounded(env.TEACHING_RUNTIME_BATCH_SIZE,20,1,100),maxAttempts:parseBounded(env.TEACHING_RUNTIME_MAX_ATTEMPTS,5,1,20),retryBaseMs:parseBounded(env.TEACHING_RUNTIME_RETRY_BASE_MS,5000,1000,300000)});
  const aiBoundary=createCentralAIExecutionBoundary({aiRun,telemetry:executionTelemetry,executionControls:aiExecutionControls});
+ setActiveTeachingAIBoundary(aiBoundary);
  let ready=false,lastInitializationError=null;
  async function initialize(){try{promptControl.assertReady();await eventStore.assertReady();await executionTelemetry.assertReady();await d28Service.assertReady();ready=true;lastInitializationError=null;logger?.info?.('[KIWI Teaching] Frozen prompt runtime verified: 20/20 families, manifest v1.4');logger?.info?.('[KIWI Teaching D28] operational hardening runtime verified.');return true;}catch(error){ready=false;lastInitializationError={code:error?.code||null,message:error?.message||String(error)};throw error;}}
  function start(){if(!ready){const error=new Error('Teaching durable runtime cannot start before schema readiness passes.');error.code='TEACHING_RUNTIME_NOT_READY';throw error;}d28Service.start();return eventRuntime.start();}
