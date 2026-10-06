@@ -135,7 +135,7 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
     const safeLeaseMs = normalizeLeaseMs(leaseMs);
     const { rows } = await query(
       `update teaching_runtime.event_outbox
-          set claim_expires_at=$3+($4::bigint*interval '1 millisecond'),updated_at=now()
+          set claim_expires_at=$3::timestamptz+($4::bigint*interval '1 millisecond'),updated_at=now()
         where event_id=$1 and status='CLAIMED' and claim_token=$2 returning *`,
       [event.event_id,event.claim_token,now,safeLeaseMs]
     );
