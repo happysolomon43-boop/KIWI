@@ -79,7 +79,7 @@ function blockRow(block,zoneInput,courseId) {
 }
 function stage4(course,data,container,reload) {
   const card=el('section','teaching-d09-card');
-  card.append(el('div','teaching-kicker','Scheduling preferences'),el('h3','','Semester and availability'),el('p','','Choose the academic period and the weekly times KIWI may use. You can also protect breaks, travel, revision, and assessment time.'));
+  card.append(el('div','teaching-kicker','Scheduling preferences'),el('h3','','Semester and availability'),el('p','','Your weekly availability is shared across the Semester. Once set in any Course, KIWI uses it as the default for the others and recalculates the shared timetable when it changes.'));
   const sem=data.semester||{}, grid=el('div','teaching-d09-fields');
   const name=el('input'); name.value=sem.name||'Semester';
   const today=new Date(),defaultEnd=new Date(today);defaultEnd.setMonth(defaultEnd.getMonth()+4);
@@ -87,6 +87,9 @@ function stage4(course,data,container,reload) {
   const end=useNativePicker(el('input')); end.type='date'; end.value=(sem.endsAt||'').slice(0,10)||dateInputValue(defaultEnd);
   const zone=el('input'); zone.value=sem.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
   addField(grid,'Semester name',name); addField(grid,'Start date',start); addField(grid,'End date',end); addField(grid,'Timetable timezone',zone); card.append(grid);
+  if(data.inheritedAvailability){
+    card.append(el('div','teaching-message','Using your current Semester availability as the default for this Course. Save it here to attach this Course to the same shared timetable.'));
+  }
 
   const windows=data.profile?.availability||[], available=windows.filter((x)=>x.kind==='AVAILABLE'), recovery=windows.filter((x)=>x.kind==='RECOVERY_ONLY'), hard=windows.filter((x)=>x.kind==='HARD_UNAVAILABLE');
   const availDays=dayPicker(available.length?available.map((x)=>x.dayOfWeek):[1,2,3,4,5]);
@@ -132,8 +135,18 @@ function stage4(course,data,container,reload) {
         await window.KIWITeachingD10.createScheduleRequest(course.course_id,body);
         message.textContent='A formal availability-change Request was created. The current timetable remains authoritative until approval/application.';
       }else{
-        const saved=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body});
-        await reload(saved,'Availability saved. You can now create a proposed timetable after the Course Plan is ready.');
+        try{
+          const saved=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body});
+          await reload(saved,'Shared availability saved. KIWI recalculated the Semester timetable automatically where a current Course Plan was available.');
+        }catch(error){
+          if(error?.code==='TEACHING_D09_ACTIVE_SEMESTER_AVAILABILITY_REQUIRES_REQUEST'&&window.KIWITeachingD10?.createScheduleRequest){
+            await window.KIWITeachingD10.createScheduleRequest(course.course_id,body);
+            message.textContent='This Semester already has an active Course, so KIWI created a formal availability-change Request. The shared timetable will recalculate when that change is applied.';
+            message.className='teaching-message';
+            return;
+          }
+          throw error;
+        }
       }
       message.className='teaching-message';
     } catch(error) { message.textContent=error.message||'Availability could not be saved.'; message.className='teaching-message'; message.dataset.kind='error'; }
@@ -146,9 +159,13 @@ function stage5(course,data,container,reload) {
   card.append(el('div','teaching-kicker','Timetable'),el('h3','','Proposed timetable and feasibility'),el('p','','KIWI uses the Course Plan, your availability, and protected time to build a realistic timetable. Required learning is never removed just to make the calendar fit.'));
   const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
   const missingInputs=!data.semester||!data.profile;
-  const missingPlan=(data.unresolvedSemesterCourses||[]).some((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
+  const unresolvedSelf=(data.unresolvedSemesterCourses||[]).find((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
+  const missingPlan=Boolean(unresolvedSelf);
   const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',postActivation?'Timetable locked after activation':(data.timetable?'Recalculate timetable':'Propose timetable')), status=el('span','teaching-d09-status',statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button';propose.disabled=postActivation||missingInputs||missingPlan; actions.append(propose,status); card.append(actions);
   if(missingInputs){card.append(el('div','teaching-message','Save your semester and availability before creating the timetable.'));}
+  else if(unresolvedSelf?.reason==='COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'){
+    card.append(el('div','teaching-message','This Course is using your shared Semester availability by default. Save the availability once to attach the Course; KIWI will then recalculate the timetable automatically.'));
+  }
   else if(missingPlan){const guidance=el('div','teaching-message'),openPlan=el('button','teaching-d08-link-button','Open Course Plan');openPlan.type='button';openPlan.addEventListener('click',()=>courseSurface.openCourse(course.course_id,'course-plan'));guidance.append(document.createTextNode('Create the Course Plan before proposing a timetable. '),openPlan);card.append(guidance);}
   const metrics=el('div','teaching-d09-metrics'); metrics.append(metric(data.feasibility?.metrics?.scheduledMinutes??0,'scheduled minutes'),metric(data.feasibility?.metrics?.requiredMinutes??0,'required minutes'),metric(data.feasibility?.metrics?.headroomRatio==null?'—':Math.round(data.feasibility.metrics.headroomRatio*100)+'%','Recovery headroom')); card.append(metrics);
   if(data.feasibility?.reasons?.length){const list=el('ul','teaching-d08-list');data.feasibility.reasons.forEach((reason)=>list.append(el('li','',statusName(reason))));card.append(list);}

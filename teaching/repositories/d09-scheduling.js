@@ -39,6 +39,22 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const {rows}=await q(runner,`select * from public.teaching_schedule_profiles where student_id=$1 and semester_id=$2 order by version_no desc limit 1`,[studentId,semesterId]);
     return rows?.[0]||null;
   }
+  async function latestDefaultSemester(studentId,runner=null){
+    const {rows=[]}=await q(runner,`
+      select s.*
+        from public.teaching_semesters s
+       where s.student_id=$1
+         and exists (
+           select 1 from public.teaching_schedule_profiles p
+            where p.student_id=s.student_id and p.semester_id=s.semester_id
+         )
+       order by (s.ends_at>=now()) desc,
+                (select max(p.created_at) from public.teaching_schedule_profiles p where p.student_id=s.student_id and p.semester_id=s.semester_id) desc,
+                s.created_at desc
+       limit 1
+    `,[studentId]);
+    return rows[0]||null;
+  }
   async function profileChildren(studentId,profileId,runner=null){
     const results=await Promise.all([
       q(runner,'select * from public.teaching_availability_windows where student_id=$1 and profile_id=$2 order by day_of_week,local_start',[studentId,profileId]),
@@ -63,47 +79,65 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
   }
   async function getSchedulingContext(studentId,courseId){
     const course=await ensureCourse(studentId,courseId);
-    if(!course.semester_id) return {course,semester:null,profile:null,availability:[],blocks:[],deadlines:[],reserves:[],courses:[],unresolvedCourses:[]};
-    const {rows:semesters}=await query('select * from public.teaching_semesters where student_id=$1 and semester_id=$2',[studentId,course.semester_id]);
-    const semester=semesters?.[0]||null;
-    const profile=await latestProfile(studentId,course.semester_id);
+    let semester=null,inheritedDefault=false;
+    if(course.semester_id){
+      const {rows:semesters}=await query('select * from public.teaching_semesters where student_id=$1 and semester_id=$2',[studentId,course.semester_id]);
+      semester=semesters?.[0]||null;
+    }else{
+      semester=await latestDefaultSemester(studentId);
+      inheritedDefault=Boolean(semester);
+    }
+    if(!semester) return {course,semester:null,profile:null,availability:[],blocks:[],deadlines:[],reserves:[],courses:[],unresolvedCourses:[],inheritedDefault:false};
+    const profile=await latestProfile(studentId,semester.semester_id);
     const children=profile?await profileChildren(studentId,profile.profile_id):{availability:[],blocks:[],deadlines:[],reserves:[]};
-    const {rows:siblingRows=[]}=await query('select * from public.teaching_courses where student_id=$1 and semester_id=$2 order by created_at,course_id',[studentId,course.semester_id]);
+    const {rows:siblingRows=[]}=await query('select * from public.teaching_courses where student_id=$1 and semester_id=$2 order by created_at,course_id',[studentId,semester.semester_id]);
     const bundles=[], unresolvedCourses=[];
     for(const sibling of siblingRows){
       const bundle=await latestPlanBundle(studentId,sibling.course_id);
       if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,stateVersion:Number(sibling.state_version),reason:'COURSE_PLAN_NOT_READY'}); continue; }
       bundles.push({...bundle,course:sibling,semesterTimezone:semester?.timezone});
     }
+    if(inheritedDefault) unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'});
     const {rows:historyRows=[]}=await query(`select * from public.teaching_timetable_versions
-      where student_id=$1 and semester_id=$2 order by version_no desc limit 1`,[studentId,course.semester_id]);
+      where student_id=$1 and semester_id=$2 order by version_no desc limit 1`,[studentId,semester.semester_id]);
     const priorTimetable=historyRows[0]||null;
     const {rows:priorSlots=[]}=priorTimetable
       ? await query('select * from public.teaching_timetable_slots where student_id=$1 and timetable_version_id=$2 order by starts_at',[studentId,priorTimetable.timetable_version_id])
       : {rows:[]};
-    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots};
+    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots,inheritedDefault};
   }
   async function getSchedulingContextUsing(runner,studentId,courseId){
     const course=await ensureCourse(studentId,courseId,runner,true);
-    if(!course.semester_id) return {course,semester:null,profile:null,availability:[],blocks:[],deadlines:[],reserves:[],courses:[],unresolvedCourses:[]};
-    const {rows:semesters}=await q(runner,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,course.semester_id]);
-    const semester=semesters?.[0]||null;
-    const profile=await latestProfile(studentId,course.semester_id,runner);
+    let semester=null,inheritedDefault=false;
+    if(course.semester_id){
+      const {rows:semesters}=await q(runner,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,course.semester_id]);
+      semester=semesters?.[0]||null;
+    }else{
+      semester=await latestDefaultSemester(studentId,runner);
+      inheritedDefault=Boolean(semester);
+      if(semester){
+        const {rows:locked}=await q(runner,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,semester.semester_id]);
+        semester=locked?.[0]||null;
+      }
+    }
+    if(!semester) return {course,semester:null,profile:null,availability:[],blocks:[],deadlines:[],reserves:[],courses:[],unresolvedCourses:[],inheritedDefault:false};
+    const profile=await latestProfile(studentId,semester.semester_id,runner);
     const children=profile?await profileChildren(studentId,profile.profile_id,runner):{availability:[],blocks:[],deadlines:[],reserves:[]};
-    const {rows:siblingRows=[]}=await q(runner,'select * from public.teaching_courses where student_id=$1 and semester_id=$2 order by created_at,course_id for update',[studentId,course.semester_id]);
+    const {rows:siblingRows=[]}=await q(runner,'select * from public.teaching_courses where student_id=$1 and semester_id=$2 order by created_at,course_id for update',[studentId,semester.semester_id]);
     const bundles=[], unresolvedCourses=[];
     for(const sibling of siblingRows){
       const bundle=await latestPlanBundle(studentId,sibling.course_id,runner);
       if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,stateVersion:Number(sibling.state_version),reason:'COURSE_PLAN_NOT_READY'}); continue; }
       bundles.push({...bundle,course:sibling,semesterTimezone:semester?.timezone});
     }
+    if(inheritedDefault) unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'});
     const {rows:historyRows=[]}=await q(runner,`select * from public.teaching_timetable_versions
-      where student_id=$1 and semester_id=$2 order by version_no desc limit 1 for update`,[studentId,course.semester_id]);
+      where student_id=$1 and semester_id=$2 order by version_no desc limit 1 for update`,[studentId,semester.semester_id]);
     const priorTimetable=historyRows[0]||null;
     const {rows:priorSlots=[]}=priorTimetable
       ? await q(runner,'select * from public.teaching_timetable_slots where student_id=$1 and timetable_version_id=$2 order by starts_at',[studentId,priorTimetable.timetable_version_id])
       : {rows:[]};
-    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots};
+    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots,inheritedDefault};
   }
   async function assertContextCurrentUsing(tx,{studentId,context}){
     const {rows:semesterRows}=await q(tx,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,context.semester.semester_id]);
@@ -389,7 +423,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     return classes;
   }
   return Object.freeze({
-    assertReady,listSemesters,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,saveScheduleInputsUsing,saveProposalUsing,
+    assertReady,listSemesters,latestDefaultSemester,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,saveScheduleInputsUsing,saveProposalUsing,
     latestTimetable,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
   });
 }
