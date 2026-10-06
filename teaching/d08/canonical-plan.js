@@ -66,27 +66,62 @@ function validateTpf03CoursePlanOutput(output, { course } = {}) {
   return { ok: true, value: output, blocksFinalPlan: blocks };
 }
 
+function buildAuditSourceUnitGraph(auditOutput = {}, sources = []) {
+  const sourceUnits = new Map(sources.map((source) => [String(source.source_ref), new Set()]));
+  const sourceRefByCanonicalRef = new Map(
+    sources.map((source) => [`source:${source.source_content_item_id}`, String(source.source_ref)])
+  );
+  const add = (sourceRef, unitRef) => {
+    const sourceKey = String(sourceRef || '').trim();
+    const unitKey = String(unitRef || '').trim();
+    if (!sourceKey || !unitKey || !sourceUnits.has(sourceKey)) return;
+    sourceUnits.get(sourceKey).add(unitKey);
+  };
+
+  for (const account of auditOutput.source_accounting || []) {
+    for (const unitRef of account.learning_unit_ids || []) add(account.source_ref, unitRef);
+  }
+
+  const unitsByTopic = new Map();
+  for (const unit of auditOutput.learning_units || []) {
+    const unitRef = String(unit.learning_unit_id || unit.id || '').trim();
+    if (!unitRef) continue;
+    for (const canonicalSourceRef of unit.source_item_refs || []) {
+      const sourceRef = sourceRefByCanonicalRef.get(String(canonicalSourceRef));
+      if (sourceRef) add(sourceRef, unitRef);
+    }
+    const topicRefs = new Set([
+      ...(unit.topic_refs || []).map(String),
+      ...(unit.topic_id == null ? [] : [String(unit.topic_id)]),
+    ].filter(Boolean));
+    for (const topicRef of topicRefs) {
+      if (!unitsByTopic.has(topicRef)) unitsByTopic.set(topicRef, new Set());
+      unitsByTopic.get(topicRef).add(unitRef);
+    }
+  }
+
+  for (const topic of auditOutput.topics || []) {
+    const topicRef = String(topic.topic_id || topic.id || '').trim();
+    const unitRefs = unitsByTopic.get(topicRef);
+    if (!topicRef || !unitRefs?.size) continue;
+    for (const canonicalSourceRef of topic.source_item_refs || []) {
+      const sourceRef = sourceRefByCanonicalRef.get(String(canonicalSourceRef));
+      if (!sourceRef) continue;
+      for (const unitRef of unitRefs) add(sourceRef, unitRef);
+    }
+  }
+
+  return new Map([...sourceUnits].map(([sourceRef, unitRefs]) => [sourceRef, Object.freeze([...unitRefs])]));
+}
+
 function currentValidatedVpkRefsForAuditUnit(unitRef, { vpkDecisions = [], auditOutput = null, sources = [] } = {}) {
   const latest = latestVpkByTarget(vpkDecisions);
   const refs = [];
   const direct = latest.get(`LEARNING_UNIT:${unitRef}`);
   if (direct?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE') refs.push(String(direct.vpk_decision_id));
-  const sourceAccounting = auditOutput?.source_accounting || [];
-  const sourceByRef = new Map(sources.map((source) => [String(source.source_ref), source]));
-  const sourceByCanonicalRef = new Map(sources.map((source) => [`source:${source.source_content_item_id}`, source]));
-  for (const account of sourceAccounting) {
-    if (!(account.learning_unit_ids || []).map(String).includes(String(unitRef))) continue;
-    const source = sourceByRef.get(String(account.source_ref));
-    if (!source) continue;
-    const byId = latest.get(`SOURCE_CONTENT_ITEM:${source.source_content_item_id}`);
-    const byRef = latest.get(`SOURCE_CONTENT_ITEM:${source.source_ref}`);
-    const decision = byId?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE' ? byId : byRef;
-    if (decision?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE') refs.push(String(decision.vpk_decision_id));
-  }
-  const canonicalUnit = (auditOutput?.learning_units || []).find((unit) => String(unit.learning_unit_id || unit.id) === String(unitRef));
-  for (const sourceItemRef of canonicalUnit?.source_item_refs || []) {
-    const source = sourceByCanonicalRef.get(String(sourceItemRef));
-    if (!source) continue;
+  const sourceUnitGraph = buildAuditSourceUnitGraph(auditOutput || {}, sources);
+  for (const source of sources) {
+    if (!(sourceUnitGraph.get(String(source.source_ref)) || []).includes(String(unitRef))) continue;
     const byId = latest.get(`SOURCE_CONTENT_ITEM:${source.source_content_item_id}`);
     const byRef = latest.get(`SOURCE_CONTENT_ITEM:${source.source_ref}`);
     const decision = byId?.decision_status === 'VALIDATED_PRIOR_KNOWLEDGE' ? byId : byRef;
@@ -114,15 +149,14 @@ function deriveLearningUnitLineage({ previousPlanContext = null, auditOutput, so
     const set = oldSourcesByUnit.get(String(mapping.learning_unit_key));
     if (set) set.add(String(mapping.source_ref));
   }
-  const sourceRefByCanonicalRef = new Map(sources.map((source) => [`source:${source.source_content_item_id}`, String(source.source_ref)]));
   const newSourcesByUnit = new Map((auditOutput.learning_units || []).map((unit) => [
     String(unit.learning_unit_id || unit.id),
-    new Set((unit.source_item_refs || []).map((ref) => sourceRefByCanonicalRef.get(String(ref))).filter(Boolean)),
+    new Set(),
   ]));
-  for (const account of auditOutput.source_accounting || []) {
-    for (const unitRef of account.learning_unit_ids || []) {
+  for (const [sourceRef, unitRefs] of buildAuditSourceUnitGraph(auditOutput, sources)) {
+    for (const unitRef of unitRefs) {
       const set = newSourcesByUnit.get(String(unitRef));
-      if (set) set.add(String(account.source_ref));
+      if (set) set.add(String(sourceRef));
     }
   }
   const oldToNew = new Map();
@@ -212,13 +246,11 @@ function materializeCoursePlanFromTpf03(output, { audit, sources = [], vpkDecisi
   const derivedDependencies = auditOutput.learning_units.flatMap((unit) => (unit.prerequisite_refs || [])
     .map(String).filter((ref) => unitIds.has(ref)).map((ref) => ({ learning_unit_key: String(unit.learning_unit_id || unit.id), prerequisite_learning_unit_key: ref, rationale: unit.dependency_type_notes || null })));
   const dependencies = explicitDependencies.length ? explicitDependencies : derivedDependencies;
-  const canonicalRefBySourceRef = new Map(sources.map((source) => [String(source.source_ref), `source:${source.source_content_item_id}`]));
-  const source_mappings = Array.isArray(auditOutput.source_accounting)
-    ? auditOutput.source_accounting.map((account) => ({ source_ref: String(account.source_ref), learning_unit_keys: (account.learning_unit_ids || []).map(String) }))
-    : sources.map((source) => ({
-        source_ref: String(source.source_ref),
-        learning_unit_keys: auditOutput.learning_units.filter((unit) => (unit.source_item_refs || []).map(String).includes(canonicalRefBySourceRef.get(String(source.source_ref)))).map((unit) => String(unit.learning_unit_id || unit.id)),
-      }));
+  const sourceUnitGraph = buildAuditSourceUnitGraph(auditOutput, sources);
+  const source_mappings = sources.map((source) => ({
+    source_ref: String(source.source_ref),
+    learning_unit_keys: sourceUnitGraph.get(String(source.source_ref)) || [],
+  }));
   const assumed_prerequisites = (auditOutput.assumed_prerequisites || []).map((item, index) => normalizeAuditPrerequisite(item, index, auditUnitIds));
   const learning_unit_lineage = deriveLearningUnitLineage({ previousPlanContext, auditOutput, sources });
   return { ok: true, value: {
@@ -256,4 +288,5 @@ module.exports = {
   validateTpf03ScopeImpactOutput,
   materializeCoursePlanFromTpf03,
   deriveLearningUnitLineage,
+  buildAuditSourceUnitGraph,
 };
