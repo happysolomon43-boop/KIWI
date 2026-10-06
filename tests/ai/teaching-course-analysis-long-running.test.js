@@ -11,10 +11,15 @@ const {
   EXECUTION_PROFILE_CONFIG,
   resolveExecutionProfile,
 } = require('../../services/ai/orchestrator');
-const { TPF02_EXECUTION_PROFILE } = require('../../teaching/orchestrator/ai-adapter');
+const {
+  TPF02_EXECUTION_PROFILE,
+  LONG_RUNNING_ANALYSIS_PROFILE,
+  executionProfileForInvocation,
+} = require('../../teaching/orchestrator/ai-adapter');
 
 test('Teaching TPF-02 uses the centrally governed long-running analysis profile', () => {
   assert.equal(TPF02_EXECUTION_PROFILE, AI_EXECUTION_PROFILES.LONG_RUNNING_ANALYSIS);
+  assert.equal(LONG_RUNNING_ANALYSIS_PROFILE, AI_EXECUTION_PROFILES.LONG_RUNNING_ANALYSIS);
   const profile = resolveExecutionProfile(AI_TASKS.MAIN_CBT, TPF02_EXECUTION_PROFILE);
 
   assert.equal(profile.name, 'LONG_RUNNING_ANALYSIS');
@@ -44,7 +49,7 @@ test('execution profile names are centrally allowlisted and fail closed', () => 
   );
 });
 
-test('TPF-02 adapter applies long-running profile without changing the central task route', () => {
+test('Teaching adapter applies long-running profile only to allowlisted invocations without changing the central task route', () => {
   const source = fs.readFileSync(
     path.resolve(__dirname, '../../teaching/orchestrator/ai-adapter.js'),
     'utf8'
@@ -54,8 +59,25 @@ test('TPF-02 adapter applies long-running profile without changing the central t
     'utf8'
   );
 
-  assert.match(source, /executionProfile:directTpf02\?TPF02_EXECUTION_PROFILE:null/);
-  assert.match(source, /TPF02_EXECUTION_PROFILE='LONG_RUNNING_ANALYSIS'/);
+  assert.equal(executionProfileForInvocation({
+    capability: { id: 'teaching.course_materials.analysis' },
+    prompt: { family_id: 'TPF-02' },
+    output_schema: { id: 'tpf02.curriculum_analysis' },
+  }), LONG_RUNNING_ANALYSIS_PROFILE);
+  assert.equal(executionProfileForInvocation({
+    capability: { id: 'teaching.scheduling.instructional_load_estimation' },
+    prompt: { family_id: 'TPF-10' },
+    output_schema: { id: 'tpf10.instructional-load-estimation' },
+  }), LONG_RUNNING_ANALYSIS_PROFILE);
+  assert.equal(executionProfileForInvocation({
+    capability: { id: 'teaching.scheduling.initial_timetable_proposal' },
+    prompt: { family_id: 'TPF-10' },
+    output_schema: { id: 'd09.scheduling-advisory.v1' },
+  }), null);
+
+  assert.match(source, /LONG_RUNNING_ANALYSIS_PROFILE='LONG_RUNNING_ANALYSIS'/);
+  assert.match(source, /teaching\.scheduling\.instructional_load_estimation/);
+  assert.match(source, /centralRouteOptions:Object\.freeze\(\{preparationRoutePosture:preparationRoutePosture\|\|null,executionProfile\}\)/);
   assert.match(routePolicy, /TEACHING_AI_TASK\s*=\s*'MAIN_CBT'/);
   assert.match(routePolicy, /WEBSITE_DEFAULT_AI_TASK\s*=\s*TEACHING_AI_TASK/);
   assert.match(routePolicy, /COURSE_PLAN_AI_TASK\s*=\s*TEACHING_AI_TASK/);

@@ -1,5 +1,9 @@
-/* Restore original Teaching families without globally changing component metrics.
- * Loaded before JavaScript so loading and error surfaces share the same fonts. */
+/* Canonical Teaching typography ownership.
+ *
+ * Keep the original KIWI Teaching families and let feature styles own their
+ * layout/scale. This layer owns family selection and browser font behaviour so
+ * dynamically rendered modules cannot fall back to native UI fonts or synthetic
+ * stretched faces. */
 html[data-app="kiwi-teaching"] {
   --teaching-font-body: "DM Sans", sans-serif;
   --teaching-font-display: "Syne", sans-serif;
@@ -7,27 +11,56 @@ html[data-app="kiwi-teaching"] {
   --font-body: var(--teaching-font-body);
   --font-display: var(--teaching-font-display);
   --font-mono: var(--teaching-font-mono);
+  --teaching-weight-regular: 400;
+  --teaching-weight-medium: 500;
   --teaching-weight-semibold: 600;
+  --teaching-weight-bold: 700;
   --teaching-type-body-small-size: 12px;
   --teaching-type-body-small-line: 1.45;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  font-synthesis: none;
+  font-stretch: normal;
+  font-variation-settings: normal;
+  font-optical-sizing: auto;
 }
+
 html[data-app="kiwi-teaching"] body {
   font-family: var(--font-body);
+  font-synthesis: none;
+  font-stretch: normal;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
-/* Native controls otherwise default to browser fonts. */
+
+/* Native controls are a common browser-font escape hatch. Keep every Teaching
+ * action and form field in the body family; component CSS still owns its size,
+ * weight, spacing, colour and geometry. */
 html[data-app="kiwi-teaching"] :is(button, input, select, textarea, option) {
   font-family: var(--font-body);
+  font-synthesis: none;
+  font-stretch: normal;
+  font-variation-settings: normal;
 }
-html[data-app="kiwi-teaching"] :is(h1, h2, h3, h4, h5, h6, .teaching-title) {
+
+/* The established Teaching hierarchy: Syne for authored headings/brand only. */
+html[data-app="kiwi-teaching"] :is(h1, h2, h3, h4, h5, h6, .teaching-title, .teaching-brand__kiwi, .teaching-brand__name) {
   font-family: var(--font-display);
+  font-synthesis: none;
+  font-stretch: normal;
 }
+
+/* Technical/provenance text remains intentionally monospace. */
 html[data-app="kiwi-teaching"] :is(code, pre, kbd, samp) {
   font-family: var(--font-mono);
+  font-synthesis: none;
+  font-stretch: normal;
 }
+
 /* Uncovered status divs retain the original message scale. No universal
- * inheritance override: nested emphasis, code and maths remain independent. */
+ * metric override: nested emphasis, code, maths and feature-specific hierarchy
+ * remain independent. */
 html[data-app="kiwi-teaching"] :is([role="status"], [role="alert"], .teaching-message, .tf-live, .ti-error, .ti-status, .td15-error, .tw-message, .tc-message) {
   font-family: var(--font-body);
   font-size: var(--teaching-type-body-small-size);

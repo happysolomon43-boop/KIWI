@@ -9,9 +9,17 @@ if (!config || !config.apiBaseUrl) {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAIN_CBT_OPERATION_TIMEOUT_MS = 180_000;
-const LONG_RUNNING_REQUEST_TIMEOUT_MS = MAIN_CBT_OPERATION_TIMEOUT_MS + 30_000;
-const LONG_RUNNING_ENDPOINTS = Object.freeze([
-  /^\/teaching\/courses\/[^/]+\/course-plan$/,
+const LONG_RUNNING_ANALYSIS_OPERATION_TIMEOUT_MS = 10 * 60 * 1000;
+const NETWORK_COMPLETION_GRACE_MS = 30_000;
+const REQUEST_TIMEOUT_POLICIES = Object.freeze([
+  Object.freeze({
+    pattern: /^\/teaching\/courses\/[^/]+\/course-plan$/,
+    timeoutMs: MAIN_CBT_OPERATION_TIMEOUT_MS + NETWORK_COMPLETION_GRACE_MS,
+  }),
+  Object.freeze({
+    pattern: /^\/teaching\/courses\/[^/]+\/timetable\/propose$/,
+    timeoutMs: LONG_RUNNING_ANALYSIS_OPERATION_TIMEOUT_MS + NETWORK_COMPLETION_GRACE_MS,
+  }),
 ]);
 const PUBLIC_AUTH_401 = new Set([
   '/auth/login',
@@ -39,9 +47,8 @@ function normalizeTimeoutMs(value, fallback = DEFAULT_TIMEOUT_MS) {
 
 function requestTimeoutFor(endpoint, requestedTimeoutMs) {
   if (requestedTimeoutMs != null) return normalizeTimeoutMs(requestedTimeoutMs);
-  return LONG_RUNNING_ENDPOINTS.some((pattern) => pattern.test(endpoint))
-    ? LONG_RUNNING_REQUEST_TIMEOUT_MS
-    : DEFAULT_TIMEOUT_MS;
+  const policy = REQUEST_TIMEOUT_POLICIES.find(({ pattern }) => pattern.test(endpoint));
+  return policy ? normalizeTimeoutMs(policy.timeoutMs) : DEFAULT_TIMEOUT_MS;
 }
 
 function apiTimeoutError(timeoutMs) {
