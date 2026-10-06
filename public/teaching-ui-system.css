@@ -16,7 +16,7 @@ html[data-app="kiwi-teaching"] input,
 html[data-app="kiwi-teaching"] select,
 html[data-app="kiwi-teaching"] textarea,
 html[data-app="kiwi-teaching"] button{
-  font-family:var(--font-body,"Inter",sans-serif);
+  font-family:var(--font-body,"DM Sans",sans-serif);
   text-rendering:optimizeLegibility;
   -webkit-font-smoothing:antialiased;
 }
@@ -29,7 +29,7 @@ html[data-app="kiwi-teaching"] .teaching-course-nav__item,
 html[data-app="kiwi-teaching"] .teaching-button,
 html[data-app="kiwi-teaching"] .teaching-d08-link-button,
 html[data-app="kiwi-teaching"] .tc-button{
-  font-family:var(--font-display,"Manrope",sans-serif);
+  font-family:var(--font-display,"Syne",sans-serif);
 }
 
 html[data-app="kiwi-teaching"] button,
