@@ -164,7 +164,7 @@ function createD08Service({
         available: Boolean(intelligence),
         ready: Boolean(intelligence) && generationBlockers.length === 0,
         blockers: Object.freeze([...generationBlockers]),
-        background: backgroundGenerationProjection(setup.backgroundPlanGeneration),
+        ...(setup.backgroundPlanGeneration ? { background: backgroundGenerationProjection(setup.backgroundPlanGeneration) } : {}),
       }),
       sourceAnalysis,
       plan: setup.plan ? Object.freeze({
