@@ -1,60 +1,36 @@
 'use strict';
-
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const root = path.resolve(__dirname, '../../..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const css = read('public/teaching-typography-system.css');
+const html = read('public/teaching.html');
 
-const ROOT = path.resolve(__dirname, '../../..');
-const typography = fs.readFileSync(path.join(ROOT, 'public/teaching-typography-system.css'), 'utf8');
-const display = fs.readFileSync(path.join(ROOT, 'public/teaching-display.js'), 'utf8');
-const interaction = fs.readFileSync(path.join(ROOT, 'public/teaching-interaction-system.js'), 'utf8');
-
-function declarationCount(property, valueFragment) {
-  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const escapedValue = valueFragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return (typography.match(new RegExp(`${escapedProperty}\\s*:\\s*[^;]*${escapedValue}[^;]*;`, 'g')) || []).length;
-}
-
-test('Teaching display installs the canonical typography stylesheet after the shared UI module is evaluated', () => {
-  const uiImport = display.indexOf("import './teaching-ui-system.js");
-  const typographyHref = display.indexOf('/teaching-typography-system.css');
-  const installCall = display.lastIndexOf('ensureTeachingTypographyStyles();');
-
-  assert.ok(uiImport >= 0, 'Teaching display must still load the shared UI system.');
-  assert.ok(typographyHref > uiImport, 'Typography contract must be declared after the UI-system import.');
-  assert.ok(installCall > typographyHref, 'Typography stylesheet must be installed by Teaching display.');
-  assert.match(display, /data-teaching-typography|dataset\.teachingTypography/);
+test('original Teaching typography loads before JavaScript and has one family owner', () => {
+  assert.ok(html.indexOf('data-teaching-typography="canonical"') < html.indexOf('</head>'));
+  assert.equal((html.match(/teaching-typography-system.css/g) || []).length, 1);
+  for (const [role, family] of [['body','DM Sans'], ['display','Syne'], ['mono','JetBrains Mono']]) {
+    assert.ok(css.includes('--teaching-font-' + role + ': "' + family + '"'));
+    assert.ok(css.includes('--font-' + role + ': var(--teaching-font-' + role + ')'));
+  }
+  assert.ok(!read('public/teaching-display.js').includes('ensureTeachingTypographyStyles'));
+  assert.ok(!read('public/teaching-interaction-system.js').includes('fonts.googleapis.com'));
 });
-
-test('Teaching typography contract disables synthetic/stretch rendering and browser text inflation', () => {
-  assert.match(typography, /font-synthesis:\s*none\s*!important/);
-  assert.match(typography, /font-stretch:\s*normal\s*!important/);
-  assert.match(typography, /-webkit-text-size-adjust:\s*100%\s*!important/);
-  assert.match(typography, /text-size-adjust:\s*100%\s*!important/);
+test('original component metrics and mathematical typography are not globally overridden', () => {
+  assert.ok(!css.includes('!important'));
+  assert.ok(!css.includes('body *'));
+  assert.ok(!css.includes('font-weight:'));
+  assert.ok(!css.includes('letter-spacing:'));
+  assert.ok(!css.includes('clamp('));
+  assert.ok(!css.includes('.tc-math'));
+  assert.ok(!css.includes('small,'));
+  assert.equal((css.match(/font-size:/g) || []).length, 1, 'Only status surfaces need a missing default size');
 });
-
-test('Teaching typography has one token owner and future components inherit it without selector registration', () => {
-  assert.match(typography, /--font-body:\s*var\(--teaching-font-body\)/);
-  assert.match(typography, /--font-display:\s*var\(--teaching-font-display\)/);
-  assert.match(typography, /--font-mono:\s*var\(--teaching-font-mono\)/);
-  assert.match(typography, /html\[data-app="kiwi-teaching"\]\s+body\s+\*/);
-  assert.doesNotMatch(interaction, /fonts\.googleapis\.com/);
-  assert.doesNotMatch(interaction, /font-family:\s*var\(--font-/);
-  assert.doesNotMatch(interaction, /"DM Sans",sans-serif/);
-});
-
-test('Teaching typography contract is cascade-authoritative for semantic type roles', () => {
-  assert.doesNotMatch(typography, /:where\(/, 'Zero-specificity typography selectors can be defeated by legacy feature CSS.');
-  assert.ok(declarationCount('font-family', '!important') >= 10, 'Semantic roles must authoritatively own their font family.');
-  assert.ok(declarationCount('font-size', '!important') >= 9, 'Semantic roles must authoritatively own their font size.');
-  assert.ok(declarationCount('font-weight', '!important') >= 9, 'Semantic roles must authoritatively own their font weight.');
-  assert.ok(declarationCount('line-height', '!important') >= 9, 'Semantic roles must authoritatively own line height.');
-});
-
-test('Teaching typography preserves explicit semantic exceptions for code and mathematical content', () => {
-  assert.match(typography, /\.tc-step p/);
-  assert.match(typography, /var\(--teaching-font-mono\)\s*!important/);
-  assert.match(typography, /html\[data-app="kiwi-teaching"\]\s+\.tc-math/);
-  assert.match(typography, /\.tc-math[\s\S]*var\(--teaching-font-body\)\s*!important/);
+test('native controls and uncovered error surfaces share original Teaching fonts', () => {
+  assert.ok(css.includes('button, input, select, textarea, option'));
+  for (const selector of ['[role="status"]', '[role="alert"]', '.tf-live', '.ti-error', '.tw-message', '.tc-message']) assert.ok(css.includes(selector));
+  assert.ok(css.includes('overflow-wrap: anywhere'));
+  assert.ok(css.includes('text-size-adjust: 100%'));
 });

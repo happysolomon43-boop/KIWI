@@ -72,9 +72,11 @@ test('Teaching uses the main KIWI type system and exposes Create Course navigati
   assert.match(html, /family=Syne/);
   assert.match(html, /family=DM\+Sans/);
   assert.match(html, /family=JetBrains\+Mono/);
-  assert.match(html, /--font-display: "Syne"/);
-  assert.match(html, /--font-body: "DM Sans"/);
-  assert.match(html, /--font-mono: "JetBrains Mono"/);
+  const typography = read(path.join(root, 'public', 'teaching-typography-system.css'));
+  assert.match(html, /data-teaching-typography="canonical"/);
+  assert.match(typography, /--teaching-font-display: "Syne"/);
+  assert.match(typography, /--teaching-font-body: "DM Sans"/);
+  assert.match(typography, /--teaching-font-mono: "JetBrains Mono"/);
   assert.match(js, /title: 'Overview'/);
   assert.match(js, /title: 'Create Course'/);
   assert.match(js, /Create course/);
