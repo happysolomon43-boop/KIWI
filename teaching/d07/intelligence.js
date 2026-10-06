@@ -35,7 +35,7 @@ function base({capabilityId,course,stateVersion,taskMode,outputSchema,contextSpe
 }
 
 function intakeRequest({course,intake}){
-  const outputSchema={id:'d07.student-intake-extraction',version:'1',uncertainty_states:['INSUFFICIENT_EVIDENCE','REVIEW_NEEDED'],review_needed_field:'uncertainty',declared_fields:['interaction_preferences','academic_self_report','goals','deadlines','planning_hypotheses','diagnostic_targets','uncertainty','provenance'],validate:async out=>normalizeIntakeExtraction(out,intake.intake_id)};
+  const outputSchema={id:'d07.student-intake-extraction',version:'1',uncertainty_states:['INSUFFICIENT_EVIDENCE','UNRESOLVED_CONFLICT','REVIEW_NEEDED'],review_needed_field:'uncertainty',declared_fields:['interaction_preferences','academic_self_report','goals','deadlines','planning_hypotheses','diagnostic_targets','uncertainty','provenance'],validate:async out=>normalizeIntakeExtraction(out,intake.intake_id)};
   return {...base({capabilityId:'teaching.curriculum.intake_signal_extraction',course,taskMode:'student_intake_signal_extraction',outputSchema,contextSpec:{untrusted_refs:[{ref:`intake:${intake.intake_id}`}],context_kind:'course_intake',access_purpose:'planning_hypothesis_extraction'},academicInput:{intake_ref:intake.intake_id},provenanceRefs:[`intake:${intake.intake_id}`]}),schemaValidator:outputSchema.validate,domainValidator:async value=>({ok:value?.provenance?.evidence_status==='NON_EVIDENCE_PLANNING_HYPOTHESIS',value,reason:'INTAKE_MUST_REMAIN_NON_EVIDENCE'}),provenanceValidator:async value=>({ok:value?.provenance?.intake_id===intake.intake_id,reason:'INTAKE_PROVENANCE_INVALID'})};
 }
 
