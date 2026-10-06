@@ -16698,7 +16698,9 @@ examRouter.post('/:id/reckoning/answer', async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(error.status || 500).json({
-      error: error.message || 'Failed to record adaptive Reckoning answer',
+      error: Number(error.status || 500) >= 500
+        ? 'KIWI could not save this answer. Your selection can be retried safely.'
+        : error.message || 'Failed to record adaptive Reckoning answer',
       code: error.code || 'ERR_RECKONING_ANSWER',
     });
   }

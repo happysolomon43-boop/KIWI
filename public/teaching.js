@@ -902,7 +902,8 @@ function renderCourseIntake() {
   select.required = true;
   select.append(new Option(teachingWorkspace.subjects.length ? 'Select a Subject' : 'Create a KIWI Subject first', ''));
   for (const subject of teachingWorkspace.subjects) {
-    select.append(new Option(`${displayCourseName(subject.name, 'Untitled subject')} · ${subject.total_cards || 0} cards`, subject.id));
+    const existing = teachingWorkspace.courses.find(course => String(course.subject_id) === String(subject.id) && !['COMPLETED', 'ARCHIVED'].includes(course.lifecycle_state));
+    select.append(new Option(`${displayCourseName(subject.name, 'Untitled subject')} · ${existing ? 'existing course' : `${subject.total_cards || 0} cards`}`, subject.id));
   }
   subjectField.append(subjectLabel, select, el('small', '', 'Need a new Subject? Create it in the KIWI study app first.'));
   subjectSection.append(subjectField);
@@ -944,21 +945,38 @@ function renderCourseIntake() {
   page.append(layout);
   main.replaceChildren(page);
 
+  let createdCourse = null;
+  select.addEventListener('change', () => {
+    createdCourse = null;
+    const existing = teachingWorkspace.courses.find(course => String(course.subject_id) === select.value && !['COMPLETED', 'ARCHIVED'].includes(course.lifecycle_state));
+    submit.textContent = existing ? 'Open existing course' : 'Create course draft';
+    showSetupMessage(message, existing ? 'This Subject already has a course. You can continue its saved setup.' : '');
+  });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (submit.disabled) return;
     if (!select.value) {
       showSetupMessage(message, 'Choose an existing KIWI Subject.', 'error');
       select.focus();
       return;
     }
 
+    const existing = teachingWorkspace.courses.find(course => String(course.subject_id) === select.value && !['COMPLETED', 'ARCHIVED'].includes(course.lifecycle_state));
+    if (existing && !createdCourse) {
+      openTeachingCourse(existing.course_id);
+      return;
+    }
+
     submit.disabled = true;
     showSetupMessage(message, 'Creating the draft and preserving its source inventory…');
     try {
-      const course = await kiwiApiRequest('/teaching/courses', {
+      const course = createdCourse || await kiwiApiRequest('/teaching/courses', {
         method: 'POST',
         body: { subjectId: select.value },
       });
+      createdCourse = course;
+      teachingWorkspace.courses = canonicalCourseRows([...teachingWorkspace.courses, course]);
+      showSetupMessage(message, 'Draft saved. Saving your learning context…');
       const intakeSignals = {
         originalFreeFormText: textarea.value,
         learningPreferences: splitSignals(document.getElementById('teachingPreferences').value),
@@ -972,10 +990,28 @@ function renderCourseIntake() {
         method: 'POST',
         body: intakeSignals,
       });
-      teachingWorkspace.courses = canonicalCourseRows([...teachingWorkspace.courses, course]);
       renderIntakeSuccess(course, result.extractionStatus, intakeSignals);
     } catch (error) {
-      showSetupMessage(message, error.message, 'error');
+      if (error.courseId) {
+        try {
+          await loadTeachingWorkspace();
+          openTeachingCourse(error.courseId);
+          return;
+        } catch {
+          // Keep the original conflict visible if refreshing fails.
+        }
+      }
+      showSetupMessage(message, createdCourse
+        ? `Your course draft is saved, but its learning context could not be processed. ${error.message || 'Please try again.'}`
+        : error.message || 'The draft could not be created. Please try again.', 'error');
+      if (createdCourse) {
+        submit.textContent = 'Retry saving context';
+        const open = el('button', 'teaching-button', 'Open saved draft');
+        open.type = 'button';
+        open.addEventListener('click', () => openTeachingCourse(createdCourse.course_id));
+        message.append(open);
+      }
+      message.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       submit.disabled = false;
     }
   });

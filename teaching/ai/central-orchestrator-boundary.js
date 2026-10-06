@@ -36,6 +36,7 @@ function assertCentralResultComplete(result) {
   error.code = 'TEACHING_AI_OUTPUT_TRUNCATED';
   error.retryable = false;
   error.finishReason = finishReason;
+  error.executionMetadata = safeExecutionMetadata(result);
   throw error;
 }
 
@@ -135,6 +136,7 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
         return Object.freeze({ executionId, accepted: false, validatedResult: null, fallbackUsed: true, fallback, failureDisposition: policy.disposition });
       }
       if (telemetry && executionId) await telemetry.finishExecution(executionId, {
+        ...(error.executionMetadata || {}),
         validationOutcome: 'FAILED', safeFailureCode: error?.code || 'TEACHING_AI_EXECUTION_FAILED', outcome: policy.disposition,
       });
       throw new TeachingAIExecutionError(error?.message || 'Teaching AI execution failed safely.', {

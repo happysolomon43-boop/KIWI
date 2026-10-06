@@ -1440,8 +1440,8 @@ function createReckoningStore({
       `UPDATE exam_questions
        SET selected_option = $4,
            is_correct = $5,
-           response_time_ms = $6,
-           time_spent_seconds = GREATEST(0, FLOOR($6::numeric / 1000))::integer,
+           response_time_ms = $6::integer,
+           time_spent_seconds = ($6::integer / 1000),
            evidence_effect = $7::jsonb,
            updated_at = now()
        WHERE id = $1
@@ -1454,7 +1454,7 @@ function createReckoningStore({
         userId,
         selectedOption,
         Boolean(isCorrect),
-        Math.max(0, Number(responseTimeMs) || 0),
+        Math.min(2147483647, Math.max(0, Math.round(Number(responseTimeMs) || 0))),
         json(evidenceEffect || {}),
       ]
     );

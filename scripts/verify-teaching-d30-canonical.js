@@ -157,8 +157,9 @@ function main() {
 
   const routeSource = read('teaching/d30/route-policy.js');
   invariant(/createAIOrchestrator/.test(routeSource), 'D30 route qualification does not construct through central AI Orchestrator');
-  invariant(/QUICK_QUESTIONS/.test(routeSource), 'website-default Teaching task binding missing');
-  invariant(/FLASHCARD_GENERATION/.test(routeSource), 'Course Plan flash-generation task binding missing');
+  invariant(/TEACHING_AI_TASK\s*=\s*'MAIN_CBT'/.test(routeSource), 'central Teaching MAIN_CBT task binding missing');
+  invariant(/WEBSITE_DEFAULT_AI_TASK\s*=\s*TEACHING_AI_TASK/.test(routeSource), 'website-default Teaching task binding missing');
+  invariant(/COURSE_PLAN_AI_TASK\s*=\s*TEACHING_AI_TASK/.test(routeSource), 'Course Plan MAIN_CBT task binding missing');
 
   const coordinatorSource=read('teaching/d30/coordinator.js');
   invariant(/findResumableSession/.test(coordinatorSource), 'D30 empirical coordinator is not resumable');

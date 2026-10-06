@@ -182,7 +182,7 @@ async function executeFamily(job, caseSpec) {
   const started = Date.now();
   const result = await boundary.execute({
     taskId: centralTaskFor({capabilityId:capability.id,familyId:caseSpec.familyId}),
-    request:{content,generation:{maxOutputTokens:1600,structuredOutput:{mimeType:'application/json'}}},
+    request:{content,generation:{maxOutputTokens:16384,structuredOutput:{mimeType:'application/json'}}},
     responsibilityKey:capability.id,
     capabilityId:capability.id,
     intelligenceClass:capability.execution_class,
