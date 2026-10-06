@@ -331,13 +331,14 @@ test('TPF-03 accepts the canonical TPF-02 schema, stays below the input limit, a
   assert.deepEqual(request.academicInput.validated_planning_signals.curriculum.learning_units[0].source_refs, fixture.sources.map((source) => source.source_ref));
 
   const output = tpf03Output({
+    coverage_treatment_map: [{ required_source_or_unit_ref: 'unit-1', planned_treatment_refs: ['unit-1'], mapping_completeness_proposal: 'full', coverage_status_claimed: 'planned_only' }],
     input_state_reference: { aggregate_type: 'teaching_course', aggregate_id: 'c1', state_version: '1' },
     course_sequence: [{ sequence_group: 1, topic_or_phase: 'Canonical topic', learning_units: [{
       ...tpf03Output().course_sequence[0].learning_units[0], learning_unit_ref: 'unit-1', prerequisite_refs: [],
     }] }],
   });
   const result = canonical.materializeCoursePlanFromTpf03(output, { audit: fixture.audit, sources: fixture.sources });
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, true, result.reason);
   assert.deepEqual(result.value.source_mappings.map((mapping) => mapping.source_ref), fixture.sources.map((source) => source.source_ref));
   assert.ok(result.value.source_mappings.every((mapping) => mapping.learning_unit_keys[0] === 'unit-1'));
 });

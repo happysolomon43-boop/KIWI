@@ -22,6 +22,8 @@ function setupFixture() {
   const inventoryDigest = sourceInventoryDigest(sources);
   const curriculumAudit = {
     curriculum_audit_id: 'audit-1',
+    prompt_family_version: '1.1',
+    output_schema_version: '2',
     status: 'VALIDATED_CANDIDATE',
     input_state_reference: 'teaching_course:course-1:state:2',
     source_inventory_digest: inventoryDigest,
@@ -29,6 +31,7 @@ function setupFixture() {
       state_version: '2',
       source_census: 2,
       domain_validated: true,
+      lineage_reconciled: true,
     },
   };
   return { course, sources, curriculumAudit };
@@ -94,4 +97,39 @@ test('D07 service composition applies audit idempotency before truncation recove
   const source = fs.readFileSync(require.resolve('../../../teaching/d07'), 'utf8');
   assert.match(source, /decorateAuditIdempotency\(unique\)/);
   assert.match(source, /decorateTruncationRecovery\(idempotent/);
+});
+
+ test('D07 rebuilds a current-state legacy audit instead of reusing pre-Lineage-Law output', async () => {
+   const setup = setupFixture();
+   setup.curriculumAudit.prompt_family_version = '1.0';
+   setup.curriculumAudit.output_schema_version = 'tpf02.curriculum-audit.v1';
+   let runs = 0;
+   const service = decorateAuditIdempotency({ async getSetup() { return setup; }, async runAudit() { runs++; return {curriculum_audit_id: 'v1.1-audit'}; } });
+   assert.equal(currentValidatedAudit(setup), null);
+   assert.equal((await service.runAudit({id:'student-1'}, 'course-1')).curriculum_audit_id, 'v1.1-audit');
+   assert.equal(runs, 1);
+   const unreconciled = setupFixture();
+   unreconciled.curriculumAudit.validation_metadata.lineage_reconciled = false;
+   assert.equal(currentValidatedAudit(unreconciled), null);
+ });
+
+test('D07 background refresh versions the outbox key and joins a completed current v1.1 audit', async () => {
+ const {createD07Service}=require('../../../teaching/d07/service');
+ const setup=setupFixture();
+ setup.backgroundAnalysis={event_id:'old-event',status:'PUBLISHED'};
+ setup.curriculumAudit.prompt_family_version='1.0';
+ setup.curriculumAudit.output_schema_version='tpf02.curriculum-audit.v1';
+ const existingKeys=new Set(['d07:curriculum-audit:course-1:2']);
+ let writes=0;
+ const service=createD07Service({subjects:{getForUser(){},getCorpusForUser(){}},repository:{async getSetup(){return setup;}},intelligence:{},outboxStore:{async append(event){assert.equal(existingKeys.has(event.idempotencyKey),false,'refresh must not collide with the legacy completed event');existingKeys.add(event.idempotencyKey);writes++;return {event:{event_id:event.eventId,status:'PENDING'}};}},randomUUID:()=> 'new-event'});
+ const refreshed=await service.queueAudit({id:'student-1'},'course-1');
+ assert.equal(refreshed.jobId,'new-event');
+ assert.equal(refreshed.status,'PENDING');
+ assert.ok(existingKeys.has('d07:curriculum-audit:course-1:2:tpf02:1.1'));
+ setup.backgroundAnalysis={event_id:'new-event',status:'PENDING'};
+ assert.equal((await service.queueAudit({id:'student-1'},'course-1')).joinedExisting,true);
+ setup.backgroundAnalysis.status='PUBLISHED';
+ setup.curriculumAudit=setupFixture().curriculumAudit;
+ assert.equal((await service.queueAudit({id:'student-1'},'course-1')).status,'PUBLISHED');
+ assert.equal(writes,1);
 });

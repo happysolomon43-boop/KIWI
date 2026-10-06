@@ -12,6 +12,7 @@ const {
   createD07Intelligence,
 } = require('../../../teaching/d07/intelligence');
 const {
+  EXECUTION_STAGES,
   buildTpf02AcademicInput,
   validateTpf02Domain,
 } = require('../../../teaching/d07/tpf02-direct');
@@ -47,20 +48,24 @@ function inventoryItem(item) {
     academic_meaning: `Meaning of ${item.source_item_ref}`,
     proposed_scope_classification: 'required',
     scope_classification_basis: 'Directly supports the course.',
+    duplicate_of_ref: null,
     content_validity_status: 'current_supported',
     content_validity_basis: 'No contradiction identified in this stage.',
     confidence: 'high',
   };
 }
 
+function sourceWalk(item) {
+  return { source_item_ref: item.source_item_ref, analysis_status: 'complete', note: null };
+}
+
 function inventoryStageOutput(request, { unresolved = false } = {}) {
   const input = request.academicInput;
   return {
-    status: unresolved ? 'unresolved' : 'ok',
     input_state_reference: input.input_state_reference,
-    review_required: unresolved,
-    review_reasons: unresolved ? ['A source needs later whole-artifact review.'] : [],
-    audit_scope: input.audit_scope,
+    task_mode: 'SOURCE_INVENTORY',
+    execution_stage: EXECUTION_STAGES.SOURCE_INVENTORY_STAGE,
+    audit_scope: { ...input.audit_scope, source_walk: input.source_items.map(sourceWalk) },
     source_inventory: input.source_items.map(inventoryItem),
     topics: [],
     learning_units: [],
@@ -68,12 +73,18 @@ function inventoryStageOutput(request, { unresolved = false } = {}) {
     source_conflicts: [],
     coverage_gaps: [],
     structure_change_proposals: [],
+    source_to_unit_reconciliation: { required_item_map: [], unmapped_required_refs: [] },
     unresolved_items: unresolved ? [{
+      unresolved_id: 'UI-stage-1',
       issue: 'A source relationship remains unresolved.',
+      source_item_refs: [input.source_items[0].source_item_ref],
       why_unresolved: 'The relationship requires whole-curriculum context.',
       required_next_input_or_review: 'Resolve during DEEP_AUDIT synthesis.',
       blocks_responsible_planning: false,
     }] : [],
+    status: unresolved ? 'unresolved' : 'ok',
+    review_required: unresolved,
+    review_reasons: unresolved ? ['A source needs later whole-artifact review.'] : [],
     student_facing_summary_candidate: null,
   };
 }
@@ -81,11 +92,10 @@ function inventoryStageOutput(request, { unresolved = false } = {}) {
 function synthesisOutput(request) {
   const refs = request.academicInput.audit_scope.source_refs;
   return {
-    status: 'ok',
     input_state_reference: request.academicInput.input_state_reference,
-    review_required: false,
-    review_reasons: [],
-    audit_scope: request.academicInput.audit_scope,
+    task_mode: 'DEEP_AUDIT',
+    execution_stage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+    audit_scope: { ...request.academicInput.audit_scope, source_walk: [] },
     source_inventory: [],
     topics: [{
       topic_id: 'topic-1',
@@ -97,31 +107,41 @@ function synthesisOutput(request) {
       learning_unit_id: 'unit-1',
       title: 'Foundations of mechanics',
       intended_competence: 'Explain and apply the central mechanics relationships.',
-      source_item_refs: refs.slice(0, 3),
+      source_item_refs: refs,
       topic_refs: ['topic-1'],
       prerequisite_refs: [],
       dependency_type_notes: 'No in-course prerequisite is required for this first unit.',
       criticality: 'foundational',
       criticality_basis: 'Later mechanics work depends on this unit.',
       proposed_exit_evidence: 'Accurate explanation and independent application.',
+      gap_refs: [],
       uncertainties: [],
     }],
     assumed_prerequisites: [],
     source_conflicts: [],
     coverage_gaps: [],
     structure_change_proposals: [],
+    source_to_unit_reconciliation: {
+      required_item_map: refs.map((ref) => ({ source_item_ref: ref, learning_unit_refs: ['unit-1'] })),
+      unmapped_required_refs: [],
+    },
     unresolved_items: [],
+    status: 'ok',
+    review_required: false,
+    review_reasons: [],
     student_facing_summary_candidate: 'The course structure is ready for review.',
   };
 }
 
-test('TPF-02 academic input preserves the frozen family task mode supplied by D07', () => {
+test('TPF-02 academic input carries an explicit execution stage as well as task mode', () => {
   const input = buildTpf02AcademicInput({
     course: course(),
     sources: sources(2),
     taskMode: 'SOURCE_INVENTORY',
+    executionStage: EXECUTION_STAGES.SOURCE_INVENTORY_STAGE,
   });
   assert.equal(input.task_mode, 'SOURCE_INVENTORY');
+  assert.equal(input.execution_stage, EXECUTION_STAGES.SOURCE_INVENTORY_STAGE);
   assert.equal(input.source_items.length, 2);
 });
 
@@ -131,7 +151,7 @@ test('large TPF-02 audits stage before the monolithic output-risk range', () => 
   assert.equal(TPF02_SOURCE_INVENTORY_BATCH_SIZE, 24);
 });
 
-test('SOURCE_INVENTORY requests validate a complete batch and forbid premature whole-curriculum synthesis', async () => {
+test('SOURCE_INVENTORY_STAGE validates a complete batch without prematurely requiring Learning Units', async () => {
   const request = sourceInventoryRequest({ course: course(), sources: sources(3) });
   const output = inventoryStageOutput(request);
   assert.equal((await request.domainValidator(output)).ok, true);
@@ -146,7 +166,7 @@ test('SOURCE_INVENTORY requests validate a complete batch and forbid premature w
   assert.equal((await request.domainValidator(invalid)).reason, 'TPF02_SOURCE_INVENTORY_STAGE_SCOPE_EXCEEDED');
 });
 
-test('staged TPF-02 exhaustively inventories large courses, then synthesizes one canonically validated artifact', async () => {
+test('staged TPF-02 exhaustively inventories a large course and validates complete required-source lineage after synthesis', async () => {
   const allSources = sources(50);
   const calls = [];
   let inventoryCallIndex = 0;
@@ -164,6 +184,7 @@ test('staged TPF-02 exhaustively inventories large courses, then synthesizes one
       }
 
       assert.equal(request.taskMode, 'DEEP_AUDIT');
+      assert.equal(request.academicInput.execution_stage, EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE);
       assert.equal(request.academicInput.source_items.length, 0);
       assert.equal(request.academicInput.source_evidence_items.length, 50);
       assert.equal(request.academicInput.prepared_source_inventory.length, 50);
@@ -188,35 +209,74 @@ test('staged TPF-02 exhaustively inventories large courses, then synthesizes one
 
   const output = result.validatedResult.output;
   assert.equal(output.source_inventory.length, 50);
+  assert.equal(output.audit_scope.source_walk.length, 50);
   assert.equal(new Set(output.source_inventory.map((item) => item.source_item_ref)).size, 50);
+  assert.equal(output.source_to_unit_reconciliation.required_item_map.length, 50);
+  assert.deepEqual(output.source_to_unit_reconciliation.unmapped_required_refs, []);
   assert.equal(output.status, 'unresolved');
   assert.equal(output.review_required, true);
+  assert.equal(output.student_facing_summary_candidate, null);
   assert.ok(output.review_reasons.includes('A source needs later whole-artifact review.'));
   assert.equal(output.unresolved_items.length, 1);
 
-  const fullInput = buildTpf02AcademicInput({ course: course(), sources: allSources });
+  const fullInput = buildTpf02AcademicInput({
+    course: course(),
+    sources: allSources,
+    taskMode: 'DEEP_AUDIT',
+    executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+  });
   const finalValidation = validateTpf02Domain(output, {
     inputStateReference: fullInput.input_state_reference,
     trustedScopeVersion: fullInput.audit_scope.trusted_scope_version,
     sourceItems: fullInput.source_items,
+    taskMode: fullInput.task_mode,
+    executionStage: fullInput.execution_stage,
   });
   assert.equal(finalValidation.ok, true, finalValidation.reason);
 });
 
-test('staged synthesis rejects any attempt by the model to replace prepared source accounting', async () => {
+test('staged synthesis rejects a structurally complete-looking result that omits one required source from Learning Units', async () => {
   const allSources = sources(49);
-  const fullInput = buildTpf02AcademicInput({ course: course(), sources: allSources });
+  const fullInput = buildTpf02AcademicInput({
+    course: course(),
+    sources: allSources,
+    taskMode: 'DEEP_AUDIT',
+    executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+  });
   const preparedInventory = fullInput.source_items.map(inventoryItem);
+  const preparedSourceWalk = fullInput.source_items.map(sourceWalk);
   const request = curriculumSynthesisRequest({
     course: course(),
     sources: allSources,
     preparedInventory,
-    stageFindings: {
-      status: 'ok',
-      review_required: false,
-      review_reasons: [],
-      unresolved_items: [],
-    },
+    preparedSourceWalk,
+    stageFindings: { status: 'ok', review_required: false, review_reasons: [], unresolved_items: [] },
+  });
+  const output = synthesisOutput(request);
+  const missing = fullInput.audit_scope.source_refs.at(-1);
+  output.learning_units[0] = { ...output.learning_units[0], source_item_refs: output.learning_units[0].source_item_refs.slice(0, -1) };
+  output.source_to_unit_reconciliation.required_item_map = output.source_to_unit_reconciliation.required_item_map.map((row) => row.source_item_ref === missing ? { ...row, learning_unit_refs: [] } : row);
+  output.source_to_unit_reconciliation.unmapped_required_refs = [missing];
+  const result = await request.domainValidator(output);
+  assert.equal(result.reason, 'TPF02_OK_STATUS_HAS_UNMAPPED_REQUIRED_SOURCE');
+});
+
+test('staged synthesis rejects any attempt by the model to replace prepared source accounting', async () => {
+  const allSources = sources(49);
+  const fullInput = buildTpf02AcademicInput({
+    course: course(),
+    sources: allSources,
+    taskMode: 'DEEP_AUDIT',
+    executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+  });
+  const preparedInventory = fullInput.source_items.map(inventoryItem);
+  const preparedSourceWalk = fullInput.source_items.map(sourceWalk);
+  const request = curriculumSynthesisRequest({
+    course: course(),
+    sources: allSources,
+    preparedInventory,
+    preparedSourceWalk,
+    stageFindings: { status: 'ok', review_required: false, review_reasons: [], unresolved_items: [] },
   });
   const output = synthesisOutput(request);
   output.source_inventory = [preparedInventory[0]];

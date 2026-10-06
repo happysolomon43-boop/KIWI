@@ -54,6 +54,8 @@ function loadSuccessorManifest() {
 const historicalManifest = loadHistoricalManifest();
 const manifest = loadSuccessorManifest();
 
+// The v1.4 manifest is an immutable baseline. Versioned amendments are applied
+// by the hash-locked body store only after this baseline check succeeds.
 for (const historical of historicalManifest.families) {
   const successor = manifest.families.find((family) => family.family_id === historical.family_id);
   if (!successor) fail(`Historical family missing from successor manifest: ${historical.family_id}`);
@@ -64,21 +66,24 @@ for (const historical of historicalManifest.families) {
   }
 }
 
+const bodyStoreStatus = promptBodyStoreStatus();
 const familyById = new Map();
 for (const family of manifest.families) {
   if (familyById.has(family.family_id)) fail(`Duplicate prompt family ${family.family_id}.`);
+  const effectiveBody = getFrozenPromptBodyRecord(family.family_id);
   familyById.set(family.family_id, Object.freeze({
     id: family.family_id,
     name: family.name,
-    version: String(family.version),
+    version: String(effectiveBody.version),
     criticality: family.criticality,
     capabilityCount: family.capability_count,
-    promptFile: family.prompt_file,
-    promptSha256: family.prompt_sha256,
-    status: family.status,
+    promptFile: effectiveBody.promptFile,
+    promptSha256: effectiveBody.promptSha256,
+    status: effectiveBody.amended ? 'qualification_pending' : family.status,
+    amended: effectiveBody.amended === true,
   }));
 }
-if (familyById.size !== 20) fail('Teaching prompt catalog must contain exactly 20 families.');
+if (familyById.size !== 20) fail('Teaching prompt catalog must contain exactly 20 effective families.');
 if ([...familyById.values()].reduce((sum, family) => sum + family.capabilityCount, 0) !== 148) {
   fail('Teaching prompt catalog capability coverage must total 148.');
 }
@@ -108,7 +113,7 @@ function assertPromptArtifactIdentity({ familyId, version, promptFile, promptSha
     String(promptFile || '') !== family.promptFile ||
     String(promptSha256 || '') !== family.promptSha256
   ) {
-    const error = new Error(`${family.id} prompt artifact is not the exact v1.4-manifested file/version/hash.`);
+    const error = new Error(`${family.id} prompt artifact is not the exact governed effective file/version/hash.`);
     error.code = 'TEACHING_UNMANIFESTED_PROMPT_REJECTED';
     throw error;
   }
@@ -129,7 +134,7 @@ function assertManifestedPromptText({ familyId, version, promptText } = {}) {
   }
   const actualSha256 = sha256(Buffer.from(promptText, 'utf8'));
   if (actualSha256 !== family.promptSha256) {
-    const error = new Error(`${family.id} prompt text does not match the manifest-frozen SHA-256.`);
+    const error = new Error(`${family.id} prompt text does not match the governed SHA-256.`);
     error.code = 'TEACHING_UNMANIFESTED_PROMPT_TEXT_REJECTED';
     throw error;
   }
@@ -139,7 +144,7 @@ function assertManifestedPromptText({ familyId, version, promptText } = {}) {
 function createFrozenPromptBinding(familyId, expectedVersion = null) {
   const family = getPromptFamily(familyId);
   if (expectedVersion != null && String(expectedVersion) !== family.version) {
-    const error = new Error(`${family.id} is frozen at v${family.version}; requested v${expectedVersion} is not manifested.`);
+    const error = new Error(`${family.id} is governed at v${family.version}; requested v${expectedVersion} is not active.`);
     error.code = 'TEACHING_PROMPT_VERSION_UNMANIFESTED';
     throw error;
   }
@@ -155,6 +160,9 @@ function createFrozenPromptBinding(familyId, expectedVersion = null) {
     combinedPackSha256: EXPECTED_PACK_SHA256,
     manifestVersion: manifest.manifest_version,
     manifestSha256: EXPECTED_MANIFEST_SHA256,
+    amendmentRegistryVersion: bodyStoreStatus.amendmentRegistryVersion || null,
+    amendmentRegistrySha256: bodyStoreStatus.amendmentRegistrySha256 || null,
+    promptAmended: family.amended,
     promptBodyEmbedded: false,
     promptBodyRuntimeAvailable: true,
   };
@@ -164,7 +172,7 @@ function createFrozenPromptBinding(familyId, expectedVersion = null) {
 
 function assertFrozenPromptBinding(binding) {
   if (!binding || binding[FROZEN_PROMPT_BINDING] !== true) {
-    const error = new Error('Teaching prompt execution requires a binding loaded from the hash-locked v1.4 prompt catalog.');
+    const error = new Error('Teaching prompt execution requires a binding loaded from the governed prompt catalog.');
     error.code = 'TEACHING_UNMANIFESTED_PROMPT_REJECTED';
     throw error;
   }
