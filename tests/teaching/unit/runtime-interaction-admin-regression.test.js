@@ -108,12 +108,18 @@ test('Teaching interaction and Admin diagnostic clients are actually bootstrappe
   const display=fs.readFileSync(path.join(root,'public/teaching-display.js'),'utf8');
   const runtime=fs.readFileSync(path.join(root,'public/kiwi-runtime-config.js'),'utf8');
   const interaction=fs.readFileSync(path.join(root,'public/teaching-interaction-system.js'),'utf8');
+  const ui=fs.readFileSync(path.join(root,'public/teaching-ui-system.css'),'utf8');
   const admin=fs.readFileSync(path.join(root,'public/admin-teaching-ai-diagnostics.js'),'utf8');
   assert.match(display,/teaching-interaction-system\.js/);
   assert.match(runtime,/admin-teaching-ai-diagnostics\.js/);
   assert.match(interaction,/data-kiwi-busy/);
   assert.match(interaction,/Syne/);
   assert.match(interaction,/kiwi\.teaching\.location\.v1/);
+  assert.doesNotMatch(interaction,/teachingActivityChip/);
+  assert.doesNotMatch(interaction,/Loading Teaching data/);
+  assert.match(interaction,/finally\{endForButton\(triggerButton\);\}/);
+  assert.match(ui,/\.teaching-d08-link-button\s*\{[\s\S]*appearance:none/);
+  assert.match(ui,/button\.teaching-course-feature-card\s*\{[\s\S]*appearance:none/);
   assert.match(admin,/Running in background/);
   assert.match(admin,/20 frozen Teaching prompt family|frozen Teaching prompt family|totalFamilies/);
 });

@@ -158,6 +158,34 @@ test('D10 source does not select model providers or create future Gradebook, Att
   assert.doesNotMatch(src,/insert into\s+public\.teaching_(gradebook|attendance|student_knowledge|progression)/i);
 });
 
+test('D10 persists no-alternative decisions as SQL NULL instead of JSON null',async()=>{
+  const current={
+    request_id:'r-null-alt',student_id:'u1',course_id:'c1',request_type:'PERMANENT_AVAILABILITY_CHANGE',
+    lifecycle_state:'REVIEWING',state_version:2,alternative_version:null,target_owner:'scheduler',
+  };
+  let decisionParams=null;
+  const query=async(sql,params=[])=>{
+    const compact=String(sql).replace(/\s+/g,' ').trim();
+    if(compact.includes('select * from public.teaching_requests')&&compact.includes('for update')) return {rows:[current]};
+    if(compact.startsWith('update public.teaching_requests set lifecycle_state=$3')){
+      decisionParams=params;
+      return {rows:[{...current,lifecycle_state:params[2],state_version:3,decision:JSON.parse(params[3]),alternative_proposal:params[4]}]};
+    }
+    if(compact.startsWith('insert into public.teaching_request_history')) return {rows:[],rowCount:1};
+    if(compact.startsWith('insert into public.teaching_academic_audit_log')) return {rows:[],rowCount:1};
+    throw new Error('Unexpected SQL in D10 null-alternative harness: '+compact);
+  };
+  const repository=createD10LifecycleRequestRepository({
+    query,withTransaction:async(fn)=>fn({query}),randomUUID:()=> 'id-1',clock:()=>new Date('2026-10-06T02:00:00Z'),
+  });
+  await repository.recordDecisionUsing({query},{
+    studentId:'u1',requestId:'r-null-alt',decisionState:'REJECTED',
+    decision:{code:'INVALID_INPUT'},alternativeProposal:null,expectedVersion:2,
+  });
+  assert.equal(decisionParams[4],null);
+  assert.equal(decisionParams[5],null);
+});
+
 
 function requestRepositoryHarness({state='APPROVED',studentResponse=null,effectiveAt=null}={}){
   let sequence=0,targetCalls=0;
