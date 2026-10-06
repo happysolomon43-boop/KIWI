@@ -68,6 +68,15 @@ function hero(eyebrow,title,copy,status){
   const root=$('section','tf-hero');const top=$('div','tf-hero__top');const text=$('div');text.append($('div','tf-eyebrow',eyebrow),$('h2','',title));top.append(text,status||null);root.append(top,$('p','',copy));return root;
 }
 function actionStatus(){const node=$('div','tf-action-status');node.setAttribute('role','status');node.setAttribute('aria-live','polite');return node;}
+function showLoading(page,live,label){
+  live.textContent='';
+  const skeleton=$('div','teaching-shell-skeleton');
+  skeleton.setAttribute('role','status');skeleton.setAttribute('aria-label',label);
+  const card=$('div','teaching-skeleton-card');
+  const title=$('div','teaching-skeleton-line');title.dataset.size='title';
+  card.append(title,$('div','teaching-skeleton-line'),$('div','teaching-skeleton-block'));
+  skeleton.append(card);page.replaceChildren(skeleton,live);
+}
 async function refreshShell(){if(typeof courses.refresh==='function')await courses.refresh({preserveView:true});}
 function open(section){courses.openSection?.(section);}
 function openCalendar(){if(nav?.open)nav.open('calendar');}
@@ -82,7 +91,7 @@ function renderTopic(topic){
 async function renderPlan({course,container}){
   const page=$('div','tf-page');container.replaceChildren(page);const live=actionStatus();page.append(live);
   async function load(){
-    live.textContent='Loading the Course Plan…';
+    showLoading(page,live,'Loading Course Plan');
     try{
       const [review,activation,schedule]=await Promise.all([
         request(coursePath(course.course_id,'/plan-review')),
@@ -96,7 +105,7 @@ async function renderPlan({course,container}){
         const card=$('section','tf-card tf-card--accent');card.append($('div','tf-eyebrow','Next step'),$('h3','','Create the academic plan'),$('p','',review.generation?.ready?'KIWI can now organize the validated curriculum into a versioned Course Plan.':'Course preparation still has unresolved steps before planning can begin.'));
         const actions=$('div','tf-actions');
         if(review.generation?.ready){const create=button('Create Course Plan',{primary:true,onClick:async()=>{create.disabled=true;live.textContent='KIWI is preparing and validating the Course Plan…';try{await request(coursePath(course.course_id,'/course-plan'),{method:'POST',body:{}});await load();}catch(error){live.textContent=error.message||'Course Plan could not be created.';create.disabled=false;}}});actions.append(create);}else actions.append(button('Open Setup',{primary:true,onClick:()=>open('setup')}));
-        card.append(actions);body.append(card);page.replaceChildren(body,live);return;
+        card.append(actions);body.append(card);page.replaceChildren(body,live);live.textContent='';return;
       }
       const grid=$('div','tf-grid'),main=$('div','tf-stack'),side=$('aside','tf-stack');
       const overview=$('section','tf-card tf-card--accent');overview.append($('div','tf-card__head'));overview.firstChild.append(add($('div',''),$('div','tf-eyebrow','Plan at a glance'),$('h3','','The learning journey')),chip(review.plan.currentForCourseScope?'Current':'Needs review',review.plan.currentForCourseScope?'':'warn'));
@@ -129,7 +138,7 @@ function renderSlot(slot,zone){
 async function renderTimetable({course,container}){
   const page=$('div','tf-page');container.replaceChildren(page);const live=actionStatus();page.append(live);
   async function load(notice=''){
-    live.textContent=notice||'Loading timetable…';
+    showLoading(page,live,'Loading timetable');
     try{
       const [data,activation]=await Promise.all([request(coursePath(course.course_id,'/schedule-review')),request(coursePath(course.course_id,'/activation-review')).catch(()=>null)]);
       const lifecycle=String(activation?.course?.lifecycleState||course.lifecycle_state||'DRAFT'),isActive=['ACTIVE','PAUSED'].includes(lifecycle),integrity=data.scheduleIntegrity||{},zone=data.semester?.timezone||'UTC',now=Date.parse(data.serverNow||new Date().toISOString());
@@ -159,7 +168,7 @@ function readinessRow(label,value,ok){const row=$('div','tf-status-row');row.dat
 async function renderFinalReview({course,container}){
   const page=$('div','tf-page');container.replaceChildren(page);const live=actionStatus();page.append(live);
   async function load(notice=''){
-    live.textContent=notice||'Loading final review…';
+    showLoading(page,live,'Loading final review');
     try{
       let [review,plan,schedule]=await Promise.all([request(coursePath(course.course_id,'/activation-review')),request(coursePath(course.course_id,'/plan-review')),request(coursePath(course.course_id,'/schedule-review'))]);
       const lifecycle=String(review.course?.lifecycleState||course.lifecycle_state||'DRAFT'),isActive=['ACTIVE','PAUSED'].includes(lifecycle),counts=planCounts(plan),integrity=review.timetableIntegrity||schedule.scheduleIntegrity||{},zone=review.semester?.timezone||schedule.semester?.timezone||'UTC';
