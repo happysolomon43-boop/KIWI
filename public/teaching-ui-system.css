@@ -24,11 +24,7 @@ html[data-app="kiwi-teaching"] button{
 html[data-app="kiwi-teaching"] h1,
 html[data-app="kiwi-teaching"] h2,
 html[data-app="kiwi-teaching"] h3,
-html[data-app="kiwi-teaching"] .teaching-title,
-html[data-app="kiwi-teaching"] .teaching-course-nav__item,
-html[data-app="kiwi-teaching"] .teaching-button,
-html[data-app="kiwi-teaching"] .teaching-d08-link-button,
-html[data-app="kiwi-teaching"] .tc-button{
+html[data-app="kiwi-teaching"] .teaching-title{
   font-family:var(--font-display,"Syne",sans-serif);
 }
 
@@ -126,6 +122,20 @@ html[data-app="kiwi-teaching"] textarea{
   color:#07140f;
 }
 
+.teaching-course-feature-card{
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+  min-height:206px;
+  padding:20px;
+  border:1px solid var(--teaching-ui-line);
+  border-radius:18px;
+  background:var(--teaching-ui-panel-soft);
+  box-shadow:none;
+}
+.teaching-course-feature-card h3{margin:7px 0 0;font-size:20px;line-height:1.25}
+.teaching-course-feature-card p{margin:10px 0 0;color:var(--teaching-muted);font-size:12px;line-height:1.65}
+.teaching-course-feature-card__actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:auto;padding-top:16px}
 button.teaching-course-feature-card{
   appearance:none;
   -webkit-appearance:none;
