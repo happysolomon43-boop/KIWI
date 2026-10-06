@@ -6,9 +6,12 @@ const assert = require('node:assert/strict');
 const {
   TPF02_SOURCE_INVENTORY_BATCH_SIZE,
   TPF02_STAGED_SOURCE_COUNT_THRESHOLD,
+  TPF02_PROGRESSIVE_STRUCTURE_SOURCE_COUNT_THRESHOLD,
+  TPF02_STRUCTURE_BATCH_SIZE,
   sourceInventoryRequest,
   curriculumSynthesisRequest,
   shouldStageCurriculumAudit,
+  shouldUseProgressiveStructure,
   createD07Intelligence,
 } = require('../../../teaching/d07/intelligence');
 const {
@@ -128,6 +131,50 @@ function lineageRepairOutput(request, unitId = 'unit-1') {
   };
 }
 
+function structurePassOutput(request) {
+  const refs = request.academicInput.source_items.map((item) => item.source_item_ref);
+  const batchIndex = Number(request.academicInput.structure_pass_context?.batch_index || 0);
+  const topicId = `batch-topic-${batchIndex}`;
+  const unitId = `batch-unit-${batchIndex}`;
+  return {
+    input_state_reference: request.academicInput.input_state_reference,
+    task_mode: 'LEARNING_UNIT_DECOMPOSITION',
+    execution_stage: EXECUTION_STAGES.SINGLE_PASS,
+    audit_scope: { ...request.academicInput.audit_scope, source_walk: [] },
+    source_inventory: [],
+    topics: [{
+      topic_id: topicId,
+      title: `Bounded structure batch ${batchIndex + 1}`,
+      source_item_refs: refs,
+      subtopics: [],
+    }],
+    learning_units: [{
+      learning_unit_id: unitId,
+      title: `Batch ${batchIndex + 1} foundations`,
+      intended_competence: 'Integrate the supplied bounded source batch into a coherent candidate learning structure.',
+      source_item_refs: refs,
+      topic_refs: [topicId],
+      prerequisite_refs: [],
+      dependency_type_notes: null,
+      criticality: 'major',
+      criticality_basis: 'This bounded source batch contributes required Course content.',
+      proposed_exit_evidence: 'Explain and apply the concepts represented by the supplied sources.',
+      gap_refs: [],
+      uncertainties: [],
+    }],
+    assumed_prerequisites: [],
+    source_conflicts: [],
+    coverage_gaps: [],
+    structure_change_proposals: [],
+    source_to_unit_reconciliation: { required_item_map: [], unmapped_required_refs: [] },
+    unresolved_items: [],
+    status: 'ok',
+    review_required: false,
+    review_reasons: [],
+    student_facing_summary_candidate: null,
+  };
+}
+
 function synthesisOutput(request) {
   const refs = request.academicInput.audit_scope.source_refs;
   return {
@@ -188,6 +235,13 @@ test('large TPF-02 audits stage before the monolithic output-risk range', () => 
   assert.equal(TPF02_STAGED_SOURCE_COUNT_THRESHOLD, 48);
   assert.equal(shouldStageCurriculumAudit({ course: course(), sources: sources(49) }), true);
   assert.equal(TPF02_SOURCE_INVENTORY_BATCH_SIZE, 24);
+});
+
+test('very large TPF-02 audits add bounded curriculum-structure preparation before whole-course synthesis', () => {
+  assert.equal(TPF02_PROGRESSIVE_STRUCTURE_SOURCE_COUNT_THRESHOLD, 120);
+  assert.equal(shouldUseProgressiveStructure({ sources: sources(120) }), false);
+  assert.equal(shouldUseProgressiveStructure({ sources: sources(121) }), true);
+  assert.equal(TPF02_STRUCTURE_BATCH_SIZE, 24);
 });
 
 test('SOURCE_INVENTORY_STAGE validates a complete batch without prematurely requiring Learning Units', async () => {
@@ -453,6 +507,89 @@ test('large staged audit completes omitted required lineage through bounded LEAR
   assert.equal(output.status, 'ok');
   assert.equal(output.review_required, false);
   assert.deepEqual(output.unresolved_items, []);
+});
+
+test('188-source TPF-02 audit uses bounded structure passes and omits raw source evidence from final synthesis', async () => {
+  const allSources = sources(188).map((source, index) => ({
+    ...source,
+    content_summary: `Source ${index + 1}: ${'dense academic evidence '.repeat(40)}`,
+  }));
+  const calls = [];
+
+  const orchestrator = {
+    async execute(request) {
+      calls.push(request);
+      if (request.taskMode === 'SOURCE_INVENTORY') {
+        const output = inventoryStageOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        const provenance = await request.provenanceValidator(domain.value);
+        assert.equal(provenance.ok, true, provenance.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      if (request.taskMode === 'LEARNING_UNIT_DECOMPOSITION'
+        && request.academicInput.structure_pass_context?.mode === 'BOUNDED_CURRICULUM_STRUCTURE') {
+        assert.ok(request.academicInput.source_items.length <= TPF02_STRUCTURE_BATCH_SIZE);
+        assert.equal(
+          request.academicInput.structure_pass_context.canonical_source_inventory.length,
+          request.academicInput.source_items.length
+        );
+        const output = structurePassOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        const provenance = await request.provenanceValidator(domain.value);
+        assert.equal(provenance.ok, true, provenance.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      assert.equal(request.taskMode, 'DEEP_AUDIT');
+      assert.equal(request.academicInput.execution_stage, EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE);
+      assert.equal(request.academicInput.source_items.length, 0);
+      assert.equal(request.academicInput.source_evidence_items.length, 0);
+      assert.equal(request.academicInput.prepared_source_inventory.length, 188);
+      assert.ok(request.academicInput.progressive_structure_candidates.length > 0);
+      const serialized = JSON.stringify(request.academicInput);
+      assert.ok(
+        Buffer.byteLength(serialized, 'utf8') < 220 * 1024,
+        `progressive final academic input remained too large: ${Buffer.byteLength(serialized, 'utf8')} bytes`
+      );
+
+      const output = synthesisOutput(request);
+      output.source_to_unit_reconciliation = { required_item_map: [], unmapped_required_refs: [] };
+      const domain = await request.domainValidator(output);
+      assert.equal(domain.ok, true, domain.reason);
+      const provenance = await request.provenanceValidator(domain.value);
+      assert.equal(provenance.ok, true, provenance.reason);
+      return { accepted: true, validatedResult: { output: domain.value } };
+    },
+  };
+
+  const result = await createD07Intelligence({ orchestrator }).runCurriculumAudit({
+    course: course(),
+    sources: allSources,
+  });
+
+  const inventoryCalls = calls.filter((request) => request.taskMode === 'SOURCE_INVENTORY');
+  const structureCalls = calls.filter((request) =>
+    request.taskMode === 'LEARNING_UNIT_DECOMPOSITION'
+    && request.academicInput.structure_pass_context?.mode === 'BOUNDED_CURRICULUM_STRUCTURE'
+  );
+  const synthesisCalls = calls.filter((request) => request.taskMode === 'DEEP_AUDIT');
+
+  assert.equal(inventoryCalls.length, 8);
+  assert.deepEqual(inventoryCalls.map((request) => request.academicInput.source_items.length), [24,24,24,24,24,24,24,20]);
+  assert.equal(structureCalls.length, 8);
+  assert.deepEqual(structureCalls.map((request) => request.academicInput.source_items.length), [24,24,24,24,24,24,24,20]);
+  assert.equal(synthesisCalls.length, 1);
+
+  const output = result.validatedResult.output;
+  assert.equal(output.source_inventory.length, 188);
+  assert.equal(output.audit_scope.source_walk.length, 188);
+  assert.equal(output.source_to_unit_reconciliation.required_item_map.length, 188);
+  assert.deepEqual(output.source_to_unit_reconciliation.unmapped_required_refs, []);
+  assert.equal(output.status, 'ok');
+  assert.equal(output.review_required, false);
 });
 
 test('staged synthesis rejects any attempt by the model to replace prepared source accounting', async () => {
