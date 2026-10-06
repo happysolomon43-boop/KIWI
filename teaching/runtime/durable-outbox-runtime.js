@@ -85,22 +85,65 @@ function createDurableTeachingOutboxRuntime({
     return Math.min(effectiveRetryBaseMs * (2 ** exponent), 15 * 60_000);
   }
 
+  function currentDate() {
+    const value = clock();
+    return value instanceof Date ? value : new Date(value);
+  }
+
+  function startClaimHeartbeat(event) {
+    if (typeof store.renewClaim !== 'function' || typeof timers.setInterval !== 'function') return null;
+    const heartbeatMs = Math.max(1_000, Math.floor(effectiveLeaseMs / 3));
+    let active = true;
+    let stopped = false;
+    let failure = null;
+    let chain = Promise.resolve();
+    const renew = () => {
+      if (!active) return;
+      chain = chain.then(async () => {
+        if (!active) return;
+        await store.renewClaim(event, { now: currentDate(), leaseMs: effectiveLeaseMs });
+      }).catch((error) => {
+        failure = error;
+        logger?.warn?.('[KIWI Teaching] outbox claim heartbeat failed', {
+          eventId: event.event_id,
+          code: error?.code || null,
+          message: error?.message || String(error),
+        });
+      });
+    };
+    const heartbeat = timers.setInterval(renew, heartbeatMs);
+    heartbeat?.unref?.();
+    return Object.freeze({
+      async stop() {
+        if (stopped) return failure;
+        stopped = true;
+        active = false;
+        timers.clearInterval?.(heartbeat);
+        await chain;
+        return failure;
+      },
+    });
+  }
+
   async function tick() {
     if (running) return Object.freeze({ skipped: true, reason: 'tick_in_progress' });
     running = true;
-    const now = clock();
+    const now = currentDate();
     lastTickAt = now.toISOString();
     try {
       await store.releaseExpiredClaims(now);
       const claimed = await store.claimPending({ workerId, now, limit: effectiveBatchSize, leaseMs: effectiveLeaseMs });
       const outcomes = [];
       for (const event of claimed) {
+        const heartbeat = startClaimHeartbeat(event);
         try {
           await publish(toCanonicalEvent(event));
+          await heartbeat?.stop();
           await store.markPublished(event);
           publishedCount += 1;
           outcomes.push('PUBLISHED');
         } catch (error) {
+          await heartbeat?.stop();
           const terminal = isTerminalPublicationFailure(error);
           if (terminal || Number(event.attempt_count) >= effectiveMaxAttempts) {
             await store.markCancelled(event, {
@@ -114,9 +157,10 @@ function createDurableTeachingOutboxRuntime({
             });
             outcomes.push('CANCELLED');
           } else {
+            const failedAt = currentDate();
             await store.retry(event, {
               errorCode: error?.code || 'TEACHING_EVENT_PUBLICATION_FAILED',
-              retryAt: new Date(now.getTime() + retryDelay(event.attempt_count)),
+              retryAt: new Date(failedAt.getTime() + retryDelay(event.attempt_count)),
             });
             outcomes.push('RETRY_WAIT');
           }
