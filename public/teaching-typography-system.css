@@ -20,7 +20,6 @@
   --teaching-type-heading-track: -0.018em;
   --teaching-type-body-size: clamp(0.9375rem, 0.91rem + 0.12vw, 1rem);
   --teaching-type-body-line: 1.58;
-  --teaching-type-body-track: normal;
   --teaching-type-body-small-size: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
   --teaching-type-body-small-line: 1.52;
   --teaching-type-label-size: clamp(0.75rem, 0.73rem + 0.08vw, 0.8125rem);
@@ -35,72 +34,102 @@
   --teaching-type-code-line: 1.55;
 }
 
+/*
+ * Canonical Teaching typography owner.
+ *
+ * Teaching historically allowed page, feature and Classroom stylesheets to set
+ * independent font shorthand/weights. On mobile that made the winning font
+ * dependent on load order and allowed browsers to synthesize unavailable font
+ * faces. Typography declarations below are intentionally authoritative: legacy
+ * feature CSS may own layout/colour, but not type metrics. Semantic exceptions
+ * (code, IDs, math) are declared later in this same file.
+ */
 html[data-app="kiwi-teaching"],
 html[data-app="kiwi-teaching"] body {
-  font-family: var(--teaching-font-body);
-  font-size: var(--teaching-type-body-size);
-  font-weight: var(--teaching-weight-regular);
-  line-height: var(--teaching-type-body-line);
-  letter-spacing: var(--teaching-type-body-track);
-  font-stretch: normal;
-  font-synthesis: none;
-  font-variation-settings: normal;
+  font-family: var(--teaching-font-body) !important;
+  font-size: var(--teaching-type-body-size) !important;
+  font-weight: var(--teaching-weight-regular) !important;
+  line-height: var(--teaching-type-body-line) !important;
+  letter-spacing: normal !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
+  font-variation-settings: normal !important;
   font-optical-sizing: auto;
-  text-size-adjust: 100%;
-  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100% !important;
+  -webkit-text-size-adjust: 100% !important;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-html[data-app="kiwi-teaching"] :where(button, input, select, textarea, option) {
-  font-family: inherit;
-  font-size: inherit;
-  font-stretch: normal;
-  font-synthesis: none;
-  font-variation-settings: normal;
+html[data-app="kiwi-teaching"] :is(button, input, select, textarea, option) {
+  font-family: var(--teaching-font-body) !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
+  font-variation-settings: normal !important;
 }
 
-html[data-app="kiwi-teaching"] :where(p, li, dd, dt, blockquote, .teaching-message, .teaching-notice, .teaching-empty, .teaching-error, .tc-notice, .tc-empty-copy) {
-  font-family: var(--teaching-font-body);
-  font-size: var(--teaching-type-body-size);
-  font-weight: var(--teaching-weight-regular);
-  line-height: var(--teaching-type-body-line);
-  letter-spacing: var(--teaching-type-body-track);
+html[data-app="kiwi-teaching"] :is(
+  p,
+  li,
+  dd,
+  dt,
+  blockquote,
+  .teaching-notice,
+  .teaching-empty,
+  .teaching-error,
+  .tc-notice,
+  .tc-empty-copy
+) {
+  font-family: var(--teaching-font-body) !important;
+  font-size: var(--teaching-type-body-size) !important;
+  font-weight: var(--teaching-weight-regular) !important;
+  line-height: var(--teaching-type-body-line) !important;
+  letter-spacing: normal !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
   overflow-wrap: anywhere;
 }
 
-html[data-app="kiwi-teaching"] :where(h1, .teaching-title) {
-  font-family: var(--teaching-font-display);
-  font-size: var(--teaching-type-display-size);
-  font-weight: var(--teaching-weight-bold);
-  line-height: var(--teaching-type-display-line);
-  letter-spacing: var(--teaching-type-display-track);
-  font-stretch: normal;
-  font-synthesis: none;
+html[data-app="kiwi-teaching"] :is(h1, .teaching-title) {
+  font-family: var(--teaching-font-display) !important;
+  font-size: var(--teaching-type-display-size) !important;
+  font-weight: var(--teaching-weight-bold) !important;
+  line-height: var(--teaching-type-display-line) !important;
+  letter-spacing: var(--teaching-type-display-track) !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
-html[data-app="kiwi-teaching"] :where(h2, .tc-course > h2, .tc-panel-head h2, .tc-after h2) {
-  font-family: var(--teaching-font-display);
-  font-size: var(--teaching-type-title-size);
-  font-weight: var(--teaching-weight-bold);
-  line-height: var(--teaching-type-title-line);
-  letter-spacing: var(--teaching-type-title-track);
-  font-stretch: normal;
-  font-synthesis: none;
+html[data-app="kiwi-teaching"] :is(h2, .tc-course > h2, .tc-panel-head h2, .tc-after h2) {
+  font-family: var(--teaching-font-display) !important;
+  font-size: var(--teaching-type-title-size) !important;
+  font-weight: var(--teaching-weight-bold) !important;
+  line-height: var(--teaching-type-title-line) !important;
+  letter-spacing: var(--teaching-type-title-track) !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
-html[data-app="kiwi-teaching"] :where(h3, h4, .teaching-course-feature-card h3, .tc-course-summary h3, .tc-workspace h2, .tc-notebook h2) {
-  font-family: var(--teaching-font-display);
-  font-size: var(--teaching-type-heading-size);
-  font-weight: var(--teaching-weight-semibold);
-  line-height: var(--teaching-type-heading-line);
-  letter-spacing: var(--teaching-type-heading-track);
-  font-stretch: normal;
-  font-synthesis: none;
+html[data-app="kiwi-teaching"] :is(
+  h3,
+  h4,
+  .teaching-course-feature-card h3,
+  .tc-course-summary h3,
+  .tc-workspace h2,
+  .tc-notebook h2,
+  .tc-scene-title
+) {
+  font-family: var(--teaching-font-display) !important;
+  font-size: var(--teaching-type-heading-size) !important;
+  font-weight: var(--teaching-weight-semibold) !important;
+  line-height: var(--teaching-type-heading-line) !important;
+  letter-spacing: var(--teaching-type-heading-track) !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
-html[data-app="kiwi-teaching"] :where(
+html[data-app="kiwi-teaching"] :is(
   .teaching-button,
   .teaching-submit,
   .teaching-d08-link-button,
@@ -115,16 +144,16 @@ html[data-app="kiwi-teaching"] :where(
   .tc-mini-action,
   .tc-mobile-tabs button
 ) {
-  font-family: var(--teaching-font-body);
-  font-size: var(--teaching-type-action-size);
-  font-weight: var(--teaching-weight-bold);
-  line-height: var(--teaching-type-action-line);
-  letter-spacing: -0.01em;
-  font-stretch: normal;
-  font-synthesis: none;
+  font-family: var(--teaching-font-body) !important;
+  font-size: var(--teaching-type-action-size) !important;
+  font-weight: var(--teaching-weight-bold) !important;
+  line-height: var(--teaching-type-action-line) !important;
+  letter-spacing: -0.01em !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
-html[data-app="kiwi-teaching"] :where(
+html[data-app="kiwi-teaching"] :is(
   label,
   .teaching-field > span,
   .teaching-field label,
@@ -134,14 +163,16 @@ html[data-app="kiwi-teaching"] :where(
   .tc-controls summary,
   .tc-comparison strong
 ) {
-  font-family: var(--teaching-font-body);
-  font-size: var(--teaching-type-label-size);
-  font-weight: var(--teaching-weight-semibold);
-  line-height: var(--teaching-type-label-line);
-  letter-spacing: var(--teaching-type-label-track);
+  font-family: var(--teaching-font-body) !important;
+  font-size: var(--teaching-type-label-size) !important;
+  font-weight: var(--teaching-weight-semibold) !important;
+  line-height: var(--teaching-type-label-line) !important;
+  letter-spacing: var(--teaching-type-label-track) !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
-html[data-app="kiwi-teaching"] :where(
+html[data-app="kiwi-teaching"] :is(
   small,
   .teaching-eyebrow,
   .teaching-menu-panel__eyebrow,
@@ -153,58 +184,77 @@ html[data-app="kiwi-teaching"] :where(
   .tc-clock small,
   .tc-board-item__label
 ) {
-  font-family: var(--teaching-font-mono);
-  font-size: var(--teaching-type-eyebrow-size);
-  font-weight: var(--teaching-weight-bold);
-  line-height: var(--teaching-type-eyebrow-line);
-  letter-spacing: var(--teaching-type-eyebrow-track);
-  font-stretch: normal;
-  font-synthesis: none;
+  font-family: var(--teaching-font-mono) !important;
+  font-size: var(--teaching-type-eyebrow-size) !important;
+  font-weight: var(--teaching-weight-bold) !important;
+  line-height: var(--teaching-type-eyebrow-line) !important;
+  letter-spacing: var(--teaching-type-eyebrow-track) !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
-html[data-app="kiwi-teaching"] :where(input, select, textarea) {
-  font-family: var(--teaching-font-body);
-  font-size: var(--teaching-type-body-size);
-  font-weight: var(--teaching-weight-regular);
-  line-height: var(--teaching-type-body-line);
-  letter-spacing: normal;
+html[data-app="kiwi-teaching"] :is(input, select, textarea) {
+  font-family: var(--teaching-font-body) !important;
+  font-size: var(--teaching-type-body-size) !important;
+  font-weight: var(--teaching-weight-regular) !important;
+  line-height: var(--teaching-type-body-line) !important;
+  letter-spacing: normal !important;
 }
 
-html[data-app="kiwi-teaching"] :where(input::placeholder, textarea::placeholder) {
-  font: inherit;
+html[data-app="kiwi-teaching"] :is(input::placeholder, textarea::placeholder) {
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
+  line-height: inherit !important;
+  letter-spacing: inherit !important;
   opacity: 0.74;
 }
 
-html[data-app="kiwi-teaching"] :where(code, pre, kbd, samp, .tc-code, .tc-code code, .tc-step, .tc-scene-nav, .tc-clock) {
-  font-family: var(--teaching-font-mono);
-  font-size: var(--teaching-type-code-size);
-  line-height: var(--teaching-type-code-line);
-  font-stretch: normal;
-  font-synthesis: none;
+html[data-app="kiwi-teaching"] :is(
+  code,
+  pre,
+  kbd,
+  samp,
+  .tc-code,
+  .tc-code code,
+  .tc-step,
+  .tc-step p,
+  .tc-scene-nav,
+  .tc-clock,
+  .tc-clock strong,
+  .tc-clock span
+) {
+  font-family: var(--teaching-font-mono) !important;
+  font-size: var(--teaching-type-code-size) !important;
+  font-weight: var(--teaching-weight-regular) !important;
+  line-height: var(--teaching-type-code-line) !important;
+  letter-spacing: normal !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
-html[data-app="kiwi-teaching"] :where(.teaching-brand__kiwi, .teaching-brand__name) {
-  font-family: var(--teaching-font-display);
-  font-stretch: normal;
-  font-synthesis: none;
+html[data-app="kiwi-teaching"] :is(.teaching-brand__kiwi, .teaching-brand__name) {
+  font-family: var(--teaching-font-display) !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
 html[data-app="kiwi-teaching"] .teaching-brand__kiwi {
-  font-size: clamp(1.0625rem, 1rem + 0.28vw, 1.25rem);
-  font-weight: var(--teaching-weight-heavy);
-  line-height: 1;
-  letter-spacing: 0.13em;
+  font-size: clamp(1.0625rem, 1rem + 0.28vw, 1.25rem) !important;
+  font-weight: var(--teaching-weight-heavy) !important;
+  line-height: 1 !important;
+  letter-spacing: 0.13em !important;
 }
 
 html[data-app="kiwi-teaching"] .teaching-brand__name {
-  font-size: clamp(1rem, 0.96rem + 0.18vw, 1.125rem);
-  font-weight: var(--teaching-weight-bold);
-  line-height: 1.05;
-  letter-spacing: -0.02em;
+  font-size: clamp(1rem, 0.96rem + 0.18vw, 1.125rem) !important;
+  font-weight: var(--teaching-weight-bold) !important;
+  line-height: 1.05 !important;
+  letter-spacing: -0.02em !important;
 }
 
-/* Runtime/API messages must stay readable even when they contain long canonical IDs. */
-html[data-app="kiwi-teaching"] :where(
+/* Runtime/API errors are body copy, not raw browser or monospace diagnostics. */
+html[data-app="kiwi-teaching"] :is(
   .teaching-message,
   .teaching-message[data-kind="error"],
   .teaching-d08-message,
@@ -213,34 +263,35 @@ html[data-app="kiwi-teaching"] :where(
   .tc-message,
   .tc-connection
 ) {
-  font-family: var(--teaching-font-body);
-  font-size: var(--teaching-type-body-small-size);
-  font-weight: var(--teaching-weight-regular);
-  line-height: var(--teaching-type-body-small-line);
-  letter-spacing: normal;
+  font-family: var(--teaching-font-body) !important;
+  font-size: var(--teaching-type-body-small-size) !important;
+  font-weight: var(--teaching-weight-regular) !important;
+  line-height: var(--teaching-type-body-small-line) !important;
+  letter-spacing: normal !important;
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: normal;
   hyphens: none;
-  font-stretch: normal;
-  font-synthesis: none;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
-/* Classroom glyphs may be decorative, but ordinary copy never owns its own font. */
-html[data-app="kiwi-teaching"] :where(.tc-brand__mark, .tc-teacher__avatar, .tc-board-empty__glyph) {
-  font-family: var(--teaching-font-display);
-  font-stretch: normal;
-  font-synthesis: none;
+/* Decorative Classroom marks use the same display family instead of ad-hoc serif faces. */
+html[data-app="kiwi-teaching"] :is(.tc-brand__mark, .tc-teacher__avatar, .tc-board-empty__glyph) {
+  font-family: var(--teaching-font-display) !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
+/* Mathematical content gets a stable readable face; Pixi/KaTeX rendering remains independent. */
 html[data-app="kiwi-teaching"] .tc-math {
-  font-family: var(--teaching-font-body);
-  font-size: var(--teaching-type-heading-size);
-  font-weight: var(--teaching-weight-medium);
-  line-height: 1.45;
-  letter-spacing: normal;
-  font-stretch: normal;
-  font-synthesis: none;
+  font-family: var(--teaching-font-body) !important;
+  font-size: var(--teaching-type-heading-size) !important;
+  font-weight: var(--teaching-weight-medium) !important;
+  line-height: 1.45 !important;
+  letter-spacing: normal !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
 }
 
 @media (max-width: 640px) {
