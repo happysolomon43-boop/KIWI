@@ -18,19 +18,24 @@ test('original Teaching typography loads before JavaScript and has one family ow
   assert.ok(!read('public/teaching-display.js').includes('ensureTeachingTypographyStyles'));
   assert.ok(!read('public/teaching-interaction-system.js').includes('fonts.googleapis.com'));
 });
-test('original component metrics and mathematical typography are not globally overridden', () => {
+
+test('typography stays centralized without universal metric overrides', () => {
   assert.ok(!css.includes('!important'));
   assert.ok(!css.includes('body *'));
-  assert.ok(!css.includes('font-weight:'));
-  assert.ok(!css.includes('letter-spacing:'));
   assert.ok(!css.includes('clamp('));
   assert.ok(!css.includes('.tc-math'));
   assert.ok(!css.includes('small,'));
-  assert.equal((css.match(/font-size:/g) || []).length, 1, 'Only status surfaces need a missing default size');
+  assert.match(css, /body \.tf-hero h2[\s\S]*font-weight: 600/);
+  assert.match(css, /\.tf-card h3, \.tf-summary-card h3[\s\S]*font-family: var\(--font-body\)/);
+  assert.match(css, /\.tf-card h3, \.tf-summary-card h3[\s\S]*font-weight: 700/);
+  assert.doesNotMatch(css, /:is\(h1, h2, h3, h4, h5, h6[^}]+font-weight:/);
 });
+
 test('native controls and uncovered error surfaces share original Teaching fonts', () => {
   assert.ok(css.includes('button, input, select, textarea, option'));
   for (const selector of ['[role="status"]', '[role="alert"]', '.tf-live', '.ti-error', '.tw-message', '.tc-message']) assert.ok(css.includes(selector));
   assert.ok(css.includes('overflow-wrap: anywhere'));
   assert.ok(css.includes('text-size-adjust: 100%'));
+  assert.ok(css.includes('font-synthesis: none'));
+  assert.ok(css.includes('font-stretch: normal'));
 });
