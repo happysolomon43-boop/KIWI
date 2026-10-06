@@ -16,6 +16,7 @@ const {
   LONG_RUNNING_ANALYSIS_PROFILE,
   executionProfileForInvocation,
 } = require('../../teaching/orchestrator/ai-adapter');
+const { TPF02_OUTPUT_SCHEMA_ID } = require('../../teaching/d07/tpf02-direct');
 
 test('Teaching TPF-02 uses the centrally governed long-running analysis profile', () => {
   assert.equal(TPF02_EXECUTION_PROFILE, AI_EXECUTION_PROFILES.LONG_RUNNING_ANALYSIS);
@@ -62,7 +63,7 @@ test('Teaching adapter applies long-running profile only to allowlisted invocati
   assert.equal(executionProfileForInvocation({
     capability: { id: 'teaching.course_materials.analysis' },
     prompt: { family_id: 'TPF-02' },
-    output_schema: { id: 'tpf02.curriculum_analysis' },
+    output_schema: { id: TPF02_OUTPUT_SCHEMA_ID },
   }), LONG_RUNNING_ANALYSIS_PROFILE);
   assert.equal(executionProfileForInvocation({
     capability: { id: 'teaching.scheduling.instructional_load_estimation' },
