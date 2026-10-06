@@ -319,6 +319,8 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSo
     validationContext,
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>{
+      const rawSchema=validateTpf02Schema(out);
+      if(!rawSchema.ok)return rawSchema;
       if(out.source_inventory.length!==0)return {ok:false,reason:'TPF02_STAGED_SYNTHESIS_MUST_DEFER_SOURCE_INVENTORY'};
       const scoped=canonicalizeSynthesisSourceScope(out,preparedInventory);
       const assembled=assembleStagedAudit(scoped,preparedInventory,preparedSourceWalk,stageFindings);
