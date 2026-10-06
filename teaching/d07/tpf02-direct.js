@@ -345,7 +345,9 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
    'This is WHOLE_CURRICULUM_SYNTHESIS_STAGE after validated source-inventory preparation.',
    'Treat prepared_source_inventory as the exact provisional source accounting and source_evidence_items as the complete academic evidence set. Do not rewrite, omit, reorder, or reclassify prepared_source_inventory.',
    'Return source_inventory as an empty array. The server will reattach the exact validated prepared_source_inventory and validated source_walk before final validation.',
+   'Use only academic_input.eligible_learning_unit_source_refs in learning_units[].source_item_refs. Sources classified duplicate, non_instructional, outside_approved_scope, or unresolved are forbidden in Learning Unit source_item_refs.',
    'Build the complete Learning Unit structure and exact source_to_unit_reconciliation against prepared_source_inventory. Every required prepared source must map to at least one Learning Unit or be explicitly blocking-unresolved.',
+   'The server canonically derives required-item reconciliation from the final Learning Unit source references and will reject any missing required lineage.',
    'Do not repeat the prepared source inventory in the response.'
   );
  }else{

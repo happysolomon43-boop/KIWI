@@ -235,6 +235,92 @@ test('staged TPF-02 exhaustively inventories a large course and validates comple
   assert.equal(finalValidation.ok, true, finalValidation.reason);
 });
 
+test('staged synthesis canonically excludes non-instructional source classes from Learning Units without weakening required lineage', async () => {
+  const allSources = sources(49);
+  const fullInput = buildTpf02AcademicInput({
+    course: course(),
+    sources: allSources,
+    taskMode: 'DEEP_AUDIT',
+    executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+  });
+  const preparedInventory = fullInput.source_items.map(inventoryItem);
+  const excludedRef = preparedInventory.at(-1).source_item_ref;
+  preparedInventory[preparedInventory.length - 1] = {
+    ...preparedInventory.at(-1),
+    proposed_scope_classification: 'duplicate',
+    scope_classification_basis: 'Duplicates the first canonical source.',
+    duplicate_of_ref: preparedInventory[0].source_item_ref,
+  };
+  const preparedSourceWalk = fullInput.source_items.map(sourceWalk);
+  const request = curriculumSynthesisRequest({
+    course: course(),
+    sources: allSources,
+    preparedInventory,
+    preparedSourceWalk,
+    stageFindings: { status: 'ok', review_required: false, review_reasons: [], unresolved_items: [] },
+  });
+
+  assert.equal(request.academicInput.eligible_learning_unit_source_refs.length, 48);
+  assert.equal(request.academicInput.eligible_learning_unit_source_refs.includes(excludedRef), false);
+
+  const output = synthesisOutput(request);
+  assert.equal(output.learning_units[0].source_item_refs.includes(excludedRef), true);
+
+  const result = await request.domainValidator(output);
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(result.value.learning_units[0].source_item_refs.includes(excludedRef), false);
+  assert.equal(result.value.source_to_unit_reconciliation.required_item_map.length, 48);
+  assert.equal(
+    result.value.source_to_unit_reconciliation.required_item_map.some((row) => row.source_item_ref === excludedRef),
+    false
+  );
+  assert.deepEqual(result.value.source_to_unit_reconciliation.unmapped_required_refs, []);
+});
+
+test('staged synthesis still fails closed when source-scope canonicalization leaves a Learning Unit without eligible evidence', async () => {
+  const allSources = sources(49);
+  const fullInput = buildTpf02AcademicInput({
+    course: course(),
+    sources: allSources,
+    taskMode: 'DEEP_AUDIT',
+    executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+  });
+  const preparedInventory = fullInput.source_items.map(inventoryItem);
+  const excludedRef = preparedInventory.at(-1).source_item_ref;
+  preparedInventory[preparedInventory.length - 1] = {
+    ...preparedInventory.at(-1),
+    proposed_scope_classification: 'non_instructional',
+    scope_classification_basis: 'Administrative material only.',
+    duplicate_of_ref: null,
+    content_validity_status: 'not_applicable',
+  };
+  const request = curriculumSynthesisRequest({
+    course: course(),
+    sources: allSources,
+    preparedInventory,
+    preparedSourceWalk: fullInput.source_items.map(sourceWalk),
+    stageFindings: { status: 'ok', review_required: false, review_reasons: [], unresolved_items: [] },
+  });
+  const output = synthesisOutput(request);
+  output.learning_units.push({
+    learning_unit_id: 'unit-excluded-only',
+    title: 'Invalid excluded-only unit',
+    intended_competence: 'This should never become an accepted Learning Unit.',
+    source_item_refs: [excludedRef],
+    topic_refs: ['topic-1'],
+    prerequisite_refs: [],
+    dependency_type_notes: null,
+    criticality: 'supporting',
+    criticality_basis: 'Regression fixture.',
+    proposed_exit_evidence: 'None.',
+    gap_refs: [],
+    uncertainties: [],
+  });
+
+  const result = await request.domainValidator(output);
+  assert.equal(result.reason, 'TPF02_LEARNING_UNIT_INVALID:1');
+});
+
 test('staged synthesis rejects a structurally complete-looking result that omits one required source from Learning Units', async () => {
   const allSources = sources(49);
   const fullInput = buildTpf02AcademicInput({
