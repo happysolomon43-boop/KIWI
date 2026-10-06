@@ -53,6 +53,7 @@ function serializablePromptContract(invocation) {
 function composeTeachingModelContent({
   invocation,
   academicInput = {},
+  academicInputLimits = undefined,
 } = {}) {
   if (!invocation?.prompt?.frozen_binding) {
     fail('Teaching prompt composition requires a structural prompt invocation.');
@@ -64,7 +65,7 @@ function composeTeachingModelContent({
     invocation.prompt.family_version
   );
   const runtimeContract = serializablePromptContract(invocation);
-  const boundedAcademicInput = serializeAcademicInput(academicInput);
+  const boundedAcademicInput = serializeAcademicInput(academicInput, academicInputLimits);
 
   // The frozen family text is reproduced byte-for-byte between the family
   // delimiters. Runtime contract/input are appended as structurally separated
