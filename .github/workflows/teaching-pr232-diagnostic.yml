@@ -1,0 +1,37 @@
+name: PR232 Teaching Regression Isolation
+
+on:
+  push:
+    branches:
+      - fix/teaching-runtime-interaction-admin
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolate-new-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm install
+      - name: Admin auth regression
+        run: node --test tests/teaching/unit/admin-ai-diagnostics-auth-regression.test.js
+      - name: Admin census regression
+        run: node --test tests/teaching/unit/admin-ai-diagnostics-census-regression.test.js
+      - name: Course uniqueness regression
+        run: node --test tests/teaching/unit/course-uniqueness-regression.test.js
+      - name: Request review validation regression
+        run: node --test tests/teaching/unit/request-review-validation-regression.test.js
+      - name: Runtime bridge regression
+        run: node --test tests/teaching/unit/runtime-bridge-regression.test.js
+      - name: Runtime interaction + Admin regression
+        run: node --test tests/teaching/unit/runtime-interaction-admin-regression.test.js
+      - name: Teaching client bootstrap regression
+        run: node --test tests/teaching/unit/teaching-client-bootstrap-regression.test.js
