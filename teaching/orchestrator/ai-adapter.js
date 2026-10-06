@@ -4,6 +4,8 @@ const {composeTpf02DirectModelContent,TPF02_OUTPUT_SCHEMA_ID,TPF02_MAX_OUTPUT_TO
 const {authorityAtLeast}=require('../ai/contracts');
 const {getD28RuntimeService}=require('../d28/runtime-bridge');
 
+const TPF02_EXECUTION_PROFILE='LONG_RUNNING_ANALYSIS';
+
 function createTeachingAIAdapter({promptControl,aiBoundary,resolveCentralTaskId=null,assertRouteExecutable=null}={}){
  if(!promptControl||typeof promptControl.createInvocation!=='function')throw new TypeError('Teaching AI adapter requires the D03 prompt control plane.');
  if(!aiBoundary||typeof aiBoundary.execute!=='function')throw new TypeError('Teaching AI adapter requires the D02 central AI execution boundary.');
@@ -33,7 +35,12 @@ function createTeachingAIAdapter({promptControl,aiBoundary,resolveCentralTaskId=
     structuredOutput:Object.freeze({mimeType:'application/json',...(requestedGeneration.structuredOutput||{})}),
    });
    const request=Object.freeze({content,generation:modelGeneration});
-   const result=await aiBoundary.execute({taskId:String(taskId).trim(),centralRouteOptions:Object.freeze({preparationRoutePosture:preparationRoutePosture||null}),request,responsibilityKey:invocation.capability.id,capabilityId:invocation.capability.id,intelligenceClass:invocation.capability.execution_class,authorityLevel:invocation.capability.authority_ceiling,authoritativeOwner:invocation.capability.authoritative_owner_boundary,correlationId:invocation.audit.correlation_id,causationId:invocation.audit.causation_id,promptFamilyId:invocation.prompt.family_id,promptFamilyVersion:invocation.prompt.family_version,constitutionVersion:invocation.constitution.version,outputSchemaId:invocation.output_schema.id,outputSchemaVersion:invocation.output_schema.version,schemaValidator,domainValidator,deterministicChecks:effectiveChecks,validationContext,safeCommunicationFallback});
+   // TPF-02 is the one Teaching family whose complete-source census can be a
+   // genuinely long-running artifact generation. It stays on MAIN_CBT and its
+   // normal provider/model ordering, but asks the central orchestrator for its
+   // named bounded long-running execution profile. No raw/provider timeout is
+   // feature-controlled here, and all other Teaching/CBT calls keep defaults.
+   const result=await aiBoundary.execute({taskId:String(taskId).trim(),centralRouteOptions:Object.freeze({preparationRoutePosture:preparationRoutePosture||null,executionProfile:directTpf02?TPF02_EXECUTION_PROFILE:null}),request,responsibilityKey:invocation.capability.id,capabilityId:invocation.capability.id,intelligenceClass:invocation.capability.execution_class,authorityLevel:invocation.capability.authority_ceiling,authoritativeOwner:invocation.capability.authoritative_owner_boundary,correlationId:invocation.audit.correlation_id,causationId:invocation.audit.causation_id,promptFamilyId:invocation.prompt.family_id,promptFamilyVersion:invocation.prompt.family_version,constitutionVersion:invocation.constitution.version,outputSchemaId:invocation.output_schema.id,outputSchemaVersion:invocation.output_schema.version,schemaValidator,domainValidator,deterministicChecks:effectiveChecks,validationContext,safeCommunicationFallback});
    if(lease&&d28?.completePplInvocation){await d28.completePplInvocation(lease,{modelMetadata:result.modelMetadata||{},validationOutcome:result.accepted?'ACCEPTED':result.fallbackUsed?'SAFE_FALLBACK':'REJECTED'});completed=true;}
    return result;
   }finally{if(lease&&!completed&&d28?.releasePplInvocation)d28.releasePplInvocation(lease);}
@@ -46,4 +53,4 @@ function createTeachingAIAdapter({promptControl,aiBoundary,resolveCentralTaskId=
   if(typeof value!=='object'||Array.isArray(value))throw new TypeError('Teaching generation controls must be an object.');
   return value;
  }
-module.exports={createTeachingAIAdapter};
+module.exports={createTeachingAIAdapter,TPF02_EXECUTION_PROFILE};

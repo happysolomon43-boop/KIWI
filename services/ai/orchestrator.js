@@ -66,6 +66,63 @@ const DEFAULT_RETRY_POLICY = Object.freeze({
   maxTransientAttemptsPerRoute: 1,
 });
 
+// Named execution profiles are central KIWI controls, not feature-supplied raw
+// provider settings. They may change admission/deadline behavior while keeping
+// the task's approved model order, capabilities, reasoning and authority intact.
+const AI_EXECUTION_PROFILES = Object.freeze({
+  LONG_RUNNING_ANALYSIS: 'LONG_RUNNING_ANALYSIS',
+});
+
+const EXECUTION_PROFILE_CONFIG = Object.freeze({
+  [AI_EXECUTION_PROFILES.LONG_RUNNING_ANALYSIS]: Object.freeze({
+    operationTimeoutMs: 10 * 60 * 1000,
+    attemptTimeoutMs: 5 * 60 * 1000,
+    executionLane: AI_EXECUTION_LANES.BACKGROUND,
+    retryPolicy: Object.freeze({
+      // A latency timeout is model/runtime evidence, not a credential problem.
+      // Give each approved model one complete latency attempt, then fall through
+      // to the next approved route instead of repeating the same long generation
+      // on another key. Quota/auth paths still rotate credentials separately.
+      maxAttemptsPerRoute: 1,
+      maxTransientAttemptsPerRoute: 1,
+    }),
+  }),
+});
+
+function resolveExecutionProfile(task, requestedProfile = null) {
+  const taskTimeoutMs = Math.max(1000, Number(task?.timeoutMs) || 60000);
+  const name = requestedProfile == null ? '' : String(requestedProfile).trim();
+  if (!name) {
+    return Object.freeze({
+      name: null,
+      operationTimeoutMs: taskTimeoutMs,
+      attemptTimeoutMs: null,
+      executionLane: task?.executionLane || null,
+      retryPolicy: null,
+    });
+  }
+  const config = EXECUTION_PROFILE_CONFIG[name];
+  if (!config) {
+    throw new AIError(`Unknown AI execution profile: ${name}`, {
+      code: AI_ERROR_CODES.CONFIG,
+      retryable: false,
+      scope: 'REQUEST',
+    });
+  }
+  const operationTimeoutMs = Math.max(taskTimeoutMs, Number(config.operationTimeoutMs) || taskTimeoutMs);
+  const configuredAttempt = Number(config.attemptTimeoutMs);
+  const attemptTimeoutMs = Number.isFinite(configuredAttempt) && configuredAttempt > 0
+    ? Math.min(configuredAttempt, operationTimeoutMs)
+    : null;
+  return Object.freeze({
+    name,
+    operationTimeoutMs,
+    attemptTimeoutMs,
+    executionLane: config.executionLane || task?.executionLane || null,
+    retryPolicy: config.retryPolicy || null,
+  });
+}
+
 function validateFeatureGenerationConfig(generation = {}) {
   const source = generation && typeof generation === 'object' ? generation : {};
   const leaked = PROVIDER_NATIVE_GENERATION_FIELDS.find((key) =>
@@ -128,7 +185,8 @@ function createAIOrchestrator({
     15000
   );
 
-  function operationTimeoutFor(task) {
+  function operationTimeoutFor(task, executionProfile = null) {
+    if (executionProfile?.operationTimeoutMs) return executionProfile.operationTimeoutMs;
     return Math.max(1000, Number(task.timeoutMs) || 60000);
   }
 
@@ -136,21 +194,33 @@ function createAIOrchestrator({
     confirmationProbe = false,
     requestStartedAt,
     operationTimeoutMs,
+    executionAttemptTimeoutMs = null,
   } = {}) {
     const elapsedMs = Math.max(0, nowMs() - requestStartedAt);
     const remainingMs = operationTimeoutMs - elapsedMs;
     if (remainingMs <= 0) return 0;
 
-    const configured = Number(candidate.attemptTimeoutMs || task.attemptTimeoutMs);
+    const profileAttempt = Number(executionAttemptTimeoutMs);
+    const configured = Number(
+      Number.isFinite(profileAttempt) && profileAttempt > 0
+        ? profileAttempt
+        : candidate.attemptTimeoutMs || task.attemptTimeoutMs
+    );
     const attemptCeiling = Number.isFinite(configured) && configured > 0
       ? configured
       : task.executionLane === AI_EXECUTION_LANES.BACKGROUND
         ? Number(task.timeoutMs) || operationTimeoutMs
         : interactiveAttemptTimeoutMs;
+    // Candidate timeout normally mirrors the task timeout. A named execution
+    // profile intentionally extends that central task deadline, so the profile
+    // operation deadline becomes the provider-attempt ceiling for that call.
+    const providerCeiling = Number.isFinite(profileAttempt) && profileAttempt > 0
+      ? operationTimeoutMs
+      : Number(candidate.timeoutMs) || Number(task.timeoutMs) || operationTimeoutMs;
 
     return Math.max(1, Math.min(
       confirmationProbe ? confirmationProbeTimeoutMs : attemptCeiling,
-      Number(candidate.timeoutMs) || Number(task.timeoutMs) || operationTimeoutMs,
+      providerCeiling,
       remainingMs
     ));
   }
@@ -298,9 +368,11 @@ function createAIOrchestrator({
     generationGroupId = null,
     operationBudgetId = null,
     preparationRoutePosture = null,
+    executionProfile = null,
   } = {}) {
     assertReady?.();
     const task = resolvedRouter.getTask(taskId);
+    const resolvedExecutionProfile = resolveExecutionProfile(task, executionProfile);
     const content = normalizeExecutionContent(
       request.content !== undefined
         ? request.content
@@ -334,8 +406,11 @@ function createAIOrchestrator({
       generation.structuredOutput = { mimeType: 'application/json' };
     }
 
-    const operationTimeoutMs = operationTimeoutFor(task);
-    const retryPolicy = retryPolicyFor(task);
+    const operationTimeoutMs = operationTimeoutFor(task, resolvedExecutionProfile);
+    const baseRetryPolicy = retryPolicyFor(task);
+    const retryPolicy = resolvedExecutionProfile.retryPolicy
+      ? Object.freeze({ ...baseRetryPolicy, ...resolvedExecutionProfile.retryPolicy })
+      : baseRetryPolicy;
     const plannedRoutes = routedCandidates.map((candidate) => ({
       provider: candidate.provider,
       modelId: candidate.modelId,
@@ -350,6 +425,7 @@ function createAIOrchestrator({
           plannedRoutes,
           plannedPrimaryRoute: plannedRoutes[0] || null,
           generationGroupId,
+          executionProfile: resolvedExecutionProfile.name,
         }))
       : null;
 
@@ -386,6 +462,7 @@ function createAIOrchestrator({
         queueWaitMs,
         admissionLimit,
         congestionLevel,
+        executionProfile: resolvedExecutionProfile.name,
       }));
     }
 
@@ -393,8 +470,8 @@ function createAIOrchestrator({
       trafficLease = await resolvedTrafficController.acquire({
         taskId,
         taskClass: task.class,
-        executionLane: task.executionLane,
-        timeoutMs: task.timeoutMs,
+        executionLane: resolvedExecutionProfile.executionLane || task.executionLane,
+        timeoutMs: operationTimeoutMs,
       });
       queueWaitMs = Number(trafficLease?.queueWaitMs) || 0;
       admissionLimit = trafficLease?.admissionLimit ?? null;
@@ -468,6 +545,7 @@ function createAIOrchestrator({
               confirmationProbe: ownsConfirmationProbe,
               requestStartedAt,
               operationTimeoutMs,
+              executionAttemptTimeoutMs: resolvedExecutionProfile.attemptTimeoutMs,
             });
             if (attemptTimeoutMs <= 0) {
               await sideEffect('route lease release', () => routeLease.release());
@@ -492,7 +570,11 @@ function createAIOrchestrator({
                 ...generation,
                 reasoning: candidate.reasoning,
               },
-              metadata: { generationGroupId, operationId },
+              metadata: {
+                generationGroupId,
+                operationId,
+                executionProfile: resolvedExecutionProfile.name,
+              },
             });
 
             try {
@@ -575,6 +657,7 @@ function createAIOrchestrator({
                 queueWaitMs,
                 admissionLimit,
                 congestionLevel,
+                executionProfile: resolvedExecutionProfile.name,
               }));
 
               return Object.freeze({
@@ -589,6 +672,7 @@ function createAIOrchestrator({
                 resolvedReasoning: candidate.reasoning?.resolved || null,
                 fallbackDepth: routeIndex,
                 attempts: attemptNumber,
+                executionProfile: resolvedExecutionProfile.name,
               });
             } catch (error) {
               const aiError = error instanceof AIError
@@ -663,6 +747,7 @@ function createAIOrchestrator({
                 code: aiError.code,
                 status: aiError.status,
                 attempt: attemptNumber,
+                executionProfile: resolvedExecutionProfile.name,
               });
 
               const lifecycleResult = await sideEffect('model lifecycle failure', () =>
@@ -759,6 +844,7 @@ function createAIOrchestrator({
             providerBlockedRoutes,
             locallyBlockedRoutes,
             maxAttempts: retryPolicy.maxAttempts,
+            executionProfile: resolvedExecutionProfile.name,
           },
           cause: lastError,
         }
@@ -809,6 +895,9 @@ module.exports = {
   FAST_ROUTE_FALLBACK_CODES,
   PROVIDER_NATIVE_GENERATION_FIELDS,
   DEFAULT_RETRY_POLICY,
+  AI_EXECUTION_PROFILES,
+  EXECUTION_PROFILE_CONFIG,
+  resolveExecutionProfile,
   validateFeatureGenerationConfig,
   createAIOrchestrator,
 };
