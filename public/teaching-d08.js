@@ -207,6 +207,35 @@ function backgroundAuditState(job) {
   return { active: false, failed: false, label: null, message: null };
 }
 
+function backgroundPlanState(job) {
+  const status = String(job?.status || '').toUpperCase();
+  const attempts = Number(job?.attemptCount || 0);
+  if (status === 'CANCELLED') {
+    return {
+      active: false,
+      failed: true,
+      label: 'Needs attention',
+      message: `Course Plan generation did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. The validated curriculum is safe; you can retry.`,
+      errorCode: job?.lastErrorCode || null,
+    };
+  }
+  if (status === 'PENDING' || status === 'CLAIMED' || status === 'RETRY_WAIT') {
+    const nextAttempt = job?.nextAttemptAt ? new Date(job.nextAttemptAt) : null;
+    const retryTime = nextAttempt && Number.isFinite(nextAttempt.getTime())
+      ? ` Next attempt ${nextAttempt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+      : '';
+    return {
+      active: true,
+      failed: false,
+      label: status === 'RETRY_WAIT' ? 'Retry scheduled' : status === 'PENDING' ? 'Queued' : 'Running',
+      message: status === 'RETRY_WAIT'
+        ? `The last Course Plan attempt did not complete. KIWI will retry safely in the background.${retryTime}`
+        : 'KIWI is preparing and validating the Course Plan in the background. You can leave this page and return later.',
+    };
+  }
+  return { active: false, failed: false, label: null, message: null };
+}
+
 function ensurePreview() {
   installStyles();
   let dialog = document.getElementById(D08_PREVIEW_ID);
@@ -318,10 +347,14 @@ function renderPlanCard(course, review, refresh) {
   const head = el('div', 'teaching-d08-plan-head');
   const copy = el('div');
   copy.append(el('div', 'teaching-kicker', 'Course Plan'), el('h3', '', 'What this course will teach'));
+  const background = backgroundPlanState(review.generation?.background);
   const needsSetup = !review.plan && review.generation?.ready === false;
   const status = el(needsSetup ? 'button' : 'span', 'teaching-d08-status', review.plan
     ? `Version ${review.plan.version} · ${safeStatus(review.plan.state)}`
-    : review.generation?.ready === false ? 'Setup required' : 'Ready to create');
+    : needsSetup ? 'Setup required'
+      : background.active ? background.label
+        : background.failed ? 'Needs attention'
+          : 'Ready to create');
   if (needsSetup) {
     status.type = 'button';
     status.setAttribute('aria-label', 'Open course setup');
@@ -331,7 +364,9 @@ function renderPlanCard(course, review, refresh) {
   card.append(head);
 
   if (!review.plan) {
-    card.append(el('p', '', 'Create a Course Plan to organize the topics and learning units for this course.'));
+    card.append(el('p', '', background.active
+      ? 'The Course Plan is being prepared from the validated curriculum. This work is durable and continues if you leave the page.'
+      : 'Create a Course Plan to organize the topics and learning units for this course.'));
     const actions = el('div', 'teaching-d08-actions');
     const message = el('div');
     message.setAttribute('role', 'status');
@@ -346,19 +381,27 @@ function renderPlanCard(course, review, refresh) {
         : 'Analyze the course materials first so KIWI can build the plan from the correct content.';
       message.className = 'teaching-message';
     } else {
-      const generate = el('button', 'teaching-button teaching-button--primary', 'Create Course Plan');
+      const generate = el('button', 'teaching-button teaching-button--primary',
+        background.active ? 'Course Plan running in background'
+          : background.failed ? 'Try Course Plan again'
+            : 'Create Course Plan');
       generate.type = 'button';
+      generate.disabled = background.active;
+      if (background.active || background.failed) {
+        message.textContent = background.message;
+        message.className = 'teaching-message';
+        if (background.failed) message.dataset.kind = 'error';
+      }
       generate.addEventListener('click', async () => {
         generate.disabled = true;
-        message.textContent = 'Creating your Course Plan…';
+        message.textContent = 'Course Plan generation queued. KIWI will continue in the background.';
         message.className = 'teaching-message';
         delete message.dataset.kind;
         try {
           await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/course-plan`, { method: 'POST', body: {} });
-          message.textContent = 'Course Plan created.';
-          await refresh();
+          await refresh({ silent: true });
         } catch (error) {
-          message.textContent = error.message || 'Could not create the Course Plan.';
+          message.textContent = error.message || 'Could not start Course Plan generation.';
           message.className = 'teaching-message';
           message.dataset.kind = 'error';
           generate.disabled = false;
@@ -531,10 +574,20 @@ async function renderCoursePlan({ course, container }) {
   page.append(head, status, body);
   container.replaceChildren(page);
 
-  async function load() {
+  let pollTimer = null;
+  const schedulePoll = () => {
+    window.clearTimeout(pollTimer);
+    pollTimer = window.setTimeout(() => {
+      if (container.isConnected) load({ silent: true });
+    }, 5000);
+  };
+
+  async function load({ silent = false } = {}) {
     refreshButton.disabled = true;
-    status.textContent = 'Loading Course Plan…';
-    status.className = 'teaching-message';
+    if (!silent) {
+      status.textContent = 'Loading Course Plan…';
+      status.className = 'teaching-message';
+    }
     try {
       const review = await fetchReview(course.course_id);
       const grid = el('div', 'teaching-d08-grid');
@@ -544,10 +597,15 @@ async function renderCoursePlan({ course, container }) {
       secondary.append(renderAnalysisCard(review), renderAssumptionsCard(review), renderScopeCard(course, review, load));
       grid.append(primary, secondary);
       body.replaceChildren(grid);
-      status.textContent = '';
-      status.className = '';
+      const background = backgroundPlanState(review.generation?.background);
+      if (background.active && !review.plan) schedulePoll();
+      if (!silent || status.dataset.kind !== 'error') {
+        status.textContent = '';
+        status.className = '';
+        delete status.dataset.kind;
+      }
     } catch (error) {
-      body.replaceChildren();
+      if (!silent) body.replaceChildren();
       status.textContent = error.message || 'Could not load Course Plan review.';
       status.className = 'teaching-message';
       status.dataset.kind = 'error';
@@ -556,7 +614,7 @@ async function renderCoursePlan({ course, container }) {
     }
   }
 
-  refreshButton.addEventListener('click', load);
+  refreshButton.addEventListener('click', () => load());
   await load();
 }
 
