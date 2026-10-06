@@ -251,7 +251,7 @@ function calendarGroupedList(items,data,renderer){
 async function renderCalendar() {
   installStyles(); const main=document.getElementById('teachingApp'); if(!main)return; const page=el('section','teaching-view teaching-d09-page'),zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
   const head=el('div','teaching-d09-card teaching-d09-calendar-hero'),copy=el('div','teaching-d09-calendar-hero__copy'),meta=el('div','teaching-d09-calendar-hero__meta');
-  copy.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Your approved Classes and announced assessments, grouped by day so the next obligation is easy to scan. Proposed Course times remain separate until approval.'));
+  copy.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Classes and announced assessments share one timetable, grouped by day so the next obligation is easy to scan. Proposed Course times remain separate until approval.'));
   const back=el('button','teaching-d08-link-button','Back to courses');back.type='button';back.addEventListener('click',()=>courseSurface.openOverview?courseSurface.openOverview():window.location.reload());meta.append(el('span','teaching-d09-calendar-zone',`Times shown in ${zone}`),back);head.append(copy,meta);page.append(head);main.replaceChildren(page);
   try{
     const data=await kiwiApiRequest('/teaching/information/calendar?currentTimeZone='+encodeURIComponent(zone));
