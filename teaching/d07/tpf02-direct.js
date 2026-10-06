@@ -353,6 +353,18 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
  }else{
   instructions.push('This is SINGLE_PASS. Account for every supplied source once, build the complete curriculum structure, and satisfy exact required-source reconciliation before proposing status ok.');
  }
+ if(academicInput?.lineage_repair_context){
+  instructions.push(
+   'This is a bounded Lineage Law reconciliation pass using the supported LEARNING_UNIT_DECOMPOSITION task mode after a whole-curriculum synthesis left one or more required prepared sources unmapped.',
+   'Do not redesign or restate unrelated curriculum structure. Work only on the supplied repair subset in prepared_source_inventory/source_evidence_items.',
+   'Return topics, assumed_prerequisites, source_conflicts, coverage_gaps, structure_change_proposals, and unresolved_items as empty arrays.',
+   'Return student_facing_summary_candidate as null, status as ok, review_required as false, and review_reasons as an empty array.',
+   'Every returned Learning Unit must have empty topic_refs, prerequisite_refs, and gap_refs. Its purpose here is only to repair required source lineage without changing unrelated relationships.',
+   'Reuse an ID from lineage_repair_context.existing_learning_unit_ids only when the supplied missing source genuinely belongs in that existing Learning Unit; in that case the server will merge only the source lineage and preserve the existing unit metadata.',
+   'If none of the existing units is academically appropriate, create the smallest coherent new Learning Unit and make its learning_unit_id begin exactly with lineage_repair_context.new_unit_id_prefix.',
+   'Every supplied repair source must appear in at least one returned learning_units[].source_item_refs entry. Do not add any source that is not in eligible_learning_unit_source_refs.'
+  );
+ }
  const runtimeBinding={
   contract:'KIWI_TPF02_DIRECT_CURRICULUM_AUDIT_V2',
   task_mode:taskMode,
