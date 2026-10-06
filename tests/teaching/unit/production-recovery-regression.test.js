@@ -27,8 +27,8 @@ test('Teaching uses the normal KIWI Syne and DM Sans type roles', () => {
   const html = read('public/teaching.html');
   const interaction = read('public/teaching-interaction-system.js');
   const typography = read('public/teaching-typography-system.css');
-  assert.match(html, /--font-display: "Syne", sans-serif/);
-  assert.match(html, /--font-body: "DM Sans", sans-serif/);
+  assert.match(typography, /--teaching-font-display: "Syne", sans-serif/);
+  assert.match(typography, /--teaching-font-body: "DM Sans", sans-serif/);
   assert.match(typography, /--font-display:\s*var\(--teaching-font-display\)/);
   assert.match(typography, /--font-body:\s*var\(--teaching-font-body\)/);
   assert.doesNotMatch(interaction, /font-family:\s*var\(--font-/);
