@@ -126,6 +126,11 @@ test('question generation routes through RECKONING_CBT and requires semantic app
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], 'RECKONING_CBT');
+  assert.deepEqual(calls[0][1].generation.structuredOutput, {
+    mimeType: 'application/json',
+  });
+  assert.equal('generationConfig' in calls[0][1], false);
+  assert.equal('responseMimeType' in calls[0][1].generation, false);
   assert.equal(generated.structure.valid, true);
   assert.equal(generated.semantics.valid, true);
   assert.equal(generated.question.correctIndex, 0);
@@ -161,6 +166,11 @@ test('AI semantic reviewer uses CBT_QUESTION_AUDIT rather than bypassing the orc
   });
 
   assert.equal(calls[0][0], 'CBT_QUESTION_AUDIT');
+  assert.deepEqual(calls[0][1].generation.structuredOutput, {
+    mimeType: 'application/json',
+  });
+  assert.equal('generationConfig' in calls[0][1], false);
+  assert.equal('responseMimeType' in calls[0][1].generation, false);
   assert.deepEqual(calls[0][2], {
     generationGroupId: 'reckoning-audit-group',
     operationBudgetId: 'reckoning:claim:audit-1',
