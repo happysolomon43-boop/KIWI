@@ -1,5 +1,7 @@
 'use strict';
 
+const {mountTeachingAdminAIDiagnosticRoutes}=require('../admin-ai-diagnostics');
+
 function mountD15Routes(router,{foundation,sendError}={}){
   if(!router||!foundation||typeof sendError!=='function') throw new TypeError('D15 routes require router, foundation and sendError.');
   const service=foundation.d15?.service||null;
@@ -45,6 +47,11 @@ function mountD15Routes(router,{foundation,sendError}={}){
     try{res.json(await service.deferralState(req.user,req.params.id));}
     catch(error){sendError(res,error,'Failed to load Class deferral state.');}
   });
+
+  // Admin-only diagnostic routes are mounted alongside authenticated Teaching
+  // routes so they reuse the same production AI boundary without adding logic
+  // to the root KIWI server monolith.
+  mountTeachingAdminAIDiagnosticRoutes(router);
 
   return Object.freeze({ready:()=>ready,requireD15Ready});
 }
