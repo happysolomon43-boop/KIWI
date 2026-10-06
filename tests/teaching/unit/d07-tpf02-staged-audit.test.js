@@ -6,8 +6,10 @@ const assert = require('node:assert/strict');
 const {
   TPF02_SOURCE_INVENTORY_BATCH_SIZE,
   TPF02_STAGED_SOURCE_COUNT_THRESHOLD,
+  TPF02_SERVER_LINEAGE_REPAIR_REASON,
   sourceInventoryRequest,
   curriculumSynthesisRequest,
+  lineageRepairRequest,
   shouldStageCurriculumAudit,
   createD07Intelligence,
 } = require('../../../teaching/d07/intelligence');
@@ -130,6 +132,46 @@ function synthesisOutput(request) {
     review_required: false,
     review_reasons: [],
     student_facing_summary_candidate: 'The course structure is ready for review.',
+  };
+}
+
+function lineageRepairOutput(request) {
+  const refs = request.academicInput.audit_scope.source_refs;
+  const existingId = request.academicInput.lineage_repair_context.existing_learning_unit_ids[0];
+  return {
+    input_state_reference: request.academicInput.input_state_reference,
+    task_mode: 'LEARNING_UNIT_DECOMPOSITION',
+    execution_stage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+    audit_scope: { ...request.academicInput.audit_scope, source_walk: [] },
+    source_inventory: [],
+    topics: [],
+    learning_units: [{
+      learning_unit_id: existingId,
+      title: 'Lineage repair projection',
+      intended_competence: 'Attach the missing required source to the already identified competence.',
+      source_item_refs: refs,
+      topic_refs: [],
+      prerequisite_refs: [],
+      dependency_type_notes: null,
+      criticality: 'supporting',
+      criticality_basis: 'Bounded lineage repair only.',
+      proposed_exit_evidence: 'Use the existing Learning Unit exit evidence after lineage merge.',
+      gap_refs: [],
+      uncertainties: [],
+    }],
+    assumed_prerequisites: [],
+    source_conflicts: [],
+    coverage_gaps: [],
+    structure_change_proposals: [],
+    source_to_unit_reconciliation: {
+      required_item_map: refs.map((ref) => ({ source_item_ref: ref, learning_unit_refs: [existingId] })),
+      unmapped_required_refs: [],
+    },
+    unresolved_items: [],
+    status: 'ok',
+    review_required: false,
+    review_reasons: [],
+    student_facing_summary_candidate: null,
   };
 }
 
@@ -321,7 +363,7 @@ test('staged synthesis still fails closed when source-scope canonicalization lea
   assert.equal(result.reason, 'TPF02_LEARNING_UNIT_INVALID:1');
 });
 
-test('staged synthesis rejects a structurally complete-looking result that omits one required source from Learning Units', async () => {
+test('staged synthesis converts accidental required-lineage omission into a bounded server repair state instead of weakening the invariant', async () => {
   const allSources = sources(49);
   const fullInput = buildTpf02AcademicInput({
     course: course(),
@@ -343,8 +385,133 @@ test('staged synthesis rejects a structurally complete-looking result that omits
   output.learning_units[0] = { ...output.learning_units[0], source_item_refs: output.learning_units[0].source_item_refs.slice(0, -1) };
   output.source_to_unit_reconciliation.required_item_map = output.source_to_unit_reconciliation.required_item_map.map((row) => row.source_item_ref === missing ? { ...row, learning_unit_refs: [] } : row);
   output.source_to_unit_reconciliation.unmapped_required_refs = [missing];
+
   const result = await request.domainValidator(output);
-  assert.equal(result.reason, 'TPF02_OK_STATUS_HAS_UNMAPPED_REQUIRED_SOURCE');
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(result.value.status, 'unresolved');
+  assert.equal(result.value.review_required, true);
+  assert.ok(result.value.review_reasons.includes(TPF02_SERVER_LINEAGE_REPAIR_REASON));
+  assert.deepEqual(result.value.source_to_unit_reconciliation.unmapped_required_refs, [missing]);
+  assert.equal(
+    result.value.unresolved_items.some((item) => item.blocks_responsible_planning && item.source_item_refs.includes(missing)),
+    true
+  );
+});
+
+test('bounded LEARNING_UNIT_DECOMPOSITION repair closes missing required lineage and preserves the original Learning Unit metadata', async () => {
+  const allSources = sources(49);
+  const calls = [];
+
+  const orchestrator = {
+    async execute(request) {
+      calls.push(request);
+      if (request.taskMode === 'SOURCE_INVENTORY') {
+        const output = inventoryStageOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        const provenance = await request.provenanceValidator(domain.value);
+        assert.equal(provenance.ok, true, provenance.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      if (request.taskMode === 'DEEP_AUDIT') {
+        const output = synthesisOutput(request);
+        const missing = request.academicInput.audit_scope.source_refs.at(-1);
+        output.learning_units[0] = {
+          ...output.learning_units[0],
+          source_item_refs: output.learning_units[0].source_item_refs.filter((ref) => ref !== missing),
+        };
+        output.source_to_unit_reconciliation.required_item_map = output.source_to_unit_reconciliation.required_item_map.map((row) =>
+          row.source_item_ref === missing ? { ...row, learning_unit_refs: [] } : row
+        );
+        output.source_to_unit_reconciliation.unmapped_required_refs = [missing];
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        const provenance = await request.provenanceValidator(domain.value);
+        assert.equal(provenance.ok, true, provenance.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      assert.equal(request.taskMode, 'LEARNING_UNIT_DECOMPOSITION');
+      assert.equal(request.capabilityId, 'teaching.curriculum.learning_unit_decomposition');
+      assert.equal(request.academicInput.lineage_repair_context.reason, TPF02_SERVER_LINEAGE_REPAIR_REASON);
+      assert.equal(request.academicInput.source_evidence_items.length, 1);
+      const output = lineageRepairOutput(request);
+      const domain = await request.domainValidator(output);
+      assert.equal(domain.ok, true, domain.reason);
+      const provenance = await request.provenanceValidator(domain.value);
+      assert.equal(provenance.ok, true, provenance.reason);
+      return { accepted: true, validatedResult: { output: domain.value } };
+    },
+  };
+
+  const result = await createD07Intelligence({ orchestrator }).runCurriculumAudit({
+    course: course(),
+    sources: allSources,
+  });
+
+  assert.equal(result.accepted, true);
+  assert.equal(result.lineageRepair.repaired_source_count, 1);
+  assert.equal(result.lineageRepair.repair_batch_count, 1);
+
+  const repairCalls = calls.filter((request) => request.taskMode === 'LEARNING_UNIT_DECOMPOSITION');
+  assert.equal(repairCalls.length, 1);
+
+  const final = result.validatedResult.output;
+  const missing = final.audit_scope.source_refs.at(-1);
+  assert.deepEqual(final.source_to_unit_reconciliation.unmapped_required_refs, []);
+  assert.equal(final.learning_units[0].source_item_refs.includes(missing), true);
+  assert.equal(final.learning_units[0].title, 'Foundations of mechanics');
+  assert.equal(final.learning_units[0].intended_competence, 'Explain and apply the central mechanics relationships.');
+  assert.equal(final.review_reasons.includes(TPF02_SERVER_LINEAGE_REPAIR_REASON), false);
+
+  const fullInput = buildTpf02AcademicInput({
+    course: course(),
+    sources: allSources,
+    taskMode: 'DEEP_AUDIT',
+    executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+  });
+  const validation = validateTpf02Domain(final, {
+    inputStateReference: fullInput.input_state_reference,
+    trustedScopeVersion: fullInput.audit_scope.trusted_scope_version,
+    sourceItems: fullInput.source_items,
+    taskMode: fullInput.task_mode,
+    executionStage: fullInput.execution_stage,
+  });
+  assert.equal(validation.ok, true, validation.reason);
+});
+
+test('lineage repair request is fail-closed if it tries to redesign unrelated curriculum structure', async () => {
+  const allSources = sources(1);
+  const fullInput = buildTpf02AcademicInput({
+    course: course(),
+    sources: allSources,
+    taskMode: 'LEARNING_UNIT_DECOMPOSITION',
+    executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+  });
+  const preparedInventory = fullInput.source_items.map(inventoryItem);
+  const existingArtifact = {
+    learning_units: [{
+      learning_unit_id: 'unit-1',
+      title: 'Existing unit',
+      intended_competence: 'Existing competence',
+      source_item_refs: [],
+      topic_refs: [],
+      criticality: 'foundational',
+    }],
+  };
+  const request = lineageRepairRequest({
+    course: course(),
+    sources: allSources,
+    preparedInventory,
+    preparedSourceWalk: fullInput.source_items.map(sourceWalk),
+    existingArtifact,
+    batchIndex: 0,
+  });
+  const output = lineageRepairOutput(request);
+  output.topics = [{ topic_id: 'unexpected-topic', title: 'Unexpected', source_item_refs: [], subtopics: [] }];
+  const result = await request.domainValidator(output);
+  assert.equal(result.reason, 'TPF02_LINEAGE_REPAIR_SCOPE_EXCEEDED');
 });
 
 test('staged synthesis rejects any attempt by the model to replace prepared source accounting', async () => {
