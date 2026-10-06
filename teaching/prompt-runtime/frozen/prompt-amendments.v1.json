@@ -1,0 +1,18 @@
+{
+  "registry_version": "1.0",
+  "base_manifest_version": "1.4",
+  "base_manifest_sha256": "7757b50cbf4cfb501158beeaccfbfd5776bc8ca8f7257b4855f5ed5fcdf67e3d",
+  "amendments": [
+    {
+      "family_id": "TPF-02",
+      "supersedes_version": "1.0",
+      "version": "1.1",
+      "prompt_file": "TPF-02_Curriculum_Analysis_Structuring_v1.1_REVISED_CANDIDATE.md",
+      "prompt_asset": "TPF-02_Curriculum_Analysis_Structuring_v1.1_REVISED_CANDIDATE.md.gz.b64",
+      "prompt_sha256": "4272ed7051786b2c3ccc545d827ab21e85e622df628310e48e837759a33ec666",
+      "status": "qualification_pending",
+      "change_class": "production_failure_repair",
+      "reason": "Required source items could pass Curriculum Audit without complete Learning Unit lineage, causing D08 Course Plan coverage failure."
+    }
+  ]
+}
