@@ -3,7 +3,12 @@
 const {
   validateTpf03CoursePlanOutput,
   validateTpf03ScopeImpactOutput,
+  buildAuditSourceUnitGraph,
 } = require('./canonical-plan');
+const {
+  buildCoverageObligations,
+  validateCoverageTreatmentPlan,
+} = require('./coverage-planning');
 const { getCapability } = require('../capability-registry');
 const { TPF03_COURSE_PLAN_RESPONSE_SCHEMA } = require('./tpf03-provider-schema');
 
@@ -58,6 +63,8 @@ function boundedPlanningSignals({ audit, diagnosticPlan = null, vpkDecisions = [
       sourceRefByAlias.set(`source:${sourceId}`, sourceRef);
     }
   }
+  const sourceUnitGraph = buildAuditSourceUnitGraph(output, sources);
+  const coverageObligations = buildCoverageObligations({ auditOutput: output, sources, sourceUnitGraph });
   return Object.freeze({
     curriculum: Object.freeze({
       audit_ref: audit?.curriculum_audit_id || null,
@@ -105,6 +112,7 @@ function boundedPlanningSignals({ audit, diagnosticPlan = null, vpkDecisions = [
       target_ref: decision.target_ref,
       decision_status: decision.decision_status,
     })),
+    required_source_coverage_obligations: coverageObligations,
     source_classifications: sources.map((source) => ({
       source_ref: source.source_ref,
       classification: source.classification,
@@ -118,6 +126,7 @@ function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions 
   const outputSchema = canonicalOutputSchema('tpf03.course-plan-scope-planning', validate);
   const sourceRefs = sources.map((source) => `source:${source.source_content_item_id}`);
   const planningSignals = boundedPlanningSignals({ audit, diagnosticPlan, vpkDecisions, sources });
+  const sourceUnitGraph = buildAuditSourceUnitGraph(audit?.audit_output || {}, sources);
   const request = base({
     capabilityId: 'teaching.curriculum.course_plan_generation',
     course,
@@ -147,6 +156,12 @@ function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions 
         include_every_declared_top_level_field: true,
         include_every_learning_unit_exactly_once: true,
         use_learning_unit_ids_exactly_as_supplied: true,
+        preserve_existing_source_unit_links: true,
+        map_every_uncovered_required_source_exactly_once: true,
+        coverage_source_ref_must_equal_obligation_source_ref: true,
+        coverage_planned_treatment_refs_must_be_supplied_learning_unit_ids: true,
+        uncovered_required_source_mapping_must_be_full_and_nonempty: true,
+        coverage_status_claimed_must_be_planned_only: true,
       },
     },
     provenanceRefs: [`curriculum-audit:${audit.curriculum_audit_id}`, ...sourceRefs, ...vpkDecisions.map((decision) => `vpk:${decision.vpk_decision_id}`)],
@@ -163,6 +178,12 @@ function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions 
       const result = validateTpf03CoursePlanOutput(out, { course });
       if (!result.ok) return result;
       if (result.blocksFinalPlan) return { ok: false, reason: 'TEACHING_D08_TPF03_PLAN_BLOCKED' };
+      const coverage = validateCoverageTreatmentPlan(out, {
+        auditOutput: audit?.audit_output || {},
+        sources,
+        sourceUnitGraph,
+      });
+      if (!coverage.ok) return coverage;
       return result;
     },
     provenanceValidator: async (out) => {
