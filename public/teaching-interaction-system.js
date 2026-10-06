@@ -18,11 +18,11 @@
   function ensureStyles(){
     if(document.getElementById('teachingInteractionStyles'))return;
     const style=document.createElement('style');style.id='teachingInteractionStyles';style.textContent=`
-      html[data-app="kiwi-teaching"] body{font-family:"DM Sans",var(--font-body),sans-serif;letter-spacing:-.012em}
+      html[data-app="kiwi-teaching"] body{font-family:var(--font-body,"DM Sans"),sans-serif;letter-spacing:-.012em}
       html[data-app="kiwi-teaching"] h1,html[data-app="kiwi-teaching"] h2,html[data-app="kiwi-teaching"] h3,
       html[data-app="kiwi-teaching"] h4,html[data-app="kiwi-teaching"] .teaching-title,
       html[data-app="kiwi-teaching"] .teaching-brand__kiwi{
-        font-family:var(--font-display,"DM Sans"),sans-serif;letter-spacing:-.025em
+        font-family:var(--font-display,"Syne"),sans-serif;letter-spacing:-.025em
       }
       html[data-app="kiwi-teaching"] p,html[data-app="kiwi-teaching"] .teaching-message,
       html[data-app="kiwi-teaching"] .teaching-course-card__meta{line-height:1.62;letter-spacing:-.008em}
