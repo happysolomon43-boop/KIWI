@@ -68,9 +68,18 @@ function validateTpf03CoursePlanOutput(output, { course } = {}) {
 
 function buildAuditSourceUnitGraph(auditOutput = {}, sources = []) {
   const sourceUnits = new Map(sources.map((source) => [String(source.source_ref), new Set()]));
-  const sourceRefByCanonicalRef = new Map(
-    sources.map((source) => [`source:${source.source_content_item_id}`, String(source.source_ref)])
-  );
+  const sourceRefByAlias = new Map();
+  for (const source of sources) {
+    const sourceRef = String(source.source_ref || '').trim();
+    const sourceId = String(source.source_content_item_id || '').trim();
+    if (!sourceRef) continue;
+    sourceRefByAlias.set(sourceRef, sourceRef);
+    if (sourceId) {
+      sourceRefByAlias.set(sourceId, sourceRef);
+      sourceRefByAlias.set(`source:${sourceId}`, sourceRef);
+    }
+  }
+  const resolveSourceRef = (value) => sourceRefByAlias.get(String(value || '').trim()) || null;
   const add = (sourceRef, unitRef) => {
     const sourceKey = String(sourceRef || '').trim();
     const unitKey = String(unitRef || '').trim();
@@ -79,9 +88,10 @@ function buildAuditSourceUnitGraph(auditOutput = {}, sources = []) {
   };
 
   for (const account of auditOutput.source_accounting || []) {
-    const sourceRef = String(account.source_ref || '').trim();
+    const rawSourceRef = String(account.source_ref || '').trim();
+    const sourceRef = resolveSourceRef(rawSourceRef) || rawSourceRef;
     if (sourceRef && !sourceUnits.has(sourceRef)) sourceUnits.set(sourceRef, new Set());
-    for (const unitRef of account.learning_unit_ids || []) add(account.source_ref, unitRef);
+    for (const unitRef of account.learning_unit_ids || []) add(sourceRef, unitRef);
   }
 
   const unitsByTopic = new Map();
@@ -89,7 +99,7 @@ function buildAuditSourceUnitGraph(auditOutput = {}, sources = []) {
     const unitRef = String(unit.learning_unit_id || unit.id || '').trim();
     if (!unitRef) continue;
     for (const canonicalSourceRef of unit.source_item_refs || []) {
-      const sourceRef = sourceRefByCanonicalRef.get(String(canonicalSourceRef));
+      const sourceRef = resolveSourceRef(canonicalSourceRef);
       if (sourceRef) add(sourceRef, unitRef);
     }
     const topicRefs = new Set([
@@ -107,7 +117,7 @@ function buildAuditSourceUnitGraph(auditOutput = {}, sources = []) {
     const unitRefs = unitsByTopic.get(topicRef);
     if (!topicRef || !unitRefs?.size) continue;
     for (const canonicalSourceRef of topic.source_item_refs || []) {
-      const sourceRef = sourceRefByCanonicalRef.get(String(canonicalSourceRef));
+      const sourceRef = resolveSourceRef(canonicalSourceRef);
       if (!sourceRef) continue;
       for (const unitRef of unitRefs) add(sourceRef, unitRef);
     }

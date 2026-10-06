@@ -8,6 +8,7 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '../../..');
 const typography = fs.readFileSync(path.join(ROOT, 'public/teaching-typography-system.css'), 'utf8');
 const display = fs.readFileSync(path.join(ROOT, 'public/teaching-display.js'), 'utf8');
+const interaction = fs.readFileSync(path.join(ROOT, 'public/teaching-interaction-system.js'), 'utf8');
 
 function declarationCount(property, valueFragment) {
   const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -31,6 +32,16 @@ test('Teaching typography contract disables synthetic/stretch rendering and brow
   assert.match(typography, /font-stretch:\s*normal\s*!important/);
   assert.match(typography, /-webkit-text-size-adjust:\s*100%\s*!important/);
   assert.match(typography, /text-size-adjust:\s*100%\s*!important/);
+});
+
+test('Teaching typography has one token owner and future components inherit it without selector registration', () => {
+  assert.match(typography, /--font-body:\s*var\(--teaching-font-body\)/);
+  assert.match(typography, /--font-display:\s*var\(--teaching-font-display\)/);
+  assert.match(typography, /--font-mono:\s*var\(--teaching-font-mono\)/);
+  assert.match(typography, /html\[data-app="kiwi-teaching"\]\s+body\s+\*/);
+  assert.doesNotMatch(interaction, /fonts\.googleapis\.com/);
+  assert.doesNotMatch(interaction, /font-family:\s*var\(--font-/);
+  assert.doesNotMatch(interaction, /"DM Sans",sans-serif/);
 });
 
 test('Teaching typography contract is cascade-authoritative for semantic type roles', () => {

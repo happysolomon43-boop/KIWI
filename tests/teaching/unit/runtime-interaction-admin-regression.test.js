@@ -108,13 +108,14 @@ test('Teaching interaction and Admin diagnostic clients are actually bootstrappe
   const display=fs.readFileSync(path.join(root,'public/teaching-display.js'),'utf8');
   const runtime=fs.readFileSync(path.join(root,'public/kiwi-runtime-config.js'),'utf8');
   const interaction=fs.readFileSync(path.join(root,'public/teaching-interaction-system.js'),'utf8');
+  const typography=fs.readFileSync(path.join(root,'public/teaching-typography-system.css'),'utf8');
   const ui=fs.readFileSync(path.join(root,'public/teaching-ui-system.css'),'utf8');
   const admin=fs.readFileSync(path.join(root,'public/admin-teaching-ai-diagnostics.js'),'utf8');
   assert.match(display,/teaching-interaction-system\.js/);
   assert.match(runtime,/admin-teaching-ai-diagnostics\.js/);
   assert.match(interaction,/data-kiwi-busy/);
-  assert.match(interaction,/Syne/);
-  assert.match(interaction,/var\(--font-display,"Syne"\)/);
+  assert.doesNotMatch(interaction,/fonts\.googleapis\.com/);
+  assert.match(typography,/--teaching-font-display:\s*"Syne"/);
   assert.match(interaction,/kiwi\.teaching\.location\.v1/);
   assert.doesNotMatch(interaction,/\.teaching-course-nav__item,html\[data-app="kiwi-teaching"\] button\{/);
   assert.doesNotMatch(interaction,/teachingActivityChip/);

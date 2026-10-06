@@ -3,6 +3,11 @@
   --teaching-font-display: "Syne", "DM Sans", ui-sans-serif, system-ui, sans-serif;
   --teaching-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
+  /* Compatibility aliases point every legacy feature at the same owners. */
+  --font-body: var(--teaching-font-body);
+  --font-display: var(--teaching-font-display);
+  --font-mono: var(--teaching-font-mono);
+
   --teaching-weight-regular: 400;
   --teaching-weight-medium: 500;
   --teaching-weight-semibold: 600;
@@ -60,6 +65,19 @@ html[data-app="kiwi-teaching"] body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/*
+ * Default every present and future Teaching component to body typography.
+ * Components no longer need to be enumerated here to avoid falling back to a
+ * browser font. The semantic heading, label, action and code roles below are
+ * the only intentional overrides.
+ */
+html[data-app="kiwi-teaching"] body * {
+  font-family: inherit !important;
+  font-stretch: normal !important;
+  font-synthesis: none !important;
+  font-variation-settings: normal !important;
 }
 
 html[data-app="kiwi-teaching"] :is(button, input, select, textarea, option) {

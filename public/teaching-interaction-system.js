@@ -8,28 +8,9 @@
   let lastPressedAt=0;
   let restored=false;
 
-  function ensureFonts(){
-    if(document.querySelector('link[data-teaching-type-system]'))return;
-    const link=document.createElement('link');link.rel='stylesheet';link.dataset.teachingTypeSystem='true';
-    link.href='https://fonts.googleapis.com/css2?family=Syne:wght@500;600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap';
-    document.head.append(link);
-  }
-
   function ensureStyles(){
     if(document.getElementById('teachingInteractionStyles'))return;
     const style=document.createElement('style');style.id='teachingInteractionStyles';style.textContent=`
-      html[data-app="kiwi-teaching"] body{font-family:var(--font-body,"DM Sans"),sans-serif;letter-spacing:-.012em}
-      html[data-app="kiwi-teaching"] h1,html[data-app="kiwi-teaching"] h2,html[data-app="kiwi-teaching"] h3,
-      html[data-app="kiwi-teaching"] h4,html[data-app="kiwi-teaching"] .teaching-title,
-      html[data-app="kiwi-teaching"] .teaching-brand__kiwi{
-        font-family:var(--font-display,"Syne"),sans-serif;letter-spacing:-.025em
-      }
-      html[data-app="kiwi-teaching"] p,html[data-app="kiwi-teaching"] .teaching-message,
-      html[data-app="kiwi-teaching"] .teaching-course-card__meta{line-height:1.62;letter-spacing:-.008em}
-      html[data-app="kiwi-teaching"] .teaching-eyebrow,html[data-app="kiwi-teaching"] [class*="__eyebrow"],
-      html[data-app="kiwi-teaching"] [class*="__badge"],html[data-app="kiwi-teaching"] .teaching-status{
-        font-family:var(--font-mono,"JetBrains Mono",monospace);letter-spacing:.11em;text-transform:uppercase
-      }
       html[data-app="kiwi-teaching"] button{position:relative;isolation:isolate;overflow:hidden;transform:translateZ(0)}
       html[data-app="kiwi-teaching"] button:not(:disabled):active{transform:translateY(1px) scale(.985)!important;filter:brightness(1.08)}
       html[data-app="kiwi-teaching"] button[data-kiwi-pressed="true"]{box-shadow:0 0 0 3px rgba(115,229,178,.12),0 12px 34px rgba(0,0,0,.2)!important}
@@ -38,7 +19,7 @@
         content:"";position:absolute;right:17px;top:50%;width:16px;height:16px;margin-top:-9px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:kiwiTeachingSpin .68s linear infinite;opacity:.72
       }
       @keyframes kiwiTeachingSpin{to{transform:rotate(360deg)}}
-      .kiwi-teaching-action-result{position:fixed;left:50%;bottom:calc(86px + env(safe-area-inset-bottom,0px));z-index:85;max-width:min(430px,calc(100vw - 30px));padding:11px 15px;border:1px solid rgba(120,229,182,.2);border-radius:14px;background:rgba(4,29,21,.96);box-shadow:0 18px 48px rgba(0,0,0,.35);color:#d9f2e7;font:600 12px/1.45 "DM Sans",sans-serif;transform:translate(-50%,12px);opacity:0;transition:.18s ease;pointer-events:none}
+      .kiwi-teaching-action-result{position:fixed;left:50%;bottom:calc(86px + env(safe-area-inset-bottom,0px));z-index:85;max-width:min(430px,calc(100vw - 30px));padding:11px 15px;border:1px solid rgba(120,229,182,.2);border-radius:14px;background:rgba(4,29,21,.96);box-shadow:0 18px 48px rgba(0,0,0,.35);color:#d9f2e7;font:var(--teaching-weight-semibold) var(--teaching-type-body-small-size)/var(--teaching-type-body-small-line) var(--teaching-font-body);transform:translate(-50%,12px);opacity:0;transition:.18s ease;pointer-events:none}
       .kiwi-teaching-action-result[data-show="true"]{transform:translate(-50%,0);opacity:1}
       .kiwi-teaching-action-result[data-kind="error"]{border-color:rgba(244,137,137,.26);color:#ffc0c0;background:rgba(41,18,18,.96)}
       @media(prefers-reduced-motion:reduce){.kiwi-teaching-action-result{transition:none}html[data-app="kiwi-teaching"] button[data-kiwi-busy="true"]::after{animation:none}}
@@ -112,7 +93,7 @@
     let tries=0;const timer=setInterval(()=>{tries+=1;if(attempt()||tries>80)clearInterval(timer);},75);
   }
 
-  function init(){ensureFonts();ensureStyles();installApiFeedback();installPressFeedback();installDeferredRestore();}
+  function init(){ensureStyles();installApiFeedback();installPressFeedback();installDeferredRestore();}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
   global.KIWITeachingInteraction=Object.freeze({dedupeCourses,toast});
 })(window);

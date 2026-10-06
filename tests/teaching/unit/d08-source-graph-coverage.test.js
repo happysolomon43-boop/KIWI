@@ -108,3 +108,17 @@ test('D08 does not invent source coverage when no authoritative graph path reach
   assert.deepEqual(graph.get('subject:card:2'), []);
   assert.deepEqual(graph.get('subject:card:3'), []);
 });
+
+test('D08 resolves persisted source refs without assuming one audit reference format', () => {
+  const mixed = audit();
+  mixed.source_accounting = [];
+  mixed.topics = [{ ...mixed.topics[0], source_item_refs: ['subject:card:2'] }];
+  mixed.learning_units = [{
+    ...mixed.learning_units[0],
+    source_item_refs: ['subject:card:1'],
+  }];
+  const graph = buildAuditSourceUnitGraph(mixed, sources());
+  assert.deepEqual(graph.get('subject:card:1'), ['unit-1']);
+  assert.deepEqual(graph.get('subject:card:2'), ['unit-1']);
+  assert.deepEqual(graph.get('subject:card:3'), []);
+});
