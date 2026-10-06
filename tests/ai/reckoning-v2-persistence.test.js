@@ -5,6 +5,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+test('fixed responseMimeType configuration failures can recover without reopening other terminal errors', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../services/reckoning/store.js'), 'utf8');
+  assert.match(source, /status = 'READY'[\s\S]*?THEN 'READY'[\s\S]*?last_error LIKE '%Feature code cannot set provider-native generation field responseMimeType%'[\s\S]*?THEN 'NEEDS_GENERATION'/);
+  assert.match(source, /terminal_item.work_state = 'TERMINAL_ERROR'[\s\S]*?COALESCE\(terminal_item.last_error, ''\) NOT LIKE '%Feature code cannot set provider-native generation field responseMimeType%'/);
+});
+
 const {
   createReckoningStore,
   ReckoningContractError,

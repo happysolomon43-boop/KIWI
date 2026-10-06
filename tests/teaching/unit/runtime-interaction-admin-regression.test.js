@@ -115,6 +115,7 @@ test('Teaching interaction and Admin diagnostic clients are actually bootstrappe
   assert.match(interaction,/data-kiwi-busy/);
   assert.match(interaction,/Syne/);
   assert.match(interaction,/kiwi\.teaching\.location\.v1/);
+  assert.doesNotMatch(interaction,/\.teaching-course-nav__item,html\[data-app="kiwi-teaching"\] button\{/);
   assert.doesNotMatch(interaction,/teachingActivityChip/);
   assert.doesNotMatch(interaction,/Loading Teaching data/);
   assert.match(interaction,/finally\{endForButton\(triggerButton\);\}/);
