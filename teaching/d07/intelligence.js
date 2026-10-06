@@ -10,6 +10,7 @@ const {
   validateTpf02Schema,
   validateTpf02Domain,
 } = require('./tpf02-direct');
+const { createStagedCurriculumAuditRunner } = require('./tpf02-staged');
 
 function base({capabilityId,course,stateVersion,taskMode,outputSchema,contextSpec,academicInput,provenanceRefs=[]}){
   return {
@@ -98,7 +99,13 @@ function vpkInterpretationRequest({course,target,evidenceRefs=[]}){
 
 function createD07Intelligence({orchestrator}={}){
   if(!orchestrator||typeof orchestrator.execute!=='function')throw new TypeError('D07 intelligence requires the Teaching Orchestrator.');
-  return Object.freeze({extractIntake:args=>orchestrator.execute(intakeRequest(args)),runCurriculumAudit:args=>orchestrator.execute(curriculumAuditRequest(args)),designDiagnostic:args=>orchestrator.execute(diagnosticRequest(args)),interpretPriorKnowledge:args=>orchestrator.execute(vpkInterpretationRequest(args))});
+  const stagedAudit=createStagedCurriculumAuditRunner({orchestrator,makeBaseRequest:base});
+  return Object.freeze({
+    extractIntake:args=>orchestrator.execute(intakeRequest(args)),
+    runCurriculumAudit:args=>stagedAudit.shouldStage(args)?stagedAudit.run(args):orchestrator.execute(curriculumAuditRequest(args)),
+    designDiagnostic:args=>orchestrator.execute(diagnosticRequest(args)),
+    interpretPriorKnowledge:args=>orchestrator.execute(vpkInterpretationRequest(args)),
+  });
 }
 
 module.exports={intakeRequest,curriculumAuditRequest,diagnosticRequest,vpkInterpretationRequest,createD07Intelligence,validateCurriculumAuditSchema,validateCurriculumAuditDomain};
