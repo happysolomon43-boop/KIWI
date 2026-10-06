@@ -44,10 +44,27 @@ html[data-app="kiwi-teaching"] :is(button, input, select, textarea, option) {
   font-variation-settings: normal;
 }
 
-/* The established Teaching hierarchy: Syne for authored headings/brand only. */
+/* The established Teaching hierarchy: Syne for authored display headings and
+ * the brand, with DM Sans for dense operational/card headings. The flow shell
+ * was overusing heavy Syne on every card, which made mobile headings look
+ * horizontally stretched even though font-stretch itself was already normal. */
 html[data-app="kiwi-teaching"] :is(h1, h2, h3, h4, h5, h6, .teaching-title, .teaching-brand__kiwi, .teaching-brand__name) {
   font-family: var(--font-display);
   font-synthesis: none;
+  font-stretch: normal;
+}
+html[data-app="kiwi-teaching"] body .tf-hero h2,
+html[data-app="kiwi-teaching"] body .teaching-schedule-x__hero h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-stretch: normal;
+}
+html[data-app="kiwi-teaching"] body :is(.tf-card h3, .tf-summary-card h3) {
+  font-family: var(--font-body);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
   font-stretch: normal;
 }
 
@@ -67,4 +84,12 @@ html[data-app="kiwi-teaching"] :is([role="status"], [role="alert"], .teaching-me
   line-height: 1.62;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+@media (max-width: 560px) {
+  html[data-app="kiwi-teaching"] body .tf-hero h2,
+  html[data-app="kiwi-teaching"] body .teaching-schedule-x__hero h2 {
+    font-size: 28px;
+    line-height: 1.08;
+  }
 }
