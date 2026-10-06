@@ -44,7 +44,7 @@ test('execution profile names are centrally allowlisted and fail closed', () => 
   );
 });
 
-test('TPF-02 adapter applies long-running profile without changing the central task route', () => {
+test('every TPF-02 stage uses the long-running profile and server-owned source-census envelope without changing MAIN_CBT routing', () => {
   const source = fs.readFileSync(
     path.resolve(__dirname, '../../teaching/orchestrator/ai-adapter.js'),
     'utf8'
@@ -54,7 +54,8 @@ test('TPF-02 adapter applies long-running profile without changing the central t
     'utf8'
   );
 
-  assert.match(source, /executionProfile:directTpf02\?TPF02_EXECUTION_PROFILE:null/);
+  assert.match(source, /executionProfile:tpf02Family\?TPF02_EXECUTION_PROFILE:null/);
+  assert.match(source, /academicInputLimits:tpf02Family\?SOURCE_CENSUS_INPUT_LIMITS:undefined/);
   assert.match(source, /TPF02_EXECUTION_PROFILE='LONG_RUNNING_ANALYSIS'/);
   assert.match(routePolicy, /TEACHING_AI_TASK\s*=\s*'MAIN_CBT'/);
   assert.match(routePolicy, /WEBSITE_DEFAULT_AI_TASK\s*=\s*TEACHING_AI_TASK/);
