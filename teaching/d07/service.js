@@ -108,72 +108,60 @@ function createD07Service({
   async function getSetup(user, id) {
     const setup = await repository.getSetup(user.id, id);
     const background = setup.backgroundAnalysis;
-    if (
-      setup.curriculumAudit ||
-      !intelligence ||
-      !background?.event_id ||
-      !outboxStore ||
-      typeof outboxStore.getById !== 'function' ||
-      typeof outboxStore.append !== 'function' ||
-      typeof randomUUID !== 'function'
-    ) {
-      return setup;
-    }
-
-    // Operational read-repair: a Curriculum Audit event can finish publication
-    // after its Course state version has changed. PUBLISHED without an audit is
-    // not success; nor is an active event bound to an older state version. When
-    // either condition is observed, leave one idempotent replacement event for
-    // the current state. This is outbox recovery only and does not mutate
-    // academic truth.
-    let eventRow = null;
-    try {
-      eventRow = await outboxStore.getById(background.event_id);
-    } catch (error) {
-      logger?.warn?.('[KIWI Teaching D07] Could not inspect background audit event for reconciliation.', {
-        courseId: String(id),
-        eventId: String(background.event_id),
-        code: error?.code || null,
-      });
-      return setup;
-    }
-    if (!eventRow) return setup;
-
-    const eventStatus = String(eventRow.status || background.status || '').toUpperCase();
-    const eventStateVersion = eventRow.aggregate_version == null
+    const currentState = String(setup.course.state_version);
+    const auditState = setup.curriculumAudit?.validation_metadata?.state_version == null
       ? null
-      : String(eventRow.aggregate_version);
-    const currentStateVersion = String(setup.course.state_version);
-    const stateChanged = eventStateVersion != null && eventStateVersion !== currentStateVersion;
-    const publishedWithoutArtifact = eventStatus === 'PUBLISHED' && !setup.curriculumAudit;
-    if (!stateChanged && !publishedWithoutArtifact) return setup;
-    if (eventStatus === 'CANCELLED') return setup;
-
-    try {
-      const recovery = await requeueAuditForCurrentState(user, id, background.event_id);
-      return {
-        ...setup,
-        backgroundAnalysis: {
-          ...background,
-          event_id: recovery.jobId,
-          status: recovery.status,
-          last_error_code: null,
-          recovered_from_event_id: background.event_id,
-          recovery_reason: stateChanged ? 'COURSE_STATE_CHANGED' : 'PUBLISHED_WITHOUT_AUDIT',
-        },
-      };
-    } catch (error) {
-      logger?.warn?.('[KIWI Teaching D07] Stale Curriculum Audit event could not be requeued yet.', {
-        courseId: String(id),
-        eventId: String(background.event_id),
-        code: error?.code || null,
-        message: String(error?.message || error).slice(0, 300),
-      });
-      return setup;
-    }
+      : String(setup.curriculumAudit.validation_metadata.state_version);
+    const auditIsCurrent = Boolean(
+      setup.curriculumAudit &&
+      auditState === currentState &&
+      setup.curriculumAudit.source_inventory_digest === sourceInventoryDigest(setup.sources)
+    );
+    return {
+      ...setup,
+      curriculumAudit: auditIsCurrent ? setup.curriculumAudit : null,
+      backgroundAnalysis: background,
+    };
   }
 
-  async function submitIntake(user, courseId, input) {
+  async function addMaterials(user, courseId, input = {}) {
+    const setup = await repository.getSetup(user.id, courseId);
+    const materials = [
+      ...(input.originalMaterials || []).map((material) =>
+        validateSupplementaryMaterialInput({ ...material, sourceKind: 'PRIMARY_STUDY_NOTE' })
+      ),
+      ...(input.supplementaryMaterials || []).map((material) => validateSupplementaryMaterialInput(material)),
+    ];
+    if (!materials.length) {
+      const error = new Error('At least one Course material is required.');
+      error.status = 400;
+      error.code = 'TEACHING_D07_MATERIAL_REQUIRED';
+      throw error;
+    }
+    const added = await repository.addMaterials({
+      studentId: user.id,
+      courseId,
+      expectedStateVersion: setup.course.state_version,
+      materials,
+    });
+    const backgroundAnalysis = await autoQueueAuditAfterDraft(user, courseId);
+    return { ...added, background_analysis: backgroundAnalysis };
+  }
+
+  async function removeMaterial(user, courseId, sourceContentItemId) {
+    const setup = await repository.getSetup(user.id, courseId);
+    const removed = await repository.removeMaterial({
+      studentId: user.id,
+      courseId,
+      sourceContentItemId,
+      expectedStateVersion: setup.course.state_version,
+    });
+    const backgroundAnalysis = await autoQueueAuditAfterDraft(user, courseId);
+    return { ...removed, background_analysis: backgroundAnalysis };
+  }
+
+  async function submitIntake(user, courseId, input = {}) {
+    const setup = await repository.getSetup(user.id, courseId);
     const intake = await repository.saveIntake({
       studentId: user.id,
       courseId,
@@ -181,7 +169,6 @@ function createD07Service({
     });
     if (!intelligence) return { intake, extraction: null, extractionStatus: 'ROUTE_HELD_UNTIL_D30' };
 
-    const setup = await repository.getSetup(user.id, courseId);
     const result = await intelligence.extractIntake({ course: setup.course, intake });
     if (!result.accepted) return { intake, extraction: null, extractionStatus: 'REJECTED' };
 
@@ -255,9 +242,6 @@ function createD07Service({
       throw error;
     }
 
-    // A deep audit can legitimately run for minutes. Re-read authoritative
-    // state before persistence so a result generated from an older Course/source
-    // snapshot can never be committed after a concurrent Course mutation.
     const current = await repository.getSetup(user.id, courseId);
     const currentStateVersion = String(current.course.state_version);
     const currentInventoryDigest = sourceInventoryDigest(current.sources);
@@ -280,7 +264,11 @@ function createD07Service({
       output,
       provenanceRefs: setup.sources.map((source) => `source:${source.source_content_item_id}`),
       validationMetadata: {
-        schema: 'd07.curriculum-audit.v1',
+        schema: 'd07.curriculum-audit.v2',
+        prompt_family: 'TPF-02',
+        prompt_version: '1.1',
+        output_schema_version: '2',
+        lineage_reconciled: true,
         domain_validated: true,
         source_census: setup.sources.length,
         state_version: inputStateVersion,
@@ -303,11 +291,6 @@ function createD07Service({
     const supersededCurrent = Boolean(
       supersedeEventId && current?.event_id && String(current.event_id) === String(supersedeEventId)
     );
-
-    // Normal callers join existing work. A worker/read-repair path that
-    // discovers the latest event is stale is the one exception: it must leave a
-    // replacement for the current state version before stale work is considered
-    // complete.
     if (['PENDING', 'CLAIMED', 'RETRY_WAIT'].includes(currentStatus) && !supersededCurrent) {
       return {
         accepted: true,
@@ -338,160 +321,164 @@ function createD07Service({
       triggerType: 'background_analysis',
       source: 'teaching.d07',
       origin: supersededCurrent ? 'teaching.curriculum.audit_state_recovery' : 'teaching.course_setup',
-      actorId: String(user.id),
+      actorId: user.id,
       aggregateType: 'teaching_course',
-      aggregateId: String(courseId),
-      aggregateVersion: Number(setup.course.state_version),
+      aggregateId: courseId,
+      aggregateVersion: setup.course.state_version,
       occurredAt: now,
+      effectiveAt: now,
       correlationId: eventId,
       causationId: effectiveCausationId,
       idempotencyKey,
       payload: {
-        course_id: String(courseId),
-        expected_state_version: String(setup.course.state_version),
+        student_id: user.id,
+        course_id: courseId,
+        subject_snapshot_ref: setup.course.subject_snapshot_ref,
+        source_inventory_digest: sourceInventoryDigest(setup.sources),
       },
       auditRefs: [],
-      provenanceRefs: (setup.sources || []).map((source) => `source:${source.source_content_item_id}`),
+      provenanceRefs: setup.sources.map((source) => `source:${source.source_content_item_id}`),
     });
+
     return {
       accepted: true,
       background: true,
-      jobId: queued.event.event_id,
-      status: queued.event.status,
-      replacedStaleEvent: supersededCurrent,
+      jobId: queued.event_id || eventId,
+      status: queued.status || 'PENDING',
+      joinedExisting: queued.inserted === false,
     };
   }
 
-  async function requeueAuditForCurrentState(user, courseId, staleEventId) {
-    if (!String(staleEventId || '').trim()) {
-      const error = new TypeError('staleEventId is required for Curriculum Audit state recovery.');
-      error.code = 'TEACHING_D07_STALE_AUDIT_EVENT_REQUIRED';
-      throw error;
-    }
-    return queueAudit(user, courseId, {
-      supersedeEventId: String(staleEventId),
-      causationId: String(staleEventId),
-    });
+  async function getAnalysisStatus(user, courseId) {
+    const setup = await repository.getSetup(user.id, courseId);
+    const current = setup.backgroundAnalysis;
+    if (!current) return { status: 'NOT_STARTED', background: true };
+    return {
+      status: current.status,
+      background: true,
+      jobId: current.event_id,
+      attempts: current.attempt_count,
+      nextAttemptAt: current.next_attempt_at,
+      errorCode: current.error_code,
+      errorMessage: current.error_message,
+      staleReason: current.stale_reason,
+    };
   }
 
-  async function planDiagnostic(user, courseId, input = {}) {
+  async function getAudit(user, courseId) {
     const setup = await repository.getSetup(user.id, courseId);
-    const signals = input.intakeSignals || {};
-    const deps = setup.curriculumAudit?.audit_output?.assumed_prerequisites || [];
-    const requirement = selectDiagnosticRequirement({
-      dependencies: deps,
-      intakeSignals: signals,
-      existingEvidence: input.existingEvidence || [],
-    });
-    if (!requirement.required) {
-      return repository.saveDiagnosticPlan({
-        studentId: user.id,
-        courseId,
-        auditId: setup.curriculumAudit?.curriculum_audit_id,
-        requirement,
-      });
-    }
+    return setup.curriculumAudit || null;
+  }
+
+  async function designDiagnostic(user, courseId) {
     if (!intelligence) held();
+    const setup = await repository.getSetup(user.id, courseId);
+    if (!setup.curriculumAudit) {
+      const error = new Error('Complete Curriculum Audit before Diagnostic design.');
+      error.status = 409;
+      error.code = 'TEACHING_D07_AUDIT_REQUIRED';
+      throw error;
+    }
+    const requirement = selectDiagnosticRequirement(setup.curriculumAudit.audit_output || {});
     const result = await intelligence.designDiagnostic({
       course: setup.course,
       requirement,
       audit: setup.curriculumAudit,
     });
     if (!result.accepted) {
-      const error = new Error('Diagnostic design was rejected by validation.');
+      const error = new Error('Targeted Diagnostic could not be validated.');
       error.status = 422;
-      error.code = 'TEACHING_D07_DIAGNOSTIC_DESIGN_REJECTED';
+      error.code = 'TEACHING_D07_DIAGNOSTIC_REJECTED';
       throw error;
     }
     return repository.saveDiagnosticPlan({
       studentId: user.id,
       courseId,
-      auditId: setup.curriculumAudit?.curriculum_audit_id,
-      requirement,
-      design: result.validatedResult.output,
-      provenanceRefs: [`curriculum-audit:${setup.curriculumAudit?.curriculum_audit_id}`],
+      auditId: setup.curriculumAudit.curriculum_audit_id,
+      requirementState: requirement.state,
+      targetRefs: requirement.targets,
+      output: result.validatedResult.output,
+      provenanceRefs: [`curriculum-audit:${setup.curriculumAudit.curriculum_audit_id}`],
     });
   }
 
-  async function decideVpk(user, courseId, input = {}) {
+  async function submitDiagnosticAttempt(user, courseId, input = {}) {
     const setup = await repository.getSetup(user.id, courseId);
-    if (!setup.course) throw new Error('Course not found.');
-    const targetKind = String(input.targetKind || '').trim();
-    const targetRef = String(input.targetRef || '').trim();
-    if (!['PREREQUISITE', 'SOURCE_CONTENT_ITEM', 'LEARNING_UNIT'].includes(targetKind) || !targetRef) {
-      const error = new Error('Valid targetKind and targetRef are required.');
-      error.status = 400;
+    if (!setup.diagnosticPlan) {
+      const error = new Error('No active Targeted Diagnostic exists for this Course.');
+      error.status = 409;
+      error.code = 'TEACHING_D07_DIAGNOSTIC_REQUIRED';
       throw error;
     }
-    const requestedRefs = Array.isArray(input.evidenceRefs) ? input.evidenceRefs.map(String) : [];
-    if (!requestedRefs.length) {
-      const error = new Error('At least one server-held Diagnostic evidence reference is required.');
-      error.status = 400;
-      error.code = 'TEACHING_D07_VPK_EVIDENCE_REQUIRED';
-      throw error;
-    }
-    const stored = await repository.loadDiagnosticEvidence({
+    const attempt = await repository.saveDiagnosticAttempt({
       studentId: user.id,
       courseId,
-      targetKind,
-      targetRef,
-      evidenceRefs: requestedRefs,
+      diagnosticPlanId: setup.diagnosticPlan.diagnostic_plan_id,
+      evidence: input.evidence,
+      independentAttempt: true,
     });
-    if (stored.length !== new Set(requestedRefs).size) {
-      const error = new Error('Every VPK evidence reference must resolve to server-held Diagnostic evidence.');
-      error.status = 422;
-      error.code = 'TEACHING_D07_VPK_EVIDENCE_UNRESOLVED';
-      throw error;
-    }
+    return attempt;
+  }
 
-    const design = setup.diagnosticPlan?.diagnostic_design || {};
-    const evidence = stored.map((row) => ({
-      evidenceRef: row.evidence_event_id,
-      probeRef: row.response_quality?.probe_ref,
-      independent: row.independent_performance === true,
-      passed: row.response_quality?.passed === true,
-      variedOrUncued: row.response_quality?.varied_or_uncued === true,
-      criteriaPassed: row.response_quality?.criteria_passed || [],
-    }));
-    const validators = new Set(stored.map((row) =>
-      `${String(row.response_quality?.validator_id || '').trim()}\u0000${String(row.response_quality?.validator_version || '').trim()}`
-    ));
-    if (
-      validators.size !== 1 ||
-      [...validators][0].startsWith('\u0000') ||
-      [...validators][0].endsWith('\u0000')
-    ) {
-      const error = new Error('Diagnostic evidence must carry one consistent validator identity and version.');
-      error.status = 422;
-      error.code = 'TEACHING_D07_VPK_VALIDATOR_PROVENANCE_INVALID';
+  async function interpretDiagnosticAttempt(user, courseId, attemptId) {
+    if (!intelligence) held();
+    const setup = await repository.getSetup(user.id, courseId);
+    const attempt = await repository.getDiagnosticAttempt(user.id, attemptId);
+    if (!attempt || String(attempt.course_id) !== String(courseId)) {
+      const error = new Error('Diagnostic Attempt not found.');
+      error.status = 404;
+      error.code = 'TEACHING_D07_DIAGNOSTIC_ATTEMPT_NOT_FOUND';
       throw error;
     }
-    const [validatorId, validatorVersion] = [...validators][0].split('\u0000');
-    const decision = evaluateValidatedPriorKnowledge({
-      evidence,
-      criticalCriteria: design.critical_criteria || [],
-      constructSupportsVariation: design.construct_supports_variation !== false,
-      unresolvedMaterialContradiction: stored.some((row) =>
-        row.response_quality?.unresolved_material_contradiction === true
-      ),
-      validatorId,
-      validatorVersion,
-      provenanceRefs: stored.map((row) => `evidence:${row.evidence_event_id}`),
+    const target = {
+      targetKind: 'learning_unit',
+      targetRef: String(setup.diagnosticPlan?.target_refs?.[0] || 'course'),
+    };
+    const result = await intelligence.interpretPriorKnowledge({
+      course: setup.course,
+      target,
+      evidenceRefs: [attempt.diagnostic_attempt_id],
     });
-    return repository.saveVpkDecision({ studentId: user.id, courseId, targetKind, targetRef, decision });
+    if (!result.accepted) {
+      const error = new Error('Validated Prior Knowledge interpretation could not be validated.');
+      error.status = 422;
+      error.code = 'TEACHING_D07_VPK_INTERPRETATION_REJECTED';
+      throw error;
+    }
+    const output = result.validatedResult.output;
+    const evaluated = evaluateValidatedPriorKnowledge({
+      targetKind: target.targetKind,
+      targetRef: target.targetRef,
+      interpretation: output,
+    });
+    return repository.saveVpkDecision({
+      studentId: user.id,
+      courseId,
+      targetKind: target.targetKind,
+      targetRef: target.targetRef,
+      status: evaluated.status,
+      rationale: evaluated.rationale,
+      evidenceRefs: [attempt.diagnostic_attempt_id],
+      provenanceRefs: [`diagnostic-attempt:${attempt.diagnostic_attempt_id}`],
+      sourceSnapshotRef: setup.course.subject_snapshot_ref,
+    });
   }
 
   return Object.freeze({
     createCourse,
     listCourses,
     getSetup,
+    addMaterials,
+    removeMaterial,
     submitIntake,
     editPreferences,
     runAudit,
     queueAudit,
-    requeueAuditForCurrentState,
-    planDiagnostic,
-    decideVpk,
+    getAnalysisStatus,
+    getAudit,
+    designDiagnostic,
+    submitDiagnosticAttempt,
+    interpretDiagnosticAttempt,
   });
 }
 
