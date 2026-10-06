@@ -79,6 +79,8 @@ function buildAuditSourceUnitGraph(auditOutput = {}, sources = []) {
   };
 
   for (const account of auditOutput.source_accounting || []) {
+    const sourceRef = String(account.source_ref || '').trim();
+    if (sourceRef && !sourceUnits.has(sourceRef)) sourceUnits.set(sourceRef, new Set());
     for (const unitRef of account.learning_unit_ids || []) add(account.source_ref, unitRef);
   }
 
