@@ -1,0 +1,255 @@
+:root {
+  --teaching-font-body: "DM Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --teaching-font-display: "Syne", "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --teaching-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --teaching-weight-regular: 400;
+  --teaching-weight-medium: 500;
+  --teaching-weight-semibold: 600;
+  --teaching-weight-bold: 700;
+  --teaching-weight-heavy: 800;
+
+  --teaching-type-display-size: clamp(2rem, 1.68rem + 1.4vw, 3rem);
+  --teaching-type-display-line: 1.08;
+  --teaching-type-display-track: -0.038em;
+  --teaching-type-title-size: clamp(1.5rem, 1.34rem + 0.72vw, 2rem);
+  --teaching-type-title-line: 1.16;
+  --teaching-type-title-track: -0.028em;
+  --teaching-type-heading-size: clamp(1.125rem, 1.04rem + 0.38vw, 1.375rem);
+  --teaching-type-heading-line: 1.28;
+  --teaching-type-heading-track: -0.018em;
+  --teaching-type-body-size: clamp(0.9375rem, 0.91rem + 0.12vw, 1rem);
+  --teaching-type-body-line: 1.58;
+  --teaching-type-body-track: normal;
+  --teaching-type-body-small-size: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
+  --teaching-type-body-small-line: 1.52;
+  --teaching-type-label-size: clamp(0.75rem, 0.73rem + 0.08vw, 0.8125rem);
+  --teaching-type-label-line: 1.35;
+  --teaching-type-label-track: 0.01em;
+  --teaching-type-eyebrow-size: 0.6875rem;
+  --teaching-type-eyebrow-line: 1.25;
+  --teaching-type-eyebrow-track: 0.09em;
+  --teaching-type-action-size: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
+  --teaching-type-action-line: 1.15;
+  --teaching-type-code-size: clamp(0.75rem, 0.73rem + 0.08vw, 0.8125rem);
+  --teaching-type-code-line: 1.55;
+}
+
+html[data-app="kiwi-teaching"],
+html[data-app="kiwi-teaching"] body {
+  font-family: var(--teaching-font-body);
+  font-size: var(--teaching-type-body-size);
+  font-weight: var(--teaching-weight-regular);
+  line-height: var(--teaching-type-body-line);
+  letter-spacing: var(--teaching-type-body-track);
+  font-stretch: normal;
+  font-synthesis: none;
+  font-variation-settings: normal;
+  font-optical-sizing: auto;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html[data-app="kiwi-teaching"] :where(button, input, select, textarea, option) {
+  font-family: inherit;
+  font-size: inherit;
+  font-stretch: normal;
+  font-synthesis: none;
+  font-variation-settings: normal;
+}
+
+html[data-app="kiwi-teaching"] :where(p, li, dd, dt, blockquote, .teaching-message, .teaching-notice, .teaching-empty, .teaching-error, .tc-notice, .tc-empty-copy) {
+  font-family: var(--teaching-font-body);
+  font-size: var(--teaching-type-body-size);
+  font-weight: var(--teaching-weight-regular);
+  line-height: var(--teaching-type-body-line);
+  letter-spacing: var(--teaching-type-body-track);
+  overflow-wrap: anywhere;
+}
+
+html[data-app="kiwi-teaching"] :where(h1, .teaching-title) {
+  font-family: var(--teaching-font-display);
+  font-size: var(--teaching-type-display-size);
+  font-weight: var(--teaching-weight-bold);
+  line-height: var(--teaching-type-display-line);
+  letter-spacing: var(--teaching-type-display-track);
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+html[data-app="kiwi-teaching"] :where(h2, .tc-course > h2, .tc-panel-head h2, .tc-after h2) {
+  font-family: var(--teaching-font-display);
+  font-size: var(--teaching-type-title-size);
+  font-weight: var(--teaching-weight-bold);
+  line-height: var(--teaching-type-title-line);
+  letter-spacing: var(--teaching-type-title-track);
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+html[data-app="kiwi-teaching"] :where(h3, h4, .teaching-course-feature-card h3, .tc-course-summary h3, .tc-workspace h2, .tc-notebook h2) {
+  font-family: var(--teaching-font-display);
+  font-size: var(--teaching-type-heading-size);
+  font-weight: var(--teaching-weight-semibold);
+  line-height: var(--teaching-type-heading-line);
+  letter-spacing: var(--teaching-type-heading-track);
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+html[data-app="kiwi-teaching"] :where(
+  .teaching-button,
+  .teaching-submit,
+  .teaching-d08-link-button,
+  .teaching-course-card__open,
+  .teaching-course-back,
+  .teaching-course-nav__item,
+  .teaching-dock__item,
+  .teaching-menu-action,
+  .teaching-confirm__button,
+  .tc-button,
+  .tc-icon,
+  .tc-mini-action,
+  .tc-mobile-tabs button
+) {
+  font-family: var(--teaching-font-body);
+  font-size: var(--teaching-type-action-size);
+  font-weight: var(--teaching-weight-bold);
+  line-height: var(--teaching-type-action-line);
+  letter-spacing: -0.01em;
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+html[data-app="kiwi-teaching"] :where(
+  label,
+  .teaching-field > span,
+  .teaching-field label,
+  .teaching-step,
+  .teaching-dock__label,
+  .tc-mode,
+  .tc-controls summary,
+  .tc-comparison strong
+) {
+  font-family: var(--teaching-font-body);
+  font-size: var(--teaching-type-label-size);
+  font-weight: var(--teaching-weight-semibold);
+  line-height: var(--teaching-type-label-line);
+  letter-spacing: var(--teaching-type-label-track);
+}
+
+html[data-app="kiwi-teaching"] :where(
+  small,
+  .teaching-eyebrow,
+  .teaching-menu-panel__eyebrow,
+  .teaching-transparency-card__eyebrow,
+  .tc-eyebrow,
+  .tc-class-card small,
+  .tc-objective small,
+  .tc-note small,
+  .tc-clock small,
+  .tc-board-item__label
+) {
+  font-family: var(--teaching-font-mono);
+  font-size: var(--teaching-type-eyebrow-size);
+  font-weight: var(--teaching-weight-bold);
+  line-height: var(--teaching-type-eyebrow-line);
+  letter-spacing: var(--teaching-type-eyebrow-track);
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+html[data-app="kiwi-teaching"] :where(input, select, textarea) {
+  font-family: var(--teaching-font-body);
+  font-size: var(--teaching-type-body-size);
+  font-weight: var(--teaching-weight-regular);
+  line-height: var(--teaching-type-body-line);
+  letter-spacing: normal;
+}
+
+html[data-app="kiwi-teaching"] :where(input::placeholder, textarea::placeholder) {
+  font: inherit;
+  opacity: 0.74;
+}
+
+html[data-app="kiwi-teaching"] :where(code, pre, kbd, samp, .tc-code, .tc-code code, .tc-step, .tc-scene-nav, .tc-clock) {
+  font-family: var(--teaching-font-mono);
+  font-size: var(--teaching-type-code-size);
+  line-height: var(--teaching-type-code-line);
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+html[data-app="kiwi-teaching"] :where(.teaching-brand__kiwi, .teaching-brand__name) {
+  font-family: var(--teaching-font-display);
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+html[data-app="kiwi-teaching"] .teaching-brand__kiwi {
+  font-size: clamp(1.0625rem, 1rem + 0.28vw, 1.25rem);
+  font-weight: var(--teaching-weight-heavy);
+  line-height: 1;
+  letter-spacing: 0.13em;
+}
+
+html[data-app="kiwi-teaching"] .teaching-brand__name {
+  font-size: clamp(1rem, 0.96rem + 0.18vw, 1.125rem);
+  font-weight: var(--teaching-weight-bold);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+/* Runtime/API messages must stay readable even when they contain long canonical IDs. */
+html[data-app="kiwi-teaching"] :where(
+  .teaching-message,
+  .teaching-message[data-kind="error"],
+  .teaching-d08-message,
+  .teaching-d08-status,
+  .teaching-d08-error,
+  .tc-message,
+  .tc-connection
+) {
+  font-family: var(--teaching-font-body);
+  font-size: var(--teaching-type-body-small-size);
+  font-weight: var(--teaching-weight-regular);
+  line-height: var(--teaching-type-body-small-line);
+  letter-spacing: normal;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  hyphens: none;
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+/* Classroom glyphs may be decorative, but ordinary copy never owns its own font. */
+html[data-app="kiwi-teaching"] :where(.tc-brand__mark, .tc-teacher__avatar, .tc-board-empty__glyph) {
+  font-family: var(--teaching-font-display);
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+html[data-app="kiwi-teaching"] .tc-math {
+  font-family: var(--teaching-font-body);
+  font-size: var(--teaching-type-heading-size);
+  font-weight: var(--teaching-weight-medium);
+  line-height: 1.45;
+  letter-spacing: normal;
+  font-stretch: normal;
+  font-synthesis: none;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --teaching-type-display-size: clamp(1.75rem, 1.35rem + 2vw, 2.25rem);
+    --teaching-type-title-size: clamp(1.375rem, 1.19rem + 0.92vw, 1.625rem);
+    --teaching-type-heading-size: clamp(1.0625rem, 0.99rem + 0.36vw, 1.1875rem);
+    --teaching-type-body-size: 0.9375rem;
+    --teaching-type-body-small-size: 0.8125rem;
+    --teaching-type-action-size: 0.8125rem;
+  }
+}
