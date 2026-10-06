@@ -16,6 +16,9 @@ const TPF02_SOURCE_INVENTORY_BATCH_SIZE = 24;
 const TPF02_SOURCE_INVENTORY_CONCURRENCY = 2;
 const TPF02_STAGED_SOURCE_COUNT_THRESHOLD = 48;
 const TPF02_STAGED_INPUT_BYTES_THRESHOLD = 192 * 1024;
+const TPF02_PROGRESSIVE_STRUCTURE_SOURCE_COUNT_THRESHOLD = 120;
+const TPF02_STRUCTURE_BATCH_SIZE = 24;
+const TPF02_STRUCTURE_CONCURRENCY = 2;
 const TPF02_LINEAGE_REPAIR_BATCH_SIZE = 12;
 const TPF02_LINEAGE_REPAIR_REVIEW_REASON = 'Required source lineage needs bounded TPF-02 completion before Course planning.';
 const TPF02_LINEAGE_UNRESOLVED_PREFIX = 'runtime-lineage-unmapped:';
@@ -532,6 +535,181 @@ function lineageRepairRequest({
   };
 }
 
+
+function shouldUseProgressiveStructure({sources=[]}={}){
+  return Array.isArray(sources)&&sources.length>TPF02_PROGRESSIVE_STRUCTURE_SOURCE_COUNT_THRESHOLD;
+}
+
+function validateStructurePassPatch(output,{academicInput,canonicalInventory=[]}={}){
+  const schema=validateTpf02Schema(output);
+  if(!schema.ok)return schema;
+  const expectedRefs=academicInput.source_items.map((item)=>item.source_item_ref);
+  const expectedSet=new Set(expectedRefs);
+  const inventoryByRef=new Map((canonicalInventory||[]).map((item)=>[String(item.source_item_ref),item]));
+  const eligibleSet=new Set(
+    [...inventoryByRef.values()]
+      .filter((item)=>['required','supplementary'].includes(String(item.proposed_scope_classification||'')))
+      .map((item)=>String(item.source_item_ref))
+  );
+  if(inventoryByRef.size!==expectedSet.size||expectedRefs.some((ref)=>!inventoryByRef.has(ref))){
+    return {ok:false,reason:'TPF02_STRUCTURE_PASS_PREPARED_CENSUS_MISMATCH'};
+  }
+  if(output.input_state_reference!==academicInput.input_state_reference)return {ok:false,reason:'TPF02_STRUCTURE_PASS_STATE_REFERENCE_MISMATCH'};
+  if(output.task_mode!=='LEARNING_UNIT_DECOMPOSITION')return {ok:false,reason:'TPF02_STRUCTURE_PASS_TASK_MODE_MISMATCH'};
+  if(output.execution_stage!==EXECUTION_STAGES.SINGLE_PASS)return {ok:false,reason:'TPF02_STRUCTURE_PASS_STAGE_MISMATCH'};
+  if(!sameStringSet(output.audit_scope?.source_refs||[],expectedRefs))return {ok:false,reason:'TPF02_STRUCTURE_PASS_SOURCE_CENSUS_MISMATCH'};
+  if(String(output.audit_scope?.trusted_scope_version||'')!==String(academicInput.audit_scope.trusted_scope_version||'')){
+    return {ok:false,reason:'TPF02_STRUCTURE_PASS_SCOPE_VERSION_MISMATCH'};
+  }
+  if((output.source_inventory||[]).length!==0)return {ok:false,reason:'TPF02_STRUCTURE_PASS_MUST_DEFER_SOURCE_INVENTORY'};
+  if((output.audit_scope?.source_walk||[]).length!==0)return {ok:false,reason:'TPF02_STRUCTURE_PASS_MUST_DEFER_SOURCE_WALK'};
+  for(const field of ['source_conflicts','coverage_gaps','structure_change_proposals','unresolved_items']){
+    if((output[field]||[]).length!==0)return {ok:false,reason:`TPF02_STRUCTURE_PASS_SCOPE_EXCEEDED:${field}`};
+  }
+  if((output.source_to_unit_reconciliation?.required_item_map||[]).length
+    ||(output.source_to_unit_reconciliation?.unmapped_required_refs||[]).length){
+    return {ok:false,reason:'TPF02_STRUCTURE_PASS_RECONCILIATION_SERVER_OWNED'};
+  }
+  if(output.status!=='ok'||output.review_required!==false||(output.review_reasons||[]).length!==0||output.student_facing_summary_candidate!=null){
+    return {ok:false,reason:'TPF02_STRUCTURE_PASS_COMPLETION_STATE_INVALID'};
+  }
+
+  const topicIds=new Set();
+  for(const topic of output.topics||[]){
+    const id=String(topic?.topic_id||'').trim();
+    if(!id||topicIds.has(id))return {ok:false,reason:'TPF02_STRUCTURE_PASS_TOPIC_ID_INVALID'};
+    topicIds.add(id);
+    if((topic.source_item_refs||[]).some((ref)=>!eligibleSet.has(String(ref)))){
+      return {ok:false,reason:'TPF02_STRUCTURE_PASS_TOPIC_SOURCE_SCOPE_INVALID'};
+    }
+  }
+
+  const assumedIds=new Set();
+  for(const item of output.assumed_prerequisites||[]){
+    const id=String(item?.assumed_prerequisite_id||'').trim();
+    if(!id||assumedIds.has(id))return {ok:false,reason:'TPF02_STRUCTURE_PASS_ASSUMED_ID_INVALID'};
+    assumedIds.add(id);
+  }
+  const unitIds=new Set();
+  for(const unit of output.learning_units||[]){
+    const id=String(unit?.learning_unit_id||'').trim();
+    if(!id||unitIds.has(id))return {ok:false,reason:'TPF02_STRUCTURE_PASS_UNIT_ID_INVALID'};
+    unitIds.add(id);
+  }
+  for(const unit of output.learning_units||[]){
+    const refs=uniqueStrings(unit.source_item_refs||[]);
+    if(!refs.length||refs.some((ref)=>!eligibleSet.has(ref)))return {ok:false,reason:'TPF02_STRUCTURE_PASS_UNIT_SOURCE_SCOPE_INVALID'};
+    if(unit.criticality==='enrichment'&&refs.some((ref)=>inventoryByRef.get(ref)?.proposed_scope_classification==='required')){
+      return {ok:false,reason:'TPF02_STRUCTURE_PASS_REQUIRED_SOURCE_ENRICHMENT_FORBIDDEN'};
+    }
+    if((unit.topic_refs||[]).some((ref)=>!topicIds.has(String(ref))))return {ok:false,reason:'TPF02_STRUCTURE_PASS_TOPIC_REF_UNKNOWN'};
+    if((unit.gap_refs||[]).length)return {ok:false,reason:'TPF02_STRUCTURE_PASS_GAP_REF_FORBIDDEN'};
+    if((unit.prerequisite_refs||[]).some((ref)=>{
+      const normalized=String(ref);
+      return normalized===String(unit.learning_unit_id)||(!unitIds.has(normalized)&&!assumedIds.has(normalized));
+    }))return {ok:false,reason:'TPF02_STRUCTURE_PASS_PREREQUISITE_REF_UNKNOWN'};
+  }
+  return {ok:true,value:output};
+}
+
+function structurePassRequest({course,sources,preparedInventory,batchIndex=0}={}){
+  const academicBase=buildTpf02AcademicInput({
+    course,
+    sources,
+    taskMode:'LEARNING_UNIT_DECOMPOSITION',
+    executionStage:EXECUTION_STAGES.SINGLE_PASS,
+  });
+  const batchRefs=new Set(academicBase.source_items.map((item)=>item.source_item_ref));
+  const canonicalInventory=(preparedInventory||[]).filter((item)=>batchRefs.has(String(item.source_item_ref)));
+  if(canonicalInventory.length!==academicBase.source_items.length){
+    const error=new Error('TPF-02 bounded structure pass is missing prepared source accounting.');
+    error.code='TEACHING_TPF02_STRUCTURE_PASS_PREPARED_CENSUS_MISMATCH';
+    throw error;
+  }
+  const academicInput=Object.freeze({
+    ...academicBase,
+    structure_pass_context:Object.freeze({
+      mode:'BOUNDED_CURRICULUM_STRUCTURE',
+      batch_index:Number(batchIndex),
+      canonical_source_inventory:Object.freeze(canonicalInventory.map((item)=>Object.freeze({...item}))),
+    }),
+  });
+  const outputSchema=tpf02OutputSchema();
+  const request=base({
+    capabilityId:'teaching.curriculum.learning_unit_decomposition',
+    course,
+    taskMode:'LEARNING_UNIT_DECOMPOSITION',
+    outputSchema,
+    contextSpec:tpf02ContextSpec(course,sources,'bounded_curriculum_structure'),
+    academicInput,
+    provenanceRefs:academicBase.source_items.map((item)=>item.source_item_ref),
+  });
+  return {
+    ...request,
+    directive:{
+      ...request.directive,
+      bounded_actions:[
+        'build a compact candidate curriculum structure for this bounded prepared source batch',
+        'preserve runtime source identity and prepared source classification',
+      ],
+      allowed_operations:[
+        'propose candidate Topics and non-authoritative Learning Units for this batch',
+        'propose batch-local assumed prerequisites when supported',
+      ],
+      prohibited_operations:[
+        'mutate authoritative state',
+        'reclassify prepared sources',
+        'reference source items outside this batch',
+        'make whole-course completeness claims',
+        'select provider or model',
+      ],
+      evidence_purpose:'bounded_curriculum_structure',
+    },
+    modelContentMode:'TPF02_DIRECT',
+    generation:Object.freeze({maxOutputTokens:TPF02_MAX_OUTPUT_TOKENS,structuredOutput:Object.freeze({mimeType:'application/json'})}),
+    schemaValidator:validateTpf02Schema,
+    domainValidator:async out=>validateStructurePassPatch(out,{academicInput,canonicalInventory}),
+    provenanceValidator:async out=>{
+      const allowed=new Set(academicBase.source_items.map((item)=>item.source_item_ref));
+      const used=uniqueStrings([
+        ...(out?.topics||[]).flatMap((topic)=>topic.source_item_refs||[]),
+        ...(out?.learning_units||[]).flatMap((unit)=>unit.source_item_refs||[]),
+      ]);
+      return {ok:used.every((ref)=>allowed.has(ref)),reason:'TPF02_STRUCTURE_PASS_PROVENANCE_INVALID'};
+    },
+  };
+}
+
+function compactStructureCandidates(stageResults=[]){
+  return Object.freeze(stageResults.map((result,batchIndex)=>{
+    const output=result?.validatedResult?.output;
+    if(!output)throw Object.assign(new Error('Validated TPF-02 structure pass produced no candidate artifact.'),{code:'TEACHING_TPF02_STRUCTURE_PASS_OUTPUT_MISSING'});
+    const topicTitleById=new Map((output.topics||[]).map((topic)=>[String(topic.topic_id),String(topic.title)]));
+    return Object.freeze({
+      batch_index:batchIndex,
+      topics:Object.freeze((output.topics||[]).map((topic)=>Object.freeze({
+        candidate_topic_ref:`batch-${batchIndex}:topic:${String(topic.topic_id)}`,
+        title:String(topic.title),
+        source_item_refs:Object.freeze(uniqueStrings(topic.source_item_refs||[])),
+      }))),
+      learning_units:Object.freeze((output.learning_units||[]).map((unit)=>Object.freeze({
+        candidate_unit_ref:`batch-${batchIndex}:unit:${String(unit.learning_unit_id)}`,
+        title:String(unit.title),
+        intended_competence:String(unit.intended_competence),
+        source_item_refs:Object.freeze(uniqueStrings(unit.source_item_refs||[])),
+        topic_titles:Object.freeze(uniqueStrings((unit.topic_refs||[]).map((ref)=>topicTitleById.get(String(ref))||String(ref)))),
+        criticality:String(unit.criticality),
+        prerequisite_candidate_refs:Object.freeze(uniqueStrings(unit.prerequisite_refs||[])),
+      }))),
+      assumed_prerequisites:Object.freeze((output.assumed_prerequisites||[]).map((item)=>Object.freeze({
+        capability:String(item.capability),
+        why_required:String(item.why_required),
+        source_or_academic_basis:String(item.source_or_academic_basis),
+      }))),
+    });
+  }));
+}
+
 function mergeSourceInventoryStages(stageResults,fullAcademicInput){
   const expectedRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const inventoryByRef=new Map();
@@ -598,17 +776,19 @@ function assembleStagedAudit(output,preparedInventory,preparedSourceWalk,stageFi
   };
 }
 
-function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSourceWalk,stageFindings}){
+function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSourceWalk,stageFindings,preparedStructureCandidates=[]}){
   const fullAcademicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE});
   const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const eligibleLearningUnitSourceRefs=Object.freeze(learningUnitEligibleSourceRefs(preparedInventory));
+  const progressiveCandidates=Array.isArray(preparedStructureCandidates)?preparedStructureCandidates:[];
   const academicInput=Object.freeze({
     ...fullAcademicInput,
     source_items:Object.freeze([]),
-    source_evidence_items:fullAcademicInput.source_items,
+    source_evidence_items:Object.freeze(progressiveCandidates.length?[]:[...fullAcademicInput.source_items]),
     prepared_source_inventory:Object.freeze([...preparedInventory]),
     eligible_learning_unit_source_refs:eligibleLearningUnitSourceRefs,
     source_inventory_stage_findings:stageFindings,
+    progressive_structure_candidates:Object.freeze([...progressiveCandidates]),
   });
   const outputSchema=tpf02OutputSchema();
   const validationContext=validationContextFor(fullAcademicInput);
@@ -702,12 +882,36 @@ function createD07Intelligence({orchestrator}={}){
     if(rejected)return rejected;
 
     const prepared=mergeSourceInventoryStages(stageResults,fullAcademicInput);
+    let preparedStructureCandidates=[];
+    if(shouldUseProgressiveStructure({sources})){
+      const sourceByRuntimeRef=new Map(sources.map((source)=>[`source:${String(source?.source_content_item_id||'').trim()}`,source]));
+      const eligibleRefs=new Set(learningUnitEligibleSourceRefs(prepared.sourceInventory));
+      const eligibleSources=[...eligibleRefs].map((ref)=>sourceByRuntimeRef.get(ref)).filter(Boolean);
+      if(eligibleSources.length!==eligibleRefs.size){
+        throw Object.assign(new Error('TPF-02 progressive structure could not resolve every eligible runtime source.'),{code:'TEACHING_TPF02_STRUCTURE_PASS_SOURCE_MISSING'});
+      }
+      const structureBatches=chunkSources(eligibleSources,TPF02_STRUCTURE_BATCH_SIZE);
+      const structureResults=await mapConcurrent(
+        structureBatches,
+        TPF02_STRUCTURE_CONCURRENCY,
+        async (batch,index)=>orchestrator.execute(structurePassRequest({
+          course,
+          sources:batch,
+          preparedInventory:prepared.sourceInventory,
+          batchIndex:index,
+        }))
+      );
+      const structureRejected=structureResults.find((result)=>!result?.accepted);
+      if(structureRejected)return structureRejected;
+      preparedStructureCandidates=compactStructureCandidates(structureResults);
+    }
     let currentResult=await orchestrator.execute(curriculumSynthesisRequest({
       course,
       sources,
       preparedInventory:prepared.sourceInventory,
       preparedSourceWalk:prepared.sourceWalk,
       stageFindings:prepared.findings,
+      preparedStructureCandidates,
     }));
     if(!currentResult?.accepted)return currentResult;
 
@@ -752,12 +956,19 @@ module.exports={
   TPF02_SOURCE_INVENTORY_CONCURRENCY,
   TPF02_STAGED_SOURCE_COUNT_THRESHOLD,
   TPF02_STAGED_INPUT_BYTES_THRESHOLD,
+  TPF02_PROGRESSIVE_STRUCTURE_SOURCE_COUNT_THRESHOLD,
+  TPF02_STRUCTURE_BATCH_SIZE,
+  TPF02_STRUCTURE_CONCURRENCY,
   TPF02_LINEAGE_REPAIR_BATCH_SIZE,
   intakeRequest,
   curriculumAuditRequest,
   sourceInventoryRequest,
   curriculumSynthesisRequest,
   shouldStageCurriculumAudit,
+  shouldUseProgressiveStructure,
+  structurePassRequest,
+  validateStructurePassPatch,
+  compactStructureCandidates,
   mergeSourceInventoryStages,
   assembleStagedAudit,
   learningUnitEligibleSourceRefs,
