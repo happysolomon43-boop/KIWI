@@ -13,6 +13,9 @@ function normalizeLimit(value, fallback = 20) {
   if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, 100);
 }
+function normalizeLeaseMs(value, fallback = 30_000) {
+  return Math.max(5_000, Math.min(Number(value) || fallback, 300_000));
+}
 
 function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
   requireFunction(query, 'query');
@@ -109,7 +112,7 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
   async function claimPending({ workerId, now = new Date(), limit = 20, leaseMs = 30_000 } = {}) {
     if (!String(workerId || '').trim()) throw new TypeError('workerId is required.');
     const safeLimit = normalizeLimit(limit);
-    const safeLeaseMs = Math.max(5_000, Math.min(Number(leaseMs) || 30_000, 300_000));
+    const safeLeaseMs = normalizeLeaseMs(leaseMs);
     const batchToken = randomUUID();
     const { rows = [] } = await query(
       `with candidates as (
@@ -126,6 +129,22 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
       [now,safeLimit,String(workerId).trim(),safeLeaseMs,batchToken]
     );
     return Object.freeze(rows.map((row) => Object.freeze({ ...row })));
+  }
+
+  async function renewClaim(event, { now = new Date(), leaseMs = 30_000 } = {}) {
+    const safeLeaseMs = normalizeLeaseMs(leaseMs);
+    const { rows } = await query(
+      `update teaching_runtime.event_outbox
+          set claim_expires_at=$3+($4::bigint*interval '1 millisecond'),updated_at=now()
+        where event_id=$1 and status='CLAIMED' and claim_token=$2 returning *`,
+      [event.event_id,event.claim_token,now,safeLeaseMs]
+    );
+    if (!rows?.[0]) {
+      const error = new Error('Teaching outbox claim is stale while renewing its lease.');
+      error.code = 'TEACHING_D05_STALE_OUTBOX_CLAIM';
+      throw error;
+    }
+    return rows[0];
   }
 
   async function markPublished(event) {
@@ -184,6 +203,7 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
     getById,
     releaseExpiredClaims,
     claimPending,
+    renewClaim,
     markPublished,
     retry,
     markCancelled,

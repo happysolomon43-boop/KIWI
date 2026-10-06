@@ -85,6 +85,38 @@ function createDurableTeachingOutboxRuntime({
     return Math.min(effectiveRetryBaseMs * (2 ** exponent), 15 * 60_000);
   }
 
+  function startClaimHeartbeat(event) {
+    if (typeof store.renewClaim !== 'function' || typeof timers.setInterval !== 'function') {
+      return Object.freeze({ async stop() {} });
+    }
+    const heartbeatMs = Math.max(1_000, Math.floor(effectiveLeaseMs / 3));
+    let heartbeatInterval = null;
+    let inFlight = null;
+    let heartbeatError = null;
+    let stopped = false;
+
+    function renew() {
+      if (stopped || inFlight) return;
+      inFlight = Promise.resolve(store.renewClaim(event, {
+        now: clock(),
+        leaseMs: effectiveLeaseMs,
+      }))
+        .catch((error) => { heartbeatError = error; })
+        .finally(() => { inFlight = null; });
+    }
+
+    heartbeatInterval = timers.setInterval(renew, heartbeatMs);
+    heartbeatInterval?.unref?.();
+    return Object.freeze({
+      async stop() {
+        stopped = true;
+        if (heartbeatInterval != null) timers.clearInterval?.(heartbeatInterval);
+        if (inFlight) await inFlight;
+        if (heartbeatError) throw heartbeatError;
+      },
+    });
+  }
+
   async function tick() {
     if (running) return Object.freeze({ skipped: true, reason: 'tick_in_progress' });
     running = true;
@@ -95,12 +127,30 @@ function createDurableTeachingOutboxRuntime({
       const claimed = await store.claimPending({ workerId, now, limit: effectiveBatchSize, leaseMs: effectiveLeaseMs });
       const outcomes = [];
       for (const event of claimed) {
+        const heartbeat = startClaimHeartbeat(event);
         try {
-          await publish(toCanonicalEvent(event));
+          let publicationError = null;
+          try {
+            await publish(toCanonicalEvent(event));
+          } catch (error) {
+            publicationError = error;
+          }
+          await heartbeat.stop();
+          if (publicationError) throw publicationError;
           await store.markPublished(event);
           publishedCount += 1;
           outcomes.push('PUBLISHED');
         } catch (error) {
+          // Once a claim token is stale this worker no longer owns the event.
+          // Do not overwrite the newer worker's retry/publication decision.
+          if (error?.code === 'TEACHING_D05_STALE_OUTBOX_CLAIM') {
+            logger?.warn?.('[KIWI Teaching] outbox worker lost claim ownership during publication', {
+              eventId: event.event_id,
+              code: error.code,
+            });
+            outcomes.push('STALE_CLAIM');
+            continue;
+          }
           const terminal = isTerminalPublicationFailure(error);
           if (terminal || Number(event.attempt_count) >= effectiveMaxAttempts) {
             await store.markCancelled(event, {
@@ -120,6 +170,10 @@ function createDurableTeachingOutboxRuntime({
             });
             outcomes.push('RETRY_WAIT');
           }
+        } finally {
+          // If publish itself failed before heartbeat.stop(), make sure the
+          // interval cannot leak into later events in this worker tick.
+          await heartbeat.stop().catch(() => {});
         }
       }
       lastError = null;
