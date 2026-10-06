@@ -39,6 +39,22 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const {rows}=await q(runner,`select * from public.teaching_schedule_profiles where student_id=$1 and semester_id=$2 order by version_no desc limit 1`,[studentId,semesterId]);
     return rows?.[0]||null;
   }
+  async function latestDefaultSemester(studentId,runner=null){
+    const {rows=[]}=await q(runner,`
+      select s.*
+        from public.teaching_semesters s
+       where s.student_id=$1
+         and exists (
+           select 1 from public.teaching_schedule_profiles p
+            where p.student_id=s.student_id and p.semester_id=s.semester_id
+         )
+       order by (s.ends_at>=now()) desc,
+                (select max(p.created_at) from public.teaching_schedule_profiles p where p.student_id=s.student_id and p.semester_id=s.semester_id) desc,
+                s.created_at desc
+       limit 1
+    `,[studentId]);
+    return rows[0]||null;
+  }
   async function profileChildren(studentId,profileId,runner=null){
     const results=await Promise.all([
       q(runner,'select * from public.teaching_availability_windows where student_id=$1 and profile_id=$2 order by day_of_week,local_start',[studentId,profileId]),
