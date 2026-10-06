@@ -396,7 +396,7 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
     const {rows:updatedRows}=await q(tx,`update public.teaching_requests set lifecycle_state=$3,state_version=state_version+1,decision=$4::jsonb,
       alternative_proposal=$5::jsonb,alternative_version=$6,updated_at=now()
       where student_id=$1 and request_id=$2 returning *`,
-    [studentId,requestId,decisionState,json(decision),json(alternativeProposal),altVersion]);
+    [studentId,requestId,decisionState,json(decision),alternativeProposal==null?null:json(alternativeProposal),altVersion]);
     const updated=updatedRows[0];
     await appendRequestHistoryUsing(tx,{request:updated,fromState:current.lifecycle_state,toState:decisionState,actorType:'SYSTEM',actorAuthority:'request',
       reason,explanation:decision?.explanation||null,safeMetadata:{decision_code:decision?.code||null,alternative_version:altVersion||null}});
