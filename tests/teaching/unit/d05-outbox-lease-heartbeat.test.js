@@ -33,7 +33,7 @@ function claimedRow() {
   };
 }
 
-test('D05 outbox store renews only the currently owned claim token', async () => {
+test('D05 outbox store renews only the currently owned claim token with an explicitly typed timestamp', async () => {
   const calls = [];
   const row = claimedRow();
   const store = createPostgresTeachingOutboxStore({
@@ -47,7 +47,8 @@ test('D05 outbox store renews only the currently owned claim token', async () =>
   const renewed = await store.renewClaim(row, { now, leaseMs: 9_000 });
   assert.equal(renewed.event_id, row.event_id);
   assert.match(calls[0].sql, /status='CLAIMED' and claim_token=\$2/);
-  assert.match(calls[0].sql, /claim_expires_at=\$3\+\(\$4::bigint\*interval '1 millisecond'\)/);
+  assert.match(calls[0].sql, /claim_expires_at=\$3::timestamptz\+\(\$4::bigint\*interval '1 millisecond'\)/);
+  assert.doesNotMatch(calls[0].sql, /claim_expires_at=\$3\+\(/);
   assert.deepEqual(calls[0].params, [row.event_id, row.claim_token, now, 9_000]);
 });
 
