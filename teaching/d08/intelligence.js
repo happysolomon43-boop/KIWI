@@ -47,10 +47,17 @@ function canonicalOutputSchema(id, validator) {
 
 function boundedPlanningSignals({ audit, diagnosticPlan = null, vpkDecisions = [], sources = [] } = {}) {
   const output = audit?.audit_output || {};
-  const sourceRefByCanonicalRef = new Map(sources.map((source) => [
-    `source:${source.source_content_item_id}`,
-    String(source.source_ref),
-  ]));
+  const sourceRefByAlias = new Map();
+  for (const source of sources) {
+    const sourceRef = String(source.source_ref || '').trim();
+    const sourceId = String(source.source_content_item_id || '').trim();
+    if (!sourceRef) continue;
+    sourceRefByAlias.set(sourceRef, sourceRef);
+    if (sourceId) {
+      sourceRefByAlias.set(sourceId, sourceRef);
+      sourceRefByAlias.set(`source:${sourceId}`, sourceRef);
+    }
+  }
   return Object.freeze({
     curriculum: Object.freeze({
       audit_ref: audit?.curriculum_audit_id || null,
@@ -69,7 +76,7 @@ function boundedPlanningSignals({ audit, diagnosticPlan = null, vpkDecisions = [
         for (const edge of output.dependencies || []) {
           if (String(edge.learning_unit_id) === unitId) prerequisiteRefs.add(String(edge.prerequisite_learning_unit_id));
         }
-        const sourceRefs = new Set((unit.source_item_refs || []).map((ref) => sourceRefByCanonicalRef.get(String(ref))).filter(Boolean));
+        const sourceRefs = new Set((unit.source_item_refs || []).map((ref) => sourceRefByAlias.get(String(ref))).filter(Boolean));
         for (const account of output.source_accounting || []) {
           if ((account.learning_unit_ids || []).map(String).includes(unitId)) sourceRefs.add(String(account.source_ref));
         }

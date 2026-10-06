@@ -218,7 +218,7 @@ function validateCoursePlanProposal(output, { sources = [], vpkDecisions = [], d
     const requiredSources = sources.filter((source) => source.classification === SOURCE_CLASS_REQUIRED && source.academically_meaningful !== false);
     const unresolved = requiredSources.filter((source) => !mappingBySource.get(String(source.source_ref))?.learning_unit_keys?.length);
     if (unresolved.length) {
-      fail(`Course Plan leaves required source items unmapped: ${unresolved.map((source) => source.source_ref).join(', ')}`, 'TEACHING_D08_REQUIRED_SOURCE_UNMAPPED');
+      fail('KIWI could not connect every required material to the Course Plan. Refresh the material analysis, then try creating the plan again.', 'TEACHING_D08_REQUIRED_SOURCE_UNMAPPED');
     }
     for (const source of sources) {
       if (source.classification !== SOURCE_CLASS_REQUIRED) {

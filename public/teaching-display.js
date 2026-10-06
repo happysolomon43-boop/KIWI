@@ -2,6 +2,7 @@ import './teaching-interaction-system.js?v=20261006-1';
 import './teaching-ui-system.js?v=20261005-2';
 import './teaching-ui-accessibility.js?v=20261005-1';
 
+const TYPOGRAPHY_STYLE_HREF = '/teaching-typography-system.css?v=20261006-1';
 const SMALL_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'into', 'nor', 'of', 'on', 'or', 'the', 'to', 'with']);
 const COURSE_TONES = [
   ['#79dcb0', '#102a20'],
@@ -11,6 +12,17 @@ const COURSE_TONES = [
   ['#ef8f9d', '#31191e'],
   ['#8fd7d5', '#112b2a'],
 ];
+
+function ensureTeachingTypographyStyles() {
+  const existing = document.querySelector('link[data-teaching-typography="canonical"]');
+  if (existing) return existing;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = TYPOGRAPHY_STYLE_HREF;
+  link.dataset.teachingTypography = 'canonical';
+  document.head.append(link);
+  return link;
+}
 
 function displayName(value, fallback = 'Untitled course') {
   const clean = String(value || '').trim().replace(/\s+/g, ' ');
@@ -38,4 +50,5 @@ function decorateCourse(node, course) {
   return node;
 }
 
+ensureTeachingTypographyStyles();
 window.KIWITeachingDisplay = Object.freeze({ displayName, courseTone, decorateCourse });
