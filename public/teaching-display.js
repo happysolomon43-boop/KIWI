@@ -1,3 +1,4 @@
+import './teaching-interaction-system.js?v=20261006-1';
 import './teaching-ui-system.js?v=20261005-2';
 import './teaching-ui-accessibility.js?v=20261005-1';
 
