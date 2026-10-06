@@ -16,6 +16,9 @@ const TPF02_SOURCE_INVENTORY_BATCH_SIZE = 24;
 const TPF02_SOURCE_INVENTORY_CONCURRENCY = 2;
 const TPF02_STAGED_SOURCE_COUNT_THRESHOLD = 48;
 const TPF02_STAGED_INPUT_BYTES_THRESHOLD = 192 * 1024;
+const TPF02_LINEAGE_REPAIR_BATCH_SIZE = 12;
+const TPF02_LINEAGE_REPAIR_REVIEW_REASON = 'Required source lineage needs bounded TPF-02 completion before Course planning.';
+const TPF02_LINEAGE_UNRESOLVED_PREFIX = 'runtime-lineage-unmapped:';
 const TPF02_STATUS_PRIORITY = Object.freeze({
   ok: 0,
   unresolved: 1,
@@ -166,6 +169,60 @@ function uniqueUnresolved(items=[]){
     result.push(item);
   }
   return result;
+}
+
+function sameStringSet(leftValues=[],rightValues=[]){
+  const left=new Set(leftValues),right=new Set(rightValues);
+  if(left.size!==right.size)return false;
+  for(const value of left)if(!right.has(value))return false;
+  return true;
+}
+
+function requiredSourceRefs(preparedInventory=[]){
+  return uniqueStrings(
+    (preparedInventory||[])
+      .filter((item)=>String(item?.proposed_scope_classification||'')==='required')
+      .map((item)=>item.source_item_ref)
+  );
+}
+
+function runtimeLineageUnresolvedId(sourceRef,originStatus='ok'){
+  return `${TPF02_LINEAGE_UNRESOLVED_PREFIX}${String(originStatus||'unresolved')}:${String(sourceRef||'')}`;
+}
+
+function runtimeLineageOriginStatus(item){
+  const id=String(item?.unresolved_id||'');
+  if(!id.startsWith(TPF02_LINEAGE_UNRESOLVED_PREFIX))return null;
+  const rest=id.slice(TPF02_LINEAGE_UNRESOLVED_PREFIX.length);
+  const index=rest.indexOf(':');
+  return index<0?null:rest.slice(0,index);
+}
+
+function isRuntimeLineageUnresolved(item){
+  return String(item?.unresolved_id||'').startsWith(TPF02_LINEAGE_UNRESOLVED_PREFIX);
+}
+
+function deferUnmappedRequiredSources(output){
+  const refs=uniqueStrings(output?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
+  if(!refs.length)return output;
+  const originStatus=String(output?.status||'unresolved');
+  const existing=Array.isArray(output?.unresolved_items)?output.unresolved_items:[];
+  const runtimeItems=refs.map((ref)=>({
+    unresolved_id:runtimeLineageUnresolvedId(ref,originStatus),
+    issue:'Required source has not yet been attached to a Learning Unit.',
+    source_item_refs:[ref],
+    why_unresolved:'Whole-curriculum synthesis did not assign this required source to a Learning Unit.',
+    required_next_input_or_review:'Run bounded TPF-02 Learning Unit lineage completion before Course planning.',
+    blocks_responsible_planning:true,
+  }));
+  return {
+    ...output,
+    status:strongerStatus(originStatus,'unresolved'),
+    review_required:true,
+    review_reasons:uniqueStrings([...(output.review_reasons||[]),TPF02_LINEAGE_REPAIR_REVIEW_REASON]),
+    unresolved_items:uniqueUnresolved([...existing,...runtimeItems]),
+    student_facing_summary_candidate:null,
+  };
 }
 
 function learningUnitEligibleSourceRefs(preparedInventory=[]){
