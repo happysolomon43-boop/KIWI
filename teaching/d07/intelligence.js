@@ -168,6 +168,62 @@ function uniqueUnresolved(items=[]){
   return result;
 }
 
+function learningUnitEligibleSourceRefs(preparedInventory=[]){
+  return uniqueStrings(
+    (preparedInventory||[])
+      .filter((item)=>['required','supplementary'].includes(String(item?.proposed_scope_classification||'')))
+      .map((item)=>item.source_item_ref)
+  );
+}
+
+function canonicalizeSynthesisSourceScope(output,preparedInventory=[]){
+  if(!output||typeof output!=='object'||Array.isArray(output))return output;
+  const eligibleRefs=new Set(learningUnitEligibleSourceRefs(preparedInventory));
+  const requiredRefs=uniqueStrings(
+    (preparedInventory||[])
+      .filter((item)=>String(item?.proposed_scope_classification||'')==='required')
+      .map((item)=>item.source_item_ref)
+  );
+
+  const learningUnits=Array.isArray(output.learning_units)
+    ? output.learning_units.map((unit)=>{
+      if(!unit||typeof unit!=='object'||Array.isArray(unit))return unit;
+      const sourceItemRefs=Array.isArray(unit.source_item_refs)
+        ? uniqueStrings(unit.source_item_refs.filter((ref)=>eligibleRefs.has(String(ref||'').trim())))
+        : unit.source_item_refs;
+      return {...unit,source_item_refs:sourceItemRefs};
+    })
+    : output.learning_units;
+
+  if(!Array.isArray(learningUnits))return {...output,learning_units:learningUnits};
+
+  const unitRefsBySource=new Map(requiredRefs.map((ref)=>[ref,[]]));
+  for(const unit of learningUnits){
+    const unitId=String(unit?.learning_unit_id||'').trim();
+    if(!unitId||!Array.isArray(unit?.source_item_refs))continue;
+    for(const ref of unit.source_item_refs){
+      if(unitRefsBySource.has(ref))unitRefsBySource.get(ref).push(unitId);
+    }
+  }
+
+  const reconciliation={
+    ...(output.source_to_unit_reconciliation&&typeof output.source_to_unit_reconciliation==='object'&&!Array.isArray(output.source_to_unit_reconciliation)
+      ? output.source_to_unit_reconciliation
+      : {}),
+    required_item_map:requiredRefs.map((ref)=>({
+      source_item_ref:ref,
+      learning_unit_refs:uniqueStrings(unitRefsBySource.get(ref)||[]),
+    })),
+    unmapped_required_refs:requiredRefs.filter((ref)=>(unitRefsBySource.get(ref)||[]).length===0),
+  };
+
+  return {
+    ...output,
+    learning_units:learningUnits,
+    source_to_unit_reconciliation:reconciliation,
+  };
+}
+
 function mergeSourceInventoryStages(stageResults,fullAcademicInput){
   const expectedRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const inventoryByRef=new Map();
@@ -237,11 +293,13 @@ function assembleStagedAudit(output,preparedInventory,preparedSourceWalk,stageFi
 function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSourceWalk,stageFindings}){
   const fullAcademicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE});
   const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
+  const eligibleLearningUnitSourceRefs=Object.freeze(learningUnitEligibleSourceRefs(preparedInventory));
   const academicInput=Object.freeze({
     ...fullAcademicInput,
     source_items:Object.freeze([]),
     source_evidence_items:fullAcademicInput.source_items,
     prepared_source_inventory:Object.freeze([...preparedInventory]),
+    eligible_learning_unit_source_refs:eligibleLearningUnitSourceRefs,
     source_inventory_stage_findings:stageFindings,
   });
   const outputSchema=tpf02OutputSchema();
@@ -262,7 +320,8 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSo
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>{
       if(out.source_inventory.length!==0)return {ok:false,reason:'TPF02_STAGED_SYNTHESIS_MUST_DEFER_SOURCE_INVENTORY'};
-      const assembled=assembleStagedAudit(out,preparedInventory,preparedSourceWalk,stageFindings);
+      const scoped=canonicalizeSynthesisSourceScope(out,preparedInventory);
+      const assembled=assembleStagedAudit(scoped,preparedInventory,preparedSourceWalk,stageFindings);
       return validateTpf02Domain(assembled,validationContext);
     },
     provenanceValidator:fullProvenanceValidator(sourceRefs),
@@ -356,6 +415,8 @@ module.exports={
   shouldStageCurriculumAudit,
   mergeSourceInventoryStages,
   assembleStagedAudit,
+  learningUnitEligibleSourceRefs,
+  canonicalizeSynthesisSourceScope,
   diagnosticRequest,
   vpkInterpretationRequest,
   createD07Intelligence,
