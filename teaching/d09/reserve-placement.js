@@ -103,10 +103,11 @@ function normalizeReservePlacement(context, result, { source = 'AUTOMATIC' } = {
   const periods = scheduler.buildPeriods(context).filter((period) => period.kind === 'AVAILABLE');
   if (!periods.length) return result;
 
-  // Generic D09 reserve rows are capacity reservations, not actual Assessment or
-  // revision events. Keep them out of the pre-instructional part of a Course.
-  // The Assessment/Revision owners can later use the capacity when a real event
-  // is warranted; Scheduler does not invent that academic event here.
+  // D09 reserve rows are planned capacity, not proof that an Assessment or
+  // revision session already exists. They must not precede all instruction,
+  // but they may legitimately sit mid-Course or near a final assessment window.
+  // Downstream Assessment/Revision owners decide when that capacity becomes a
+  // real academic event; Scheduler only protects the time here.
   const placed = result.schedule
     .filter((slot) => !RESERVE_KINDS.has(String(slot.kind)))
     .map((slot) => ({ ...slot }));
@@ -118,7 +119,7 @@ function normalizeReservePlacement(context, result, { source = 'AUTOMATIC' } = {
       placed.push({ ...slot });
       continue;
     }
-    const notBefore = Math.max(...courseClasses.map((item) => Date.parse(item.endsAt)));
+    const notBefore = Math.min(...courseClasses.map((item) => Date.parse(item.endsAt)));
     const hardDeadline = hardDeadlineFor(context, slot.courseId);
     const originalValid = Date.parse(slot.startsAt) >= notBefore
       && (!hardDeadline || Date.parse(slot.endsAt) <= Date.parse(hardDeadline))
@@ -145,7 +146,7 @@ function normalizeReservePlacement(context, result, { source = 'AUTOMATIC' } = {
       endsAt: candidate.end,
       localDate: scheduler.dateKey(new Date(candidate.start), context.semester.timezone),
       exceptionCodes: Object.freeze([...(slot.exceptionCodes || []), 'RESERVE_CAPACITY_PLACED_AFTER_INSTRUCTION']),
-      rationale: `${slot.kind === 'ASSESSMENT_RESERVE' ? 'Assessment' : 'Revision'} capacity reserved after scheduled instruction; this is capacity, not an invented academic event.`,
+      rationale: `${slot.kind === 'ASSESSMENT_RESERVE' ? 'Assessment' : 'Revision'} capacity reserved after initial scheduled instruction; this is capacity, not an invented academic event.`,
     });
   }
 
@@ -160,10 +161,10 @@ function normalizeReservePlacement(context, result, { source = 'AUTOMATIC' } = {
 
   const invalidReserve = schedule.some((slot) => {
     if (!RESERVE_KINDS.has(String(slot.kind))) return false;
-    const lastClassEnd = Math.max(...schedule
+    const firstClassEnd = Math.min(...schedule
       .filter((item) => item.kind === 'CLASS' && String(item.courseId) === String(slot.courseId))
       .map((item) => Date.parse(item.endsAt)));
-    return Number.isFinite(lastClassEnd) && Date.parse(slot.startsAt) < lastClassEnd;
+    return Number.isFinite(firstClassEnd) && Date.parse(slot.startsAt) < firstClassEnd;
   });
   if (invalidReserve) return result;
 
@@ -177,13 +178,13 @@ function normalizeReservePlacement(context, result, { source = 'AUTOMATIC' } = {
     }),
     policy: Object.freeze({
       ...(result.policy || {}),
-      genericReserveCapacityAfterScheduledInstruction: true,
+      genericReserveCapacityAfterInitialInstruction: true,
       reserveCapacityDoesNotInventAssessmentOrRevisionEvent: true,
     }),
     stateDigest: digest({
       source,
       previousStateDigest: result.stateDigest,
-      reservePlacementPolicy: 'after-scheduled-instruction.v1',
+      reservePlacementPolicy: 'after-initial-instruction.v2',
       schedule: schedule.map((slot) => [slot.courseId, slot.kind, slot.startsAt, slot.endsAt, slot.plannedMinutes]),
     }),
   });

@@ -46,17 +46,20 @@ function screenshotShapedSchedule() {
   };
 }
 
-test('D09 generic assessment/revision capacity cannot remain before instructional Classes', () => {
+test('D09 generic assessment/revision capacity starts only after initial instruction and can remain mid-Course', () => {
   const normalized = normalizeReservePlacement(reserveContext(), screenshotShapedSchedule(), { source: 'REGRESSION' });
   const classes = normalized.schedule.filter((slot) => slot.kind === 'CLASS');
   const reserves = normalized.schedule.filter((slot) => slot.kind.endsWith('_RESERVE'));
+  const firstClassEnd = Math.min(...classes.map((slot) => Date.parse(slot.endsAt)));
   const lastClassEnd = Math.max(...classes.map((slot) => Date.parse(slot.endsAt)));
 
   assert.equal(reserves.length, 2);
-  assert.ok(reserves.every((slot) => Date.parse(slot.startsAt) >= lastClassEnd));
+  assert.ok(reserves.every((slot) => Date.parse(slot.startsAt) >= firstClassEnd));
+  assert.ok(reserves.some((slot) => Date.parse(slot.startsAt) < lastClassEnd), 'planned reserve capacity may be mid-Course rather than forced after all instruction');
   assert.equal(normalized.metrics.scheduledMinutes, 410);
   assert.equal(normalized.metrics.reservePlacementNormalized, true);
   assert.equal(normalized.metrics.reserveSlotsRepositioned, 2);
+  assert.equal(normalized.policy.genericReserveCapacityAfterInitialInstruction, true);
   assert.equal(normalized.policy.reserveCapacityDoesNotInventAssessmentOrRevisionEvent, true);
   assert.ok(reserves.every((slot) => slot.exceptionCodes.includes('RESERVE_CAPACITY_PLACED_AFTER_INSTRUCTION')));
 });
