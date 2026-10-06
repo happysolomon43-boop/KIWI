@@ -194,3 +194,31 @@ test('canonical TPF-02 persistence baseline keeps normalized audit sections and 
  for(const table of ['teaching_curriculum_audit_source_inventory','teaching_curriculum_audit_topics','teaching_curriculum_audit_learning_units','teaching_curriculum_audit_assumed_prerequisites','teaching_curriculum_audit_source_conflicts','teaching_curriculum_audit_coverage_gaps','teaching_curriculum_audit_structure_change_proposals','teaching_curriculum_audit_unresolved_items'])assert.match(sql,new RegExp(`CREATE TABLE public\\.${table}`));
  assert.doesNotMatch(sql,/ALTER COLUMN status/);
 });
+
+test('D07 persists governed v1.1 identity and v2 conflict/structure projections without losing the complete JSON artifact', async () => {
+ const {createD07CourseIntakeRepository}=require('../../../teaching/repositories/d07-course-intake');
+ const statements=[];
+ const query=async(sql,params=[])=>{
+  statements.push({sql,params});
+  if(sql.includes('max(audit_version)'))return {rows:[{v:2}]};
+  if(sql.includes('insert into public.teaching_curriculum_audits('))return {rows:[{curriculum_audit_id:'new-audit',prompt_family_version:params[15],output_schema_version:params[16],audit_output:JSON.parse(params[6])}]};
+  return {rows:[]};
+ };
+ const repository=createD07CourseIntakeRepository({query,withTransaction:fn=>fn(query),randomUUID:()=> 'new-audit'});
+ const output=canonicalAudit();
+ output.source_conflicts=[{conflict_id:'conflict-1',conflict:'Terminology differs.',conflict_type:'terminology',source_item_refs:['source:s1','source:s2'],authority_context:'Course sources',resolution_status:'resolved_by_authoritative_rule',resolution_or_required_review:'Use Course terminology.',blocking:false}];
+ output.structure_change_proposals=[{type:'merge',affected_unit_refs:['lu-1','lu-2'],resulting_unit_refs:['lu-1'],source_item_refs_before:['source:s1','source:s2'],source_item_refs_after:['source:s1','source:s2'],proposal:'Consider one connected unit.',reason:'Closely related foundations.'}];
+ const saved=await repository.saveAudit({studentId:'u1',courseId:'course-1',subjectSnapshotRef:course.subject_snapshot_ref,inventoryDigest:'digest',output,provenanceRefs:[],validationMetadata:{domain_validated:true,lineage_reconciled:true}});
+ assert.equal(saved.prompt_family_version,'1.1');
+ assert.equal(saved.output_schema_version,'2');
+ assert.deepEqual(saved.audit_output,output);
+ const audit=statements.find(x=>x.sql.includes('insert into public.teaching_curriculum_audits('));
+ assert.equal(JSON.parse(audit.params[8]).schema,'tpf02.curriculum-audit.v2');
+ const conflict=statements.find(x=>x.sql.includes('insert into public.teaching_curriculum_audit_source_conflicts('));
+ assert.deepEqual(JSON.parse(conflict.params[6]),['source:s1','source:s2']);
+ const structure=statements.find(x=>x.sql.includes('insert into public.teaching_curriculum_audit_structure_change_proposals('));
+ assert.equal(structure.params[7],true);
+ const before=statements.length;
+ await assert.rejects(repository.saveAudit({output:{}}),{code:'TPF02_TOP_LEVEL_CONTRACT_MISMATCH'});
+ assert.equal(statements.length,before);
+});

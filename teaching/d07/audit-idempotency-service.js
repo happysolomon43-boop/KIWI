@@ -1,6 +1,7 @@
 'use strict';
 
 const { digest } = require('./contracts');
+const { TPF02_FAMILY_VERSION, TPF02_OUTPUT_SCHEMA_VERSION } = require('./tpf02-direct');
 
 function sourceInventoryDigest(sources = []) {
   return digest((sources || []).map((source) => [source.source_ref, source.content_hash]));
@@ -22,6 +23,9 @@ function currentValidatedAudit(setup) {
     ? audit.validation_metadata
     : {};
 
+  if (String(audit.prompt_family_version || '') !== TPF02_FAMILY_VERSION) return null;
+  if (String(audit.output_schema_version || '') !== TPF02_OUTPUT_SCHEMA_VERSION) return null;
+  if (metadata.lineage_reconciled !== true) return null;
   if (String(audit.status || '').toUpperCase() !== 'VALIDATED_CANDIDATE') return null;
   if (String(audit.input_state_reference || '') !== expectedStateRef) return null;
   if (String(audit.source_inventory_digest || '') !== expectedDigest) return null;
