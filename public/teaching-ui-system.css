@@ -99,6 +99,43 @@ html[data-app="kiwi-teaching"] textarea{
   letter-spacing:-.015em;
   transition:transform 150ms ease,border-color 150ms ease,background 150ms ease,color 150ms ease,box-shadow 150ms ease,opacity 150ms ease;
 }
+
+/* These controls are shared by Calendar, Requests, Course Plan, and Work.
+   Their complete skin must not depend on D08 having rendered first. */
+.teaching-d08-link-button{
+  appearance:none;
+  -webkit-appearance:none;
+  min-height:40px;
+  padding:0 13px;
+  border:1px solid rgba(223,245,235,.075);
+  border-radius:10px;
+  background:rgba(255,255,255,.016);
+  color:#c7d5ce;
+  font:650 12px/1 var(--font-body,"DM Sans",sans-serif);
+  text-align:center;
+  cursor:pointer;
+}
+.teaching-d08-link-button:hover,
+.teaching-d08-link-button:focus-visible{
+  border-color:rgba(126,226,184,.20);
+  background:rgba(126,226,184,.07);
+}
+.teaching-d08-link-button--primary{
+  border-color:transparent;
+  background:var(--teaching-accent,#7ee2b8);
+  color:#07140f;
+}
+
+button.teaching-course-feature-card{
+  appearance:none;
+  -webkit-appearance:none;
+  width:100%;
+  margin:0;
+  color:var(--teaching-text,#f2f7f4);
+  font:inherit;
+  text-align:left;
+  cursor:pointer;
+}
 .teaching-button:focus-visible,
 .teaching-d08-link-button:focus-visible,
 .tc-button:focus-visible,
