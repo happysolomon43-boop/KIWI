@@ -354,6 +354,9 @@ function createReckoningStore({
              WHEN reckoning_preparation_items.status = 'READY'
                THEN 'READY'
              WHEN reckoning_preparation_items.work_state = 'TERMINAL_ERROR'
+               AND reckoning_preparation_items.last_error LIKE '%Feature code cannot set provider-native generation field responseMimeType%'
+               THEN 'NEEDS_GENERATION'
+             WHEN reckoning_preparation_items.work_state = 'TERMINAL_ERROR'
                THEN 'TERMINAL_ERROR'
              ELSE reckoning_preparation_items.work_state
            END,
@@ -771,6 +774,7 @@ function createReckoningStore({
            WHERE terminal_item.reckoning_id = reckoning_sessions.id
              AND terminal_item.user_id = reckoning_sessions.user_id
              AND terminal_item.work_state = 'TERMINAL_ERROR'
+             AND COALESCE(terminal_item.last_error, '') NOT LIKE '%Feature code cannot set provider-native generation field responseMimeType%'
          )
          AND (
            generation_status IN ('error','partial')
