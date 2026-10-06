@@ -112,3 +112,24 @@ test('D07 service composition applies audit idempotency before truncation recove
    unreconciled.curriculumAudit.validation_metadata.lineage_reconciled = false;
    assert.equal(currentValidatedAudit(unreconciled), null);
  });
+
+test('D07 background refresh versions the outbox key and joins a completed current v1.1 audit', async () => {
+ const {createD07Service}=require('../../../teaching/d07/service');
+ const setup=setupFixture();
+ setup.backgroundAnalysis={event_id:'old-event',status:'PUBLISHED'};
+ setup.curriculumAudit.prompt_family_version='1.0';
+ setup.curriculumAudit.output_schema_version='tpf02.curriculum-audit.v1';
+ const existingKeys=new Set(['d07:curriculum-audit:course-1:2']);
+ let writes=0;
+ const service=createD07Service({subjects:{getForUser(){},getCorpusForUser(){}},repository:{async getSetup(){return setup;}},intelligence:{},outboxStore:{async append(event){assert.equal(existingKeys.has(event.idempotencyKey),false,'refresh must not collide with the legacy completed event');existingKeys.add(event.idempotencyKey);writes++;return {event:{event_id:event.eventId,status:'PENDING'}};}},randomUUID:()=> 'new-event'});
+ const refreshed=await service.queueAudit({id:'student-1'},'course-1');
+ assert.equal(refreshed.jobId,'new-event');
+ assert.equal(refreshed.status,'PENDING');
+ assert.ok(existingKeys.has('d07:curriculum-audit:course-1:2:tpf02:1.1'));
+ setup.backgroundAnalysis={event_id:'new-event',status:'PENDING'};
+ assert.equal((await service.queueAudit({id:'student-1'},'course-1')).joinedExisting,true);
+ setup.backgroundAnalysis.status='PUBLISHED';
+ setup.curriculumAudit=setupFixture().curriculumAudit;
+ assert.equal((await service.queueAudit({id:'student-1'},'course-1')).status,'PUBLISHED');
+ assert.equal(writes,1);
+});

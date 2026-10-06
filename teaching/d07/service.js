@@ -7,6 +7,8 @@ const {
   evaluateValidatedPriorKnowledge,
   digest,
 } = require('./contracts');
+const { TPF02_FAMILY_VERSION } = require('./tpf02-direct');
+const { currentValidatedAudit } = require('./audit-idempotency-service');
 const { validateSupplementaryMaterialInput } = require('../d28/security');
 
 function createD07Service({
@@ -312,7 +314,8 @@ function createD07Service({
     // discovers the latest event is stale is the one exception: it must leave a
     // replacement for the current state version before stale work is considered
     // complete.
-    if (['PENDING', 'CLAIMED', 'RETRY_WAIT'].includes(currentStatus) && !supersededCurrent) {
+    if ((['PENDING', 'CLAIMED', 'RETRY_WAIT'].includes(currentStatus)
+      || (currentStatus === 'PUBLISHED' && currentValidatedAudit(setup))) && !supersededCurrent) {
       return {
         accepted: true,
         background: true,
@@ -324,7 +327,7 @@ function createD07Service({
 
     const now = clock().toISOString();
     const eventId = randomUUID();
-    const baseKey = `d07:curriculum-audit:${courseId}:${setup.course.state_version}`;
+    const baseKey = `d07:curriculum-audit:${courseId}:${setup.course.state_version}:tpf02:${TPF02_FAMILY_VERSION}`;
     const idempotencyKey = supersededCurrent
       ? `${baseKey}:state-recovery:${current.event_id}`
       : currentStatus === 'CANCELLED'
