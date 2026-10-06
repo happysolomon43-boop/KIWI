@@ -104,7 +104,74 @@ function createD07Service({
   }
 
   const listCourses = (user) => repository.listCourses(user.id);
-  const getSetup = (user, id) => repository.getSetup(user.id, id);
+
+  async function getSetup(user, id) {
+    const setup = await repository.getSetup(user.id, id);
+    const background = setup.backgroundAnalysis;
+    if (
+      setup.curriculumAudit ||
+      !intelligence ||
+      !background?.event_id ||
+      !outboxStore ||
+      typeof outboxStore.getById !== 'function' ||
+      typeof outboxStore.append !== 'function' ||
+      typeof randomUUID !== 'function'
+    ) {
+      return setup;
+    }
+
+    // Operational read-repair: a Curriculum Audit event can finish publication
+    // after its Course state version has changed. PUBLISHED without an audit is
+    // not success; nor is an active event bound to an older state version. When
+    // either condition is observed, leave one idempotent replacement event for
+    // the current state. This is outbox recovery only and does not mutate
+    // academic truth.
+    let eventRow = null;
+    try {
+      eventRow = await outboxStore.getById(background.event_id);
+    } catch (error) {
+      logger?.warn?.('[KIWI Teaching D07] Could not inspect background audit event for reconciliation.', {
+        courseId: String(id),
+        eventId: String(background.event_id),
+        code: error?.code || null,
+      });
+      return setup;
+    }
+    if (!eventRow) return setup;
+
+    const eventStatus = String(eventRow.status || background.status || '').toUpperCase();
+    const eventStateVersion = eventRow.aggregate_version == null
+      ? null
+      : String(eventRow.aggregate_version);
+    const currentStateVersion = String(setup.course.state_version);
+    const stateChanged = eventStateVersion != null && eventStateVersion !== currentStateVersion;
+    const publishedWithoutArtifact = eventStatus === 'PUBLISHED' && !setup.curriculumAudit;
+    if (!stateChanged && !publishedWithoutArtifact) return setup;
+    if (eventStatus === 'CANCELLED') return setup;
+
+    try {
+      const recovery = await requeueAuditForCurrentState(user, id, background.event_id);
+      return {
+        ...setup,
+        backgroundAnalysis: {
+          ...background,
+          event_id: recovery.jobId,
+          status: recovery.status,
+          last_error_code: null,
+          recovered_from_event_id: background.event_id,
+          recovery_reason: stateChanged ? 'COURSE_STATE_CHANGED' : 'PUBLISHED_WITHOUT_AUDIT',
+        },
+      };
+    } catch (error) {
+      logger?.warn?.('[KIWI Teaching D07] Stale Curriculum Audit event could not be requeued yet.', {
+        courseId: String(id),
+        eventId: String(background.event_id),
+        code: error?.code || null,
+        message: String(error?.message || error).slice(0, 300),
+      });
+      return setup;
+    }
+  }
 
   async function submitIntake(user, courseId, input) {
     const intake = await repository.saveIntake({
@@ -237,9 +304,10 @@ function createD07Service({
       supersedeEventId && current?.event_id && String(current.event_id) === String(supersedeEventId)
     );
 
-    // Normal callers join existing work. A worker that discovers its own event
-    // is stale is the one exception: it must atomically leave a replacement for
-    // the current state version before the stale event is marked published.
+    // Normal callers join existing work. A worker/read-repair path that
+    // discovers the latest event is stale is the one exception: it must leave a
+    // replacement for the current state version before stale work is considered
+    // complete.
     if (['PENDING', 'CLAIMED', 'RETRY_WAIT'].includes(currentStatus) && !supersededCurrent) {
       return {
         accepted: true,
