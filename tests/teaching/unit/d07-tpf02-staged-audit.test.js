@@ -89,6 +89,45 @@ function inventoryStageOutput(request, { unresolved = false } = {}) {
   };
 }
 
+function lineageRepairOutput(request, unitId = 'unit-1') {
+  const refs = request.academicInput.audit_scope.source_refs;
+  return {
+    input_state_reference: request.academicInput.input_state_reference,
+    task_mode: 'LEARNING_UNIT_DECOMPOSITION',
+    execution_stage: EXECUTION_STAGES.SINGLE_PASS,
+    audit_scope: { ...request.academicInput.audit_scope, source_walk: [] },
+    source_inventory: [],
+    topics: [],
+    learning_units: [{
+      learning_unit_id: unitId,
+      title: 'Existing unit lineage attachment',
+      intended_competence: 'Preserve the existing competence while attaching required source lineage.',
+      source_item_refs: refs,
+      topic_refs: [],
+      prerequisite_refs: [],
+      dependency_type_notes: null,
+      criticality: 'foundational',
+      criticality_basis: 'Required source lineage belongs with the existing foundational unit.',
+      proposed_exit_evidence: 'Use the existing unit evidence contract.',
+      gap_refs: [],
+      uncertainties: [],
+    }],
+    assumed_prerequisites: [],
+    source_conflicts: [],
+    coverage_gaps: [],
+    structure_change_proposals: [],
+    source_to_unit_reconciliation: {
+      required_item_map: refs.map((ref) => ({ source_item_ref: ref, learning_unit_refs: [unitId] })),
+      unmapped_required_refs: [],
+    },
+    unresolved_items: [],
+    status: 'ok',
+    review_required: false,
+    review_reasons: [],
+    student_facing_summary_candidate: null,
+  };
+}
+
 function synthesisOutput(request) {
   const refs = request.academicInput.audit_scope.source_refs;
   return {
@@ -321,7 +360,7 @@ test('staged synthesis still fails closed when source-scope canonicalization lea
   assert.equal(result.reason, 'TPF02_LEARNING_UNIT_INVALID:1');
 });
 
-test('staged synthesis rejects a structurally complete-looking result that omits one required source from Learning Units', async () => {
+test('staged synthesis turns an omitted required source into an explicit blocking provisional artifact for bounded repair', async () => {
   const allSources = sources(49);
   const fullInput = buildTpf02AcademicInput({
     course: course(),
@@ -341,10 +380,79 @@ test('staged synthesis rejects a structurally complete-looking result that omits
   const output = synthesisOutput(request);
   const missing = fullInput.audit_scope.source_refs.at(-1);
   output.learning_units[0] = { ...output.learning_units[0], source_item_refs: output.learning_units[0].source_item_refs.slice(0, -1) };
-  output.source_to_unit_reconciliation.required_item_map = output.source_to_unit_reconciliation.required_item_map.map((row) => row.source_item_ref === missing ? { ...row, learning_unit_refs: [] } : row);
-  output.source_to_unit_reconciliation.unmapped_required_refs = [missing];
+
   const result = await request.domainValidator(output);
-  assert.equal(result.reason, 'TPF02_OK_STATUS_HAS_UNMAPPED_REQUIRED_SOURCE');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(result.value.source_to_unit_reconciliation.unmapped_required_refs, [missing]);
+  assert.equal(result.value.status, 'unresolved');
+  assert.equal(result.value.review_required, true);
+  assert.equal(result.value.student_facing_summary_candidate, null);
+  assert.ok(result.value.unresolved_items.some((item) =>
+    item.blocks_responsible_planning === true
+    && item.source_item_refs.includes(missing)
+    && String(item.unresolved_id).startsWith('runtime-lineage-unmapped:')
+  ));
+});
+
+test('large staged audit completes omitted required lineage through bounded LEARNING_UNIT_DECOMPOSITION before returning', async () => {
+  const allSources = sources(49);
+  const calls = [];
+
+  const orchestrator = {
+    async execute(request) {
+      calls.push(request);
+      if (request.taskMode === 'SOURCE_INVENTORY') {
+        const output = inventoryStageOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        const provenance = await request.provenanceValidator(domain.value);
+        assert.equal(provenance.ok, true, provenance.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      if (request.taskMode === 'DEEP_AUDIT') {
+        const output = synthesisOutput(request);
+        const missing = request.academicInput.audit_scope.source_refs.at(-1);
+        output.learning_units[0] = {
+          ...output.learning_units[0],
+          source_item_refs: output.learning_units[0].source_item_refs.filter((ref) => ref !== missing),
+        };
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        assert.deepEqual(domain.value.source_to_unit_reconciliation.unmapped_required_refs, [missing]);
+        const provenance = await request.provenanceValidator(domain.value);
+        assert.equal(provenance.ok, true, provenance.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      assert.equal(request.taskMode, 'LEARNING_UNIT_DECOMPOSITION');
+      assert.equal(request.academicInput.lineage_repair_context.mode, 'REQUIRED_SOURCE_LINEAGE_COMPLETION');
+      assert.equal(request.academicInput.source_items.length, 1);
+      const output = lineageRepairOutput(request);
+      const domain = await request.domainValidator(output);
+      assert.equal(domain.ok, true, domain.reason);
+      const provenance = await request.provenanceValidator(domain.value);
+      assert.equal(provenance.ok, true, provenance.reason);
+      return { accepted: true, validatedResult: { output: domain.value } };
+    },
+  };
+
+  const result = await createD07Intelligence({ orchestrator }).runCurriculumAudit({
+    course: course(),
+    sources: allSources,
+  });
+
+  assert.equal(calls.filter((request) => request.taskMode === 'SOURCE_INVENTORY').length, 3);
+  assert.equal(calls.filter((request) => request.taskMode === 'DEEP_AUDIT').length, 1);
+  assert.equal(calls.filter((request) => request.taskMode === 'LEARNING_UNIT_DECOMPOSITION').length, 1);
+
+  const output = result.validatedResult.output;
+  assert.deepEqual(output.source_to_unit_reconciliation.unmapped_required_refs, []);
+  assert.equal(output.source_to_unit_reconciliation.required_item_map.length, 49);
+  assert.equal(output.learning_units[0].source_item_refs.length, 49);
+  assert.equal(output.status, 'ok');
+  assert.equal(output.review_required, false);
+  assert.deepEqual(output.unresolved_items, []);
 });
 
 test('staged synthesis rejects any attempt by the model to replace prepared source accounting', async () => {
