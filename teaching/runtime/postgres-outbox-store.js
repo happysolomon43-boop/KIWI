@@ -85,6 +85,16 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
 
   async function append(input) { return appendUsing(query, input); }
 
+  async function getById(eventId) {
+    const normalized = String(eventId || '').trim();
+    if (!normalized) return null;
+    const { rows = [] } = await query(
+      'select * from teaching_runtime.event_outbox where event_id=$1 limit 1',
+      [normalized]
+    );
+    return rows[0] ? Object.freeze({ ...rows[0] }) : null;
+  }
+
   async function releaseExpiredClaims(now = new Date()) {
     const { rowCount = 0 } = await query(
       `update teaching_runtime.event_outbox
@@ -121,7 +131,8 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
   async function markPublished(event) {
     const { rows } = await query(
       `update teaching_runtime.event_outbox
-          set status='PUBLISHED',published_at=now(),claim_expires_at=null,updated_at=now()
+          set status='PUBLISHED',published_at=now(),last_error_code=null,
+              claim_token=null,claimed_by=null,claimed_at=null,claim_expires_at=null,updated_at=now()
         where event_id=$1 and status='CLAIMED' and claim_token=$2 returning *`,
       [event.event_id,event.claim_token]
     );
@@ -166,7 +177,17 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
     return rows[0];
   }
 
-  return Object.freeze({ assertReady, appendUsing, append, releaseExpiredClaims, claimPending, markPublished, retry, markCancelled });
+  return Object.freeze({
+    assertReady,
+    appendUsing,
+    append,
+    getById,
+    releaseExpiredClaims,
+    claimPending,
+    markPublished,
+    retry,
+    markCancelled,
+  });
 }
 
 module.exports = { createPostgresTeachingOutboxStore };
