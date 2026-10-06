@@ -147,8 +147,8 @@ function createQuestionBank({
       'RECKONING_CBT',
       {
         content: buildPrompt(blueprint, retryFeedback, previousQuestion),
-        generationConfig: {
-          responseMimeType: 'application/json',
+        generation: {
+          structuredOutput: { mimeType: 'application/json' },
           temperature: Math.min(0.55, 0.35 + Math.max(0, Number(attempt) - 1) * 0.08),
         },
       },
