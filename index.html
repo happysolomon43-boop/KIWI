@@ -14607,7 +14607,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         return false;
       }
 
-      function _renderAdaptiveReckoningQuestion(state) {
+      function _renderAdaptiveReckoningQuestion(state, retry = {}) {
         const container = _adaptiveReckoningHost();
         const question = state.currentQuestion;
         if (!container || !question) return;
@@ -14628,7 +14628,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px;">
                 <div>
                   <div style="font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:1.4px;text-transform:uppercase;color:var(--red-bright);">Reckoning · ${escapeHTML(role)}</div>
-                  <div style="font-family:var(--font-display);font-size:var(--text-2xl);font-weight:750;color:var(--text);margin-top:5px;">Question ${questionOrdinal}</div>
+                  <div style="font-family:var(--font-display);font-size:var(--text-2xl);font-weight:600;color:var(--text);margin-top:5px;">Question ${questionOrdinal}</div>
+                  <div style="font-size:var(--text-sm);color:var(--text-3);margin-top:8px;line-height:1.5;">Adaptive review · one question at a time${state.preparedQuestionCount ? ` · ${Number(state.preparedQuestionCount)} prepared` : ''}. Your answers determine what comes next.</div>
                 </div>
                 <div style="text-align:right;">
                   <div style="font-size:var(--text-xs);color:var(--text-4);text-transform:uppercase;letter-spacing:1px;">Elapsed review</div>
@@ -14643,7 +14644,8 @@ body.kiwi-tour-active { overscroll-behavior: none; }
               </div>
 
               <div class="card" style="padding:24px;margin:0;">
-                <div class="exam-stem" style="font-size:clamp(18px,4vw,24px);line-height:1.55;font-weight:650;margin-bottom:22px;">${escapeHTML(question.stem || "")}</div>
+                <div class="exam-stem" style="font-family:var(--font-body);font-size:clamp(18px,4vw,22px);line-height:1.55;font-weight:600;margin-bottom:22px;">${escapeHTML(question.stem || "")}</div>
+                ${retry.error ? `<div role="alert" style="padding:12px;margin-bottom:16px;border:1px solid var(--red-bright);border-radius:10px;line-height:1.5;">${escapeHTML(retry.error)}</div>` : ''}
                 <div id="adaptiveOptions" style="display:flex;flex-direction:column;gap:10px;">
                   ${(question.options || []).map((opt) => `
                     <button type="button" class="exam-option adaptive-reckoning-option" data-option="${escapeHTML(opt.id)}" style="width:100%;text-align:left;">
@@ -14678,7 +14680,7 @@ body.kiwi-tour-active { overscroll-behavior: none; }
         });
 
         document.getElementById("adaptiveAnswerBtn")?.addEventListener("click", async () => {
-          if (!selected) return;
+          if (!selected || document.getElementById("adaptiveAnswerBtn")?.disabled) return;
           const submit = document.getElementById("adaptiveAnswerBtn");
           if (submit) {
             submit.disabled = true;
@@ -14695,12 +14697,23 @@ body.kiwi-tour-active { overscroll-behavior: none; }
             );
             await _openAdaptiveReckoningState(nextState);
           } catch (error) {
-            showToast(error.message || "Answer could not be saved. Your previous state is still safe.", "error", 7000);
             const fresh = await api.getAdaptiveReckoningState(state.examSessionId).catch(() => null);
-            if (fresh) await _openAdaptiveReckoningState(fresh);
-            else _renderAdaptiveReckoningQuestion(state);
+            if (fresh && fresh.currentQuestion?.id !== question.id) {
+              await _openAdaptiveReckoningState(fresh);
+            } else {
+              if (fresh) AppState.adaptiveReckoning = fresh;
+              _renderAdaptiveReckoningQuestion(fresh || state, {
+                selectedOption: selected,
+                error: 'KIWI could not confirm that your answer was saved. Your selection is retained. Retry submitting; the same answer cannot be counted twice.',
+              });
+            }
           }
         });
+
+        if (retry.selectedOption) {
+          [...container.querySelectorAll('.adaptive-reckoning-option')]
+            .find(button => button.dataset.option === retry.selectedOption)?.click();
+        }
 
         document.getElementById("adaptiveFlagQuestionBtn")?.addEventListener("click", async () => {
           const button = document.getElementById("adaptiveFlagQuestionBtn");

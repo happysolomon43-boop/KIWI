@@ -389,6 +389,7 @@ function createReckoningEngine(options = {}) {
       enginePhase: phase,
       reviewRole: currentQuestion?.reckoning_role || null,
       questionsUsed,
+      preparedQuestionCount: questions.length,
       softQuestionBudget: Number(session.soft_question_budget) || null,
       hardQuestionCap: Number(session.hard_question_cap) || config.planner.hardQuestionCap,
       currentBlock: Number(session.current_block) || 0,

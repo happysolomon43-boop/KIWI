@@ -139,6 +139,7 @@ async function parseResponse(response, endpoint) {
   error.status = response.status;
   error.code = data.code || null;
   error.endpoint = endpoint;
+  error.courseId = typeof data.courseId === 'string' ? data.courseId : null;
   throw error;
 }
 

@@ -182,7 +182,11 @@ function backgroundAuditState(job) {
       active: false,
       failed: true,
       label: 'Needs attention',
-      message: 'The background analysis could not produce a valid result after several attempts. Your materials are safe. Try again when you are ready.',
+      message: job?.last_error_code === 'TEACHING_ACADEMIC_INPUT_INVALID'
+        ? 'KIWI could not prepare the material input for analysis. Your materials are safe. Retry after the input-processing fix is available.'
+        : job?.last_error_code === 'TEACHING_AI_OUTPUT_TRUNCATED'
+          ? 'The AI response ended before the analysis was complete. No incomplete analysis was saved. Your materials are safe; you can retry.'
+          : `The background analysis did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. Your materials are safe. Try again when you are ready.`,
       errorCode: job?.last_error_code || null,
     };
   }

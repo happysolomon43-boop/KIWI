@@ -1,7 +1,7 @@
 'use strict';
 
 const { getPromptBody, assertFrozenPromptBinding } = require('../prompt-runtime/prompt-catalog');
-const { serializeAcademicInput } = require('../prompt-runtime/academic-input');
+const { serializeAcademicInput, SOURCE_CENSUS_INPUT_LIMITS } = require('../prompt-runtime/academic-input');
 
 const TPF02_FAMILY_ID = 'TPF-02';
 const TPF02_FAMILY_VERSION = '1.0';
@@ -155,7 +155,7 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
   '</KIWI_TPF02_DIRECT_RUNTIME_BINDING>',
   '',
   '<KIWI_TPF02_ACADEMIC_INPUT>',
-  serializeAcademicInput(academicInput||{}),
+  serializeAcademicInput(academicInput||{}, SOURCE_CENSUS_INPUT_LIMITS),
   '</KIWI_TPF02_ACADEMIC_INPUT>',
  ].join('\n');
 }

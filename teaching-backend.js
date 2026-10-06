@@ -11,6 +11,7 @@ function sendError(res, error, fallbackMessage) {
   res.status(status).json({
     error: error?.message || fallbackMessage,
     ...(error?.code ? { code: error.code } : {}),
+    ...(error?.courseId ? { courseId: error.courseId } : {}),
   });
 }
 
