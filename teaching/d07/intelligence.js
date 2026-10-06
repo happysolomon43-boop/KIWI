@@ -632,7 +632,13 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSo
       if(out.source_inventory.length!==0)return {ok:false,reason:'TPF02_STAGED_SYNTHESIS_MUST_DEFER_SOURCE_INVENTORY'};
       const scoped=canonicalizeSynthesisSourceScope(out,preparedInventory);
       const assembled=assembleStagedAudit(scoped,preparedInventory,preparedSourceWalk,stageFindings);
-      return validateTpf02Domain(assembled,validationContext);
+      const validated=validateTpf02Domain(assembled,validationContext);
+      if(validated.ok)return validated;
+      if(!['TPF02_OK_STATUS_HAS_UNMAPPED_REQUIRED_SOURCE','TPF02_UNMAPPED_REQUIRED_SOURCE_NOT_BLOCKED'].includes(validated.reason)){
+        return validated;
+      }
+      const deferred=deferUnmappedRequiredSources(assembled);
+      return validateTpf02Domain(deferred,validationContext);
     },
     provenanceValidator:fullProvenanceValidator(sourceRefs),
   };
