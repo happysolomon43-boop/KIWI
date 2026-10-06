@@ -108,25 +108,36 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
   }
   async function getSchedulingContextUsing(runner,studentId,courseId){
     const course=await ensureCourse(studentId,courseId,runner,true);
-    if(!course.semester_id) return {course,semester:null,profile:null,availability:[],blocks:[],deadlines:[],reserves:[],courses:[],unresolvedCourses:[]};
-    const {rows:semesters}=await q(runner,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,course.semester_id]);
-    const semester=semesters?.[0]||null;
-    const profile=await latestProfile(studentId,course.semester_id,runner);
+    let semester=null,inheritedDefault=false;
+    if(course.semester_id){
+      const {rows:semesters}=await q(runner,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,course.semester_id]);
+      semester=semesters?.[0]||null;
+    }else{
+      semester=await latestDefaultSemester(studentId,runner);
+      inheritedDefault=Boolean(semester);
+      if(semester){
+        const {rows:locked}=await q(runner,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,semester.semester_id]);
+        semester=locked?.[0]||null;
+      }
+    }
+    if(!semester) return {course,semester:null,profile:null,availability:[],blocks:[],deadlines:[],reserves:[],courses:[],unresolvedCourses:[],inheritedDefault:false};
+    const profile=await latestProfile(studentId,semester.semester_id,runner);
     const children=profile?await profileChildren(studentId,profile.profile_id,runner):{availability:[],blocks:[],deadlines:[],reserves:[]};
-    const {rows:siblingRows=[]}=await q(runner,'select * from public.teaching_courses where student_id=$1 and semester_id=$2 order by created_at,course_id for update',[studentId,course.semester_id]);
+    const {rows:siblingRows=[]}=await q(runner,'select * from public.teaching_courses where student_id=$1 and semester_id=$2 order by created_at,course_id for update',[studentId,semester.semester_id]);
     const bundles=[], unresolvedCourses=[];
     for(const sibling of siblingRows){
       const bundle=await latestPlanBundle(studentId,sibling.course_id,runner);
       if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,stateVersion:Number(sibling.state_version),reason:'COURSE_PLAN_NOT_READY'}); continue; }
       bundles.push({...bundle,course:sibling,semesterTimezone:semester?.timezone});
     }
+    if(inheritedDefault) unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'});
     const {rows:historyRows=[]}=await q(runner,`select * from public.teaching_timetable_versions
-      where student_id=$1 and semester_id=$2 order by version_no desc limit 1 for update`,[studentId,course.semester_id]);
+      where student_id=$1 and semester_id=$2 order by version_no desc limit 1 for update`,[studentId,semester.semester_id]);
     const priorTimetable=historyRows[0]||null;
     const {rows:priorSlots=[]}=priorTimetable
       ? await q(runner,'select * from public.teaching_timetable_slots where student_id=$1 and timetable_version_id=$2 order by starts_at',[studentId,priorTimetable.timetable_version_id])
       : {rows:[]};
-    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots};
+    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots,inheritedDefault};
   }
   async function assertContextCurrentUsing(tx,{studentId,context}){
     const {rows:semesterRows}=await q(tx,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,context.semester.semester_id]);
@@ -412,7 +423,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     return classes;
   }
   return Object.freeze({
-    assertReady,listSemesters,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,saveScheduleInputsUsing,saveProposalUsing,
+    assertReady,listSemesters,latestDefaultSemester,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,saveScheduleInputsUsing,saveProposalUsing,
     latestTimetable,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
   });
 }
