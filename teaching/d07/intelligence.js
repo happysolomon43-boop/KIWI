@@ -702,13 +702,41 @@ function createD07Intelligence({orchestrator}={}){
     if(rejected)return rejected;
 
     const prepared=mergeSourceInventoryStages(stageResults,fullAcademicInput);
-    return orchestrator.execute(curriculumSynthesisRequest({
+    let currentResult=await orchestrator.execute(curriculumSynthesisRequest({
       course,
       sources,
       preparedInventory:prepared.sourceInventory,
       preparedSourceWalk:prepared.sourceWalk,
       stageFindings:prepared.findings,
     }));
+    if(!currentResult?.accepted)return currentResult;
+
+    let currentOutput=currentResult.validatedResult?.output;
+    let pendingRefs=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
+    while(pendingRefs.length){
+      const batch=pendingRefs.slice(0,TPF02_LINEAGE_REPAIR_BATCH_SIZE);
+      let repaired=null;
+      try{
+        repaired=await orchestrator.execute(lineageRepairRequest({
+          course,
+          sources,
+          baseOutput:currentOutput,
+          preparedInventory:prepared.sourceInventory,
+          preparedSourceWalk:prepared.sourceWalk,
+          stageFindings:prepared.findings,
+          repairRefs:batch,
+        }));
+      }catch{
+        break;
+      }
+      if(!repaired?.accepted)break;
+      currentResult=repaired;
+      currentOutput=repaired.validatedResult?.output;
+      const nextPending=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
+      if(nextPending.length>=pendingRefs.length&&batch.every((ref)=>nextPending.includes(ref)))break;
+      pendingRefs=nextPending;
+    }
+    return currentResult;
   }
 
   return Object.freeze({
