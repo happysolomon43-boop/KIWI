@@ -23,9 +23,17 @@ function installStyles() {
     '.teaching-d09-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}.teaching-d09-metric{padding:11px;border:1px solid var(--teaching-border);border-radius:11px}' +
     '.teaching-d09-metric strong{display:block;font-size:18px}.teaching-d09-metric span{display:block;color:#74877e;font-size:10px}.teaching-d09-slot{padding:12px;border:1px solid var(--teaching-border);border-radius:12px;margin-top:8px}' +
     '.teaching-d09-slot__top{display:flex;justify-content:space-between;gap:8px}.teaching-d09-slot small{display:block;margin-top:5px;color:#7e9288}.teaching-d09-note{font-size:11px;color:#74877e;line-height:1.55}' +
-    '.teaching-d09-calendar{display:grid;gap:10px}.teaching-d09-calendar-item{padding:14px;border:1px solid var(--teaching-border);border-radius:12px;background:var(--teaching-surface-soft)}' +
-    '.teaching-d09-calendar-section{display:grid;gap:12px}.teaching-d09-calendar-section__head,.teaching-d09-calendar-item__top{display:flex;align-items:start;justify-content:space-between;gap:12px}.teaching-d09-calendar-section__head h3{margin:0;font:600 20px/1.3 var(--font-display)}.teaching-d09-calendar-item__top strong{display:block;font:600 17px/1.4 var(--font-display);overflow-wrap:anywhere}.teaching-d09-calendar-kind{flex:none;padding:4px 8px;border-radius:8px;background:var(--teaching-accent-soft);color:var(--teaching-accent);font:600 11px/1.4 var(--font-body)}.teaching-d09-calendar-time{margin-top:12px;font:400 14px/1.6 var(--font-body);color:var(--teaching-text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.teaching-d09-calendar-item .teaching-d09-actions{gap:8px}.teaching-d09-calendar-item .teaching-d09-actions button{flex:1;min-width:130px;font:600 12px/1.4 var(--font-body)}' +
-    '@media(max-width:760px){.teaching-d09-grid,.teaching-d09-fields{grid-template-columns:1fr}.teaching-d09-row{grid-template-columns:1fr}.teaching-d09-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}';
+    '.teaching-d09-calendar-hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;background:linear-gradient(145deg,rgba(11,32,25,.9),rgba(5,20,15,.94))}' +
+    '.teaching-d09-calendar-hero__copy{min-width:0}.teaching-d09-calendar-hero__meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.teaching-d09-calendar-zone{display:inline-flex;align-items:center;min-height:30px;padding:6px 10px;border:1px solid rgba(126,226,184,.13);border-radius:999px;background:rgba(126,226,184,.045);color:#9ec9b6;font:600 10px/1.35 var(--font-body)}' +
+    '.teaching-d09-calendar-section{display:grid;gap:12px}.teaching-d09-calendar-section__head{display:flex;align-items:end;justify-content:space-between;gap:14px;padding:2px}.teaching-d09-calendar-section__head h3{margin:0;font:700 20px/1.25 var(--font-body);letter-spacing:-.02em}.teaching-d09-calendar-section__head>span{color:#70877c;font:500 11px/1.4 var(--font-body)}' +
+    '.teaching-d09-calendar{display:grid;gap:14px}.teaching-d09-calendar-day{overflow:hidden;border:1px solid rgba(223,245,235,.075);border-radius:18px;background:linear-gradient(180deg,rgba(9,29,22,.78),rgba(5,20,15,.76));box-shadow:0 12px 34px rgba(0,0,0,.09)}' +
+    '.teaching-d09-calendar-day__head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 17px;border-bottom:1px solid rgba(223,245,235,.065);background:rgba(255,255,255,.008)}.teaching-d09-calendar-day__head strong{font:700 14px/1.35 var(--font-body);letter-spacing:-.01em}.teaching-d09-calendar-day__head span{color:#657b71;font:500 10px/1.35 var(--font-body)}' +
+    '.teaching-d09-calendar-day__items{display:grid}.teaching-d09-calendar-row{position:relative;display:grid;grid-template-columns:94px minmax(0,1fr);gap:18px;padding:17px;border-top:1px solid rgba(223,245,235,.055)}.teaching-d09-calendar-row:first-child{border-top:0}.teaching-d09-calendar-row:hover{background:rgba(126,226,184,.018)}' +
+    '.teaching-d09-calendar-row__time{display:grid;align-content:start;gap:3px;padding-top:2px;color:#92a89e;font:500 11px/1.28 var(--font-mono);font-variant-numeric:tabular-nums}.teaching-d09-calendar-row__time span:last-child{color:#60766c}.teaching-d09-calendar-row__body{min-width:0}.teaching-d09-calendar-row__top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.teaching-d09-calendar-row__title{min-width:0}.teaching-d09-calendar-row__title strong{display:block;color:#e9f5ef;font:700 15px/1.35 var(--font-body);letter-spacing:-.01em;overflow-wrap:anywhere}.teaching-d09-calendar-row__meta{margin-top:4px;color:#71877d;font:400 10.5px/1.45 var(--font-body)}' +
+    '.teaching-d09-calendar-kind{flex:none;display:inline-flex;align-items:center;min-height:26px;padding:5px 9px;border:1px solid rgba(126,226,184,.12);border-radius:999px;background:rgba(126,226,184,.065);color:#89dfb8;font:700 10px/1.3 var(--font-body);white-space:nowrap}.teaching-d09-calendar-kind[data-kind="ASSESSMENT"]{border-color:rgba(245,180,82,.17);background:rgba(245,180,82,.055);color:#dfc184}.teaching-d09-calendar-kind[data-kind="PROPOSAL"]{border-color:rgba(142,165,218,.16);background:rgba(142,165,218,.05);color:#b3c5ea}' +
+    '.teaching-d09-calendar-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:13px}.teaching-d09-calendar-actions button{min-width:0;min-height:38px;padding:0 11px;border-radius:10px;font:600 11px/1.35 var(--font-body);white-space:normal}.teaching-d09-calendar-actions button[data-tone="urgent"]{border-color:rgba(236,102,102,.13);color:#d8b2b2}.teaching-d09-calendar-actions button[data-tone="urgent"]:hover,.teaching-d09-calendar-actions button[data-tone="urgent"]:focus-visible{border-color:rgba(236,102,102,.28);background:rgba(236,102,102,.055);color:#efc2c2}' +
+    '@media(max-width:760px){.teaching-d09-grid,.teaching-d09-fields{grid-template-columns:1fr}.teaching-d09-row{grid-template-columns:1fr}.teaching-d09-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.teaching-d09-calendar-hero{grid-template-columns:1fr}.teaching-d09-calendar-hero__meta{justify-content:flex-start}}' +
+    '@media(max-width:520px){.teaching-d09-calendar-day{border-radius:16px}.teaching-d09-calendar-day__head{padding:13px 14px}.teaching-d09-calendar-row{grid-template-columns:78px minmax(0,1fr);gap:12px;padding:15px 14px}.teaching-d09-calendar-row__time{font-size:10px}.teaching-d09-calendar-row__top{gap:8px}.teaching-d09-calendar-row__title strong{font-size:14px}.teaching-d09-calendar-kind{padding:4px 7px;font-size:9px}.teaching-d09-calendar-actions{gap:7px}.teaching-d09-calendar-actions button{min-height:40px;padding:0 8px;font-size:10.5px}}';
   document.head.append(style);
 }
 function statusName(value) { return String(value || 'Pending').replaceAll('_',' ').toLowerCase().replace(/(^|\s)\S/g, (m) => m.toUpperCase()); }
@@ -175,39 +183,81 @@ async function renderSummary({course,container,openSection}) {
   const actions=el('div','teaching-course-feature-card__actions'), open=el('button','teaching-d08-link-button teaching-d08-link-button--primary','Open scheduling');open.type='button';open.addEventListener('click',openSection);actions.append(open);card.append(actions);container.replaceChildren(card);
   try{const data=await fetchReview(course.course_id);if(data.feasibility){const badge=el('span','teaching-course-feature-card__status',statusName(data.feasibility.outcome));card.insertBefore(badge,card.children[1]);}}catch(_){}
 }
-function displayCalendarTime(value,zone){
+function calendarStart(item){return item?.startsAt||item?.starts_at||null;}
+function calendarEnd(item){return item?.endsAt||item?.ends_at||null;}
+function calendarDayKey(value,zone){
+  if(!value)return 'unscheduled';
+  const date=new Date(value);if(!Number.isFinite(date.getTime()))return 'unscheduled';
+  try{const p=localParts(date,zone);return `${p.year}-${p.month}-${p.day}`;}catch{return date.toISOString().slice(0,10);}
+}
+function displayCalendarDay(value,zone){
   if(!value)return 'Time not set';
   const date=new Date(value);if(!Number.isFinite(date.getTime()))return 'Time not set';
-  try{return new Intl.DateTimeFormat(undefined,{timeZone:zone,weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(date);}catch{return date.toLocaleString();}
+  try{return new Intl.DateTimeFormat(undefined,{timeZone:zone,weekday:'long',month:'short',day:'numeric'}).format(date);}catch{return date.toLocaleDateString();}
+}
+function displayCalendarTime(value,zone){
+  if(!value)return '—';
+  const date=new Date(value);if(!Number.isFinite(date.getTime()))return '—';
+  try{return new Intl.DateTimeFormat(undefined,{timeZone:zone,hour:'numeric',minute:'2-digit'}).format(date);}catch{return date.toLocaleTimeString();}
+}
+function calendarDuration(item){
+  const explicit=Number(item?.plannedMinutes??item?.planned_minutes);
+  if(Number.isFinite(explicit)&&explicit>0)return Math.round(explicit);
+  const start=Date.parse(calendarStart(item)||''),end=Date.parse(calendarEnd(item)||'');
+  return Number.isFinite(start)&&Number.isFinite(end)&&end>start?Math.round((end-start)/60000):null;
+}
+function groupCalendarItems(items,zone){
+  const groups=new Map();
+  [...items].sort((a,b)=>Date.parse(calendarStart(a)||0)-Date.parse(calendarStart(b)||0)).forEach((item)=>{
+    const start=calendarStart(item),key=calendarDayKey(start,zone);
+    if(!groups.has(key))groups.set(key,{key,label:displayCalendarDay(start,zone),items:[]});
+    groups.get(key).items.push(item);
+  });
+  return [...groups.values()];
 }
 function calendarEventCard(item,data){
-  const kind=String(item.kind||'CLASS').toUpperCase(),card=el('article','teaching-d09-calendar-item'),top=el('div','teaching-d09-calendar-item__top'),copy=el('div');
-  const kindLabel=kind==='ASSESSMENT'?statusName(item.assessmentType||'Assessment'):'Class';
-  copy.append(el('strong','',item.title||kindLabel),el('div','teaching-d09-note',kind==='ASSESSMENT'?'Announced assessment':'Approved timetable'));
-  const badge=el('span','teaching-d09-calendar-kind',kindLabel);badge.dataset.kind=kind;
-  top.append(copy,badge);card.append(top,el('div','teaching-d09-calendar-time',displayCalendarTime(item.startsAt,data.currentTimeZone)+(item.endsAt?' → '+displayCalendarTime(item.endsAt,data.currentTimeZone):'')+' · '+data.currentTimeZone));
+  const kind=String(item.kind||'CLASS').toUpperCase(),card=el('article','teaching-d09-calendar-row'),zone=data.currentTimeZone||'UTC';
+  const start=calendarStart(item),end=calendarEnd(item),time=el('div','teaching-d09-calendar-row__time');
+  time.append(el('span','',displayCalendarTime(start,zone)),el('span','',end?displayCalendarTime(end,zone):'—'));
+  const body=el('div','teaching-d09-calendar-row__body'),top=el('div','teaching-d09-calendar-row__top'),title=el('div','teaching-d09-calendar-row__title');
+  const kindLabel=kind==='ASSESSMENT'?statusName(item.assessmentType||'Assessment'):'Class',duration=calendarDuration(item);
+  title.append(el('strong','',item.title||kindLabel),el('div','teaching-d09-calendar-row__meta',(kind==='ASSESSMENT'?'Announced assessment':'Approved schedule')+(duration?` · ${duration} min`:'')));
+  const badge=el('span','teaching-d09-calendar-kind',kindLabel);badge.dataset.kind=kind;top.append(title,badge);body.append(top);
   if(kind==='CLASS'&&window.KIWITeachingD10){
-    const actions=el('div','teaching-d09-actions'),move=el('button','teaching-d08-link-button','Request new time'),absence=el('button','teaching-d08-link-button','Emergency absence');
-    move.type=absence.type='button';move.addEventListener('click',()=>window.KIWITeachingD10.requestClassReschedule(item));absence.addEventListener('click',()=>window.KIWITeachingD10.emergencyAbsence(item));actions.append(move,absence);card.append(actions);
+    const actions=el('div','teaching-d09-calendar-actions'),move=el('button','teaching-d08-link-button','Request new time'),absence=el('button','teaching-d08-link-button','Emergency absence');
+    move.type=absence.type='button';absence.dataset.tone='urgent';
+    move.setAttribute('aria-label',`Request a new time for ${displayCalendarDay(start,zone)} at ${displayCalendarTime(start,zone)}`);
+    absence.setAttribute('aria-label',`Report emergency absence for ${displayCalendarDay(start,zone)} at ${displayCalendarTime(start,zone)}`);
+    move.addEventListener('click',()=>window.KIWITeachingD10.requestClassReschedule(item));absence.addEventListener('click',()=>window.KIWITeachingD10.emergencyAbsence(item));actions.append(move,absence);body.append(actions);
   }
-  return card;
+  card.append(time,body);return card;
 }
 function proposalCard(item,data){
-  const card=el('article','teaching-d09-calendar-item'),top=el('div','teaching-d09-calendar-item__top'),copy=el('div');
-  copy.append(el('strong','',item.course_title||item.title||'Proposed Class'),el('div','teaching-d09-note','Pre-activation proposal'));
-  const badge=el('span','teaching-d09-calendar-kind','Proposed');badge.dataset.kind='PROPOSAL';top.append(copy,badge);
-  const start=item.displayStart||displayCalendarTime(item.startsAt||item.starts_at,data.currentTimeZone),end=item.displayEnd||displayCalendarTime(item.endsAt||item.ends_at,data.currentTimeZone);
-  card.append(top,el('div','teaching-d09-calendar-time',start+(end?' → '+end:'')+' · '+data.currentTimeZone));return card;
+  const card=el('article','teaching-d09-calendar-row'),zone=data.currentTimeZone||'UTC',start=calendarStart(item),end=calendarEnd(item),time=el('div','teaching-d09-calendar-row__time');
+  time.append(el('span','',start?displayCalendarTime(start,zone):(item.displayStart||'—')),el('span','',end?displayCalendarTime(end,zone):(item.displayEnd||'—')));
+  const body=el('div','teaching-d09-calendar-row__body'),top=el('div','teaching-d09-calendar-row__top'),title=el('div','teaching-d09-calendar-row__title'),duration=calendarDuration(item);
+  title.append(el('strong','',item.course_title||item.title||'Proposed Class'),el('div','teaching-d09-calendar-row__meta','Pre-activation proposal'+(duration?` · ${duration} min`:'')));
+  const badge=el('span','teaching-d09-calendar-kind','Proposed');badge.dataset.kind='PROPOSAL';top.append(title,badge);body.append(top);card.append(time,body);return card;
+}
+function calendarGroupedList(items,data,renderer){
+  const list=el('div','teaching-d09-calendar'),zone=data.currentTimeZone||'UTC';
+  groupCalendarItems(items,zone).forEach((group)=>{
+    const day=el('section','teaching-d09-calendar-day'),head=el('div','teaching-d09-calendar-day__head'),body=el('div','teaching-d09-calendar-day__items');
+    head.append(el('strong','',group.label),el('span','',group.items.length+' item'+(group.items.length===1?'':'s')));
+    group.items.forEach((item)=>body.append(renderer(item,data)));day.append(head,body);list.append(day);
+  });
+  return list;
 }
 async function renderCalendar() {
   installStyles(); const main=document.getElementById('teachingApp'); if(!main)return; const page=el('section','teaching-view teaching-d09-page'),zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
-  const head=el('div','teaching-d09-card');head.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Classes and announced assessments share one timetable. Proposed Course times remain separate until they are approved.'));
-  const back=el('button','teaching-d08-link-button','Back to courses');back.type='button';back.addEventListener('click',()=>courseSurface.openOverview?courseSurface.openOverview():window.location.reload());head.append(back);page.append(head);main.replaceChildren(page);
+  const head=el('div','teaching-d09-card teaching-d09-calendar-hero'),copy=el('div','teaching-d09-calendar-hero__copy'),meta=el('div','teaching-d09-calendar-hero__meta');
+  copy.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Classes and announced assessments share one timetable, grouped by day so the next obligation is easy to scan. Proposed Course times remain separate until approval.'));
+  const back=el('button','teaching-d08-link-button','Back to courses');back.type='button';back.addEventListener('click',()=>courseSurface.openOverview?courseSurface.openOverview():window.location.reload());meta.append(el('span','teaching-d09-calendar-zone',`Times shown in ${zone}`),back);head.append(copy,meta);page.append(head);main.replaceChildren(page);
   try{
     const data=await kiwiApiRequest('/teaching/information/calendar?currentTimeZone='+encodeURIComponent(zone));
     const events=Array.isArray(data.events)?data.events:[],proposals=Array.isArray(data.preactivationProposals)?data.preactivationProposals:[];
-    if(events.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head'),list=el('div','teaching-d09-calendar');sectionHead.append(el('h3','','Scheduled'),el('span','',events.length+' item'+(events.length===1?'':'s')));events.forEach((item)=>list.append(calendarEventCard(item,data)));section.append(sectionHead,list);page.append(section);}
-    if(proposals.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head'),list=el('div','teaching-d09-calendar');sectionHead.append(el('h3','','Proposed course times'),el('span','',proposals.length+' item'+(proposals.length===1?'':'s')));proposals.forEach((item)=>list.append(proposalCard(item,data)));section.append(sectionHead,list);page.append(section);}
+    if(events.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head');sectionHead.append(el('h3','','Scheduled'),el('span','',events.length+' item'+(events.length===1?'':'s')));section.append(sectionHead,calendarGroupedList(events,data,calendarEventCard));page.append(section);}
+    if(proposals.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head');sectionHead.append(el('h3','','Proposed course times'),el('span','',proposals.length+' item'+(proposals.length===1?'':'s')));section.append(sectionHead,calendarGroupedList(proposals,data,proposalCard));page.append(section);}
     if(!events.length&&!proposals.length)page.append(el('div','teaching-empty','No Teaching timetable items yet.'));
     if(data.issues?.length)page.append(el('div','teaching-message','Some calendar information is temporarily unavailable. The items shown above remain the authoritative visible timetable.'));
   }catch(error){const message=el('div','teaching-message',error.message||'Calendar could not be loaded.');message.dataset.kind='error';page.append(message);}
