@@ -19,17 +19,18 @@
         content:"";position:absolute;right:17px;top:50%;width:16px;height:16px;margin-top:-9px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:kiwiTeachingSpin .68s linear infinite;opacity:.72
       }
       @keyframes kiwiTeachingSpin{to{transform:rotate(360deg)}}
-      .kiwi-teaching-action-result{position:fixed;left:50%;bottom:calc(86px + env(safe-area-inset-bottom,0px));z-index:85;max-width:min(430px,calc(100vw - 30px));padding:11px 15px;border:1px solid rgba(120,229,182,.2);border-radius:14px;background:rgba(4,29,21,.96);box-shadow:0 18px 48px rgba(0,0,0,.35);color:#d9f2e7;font:var(--teaching-weight-semibold) var(--teaching-type-body-small-size)/var(--teaching-type-body-small-line) var(--teaching-font-body);transform:translate(-50%,12px);opacity:0;transition:.18s ease;pointer-events:none}
-      .kiwi-teaching-action-result[data-show="true"]{transform:translate(-50%,0);opacity:1}
-      .kiwi-teaching-action-result[data-kind="error"]{border-color:rgba(244,137,137,.26);color:#ffc0c0;background:rgba(41,18,18,.96)}
-      @media(prefers-reduced-motion:reduce){.kiwi-teaching-action-result{transition:none}html[data-app="kiwi-teaching"] button[data-kiwi-busy="true"]::after{animation:none}}
-      @media(forced-colors:active){.kiwi-teaching-action-result{border:1px solid CanvasText;background:Canvas;color:CanvasText}html[data-app="kiwi-teaching"] button[data-kiwi-pressed="true"]{outline:3px solid Highlight}}
+      html[data-app="kiwi-teaching"] .teaching-message[data-kind="error"]{
+        position:relative;display:block;margin:16px 0 0;padding:15px 16px 15px 48px;border:1px solid rgba(236,139,139,.20);border-radius:16px;
+        background:linear-gradient(145deg,rgba(87,34,34,.22),rgba(40,25,24,.28));box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+        color:#e7d9d7;font-family:var(--teaching-font-body);font-size:var(--teaching-type-body-small-size);font-weight:var(--teaching-weight-medium);line-height:1.65;letter-spacing:normal;overflow-wrap:anywhere
+      }
+      html[data-app="kiwi-teaching"] .teaching-message[data-kind="error"]::before{
+        content:"!";position:absolute;left:15px;top:15px;display:grid;place-items:center;width:22px;height:22px;border:1px solid rgba(240,156,156,.26);border-radius:999px;
+        background:rgba(236,128,128,.10);color:#f0b0aa;font-family:var(--teaching-font-display);font-size:13px;font-weight:var(--teaching-weight-bold);line-height:1
+      }
+      @media(prefers-reduced-motion:reduce){html[data-app="kiwi-teaching"] button[data-kiwi-busy="true"]::after{animation:none}}
+      @media(forced-colors:active){html[data-app="kiwi-teaching"] .teaching-message[data-kind="error"]{border:1px solid CanvasText;background:Canvas;color:CanvasText}html[data-app="kiwi-teaching"] button[data-kiwi-pressed="true"]{outline:3px solid Highlight}}
     `;document.head.append(style);
-  }
-
-  function toast(message,kind='success'){
-    let node=document.querySelector('.kiwi-teaching-action-result');if(!node){node=document.createElement('div');node.className='kiwi-teaching-action-result';node.setAttribute('role','status');node.setAttribute('aria-live','polite');document.body.append(node);}
-    node.textContent=message;node.dataset.kind=kind;node.dataset.show='true';clearTimeout(node._hideTimer);node._hideTimer=setTimeout(()=>{node.dataset.show='false';},2800);
   }
 
   function beginForButton(button){
@@ -66,10 +67,8 @@
       try{
         let result=await original(endpoint,options);
         if(isTeaching&&method==='GET'&&/\/teaching\/courses(?:\?|$)/.test(endpoint))result=dedupeCourses(result);
-        if(visibleWork&&method!=='GET')toast('Action completed.','success');
         return result;
-      }catch(error){if(visibleWork)toast(error?.message||'Teaching action failed.','error');throw error;}
-      finally{endForButton(triggerButton);}
+      }finally{endForButton(triggerButton);}
     };
     global.KIWI_API_CLIENT=Object.freeze({...client,kiwiApiRequest:wrapped,__teachingInteractionWrapped:true});
   }
@@ -95,5 +94,5 @@
 
   function init(){ensureStyles();installApiFeedback();installPressFeedback();installDeferredRestore();}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
-  global.KIWITeachingInteraction=Object.freeze({dedupeCourses,toast});
+  global.KIWITeachingInteraction=Object.freeze({dedupeCourses});
 })(window);
