@@ -1,5 +1,7 @@
 'use strict';
 
+const COVERAGE_HINT_MAX_CHARS = 180;
+
 function invalid(message, reason = 'TEACHING_D08_TPF03_COVERAGE_MAP_INVALID') {
   return { ok: false, reason, message };
 }
@@ -19,12 +21,38 @@ function sourceAliasIndex(sources = []) {
   return aliases;
 }
 
-function requiredMeaningfulSources(sources = []) {
+function isLineageReconciledAudit(auditOutput = {}) {
+  return Boolean(
+    auditOutput?.source_to_unit_reconciliation
+    && Array.isArray(auditOutput.source_to_unit_reconciliation.required_item_map)
+    && Array.isArray(auditOutput.source_to_unit_reconciliation.unmapped_required_refs)
+  );
+}
+
+function legacyRequiredSources(sources = []) {
   return sources.filter((source) => (
     source?.classification === 'ACADEMICALLY_MEANINGFUL'
     && source?.academically_meaningful !== false
     && String(source?.source_ref || '').trim()
   ));
+}
+
+function requiredSourceRefs({ auditOutput = {}, sources = [] } = {}) {
+  const aliases = sourceAliasIndex(sources);
+  if (isLineageReconciledAudit(auditOutput)) {
+    return [...new Set((auditOutput.source_inventory || [])
+      .filter((item) => item?.proposed_scope_classification === 'required')
+      .map((item) => aliases.get(String(item?.source_item_ref || '').trim()))
+      .filter(Boolean))];
+  }
+  return legacyRequiredSources(sources).map((source) => String(source.source_ref));
+}
+
+function compactHint(value, maxChars = COVERAGE_HINT_MAX_CHARS) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`;
 }
 
 function academicMeaningBySource(auditOutput = {}, sources = []) {
@@ -33,34 +61,54 @@ function academicMeaningBySource(auditOutput = {}, sources = []) {
   for (const item of auditOutput.source_inventory || []) {
     const canonical = aliases.get(String(item?.source_item_ref || '').trim());
     if (!canonical) continue;
-    const meaning = String(item?.academic_meaning || '').trim();
+    const meaning = compactHint(item?.academic_meaning);
     if (meaning) meanings.set(canonical, meaning);
   }
   return meanings;
 }
 
-function buildCoverageObligations({ auditOutput = {}, sources = [], sourceUnitGraph = new Map() } = {}) {
-  const meanings = academicMeaningBySource(auditOutput, sources);
-  return requiredMeaningfulSources(sources).map((source) => {
-    const sourceRef = String(source.source_ref);
-    const existingRefs = Array.from(sourceUnitGraph.get(sourceRef) || [], String);
-    return Object.freeze({
-      source_ref: sourceRef,
-      academic_summary: meanings.get(sourceRef) || String(source.content_summary || source.classification_reason || '').trim() || null,
-      existing_learning_unit_refs: Object.freeze([...new Set(existingRefs)]),
-      requires_planner_mapping: existingRefs.length === 0,
-    });
+function auditCoverageState({ auditOutput = {}, sources = [], sourceUnitGraph = new Map() } = {}) {
+  const required = requiredSourceRefs({ auditOutput, sources });
+  const missing = required.filter((sourceRef) => !(sourceUnitGraph.get(sourceRef) || []).length);
+  return Object.freeze({
+    lineageReconciled: isLineageReconciledAudit(auditOutput),
+    requiredSourceRefs: Object.freeze(required),
+    missingSourceRefs: Object.freeze(missing),
   });
 }
 
+function buildCoverageObligations({ auditOutput = {}, sources = [], sourceUnitGraph = new Map() } = {}) {
+  const state = auditCoverageState({ auditOutput, sources, sourceUnitGraph });
+  if (state.lineageReconciled) return Object.freeze([]);
+  const meanings = academicMeaningBySource(auditOutput, sources);
+  const byRef = new Map(sources.map((source) => [String(source?.source_ref || '').trim(), source]));
+  return Object.freeze(state.missingSourceRefs.map((sourceRef) => {
+    const source = byRef.get(sourceRef) || {};
+    return Object.freeze({
+      source_ref: sourceRef,
+      academic_hint: meanings.get(sourceRef)
+        || compactHint(source.classification_reason)
+        || compactHint(source.content_summary)
+        || null,
+    });
+  }));
+}
+
 function validateCoverageTreatmentPlan(output, { auditOutput = {}, sources = [], sourceUnitGraph = new Map() } = {}) {
+  const state = auditCoverageState({ auditOutput, sources, sourceUnitGraph });
+  if (state.lineageReconciled && state.missingSourceRefs.length) {
+    return invalid(
+      `Validated TPF-02 v1.1 audit is missing Learning Unit lineage for ${state.missingSourceRefs.length} required source item${state.missingSourceRefs.length === 1 ? '' : 's'}. Regenerate the Curriculum Audit instead of repairing it in Course Planning.`,
+      'TEACHING_D08_AUDIT_LINEAGE_INVALID'
+    );
+  }
+
   const map = Array.isArray(output?.coverage_treatment_map) ? output.coverage_treatment_map : [];
   const aliases = sourceAliasIndex(sources);
   const knownUnits = new Set((auditOutput.learning_units || [])
     .map((unit) => String(unit?.learning_unit_id || unit?.id || '').trim())
     .filter(Boolean));
-  const requiredSources = requiredMeaningfulSources(sources).map((source) => String(source.source_ref));
-  const missingBeforePlanning = new Set(requiredSources.filter((sourceRef) => !(sourceUnitGraph.get(sourceRef) || []).length));
+  const missingBeforePlanning = new Set(state.missingSourceRefs);
   const plannedBySource = new Map();
 
   for (const item of map) {
@@ -68,10 +116,10 @@ function validateCoverageTreatmentPlan(output, { auditOutput = {}, sources = [],
     if (!rawRef) continue;
     const sourceRef = aliases.get(rawRef) || null;
     if (!sourceRef) {
-      // TPF-03 also allows Learning Unit-level treatment rows. They do not establish source coverage.
       if (knownUnits.has(rawRef)) continue;
       return invalid(`TPF-03 coverage treatment references unknown material or Learning Unit ${rawRef}.`, 'TEACHING_D08_TPF03_COVERAGE_REFERENCE_INVALID');
     }
+    if (!missingBeforePlanning.has(sourceRef)) continue;
     if (plannedBySource.has(sourceRef)) {
       return invalid(`TPF-03 repeats material coverage for ${sourceRef}.`, 'TEACHING_D08_TPF03_DUPLICATE_SOURCE_COVERAGE');
     }
@@ -95,12 +143,12 @@ function validateCoverageTreatmentPlan(output, { auditOutput = {}, sources = [],
     const preview = unresolved.slice(0, 4).join(', ');
     const suffix = unresolved.length > 4 ? ` and ${unresolved.length - 4} more` : '';
     return invalid(
-      `TPF-03 did not fully connect ${unresolved.length} required material item${unresolved.length === 1 ? '' : 's'} to known Learning Units (${preview}${suffix}).`,
+      `TPF-03 did not fully connect ${unresolved.length} legacy required material item${unresolved.length === 1 ? '' : 's'} to known Learning Units (${preview}${suffix}).`,
       'TEACHING_D08_REQUIRED_SOURCE_UNMAPPED'
     );
   }
 
-  return { ok: true, plannedBySource, missingBeforePlanning };
+  return { ok: true, plannedBySource, missingBeforePlanning, lineageReconciled: state.lineageReconciled };
 }
 
 function mergeCoverageTreatmentMappings({ output, auditOutput = {}, sources = [], sourceUnitGraph = new Map() } = {}) {
@@ -118,12 +166,17 @@ function mergeCoverageTreatmentMappings({ output, auditOutput = {}, sources = []
   return {
     ok: true,
     graph: new Map([...merged].map(([sourceRef, refs]) => [sourceRef, Object.freeze([...refs])])),
+    lineageReconciled: validated.lineageReconciled,
   };
 }
 
 module.exports = {
+  COVERAGE_HINT_MAX_CHARS,
   sourceAliasIndex,
-  requiredMeaningfulSources,
+  isLineageReconciledAudit,
+  legacyRequiredSources,
+  requiredSourceRefs,
+  auditCoverageState,
   buildCoverageObligations,
   validateCoverageTreatmentPlan,
   mergeCoverageTreatmentMappings,
