@@ -51,8 +51,8 @@ function createAISemanticReviewer({ aiRun } = {}) {
       'CBT_QUESTION_AUDIT',
       {
         content: prompt,
-        generationConfig: {
-          responseMimeType: 'application/json',
+        generation: {
+          structuredOutput: { mimeType: 'application/json' },
           temperature: 0.1,
         },
       },
