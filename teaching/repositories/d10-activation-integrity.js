@@ -16,6 +16,9 @@ function activationIntegrityBlockers(integrity = {}) {
   if (Number(integrity.elapsedSlotCount) > 0) {
     blockers.push('TIMETABLE_ELAPSED_REPLAN_REQUIRED');
   }
+  if (Number(integrity.reserveBeforeFirstClassCount) > 0) {
+    blockers.push('TIMETABLE_RESERVE_BEFORE_FIRST_CLASS');
+  }
   return Object.freeze(blockers);
 }
 
@@ -46,6 +49,8 @@ function createD10LifecycleRequestRepository(options = {}) {
       classSlotCount: 0,
       futureClassSlotCount: 0,
       elapsedSlotCount: 0,
+      reserveBeforeFirstClassCount: 0,
+      earliestClassStartAt: null,
       blockers: Object.freeze([]),
     });
     const at = now().toISOString();
@@ -62,7 +67,18 @@ function createD10LifecycleRequestRepository(options = {}) {
           count(*)::int total_slot_count,
           count(*) filter (where slot_kind='CLASS')::int class_slot_count,
           count(*) filter (where slot_kind='CLASS' and ends_at>$3)::int future_class_slot_count,
-          count(*) filter (where ends_at<=$3)::int elapsed_slot_count
+          count(*) filter (where ends_at<=$3)::int elapsed_slot_count,
+          min(starts_at) filter (where slot_kind='CLASS') earliest_class_start_at,
+          count(*) filter (
+            where slot_kind in ('ASSESSMENT_RESERVE','REVISION_RESERVE')
+              and starts_at < (
+                select min(s2.starts_at)
+                from public.teaching_timetable_slots s2
+                where s2.student_id=$1
+                  and s2.timetable_version_id=$2
+                  and s2.slot_kind='CLASS'
+              )
+          )::int reserve_before_first_class_count
         from public.teaching_timetable_slots
         where student_id=$1 and timetable_version_id=$2
       `, [studentId, timetableVersionId, at]),
@@ -76,6 +92,8 @@ function createD10LifecycleRequestRepository(options = {}) {
       classSlotCount: Number(slot.class_slot_count) || 0,
       futureClassSlotCount: Number(slot.future_class_slot_count) || 0,
       elapsedSlotCount: Number(slot.elapsed_slot_count) || 0,
+      reserveBeforeFirstClassCount: Number(slot.reserve_before_first_class_count) || 0,
+      earliestClassStartAt: slot.earliest_class_start_at || null,
       serverNow: at,
     };
     return Object.freeze({ ...integrity, blockers: activationIntegrityBlockers(integrity) });
@@ -103,14 +121,38 @@ function createD10LifecycleRequestRepository(options = {}) {
       timetableVersionId: expected.timetableVersionId,
     });
     if (integrity.blockers.length) {
-      throw blocked('Course cannot activate with an empty, elapsed or unestimated timetable.', integrity.blockers, integrity);
+      throw blocked('Course cannot activate with an invalid timetable. Recalculate the timetable before starting the Course.', integrity.blockers, integrity);
     }
     return integrity;
   }
 
   async function activateCourseUsing(tx, input = {}) {
     await assertActivationTimetableUsing(tx, input);
-    return base.activateCourseUsing(tx, input);
+    const prepareScheduleUsing = input.prepareScheduleUsing || input.activateScheduleUsing;
+    const materializeScheduleUsing = input.materializeScheduleUsing;
+    const activated = await base.activateCourseUsing(tx, {
+      ...input,
+      activateScheduleUsing: prepareScheduleUsing,
+    });
+
+    // The production teaching_classes.activation_id FK is immediate and
+    // non-deferrable. The base D10 transaction inserts the activation parent
+    // before returning here, so Class materialization must happen at this
+    // boundary rather than inside the pre-activation Scheduler callback.
+    if (typeof materializeScheduleUsing !== 'function') return activated;
+    const classes = await materializeScheduleUsing(
+      tx,
+      activated.facts,
+      activated.activationId,
+      activated.schedule
+    );
+    return Object.freeze({
+      ...activated,
+      schedule: Object.freeze({
+        ...activated.schedule,
+        classes: Object.freeze([...(classes || [])]),
+      }),
+    });
   }
   async function activateCourse(input = {}) { return withTransaction((tx) => activateCourseUsing(tx, input)); }
 
