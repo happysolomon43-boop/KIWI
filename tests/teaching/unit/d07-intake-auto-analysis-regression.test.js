@@ -70,7 +70,7 @@ test('new Teaching courses enqueue curriculum analysis immediately after the dur
       async append(event) {
         order.push('audit-enqueued');
         events.push(event);
-        return { event: { ...event, status: 'PENDING' } };
+        return { event: { ...event, event_id: event.eventId, status: 'PENDING' } };
       },
     },
     randomUUID: () => 'job-1',
@@ -124,6 +124,128 @@ test('an analysis enqueue failure never rolls back or hides an already-saved cou
   assert.equal(course.background_analysis.accepted, false);
   assert.equal(course.background_analysis.status, 'QUEUE_FAILED');
   assert.equal(course.background_analysis.code, 'OUTBOX_TEMPORARY_FAILURE');
+});
+
+test('a stale active curriculum-audit event is replaced with one bound to the current Course state', async () => {
+  const events = [];
+  const setup = {
+    course: { course_id: 'course-1', state_version: 2 },
+    sources: [{ source_content_item_id: 'source-1', source_ref: 'ref-1', content_hash: 'hash-1' }],
+    curriculumAudit: null,
+    backgroundAnalysis: { event_id: 'stale-event', status: 'CLAIMED' },
+  };
+  const service = createD07Service({
+    subjects: subjects(),
+    repository: { async getSetup() { return setup; } },
+    intelligence: {},
+    outboxStore: {
+      async getById() {
+        return { event_id: 'stale-event', status: 'CLAIMED', aggregate_version: 1 };
+      },
+      async append(event) {
+        events.push(event);
+        return { event: { ...event, event_id: event.eventId, status: 'PENDING' } };
+      },
+    },
+    randomUUID: () => 'replacement-event',
+    clock: () => new Date('2026-10-06T10:00:00.000Z'),
+    logger: { warn() {} },
+  });
+
+  const reconciled = await service.getSetup({ id: 'student-1' }, 'course-1');
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].aggregateVersion, 2);
+  assert.equal(events[0].payload.expected_state_version, '2');
+  assert.equal(events[0].causationId, 'stale-event');
+  assert.equal(events[0].idempotencyKey, 'd07:curriculum-audit:course-1:2:state-recovery:stale-event');
+  assert.equal(reconciled.backgroundAnalysis.event_id, 'replacement-event');
+  assert.equal(reconciled.backgroundAnalysis.status, 'PENDING');
+  assert.equal(reconciled.backgroundAnalysis.recovery_reason, 'COURSE_STATE_CHANGED');
+});
+
+test('PUBLISHED without a Curriculum Audit artifact is treated as recoverable, not successful analysis', async () => {
+  const events = [];
+  const setup = {
+    course: { course_id: 'course-1', state_version: 2 },
+    sources: [{ source_content_item_id: 'source-1', source_ref: 'ref-1', content_hash: 'hash-1' }],
+    curriculumAudit: null,
+    backgroundAnalysis: { event_id: 'published-without-audit', status: 'PUBLISHED', last_error_code: 'TIMEOUT' },
+  };
+  const service = createD07Service({
+    subjects: subjects(),
+    repository: { async getSetup() { return setup; } },
+    intelligence: {},
+    outboxStore: {
+      async getById() {
+        return { event_id: 'published-without-audit', status: 'PUBLISHED', aggregate_version: 2 };
+      },
+      async append(event) {
+        events.push(event);
+        return { event: { ...event, event_id: event.eventId, status: 'PENDING' } };
+      },
+    },
+    randomUUID: () => 'recovery-event',
+    clock: () => new Date('2026-10-06T10:00:00.000Z'),
+    logger: { warn() {} },
+  });
+
+  const reconciled = await service.getSetup({ id: 'student-1' }, 'course-1');
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].aggregateVersion, 2);
+  assert.equal(events[0].idempotencyKey, 'd07:curriculum-audit:course-1:2:state-recovery:published-without-audit');
+  assert.equal(reconciled.backgroundAnalysis.status, 'PENDING');
+  assert.equal(reconciled.backgroundAnalysis.last_error_code, null);
+  assert.equal(reconciled.backgroundAnalysis.recovery_reason, 'PUBLISHED_WITHOUT_AUDIT');
+});
+
+test('a Course mutation during a long Curriculum Audit prevents stale artifact persistence', async () => {
+  let reads = 0;
+  let saved = false;
+  const sources = [{ source_content_item_id: 'source-1', source_ref: 'ref-1', content_hash: 'hash-1' }];
+  const repository = {
+    async getSetup() {
+      reads += 1;
+      return {
+        course: {
+          course_id: 'course-1',
+          state_version: reads === 1 ? 1 : 2,
+          subject_snapshot_ref: 'subject:1',
+        },
+        sources,
+      };
+    },
+    async saveAudit() {
+      saved = true;
+      return {};
+    },
+  };
+  const service = createD07Service({
+    subjects: subjects(),
+    repository,
+    intelligence: {
+      async runCurriculumAudit() {
+        return { accepted: true, validatedResult: { output: {} } };
+      },
+    },
+  });
+
+  await assert.rejects(
+    service.runAudit({ id: 'student-1' }, 'course-1'),
+    (error) => error?.code === 'TEACHING_D07_AUDIT_STATE_CHANGED' && error?.retryable === true
+  );
+  assert.equal(saved, false);
+  assert.equal(reads, 2);
+});
+
+test('successful outbox publication clears stale retry metadata and claim ownership', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '../../../teaching/runtime/postgres-outbox-store.js'),
+    'utf8'
+  );
+  assert.match(source, /status='PUBLISHED',published_at=now\(\),last_error_code=null/);
+  assert.match(source, /claim_token=null,claimed_by=null,claimed_at=null,claim_expires_at=null/);
 });
 
 test('the unified upload flow persists uploaded sources before it submits optional learning context', () => {
