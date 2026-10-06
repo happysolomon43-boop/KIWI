@@ -6,6 +6,7 @@ const {
   TPF02_OUTPUT_SCHEMA_VERSION,
   TPF02_MAX_OUTPUT_TOKENS,
   TPF02_TOP_LEVEL_FIELDS,
+  EXECUTION_STAGES,
   buildTpf02AcademicInput,
   validateTpf02Schema,
   validateTpf02Domain,
@@ -18,17 +19,9 @@ const TPF02_STAGED_INPUT_BYTES_THRESHOLD = 192 * 1024;
 const TPF02_STATUS_PRIORITY = Object.freeze({
   ok: 0,
   unresolved: 1,
-  blocked_insufficient_sources: 2,
-  blocked_authority_conflict: 3,
+  blocked_authority_conflict: 2,
+  blocked_insufficient_sources: 3,
 });
-const TPF02_SYNTHESIS_EMPTY_FIELDS = Object.freeze([
-  'topics',
-  'learning_units',
-  'assumed_prerequisites',
-  'source_conflicts',
-  'coverage_gaps',
-  'structure_change_proposals',
-]);
 
 function base({capabilityId,course,stateVersion,taskMode,outputSchema,contextSpec,academicInput,provenanceRefs=[]}){
   return {
@@ -85,6 +78,8 @@ function validationContextFor(academicInput){
     inputStateReference:academicInput.input_state_reference,
     trustedScopeVersion:academicInput.audit_scope.trusted_scope_version,
     sourceItems:academicInput.source_items,
+    taskMode:academicInput.task_mode,
+    executionStage:academicInput.execution_stage,
   };
 }
 
@@ -96,7 +91,7 @@ function fullProvenanceValidator(sourceRefs){
 }
 
 function curriculumAuditRequest({course,sources}){
-  const academicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT'});
+  const academicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS});
   const sourceRefs=academicInput.source_items.map((item)=>item.source_item_ref);
   const outputSchema=tpf02OutputSchema();
   const request=base({
@@ -121,7 +116,7 @@ function curriculumAuditRequest({course,sources}){
 }
 
 function sourceInventoryRequest({course,sources}){
-  const academicInput=buildTpf02AcademicInput({course,sources,taskMode:'SOURCE_INVENTORY'});
+  const academicInput=buildTpf02AcademicInput({course,sources,taskMode:'SOURCE_INVENTORY',executionStage:EXECUTION_STAGES.SOURCE_INVENTORY_STAGE});
   const sourceRefs=academicInput.source_items.map((item)=>item.source_item_ref);
   const outputSchema=tpf02OutputSchema();
   const validationContext=validationContextFor(academicInput);
@@ -139,17 +134,7 @@ function sourceInventoryRequest({course,sources}){
     generation:Object.freeze({maxOutputTokens:TPF02_MAX_OUTPUT_TOKENS,structuredOutput:Object.freeze({mimeType:'application/json'})}),
     validationContext,
     schemaValidator:validateTpf02Schema,
-    domainValidator:async out=>{
-      const domain=validateTpf02Domain(out,validationContext);
-      if(!domain.ok)return domain;
-      if(TPF02_SYNTHESIS_EMPTY_FIELDS.some((field)=>out[field].length>0)){
-        return {ok:false,reason:'TPF02_SOURCE_INVENTORY_STAGE_SCOPE_EXCEEDED'};
-      }
-      if(out.student_facing_summary_candidate!=null){
-        return {ok:false,reason:'TPF02_SOURCE_INVENTORY_STAGE_SUMMARY_FORBIDDEN'};
-      }
-      return domain;
-    },
+    domainValidator:async out=>validateTpf02Domain(out,validationContext),
     provenanceValidator:fullProvenanceValidator(sourceRefs),
   };
 }
@@ -169,11 +154,12 @@ function uniqueUnresolved(items=[]){
   const result=[];
   for(const item of items){
     if(!item||typeof item!=='object')continue;
-    const key=JSON.stringify([
+    const key=String(item.unresolved_id||'')||JSON.stringify([
       item.issue,
       item.why_unresolved,
       item.required_next_input_or_review,
       item.blocks_responsible_planning===true,
+      ...(item.source_item_refs||[]),
     ]);
     if(seen.has(key))continue;
     seen.add(key);
@@ -185,6 +171,7 @@ function uniqueUnresolved(items=[]){
 function mergeSourceInventoryStages(stageResults,fullAcademicInput){
   const expectedRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const inventoryByRef=new Map();
+  const walkByRef=new Map();
   let status='ok';
   let reviewRequired=false;
   const reviewReasons=[];
@@ -199,19 +186,26 @@ function mergeSourceInventoryStages(stageResults,fullAcademicInput){
     unresolvedItems.push(...(output.unresolved_items||[]));
     for(const item of output.source_inventory||[]){
       const ref=String(item?.source_item_ref||'');
-      if(!ref||inventoryByRef.has(ref)){
-        throw Object.assign(new Error('TPF-02 SOURCE_INVENTORY stages produced duplicate or invalid source references.'),{code:'TEACHING_TPF02_STAGE_SOURCE_CENSUS_INVALID'});
-      }
+      if(!ref||inventoryByRef.has(ref))throw Object.assign(new Error('TPF-02 SOURCE_INVENTORY stages produced duplicate or invalid source references.'),{code:'TEACHING_TPF02_STAGE_SOURCE_CENSUS_INVALID'});
       inventoryByRef.set(ref,item);
+    }
+    for(const item of output.audit_scope?.source_walk||[]){
+      const ref=String(item?.source_item_ref||'');
+      if(!ref||walkByRef.has(ref))throw Object.assign(new Error('TPF-02 SOURCE_INVENTORY stages produced duplicate or invalid source-walk references.'),{code:'TEACHING_TPF02_STAGE_SOURCE_WALK_INVALID'});
+      walkByRef.set(ref,item);
     }
   }
 
   if(inventoryByRef.size!==expectedRefs.length||expectedRefs.some((ref)=>!inventoryByRef.has(ref))){
     throw Object.assign(new Error('TPF-02 staged source inventory did not account for the complete Course source census.'),{code:'TEACHING_TPF02_STAGE_SOURCE_CENSUS_INVALID'});
   }
+  if(walkByRef.size!==expectedRefs.length||expectedRefs.some((ref)=>!walkByRef.has(ref))){
+    throw Object.assign(new Error('TPF-02 staged source walk did not account for the complete Course source census.'),{code:'TEACHING_TPF02_STAGE_SOURCE_WALK_INVALID'});
+  }
 
   return Object.freeze({
     sourceInventory:Object.freeze(expectedRefs.map((ref)=>inventoryByRef.get(ref))),
+    sourceWalk:Object.freeze(expectedRefs.map((ref)=>walkByRef.get(ref))),
     findings:Object.freeze({
       status,
       review_required:reviewRequired,
@@ -221,29 +215,27 @@ function mergeSourceInventoryStages(stageResults,fullAcademicInput){
   });
 }
 
-function assembleStagedAudit(output,preparedInventory,stageFindings){
+function assembleStagedAudit(output,preparedInventory,preparedSourceWalk,stageFindings){
   const reviewReasons=uniqueStrings([...(stageFindings.review_reasons||[]),...(output.review_reasons||[])]);
   const unresolvedItems=uniqueUnresolved([...(stageFindings.unresolved_items||[]),...(output.unresolved_items||[])]);
   let status=strongerStatus(stageFindings.status,output.status);
   if(status==='ok'&&unresolvedItems.some((item)=>item.blocks_responsible_planning===true))status='unresolved';
-  const reviewRequired=Boolean(
-    stageFindings.review_required||
-    output.review_required||
-    reviewReasons.length||
-    status==='blocked_authority_conflict'
-  );
+  if(status==='ok'&&(preparedSourceWalk||[]).some((item)=>item.analysis_status!=='complete'))status='unresolved';
+  const reviewRequired=Boolean(stageFindings.review_required||output.review_required||reviewReasons.length||status!=='ok');
   return {
     ...output,
     status,
     review_required:reviewRequired,
     review_reasons:reviewReasons,
     source_inventory:[...preparedInventory],
+    audit_scope:{...output.audit_scope,source_walk:[...preparedSourceWalk]},
     unresolved_items:unresolvedItems,
+    student_facing_summary_candidate:status==='ok'?output.student_facing_summary_candidate:null,
   };
 }
 
-function curriculumSynthesisRequest({course,sources,preparedInventory,stageFindings}){
-  const fullAcademicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT'});
+function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSourceWalk,stageFindings}){
+  const fullAcademicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE});
   const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const academicInput=Object.freeze({
     ...fullAcademicInput,
@@ -270,7 +262,7 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,stageFindi
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>{
       if(out.source_inventory.length!==0)return {ok:false,reason:'TPF02_STAGED_SYNTHESIS_MUST_DEFER_SOURCE_INVENTORY'};
-      const assembled=assembleStagedAudit(out,preparedInventory,stageFindings);
+      const assembled=assembleStagedAudit(out,preparedInventory,preparedSourceWalk,stageFindings);
       return validateTpf02Domain(assembled,validationContext);
     },
     provenanceValidator:fullProvenanceValidator(sourceRefs),
@@ -279,7 +271,7 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,stageFindi
 
 function shouldStageCurriculumAudit({course,sources}){
   if((sources||[]).length>TPF02_STAGED_SOURCE_COUNT_THRESHOLD)return true;
-  const input=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT'});
+  const input=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS});
   return Buffer.byteLength(JSON.stringify(input),'utf8')>TPF02_STAGED_INPUT_BYTES_THRESHOLD;
 }
 
@@ -324,7 +316,7 @@ function createD07Intelligence({orchestrator}={}){
       return orchestrator.execute(curriculumAuditRequest({course,sources}));
     }
 
-    const fullAcademicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT'});
+    const fullAcademicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE});
     const batches=chunkSources(sources);
     const stageResults=await mapConcurrent(
       batches,
@@ -339,6 +331,7 @@ function createD07Intelligence({orchestrator}={}){
       course,
       sources,
       preparedInventory:prepared.sourceInventory,
+      preparedSourceWalk:prepared.sourceWalk,
       stageFindings:prepared.findings,
     }));
   }
