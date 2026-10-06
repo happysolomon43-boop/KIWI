@@ -15,7 +15,14 @@ const {
   validateTpf03ScopeImpactOutput,
 } = require('./canonical-plan');
 
-function createD08Service({ subjects, repository, intelligence = null } = {}) {
+function createD08Service({
+  subjects,
+  repository,
+  intelligence = null,
+  outboxStore = null,
+  randomUUID = null,
+  clock = () => new Date(),
+} = {}) {
   if (!subjects || typeof subjects.getCorpusForUser !== 'function') throw new TypeError('D08 service requires the authenticated KIWI Subject corpus interface.');
   if (!repository) throw new TypeError('D08 service requires its D04/D05/D08-backed repository.');
 
@@ -46,6 +53,32 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
     const pending = (setup.scopeChanges || []).find((row) => ['PENDING_PLAN_UPDATE','ADOPTED_PENDING_AUDIT'].includes(row.status));
     if (pending) return Object.freeze({ current: false, reason: 'COURSE_SCOPE_CHANGE_PENDING_REPLAN' });
     return Object.freeze({ current: true, reason: null });
+  }
+
+  function generationReadiness(setup) {
+    const blockers = [];
+    if (!setup.curriculumAudit || setup.curriculumAudit.status !== 'VALIDATED_CANDIDATE') blockers.push('CURRICULUM_AUDIT_REQUIRED');
+    else if (String(setup.curriculumAudit.subject_snapshot_ref || '') !== String(setup.course.subject_snapshot_ref || '')) blockers.push('CURRICULUM_AUDIT_STALE_FOR_SCOPE');
+    if ((setup.sources || []).some((source) => !source.classification)) blockers.push('SOURCE_CLASSIFICATION_INCOMPLETE');
+    const diagnostic = assessRequiredDiagnostic({ diagnosticPlan: setup.diagnosticPlan, vpkDecisions: setup.vpkDecisions });
+    if (!diagnostic.resolved) blockers.push('REQUIRED_DIAGNOSTIC_UNRESOLVED');
+    return Object.freeze({ blockers: Object.freeze(blockers), diagnostic });
+  }
+
+  function backgroundGenerationProjection(job) {
+    if (!job) return null;
+    return Object.freeze({
+      eventId: job.event_id,
+      status: String(job.status || '').toUpperCase(),
+      attemptCount: Number(job.attempt_count || 0),
+      lastErrorCode: job.last_error_code || null,
+      nextAttemptAt: job.next_attempt_at || null,
+      createdAt: job.created_at || null,
+      updatedAt: job.updated_at || null,
+      publishedAt: job.published_at || null,
+      aggregateVersion: job.aggregate_version == null ? null : Number(job.aggregate_version),
+      causationId: job.causation_id || null,
+    });
   }
 
   function buildPreviousPlanContext(setup) {
@@ -92,12 +125,9 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
       unitsByTopic.get(unit.topic_id).push(unit);
     }
     const scopeState = currentPlanScopeState(setup);
-    const diagnostic = assessRequiredDiagnostic({ diagnosticPlan: setup.diagnosticPlan, vpkDecisions: setup.vpkDecisions });
-    const generationBlockers = [];
-    if (!setup.curriculumAudit || setup.curriculumAudit.status !== 'VALIDATED_CANDIDATE') generationBlockers.push('CURRICULUM_AUDIT_REQUIRED');
-    else if (String(setup.curriculumAudit.subject_snapshot_ref || '') !== String(setup.course.subject_snapshot_ref || '')) generationBlockers.push('CURRICULUM_AUDIT_STALE_FOR_SCOPE');
-    if ((setup.sources || []).some((source) => !source.classification)) generationBlockers.push('SOURCE_CLASSIFICATION_INCOMPLETE');
-    if (!diagnostic.resolved) generationBlockers.push('REQUIRED_DIAGNOSTIC_UNRESOLVED');
+    const readiness = generationReadiness(setup);
+    const diagnostic = readiness.diagnostic;
+    const generationBlockers = readiness.blockers;
     const auditOutput = setup.curriculumAudit?.audit_output || {};
     const meaningfulSources = (setup.sources || []).filter((source) => source.classification === 'ACADEMICALLY_MEANINGFUL' && source.academically_meaningful !== false);
     const excludedSources = (setup.sources || []).filter((source) => source.classification && source.classification !== 'ACADEMICALLY_MEANINGFUL');
@@ -133,7 +163,8 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
       generation: Object.freeze({
         available: Boolean(intelligence),
         ready: Boolean(intelligence) && generationBlockers.length === 0,
-        blockers: Object.freeze(generationBlockers),
+        blockers: Object.freeze([...generationBlockers]),
+        ...(setup.backgroundPlanGeneration ? { background: backgroundGenerationProjection(setup.backgroundPlanGeneration) } : {}),
       }),
       sourceAnalysis,
       plan: setup.plan ? Object.freeze({
@@ -179,25 +210,32 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
     return sanitizePlanReview(await repository.getPlanReview(user.id, courseId));
   }
 
+  function assertGenerationReady(setup) {
+    const readiness = generationReadiness(setup);
+    const blocker = readiness.blockers[0] || null;
+    if (!blocker) return readiness;
+    const messages = {
+      CURRICULUM_AUDIT_REQUIRED: 'A validated Curriculum Audit is required before Course Plan generation.',
+      CURRICULUM_AUDIT_STALE_FOR_SCOPE: 'The current Course source snapshot requires a new validated Curriculum Audit before Course Plan generation.',
+      SOURCE_CLASSIFICATION_INCOMPLETE: 'Every current source item must be classified by the validated Curriculum Audit before Course Plan generation.',
+      REQUIRED_DIAGNOSTIC_UNRESOLVED: 'Required targeted Diagnostic evidence must be resolved before Course Plan generation.',
+    };
+    const codes = {
+      CURRICULUM_AUDIT_REQUIRED: 'TEACHING_D08_CURRICULUM_AUDIT_REQUIRED',
+      CURRICULUM_AUDIT_STALE_FOR_SCOPE: 'TEACHING_D08_CURRICULUM_AUDIT_STALE_FOR_SCOPE',
+      SOURCE_CLASSIFICATION_INCOMPLETE: 'TEACHING_D08_SOURCE_CLASSIFICATION_INCOMPLETE',
+      REQUIRED_DIAGNOSTIC_UNRESOLVED: 'TEACHING_D08_REQUIRED_DIAGNOSTIC_UNRESOLVED',
+    };
+    const error = new Error(messages[blocker] || 'Course Plan generation is not ready.');
+    error.status = 409;
+    error.code = codes[blocker] || 'TEACHING_D08_COURSE_PLAN_NOT_READY';
+    if (blocker === 'REQUIRED_DIAGNOSTIC_UNRESOLVED') error.unresolvedTargets = readiness.diagnostic.unresolvedTargets;
+    throw error;
+  }
+
   async function generateCoursePlan(user, courseId) {
     const setup = await repository.getBaseSetup(user.id, courseId);
-    if (!setup.curriculumAudit || setup.curriculumAudit.status !== 'VALIDATED_CANDIDATE') {
-      const error = new Error('A validated Curriculum Audit is required before Course Plan generation.');
-      error.status = 409; error.code = 'TEACHING_D08_CURRICULUM_AUDIT_REQUIRED'; throw error;
-    }
-    if (String(setup.curriculumAudit.subject_snapshot_ref || '') !== String(setup.course.subject_snapshot_ref || '')) {
-      const error = new Error('The current Course source snapshot requires a new validated Curriculum Audit before Course Plan generation.');
-      error.status = 409; error.code = 'TEACHING_D08_CURRICULUM_AUDIT_STALE_FOR_SCOPE'; throw error;
-    }
-    if (setup.sources.some((source) => !source.classification)) {
-      const error = new Error('Every current source item must be classified by the validated Curriculum Audit before Course Plan generation.');
-      error.status = 409; error.code = 'TEACHING_D08_SOURCE_CLASSIFICATION_INCOMPLETE'; throw error;
-    }
-    const diagnostic = assessRequiredDiagnostic({ diagnosticPlan: setup.diagnosticPlan, vpkDecisions: setup.vpkDecisions });
-    if (!diagnostic.resolved) {
-      const error = new Error('Required targeted Diagnostic evidence must be resolved before Course Plan generation.');
-      error.status = 409; error.code = 'TEACHING_D08_REQUIRED_DIAGNOSTIC_UNRESOLVED'; error.unresolvedTargets = diagnostic.unresolvedTargets; throw error;
-    }
+    assertGenerationReady(setup);
     if (!intelligence) held();
     const existing = await repository.getPlanReview(user.id, courseId);
     const previousPlanContext = buildPreviousPlanContext(existing);
@@ -264,6 +302,94 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
       scopeDiff: pendingScopeChange ? { scope_change_id: pendingScopeChange.scope_change_id, impact: pendingScopeChange.impact_summary } : {},
     });
     return sanitizePlanReview(await repository.getPlanReview(user.id, courseId));
+  }
+
+  async function queueCoursePlan(user, courseId) {
+    if (!intelligence) held();
+    if (!outboxStore || typeof outboxStore.append !== 'function' || typeof randomUUID !== 'function') {
+      const error = new Error('Background Course Plan generation is temporarily unavailable.');
+      error.status = 503;
+      error.code = 'TEACHING_D08_BACKGROUND_GENERATION_UNAVAILABLE';
+      throw error;
+    }
+
+    const setup = await repository.getPlanReview(user.id, courseId);
+    assertGenerationReady(setup);
+
+    const scope = currentPlanScopeState(setup);
+    if (setup.plan && scope.current) {
+      return Object.freeze({
+        accepted: true,
+        background: false,
+        status: 'COMPLETED',
+        planReady: true,
+        planVersion: Number(setup.plan.version_no),
+      });
+    }
+
+    const current = setup.backgroundPlanGeneration || null;
+    const currentStatus = String(current?.status || '').toUpperCase();
+    if (['PENDING','CLAIMED','RETRY_WAIT'].includes(currentStatus)) {
+      return Object.freeze({
+        accepted: true,
+        background: true,
+        jobId: current.event_id,
+        status: currentStatus,
+        joinedExisting: true,
+      });
+    }
+    if (currentStatus === 'PUBLISHED') {
+      const refreshed = await repository.getPlanReview(user.id, courseId);
+      const refreshedScope = currentPlanScopeState(refreshed);
+      if (refreshed.plan && refreshedScope.current) {
+        return Object.freeze({
+          accepted: true,
+          background: false,
+          status: 'COMPLETED',
+          planReady: true,
+          planVersion: Number(refreshed.plan.version_no),
+        });
+      }
+    }
+
+    const eventId = randomUUID();
+    const now = clock().toISOString();
+    const baseKey = `d08:course-plan:${courseId}:${setup.course.state_version}:tpf03:1.0`;
+    const idempotencyKey = currentStatus === 'CANCELLED'
+      ? `${baseKey}:recovery:${current.event_id}`
+      : baseKey;
+    const queued = await outboxStore.append({
+      eventId,
+      schemaVersion: 1,
+      eventType: 'teaching.course_plan.generation_requested',
+      eventCategory: 'operational_recovery_event',
+      triggerType: 'background_analysis',
+      source: 'teaching.d08',
+      origin: 'teaching.course_plan_review',
+      actorId: String(user.id),
+      aggregateType: 'teaching_course',
+      aggregateId: String(courseId),
+      aggregateVersion: Number(setup.course.state_version),
+      occurredAt: now,
+      correlationId: eventId,
+      causationId: currentStatus === 'CANCELLED' ? String(current.event_id) : null,
+      idempotencyKey,
+      payload: {
+        course_id: String(courseId),
+        expected_state_version: String(setup.course.state_version),
+      },
+      auditRefs: setup.curriculumAudit?.curriculum_audit_id
+        ? [`curriculum-audit:${setup.curriculumAudit.curriculum_audit_id}`]
+        : [],
+      provenanceRefs: (setup.sources || []).map((source) => `source:${source.source_content_item_id}`),
+    });
+    return Object.freeze({
+      accepted: true,
+      background: true,
+      jobId: queued.event.event_id,
+      status: queued.event.status,
+      joinedExisting: queued.inserted === false,
+    });
   }
 
   async function getCoverageReport(user, courseId) {
@@ -404,6 +530,7 @@ function createD08Service({ subjects, repository, intelligence = null } = {}) {
 
   return Object.freeze({
     getPlanReview,
+    queueCoursePlan,
     generateCoursePlan,
     getCoverageReport,
     getActivationCoverageDecision,

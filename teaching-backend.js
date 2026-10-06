@@ -252,6 +252,29 @@ function createTeachingRouter({
   }
 
   const coursePlanService = d08Service || foundation.d08?.service || null;
+  if (coursePlanService && publishedEventRegistry && typeof publishedEventRegistry.register === 'function') {
+    publishedEventRegistry.register('teaching.course_plan.generation_requested', {
+      subscriberId: 'd08-course-plan-background-worker',
+      handle: async (event) => {
+        const review = await coursePlanService.getPlanReview({ id: event.actorId }, event.aggregateId);
+        const currentStateVersion = String(review?.course?.stateVersion ?? '');
+        const expectedStateVersion = String(event.payload?.expected_state_version ?? event.aggregateVersion ?? '');
+        if (currentStateVersion !== expectedStateVersion) {
+          return Object.freeze({
+            accepted: true,
+            stale: true,
+            safeMetadata: { reason: 'COURSE_STATE_CHANGED' },
+          });
+        }
+        const result = await coursePlanService.generateCoursePlan({ id: event.actorId }, event.aggregateId);
+        return Object.freeze({
+          accepted: true,
+          planVersion: result?.plan?.version || null,
+          safeMetadata: { plan_version: result?.plan?.version || null },
+        });
+      },
+    });
+  }
   if (coursePlanService) {
     const requireD08Ready = (req, res, next) => {
       if (d08Ready) return next();
@@ -266,8 +289,13 @@ function createTeachingRouter({
       catch (error) { sendError(res, error, 'Failed to load Course Plan review.'); }
     });
     router.post('/courses/:id/course-plan', requireD08Ready, async (req, res) => {
-      try { res.status(201).json(await coursePlanService.generateCoursePlan(req.user, req.params.id)); }
-      catch (error) { sendError(res, error, 'Failed to prepare Course Plan.'); }
+      try {
+        if (typeof coursePlanService.queueCoursePlan === 'function') {
+          return res.status(202).json(await coursePlanService.queueCoursePlan(req.user, req.params.id));
+        }
+        return res.status(201).json(await coursePlanService.generateCoursePlan(req.user, req.params.id));
+      }
+      catch (error) { return sendError(res, error, 'Failed to prepare Course Plan.'); }
     });
     router.get('/courses/:id/coverage-report', requireD08Ready, async (req, res) => {
       try { res.json(await coursePlanService.getCoverageReport(req.user, req.params.id)); }

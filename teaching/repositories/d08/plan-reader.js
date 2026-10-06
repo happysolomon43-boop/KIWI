@@ -116,12 +116,39 @@ function createPlanReader({ query }) {
     };
   }
 
-  async function getPlanReview(studentId, courseId) {
-    const [base, plan] = await Promise.all([getBaseSetup(studentId, courseId), getLatestPlanBundle(studentId, courseId)]);
-    return { ...base, ...plan };
+  async function latestBackgroundPlanGeneration(studentId, courseId) {
+    try {
+      const { rows = [] } = await query(
+        `select event_id,status,attempt_count,last_error_code,next_attempt_at,created_at,updated_at,published_at,aggregate_version,causation_id
+           from teaching_runtime.event_outbox
+          where actor_id=$1
+            and aggregate_type='teaching_course'
+            and aggregate_id=$2
+            and event_type='teaching.course_plan.generation_requested'
+          order by created_at desc
+          limit 1`,
+        [studentId, courseId],
+      );
+      const row = rows[0] || null;
+      if (row && String(row.status).toUpperCase() === 'RETRY_WAIT' && Number(row.attempt_count) >= 8) {
+        return { ...row, status: 'CANCELLED', last_error_code: row.last_error_code || 'TEACHING_EVENT_RETRY_EXHAUSTED' };
+      }
+      return row;
+    } catch {
+      return null;
+    }
   }
 
-  return Object.freeze({ assertReady, getBaseSetup, getLatestPlanBundle, getPlanReview });
+  async function getPlanReview(studentId, courseId) {
+    const [base, plan, backgroundPlanGeneration] = await Promise.all([
+      getBaseSetup(studentId, courseId),
+      getLatestPlanBundle(studentId, courseId),
+      latestBackgroundPlanGeneration(studentId, courseId),
+    ]);
+    return { ...base, ...plan, backgroundPlanGeneration };
+  }
+
+  return Object.freeze({ assertReady, getBaseSetup, getLatestPlanBundle, latestBackgroundPlanGeneration, getPlanReview });
 }
 
 module.exports = { createPlanReader };
