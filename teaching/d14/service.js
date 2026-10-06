@@ -6,11 +6,39 @@ const { validateBlock } = require('./board');
 const MODES=Object.freeze({OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'});
 const RESTRICTED=new Set(['ASSESSMENT','CLASSWORK']);
 const SIGNALS=new Set(['ASK_TEACHER','NEED_HELP','READY','FINISHED','BREAK_REQUEST','EARLY_DISMISSAL_REQUEST','TECHNICAL_ISSUE','LEAVE']);
-function fail(code,status=409){throw Object.assign(new Error(code),{code,status});}
+const CLASSROOM_EARLY_ENTRY_MINUTES=60;
+const MINUTE_MS=60_000;
+function fail(code,status=409,message=null){throw Object.assign(new Error(message||code),{code,status});}
+function classroomEntryWindow(classRow,serverNow){
+  const now=serverNow instanceof Date?serverNow:new Date(serverNow);
+  const start=new Date(classRow.scheduled_start_at);
+  const end=new Date(classRow.scheduled_end_at);
+  const opensAt=new Date(start.getTime()-CLASSROOM_EARLY_ENTRY_MINUTES*MINUTE_MS);
+  const closed=String(classRow.lifecycle_state)==='CLOSED'||String(classRow.lifecycle_state)==='CANCELLED';
+  const beforeOpen=now.getTime()<opensAt.getTime();
+  const beforeStart=now.getTime()<start.getTime();
+  return Object.freeze({
+    opensAt:opensAt.toISOString(),
+    scheduledStartAt:start.toISOString(),
+    scheduledEndAt:end.toISOString(),
+    entryAllowed:!closed&&!beforeOpen,
+    liveStartAllowed:!closed&&!beforeStart,
+    phase:closed?'CLOSED':beforeOpen?'LOCKED':beforeStart?'PRE_CLASS':'CLASS_TIME',
+    earlyEntryMinutes:CLASSROOM_EARLY_ENTRY_MINUTES,
+    minutesUntilOpen:Math.max(0,Math.ceil((opensAt.getTime()-now.getTime())/MINUTE_MS)),
+    minutesUntilStart:Math.max(0,Math.ceil((start.getTime()-now.getTime())/MINUTE_MS)),
+    serverAuthoritative:true,
+  });
+}
 function createD14Service({repository,d11Repository,d11Service,d12Service,attendanceService=null,studyIntelligence=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
   if(!repository||!d11Repository||!d11Service||!d12Service||!randomUUID)throw new TypeError('D14 requires the existing D11/D12 owners and its artifact repository.');
-  async function context(studentId,classId){const value=await d11Repository.getClassContext(studentId,classId);if(!value)fail('TEACHING_D14_CLASS_NOT_FOUND',404);return value;}
-  async function listClasses(user,courseId){const course=await repository.identity(user.id,courseId);if(!course)fail('TEACHING_D14_COURSE_NOT_FOUND',404);return {course,classes:await repository.listClasses(user.id,courseId)};}
+  async function context(studentId,classId){const value=await d11Repository.getClassContext(studentId,classId);if(!value)fail('TEACHING_D14_CLASS_NOT_FOUND',404,'Teaching Class not found.');return value;}
+  async function listClasses(user,courseId){
+    const course=await repository.identity(user.id,courseId);if(!course)fail('TEACHING_D14_COURSE_NOT_FOUND',404,'Teaching Course not found.');
+    const serverNow=clock();
+    const classes=(await repository.listClasses(user.id,courseId)).map((row)=>Object.freeze({...row,entryWindow:classroomEntryWindow(row,serverNow)}));
+    return {course,classes,serverNow:serverNow.toISOString(),classroomPolicy:Object.freeze({earlyEntryMinutes:CLASSROOM_EARLY_ENTRY_MINUTES,liveTeachingStartsAtScheduledTime:true,browserTimeAuthoritative:false})};
+  }
   async function snapshot(user,classId){
     const d11=await d11Service.getClass(user,classId);
     const source=await context(user.id,classId);
@@ -43,6 +71,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const interruption=source.session?.instructional_substate==='INTERRUPTED'?{cause:source.session.interruption_metadata?.cause==='SYSTEM'?'SYSTEM':'UNDETERMINED',academicPenalty:false}:null;
     return Object.freeze({class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
       mode:MODES[mode]||'Before Class',modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,
+      entryWindow:classroomEntryWindow(source.classRow,serverNow),
       requiredMaterials:Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],
       learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
@@ -74,11 +103,16 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
   }
   async function enter(user,classId){
     const ctx=await context(user.id,classId);
+    const window=classroomEntryWindow(ctx.classRow,clock());
+    if(!window.entryAllowed){
+      if(window.phase==='LOCKED') fail('TEACHING_D14_CLASSROOM_NOT_OPEN',423,`Classroom opens ${CLASSROOM_EARLY_ENTRY_MINUTES} minutes before the scheduled Class. It opens at ${window.opensAt}.`);
+      fail('TEACHING_D14_CLASSROOM_ENTRY_UNAVAILABLE',409,'This Classroom is not currently open for entry.');
+    }
     const row=await repository.recordInteraction({studentId:user.id,classId,session:ctx.session,kind:'JOIN',body:null,idempotencyKey:`d14-join:${classId}`});
     const attendance=attendanceService&&typeof attendanceService.observeJoin==='function'
       ? await attendanceService.observeJoin(user,classId,{interactionId:row.interaction_id,occurredAt:row.created_at})
       : null;
-    return {enteredAt:row.created_at,formalAttendanceDetermined:Boolean(attendance?.record),attendance};
+    return {enteredAt:row.created_at,formalAttendanceDetermined:Boolean(attendance?.record),attendance,entryWindow:window,liveTeachingStarted:false};
   }
   async function respond(user,classId,input={}){
     if(!input.learningUnitId||!input.responsePayload)fail('TEACHING_D14_RESPONSE_INVALID',400);
@@ -109,7 +143,6 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD',stage,binding:request.binding,idempotencyKey:key});
       return {state:row.state,routeQualification:'UNQUALIFIED_UNTIL_D30',published:false};
     }
-    // No database transaction spans the central Teaching Orchestrator call.
     const result=await studyIntelligence.execute(request);
     const current=await context(studentId,classId);
     const fresh=noteRequest({stage,context:current,cardSet:await cardSetReader({studentId,classId,stage}),sourceSnapshot:await sourceReader({studentId,classId}),closure:stage==='POST_CLASS'?await d11Repository.getClosureFact(studentId,classId):null,summary:stage==='POST_CLASS'?await d11Repository.latestSummary(studentId,classId):null,priorNote:previous,plannedLearningUnits:planned,actualTaughtLearningUnits:actual});
@@ -122,4 +155,4 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
   }
   return Object.freeze({listClasses,snapshot,notebook,signal,enter,respond,runStudyStage,publishTeacherTurn:repository.publishTeacherTurn});
 }
-module.exports={createD14Service,MODES};
+module.exports={createD14Service,MODES,CLASSROOM_EARLY_ENTRY_MINUTES,classroomEntryWindow};

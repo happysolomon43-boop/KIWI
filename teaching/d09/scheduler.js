@@ -8,6 +8,8 @@ const {
 const DAY_MS = 86400000;
 const MINUTE_MS = 60000;
 const DEFAULT_HORIZON = Object.freeze({ imminentDays:7, concreteDays:28 });
+const PREFERRED_SAME_DAY_GAP_MINUTES = 180;
+const PREFERRED_SAME_DAY_GAP_MAX_MINUTES = 480;
 
 function dateParts(date, timeZone) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -234,8 +236,58 @@ function preferenceScore(period,work,preferences) {
   if(preferredTimes.includes(p.hour+':'+p.minute)) score+=30;
   const preferredDays=preferences?.preferredDays||preferences?.preferred_days||[];
   if(preferredDays.map(Number).includes(period.dow)) score+=10;
-  if(work.lastDate && addDateKey(work.lastDate,1)===period.key && preferences?.avoidConsecutiveSameCourseDays!==false) score-=25;
   return score;
+}
+function dayDistance(fromKey,toKey){
+  if(!fromKey||!toKey)return null;
+  const parse=(key)=>{const [y,m,d]=key.split('-').map(Number);return Date.UTC(y,m-1,d);};
+  return Math.round((parse(toKey)-parse(fromKey))/DAY_MS);
+}
+function stableVariation(...parts){
+  const text=parts.flat().map((value)=>String(value??'')).join('|');
+  let hash=2166136261;
+  for(let i=0;i<text.length;i+=1){hash^=text.charCodeAt(i);hash=Math.imul(hash,16777619);}
+  return ((hash>>>0)%25)-12;
+}
+function gapMinutesFromSlot(slot,start,end){
+  if(Date.parse(end)<=Date.parse(slot.startsAt)) return Math.floor((Date.parse(slot.startsAt)-Date.parse(end))/MINUTE_MS);
+  if(Date.parse(start)>=Date.parse(slot.endsAt)) return Math.floor((Date.parse(start)-Date.parse(slot.endsAt))/MINUTE_MS);
+  return -1;
+}
+function cadenceScore({period,work,task,start,end,slots,dayCounts,preferences,courseCount}){
+  if(task.kind!=='CLASS') return 0;
+  let score=0;
+  const distance=dayDistance(work.lastDate,period.key);
+  if(distance!=null){
+    if(distance===0) score-=155;
+    else if(distance===1 && preferences?.avoidConsecutiveSameCourseDays!==false) score-=95;
+    else if(distance===2) score+=54;
+    else if(distance===3) score+=42;
+    else if(distance===4) score+=12;
+    else if(distance>=5) score-=Math.min(85,(distance-4)*20);
+  }
+  const totalOnDay=dayCounts.get(period.key)||0;
+  score-=totalOnDay*70;
+  const sameCourseDay=slots.filter((slot)=>slot.kind==='CLASS'&&slot.courseId===work.courseId&&slot.localDate===period.key);
+  if(sameCourseDay.length){
+    const gaps=sameCourseDay.map((slot)=>gapMinutesFromSlot(slot,start,end)).filter((value)=>value>=0);
+    const gap=gaps.length?Math.min(...gaps):0;
+    if(gap<PREFERRED_SAME_DAY_GAP_MINUTES) score-=520+(PREFERRED_SAME_DAY_GAP_MINUTES-gap)*2;
+    else if(gap<=PREFERRED_SAME_DAY_GAP_MAX_MINUTES) score+=68;
+    else score-=Math.min(55,Math.floor((gap-PREFERRED_SAME_DAY_GAP_MAX_MINUTES)/30)*4);
+    score-=sameCourseDay.length*85;
+  }
+  // As more Courses compete for the same capacity, spacing preferences soften
+  // naturally without ever weakening hard blocks, deadlines or the two-Class ceiling.
+  if(courseCount>1 && totalOnDay>0) score+=Math.min(55,(courseCount-1)*16);
+  score+=stableVariation(work.courseId,period.key,task.learningUnitIds?.[0]||task.title,start);
+  return score;
+}
+function sameDaySpacingException(slots,courseId,localDate,start,end){
+  const peers=slots.filter((slot)=>slot.kind==='CLASS'&&slot.courseId===courseId&&slot.localDate===localDate);
+  if(!peers.length)return false;
+  const gaps=peers.map((slot)=>gapMinutesFromSlot(slot,start,end)).filter((value)=>value>=0);
+  return !gaps.length||Math.min(...gaps)<PREFERRED_SAME_DAY_GAP_MINUTES;
 }
 function alternativesFor(reasons, context, courseWork) {
   const out=[];
@@ -286,6 +338,10 @@ function retainStablePlacements(context, periods, work, scheduleLimit, now) {
     const localDate=dateKey(new Date(start),context.semester.timezone);
     const dayCount=dayCounts.get(localDate)||0;
     if(kind==='CLASS' && dayCount>=2) continue;
+    // Do not preserve a pathological back-to-back same-Course placement merely
+    // because it existed in the previous proposal. Reallocate it through the
+    // cadence scorer so a separated window/day can be chosen when available.
+    if(kind==='CLASS' && sameDaySpacingException(slots,courseId,localDate,start,end)) continue;
     slots.push({
       courseId,kind,startsAt:start,endsAt:end,timezone:context.semester.timezone,
       localDate,learningUnitIds:[...task.learningUnitIds],plannedMinutes:minutes,
@@ -343,8 +399,8 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
         if(w.deadline.hard && Date.parse(candidateEnd)>Date.parse(w.deadline.hard)) continue;
         if(conflictsForWork(context,w,task,period.cursor,candidateEnd)) continue;
         const score=preferenceScore(period,w,preferences)
+          + cadenceScore({period,work:w,task,start:period.cursor,end:candidateEnd,slots,dayCounts,preferences,courseCount:work.length})
           + protectedPreference(context,w,task,period.cursor,candidateEnd)
-          - (task.kind==='CLASS' && w.lastDate===period.key?40:0)
           - (period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY'?10000:0)
           + (w.deadline.kind==='HARD'?12:0)
           - (w.scheduledMinutes/Math.max(1,w.requiredMinutes))*20;
@@ -358,14 +414,18 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
     const start=best.period.cursor;
     const end=new Date(Date.parse(start)+best.minutes*MINUTE_MS).toISOString();
     const count=dayCounts.get(best.period.key)||0;
-    const spacingException=best.task.kind==='CLASS' && best.w.lastDate && addDateKey(best.w.lastDate,1)===best.period.key;
+    const consecutiveDay=best.task.kind==='CLASS' && best.w.lastDate && addDateKey(best.w.lastDate,1)===best.period.key;
+    const condensedDay=best.task.kind==='CLASS' && sameDaySpacingException(slots,best.w.courseId,best.period.key,start,end);
+    const exceptions=[];
+    if(consecutiveDay) exceptions.push('CONSECUTIVE_SAME_COURSE_DAY_PLACEMENT_REQUIRED_BY_FEASIBLE_CAPACITY');
+    if(condensedDay) exceptions.push('CONDENSED_SAME_DAY_PLACEMENT_REQUIRED_BY_FEASIBLE_CAPACITY');
     slots.push({
       courseId:best.w.courseId,kind:best.task.kind,startsAt:start,endsAt:end,timezone:context.semester.timezone,
       localDate:best.period.key,learningUnitIds:[...best.task.learningUnitIds],plannedMinutes:best.minutes,
       horizonStage:horizonStage(start,now,context.profile?.settings||{}),
-      exceptionCodes:Object.freeze(spacingException?['CONSECUTIVE_SAME_COURSE_DAY_PLACEMENT_REQUIRED_BY_FEASIBLE_CAPACITY']:[]),
+      exceptionCodes:Object.freeze(exceptions),
       rationale:best.task.kind==='CLASS'
-        ? 'Instructional-load allocation from the current Course Plan.'
+        ? (condensedDay?'Instructional-load allocation compressed only because a wider same-day gap was not selected by feasible capacity.':'Instructional-load allocation with stable retention spacing and natural timetable cadence.')
         : 'Capacity reserved from Course start for '+best.task.kind.toLowerCase().replaceAll('_',' ')+'.',
     });
     best.task.remaining-=best.minutes;
@@ -401,6 +461,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
       requiredMinutes:required,scheduledMinutes:scheduledTotal,unscheduledMinutes:unscheduled,
       headroomRatio:Number(headroomRatio.toFixed(4)),debtMinutes,
       courseCount:work.length,normalDailyFullClassMaximum:2,stableSlotsRetained:stable.slots.length,
+      preferredSameDayClassGapMinutes:Object.freeze([PREFERRED_SAME_DAY_GAP_MINUTES,PREFERRED_SAME_DAY_GAP_MAX_MINUTES]),
     }),
     courseSummaries:Object.freeze(work.map((w)=>Object.freeze({
       courseId:w.courseId,requiredMinutes:w.requiredMinutes,scheduledMinutes:w.scheduledMinutes,
@@ -411,6 +472,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
       headroomPolicyVersion:policy.policyVersion,targetHeadroomRatio:policy.targetRatio,minimumHeadroomRatio:policy.minimumRatio,
       hardConstraintsMayBeViolated:false,requiredContentMayBeDeleted:false,
       stableTimetablePreference:true,sameCourseSpacingPreference:true,
+      deterministicCadenceVariation:true,preferredSameDayClassGapMinutes:Object.freeze([PREFERRED_SAME_DAY_GAP_MINUTES,PREFERRED_SAME_DAY_GAP_MAX_MINUTES]),
     }),
     stateDigest:digest({
       semester:[context.semester.semester_id,context.semester.state_version,context.semester.starts_at,context.semester.ends_at,context.semester.timezone],
@@ -501,6 +563,7 @@ function projectCalendarSlot(slot,currentTimeZone) {
 }
 
 module.exports = {
-  DEFAULT_HORIZON,dateParts,dateKey,addDateKey,weekdayOfKey,zonedLocalToInstant,overlap,minutesBetween,
+  DEFAULT_HORIZON,PREFERRED_SAME_DAY_GAP_MINUTES,PREFERRED_SAME_DAY_GAP_MAX_MINUTES,
+  dateParts,dateKey,addDateKey,weekdayOfKey,zonedLocalToInstant,overlap,minutesBetween,
   subtractIntervals,buildPeriods,topologicalUnits,buildCourseWork,subtractOccupiedPeriods,retainStablePlacements,computeSchedule,validateEditedSchedule,projectCalendarSlot,
 };

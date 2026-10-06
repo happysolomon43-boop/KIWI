@@ -31,7 +31,6 @@ function decorate() {
     const state = node.dataset.state || node.dataset.status || node.dataset.kind;
     if (state && !node.getAttribute('aria-label') && !node.textContent.trim()) node.setAttribute('aria-label', String(state).replaceAll('_', ' '));
   });
-  // These containers remain navigation landmarks. Horizontal arrow-key behavior is implemented below without aria-orientation, which is not supported on the navigation role.
 }
 
 const observer = new MutationObserver(decorate);
@@ -126,9 +125,6 @@ function handleClassroomTabs(event) {
   return true;
 }
 
-// Remove inert in the capture phase so the original shell can move focus into a
-// drawer synchronously when its own click handler opens it. MutationObserver
-// then keeps the state aligned for every subsequent open/close transition.
 document.addEventListener('click', (event) => {
   const menuOpener = event.target.closest('#teachingMenuButton, .teaching-dock__item[data-menu="true"]');
   if (menuOpener && menuPanel) {
@@ -171,9 +167,6 @@ document.addEventListener('keydown', (event) => {
 
 window.KIWITeachingAccessibility = Object.freeze({ announce, focusWorkspace, syncDrawer: () => drawerEntries.forEach(syncDrawer) });
 
-// D25 is deliberately layered after the accepted D24 accessibility system so
-// degraded/recovery states inherit the same focus, live-region and responsive
-// behavior without making D24 or browser state an academic owner.
 if (!document.querySelector('link[data-teaching-d25]')) {
   const reliabilityStyles = document.createElement('link');
   reliabilityStyles.rel = 'stylesheet';
@@ -187,4 +180,12 @@ if (!document.querySelector('script[data-teaching-d25]')) {
   reliabilityScript.dataset.teachingD25 = 'true';
   reliabilityScript.defer = true;
   document.body.append(reliabilityScript);
+}
+
+if (!document.querySelector('script[data-teaching-experience]')) {
+  const experienceScript = document.createElement('script');
+  experienceScript.src = '/teaching-experience-enhancements.js?v=20261005-experience-1';
+  experienceScript.dataset.teachingExperience = 'true';
+  experienceScript.defer = true;
+  document.body.append(experienceScript);
 }
