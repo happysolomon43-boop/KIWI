@@ -114,6 +114,9 @@ test('Teaching interaction and Admin diagnostic clients are actually bootstrappe
   assert.match(interaction,/data-kiwi-busy/);
   assert.match(interaction,/Syne/);
   assert.match(interaction,/kiwi\.teaching\.location\.v1/);
+  assert.doesNotMatch(interaction,/teachingActivityChip/);
+  assert.doesNotMatch(interaction,/Loading Teaching data/);
+  assert.match(interaction,/finally\{endForButton\(triggerButton\);\}/);
   assert.match(admin,/Running in background/);
   assert.match(admin,/20 frozen Teaching prompt family|frozen Teaching prompt family|totalFamilies/);
 });
