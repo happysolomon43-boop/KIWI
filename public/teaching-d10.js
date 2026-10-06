@@ -263,6 +263,11 @@ function requestCard(item){
     const decline=button('Decline');decline.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/alternative/decline','Decline this alternative','POST',{alternativeVersion:item.alternativeProposal.version});
     actions.append(accept,decline);
   }
+  if(['APPROVED','APPROVED_WITH_ADJUSTMENT'].includes(item.state)&&item.ownerImplemented&&!item.applicationRef){
+    const apply=button('Apply approved change',true);
+    apply.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/apply','Apply this approved change');
+    actions.append(apply);
+  }
   if(['DRAFT','SUBMITTED','REVIEWING','ALTERNATIVE_PROPOSED'].includes(item.state)){const withdraw=button('Withdraw');withdraw.onclick=()=>act('/teaching/requests/'+encodeURIComponent(item.requestId)+'/withdraw','Withdraw this Request');actions.append(withdraw);}
   if(actions.children.length)card.append(actions);
   return card;

@@ -131,20 +131,29 @@ const reckoningShadow = createShadowIntelligence({
   logger: console,
 });
 
-// Transaction helper
-async function withTransaction(fn) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
+// Transaction helper. PostgreSQL deadlocks and serialization failures are
+// transient by definition: the database has rolled the transaction back, so
+// retry the complete unit of work with a fresh connection. This is especially
+// important for Teaching lifecycle mutations, where the Class controller and a
+// formal Request can legitimately touch the same Course/Class rows at once.
+async function withTransaction(fn, { maxAttempts = 3 } = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => null);
+      const retryable = e?.code === '40P01' || e?.code === '40001';
+      if (!retryable || attempt >= maxAttempts) throw e;
+      await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+    } finally {
+      client.release();
+    }
   }
+  throw new Error('Transaction retry attempts exhausted.');
 }
 
 // Delivery E: V2 preparation and execution use the same centralized AI

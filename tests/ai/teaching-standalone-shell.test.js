@@ -72,7 +72,7 @@ test('Teaching uses the main KIWI type system and exposes Create Course navigati
   assert.match(html, /family=Syne/);
   assert.match(html, /family=DM\+Sans/);
   assert.match(html, /family=JetBrains\+Mono/);
-  assert.match(html, /--font-display: "DM Sans"/);
+  assert.match(html, /--font-display: "Syne"/);
   assert.match(html, /--font-body: "DM Sans"/);
   assert.match(html, /--font-mono: "JetBrains Mono"/);
   assert.match(js, /title: 'Overview'/);
