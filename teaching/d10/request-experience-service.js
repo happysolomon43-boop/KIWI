@@ -18,9 +18,10 @@ function decorateD10RequestExperience(service, options = {}) {
   const transactionalMutation = options.transactionalMutation || null;
   const randomUUID = options.randomUUID || null;
   const clock = typeof options.clock === 'function' ? options.clock : () => new Date();
+  const canInspectRequest = typeof service.getRequest === 'function';
 
   async function rejectInvalidReview(user, requestId, current, cause) {
-    if (!repository?.recordDecisionUsing || !transactionalMutation?.mutateAndPublish || typeof randomUUID !== 'function') throw cause;
+    if (!canInspectRequest || !repository?.recordDecisionUsing || !transactionalMutation?.mutateAndPublish || typeof randomUUID !== 'function') throw cause;
     let reviewing = current;
     if (String(reviewing?.state || '').toUpperCase() === 'SUBMITTED') {
       reviewing = await service.submitRequest(user, requestId);
@@ -78,19 +79,24 @@ function decorateD10RequestExperience(service, options = {}) {
   }
 
   async function submitRequest(user, requestId) {
-    const current = await service.getRequest(user, requestId);
-    validateRequestForReview(current);
+    if (canInspectRequest) {
+      const current = await service.getRequest(user, requestId);
+      validateRequestForReview(current);
+    }
     const submitted = await service.submitRequest(user, requestId);
     if (String(submitted?.state || '').toUpperCase() !== 'REVIEWING') return submitted;
     try {
       return await service.reviewRequest(user, requestId);
     } catch (error) {
-      if (String(error?.code || '').startsWith('TEACHING_D09_')) return rejectInvalidReview(user, requestId, submitted, error);
+      if (canInspectRequest && String(error?.code || '').startsWith('TEACHING_D09_')) {
+        return rejectInvalidReview(user, requestId, submitted, error);
+      }
       throw error;
     }
   }
 
   async function reviewRequest(user, requestId) {
+    if (!canInspectRequest) return service.reviewRequest(user, requestId);
     const current = await service.getRequest(user, requestId);
     try {
       validateRequestForReview(current);
