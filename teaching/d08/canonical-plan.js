@@ -1,6 +1,7 @@
 'use strict';
 
 const { latestVpkByTarget } = require('./contracts');
+const { mergeCoverageTreatmentMappings } = require('./coverage-planning');
 
 const CANONICAL_STATUSES = new Set(['ok','unresolved_inputs','academically_infeasible_under_constraints','requires_scope_review']);
 const TREATMENT_MAP = Object.freeze({
@@ -259,9 +260,11 @@ function materializeCoursePlanFromTpf03(output, { audit, sources = [], vpkDecisi
     .map(String).filter((ref) => unitIds.has(ref)).map((ref) => ({ learning_unit_key: String(unit.learning_unit_id || unit.id), prerequisite_learning_unit_key: ref, rationale: unit.dependency_type_notes || null })));
   const dependencies = explicitDependencies.length ? explicitDependencies : derivedDependencies;
   const sourceUnitGraph = buildAuditSourceUnitGraph(auditOutput, sources);
+  const mergedCoverage = mergeCoverageTreatmentMappings({ output, auditOutput, sources, sourceUnitGraph });
+  if (!mergedCoverage.ok) return mergedCoverage;
   const source_mappings = sources.map((source) => ({
     source_ref: String(source.source_ref),
-    learning_unit_keys: sourceUnitGraph.get(String(source.source_ref)) || [],
+    learning_unit_keys: mergedCoverage.graph.get(String(source.source_ref)) || [],
   }));
   const assumed_prerequisites = (auditOutput.assumed_prerequisites || []).map((item, index) => normalizeAuditPrerequisite(item, index, auditUnitIds));
   const learning_unit_lineage = deriveLearningUnitLineage({ previousPlanContext, auditOutput, sources });
