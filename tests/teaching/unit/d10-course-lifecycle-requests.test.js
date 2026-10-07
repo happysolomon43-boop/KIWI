@@ -103,6 +103,14 @@ test('D10 activation integrity counts only the selected Course slots inside a sh
   assert.deepEqual(integrity.blockers,[]);
 });
 
+test('D10 activation requires the selected Course Plan lineage inside the shared timetable version',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d10-lifecycle-requests.js'),'utf8');
+  assert.match(source,/TIMETABLE_COURSE_PLAN_REF_REQUIRED/);
+  assert.match(source,/TIMETABLE_COURSE_PLAN_REF_STALE/);
+  assert.match(source,/TIMETABLE_COURSE_STATE_STALE/);
+  assert.match(source,/course_plan_refs/);
+});
+
 test('D10 Course activation publishes COURSE_ACTIVATED through the D05 transactional mutation boundary',async()=>{
   let event=null,mutationCalls=0;
   const repository={
