@@ -111,10 +111,9 @@ function lineageRepairOutput(request, unitId = 'unit-lineage-repair') {
     input_state_reference: request.academicInput.input_state_reference,
     task_mode: 'LEARNING_UNIT_DECOMPOSITION',
     execution_stage: EXECUTION_STAGES.SINGLE_PASS,
-    audit_scope: { ...request.academicInput.audit_scope, source_walk: [] },
-    source_inventory: [],
-    topics: [],
-    learning_units: [{
+    existing_unit_attachments: [],
+    new_topics: [],
+    new_learning_units: [{
       learning_unit_id: unitId,
       title: 'Resolve the previously unmapped required capability',
       intended_competence: 'Explain and apply the academic requirement carried by the previously unmapped source.',
@@ -129,19 +128,6 @@ function lineageRepairOutput(request, unitId = 'unit-lineage-repair') {
       gap_refs: [],
       uncertainties: [],
     }],
-    assumed_prerequisites: [],
-    source_conflicts: [],
-    coverage_gaps: [],
-    structure_change_proposals: [],
-    source_to_unit_reconciliation: {
-      required_item_map: refs.map((ref) => ({ source_item_ref: ref, learning_unit_refs: [unitId] })),
-      unmapped_required_refs: [],
-    },
-    unresolved_items: [],
-    status: 'ok',
-    review_required: false,
-    review_reasons: [],
-    student_facing_summary_candidate: null,
   };
 }
 
