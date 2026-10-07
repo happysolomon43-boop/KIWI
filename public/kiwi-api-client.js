@@ -20,6 +20,10 @@ const REQUEST_TIMEOUT_POLICIES = Object.freeze([
     pattern: /^\/teaching\/courses\/[^/]+\/timetable\/propose$/,
     timeoutMs: LONG_RUNNING_ANALYSIS_OPERATION_TIMEOUT_MS + NETWORK_COMPLETION_GRACE_MS,
   }),
+  Object.freeze({
+    pattern: /^\/teaching\/courses\/[^/]+\/schedule-inputs$/,
+    timeoutMs: LONG_RUNNING_ANALYSIS_OPERATION_TIMEOUT_MS + NETWORK_COMPLETION_GRACE_MS,
+  }),
 ]);
 const PUBLIC_AUTH_401 = new Set([
   '/auth/login',
