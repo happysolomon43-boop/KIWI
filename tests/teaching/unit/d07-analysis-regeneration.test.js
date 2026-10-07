@@ -12,6 +12,7 @@ const {
   buildRefinementContext,
   curriculumRefinementRequest,
   executeAdaptiveLineageRepair,
+  validateLineageRepairPatch,
 } = require('../../../teaching/d07/intelligence');
 
 function course(stateVersion=4,state='DRAFT') {
@@ -228,6 +229,80 @@ test('adaptive lineage repair never retries stale state as a smaller academic pa
   assert.equal(attempts,1);
   assert.deepEqual(result.attemptedBatchSizes,[4]);
 });
+
+test('lineage repair accepts an exact existing Topic restatement but still forbids Topic mutation', () => {
+  const baseOutput={
+    topics:[{
+      topic_id:'topic-1',
+      title:'Mechanics',
+      source_item_refs:['source:old'],
+      subtopics:[{subtopic_id:'subtopic-1',title:'Motion'}],
+    }],
+    learning_units:[{
+      learning_unit_id:'unit-1',
+      criticality:'major',
+    }],
+    assumed_prerequisites:[],
+  };
+  const academicInput={
+    input_state_reference:'teaching_course:course-1:state:4',
+    audit_scope:{trusted_scope_version:'subject:subject-1:snapshot-4'},
+  };
+  const patch={
+    input_state_reference:'teaching_course:course-1:state:4',
+    task_mode:'LEARNING_UNIT_DECOMPOSITION',
+    execution_stage:'SINGLE_PASS',
+    audit_scope:{
+      subject_or_course:'Biology',
+      trusted_scope_version:'subject:subject-1:snapshot-4',
+      source_refs:['source:new'],
+      source_walk:[],
+    },
+    source_inventory:[],
+    topics:[{
+      topic_id:'topic-1',
+      title:'Mechanics',
+      source_item_refs:['source:old'],
+      subtopics:[{subtopic_id:'subtopic-1',title:'Motion'}],
+    }],
+    learning_units:[{
+      learning_unit_id:'unit-1',
+      source_item_refs:['source:new'],
+      topic_refs:['topic-1'],
+      prerequisite_refs:[],
+      gap_refs:[],
+      criticality:'major',
+    }],
+    assumed_prerequisites:[],
+    source_conflicts:[],
+    coverage_gaps:[],
+    structure_change_proposals:[],
+    unresolved_items:[],
+    status:'ok',
+    review_required:false,
+    review_reasons:[],
+    student_facing_summary_candidate:null,
+  };
+
+  const harmless=validateLineageRepairPatch(patch,{
+    academicInput,
+    baseOutput,
+    repairRefs:['source:new'],
+  });
+  assert.equal(harmless.ok,true);
+
+  const mutated=validateLineageRepairPatch({
+    ...patch,
+    topics:[{...patch.topics[0],title:'Rewritten Mechanics'}],
+  },{
+    academicInput,
+    baseOutput,
+    repairRefs:['source:new'],
+  });
+  assert.equal(mutated.ok,false);
+  assert.equal(mutated.reason,'TPF02_LINEAGE_REPAIR_EXISTING_TOPIC_REWRITE_FORBIDDEN');
+});
+
 
 test('validated refinement commits a new audit version and only then resets downstream setup', async () => {
   const audit=currentAudit();
