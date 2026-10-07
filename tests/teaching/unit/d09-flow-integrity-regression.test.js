@@ -163,6 +163,24 @@ test('D09 instructional-load estimation uses frozen TPF-10 authority and canonic
   assert.deepEqual(validateLoadEstimationOutput(output, targets, ctx.courses[0].course), { ok: true, value: output });
 });
 
+test('D09 owns the deterministic Scheduler-validation handoff instead of trusting the model flag', () => {
+  const ctx = context();
+  const targets = loadTargets(ctx);
+  const output = canonicalOutput(targets[0]);
+  output.validation_and_handoff.deterministic_scheduler_validation_required = false;
+
+  const result = validateLoadEstimationOutput(output, targets, ctx.courses[0].course);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.validation_and_handoff.deterministic_scheduler_validation_required, true);
+  assert.equal(output.validation_and_handoff.deterministic_scheduler_validation_required, false);
+
+  const request = schedulingRequest({ course: ctx.courses[0].course, context: ctx, taskMode: 'instructional_load_estimation' });
+  assert.deepEqual(request.academicInput.runtime_owned_output_invariants, {
+    deterministic_scheduler_validation_required: true,
+  });
+});
+
 test('D09 instructional-load estimation passes the frozen D03 structural invocation boundary', () => {
   const ctx = context();
   const course = ctx.courses[0].course;
