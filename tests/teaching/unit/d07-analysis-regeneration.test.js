@@ -174,12 +174,26 @@ test('analysis reset preserves history but invalidates every downstream current 
   assert.match(repository,/timetable_state='STALE'/);
   assert.match(repository,/TEACHING_ANALYSIS_REGENERATION_RESET/);
   assert.match(repository,/state_version=state_version\+1/);
+  assert.match(repository,/COURSE_ANALYSIS_REGENERATION/);
+  assert.match(repository,/lifecycle_state='DRAFT'/);
+  assert.match(repository,/Course Analysis regeneration reset/);
   assert.doesNotMatch(repository,/delete from public\.teaching_curriculum_audits/i);
   assert.doesNotMatch(repository,/delete from public\.teaching_course_plans/i);
 
   assert.match(planReader,/plan_state not in \('REVIEW_REQUIRED','SUPERSEDED'\)/);
   assert.match(planReader,/curriculum_audit_id/);
   assert.match(scheduler,/plan_state not in \('REVIEW_REQUIRED','SUPERSEDED'\)/);
+});
+
+test('READY-to-DRAFT reset is a guarded analysis-regeneration transition, not a general lifecycle rollback', () => {
+  const migration=fs.readFileSync(
+    path.resolve(__dirname,'../../../migrations/20261007_teaching_analysis_regeneration_reset.sql'),
+    'utf8',
+  );
+  assert.match(migration,/current_setting\('kiwi\.teaching_analysis_reset'/);
+  assert.match(migration,/COURSE_ANALYSIS_REGENERATION/);
+  assert.match(migration,/OLD\.lifecycle_state='READY' AND NEW\.lifecycle_state='DRAFT'/);
+  assert.match(migration,/OLD\.activated_at IS NULL AND OLD\.academic_record_started_at IS NULL/);
 });
 
 test('Course Setup exposes a deliberate optional regeneration reason instead of silently regenerating', () => {
