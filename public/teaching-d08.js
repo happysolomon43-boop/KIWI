@@ -864,10 +864,11 @@ async function renderCourseSetup({ course, container }) {
         actions.append(continueButton);
       }
 
+      let regenerationBox = null;
       if (auditReady && sourcesReady && !backgroundAudit.active) {
         const regenerate = el('button', 'teaching-button', 'Regenerate analysis');
         regenerate.type = 'button';
-        const regenerationBox = el('div', 'teaching-d08-regenerate-box');
+        regenerationBox = el('div', 'teaching-d08-regenerate-box');
         regenerationBox.hidden = true;
         const reasonLabel = el('label', '', 'Why should KIWI reconsider the analysis?');
         const reason = el('textarea');
@@ -923,10 +924,10 @@ async function renderCourseSetup({ course, container }) {
           }
         });
         actions.append(regenerate);
-        card.append(regenerationBox);
       }
 
       card.append(actions);
+      if (regenerationBox) card.append(regenerationBox);
       body.replaceChildren(card);
       if (backgroundAudit.active) {
         startAnalysisCountdown({ deadline: countdownDeadline, eventId: backgroundEventId });
