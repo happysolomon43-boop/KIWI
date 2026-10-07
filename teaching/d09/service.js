@@ -431,7 +431,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     }
     const {planBasis,basisDigest}=timetableBuildBasis(context,{operation:normalizedOperation,source});
     const current=typeof repository.latestBackgroundTimetableBuild==='function'
-      ? await repository.latestBackgroundTimetableBuild(user.id,courseId)
+      ? await repository.latestBackgroundTimetableBuild(user.id,courseId,context.semester.semester_id)
       : null;
     const currentStatus=String(current?.status||'').toUpperCase();
     const currentBasis=String(current?.payload?.basis_digest||'');
@@ -460,7 +460,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       causationId:current&&['PENDING','CLAIMED','RETRY_WAIT','CANCELLED'].includes(currentStatus)
         ? String(current.event_id)
         : null,
-      idempotencyKey:`d09:timetable:${courseId}:${basisDigest}`,
+      idempotencyKey:`d09:timetable:semester:${context.semester.semester_id}:${basisDigest}`,
       payload:{
         course_id:String(courseId),
         expected_state_version:String(context.course.state_version),
