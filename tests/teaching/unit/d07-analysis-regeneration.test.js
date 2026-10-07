@@ -286,6 +286,14 @@ test('Course Setup lets the student choose targeted changes or whole-analysis re
   assert.match(ui,/Active Courses use governed academic-change workflows/);
 });
 
+test('Course Setup shows one actionable Course-analysis failure surface for the 188-source validation case', () => {
+  const ui=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-d08.js'),'utf8');
+  assert.match(ui,/TEACHING_D07_CURRICULUM_AUDIT_REJECTED/);
+  assert.match(ui,/could not safely complete the final Course-structure validation/);
+  assert.match(ui,/large source sets are resumed through bounded validation work/);
+  assert.doesNotMatch(ui,/card\.append\(failure\)/);
+});
+
 
 test('Course analysis background idempotency joins only the exact same refinement request', async () => {
   const audit=currentAudit();
