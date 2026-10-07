@@ -1,6 +1,6 @@
 'use strict';
 const {composeTeachingModelContent}=require('../prompt-runtime/prompt-composer');
-const {composeTpf02DirectModelContent,TPF02_OUTPUT_SCHEMA_ID,TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,TPF02_MAX_OUTPUT_TOKENS}=require('../d07/tpf02-direct');
+const {composeTpf02DirectModelContent,TPF02_OUTPUT_SCHEMA_ID,TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,tpf02OutputTokenBudget}=require('../d07/tpf02-direct');
 const {authorityAtLeast}=require('../ai/contracts');
 const {getD28RuntimeService}=require('../d28/runtime-bridge');
 
@@ -43,7 +43,7 @@ function createTeachingAIAdapter({promptControl,aiBoundary,resolveCentralTaskId=
    const requestedGeneration=requestGeneration(generation);
    const modelGeneration=Object.freeze({
     ...requestedGeneration,
-    ...(directTpf02?{maxOutputTokens:TPF02_MAX_OUTPUT_TOKENS}:{}),
+    ...(directTpf02?{maxOutputTokens:tpf02OutputTokenBudget(academicInput)}:{}),
     structuredOutput:Object.freeze({mimeType:'application/json',...(requestedGeneration.structuredOutput||{})}),
    });
    const request=Object.freeze({content,generation:modelGeneration});

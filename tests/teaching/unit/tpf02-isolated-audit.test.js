@@ -11,6 +11,9 @@ const {
  TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,
  TPF02_DECOMPOSITION_PATCH_FIELDS,
  TPF02_MAX_OUTPUT_TOKENS,
+ TPF02_BOUNDED_MAX_OUTPUT_TOKENS,
+ TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS,
+ tpf02OutputTokenBudget,
  EXECUTION_STAGES,
  buildTpf02AcademicInput,
  validateTpf02Schema,
@@ -130,13 +133,13 @@ test('TPF-02 v1.2 reconciliation must exactly match every Learning Unit carrying
  assert.equal(validateTpf02Domain(broken,validationContext()).reason,'TPF02_RECONCILIATION_UNIT_SET_MISMATCH');
 });
 
-test('D07 curriculum audit request uses TPF-02 v1.2, v3 output schema, bounded sources and a 48k output budget',async()=>{
+test('D07 bounded curriculum audit request keeps the 48k TPF-02 generation budget',async()=>{
  const request=curriculumAuditRequest({course,sources});
  assert.equal(request.taskMode,'DEEP_AUDIT');
  assert.equal(request.outputSchema.id,'tpf02.curriculum-audit');
  assert.equal(request.outputSchema.version,'3');
  assert.deepEqual(request.outputSchema.declared_fields,TPF02_TOP_LEVEL_FIELDS);
- assert.equal(request.generation.maxOutputTokens,TPF02_MAX_OUTPUT_TOKENS);
+ assert.equal(request.generation.maxOutputTokens,TPF02_BOUNDED_MAX_OUTPUT_TOKENS);
  assert.equal(request.academicInput.execution_stage,EXECUTION_STAGES.SINGLE_PASS);
  assert.equal(request.academicInput.source_items.length,2);
  assert.equal(request.academicInput.source_items[0].content,sources[0].content_summary);
@@ -175,7 +178,7 @@ test('direct TPF-02 composer binds SPLIT_UNIT to the dedicated decomposition pat
  assert.doesNotMatch(content,/\"exact_top_level_fields\":\[\"input_state_reference\",\"task_mode\",\"execution_stage\",\"audit_scope\"/);
  assert.equal(TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,'tpf02.decomposition-repair-patch');
 });
-test('Teaching AI adapter sends isolated TPF-02 v1.2 through MAIN_CBT with 48k structured output generation',async()=>{
+test('Teaching AI adapter keeps bounded isolated TPF-02 work at 48k structured output generation',async()=>{
  const calls=[];
  const binding=createFrozenPromptBinding('TPF-02','1.2');
  const adapter=createTeachingAIAdapter({
@@ -196,7 +199,7 @@ test('Teaching AI adapter sends isolated TPF-02 v1.2 through MAIN_CBT with 48k s
  await adapter.execute({invocation,academicInput:buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS}),schemaValidator:validateTpf02Schema,domainValidator:async out=>({ok:true,value:out}),provenanceValidator:async()=>({ok:true})});
  assert.equal(calls.length,1);
  assert.equal(calls[0].taskId,'MAIN_CBT');
- assert.equal(calls[0].request.generation.maxOutputTokens,48000);
+ assert.equal(calls[0].request.generation.maxOutputTokens,TPF02_BOUNDED_MAX_OUTPUT_TOKENS);
  assert.equal(calls[0].request.generation.structuredOutput.mimeType,'application/json');
  assert.match(calls[0].request.content,/<KIWI_TPF02_DIRECT_RUNTIME_BINDING>/);
 });
@@ -231,9 +234,21 @@ test('Teaching AI adapter keeps decomposition repair on isolated TPF-02 direct r
  assert.equal(calls.length,1);
  assert.equal(calls[0].taskId,'MAIN_CBT');
  assert.equal(calls[0].centralRouteOptions.executionProfile,'LONG_RUNNING_ANALYSIS');
- assert.equal(calls[0].request.generation.maxOutputTokens,48000);
+ assert.equal(calls[0].request.generation.maxOutputTokens,TPF02_BOUNDED_MAX_OUTPUT_TOKENS);
  assert.match(calls[0].request.content,/KIWI_TPF02_DECOMPOSITION_REPAIR_PATCH_V1/);
  assert.match(calls[0].request.content,/tpf02\.decomposition-repair-patch/);
+});
+
+test('TPF-02 whole-Curriculum synthesis reserves 64k generation capacity while bounded passes stay at 48k',()=>{
+ const bounded=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS});
+ const whole=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE});
+ const repair=buildTpf02AcademicInput({course,sources,taskMode:'SPLIT_UNIT',executionStage:EXECUTION_STAGES.SINGLE_PASS});
+ assert.equal(tpf02OutputTokenBudget(bounded),TPF02_BOUNDED_MAX_OUTPUT_TOKENS);
+ assert.equal(tpf02OutputTokenBudget(repair),TPF02_BOUNDED_MAX_OUTPUT_TOKENS);
+ assert.equal(tpf02OutputTokenBudget(whole),TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS);
+ assert.equal(TPF02_BOUNDED_MAX_OUTPUT_TOKENS,48000);
+ assert.equal(TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS,64000);
+ assert.equal(TPF02_MAX_OUTPUT_TOKENS,TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS);
 });
 
 test('Teaching boundary rejects MAX_TOKENS before truncated JSON can reach schema validation',async()=>{
