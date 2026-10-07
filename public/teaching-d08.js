@@ -216,7 +216,7 @@ function backgroundAuditState(job) {
           ? 'The AI response ended before the Course analysis operation was complete. No incomplete analysis was saved and the current Course remains intact.'
           : job?.last_error_code === 'TEACHING_D07_CURRICULUM_AUDIT_REJECTED'
             ? 'KIWI could not safely complete the final Course-structure validation. No incomplete analysis was saved. Try the analysis again; large source sets are resumed through bounded validation work.'
-            : `The background ${actionName} did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. The current validated Course analysis and downstream setup remain intact.`,
+            : `The background ${actionName} did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. ${operation === 'GENERATE' ? 'Your materials are safe and no incomplete Course analysis was saved.' : 'The current validated Course analysis and downstream setup remain intact.'}`,
       errorCode: job?.last_error_code || null,
     };
   }
