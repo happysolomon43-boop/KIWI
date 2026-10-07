@@ -1414,6 +1414,48 @@ async function mapConcurrent(items,limit,worker){
   return results;
 }
 
+async function executeAdaptiveLineageRepair({baseOutput,repairRefs=[],executeBatch}={}){
+  if(typeof executeBatch!=='function')throw new TypeError('Adaptive TPF-02 lineage repair requires executeBatch().');
+  const refs=uniqueStrings(repairRefs);
+  if(!refs.length)return Object.freeze({accepted:true,result:null,output:baseOutput,attemptedBatchSizes:Object.freeze([])});
+  const attemptedBatchSizes=[];
+
+  async function run(output,batch){
+    attemptedBatchSizes.push(batch.length);
+    const result=await executeBatch(output,batch);
+    if(result?.accepted){
+      const nextOutput=result.validatedResult?.output;
+      if(!nextOutput){
+        return {
+          accepted:false,
+          result:{accepted:false,errorCode:'TEACHING_TPF02_LINEAGE_REPAIR_OUTPUT_MISSING',reason:'TPF02_LINEAGE_REPAIR_OUTPUT_MISSING'},
+          output,
+        };
+      }
+      return {accepted:true,result,output:nextOutput};
+    }
+
+    // A validator can reject a multi-source patch even when the same academic
+    // work is valid in smaller bounded slices. Never bypass validation: shrink
+    // the batch until the rejected scope is isolated. Stale/cancelled work is a
+    // state-control failure, not a patch-size problem, so it must propagate.
+    if(batch.length<=1||result?.stale===true||result?.cancelled===true){
+      return {accepted:false,result,output};
+    }
+
+    const splitAt=Math.ceil(batch.length/2);
+    const first=await run(output,batch.slice(0,splitAt));
+    if(!first.accepted)return first;
+    return run(first.output,batch.slice(splitAt));
+  }
+
+  const repaired=await run(baseOutput,refs);
+  return Object.freeze({
+    ...repaired,
+    attemptedBatchSizes:Object.freeze([...attemptedBatchSizes]),
+  });
+}
+
 function diagnosticRequest({course,requirement,audit}){
   const outputSchema={id:'d07.targeted-diagnostic',version:'1',uncertainty_states:['INSUFFICIENT_EVIDENCE','REVIEW_NEEDED'],review_needed_field:'review_needed',declared_fields:['purpose','targets','opportunities','critical_criteria','non_graded'],validate:async out=>{if(!out||out.non_graded!==true||!Array.isArray(out.targets)||!Array.isArray(out.opportunities)||out.opportunities.length<2)return {ok:false,reason:'TARGETED_DIAGNOSTIC_SCHEMA_INVALID'};const allowed=new Set(requirement.targets);if(out.targets.some(x=>!allowed.has(String(x))))return {ok:false,reason:'DIAGNOSTIC_TARGET_OUT_OF_SCOPE'};return {ok:true,value:out};}};
   return {...base({capabilityId:'teaching.curriculum.targeted_placement_prior_knowledge_diagnostic_design',course,taskMode:'targeted_placement_diagnostic_design',outputSchema,contextSpec:{authoritative_refs:[{ref:`course:${course.course_id}`},{ref:`curriculum-audit:${audit.curriculum_audit_id}`}],context_kind:'diagnostic_design',access_purpose:'prior_knowledge_verification'},academicInput:{target_refs:requirement.targets,non_graded:true},provenanceRefs:[`curriculum-audit:${audit.curriculum_audit_id}`]}),schemaValidator:outputSchema.validate,domainValidator:outputSchema.validate,provenanceValidator:async out=>({ok:out.targets.every(x=>requirement.targets.includes(String(x))),reason:'DIAGNOSTIC_PROVENANCE_INVALID'})};
@@ -1515,23 +1557,22 @@ function createD07Intelligence({orchestrator}={}){
     let pendingRefs=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
     while(pendingRefs.length){
       const batch=pendingRefs.slice(0,TPF02_LINEAGE_REPAIR_BATCH_SIZE);
-      let repaired=null;
-      try{
-        repaired=await orchestrator.execute(lineageRepairRequest({
+      const repaired=await executeAdaptiveLineageRepair({
+        baseOutput:currentOutput,
+        repairRefs:batch,
+        executeBatch:(baseOutput,repairRefs)=>orchestrator.execute(lineageRepairRequest({
           course,
           sources,
-          baseOutput:currentOutput,
+          baseOutput,
           preparedInventory:prepared.sourceInventory,
           preparedSourceWalk:prepared.sourceWalk,
           stageFindings:prepared.findings,
-          repairRefs:batch,
-        }));
-      }catch{
-        break;
-      }
-      if(!repaired?.accepted)return repaired;
-      currentResult=repaired;
-      currentOutput=repaired.validatedResult?.output;
+          repairRefs,
+        })),
+      });
+      if(!repaired.accepted)return repaired.result||{accepted:false,errorCode:'TEACHING_TPF02_LINEAGE_REPAIR_REJECTED',reason:'TPF02_LINEAGE_REPAIR_REJECTED'};
+      currentResult=repaired.result||currentResult;
+      currentOutput=repaired.output;
       const nextPending=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
       if(nextPending.length>=pendingRefs.length&&batch.every((ref)=>nextPending.includes(ref)))break;
       pendingRefs=nextPending;
@@ -1582,6 +1623,7 @@ module.exports={
   TPF02_DECOMPOSITION_REPAIR_MAX_ATTEMPTS,
   TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE,
   TPF02_PROGRESSIVE_SYNTHESIS_INPUT_BYTES_LIMIT,
+  executeAdaptiveLineageRepair,
   intakeRequest,
   buildRegenerationContext,
   withRegenerationContext,
