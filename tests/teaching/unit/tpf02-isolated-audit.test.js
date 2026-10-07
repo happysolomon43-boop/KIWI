@@ -20,6 +20,11 @@ const {
  validateTpf02Domain,
  composeTpf02DirectModelContent,
 }=require('../../../teaching/d07/tpf02-direct');
+const {
+ TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_ID,
+ TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_VERSION,
+ TPF02_MERGE_COMPRESSION_PATCH_FIELDS,
+}=require('../../../teaching/d07/tpf02-merge-compression');
 const {curriculumAuditRequest}=require('../../../teaching/d07/intelligence');
 const {createFrozenPromptBinding,getPromptBody}=require('../../../teaching/prompt-runtime/prompt-catalog');
 const {createTeachingAIAdapter}=require('../../../teaching/orchestrator/ai-adapter');
@@ -202,6 +207,38 @@ test('Teaching AI adapter keeps bounded isolated TPF-02 work at 48k structured o
  assert.equal(calls[0].request.generation.maxOutputTokens,TPF02_BOUNDED_MAX_OUTPUT_TOKENS);
  assert.equal(calls[0].request.generation.structuredOutput.mimeType,'application/json');
  assert.match(calls[0].request.content,/<KIWI_TPF02_DIRECT_RUNTIME_BINDING>/);
+});
+
+test('Teaching AI adapter gives merge/compression patches the direct TPF-02 one-MiB envelope',async()=>{
+ const calls=[];
+ const binding=createFrozenPromptBinding('TPF-02','1.2');
+ const adapter=createTeachingAIAdapter({
+  promptControl:{createInvocation(){throw new Error('not used');}},
+  aiBoundary:{async execute(args){calls.push(args);return {accepted:true,modelMetadata:{}};}},
+  resolveCentralTaskId:async()=>({taskId:'MAIN_CBT'}),
+  assertRouteExecutable:()=>true,
+ });
+ const invocation={
+  capability:{id:'teaching.curriculum.dynamic_learning_unit_merging_compression',authority_ceiling:'T3',execution_class:'DIRECT-AI',authoritative_owner_boundary:'Curriculum Audit owner'},
+  prompt:{family_id:'TPF-02',family_version:'1.2',task_mode:'MERGE_OR_COMPRESS_UNITS',frozen_binding:binding},
+  output_schema:{id:TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_ID,version:TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_VERSION,declared_fields:[...TPF02_MERGE_COMPRESSION_PATCH_FIELDS]},
+  route_control:{},
+  state_reference:{aggregate_type:'teaching_course',aggregate_id:'course-1',state_version:'7'},
+  audit:{correlation_id:'corr-merge',causation_id:null},
+  constitution:{version:'test'},
+ };
+ const academicInput={
+  input_state_reference:'teaching_course:course-1:state:7',
+  task_mode:'MERGE_OR_COMPRESS_UNITS',
+  execution_stage:'SINGLE_PASS',
+  audit_scope:{subject_or_course:'Physics',source_refs:[],trusted_scope_version:'scope-7'},
+  merge_compression_context:{mode:'STUDENT_DIRECTED_MERGE_COMPRESSION',large_context:'x'.repeat(70_000)},
+ };
+ await adapter.execute({invocation,academicInput,schemaValidator:async()=>({ok:true}),domainValidator:async()=>({ok:true}),provenanceValidator:async()=>({ok:true})});
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].centralRouteOptions.executionProfile,'LONG_RUNNING_ANALYSIS');
+ assert.match(calls[0].request.content,/<KIWI_TPF02_DIRECT_RUNTIME_BINDING>/);
+ assert.match(calls[0].request.content,/STUDENT_DIRECTED_MERGE_COMPRESSION/);
 });
 
 test('Teaching AI adapter keeps decomposition repair on isolated TPF-02 direct routing and long-running generation',async()=>{

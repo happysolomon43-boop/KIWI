@@ -12,6 +12,7 @@ const {
   buildRefinementContext,
   curriculumRefinementRequest,
   mergeCompressionRefinementRequest,
+  buildMergeCompressionContext,
   isMergeCompressionChangeRequest,
   validateMergeCompressionPatch,
   applyMergeCompressionPatch,
@@ -250,6 +251,51 @@ test('non-compression revisions reuse validated generation and preserve the stud
   assert.equal(requests[0].academicInput.regeneration_context.requested,true);
   assert.match(requests[0].academicInput.regeneration_context.student_reason,/independently assessable/i);
   assert.equal(Object.hasOwn(requests[0].academicInput,'refinement_context'),false);
+});
+
+test('GST-scale merge refinement stays below the governed academic-input boundary', () => {
+  const sourceItems=Array.from({length:141},(_,index)=>({
+    source_item_ref:`source:s-${index}`,
+    academic_meaning:'A deliberately verbose academic meaning that must remain server-side once source accounting has already been validated.',
+    proposed_scope_classification:index<120?'required':'supplementary',
+    content_validity_status:'current_supported',
+  }));
+  const units=Array.from({length:69},(_,index)=>({
+    learning_unit_id:`u-${index}`,
+    title:`Learning Unit ${index}`,
+    intended_competence:`Demonstrate and explain the independently assessable competence represented by unit ${index}.`,
+    source_item_refs:[`source:s-${index}`,`source:s-${(index+1)%141}`],
+    topic_refs:[`t-${Math.floor(index/10)}`],
+    subtopic_id:`st-${Math.floor(index/5)}`,
+    prerequisite_refs:index?[ `u-${index-1}` ]:[],
+    dependency_type_notes:'A long dependency explanation remains authoritative on the server.',
+    criticality:'major',
+    criticality_basis:'Required Course scope.',
+    proposed_exit_evidence:`Produce valid exit evidence for competence ${index} without collapsing its academic boundary.`,
+    gap_refs:[],
+    uncertainties:['A verbose uncertainty that must not be repeated in the bounded selection context.'],
+  }));
+  const audit=currentAudit(1);
+  audit.audit_output={
+    ...audit.audit_output,
+    source_inventory:sourceItems,
+    topics:Array.from({length:7},(_,index)=>({
+      topic_id:`t-${index}`,
+      title:`Topic ${index}`,
+      source_item_refs:[],
+      subtopics:Array.from({length:2},(__,sub)=>({subtopic_id:`st-${index*2+sub}`,title:`Subtopic ${index}-${sub}`})),
+    })),
+    learning_units:units,
+  };
+  const context=buildMergeCompressionContext({
+    previousAudit:audit,
+    changeRequest:'Reduce excessive Learning Units by merging academically inseparable units while preserving quality.',
+  });
+  assert.equal(context.current_learning_units.length,69);
+  assert.equal(context.source_inventory_context.total_source_count,141);
+  assert.equal(Object.hasOwn(context.current_learning_units[0],'source_item_refs'),false);
+  assert.equal(Object.hasOwn(context.source_inventory_context,'academic_meaning'),false);
+  assert.ok(Buffer.byteLength(JSON.stringify(context),'utf8')<48*1024);
 });
 
 test('bounded merge/compression patch preserves lineage and rewires downstream prerequisites deterministically', () => {
