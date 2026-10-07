@@ -431,7 +431,11 @@ function validateAssembledArtifact(output,context={}){
  for(const conflict of output.source_conflicts.filter((entry)=>entry.resolution_status==='unresolved'))if(!output.unresolved_items.some((u)=>conflict.source_item_refs.some((ref)=>u.source_item_refs.includes(ref))))return invalid('TPF02_AUTHORITY_CONFLICT_UNRESOLVED_ITEM_MISSING');
 
  for(const proposal of output.structure_change_proposals){
-  if(proposal.affected_unit_refs.some((ref)=>!unitById.has(ref))||proposal.resulting_unit_refs.some((ref)=>!unitById.has(ref)))return invalid('TPF02_STRUCTURE_CHANGE_UNIT_REF_UNKNOWN');
+  // affected_unit_refs may name superseded provisional units that no longer
+  // exist in the final graph. resulting_unit_refs, however, must resolve to
+  // final Learning Units. Source lineage on both sides must stay runtime-owned.
+  if(proposal.resulting_unit_refs.some((ref)=>!unitById.has(ref)))return invalid('TPF02_STRUCTURE_CHANGE_RESULT_UNIT_REF_UNKNOWN');
+  if(proposal.source_item_refs_before.some((ref)=>!inventoryByRef.has(ref))||proposal.source_item_refs_after.some((ref)=>!inventoryByRef.has(ref)))return invalid('TPF02_STRUCTURE_CHANGE_SOURCE_REF_UNKNOWN');
   const beforeRequired=new Set(proposal.source_item_refs_before.filter((ref)=>inventoryByRef.get(ref)?.proposed_scope_classification==='required'));
   const after=new Set(proposal.source_item_refs_after);
   for(const ref of beforeRequired)if(!after.has(ref))return invalid('TPF02_STRUCTURE_CHANGE_REQUIRED_LINEAGE_LOST');
