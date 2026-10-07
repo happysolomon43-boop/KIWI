@@ -228,3 +228,58 @@ test('both Schedule surfaces show and poll durable background timetable state',(
     assert.match(source,/5000/);
   }
 });
+
+
+test('background timetable work is shared across sibling Course pages in the same Semester',async()=>{
+  const c1=bundle('c1'),c2=bundle('c2');
+  c2.course={...c2.course,state_version:4};
+  const shared={
+    ...context(),
+    courses:[c1,c2],
+    inheritedDefault:false,
+  };
+  let active=null,appendCount=0;
+  const repository={
+    async getSchedulingContext(_studentId,courseId){
+      return {...shared,course:(courseId==='c2'?c2:c1).course};
+    },
+    async latestBackgroundTimetableBuild(_studentId,_courseId,semesterId){
+      assert.equal(semesterId,'sem1');
+      return active;
+    },
+  };
+  const outboxStore={
+    async append(event){
+      appendCount+=1;
+      assert.match(event.idempotencyKey,/^d09:timetable:semester:sem1:/);
+      active={event_id:event.eventId,status:'PENDING',payload:event.payload};
+      return {inserted:true,event:{...event,event_id:event.eventId,status:'PENDING'}};
+    },
+  };
+  let id=0;
+  const service=createD09Service({
+    repository,
+    transactionalMutation:{async mutateAndPublish(){throw new Error('not used');}},
+    randomUUID:()=>`semester-job-${++id}`,
+    outboxStore,
+    clock:()=>new Date('2026-10-07T13:00:00Z'),
+  });
+
+  const first=await service.queueTimetableBuild({id:'student-1'},'c1',{
+    operation:'BUILD',source:'MANUAL_BACKGROUND_BUILD',
+  });
+  const sibling=await service.queueTimetableBuild({id:'student-1'},'c2',{
+    operation:'BUILD',source:'MANUAL_BACKGROUND_BUILD',
+  });
+
+  assert.equal(appendCount,1);
+  assert.equal(first.jobId,'semester-job-1');
+  assert.equal(sibling.joinedExisting,true);
+  assert.equal(sibling.jobId,'semester-job-1');
+});
+
+test('schedule repository discovers active timetable jobs by Semester instead of initiating Course only',()=>{
+  const repository=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d09-scheduling.js'),'utf8');
+  assert.match(repository,/payload->>'semester_id'=\$2/);
+  assert.match(repository,/latestBackgroundTimetableBuild\(studentId,courseId,context\.semester\?\.semester_id\|\|null\)/);
+});
