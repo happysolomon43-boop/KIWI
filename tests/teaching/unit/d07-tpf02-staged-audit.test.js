@@ -730,6 +730,55 @@ test('49-source under-decomposition is repaired through bounded SPLIT_UNIT befor
   assert.equal(output.source_to_unit_reconciliation.required_item_map.length, 49);
 });
 
+test('runCurriculumAudit stops repair retries when a bounded patch returns an explicit unresolved state', async () => {
+  const allSources = sources(49);
+  const calls = [];
+  const orchestrator = {
+    async execute(request) {
+      calls.push(request);
+      if (request.taskMode === 'SOURCE_INVENTORY') {
+        const output = inventoryStageOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+      if (request.taskMode === 'DEEP_AUDIT') {
+        const output = coarseSynthesisOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+      assert.equal(request.taskMode, 'SPLIT_UNIT');
+      const patch = {
+        input_state_reference: request.academicInput.input_state_reference,
+        task_mode: 'SPLIT_UNIT',
+        execution_stage: EXECUTION_STAGES.SINGLE_PASS,
+        target_unit_id: request.repairScope.target_unit_id,
+        decision: 'unresolved',
+        resulting_units: [],
+        split_reason: null,
+        unit_justification: null,
+        course_ratio_justification: null,
+        unresolved_reason: 'The bounded evidence cannot safely establish an independent competence boundary.',
+        required_next_input_or_review: 'Review fuller authoritative source context before changing this unit.',
+        review_required: true,
+      };
+      const domain = await request.domainValidator(patch);
+      assert.equal(domain.ok, true, domain.reason);
+      return { accepted: true, validatedResult: { output: domain.value } };
+    },
+  };
+
+  const result = await createD07Intelligence({ orchestrator }).runCurriculumAudit({
+    course: course(),
+    sources: allSources,
+  });
+  assert.equal(calls.filter((request) => request.taskMode === 'SPLIT_UNIT').length, 1);
+  assert.equal(result.accepted, true);
+  assert.equal(result.validatedResult.output.status, 'unresolved');
+  assert.equal(result.validatedResult.output.review_required, true);
+});
+
 test('decomposition repair stays bounded instead of resending and regenerating the whole large Course graph', () => {
   const allSources = sources(130);
   const fullInput = buildTpf02AcademicInput({
