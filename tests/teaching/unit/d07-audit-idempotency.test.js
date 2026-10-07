@@ -178,6 +178,9 @@ test('D07 background refresh versions the outbox key and joins a completed curre
  assert.equal((await service.queueAudit({id:'student-1'},'course-1')).joinedExisting,true);
  setup.backgroundAnalysis.status='PUBLISHED';
  setup.curriculumAudit=setupFixture().curriculumAudit;
- assert.equal((await service.queueAudit({id:'student-1'},'course-1')).status,'PUBLISHED');
+ const completed=await service.queueAudit({id:'student-1'},'course-1');
+ assert.equal(completed.status,'COMPLETED');
+ assert.equal(completed.background,false);
+ assert.equal(completed.auditReady,true);
  assert.equal(writes,1);
 });
