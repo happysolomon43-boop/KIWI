@@ -105,5 +105,5 @@ test('D07 child-table projections normalize contract-null optional text without 
 
   const unitInsert = statements.find(({ sql }) => /insert into public\.teaching_curriculum_audit_learning_units/i.test(sql));
   assert.ok(unitInsert);
-  assert.equal(unitInsert.params[10], '');
+  assert.equal(unitInsert.params[11], '');
 });
