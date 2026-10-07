@@ -140,7 +140,7 @@ test('D07 curriculum audit request uses TPF-02 v1.2, v3 output schema, bounded s
  assert.equal((await request.domainValidator(canonicalAudit())).ok,true);
 });
 
-test('direct TPF-02 composer uses the governed v1.1 artifact plus isolated runtime/input binding',()=>{
+test('direct TPF-02 composer uses the governed v1.2 artifact plus isolated runtime/input binding',()=>{
  const binding=createFrozenPromptBinding('TPF-02','1.2');
  const academicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS});
  const content=composeTpf02DirectModelContent({invocation:{capability:{id:'teaching.curriculum.deep_curriculum_audit'},state_reference:{aggregate_type:'teaching_course',aggregate_id:'course-1',state_version:'7'},prompt:{family_id:'TPF-02',family_version:'1.2',frozen_binding:binding}},academicInput});
@@ -155,7 +155,7 @@ test('direct TPF-02 composer uses the governed v1.1 artifact plus isolated runti
 
 test('Teaching AI adapter sends isolated TPF-02 v1.2 through MAIN_CBT with 48k structured output generation',async()=>{
  const calls=[];
- const binding=createFrozenPromptBinding('TPF-02','1.1');
+ const binding=createFrozenPromptBinding('TPF-02','1.2');
  const adapter=createTeachingAIAdapter({
   promptControl:{createInvocation(){throw new Error('not used');}},
   aiBoundary:{async execute(args){calls.push(args);return {accepted:true,modelMetadata:{}};}},
@@ -203,7 +203,7 @@ test('canonical TPF-02 persistence baseline keeps normalized audit sections and 
  assert.doesNotMatch(sql,/ALTER COLUMN status/);
 });
 
-test('D07 persists governed v1.1 identity and v2 conflict/structure projections without losing the complete JSON artifact', async () => {
+test('D07 persists governed v1.2 identity and v3 hierarchy projections without losing the complete JSON artifact', async () => {
  const {createD07CourseIntakeRepository}=require('../../../teaching/repositories/d07-course-intake');
  const statements=[];
  const query=async(sql,params=[])=>{
