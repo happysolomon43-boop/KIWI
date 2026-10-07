@@ -415,6 +415,29 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     ]);
     return {timetable,slots:slots.rows||[],feasibility:fs.rows?.[0]||null};
   }
+  async function latestBackgroundTimetableGeneration(studentId,courseId){
+    try{
+      const {rows=[]}=await query(
+        `select event_id,status,attempt_count,last_error_code,next_attempt_at,created_at,updated_at,published_at,aggregate_version,causation_id,payload
+           from teaching_runtime.event_outbox
+          where actor_id=$1
+            and aggregate_type='teaching_course'
+            and aggregate_id=$2
+            and event_type='teaching.timetable.generation_requested'
+          order by created_at desc
+          limit 1`,
+        [studentId,courseId]
+      );
+      const row=rows[0]||null;
+      if(row&&String(row.status).toUpperCase()==='RETRY_WAIT'&&Number(row.attempt_count)>=8){
+        return {...row,status:'CANCELLED',last_error_code:row.last_error_code||'TEACHING_EVENT_RETRY_EXHAUSTED'};
+      }
+      return row;
+    }catch(_error){
+      return null;
+    }
+  }
+
   async function getScheduleReview(studentId,courseId){
     const context=await getSchedulingContext(studentId,courseId);
     const requestedLifecycle=String(context.course?.lifecycle_state||'DRAFT');
@@ -443,7 +466,8 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
           || Number(ref.state_version)!==Number(bundle.course.state_version);
       })
     );
-    return {...context,...latest,staleSchedule,debtMinutes:Math.max(0,Number(debt?.[0]?.debt_minutes)||0)};
+    const backgroundTimetableGeneration=await latestBackgroundTimetableGeneration(studentId,courseId);
+    return {...context,...latest,staleSchedule,debtMinutes:Math.max(0,Number(debt?.[0]?.debt_minutes)||0),backgroundTimetableGeneration};
   }
   async function listCalendar(studentId,{from,to}={}){
     const params=[studentId], filters=[];
@@ -523,7 +547,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
   }
   return Object.freeze({
     assertReady,listSemesters,latestDefaultSemester,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,attachCourseToSemester,saveScheduleInputsUsing,saveProposalUsing,
-    latestTimetable,latestApprovedTimetable,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
+    latestTimetable,latestApprovedTimetable,latestBackgroundTimetableGeneration,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
   });
 }
 module.exports={createD09SchedulingRepository};
