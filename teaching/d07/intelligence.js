@@ -263,14 +263,29 @@ function canonicalizeSynthesisSourceScope(output,preparedInventory=[]){
 
   if(!Array.isArray(learningUnits))return {...output,learning_units:learningUnits};
 
+  // Topic source membership is a deterministic projection of final Learning Unit
+  // lineage. This keeps provisional synthesis repairable when the model omits a
+  // required source from every unit, and it prevents excluded source classes
+  // from surviving only in Topic metadata.
+  const topicSourceRefs=new Map((output.topics||[]).map((topic)=>[String(topic.topic_id),[]]));
   const unitRefsBySource=new Map(requiredRefs.map((ref)=>[ref,[]]));
   for(const unit of learningUnits){
     const unitId=String(unit?.learning_unit_id||'').trim();
     if(!unitId||!Array.isArray(unit?.source_item_refs))continue;
+    for(const topicRef of unit.topic_refs||[]){
+      const key=String(topicRef);
+      if(topicSourceRefs.has(key))topicSourceRefs.get(key).push(...unit.source_item_refs);
+    }
     for(const ref of unit.source_item_refs){
       if(unitRefsBySource.has(ref))unitRefsBySource.get(ref).push(unitId);
     }
   }
+  const topics=Array.isArray(output.topics)
+    ? output.topics.map((topic)=>({
+      ...topic,
+      source_item_refs:uniqueStrings(topicSourceRefs.get(String(topic.topic_id))||[]),
+    }))
+    : output.topics;
 
   const reconciliation={
     ...(output.source_to_unit_reconciliation&&typeof output.source_to_unit_reconciliation==='object'&&!Array.isArray(output.source_to_unit_reconciliation)
@@ -285,6 +300,7 @@ function canonicalizeSynthesisSourceScope(output,preparedInventory=[]){
 
   return {
     ...output,
+    topics,
     learning_units:learningUnits,
     source_to_unit_reconciliation:reconciliation,
   };
