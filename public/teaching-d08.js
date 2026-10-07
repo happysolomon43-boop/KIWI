@@ -11,6 +11,7 @@ if (!courseSurface || typeof courseSurface.registerSection !== 'function') {
 
 const D08_STYLE_ID = 'teachingD08Styles';
 const D08_PREVIEW_ID = 'teachingD08Preview';
+const ANALYSIS_COUNTDOWN_MS = 5 * 60 * 1000;
 
 function installStyles() {
   if (document.getElementById(D08_STYLE_ID)) return;
@@ -39,6 +40,11 @@ function installStyles() {
     .teaching-d08-setup-step{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:12px;align-items:center;padding:14px;border:1px solid var(--teaching-border);border-radius:15px;background:rgba(1,12,9,.34)}
     .teaching-d08-setup-step__mark{display:grid;place-items:center;width:36px;height:36px;border-radius:12px;background:var(--teaching-accent-soft);color:var(--teaching-accent);font-weight:900}
     .teaching-d08-setup-step strong,.teaching-d08-setup-step small{display:block}.teaching-d08-setup-step small{margin-top:4px;color:var(--teaching-muted);line-height:1.45}
+    .teaching-d08-analysis-countdown{display:inline-flex;align-items:center;gap:8px;width:max-content;max-width:100%;margin-top:10px;padding:6px 9px;border:1px solid rgba(126,226,184,.14);border-radius:999px;background:rgba(126,226,184,.07);color:#bfe7d4;font-family:var(--font-mono);line-height:1}
+    .teaching-d08-analysis-countdown__label{color:#789c8d;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+    .teaching-d08-analysis-countdown__value{min-width:7.5ch;color:#d9f5e8;font-size:11px;font-weight:800;letter-spacing:.04em}
+    .teaching-d08-analysis-countdown[data-expired="true"]{border-color:rgba(223,245,235,.08);background:rgba(255,255,255,.018);color:var(--teaching-muted)}
+    .teaching-d08-analysis-countdown[data-expired="true"] .teaching-d08-analysis-countdown__value{color:#96aaa0}
     .teaching-d08-page{display:grid;gap:18px}
     .teaching-d08-page__head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;padding:4px 2px 8px}
     .teaching-d08-page__head h2{margin:7px 0 0;font-family:var(--font-display);font-size:clamp(28px,4vw,42px);letter-spacing:-.045em}
@@ -171,6 +177,13 @@ async function fetchReview(courseId) {
 
 async function fetchSetup(courseId) {
   return kiwiApiRequest(`/teaching/courses/${encodeURIComponent(courseId)}/setup`);
+}
+
+function formatAnalysisCountdown(remainingMs) {
+  const totalSeconds = Math.max(0, Math.ceil(Number(remainingMs || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 function backgroundAuditState(job) {
@@ -637,7 +650,62 @@ async function renderCourseSetup({ course, container }) {
   container.replaceChildren(page);
 
   let pollTimer = null;
+  let countdownTimer = null;
+  let countdownDeadline = null;
+  let countdownEventId = null;
   let lastRenderKey = null;
+
+  const materialAnalysisRow = () => body.querySelector('[data-setup-step="material-analysis"]');
+  const ensureAnalysisCountdown = () => {
+    const row = materialAnalysisRow();
+    const copyNode = row?.querySelector('[data-setup-step-copy]');
+    if (!copyNode) return null;
+    let timer = copyNode.querySelector('[data-analysis-countdown]');
+    if (timer) return timer;
+    timer = el('span', 'teaching-d08-analysis-countdown');
+    timer.dataset.analysisCountdown = 'true';
+    timer.dataset.expired = 'false';
+    timer.setAttribute('role', 'timer');
+    timer.setAttribute('aria-label', 'Material analysis countdown');
+    const label = el('span', 'teaching-d08-analysis-countdown__label', '5 min');
+    const value = el('span', 'teaching-d08-analysis-countdown__value', '05:00');
+    value.dataset.analysisCountdownValue = 'true';
+    timer.append(label, value);
+    copyNode.append(timer);
+    return timer;
+  };
+  const paintAnalysisCountdown = () => {
+    if (!countdownDeadline) return;
+    const timer = ensureAnalysisCountdown();
+    if (!timer) return;
+    const remainingMs = Math.max(0, countdownDeadline - Date.now());
+    const value = timer.querySelector('[data-analysis-countdown-value]');
+    if (value) value.textContent = `${formatAnalysisCountdown(remainingMs)} remaining`;
+    timer.dataset.expired = remainingMs <= 0 ? 'true' : 'false';
+  };
+  const startAnalysisCountdown = ({ deadline = null, eventId = null } = {}) => {
+    const parsedDeadline = Number(deadline);
+    if (Number.isFinite(parsedDeadline) && parsedDeadline > 0) countdownDeadline = parsedDeadline;
+    else if (!countdownDeadline) countdownDeadline = Date.now() + ANALYSIS_COUNTDOWN_MS;
+    if (eventId != null) countdownEventId = String(eventId);
+    paintAnalysisCountdown();
+    if (countdownTimer != null) return;
+    countdownTimer = window.setInterval(() => {
+      if (!container.isConnected) {
+        window.clearInterval(countdownTimer);
+        countdownTimer = null;
+        return;
+      }
+      paintAnalysisCountdown();
+    }, 1000);
+  };
+  const stopAnalysisCountdown = () => {
+    if (countdownTimer != null) window.clearInterval(countdownTimer);
+    countdownTimer = null;
+    countdownDeadline = null;
+    countdownEventId = null;
+    body.querySelector('[data-analysis-countdown]')?.remove();
+  };
   const schedulePoll = () => {
     window.clearTimeout(pollTimer);
     pollTimer = window.setTimeout(() => {
@@ -656,6 +724,23 @@ async function renderCourseSetup({ course, container }) {
         && String(setup.curriculumAudit?.subject_snapshot_ref || '') === String(setup.course?.subject_snapshot_ref || '');
       const sourcesReady = (setup.sources || []).length > 0 && (setup.sources || []).every((source) => Boolean(source.classification));
       const backgroundAudit = backgroundAuditState(setup.backgroundAnalysis);
+      const backgroundEventId = setup.backgroundAnalysis?.event_id == null
+        ? null
+        : String(setup.backgroundAnalysis.event_id);
+      const backgroundCreatedAt = setup.backgroundAnalysis?.created_at
+        ? new Date(setup.backgroundAnalysis.created_at).getTime()
+        : NaN;
+      if (backgroundAudit.active) {
+        const replacedEvent = Boolean(backgroundEventId && countdownEventId && backgroundEventId !== countdownEventId);
+        if (!countdownDeadline || replacedEvent) {
+          countdownDeadline = Number.isFinite(backgroundCreatedAt)
+            ? backgroundCreatedAt + ANALYSIS_COUNTDOWN_MS
+            : Date.now() + ANALYSIS_COUNTDOWN_MS;
+        }
+        if (backgroundEventId) countdownEventId = backgroundEventId;
+      } else {
+        stopAnalysisCountdown();
+      }
       const diagnosticRequired = setup.diagnosticPlan?.requirement_state === 'REQUIRED';
       const diagnosticResolved = !diagnosticRequired || (setup.diagnosticPlan?.target_refs || []).every((target) =>
         (setup.vpkDecisions || []).some((decision) => String(decision.target_ref) === String(target)));
@@ -668,6 +753,7 @@ async function renderCourseSetup({ course, container }) {
         diagnosticResolved,
         readinessChecked,
         backgroundStatus: setup.backgroundAnalysis?.status || null,
+        backgroundEventId,
         backgroundAttempts: setup.backgroundAnalysis?.attempt_count || 0,
         backgroundUpdatedAt: setup.backgroundAnalysis?.updated_at || null,
       });
@@ -679,16 +765,18 @@ async function renderCourseSetup({ course, container }) {
       const card = el('section', 'teaching-d08-card');
       card.append(el('div', 'teaching-kicker', 'What KIWI needs'), el('h3', '', 'A clear source foundation'));
       const list = el('div', 'teaching-d08-setup-list');
-      const setupStep = (mark, title, description, state) => {
+      const setupStep = (mark, title, description, state, { key = null } = {}) => {
         const row = el('div', 'teaching-d08-setup-step');
+        if (key) row.dataset.setupStep = key;
         const text = el('div');
+        text.dataset.setupStepCopy = 'true';
         text.append(el('strong', '', title), el('small', '', description));
         row.append(el('span', 'teaching-d08-setup-step__mark', mark), text, el('span', 'teaching-d08-status', state));
         return row;
       };
       list.append(
         setupStep((setup.sources || []).length ? '✓' : '•', 'Course materials', `${(setup.sources || []).length} saved source item${(setup.sources || []).length === 1 ? '' : 's'} will ground the plan.`, (setup.sources || []).length ? 'Ready' : 'Missing'),
-        setupStep(auditReady && sourcesReady ? '✓' : '•', 'Material analysis', auditReady && sourcesReady ? 'The current materials have been analyzed and classified.' : backgroundAudit.message || 'KIWI needs to identify the topics, requirements, and relevant source content.', auditReady && sourcesReady ? 'Ready' : backgroundAudit.label || 'Needed'),
+        setupStep(auditReady && sourcesReady ? '✓' : '•', 'Material analysis', auditReady && sourcesReady ? 'The current materials have been analyzed and classified.' : backgroundAudit.message || 'KIWI needs to identify the topics, requirements, and relevant source content.', auditReady && sourcesReady ? 'Ready' : backgroundAudit.label || 'Needed', { key: 'material-analysis' }),
         setupStep(readinessChecked && diagnosticResolved ? '✓' : '•', 'Learning readiness', diagnosticRequired ? 'A focused, non-graded learning check is required before planning can continue.' : readinessChecked ? 'No additional learning check blocks the Course Plan.' : 'Check whether any prerequisite knowledge needs verification.', readinessChecked && diagnosticResolved ? 'Ready' : 'Action needed')
       );
       card.append(list);
@@ -704,7 +792,17 @@ async function renderCourseSetup({ course, container }) {
         analyze.type = 'button';
         analyze.disabled = backgroundAudit.active;
         analyze.addEventListener('click', async () => {
+          const materialRow = materialAnalysisRow();
+          const materialState = materialRow?.querySelector('.teaching-d08-status');
+          const materialDescription = materialRow?.querySelector('small');
+          const previousState = materialState?.textContent || '';
+          const previousDescription = materialDescription?.textContent || '';
           analyze.disabled = true;
+          analyze.textContent = 'Analysis running in background';
+          if (materialState) materialState.textContent = 'Running';
+          if (materialDescription) materialDescription.textContent = 'KIWI is analyzing the materials in the background. You can safely leave this page.';
+          startAnalysisCountdown({ deadline: Date.now() + ANALYSIS_COUNTDOWN_MS });
+          schedulePoll();
           status.textContent = 'Analysis started in the background. You can keep using KIWI while it finishes.';
           status.className = 'teaching-message';
           delete status.dataset.kind;
@@ -712,6 +810,10 @@ async function renderCourseSetup({ course, container }) {
             await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/curriculum-audit`, { method: 'POST', body: {} });
             await load();
           } catch (error) {
+            stopAnalysisCountdown();
+            if (materialState) materialState.textContent = previousState;
+            if (materialDescription) materialDescription.textContent = previousDescription;
+            analyze.textContent = backgroundAudit.failed ? 'Try analysis again' : 'Analyze course materials';
             status.textContent = error.message || 'The material analysis could not be started.';
             status.className = 'teaching-message';
             status.dataset.kind = 'error';
@@ -750,6 +852,9 @@ async function renderCourseSetup({ course, container }) {
       }
       card.append(actions);
       body.replaceChildren(card);
+      if (backgroundAudit.active) {
+        startAnalysisCountdown({ deadline: countdownDeadline, eventId: backgroundEventId });
+      }
       if (!silent || status.dataset.kind !== 'error') {
         status.textContent = '';
         status.className = '';
