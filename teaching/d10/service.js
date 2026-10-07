@@ -4,7 +4,7 @@ const { TEACHING_EVENTS } = require('../events/names');
 const { EVENT_CATEGORIES } = require('../runtime/constants');
 const { normalizeScheduleInputs } = require('../d09/contracts');
 const { validateEditedSchedule } = require('../d09/scheduler');
-const { schedulableScheduleContext, computeSharedSemesterSchedule } = require('../d09/schedule-preparation');
+const { schedulableScheduleContext, computeSharedSemesterSchedule, missingInstructionalLoads } = require('../d09/schedule-preparation');
 const { normalizeCreateRequest,requestDefinition } = require('./contracts');
 
 function createD10Service({
@@ -117,6 +117,16 @@ function createD10Service({
 
   async function rebuildGovernedSemesterUsing(tx,{studentId,courseId,requestId,includeCourseId=null}){
     const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+    const eligibleContext=schedulableScheduleContext(context,{includeCourseId});
+    const missingLoads=missingInstructionalLoads(eligibleContext);
+    if(missingLoads.length){
+      throw error(
+        'The shared Semester timetable cannot be changed until KIWI finishes workload preparation for every schedulable Course Plan.',
+        'TEACHING_D09_LOAD_ESTIMATION_REQUIRED',
+        409,
+        {learningUnitIds:missingLoads.map(({unit})=>String(unit.learning_unit_id))},
+      );
+    }
     const computed=computeSharedSemesterSchedule(context,{
       now:serverNow().toISOString(),
       includeCourseId,
