@@ -231,10 +231,92 @@ function createD10Service({
         if(def.owner==='work'){if(!workRequestOwner||typeof workRequestOwner.applyRequestUsing!=='function') throw error('The D16 Work owner is not available for this approved Request.','TEACHING_D16_REQUEST_OWNER_UNAVAILABLE',503);return workRequestOwner.applyRequestUsing(tx,request,change);}
         if(!def.implementedOwner) throw error('The authoritative target owner is not implemented in D10; Request remains a handoff record.','TEACHING_D10_REQUEST_OWNER_PENDING',409,{owner:def.owner});
         if(['SINGLE_CLASS_RESCHEDULE','PERMANENT_AVAILABILITY_CHANGE','ACADEMIC_BREAK'].includes(request.request_type)) return applyScheduleRequestUsing(tx,request,change);
-        if(request.request_type==='COURSE_PAUSE'){const course=await repository.ensureCourse(studentId,request.course_id,tx,true);if(course.lifecycle_state!=='ACTIVE') throw error('Course changed before Pause application.','TEACHING_D10_REQUEST_TARGET_STALE');const updated=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'PAUSED',reason:'Approved Course Pause',sourceRequestId:request.request_id,expectedVersion:course.state_version});await d09Repository.markCurrentTimetableStaleUsing(tx,{studentId,semesterId:updated.semester_id});if(typeof d09Repository.suspendCourseClassesUsing==='function') await d09Repository.suspendCourseClassesUsing(tx,{studentId,courseId:request.course_id,requestId:request.request_id});return {targetVersionAfter:`course-state:${updated.state_version}`,safeMetadata:{lifecycle_state:'PAUSED',schedule_review_required:true}};}
-        if(request.request_type==='COURSE_RESUME'){const admission=await repository.currentAdmissionPolicy(tx),counted=await repository.countedCourses(studentId,{excludeCourseId:request.course_id,runner:tx,lock:true});if(counted.length>=Number(admission.maximum_concurrent_courses)) throw error('Course resume now exceeds the concurrent-Course policy.','TEACHING_D10_CONCURRENT_COURSE_LIMIT');let context=await d09Repository.getSchedulingContextUsing(tx,studentId,request.course_id);const computed=computeSharedSemesterSchedule(context,{now:serverNow().toISOString(),includeCourseId:request.course_id}),derived=computed.planningContext,schedule=computed.result;if(schedule.outcome==='INFEASIBLE') throw error('Course resume is no longer schedule-feasible.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:schedule.reasons});const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId:request.course_id,context,planningContext:derived,result:schedule,source:'FORMAL_REQUEST_APPLIED'});await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id,includeCourseIds:[request.course_id]});const course=await repository.ensureCourse(studentId,request.course_id,tx,true);if(course.lifecycle_state!=='PAUSED') throw error('Course is no longer Paused.','TEACHING_D10_REQUEST_TARGET_STALE');const updated=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'ACTIVE',reason:'Approved Course Resume',sourceRequestId:request.request_id,policyVersion:admission.policy_version,expectedVersion:course.state_version});await repository.recordAdmissionUsing(tx,{studentId,courseId:request.course_id,kind:'RESUME',policy:admission,countBefore:counted.length,outcome:'ALLOW',sourceRequestId:request.request_id});return {targetVersionAfter:`course-state:${updated.state_version}`,safeMetadata:{lifecycle_state:'ACTIVE',timetable_version:Number(saved.timetable.version_no)}};}
+        if(request.request_type==='COURSE_PAUSE'){
+          const course=await repository.ensureCourse(studentId,request.course_id,tx,true);
+          if(course.lifecycle_state!=='ACTIVE') throw error('Course changed before Pause application.','TEACHING_D10_REQUEST_TARGET_STALE');
+          const updated=await repository.transitionCourseUsing(tx,{
+            studentId,courseId:request.course_id,toState:'PAUSED',reason:'Approved Course Pause',
+            sourceRequestId:request.request_id,expectedVersion:course.state_version,
+          });
+          const rebuilt=await rebuildGovernedSemesterUsing(tx,{
+            studentId,courseId:request.course_id,requestId:request.request_id,
+          });
+          return {
+            targetVersionAfter:`course-state:${updated.state_version}`,
+            safeMetadata:{
+              lifecycle_state:'PAUSED',
+              timetable_version:Number(rebuilt.saved.timetable.version_no),
+              materialized_classes:rebuilt.classes.length,
+              shared_semester_reflow:true,
+            },
+          };
+        }
+        if(request.request_type==='COURSE_RESUME'){
+          const admission=await repository.currentAdmissionPolicy(tx);
+          const counted=await repository.countedCourses(studentId,{excludeCourseId:request.course_id,runner:tx,lock:true});
+          if(counted.length>=Number(admission.maximum_concurrent_courses)){
+            throw error('Course resume now exceeds the concurrent-Course policy.','TEACHING_D10_CONCURRENT_COURSE_LIMIT');
+          }
+          const course=await repository.ensureCourse(studentId,request.course_id,tx,true);
+          if(course.lifecycle_state!=='PAUSED') throw error('Course is no longer Paused.','TEACHING_D10_REQUEST_TARGET_STALE');
+          const updated=await repository.transitionCourseUsing(tx,{
+            studentId,courseId:request.course_id,toState:'ACTIVE',reason:'Approved Course Resume',
+            sourceRequestId:request.request_id,policyVersion:admission.policy_version,expectedVersion:course.state_version,
+          });
+          const rebuilt=await rebuildGovernedSemesterUsing(tx,{
+            studentId,courseId:request.course_id,requestId:request.request_id,
+          });
+          await repository.recordAdmissionUsing(tx,{
+            studentId,courseId:request.course_id,kind:'RESUME',policy:admission,
+            countBefore:counted.length,outcome:'ALLOW',sourceRequestId:request.request_id,
+          });
+          return {
+            targetVersionAfter:`course-state:${updated.state_version}`,
+            safeMetadata:{
+              lifecycle_state:'ACTIVE',
+              timetable_version:Number(rebuilt.saved.timetable.version_no),
+              materialized_classes:rebuilt.classes.length,
+              shared_semester_reflow:true,
+            },
+          };
+        }
         if(request.request_type==='TEACHER_CHANGE'){const changed=await repository.changeTeacherUsing(tx,{studentId,courseId:request.course_id,teacherIdentityId:change.teacherIdentityId,sourceRequestId:request.request_id});return {targetVersionAfter:`teacher-assignment:${changed.assignment.teacher_assignment_id}:version:${changed.assignment.version_no}`,safeMetadata:{teacher_assignment_version:Number(changed.assignment.version_no),historical_teacher_records_preserved:true}};}
-        if(request.request_type==='COURSE_CANCELLATION'){let course=await repository.ensureCourse(studentId,request.course_id,tx,true);if(!['ACTIVE','PAUSED'].includes(course.lifecycle_state)) throw error('Course can no longer follow the approved cancellation path.','TEACHING_D10_REQUEST_TARGET_STALE');course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'TEACHING_ENDED',reason:'Approved Course cancellation',sourceRequestId:request.request_id,expectedVersion:course.state_version});course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'FINALIZING',reason:'Cancellation finalization boundary',sourceRequestId:request.request_id,expectedVersion:course.state_version});course=await repository.transitionCourseUsing(tx,{studentId,courseId:request.course_id,toState:'INCOMPLETE',reason:'Cancellation preserves unresolved final determination as Incomplete',sourceRequestId:request.request_id,expectedVersion:course.state_version});await repository.recordCancellationClosureUsing(tx,{studentId,courseId:request.course_id,reason:change.reason||'Approved Course cancellation',sourceRequestId:request.request_id});await d09Repository.markCurrentTimetableStaleUsing(tx,{studentId,semesterId:course.semester_id});if(typeof d09Repository.suspendCourseClassesUsing==='function') await d09Repository.suspendCourseClassesUsing(tx,{studentId,courseId:request.course_id,requestId:request.request_id});return {targetVersionAfter:`course-state:${course.state_version}`,safeMetadata:{lifecycle_state:'INCOMPLETE',cancellation_closure_recorded:true}};}
+        if(request.request_type==='COURSE_CANCELLATION'){
+          let course=await repository.ensureCourse(studentId,request.course_id,tx,true);
+          if(!['ACTIVE','PAUSED'].includes(course.lifecycle_state)){
+            throw error('Course can no longer follow the approved cancellation path.','TEACHING_D10_REQUEST_TARGET_STALE');
+          }
+          course=await repository.transitionCourseUsing(tx,{
+            studentId,courseId:request.course_id,toState:'TEACHING_ENDED',reason:'Approved Course cancellation',
+            sourceRequestId:request.request_id,expectedVersion:course.state_version,
+          });
+          course=await repository.transitionCourseUsing(tx,{
+            studentId,courseId:request.course_id,toState:'FINALIZING',reason:'Cancellation finalization boundary',
+            sourceRequestId:request.request_id,expectedVersion:course.state_version,
+          });
+          course=await repository.transitionCourseUsing(tx,{
+            studentId,courseId:request.course_id,toState:'INCOMPLETE',
+            reason:'Cancellation preserves unresolved final determination as Incomplete',
+            sourceRequestId:request.request_id,expectedVersion:course.state_version,
+          });
+          await repository.recordCancellationClosureUsing(tx,{
+            studentId,courseId:request.course_id,reason:change.reason||'Approved Course cancellation',
+            sourceRequestId:request.request_id,
+          });
+          const rebuilt=await rebuildGovernedSemesterUsing(tx,{
+            studentId,courseId:request.course_id,requestId:request.request_id,
+          });
+          return {
+            targetVersionAfter:`course-state:${course.state_version}`,
+            safeMetadata:{
+              lifecycle_state:'INCOMPLETE',
+              cancellation_closure_recorded:true,
+              timetable_version:Number(rebuilt.saved.timetable.version_no),
+              materialized_classes:rebuilt.classes.length,
+              shared_semester_reflow:true,
+            },
+          };
+        }
         throw error('No D10 authoritative application path exists for this Request type.','TEACHING_D10_REQUEST_OWNER_PENDING');
       },
     });
