@@ -189,7 +189,6 @@ function buildRefinementContext({changeRequest=null,previousAudit=null}={}){
     learning_units:Object.freeze([...(current.learning_units||[])]),
     assumed_prerequisites:Object.freeze([...(current.assumed_prerequisites||[])]),
     structure_change_proposals:Object.freeze([...(current.structure_change_proposals||[])]),
-    source_to_unit_reconciliation:current.source_to_unit_reconciliation,
     unresolved_items:Object.freeze([...(current.unresolved_items||[])]),
     status:current.status,
     review_required:current.review_required,
@@ -250,7 +249,12 @@ function validateRefinementOutput(output,previousOutput,validationContext){
     return {ok:false,reason:'TPF02_REFINEMENT_AUDIT_SCOPE_VERSION_MUTATION_FORBIDDEN'};
   }
 
-  const assembled={
+  if((output.source_to_unit_reconciliation?.required_item_map||[]).length!==0
+    ||(output.source_to_unit_reconciliation?.unmapped_required_refs||[]).length!==0){
+    return {ok:false,reason:'TPF02_REFINEMENT_RECONCILIATION_RESTATEMENT_FORBIDDEN'};
+  }
+
+  const assembled=canonicalizeSynthesisSourceScope({
     ...output,
     source_inventory:[...(previousOutput.source_inventory||[])],
     audit_scope:{
@@ -260,7 +264,7 @@ function validateRefinementOutput(output,previousOutput,validationContext){
     },
     source_conflicts:[...(previousOutput.source_conflicts||[])],
     coverage_gaps:[...(previousOutput.coverage_gaps||[])],
-  };
+  },previousOutput.source_inventory||[]);
   return validateTpf02Domain(assembled,validationContext);
 }
 
