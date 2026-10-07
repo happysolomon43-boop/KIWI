@@ -129,20 +129,35 @@ function blockRow(block,zoneInput,courseId){
 function renderTimetable(data,course,card,reload){
   const integrity=data.scheduleIntegrity||{};
   const post=postActivationState(course);
+  const unresolvedSelf=(data.unresolvedSemesterCourses||[]).filter((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
+  const missingAttachment=unresolvedSelf.some((item)=>item.reason==='COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER')||data.requestedCourse?.attachedToSemester===false;
+  const missingPlan=data.requestedCourse?data.requestedCourse.planReady===false:unresolvedSelf.some((item)=>item.reason==='COURSE_PLAN_NOT_READY');
+  const missingInputs=!data.semester||!data.profile;
+  const courseSlots=Array.isArray(data.courseSlots)?data.courseSlots:(data.slots||[]).filter((slot)=>String(slot.courseId||slot.course_id||'')===String(course.course_id));
+  const courseSummary=data.feasibility?.courseSummary||null;
+  const hasCourseTimetable=Boolean(data.timetable)&&(Boolean(courseSummary)||courseSlots.length>0);
   const status=el('div','teaching-schedule-x__actions');
-  const action=el('button','teaching-schedule-x__primary',integrity.recoveryRequired?'Repair timetable':post?'Timetable active':(data.timetable?'Recalculate timetable':'Build timetable'));
-  action.type='button';action.disabled=post&&!integrity.recoveryRequired;
-  const badge=el('span','teaching-schedule-x__badge',words(data.feasibility?.outcome||'Not calculated'));status.append(action,badge);card.append(status);
-  const m=data.feasibility?.metrics||{};const metrics=el('div','teaching-schedule-x__metrics');metrics.append(metric(String(m.scheduledMinutes??0),'scheduled minutes'),metric(String(m.requiredMinutes??0),'required minutes'),metric(m.headroomRatio==null?'—':`${Math.round(Number(m.headroomRatio)*100)}%`,'recovery headroom'));card.append(metrics);
+  const action=el('button','teaching-schedule-x__primary',missingPlan?'Open Course Plan':integrity.recoveryRequired?'Repair timetable':post?'Timetable active':(hasCourseTimetable?'Recalculate timetable':'Build timetable'));
+  action.type='button';action.disabled=missingInputs||(post&&!integrity.recoveryRequired);
+  const badge=el('span','teaching-schedule-x__badge',missingPlan?'Plan required':missingAttachment?'Using shared availability':words(data.feasibility?.outcome||'Not calculated'));status.append(action,badge);card.append(status);
+  if(missingPlan){
+    card.append(el('div','teaching-schedule-x__hint','This Course has no current Course Plan. Semester timetable items from other Courses are not shown here. Create the Course Plan first; once this Course is attached to the shared Semester availability, KIWI will recalculate the timetable automatically.'));
+    const message=el('div','teaching-schedule-x__message');card.append(message);
+    action.disabled=post;
+    action.addEventListener('click',()=>{if(!action.disabled)courseSurface.openCourse(course.course_id,'course-plan');});
+    return;
+  }
+  if(missingAttachment)card.append(el('div','teaching-schedule-x__hint','This Course inherits your shared Semester availability automatically. When its timetable is built, KIWI will attach the Course to that Semester and place its Classes around the other Course workload already scheduled there.'));
+  const m=data.feasibility?.metrics||{},scheduledMinutes=courseSummary?.scheduledMinutes??courseSlots.reduce((sum,slot)=>sum+(Number(slot.plannedMinutes)||Math.max(0,Math.round((Date.parse(slot.endsAt)-Date.parse(slot.startsAt))/60000))),0),requiredMinutes=courseSummary?.requiredMinutes??'—';const metrics=el('div','teaching-schedule-x__metrics');metrics.append(metric(String(scheduledMinutes),'scheduled minutes'),metric(String(requiredMinutes),'required minutes'),metric(m.headroomRatio==null?'—':`${Math.round(Number(m.headroomRatio)*100)}%`,'semester recovery headroom'));card.append(metrics);
   if(data.feasibility?.metrics?.naturalizedCadence)card.append(el('div','teaching-schedule-x__hint','Cadence is deterministic but varied: KIWI prefers spaced meetings, one or two Classes on a day as needed, and 3–8 hour same-day gaps when feasible. Heavier course load may compress those preferences.'));
   if(integrity.recoveryRequired)card.append(el('div','teaching-schedule-x__hint','This active Course has no future instructional Classes. Repair rebuilds from the remaining semester using current workload and availability.'));
 
   const groups=new Map();
-  for(const slot of data.slots||[]){const key=formatDay(slot.startsAt,slot.timezone||data.semester?.timezone||'UTC');if(!groups.has(key))groups.set(key,[]);groups.get(key).push(slot);}
+  for(const slot of courseSlots){const key=formatDay(slot.startsAt,slot.timezone||data.semester?.timezone||'UTC');if(!groups.has(key))groups.set(key,[]);groups.get(key).push(slot);}
   for(const [label,slots] of groups){const group=el('section','teaching-schedule-x__day-group');const head=el('div','teaching-schedule-x__day-title');head.append(document.createTextNode(label),el('small','',`${slots.length} item${slots.length===1?'':'s'}`));group.append(head);slots.forEach((slot)=>{const zone=slot.timezone||data.semester?.timezone||'UTC';const item=el('article','teaching-schedule-x__slot');item.append(el('div','teaching-schedule-x__slot-time',`${formatTime(slot.startsAt,zone)}\n${formatTime(slot.endsAt,zone)}`));const copy=el('div','teaching-schedule-x__slot-copy');copy.append(el('strong','',slot.kind==='CLASS'?'Class':words(slot.kind)),el('small','',`${slot.plannedMinutes||Math.round((Date.parse(slot.endsAt)-Date.parse(slot.startsAt))/60000)} min${slot.learningUnitRefs?.length?` · ${slot.learningUnitRefs.length} learning unit${slot.learningUnitRefs.length===1?'':'s'}`:''}`));item.append(copy,el('span','teaching-schedule-x__badge',words(slot.horizonStage||'scheduled')));group.append(item);});card.append(group);}
-  if(!(data.slots||[]).length)card.append(el('div','teaching-schedule-x__hint','No timetable has been created yet. KIWI will use instructional load, availability, deadlines and recovery capacity to place Classes.'));
+  if(!courseSlots.length)card.append(el('div','teaching-schedule-x__hint','No timetable has been created for this Course yet. KIWI will use instructional load, availability, deadlines and recovery capacity to place Classes.'));
   const message=el('div','teaching-schedule-x__message');card.append(message);
-  action.addEventListener('click',async()=>{action.disabled=true;message.textContent=integrity.recoveryRequired?'Repairing from remaining semester capacity…':'Building a realistic timetable…';try{const updated=await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/timetable/propose`,{method:'POST',body:{}});await reload(updated,integrity.recoveryRequired?'Timetable repaired.':'Timetable created.');}catch(error){message.textContent=error.message||'Timetable could not be created.';message.dataset.kind='error';action.disabled=post&&!integrity.recoveryRequired;} });
+  action.addEventListener('click',async()=>{action.disabled=true;message.textContent=integrity.recoveryRequired?'Repairing from remaining semester capacity…':'Building a realistic timetable…';try{const updated=await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/timetable/propose`,{method:'POST',body:{}});await reload(updated,integrity.recoveryRequired?'Timetable repaired.':'Timetable created.');}catch(error){message.textContent=error.message||'Timetable could not be created.';message.dataset.kind='error';action.disabled=missingInputs||(post&&!integrity.recoveryRequired);} });
 }
 
 async function renderSchedule({course,container}){
@@ -154,7 +169,7 @@ async function renderSchedule({course,container}){
       page.replaceChildren();
       const hero=el('section','teaching-schedule-x__hero');const copy=el('div');copy.append(el('div','teaching-kicker','Time & pacing'),el('h2','','Make the week feel realistic'),el('p','','Tell KIWI when you are normally free. Multiple availability windows let the Scheduler spread Classes naturally instead of filling the earliest block every day.'));const meta=el('div','teaching-schedule-x__hero-meta');meta.append(el('span','teaching-schedule-x__signal',data.semester?.timezone||'Timezone not set'),el('span','teaching-schedule-x__signal',postActivationState(course)?'Formal changes after activation':'Editable before activation'));hero.append(copy,meta);page.append(hero);
       const grid=el('div','teaching-schedule-x__grid');const preferences=el('section','teaching-schedule-x__card'),timetable=el('section','teaching-schedule-x__card');grid.append(preferences,timetable);page.append(grid);
-      preferences.append(el('div','teaching-kicker','Availability'),el('h3','','Your normal study windows'),el('p','','Availability is permission, not a command to fill every minute. KIWI still chooses a sensible cadence within these windows.'));
+      preferences.append(el('div','teaching-kicker','Availability'),el('h3','','Your shared Semester study windows'),el('p','',data.inheritedAvailability?'This Course is inheriting the Semester availability you already set. You do not need to enter it again; KIWI schedules this Course around the same shared timetable.':'Availability is Semester-wide: set it once and KIWI uses the same windows when scheduling every Course in this Semester.'));
       const sem=data.semester||{};const semFields=el('div','teaching-schedule-x__fields');semFields.style.marginTop='18px';const name=el('input');name.value=sem.name||'Semester';const today=new Date(),defaultEnd=new Date(today);defaultEnd.setMonth(defaultEnd.getMonth()+1);const start=usePicker(el('input'));start.type='date';start.value=(sem.startsAt||'').slice(0,10)||dateInputValue(today);const end=usePicker(el('input'));end.type='date';end.value=(sem.endsAt||'').slice(0,10)||dateInputValue(defaultEnd);const zone=el('input');zone.value=sem.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';semFields.append(field('Semester name',name),field('Start date',start),field('End date',end),field('Timetable timezone',zone));preferences.append(semFields);
 
       const rows=data.profile?.availability||[];const available=groupedAvailability(rows.filter((x)=>x.kind==='AVAILABLE'));

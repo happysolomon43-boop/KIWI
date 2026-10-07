@@ -7,7 +7,7 @@ const { materializePlanCoverage } = require('./plan-coverage');
 function createPlanWriter(ctx) {
   const { q, withTransaction, randomUUID, clock, json } = ctx;
 
-  async function createPlanVersion({ studentId, courseId, expectedCourseStateVersion, audit, diagnosticPlan, sourceInventoryDigest, proposal, coverage, generationProvenance, scopeDiff }) {
+  async function createPlanVersion({ studentId, courseId, expectedCourseStateVersion, audit, diagnosticPlan, sourceInventoryDigest, proposal, coverage, generationProvenance, scopeDiff, allowCurrentPlanReplacement = false }) {
     return withTransaction(async (tx) => {
       const locked = await q(tx, `select * from public.teaching_courses where student_id=$1 and course_id=$2 for update`, [studentId, courseId]);
       const course = locked.rows?.[0];
@@ -32,7 +32,7 @@ function createPlanWriter(ctx) {
 
       const latest = await q(tx, `select * from public.teaching_course_plans where student_id=$1 and course_id=$2 order by version_no desc limit 1 for update`, [studentId, courseId]);
       const previousPlan = latest.rows?.[0] || null;
-      if (previousPlan && previousPlan.source_snapshot_ref === course.subject_snapshot_ref && previousPlan.plan_state !== 'REVIEW_REQUIRED') {
+      if (previousPlan && previousPlan.source_snapshot_ref === course.subject_snapshot_ref && previousPlan.plan_state !== 'REVIEW_REQUIRED' && !allowCurrentPlanReplacement) {
         const error = new Error('The current Course scope already has a Course Plan version.');
         error.status = 409;
         error.code = 'TEACHING_D08_PLAN_ALREADY_CURRENT';
@@ -108,11 +108,15 @@ function createPlanWriter(ctx) {
         ) values($1,$2,$3,'SYSTEM',null,'COURSE_PLAN_VERSION_CREATED','COURSE_PLAN',$4,'Course Plan/Coverage',$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb)
       `, [
         randomUUID(), studentId, now, coursePlanId, `course-plan:${coursePlanId}:v${version}`,
-        previousPlan ? 'Versioned Course Plan update after reviewed scope change.' : 'Course Plan version 1 created from validated Curriculum Audit.',
+        previousPlan
+          ? (allowCurrentPlanReplacement
+            ? 'Student-requested Course Plan regeneration created a new version from the current validated academic scope.'
+            : 'Versioned Course Plan update after reviewed scope change.')
+          : 'Course Plan version 1 created from validated Curriculum Audit.',
         json(previousPlan ? { course_plan_id: previousPlan.course_plan_id, version_no: previousPlan.version_no } : {}),
         json({ course_plan_id: coursePlanId, version_no: version, scope_checksum: scopeChecksum, pre_activation_audit_id: preAuditId }),
         json([ `curriculum-audit:${audit.curriculum_audit_id}` ]),
-        json({ source_inventory_digest: sourceInventoryDigest, plan_contract_version: 'd08.course-plan.v1' }),
+        json({ source_inventory_digest: sourceInventoryDigest, plan_contract_version: 'd08.course-plan.v1', regeneration_requested: Boolean(allowCurrentPlanReplacement) }),
       ]);
       return rows[0];
     });

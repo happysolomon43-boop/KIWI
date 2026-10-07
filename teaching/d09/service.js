@@ -122,7 +122,27 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       exceptionCodes:s.exception_codes,rationale:s.rationale,
     }));
     const scheduleStale=Boolean(review.staleSchedule);
-    const past=slots.filter((s)=>Date.parse(s.endsAt)<=Date.parse(serverNow)).length;
+    const requestedCourseId=String(review.course?.course_id||'');
+    const requestedBundle=(review.courses||[]).find((bundle)=>String(bundle.course?.course_id||'')===requestedCourseId)
+      || (String(review.inheritedCourseBundle?.course?.course_id||'')===requestedCourseId?review.inheritedCourseBundle:null);
+    let requestedPlanReady=false;
+    if(requestedBundle){
+      try{assertCurrentCoursePlan(requestedBundle.course,requestedBundle.plan,requestedBundle.scopeChanges);requestedPlanReady=true;}
+      catch(_error){requestedPlanReady=false;}
+    }
+    const courseSlots=slots.filter((slot)=>String(slot.courseId||'')===requestedCourseId);
+    const rawCourseSummary=(review.feasibility?.course_summaries||[]).find((summary)=>String(summary.courseId??summary.course_id??'')===requestedCourseId)||null;
+    const courseSummary=rawCourseSummary?Object.freeze({
+      courseId:requestedCourseId,
+      requiredMinutes:Number(rawCourseSummary.requiredMinutes??rawCourseSummary.required_minutes??0),
+      scheduledMinutes:Number(rawCourseSummary.scheduledMinutes??rawCourseSummary.scheduled_minutes??0),
+      instructionalLoadMinMinutes:Number(rawCourseSummary.instructionalLoadMinMinutes??rawCourseSummary.instructional_load_min_minutes??0),
+      instructionalLoadMaxMinutes:Number(rawCourseSummary.instructionalLoadMaxMinutes??rawCourseSummary.instructional_load_max_minutes??0),
+      reserveMinutes:Number(rawCourseSummary.reserveMinutes??rawCourseSummary.reserve_minutes??0),
+      deadlineKind:rawCourseSummary.deadlineKind??rawCourseSummary.deadline_kind??null,
+      targetAt:rawCourseSummary.targetAt??rawCourseSummary.target_at??null,
+    }):null;
+    const past=courseSlots.filter((s)=>Date.parse(s.endsAt)<=Date.parse(serverNow)).length;
     return Object.freeze({
       stage:'PROPOSED_TIMETABLE_AND_FEASIBILITY',
       serverNow,
@@ -134,6 +154,12 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       availabilityScope:'SEMESTER_GLOBAL_DEFAULT',
       inheritedAvailability:review.inheritedDefault===true,
       semesterHasActivatedCourses:semesterHasActivatedCourses(review),
+      requestedCourse:Object.freeze({
+        courseId:requestedCourseId,
+        lifecycleState:String(review.course?.lifecycle_state||'DRAFT'),
+        planReady:requestedPlanReady,
+        attachedToSemester:review.inheritedDefault!==true,
+      }),
       profile:review.profile?Object.freeze({
         profileId:review.profile.profile_id,version:Number(review.profile.version_no),timezone:review.profile.timezone,
         preferences:review.profile.preferences,settings:review.profile.settings,
@@ -147,13 +173,14 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
         state:scheduleStale?'STALE':review.timetable.timetable_state,sourceKind:review.timetable.source_kind,createdAt:review.timetable.created_at,
       }):null,
       slots:Object.freeze(slots),
+      courseSlots:Object.freeze(courseSlots),
       feasibility:review.feasibility?Object.freeze({
         outcome:scheduleStale?'STALE':review.feasibility.outcome,evaluatedAt:review.feasibility.evaluated_at,
-        metrics:review.feasibility.capacity_metrics,reasons:review.feasibility.reasons,alternatives:review.feasibility.alternatives,
+        metrics:review.feasibility.capacity_metrics,courseSummary,reasons:review.feasibility.reasons,alternatives:review.feasibility.alternatives,
         headroomPolicyVersion:review.feasibility.headroom_policy_version,
       }):null,
       progressTruths:Object.freeze({
-        calendar:Object.freeze({elapsedScheduledSlots:past,totalScheduledSlots:slots.length,source:'SCHEDULER_SERVER_TIME'}),
+        calendar:Object.freeze({elapsedScheduledSlots:past,totalScheduledSlots:courseSlots.length,source:'SCHEDULER_SERVER_TIME',scope:'REQUESTED_COURSE'}),
         curriculumCoverage:Object.freeze(Object.fromEntries(coverageByCourse)),
         verifiedLearning:Object.freeze({status:'UNAVAILABLE_UNTIL_D13',source:'STUDENT_KNOWLEDGE_MODEL_OWNER_NOT_IMPLEMENTED_IN_D09'}),
       }),
@@ -180,12 +207,58 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     const review=await repository.getScheduleReview(user.id,courseId);
     return sanitizeReview(review,clock().toISOString());
   }
+  async function attachInheritedDefaultForScheduling(user,courseId,context){
+    if(!context?.inheritedDefault) return context;
+    if(semesterHasActivatedCourses(context)){
+      const e=new Error('This shared Semester already contains an active Course. Adding another Course requires the governed scheduling-change path.');
+      e.status=409;
+      e.code='TEACHING_D09_ACTIVE_SEMESTER_REQUIRES_GOVERNED_RECALCULATION';
+      throw e;
+    }
+    const inherited=context.inheritedCourseBundle||null;
+    if(!inherited){
+      const e=new Error('The requested Course could not inherit the current Semester scheduling context.'); e.status=409; e.code='TEACHING_D09_DEFAULT_SEMESTER_CONTEXT_REQUIRED'; throw e;
+    }
+    assertCurrentCoursePlan(inherited.course,inherited.plan,inherited.scopeChanges);
+    if(typeof repository.attachCourseToSemester!=='function'){
+      const e=new Error('Shared Semester inheritance is temporarily unavailable.'); e.status=503; e.code='TEACHING_D09_DEFAULT_SEMESTER_ATTACH_UNAVAILABLE'; throw e;
+    }
+    await repository.attachCourseToSemester({studentId:user.id,courseId,semesterId:context.semester.semester_id});
+    return repository.getSchedulingContext(user.id,courseId);
+  }
+  async function recalculateAfterCoursePlanChange(user,courseId){
+    let context=await repository.getSchedulingContext(user.id,courseId);
+    if(!context.semester||!context.profile) return Object.freeze({recalculated:false,reason:'SCHEDULE_INPUTS_REQUIRED'});
+    if(semesterHasActivatedCourses(context)) return Object.freeze({recalculated:false,reason:'ACTIVE_SEMESTER_REQUIRES_GOVERNED_RECALCULATION'});
+    if(context.inheritedDefault){
+      try{context=await attachInheritedDefaultForScheduling(user,courseId,context);}
+      catch(error){return Object.freeze({recalculated:false,reason:error?.code||'DEFAULT_SEMESTER_ATTACH_FAILED'});}
+    }
+    const requested=(context.courses||[]).find((bundle)=>String(bundle.course?.course_id||'')===String(courseId));
+    if(!requested) return Object.freeze({recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED'});
+    for(const bundle of context.courses||[]) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
+    const result=computeSchedule(context,{now:clock().toISOString()});
+    const saved=await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{
+      studentId:user.id,
+      courseId,
+      context,
+      result,
+      source:'COURSE_PLAN_AUTO_RECALC',
+    }));
+    return Object.freeze({
+      recalculated:true,
+      timetableVersionId:saved.timetable?.timetable_version_id||null,
+      timetableVersion:saved.timetable?.version_no==null?null:Number(saved.timetable.version_no),
+      outcome:saved.feasibility?.outcome||result.outcome||null,
+    });
+  }
   async function proposeTimetable(user,courseId){
-    const context=await repository.getSchedulingContext(user.id,courseId);
+    let context=await repository.getSchedulingContext(user.id,courseId);
+    if(context.inheritedDefault) context=await attachInheritedDefaultForScheduling(user,courseId,context);
     requireReadyContext(context,courseId);
     const serverNow=clock().toISOString();
     const result=computeSchedule(context,{now:serverNow});
-    const saved=await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{studentId:user.id,courseId,context,result,source:'DETERMINISTIC_INITIAL'}));
+    await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{studentId:user.id,courseId,context,result,source:'DETERMINISTIC_INITIAL'}));
     return getScheduleReview(user,courseId);
   }
   async function editTimetable(user,courseId,input={}){
@@ -218,6 +291,6 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     });
   }
 
-  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,proposeTimetable,editTimetable,getCalendar});
+  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,recalculateAfterCoursePlanChange,proposeTimetable,editTimetable,getCalendar});
 }
 module.exports={createD09Service};
