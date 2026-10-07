@@ -64,7 +64,7 @@ test('D05 outbox heartbeat keeps a long publication claim alive until publish co
   const runtime = createDurableTeachingOutboxRuntime({
     store: {
       async releaseExpiredClaims() { return 0; },
-      async claimPending() { return [row]; },
+      async claimPending() { return published > 0 ? [] : [row]; },
       async renewClaim(event, options) {
         assert.equal(event.claim_token, row.claim_token);
         assert.equal(options.leaseMs, 9_000);
