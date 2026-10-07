@@ -15,6 +15,9 @@ const {
   shouldStageCurriculumAudit,
   shouldUseProgressiveStructure,
   structurePassRequest,
+  lineageRepairRequest,
+  canonicalizeStructurePassOutput,
+  canonicalizeLineageRepairOutput,
   decompositionRepairRequest,
   createD07Intelligence,
 } = require('../../../teaching/d07/intelligence');
@@ -1112,4 +1115,139 @@ test('staged synthesis rejects any attempt by the model to replace prepared sour
   output.source_inventory = [preparedInventory[0]];
   const result = await request.domainValidator(output);
   assert.equal(result.reason, 'TPF02_STAGED_SYNTHESIS_MUST_DEFER_SOURCE_INVENTORY');
+});
+
+
+test('bounded structure passes restore runtime-owned fields and discard source-less provisional units before validation', async () => {
+  const batchSources=sources(2);
+  const academicBase=buildTpf02AcademicInput({
+    course:course(),
+    sources:batchSources,
+    taskMode:'LEARNING_UNIT_DECOMPOSITION',
+    executionStage:EXECUTION_STAGES.SINGLE_PASS,
+  });
+  const preparedInventory=academicBase.source_items.map(inventoryItem);
+  const request=structurePassRequest({
+    course:course(),
+    sources:batchSources,
+    preparedInventory,
+    batchIndex:0,
+  });
+  const raw=structurePassOutput(request);
+  raw.input_state_reference='model-invented-state';
+  raw.audit_scope={
+    ...raw.audit_scope,
+    source_refs:['source:not-runtime-owned'],
+    trusted_scope_version:'model-invented-scope',
+  };
+  raw.learning_units.push({
+    learning_unit_id:'source-less-provisional-unit',
+    title:'Poisoned provisional unit',
+    intended_competence:'This row should never reach final synthesis.',
+    source_item_refs:[],
+    topic_refs:[raw.topics[0].topic_id],
+    subtopic_id:raw.topics[0].subtopics[0].subtopic_id,
+    prerequisite_refs:[],
+    dependency_type_notes:null,
+    criticality:'supporting',
+    criticality_basis:'No eligible evidence survived.',
+    proposed_exit_evidence:'None.',
+    gap_refs:[],
+    uncertainties:[],
+  });
+
+  const canonical=canonicalizeStructurePassOutput(raw,{
+    academicInput:request.academicInput,
+    canonicalInventory:preparedInventory,
+  });
+  assert.equal(canonical.input_state_reference,request.academicInput.input_state_reference);
+  assert.deepEqual(canonical.audit_scope.source_refs,request.academicInput.audit_scope.source_refs);
+  assert.equal(canonical.audit_scope.trusted_scope_version,request.academicInput.audit_scope.trusted_scope_version);
+  assert.equal(canonical.learning_units.some((unit)=>unit.learning_unit_id==='source-less-provisional-unit'),false);
+
+  const schema=await request.schemaValidator(raw);
+  assert.equal(schema.ok,true,schema.reason);
+  const domain=await request.domainValidator(schema.value);
+  assert.equal(domain.ok,true,domain.reason);
+});
+
+test('lineage repair reconstructs immutable existing-unit fields instead of rejecting a malformed model echo', async () => {
+  const repairSource={...sources(1)[0],source_content_item_id:'repair-source'};
+  const repairRef='source:repair-source';
+  const baseOutput={
+    topics:[{
+      topic_id:'topic-1',
+      title:'Mechanics',
+      source_item_refs:[repairRef],
+      subtopics:[{subtopic_id:'subtopic-1',title:'Motion'}],
+    }],
+    learning_units:[{
+      learning_unit_id:'unit-1',
+      title:'Newtonian motion',
+      intended_competence:'Apply Newton laws to constrained motion problems.',
+      source_item_refs:[repairRef],
+      topic_refs:['topic-1'],
+      subtopic_id:'subtopic-1',
+      prerequisite_refs:[],
+      dependency_type_notes:null,
+      criticality:'major',
+      criticality_basis:'Core assessed mechanics competence.',
+      proposed_exit_evidence:'Solve and explain a multi-force motion problem.',
+      gap_refs:[],
+      uncertainties:[],
+    }],
+    assumed_prerequisites:[],
+    coverage_gaps:[],
+  };
+  const request=lineageRepairRequest({
+    course:course(),
+    sources:[repairSource],
+    baseOutput,
+    preparedInventory:[{
+      source_item_ref:repairRef,
+      provenance:'fixture',
+      academic_meaning:'Newtonian motion evidence',
+      proposed_scope_classification:'required',
+      scope_classification_basis:'Direct Course evidence.',
+      duplicate_of_ref:null,
+      content_validity_status:'current_supported',
+      content_validity_basis:null,
+      confidence:'high',
+    }],
+    preparedSourceWalk:[{source_item_ref:repairRef,analysis_status:'complete',note:null}],
+    stageFindings:{status:'ok',review_required:false,review_reasons:[],unresolved_items:[]},
+    repairRefs:[repairRef],
+  });
+  const raw=lineageRepairOutput(request,'unit-1');
+  raw.input_state_reference='model-invented-state';
+  raw.learning_units[0]={
+    learning_unit_id:'unit-1',
+    title:'',
+    intended_competence:'',
+    source_item_refs:[repairRef],
+    topic_refs:[],
+    subtopic_id:null,
+    prerequisite_refs:[],
+    dependency_type_notes:null,
+    criticality:'major',
+    criticality_basis:'',
+    proposed_exit_evidence:'',
+    gap_refs:[],
+    uncertainties:[],
+  };
+
+  const canonical=canonicalizeLineageRepairOutput(raw,{
+    academicInput:request.academicInput,
+    baseOutput,
+    repairRefs:[repairRef],
+  });
+  assert.equal(canonical.input_state_reference,request.academicInput.input_state_reference);
+  assert.equal(canonical.learning_units[0].title,'Newtonian motion');
+  assert.equal(canonical.learning_units[0].intended_competence,'Apply Newton laws to constrained motion problems.');
+  assert.deepEqual(canonical.learning_units[0].topic_refs,['topic-1']);
+  assert.equal(canonical.learning_units[0].subtopic_id,'subtopic-1');
+
+  const schema=await request.schemaValidator(raw);
+  assert.equal(schema.ok,true,schema.reason);
+  assert.equal(schema.value.learning_units[0].title,'Newtonian motion');
 });
