@@ -11,6 +11,7 @@ const {
   buildRegenerationContext,
   buildRefinementContext,
   curriculumRefinementRequest,
+  executeAdaptiveLineageRepair,
 } = require('../../../teaching/d07/intelligence');
 
 function course(stateVersion=4,state='DRAFT') {
@@ -170,6 +171,56 @@ test('targeted refinement sends the validated current analysis instead of re-run
   assert.equal(request.academicInput.refinement_context.mode,'STUDENT_DIRECTED_ANALYSIS_REFINEMENT');
   assert.equal(request.academicInput.refinement_context.current_analysis.learning_units.length,20);
   assert.match(request.contextSpec.context_kind,/student_directed_analysis_refinement/);
+});
+
+test('targeted refinement receives the whole-synthesis output ceiling so reasoning tokens cannot truncate a valid replacement', () => {
+  const request=curriculumRefinementRequest({
+    course:course(),
+    sources:[source()],
+    previousAudit:currentAudit(),
+    changeRequest:'Merge overlapping Learning Units without losing required competence boundaries.',
+  });
+
+  assert.equal(request.generation.maxOutputTokens,64_000);
+});
+
+test('large-course lineage repair shrinks a rejected batch and preserves accepted progress between slices', async () => {
+  const refs=Array.from({length:12},(_,index)=>`source:${index+1}`);
+  const attempts=[];
+  const result=await executeAdaptiveLineageRepair({
+    baseOutput:{applied:[]},
+    repairRefs:refs,
+    executeBatch:async (baseOutput,batch)=>{
+      attempts.push(batch.length);
+      if(batch.length>6)return {accepted:false};
+      return {
+        accepted:true,
+        validatedResult:{output:{applied:[...baseOutput.applied,...batch]}},
+      };
+    },
+  });
+
+  assert.equal(result.accepted,true);
+  assert.deepEqual(attempts,[12,6,6]);
+  assert.deepEqual(result.attemptedBatchSizes,[12,6,6]);
+  assert.deepEqual(result.output.applied,refs);
+});
+
+test('adaptive lineage repair never retries stale state as a smaller academic patch', async () => {
+  let attempts=0;
+  const result=await executeAdaptiveLineageRepair({
+    baseOutput:{},
+    repairRefs:['source:1','source:2','source:3','source:4'],
+    executeBatch:async ()=>{
+      attempts+=1;
+      return {accepted:false,stale:true};
+    },
+  });
+
+  assert.equal(result.accepted,false);
+  assert.equal(result.result.stale,true);
+  assert.equal(attempts,1);
+  assert.deepEqual(result.attemptedBatchSizes,[4]);
 });
 
 test('validated refinement commits a new audit version and only then resets downstream setup', async () => {
