@@ -115,10 +115,103 @@ function createD10Service({
   async function declineAlternative(user,requestId,input={}){const version=Number(input.alternativeVersion);if(!Number.isInteger(version)||version<1) throw error('alternativeVersion is required.','TEACHING_D10_ALTERNATIVE_VERSION_REQUIRED',400);return sanitizeRequest(await repository.declineAlternative({studentId:user.id,requestId,alternativeVersion:version}));}
   function requestChange(request){if(request.lifecycle_state==='APPROVED_WITH_ADJUSTMENT'&&request.student_response==='ACCEPTED'&&request.alternative_proposal?.requestedChange)return request.alternative_proposal.requestedChange;return request.requested_change;}
 
+  async function rebuildGovernedSemesterUsing(tx,{studentId,courseId,requestId,includeCourseId=null}){
+    const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+    const computed=computeSharedSemesterSchedule(context,{
+      now:serverNow().toISOString(),
+      includeCourseId,
+    });
+    if(computed.result.outcome==='INFEASIBLE'){
+      throw error('Approved schedule change became infeasible before application.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{
+        reasons:computed.result.reasons,
+        alternatives:computed.result.alternatives,
+      });
+    }
+    const saved=await d09Repository.saveProposalUsing(tx,{
+      studentId,
+      courseId,
+      context,
+      planningContext:computed.planningContext,
+      result:computed.result,
+      source:'FORMAL_REQUEST_APPLIED',
+    });
+    const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{
+      studentId,
+      semesterId:context.semester.semester_id,
+      timetable:saved.timetable,
+      slots:saved.slots,
+      requestId,
+      includeCourseIds:includeCourseId?[includeCourseId]:[],
+    });
+    return {context,planningContext:computed.planningContext,result:computed.result,saved,classes};
+  }
+
   async function applyScheduleRequestUsing(tx,request,change){
     const studentId=request.student_id,courseId=request.course_id;
-    if(request.request_type==='SINGLE_CLASS_RESCHEDULE'){const klass=await repository.getClassTargetUsing(tx,{studentId,classId:change.classId});if(`class-schedule:${klass.schedule_version}`!==String(request.target_version_ref||'')) throw error('Class schedule changed before Request application.','TEACHING_D10_REQUEST_TARGET_STALE');if(!klass.source_timetable_slot_id) throw error('Class is not bound to an authoritative timetable slot.','TEACHING_D10_REQUEST_TARGET_STALE');const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId),latest=typeof d09Repository.latestApprovedTimetable==='function'?await d09Repository.latestApprovedTimetable(studentId,context.semester.semester_id,tx):await d09Repository.latestTimetable(studentId,context.semester.semester_id,tx),result=validateEditedSchedule(activeScheduleContext(context),latest.slots,[{slotId:klass.source_timetable_slot_id,startsAt:change.startsAt,endsAt:change.endsAt,exceptionReason:'Approved formal reschedule Request'}],{now:serverNow().toISOString()});if(result.outcome==='INFEASIBLE') throw error('Approved reschedule became infeasible before application.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:result.reasons});const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId,context:activeScheduleContext(context),result,source:'FORMAL_REQUEST_APPLIED'}),classes=await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id});return {targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length}};}
-    let context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId),normalized;if(request.request_type==='PERMANENT_AVAILABILITY_CHANGE'){normalized=normalizeScheduleInputs(change.scheduleInputs);if(normalized.semester.semesterId&&String(normalized.semester.semesterId)!==String(context.semester.semester_id)) throw error('Availability Request cannot change Semester identity.','TEACHING_D10_AVAILABILITY_SEMESTER_MISMATCH');}else if(request.request_type==='ACADEMIC_BREAK') normalized=normalizeScheduleInputs(inputsFromContext(context,{extraBlock:{courseId,kind:'BREAK',startsAt:change.startsAt,endsAt:change.endsAt,label:'Academic Break',reason:'Approved Academic Break Request'}}));else throw error('Unsupported Scheduler Request application.','TEACHING_D10_REQUEST_OWNER_APPLICATION_INVALID');await d09Repository.saveScheduleInputsUsing(tx,{studentId,courseId,input:normalized,governedRequestRef:request.request_id});context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);const computed=computeSharedSemesterSchedule(context,{now:serverNow().toISOString()}),derived=computed.planningContext,result=computed.result;if(result.outcome==='INFEASIBLE') throw error('Approved schedule change became infeasible before application.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:result.reasons});const saved=await d09Repository.saveProposalUsing(tx,{studentId,courseId,context,planningContext:derived,result,source:'FORMAL_REQUEST_APPLIED'}),classes=await d09Repository.materializeApprovedTimetableUsing(tx,{studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id});return {targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length,request_kind:request.request_type}};
+
+    if(request.request_type==='SINGLE_CLASS_RESCHEDULE'){
+      const klass=await repository.getClassTargetUsing(tx,{studentId,classId:change.classId});
+      if(`class-schedule:${klass.schedule_version}`!==String(request.target_version_ref||'')){
+        throw error('Class schedule changed before Request application.','TEACHING_D10_REQUEST_TARGET_STALE');
+      }
+      if(!klass.source_timetable_slot_id){
+        throw error('Class is not bound to an authoritative timetable slot.','TEACHING_D10_REQUEST_TARGET_STALE');
+      }
+      const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+      const planningContext=activeScheduleContext(context);
+      const latest=typeof d09Repository.latestApprovedTimetable==='function'
+        ? await d09Repository.latestApprovedTimetable(studentId,context.semester.semester_id,tx)
+        : await d09Repository.latestTimetable(studentId,context.semester.semester_id,tx);
+      const result=validateEditedSchedule(planningContext,latest.slots,[{
+        slotId:klass.source_timetable_slot_id,
+        startsAt:change.startsAt,
+        endsAt:change.endsAt,
+        exceptionReason:'Approved formal reschedule Request',
+      }],{now:serverNow().toISOString()});
+      if(result.outcome==='INFEASIBLE'){
+        throw error('Approved reschedule became infeasible before application.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{reasons:result.reasons});
+      }
+      const saved=await d09Repository.saveProposalUsing(tx,{
+        studentId,courseId,context,planningContext,result,source:'FORMAL_REQUEST_APPLIED',
+      });
+      const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{
+        studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id,
+      });
+      return {
+        targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,
+        safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length},
+      };
+    }
+
+    let context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+    let normalized;
+    if(request.request_type==='PERMANENT_AVAILABILITY_CHANGE'){
+      normalized=normalizeScheduleInputs(change.scheduleInputs);
+      if(normalized.semester.semesterId&&String(normalized.semester.semesterId)!==String(context.semester.semester_id)){
+        throw error('Availability Request cannot change Semester identity.','TEACHING_D10_AVAILABILITY_SEMESTER_MISMATCH');
+      }
+    }else if(request.request_type==='ACADEMIC_BREAK'){
+      normalized=normalizeScheduleInputs(inputsFromContext(context,{
+        extraBlock:{courseId,kind:'BREAK',startsAt:change.startsAt,endsAt:change.endsAt,label:'Academic Break',reason:'Approved Academic Break Request'},
+      }));
+    }else{
+      throw error('Unsupported Scheduler Request application.','TEACHING_D10_REQUEST_OWNER_APPLICATION_INVALID');
+    }
+
+    await d09Repository.saveScheduleInputsUsing(tx,{
+      studentId,courseId,input:normalized,governedRequestRef:request.request_id,
+    });
+    const rebuilt=await rebuildGovernedSemesterUsing(tx,{
+      studentId,courseId,requestId:request.request_id,
+    });
+    return {
+      targetVersionAfter:`timetable:${rebuilt.saved.timetable.timetable_version_id}:version:${rebuilt.saved.timetable.version_no}`,
+      safeMetadata:{
+        timetable_version:Number(rebuilt.saved.timetable.version_no),
+        materialized_classes:rebuilt.classes.length,
+        request_kind:request.request_type,
+      },
+    };
   }
 
   async function applyApprovedRequest(user,requestId,{expectedVersion=null}={}){
