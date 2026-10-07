@@ -24,6 +24,7 @@ const TEACHING_EVENTS = Object.freeze({
   NOTIFICATION_DELIVERY_DUE: 'teaching.notification.delivery_due',
   CURRICULUM_AUDIT_REQUESTED: 'teaching.curriculum.audit_requested',
   COURSE_PLAN_GENERATION_REQUESTED: 'teaching.course_plan.generation_requested',
+  TIMETABLE_BUILD_REQUESTED: 'teaching.timetable.build_requested',
 
   // D05 Progressive Preparation Lifecycle durable events. Scheduled review and
   // finalization events use D02 due_events; all other committed facts use the
