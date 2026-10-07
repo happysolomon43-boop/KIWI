@@ -606,20 +606,31 @@ function validateLineageRepairPatch(output,{academicInput,baseOutput,repairRefs=
   const existingTopicById=new Map((baseOutput.topics||[]).map((topic)=>[String(topic.topic_id),topic]));
   const existingTopicIds=new Set(existingTopicById.keys());
   const newTopicIds=new Set();
-  const seenRepairTopicIds=new Set();
+  const seenRepairTopicById=new Map();
+  const sameTopicStructure=(left,right)=>
+    String(left?.title||'')===String(right?.title||'')
+    &&JSON.stringify(left?.subtopics||[])===JSON.stringify(right?.subtopics||[]);
   for(const topic of output.topics||[]){
     const id=String(topic?.topic_id||'').trim();
-    if(!id||seenRepairTopicIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_INVALID'};
-    seenRepairTopicIds.add(id);
+    if(!id)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_INVALID'};
+
+    const repeated=seenRepairTopicById.get(id);
+    if(repeated){
+      // A structured-output retry can harmlessly repeat the same Topic row.
+      // Collapse only an exact structural duplicate; conflicting reuse of the
+      // same ID is still rejected and can never reach the canonical artifact.
+      if(!sameTopicStructure(topic,repeated))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_CONFLICT'};
+      continue;
+    }
+    seenRepairTopicById.set(id,topic);
+
     const existing=existingTopicById.get(id);
     if(existing){
       // Existing Topics are immutable in lineage repair. Providers sometimes
       // harmlessly restate one while attaching a source to an existing Learning
       // Unit. Accept only an exact structural restatement; applyLineageRepair()
       // already ignores existing Topic rows, so no rewrite can cross authority.
-      const sameTitle=String(topic.title||'')===String(existing.title||'');
-      const sameSubtopics=JSON.stringify(topic.subtopics||[])===JSON.stringify(existing.subtopics||[]);
-      if(!sameTitle||!sameSubtopics)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_EXISTING_TOPIC_REWRITE_FORBIDDEN'};
+      if(!sameTopicStructure(topic,existing))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_EXISTING_TOPIC_REWRITE_FORBIDDEN'};
       continue;
     }
     newTopicIds.add(id);
