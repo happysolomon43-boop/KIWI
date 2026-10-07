@@ -171,6 +171,7 @@ test('targeted refinement sends the validated current analysis instead of re-run
   assert.equal(request.academicInput.refinement_context.mode,'STUDENT_DIRECTED_ANALYSIS_REFINEMENT');
   assert.equal(request.academicInput.refinement_context.current_analysis.learning_units.length,20);
   assert.equal(request.academicInput.refinement_context.current_analysis.source_inventory,undefined);
+  assert.equal(request.academicInput.refinement_context.current_analysis.source_to_unit_reconciliation,undefined);
   assert.ok(request.academicInput.refinement_context.immutable_analysis_context);
   assert.deepEqual(request.academicInput.refinement_context.immutable_scope,[
     'source_inventory','audit_scope','source_conflicts','coverage_gaps',
@@ -336,6 +337,7 @@ test('TPF-02 direct execution treats student refinement as bounded structural gu
   assert.match(direct,/preserve unaffected curriculum structure/i);
   assert.match(direct,/server preserves source_inventory, full audit_scope, source_conflicts, and coverage_gaps/i);
   assert.match(direct,/empty source_refs and source_walk/i);
+  assert.match(direct,/rebuilds source_to_unit_reconciliation deterministically/i);
   assert.match(direct,/merge only when distinct assessable competencies are not collapsed/);
 });
 
