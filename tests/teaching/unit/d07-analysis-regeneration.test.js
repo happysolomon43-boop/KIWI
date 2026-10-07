@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { digest } = require('../../../teaching/d07/contracts');
 
 const { createD07Service } = require('../../../teaching/d07/service');
 const {
@@ -48,6 +49,8 @@ function currentAudit(version=4) {
     curriculum_audit_id:`audit-${version}`,
     audit_version:version,
     status:'VALIDATED_CANDIDATE',
+    subject_snapshot_ref:'subject:subject-1:snapshot-4',
+    source_inventory_digest:digest([['note:1','hash-1']]),
     audit_output:{
       input_state_reference:'course:course-1:state:4',
       task_mode:'DEEP_AUDIT',
@@ -346,7 +349,6 @@ test('validated analysis revision advances Course state so claimed downstream wo
 
 
 test('stale Course analysis cannot be refined against changed source material', async () => {
-  const {digest}=require('../../../teaching/d07/contracts');
   const audit=currentAudit();
   const setup={
     course:course(4),
