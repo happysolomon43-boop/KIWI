@@ -49,6 +49,34 @@ test('the active Teaching schedule surface never renders another Course timetabl
   assert.match(service, /courseSummary/);
 });
 
+test('Semester owns one shared timetable version while Course pages remain filtered views', () => {
+  const service = fs.readFileSync(path.join(root, 'teaching/d09/service.js'), 'utf8');
+  const repository = fs.readFileSync(path.join(root, 'teaching/repositories/d09-scheduling.js'), 'utf8');
+  const migration = fs.readFileSync(path.join(root, 'migrations/20260929_teaching_d09_scheduling.sql'), 'utf8');
+  const scheduleUi = fs.readFileSync(path.join(root, 'public/teaching-schedule-experience.js'), 'utf8');
+
+  assert.match(service, /scope:'SEMESTER_SHARED'/);
+  assert.match(service, /oneSharedTimetableVersionPerSemester:true/);
+  assert.match(service, /availabilityChangeReflowsAllSchedulableCourses:true/);
+  assert.match(service, /courseSlots:Object\.freeze\(courseSlots\)/);
+  assert.match(repository, /const coursePlanRefs=context\.courses\.map/);
+  assert.match(repository, /for\(const slot of result\.schedule\)/);
+  assert.match(migration, /UNIQUE\(semester_id,version_no\)/);
+  assert.match(scheduleUi, /one deterministic Semester timetable version/);
+  assert.match(scheduleUi, /filtered to this Course/);
+});
+
+test('availability changes and Course Plan changes converge through the same shared timetable rebuild owner', () => {
+  const service = fs.readFileSync(path.join(root, 'teaching/d09/service.js'), 'utf8');
+  const backend = fs.readFileSync(path.join(root, 'teaching-backend.js'), 'utf8');
+
+  assert.match(service, /function rebuildSharedSemesterTimetable/);
+  assert.match(service, /source:'AVAILABILITY_AUTO_RECALC'/);
+  assert.match(service, /return rebuildSharedSemesterTimetable\(user,courseId,context/);
+  assert.match(backend, /recalculateAfterCoursePlanChange/);
+  assert.match(backend, /timetable_recalculated/);
+});
+
 test('Course Plan regeneration is versioned and triggers safe timetable recalculation', () => {
   const flow = fs.readFileSync(path.join(root, 'public/teaching-flow-integrity.js'), 'utf8');
   const d08 = fs.readFileSync(path.join(root, 'teaching/d08/service.js'), 'utf8');
