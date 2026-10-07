@@ -521,7 +521,7 @@ function lineageRepairRequest({
       existing_gap_refs:Object.freeze((baseOutput.coverage_gaps||[]).map((item)=>item.gap_id)),
     }),
   });
-  const outputSchema=tpf02OutputSchema();
+  const outputSchema=tpf02DecompositionPatchOutputSchema();
   const fullAcademicInput=buildTpf02AcademicInput({
     course,
     sources,
@@ -893,9 +893,9 @@ function decompositionRepairRequest({
     },
     modelContentMode:'TPF02_DIRECT',
     generation:Object.freeze({maxOutputTokens:TPF02_MAX_OUTPUT_TOKENS,structuredOutput:Object.freeze({mimeType:'application/json'})}),
-    schemaValidator:validateTpf02Schema,
+    schemaValidator:validateTpf02DecompositionPatchSchema,
     domainValidator:async out=>{
-      const patch=validateDecompositionRepairPatch(out,{academicInput,baseOutput,preparedInventory,repairScope});
+      const patch=validateDecompositionRepairPatch(out,{academicInput,baseOutput,repairScope});
       if(!patch.ok)return patch;
       const merged=applyDecompositionRepair(baseOutput,patch.value,{preparedInventory,preparedSourceWalk,repairScope});
       return validateTpf02Domain(merged,fullValidationContext);
