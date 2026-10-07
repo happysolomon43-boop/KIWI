@@ -467,7 +467,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
         return !bundle
           || String(ref.course_plan_id)!==String(bundle.plan.course_plan_id)
           || Number(ref.version_no)!==Number(bundle.plan.version_no)
-          || Number(ref.state_version)!==Number(bundle.course.state_version);
+          || (!authoritativeView && Number(ref.state_version)!==Number(bundle.course.state_version));
       })
     );
     return {...context,...latest,staleSchedule,debtMinutes:Math.max(0,Number(debt?.[0]?.debt_minutes)||0)};
