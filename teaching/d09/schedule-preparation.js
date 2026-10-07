@@ -1,9 +1,14 @@
 'use strict';
 
+const { computeSchedule } = require('./scheduler');
+
 const PREACTIVATION_STATES = new Set(['DRAFT', 'READY', 'PLANNING', 'SETUP']);
 const NO_INITIAL_INSTRUCTION = 'VALIDATED_PRIOR_KNOWLEDGE_NO_INITIAL_INSTRUCTION';
 const DEFAULT_LOAD_BATCH_SIZE = 20;
 const DEFAULT_LOAD_CONCURRENCY = 2;
+const SCHEDULER_EXCLUDED_LIFECYCLES = new Set([
+  'PAUSED','TEACHING_ENDED','FINALIZING','INCOMPLETE','COMPLETED','ARCHIVED',
+]);
 
 function fail(message, code, status = 409, details = null) {
   const error = new Error(message);
@@ -11,6 +16,22 @@ function fail(message, code, status = 409, details = null) {
   error.status = status;
   if (details) error.details = details;
   return error;
+}
+
+function isSchedulableLifecycle(state) {
+  return !SCHEDULER_EXCLUDED_LIFECYCLES.has(String(state || 'DRAFT'));
+}
+
+function schedulableScheduleContext(context, { includeCourseId = null } = {}) {
+  const included = (context?.courses || []).filter((bundle) => {
+    const id = String(bundle.course?.course_id || '');
+    if (includeCourseId != null && id === String(includeCourseId)) return true;
+    return isSchedulableLifecycle(bundle.course?.lifecycle_state);
+  });
+  return Object.freeze({
+    ...(context || {}),
+    courses: Object.freeze(included),
+  });
 }
 
 function treatment(unit) {
@@ -49,6 +70,16 @@ function planningContextAt(context, serverNow) {
     derived_by: 'D09_SERVER_TIME_FLOOR',
   });
   return Object.freeze({ ...context, blocks: Object.freeze([...(context.blocks || []), elapsedBlock]) });
+}
+
+function computeSharedSemesterSchedule(context, { now, includeCourseId = null } = {}) {
+  const nowIso = now instanceof Date ? now.toISOString() : String(now || new Date().toISOString());
+  const eligible = schedulableScheduleContext(context, { includeCourseId });
+  const planningContext = planningContextAt(eligible, nowIso);
+  return Object.freeze({
+    planningContext,
+    result: computeSchedule(planningContext, { now: nowIso }),
+  });
 }
 
 function extractExecutionRef(result) {
@@ -174,6 +205,7 @@ async function ensureInstructionalLoads({
 } = {}) {
   const context = initialContext;
   const missing = missingInstructionalLoads(context);
+  const requestedScopeRefs = new Set(targetRefs(missing));
   if (!missing.length) return context;
   if (!intelligence || typeof intelligence.execute !== 'function') {
     throw fail('Instructional-load estimation is required before this timetable can be created.', 'TEACHING_D09_LOAD_ESTIMATION_UNAVAILABLE', 503);
@@ -249,7 +281,9 @@ async function ensureInstructionalLoads({
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   const refreshed = await repository.getSchedulingContext(user.id, courseId);
-  const remaining = missingInstructionalLoads(refreshed);
+  const remaining = missingInstructionalLoads(refreshed).filter(({ bundle, unit }) =>
+    requestedScopeRefs.has(scopeRef(bundle.course.course_id, unit.learning_unit_id))
+  );
   if (remaining.length) {
     throw fail('One or more Learning Units still have no safe instructional-load range.', 'TEACHING_D09_LOAD_ESTIMATION_INCOMPLETE', 422, {
       learningUnitIds: remaining.map(({ unit }) => String(unit.learning_unit_id)),
@@ -263,6 +297,10 @@ module.exports = {
   NO_INITIAL_INSTRUCTION,
   DEFAULT_LOAD_BATCH_SIZE,
   DEFAULT_LOAD_CONCURRENCY,
+  SCHEDULER_EXCLUDED_LIFECYCLES,
+  isSchedulableLifecycle,
+  schedulableScheduleContext,
+  computeSharedSemesterSchedule,
   fail,
   treatment,
   instructionalUnits,
