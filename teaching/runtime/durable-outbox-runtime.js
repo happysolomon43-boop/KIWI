@@ -126,13 +126,30 @@ function createDurableTeachingOutboxRuntime({
   async function tick() {
     if (running) return Object.freeze({ skipped: true, reason: 'tick_in_progress' });
     running = true;
-    const now = clock();
-    lastTickAt = now.toISOString();
+    const startedAt = clock();
+    lastTickAt = startedAt.toISOString();
+    let claimedCount = 0;
+    const outcomes = [];
     try {
-      await store.releaseExpiredClaims(now);
-      const claimed = await store.claimPending({ workerId, now, limit: effectiveBatchSize, leaseMs: effectiveLeaseMs });
-      const outcomes = [];
-      for (const event of claimed) {
+      await store.releaseExpiredClaims(startedAt);
+
+      // Long-running Teaching publications can take minutes. Do not claim an
+      // entire batch up front and then leave later rows un-heartbeated while
+      // earlier rows execute. Claim exactly one row when this worker is ready
+      // to start its heartbeat, then repeat up to the configured batch limit.
+      // This preserves batch throughput without creating idle expiring claims.
+      for (let slot = 0; slot < effectiveBatchSize; slot += 1) {
+        const claimNow = clock();
+        const claimed = await store.claimPending({
+          workerId,
+          now: claimNow,
+          limit: 1,
+          leaseMs: effectiveLeaseMs,
+        });
+        const event = claimed?.[0];
+        if (!event) break;
+        claimedCount += 1;
+
         const heartbeat = startClaimHeartbeat(event);
         try {
           let publicationError = null;
@@ -173,9 +190,10 @@ function createDurableTeachingOutboxRuntime({
             });
             outcomes.push('CANCELLED');
           } else {
+            const retryNow = clock();
             await store.retry(event, {
               errorCode: error?.code || 'TEACHING_EVENT_PUBLICATION_FAILED',
-              retryAt: new Date(now.getTime() + retryDelay(event.attempt_count)),
+              retryAt: new Date(retryNow.getTime() + retryDelay(event.attempt_count)),
             });
             outcomes.push('RETRY_WAIT');
           }
@@ -185,12 +203,17 @@ function createDurableTeachingOutboxRuntime({
           await heartbeat.stop().catch(() => {});
         }
       }
+
       lastError = null;
-      return Object.freeze({ skipped: false, claimed: claimed.length, outcomes: Object.freeze(outcomes) });
+      return Object.freeze({
+        skipped: false,
+        claimed: claimedCount,
+        outcomes: Object.freeze(outcomes),
+      });
     } catch (error) {
       lastError = { code: error?.code || null, message: error?.message || String(error) };
       logger?.error?.('[KIWI Teaching] event-outbox tick failed', lastError);
-      return Object.freeze({ skipped: false, claimed: 0, error: lastError });
+      return Object.freeze({ skipped: false, claimed: claimedCount, error: lastError });
     } finally {
       running = false;
     }
