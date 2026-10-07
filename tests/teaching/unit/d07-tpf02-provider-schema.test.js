@@ -17,6 +17,9 @@ const {
   TPF02_CURRICULUM_AUDIT_RESPONSE_SCHEMA,
   TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA,
 } = require('../../../teaching/d07/tpf02-provider-schema');
+const {
+  TPF02_MERGE_COMPRESSION_PATCH_RESPONSE_SCHEMA,
+} = require('../../../teaching/d07/tpf02-merge-compression');
 const { createExecutionRequest } = require('../../../services/ai/execution-contracts');
 const { serializeGoogleExecutionRequest } = require('../../../services/ai/google-provider-adapter');
 
@@ -57,6 +60,27 @@ function preparedInventory() {
     confidence: 'high',
   }];
 }
+
+
+test('merge/compression provider schema keeps collection limits in the runtime validator', () => {
+  const request = createExecutionRequest({
+    provider: 'GOOGLE',
+    modelId: 'gemini-test',
+    taskId: 'MAIN_CBT',
+    content: 'bounded merge patch',
+    generation: {
+      structuredOutput: {
+        mimeType: 'application/json',
+        schema: TPF02_MERGE_COMPRESSION_PATCH_RESPONSE_SCHEMA,
+      },
+    },
+  });
+  const serialized = serializeGoogleExecutionRequest(request);
+  const mergeGroups = serialized.generationConfig.responseSchema.properties.merge_groups;
+  assert.equal(mergeGroups.type, 'array');
+  assert.equal(Object.hasOwn(mergeGroups, 'maxItems'), false);
+  assert.equal(Object.hasOwn(mergeGroups, 'minItems'), false);
+});
 
 test('TPF-02 provider schema requires the exact canonical top-level contract', () => {
   assert.deepEqual(
