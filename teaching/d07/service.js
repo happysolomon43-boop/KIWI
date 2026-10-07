@@ -334,13 +334,35 @@ function createD07Service({
           previousAudit: normalizedOperation === 'REGENERATE' ? revisionBasis : null,
         });
     if (!result?.accepted) {
-      const error = new Error(normalizedOperation === 'REFINE'
-        ? 'The requested Course analysis change could not be validated safely.'
-        : 'Curriculum Audit was rejected by validation.');
+      if (result?.stale === true) {
+        const error = new Error('Course state changed while Course analysis was running; the operation must restart from the current analysis.');
+        error.status = 409;
+        error.code = 'TEACHING_D07_AUDIT_STATE_CHANGED';
+        error.retryable = true;
+        throw error;
+      }
+      const validationFailure = result?.validationFailure || null;
+      const validationReason = String(
+        validationFailure?.reason
+        || result?.rejectionReason
+        || result?.reason
+        || result?.errorCode
+        || ''
+      ).trim() || null;
+      const noDefensibleChange = validationReason === 'TPF02_MERGE_COMPRESSION_NO_DEFENSIBLE_CHANGE';
+      const error = new Error(noDefensibleChange
+        ? 'KIWI could not identify an academically defensible merge or compression from the current Course analysis.'
+        : normalizedOperation === 'REFINE'
+          ? 'The requested Course analysis change could not be validated safely.'
+          : 'Curriculum Audit was rejected by validation.');
       error.status = 422;
       error.code = normalizedOperation === 'REFINE'
         ? 'TEACHING_D07_ANALYSIS_REFINEMENT_REJECTED'
         : 'TEACHING_D07_CURRICULUM_AUDIT_REJECTED';
+      error.retryable = validationFailure ? false : !String(result?.errorCode || '').startsWith('TEACHING_TPF02_');
+      error.validationReason = validationReason;
+      error.validationStage = validationFailure?.stage || result?.validationStage || null;
+      error.validationFailure = validationFailure;
       throw error;
     }
 

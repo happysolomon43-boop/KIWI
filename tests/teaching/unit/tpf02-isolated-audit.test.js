@@ -298,6 +298,8 @@ test('Teaching boundary rejects MAX_TOKENS before truncated JSON can reach schem
 test('Teaching outbox treats deterministic TPF-02/truncation failures as terminal rather than scheduling identical retries',async()=>{
  assert.equal(isTerminalPublicationFailure({code:'TEACHING_AI_OUTPUT_TRUNCATED'}),true);
  assert.equal(isTerminalPublicationFailure({code:'BAD_REQUEST'}),true);
+ assert.equal(isTerminalPublicationFailure({code:'TEACHING_D07_ANALYSIS_REFINEMENT_REJECTED',retryable:false}),true);
+ assert.equal(isTerminalPublicationFailure({code:'TEACHING_EVENT_PUBLICATION_FAILED',validationFailure:{kind:'VALIDATION_REJECTION'}}),true);
  const actions=[];
  const event={event_id:'e1',attempt_count:1,status:'CLAIMED',schema_version:1,event_type:'teaching.curriculum.audit_requested',event_category:'operational_recovery_event',trigger_type:'background_analysis',source:'teaching.d07',origin:'teaching.course_setup',actor_id:'u1',aggregate_type:'teaching_course',aggregate_id:'course-1',aggregate_version:7,occurred_at:new Date(),effective_at:null,correlation_id:'e1',causation_id:null,idempotency_key:'k',payload:{},audit_refs:[],provenance_refs:[]};
  const runtime=createDurableTeachingOutboxRuntime({store:{async releaseExpiredClaims(){},async claimPending(){return [event];},async markPublished(){actions.push('published');},async markCancelled(_e,x){actions.push(['cancelled',x.errorCode]);},async retry(){actions.push('retry');}},publish:async()=>{const error=new Error('truncated');error.code='TEACHING_AI_OUTPUT_TRUNCATED';throw error;},workerId:'test-worker',logger:{error(){}}});

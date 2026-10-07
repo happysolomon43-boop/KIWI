@@ -124,6 +124,14 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
         validatedResult: validated.accepted ? validated : null,
         rejectionReason: validated.accepted ? null : validated.reason,
         validationStage: validated.accepted ? null : validated.stage,
+        validationFailure: validated.accepted ? null : (validated.validationFailure || Object.freeze({
+          kind: 'VALIDATION_REJECTION',
+          stage: validated.stage || 'unknown',
+          reason: validated.reason || 'MODEL_OUTPUT_REJECTED',
+          retryable: validated.retryable === true,
+          repairable: validated.repairable || 'UNSPECIFIED',
+          validatorId: null,
+        })),
         modelMetadata: Object.freeze({ ...meta, taskId }),
       });
     } catch (error) {
