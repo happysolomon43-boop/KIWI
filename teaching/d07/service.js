@@ -300,8 +300,15 @@ function createD07Service({
     const normalizedReason = String(regenerationReason || '').trim().slice(0, 1500);
     const revision = normalizedOperation !== 'GENERATE';
     const revisionBasis = previousAudit || (revision ? setup.curriculumAudit : null);
-    if (revision && (!revisionBasis || revisionBasis.status !== 'VALIDATED_CANDIDATE')) {
-      const error = new Error('A validated Course analysis is required before it can be changed.');
+    const revisionBasisMatchesSetup = !revision
+      || (
+        revisionBasis
+        && analysisRevisionBasisCurrent(setup)
+        && String(revisionBasis.curriculum_audit_id || '') === String(setup.curriculumAudit?.curriculum_audit_id || '')
+        && Number(revisionBasis.audit_version || 0) === Number(setup.curriculumAudit?.audit_version || 0)
+      );
+    if (revision && !revisionBasisMatchesSetup) {
+      const error = new Error('The current Course analysis must match the present Course materials before it can be changed.');
       error.status = 409;
       error.code = 'TEACHING_D07_ANALYSIS_REVISION_REQUIRES_CURRENT';
       throw error;
