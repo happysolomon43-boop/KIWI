@@ -9,6 +9,7 @@ const {
   ensureInstructionalLoads,
   missingInstructionalLoads,
   scopeRef,
+  computeSharedSemesterSchedule,
 } = require('../../../teaching/d09/schedule-preparation');
 const { schedulingRequest } = require('../../../teaching/d09/intelligence');
 
@@ -113,6 +114,20 @@ test('D09 workload preparation adaptively splits a MAX_TOKENS batch and persists
   assert.ok(callSizes.filter((size)=>size<=2).length>=2,'bounded sub-batches should eventually succeed');
   assert.equal(missingInstructionalLoads(prepared).length,0);
   assert.ok(prepared.courses[0].units.every((unit)=>unit.instructional_load_max_minutes===75));
+});
+
+test('shared Scheduler can persist an empty future timetable after the last governed Course leaves scheduling', () => {
+  const context={
+    course:{course_id:'c1',lifecycle_state:'PAUSED'},
+    semester:{semester_id:'sem1',state_version:2,starts_at:'2026-10-01T00:00:00Z',ends_at:'2026-12-01T00:00:00Z',timezone:'UTC'},
+    profile:{profile_id:'profile1',version_no:2,preferences:{},settings:{}},
+    availability:[],blocks:[],deadlines:[],reserves:[],courses:[],priorSlots:[],
+  };
+  const {result}=computeSharedSemesterSchedule(context,{now:'2026-10-07T12:00:00Z'});
+  assert.equal(result.outcome,'FEASIBLE');
+  assert.equal(result.metrics.requiredMinutes,0);
+  assert.equal(result.schedule.length,0);
+  assert.doesNotMatch(result.reasons.join(','),/NO_USABLE_AVAILABILITY/);
 });
 
 test('TPF-10 instructional-load requests can target a bounded subset with completion headroom', () => {
