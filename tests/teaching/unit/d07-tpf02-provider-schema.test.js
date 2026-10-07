@@ -65,7 +65,8 @@ function preparedInventory() {
 test('merge/compression provider schema keeps collection limits in the runtime validator', () => {
   const request = createExecutionRequest({
     provider: 'GOOGLE',
-    model: { modelId: 'gemini-test' },
+    modelId: 'gemini-test',
+    taskId: 'MAIN_CBT',
     content: 'bounded merge patch',
     generation: {
       structuredOutput: {
