@@ -121,7 +121,15 @@ function createD07CourseIntakeRepository({query,withTransaction,randomUUID,clock
    }
    resetApplied=true;
   }
-  return {...rows[0],downstream_reset_applied:resetApplied,course_state_version_after:nextCourseStateVersion};
+  const committedValidationMetadata=revision&&nextCourseStateVersion!==Number(validationMetadata?.state_version||nextCourseStateVersion)
+    ? {...canonicalMetadata,revision_committed_state_version:nextCourseStateVersion}
+    : canonicalMetadata;
+  return {
+    ...rows[0],
+    validation_metadata:committedValidationMetadata,
+    downstream_reset_applied:resetApplied,
+    course_state_version_after:nextCourseStateVersion,
+  };
  });}
  async function saveDiagnosticPlan({studentId,courseId,auditId,requirement,design=null,provenanceRefs=[]}){const v=Number((await query('select coalesce(max(plan_version),0)+1 v from public.teaching_diagnostic_plans where course_id=$1',[courseId])).rows[0].v);const required=requirement.required;const {rows}=await query(`insert into public.teaching_diagnostic_plans(diagnostic_plan_id,student_id,course_id,curriculum_audit_id,plan_version,requirement_state,requirement_reason,target_refs,non_graded,capability_id,prompt_family_id,prompt_family_version,output_schema_version,diagnostic_design,provenance_refs) values($1,$2,$3,$4,$5,$6,$7,$8::jsonb,true,$9,$10,$11,$12,$13::jsonb,$14::jsonb) returning *`,[randomUUID(),studentId,courseId,auditId||null,v,required?'REQUIRED':'NOT_REQUIRED',requirement.reason,JSON.stringify(requirement.targets),required?'teaching.curriculum.targeted_placement_prior_knowledge_diagnostic_design':null,required?'TPF-04':null,required?'1.2':null,required?'d07.targeted-diagnostic.v1':null,required?JSON.stringify(design):null,JSON.stringify(provenanceRefs)]);return rows[0];}
  async function loadDiagnosticEvidence({studentId,courseId,targetKind,targetRef,evidenceRefs}){if(!Array.isArray(evidenceRefs)||!evidenceRefs.length)return [];const {rows=[]}=await query(`select e.* from public.teaching_evidence_events e where e.student_id=$1 and e.course_id=$2 and e.evidence_event_id=any($3::text[]) and e.evidence_kind='DIAGNOSTIC' and e.evidence_purpose='PRIOR_KNOWLEDGE_VERIFICATION' and e.formal_assessment=false and (($4='LEARNING_UNIT' and exists(select 1 from public.teaching_evidence_event_learning_units l where l.evidence_event_id=e.evidence_event_id and l.student_id=$1 and l.learning_unit_id=$5)) or ($4<>'LEARNING_UNIT' and e.response_quality->>'target_ref'=$5))`,[studentId,courseId,evidenceRefs,targetKind,targetRef]);return rows;}
