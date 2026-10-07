@@ -119,7 +119,7 @@ function createPlanReader({ query }) {
   async function latestBackgroundPlanGeneration(studentId, courseId) {
     try {
       const { rows = [] } = await query(
-        `select event_id,status,attempt_count,last_error_code,next_attempt_at,created_at,updated_at,published_at,aggregate_version,causation_id
+        `select event_id,status,attempt_count,last_error_code,next_attempt_at,created_at,updated_at,published_at,aggregate_version,causation_id,payload
            from teaching_runtime.event_outbox
           where actor_id=$1
             and aggregate_type='teaching_course'
