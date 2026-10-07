@@ -85,36 +85,31 @@ function createTeachingRouter({
         if (String(setup.course.state_version) !== String(event.payload?.expected_state_version || event.aggregate_version)) {
           return Object.freeze({ accepted: true, stale: true, safeMetadata: { reason: 'COURSE_STATE_CHANGED' } });
         }
-        const regenerate = event.payload?.regenerate === true;
+        const operation = String(
+          event.payload?.operation
+          || (event.payload?.refine === true ? 'REFINE' : event.payload?.regenerate === true ? 'REGENERATE' : 'GENERATE')
+        ).toUpperCase();
+        const revision = operation === 'REFINE' || operation === 'REGENERATE';
         const audit = await backgroundAuditService.runAudit(
           { id: event.actorId },
           event.aggregateId,
           {
-            regenerate,
-            regenerationReason: event.payload?.regeneration_reason || null,
-            previousAudit: regenerate ? setup.curriculumAudit || null : null,
+            operation,
+            changeRequest: operation === 'REFINE' ? event.payload?.change_request || null : null,
+            regenerationReason: operation === 'REGENERATE' ? event.payload?.regeneration_reason || null : null,
+            previousAudit: revision ? setup.curriculumAudit || null : null,
           },
         );
-        let timetableReset = null;
-        if (regenerate && schedulingService && typeof schedulingService.queueTimetableBuild === 'function') {
-          try {
-            timetableReset = await schedulingService.queueTimetableBuild(
-              { id: event.actorId },
-              event.aggregateId,
-              { operation: 'REFLOW', source: 'CURRICULUM_AUDIT_RESET' },
-            );
-          } catch (error) {
-            timetableReset = { accepted: false, reason: error?.code || 'TIMETABLE_RESET_QUEUE_FAILED' };
-          }
-        }
         return Object.freeze({
           accepted: true,
           auditId: audit.curriculum_audit_id,
           safeMetadata: {
             audit_id: audit.curriculum_audit_id,
-            regeneration_requested: regenerate,
-            timetable_reset_queued: timetableReset?.accepted === true,
-            timetable_reset_reason: timetableReset?.accepted === true ? null : timetableReset?.reason || null,
+            operation,
+            refinement_requested: operation === 'REFINE',
+            regeneration_requested: operation === 'REGENERATE',
+            downstream_reset_applied: audit.downstream_reset_applied === true,
+            course_state_version_after: audit.course_state_version_after || null,
           },
         });
       },
@@ -271,12 +266,19 @@ function createTeachingRouter({
     });
     router.post('/courses/:id/curriculum-audit', async (req, res) => {
       try {
+        const operation = String(
+          req.body?.operation
+          || (req.body?.refine === true ? 'REFINE' : req.body?.regenerate === true ? 'REGENERATE' : 'GENERATE')
+        ).toUpperCase();
         res.status(202).json(await courseIntakeService.queueAudit(req.user, req.params.id, {
-          regenerate: req.body?.regenerate === true,
+          operation,
+          refine: operation === 'REFINE',
+          regenerate: operation === 'REGENERATE',
+          changeRequest: req.body?.changeRequest ?? req.body?.instruction ?? null,
           regenerationReason: req.body?.reason ?? req.body?.regenerationReason ?? null,
         }));
       }
-      catch (error) { sendError(res, error, 'Failed to queue Curriculum Audit.'); }
+      catch (error) { sendError(res, error, 'Failed to queue Course analysis.'); }
     });
     router.post('/courses/:id/diagnostic-plan', async (req, res) => {
       try { res.status(201).json(await courseIntakeService.planDiagnostic(req.user, req.params.id, req.body)); }
