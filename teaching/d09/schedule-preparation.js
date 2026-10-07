@@ -9,7 +9,7 @@ const DEFAULT_LOAD_CONCURRENCY = 2;
 const SCHEDULER_EXCLUDED_LIFECYCLES = new Set([
   'PAUSED','TEACHING_ENDED','FINALIZING','INCOMPLETE','COMPLETED','ARCHIVED',
 ]);
-const GOVERNED_SCHEDULE_LIFECYCLES = new Set(['ACTIVE','PAUSED']);
+const GOVERNED_SCHEDULE_LIFECYCLES = new Set(['ACTIVE','PAUSED','INCOMPLETE']);
 
 function fail(message, code, status = 409, details = null) {
   const error = new Error(message);
