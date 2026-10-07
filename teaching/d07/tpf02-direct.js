@@ -159,7 +159,7 @@ function validateTpf02DecompositionPatchSchema(output){
 
  for(const [index,unit] of output.resulting_units.entries()){
   if(!isObject(unit)||!exactObjectFields(unit,TPF02_DECOMPOSITION_PATCH_UNIT_FIELDS))return invalid(`TPF02_DECOMPOSITION_PATCH_UNIT_CONTRACT_INVALID:${index}`);
-  if(!isString(unit.learning_unit_id)||!isString(unit.title)||!isString(unit.intended_competence)||!uniqueStringArray(unit.source_item_refs)||unit.source_item_refs.length===0||!uniqueStringArray(unit.prerequisite_refs)||!nullableString(unit.dependency_type_notes)||!CRITICALITY.has(unit.criticality)||!isString(unit.criticality_basis)||!isString(unit.proposed_exit_evidence)||!stringArray(unit.uncertainties))return invalid(`TPF02_DECOMPOSITION_PATCH_UNIT_INVALID:${index}`);
+  if(!isString(unit.learning_unit_id)||!isString(unit.title)||!isString(unit.intended_competence)||!uniqueStringArray(unit.source_item_refs)||!uniqueStringArray(unit.prerequisite_refs)||!nullableString(unit.dependency_type_notes)||!CRITICALITY.has(unit.criticality)||!isString(unit.criticality_basis)||!isString(unit.proposed_exit_evidence)||!stringArray(unit.uncertainties))return invalid(`TPF02_DECOMPOSITION_PATCH_UNIT_INVALID:${index}`);
  }
 
  if(output.decision==='split'){
