@@ -343,3 +343,35 @@ test('validated analysis revision advances Course state so claimed downstream wo
   assert.match(planWriter,/TEACHING_D08_STALE_COURSE_STATE/);
   assert.match(timetableRepository,/assertSchedulingContextCurrent/);
 });
+
+
+test('stale Course analysis cannot be refined against changed source material', async () => {
+  const {digest}=require('../../../teaching/d07/contracts');
+  const audit=currentAudit();
+  const setup={
+    course:course(4),
+    sources:[source('source-1')],
+    curriculumAudit:{
+      ...audit,
+      subject_snapshot_ref:'subject:subject-1:snapshot-4',
+      source_inventory_digest:digest([['note:1','older-hash']]),
+    },
+    backgroundAnalysis:null,
+  };
+  let aiCalls=0;
+  const service=createD07Service({
+    subjects:subjects(),
+    repository:{async getSetup(){return setup;}},
+    intelligence:{async refineCurriculumAudit(){aiCalls+=1;return {accepted:true};}},
+  });
+
+  await assert.rejects(
+    service.runAudit({id:'student-1'},'course-1',{
+      operation:'REFINE',
+      changeRequest:'Split the broad Learning Units.',
+      previousAudit:setup.curriculumAudit,
+    }),
+    (error)=>error.code==='TEACHING_D07_ANALYSIS_REVISION_REQUIRES_CURRENT',
+  );
+  assert.equal(aiCalls,0);
+});
