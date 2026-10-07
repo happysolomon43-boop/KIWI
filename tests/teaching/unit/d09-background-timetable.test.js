@@ -281,7 +281,7 @@ test('background timetable work is shared across sibling Course pages in the sam
 test('schedule repository discovers active timetable jobs by Semester instead of initiating Course only',()=>{
   const repository=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d09-scheduling.js'),'utf8');
   assert.match(repository,/payload->>'semester_id'=\$2/);
-  assert.match(repository,/latestBackgroundTimetableBuild\(studentId,courseId,context\.semester\?\.semester_id\|\|null\)/);
+  assert.match(repository,/latestBackgroundTimetableBuild\(\s*studentId,\s*courseId,\s*context\.semester\?\.semester_id\|\|null,?\s*\)/);
 });
 
 
