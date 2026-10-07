@@ -17,6 +17,7 @@ const {
   validateMergeCompressionPatch,
   applyMergeCompressionPatch,
   createD07Intelligence,
+  canonicalizeTpf02RuntimeEnvelope,
   canonicalizeSynthesisSourceScope,
   executeAdaptiveLineageRepair,
   validateLineageRepairPatch,
@@ -914,4 +915,88 @@ test('Course Setup keeps an in-flight analysis revision visibly running and paus
   assert.match(ui,/current validated Course analysis remains authoritative while KIWI finishes this revision/);
   assert.match(ui,/Course Plan setup is paused until the revision finishes/);
   assert.match(ui,/backgroundOperation: backgroundAudit\.operation/);
+});
+
+
+test('merge/compression accepts an explicit no-change decision instead of turning academic restraint into failure', () => {
+  const output={
+    input_state_reference:'teaching_course:course-1:state:4',
+    task_mode:'MERGE_OR_COMPRESS_UNITS',
+    execution_stage:'SINGLE_PASS',
+    merge_groups:[],
+    unresolved_reason:'The current units represent distinct assessable competencies and no safe same-placement merge was identified.',
+    required_next_input_or_review:'Keep the current structure or provide a narrower merge instruction.',
+    review_required:true,
+  };
+  const result=validateMergeCompressionPatch(output,{
+    academicInput:{input_state_reference:'teaching_course:course-1:state:4'},
+    baseOutput:{learning_units:[]},
+  });
+  assert.equal(result.ok,true);
+  assert.deepEqual(result.value.merge_groups,[]);
+});
+
+test('merge/compression canonicalizes server-owned state identity before schema validation', async () => {
+  const request=mergeCompressionRefinementRequest({
+    course:course(),
+    sources:[source()],
+    previousAudit:currentAudit(),
+    changeRequest:'Reduce and merge excessive learning units while preserving quality.',
+  });
+  const modelOutput={
+    input_state_reference:'model-invented-state',
+    task_mode:'MERGE_OR_COMPRESS_UNITS',
+    execution_stage:'SINGLE_PASS',
+    merge_groups:[],
+    unresolved_reason:'No academically defensible merge can be made without collapsing distinct competencies.',
+    required_next_input_or_review:'Keep the validated structure.',
+    review_required:true,
+  };
+
+  const schema=await request.schemaValidator(modelOutput);
+  assert.equal(schema.ok,true,schema.reason);
+  assert.equal(schema.value.input_state_reference,request.academicInput.input_state_reference);
+  assert.equal(canonicalizeTpf02RuntimeEnvelope(modelOutput,request.academicInput,{canonicalizeAuditScope:false}).input_state_reference,request.academicInput.input_state_reference);
+});
+
+test('D07 preserves the precise validation cause and marks completed validation rejection non-retryable', async () => {
+  const audit=currentAudit();
+  const setup={course:course(4),sources:[source()],curriculumAudit:audit,backgroundAnalysis:null};
+  const service=createD07Service({
+    subjects:subjects(),
+    repository:{async getSetup(){return setup;}},
+    intelligence:{
+      async refineCurriculumAudit(){
+        return {
+          accepted:false,
+          rejectionReason:'TPF02_MERGE_COMPRESSION_PLACEMENT_MISMATCH',
+          validationStage:'domain',
+          validationFailure:{
+            kind:'VALIDATION_REJECTION',
+            stage:'domain',
+            reason:'TPF02_MERGE_COMPRESSION_PLACEMENT_MISMATCH',
+            retryable:false,
+            repairable:'TARGETED_REPAIR',
+            validatorId:'domain',
+          },
+        };
+      },
+    },
+  });
+
+  await assert.rejects(
+    service.runAudit(
+      {id:'student-1'},
+      'course-1',
+      {operation:'REFINE',changeRequest:'Merge overlapping units carefully.'},
+    ),
+    (error)=>{
+      assert.equal(error.code,'TEACHING_D07_ANALYSIS_REFINEMENT_REJECTED');
+      assert.equal(error.retryable,false);
+      assert.equal(error.validationReason,'TPF02_MERGE_COMPRESSION_PLACEMENT_MISMATCH');
+      assert.equal(error.validationStage,'domain');
+      assert.equal(error.validationFailure.repairable,'TARGETED_REPAIR');
+      return true;
+    },
+  );
 });
