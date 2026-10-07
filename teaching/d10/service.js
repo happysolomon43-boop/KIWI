@@ -4,7 +4,13 @@ const { TEACHING_EVENTS } = require('../events/names');
 const { EVENT_CATEGORIES } = require('../runtime/constants');
 const { normalizeScheduleInputs } = require('../d09/contracts');
 const { validateEditedSchedule } = require('../d09/scheduler');
-const { schedulableScheduleContext, computeSharedSemesterSchedule, missingInstructionalLoads } = require('../d09/schedule-preparation');
+const {
+  schedulableScheduleContext,
+  activeAuthorityScheduleContext,
+  timetableRefScheduleContext,
+  computeSharedSemesterSchedule,
+  missingInstructionalLoads,
+} = require('../d09/schedule-preparation');
 const { normalizeCreateRequest,requestDefinition } = require('./contracts');
 
 function createD10Service({
@@ -115,22 +121,69 @@ function createD10Service({
   async function declineAlternative(user,requestId,input={}){const version=Number(input.alternativeVersion);if(!Number.isInteger(version)||version<1) throw error('alternativeVersion is required.','TEACHING_D10_ALTERNATIVE_VERSION_REQUIRED',400);return sanitizeRequest(await repository.declineAlternative({studentId:user.id,requestId,alternativeVersion:version}));}
   function requestChange(request){if(request.lifecycle_state==='APPROVED_WITH_ADJUSTMENT'&&request.student_response==='ACCEPTED'&&request.alternative_proposal?.requestedChange)return request.alternative_proposal.requestedChange;return request.requested_change;}
 
-  async function rebuildGovernedSemesterUsing(tx,{studentId,courseId,requestId,includeCourseId=null}){
-    const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
-    const eligibleContext=schedulableScheduleContext(context,{includeCourseId});
-    const missingLoads=missingInstructionalLoads(eligibleContext);
+  function requirePreparedLoads(planningContext,{allowEmpty=true}={}){
+    const missingLoads=missingInstructionalLoads(planningContext);
     if(missingLoads.length){
       throw error(
-        'The shared Semester timetable cannot be changed until KIWI finishes workload preparation for every schedulable Course Plan.',
+        'The authoritative Semester timetable cannot be changed until KIWI finishes workload preparation for the affected active Course Plans.',
         'TEACHING_D09_LOAD_ESTIMATION_REQUIRED',
         409,
         {learningUnitIds:missingLoads.map(({unit})=>String(unit.learning_unit_id))},
       );
     }
-    const computed=computeSharedSemesterSchedule(context,{
-      now:serverNow().toISOString(),
-      includeCourseId,
+    if(!allowEmpty&&!(planningContext.courses||[]).length){
+      throw error('No Course is currently eligible for this timetable operation.','TEACHING_D09_CURRENT_COURSE_PLAN_REQUIRED',409);
+    }
+  }
+
+  async function buildPendingExpansionUsing(tx,{studentId,courseId,requestId,context}){
+    const expansionContext=schedulableScheduleContext(context);
+    const hasDraftExpansion=(expansionContext.courses||[]).some((bundle)=>
+      ['DRAFT','READY','PLANNING','SETUP'].includes(String(bundle.course?.lifecycle_state||'DRAFT'))
+    );
+    if(!hasDraftExpansion) return {created:false,reason:'NO_PREACTIVATION_EXPANSION'};
+
+    const missing=missingInstructionalLoads(expansionContext);
+    if(missing.length){
+      return {
+        created:false,
+        reason:'LOAD_PREPARATION_REQUIRED',
+        learningUnitIds:missing.map(({unit})=>String(unit.learning_unit_id)),
+      };
+    }
+
+    const computed=computeSharedSemesterSchedule(context,{now:serverNow().toISOString()});
+    if(computed.result.outcome==='INFEASIBLE'){
+      return {
+        created:false,
+        reason:'EXPANSION_INFEASIBLE',
+        reasons:computed.result.reasons,
+        alternatives:computed.result.alternatives,
+      };
+    }
+    const saved=await d09Repository.saveProposalUsing(tx,{
+      studentId,
+      courseId,
+      context,
+      planningContext:computed.planningContext,
+      result:computed.result,
+      source:'COURSE_ADMISSION_EXPANSION_PROPOSAL',
     });
+    return {
+      created:true,
+      timetableVersionId:saved.timetable.timetable_version_id,
+      timetableVersion:Number(saved.timetable.version_no),
+      affectedCourseIds:(computed.planningContext.courses||[]).map((bundle)=>String(bundle.course.course_id)),
+      requestId,
+    };
+  }
+
+  async function rebuildGovernedSemesterUsing(tx,{studentId,courseId,requestId}){
+    const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+    const authorityContext=activeAuthorityScheduleContext(context);
+    requirePreparedLoads(authorityContext);
+
+    const computed=computeSharedSemesterSchedule(authorityContext,{now:serverNow().toISOString()});
     if(computed.result.outcome==='INFEASIBLE'){
       throw error('Approved schedule change became infeasible before application.','TEACHING_D10_REQUEST_REVALIDATION_FAILED',409,{
         reasons:computed.result.reasons,
@@ -151,9 +204,21 @@ function createD10Service({
       timetable:saved.timetable,
       slots:saved.slots,
       requestId,
-      includeCourseIds:includeCourseId?[includeCourseId]:[],
     });
-    return {context,planningContext:computed.planningContext,result:computed.result,saved,classes};
+
+    const refreshedContext=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+    const expansion=await buildPendingExpansionUsing(tx,{
+      studentId,courseId,requestId,context:refreshedContext,
+    });
+
+    return {
+      context,
+      planningContext:computed.planningContext,
+      result:computed.result,
+      saved,
+      classes,
+      expansion,
+    };
   }
 
   async function applyScheduleRequestUsing(tx,request,change){
@@ -168,10 +233,14 @@ function createD10Service({
         throw error('Class is not bound to an authoritative timetable slot.','TEACHING_D10_REQUEST_TARGET_STALE');
       }
       const context=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
-      const planningContext=activeScheduleContext(context);
       const latest=typeof d09Repository.latestApprovedTimetable==='function'
         ? await d09Repository.latestApprovedTimetable(studentId,context.semester.semester_id,tx)
         : await d09Repository.latestTimetable(studentId,context.semester.semester_id,tx);
+      if(!latest.timetable){
+        throw error('The authoritative Semester timetable is no longer available.','TEACHING_D10_REQUEST_TARGET_STALE');
+      }
+      const planningContext=timetableRefScheduleContext(context,latest.timetable);
+      requirePreparedLoads(planningContext,{allowEmpty:false});
       const result=validateEditedSchedule(planningContext,latest.slots,[{
         slotId:klass.source_timetable_slot_id,
         startsAt:change.startsAt,
@@ -187,9 +256,18 @@ function createD10Service({
       const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{
         studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id,
       });
+      const refreshedContext=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
+      const expansion=await buildPendingExpansionUsing(tx,{
+        studentId,courseId,requestId:request.request_id,context:refreshedContext,
+      });
       return {
         targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,
-        safeMetadata:{timetable_version:Number(saved.timetable.version_no),materialized_classes:classes.length},
+        safeMetadata:{
+          timetable_version:Number(saved.timetable.version_no),
+          materialized_classes:classes.length,
+          pending_expansion_version:expansion.created?expansion.timetableVersion:null,
+          pending_expansion_reason:expansion.created?null:expansion.reason,
+        },
       };
     }
 
@@ -220,6 +298,8 @@ function createD10Service({
         timetable_version:Number(rebuilt.saved.timetable.version_no),
         materialized_classes:rebuilt.classes.length,
         request_kind:request.request_type,
+        pending_expansion_version:rebuilt.expansion.created?rebuilt.expansion.timetableVersion:null,
+        pending_expansion_reason:rebuilt.expansion.created?null:rebuilt.expansion.reason,
       },
     };
   }
