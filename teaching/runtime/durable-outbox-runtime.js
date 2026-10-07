@@ -50,6 +50,11 @@ function toCanonicalEvent(row) {
 
 function isTerminalPublicationFailure(error) {
   const code = String(error?.code || '').trim();
+  // A completed model-validation decision is not an infrastructure outage.
+  // Bounded model retries and TPF-specific repair happen inside the owning
+  // workflow; replaying the entire outbox job only repeats expensive work.
+  if (error?.retryable === false) return true;
+  if (error?.validationFailure?.kind === 'VALIDATION_REJECTION') return true;
   return TERMINAL_PUBLICATION_CODES.has(code) || code.startsWith('TEACHING_TPF02_');
 }
 
