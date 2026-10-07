@@ -9,12 +9,12 @@ const { serializeGoogleExecutionRequest } = require('../../../services/ai/google
 
 test('TPF-10 keeps runtime boolean invariants without sending Gemini boolean enum literals', () => {
   assert.deepEqual(
-    TPF10_INSTRUCTIONAL_LOAD_RESPONSE_SCHEMA.properties.validation_and_handoff.properties.deterministic_scheduler_validation_required.enum,
-    [true]
+    TPF10_INSTRUCTIONAL_LOAD_RESPONSE_SCHEMA.properties.validation_and_handoff.properties.deterministic_scheduler_validation_required,
+    { type:'boolean' }
   );
   assert.deepEqual(
-    TPF10_INSTRUCTIONAL_LOAD_RESPONSE_SCHEMA.properties.capacity_analysis.properties.recovery_headroom.properties.invented_numeric_headroom.enum,
-    [false]
+    TPF10_INSTRUCTIONAL_LOAD_RESPONSE_SCHEMA.properties.capacity_analysis.properties.recovery_headroom.properties.invented_numeric_headroom,
+    { type:'boolean' }
   );
 
   const request = createExecutionRequest({
