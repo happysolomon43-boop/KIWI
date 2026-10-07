@@ -354,8 +354,11 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const {rows:previousRows}=await q(tx,expansionProposal
       ? `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL')
           order by version_no desc limit 1 for update`
-      : `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state not in ('SUPERSEDED','STALE')
-          order by version_no desc limit 1 for update`,
+      : directApproval
+        ? `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state='APPROVED'
+            order by version_no desc limit 1 for update`
+        : `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state not in ('SUPERSEDED','STALE')
+            order by version_no desc limit 1 for update`,
       [studentId,context.semester.semester_id]);
     const previous=previousRows?.[0]||null;
     if(directApproval){
