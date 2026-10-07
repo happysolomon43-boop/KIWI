@@ -1033,9 +1033,9 @@ test('188-source TPF-02 audit preserves complete academic evidence while removin
       assert.equal(request.academicInput.prepared_source_inventory.length, 188);
       assert.ok(request.academicInput.progressive_structure_candidates.length > 0);
       for (const [index, item] of request.academicInput.source_evidence_items.entries()) {
-        assert.deepEqual(Object.keys(item).sort(), ['content','source_item_ref','source_kind']);
+        assert.deepEqual(Object.keys(item).sort(), ['source_item_ref','source_kind']);
         assert.equal(item.source_item_ref, `source:source-${index + 1}`);
-        assert.equal(item.content, allSources[index].content_summary);
+        assert.equal(Object.hasOwn(item, 'content'), false);
         assert.equal(Object.hasOwn(item, 'locator'), false);
         assert.equal(Object.hasOwn(item, 'content_hash'), false);
         assert.equal(Object.hasOwn(item, 'source_version_ref'), false);

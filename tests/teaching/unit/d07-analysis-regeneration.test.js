@@ -226,6 +226,32 @@ test('merge/reduce Course-analysis edits route through the bounded MERGE_OR_COMP
   assert.equal(requests[0].generation.maxOutputTokens,48_000);
 });
 
+test('non-compression revisions reuse validated generation and preserve the student request as regeneration context', async () => {
+  const requests=[];
+  const intelligence=createD07Intelligence({
+    orchestrator:{
+      async execute(request){
+        requests.push(request);
+        return {accepted:false,reason:'test-stop'};
+      },
+    },
+  });
+
+  await intelligence.refineCurriculumAudit({
+    course:course(),
+    sources:[source()],
+    previousAudit:currentAudit(),
+    changeRequest:'Split the broad mechanics unit into independently assessable skills.',
+  });
+
+  assert.equal(requests.length,1);
+  assert.equal(requests[0].capabilityId,'teaching.curriculum.deep_curriculum_audit');
+  assert.equal(requests[0].taskMode,'DEEP_AUDIT');
+  assert.equal(requests[0].academicInput.regeneration_context.requested,true);
+  assert.match(requests[0].academicInput.regeneration_context.student_reason,/independently assessable/i);
+  assert.equal(Object.hasOwn(requests[0].academicInput,'refinement_context'),false);
+});
+
 test('bounded merge/compression patch preserves lineage and rewires downstream prerequisites deterministically', () => {
   const baseOutput={
     input_state_reference:'teaching_course:course-1:state:4',

@@ -1411,10 +1411,14 @@ function compactStructureCandidates(stageResults=[]){
 }
 
 function compactProgressiveSourceEvidence(sourceItems=[]){
+  // The inventory and structure stages have already consumed the raw material.
+  // Re-sending it here duplicates the largest part of the context and defeats
+  // staging for large Courses. Final synthesis needs only stable source
+  // identity; its academic evidence comes from the validated prepared
+  // inventory and bounded structure candidates.
   return Object.freeze((sourceItems||[]).map((item)=>Object.freeze({
     source_item_ref:String(item.source_item_ref),
     source_kind:item.source_kind==null?null:String(item.source_kind),
-    content:String(item.content||''),
   })));
 }
 
@@ -1630,11 +1634,21 @@ function createD07Intelligence({orchestrator}={}){
   if(!orchestrator||typeof orchestrator.execute!=='function')throw new TypeError('D07 intelligence requires the Teaching Orchestrator.');
 
   async function refineCurriculumAudit(args={}){
-    return orchestrator.execute(
-      isMergeCompressionChangeRequest(args.changeRequest)
-        ? mergeCompressionRefinementRequest(args)
-        : curriculumRefinementRequest(args)
-    );
+    if(isMergeCompressionChangeRequest(args.changeRequest)){
+      return orchestrator.execute(mergeCompressionRefinementRequest(args));
+    }
+
+    // A full-audit refinement restates both the complete prior artifact and a
+    // complete replacement. That grows with Course size in both directions and
+    // eventually exceeds provider input/output limits. Reuse the normal audit
+    // pipeline instead: large Courses take the staged path, the student's
+    // request remains available as regeneration context, and the result still
+    // passes the complete schema, domain, lineage, and provenance validators.
+    return runCurriculumAudit({
+      ...args,
+      regenerationReason:args.changeRequest,
+      previousAudit:args.previousAudit,
+    });
   }
 
   async function runCurriculumAudit(args={}){
