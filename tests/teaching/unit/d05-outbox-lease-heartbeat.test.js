@@ -58,13 +58,14 @@ test('D05 outbox heartbeat keeps a long publication claim alive until publish co
   let heartbeatMs = null;
   let renewals = 0;
   let published = 0;
+  let claimCalls = 0;
   let resolvePublication;
   const publication = new Promise((resolve) => { resolvePublication = resolve; });
 
   const runtime = createDurableTeachingOutboxRuntime({
     store: {
       async releaseExpiredClaims() { return 0; },
-      async claimPending() { return published > 0 ? [] : [row]; },
+      async claimPending({ limit }) { assert.equal(limit, 1); claimCalls += 1; return claimCalls === 1 ? [row] : []; },
       async renewClaim(event, options) {
         assert.equal(event.claim_token, row.claim_token);
         assert.equal(options.leaseMs, 9_000);
@@ -96,6 +97,7 @@ test('D05 outbox heartbeat keeps a long publication claim alive until publish co
 
   const tickPromise = runtime.tick();
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(claimCalls, 1);
   assert.equal(heartbeatMs, 3_000);
   assert.equal(typeof heartbeat, 'function');
 
@@ -108,4 +110,5 @@ test('D05 outbox heartbeat keeps a long publication claim alive until publish co
   const result = await tickPromise;
   assert.deepEqual(result.outcomes, ['PUBLISHED']);
   assert.equal(published, 1);
+  assert.equal(claimCalls, 2);
 });
