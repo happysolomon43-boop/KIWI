@@ -23,6 +23,7 @@ const {
   TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,
   TPF02_DECOMPOSITION_PATCH_FIELDS,
   TPF02_DECOMPOSITION_PATCH_UNIT_FIELDS,
+  TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS,
   buildTpf02AcademicInput,
   validateTpf02Domain,
   validateTpf02DecompositionPatchSchema,
@@ -446,6 +447,7 @@ test('staged TPF-02 exhaustively inventories a large course and validates comple
 
       assert.equal(request.taskMode, 'DEEP_AUDIT');
       assert.equal(request.academicInput.execution_stage, EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE);
+      assert.equal(request.generation.maxOutputTokens, TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS);
       assert.equal(request.academicInput.source_items.length, 0);
       assert.equal(request.academicInput.source_evidence_items.length, 50);
       assert.equal(request.academicInput.prepared_source_inventory.length, 50);
