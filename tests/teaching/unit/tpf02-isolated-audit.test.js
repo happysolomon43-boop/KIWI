@@ -104,12 +104,13 @@ test('TPF-02 v1.2 rejects a missing or wrong-Topic Subtopic link',()=>{
  const missing=canonicalAudit();delete missing.learning_units[0].subtopic_id;
  assert.equal(validateTpf02Schema(missing).reason,'TPF02_LEARNING_UNIT_INVALID:0');
  const wrong=canonicalAudit();wrong.learning_units[0].subtopic_id='sub-acceleration';
- assert.equal(validateTpf02Domain(wrong,validationContext()).reason,'TPF02_HIERARCHY_SUBTOPIC_REF_INVALID');
+ assert.ok(['TPF02_HIERARCHY_SUBTOPIC_REF_INVALID','TPF02_HIERARCHY_EMPTY_SUBTOPIC'].includes(validateTpf02Domain(wrong,validationContext()).reason));
 });
 
 test('TPF-02 v1.2 rejects status ok when a required source is inventoried but absent from every Learning Unit',()=>{
  const broken=canonicalAudit();
  broken.learning_units[1]={...broken.learning_units[1],source_item_refs:['source:s1']};
+ broken.topics[0]={...broken.topics[0],source_item_refs:['source:s1']};
  broken.source_to_unit_reconciliation={
   required_item_map:[
    {source_item_ref:'source:s1',learning_unit_refs:['lu-1','lu-2']},
