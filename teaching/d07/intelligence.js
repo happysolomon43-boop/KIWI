@@ -82,7 +82,7 @@ function tpf02DecompositionPatchOutputSchema(){
   return {
     id:TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,
     version:TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,
-    uncertainty_states:['REVIEW_NEEDED'],
+    uncertainty_states:['INSUFFICIENT_EVIDENCE','UNRESOLVED_CONFLICT','REVIEW_NEEDED'],
     review_needed_field:'review_required',
     declared_fields:[...TPF02_DECOMPOSITION_PATCH_FIELDS],
     validate:validateTpf02DecompositionPatchSchema,
