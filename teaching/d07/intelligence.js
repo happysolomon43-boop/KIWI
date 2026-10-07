@@ -19,6 +19,10 @@ const {
   decompositionRepairState,
   DECOMPOSITION_JUSTIFICATION_PREFIX,
 } = require('./tpf02-direct');
+const {
+  TPF02_CURRICULUM_AUDIT_RESPONSE_SCHEMA,
+  TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA,
+} = require('./tpf02-provider-schema');
 
 const TPF02_SOURCE_INVENTORY_BATCH_SIZE = 24;
 const TPF02_SOURCE_INVENTORY_CONCURRENCY = 2;
@@ -90,6 +94,16 @@ function tpf02DecompositionPatchOutputSchema(){
   };
 }
 
+function tpf02Generation(academicInput,responseSchema=TPF02_CURRICULUM_AUDIT_RESPONSE_SCHEMA){
+  return Object.freeze({
+    maxOutputTokens:tpf02OutputTokenBudget(academicInput),
+    structuredOutput:Object.freeze({
+      mimeType:'application/json',
+      schema:responseSchema,
+    }),
+  });
+}
+
 function tpf02ContextSpec(course,sources,accessPurpose='source_accounting'){
   const untrusted=new Set(['PRIMARY_STUDY_NOTE','STUDENT_SUPPLEMENT']);
   return {
@@ -137,7 +151,7 @@ function curriculumAuditRequest({course,sources}){
   return {
     ...request,
     modelContentMode:'TPF02_DIRECT',
-    generation:Object.freeze({maxOutputTokens:tpf02OutputTokenBudget(academicInput),structuredOutput:Object.freeze({mimeType:'application/json'})}),
+    generation:tpf02Generation(academicInput),
     validationContext,
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>validateTpf02Domain(out,validationContext),
@@ -161,7 +175,7 @@ function sourceInventoryRequest({course,sources}){
       provenanceRefs:sourceRefs,
     }),
     modelContentMode:'TPF02_DIRECT',
-    generation:Object.freeze({maxOutputTokens:tpf02OutputTokenBudget(academicInput),structuredOutput:Object.freeze({mimeType:'application/json'})}),
+    generation:tpf02Generation(academicInput),
     validationContext,
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>validateTpf02Domain(out,validationContext),
@@ -522,7 +536,7 @@ function lineageRepairRequest({
       existing_gap_refs:Object.freeze((baseOutput.coverage_gaps||[]).map((item)=>item.gap_id)),
     }),
   });
-  const outputSchema=tpf02DecompositionPatchOutputSchema();
+  const outputSchema=tpf02OutputSchema();
   const fullAcademicInput=buildTpf02AcademicInput({
     course,
     sources,
@@ -562,7 +576,7 @@ function lineageRepairRequest({
       evidence_purpose:'required_source_lineage_completion',
     },
     modelContentMode:'TPF02_DIRECT',
-    generation:Object.freeze({maxOutputTokens:tpf02OutputTokenBudget(academicInput),structuredOutput:Object.freeze({mimeType:'application/json'})}),
+    generation:tpf02Generation(academicInput),
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>{
       const patch=validateLineageRepairPatch(out,{academicInput,baseOutput,repairRefs:requestedRefs});
@@ -927,7 +941,7 @@ function decompositionRepairRequest({
       evidence_purpose:'curriculum_decomposition_repair',
     },
     modelContentMode:'TPF02_DIRECT',
-    generation:Object.freeze({maxOutputTokens:tpf02OutputTokenBudget(academicInput),structuredOutput:Object.freeze({mimeType:'application/json'})}),
+    generation:tpf02Generation(academicInput,TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA),
     schemaValidator:validateTpf02DecompositionPatchSchema,
     domainValidator:async out=>{
       const patch=validateDecompositionRepairPatch(out,{academicInput,baseOutput,repairScope});
@@ -1084,7 +1098,7 @@ function structurePassRequest({course,sources,preparedInventory,batchIndex=0}={}
       evidence_purpose:'bounded_curriculum_structure',
     },
     modelContentMode:'TPF02_DIRECT',
-    generation:Object.freeze({maxOutputTokens:tpf02OutputTokenBudget(academicInput),structuredOutput:Object.freeze({mimeType:'application/json'})}),
+    generation:tpf02Generation(academicInput),
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>validateStructurePassPatch(out,{academicInput,canonicalInventory}),
     provenanceValidator:async out=>{
@@ -1243,7 +1257,7 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSo
       provenanceRefs:sourceRefs,
     }),
     modelContentMode:'TPF02_DIRECT',
-    generation:Object.freeze({maxOutputTokens:tpf02OutputTokenBudget(academicInput),structuredOutput:Object.freeze({mimeType:'application/json'})}),
+    generation:tpf02Generation(academicInput),
     validationContext,
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>{
