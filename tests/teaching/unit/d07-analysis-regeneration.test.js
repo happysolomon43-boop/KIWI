@@ -282,3 +282,64 @@ test('Course Setup lets the student choose targeted changes or whole-analysis re
   assert.match(ui,/analysisRevisionAllowed/);
   assert.match(ui,/Active Courses use governed academic-change workflows/);
 });
+
+
+test('Course analysis background idempotency joins only the exact same refinement request', async () => {
+  const audit=currentAudit();
+  const active={
+    event_id:'refine-job-active',
+    status:'PENDING',
+    aggregate_version:4,
+    payload:{
+      operation:'REFINE',
+      expected_state_version:'4',
+      previous_audit_id:'audit-4',
+      previous_audit_version:4,
+      change_request:'Split broad Learning Units.',
+      regeneration_reason:null,
+    },
+  };
+  const setup={course:course(4),sources:[source()],curriculumAudit:{
+    ...audit,
+    subject_snapshot_ref:'subject:subject-1:snapshot-4',
+    source_inventory_digest:require('../../../teaching/d07/contracts').digest([[source().source_ref,source().content_hash]]),
+  },backgroundAnalysis:active};
+  const service=createD07Service({
+    subjects:subjects(),
+    repository:{async getSetup(){return setup;}},
+    intelligence:{},
+    outboxStore:{async append(){throw new Error('identical active work should be joined');}},
+    randomUUID:()=> 'unused',
+  });
+
+  const joined=await service.queueAudit({id:'student-1'},'course-1',{
+    operation:'REFINE',
+    changeRequest:'Split broad Learning Units.',
+  });
+  assert.equal(joined.joinedExisting,true);
+  assert.equal(joined.jobId,'refine-job-active');
+
+  await assert.rejects(
+    service.queueAudit({id:'student-1'},'course-1',{
+      operation:'REFINE',
+      changeRequest:'Merge overlapping Learning Units instead.',
+    }),
+    (error)=>error.code==='TEACHING_D07_ANALYSIS_OPERATION_IN_PROGRESS',
+  );
+  await assert.rejects(
+    service.queueAudit({id:'student-1'},'course-1',{operation:'REGENERATE'}),
+    (error)=>error.code==='TEACHING_D07_ANALYSIS_OPERATION_IN_PROGRESS',
+  );
+});
+
+test('validated analysis revision advances Course state so claimed downstream workers cannot commit old analysis results', () => {
+  const repository=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d07-course-intake.js'),'utf8');
+  const planWriter=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d08/plan-writer.js'),'utf8');
+  const timetableRepository=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d09-scheduling.js'),'utf8');
+
+  assert.match(repository,/Every validated analysis revision advances Course state/);
+  assert.match(repository,/set state_version=state_version\+1,updated_at=now\(\)/);
+  assert.match(repository,/revision_committed_state_version/);
+  assert.match(planWriter,/TEACHING_D08_STALE_COURSE_STATE/);
+  assert.match(timetableRepository,/assertSchedulingContextCurrent/);
+});
