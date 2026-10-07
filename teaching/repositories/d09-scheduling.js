@@ -97,7 +97,11 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,stateVersion:Number(sibling.state_version),reason:'COURSE_PLAN_NOT_READY'}); continue; }
       bundles.push({...bundle,course:sibling,semesterTimezone:semester?.timezone});
     }
-    if(inheritedDefault) unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'});
+    if(inheritedDefault){
+      const requestedBundle=await latestPlanBundle(studentId,course.course_id);
+      if(!requestedBundle.plan) unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_PLAN_NOT_READY'});
+      unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'});
+    }
     const {rows:historyRows=[]}=await query(`select * from public.teaching_timetable_versions
       where student_id=$1 and semester_id=$2 order by version_no desc limit 1`,[studentId,semester.semester_id]);
     const priorTimetable=historyRows[0]||null;
@@ -130,7 +134,11 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,stateVersion:Number(sibling.state_version),reason:'COURSE_PLAN_NOT_READY'}); continue; }
       bundles.push({...bundle,course:sibling,semesterTimezone:semester?.timezone});
     }
-    if(inheritedDefault) unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'});
+    if(inheritedDefault){
+      const requestedBundle=await latestPlanBundle(studentId,course.course_id,runner);
+      if(!requestedBundle.plan) unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_PLAN_NOT_READY'});
+      unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'});
+    }
     const {rows:historyRows=[]}=await q(runner,`select * from public.teaching_timetable_versions
       where student_id=$1 and semester_id=$2 order by version_no desc limit 1 for update`,[studentId,semester.semester_id]);
     const priorTimetable=historyRows[0]||null;
