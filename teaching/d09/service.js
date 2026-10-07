@@ -62,6 +62,34 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
   function semesterHasActivatedCourses(context){
     return (context?.courses||[]).some((bundle)=>!PREACTIVATION_STATES.has(String(bundle.course?.lifecycle_state||'DRAFT')));
   }
+  function schedulableCourseIds(context){
+    return Object.freeze([...(context?.courses||[])].map((bundle)=>String(bundle.course?.course_id||'')).filter(Boolean));
+  }
+  async function rebuildSharedSemesterTimetable(user,courseId,context,{source}={}){
+    if(!context?.semester||!context?.profile) return Object.freeze({
+      recalculated:false,reason:'SCHEDULE_INPUTS_REQUIRED',scope:'SEMESTER_SHARED',semesterId:context?.semester?.semester_id||null,affectedCourseIds:Object.freeze([]),
+    });
+    const affectedCourseIds=schedulableCourseIds(context);
+    if(!affectedCourseIds.length) return Object.freeze({
+      recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED',scope:'SEMESTER_SHARED',semesterId:context.semester.semester_id,affectedCourseIds,
+    });
+    for(const bundle of context.courses||[]) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
+    const result=computeSchedule(context,{now:clock().toISOString()});
+    const saved=await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{
+      studentId:user.id,courseId,context,result,source,
+    }));
+    return Object.freeze({
+      recalculated:true,
+      scope:'SEMESTER_SHARED',
+      semesterId:context.semester.semester_id,
+      affectedCourseIds,
+      affectedCourseCount:affectedCourseIds.length,
+      timetableVersionId:saved.timetable?.timetable_version_id||null,
+      timetableVersion:saved.timetable?.version_no==null?null:Number(saved.timetable.version_no),
+      outcome:saved.feasibility?.outcome||result.outcome||null,
+      source,
+    });
+  }
   async function listSemesters(user){ return repository.listSemesters(user.id); }
   async function saveScheduleInputs(user,courseId,input){
     const normalized=normalizeScheduleInputs(input);
@@ -78,30 +106,30 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
 
     await commitWithPpl((tx)=>repository.saveScheduleInputsUsing(tx,{studentId:user.id,courseId,input:normalized}));
 
-    // Availability is semester-global. Once a new profile version is committed,
-    // immediately rebuild the timetable proposal for every currently schedulable
-    // Course instead of leaving a stale timetable that requires another click.
+    // Availability is Semester-global. Committing a new profile immediately
+    // invalidates every older timetable version for that Semester. Build one
+    // replacement timetable from every current Course Plan so no Course can
+    // retain a contradictory private timetable.
+    let automaticRecalculation=null;
     try{
       const context=await repository.getSchedulingContext(user.id,courseId);
-      if(context.semester&&context.profile&&(context.courses||[]).length){
-        for(const bundle of context.courses) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
-        const result=computeSchedule(context,{now:clock().toISOString()});
-        await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{
-          studentId:user.id,
-          courseId,
-          context,
-          result,
-          source:'AVAILABILITY_AUTO_RECALC',
-        }));
-      }
+      automaticRecalculation=await rebuildSharedSemesterTimetable(user,courseId,context,{source:'AVAILABILITY_AUTO_RECALC'});
     }catch(error){
-      logger?.warn?.('[KIWI Teaching D09] Availability saved but automatic timetable recalculation could not complete.',{
+      automaticRecalculation=Object.freeze({
+        recalculated:false,
+        reason:error?.code||'SEMESTER_TIMETABLE_REBUILD_FAILED',
+        scope:'SEMESTER_SHARED',
+        semesterId:null,
+        affectedCourseIds:Object.freeze([]),
+      });
+      logger?.warn?.('[KIWI Teaching D09] Availability saved but automatic Semester timetable rebuild could not complete.',{
         courseId:String(courseId),
         code:error?.code||null,
         message:String(error?.message||error).slice(0,300),
       });
     }
-    return getScheduleReview(user,courseId);
+    const review=await getScheduleReview(user,courseId);
+    return Object.freeze({...review,automaticRecalculation});
   }
   function sanitizeReview(review,serverNow){
     if(!review.semester) return Object.freeze({
@@ -154,6 +182,13 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       availabilityScope:'SEMESTER_GLOBAL_DEFAULT',
       inheritedAvailability:review.inheritedDefault===true,
       semesterHasActivatedCourses:semesterHasActivatedCourses(review),
+      timetableScope:Object.freeze({
+        kind:'SEMESTER_SHARED',
+        semesterId:review.semester.semester_id,
+        courseIds:schedulableCourseIds(review),
+        courseCount:schedulableCourseIds(review).length,
+        requestedCourseOnlyView:true,
+      }),
       requestedCourse:Object.freeze({
         courseId:requestedCourseId,
         lifecycleState:String(review.course?.lifecycle_state||'DRAFT'),
@@ -199,6 +234,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       invariants:Object.freeze({
         hardConstraintsMayBeViolated:false,requiredCurriculumMayBeDeletedToFit:false,serverTimeAuthoritative:true,
         scheduleDebtIsNotMastery:true,pplIsNotScheduler:true,activationOwnedByD10:true,
+        oneSharedTimetableVersionPerSemester:true,availabilityChangeReflowsAllSchedulableCourses:true,
       }),
       routeQualification:'DETERMINISTIC_RUNTIME_READY',
     });
@@ -229,31 +265,19 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     }
     const requested=(context.courses||[]).find((bundle)=>String(bundle.course?.course_id||'')===String(courseId));
     if(!requested) return Object.freeze({recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED'});
-    for(const bundle of context.courses||[]) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
-    const result=computeSchedule(context,{now:clock().toISOString()});
     const expansion=semesterHasActivatedCourses(context)&&PREACTIVATION_STATES.has(String(context.course?.lifecycle_state||'DRAFT'));
-    const saved=await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{
-      studentId:user.id,
-      courseId,
-      context,
-      result,
+    return rebuildSharedSemesterTimetable(user,courseId,context,{
       source:expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':'COURSE_PLAN_AUTO_RECALC',
-    }));
-    return Object.freeze({
-      recalculated:true,
-      timetableVersionId:saved.timetable?.timetable_version_id||null,
-      timetableVersion:saved.timetable?.version_no==null?null:Number(saved.timetable.version_no),
-      outcome:saved.feasibility?.outcome||result.outcome||null,
     });
   }
   async function proposeTimetable(user,courseId){
     let context=await repository.getSchedulingContext(user.id,courseId);
     if(context.inheritedDefault) context=await attachInheritedDefaultForScheduling(user,courseId,context);
     requireReadyContext(context,courseId);
-    const serverNow=clock().toISOString();
-    const result=computeSchedule(context,{now:serverNow});
     const expansion=semesterHasActivatedCourses(context)&&PREACTIVATION_STATES.has(String(context.course?.lifecycle_state||'DRAFT'));
-    await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{studentId:user.id,courseId,context,result,source:expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':'DETERMINISTIC_INITIAL'}));
+    await rebuildSharedSemesterTimetable(user,courseId,context,{
+      source:expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':'DETERMINISTIC_INITIAL',
+    });
     return getScheduleReview(user,courseId);
   }
   async function editTimetable(user,courseId,input={}){
@@ -286,6 +310,6 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     });
   }
 
-  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,recalculateAfterCoursePlanChange,proposeTimetable,editTimetable,getCalendar});
+  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,recalculateAfterCoursePlanChange,rebuildSharedSemesterTimetable,proposeTimetable,editTimetable,getCalendar});
 }
 module.exports={createD09Service};
