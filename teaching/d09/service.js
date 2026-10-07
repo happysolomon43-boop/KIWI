@@ -443,7 +443,9 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     }
     const eventId=randomUUID();
     const now=clock().toISOString();
-    const queued=await outboxStore.append({
+    const predecessorEventId=current?.event_id?String(current.event_id):'initial';
+    const idempotencyKey=`d09:timetable:semester:${context.semester.semester_id}:${basisDigest}:after:${predecessorEventId}`;
+    const eventInput={
       eventId,
       schemaVersion:1,
       eventType:'teaching.timetable.build_requested',
@@ -460,7 +462,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       causationId:current&&['PENDING','CLAIMED','RETRY_WAIT','CANCELLED'].includes(currentStatus)
         ? String(current.event_id)
         : null,
-      idempotencyKey:`d09:timetable:semester:${context.semester.semester_id}:${basisDigest}`,
+      idempotencyKey,
       payload:{
         course_id:String(courseId),
         expected_state_version:String(context.course.state_version),
@@ -474,7 +476,38 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       },
       auditRefs:[],
       provenanceRefs:planBasis.filter((item)=>item.planId).map((item)=>`course-plan:${item.planId}:v${item.planVersion}`),
-    });
+    };
+    let queued;
+    try{
+      queued=await outboxStore.append(eventInput);
+    }catch(error){
+      // The Semester-level pre-read and append are intentionally separate from
+      // the scheduler transaction. If two callers race from the same predecessor,
+      // the outbox idempotency key lets exactly one win. Re-read and join that
+      // winner instead of surfacing a false failure to the second caller.
+      if(error?.code==='TEACHING_D05_EVENT_IDEMPOTENCY_CONFLICT'&&typeof repository.latestBackgroundTimetableBuild==='function'){
+        const raced=await repository.latestBackgroundTimetableBuild(
+          user.id,
+          courseId,
+          context.semester.semester_id,
+        );
+        const racedStatus=String(raced?.status||'').toUpperCase();
+        if(
+          ['PENDING','CLAIMED','RETRY_WAIT'].includes(racedStatus)
+          &&String(raced?.payload?.basis_digest||'')===basisDigest
+        ){
+          return Object.freeze({
+            accepted:true,
+            background:true,
+            jobId:raced.event_id,
+            status:racedStatus,
+            joinedExisting:true,
+            operation:raced?.payload?.operation||normalizedOperation,
+          });
+        }
+      }
+      throw error;
+    }
     return Object.freeze({
       accepted:true,
       background:true,

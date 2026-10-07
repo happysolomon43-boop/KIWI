@@ -283,3 +283,87 @@ test('schedule repository discovers active timetable jobs by Semester instead of
   assert.match(repository,/payload->>'semester_id'=\$2/);
   assert.match(repository,/latestBackgroundTimetableBuild\(studentId,courseId,context\.semester\?\.semester_id\|\|null\)/);
 });
+
+
+test('completed timetable work does not block a deliberate rebuild on the same Semester basis',async()=>{
+  const current=context();
+  let latest=null;
+  const events=[];
+  let id=0;
+  const repository={
+    async getSchedulingContext(){return current;},
+    async latestBackgroundTimetableBuild(){return latest;},
+  };
+  const service=createD09Service({
+    repository,
+    transactionalMutation:{async mutateAndPublish(){throw new Error('not used');}},
+    randomUUID:()=>`tt-rebuild-${++id}`,
+    outboxStore:{
+      async append(event){
+        events.push(event);
+        latest={event_id:event.eventId,status:'PENDING',payload:event.payload};
+        return {inserted:true,event:{...event,event_id:event.eventId,status:'PENDING'}};
+      },
+    },
+    clock:()=>new Date('2026-10-07T13:00:00Z'),
+  });
+
+  const first=await service.queueTimetableBuild({id:'student-1'},'c1',{
+    operation:'BUILD',source:'MANUAL_BACKGROUND_BUILD',
+  });
+  latest={event_id:first.jobId,status:'PUBLISHED',payload:events[0].payload};
+  const second=await service.queueTimetableBuild({id:'student-1'},'c1',{
+    operation:'BUILD',source:'MANUAL_BACKGROUND_BUILD',
+  });
+
+  assert.equal(events.length,2);
+  assert.notEqual(events[0].idempotencyKey,events[1].idempotencyKey);
+  assert.match(events[0].idempotencyKey,/after:initial$/);
+  assert.match(events[1].idempotencyKey,/after:tt-rebuild-1$/);
+  assert.equal(second.joinedExisting,false);
+  assert.equal(second.jobId,'tt-rebuild-2');
+});
+
+test('a concurrent Semester timetable queue race joins the winning successor job',async()=>{
+  const current=context();
+  const prior={
+    event_id:'published-before-race',
+    status:'PUBLISHED',
+    payload:null,
+  };
+  let latest=prior;
+  let attempted=null;
+  const repository={
+    async getSchedulingContext(){return current;},
+    async latestBackgroundTimetableBuild(){return latest;},
+  };
+  const service=createD09Service({
+    repository,
+    transactionalMutation:{async mutateAndPublish(){throw new Error('not used');}},
+    randomUUID:()=> 'losing-race-event',
+    outboxStore:{
+      async append(event){
+        attempted=event;
+        latest={
+          event_id:'winning-race-event',
+          status:'PENDING',
+          payload:{...event.payload},
+        };
+        const error=new Error('duplicate logical queue request');
+        error.code='TEACHING_D05_EVENT_IDEMPOTENCY_CONFLICT';
+        throw error;
+      },
+    },
+    clock:()=>new Date('2026-10-07T13:00:00Z'),
+  });
+
+  const queued=await service.queueTimetableBuild({id:'student-1'},'c1',{
+    operation:'BUILD',source:'MANUAL_BACKGROUND_BUILD',
+  });
+
+  assert.ok(attempted);
+  assert.match(attempted.idempotencyKey,/after:published-before-race$/);
+  assert.equal(queued.joinedExisting,true);
+  assert.equal(queued.jobId,'winning-race-event');
+  assert.equal(queued.status,'PENDING');
+});
