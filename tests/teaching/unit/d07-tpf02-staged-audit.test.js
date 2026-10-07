@@ -12,6 +12,7 @@ const {
   curriculumSynthesisRequest,
   shouldStageCurriculumAudit,
   shouldUseProgressiveStructure,
+  structurePassRequest,
   createD07Intelligence,
 } = require('../../../teaching/d07/intelligence');
 const {
