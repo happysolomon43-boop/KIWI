@@ -375,3 +375,16 @@ test('stale Course analysis cannot be refined against changed source material', 
   );
   assert.equal(aiCalls,0);
 });
+
+
+test('analysis-boundary reset makes old diagnostic and prior-knowledge results historical without deleting them', () => {
+  const intakeRepository=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d07-course-intake.js'),'utf8');
+  const planReader=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d08/plan-reader.js'),'utf8');
+
+  for(const source of [intakeRepository,planReader]){
+    assert.match(source,/String\(row\.curriculum_audit_id\|\|''\)===String\(curriculumAudit\.curriculum_audit_id\|\|''\)/);
+    assert.match(source,/Date\.parse\(row\.decided_at\|\|''\)>=auditAt/);
+  }
+  assert.doesNotMatch(intakeRepository,/delete from public\.teaching_diagnostic_plans/i);
+  assert.doesNotMatch(intakeRepository,/delete from public\.teaching_validated_prior_knowledge_decisions/i);
+});
