@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeScheduleInputs, assertCurrentCoursePlan, assertIanaTimezone } = require('./contracts');
+const { normalizeScheduleInputs, assertCurrentCoursePlan, assertIanaTimezone, digest } = require('./contracts');
 const { computeSchedule, validateEditedSchedule, projectCalendarSlot } = require('./scheduler');
 const { buildPreparationEvent } = require('../preparation/events');
 const { TEACHING_EVENTS } = require('../events/names');
@@ -15,11 +15,36 @@ const {
   computeSharedSemesterSchedule,
 } = require('./schedule-preparation');
 
-function createD09Service({repository,transactionalMutation,randomUUID,clock=()=>new Date(),intelligence=null,logger=console}={}) {
+function createD09Service({repository,transactionalMutation,randomUUID,clock=()=>new Date(),intelligence=null,outboxStore=null,logger=console}={}) {
   if(!repository) throw new TypeError('D09 service requires repository.');
   if(!transactionalMutation||typeof transactionalMutation.mutateAndPublish!=='function') throw new TypeError('D09 service requires the D05 transactional Teaching mutation boundary.');
   if(typeof randomUUID!=='function') throw new TypeError('D09 service requires randomUUID().');
 
+  const backgroundQueueUnavailable=()=>{
+    const error=new Error('Background timetable building is temporarily unavailable.');
+    error.status=503;
+    error.code='TEACHING_D09_BACKGROUND_TIMETABLE_UNAVAILABLE';
+    throw error;
+  };
+  function backgroundBuildProjection(job){
+    if(!job)return null;
+    const status=String(job.status||'').toUpperCase();
+    const payload=job.payload&&typeof job.payload==='object'&&!Array.isArray(job.payload)?job.payload:{};
+    return Object.freeze({
+      eventId:job.event_id,
+      status,
+      operation:String(payload.operation||'BUILD'),
+      source:payload.source||null,
+      attemptCount:Number(job.attempt_count||0),
+      lastErrorCode:job.last_error_code||null,
+      nextAttemptAt:job.next_attempt_at||null,
+      createdAt:job.created_at||null,
+      updatedAt:job.updated_at||null,
+      publishedAt:job.published_at||null,
+      aggregateVersion:job.aggregate_version==null?null:Number(job.aggregate_version),
+      active:['PENDING','CLAIMED','RETRY_WAIT'].includes(status),
+    });
+  }
   function pplEvent(result,correlationId){
     const p=result.ppl;
     return buildPreparationEvent({
@@ -190,18 +215,32 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
         : changesSharedAuthority
           ? 'AVAILABILITY_AUTO_RECALC'
           : 'SCHEDULE_INPUT_AUTO_RECALC';
-      automaticRecalculation=await rebuildSharedSemesterTimetable(user,courseId,recalculationContext,{source});
+      const queued=await queueTimetableBuild(user,courseId,{operation:'REFLOW',source});
+      const affectedCourseIds=schedulableCourseIds(schedulableScheduleContext(recalculationContext));
+      automaticRecalculation=Object.freeze({
+        recalculated:false,
+        queued:true,
+        background:true,
+        jobId:queued.jobId,
+        status:queued.status,
+        scope:'SEMESTER_SHARED',
+        semesterId:recalculationContext?.semester?.semester_id||null,
+        affectedCourseIds,
+        affectedCourseCount:affectedCourseIds.length,
+        source,
+      });
     }catch(error){
       const affectedCourseIds=schedulableCourseIds(recalculationContext);
       automaticRecalculation=Object.freeze({
         recalculated:false,
-        reason:error?.code||'SEMESTER_TIMETABLE_REBUILD_FAILED',
+        queued:false,
+        reason:error?.code||'SEMESTER_TIMETABLE_REBUILD_QUEUE_FAILED',
         scope:'SEMESTER_SHARED',
         semesterId:recalculationContext?.semester?.semester_id||null,
         affectedCourseIds,
         affectedCourseCount:affectedCourseIds.length,
       });
-      logger?.warn?.('[KIWI Teaching D09] Schedule inputs saved but automatic Semester timetable rebuild could not complete.',{
+      logger?.warn?.('[KIWI Teaching D09] Schedule inputs saved but background Semester timetable rebuild could not be queued.',{
         courseId:String(courseId),
         code:error?.code||null,
         message:String(error?.message||error).slice(0,300),
@@ -213,6 +252,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
   function sanitizeReview(review,serverNow){
     if(!review.semester) return Object.freeze({
       stage:'SEMESTER_AND_AVAILABILITY',semester:null,profile:null,feasibility:null,timetable:null,slots:[],
+      backgroundBuild:backgroundBuildProjection(review.backgroundTimetableBuild),
       serverNow,routeQualification:'DETERMINISTIC_RUNTIME_READY',
     });
     const coverageByCourse=new Map();
@@ -318,6 +358,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
           ? Object.freeze(['BUILD_BUFFER','OPTIONAL_TRANSFER_OR_ENRICHMENT','ACCELERATION_ONLY_WITH_TRUSTWORTHY_EVIDENCE'])
           : Object.freeze([]),
       }),
+      backgroundBuild:backgroundBuildProjection(review.backgroundTimetableBuild),
       unresolvedSemesterCourses:Object.freeze(review.unresolvedCourses||[]),
       invariants:Object.freeze({
         hardConstraintsMayBeViolated:false,requiredCurriculumMayBeDeletedToFit:false,serverTimeAuthoritative:true,
@@ -330,6 +371,87 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
   async function getScheduleReview(user,courseId){
     const review=await repository.getScheduleReview(user.id,courseId);
     return sanitizeReview(review,clock().toISOString());
+  }
+
+  async function queueTimetableBuild(user,courseId,{operation='BUILD',source=null}={}){
+    if(!outboxStore||typeof outboxStore.append!=='function') backgroundQueueUnavailable();
+    const normalizedOperation=String(operation||'BUILD').toUpperCase();
+    if(!['BUILD','REFLOW'].includes(normalizedOperation)){
+      const error=new Error('Unsupported timetable background operation.');
+      error.status=400;
+      error.code='TEACHING_D09_BACKGROUND_OPERATION_INVALID';
+      throw error;
+    }
+    const context=await repository.getSchedulingContext(user.id,courseId);
+    if(!context.semester||!context.profile){
+      const error=new Error('Save Semester availability before building the timetable.');
+      error.status=409;
+      error.code='TEACHING_D09_SCHEDULE_INPUTS_REQUIRED';
+      throw error;
+    }
+    const current=typeof repository.latestBackgroundTimetableBuild==='function'
+      ? await repository.latestBackgroundTimetableBuild(user.id,courseId)
+      : null;
+    const currentStatus=String(current?.status||'').toUpperCase();
+    if(['PENDING','CLAIMED','RETRY_WAIT'].includes(currentStatus)){
+      return Object.freeze({
+        accepted:true,background:true,jobId:current.event_id,status:currentStatus,joinedExisting:true,
+        operation:current?.payload?.operation||normalizedOperation,
+      });
+    }
+    const eventId=randomUUID();
+    const now=clock().toISOString();
+    const planBasis=(context.courses||[]).map((bundle)=>({
+      courseId:String(bundle.course?.course_id||''),
+      courseStateVersion:Number(bundle.course?.state_version||0),
+      planId:String(bundle.plan?.course_plan_id||''),
+      planVersion:Number(bundle.plan?.version_no||0),
+    })).sort((a,b)=>a.courseId.localeCompare(b.courseId));
+    const basisDigest=digest({
+      semesterId:context.semester.semester_id,
+      semesterStateVersion:Number(context.semester.state_version||0),
+      profileId:context.profile.profile_id,
+      profileVersion:Number(context.profile.version_no||0),
+      plans:planBasis,
+      operation:normalizedOperation,
+      source:source||null,
+    });
+    const queued=await outboxStore.append({
+      eventId,
+      schemaVersion:1,
+      eventType:'teaching.timetable.build_requested',
+      eventCategory:'operational_recovery_event',
+      triggerType:'background_analysis',
+      source:'teaching.d09',
+      origin:normalizedOperation==='BUILD'?'teaching.schedule_manual_build':'teaching.schedule_auto_reflow',
+      actorId:String(user.id),
+      aggregateType:'teaching_course',
+      aggregateId:String(courseId),
+      aggregateVersion:Number(context.course.state_version),
+      occurredAt:now,
+      correlationId:eventId,
+      causationId:currentStatus==='CANCELLED'?String(current.event_id):null,
+      idempotencyKey:`d09:timetable:${courseId}:${basisDigest}`,
+      payload:{
+        course_id:String(courseId),
+        expected_state_version:String(context.course.state_version),
+        semester_id:String(context.semester.semester_id),
+        profile_id:String(context.profile.profile_id),
+        profile_version:Number(context.profile.version_no),
+        operation:normalizedOperation,
+        source:source||null,
+      },
+      auditRefs:[],
+      provenanceRefs:planBasis.filter((item)=>item.planId).map((item)=>`course-plan:${item.planId}:v${item.planVersion}`),
+    });
+    return Object.freeze({
+      accepted:true,
+      background:true,
+      jobId:queued.event.event_id,
+      status:queued.event.status,
+      joinedExisting:queued.inserted===false,
+      operation:normalizedOperation,
+    });
   }
   async function attachInheritedDefaultForScheduling(user,courseId,context){
     if(!context?.inheritedDefault) return context;
@@ -344,18 +466,18 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     await repository.attachCourseToSemester({studentId:user.id,courseId,semesterId:context.semester.semester_id});
     return repository.getSchedulingContext(user.id,courseId);
   }
-  async function recalculateAfterCoursePlanChange(user,courseId){
+  async function recalculateAfterCoursePlanChange(user,courseId,{source=null}={}){
     let context=await repository.getSchedulingContext(user.id,courseId);
     if(!context.semester||!context.profile) return Object.freeze({recalculated:false,reason:'SCHEDULE_INPUTS_REQUIRED'});
     if(context.inheritedDefault){
       try{context=await attachInheritedDefaultForScheduling(user,courseId,context);}
       catch(error){return Object.freeze({recalculated:false,reason:error?.code||'DEFAULT_SEMESTER_ATTACH_FAILED'});}
     }
-    const requested=(context.courses||[]).find((bundle)=>String(bundle.course?.course_id||'')===String(courseId));
-    if(!requested) return Object.freeze({recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED'});
+    const eligible=schedulableScheduleContext(context);
+    if(!(eligible.courses||[]).length) return Object.freeze({recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED'});
     const expansion=semesterHasActivatedCourses(context)&&PREACTIVATION_STATES.has(String(context.course?.lifecycle_state||'DRAFT'));
     return rebuildSharedSemesterTimetable(user,courseId,context,{
-      source:expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':'COURSE_PLAN_AUTO_RECALC',
+      source:source||(expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':'COURSE_PLAN_AUTO_RECALC'),
     });
   }
   async function proposeTimetable(user,courseId){
@@ -398,6 +520,6 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     });
   }
 
-  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,recalculateAfterCoursePlanChange,rebuildSharedSemesterTimetable,proposeTimetable,editTimetable,getCalendar});
+  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,queueTimetableBuild,recalculateAfterCoursePlanChange,rebuildSharedSemesterTimetable,proposeTimetable,editTimetable,getCalendar});
 }
 module.exports={createD09Service};
