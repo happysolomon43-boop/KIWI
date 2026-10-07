@@ -175,7 +175,10 @@ function validateMergeCompressionPatch(output,{academicInput,baseOutput}={}){
   const schema=validateTpf02MergeCompressionPatchSchema(output);
   if(!schema.ok)return schema;
   if(output.input_state_reference!==academicInput?.input_state_reference)return invalid('TPF02_MERGE_COMPRESSION_STATE_REFERENCE_MISMATCH');
-  if(!output.merge_groups.length)return invalid('TPF02_MERGE_COMPRESSION_NO_DEFENSIBLE_CHANGE');
+  // An academically justified no-change result is a valid outcome, not a
+  // transport/validation failure. The schema requires an explicit unresolved
+  // reason and next-review guidance when no merge groups are proposed.
+  if(!output.merge_groups.length)return valid(output);
 
   const unitById=new Map((baseOutput?.learning_units||[]).map((unit)=>[String(unit.learning_unit_id),unit]));
   const claimed=new Set();
