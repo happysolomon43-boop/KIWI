@@ -301,6 +301,27 @@ test('lineage repair accepts an exact existing Topic restatement but still forbi
   });
   assert.equal(mutated.ok,false);
   assert.equal(mutated.reason,'TPF02_LINEAGE_REPAIR_EXISTING_TOPIC_REWRITE_FORBIDDEN');
+
+  const exactDuplicate=validateLineageRepairPatch({
+    ...patch,
+    topics:[patch.topics[0],{...patch.topics[0]}],
+  },{
+    academicInput,
+    baseOutput,
+    repairRefs:['source:new'],
+  });
+  assert.equal(exactDuplicate.ok,true);
+
+  const conflictingDuplicate=validateLineageRepairPatch({
+    ...patch,
+    topics:[patch.topics[0],{...patch.topics[0],title:'Conflicting mechanics'}],
+  },{
+    academicInput,
+    baseOutput,
+    repairRefs:['source:new'],
+  });
+  assert.equal(conflictingDuplicate.ok,false);
+  assert.equal(conflictingDuplicate.reason,'TPF02_LINEAGE_REPAIR_TOPIC_ID_CONFLICT');
 });
 
 
