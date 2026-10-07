@@ -41,8 +41,8 @@ function createD10LifecycleRequestRepository(options = {}) {
     return error;
   }
 
-  async function timetableIntegrityUsing(runner, { studentId, coursePlanId, timetableVersionId } = {}) {
-    if (!coursePlanId || !timetableVersionId) return Object.freeze({
+  async function timetableIntegrityUsing(runner, { studentId, courseId, coursePlanId, timetableVersionId } = {}) {
+    if (!courseId || !coursePlanId || !timetableVersionId) return Object.freeze({
       instructionalUnitCount: 0,
       estimatedInstructionalMinutes: 0,
       totalSlotCount: 0,
@@ -66,8 +66,8 @@ function createD10LifecycleRequestRepository(options = {}) {
         select
           count(*)::int total_slot_count,
           count(*) filter (where slot_kind='CLASS')::int class_slot_count,
-          count(*) filter (where slot_kind='CLASS' and ends_at>$3)::int future_class_slot_count,
-          count(*) filter (where ends_at<=$3)::int elapsed_slot_count,
+          count(*) filter (where slot_kind='CLASS' and ends_at>$4)::int future_class_slot_count,
+          count(*) filter (where ends_at<=$4)::int elapsed_slot_count,
           min(starts_at) filter (where slot_kind='CLASS') earliest_class_start_at,
           count(*) filter (
             where slot_kind in ('ASSESSMENT_RESERVE','REVISION_RESERVE')
@@ -76,12 +76,13 @@ function createD10LifecycleRequestRepository(options = {}) {
                 from public.teaching_timetable_slots s2
                 where s2.student_id=$1
                   and s2.timetable_version_id=$2
+                  and s2.course_id=$3
                   and s2.slot_kind='CLASS'
               )
           )::int reserve_before_first_class_count
         from public.teaching_timetable_slots
-        where student_id=$1 and timetable_version_id=$2
-      `, [studentId, timetableVersionId, at]),
+        where student_id=$1 and timetable_version_id=$2 and course_id=$3
+      `, [studentId, timetableVersionId, courseId, at]),
     ]);
     const unit = unitRows[0] || {};
     const slot = slotRows[0] || {};
@@ -104,6 +105,7 @@ function createD10LifecycleRequestRepository(options = {}) {
     const integrity = facts.plan && facts.timetable
       ? await timetableIntegrityUsing(null, {
           studentId,
+          courseId,
           coursePlanId: facts.plan.course_plan_id,
           timetableVersionId: facts.timetable.timetable_version_id,
         })
@@ -117,6 +119,7 @@ function createD10LifecycleRequestRepository(options = {}) {
     if (!expected.planId || !expected.timetableVersionId) return null;
     const integrity = await timetableIntegrityUsing(tx, {
       studentId: input.studentId,
+      courseId: input.courseId,
       coursePlanId: expected.planId,
       timetableVersionId: expected.timetableVersionId,
     });
