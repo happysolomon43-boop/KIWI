@@ -103,10 +103,14 @@ function createD07CourseIntakeRepository({query,withTransaction,randomUUID,clock
        JSON.stringify({lifecycle_state:'DRAFT',curriculum_audit_id:auditId,analysis_boundary_reset:true}),
        JSON.stringify({historical_versions_preserved:true,reset_boundary:'COURSE_ANALYSIS',revision_mode:revision.mode||null})]);
    }else{
-    // DRAFT/PLANNING/SETUP already sit on the analysis side of the lifecycle
-    // boundary. Reset their downstream artifacts without manufacturing a
-    // Course state change that would immediately stale the validated revision.
-    updatedCourse=revisionCourse;
+    // Every validated analysis revision advances Course state, even while the
+    // lifecycle remains preactivation. This is the concurrency boundary that
+    // prevents an already-CLAIMED Course Plan or timetable worker, prepared
+    // from the old analysis, from committing after the new analysis wins.
+    const {rows:updatedRows=[]}=await q(tx,`update public.teaching_courses
+      set state_version=state_version+1,updated_at=now()
+      where student_id=$1 and course_id=$2 returning *`,[studentId,courseId]);
+    updatedCourse=updatedRows[0]||revisionCourse;
    }
    nextCourseStateVersion=Number(updatedCourse.state_version||revisionCourse.state_version||0);
    if(nextCourseStateVersion!==Number(validationMetadata?.state_version||nextCourseStateVersion)){
