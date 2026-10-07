@@ -324,7 +324,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const {rows:activatedRows=[]}=await q(tx,`select course_id from public.teaching_courses
       where student_id=$1 and semester_id=$2 and lifecycle_state not in ('DRAFT','READY','PLANNING','SETUP')
       limit 1`,[studentId,semester.semester_id]);
-    const preserveApprovedAuthority=!governedRequestRef&&activatedRows.length>0;
+    const preserveApprovedAuthority=activatedRows.length>0;
     const {rowCount:staledTimetableCount=0}=await q(tx,preserveApprovedAuthority
       ? `update public.teaching_timetable_versions
           set timetable_state='STALE'
