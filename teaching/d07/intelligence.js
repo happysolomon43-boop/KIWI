@@ -693,6 +693,13 @@ function validateDecompositionRepairPatch(output,{academicInput,baseOutput,repai
     return {ok:true,value:output};
   }
 
+  if(output.decision==='unresolved'){
+    if(String(output.unresolved_reason||'').trim().length<12||String(output.required_next_input_or_review||'').trim().length<8){
+      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNRESOLVED_DETAIL_TOO_THIN'};
+    }
+    return {ok:true,value:output};
+  }
+
   if(courseJustification)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SPLIT_COURSE_JUSTIFICATION_FORBIDDEN'};
   const outputUnits=output.resulting_units||[];
   const outputUnitById=new Map();
@@ -754,6 +761,16 @@ function applyDecompositionRepair(baseOutput,repairOutput,{preparedInventory=[],
     }];
     if(repairOutput.course_ratio_justification)reviewReasons=uniqueStrings([...reviewReasons,String(repairOutput.course_ratio_justification)]);
     reviewRequired=true;
+  }else if(repairOutput.decision==='unresolved'){
+    replacementUnits=[{
+      ...baseUnit,
+      source_item_refs:[...(baseUnit.source_item_refs||[])],
+      topic_refs:[...(baseUnit.topic_refs||[])],
+      prerequisite_refs:[...(baseUnit.prerequisite_refs||[])],
+      gap_refs:[...(baseUnit.gap_refs||[])],
+      uncertainties:[...(baseUnit.uncertainties||[])],
+    }];
+    reviewRequired=true;
   }else{
     const untouchedRefs=uniqueStrings(repairScope?.untouched_source_refs||[]);
     const resultIds=(repairOutput.resulting_units||[]).map((unit)=>String(unit.learning_unit_id));
@@ -786,16 +803,32 @@ function applyDecompositionRepair(baseOutput,repairOutput,{preparedInventory=[],
     });
   }
 
+  const unresolvedRepair=repairOutput.decision==='unresolved';
+  const unresolvedItems=unresolvedRepair
+    ? uniqueUnresolved([
+      ...(baseOutput.unresolved_items||[]),
+      {
+        unresolved_id:`decomposition-repair:${targetUnitId}`,
+        issue:'Learning Unit decomposition could not be resolved from the bounded evidence.',
+        source_item_refs:uniqueStrings(repairScope?.repair_source_refs||[]),
+        why_unresolved:String(repairOutput.unresolved_reason),
+        required_next_input_or_review:String(repairOutput.required_next_input_or_review),
+        blocks_responsible_planning:true,
+      },
+    ])
+    : [...(baseOutput.unresolved_items||[])];
   const merged={
     ...baseOutput,
     topics:(baseOutput.topics||[]).map((topic)=>({...topic,source_item_refs:[...(topic.source_item_refs||[])],subtopics:(topic.subtopics||[]).map((subtopic)=>({...subtopic}))})),
     learning_units:[...untouchedUnits,...replacementUnits],
     structure_change_proposals:structureChangeProposals,
+    unresolved_items:unresolvedItems,
+    status:unresolvedRepair?strongerStatus(baseOutput.status,'unresolved'):baseOutput.status,
     review_required:reviewRequired,
     review_reasons:uniqueStrings(reviewReasons),
     source_inventory:[...preparedInventory],
     audit_scope:{...baseOutput.audit_scope,source_walk:[...preparedSourceWalk]},
-    student_facing_summary_candidate:baseOutput.student_facing_summary_candidate,
+    student_facing_summary_candidate:unresolvedRepair?null:baseOutput.student_facing_summary_candidate,
   };
   return canonicalizeSynthesisSourceScope(merged,preparedInventory);
 }
