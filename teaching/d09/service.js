@@ -6,6 +6,7 @@ const { buildPreparationEvent } = require('../preparation/events');
 const { TEACHING_EVENTS } = require('../events/names');
 const {
   PREACTIVATION_STATES,
+  isGovernedSchedulingLifecycle,
   instructionalUnits,
   scheduleClassFacts,
   slotsForCourse,
@@ -87,7 +88,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     }));
   }
   function semesterHasActivatedCourses(context){
-    return (context?.courses||[]).some((bundle)=>!PREACTIVATION_STATES.has(String(bundle.course?.lifecycle_state||'DRAFT')));
+    return (context?.courses||[]).some((bundle)=>isGovernedSchedulingLifecycle(bundle.course?.lifecycle_state));
   }
   function schedulableCourseIds(context){
     return Object.freeze([...(context?.courses||[])].map((bundle)=>String(bundle.course?.course_id||'')).filter(Boolean));
@@ -158,7 +159,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     const normalized=normalizeScheduleInputs(input);
     const before=await repository.getSchedulingContext(user.id,courseId);
     const activatedCourseIds=new Set((before.courses||[])
-      .filter((bundle)=>!PREACTIVATION_STATES.has(String(bundle.course?.lifecycle_state||'DRAFT')))
+      .filter((bundle)=>isGovernedSchedulingLifecycle(bundle.course?.lifecycle_state))
       .map((bundle)=>String(bundle.course.course_id)));
     const changesSharedAuthority=Boolean(before.semester&&before.profile)
       && sharedScheduleAuthorityFingerprint({
