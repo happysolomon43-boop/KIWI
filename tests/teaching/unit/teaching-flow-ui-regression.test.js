@@ -22,7 +22,7 @@ test('Teaching guided review flow keeps Course Plan, Timetable and Final Review 
   assert.match(source, /id:'activation',label:'Final Review'/);
   assert.match(source, /Accept final review/);
   assert.match(source, /Start Course/);
-  assert.match(source, /Repair timetable/);
+  assert.match(source, /Repair Semester timetable/);
 });
 
 test('Course Plan background actions expose authoritative running, success and failure states', () => {
