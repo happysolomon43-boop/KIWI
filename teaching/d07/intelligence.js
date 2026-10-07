@@ -392,7 +392,7 @@ function curriculumRefinementRequest({course,sources,previousAudit,changeRequest
     modelContentMode:'TPF02_DIRECT',
     generation:tpf02Generation(academicInput),
     validationContext,
-    schemaValidator:validateTpf02Schema,
+    schemaValidator:out=>validateTpf02Schema(canonicalizeTpf02RuntimeEnvelope(out,academicInput)),
     domainValidator:async out=>validateRefinementOutput(out,previousOutput,validationContext),
     provenanceValidator:fullProvenanceValidator(sourceRefs),
   };
@@ -463,7 +463,7 @@ function mergeCompressionRefinementRequest({course,sources,previousAudit,changeR
     modelContentMode:'TPF02_DIRECT',
     generation:tpf02Generation(academicInput,TPF02_MERGE_COMPRESSION_PATCH_RESPONSE_SCHEMA),
     validationContext:fullValidationContext,
-    schemaValidator:validateTpf02MergeCompressionPatchSchema,
+    schemaValidator:out=>validateTpf02MergeCompressionPatchSchema(canonicalizeTpf02RuntimeEnvelope(out,academicInput,{canonicalizeAuditScope:false})),
     domainValidator:async out=>{
       const patch=validateMergeCompressionPatch(out,{academicInput,baseOutput:previousOutput});
       if(!patch.ok)return patch;
@@ -506,7 +506,7 @@ function curriculumAuditRequest({course,sources,regenerationContext=null}){
     modelContentMode:'TPF02_DIRECT',
     generation:tpf02Generation(academicInput),
     validationContext,
-    schemaValidator:validateTpf02Schema,
+    schemaValidator:out=>validateTpf02Schema(canonicalizeTpf02RuntimeEnvelope(out,academicInput)),
     domainValidator:async out=>validateTpf02Domain(out,validationContext),
     provenanceValidator:fullProvenanceValidator(sourceRefs),
   };
@@ -530,7 +530,7 @@ function sourceInventoryRequest({course,sources}){
     modelContentMode:'TPF02_DIRECT',
     generation:tpf02Generation(academicInput),
     validationContext,
-    schemaValidator:validateTpf02Schema,
+    schemaValidator:out=>validateTpf02Schema(canonicalizeTpf02RuntimeEnvelope(out,academicInput)),
     domainValidator:async out=>validateTpf02Domain(out,validationContext),
     provenanceValidator:fullProvenanceValidator(sourceRefs),
   };
@@ -978,7 +978,7 @@ function lineageRepairRequest({
     },
     modelContentMode:'TPF02_DIRECT',
     generation:tpf02Generation(academicInput),
-    schemaValidator:validateTpf02Schema,
+    schemaValidator:out=>validateTpf02Schema(canonicalizeLineageRepairOutput(out,{academicInput,baseOutput,repairRefs:requestedRefs})),
     domainValidator:async out=>{
       const patch=validateLineageRepairPatch(out,{academicInput,baseOutput,repairRefs:requestedRefs});
       if(!patch.ok)return patch;
@@ -1343,7 +1343,7 @@ function decompositionRepairRequest({
     },
     modelContentMode:'TPF02_DIRECT',
     generation:tpf02Generation(academicInput,TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA),
-    schemaValidator:validateTpf02DecompositionPatchSchema,
+    schemaValidator:out=>validateTpf02DecompositionPatchSchema(canonicalizeTpf02RuntimeEnvelope(out,academicInput,{canonicalizeAuditScope:false})),
     domainValidator:async out=>{
       const patch=validateDecompositionRepairPatch(out,{academicInput,baseOutput,repairScope});
       if(!patch.ok)return patch;
@@ -1501,7 +1501,7 @@ function structurePassRequest({course,sources,preparedInventory,batchIndex=0,reg
     },
     modelContentMode:'TPF02_DIRECT',
     generation:tpf02Generation(academicInput),
-    schemaValidator:validateTpf02Schema,
+    schemaValidator:out=>validateTpf02Schema(canonicalizeStructurePassOutput(out,{academicInput,canonicalInventory})),
     domainValidator:async out=>validateStructurePassPatch(out,{academicInput,canonicalInventory}),
     provenanceValidator:async out=>{
       const allowed=new Set(academicBase.source_items.map((item)=>item.source_item_ref));
@@ -1666,7 +1666,7 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSo
     modelContentMode:'TPF02_DIRECT',
     generation:tpf02Generation(academicInput),
     validationContext,
-    schemaValidator:validateTpf02Schema,
+    schemaValidator:out=>validateTpf02Schema(canonicalizeTpf02RuntimeEnvelope(out,academicInput)),
     domainValidator:async out=>{
       const rawSchema=validateTpf02Schema(out);
       if(!rawSchema.ok)return rawSchema;
