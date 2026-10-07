@@ -232,7 +232,7 @@ button.teaching-course-feature-card{
     linear-gradient(145deg,rgba(10,43,32,.98),rgba(4,22,16,.96));
 }
 .teaching-schedule-x__hero h2{margin:7px 0 8px;font-size:clamp(28px,5vw,42px);line-height:1.03;letter-spacing:-.04em}
-.teaching-schedule-x__hero p{max-width:680px;margin:0;color:#8ba99c;line-height:1.65;font-size:13px}
+.teaching-schedule-x__hero p{max-width:680px;margin:0;color:#8ba99c;line-height:1.55;font-size:13px}
 .teaching-schedule-x__hero-meta{display:grid;gap:9px;justify-items:start}
 .teaching-schedule-x__signal{
   display:inline-flex;align-items:center;gap:8px;min-height:34px;padding:7px 11px;
@@ -243,7 +243,7 @@ button.teaching-course-feature-card{
 .teaching-schedule-x__grid{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(320px,.92fr);gap:16px}
 .teaching-schedule-x__card{padding:clamp(18px,3vw,26px);border-radius:22px;box-shadow:none}
 .teaching-schedule-x__card h3{margin:6px 0 7px;font-size:22px;letter-spacing:-.025em}
-.teaching-schedule-x__card>p{margin:0;color:#819f92;font-size:12px;line-height:1.62}
+.teaching-schedule-x__card>p{margin:0;color:#819f92;font-size:12px;line-height:1.55}
 .teaching-schedule-x__section{display:grid;gap:13px;margin-top:22px;padding-top:20px;border-top:1px solid rgba(126,235,190,.09)}
 .teaching-schedule-x__section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
 .teaching-schedule-x__section-head h4{margin:0;font-family:var(--font-display);font-size:16px;letter-spacing:-.02em}
@@ -285,10 +285,10 @@ button.teaching-course-feature-card{
 .teaching-schedule-x__primary:hover{transform:translateY(-1px)}
 .teaching-schedule-x__primary:disabled{cursor:wait;transform:none;opacity:.58}
 .teaching-schedule-x__message{min-height:20px;color:#8eaea0;font-size:11px;line-height:1.5}
-.teaching-schedule-x__message[data-kind="error"]{color:#f1a5a5}
+.teaching-schedule-x__message[data-kind="error"]{margin-top:8px;padding:10px 12px;border:1px solid rgba(241,165,165,.18);border-radius:12px;background:rgba(120,32,32,.10);color:#f1b0b0}
 .teaching-schedule-x__metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:18px}
 .teaching-schedule-x__metric{padding:13px;border:1px solid var(--teaching-ui-line);border-radius:14px;background:rgba(2,17,12,.32)}
-.teaching-schedule-x__metric strong{display:block;font-family:var(--font-display);font-size:22px;letter-spacing:-.035em}
+.teaching-schedule-x__metric strong{display:block;font-family:var(--font-body);font-size:21px;font-weight:600;line-height:1.1;letter-spacing:-.02em}
 .teaching-schedule-x__metric span{display:block;margin-top:3px;color:#6f8d80;font-size:10px}
 .teaching-schedule-x__day-group{display:grid;gap:8px;margin-top:15px}
 .teaching-schedule-x__day-title{display:flex;justify-content:space-between;gap:12px;padding:0 2px;color:#cfe9de;font-family:var(--font-display);font-size:14px;font-weight:780}
