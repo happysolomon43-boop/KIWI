@@ -721,17 +721,19 @@ test('READY-to-DRAFT reset remains guarded and can only occur for a validated Co
   assert.match(migration,/OLD\.activated_at IS NULL AND OLD\.academic_record_started_at IS NULL/);
 });
 
-test('Course Setup lets the student choose targeted changes or whole-analysis regeneration', () => {
+test('Course Setup requires an explicit revision approach before enabling the integrated action', () => {
   const ui=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-d08.js'),'utf8');
-  assert.match(ui,/Request changes/);
-  assert.match(ui,/Regenerate analysis/);
-  assert.match(ui,/What should KIWI change\?/);
-  assert.match(ui,/Apply requested changes/);
-  assert.match(ui,/Regenerate whole analysis/);
+  assert.match(ui,/Revise Course analysis/);
+  assert.match(ui,/Choose an approach/);
+  assert.match(ui,/Request specific changes/);
+  assert.match(ui,/Regenerate from materials/);
+  assert.match(ui,/let mode = null/);
+  assert.match(ui,/confirm\.disabled = !mode \|\| !hasRequiredRequest/);
+  assert.match(ui,/mode !== 'REFINE' \|\| instruction\.value\.trim\(\)\.length > 0/);
+  assert.match(ui,/details\.hidden = true/);
   assert.match(ui,/operation: 'REFINE'/);
   assert.match(ui,/operation: 'REGENERATE'/);
-  assert.match(ui,/If validation fails, nothing is reset/);
-  assert.match(ui,/If regeneration fails, the current Course remains intact/);
+  assert.match(ui,/current validated analysis stays in place until the new result passes every check/i);
   assert.match(ui,/analysisRevisionAllowed/);
   assert.match(ui,/Active Courses use governed academic-change workflows/);
 });
