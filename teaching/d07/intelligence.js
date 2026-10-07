@@ -156,6 +156,140 @@ function fullProvenanceValidator(sourceRefs){
   };
 }
 
+
+function canonicalizeTpf02RuntimeEnvelope(output,academicInput,{canonicalizeAuditScope=true}={}){
+  if(!output||typeof output!=='object'||Array.isArray(output))return output;
+  const canonical={
+    ...output,
+    input_state_reference:String(academicInput?.input_state_reference||output.input_state_reference||''),
+    task_mode:String(academicInput?.task_mode||output.task_mode||''),
+    execution_stage:String(academicInput?.execution_stage||output.execution_stage||''),
+  };
+  if(canonicalizeAuditScope&&output.audit_scope&&typeof output.audit_scope==='object'&&!Array.isArray(output.audit_scope)&&academicInput?.audit_scope){
+    canonical.audit_scope={
+      ...output.audit_scope,
+      subject_or_course:String(academicInput.audit_scope.subject_or_course||''),
+      source_refs:uniqueStrings(academicInput.audit_scope.source_refs||[]),
+      trusted_scope_version:String(academicInput.audit_scope.trusted_scope_version||''),
+    };
+  }
+  return canonical;
+}
+
+function canonicalizeStructurePassOutput(output,{academicInput,canonicalInventory=[]}={}){
+  const runtime=canonicalizeTpf02RuntimeEnvelope(output,academicInput);
+  if(!runtime||typeof runtime!=='object'||Array.isArray(runtime))return runtime;
+  const eligible=new Set(
+    (canonicalInventory||[])
+      .filter((item)=>['required','supplementary'].includes(String(item?.proposed_scope_classification||'')))
+      .map((item)=>String(item.source_item_ref))
+  );
+  const topics=Array.isArray(runtime.topics)
+    ? runtime.topics.map((topic)=>({
+      ...topic,
+      source_item_refs:uniqueStrings((topic?.source_item_refs||[]).filter((ref)=>eligible.has(String(ref)))),
+    }))
+    : runtime.topics;
+  const learningUnits=Array.isArray(runtime.learning_units)
+    ? runtime.learning_units.map((unit)=>({
+      ...unit,
+      source_item_refs:uniqueStrings((unit?.source_item_refs||[]).filter((ref)=>eligible.has(String(ref)))),
+      topic_refs:uniqueStrings(unit?.topic_refs||[]),
+      prerequisite_refs:uniqueStrings(unit?.prerequisite_refs||[]),
+      gap_refs:[],
+      uncertainties:uniqueStrings(unit?.uncertainties||[]),
+    })).filter((unit)=>unit.source_item_refs.length>0)
+    : runtime.learning_units;
+  const assumedPrerequisites=Array.isArray(runtime.assumed_prerequisites)
+    ? runtime.assumed_prerequisites.map((item)=>({...item,inside_course_scope:false}))
+    : runtime.assumed_prerequisites;
+  return {
+    ...runtime,
+    audit_scope:{...(runtime.audit_scope||{}),source_walk:[]},
+    source_inventory:[],
+    topics,
+    learning_units:learningUnits,
+    assumed_prerequisites:assumedPrerequisites,
+    source_conflicts:[],
+    coverage_gaps:[],
+    structure_change_proposals:[],
+    source_to_unit_reconciliation:{required_item_map:[],unmapped_required_refs:[]},
+    unresolved_items:[],
+    status:'ok',
+    review_required:false,
+    review_reasons:[],
+    student_facing_summary_candidate:null,
+  };
+}
+
+function canonicalizeLineageRepairOutput(output,{academicInput,baseOutput,repairRefs=[]}={}){
+  const runtime=canonicalizeTpf02RuntimeEnvelope(output,academicInput);
+  if(!runtime||typeof runtime!=='object'||Array.isArray(runtime))return runtime;
+  const repaired=new Set(uniqueStrings(repairRefs));
+  const existingTopics=new Map((baseOutput?.topics||[]).map((topic)=>[String(topic.topic_id),topic]));
+  const existingUnits=new Map((baseOutput?.learning_units||[]).map((unit)=>[String(unit.learning_unit_id),unit]));
+  const topics=Array.isArray(runtime.topics)
+    ? runtime.topics.map((topic)=>{
+      const id=String(topic?.topic_id||'');
+      const existing=existingTopics.get(id);
+      if(existing){
+        return {
+          topic_id:id,
+          title:String(existing.title),
+          source_item_refs:[],
+          subtopics:(existing.subtopics||[]).map((subtopic)=>({...subtopic})),
+        };
+      }
+      return {
+        ...topic,
+        source_item_refs:uniqueStrings((topic?.source_item_refs||[]).filter((ref)=>repaired.has(String(ref)))),
+      };
+    })
+    : runtime.topics;
+  const learningUnits=Array.isArray(runtime.learning_units)
+    ? runtime.learning_units.map((unit)=>{
+      const id=String(unit?.learning_unit_id||'');
+      const refs=uniqueStrings((unit?.source_item_refs||[]).filter((ref)=>repaired.has(String(ref))));
+      const existing=existingUnits.get(id);
+      if(existing){
+        return {
+          ...existing,
+          source_item_refs:refs,
+          topic_refs:[...(existing.topic_refs||[])],
+          prerequisite_refs:[...(existing.prerequisite_refs||[])],
+          gap_refs:[...(existing.gap_refs||[])],
+          uncertainties:[...(existing.uncertainties||[])],
+        };
+      }
+      return {
+        ...unit,
+        source_item_refs:refs,
+        topic_refs:uniqueStrings(unit?.topic_refs||[]),
+        prerequisite_refs:uniqueStrings(unit?.prerequisite_refs||[]),
+        gap_refs:uniqueStrings(unit?.gap_refs||[]),
+        uncertainties:uniqueStrings(unit?.uncertainties||[]),
+      };
+    }).filter((unit)=>unit.source_item_refs.length>0)
+    : runtime.learning_units;
+  return {
+    ...runtime,
+    audit_scope:{...(runtime.audit_scope||{}),source_walk:[]},
+    source_inventory:[],
+    topics,
+    learning_units:learningUnits,
+    assumed_prerequisites:[],
+    source_conflicts:[],
+    coverage_gaps:[],
+    structure_change_proposals:[],
+    source_to_unit_reconciliation:{required_item_map:[],unmapped_required_refs:[]},
+    unresolved_items:[],
+    status:'ok',
+    review_required:false,
+    review_reasons:[],
+    student_facing_summary_candidate:null,
+  };
+}
+
 function buildRegenerationContext({regenerationReason=null,previousAudit=null}={}){
   const reason=String(regenerationReason||'').trim().slice(0,1500);
   if(!previousAudit&&!reason)return null;
