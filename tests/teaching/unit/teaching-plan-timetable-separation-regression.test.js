@@ -56,7 +56,7 @@ test('Semester owns one shared timetable version while Course pages remain filte
   const scheduleUi = fs.readFileSync(path.join(root, 'public/teaching-schedule-experience.js'), 'utf8');
 
   assert.match(service, /scope:'SEMESTER_SHARED'/);
-  assert.match(service, /oneSharedTimetableVersionPerSemester:true/);
+  assert.match(service, /noIndependentCourseTimetableAuthority:true/);
   assert.match(service, /availabilityChangeReflowsAllSchedulableCourses:true/);
   assert.match(service, /courseSlots:Object\.freeze\(courseSlots\)/);
   assert.match(repository, /const coursePlanRefs=context\.courses\.map/);
