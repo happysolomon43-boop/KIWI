@@ -140,7 +140,7 @@ function structuralOutputSchema({ id, validate, taskMode }) {
 // D09 core feasibility/commit is deterministic. These request builders expose
 // only frozen model-eligible advisory seams. The Scheduler remains authoritative
 // for feasibility, placement, persistence, activation and recovery.
-function schedulingRequest({course,context,taskMode='initial_timetable_proposal'}={}) {
+function schedulingRequest({course,context,taskMode='initial_timetable_proposal',instructionalLoadTargetRefs=null}={}) {
   const capabilityByMode={
     initial_timetable_proposal:'teaching.scheduling.initial_timetable_proposal',
     instructional_load_estimation:'teaching.scheduling.instructional_load_estimation',
@@ -156,7 +156,17 @@ function schedulingRequest({course,context,taskMode='initial_timetable_proposal'
   const capability=getCapability(capabilityId);
   const promptFamilyId=taskMode==='rolling_planning_horizon_adjustment'?'TPF-05':'TPF-10';
   const promptFamilyVersion=promptFamilyId==='TPF-10'?'1.1':'1.3';
-  const targets=taskMode==='instructional_load_estimation'?loadTargets(context):Object.freeze([]);
+  const allTargets=taskMode==='instructional_load_estimation'?loadTargets(context):Object.freeze([]);
+  const requestedTargetRefs=Array.isArray(instructionalLoadTargetRefs)?new Set(instructionalLoadTargetRefs.map(String)):null;
+  const targets=taskMode==='instructional_load_estimation'
+    ? Object.freeze(requestedTargetRefs?[...allTargets].filter((target)=>requestedTargetRefs.has(String(target.scope_ref))):[...allTargets])
+    : Object.freeze([]);
+  if(requestedTargetRefs&&targets.length!==requestedTargetRefs.size){
+    const error=new Error('One or more bounded instructional-load targets are no longer current.');
+    error.code='TEACHING_D09_LOAD_TARGET_STALE';
+    error.status=409;
+    throw error;
+  }
   const validate=taskMode==='instructional_load_estimation'
     ? async(out)=>validateLoadEstimationOutput(out,targets,course)
     : async(out)=>({ok:Boolean(out&&typeof out==='object'&&!Array.isArray(out)),value:out,reason:'TEACHING_D09_ADVISORY_SCHEMA_INVALID'});
@@ -207,7 +217,13 @@ function schedulingRequest({course,context,taskMode='initial_timetable_proposal'
   };
   if(triggerType==='background_analysis')request.idempotencyKey=`d09:${course.course_id}:${taskMode}:${course.state_version}`;
   if(taskMode==='instructional_load_estimation'){
-    request.generation={maxOutputTokens:12_000,structuredOutput:{schema:TPF10_INSTRUCTIONAL_LOAD_RESPONSE_SCHEMA}};
+    // Instructional-load estimation is intentionally bounded into small target
+    // batches by D09 schedule preparation. Give each batch enough completion
+    // headroom for provider reasoning plus the canonical TPF-10 artifact, rather
+    // than sending an entire Semester worth of missing Learning Units through a
+    // single 12k-token completion that can terminate at MAX_TOKENS.
+    const loadOutputBudget=Math.min(24_000,Math.max(16_000,14_000+(targets.length*750)));
+    request.generation={maxOutputTokens:loadOutputBudget,structuredOutput:{schema:TPF10_INSTRUCTIONAL_LOAD_RESPONSE_SCHEMA}};
     request.schemaValidator=validate;
     request.domainValidator=validate;
     request.provenanceValidator=async(out)=>{
