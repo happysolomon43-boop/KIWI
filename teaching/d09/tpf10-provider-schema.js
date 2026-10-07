@@ -4,8 +4,8 @@ const STRING_ARRAY = Object.freeze({ type: 'array', items: Object.freeze({ type:
 const STRING = Object.freeze({ type: 'string' });
 const NULLABLE_STRING = Object.freeze({ type: 'string', nullable: true });
 const BOOLEAN = Object.freeze({ type: 'boolean' });
-const TRUE = Object.freeze({ type: 'boolean', enum: Object.freeze([true]) });
-const FALSE = Object.freeze({ type: 'boolean', enum: Object.freeze([false]) });
+const TRUE = BOOLEAN;
+const FALSE = BOOLEAN;
 
 const LOAD_ESTIMATE_SCHEMA = Object.freeze({
   type: 'object',
