@@ -327,7 +327,7 @@ test('D09 flow-integrity proposal automatically attaches a plan-ready Course to 
     unresolvedCourses:[{ courseId:'course-1', reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER' }],
     priorSlots:[],
     inheritedDefault:true,
-    inheritedCourseBundle,
+    inheritedCourseBundle:inheritedBundle,
   };
   const attachedCourse = { ...requestedCourse, semester_id:'sem-1', state_version:2 };
   const after = {
