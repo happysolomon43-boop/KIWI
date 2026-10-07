@@ -199,7 +199,7 @@ test('Teaching AI adapter keeps bounded isolated TPF-02 work at 48k structured o
  await adapter.execute({invocation,academicInput:buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS}),schemaValidator:validateTpf02Schema,domainValidator:async out=>({ok:true,value:out}),provenanceValidator:async()=>({ok:true})});
  assert.equal(calls.length,1);
  assert.equal(calls[0].taskId,'MAIN_CBT');
- assert.equal(calls[0].request.generation.maxOutputTokens,48000);
+ assert.equal(calls[0].request.generation.maxOutputTokens,TPF02_BOUNDED_MAX_OUTPUT_TOKENS);
  assert.equal(calls[0].request.generation.structuredOutput.mimeType,'application/json');
  assert.match(calls[0].request.content,/<KIWI_TPF02_DIRECT_RUNTIME_BINDING>/);
 });
@@ -234,7 +234,7 @@ test('Teaching AI adapter keeps decomposition repair on isolated TPF-02 direct r
  assert.equal(calls.length,1);
  assert.equal(calls[0].taskId,'MAIN_CBT');
  assert.equal(calls[0].centralRouteOptions.executionProfile,'LONG_RUNNING_ANALYSIS');
- assert.equal(calls[0].request.generation.maxOutputTokens,48000);
+ assert.equal(calls[0].request.generation.maxOutputTokens,TPF02_BOUNDED_MAX_OUTPUT_TOKENS);
  assert.match(calls[0].request.content,/KIWI_TPF02_DECOMPOSITION_REPAIR_PATCH_V1/);
  assert.match(calls[0].request.content,/tpf02\.decomposition-repair-patch/);
 });
