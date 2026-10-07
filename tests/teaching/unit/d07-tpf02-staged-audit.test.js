@@ -27,6 +27,7 @@ const {
   validateTpf02DecompositionPatchSchema,
   decompositionRepairState,
 } = require('../../../teaching/d07/tpf02-direct');
+const { assertOutputSchemaDescriptor } = require('../../../teaching/prompt-runtime/contracts');
 
 function course() {
   return {
@@ -809,6 +810,7 @@ test('decomposition repair stays bounded instead of resending and regenerating t
   assert.equal(request.taskMode, 'SPLIT_UNIT');
   assert.equal(request.outputSchema.id, TPF02_DECOMPOSITION_PATCH_SCHEMA_ID);
   assert.deepEqual(request.outputSchema.declared_fields, [...TPF02_DECOMPOSITION_PATCH_FIELDS]);
+  assert.doesNotThrow(() => assertOutputSchemaDescriptor(request.outputSchema));
   assert.equal(request.academicInput.source_items.length, TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE);
   assert.equal(request.academicInput.decomposition_repair_context.repair_scope.repair_source_refs.length, TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE);
   assert.equal(request.academicInput.decomposition_repair_context.current_learning_unit.source_item_refs.length, 130);
