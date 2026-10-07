@@ -143,7 +143,7 @@ function stage4(course,data,container,reload) {
         message.textContent='A formal availability-change Request was created. The current timetable remains authoritative until approval/application.';
       }else{
         try{
-          const saved=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body,timeoutMs:210000});
+          const saved=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body});
           const sync=saved?.automaticRecalculation||null;
           const notice=sync?.recalculated
             ? {text:`Shared availability saved. Semester timetable v${sync.timetableVersion??'new'} was rebuilt across ${sync.affectedCourseCount||sync.affectedCourseIds?.length||1} Course${(sync.affectedCourseCount||sync.affectedCourseIds?.length||1)===1?'':'s'}.`,kind:'success'}
@@ -194,7 +194,7 @@ function stage5(course,data,container,reload) {
   });
   card.append(slotList);
   const proposalMessage=el('div');proposalMessage.setAttribute('role','status');proposalMessage.setAttribute('aria-live','polite');card.append(proposalMessage);
-  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Rebuilding one Semester timetable across every schedulable Course…';proposalMessage.className='teaching-message';try{const updated=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{},timeoutMs:210000});await reload(updated,{text:'Shared Semester timetable rebuilt. Every current Course Plan is coordinated in the same timetable version.',kind:'success'});}catch(error){proposalMessage.textContent=scheduleActionError(error,'Semester timetable feasibility could not be calculated.');proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
+  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Rebuilding one Semester timetable across every schedulable Course…';proposalMessage.className='teaching-message';try{const updated=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});await reload(updated,{text:'Shared Semester timetable rebuilt. Every current Course Plan is coordinated in the same timetable version.',kind:'success'});}catch(error){proposalMessage.textContent=scheduleActionError(error,'Semester timetable feasibility could not be calculated.');proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
   container.append(card);
 }
 async function renderSchedule({course,container}) {
