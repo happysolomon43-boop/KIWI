@@ -200,32 +200,6 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     await repository.attachCourseToSemester({studentId:user.id,courseId,semesterId:context.semester.semester_id});
     return repository.getSchedulingContext(user.id,courseId);
   }
-  async function recalculateAfterCoursePlanChange(user,courseId){
-    let context=await repository.getSchedulingContext(user.id,courseId);
-    if(!context.semester||!context.profile) return Object.freeze({recalculated:false,reason:'SCHEDULE_INPUTS_REQUIRED'});
-    if(context.inheritedDefault){
-      try{context=await attachInheritedDefaultForScheduling(user,courseId,context);}
-      catch(error){return Object.freeze({recalculated:false,reason:error?.code||'DEFAULT_SEMESTER_ATTACH_FAILED'});}
-    }
-    const requested=(context.courses||[]).find((bundle)=>String(bundle.course?.course_id||'')===String(courseId));
-    if(!requested) return Object.freeze({recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED'});
-    for(const bundle of context.courses||[]) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
-    const result=computeSchedule(context,{now:clock().toISOString()});
-    const expansion=semesterHasActivatedCourses(context)&&PREACTIVATION_STATES.has(String(context.course?.lifecycle_state||'DRAFT'));
-    const saved=await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{
-      studentId:user.id,
-      courseId,
-      context,
-      result,
-      source:expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':'COURSE_PLAN_AUTO_RECALC',
-    }));
-    return Object.freeze({
-      recalculated:true,
-      timetableVersionId:saved.timetable?.timetable_version_id||null,
-      timetableVersion:saved.timetable?.version_no==null?null:Number(saved.timetable.version_no),
-      outcome:saved.feasibility?.outcome||result.outcome||null,
-    });
-  }
   async function proposeTimetable(user,courseId){
     let context=await repository.getSchedulingContext(user.id,courseId);
     if(context.inheritedDefault) context=await attachInheritedDefaultForScheduling(user,courseId,context);
@@ -266,6 +240,6 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     });
   }
 
-  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,recalculateAfterCoursePlanChange,proposeTimetable,editTimetable,getCalendar});
+  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,proposeTimetable,editTimetable,getCalendar});
 }
 module.exports={createD09Service};
