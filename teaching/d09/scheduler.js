@@ -386,7 +386,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
     if(w.deadline.hard && (remaining>0 || !last || Date.parse(last.endsAt)>Date.parse(w.deadline.hard))) reasons.push('HARD_DEADLINE_CANNOT_BE_MET:'+w.courseId);
     if(w.deadline.flexible && last && Date.parse(last.endsAt)>Date.parse(w.deadline.flexible)) reasons.push('FLEXIBLE_TARGET_PRESSURE:'+w.courseId);
   }
-  const headroomRatio=totalCapacity===0?0:Math.max(0,(totalCapacity-scheduledTotal)/totalCapacity);
+  const headroomRatio=required===0&&scheduledTotal===0?1:totalCapacity===0?0:Math.max(0,(totalCapacity-scheduledTotal)/totalCapacity);
   let outcome='FEASIBLE';
   if(reasons.some((r)=>r.startsWith('HARD_DEADLINE')||r==='REQUIRED_INSTRUCTIONAL_LOAD_UNSCHEDULED'||r==='NO_USABLE_AVAILABILITY'||r==='RECOVERY_HEADROOM_BELOW_MINIMUM')) outcome='INFEASIBLE';
   else if(headroomRatio<policy.targetRatio || reasons.some((r)=>r.startsWith('FLEXIBLE_TARGET_PRESSURE'))) outcome='AT_RISK';
@@ -472,7 +472,7 @@ function validateEditedSchedule(context, existingSlots, edits,{now=new Date().to
   const periods=buildPeriods(context);
   const totalCapacity=periods.reduce((s,p)=>s+p.minutes,0);
   const policy=headroomPolicy();
-  const headroomRatio=totalCapacity===0?0:Math.max(0,(totalCapacity-scheduled)/totalCapacity);
+  const headroomRatio=required===0&&scheduled===0?1:totalCapacity===0?0:Math.max(0,(totalCapacity-scheduled)/totalCapacity);
   const debt=Math.max(0,required-scheduled);
   const reasons=[];
   if(headroomRatio<policy.minimumRatio) reasons.push('RECOVERY_HEADROOM_BELOW_MINIMUM');
