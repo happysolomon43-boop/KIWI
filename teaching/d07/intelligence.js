@@ -664,68 +664,52 @@ function selectDecompositionRepairScope({
   });
 }
 
-function validateDecompositionRepairPatch(output,{academicInput,baseOutput,preparedInventory=[],repairScope}={}){
-  const schema=validateTpf02Schema(output);
+function validateDecompositionRepairPatch(output,{academicInput,baseOutput,repairScope}={}){
+  const schema=validateTpf02DecompositionPatchSchema(output);
   if(!schema.ok)return schema;
   const scope=repairScope||academicInput?.decomposition_repair_context?.repair_scope;
   if(!scope)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SCOPE_REQUIRED'};
   const targetUnitId=String(scope.target_unit_id||'');
   const baseUnit=(baseOutput.learning_units||[]).find((unit)=>String(unit.learning_unit_id)===targetUnitId);
   if(!baseUnit)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_TARGET_UNIT_UNKNOWN'};
+  if(output.input_state_reference!==academicInput.input_state_reference)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_STATE_REFERENCE_MISMATCH'};
+  if(output.target_unit_id!==targetUnitId)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_TARGET_UNIT_MISMATCH'};
 
   const repairRefs=uniqueStrings(scope.repair_source_refs||[]);
   const repairRefSet=new Set(repairRefs);
-  const originalRefs=uniqueStrings(baseUnit.source_item_refs||[]);
-  const originalRefSet=new Set(originalRefs);
-  const untouchedRefs=originalRefs.filter((ref)=>!repairRefSet.has(ref));
-  const existingTopicById=new Map((baseOutput.topics||[]).map((topic)=>[String(topic.topic_id),topic]));
+  const untouchedRefs=uniqueStrings(scope.untouched_source_refs||[]);
   const existingUnitIds=new Set((baseOutput.learning_units||[]).map((unit)=>String(unit.learning_unit_id)));
   const assumedIds=new Set((baseOutput.assumed_prerequisites||[]).map((item)=>String(item.assumed_prerequisite_id)));
-  const existingGapIds=new Set((baseOutput.coverage_gaps||[]).map((item)=>String(item.gap_id)));
 
-  if(output.input_state_reference!==academicInput.input_state_reference)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_STATE_REFERENCE_MISMATCH'};
-  if(output.task_mode!=='SPLIT_UNIT')return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_TASK_MODE_MISMATCH'};
-  if(output.execution_stage!==EXECUTION_STAGES.SINGLE_PASS)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_STAGE_MISMATCH'};
-  if(!sameStringSet(output.audit_scope?.source_refs||[],repairRefs))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SOURCE_CENSUS_MISMATCH'};
-  if(String(output.audit_scope?.trusted_scope_version||'')!==String(academicInput.audit_scope.trusted_scope_version||''))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SCOPE_VERSION_MISMATCH'};
-  if((output.source_inventory||[]).length!==0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_MUST_DEFER_SOURCE_INVENTORY'};
-  if((output.audit_scope?.source_walk||[]).length!==0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_MUST_DEFER_SOURCE_WALK'};
-  if((output.topics||[]).length!==0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_TOPICS_SERVER_OWNED'};
-  for(const field of ['assumed_prerequisites','source_conflicts','coverage_gaps','unresolved_items']){
-    if((output[field]||[]).length!==0)return {ok:false,reason:`TPF02_DECOMPOSITION_REPAIR_SCOPE_EXCEEDED:${field}`};
-  }
-  if((output.source_to_unit_reconciliation?.required_item_map||[]).length
-    ||(output.source_to_unit_reconciliation?.unmapped_required_refs||[]).length){
-    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_RECONCILIATION_SERVER_OWNED'};
-  }
-  if(output.status!=='ok'||output.student_facing_summary_candidate!=null)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_COMPLETION_STATE_INVALID'};
-  if((output.review_reasons||[]).some((reason)=>!String(reason).trim().startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX))){
-    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_REVIEW_REASON_OUT_OF_SCOPE'};
+  const unitJustification=String(output.unit_justification||'').trim();
+  const courseJustification=String(output.course_ratio_justification||'').trim();
+  if(output.decision==='keep'){
+    if(!unitJustification.startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_KEEP_JUSTIFICATION_PREFIX_REQUIRED'};
+    if(courseJustification){
+      if(scope.course_ratio_flag!==true)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_COURSE_JUSTIFICATION_OUT_OF_SCOPE'};
+      if(!courseJustification.startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_COURSE_JUSTIFICATION_PREFIX_REQUIRED'};
+    }
+    return {ok:true,value:output};
   }
 
-  const outputUnits=output.learning_units||[];
-  if(!outputUnits.length)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_REQUIRED'};
+  if(courseJustification)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SPLIT_COURSE_JUSTIFICATION_FORBIDDEN'};
+  const outputUnits=output.resulting_units||[];
   const outputUnitById=new Map();
   for(const unit of outputUnits){
     const id=String(unit.learning_unit_id||'').trim();
-    if(!id||outputUnitById.has(id))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_ID_INVALID'};
+    if(outputUnitById.has(id))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_ID_DUPLICATE'};
     if(existingUnitIds.has(id)&&id!==targetUnitId)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNAFFECTED_UNIT_REWRITE_FORBIDDEN'};
-    if((unit.source_item_refs||[]).some((ref)=>!originalRefSet.has(String(ref))))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_SOURCE_REF_INVALID'};
-    if(!sameStringSet(unit.topic_refs||[],baseUnit.topic_refs||[]))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_TOPIC_PLACEMENT_CHANGED'};
-    if((unit.subtopic_id??null)!==(baseUnit.subtopic_id??null))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SUBTOPIC_PLACEMENT_CHANGED'};
-    if((unit.gap_refs||[]).some((ref)=>!existingGapIds.has(String(ref))))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_GAP_REF_INVALID'};
+    if((unit.source_item_refs||[]).some((ref)=>!repairRefSet.has(String(ref))))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_SOURCE_REF_INVALID'};
+    if(id!==targetUnitId&&(unit.source_item_refs||[]).length===0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_NEW_UNIT_SOURCE_REQUIRED'};
     outputUnitById.set(id,unit);
   }
   const continuity=outputUnitById.get(targetUnitId);
   if(!continuity)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_CONTINUITY_UNIT_REQUIRED'};
-  if((baseUnit.prerequisite_refs||[]).some((ref)=>!(continuity.prerequisite_refs||[]).includes(ref))){
-    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_PREREQUISITE_LINEAGE_LOST'};
-  }
-  if((baseUnit.gap_refs||[]).some((ref)=>!(continuity.gap_refs||[]).includes(ref))){
-    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_GAP_LINEAGE_LOST'};
-  }
-  if((baseUnit.uncertainties||[]).some((value)=>!(continuity.uncertainties||[]).includes(value))){
-    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNCERTAINTY_LINEAGE_LOST'};
+  if((continuity.source_item_refs||[]).length===0&&untouchedRefs.length===0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_CONTINUITY_SOURCE_REQUIRED'};
+
+  const mappedRepairRefs=new Set(outputUnits.flatMap((unit)=>unit.source_item_refs||[]).map(String));
+  if(mappedRepairRefs.size!==repairRefSet.size||repairRefs.some((ref)=>!mappedRepairRefs.has(ref))){
+    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_BOUNDED_LINEAGE_INCOMPLETE'};
   }
 
   const allowedPrereqs=new Set([...existingUnitIds,...outputUnitById.keys(),...assumedIds]);
@@ -733,72 +717,84 @@ function validateDecompositionRepairPatch(output,{academicInput,baseOutput,prepa
     if((unit.prerequisite_refs||[]).some((ref)=>!allowedPrereqs.has(String(ref)))){
       return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_PREREQUISITE_REF_UNKNOWN'};
     }
-  }
-
-  const unionRefs=uniqueStrings(outputUnits.flatMap((unit)=>unit.source_item_refs||[]));
-  if(!sameStringSet(unionRefs,originalRefs))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SOURCE_LINEAGE_CHANGED'};
-  for(const ref of untouchedRefs){
-    if(!(continuity.source_item_refs||[]).includes(ref))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNEXAMINED_SOURCE_MOVED'};
-    if(outputUnits.some((unit)=>String(unit.learning_unit_id)!==targetUnitId&&(unit.source_item_refs||[]).includes(ref))){
-      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNEXAMINED_SOURCE_DUPLICATED'};
+    if((unit.prerequisite_refs||[]).includes(unit.learning_unit_id)){
+      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SELF_PREREQUISITE'};
     }
   }
-
-  const newUnits=outputUnits.filter((unit)=>String(unit.learning_unit_id)!==targetUnitId);
-  if(newUnits.length){
-    if(output.structure_change_proposals.length!==1)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SPLIT_PROPOSAL_REQUIRED'};
-    const proposal=output.structure_change_proposals[0];
-    if(proposal.type!=='split')return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_ONLY_SPLIT_ALLOWED'};
-    if(!sameStringSet(proposal.affected_unit_refs||[],[targetUnitId]))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_AFFECTED_UNIT_REF_INVALID'};
-    if(!sameStringSet(proposal.resulting_unit_refs||[],[...outputUnitById.keys()]))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_RESULT_UNIT_REF_INVALID'};
-    if(!sameStringSet(proposal.source_item_refs_before||[],originalRefs)
-      ||!sameStringSet(proposal.source_item_refs_after||[],originalRefs)){
-      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_PROPOSAL_LINEAGE_CHANGED'};
-    }
-    if(newUnits.some((unit)=>(unit.source_item_refs||[]).some((ref)=>!repairRefSet.has(String(ref))))){
-      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_NEW_UNIT_USED_UNEXAMINED_SOURCE'};
-    }
-    if(repairRefs.every((ref)=>(continuity.source_item_refs||[]).includes(ref))){
-      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_NO_PROGRESS'};
-    }
-  }else{
-    if(output.structure_change_proposals.length!==0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNCHANGED_UNIT_PROPOSAL_FORBIDDEN'};
-    const unitJustified=(continuity.uncertainties||[]).some((item)=>
-      String(item||'').trim().startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX)
-      &&String(item||'').trim().length>DECOMPOSITION_JUSTIFICATION_PREFIX.length+12
-    );
-    const courseJustified=(output.review_reasons||[]).some((item)=>
-      String(item||'').trim().startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX)
-      &&String(item||'').trim().length>DECOMPOSITION_JUSTIFICATION_PREFIX.length+12
-    );
-    if(!unitJustified&&!courseJustified)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_NO_PROGRESS'};
-    if(output.review_required!==true)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_JUSTIFICATION_REQUIRES_REVIEW'};
-  }
-
   return {ok:true,value:output};
 }
 
 function applyDecompositionRepair(baseOutput,repairOutput,{preparedInventory=[],preparedSourceWalk=[],repairScope}={}){
   const targetUnitId=String(repairScope?.target_unit_id||'');
-  const units=(baseOutput.learning_units||[])
+  const baseUnit=(baseOutput.learning_units||[]).find((unit)=>String(unit.learning_unit_id)===targetUnitId);
+  if(!baseUnit){
+    const error=new Error('TPF-02 decomposition repair target disappeared before patch application.');
+    error.code='TEACHING_TPF02_DECOMPOSITION_REPAIR_TARGET_MISSING';
+    throw error;
+  }
+
+  const untouchedUnits=(baseOutput.learning_units||[])
     .filter((unit)=>String(unit.learning_unit_id)!==targetUnitId)
     .map((unit)=>({...unit,source_item_refs:[...(unit.source_item_refs||[])],topic_refs:[...(unit.topic_refs||[])],prerequisite_refs:[...(unit.prerequisite_refs||[])],gap_refs:[...(unit.gap_refs||[])],uncertainties:[...(unit.uncertainties||[])]}));
-  for(const unit of repairOutput.learning_units||[]){
-    units.push({...unit,source_item_refs:[...(unit.source_item_refs||[])],topic_refs:[...(unit.topic_refs||[])],prerequisite_refs:[...(unit.prerequisite_refs||[])],gap_refs:[...(unit.gap_refs||[])],uncertainties:[...(unit.uncertainties||[])]});
+
+  let replacementUnits=[];
+  let structureChangeProposals=[...(baseOutput.structure_change_proposals||[])];
+  let reviewReasons=[...(baseOutput.review_reasons||[])];
+  let reviewRequired=Boolean(baseOutput.review_required);
+
+  if(repairOutput.decision==='keep'){
+    replacementUnits=[{
+      ...baseUnit,
+      source_item_refs:[...(baseUnit.source_item_refs||[])],
+      topic_refs:[...(baseUnit.topic_refs||[])],
+      prerequisite_refs:[...(baseUnit.prerequisite_refs||[])],
+      gap_refs:[...(baseUnit.gap_refs||[])],
+      uncertainties:uniqueStrings([...(baseUnit.uncertainties||[]),String(repairOutput.unit_justification)]),
+    }];
+    if(repairOutput.course_ratio_justification)reviewReasons=uniqueStrings([...reviewReasons,String(repairOutput.course_ratio_justification)]);
+    reviewRequired=true;
+  }else{
+    const untouchedRefs=uniqueStrings(repairScope?.untouched_source_refs||[]);
+    const resultIds=(repairOutput.resulting_units||[]).map((unit)=>String(unit.learning_unit_id));
+    replacementUnits=(repairOutput.resulting_units||[]).map((patchUnit)=>{
+      const continuity=String(patchUnit.learning_unit_id)===targetUnitId;
+      return {
+        learning_unit_id:String(patchUnit.learning_unit_id),
+        title:String(patchUnit.title),
+        intended_competence:String(patchUnit.intended_competence),
+        source_item_refs:uniqueStrings([...(continuity?untouchedRefs:[]),...(patchUnit.source_item_refs||[])]),
+        topic_refs:[...(baseUnit.topic_refs||[])],
+        subtopic_id:baseUnit.subtopic_id==null?null:String(baseUnit.subtopic_id),
+        prerequisite_refs:uniqueStrings([...(continuity?(baseUnit.prerequisite_refs||[]):[]),...(patchUnit.prerequisite_refs||[])]),
+        dependency_type_notes:patchUnit.dependency_type_notes==null?null:String(patchUnit.dependency_type_notes),
+        criticality:String(patchUnit.criticality),
+        criticality_basis:String(patchUnit.criticality_basis),
+        proposed_exit_evidence:String(patchUnit.proposed_exit_evidence),
+        gap_refs:continuity?[...(baseUnit.gap_refs||[])]:[],
+        uncertainties:uniqueStrings([...(continuity?(baseUnit.uncertainties||[]):[]),...(patchUnit.uncertainties||[])]),
+      };
+    });
+    structureChangeProposals.push({
+      type:'split',
+      affected_unit_refs:[targetUnitId],
+      resulting_unit_refs:resultIds,
+      source_item_refs_before:[...(baseUnit.source_item_refs||[])],
+      source_item_refs_after:uniqueStrings(replacementUnits.flatMap((unit)=>unit.source_item_refs||[])),
+      proposal:`Split ${targetUnitId} into independently teachable and verifiable competence units.`,
+      reason:String(repairOutput.split_reason),
+    });
   }
+
   const merged={
     ...baseOutput,
     topics:(baseOutput.topics||[]).map((topic)=>({...topic,source_item_refs:[...(topic.source_item_refs||[])],subtopics:(topic.subtopics||[]).map((subtopic)=>({...subtopic}))})),
-    learning_units:units,
-    structure_change_proposals:[
-      ...(baseOutput.structure_change_proposals||[]),
-      ...(repairOutput.structure_change_proposals||[]),
-    ],
-    review_required:Boolean(baseOutput.review_required||repairOutput.review_required),
-    review_reasons:uniqueStrings([...(baseOutput.review_reasons||[]),...(repairOutput.review_reasons||[])]),
+    learning_units:[...untouchedUnits,...replacementUnits],
+    structure_change_proposals:structureChangeProposals,
+    review_required:reviewRequired,
+    review_reasons:uniqueStrings(reviewReasons),
     source_inventory:[...preparedInventory],
     audit_scope:{...baseOutput.audit_scope,source_walk:[...preparedSourceWalk]},
-    student_facing_summary_candidate:String(baseOutput.status||'ok')==='ok'?baseOutput.student_facing_summary_candidate:null,
+    student_facing_summary_candidate:baseOutput.student_facing_summary_candidate,
   };
   return canonicalizeSynthesisSourceScope(merged,preparedInventory);
 }
