@@ -103,11 +103,18 @@ function createD07CourseIntakeRepository({query,withTransaction,randomUUID,clock
        JSON.stringify({lifecycle_state:'DRAFT',curriculum_audit_id:auditId,analysis_boundary_reset:true}),
        JSON.stringify({historical_versions_preserved:true,reset_boundary:'COURSE_ANALYSIS',revision_mode:revision.mode||null})]);
    }else{
-    const {rows:updatedRows=[]}=await q(tx,`update public.teaching_courses set state_version=state_version+1,updated_at=now()
-      where student_id=$1 and course_id=$2 returning *`,[studentId,courseId]);
-    updatedCourse=updatedRows[0]||revisionCourse;
+    // DRAFT/PLANNING/SETUP already sit on the analysis side of the lifecycle
+    // boundary. Reset their downstream artifacts without manufacturing a
+    // Course state change that would immediately stale the validated revision.
+    updatedCourse=revisionCourse;
    }
    nextCourseStateVersion=Number(updatedCourse.state_version||revisionCourse.state_version||0);
+   if(nextCourseStateVersion!==Number(validationMetadata?.state_version||nextCourseStateVersion)){
+    await q(tx,`update public.teaching_curriculum_audits
+      set validation_metadata=validation_metadata||$3::jsonb
+      where student_id=$1 and curriculum_audit_id=$2`,
+      [studentId,auditId,JSON.stringify({revision_committed_state_version:nextCourseStateVersion})]);
+   }
    resetApplied=true;
   }
   return {...rows[0],downstream_reset_applied:resetApplied,course_state_version_after:nextCourseStateVersion};
