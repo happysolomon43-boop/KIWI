@@ -230,7 +230,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       if(String(updated.semester_id)!==String(semester.semester_id)){
         const e=new Error('Course Semester assignment changed before the default could be inherited.'); e.status=409; e.code='TEACHING_D09_DEFAULT_SEMESTER_ATTACH_STALE'; throw e;
       }
-      const {rowCount:staledTimetableCount=0}=await q(tx,"update public.teaching_timetable_versions set timetable_state='STALE' where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')",[studentId,semester.semester_id]);
+      const {rowCount:staledTimetableCount=0}=await q(tx,"update public.teaching_timetable_versions set timetable_state='STALE' where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL')",[studentId,semester.semester_id]);
       await auditUsing(tx,{
         studentId,action:'scheduler.course.inherit_semester_default',entityType:'COURSE',entityId:courseId,stateVersionRef:updated.state_version,
         reason:'Course inherited the current Semester-global availability before scheduling.',
@@ -326,17 +326,35 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     await ensureCourse(studentId,courseId,tx,true);
     const {rows:vrows}=await q(tx,'select coalesce(max(version_no),0)+1 v from public.teaching_timetable_versions where semester_id=$1',[context.semester.semester_id]);
     const version=Number(vrows[0].v), timetableId=randomUUID();
-    const {rows:previousRows}=await q(tx,`select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state not in ('SUPERSEDED','STALE')
-      order by version_no desc limit 1 for update`,[studentId,context.semester.semester_id]);
+    const expansionProposal=source==='COURSE_ADMISSION_EXPANSION_PROPOSAL';
+    const directApproval=source==='FORMAL_REQUEST_APPLIED';
+    const {rows:previousRows}=await q(tx,expansionProposal
+      ? `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL')
+          order by version_no desc limit 1 for update`
+      : `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state not in ('SUPERSEDED','STALE')
+          order by version_no desc limit 1 for update`,
+      [studentId,context.semester.semester_id]);
     const previous=previousRows?.[0]||null;
-    if(previous) await q(tx,"update public.teaching_timetable_versions set timetable_state='SUPERSEDED' where timetable_version_id=$1",[previous.timetable_version_id]);
+    if(directApproval){
+      await q(tx,`update public.teaching_timetable_versions set timetable_state='SUPERSEDED'
+        where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')`,
+        [studentId,context.semester.semester_id]);
+    }else if(previous){
+      await q(tx,"update public.teaching_timetable_versions set timetable_state='SUPERSEDED' where timetable_version_id=$1",[previous.timetable_version_id]);
+    }
+    let lineagePrevious=previous;
+    if(expansionProposal&&!lineagePrevious){
+      const {rows:approvedRows=[]}=await q(tx,`select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state='APPROVED'
+        order by version_no desc limit 1 for update`,[studentId,context.semester.semester_id]);
+      lineagePrevious=approvedRows[0]||null;
+    }
     const state=source==='FORMAL_REQUEST_APPLIED'?'APPROVED':source==='PREACTIVATION_EDIT'?'EDITED_PROPOSAL':'PROPOSED';
     const coursePlanRefs=context.courses.map((b)=>({course_id:b.course.course_id,course_plan_id:b.plan.course_plan_id,version_no:b.plan.version_no,state_version:b.course.state_version}));
     const {rows:tt}=await q(tx,`insert into public.teaching_timetable_versions(
       timetable_version_id,student_id,semester_id,profile_id,version_no,timetable_state,state_digest,source_kind,course_plan_refs,
       supersedes_timetable_version_id,created_by
     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,'scheduler') returning *`,
-      [timetableId,studentId,context.semester.semester_id,context.profile.profile_id,version,state,result.stateDigest,source,json(coursePlanRefs),previous?.timetable_version_id||null]);
+      [timetableId,studentId,context.semester.semester_id,context.profile.profile_id,version,state,result.stateDigest,source,json(coursePlanRefs),lineagePrevious?.timetable_version_id||null]);
     const slots=[];
     for(const slot of result.schedule){
       const id=randomUUID();
@@ -386,16 +404,37 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     ]);
     return {timetable,slots:slots.rows||[],feasibility:fs.rows?.[0]||null};
   }
+  async function latestApprovedTimetable(studentId,semesterId,runner=null){
+    const {rows}=await q(runner,`select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state='APPROVED'
+      order by version_no desc limit 1`,[studentId,semesterId]);
+    const timetable=rows?.[0]||null;
+    if(!timetable) return {timetable:null,slots:[],feasibility:null};
+    const [slots,fs]=await Promise.all([
+      q(runner,'select * from public.teaching_timetable_slots where student_id=$1 and timetable_version_id=$2 order by starts_at',[studentId,timetable.timetable_version_id]),
+      q(runner,'select * from public.teaching_schedule_feasibility where student_id=$1 and timetable_version_id=$2 order by evaluated_at desc limit 1',[studentId,timetable.timetable_version_id]),
+    ]);
+    return {timetable,slots:slots.rows||[],feasibility:fs.rows?.[0]||null};
+  }
   async function getScheduleReview(studentId,courseId){
     const context=await getSchedulingContext(studentId,courseId);
-    const latest=context.semester?await latestTimetable(studentId,context.semester.semester_id):{timetable:null,slots:[],feasibility:null};
+    const requestedLifecycle=String(context.course?.lifecycle_state||'DRAFT');
+    const authoritativeView=['ACTIVE','PAUSED'].includes(requestedLifecycle);
+    const latest=context.semester
+      ? (authoritativeView
+          ? await latestApprovedTimetable(studentId,context.semester.semester_id)
+          : await latestTimetable(studentId,context.semester.semester_id))
+      : {timetable:null,slots:[],feasibility:null};
     const {rows:debt}=context.semester?await query(`select coalesce(sum(delta_minutes),0)::int debt_minutes from public.teaching_schedule_debt_entries
       where student_id=$1 and semester_id=$2`,[studentId,context.semester.semester_id]):{rows:[{debt_minutes:0}]};
     const refs=latest.timetable?.course_plan_refs||[];
     const currentByCourse=new Map((context.courses||[]).map((bundle)=>[String(bundle.course.course_id),bundle]));
+    const refByCourse=new Map(refs.map((ref)=>[String(ref.course_id),ref]));
+    const requiredCourseIds=authoritativeView
+      ? (context.courses||[]).filter((bundle)=>['ACTIVE','PAUSED'].includes(String(bundle.course?.lifecycle_state||''))).map((bundle)=>String(bundle.course.course_id))
+      : (context.courses||[]).map((bundle)=>String(bundle.course.course_id));
     const staleSchedule=Boolean(latest.timetable) && (
       String(latest.timetable.profile_id)!==String(context.profile?.profile_id||'')
-      || refs.length!==(context.courses||[]).length
+      || requiredCourseIds.some((id)=>!refByCourse.has(id))
       || refs.some((ref)=>{
         const bundle=currentByCourse.get(String(ref.course_id));
         return !bundle
@@ -418,7 +457,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const proposals=await query(`select s.*,co.title course_title,t.timetable_state,t.version_no timetable_version_no
       from public.teaching_timetable_slots s join public.teaching_timetable_versions t on t.timetable_version_id=s.timetable_version_id
       join public.teaching_courses co on co.course_id=s.course_id
-      where s.student_id=$1 and t.timetable_state not in ('SUPERSEDED','STALE') ${proposalFilters.length?'and '+proposalFilters.join(' and '):''}
+      where s.student_id=$1 and t.timetable_state in ('PROPOSED','EDITED_PROPOSAL') ${proposalFilters.length?'and '+proposalFilters.join(' and '):''}
       order by s.starts_at`,proposalParams);
     return {classes:classRows.rows||[],proposals:proposals.rows||[]};
   }
@@ -429,6 +468,10 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     if(!timetable){ const e=new Error('Timetable version not found.'); e.status=404; e.code='TEACHING_D09_TIMETABLE_NOT_FOUND'; throw e; }
     if(['SUPERSEDED','STALE'].includes(timetable.timetable_state)){ const e=new Error('A stale/superseded timetable cannot be activated.'); e.status=409; e.code='TEACHING_D09_TIMETABLE_STALE'; throw e; }
     if(timetable.timetable_state!=='APPROVED'){
+      await q(tx,`update public.teaching_timetable_versions set timetable_state='SUPERSEDED'
+        where student_id=$1 and semester_id=$2 and timetable_version_id<>$3
+          and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')`,
+        [studentId,timetable.semester_id,timetableVersionId]);
       const {rows:updated}=await q(tx,`update public.teaching_timetable_versions set timetable_state='APPROVED'
         where student_id=$1 and timetable_version_id=$2 returning *`,[studentId,timetableVersionId]);
       return updated[0];
@@ -446,32 +489,41 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       [studentId,courseId,requestId]);
     return Number(rowCount)||0;
   }
-  async function materializeApprovedTimetableUsing(tx,{studentId,semesterId,timetable,slots,activationId=null,requestId=null}){
+  async function materializeApprovedTimetableUsing(tx,{studentId,semesterId,timetable,slots,activationId=null,requestId=null,includeCourseIds=[]}){
     const at=clock();
+    const {rows:courseRows=[]}=await q(tx,`select course_id,lifecycle_state,activation_id from public.teaching_courses
+      where student_id=$1 and semester_id=$2 for update`,[studentId,semesterId]);
+    const explicit=new Set((includeCourseIds||[]).map(String));
+    const courseById=new Map(courseRows.map((row)=>[String(row.course_id),row]));
+    const eligible=new Set(courseRows
+      .filter((row)=>String(row.lifecycle_state)==='ACTIVE'||explicit.has(String(row.course_id)))
+      .map((row)=>String(row.course_id)));
     await q(tx,`update public.teaching_classes set lifecycle_state='CANCELLED',updated_at=now()
       where student_id=$1 and lifecycle_state='SCHEDULED' and scheduled_start_at>=$2
         and course_id in (select course_id from public.teaching_courses where student_id=$1 and semester_id=$3)
         and (source_timetable_version_id is null or source_timetable_version_id<>$4)`,
       [studentId,at,semesterId,timetable.timetable_version_id]);
     const classes=[];
-    for(const slot of (slots||[]).filter((s)=>String(s.slot_kind||s.kind)==='CLASS')){
+    for(const slot of (slots||[]).filter((s)=>String(s.slot_kind||s.kind)==='CLASS'&&eligible.has(String(s.course_id||s.courseId||'')))){
       const {rows:existing}=await q(tx,`select * from public.teaching_classes where student_id=$1 and source_timetable_slot_id=$2 for update`,
         [studentId,slot.timetable_slot_id]);
       if(existing?.[0]){ classes.push(existing[0]); continue; }
-      const id=randomUUID();
+      const id=randomUUID(),slotCourseId=String(slot.course_id||slot.courseId||'');
+      const courseRow=courseById.get(slotCourseId)||null;
+      const slotActivationId=explicit.has(slotCourseId)&&activationId?activationId:(courseRow?.activation_id||activationId||null);
       const {rows}=await q(tx,`insert into public.teaching_classes(
         class_id,student_id,course_id,scheduled_start_at,scheduled_end_at,timezone,lifecycle_state,schedule_version,
         source_timetable_version_id,source_timetable_slot_id,activation_id,source_request_id
       ) values($1,$2,$3,$4,$5,$6,'SCHEDULED',$7,$8,$9,$10,$11) returning *`,
       [id,studentId,slot.course_id,slot.starts_at,slot.ends_at,slot.timezone,Number(timetable.version_no),
-       timetable.timetable_version_id,slot.timetable_slot_id,activationId,requestId]);
+       timetable.timetable_version_id,slot.timetable_slot_id,slotActivationId,requestId]);
       classes.push(rows[0]);
     }
     return classes;
   }
   return Object.freeze({
     assertReady,listSemesters,latestDefaultSemester,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,attachCourseToSemester,saveScheduleInputsUsing,saveProposalUsing,
-    latestTimetable,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
+    latestTimetable,latestApprovedTimetable,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
   });
 }
 module.exports={createD09SchedulingRepository};

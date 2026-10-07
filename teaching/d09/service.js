@@ -209,12 +209,6 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
   }
   async function attachInheritedDefaultForScheduling(user,courseId,context){
     if(!context?.inheritedDefault) return context;
-    if(semesterHasActivatedCourses(context)){
-      const e=new Error('This shared Semester already contains an active Course. Adding another Course requires the governed scheduling-change path.');
-      e.status=409;
-      e.code='TEACHING_D09_ACTIVE_SEMESTER_REQUIRES_GOVERNED_RECALCULATION';
-      throw e;
-    }
     const inherited=context.inheritedCourseBundle||null;
     if(!inherited){
       const e=new Error('The requested Course could not inherit the current Semester scheduling context.'); e.status=409; e.code='TEACHING_D09_DEFAULT_SEMESTER_CONTEXT_REQUIRED'; throw e;
@@ -229,7 +223,6 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
   async function recalculateAfterCoursePlanChange(user,courseId){
     let context=await repository.getSchedulingContext(user.id,courseId);
     if(!context.semester||!context.profile) return Object.freeze({recalculated:false,reason:'SCHEDULE_INPUTS_REQUIRED'});
-    if(semesterHasActivatedCourses(context)) return Object.freeze({recalculated:false,reason:'ACTIVE_SEMESTER_REQUIRES_GOVERNED_RECALCULATION'});
     if(context.inheritedDefault){
       try{context=await attachInheritedDefaultForScheduling(user,courseId,context);}
       catch(error){return Object.freeze({recalculated:false,reason:error?.code||'DEFAULT_SEMESTER_ATTACH_FAILED'});}
@@ -238,12 +231,13 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     if(!requested) return Object.freeze({recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED'});
     for(const bundle of context.courses||[]) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
     const result=computeSchedule(context,{now:clock().toISOString()});
+    const expansion=semesterHasActivatedCourses(context)&&PREACTIVATION_STATES.has(String(context.course?.lifecycle_state||'DRAFT'));
     const saved=await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{
       studentId:user.id,
       courseId,
       context,
       result,
-      source:'COURSE_PLAN_AUTO_RECALC',
+      source:expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':'COURSE_PLAN_AUTO_RECALC',
     }));
     return Object.freeze({
       recalculated:true,
@@ -258,7 +252,8 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     requireReadyContext(context,courseId);
     const serverNow=clock().toISOString();
     const result=computeSchedule(context,{now:serverNow});
-    await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{studentId:user.id,courseId,context,result,source:'DETERMINISTIC_INITIAL'}));
+    const expansion=semesterHasActivatedCourses(context)&&PREACTIVATION_STATES.has(String(context.course?.lifecycle_state||'DRAFT'));
+    await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{studentId:user.id,courseId,context,result,source:expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':'DETERMINISTIC_INITIAL'}));
     return getScheduleReview(user,courseId);
   }
   async function editTimetable(user,courseId,input={}){

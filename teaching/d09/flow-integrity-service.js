@@ -203,12 +203,6 @@ function decorateD09Service(base, {
 
   async function attachInheritedDefaultForScheduling(user, courseId, context) {
     if (!context?.inheritedDefault) return context;
-    if (semesterHasActivatedCourses(context)) {
-      throw fail(
-        'This shared Semester already contains an active Course. Adding another Course requires the governed scheduling-change path.',
-        'TEACHING_D09_ACTIVE_SEMESTER_REQUIRES_GOVERNED_RECALCULATION'
-      );
-    }
     const inherited = context.inheritedCourseBundle || null;
     if (!inherited) throw fail('The requested Course could not inherit the current Semester scheduling context.', 'TEACHING_D09_DEFAULT_SEMESTER_CONTEXT_REQUIRED');
     assertCurrentCoursePlan(inherited.course, inherited.plan, inherited.scopeChanges);
@@ -319,9 +313,6 @@ function decorateD09Service(base, {
     if (!context.semester || !context.profile) {
       return Object.freeze({ recalculated:false, reason:'SCHEDULE_INPUTS_REQUIRED' });
     }
-    if (semesterHasActivatedCourses(context)) {
-      return Object.freeze({ recalculated:false, reason:'ACTIVE_SEMESTER_REQUIRES_GOVERNED_RECALCULATION' });
-    }
     try {
       if (context.inheritedDefault) context = await attachInheritedDefaultForScheduling(user, courseId, context);
       requireReadyContext(context, courseId);
@@ -339,12 +330,13 @@ function decorateD09Service(base, {
       if (classFacts.elapsedClassCount > 0) {
         return Object.freeze({ recalculated:false, reason:'TEACHING_D09_ELAPSED_TIMETABLE_REJECTED' });
       }
+      const expansion = semesterHasActivatedCourses(context) && PREACTIVATION_STATES.has(String(context.course?.lifecycle_state || 'DRAFT'));
       const saved = await commitWithPpl((tx) => repository.saveProposalUsing(tx, {
         studentId: user.id,
         courseId,
         context,
         result,
-        source: 'COURSE_PLAN_AUTO_RECALC',
+        source: expansion ? 'COURSE_ADMISSION_EXPANSION_PROPOSAL' : 'COURSE_PLAN_AUTO_RECALC',
       }));
       return Object.freeze({
         recalculated:true,
@@ -385,12 +377,13 @@ function decorateD09Service(base, {
     if (classFacts.elapsedClassCount > 0) {
       throw fail('The proposed timetable contains elapsed Classes and must be recalculated from server time.', 'TEACHING_D09_ELAPSED_TIMETABLE_REJECTED', 422);
     }
+    const expansion = semesterHasActivatedCourses(context) && PREACTIVATION_STATES.has(lifecycle);
     await commitWithPpl((tx) => repository.saveProposalUsing(tx, {
       studentId: user.id,
       courseId,
       context,
       result,
-      source: 'DETERMINISTIC_INITIAL',
+      source: expansion ? 'COURSE_ADMISSION_EXPANSION_PROPOSAL' : 'DETERMINISTIC_INITIAL',
     }));
     return getScheduleReview(user, courseId);
   }

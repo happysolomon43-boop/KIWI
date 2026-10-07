@@ -113,6 +113,58 @@ test('a new Course automatically inherits the existing Semester availability and
   assert.equal(proposalSource,'COURSE_PLAN_AUTO_RECALC');
 });
 
+test('a new Course expands an active Semester into an integrated future proposal instead of being blocked',async()=>{
+  let reads=0,attachCalls=0,proposalSource=null;
+  const active=bundle('active','ACTIVE');
+  const inherited=bundle('c2');
+  inherited.course={...inherited.course,semester_id:null};
+  const before={
+    ...context([active]),
+    course:{course_id:'c2',title:'c2',lifecycle_state:'DRAFT',state_version:1,semester_id:null,subject_snapshot_ref:'snap'},
+    inheritedDefault:true,
+    inheritedCourseBundle:inherited,
+    unresolvedCourses:[{courseId:'c2',title:'c2',stateVersion:1,reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'}],
+  };
+  const attached=bundle('c2');
+  attached.course={...attached.course,state_version:2};
+  const after={
+    ...context([active,attached]),
+    course:{...attached.course,title:'c2'},
+    inheritedDefault:false,
+    priorSlots:[
+      {course_id:'active',slot_kind:'CLASS',starts_at:'2026-10-05T09:00:00Z',ends_at:'2026-10-05T10:00:00Z'},
+      {course_id:'active',slot_kind:'CLASS',starts_at:'2026-10-07T09:00:00Z',ends_at:'2026-10-07T10:00:00Z'},
+    ],
+  };
+  const repository={
+    async getSchedulingContext(){reads+=1;return reads===1?before:after;},
+    async attachCourseToSemester({studentId,courseId,semesterId}){
+      attachCalls+=1;
+      assert.equal(studentId,'u1');
+      assert.equal(courseId,'c2');
+      assert.equal(semesterId,'sem1');
+      return {attached:true};
+    },
+    async saveProposalUsing(_tx,{result,source}){
+      proposalSource=source;
+      assert.equal(result.courseSummaries.length,2);
+      assert.ok(result.schedule.some((slot)=>slot.courseId==='active'));
+      assert.ok(result.schedule.some((slot)=>slot.courseId==='c2'));
+      return {timetable:{timetable_version_id:'tt-expansion',version_no:5},slots:[],feasibility:{outcome:result.outcome},ppl:{isNew:false,workspaceId:'w1',workspaceVersion:6,changedRefs:['timetable:tt-expansion'],targetEffectiveAt:after.semester.ends_at}};
+    },
+    async listSemesters(){return [];},
+  };
+  const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
+  const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z')});
+
+  const result=await service.recalculateAfterCoursePlanChange({id:'u1'},'c2');
+
+  assert.equal(attachCalls,1);
+  assert.equal(result.recalculated,true);
+  assert.equal(result.timetableVersionId,'tt-expansion');
+  assert.equal(proposalSource,'COURSE_ADMISSION_EXPANSION_PROPOSAL');
+});
+
 test('Course Plan completion automatically rebuilds a pre-activation Semester timetable',async()=>{
   let proposalSource=null;
   const scheduledContext=context([bundle('c1'),bundle('c2')]);
@@ -192,4 +244,23 @@ test('schedule review exposes only the requested Course slots and workload summa
   assert.equal(review.feasibility.courseSummary.courseId,'c1');
   assert.equal(review.feasibility.courseSummary.requiredMinutes,60);
   assert.equal(review.progressTruths.calendar.totalScheduledSlots,1);
+});
+
+
+test('active Semester expansion preserves approved authority until activation transfers it',()=>{
+  const repository=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d09-scheduling.js'),'utf8');
+  const service=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d09/service.js'),'utf8');
+  const integrity=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d09/flow-integrity-service.js'),'utf8');
+  const d10=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d10/service.js'),'utf8');
+
+  assert.match(service,/COURSE_ADMISSION_EXPANSION_PROPOSAL/);
+  assert.match(integrity,/COURSE_ADMISSION_EXPANSION_PROPOSAL/);
+  assert.doesNotMatch(integrity,/Adding another Course requires the governed scheduling-change path/);
+  assert.match(repository,/latestApprovedTimetable/);
+  assert.match(repository,/timetable_state in \('PROPOSED','EDITED_PROPOSAL'\)/);
+  assert.match(repository,/includeCourseIds=\[\]/);
+  assert.match(repository,/select course_id,lifecycle_state,activation_id/);
+  assert.match(repository,/slotActivationId/);
+  assert.match(d10,/includeCourseIds:\[courseId\]/);
+  assert.match(d10,/latestApprovedTimetable/);
 });
