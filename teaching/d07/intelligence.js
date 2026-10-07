@@ -712,12 +712,22 @@ function lineageRepairRequest({
         }))),
       }))),
       existing_learning_units:Object.freeze((baseOutput.learning_units||[]).map((unit)=>Object.freeze({
+        // Existing-unit attachment still has to satisfy the canonical TPF-02
+        // Learning Unit schema before the server can consume only its lineage
+        // delta. Give the model every immutable field it must echo so it never
+        // has to invent filler just to attach a source ref.
         learning_unit_id:unit.learning_unit_id,
         title:unit.title,
         intended_competence:unit.intended_competence,
         topic_refs:Object.freeze([...(unit.topic_refs||[])]),
         subtopic_id:unit.subtopic_id==null?null:unit.subtopic_id,
+        prerequisite_refs:Object.freeze([...(unit.prerequisite_refs||[])]),
+        dependency_type_notes:unit.dependency_type_notes==null?null:unit.dependency_type_notes,
         criticality:unit.criticality,
+        criticality_basis:unit.criticality_basis,
+        proposed_exit_evidence:unit.proposed_exit_evidence,
+        gap_refs:Object.freeze([...(unit.gap_refs||[])]),
+        uncertainties:Object.freeze([...(unit.uncertainties||[])]),
       }))),
       existing_assumed_prerequisite_refs:Object.freeze((baseOutput.assumed_prerequisites||[]).map((item)=>item.assumed_prerequisite_id)),
       existing_gap_refs:Object.freeze((baseOutput.coverage_gaps||[]).map((item)=>item.gap_id)),
