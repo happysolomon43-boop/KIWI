@@ -2,7 +2,7 @@
 
 const PREACTIVATION_STATES = new Set(['DRAFT', 'READY', 'PLANNING', 'SETUP']);
 const NO_INITIAL_INSTRUCTION = 'VALIDATED_PRIOR_KNOWLEDGE_NO_INITIAL_INSTRUCTION';
-const DEFAULT_LOAD_BATCH_SIZE = 8;
+const DEFAULT_LOAD_BATCH_SIZE = 16;
 
 function fail(message, code, status = 409, details = null) {
   const error = new Error(message);
