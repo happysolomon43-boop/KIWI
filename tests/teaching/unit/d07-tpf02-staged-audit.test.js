@@ -8,17 +8,20 @@ const {
   TPF02_STAGED_SOURCE_COUNT_THRESHOLD,
   TPF02_PROGRESSIVE_STRUCTURE_SOURCE_COUNT_THRESHOLD,
   TPF02_STRUCTURE_BATCH_SIZE,
+  TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE,
   sourceInventoryRequest,
   curriculumSynthesisRequest,
   shouldStageCurriculumAudit,
   shouldUseProgressiveStructure,
   structurePassRequest,
+  decompositionRepairRequest,
   createD07Intelligence,
 } = require('../../../teaching/d07/intelligence');
 const {
   EXECUTION_STAGES,
   buildTpf02AcademicInput,
   validateTpf02Domain,
+  decompositionRepairState,
 } = require('../../../teaching/d07/tpf02-direct');
 
 function course() {
@@ -275,20 +278,60 @@ function coarseSynthesisOutput(request) {
 }
 
 function decompositionRepairOutput(request) {
-  const repaired = synthesisOutput({ academicInput: {
-    ...request.academicInput,
-    audit_scope: request.academicInput.audit_scope,
-  } });
+  const context = request.academicInput.decomposition_repair_context;
+  const target = context.current_learning_unit;
+  const repairRefs = [...context.repair_scope.repair_source_refs];
+  const untouchedRefs = [...context.repair_scope.untouched_source_refs];
+  const continuityRefs = untouchedRefs.length ? untouchedRefs : repairRefs.slice(0, 1);
+  const splitRefs = untouchedRefs.length ? repairRefs : repairRefs.slice(1);
+  const groups = [];
+  for (let index = 0; index < splitRefs.length; index += 12) groups.push(splitRefs.slice(index, index + 12));
+  const suffix = String(repairRefs[0] || 'repair').replace(/[^a-zA-Z0-9]+/g, '-');
+
+  const continuity = {
+    ...target,
+    source_item_refs: continuityRefs,
+    topic_refs: [...target.topic_refs],
+    prerequisite_refs: [...target.prerequisite_refs],
+    gap_refs: [...target.gap_refs],
+    uncertainties: [...target.uncertainties],
+  };
+  const additions = groups.map((sourceRefs, index) => ({
+    learning_unit_id: `${target.learning_unit_id}-split-${suffix}-${index + 1}`,
+    title: `${target.title} — capability ${index + 1}`,
+    intended_competence: `Independently demonstrate bounded capability ${index + 1} from the selected evidence.`,
+    source_item_refs: sourceRefs,
+    topic_refs: [...target.topic_refs],
+    subtopic_id: target.subtopic_id,
+    prerequisite_refs: [...target.prerequisite_refs],
+    dependency_type_notes: target.dependency_type_notes,
+    criticality: target.criticality,
+    criticality_basis: 'Bounded T1-T5 decomposition repair.',
+    proposed_exit_evidence: 'Independently demonstrate this split capability.',
+    gap_refs: [...target.gap_refs],
+    uncertainties: [],
+  }));
+  const units = [continuity, ...additions];
   return {
-    ...repaired,
+    input_state_reference: request.academicInput.input_state_reference,
     task_mode: 'SPLIT_UNIT',
     execution_stage: EXECUTION_STAGES.SINGLE_PASS,
     audit_scope: { ...request.academicInput.audit_scope, source_walk: [] },
     source_inventory: [],
+    topics: [],
+    learning_units: units,
     assumed_prerequisites: [],
     source_conflicts: [],
     coverage_gaps: [],
-    structure_change_proposals: [],
+    structure_change_proposals: additions.length ? [{
+      type: 'split',
+      affected_unit_refs: [target.learning_unit_id],
+      resulting_unit_refs: units.map((unit) => unit.learning_unit_id),
+      source_item_refs_before: [...target.source_item_refs],
+      source_item_refs_after: [...target.source_item_refs],
+      proposal: 'Split the over-broad target using only bounded repair evidence.',
+      reason: 'T1-T5 decomposition requires independently verifiable capability boundaries.',
+    }] : [],
     source_to_unit_reconciliation: { required_item_map: [], unmapped_required_refs: [] },
     unresolved_items: [],
     status: 'ok',
@@ -669,7 +712,7 @@ test('49-source under-decomposition is repaired through bounded SPLIT_UNIT befor
 
       assert.equal(request.taskMode, 'SPLIT_UNIT');
       assert.equal(request.academicInput.decomposition_repair_context.mode, 'DECOMPOSITION_REPAIR');
-      assert.equal(request.academicInput.decomposition_repair_context.decomposition_flags.repair_required, true);
+      assert.equal(request.academicInput.decomposition_repair_context.repair_scope.target_unit_id, 'unit-coarse');
       const output = decompositionRepairOutput(request);
       const domain = await request.domainValidator(output);
       assert.equal(domain.ok, true, domain.reason);
@@ -685,12 +728,51 @@ test('49-source under-decomposition is repaired through bounded SPLIT_UNIT befor
   });
 
   assert.equal(calls.filter((request) => request.taskMode === 'DEEP_AUDIT').length, 1);
-  assert.equal(calls.filter((request) => request.taskMode === 'SPLIT_UNIT').length, 1);
+  const repairCalls = calls.filter((request) => request.taskMode === 'SPLIT_UNIT');
+  assert.equal(repairCalls.length, 2);
+  assert.ok(repairCalls.every((request) => request.academicInput.source_items.length <= TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE));
+  assert.ok(repairCalls.every((request) => request.academicInput.decomposition_repair_context.current_learning_unit));
   const output = result.validatedResult.output;
   assert.ok(output.learning_units.length >= 4);
   assert.ok(output.learning_units.every((unit) => unit.source_item_refs.length <= 16));
   assert.deepEqual(output.source_to_unit_reconciliation.unmapped_required_refs, []);
   assert.equal(output.source_to_unit_reconciliation.required_item_map.length, 49);
+});
+
+test('decomposition repair stays bounded instead of resending and regenerating the whole large Course graph', () => {
+  const allSources = sources(130);
+  const fullInput = buildTpf02AcademicInput({
+    course: course(),
+    sources: allSources,
+    taskMode: 'DEEP_AUDIT',
+    executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+  });
+  const preparedInventory = fullInput.source_items.map(inventoryItem);
+  const baseOutput = coarseSynthesisOutput({ academicInput: fullInput });
+  baseOutput.source_inventory = preparedInventory;
+  baseOutput.audit_scope.source_walk = fullInput.source_items.map(sourceWalk);
+  const inventoryByRef = new Map(preparedInventory.map((item) => [item.source_item_ref, item]));
+  const state = decompositionRepairState(baseOutput, inventoryByRef, {
+    decompositionLimits: fullInput.constraints.decomposition_limits,
+  });
+  assert.equal(state.repair_required, true);
+
+  const request = decompositionRepairRequest({
+    course: course(),
+    sources: allSources,
+    baseOutput,
+    preparedInventory,
+    preparedSourceWalk: baseOutput.audit_scope.source_walk,
+    decompositionState: state,
+  });
+
+  assert.equal(request.taskMode, 'SPLIT_UNIT');
+  assert.equal(request.academicInput.source_items.length, TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE);
+  assert.equal(request.academicInput.decomposition_repair_context.repair_scope.repair_source_refs.length, TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE);
+  assert.equal(request.academicInput.decomposition_repair_context.current_learning_unit.source_item_refs.length, 130);
+  assert.equal(request.academicInput.decomposition_repair_context.all_unit_outline.length, 1);
+  assert.equal(request.contextSpec.provenance_refs.length + request.contextSpec.untrusted_refs.length, TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE);
+  assert.ok(Buffer.byteLength(JSON.stringify(request.academicInput), 'utf8') < 128 * 1024);
 });
 
 test('progressive structure pass does not abort a large audit merely because its provisional batch triggers G11', async () => {

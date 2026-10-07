@@ -489,6 +489,20 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
    'Return source_to_unit_reconciliation for the supplied repair refs only. The server will derive and revalidate the whole-course reconciliation after applying the patch.',
    'Return status "ok", review_required false, review_reasons [], and student_facing_summary_candidate null only when every supplied repair ref has Learning Unit lineage.'
   );
+ }else if(decompositionRepair){
+  instructions.push(
+   'This is a bounded DECOMPOSITION_REPAIR pass for exactly one existing Learning Unit after whole-course synthesis.',
+   'academic_input.decomposition_repair_context.repair_scope.target_unit_id is the only existing Learning Unit you may rewrite. current_learning_unit is its full current definition.',
+   'academic_input.source_items and canonical_source_inventory contain only the bounded repair evidence. repair_scope.untouched_source_refs were not re-read in this pass and must remain attached only to the continuity unit.',
+   'Return topics as an empty array. The server owns the existing Topic/Subtopic graph. Every returned Learning Unit must keep exactly the target unit\'s topic_refs and subtopic_id.',
+   'Return learning_units containing the continuity unit with the exact target_unit_id plus only genuinely necessary new split units. Never return any unaffected existing Learning Unit.',
+   'If you split: keep the target_unit_id as one resulting continuity unit, move only supplied repair_source_refs into new units, preserve all unexamined refs on the continuity unit, and return exactly one type "split" structure_change_proposal whose affected_unit_refs is [target_unit_id], resulting_unit_refs names every returned unit, and before/after source ref sets preserve the target unit\'s full lineage.',
+   'If the target genuinely passes T1-T5 despite the deterministic proxy, do not invent a split. Return only the continuity unit, preserve its source/prerequisite/gap lineage, append a concise uncertainty beginning "DECOMPOSITION_JUSTIFICATION:", set review_required true, and leave structure_change_proposals empty.',
+   'When repair_scope.course_ratio_flag is true, review all_unit_outline as a compact whole-course boundary map. A course-level low-ratio proxy may be justified only with a concise review_reasons entry beginning "DECOMPOSITION_JUSTIFICATION:" and review_required true; otherwise improve granularity by splitting the target.',
+   'Return source_inventory and audit_scope.source_walk as empty arrays. Return assumed_prerequisites, source_conflicts, coverage_gaps, and unresolved_items as empty arrays.',
+   'Return source_to_unit_reconciliation with empty arrays; the server derives whole-course reconciliation after applying the bounded patch.',
+   'Return status "ok" and student_facing_summary_candidate null. Do not mutate source classification, Course state, or any non-structural audit finding.'
+  );
  }else if(structurePass){
   instructions.push(
    'This is a bounded BOUNDED_CURRICULUM_STRUCTURE pass using the supported LEARNING_UNIT_DECOMPOSITION task mode after validated source-inventory preparation.',
