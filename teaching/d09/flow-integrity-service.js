@@ -403,7 +403,12 @@ function decorateD09Service(base, {
   }
 
   async function getScheduleReview(user, courseId) {
-    const review = await base.getScheduleReview(user, courseId);
+    const [review, backgroundTimetableGeneration] = await Promise.all([
+      base.getScheduleReview(user, courseId),
+      typeof repository.latestBackgroundTimetableGeneration === 'function'
+        ? repository.latestBackgroundTimetableGeneration(user.id, courseId)
+        : Promise.resolve(null),
+    ]);
     const scopedSlots = Array.isArray(review.courseSlots) ? review.courseSlots : slotsForCourse(review.slots, courseId);
     const classFacts = scheduleClassFacts(scopedSlots, review.serverNow || serverNow());
     const elapsedSlotCount = scopedSlots.filter((slot) => Date.parse(slot.endsAt) <= Date.parse(review.serverNow || serverNow())).length;
@@ -426,6 +431,9 @@ function decorateD09Service(base, {
         ...(review.scheduleHealth || {}),
         recoveryRequired,
         systemFailureProtected: recoveryRequired,
+      }),
+      generation: Object.freeze({
+        background: timetableJobProjection(backgroundTimetableGeneration, review),
       }),
     });
   }
@@ -534,7 +542,7 @@ function decorateD09Service(base, {
     }
   }
 
-  async function proposeTimetable(user, courseId) {
+  async function proposeTimetable(user, courseId, { sourceKind = 'DETERMINISTIC_INITIAL' } = {}) {
     let context = await repository.getSchedulingContext(user.id, courseId);
     if (context.inheritedDefault) context = await attachInheritedDefaultForScheduling(user, courseId, context);
     requireReadyContext(context, courseId);
@@ -568,15 +576,50 @@ function decorateD09Service(base, {
       courseId,
       context,
       result,
-      source: expansion ? 'COURSE_ADMISSION_EXPANSION_PROPOSAL' : 'DETERMINISTIC_INITIAL',
+      source: expansion ? 'COURSE_ADMISSION_EXPANSION_PROPOSAL' : String(sourceKind || 'DETERMINISTIC_INITIAL'),
     }));
     return getScheduleReview(user, courseId);
   }
 
+  async function saveScheduleInputs(user, courseId, input) {
+    await base.saveScheduleInputs(user, courseId, input);
+    let queueResult = null;
+    try {
+      const context = await repository.getSchedulingContext(user.id, courseId);
+      const requested = requestedBundleForContext(context, courseId);
+      if (requested?.plan && PREACTIVATION_STATES.has(String(context.course?.lifecycle_state || 'DRAFT'))) {
+        queueResult = await queueTimetable(user, courseId, {
+          sourceKind:'AVAILABILITY_AUTO_RECALC',
+          trigger:'AVAILABILITY_SAVE',
+        });
+      }
+    } catch (error) {
+      // Availability persistence is authoritative and must not be reported as
+      // failed merely because the separate background Scheduler queue is down.
+      queueResult = Object.freeze({
+        accepted:false,
+        background:false,
+        errorCode:error?.code || 'TEACHING_D09_BACKGROUND_GENERATION_UNAVAILABLE',
+      });
+    }
+    const review = await getScheduleReview(user, courseId);
+    return Object.freeze({
+      ...review,
+      availabilitySave:Object.freeze({
+        saved:true,
+        timetableQueued:queueResult?.accepted === true && queueResult?.background === true,
+        jobId:queueResult?.jobId || null,
+        queueErrorCode:queueResult?.accepted === false ? queueResult.errorCode : null,
+      }),
+    });
+  }
+
   return Object.freeze({
     ...base,
+    saveScheduleInputs,
     getScheduleReview,
-    recalculateAfterCoursePlanChange,
+    queueTimetable,
+    processQueuedTimetable,
     proposeTimetable,
     recoverSystemInvalidTimetable,
   });
