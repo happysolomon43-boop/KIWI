@@ -6,13 +6,13 @@
     {
       "family_id": "TPF-02",
       "supersedes_version": "1.0",
-      "version": "1.1",
-      "prompt_file": "TPF-02_Curriculum_Analysis_Structuring_v1.1_REVISED_CANDIDATE.md",
-      "prompt_asset": "TPF-02_Curriculum_Analysis_Structuring_v1.1_REVISED_CANDIDATE.md.gz.b64",
-      "prompt_sha256": "4272ed7051786b2c3ccc545d827ab21e85e622df628310e48e837759a33ec666",
+      "version": "1.2",
+      "prompt_file": "TPF-02_Curriculum_Analysis_Structuring_v1.2_REVISED_CANDIDATE.md",
+      "prompt_asset": "TPF-02_Curriculum_Analysis_Structuring_v1.2_REVISED_CANDIDATE.md",
+      "prompt_sha256": "c3084d859209c672d86659b54ce63cc52422b3887414c0b50a64722f4744c004",
       "status": "qualification_pending",
-      "change_class": "production_failure_repair",
-      "reason": "Required source items could pass Curriculum Audit without complete Learning Unit lineage, causing D08 Course Plan coverage failure."
+      "change_class": "curriculum_decomposition_integrity_repair",
+      "reason": "Supersedes effective TPF-02 v1.1 by adding deterministic hierarchy/decomposition gates, real Subtopic linkage, and anti-collapse guidance while preserving exact required-source lineage."
     }
   ]
 }

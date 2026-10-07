@@ -79,10 +79,10 @@ function canonicalTpf02Audit(sourceCount = 54) {
       subject_snapshot_ref: 'snapshot:canonical',
       audit_output: {
         source_inventory: sourceItemRefs.map((source_item_ref) => ({ source_item_ref })),
-        topics: [{ topic_id: 'topic-1', title: 'Canonical topic', source_item_refs: sourceItemRefs, subtopics: ['Foundation'] }],
+        topics: [{ topic_id: 'topic-1', title: 'Canonical topic', source_item_refs: sourceItemRefs, subtopics: [{ subtopic_id: 'subtopic-1', title: 'Foundation' }] }],
         learning_units: [{
           learning_unit_id: 'unit-1', title: 'Canonical unit', intended_competence: 'Explain and apply the canonical foundation independently.',
-          source_item_refs: sourceItemRefs, topic_refs: ['topic-1'], prerequisite_refs: [], dependency_type_notes: '',
+          source_item_refs: sourceItemRefs, topic_refs: ['topic-1'], subtopic_id: 'subtopic-1', prerequisite_refs: [], dependency_type_notes: '',
           criticality: 'foundational', criticality_basis: 'Required foundation.', proposed_exit_evidence: 'Explain and apply it independently.', uncertainties: [],
         }],
         assumed_prerequisites: [],

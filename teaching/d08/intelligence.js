@@ -91,6 +91,7 @@ function boundedPlanningSignals({ audit, diagnosticPlan = null, vpkDecisions = [
         return {
           id: unitId,
           topic_refs: (unit.topic_refs || (unit.topic_id ? [unit.topic_id] : [])).map(String),
+          subtopic_id: unit.subtopic_id == null ? null : String(unit.subtopic_id),
           title: String(unit.title || unit.learning_unit_id || unit.id),
           intended_competence: String(unit.intended_competence || ''),
           criticality: String(unit.criticality || 'MEDIUM'),
@@ -174,7 +175,7 @@ function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions 
       // over the 64 KiB academic-input ceiling.
       previous_plan_context: boundedPreviousPlanContext(previousPlanContext),
       validated_planning_signals: planningSignals,
-      authoritative_coverage_rule: 'TPF-02 v1.1 lineage is authoritative input; only legacy uncovered items may receive bounded TPF-03 planning proposals; final reconciliation remains deterministic',
+      authoritative_coverage_rule: 'TPF-02 v1.2 lineage and validated Topic/Subtopic/Learning Unit structure are authoritative input; only legacy uncovered items may receive bounded TPF-03 planning proposals; final reconciliation remains deterministic',
       output_requirements: {
         return_one_json_object: true,
         include_every_declared_top_level_field: true,

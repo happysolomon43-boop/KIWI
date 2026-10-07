@@ -22,8 +22,8 @@ function setupFixture() {
   const inventoryDigest = sourceInventoryDigest(sources);
   const curriculumAudit = {
     curriculum_audit_id: 'audit-1',
-    prompt_family_version: '1.1',
-    output_schema_version: '2',
+    prompt_family_version: '1.2',
+    output_schema_version: '3',
     status: 'VALIDATED_CANDIDATE',
     input_state_reference: 'teaching_course:course-1:state:2',
     source_inventory_digest: inventoryDigest,
@@ -104,16 +104,16 @@ test('D07 service composition applies audit idempotency before truncation recove
    setup.curriculumAudit.prompt_family_version = '1.0';
    setup.curriculumAudit.output_schema_version = 'tpf02.curriculum-audit.v1';
    let runs = 0;
-   const service = decorateAuditIdempotency({ async getSetup() { return setup; }, async runAudit() { runs++; return {curriculum_audit_id: 'v1.1-audit'}; } });
+   const service = decorateAuditIdempotency({ async getSetup() { return setup; }, async runAudit() { runs++; return {curriculum_audit_id: 'v1.2-audit'}; } });
    assert.equal(currentValidatedAudit(setup), null);
-   assert.equal((await service.runAudit({id:'student-1'}, 'course-1')).curriculum_audit_id, 'v1.1-audit');
+   assert.equal((await service.runAudit({id:'student-1'}, 'course-1')).curriculum_audit_id, 'v1.2-audit');
    assert.equal(runs, 1);
    const unreconciled = setupFixture();
    unreconciled.curriculumAudit.validation_metadata.lineage_reconciled = false;
    assert.equal(currentValidatedAudit(unreconciled), null);
  });
 
-test('D07 background refresh versions the outbox key and joins a completed current v1.1 audit', async () => {
+test('D07 background refresh versions the outbox key and joins a completed current v1.2 audit', async () => {
  const {createD07Service}=require('../../../teaching/d07/service');
  const setup=setupFixture();
  setup.backgroundAnalysis={event_id:'old-event',status:'PUBLISHED'};
@@ -125,7 +125,7 @@ test('D07 background refresh versions the outbox key and joins a completed curre
  const refreshed=await service.queueAudit({id:'student-1'},'course-1');
  assert.equal(refreshed.jobId,'new-event');
  assert.equal(refreshed.status,'PENDING');
- assert.ok(existingKeys.has('d07:curriculum-audit:course-1:2:tpf02:1.1'));
+ assert.ok(existingKeys.has('d07:curriculum-audit:course-1:2:tpf02:1.2'));
  setup.backgroundAnalysis={event_id:'new-event',status:'PENDING'};
  assert.equal((await service.queueAudit({id:'student-1'},'course-1')).joinedExisting,true);
  setup.backgroundAnalysis.status='PUBLISHED';

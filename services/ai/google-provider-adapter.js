@@ -26,6 +26,20 @@ function serializeGoogleContent(content) {
   }];
 }
 
+function serializeGoogleResponseSchema(value) {
+  if (Array.isArray(value)) return value.map(serializeGoogleResponseSchema);
+  if (value == null || typeof value !== 'object') return value;
+  const result = {};
+  for (const [key, child] of Object.entries(value)) {
+    // Gemini's responseSchema accepts boolean fields, but its enum values are
+    // string-typed. Preserve the neutral KIWI schema invariant internally and
+    // remove only the provider-incompatible boolean enum at this adapter edge.
+    if (key === 'enum' && value.type === 'boolean') continue;
+    result[key] = serializeGoogleResponseSchema(child);
+  }
+  return result;
+}
+
 function serializeGoogleExecutionRequest(request) {
   if (!request || request.provider !== AI_PROVIDERS.GOOGLE) {
     throw new Error('Google adapter requires a GOOGLE execution request');
@@ -48,7 +62,7 @@ function serializeGoogleExecutionRequest(request) {
   if (generation.structuredOutput) {
     generationConfig.responseMimeType = generation.structuredOutput.mimeType || 'application/json';
     if (generation.structuredOutput.schema != null) {
-      generationConfig.responseSchema = generation.structuredOutput.schema;
+      generationConfig.responseSchema = serializeGoogleResponseSchema(generation.structuredOutput.schema);
     }
   }
 
@@ -98,6 +112,7 @@ function createGoogleProviderAdapter({
 
 module.exports = {
   serializeGoogleContent,
+  serializeGoogleResponseSchema,
   serializeGoogleExecutionRequest,
   createGoogleProviderAdapter,
 };

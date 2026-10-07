@@ -37,6 +37,7 @@ function candidateOutput() {
       intended_competence: 'Explain the stages of the cell cycle.',
       source_item_refs: ['source:source-1'],
       topic_refs: [],
+      subtopic_id: null,
       prerequisite_refs: [],
       dependency_type_notes: null,
       criticality: 'foundational',
@@ -104,5 +105,5 @@ test('D07 child-table projections normalize contract-null optional text without 
 
   const unitInsert = statements.find(({ sql }) => /insert into public\.teaching_curriculum_audit_learning_units/i.test(sql));
   assert.ok(unitInsert);
-  assert.equal(unitInsert.params[10], '');
+  assert.equal(unitInsert.params[11], '');
 });
