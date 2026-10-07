@@ -123,6 +123,7 @@ function stage4(course,data,container,reload) {
   addField(academic,'Target/deadline',deadline); addField(academic,'Deadline type',deadlineKind); addField(academic,'Revision reserve minutes',revision); addField(academic,'Assessment reserve minutes',assessment); card.append(academic);
 
   const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
+  const backgroundBuild=data.backgroundBuild||null,buildActive=backgroundBuild?.active===true;
   const message=el('div'), actions=el('div','teaching-d09-actions'), save=el('button','teaching-button teaching-button--primary',postActivation?'Request this availability change':'Save availability'); save.type='button'; actions.append(save); card.append(actions,message);
   save.addEventListener('click',async()=>{
     save.disabled=true;
@@ -175,12 +176,13 @@ function stage5(course,data,container,reload) {
   const unresolvedSelf=(data.unresolvedSemesterCourses||[]).filter((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
   const missingAttachment=unresolvedSelf.some((item)=>item.reason==='COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER');
   const missingPlan=unresolvedSelf.some((item)=>item.reason==='COURSE_PLAN_NOT_READY');
-  const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',postActivation?'Timetable locked after activation':(data.timetable?'Rebuild Semester timetable':'Build Semester timetable')), status=el('span','teaching-d09-status',statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button';propose.disabled=postActivation||missingInputs||missingPlan; actions.append(propose,status); card.append(actions);
+  const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',buildActive?'Timetable building in background':postActivation?'Timetable locked after activation':(data.timetable?'Rebuild Semester timetable':'Build Semester timetable')), status=el('span','teaching-d09-status',buildActive?'Running in background':statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button';propose.disabled=buildActive||postActivation||missingInputs||missingPlan; actions.append(propose,status); card.append(actions);
   if(missingInputs){card.append(el('div','teaching-message','Save your semester and availability before creating the timetable.'));}
   else {
     if(missingAttachment) card.append(el('div','teaching-message','This Course is already using your shared Semester availability. When the timetable is proposed, KIWI rebuilds the future Semester schedule as one combined workload: elapsed Classes stay fixed, while existing future Classes may shift so the new Course is integrated naturally instead of being bolted on.'));
     if(missingPlan){const guidance=el('div','teaching-message'),openPlan=el('button','teaching-d08-link-button','Open Course Plan');openPlan.type='button';openPlan.addEventListener('click',()=>courseSurface.openCourse(course.course_id,'course-plan'));guidance.append(document.createTextNode('Create the Course Plan before proposing a timetable. '),openPlan);card.append(guidance);}
   }
+  if(buildActive)card.append(el('div','teaching-message','KIWI is building the shared Semester timetable in the background. You can leave this page; the build will continue.'));
   const courseSummary=data.feasibility?.courseSummary||null;const courseSlots=Array.isArray(data.courseSlots)?data.courseSlots:(data.slots||[]).filter((slot)=>String(slot.courseId||slot.course_id||'')===String(course.course_id));const scheduledMinutes=courseSummary?.scheduledMinutes??courseSlots.reduce((sum,slot)=>sum+(Number(slot.plannedMinutes)||Math.max(0,Math.round((Date.parse(slot.endsAt)-Date.parse(slot.startsAt))/60000))),0);const metrics=el('div','teaching-d09-metrics'); metrics.append(metric(scheduledMinutes,'scheduled minutes'),metric(courseSummary?.requiredMinutes??0,'required minutes'),metric(data.feasibility?.metrics?.headroomRatio==null?'—':Math.round(data.feasibility.metrics.headroomRatio*100)+'%','Recovery headroom (Semester)')); card.append(metrics);
   if(data.feasibility?.reasons?.length){const list=el('ul','teaching-d08-list');data.feasibility.reasons.forEach((reason)=>list.append(el('li','',statusName(reason))));card.append(list);}
   if(data.feasibility?.alternatives?.length){card.append(el('p','teaching-d09-note','Feasible alternatives'));const list=el('ul','teaching-d08-list');data.feasibility.alternatives.forEach((item)=>list.append(el('li','',item.message)));card.append(list);}
@@ -194,21 +196,24 @@ function stage5(course,data,container,reload) {
   });
   card.append(slotList);
   const proposalMessage=el('div');proposalMessage.setAttribute('role','status');proposalMessage.setAttribute('aria-live','polite');card.append(proposalMessage);
-  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Rebuilding one Semester timetable across every schedulable Course…';proposalMessage.className='teaching-message';try{const updated=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});await reload(updated,{text:'Shared Semester timetable rebuilt. Every current Course Plan is coordinated in the same timetable version.',kind:'success'});}catch(error){proposalMessage.textContent=scheduleActionError(error,'Semester timetable feasibility could not be calculated.');proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
+  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Starting the shared Semester timetable build in the background…';proposalMessage.className='teaching-message';try{await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});await reload(null,{text:'Timetable build started in the background. You can keep using KIWI while it finishes.',kind:'success'});}catch(error){proposalMessage.textContent=scheduleActionError(error,'Semester timetable build could not be started.');proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
   container.append(card);
 }
 async function renderSchedule({course,container}) {
   installStyles(); const page=el('div','teaching-d09-page'),live=el('div');live.setAttribute('role','status');live.setAttribute('aria-live','polite'); container.replaceChildren(page);
+  let buildPollTimer=null;
   function renderData(data,notice=null){
-    const grid=el('div','teaching-d09-grid'),left=el('div'),right=el('div');grid.append(left,right);page.replaceChildren(live,grid);stage4(course,data,left,renderData);stage5(course,data,right,renderData);
+    if(buildPollTimer!=null){window.clearTimeout(buildPollTimer);buildPollTimer=null;}
+    const grid=el('div','teaching-d09-grid'),left=el('div'),right=el('div');grid.append(left,right);page.replaceChildren(live,grid);stage4(course,data,left,refresh);stage5(course,data,right,refresh);
     const text=typeof notice==='string'?notice:notice?.text||'';live.textContent=text;live.className=text?'teaching-message':'';delete live.dataset.kind;if(text&&notice?.kind)live.dataset.kind=notice.kind;
+    if(data.backgroundBuild?.active)buildPollTimer=window.setTimeout(()=>{if(page.isConnected)refresh(null,{text:'Timetable build is still running in the background.'});},5000);
   }
-  async function load() {
-    showScheduleLoading(page,'Loading Semester availability and timetable');
-    try { renderData(await fetchReview(course.course_id)); }
+  async function refresh(prefetched=null,notice=null){
+    try { renderData(prefetched||await fetchReview(course.course_id),notice); }
     catch(error){page.replaceChildren(el('div','teaching-message',error.message||'Scheduling could not be loaded.'));page.firstElementChild.dataset.kind='error';}
   }
-  await load();
+  showScheduleLoading(page,'Loading Semester availability and timetable');
+  await refresh();
 }
 async function renderSummary({course,container,openSection}) {
   installStyles(); const card=el('article','teaching-course-feature-card'); card.append(el('div','teaching-kicker','Time and pacing'),el('h3','','Semester & Timetable'),el('p','','Set availability, preserve recovery capacity, and check whether the current Course Plan actually fits the academic period.'));
