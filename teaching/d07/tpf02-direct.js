@@ -512,7 +512,7 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
     : 'source_evidence_items is the complete academic evidence set for this staged Course.',
    'Treat prepared_source_inventory as the exact provisional source accounting. Do not rewrite, omit, reorder, or reclassify prepared_source_inventory.',
    progressiveSynthesis
-    ? 'For this progressive large-Course synthesis, prepared_source_inventory academic_meaning plus progressive_structure_candidates are the bounded evidence representation. Do not demand or invent raw source text that is intentionally absent from this final pass.'
+    ? 'For this progressive large-Course synthesis, source_evidence_items is the complete bounded source evidence set and progressive_structure_candidates are provisional structural hints. Re-evaluate candidate boundaries against the evidence; do not preserve a coarse candidate merely because it came from a batch.'
     : 'Use source_evidence_items to ground whole-course structure and cross-source judgments.',
    'Return source_inventory as an empty array. The server will reattach the exact validated prepared_source_inventory and validated source_walk before final validation.',
    'Use only academic_input.eligible_learning_unit_source_refs in learning_units[].source_item_refs. Sources classified duplicate, non_instructional, outside_approved_scope, or unresolved are forbidden in Learning Unit source_item_refs.',
