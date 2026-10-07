@@ -110,7 +110,7 @@ function createTeachingFoundation({
     ? createD09SchedulingRepository({ query, withTransaction, randomUUID })
     : null;
   const d09Service = d09Repository && d09TransactionalMutation
-    ? d09.createD09Service({ repository: d09Repository, transactionalMutation: d09TransactionalMutation, randomUUID, intelligence: d09Intelligence })
+    ? d09.createD09Service({ repository: d09Repository, transactionalMutation: d09TransactionalMutation, randomUUID, intelligence: d09Intelligence, outboxStore:d10RuntimePlatform?.outboxStore || null })
     : null;
   const d09AttendanceRecoveryOwner = persistentDepsReady && typeof d09.createD09AttendanceRecoveryOwner === 'function'
     ? d09.createD09AttendanceRecoveryOwner({ query, withTransaction, randomUUID })
