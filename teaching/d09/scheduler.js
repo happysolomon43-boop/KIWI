@@ -314,7 +314,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
   const maxCore=Math.floor(totalCapacity*(1-policy.minimumRatio));
   const required=work.reduce((sum,w)=>sum+w.requiredMinutes,0);
   const initialReasons=[];
-  if(!periods.length) initialReasons.push('NO_USABLE_AVAILABILITY');
+  if(!periods.length && required>0) initialReasons.push('NO_USABLE_AVAILABILITY');
   if(required>maxCore) initialReasons.push('RECOVERY_HEADROOM_BELOW_MINIMUM');
   const scheduleLimit=Math.min(required,maxCore);
   const stable=retainStablePlacements(context,periods,work,scheduleLimit,now);
