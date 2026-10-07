@@ -389,6 +389,15 @@ test('Course Setup shows one actionable Course-analysis failure surface for the 
   assert.doesNotMatch(ui,/card\.append\(failure\)/);
 });
 
+test('Course Setup preserves the last verified state and retries after a transient browser fetch interruption', () => {
+  const ui=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-d08.js'),'utf8');
+  assert.match(ui,/lastBackgroundAuditActive/);
+  assert.match(ui,/failed to fetch\|networkerror\|network request failed\|load failed/i);
+  assert.match(ui,/Keeping the last verified Course Setup while KIWI reconnects/);
+  assert.match(ui,/if \(networkFailure \|\| \(silent && lastBackgroundAuditActive\)\) schedulePoll\(\)/);
+  assert.doesNotMatch(ui,/catch \(error\) \{\s*body\.replaceChildren\(\);\s*status\.textContent = error\.message \|\| 'Course preparation could not be loaded\.'/);
+});
+
 
 test('Course analysis background idempotency joins only the exact same refinement request', async () => {
   const audit=currentAudit();
