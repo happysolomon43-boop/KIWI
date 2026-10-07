@@ -1,7 +1,6 @@
 'use strict';
 
 const { computeSchedule } = require('./scheduler');
-const { assertCurrentCoursePlan } = require('./contracts');
 const { buildPreparationEvent } = require('../preparation/events');
 const { TEACHING_EVENTS } = require('../events/names');
 
