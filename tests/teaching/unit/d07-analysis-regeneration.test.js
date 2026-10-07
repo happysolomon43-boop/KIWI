@@ -16,6 +16,7 @@ const {
   validateMergeCompressionPatch,
   applyMergeCompressionPatch,
   createD07Intelligence,
+  canonicalizeSynthesisSourceScope,
   executeAdaptiveLineageRepair,
   validateLineageRepairPatch,
   lineageRepairRequest,
@@ -322,6 +323,36 @@ test('merge/compression patch refuses cross-placement merges even when the stude
   });
   assert.equal(result.ok,false);
   assert.equal(result.reason,'TPF02_MERGE_COMPRESSION_PLACEMENT_MISMATCH');
+});
+
+test('whole-curriculum synthesis restores the authoritative audit-scope source census before final validation', () => {
+  const raw={
+    audit_scope:{
+      subject_or_course:'Biology',
+      source_refs:['source:s1'],
+      trusted_scope_version:'model-echo',
+      source_walk:[],
+    },
+    topics:[],
+    learning_units:[],
+    source_to_unit_reconciliation:{required_item_map:[],unmapped_required_refs:[]},
+  };
+  const preparedInventory=[
+    {source_item_ref:'source:s1',proposed_scope_classification:'required'},
+    {source_item_ref:'source:s2',proposed_scope_classification:'required'},
+  ];
+  const authoritativeAuditScope={
+    subject_or_course:'Biology',
+    source_refs:['source:s1','source:s2'],
+    trusted_scope_version:'subject:subject-1:snapshot-4',
+  };
+
+  const canonical=canonicalizeSynthesisSourceScope(raw,preparedInventory,authoritativeAuditScope);
+
+  assert.deepEqual(canonical.audit_scope.source_refs,['source:s1','source:s2']);
+  assert.equal(canonical.audit_scope.trusted_scope_version,'subject:subject-1:snapshot-4');
+  assert.equal(canonical.audit_scope.subject_or_course,'Biology');
+  assert.deepEqual(canonical.source_to_unit_reconciliation.unmapped_required_refs,['source:s1','source:s2']);
 });
 
 test('large-course lineage repair shrinks a rejected batch and preserves accepted progress between slices', async () => {

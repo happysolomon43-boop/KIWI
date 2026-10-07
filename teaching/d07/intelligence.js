@@ -493,7 +493,7 @@ function learningUnitEligibleSourceRefs(preparedInventory=[]){
   );
 }
 
-function canonicalizeSynthesisSourceScope(output,preparedInventory=[]){
+function canonicalizeSynthesisSourceScope(output,preparedInventory=[],authoritativeAuditScope=null){
   if(!output||typeof output!=='object'||Array.isArray(output))return output;
   const eligibleRefs=new Set(learningUnitEligibleSourceRefs(preparedInventory));
   const requiredRefs=uniqueStrings(
@@ -549,8 +549,21 @@ function canonicalizeSynthesisSourceScope(output,preparedInventory=[]){
     unmapped_required_refs:requiredRefs.filter((ref)=>(unitRefsBySource.get(ref)||[]).length===0),
   };
 
+  const auditScope=authoritativeAuditScope&&typeof authoritativeAuditScope==='object'&&!Array.isArray(authoritativeAuditScope)
+    ? {
+      ...(output.audit_scope&&typeof output.audit_scope==='object'&&!Array.isArray(output.audit_scope)?output.audit_scope:{}),
+      // source_refs and trusted_scope_version are runtime-owned census fields.
+      // Whole-curriculum synthesis must not depend on a large model echo for
+      // their completeness; the model owns academic structure, not source identity.
+      subject_or_course:String(authoritativeAuditScope.subject_or_course||output?.audit_scope?.subject_or_course||''),
+      source_refs:uniqueStrings(authoritativeAuditScope.source_refs||[]),
+      trusted_scope_version:String(authoritativeAuditScope.trusted_scope_version||output?.audit_scope?.trusted_scope_version||''),
+    }
+    : output.audit_scope;
+
   return {
     ...output,
+    audit_scope:auditScope,
     topics,
     learning_units:learningUnits,
     source_to_unit_reconciliation:reconciliation,
@@ -1520,7 +1533,7 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSo
       const rawSchema=validateTpf02Schema(out);
       if(!rawSchema.ok)return rawSchema;
       if(out.source_inventory.length!==0)return {ok:false,reason:'TPF02_STAGED_SYNTHESIS_MUST_DEFER_SOURCE_INVENTORY'};
-      const scoped=canonicalizeSynthesisSourceScope(out,preparedInventory);
+      const scoped=canonicalizeSynthesisSourceScope(out,preparedInventory,fullAcademicInput.audit_scope);
       const assembled=assembleStagedAudit(scoped,preparedInventory,preparedSourceWalk,stageFindings);
       const validated=validateTpf02Domain(assembled,validationContext);
       if(validated.ok)return validated;
