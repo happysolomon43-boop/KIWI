@@ -39,6 +39,33 @@ function schedulableScheduleContext(context, { includeCourseId = null } = {}) {
   });
 }
 
+function activeAuthorityScheduleContext(context) {
+  const included = (context?.courses || []).filter((bundle) =>
+    String(bundle.course?.lifecycle_state || '') === 'ACTIVE'
+  );
+  return Object.freeze({
+    ...(context || {}),
+    courses: Object.freeze(included),
+  });
+}
+
+function timetableRefScheduleContext(context, timetable) {
+  const refs = Array.isArray(timetable?.course_plan_refs) ? timetable.course_plan_refs : [];
+  const refByCourse = new Map(refs.map((ref) => [String(ref.course_id || ''), ref]));
+  const included = (context?.courses || []).filter((bundle) => {
+    const ref = refByCourse.get(String(bundle.course?.course_id || ''));
+    return Boolean(
+      ref
+      && String(ref.course_plan_id || '') === String(bundle.plan?.course_plan_id || '')
+      && Number(ref.version_no) === Number(bundle.plan?.version_no)
+    );
+  });
+  return Object.freeze({
+    ...(context || {}),
+    courses: Object.freeze(included),
+  });
+}
+
 function treatment(unit) {
   return String(unit?.metadata?.instructional_treatment || 'FULL_INSTRUCTION');
 }
@@ -308,6 +335,8 @@ module.exports = {
   isGovernedSchedulingLifecycle,
   isSchedulableLifecycle,
   schedulableScheduleContext,
+  activeAuthorityScheduleContext,
+  timetableRefScheduleContext,
   computeSharedSemesterSchedule,
   fail,
   treatment,
