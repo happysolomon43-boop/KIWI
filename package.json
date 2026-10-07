@@ -56,7 +56,6 @@
     "dotenv": "^16.6.1",
     "express": "^5",
     "jsonwebtoken": "^9.0.3",
-    "mammoth": "^1.8.0",
     "node-cron": "4.6.0",
     "officeparser": "8.0.0",
     "pdf-parse": "^1.1.1",
