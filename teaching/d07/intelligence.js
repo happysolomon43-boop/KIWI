@@ -406,23 +406,45 @@ function mergeCompressionRefinementRequest({course,sources,previousAudit,changeR
     error.code='TEACHING_D07_MERGE_COMPRESSION_REQUIRES_CURRENT';
     throw error;
   }
-  const mergeContext=buildMergeCompressionContext({changeRequest,previousAudit});
+
+  // A validated audit can remain academically current while Course state_version
+  // advances for non-source setup changes (for example intake/preferences). The
+  // persisted audit envelope therefore cannot be treated as current runtime
+  // identity. Preserve its final execution stage, but rebind server-owned state
+  // and source-scope identity to the current Course before applying a revision.
+  const baseExecutionStage=String(previousOutput.execution_stage||'').trim().toUpperCase();
+  if(![EXECUTION_STAGES.SINGLE_PASS,EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE].includes(baseExecutionStage)){
+    const error=new Error('The current Course analysis is not a final TPF-02 artifact and cannot be merge/compression revised.');
+    error.code='TEACHING_D07_MERGE_COMPRESSION_BASE_STAGE_INVALID';
+    throw error;
+  }
+
   const taskAcademicInput=buildTpf02AcademicInput({
     course,
     sources,
     taskMode:'MERGE_OR_COMPRESS_UNITS',
     executionStage:EXECUTION_STAGES.SINGLE_PASS,
   });
-  const academicInput=Object.freeze({
-    ...taskAcademicInput,
-    source_items:Object.freeze([]),
-    merge_compression_context:mergeContext,
-  });
   const fullAcademicInput=buildTpf02AcademicInput({
     course,
     sources,
     taskMode:'DEEP_AUDIT',
-    executionStage:EXECUTION_STAGES.SINGLE_PASS,
+    executionStage:baseExecutionStage,
+  });
+  const revisionBaseOutput=canonicalizeSynthesisSourceScope(
+    canonicalizeTpf02RuntimeEnvelope(previousOutput,fullAcademicInput),
+    previousOutput.source_inventory||[],
+    fullAcademicInput.audit_scope,
+  );
+  const canonicalPreviousAudit={
+    ...previousAudit,
+    audit_output:revisionBaseOutput,
+  };
+  const mergeContext=buildMergeCompressionContext({changeRequest,previousAudit:canonicalPreviousAudit});
+  const academicInput=Object.freeze({
+    ...taskAcademicInput,
+    source_items:Object.freeze([]),
+    merge_compression_context:mergeContext,
   });
   const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const fullValidationContext=validationContextFor(fullAcademicInput,{allowDecompositionRepair:true});
@@ -465,14 +487,18 @@ function mergeCompressionRefinementRequest({course,sources,previousAudit,changeR
     validationContext:fullValidationContext,
     schemaValidator:out=>validateTpf02MergeCompressionPatchSchema(canonicalizeTpf02RuntimeEnvelope(out,academicInput,{canonicalizeAuditScope:false})),
     domainValidator:async out=>{
-      const patch=validateMergeCompressionPatch(out,{academicInput,baseOutput:previousOutput});
+      const patch=validateMergeCompressionPatch(out,{academicInput,baseOutput:revisionBaseOutput});
       if(!patch.ok)return patch;
       if(!(patch.value.merge_groups||[]).length){
-        const unchanged=validateTpf02Domain(previousOutput,fullValidationContext);
-        return unchanged.ok?{ok:true,value:previousOutput}:unchanged;
+        const unchanged=validateTpf02Domain(revisionBaseOutput,fullValidationContext);
+        return unchanged.ok?{ok:true,value:revisionBaseOutput}:unchanged;
       }
-      const applied=applyMergeCompressionPatch(previousOutput,patch.value);
-      const assembled=canonicalizeSynthesisSourceScope(applied,previousOutput.source_inventory||[]);
+      const applied=applyMergeCompressionPatch(revisionBaseOutput,patch.value);
+      const assembled=canonicalizeSynthesisSourceScope(
+        applied,
+        revisionBaseOutput.source_inventory||[],
+        fullAcademicInput.audit_scope,
+      );
       const validated=validateTpf02Domain(assembled,fullValidationContext);
       if(!validated.ok)return validated;
 
