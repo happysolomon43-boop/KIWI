@@ -83,7 +83,7 @@ test('new Teaching courses enqueue curriculum analysis immediately after the dur
   assert.deepEqual(order, ['draft-saved', 'setup-read', 'audit-enqueued']);
   assert.equal(events.length, 1);
   assert.equal(events[0].eventType, 'teaching.curriculum.audit_requested');
-  assert.equal(events[0].idempotencyKey, 'd07:curriculum-audit:course-1:1:tpf02:1.1');
+  assert.equal(events[0].idempotencyKey, 'd07:curriculum-audit:course-1:1:tpf02:1.2');
   assert.equal(course.background_analysis.status, 'PENDING');
 });
 
@@ -158,7 +158,7 @@ test('a stale active curriculum-audit event is replaced with one bound to the cu
   assert.equal(events[0].aggregateVersion, 2);
   assert.equal(events[0].payload.expected_state_version, '2');
   assert.equal(events[0].causationId, 'stale-event');
-  assert.equal(events[0].idempotencyKey, 'd07:curriculum-audit:course-1:2:tpf02:1.1:state-recovery:stale-event');
+  assert.equal(events[0].idempotencyKey, 'd07:curriculum-audit:course-1:2:tpf02:1.2:state-recovery:stale-event');
   assert.equal(reconciled.backgroundAnalysis.event_id, 'replacement-event');
   assert.equal(reconciled.backgroundAnalysis.status, 'PENDING');
   assert.equal(reconciled.backgroundAnalysis.recovery_reason, 'COURSE_STATE_CHANGED');
@@ -194,7 +194,7 @@ test('PUBLISHED without a Curriculum Audit artifact is treated as recoverable, n
 
   assert.equal(events.length, 1);
   assert.equal(events[0].aggregateVersion, 2);
-  assert.equal(events[0].idempotencyKey, 'd07:curriculum-audit:course-1:2:tpf02:1.1:state-recovery:published-without-audit');
+  assert.equal(events[0].idempotencyKey, 'd07:curriculum-audit:course-1:2:tpf02:1.2:state-recovery:published-without-audit');
   assert.equal(reconciled.backgroundAnalysis.status, 'PENDING');
   assert.equal(reconciled.backgroundAnalysis.last_error_code, null);
   assert.equal(reconciled.backgroundAnalysis.recovery_reason, 'PUBLISHED_WITHOUT_AUDIT');
