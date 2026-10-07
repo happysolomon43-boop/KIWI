@@ -195,7 +195,11 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
         if(String(planRef.course_plan_id||'')!==String(plan.course_plan_id)||Number(planRef.version_no)!==Number(plan.version_no)){
           blockers.push('TIMETABLE_COURSE_PLAN_REF_STALE');
         }
-        if(Number(planRef.state_version)!==Number(course.state_version)){
+        const timetableCourseStateVersion=Number(planRef.state_version);
+        const courseStateVersion=Number(course.state_version);
+        const expectedReadyPredecessor=String(course.lifecycle_state||'')==='READY'
+          && timetableCourseStateVersion===courseStateVersion-1;
+        if(timetableCourseStateVersion!==courseStateVersion&&!expectedReadyPredecessor){
           blockers.push('TIMETABLE_COURSE_STATE_STALE');
         }
       }
