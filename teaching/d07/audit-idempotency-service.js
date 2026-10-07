@@ -43,11 +43,20 @@ function decorateAuditIdempotency(service) {
 
   return Object.freeze({
     ...service,
-    async runAudit(user, courseId) {
+    async runAudit(user, courseId, options = {}) {
+      const operation = String(
+        options?.operation
+        || (options?.refine === true ? 'REFINE' : options?.regenerate === true ? 'REGENERATE' : 'GENERATE')
+      ).toUpperCase();
+      // Refinement and regeneration are explicit revision requests. They must
+      // never be short-circuited merely because a current audit already exists.
+      if (operation === 'REFINE' || operation === 'REGENERATE') {
+        return baseRunAudit(user, courseId, options);
+      }
       const setup = await service.getSetup(user, courseId);
       const existing = currentValidatedAudit(setup);
       if (existing) return existing;
-      return baseRunAudit(user, courseId);
+      return baseRunAudit(user, courseId, options);
     },
   });
 }
