@@ -117,6 +117,24 @@ function boundedPlanningSignals({ audit, diagnosticPlan = null, vpkDecisions = [
   });
 }
 
+function boundedPreviousPlanContext(previousPlanContext = null) {
+  if (!previousPlanContext) return null;
+  const units = Array.isArray(previousPlanContext.units)
+    ? previousPlanContext.units
+      .map((unit) => Object.freeze({
+        key: String(unit?.key || '').trim(),
+        title: String(unit?.title || '').trim(),
+      }))
+      .filter((unit) => unit.key)
+    : [];
+  return Object.freeze({
+    version: Number(previousPlanContext.version || 0) || null,
+    units: Object.freeze(units),
+    source_mapping_count: Array.isArray(previousPlanContext.sourceMappings) ? previousPlanContext.sourceMappings.length : 0,
+    source_mapping_lineage_handled_deterministically: true,
+  });
+}
+
 function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions = [], sources = [], previousPlanContext = null }) {
   const validate = async (out) => validateTpf03CoursePlanOutput(out, { course });
   const outputSchema = canonicalOutputSchema('tpf03.course-plan-scope-planning', validate);
@@ -150,7 +168,11 @@ function coursePlanRequest({ course, audit, diagnosticPlan = null, vpkDecisions 
       diagnostic_plan_ref: diagnosticPlan?.diagnostic_plan_id || null,
       vpk_decision_refs: vpkDecisions.map((decision) => decision.vpk_decision_id),
       source_refs: sourceRefs,
-      previous_plan_context: previousPlanContext,
+      // Full previous source mappings remain server-side for deterministic
+      // split/merge lineage. Re-sending them to TPF-03 duplicates the current
+      // TPF-02 lineage graph and can push large (100+ material) regenerations
+      // over the 64 KiB academic-input ceiling.
+      previous_plan_context: boundedPreviousPlanContext(previousPlanContext),
       validated_planning_signals: planningSignals,
       authoritative_coverage_rule: 'TPF-02 v1.1 lineage is authoritative input; only legacy uncovered items may receive bounded TPF-03 planning proposals; final reconciliation remains deterministic',
       output_requirements: {
@@ -239,4 +261,4 @@ function createD08Intelligence({ orchestrator } = {}) {
   });
 }
 
-module.exports = { boundedPlanningSignals, coursePlanRequest, scopeChangeImpactRequest, createD08Intelligence };
+module.exports = { boundedPlanningSignals, boundedPreviousPlanContext, coursePlanRequest, scopeChangeImpactRequest, createD08Intelligence };
