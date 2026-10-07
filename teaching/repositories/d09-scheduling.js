@@ -97,8 +97,10 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,stateVersion:Number(sibling.state_version),reason:'COURSE_PLAN_NOT_READY'}); continue; }
       bundles.push({...bundle,course:sibling,semesterTimezone:semester?.timezone});
     }
+    let inheritedCourseBundle=null;
     if(inheritedDefault){
       const requestedBundle=await latestPlanBundle(studentId,course.course_id);
+      inheritedCourseBundle={...requestedBundle,course,semesterTimezone:semester?.timezone};
       if(!requestedBundle.plan) unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_PLAN_NOT_READY'});
       unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'});
     }
@@ -108,7 +110,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const {rows:priorSlots=[]}=priorTimetable
       ? await query('select * from public.teaching_timetable_slots where student_id=$1 and timetable_version_id=$2 order by starts_at',[studentId,priorTimetable.timetable_version_id])
       : {rows:[]};
-    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots,inheritedDefault};
+    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots,inheritedDefault,inheritedCourseBundle};
   }
   async function getSchedulingContextUsing(runner,studentId,courseId){
     const course=await ensureCourse(studentId,courseId,runner,true);
@@ -134,8 +136,10 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       if(!bundle.plan){ unresolvedCourses.push({courseId:sibling.course_id,title:sibling.title,stateVersion:Number(sibling.state_version),reason:'COURSE_PLAN_NOT_READY'}); continue; }
       bundles.push({...bundle,course:sibling,semesterTimezone:semester?.timezone});
     }
+    let inheritedCourseBundle=null;
     if(inheritedDefault){
       const requestedBundle=await latestPlanBundle(studentId,course.course_id,runner);
+      inheritedCourseBundle={...requestedBundle,course,semesterTimezone:semester?.timezone};
       if(!requestedBundle.plan) unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_PLAN_NOT_READY'});
       unresolvedCourses.unshift({courseId:course.course_id,title:course.title,stateVersion:Number(course.state_version),reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'});
     }
@@ -145,7 +149,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const {rows:priorSlots=[]}=priorTimetable
       ? await q(runner,'select * from public.teaching_timetable_slots where student_id=$1 and timetable_version_id=$2 order by starts_at',[studentId,priorTimetable.timetable_version_id])
       : {rows:[]};
-    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots,inheritedDefault};
+    return {course,semester,profile,...children,courses:bundles,unresolvedCourses,priorTimetable,priorSlots,inheritedDefault,inheritedCourseBundle};
   }
   async function assertContextCurrentUsing(tx,{studentId,context}){
     const {rows:semesterRows}=await q(tx,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,context.semester.semester_id]);
@@ -205,6 +209,37 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     ) values($1,$2,$3,'SYSTEM',null,$4,$5,$6,'scheduler',$7,$8,$9::jsonb,$10::jsonb,'[]'::jsonb,$11::jsonb)`,
       [randomUUID(),studentId,clock(),action,entityType,entityId,stateVersionRef==null?null:String(stateVersionRef),reason,json(beforeRef),json(afterRef),json(safeMetadata)]);
   }
+  async function attachCourseToSemester({studentId,courseId,semesterId}){
+    return withTransaction(async(tx)=>{
+      const course=await ensureCourse(studentId,courseId,tx,true);
+      const lifecycle=String(course.lifecycle_state||'DRAFT');
+      if(!['DRAFT','READY','PLANNING','SETUP'].includes(lifecycle)){
+        const e=new Error('A Course can only inherit the shared Semester automatically before activation.'); e.status=409; e.code='TEACHING_D09_DEFAULT_SEMESTER_ATTACH_PREACTIVATION_ONLY'; throw e;
+      }
+      if(course.semester_id){
+        if(String(course.semester_id)===String(semesterId)) return {course,attached:false,staledTimetableCount:0};
+        const e=new Error('Course is already attached to a different Semester.'); e.status=409; e.code='TEACHING_D09_COURSE_ALREADY_ASSIGNED_TO_SEMESTER'; throw e;
+      }
+      const {rows:semesters=[]}=await q(tx,'select * from public.teaching_semesters where student_id=$1 and semester_id=$2 for update',[studentId,semesterId]);
+      const semester=semesters[0]||null;
+      if(!semester){ const e=new Error('Shared Semester default no longer exists.'); e.status=409; e.code='TEACHING_D09_DEFAULT_SEMESTER_MISSING'; throw e; }
+      const profile=await latestProfile(studentId,semester.semester_id,tx);
+      if(!profile){ const e=new Error('Shared Semester availability is no longer current.'); e.status=409; e.code='TEACHING_D09_SCHEDULE_PROFILE_REQUIRED'; throw e; }
+      const {rows:updatedRows=[]}=await q(tx,"update public.teaching_courses set semester_id=$3,state_version=state_version+1,updated_at=now() where student_id=$1 and course_id=$2 and semester_id is null returning *",[studentId,courseId,semester.semester_id]);
+      const updated=updatedRows[0]||await ensureCourse(studentId,courseId,tx,true);
+      if(String(updated.semester_id)!==String(semester.semester_id)){
+        const e=new Error('Course Semester assignment changed before the default could be inherited.'); e.status=409; e.code='TEACHING_D09_DEFAULT_SEMESTER_ATTACH_STALE'; throw e;
+      }
+      const {rowCount:staledTimetableCount=0}=await q(tx,"update public.teaching_timetable_versions set timetable_state='STALE' where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')",[studentId,semester.semester_id]);
+      await auditUsing(tx,{
+        studentId,action:'scheduler.course.inherit_semester_default',entityType:'COURSE',entityId:courseId,stateVersionRef:updated.state_version,
+        reason:'Course inherited the current Semester-global availability before scheduling.',
+        beforeRef:{semester_id:null},afterRef:{semester_id:semester.semester_id},
+        safeMetadata:{profile_id:profile.profile_id,profile_version:Number(profile.version_no),staled_timetable_count:Number(staledTimetableCount)||0},
+      });
+      return {course:updated,semester,profile,attached:true,staledTimetableCount:Number(staledTimetableCount)||0};
+    });
+  }
   async function saveScheduleInputsUsing(tx,{studentId,courseId,input,governedRequestRef=null}){
     const course=await ensureCourse(studentId,courseId,tx,true);
     if(!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT')) && !governedRequestRef){
@@ -255,7 +290,11 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       availability_window_id,student_id,profile_id,day_of_week,local_start,local_end,kind,preference_weight,effective_start_date,effective_end_date,label
     ) values($1,$2,$3,$4,$5::time,$6::time,$7,$8,$9::date,$10::date,$11)`,
       [randomUUID(),studentId,profileId,a.dayOfWeek,a.startLocal,a.endLocal,a.kind,a.preferenceWeight,a.effectiveStartDate,a.effectiveEndDate,a.label]);
-    for(const b of input.blocks) await q(tx,`insert into public.teaching_schedule_blocks(
+    const blocks=[
+      ...priorChildrenFull.blocks.filter((b)=>b.course_id&&String(b.course_id)!==String(courseId)),
+      ...input.blocks,
+    ];
+    for(const b of blocks) await q(tx,`insert into public.teaching_schedule_blocks(
       schedule_block_id,student_id,profile_id,course_id,block_kind,starts_at,ends_at,label,reason
     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [randomUUID(),studentId,profileId,b.courseId||b.course_id||null,b.kind||b.block_kind,b.startsAt||b.starts_at,b.endsAt||b.ends_at,b.label||null,b.reason||null]);
@@ -431,7 +470,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     return classes;
   }
   return Object.freeze({
-    assertReady,listSemesters,latestDefaultSemester,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,saveScheduleInputsUsing,saveProposalUsing,
+    assertReady,listSemesters,latestDefaultSemester,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,attachCourseToSemester,saveScheduleInputsUsing,saveProposalUsing,
     latestTimetable,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
   });
 }

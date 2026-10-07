@@ -33,11 +33,23 @@ function createD08Service({
     throw error;
   }
 
+  const PREACTIVATION_STATES = new Set(['DRAFT', 'READY', 'PLANNING', 'SETUP']);
+
   function requirePlan(setup) {
     if (setup.plan) return setup.plan;
     const error = new Error('A Course Plan has not been created for this Course.');
     error.status = 409;
     error.code = 'TEACHING_D08_COURSE_PLAN_REQUIRED';
+    throw error;
+  }
+
+  function assertRegenerationAllowed(setup) {
+    requirePlan(setup);
+    const lifecycleState = String(setup.course?.lifecycle_state || 'DRAFT').toUpperCase();
+    if (PREACTIVATION_STATES.has(lifecycleState)) return;
+    const error = new Error('Course Plan regeneration is available before Course activation. Active Courses require governed academic-change workflows.');
+    error.status = 409;
+    error.code = 'TEACHING_D08_REGENERATION_PREACTIVATION_ONLY';
     throw error;
   }
 
@@ -164,6 +176,7 @@ function createD08Service({
         available: Boolean(intelligence),
         ready: Boolean(intelligence) && generationBlockers.length === 0,
         blockers: Object.freeze([...generationBlockers]),
+        regenerationAllowed: Boolean(intelligence) && Boolean(setup.plan) && PREACTIVATION_STATES.has(String(setup.course?.lifecycle_state || 'DRAFT').toUpperCase()),
         ...(setup.backgroundPlanGeneration ? { background: backgroundGenerationProjection(setup.backgroundPlanGeneration) } : {}),
       }),
       sourceAnalysis,
@@ -233,11 +246,12 @@ function createD08Service({
     throw error;
   }
 
-  async function generateCoursePlan(user, courseId) {
+  async function generateCoursePlan(user, courseId, { regenerate = false } = {}) {
     const setup = await repository.getBaseSetup(user.id, courseId);
     assertGenerationReady(setup);
     if (!intelligence) held();
     const existing = await repository.getPlanReview(user.id, courseId);
+    if (regenerate) assertRegenerationAllowed(existing);
     const previousPlanContext = buildPreviousPlanContext(existing);
     const result = await intelligence.generateCoursePlan({
       course: setup.course,
@@ -294,17 +308,19 @@ function createD08Service({
         capability_id: 'teaching.curriculum.course_plan_generation',
         prompt_family_id: 'TPF-03',
         prompt_family_version: '1.0',
-        task_mode: 'course_plan_generation',
+        task_mode: regenerate ? 'course_plan_regeneration' : 'course_plan_generation',
+        regeneration_requested: regenerate,
         output_schema_version: 'tpf03.course-plan-scope-planning/1',
         execution_id: result.executionId || result.execution_id || null,
         validation: 'frozen-schema+domain+authority+provenance+state-version+deterministic-coverage',
       },
       scopeDiff: pendingScopeChange ? { scope_change_id: pendingScopeChange.scope_change_id, impact: pendingScopeChange.impact_summary } : {},
+      allowCurrentPlanReplacement: regenerate,
     });
     return sanitizePlanReview(await repository.getPlanReview(user.id, courseId));
   }
 
-  async function queueCoursePlan(user, courseId) {
+  async function queueCoursePlan(user, courseId, { regenerate = false } = {}) {
     if (!intelligence) held();
     if (!outboxStore || typeof outboxStore.append !== 'function' || typeof randomUUID !== 'function') {
       const error = new Error('Background Course Plan generation is temporarily unavailable.');
@@ -315,9 +331,10 @@ function createD08Service({
 
     const setup = await repository.getPlanReview(user.id, courseId);
     assertGenerationReady(setup);
+    if (regenerate) assertRegenerationAllowed(setup);
 
     const scope = currentPlanScopeState(setup);
-    if (setup.plan && scope.current) {
+    if (!regenerate && setup.plan && scope.current) {
       return Object.freeze({
         accepted: true,
         background: false,
@@ -338,7 +355,7 @@ function createD08Service({
         joinedExisting: true,
       });
     }
-    if (currentStatus === 'PUBLISHED') {
+    if (!regenerate && currentStatus === 'PUBLISHED') {
       const refreshed = await repository.getPlanReview(user.id, courseId);
       const refreshedScope = currentPlanScopeState(refreshed);
       if (refreshed.plan && refreshedScope.current) {
@@ -354,7 +371,8 @@ function createD08Service({
 
     const eventId = randomUUID();
     const now = clock().toISOString();
-    const baseKey = `d08:course-plan:${courseId}:${setup.course.state_version}:tpf03:1.0`;
+    const regenerationBasis = regenerate ? `:from-plan-${Number(setup.plan?.version_no || 0)}` : '';
+    const baseKey = `d08:course-plan:${courseId}:${setup.course.state_version}:tpf03:1.0:${regenerate ? 'regenerate' : 'generate'}${regenerationBasis}`;
     const idempotencyKey = currentStatus === 'CANCELLED'
       ? `${baseKey}:recovery:${current.event_id}`
       : baseKey;
@@ -377,6 +395,7 @@ function createD08Service({
       payload: {
         course_id: String(courseId),
         expected_state_version: String(setup.course.state_version),
+        regenerate,
       },
       auditRefs: setup.curriculumAudit?.curriculum_audit_id
         ? [`curriculum-audit:${setup.curriculumAudit.curriculum_audit_id}`]
@@ -390,6 +409,10 @@ function createD08Service({
       status: queued.event.status,
       joinedExisting: queued.inserted === false,
     });
+  }
+
+  async function regenerateCoursePlan(user, courseId) {
+    return queueCoursePlan(user, courseId, { regenerate: true });
   }
 
   async function getCoverageReport(user, courseId) {
@@ -531,6 +554,7 @@ function createD08Service({
   return Object.freeze({
     getPlanReview,
     queueCoursePlan,
+    regenerateCoursePlan,
     generateCoursePlan,
     getCoverageReport,
     getActivationCoverageDecision,

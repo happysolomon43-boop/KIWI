@@ -378,7 +378,7 @@ test('D08 plan review exposes current generation readiness instead of a historic
   });
   const review = await service.getPlanReview({ id: 'u1' }, 'c1');
   assert.equal(review.routeQualification, 'QUALIFIED_BY_RUNTIME_INJECTION');
-  assert.deepEqual(review.generation, { available: true, ready: true, blockers: [] });
+  assert.deepEqual(review.generation, { available: true, ready: true, blockers: [], regenerationAllowed: false });
 });
 
 test('D08 service rejects stale Curriculum Audit after authoritative scope change', async () => {

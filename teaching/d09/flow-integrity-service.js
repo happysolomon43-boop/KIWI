@@ -1,6 +1,7 @@
 'use strict';
 
 const { computeSchedule } = require('./scheduler');
+const { assertCurrentCoursePlan } = require('./contracts');
 const { buildPreparationEvent } = require('../preparation/events');
 const { TEACHING_EVENTS } = require('../events/names');
 
@@ -113,6 +114,10 @@ function scheduleClassFacts(schedule, serverNow) {
   });
 }
 
+function slotsForCourse(schedule, courseId) {
+  return (schedule || []).filter((slot) => String(slot.courseId || slot.course_id || '') === String(courseId));
+}
+
 function decorateD09Service(base, {
   repository,
   transactionalMutation,
@@ -192,11 +197,40 @@ function decorateD09Service(base, {
     return context;
   }
 
+  function semesterHasActivatedCourses(context) {
+    return (context?.courses || []).some((bundle) => !PREACTIVATION_STATES.has(String(bundle.course?.lifecycle_state || 'DRAFT')));
+  }
+
+  async function attachInheritedDefaultForScheduling(user, courseId, context) {
+    if (!context?.inheritedDefault) return context;
+    if (semesterHasActivatedCourses(context)) {
+      throw fail(
+        'This shared Semester already contains an active Course. Adding another Course requires the governed scheduling-change path.',
+        'TEACHING_D09_ACTIVE_SEMESTER_REQUIRES_GOVERNED_RECALCULATION'
+      );
+    }
+    const inherited = context.inheritedCourseBundle || null;
+    if (!inherited) throw fail('The requested Course could not inherit the current Semester scheduling context.', 'TEACHING_D09_DEFAULT_SEMESTER_CONTEXT_REQUIRED');
+    assertCurrentCoursePlan(inherited.course, inherited.plan, inherited.scopeChanges);
+    if (typeof repository.attachCourseToSemester !== 'function') {
+      throw fail('Shared Semester inheritance is temporarily unavailable.', 'TEACHING_D09_DEFAULT_SEMESTER_ATTACH_UNAVAILABLE', 503);
+    }
+    await repository.attachCourseToSemester({
+      studentId: user.id,
+      courseId,
+      semesterId: context.semester.semester_id,
+    });
+    return repository.getSchedulingContext(user.id, courseId);
+  }
+
   async function getScheduleReview(user, courseId) {
     const review = await base.getScheduleReview(user, courseId);
-    const classFacts = scheduleClassFacts(review.slots, review.serverNow || serverNow());
-    const elapsedSlotCount = (review.slots || []).filter((slot) => Date.parse(slot.endsAt) <= Date.parse(review.serverNow || serverNow())).length;
+    const scopedSlots = Array.isArray(review.courseSlots) ? review.courseSlots : slotsForCourse(review.slots, courseId);
+    const classFacts = scheduleClassFacts(scopedSlots, review.serverNow || serverNow());
+    const elapsedSlotCount = scopedSlots.filter((slot) => Date.parse(slot.endsAt) <= Date.parse(review.serverNow || serverNow())).length;
+    const selectedCourseActive=['ACTIVE','PAUSED'].includes(String(review.requestedCourse?.lifecycleState||'DRAFT'));
     const recoveryRequired = Boolean(
+      selectedCourseActive &&
       review.timetable &&
       review.timetable.state === 'APPROVED' &&
       classFacts.futureClassCount === 0
@@ -207,7 +241,7 @@ function decorateD09Service(base, {
         ...classFacts,
         elapsedSlotCount,
         recoveryRequired,
-        reserveOnly: Boolean((review.slots || []).length && classFacts.classCount === 0),
+        reserveOnly: Boolean(scopedSlots.length && classFacts.classCount === 0),
       }),
       scheduleHealth: Object.freeze({
         ...(review.scheduleHealth || {}),
@@ -225,7 +259,7 @@ function decorateD09Service(base, {
     }
     const latest = await repository.latestTimetable(user.id, context.semester.semester_id);
     const nowIso = serverNow();
-    const existingFacts = scheduleClassFacts(latest.slots || [], nowIso);
+    const existingFacts = scheduleClassFacts(slotsForCourse(latest.slots || [], courseId), nowIso);
     if (existingFacts.futureClassCount > 0) return getScheduleReview(user, courseId);
     if (!instructionalUnits(context).length) {
       throw fail('This Course has no instructional Learning Units to recover.', 'TEACHING_D09_RECOVERY_NO_INSTRUCTION_REQUIRED', 409);
@@ -233,7 +267,7 @@ function decorateD09Service(base, {
     context = await ensureInstructionalLoads(user, courseId, context);
     const derived = planningContextAt(context, nowIso);
     const result = computeSchedule(derived, { now: nowIso });
-    const classFacts = scheduleClassFacts(result.schedule, nowIso);
+    const classFacts = scheduleClassFacts(slotsForCourse(result.schedule, courseId), nowIso);
     if (result.outcome !== 'FEASIBLE' || classFacts.futureClassCount <= 0 || classFacts.elapsedClassCount > 0) {
       throw fail('KIWI cannot safely repair this timetable inside the remaining semester capacity.', 'TEACHING_D09_SYSTEM_RECOVERY_INFEASIBLE', 422, {
         outcome: result.outcome,
@@ -280,13 +314,57 @@ function decorateD09Service(base, {
     });
   }
 
+  async function recalculateAfterCoursePlanChange(user, courseId) {
+    let context = await repository.getSchedulingContext(user.id, courseId);
+    if (!context.semester || !context.profile) {
+      return Object.freeze({ recalculated:false, reason:'SCHEDULE_INPUTS_REQUIRED' });
+    }
+    if (semesterHasActivatedCourses(context)) {
+      return Object.freeze({ recalculated:false, reason:'ACTIVE_SEMESTER_REQUIRES_GOVERNED_RECALCULATION' });
+    }
+    try {
+      if (context.inheritedDefault) context = await attachInheritedDefaultForScheduling(user, courseId, context);
+      requireReadyContext(context, courseId);
+      for (const bundle of context.courses || []) assertCurrentCoursePlan(bundle.course, bundle.plan, bundle.scopeChanges);
+      context = await ensureInstructionalLoads(user, courseId, context);
+      const nowIso = serverNow();
+      const derived = planningContextAt(context, nowIso);
+      const result = computeSchedule(derived, { now: nowIso });
+      const requestedInstructionalCount = instructionalUnits(context)
+        .filter(({ bundle }) => String(bundle.course.course_id) === String(courseId)).length;
+      const classFacts = scheduleClassFacts(slotsForCourse(result.schedule, courseId), nowIso);
+      if (requestedInstructionalCount > 0 && classFacts.classCount === 0) {
+        return Object.freeze({ recalculated:false, reason:'TEACHING_D09_EMPTY_INSTRUCTIONAL_TIMETABLE' });
+      }
+      if (classFacts.elapsedClassCount > 0) {
+        return Object.freeze({ recalculated:false, reason:'TEACHING_D09_ELAPSED_TIMETABLE_REJECTED' });
+      }
+      const saved = await commitWithPpl((tx) => repository.saveProposalUsing(tx, {
+        studentId: user.id,
+        courseId,
+        context,
+        result,
+        source: 'COURSE_PLAN_AUTO_RECALC',
+      }));
+      return Object.freeze({
+        recalculated:true,
+        timetableVersionId:saved.timetable?.timetable_version_id || null,
+        timetableVersion:saved.timetable?.version_no == null ? null : Number(saved.timetable.version_no),
+        outcome:saved.feasibility?.outcome || result.outcome || null,
+      });
+    } catch (error) {
+      return Object.freeze({ recalculated:false, reason:error?.code || 'COURSE_PLAN_AUTO_RECALC_FAILED' });
+    }
+  }
+
   async function proposeTimetable(user, courseId) {
     let context = await repository.getSchedulingContext(user.id, courseId);
+    if (context.inheritedDefault) context = await attachInheritedDefaultForScheduling(user, courseId, context);
     requireReadyContext(context, courseId);
     const lifecycle = String(context.course.lifecycle_state || 'DRAFT');
     if (lifecycle === 'ACTIVE') {
       const latest = await repository.latestTimetable(user.id, context.semester.semester_id);
-      const existingFacts = scheduleClassFacts(latest.slots || [], serverNow());
+      const existingFacts = scheduleClassFacts(slotsForCourse(latest.slots || [], courseId), serverNow());
       if (existingFacts.futureClassCount <= 0) {
         return recoverSystemInvalidTimetable(user, courseId, context);
       }
@@ -299,9 +377,9 @@ function decorateD09Service(base, {
     const nowIso = serverNow();
     const derived = planningContextAt(context, nowIso);
     const result = computeSchedule(derived, { now: nowIso });
-    const instructionalCount = instructionalUnits(context).length;
-    const classFacts = scheduleClassFacts(result.schedule, nowIso);
-    if (instructionalCount > 0 && classFacts.classCount === 0) {
+    const classFacts = scheduleClassFacts(slotsForCourse(result.schedule, courseId), nowIso);
+    const requestedInstructionalCount = instructionalUnits(context).filter(({ bundle }) => String(bundle.course.course_id) === String(courseId)).length;
+    if (requestedInstructionalCount > 0 && classFacts.classCount === 0) {
       throw fail('The Scheduler produced no instructional Classes for a Course that requires instruction.', 'TEACHING_D09_EMPTY_INSTRUCTIONAL_TIMETABLE', 422, { reasons: result.reasons || [] });
     }
     if (classFacts.elapsedClassCount > 0) {
@@ -320,6 +398,7 @@ function decorateD09Service(base, {
   return Object.freeze({
     ...base,
     getScheduleReview,
+    recalculateAfterCoursePlanChange,
     proposeTimetable,
     recoverSystemInvalidTimetable,
   });
@@ -331,5 +410,6 @@ module.exports = {
   planningContextAt,
   extractInstructionalLoadEstimates,
   scheduleClassFacts,
+  slotsForCourse,
   decorateD09Service,
 };

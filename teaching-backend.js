@@ -251,7 +251,25 @@ function createTeachingRouter({
     });
   }
 
+  const schedulingService = d09Service || foundation.d09?.service || null;
   const coursePlanService = d08Service || foundation.d08?.service || null;
+
+  async function refreshScheduleAfterCoursePlan(user, courseId) {
+    if (!schedulingService || typeof schedulingService.recalculateAfterCoursePlanChange !== 'function') {
+      return Object.freeze({ recalculated: false, reason: 'SCHEDULER_REFRESH_UNAVAILABLE' });
+    }
+    try {
+      return await schedulingService.recalculateAfterCoursePlanChange(user, courseId);
+    } catch (error) {
+      console.warn('[KIWI Teaching] Course Plan committed but automatic timetable recalculation could not complete.', {
+        courseId: String(courseId),
+        code: error?.code || null,
+        message: String(error?.message || error).slice(0, 300),
+      });
+      return Object.freeze({ recalculated: false, reason: error?.code || 'SCHEDULER_REFRESH_FAILED' });
+    }
+  }
+
   if (coursePlanService && publishedEventRegistry && typeof publishedEventRegistry.register === 'function') {
     publishedEventRegistry.register('teaching.course_plan.generation_requested', {
       subscriberId: 'd08-course-plan-background-worker',
@@ -266,11 +284,18 @@ function createTeachingRouter({
             safeMetadata: { reason: 'COURSE_STATE_CHANGED' },
           });
         }
-        const result = await coursePlanService.generateCoursePlan({ id: event.actorId }, event.aggregateId);
+        const regenerate = event.payload?.regenerate === true;
+        const result = await coursePlanService.generateCoursePlan({ id: event.actorId }, event.aggregateId, { regenerate });
+        const scheduleRefresh = await refreshScheduleAfterCoursePlan({ id: event.actorId }, event.aggregateId);
         return Object.freeze({
           accepted: true,
           planVersion: result?.plan?.version || null,
-          safeMetadata: { plan_version: result?.plan?.version || null },
+          safeMetadata: {
+            plan_version: result?.plan?.version || null,
+            regeneration_requested: regenerate,
+            timetable_recalculated: scheduleRefresh.recalculated === true,
+            timetable_refresh_reason: scheduleRefresh.reason || null,
+          },
         });
       },
     });
@@ -293,9 +318,25 @@ function createTeachingRouter({
         if (typeof coursePlanService.queueCoursePlan === 'function') {
           return res.status(202).json(await coursePlanService.queueCoursePlan(req.user, req.params.id));
         }
-        return res.status(201).json(await coursePlanService.generateCoursePlan(req.user, req.params.id));
+        const result = await coursePlanService.generateCoursePlan(req.user, req.params.id);
+        await refreshScheduleAfterCoursePlan(req.user, req.params.id);
+        return res.status(201).json(result);
       }
       catch (error) { return sendError(res, error, 'Failed to prepare Course Plan.'); }
+    });
+    router.post('/courses/:id/course-plan/regenerate', requireD08Ready, async (req, res) => {
+      try {
+        if (typeof coursePlanService.regenerateCoursePlan === 'function') {
+          return res.status(202).json(await coursePlanService.regenerateCoursePlan(req.user, req.params.id));
+        }
+        if (typeof coursePlanService.queueCoursePlan === 'function') {
+          return res.status(202).json(await coursePlanService.queueCoursePlan(req.user, req.params.id, { regenerate: true }));
+        }
+        const result = await coursePlanService.generateCoursePlan(req.user, req.params.id, { regenerate: true });
+        await refreshScheduleAfterCoursePlan(req.user, req.params.id);
+        return res.status(201).json(result);
+      }
+      catch (error) { return sendError(res, error, 'Failed to regenerate Course Plan.'); }
     });
     router.get('/courses/:id/coverage-report', requireD08Ready, async (req, res) => {
       try { res.json(await coursePlanService.getCoverageReport(req.user, req.params.id)); }
@@ -335,7 +376,6 @@ function createTeachingRouter({
     });
   }
 
-  const schedulingService = d09Service || foundation.d09?.service || null;
   if (schedulingService) {
     const requireD09Ready = (req, res, next) => {
       if (d09Ready) return next();
