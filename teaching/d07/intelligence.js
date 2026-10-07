@@ -4,19 +4,14 @@ const { getCapability } = require('../capability-registry');
 const {
   TPF02_OUTPUT_SCHEMA_ID,
   TPF02_OUTPUT_SCHEMA_VERSION,
-  TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS,
   tpf02OutputTokenBudget,
   TPF02_TOP_LEVEL_FIELDS,
-  TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_ID,
-  TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_VERSION,
-  TPF02_LINEAGE_REPAIR_PATCH_FIELDS,
   TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,
   TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,
   TPF02_DECOMPOSITION_PATCH_FIELDS,
   EXECUTION_STAGES,
   buildTpf02AcademicInput,
   validateTpf02Schema,
-  validateTpf02LineageRepairPatchSchema,
   validateTpf02DecompositionPatchSchema,
   validateTpf02Domain,
   validateHierarchy,
@@ -26,7 +21,6 @@ const {
 } = require('./tpf02-direct');
 const {
   TPF02_CURRICULUM_AUDIT_RESPONSE_SCHEMA,
-  TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA,
   TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA,
 } = require('./tpf02-provider-schema');
 
@@ -86,17 +80,6 @@ function tpf02OutputSchema(){
     review_needed_field:'review_required',
     declared_fields:[...TPF02_TOP_LEVEL_FIELDS],
     validate:validateTpf02Schema,
-  };
-}
-
-function tpf02LineageRepairPatchOutputSchema(){
-  return {
-    id:TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_ID,
-    version:TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_VERSION,
-    uncertainty_states:['INSUFFICIENT_EVIDENCE','UNRESOLVED_CONFLICT','REVIEW_NEEDED'],
-    review_needed_field:null,
-    declared_fields:[...TPF02_LINEAGE_REPAIR_PATCH_FIELDS],
-    validate:validateTpf02LineageRepairPatchSchema,
   };
 }
 
@@ -200,9 +183,7 @@ function buildRefinementContext({changeRequest=null,previousAudit=null}={}){
     current_analysis:current,
     immutable_scope:Object.freeze([
       'source_inventory',
-      'audit_scope.source_refs',
-      'audit_scope.trusted_scope_version',
-      'audit_scope.source_walk',
+      'audit_scope',
       'source_conflicts',
       'coverage_gaps',
     ]),
@@ -218,9 +199,7 @@ function buildRefinementContext({changeRequest=null,previousAudit=null}={}){
 
 function canonicalJsonValue(value){
   if(Array.isArray(value))return value.map(canonicalJsonValue);
-  if(value&&typeof value==='object'){
-    return Object.fromEntries(Object.keys(value).sort().map((key)=>[key,canonicalJsonValue(value[key])]));
-  }
+  if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map((key)=>[key,canonicalJsonValue(value[key])]));
   return value??null;
 }
 function stableJson(value){return JSON.stringify(canonicalJsonValue(value));}
@@ -238,17 +217,8 @@ function validateRefinementOutput(output,previousOutput,validationContext){
 function curriculumRefinementRequest({course,sources,previousAudit,changeRequest}={}){
   const previousOutput=previousAudit?.audit_output;
   const refinementContext=buildRefinementContext({changeRequest,previousAudit});
-  const fullAcademicInput=buildTpf02AcademicInput({
-    course,
-    sources,
-    taskMode:'DEEP_AUDIT',
-    executionStage:EXECUTION_STAGES.SINGLE_PASS,
-  });
-  const academicInput=Object.freeze({
-    ...fullAcademicInput,
-    source_items:Object.freeze([]),
-    refinement_context:refinementContext,
-  });
+  const fullAcademicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS});
+  const academicInput=Object.freeze({...fullAcademicInput,source_items:Object.freeze([]),refinement_context:refinementContext});
   const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const outputSchema=tpf02OutputSchema();
   const request=base({
@@ -256,10 +226,7 @@ function curriculumRefinementRequest({course,sources,previousAudit,changeRequest
     course,
     taskMode:'DEEP_AUDIT',
     outputSchema,
-    contextSpec:Object.freeze({
-      ...tpf02ContextSpec(course,sources,'student_directed_analysis_refinement'),
-      context_kind:'student_directed_analysis_refinement',
-    }),
+    contextSpec:{...tpf02ContextSpec(course,sources,'student_directed_analysis_refinement'),context_kind:'student_directed_analysis_refinement'},
     academicInput,
     provenanceRefs:sourceRefs,
   });
@@ -267,10 +234,7 @@ function curriculumRefinementRequest({course,sources,previousAudit,changeRequest
   return {
     ...request,
     modelContentMode:'TPF02_DIRECT',
-    generation:Object.freeze({
-      ...tpf02Generation(academicInput),
-      maxOutputTokens:TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS,
-    }),
+    generation:tpf02Generation(academicInput),
     validationContext,
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>validateRefinementOutput(out,previousOutput,validationContext),
@@ -279,10 +243,7 @@ function curriculumRefinementRequest({course,sources,previousAudit,changeRequest
 }
 
 function curriculumAuditRequest({course,sources,regenerationContext=null}){
-  const academicInput=withRegenerationContext(
-    buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS}),
-    regenerationContext
-  );
+  const academicInput=withRegenerationContext(buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS}),regenerationContext);
   const sourceRefs=academicInput.source_items.map((item)=>item.source_item_ref);
   const outputSchema=tpf02OutputSchema();
   const request=base({
@@ -572,15 +533,25 @@ function applyLineageRepair(baseOutput,repairOutput,{
 }
 
 function validateLineageRepairPatch(output,{academicInput,baseOutput,repairRefs=[]}={}){
-  const schema=validateTpf02LineageRepairPatchSchema(output);
-  if(!schema.ok)return schema;
   const expectedRefs=uniqueStrings(repairRefs);
   const expectedSet=new Set(expectedRefs);
   if(output.input_state_reference!==academicInput.input_state_reference)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_STATE_REFERENCE_MISMATCH'};
+  if(output.task_mode!=='LEARNING_UNIT_DECOMPOSITION')return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TASK_MODE_MISMATCH'};
+  if(output.execution_stage!==EXECUTION_STAGES.SINGLE_PASS)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_STAGE_MISMATCH'};
+  if(!sameStringSet(output.audit_scope?.source_refs||[],expectedRefs))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_SOURCE_CENSUS_MISMATCH'};
+  if(String(output.audit_scope?.trusted_scope_version||'')!==String(academicInput.audit_scope.trusted_scope_version||''))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_SCOPE_VERSION_MISMATCH'};
+  if((output.source_inventory||[]).length!==0)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_MUST_DEFER_SOURCE_INVENTORY'};
+  if((output.audit_scope?.source_walk||[]).length!==0)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_MUST_DEFER_SOURCE_WALK'};
+  for(const field of ['assumed_prerequisites','source_conflicts','coverage_gaps','structure_change_proposals','unresolved_items']){
+    if((output[field]||[]).length!==0)return {ok:false,reason:`TPF02_LINEAGE_REPAIR_SCOPE_EXCEEDED:${field}`};
+  }
+  if(output.status!=='ok'||output.review_required!==false||(output.review_reasons||[]).length!==0||output.student_facing_summary_candidate!=null){
+    return {ok:false,reason:'TPF02_LINEAGE_REPAIR_COMPLETION_STATE_INVALID'};
+  }
 
   const existingTopicIds=new Set((baseOutput.topics||[]).map((topic)=>String(topic.topic_id)));
   const newTopicIds=new Set();
-  for(const topic of output.new_topics||[]){
+  for(const topic of output.topics||[]){
     const id=String(topic?.topic_id||'').trim();
     if(!id||existingTopicIds.has(id)||newTopicIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_INVALID'};
     newTopicIds.add(id);
@@ -588,33 +559,27 @@ function validateLineageRepairPatch(output,{academicInput,baseOutput,repairRefs=
   }
 
   const existingUnitById=new Map((baseOutput.learning_units||[]).map((unit)=>[String(unit.learning_unit_id),unit]));
-  const attachmentIds=new Set();
-  const newUnitIds=new Set();
-  const covered=new Set();
-  for(const attachment of output.existing_unit_attachments||[]){
-    const id=String(attachment.learning_unit_id||'').trim();
-    if(!existingUnitById.has(id)||attachmentIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_ATTACHMENT_UNIT_INVALID'};
-    attachmentIds.add(id);
-    if(existingUnitById.get(id)?.criticality==='enrichment')return {ok:false,reason:'TPF02_LINEAGE_REPAIR_REQUIRED_SOURCE_ENRICHMENT_FORBIDDEN'};
-    for(const ref of uniqueStrings(attachment.source_item_refs||[])){
-      if(!expectedSet.has(ref))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_ATTACHMENT_SOURCE_REF_INVALID'};
-      covered.add(ref);
-    }
+  const repairUnitIds=new Set();
+  for(const unit of output.learning_units||[]){
+    const id=String(unit?.learning_unit_id||'').trim();
+    if(!id||repairUnitIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_UNIT_ID_INVALID'};
+    repairUnitIds.add(id);
   }
-  for(const unit of output.new_learning_units||[]){
-    const id=String(unit.learning_unit_id||'').trim();
-    if(!id||existingUnitById.has(id)||newUnitIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_NEW_UNIT_ID_INVALID'};
-    newUnitIds.add(id);
-  }
-
   const existingAssumedIds=new Set((baseOutput.assumed_prerequisites||[]).map((item)=>String(item.assumed_prerequisite_id)));
   const allowedTopicIds=new Set([...existingTopicIds,...newTopicIds]);
-  const allowedPrerequisiteIds=new Set([...existingUnitById.keys(),...newUnitIds,...existingAssumedIds]);
-  for(const unit of output.new_learning_units||[]){
+  const allowedPrerequisiteIds=new Set([...existingUnitById.keys(),...repairUnitIds,...existingAssumedIds]);
+  const covered=new Set();
+
+  for(const unit of output.learning_units||[]){
     const id=String(unit.learning_unit_id);
     const refs=uniqueStrings(unit.source_item_refs||[]);
     if(!refs.length||refs.some((ref)=>!expectedSet.has(ref)))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_UNIT_SOURCE_REF_INVALID'};
     for(const ref of refs)covered.add(ref);
+    const existing=existingUnitById.get(id);
+    if(existing){
+      if(existing.criticality==='enrichment')return {ok:false,reason:'TPF02_LINEAGE_REPAIR_REQUIRED_SOURCE_ENRICHMENT_FORBIDDEN'};
+      continue;
+    }
     if(unit.criticality==='enrichment')return {ok:false,reason:'TPF02_LINEAGE_REPAIR_REQUIRED_SOURCE_ENRICHMENT_FORBIDDEN'};
     if((unit.topic_refs||[]).some((ref)=>!allowedTopicIds.has(String(ref))))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_REF_UNKNOWN'};
     if((unit.prerequisite_refs||[]).some((ref)=>String(ref)===id||!allowedPrerequisiteIds.has(String(ref))))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_PREREQUISITE_REF_UNKNOWN'};
@@ -622,17 +587,7 @@ function validateLineageRepairPatch(output,{academicInput,baseOutput,repairRefs=
   }
 
   if(!sameStringSet([...covered],expectedRefs))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_SOURCE_CENSUS_INCOMPLETE'};
-  const normalized=Object.freeze({
-    topics:Object.freeze([...(output.new_topics||[])]),
-    learning_units:Object.freeze([
-      ...(output.existing_unit_attachments||[]).map((item)=>Object.freeze({
-        learning_unit_id:item.learning_unit_id,
-        source_item_refs:Object.freeze([...(item.source_item_refs||[])]),
-      })),
-      ...(output.new_learning_units||[]),
-    ]),
-  });
-  return {ok:true,value:normalized};
+  return {ok:true,value:output};
 }
 
 function lineageRepairRequest({
@@ -689,7 +644,7 @@ function lineageRepairRequest({
       existing_gap_refs:Object.freeze((baseOutput.coverage_gaps||[]).map((item)=>item.gap_id)),
     }),
   });
-  const outputSchema=tpf02LineageRepairPatchOutputSchema();
+  const outputSchema=tpf02OutputSchema();
   const fullAcademicInput=buildTpf02AcademicInput({
     course,
     sources,
@@ -697,6 +652,7 @@ function lineageRepairRequest({
     executionStage:EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
   });
   const fullValidationContext=validationContextFor(fullAcademicInput,{allowDecompositionRepair:true});
+  const fullSourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const request=base({
     capabilityId:'teaching.curriculum.learning_unit_decomposition',
     course,
@@ -728,8 +684,8 @@ function lineageRepairRequest({
       evidence_purpose:'required_source_lineage_completion',
     },
     modelContentMode:'TPF02_DIRECT',
-    generation:tpf02Generation(academicInput,TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA),
-    schemaValidator:validateTpf02LineageRepairPatchSchema,
+    generation:tpf02Generation(academicInput),
+    schemaValidator:validateTpf02Schema,
     domainValidator:async out=>{
       const patch=validateLineageRepairPatch(out,{academicInput,baseOutput,repairRefs:requestedRefs});
       if(!patch.ok)return patch;
@@ -741,14 +697,7 @@ function lineageRepairRequest({
       });
       return validateTpf02Domain(merged,fullValidationContext);
     },
-    provenanceValidator:async out=>{
-      const used=uniqueStrings([
-        ...(out?.existing_unit_attachments||[]).flatMap((item)=>item.source_item_refs||[]),
-        ...(out?.new_topics||[]).flatMap((topic)=>topic.source_item_refs||[]),
-        ...(out?.new_learning_units||[]).flatMap((unit)=>unit.source_item_refs||[]),
-      ]);
-      return {ok:used.every((ref)=>requestedSet.has(ref)),reason:'TPF02_LINEAGE_REPAIR_PROVENANCE_INVALID'};
-    },
+    provenanceValidator:fullProvenanceValidator(fullSourceRefs),
     validationContext:fullValidationContext,
   };
 }
@@ -1564,9 +1513,8 @@ function createD07Intelligence({orchestrator}={}){
 
     let currentOutput=currentResult.validatedResult?.output;
     let pendingRefs=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
-    let lineageBatchSize=Math.min(TPF02_LINEAGE_REPAIR_BATCH_SIZE,Math.max(1,pendingRefs.length));
     while(pendingRefs.length){
-      const batch=pendingRefs.slice(0,lineageBatchSize);
+      const batch=pendingRefs.slice(0,TPF02_LINEAGE_REPAIR_BATCH_SIZE);
       let repaired=null;
       try{
         repaired=await orchestrator.execute(lineageRepairRequest({
@@ -1578,32 +1526,15 @@ function createD07Intelligence({orchestrator}={}){
           stageFindings:prepared.findings,
           repairRefs:batch,
         }));
-      }catch(error){
-        if(batch.length>1){
-          lineageBatchSize=Math.max(1,Math.ceil(batch.length/2));
-          continue;
-        }
-        throw error;
+      }catch{
+        break;
       }
-      if(!repaired?.accepted){
-        if(batch.length>1){
-          lineageBatchSize=Math.max(1,Math.ceil(batch.length/2));
-          continue;
-        }
-        return repaired;
-      }
+      if(!repaired?.accepted)return repaired;
       currentResult=repaired;
       currentOutput=repaired.validatedResult?.output;
       const nextPending=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
-      if(nextPending.length>=pendingRefs.length&&batch.every((ref)=>nextPending.includes(ref))){
-        if(batch.length>1){
-          lineageBatchSize=Math.max(1,Math.ceil(batch.length/2));
-          continue;
-        }
-        break;
-      }
+      if(nextPending.length>=pendingRefs.length&&batch.every((ref)=>nextPending.includes(ref)))break;
       pendingRefs=nextPending;
-      lineageBatchSize=Math.min(TPF02_LINEAGE_REPAIR_BATCH_SIZE,Math.max(1,pendingRefs.length));
     }
     if(pendingRefs.length)return {accepted:false,errorCode:'TEACHING_TPF02_LINEAGE_REPAIR_EXHAUSTED',reason:'TPF02_UNMAPPED_REQUIRED_SOURCE_REMAINS'};
 
