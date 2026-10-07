@@ -230,6 +230,50 @@ test('failed refinement cannot reset the existing Course because reset lives beh
   assert.equal(setup.curriculumAudit.status,'VALIDATED_CANDIDATE');
 });
 
+test('a cancelled refinement can be retried without joining its terminal outbox event', async () => {
+  const audit=currentAudit();
+  const events=[];
+  const setup={
+    course:course(4),
+    sources:[source()],
+    curriculumAudit:{
+      ...audit,
+      subject_snapshot_ref:'subject:subject-1:snapshot-4',
+      source_inventory_digest:require('../../../teaching/d07/contracts').digest([[source().source_ref,source().content_hash]]),
+    },
+    backgroundAnalysis:{
+      event_id:'failed-refine-job',
+      status:'CANCELLED',
+      payload:{
+        operation:'REFINE',
+        expected_state_version:'4',
+        previous_audit_id:'audit-4',
+        previous_audit_version:4,
+        change_request:'Split broad Learning Units.',
+      },
+    },
+  };
+  const service=createD07Service({
+    subjects:subjects(),
+    repository:{async getSetup(){return setup;}},
+    intelligence:{},
+    outboxStore:{async append(event){events.push(event);return {inserted:true,event:{...event,event_id:event.eventId,status:'PENDING'}};}},
+    randomUUID:()=> 'retry-refine-job',
+    clock:()=>new Date('2026-10-07T15:30:00Z'),
+  });
+
+  const queued=await service.queueAudit({id:'student-1'},'course-1',{
+    operation:'REFINE',
+    changeRequest:'Split broad Learning Units.',
+  });
+
+  assert.equal(events.length,1);
+  assert.match(events[0].idempotencyKey,/recovery:failed-refine-job$/);
+  assert.equal(events[0].causationId,'failed-refine-job');
+  assert.equal(queued.jobId,'retry-refine-job');
+  assert.equal(queued.joinedExisting,false);
+});
+
 test('TPF-02 direct execution treats student refinement as bounded structural guidance, never source authority', () => {
   const direct=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d07/tpf02-direct.js'),'utf8');
   assert.match(direct,/STUDENT_DIRECTED_ANALYSIS_REFINEMENT/);
