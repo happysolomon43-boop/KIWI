@@ -7,12 +7,16 @@ const {
   TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS,
   tpf02OutputTokenBudget,
   TPF02_TOP_LEVEL_FIELDS,
+  TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_ID,
+  TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_VERSION,
+  TPF02_LINEAGE_REPAIR_PATCH_FIELDS,
   TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,
   TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,
   TPF02_DECOMPOSITION_PATCH_FIELDS,
   EXECUTION_STAGES,
   buildTpf02AcademicInput,
   validateTpf02Schema,
+  validateTpf02LineageRepairPatchSchema,
   validateTpf02DecompositionPatchSchema,
   validateTpf02Domain,
   validateHierarchy,
@@ -22,6 +26,7 @@ const {
 } = require('./tpf02-direct');
 const {
   TPF02_CURRICULUM_AUDIT_RESPONSE_SCHEMA,
+  TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA,
   TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA,
 } = require('./tpf02-provider-schema');
 
@@ -81,6 +86,17 @@ function tpf02OutputSchema(){
     review_needed_field:'review_required',
     declared_fields:[...TPF02_TOP_LEVEL_FIELDS],
     validate:validateTpf02Schema,
+  };
+}
+
+function tpf02LineageRepairPatchOutputSchema(){
+  return {
+    id:TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_ID,
+    version:TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_VERSION,
+    uncertainty_states:['INSUFFICIENT_EVIDENCE','UNRESOLVED_CONFLICT','REVIEW_NEEDED'],
+    review_needed_field:null,
+    declared_fields:[...TPF02_LINEAGE_REPAIR_PATCH_FIELDS],
+    validate:validateTpf02LineageRepairPatchSchema,
   };
 }
 
