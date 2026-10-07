@@ -511,7 +511,10 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     if(!(eligible.courses||[]).length) return Object.freeze({recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED'});
     const expansion=semesterHasActivatedCourses(context)&&PREACTIVATION_STATES.has(String(context.course?.lifecycle_state||'DRAFT'));
     return rebuildSharedSemesterTimetable(user,courseId,context,{
-      source:source||(expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':'COURSE_PLAN_AUTO_RECALC'),
+      // Active-Semester expansion is an authority rule, not caller metadata.
+      // Background orchestration may describe why the rebuild was queued, but
+      // it cannot downgrade an expansion proposal into an ordinary reflow.
+      source:expansion?'COURSE_ADMISSION_EXPANSION_PROPOSAL':(source||'COURSE_PLAN_AUTO_RECALC'),
     });
   }
   async function proposeTimetable(user,courseId){
