@@ -1,6 +1,6 @@
 'use strict';
 const {composeTeachingModelContent}=require('../prompt-runtime/prompt-composer');
-const {composeTpf02DirectModelContent,TPF02_OUTPUT_SCHEMA_ID,TPF02_MAX_OUTPUT_TOKENS}=require('../d07/tpf02-direct');
+const {composeTpf02DirectModelContent,TPF02_OUTPUT_SCHEMA_ID,TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,TPF02_MAX_OUTPUT_TOKENS}=require('../d07/tpf02-direct');
 const {authorityAtLeast}=require('../ai/contracts');
 const {getD28RuntimeService}=require('../d28/runtime-bridge');
 
@@ -10,7 +10,8 @@ const LONG_RUNNING_CAPABILITY_IDS=new Set([
  'teaching.scheduling.instructional_load_estimation',
 ]);
 
-function isDirectTpf02(invocation){return invocation?.prompt?.family_id==='TPF-02'&&invocation?.output_schema?.id===TPF02_OUTPUT_SCHEMA_ID;}
+const DIRECT_TPF02_SCHEMA_IDS=new Set([TPF02_OUTPUT_SCHEMA_ID,TPF02_DECOMPOSITION_PATCH_SCHEMA_ID]);
+function isDirectTpf02(invocation){return invocation?.prompt?.family_id==='TPF-02'&&DIRECT_TPF02_SCHEMA_IDS.has(String(invocation?.output_schema?.id||''));}
 function executionProfileForInvocation(invocation){
  return isDirectTpf02(invocation)||LONG_RUNNING_CAPABILITY_IDS.has(String(invocation?.capability?.id||''))
   ?LONG_RUNNING_ANALYSIS_PROFILE
@@ -64,4 +65,4 @@ function createTeachingAIAdapter({promptControl,aiBoundary,resolveCentralTaskId=
   if(typeof value!=='object'||Array.isArray(value))throw new TypeError('Teaching generation controls must be an object.');
   return value;
  }
-module.exports={createTeachingAIAdapter,TPF02_EXECUTION_PROFILE,LONG_RUNNING_ANALYSIS_PROFILE,LONG_RUNNING_CAPABILITY_IDS,executionProfileForInvocation};
+module.exports={createTeachingAIAdapter,TPF02_EXECUTION_PROFILE,LONG_RUNNING_ANALYSIS_PROFILE,LONG_RUNNING_CAPABILITY_IDS,DIRECT_TPF02_SCHEMA_IDS,executionProfileForInvocation};
