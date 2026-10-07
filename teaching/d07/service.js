@@ -352,10 +352,13 @@ function createD07Service({
     } else if ((currentStatus === 'PUBLISHED' && currentValidatedAudit(setup)) && !supersededCurrent) {
       return {
         accepted: true,
-        background: false,
-        status: 'COMPLETED',
+        background: true,
+        jobId: current.event_id,
+        status: current.status,
+        joinedExisting: true,
         auditReady: true,
         auditVersion: Number(setup.curriculumAudit.audit_version),
+        operation: 'GENERATION',
       };
     }
 
