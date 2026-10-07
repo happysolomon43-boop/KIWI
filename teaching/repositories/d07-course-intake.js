@@ -82,9 +82,32 @@ function createD07CourseIntakeRepository({query,withTransaction,randomUUID,clock
      where actor_id=$1 and aggregate_type='teaching_course' and aggregate_id=$2
        and event_type in ('teaching.course_plan.generation_requested','teaching.timetable.build_requested')
        and status in ('PENDING','RETRY_WAIT')`,[studentId,courseId]);
-   const {rows:courseRows=[]}=await q(tx,`update public.teaching_courses set state_version=state_version+1,updated_at=now()
-     where student_id=$1 and course_id=$2 returning state_version`,[studentId,courseId]);
-   nextCourseStateVersion=Number(courseRows[0]?.state_version||revisionCourse.state_version||0);
+   let updatedCourse=null;
+   if(String(revisionCourse.lifecycle_state||'DRAFT').toUpperCase()==='READY'){
+    await q(tx,`select set_config('kiwi.teaching_analysis_reset','COURSE_ANALYSIS_REVISION',true)`,[]);
+    const {rows:updatedRows=[]}=await q(tx,`update public.teaching_courses
+      set lifecycle_state='DRAFT',state_version=state_version+1,status_overlays='{}'::text[],updated_at=now()
+      where student_id=$1 and course_id=$2 returning *`,[studentId,courseId]);
+    updatedCourse=updatedRows[0]||revisionCourse;
+    const occurredAt=clock();
+    await q(tx,`insert into public.teaching_course_lifecycle_history(
+      lifecycle_event_id,student_id,course_id,from_state,to_state,state_version,actor_authority,reason,source_request_id,policy_version,occurred_at
+    ) values($1,$2,$3,'READY','DRAFT',$4,'course_lifecycle',$5,null,null,$6)`,
+      [randomUUID(),studentId,courseId,Number(updatedCourse.state_version),'Course Analysis revision reset',occurredAt]);
+    await q(tx,`insert into public.teaching_academic_audit_log(
+      audit_id,student_id,occurred_at,actor_type,actor_id,action,entity_type,entity_id,authoritative_owner,
+      state_version_ref,reason,before_ref,after_ref,provenance_refs,safe_metadata
+    ) values($1,$2,$3,'SYSTEM',null,'course.analysis_revision.reset','COURSE',$4,'course_lifecycle_request',$5,$6,$7::jsonb,$8::jsonb,'[]'::jsonb,$9::jsonb)`,
+      [randomUUID(),studentId,occurredAt,courseId,String(updatedCourse.state_version),revision.studentInstruction||'Student changed the validated Course Analysis',
+       JSON.stringify({lifecycle_state:'READY',curriculum_audit_id:revisionBasis.curriculum_audit_id}),
+       JSON.stringify({lifecycle_state:'DRAFT',curriculum_audit_id:auditId,analysis_boundary_reset:true}),
+       JSON.stringify({historical_versions_preserved:true,reset_boundary:'COURSE_ANALYSIS',revision_mode:revision.mode||null})]);
+   }else{
+    const {rows:updatedRows=[]}=await q(tx,`update public.teaching_courses set state_version=state_version+1,updated_at=now()
+      where student_id=$1 and course_id=$2 returning *`,[studentId,courseId]);
+    updatedCourse=updatedRows[0]||revisionCourse;
+   }
+   nextCourseStateVersion=Number(updatedCourse.state_version||revisionCourse.state_version||0);
    resetApplied=true;
   }
   return {...rows[0],downstream_reset_applied:resetApplied,course_state_version_after:nextCourseStateVersion};
