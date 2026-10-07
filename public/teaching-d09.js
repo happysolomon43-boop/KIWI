@@ -7,6 +7,7 @@ if (!courseSurface || typeof courseSurface.registerSection !== 'function') throw
 const STYLE_ID = 'teachingD09Styles';
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function el(tag, cls = '', text = null) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+function scheduleActionError(error,fallback){const code=String(error?.code||'').toUpperCase(),message=String(error?.message||'');if(code.includes('LOAD_ESTIMATION_TRUNCATED')||code.includes('AI_OUTPUT_TRUNCATED')||/MAX_TOKENS|incomplete Teaching artifact/i.test(message))return 'KIWI could not finish workload preparation for this timetable. Nothing was changed; try the timetable action again.';return message||fallback;}
 function installStyles() {
   if (document.getElementById(STYLE_ID)) return;
   const style = el('style'); style.id = STYLE_ID;
@@ -142,7 +143,7 @@ function stage4(course,data,container,reload) {
         message.textContent='A formal availability-change Request was created. The current timetable remains authoritative until approval/application.';
       }else{
         try{
-          const saved=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body});
+          const saved=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body,timeoutMs:210000});
           const sync=saved?.automaticRecalculation||null;
           const notice=sync?.recalculated
             ? {text:`Shared availability saved. Semester timetable v${sync.timetableVersion??'new'} was rebuilt across ${sync.affectedCourseCount||sync.affectedCourseIds?.length||1} Course${(sync.affectedCourseCount||sync.affectedCourseIds?.length||1)===1?'':'s'}.`,kind:'success'}
@@ -161,7 +162,7 @@ function stage4(course,data,container,reload) {
         }
       }
       message.className='teaching-message';
-    } catch(error) { message.textContent=error.message||'Availability could not be saved.'; message.className='teaching-message'; message.dataset.kind='error'; }
+    } catch(error) { message.textContent=scheduleActionError(error,'Availability could not be saved.'); message.className='teaching-message'; message.dataset.kind='error'; }
     finally { save.disabled=false; }
   });
   container.append(card);
@@ -193,7 +194,7 @@ function stage5(course,data,container,reload) {
   });
   card.append(slotList);
   const proposalMessage=el('div');proposalMessage.setAttribute('role','status');proposalMessage.setAttribute('aria-live','polite');card.append(proposalMessage);
-  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Rebuilding one Semester timetable across every schedulable Course…';proposalMessage.className='teaching-message';try{const updated=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});await reload(updated,{text:'Shared Semester timetable rebuilt. Every current Course Plan is coordinated in the same timetable version.',kind:'success'});}catch(error){proposalMessage.textContent=error.message||'Semester timetable feasibility could not be calculated.';proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
+  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Rebuilding one Semester timetable across every schedulable Course…';proposalMessage.className='teaching-message';try{const updated=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{},timeoutMs:210000});await reload(updated,{text:'Shared Semester timetable rebuilt. Every current Course Plan is coordinated in the same timetable version.',kind:'success'});}catch(error){proposalMessage.textContent=scheduleActionError(error,'Semester timetable feasibility could not be calculated.');proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
   container.append(card);
 }
 async function renderSchedule({course,container}) {
