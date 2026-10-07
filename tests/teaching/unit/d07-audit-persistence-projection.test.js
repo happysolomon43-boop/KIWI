@@ -37,6 +37,7 @@ function candidateOutput() {
       intended_competence: 'Explain the stages of the cell cycle.',
       source_item_refs: ['source:source-1'],
       topic_refs: [],
+      subtopic_id: null,
       prerequisite_refs: [],
       dependency_type_notes: null,
       criticality: 'foundational',
