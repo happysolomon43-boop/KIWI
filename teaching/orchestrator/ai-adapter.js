@@ -1,6 +1,7 @@
 'use strict';
 const {composeTeachingModelContent}=require('../prompt-runtime/prompt-composer');
 const {composeTpf02DirectModelContent,TPF02_OUTPUT_SCHEMA_ID,TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,tpf02OutputTokenBudget}=require('../d07/tpf02-direct');
+const {TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_ID}=require('../d07/tpf02-merge-compression');
 const {authorityAtLeast}=require('../ai/contracts');
 const {getD28RuntimeService}=require('../d28/runtime-bridge');
 
@@ -10,7 +11,7 @@ const LONG_RUNNING_CAPABILITY_IDS=new Set([
  'teaching.scheduling.instructional_load_estimation',
 ]);
 
-const DIRECT_TPF02_SCHEMA_IDS=new Set([TPF02_OUTPUT_SCHEMA_ID,TPF02_DECOMPOSITION_PATCH_SCHEMA_ID]);
+const DIRECT_TPF02_SCHEMA_IDS=new Set([TPF02_OUTPUT_SCHEMA_ID,TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_ID]);
 function isDirectTpf02(invocation){return invocation?.prompt?.family_id==='TPF-02'&&DIRECT_TPF02_SCHEMA_IDS.has(String(invocation?.output_schema?.id||''));}
 function executionProfileForInvocation(invocation){
  return isDirectTpf02(invocation)||LONG_RUNNING_CAPABILITY_IDS.has(String(invocation?.capability?.id||''))
