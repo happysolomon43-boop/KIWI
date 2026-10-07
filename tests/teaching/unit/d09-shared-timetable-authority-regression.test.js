@@ -157,7 +157,7 @@ test('active Semester draft planning preserves approved authority while future p
   const repository=fs.readFileSync(path.join(root,'teaching/repositories/d09-scheduling.js'),'utf8');
   const service=fs.readFileSync(path.join(root,'teaching/d09/service.js'),'utf8');
 
-  assert.match(repository,/const preserveApprovedAuthority=!governedRequestRef&&activatedRows\.length>0/);
+  assert.match(repository,/const preserveApprovedAuthority=activatedRows\.length>0/);
   assert.match(repository,/preserveApprovedAuthority[\s\S]*timetable_state in \('PROPOSED','EDITED_PROPOSAL'\)/);
   assert.match(repository,/\(!authoritativeView && String\(latest\.timetable\.profile_id\)!==String\(context\.profile\?\.profile_id\|\|''\)\)/);
   assert.match(service,/source=expansion[\s\S]*'COURSE_ADMISSION_EXPANSION_PROPOSAL'/);
