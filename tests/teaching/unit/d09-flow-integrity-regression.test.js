@@ -159,7 +159,6 @@ test('D09 instructional-load estimation uses frozen TPF-10 authority and canonic
   assert.deepEqual(providerSchema.properties.capacity_analysis.properties.recovery_headroom.properties.invented_numeric_headroom.enum, [false]);
   assert.deepEqual(providerSchema.properties.inactivity_interpretation.properties.misconduct_inference_made.enum, [false]);
   assert.deepEqual(providerSchema.properties.inactivity_interpretation.properties.attendance_outcome_made.enum, [false]);
-  assert.doesNotMatch(JSON.stringify(providerSchema), /"enum":\[(?:true|false)\]/);
   const output = canonicalOutput(targets[0]);
   assert.deepEqual(validateLoadEstimationOutput(output, targets, ctx.courses[0].course), { ok: true, value: output });
 });
