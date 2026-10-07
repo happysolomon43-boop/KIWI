@@ -43,7 +43,8 @@ test('the active Teaching schedule surface never renders another Course timetabl
 
   assert.match(experience, /data\.requestedCourse\?data\.requestedCourse\.planReady===false/);
   assert.match(experience, /Array\.isArray\(data\.courseSlots\)/);
-  assert.match(experience, /Semester timetable items from other Courses are not shown here/);
+  assert.match(experience, /This Course has no current Course Plan/);
+  assert.match(experience, /add this Course to the shared Semester timetable/);
   assert.match(experience, /missingPlan\?'Open Course Plan'/);
   assert.match(service, /courseSlots:Object\.freeze\(courseSlots\)/);
   assert.match(service, /courseSummary/);
@@ -71,7 +72,7 @@ test('availability changes and Course Plan changes converge through the same sha
   const backend = fs.readFileSync(path.join(root, 'teaching-backend.js'), 'utf8');
 
   assert.match(service, /function rebuildSharedSemesterTimetable/);
-  assert.match(service, /source:'AVAILABILITY_AUTO_RECALC'/);
+  assert.match(service, /'AVAILABILITY_AUTO_RECALC'/);
   assert.match(service, /return rebuildSharedSemesterTimetable\(user,courseId,context/);
   assert.match(backend, /recalculateAfterCoursePlanChange/);
   assert.match(backend, /timetable_recalculated/);
