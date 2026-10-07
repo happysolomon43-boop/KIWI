@@ -136,29 +136,36 @@ function buildMergeCompressionContext({changeRequest=null,previousAudit=null}={}
         title:String(subtopic.title),
       }))),
     }))),
+    // The model needs the academic outline to identify defensible merge
+    // candidates. Full lineage, prerequisites, gaps, and uncertainty arrays
+    // remain runtime-owned and are reassembled from baseOutput after the patch.
+    // Keeping those fields out of the request prevents large validated audits
+    // from failing the 64 KiB academic-input boundary before execution.
     current_learning_units:Object.freeze((current.learning_units||[]).map((unit)=>Object.freeze({
       learning_unit_id:String(unit.learning_unit_id),
       title:String(unit.title),
       intended_competence:String(unit.intended_competence),
-      source_item_refs:Object.freeze([...(unit.source_item_refs||[])]),
       topic_refs:Object.freeze([...(unit.topic_refs||[])]),
       subtopic_id:unit.subtopic_id==null?null:String(unit.subtopic_id),
-      prerequisite_refs:Object.freeze([...(unit.prerequisite_refs||[])]),
-      dependency_type_notes:unit.dependency_type_notes==null?null:String(unit.dependency_type_notes),
+      source_ref_count:(unit.source_item_refs||[]).length,
       criticality:String(unit.criticality),
-      criticality_basis:String(unit.criticality_basis),
       proposed_exit_evidence:String(unit.proposed_exit_evidence),
-      gap_refs:Object.freeze([...(unit.gap_refs||[])]),
-      uncertainties:Object.freeze([...(unit.uncertainties||[])]),
     }))),
-    source_inventory_context:Object.freeze((current.source_inventory||[])
-      .filter((item)=>['required','supplementary'].includes(String(item.proposed_scope_classification)))
-      .map((item)=>Object.freeze({
-        source_item_ref:String(item.source_item_ref),
-        academic_meaning:String(item.academic_meaning),
-        proposed_scope_classification:String(item.proposed_scope_classification),
-        content_validity_status:String(item.content_validity_status),
-      }))),
+    source_inventory_context:Object.freeze((()=>{
+      const scopeCounts={};
+      const validityCounts={};
+      for(const item of current.source_inventory||[]){
+        const scope=String(item?.proposed_scope_classification||'unknown');
+        const validity=String(item?.content_validity_status||'unknown');
+        scopeCounts[scope]=(scopeCounts[scope]||0)+1;
+        validityCounts[validity]=(validityCounts[validity]||0)+1;
+      }
+      return {
+        total_source_count:(current.source_inventory||[]).length,
+        scope_classification_counts:Object.freeze({...scopeCounts}),
+        content_validity_counts:Object.freeze({...validityCounts}),
+      };
+    })()),
     existing_assumed_prerequisite_refs:Object.freeze((current.assumed_prerequisites||[]).map((item)=>String(item.assumed_prerequisite_id))),
     existing_gap_refs:Object.freeze((current.coverage_gaps||[]).map((item)=>String(item.gap_id))),
   });
