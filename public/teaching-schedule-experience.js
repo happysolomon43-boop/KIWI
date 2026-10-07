@@ -154,7 +154,7 @@ function renderTimetable(data,course,card,reload){
   action.type='button';action.disabled=missingInputs||(post&&!integrity.recoveryRequired);
   const badge=el('span','teaching-schedule-x__badge',missingPlan?'Plan required':missingAttachment?'Using shared availability':words(data.feasibility?.outcome||'Not calculated'));status.append(action,badge);card.append(status);
   if(missingPlan){
-    card.append(el('div','teaching-schedule-x__hint','This Course has no current Course Plan. Semester timetable items from other Courses are not shown here. Create the Course Plan first; once this Course is attached to the shared Semester availability, KIWI will recalculate the timetable automatically.'));
+    card.append(el('div','teaching-schedule-x__hint','This Course has no current Course Plan. Create it first; then KIWI will add this Course to the shared Semester timetable.'));
     const message=el('div','teaching-schedule-x__message');card.append(message);
     action.disabled=post;
     action.addEventListener('click',()=>{if(!action.disabled)courseSurface.openCourse(course.course_id,'course-plan');});
