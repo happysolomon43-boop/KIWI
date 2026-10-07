@@ -278,7 +278,7 @@ test('TPF-02 direct execution treats student refinement as bounded structural gu
   const direct=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d07/tpf02-direct.js'),'utf8');
   assert.match(direct,/STUDENT_DIRECTED_ANALYSIS_REFINEMENT/);
   assert.match(direct,/preserve unaffected curriculum structure/i);
-  assert.match(direct,/Copy source_inventory, audit_scope\.source_walk, source_conflicts, and coverage_gaps exactly/);
+  assert.match(direct,/Copy source_inventory, audit_scope, source_conflicts, and coverage_gaps exactly/);
   assert.match(direct,/merge only when distinct assessable competencies are not collapsed/);
 });
 
