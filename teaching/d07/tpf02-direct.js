@@ -12,6 +12,7 @@ const DEFAULT_DECOMPOSITION_LIMITS = Object.freeze({
  max_source_refs_per_unit: 16,
  min_units_per_required_source: 0.06,
 });
+const DECOMPOSITION_JUSTIFICATION_PREFIX = 'DECOMPOSITION_JUSTIFICATION:';
 
 const EXECUTION_STAGES = Object.freeze({
   SINGLE_PASS: 'SINGLE_PASS',
@@ -341,10 +342,41 @@ function decompositionFlags(output,inventoryByRef,context={}){
  });
 }
 
-function validateDecomposition(output,inventoryByRef,context={}){
+function decompositionRepairState(output,inventoryByRef,context={}){
  const flags=decompositionFlags(output,inventoryByRef,context);
- if(flags.course_ratio_flag||flags.unit_flags.length)return invalid('TPF02_DECOMPOSITION_REPAIR_REQUIRED');
- return valid(flags);
+ const unitById=new Map((output.learning_units||[]).map((unit)=>[String(unit.learning_unit_id),unit]));
+ const justifiedUnitIds=[];
+ const pendingUnitFlags=[];
+ for(const flag of flags.unit_flags){
+  const unit=unitById.get(String(flag.learning_unit_id));
+  const justified=output.review_required===true&&(unit?.uncertainties||[]).some((item)=>
+   String(item||'').trim().startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX)
+   &&String(item||'').trim().length>DECOMPOSITION_JUSTIFICATION_PREFIX.length+12
+  );
+  if(justified)justifiedUnitIds.push(flag.learning_unit_id);
+  else pendingUnitFlags.push(flag);
+ }
+ const courseRatioJustified=!flags.course_ratio_flag||(
+  output.review_required===true
+  &&(output.review_reasons||[]).some((item)=>
+   String(item||'').trim().startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX)
+   &&String(item||'').trim().length>DECOMPOSITION_JUSTIFICATION_PREFIX.length+12
+  )
+ );
+ const repairRequired=pendingUnitFlags.length>0||!courseRatioJustified;
+ return Object.freeze({
+  ...flags,
+  repair_required:repairRequired,
+  pending_unit_flags:Object.freeze(pendingUnitFlags),
+  justified_unit_ids:Object.freeze(justifiedUnitIds),
+  course_ratio_justified:courseRatioJustified,
+ });
+}
+
+function validateDecomposition(output,inventoryByRef,context={}){
+ const state=decompositionRepairState(output,inventoryByRef,context);
+ if(state.repair_required&&context.allowDecompositionRepair!==true)return invalid('TPF02_DECOMPOSITION_REPAIR_REQUIRED');
+ return valid(state);
 }
 
 function validateAssembledArtifact(output,context={}){
@@ -426,6 +458,8 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
   &&academicInput?.lineage_repair_context?.mode==='REQUIRED_SOURCE_LINEAGE_COMPLETION';
  const structurePass=taskMode==='LEARNING_UNIT_DECOMPOSITION'
   &&academicInput?.structure_pass_context?.mode==='BOUNDED_CURRICULUM_STRUCTURE';
+ const decompositionRepair=taskMode==='SPLIT_UNIT'
+  &&academicInput?.decomposition_repair_context?.mode==='DECOMPOSITION_REPAIR';
  const progressiveSynthesis=stage===EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE
   &&Array.isArray(academicInput?.progressive_structure_candidates)
   &&academicInput.progressive_structure_candidates.length>0;
@@ -515,6 +549,6 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
 
 module.exports={
  TPF02_FAMILY_ID,TPF02_FAMILY_VERSION,TPF02_OUTPUT_SCHEMA_ID,TPF02_OUTPUT_SCHEMA_VERSION,TPF02_MAX_OUTPUT_TOKENS,
- TPF02_TOP_LEVEL_FIELDS,EXECUTION_STAGES,DEFAULT_DECOMPOSITION_LIMITS,buildTpf02AcademicInput,validateTpf02Schema,validateTpf02Domain,
- validateAssembledArtifact,validateHierarchy,decompositionFlags,validateDecomposition,composeTpf02DirectModelContent,inputStateReference,
+ TPF02_TOP_LEVEL_FIELDS,EXECUTION_STAGES,DEFAULT_DECOMPOSITION_LIMITS,DECOMPOSITION_JUSTIFICATION_PREFIX,buildTpf02AcademicInput,validateTpf02Schema,validateTpf02Domain,
+ validateAssembledArtifact,validateHierarchy,decompositionFlags,decompositionRepairState,validateDecomposition,composeTpf02DirectModelContent,inputStateReference,
 };
