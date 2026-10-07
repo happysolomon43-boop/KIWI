@@ -258,6 +258,150 @@ function decorateD09Service(base, {
     return repository.getSchedulingContext(user.id, courseId);
   }
 
+  function timetableBasis(context, courseId) {
+    const requested = requestedBundleForContext(context, courseId);
+    const plan = requested?.plan || null;
+    return Object.freeze({
+      courseStateVersion: Number(context?.course?.state_version || 0),
+      semesterId: context?.semester?.semester_id == null ? null : String(context.semester.semester_id),
+      semesterStateVersion: Number(context?.semester?.state_version || 0),
+      profileId: context?.profile?.profile_id == null ? null : String(context.profile.profile_id),
+      profileVersion: Number(context?.profile?.version_no || 0),
+      planId: plan?.course_plan_id == null ? null : String(plan.course_plan_id),
+      planVersion: Number(plan?.version_no || 0),
+      timetableVersion: Number(context?.priorTimetable?.version_no || 0),
+    });
+  }
+
+  function sameTimetableJobBasis(job, basis) {
+    const payload = job?.payload && typeof job.payload === 'object' && !Array.isArray(job.payload) ? job.payload : {};
+    return String(payload.expected_course_state_version || '') === String(basis.courseStateVersion)
+      && String(payload.expected_semester_id || '') === String(basis.semesterId || '')
+      && String(payload.expected_semester_state_version || '') === String(basis.semesterStateVersion)
+      && String(payload.expected_profile_id || '') === String(basis.profileId || '')
+      && String(payload.expected_profile_version || '') === String(basis.profileVersion)
+      && String(payload.expected_plan_id || '') === String(basis.planId || '')
+      && String(payload.expected_plan_version || '') === String(basis.planVersion)
+      && String(payload.previous_timetable_version || '0') === String(basis.timetableVersion || 0);
+  }
+
+  async function queueTimetable(user, courseId, {
+    sourceKind = 'USER_REQUESTED',
+    trigger = 'MANUAL',
+    causationId = null,
+  } = {}) {
+    if (!outboxStore || typeof outboxStore.append !== 'function') {
+      throw fail('Background timetable generation is temporarily unavailable.', 'TEACHING_D09_BACKGROUND_GENERATION_UNAVAILABLE', 503);
+    }
+    let context = await repository.getSchedulingContext(user.id, courseId);
+    if (!context.semester || !context.profile) {
+      throw fail('Save the semester and availability before creating a timetable.', 'TEACHING_D09_SCHEDULE_INPUTS_REQUIRED');
+    }
+    const requested = requestedBundleForContext(context, courseId);
+    if (!requested?.plan) {
+      throw fail('Create the Course Plan before building the timetable.', 'TEACHING_D09_CURRENT_COURSE_PLAN_REQUIRED');
+    }
+    assertCurrentCoursePlan(requested.course, requested.plan, requested.scopeChanges || []);
+
+    const basis = timetableBasis(context, courseId);
+    const current = typeof repository.latestBackgroundTimetableGeneration === 'function'
+      ? await repository.latestBackgroundTimetableGeneration(user.id, courseId)
+      : null;
+    const currentStatus = String(current?.status || '').toUpperCase();
+    if (['PENDING','CLAIMED','RETRY_WAIT'].includes(currentStatus) && sameTimetableJobBasis(current, basis)) {
+      return Object.freeze({
+        accepted:true,
+        background:true,
+        jobId:current.event_id,
+        status:currentStatus,
+        joinedExisting:true,
+      });
+    }
+
+    const eventId = randomUUID();
+    const now = serverNow();
+    const baseKey = [
+      'd09:timetable',
+      String(courseId),
+      `course-${basis.courseStateVersion}`,
+      `semester-${basis.semesterStateVersion}`,
+      `profile-${basis.profileVersion}`,
+      `plan-${basis.planVersion}`,
+      `from-tt-${basis.timetableVersion}`,
+      String(sourceKind),
+    ].join(':');
+    const recovery = currentStatus === 'CANCELLED' && sameTimetableJobBasis(current, basis);
+    const idempotencyKey = recovery ? `${baseKey}:recovery:${current.event_id}` : baseKey;
+    const queued = await outboxStore.append({
+      eventId,
+      schemaVersion:1,
+      eventType:TEACHING_EVENTS.TIMETABLE_GENERATION_REQUESTED,
+      eventCategory:'operational_recovery_event',
+      triggerType:'background_analysis',
+      source:'teaching.d09',
+      origin:'teaching.scheduler',
+      actorId:String(user.id),
+      aggregateType:'teaching_course',
+      aggregateId:String(courseId),
+      aggregateVersion:basis.courseStateVersion,
+      occurredAt:now,
+      correlationId:eventId,
+      causationId:causationId || (recovery ? String(current.event_id) : null),
+      idempotencyKey,
+      payload:{
+        course_id:String(courseId),
+        operation:'TIMETABLE_GENERATION',
+        trigger:String(trigger),
+        source_kind:String(sourceKind),
+        expected_course_state_version:String(basis.courseStateVersion),
+        expected_semester_id:basis.semesterId,
+        expected_semester_state_version:String(basis.semesterStateVersion),
+        expected_profile_id:basis.profileId,
+        expected_profile_version:Number(basis.profileVersion),
+        expected_plan_id:basis.planId,
+        expected_plan_version:Number(basis.planVersion),
+        previous_timetable_version:Number(basis.timetableVersion),
+      },
+      auditRefs:basis.planId ? [`course-plan:${basis.planId}:v${basis.planVersion}`] : [],
+      provenanceRefs:[
+        basis.profileId ? `schedule-profile:${basis.profileId}:v${basis.profileVersion}` : null,
+        basis.semesterId ? `semester:${basis.semesterId}:v${basis.semesterStateVersion}` : null,
+      ].filter(Boolean),
+    });
+    return Object.freeze({
+      accepted:true,
+      background:true,
+      jobId:queued.event.event_id,
+      status:queued.event.status,
+      joinedExisting:queued.inserted === false,
+    });
+  }
+
+  async function processQueuedTimetable(user, courseId, payload = {}) {
+    const context = await repository.getSchedulingContext(user.id, courseId);
+    const basis = timetableBasis(context, courseId);
+    const stale = String(payload.expected_course_state_version || '') !== String(basis.courseStateVersion)
+      || String(payload.expected_semester_id || '') !== String(basis.semesterId || '')
+      || String(payload.expected_semester_state_version || '') !== String(basis.semesterStateVersion)
+      || String(payload.expected_profile_id || '') !== String(basis.profileId || '')
+      || String(payload.expected_profile_version || '') !== String(basis.profileVersion)
+      || String(payload.expected_plan_id || '') !== String(basis.planId || '')
+      || String(payload.expected_plan_version || '') !== String(basis.planVersion)
+      || String(payload.previous_timetable_version || '0') !== String(basis.timetableVersion || 0);
+    if (stale) {
+      return Object.freeze({ accepted:true, stale:true, reason:'SCHEDULING_CONTEXT_CHANGED' });
+    }
+    const review = await proposeTimetable(user, courseId, {
+      sourceKind:String(payload.source_kind || 'USER_REQUESTED'),
+    });
+    return Object.freeze({
+      accepted:true,
+      stale:false,
+      timetableVersion:review?.timetable?.version ?? null,
+      outcome:review?.feasibility?.outcome || null,
+    });
+  }
+
   async function getScheduleReview(user, courseId) {
     const review = await base.getScheduleReview(user, courseId);
     const scopedSlots = Array.isArray(review.courseSlots) ? review.courseSlots : slotsForCourse(review.slots, courseId);
