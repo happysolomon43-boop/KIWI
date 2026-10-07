@@ -139,7 +139,7 @@ test('D07 bounded curriculum audit request keeps the 48k TPF-02 generation budge
  assert.equal(request.outputSchema.id,'tpf02.curriculum-audit');
  assert.equal(request.outputSchema.version,'3');
  assert.deepEqual(request.outputSchema.declared_fields,TPF02_TOP_LEVEL_FIELDS);
- assert.equal(request.generation.maxOutputTokens,TPF02_MAX_OUTPUT_TOKENS);
+ assert.equal(request.generation.maxOutputTokens,TPF02_BOUNDED_MAX_OUTPUT_TOKENS);
  assert.equal(request.academicInput.execution_stage,EXECUTION_STAGES.SINGLE_PASS);
  assert.equal(request.academicInput.source_items.length,2);
  assert.equal(request.academicInput.source_items[0].content,sources[0].content_summary);
