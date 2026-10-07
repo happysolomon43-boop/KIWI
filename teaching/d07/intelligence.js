@@ -31,6 +31,7 @@ const TPF02_LINEAGE_REPAIR_BATCH_SIZE = 12;
 const TPF02_LINEAGE_REPAIR_REVIEW_REASON = 'Required source lineage needs bounded TPF-02 completion before Course planning.';
 const TPF02_DECOMPOSITION_REPAIR_MAX_ATTEMPTS = 12;
 const TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE = 24;
+const TPF02_PROGRESSIVE_SYNTHESIS_INPUT_BYTES_LIMIT = 512 * 1024;
 const TPF02_LINEAGE_UNRESOLVED_PREFIX = 'runtime-lineage-unmapped:';
 const TPF02_STATUS_PRIORITY = Object.freeze({
   ok: 0,
@@ -1101,35 +1102,48 @@ function compactStructureCandidates(stageResults=[]){
   return Object.freeze(stageResults.map((result,batchIndex)=>{
     const output=result?.validatedResult?.output;
     if(!output)throw Object.assign(new Error('Validated TPF-02 structure pass produced no candidate artifact.'),{code:'TEACHING_TPF02_STRUCTURE_PASS_OUTPUT_MISSING'});
-    const topicTitleById=new Map((output.topics||[]).map((topic)=>[String(topic.topic_id),String(topic.title)]));
+    const topicById=new Map((output.topics||[]).map((topic)=>[String(topic.topic_id),topic]));
+    const subtopicTitleById=new Map();
+    for(const topic of output.topics||[]){
+      for(const subtopic of topic.subtopics||[])subtopicTitleById.set(String(subtopic.subtopic_id),String(subtopic.title));
+    }
     return Object.freeze({
       batch_index:batchIndex,
-      topics:Object.freeze((output.topics||[]).map((topic)=>Object.freeze({
-        candidate_topic_ref:`batch-${batchIndex}:topic:${String(topic.topic_id)}`,
-        title:String(topic.title),
-        source_item_refs:Object.freeze(uniqueStrings(topic.source_item_refs||[])),
-        subtopics:Object.freeze((topic.subtopics||[]).map((subtopic)=>Object.freeze({
-          subtopic_id:String(subtopic.subtopic_id),
-          title:String(subtopic.title),
-        }))),
-      }))),
       learning_units:Object.freeze((output.learning_units||[]).map((unit)=>Object.freeze({
         candidate_unit_ref:`batch-${batchIndex}:unit:${String(unit.learning_unit_id)}`,
         title:String(unit.title),
         intended_competence:String(unit.intended_competence),
         source_item_refs:Object.freeze(uniqueStrings(unit.source_item_refs||[])),
-        topic_titles:Object.freeze(uniqueStrings((unit.topic_refs||[]).map((ref)=>topicTitleById.get(String(ref))||String(ref)))),
-        subtopic_id:unit.subtopic_id==null?null:String(unit.subtopic_id),
+        topic_titles:Object.freeze(uniqueStrings((unit.topic_refs||[]).map((ref)=>String(topicById.get(String(ref))?.title||ref)))),
+        subtopic_title:unit.subtopic_id==null?null:(subtopicTitleById.get(String(unit.subtopic_id))||String(unit.subtopic_id)),
+        proposed_exit_evidence:String(unit.proposed_exit_evidence),
         criticality:String(unit.criticality),
         prerequisite_candidate_refs:Object.freeze(uniqueStrings(unit.prerequisite_refs||[])),
       }))),
       assumed_prerequisites:Object.freeze((output.assumed_prerequisites||[]).map((item)=>Object.freeze({
         capability:String(item.capability),
         why_required:String(item.why_required),
-        source_or_academic_basis:String(item.source_or_academic_basis),
       }))),
     });
   }));
+}
+
+function compactProgressiveSourceEvidence(sourceItems=[]){
+  return Object.freeze((sourceItems||[]).map((item)=>Object.freeze({
+    source_item_ref:String(item.source_item_ref),
+    source_kind:item.source_kind==null?null:String(item.source_kind),
+    content:String(item.content||''),
+  })));
+}
+
+function assertProgressiveSynthesisInputBudget(academicInput){
+  const bytes=Buffer.byteLength(JSON.stringify(academicInput),'utf8');
+  if(bytes>TPF02_PROGRESSIVE_SYNTHESIS_INPUT_BYTES_LIMIT){
+    const error=new Error(`TPF-02 progressive whole-Course synthesis input exceeded the governed context budget (${bytes} bytes).`);
+    error.code='TEACHING_TPF02_PROGRESSIVE_SYNTHESIS_INPUT_TOO_LARGE';
+    throw error;
+  }
+  return bytes;
 }
 
 function mergeSourceInventoryStages(stageResults,fullAcademicInput){
@@ -1203,15 +1217,19 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSo
   const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const eligibleLearningUnitSourceRefs=Object.freeze(learningUnitEligibleSourceRefs(preparedInventory));
   const progressiveCandidates=Array.isArray(preparedStructureCandidates)?preparedStructureCandidates:[];
+  const progressive=progressiveCandidates.length>0;
   const academicInput=Object.freeze({
     ...fullAcademicInput,
     source_items:Object.freeze([]),
-    source_evidence_items:Object.freeze([...fullAcademicInput.source_items]),
+    source_evidence_items:progressive
+      ? compactProgressiveSourceEvidence(fullAcademicInput.source_items)
+      : Object.freeze([...fullAcademicInput.source_items]),
     prepared_source_inventory:Object.freeze([...preparedInventory]),
     eligible_learning_unit_source_refs:eligibleLearningUnitSourceRefs,
     source_inventory_stage_findings:stageFindings,
     progressive_structure_candidates:Object.freeze([...progressiveCandidates]),
   });
+  if(progressive)assertProgressiveSynthesisInputBudget(academicInput);
   const outputSchema=tpf02OutputSchema();
   const validationContext=validationContextFor(fullAcademicInput,{allowDecompositionRepair:true});
   return {
@@ -1428,6 +1446,7 @@ module.exports={
   TPF02_LINEAGE_REPAIR_BATCH_SIZE,
   TPF02_DECOMPOSITION_REPAIR_MAX_ATTEMPTS,
   TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE,
+  TPF02_PROGRESSIVE_SYNTHESIS_INPUT_BYTES_LIMIT,
   intakeRequest,
   curriculumAuditRequest,
   sourceInventoryRequest,
