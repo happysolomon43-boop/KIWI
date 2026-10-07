@@ -167,6 +167,9 @@ function createDurableTeachingOutboxRuntime({
               terminal,
               code: error?.code || null,
               message: error?.message || String(error),
+              validationStage: error?.validationStage || error?.validationFailure?.stage || null,
+              validationReason: error?.validationReason || error?.validationFailure?.reason || null,
+              validationRepairable: error?.validationFailure?.repairable || null,
             });
             outcomes.push('CANCELLED');
           } else {
