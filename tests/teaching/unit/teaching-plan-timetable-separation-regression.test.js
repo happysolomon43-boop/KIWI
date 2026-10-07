@@ -77,6 +77,18 @@ test('availability changes and Course Plan changes converge through the same sha
   assert.match(backend, /timetable_recalculated/);
 });
 
+test('active Semester availability changes keep the governed Request boundary and rebuild the shared authoritative timetable on application', () => {
+  const d09 = fs.readFileSync(path.join(root, 'teaching/d09/service.js'), 'utf8');
+  const d10 = fs.readFileSync(path.join(root, 'teaching/d10/service.js'), 'utf8');
+
+  assert.match(d09, /TEACHING_D09_ACTIVE_SEMESTER_AVAILABILITY_REQUIRES_REQUEST/);
+  assert.match(d10, /PERMANENT_AVAILABILITY_CHANGE/);
+  assert.match(d10, /saveScheduleInputsUsing\(tx,/);
+  assert.match(d10, /computeSchedule\(derived/);
+  assert.match(d10, /source:'FORMAL_REQUEST_APPLIED'/);
+  assert.match(d10, /materializeApprovedTimetableUsing/);
+});
+
 test('Course Plan regeneration is versioned and triggers safe timetable recalculation', () => {
   const flow = fs.readFileSync(path.join(root, 'public/teaching-flow-integrity.js'), 'utf8');
   const d08 = fs.readFileSync(path.join(root, 'teaching/d08/service.js'), 'utf8');
