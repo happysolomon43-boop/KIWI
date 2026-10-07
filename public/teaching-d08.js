@@ -214,7 +214,9 @@ function backgroundAuditState(job) {
         ? 'KIWI could not prepare the material input for analysis. Your materials are safe. Try again when you are ready.'
         : job?.last_error_code === 'TEACHING_AI_OUTPUT_TRUNCATED'
           ? 'The AI response ended before the Course analysis operation was complete. No incomplete analysis was saved and the current Course remains intact.'
-          : `The background ${actionName} did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. The current validated Course analysis and downstream setup remain intact.`,
+          : job?.last_error_code === 'TEACHING_D07_CURRICULUM_AUDIT_REJECTED'
+            ? 'KIWI could not safely complete the final Course-structure validation. No incomplete analysis was saved. Try the analysis again; large source sets are resumed through bounded validation work.'
+            : `The background ${actionName} did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. The current validated Course analysis and downstream setup remain intact.`,
       errorCode: job?.last_error_code || null,
     };
   }
@@ -805,12 +807,6 @@ async function renderCourseSetup({ course, container }) {
         setupStep(readinessChecked && diagnosticResolved ? '✓' : '•', 'Learning readiness', diagnosticRequired ? 'A focused, non-graded learning check is required before planning can continue.' : readinessChecked ? 'No additional learning check blocks the Course Plan.' : 'Check whether any prerequisite knowledge needs verification.', readinessChecked && diagnosticResolved ? 'Ready' : 'Action needed')
       );
       card.append(list);
-      if (backgroundAudit.failed) {
-        const failure = el('div', 'teaching-message', backgroundAudit.message);
-        failure.dataset.kind = 'error';
-        failure.setAttribute('role', 'alert');
-        card.append(failure);
-      }
       const actions = el('div', 'teaching-d08-actions');
       if (!auditReady || !sourcesReady) {
         const analyze = el('button', 'teaching-button teaching-button--primary', backgroundAudit.active ? 'Analysis running in background' : backgroundAudit.failed ? 'Try analysis again' : 'Analyze course materials');
