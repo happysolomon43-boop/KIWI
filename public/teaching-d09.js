@@ -127,7 +127,7 @@ function stage4(course,data,container,reload) {
   const message=el('div'), actions=el('div','teaching-d09-actions'), save=el('button','teaching-button teaching-button--primary',postActivation?'Request this availability change':'Save availability'); save.type='button'; actions.append(save); card.append(actions,message);
   save.addEventListener('click',async()=>{
     save.disabled=true;
-    message.textContent=postActivation?'Preparing the governed availability-change Request…':'Saving shared availability and rebuilding the Semester timetable…';message.className='teaching-message';delete message.dataset.kind;
+    message.textContent=postActivation?'Preparing the governed availability-change Request…':'Saving shared availability and queueing the Semester timetable rebuild…';message.className='teaching-message';delete message.dataset.kind;
     try {
       const tz=zone.value.trim(); if(!name.value.trim()) throw new Error('Enter a semester name.'); if(!start.value||!end.value) throw new Error('Semester start and end dates are required.');
       const availability=[];
