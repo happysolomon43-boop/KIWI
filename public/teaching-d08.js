@@ -71,11 +71,34 @@ function installStyles() {
     .teaching-d08-list{display:grid;gap:9px;margin:14px 0 0;padding:0;list-style:none}
     .teaching-d08-list li{padding:11px 12px;border:1px solid var(--teaching-border);border-radius:12px;color:#b9d4c8;font-size:12px;line-height:1.5}
     .teaching-d08-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:16px}
-    .teaching-d08-regenerate-box{display:grid;gap:10px;margin-top:14px;padding:14px;border:1px solid var(--teaching-border);border-radius:14px;background:rgba(255,255,255,.018)}
-    .teaching-d08-regenerate-box label{font-size:12px;font-weight:700;color:var(--teaching-text)}
-    .teaching-d08-regenerate-box p{margin:0;color:var(--teaching-muted);font-size:11px;line-height:1.55}
-    .teaching-d08-regenerate-box textarea{box-sizing:border-box;width:100%;min-height:108px;resize:vertical;padding:11px 12px;border:1px solid var(--teaching-border);border-radius:11px;background:rgba(1,12,9,.42);color:var(--teaching-text);font:inherit;line-height:1.5;outline:none}
-    .teaching-d08-regenerate-box textarea:focus{border-color:var(--teaching-border-strong)}
+    .teaching-d08-revision-entry{border-color:rgba(83,190,143,.28);background:rgba(83,190,143,.055)}
+    .teaching-d08-revision-panel{margin-top:18px;padding:20px;border:1px solid rgba(83,190,143,.22);border-radius:18px;background:linear-gradient(145deg,rgba(21,54,43,.72),rgba(5,25,19,.76));box-shadow:0 18px 48px rgba(0,0,0,.16)}
+    .teaching-d08-revision-panel__head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+    .teaching-d08-revision-panel__head strong{display:block;margin-top:4px;font-family:var(--font-display);font-size:20px;letter-spacing:-.025em}
+    .teaching-d08-revision-panel__head p{max-width:640px;margin:7px 0 0;color:var(--teaching-muted);font-size:12px;line-height:1.55}
+    .teaching-d08-revision-panel__eyebrow{display:block;color:#7fd9b2;font-size:10px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}
+    .teaching-d08-revision-panel__close{flex:none;padding:7px 9px;border:0;background:transparent;color:var(--teaching-muted);font:inherit;font-size:11px;cursor:pointer}
+    .teaching-d08-revision-panel__close:hover{color:var(--teaching-text)}
+    .teaching-d08-revision-chooser{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:18px 0 0;padding:0;border:0}
+    .teaching-d08-revision-chooser legend{grid-column:1/-1;margin-bottom:8px;padding:0;color:var(--teaching-text);font-size:12px;font-weight:750}
+    .teaching-d08-revision-option{position:relative;display:flex;gap:11px;min-width:0;padding:14px;border:1px solid var(--teaching-border);border-radius:14px;background:rgba(1,12,9,.3);cursor:pointer;transition:border-color .16s ease,background .16s ease,transform .16s ease}
+    .teaching-d08-revision-option:hover{border-color:rgba(83,190,143,.42);transform:translateY(-1px)}
+    .teaching-d08-revision-option[data-selected="true"]{border-color:#53be8f;background:rgba(83,190,143,.1);box-shadow:inset 0 0 0 1px rgba(83,190,143,.15)}
+    .teaching-d08-revision-option input{flex:none;width:16px;height:16px;margin:2px 0 0;accent-color:#53be8f}
+    .teaching-d08-revision-option__copy,.teaching-d08-revision-option__title{display:block;min-width:0}
+    .teaching-d08-revision-option__title{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .teaching-d08-revision-option__title strong{font-size:13px}
+    .teaching-d08-revision-option__copy small{display:block;margin-top:6px;color:var(--teaching-muted);font-size:11px;line-height:1.5}
+    .teaching-d08-revision-option__badge{flex:none;padding:3px 6px;border-radius:999px;background:rgba(83,190,143,.1);color:#91dcbc;font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+    .teaching-d08-revision-details{display:grid;grid-template-columns:1fr auto;gap:7px 12px;margin-top:14px;padding-top:16px;border-top:1px solid var(--teaching-border)}
+    .teaching-d08-revision-details label{font-size:12px;font-weight:750;color:var(--teaching-text)}
+    .teaching-d08-revision-details textarea{grid-column:1/-1;box-sizing:border-box;width:100%;min-height:104px;resize:vertical;padding:12px 13px;border:1px solid var(--teaching-border);border-radius:12px;background:rgba(1,12,9,.46);color:var(--teaching-text);font:inherit;line-height:1.5;outline:none}
+    .teaching-d08-revision-details textarea:focus{border-color:#53be8f;box-shadow:0 0 0 3px rgba(83,190,143,.1)}
+    .teaching-d08-revision-count{color:var(--teaching-muted);font-size:10px;text-align:right}
+    .teaching-d08-revision-helper{grid-column:1/-1;margin:0;color:var(--teaching-muted);font-size:11px;line-height:1.5}
+    .teaching-d08-revision-impact{grid-column:1/-1;margin:3px 0 0;padding:10px 11px;border-left:2px solid rgba(83,190,143,.52);border-radius:0 9px 9px 0;background:rgba(83,190,143,.055);color:#b9d4c8;font-size:11px;line-height:1.5}
+    .teaching-d08-revision-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:16px}
+    .teaching-d08-revision-actions .teaching-button--primary:disabled{cursor:not-allowed;filter:saturate(.45);opacity:.48}
     .teaching-d08-note{margin-top:12px;color:var(--teaching-muted);font-size:12px;line-height:1.55}
     .teaching-d08-preview{width:min(520px,calc(100vw - 28px));max-height:min(720px,86dvh);overflow:auto;padding:0;border:1px solid var(--teaching-border-strong);border-radius:24px;background:rgba(6,26,20,.99);color:var(--teaching-text);box-shadow:var(--teaching-shadow)}
     .teaching-d08-preview::backdrop{background:rgba(0,0,0,.62);backdrop-filter:blur(4px)}
@@ -90,6 +113,10 @@ function installStyles() {
       .teaching-d08-page__head{align-items:flex-start;flex-direction:column}
     }
     @media(max-width:560px){
+      .teaching-d08-revision-panel{padding:16px}
+      .teaching-d08-revision-chooser{grid-template-columns:1fr}
+      .teaching-d08-revision-option__title{align-items:flex-start}
+      .teaching-d08-revision-actions{display:grid;grid-template-columns:1fr}
       .teaching-d08-mini-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
       .teaching-d08-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
       .teaching-d08-preview__actions{grid-template-columns:1fr}
@@ -906,63 +933,140 @@ async function renderCourseSetup({ course, container }) {
       let analysisChangeBox = null;
       const analysisRevisionAllowed = ['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state || 'DRAFT').toUpperCase());
       if (auditReady && sourcesReady && !backgroundAudit.active && analysisRevisionAllowed) {
-        const refine = el('button', 'teaching-button', 'Request changes');
-        const regenerate = el('button', 'teaching-button', 'Regenerate analysis');
-        refine.type = 'button';
-        regenerate.type = 'button';
+        const revise = el('button', 'teaching-button teaching-d08-revision-entry', 'Revise Course analysis');
+        revise.type = 'button';
+        revise.setAttribute('aria-expanded', 'false');
 
-        analysisChangeBox = el('div', 'teaching-d08-regenerate-box');
+        analysisChangeBox = el('section', 'teaching-d08-revision-panel');
         analysisChangeBox.hidden = true;
-        const heading = el('strong', '', 'Change Course analysis');
-        const modeText = el('p', '', '');
-        const instructionLabel = el('label', '', 'What should KIWI change?');
-        const instruction = el('textarea');
-        instruction.maxLength = 1500;
-        const warning = el('p', '', '');
-        const boxActions = el('div', 'teaching-d08-actions');
-        const confirm = el('button', 'teaching-button teaching-button--primary', 'Apply changes');
-        const cancel = el('button', 'teaching-button', 'Cancel');
-        confirm.type = 'button';
-        cancel.type = 'button';
-        boxActions.append(confirm, cancel);
-        analysisChangeBox.append(heading, modeText, instructionLabel, instruction, warning, boxActions);
+        analysisChangeBox.setAttribute('aria-label', 'Revise Course analysis');
 
-        let mode = 'REFINE';
-        const configure = (nextMode) => {
-          mode = nextMode;
-          analysisChangeBox.hidden = false;
-          refine.disabled = nextMode === 'REFINE';
-          regenerate.disabled = nextMode === 'REGENERATE';
-          if (nextMode === 'REFINE') {
-            modeText.textContent = 'KIWI will revise the current validated analysis instead of rebuilding it from scratch.';
-            instructionLabel.textContent = 'What should KIWI change?';
-            instruction.placeholder = 'For example: “Learning Units are too broad — split them into smaller assessable units”, “these two units overlap — merge them”, or “this topic needs more detail”.';
-            warning.textContent = 'Your request is treated as guidance, not permission to remove required Course scope. If the revised analysis validates, Course Plan, learning-readiness, and timetable state derived from the old analysis reset to the new analysis boundary. If validation fails, nothing is reset.';
-            confirm.textContent = 'Apply requested changes';
-          } else {
-            modeText.textContent = 'KIWI will re-analyze the complete Course materials and build a new Course analysis.';
-            instructionLabel.textContent = 'Why regenerate?';
-            instruction.placeholder = 'Optional — for example: “the overall Learning Unit structure is too coarse” or “reconsider the Course decomposition from the source materials”.';
-            warning.textContent = 'If the regenerated analysis validates, Course Plan, learning-readiness, and timetable state derived from the old analysis reset to the new analysis boundary. If regeneration fails, the current Course remains intact.';
-            confirm.textContent = 'Regenerate whole analysis';
-          }
-          instruction.focus();
+        const panelHead = el('div', 'teaching-d08-revision-panel__head');
+        const panelTitle = el('div');
+        panelTitle.append(
+          el('span', 'teaching-d08-revision-panel__eyebrow', 'Course analysis'),
+          el('strong', '', 'What would you like to improve?'),
+          el('p', '', 'Choose one approach. Your current validated analysis stays in place until the new result passes every check.')
+        );
+        const close = el('button', 'teaching-d08-revision-panel__close', 'Close');
+        close.type = 'button';
+        close.setAttribute('aria-label', 'Close analysis revision');
+        panelHead.append(panelTitle, close);
+
+        const chooser = document.createElement('fieldset');
+        chooser.className = 'teaching-d08-revision-chooser';
+        const chooserLegend = document.createElement('legend');
+        chooserLegend.textContent = 'Choose an approach';
+
+        const option = ({ value, title, description, badge }) => {
+          const label = el('label', 'teaching-d08-revision-option');
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = `analysis-revision-${course.course_id}`;
+          radio.value = value;
+          const copy = el('span', 'teaching-d08-revision-option__copy');
+          const titleRow = el('span', 'teaching-d08-revision-option__title');
+          titleRow.append(el('strong', '', title), el('span', 'teaching-d08-revision-option__badge', badge));
+          copy.append(titleRow, el('small', '', description));
+          label.append(radio, copy);
+          return { label, radio };
         };
 
-        refine.addEventListener('click', () => configure('REFINE'));
-        regenerate.addEventListener('click', () => configure('REGENERATE'));
-        cancel.addEventListener('click', () => {
-          analysisChangeBox.hidden = true;
-          refine.disabled = false;
-          regenerate.disabled = false;
-          instruction.value = '';
+        const refineOption = option({
+          value: 'REFINE',
+          title: 'Request specific changes',
+          badge: 'Focused',
+          description: 'Tell KIWI what feels wrong. It will revise the analysis around that request and revalidate the complete result.',
         });
+        const regenerateOption = option({
+          value: 'REGENERATE',
+          title: 'Regenerate from materials',
+          badge: 'Full review',
+          description: 'Ask KIWI to reassess all Course materials and produce a new analysis from the source evidence.',
+        });
+        chooser.append(chooserLegend, refineOption.label, regenerateOption.label);
+
+        const details = el('div', 'teaching-d08-revision-details');
+        details.hidden = true;
+        const instructionLabel = el('label', '', '');
+        const instruction = el('textarea');
+        instruction.maxLength = 1500;
+        const characterCount = el('span', 'teaching-d08-revision-count', '0 / 1500');
+        const helper = el('p', 'teaching-d08-revision-helper', '');
+        const impact = el('p', 'teaching-d08-revision-impact', '');
+        details.append(instructionLabel, instruction, characterCount, helper, impact);
+
+        const boxActions = el('div', 'teaching-d08-revision-actions');
+        const confirm = el('button', 'teaching-button teaching-button--primary', 'Choose an approach');
+        const cancel = el('button', 'teaching-button', 'Cancel');
+        confirm.type = 'button';
+        confirm.disabled = true;
+        cancel.type = 'button';
+        boxActions.append(confirm, cancel);
+        analysisChangeBox.append(panelHead, chooser, details, boxActions);
+
+        let mode = null;
+        const refreshConfirm = () => {
+          const hasRequiredRequest = mode !== 'REFINE' || instruction.value.trim().length > 0;
+          confirm.disabled = !mode || !hasRequiredRequest;
+        };
+        const configure = (nextMode) => {
+          mode = nextMode;
+          details.hidden = false;
+          refineOption.label.dataset.selected = String(nextMode === 'REFINE');
+          regenerateOption.label.dataset.selected = String(nextMode === 'REGENERATE');
+          if (nextMode === 'REFINE') {
+            instructionLabel.textContent = 'Describe the change you need';
+            instruction.placeholder = 'Example: Split the broad mechanics unit into smaller assessable skills, or merge the two units that cover the same concept.';
+            helper.textContent = 'Be specific about the part that feels wrong. This request is required.';
+            impact.textContent = 'If the revision validates, planning based on the previous analysis will update to the new analysis boundary.';
+            confirm.textContent = 'Request these changes';
+          } else {
+            instructionLabel.textContent = 'Add context for the new analysis (optional)';
+            instruction.placeholder = 'Example: Reconsider the overall unit structure and give each major competence enough depth.';
+            helper.textContent = 'KIWI will review every Course material again. You can add context, or continue without it.';
+            impact.textContent = 'A validated regeneration replaces the analysis boundary used by Course Plan, readiness, and timetable work.';
+            confirm.textContent = 'Regenerate from materials';
+          }
+          refreshConfirm();
+          instruction.focus();
+        };
+        const resetRevisionPanel = () => {
+          mode = null;
+          analysisChangeBox.hidden = true;
+          revise.hidden = false;
+          revise.disabled = false;
+          revise.setAttribute('aria-expanded', 'false');
+          instruction.value = '';
+          characterCount.textContent = '0 / 1500';
+          details.hidden = true;
+          confirm.textContent = 'Choose an approach';
+          confirm.disabled = true;
+          refineOption.radio.checked = false;
+          regenerateOption.radio.checked = false;
+          delete refineOption.label.dataset.selected;
+          delete regenerateOption.label.dataset.selected;
+        };
+
+        revise.addEventListener('click', () => {
+          analysisChangeBox.hidden = false;
+          revise.hidden = true;
+          revise.setAttribute('aria-expanded', 'true');
+          refineOption.radio.focus();
+        });
+        refineOption.radio.addEventListener('change', () => configure('REFINE'));
+        regenerateOption.radio.addEventListener('change', () => configure('REGENERATE'));
+        instruction.addEventListener('input', () => {
+          characterCount.textContent = `${instruction.value.length} / 1500`;
+          refreshConfirm();
+        });
+        close.addEventListener('click', resetRevisionPanel);
+        cancel.addEventListener('click', resetRevisionPanel);
         confirm.addEventListener('click', async () => {
+          if (!mode) return;
           const requested = instruction.value.trim();
           if (mode === 'REFINE' && !requested) {
-            status.textContent = 'Describe the change you want KIWI to make.';
-            status.className = 'teaching-message';
-            status.dataset.kind = 'error';
+            refreshConfirm();
             instruction.focus();
             return;
           }
@@ -971,8 +1075,9 @@ async function renderCourseSetup({ course, container }) {
           const materialDescription = materialRow?.querySelector('small');
           confirm.disabled = true;
           cancel.disabled = true;
-          refine.disabled = true;
-          regenerate.disabled = true;
+          close.disabled = true;
+          refineOption.radio.disabled = true;
+          regenerateOption.radio.disabled = true;
           if (materialState) materialState.textContent = 'Running';
           if (materialDescription) materialDescription.textContent = mode === 'REFINE'
             ? 'KIWI is applying your requested analysis changes in the background. You can safely leave this page.'
@@ -999,13 +1104,14 @@ async function renderCourseSetup({ course, container }) {
               : 'Course analysis regeneration could not be started.');
             status.className = 'teaching-message';
             status.dataset.kind = 'error';
-            confirm.disabled = false;
             cancel.disabled = false;
-            refine.disabled = false;
-            regenerate.disabled = false;
+            close.disabled = false;
+            refineOption.radio.disabled = false;
+            regenerateOption.radio.disabled = false;
+            refreshConfirm();
           }
         });
-        actions.append(refine, regenerate);
+        actions.append(revise);
       }
 
       card.append(actions);
