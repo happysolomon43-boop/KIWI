@@ -109,6 +109,8 @@ test('D10 activation requires the selected Course Plan lineage inside the shared
   assert.match(source,/TIMETABLE_COURSE_PLAN_REF_STALE/);
   assert.match(source,/TIMETABLE_COURSE_STATE_STALE/);
   assert.match(source,/course_plan_refs/);
+  assert.match(source,/expectedReadyPredecessor/);
+  assert.match(source,/timetableCourseStateVersion===courseStateVersion-1/);
 });
 
 test('D10 Course activation publishes COURSE_ACTIVATED through the D05 transactional mutation boundary',async()=>{
