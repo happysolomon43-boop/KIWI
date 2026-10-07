@@ -180,6 +180,15 @@ test('active Semester draft planning preserves approved authority while future p
 });
 
 
+test('formal approvals supersede the prior approved authority, not a pending draft expansion proposal', () => {
+  const root=path.resolve(__dirname,'../../..');
+  const repository=fs.readFileSync(path.join(root,'teaching/repositories/d09-scheduling.js'),'utf8');
+
+  assert.match(repository,/directApproval[\s\S]*timetable_state='APPROVED'/);
+  assert.match(repository,/if\(directApproval\)[\s\S]*timetable_state in \('PROPOSED','EDITED_PROPOSAL','APPROVED'\)/);
+  assert.match(repository,/lineagePrevious=previous/);
+});
+
 test('D10 lifecycle schedule mutations rebuild shared Semester authority instead of orphaning sibling Courses', () => {
   const root=path.resolve(__dirname,'../../..');
   const d10=fs.readFileSync(path.join(root,'teaching/d10/service.js'),'utf8');
