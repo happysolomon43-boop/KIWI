@@ -200,13 +200,20 @@ function buildRefinementContext({changeRequest=null,previousAudit=null}={}){
   });
 }
 
-function stableJson(value){return JSON.stringify(value??null);}
+function canonicalJsonValue(value){
+  if(Array.isArray(value))return value.map(canonicalJsonValue);
+  if(value&&typeof value==='object'){
+    return Object.fromEntries(Object.keys(value).sort().map((key)=>[key,canonicalJsonValue(value[key])]));
+  }
+  return value??null;
+}
+function stableJson(value){return JSON.stringify(canonicalJsonValue(value));}
 
 function validateRefinementOutput(output,previousOutput,validationContext){
   const validated=validateTpf02Domain(output,validationContext);
   if(!validated.ok)return validated;
   if(stableJson(output.source_inventory)!==stableJson(previousOutput.source_inventory))return {ok:false,reason:'TPF02_REFINEMENT_SOURCE_INVENTORY_MUTATION_FORBIDDEN'};
-  if(stableJson(output.audit_scope?.source_walk)!==stableJson(previousOutput.audit_scope?.source_walk))return {ok:false,reason:'TPF02_REFINEMENT_SOURCE_WALK_MUTATION_FORBIDDEN'};
+  if(stableJson(output.audit_scope)!==stableJson(previousOutput.audit_scope))return {ok:false,reason:'TPF02_REFINEMENT_AUDIT_SCOPE_MUTATION_FORBIDDEN'};
   if(stableJson(output.source_conflicts)!==stableJson(previousOutput.source_conflicts))return {ok:false,reason:'TPF02_REFINEMENT_SOURCE_CONFLICT_MUTATION_FORBIDDEN'};
   if(stableJson(output.coverage_gaps)!==stableJson(previousOutput.coverage_gaps))return {ok:false,reason:'TPF02_REFINEMENT_COVERAGE_GAP_MUTATION_FORBIDDEN'};
   return validated;
