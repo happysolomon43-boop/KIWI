@@ -13,6 +13,7 @@ const {
   curriculumRefinementRequest,
   executeAdaptiveLineageRepair,
   validateLineageRepairPatch,
+  lineageRepairRequest,
 } = require('../../../teaching/d07/intelligence');
 
 function course(stateVersion=4,state='DRAFT') {
@@ -228,6 +229,59 @@ test('adaptive lineage repair never retries stale state as a smaller academic pa
   assert.equal(result.result.stale,true);
   assert.equal(attempts,1);
   assert.deepEqual(result.attemptedBatchSizes,[4]);
+});
+
+test('lineage repair receives every canonical field needed to attach lineage to an existing Learning Unit', () => {
+  const existingUnit={
+    learning_unit_id:'unit-1',
+    title:'Newtonian motion',
+    intended_competence:'Apply Newton laws to constrained motion problems.',
+    source_item_refs:['source:old'],
+    topic_refs:['topic-1'],
+    subtopic_id:'subtopic-1',
+    prerequisite_refs:['assumed-1'],
+    dependency_type_notes:'Requires vector resolution.',
+    criticality:'major',
+    criticality_basis:'Core assessed mechanics competence.',
+    proposed_exit_evidence:'Solve and explain a multi-force motion problem.',
+    gap_refs:[],
+    uncertainties:['Boundary cases need later confirmation.'],
+  };
+  const request=lineageRepairRequest({
+    course:course(),
+    sources:[source()],
+    baseOutput:{
+      topics:[{topic_id:'topic-1',title:'Mechanics',source_item_refs:['source:old'],subtopics:[{subtopic_id:'subtopic-1',title:'Motion'}]}],
+      learning_units:[existingUnit],
+      assumed_prerequisites:[{assumed_prerequisite_id:'assumed-1'}],
+      coverage_gaps:[],
+    },
+    preparedInventory:[{
+      source_item_ref:'source:source-1',
+      proposed_scope_classification:'required',
+    }],
+    preparedSourceWalk:[],
+    stageFindings:{},
+    repairRefs:['source:source-1'],
+  });
+
+  assert.deepEqual(
+    request.academicInput.lineage_repair_context.existing_learning_units[0],
+    {
+      learning_unit_id:'unit-1',
+      title:'Newtonian motion',
+      intended_competence:'Apply Newton laws to constrained motion problems.',
+      topic_refs:['topic-1'],
+      subtopic_id:'subtopic-1',
+      prerequisite_refs:['assumed-1'],
+      dependency_type_notes:'Requires vector resolution.',
+      criticality:'major',
+      criticality_basis:'Core assessed mechanics competence.',
+      proposed_exit_evidence:'Solve and explain a multi-force motion problem.',
+      gap_refs:[],
+      uncertainties:['Boundary cases need later confirmation.'],
+    },
+  );
 });
 
 test('lineage repair accepts an exact existing Topic restatement but still forbids Topic mutation', () => {
