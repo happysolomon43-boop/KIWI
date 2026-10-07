@@ -10,12 +10,12 @@ const D30_TASK_IDS = Object.freeze([
 ]);
 
 const D30_CONTRACT_VERSION = 'D30-qualification-v1';
-const EVALUATION_SUITE_VERSION = 'phase16-v1.4+tpf02-v1.1+tpf20-v1.0';
+const EVALUATION_SUITE_VERSION = 'phase16-v1.4+tpf02-v1.2+tpf20-v1.0';
 const PROMPT_MANIFEST_VERSION = '1.4';
 const PROMPT_MANIFEST_SHA256 = '7757b50cbf4cfb501158beeaccfbfd5776bc8ca8f7257b4855f5ed5fcdf67e3d';
 const PROMPT_PACK_SHA256 = '6632f5c566fb81906c5ecf27e7d5412a330b93f63c429d46f3bee65aac91ab5d';
 const PROMPT_AMENDMENT_REGISTRY_VERSION = '1.0';
-const PROMPT_AMENDMENT_REGISTRY_SHA256 = '04e1d9bf020cf5fd0ad20bb4c9cf6af7c972247d87f0700463be2819d01d8a9c';
+const PROMPT_AMENDMENT_REGISTRY_SHA256 = '76157d36547788ae05907b034afe69a0b60a293a758dea8b8b16b2839af25054';
 const CONSTITUTION_VERSION = 'Blueprint-11.7/Teaching-Constitution';
 
 const CRITICALITY_FLOORS = Object.freeze({ C2: 40, C3: 72, C4: 120 });
@@ -46,7 +46,7 @@ const AUTHORING_WAVES = Object.freeze([
 
 const FAMILY_DEFINITIONS = Object.freeze([
   ['TPF-01','1.0','C3',2,'7ab97ec3ba8285659c40b7dc3ab149a721d8b475c14cbda89d13e73796d6d370','Student Intake Interpretation'],
-  ['TPF-02','1.1','C4',14,'4272ed7051786b2c3ccc545d827ab21e85e622df628310e48e837759a33ec666','Curriculum Analysis & Structuring'],
+  ['TPF-02','1.2','C4',14,'c3084d859209c672d86659b54ce63cc52422b3887414c0b50a64722f4744c004','Curriculum Analysis & Structuring'],
   ['TPF-03','1.0','C4',2,'78b10efe7530fd1e84db1b284a90d15f0a2071d9dc241e5d31604b39b237ce26','Course Plan & Scope Planning'],
   ['TPF-04','1.2','C4',3,'bccf0a2f4eca30ab5259d87dc2c6640d8eda4e09b61c1e5fd41e5a39162bb453','Diagnostic & Verification Design'],
   ['TPF-05','1.3','C3',10,'7d9de1367dec90463f259de4971d091e5ddfeb7495b214e8a01274e3f9be2982','Lesson Planning, Homework & Live Replanning'],
