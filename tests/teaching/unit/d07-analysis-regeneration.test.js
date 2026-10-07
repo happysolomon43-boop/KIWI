@@ -436,8 +436,8 @@ test('analysis-boundary reset makes old diagnostic and prior-knowledge results h
   const planReader=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d08/plan-reader.js'),'utf8');
 
   for(const source of [intakeRepository,planReader]){
-    assert.match(source,/String\(row\.curriculum_audit_id\|\|''\)===String\(curriculumAudit\.curriculum_audit_id\|\|''\)/);
-    assert.match(source,/Date\.parse\(row\.decided_at\|\|''\)>=auditAt/);
+    assert.match(source,/String\(row\.curriculum_audit_id\s*\|\|\s*''\)\s*===\s*String\(curriculumAudit\.curriculum_audit_id\s*\|\|\s*''\)/);
+    assert.match(source,/Date\.parse\(row\.decided_at\s*\|\|\s*''\)\s*>=\s*auditAt/);
   }
   assert.doesNotMatch(intakeRepository,/delete from public\.teaching_diagnostic_plans/i);
   assert.doesNotMatch(intakeRepository,/delete from public\.teaching_validated_prior_knowledge_decisions/i);
