@@ -23,6 +23,17 @@ const {
   TPF02_CURRICULUM_AUDIT_RESPONSE_SCHEMA,
   TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA,
 } = require('./tpf02-provider-schema');
+const {
+  TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_ID,
+  TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_VERSION,
+  TPF02_MERGE_COMPRESSION_PATCH_FIELDS,
+  TPF02_MERGE_COMPRESSION_PATCH_RESPONSE_SCHEMA,
+  validateTpf02MergeCompressionPatchSchema,
+  isMergeCompressionChangeRequest,
+  buildMergeCompressionContext,
+  validateMergeCompressionPatch,
+  applyMergeCompressionPatch,
+} = require('./tpf02-merge-compression');
 
 const TPF02_SOURCE_INVENTORY_BATCH_SIZE = 24;
 const TPF02_SOURCE_INVENTORY_CONCURRENCY = 2;
@@ -91,6 +102,17 @@ function tpf02DecompositionPatchOutputSchema(){
     review_needed_field:'review_required',
     declared_fields:[...TPF02_DECOMPOSITION_PATCH_FIELDS],
     validate:validateTpf02DecompositionPatchSchema,
+  };
+}
+
+function tpf02MergeCompressionPatchOutputSchema(){
+  return {
+    id:TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_ID,
+    version:TPF02_MERGE_COMPRESSION_PATCH_SCHEMA_VERSION,
+    uncertainty_states:['INSUFFICIENT_EVIDENCE','UNRESOLVED_CONFLICT','REVIEW_NEEDED'],
+    review_needed_field:'review_required',
+    declared_fields:[...TPF02_MERGE_COMPRESSION_PATCH_FIELDS],
+    validate:validateTpf02MergeCompressionPatchSchema,
   };
 }
 
@@ -238,6 +260,95 @@ function curriculumRefinementRequest({course,sources,previousAudit,changeRequest
     validationContext,
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>validateRefinementOutput(out,previousOutput,validationContext),
+    provenanceValidator:fullProvenanceValidator(sourceRefs),
+  };
+}
+
+
+function mergeCompressionRefinementRequest({course,sources,previousAudit,changeRequest}={}){
+  const previousOutput=previousAudit?.audit_output;
+  if(!previousOutput){
+    const error=new Error('A validated Course analysis is required before merge/compression.');
+    error.code='TEACHING_D07_MERGE_COMPRESSION_REQUIRES_CURRENT';
+    throw error;
+  }
+  const mergeContext=buildMergeCompressionContext({changeRequest,previousAudit});
+  const taskAcademicInput=buildTpf02AcademicInput({
+    course,
+    sources,
+    taskMode:'MERGE_OR_COMPRESS_UNITS',
+    executionStage:EXECUTION_STAGES.SINGLE_PASS,
+  });
+  const academicInput=Object.freeze({
+    ...taskAcademicInput,
+    source_items:Object.freeze([]),
+    merge_compression_context:mergeContext,
+  });
+  const fullAcademicInput=buildTpf02AcademicInput({
+    course,
+    sources,
+    taskMode:'DEEP_AUDIT',
+    executionStage:EXECUTION_STAGES.SINGLE_PASS,
+  });
+  const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
+  const fullValidationContext=validationContextFor(fullAcademicInput,{allowDecompositionRepair:true});
+  const outputSchema=tpf02MergeCompressionPatchOutputSchema();
+  const request=base({
+    capabilityId:'teaching.curriculum.dynamic_learning_unit_merging_compression',
+    course,
+    taskMode:'MERGE_OR_COMPRESS_UNITS',
+    outputSchema,
+    contextSpec:{...tpf02ContextSpec(course,sources,'student_directed_merge_compression'),context_kind:'student_directed_merge_compression'},
+    academicInput,
+    provenanceRefs:sourceRefs,
+  });
+  return {
+    ...request,
+    directive:{
+      ...request.directive,
+      bounded_actions:[
+        'propose only academically defensible Learning Unit merge/compression groups from the validated Course analysis',
+        'preserve all required source lineage and unaffected curriculum structure',
+      ],
+      allowed_operations:[
+        'merge or compress existing Learning Units that share the same Topic/Subtopic placement',
+        'reuse one affected Learning Unit id as the continuity identity for each accepted merge group',
+      ],
+      prohibited_operations:[
+        'mutate authoritative state',
+        'reclassify source scope',
+        'split Learning Units',
+        'create or delete Topics or Subtopics',
+        'move Learning Units across Topic/Subtopic placement',
+        'drop required source lineage',
+        'rewrite unaffected Learning Units',
+        'select provider or model',
+      ],
+      evidence_purpose:'student_directed_merge_compression',
+    },
+    modelContentMode:'TPF02_DIRECT',
+    generation:tpf02Generation(academicInput,TPF02_MERGE_COMPRESSION_PATCH_RESPONSE_SCHEMA),
+    validationContext:fullValidationContext,
+    schemaValidator:validateTpf02MergeCompressionPatchSchema,
+    domainValidator:async out=>{
+      const patch=validateMergeCompressionPatch(out,{academicInput,baseOutput:previousOutput});
+      if(!patch.ok)return patch;
+      const applied=applyMergeCompressionPatch(previousOutput,patch.value);
+      const assembled=canonicalizeSynthesisSourceScope(applied,previousOutput.source_inventory||[]);
+      const validated=validateTpf02Domain(assembled,fullValidationContext);
+      if(!validated.ok)return validated;
+
+      const decomposition=decompositionRepairState(
+        assembled,
+        new Map((assembled.source_inventory||[]).map((item)=>[String(item.source_item_ref),item])),
+        {decompositionLimits:fullAcademicInput.constraints.decomposition_limits},
+      );
+      const mergedIds=new Set((patch.value.merge_groups||[]).map((group)=>String(group.continuity_unit_ref)));
+      if((decomposition.pending_unit_flags||[]).some((flag)=>mergedIds.has(String(flag.learning_unit_id)))){
+        return {ok:false,reason:'TPF02_MERGE_COMPRESSION_DECOMPOSITION_GUARD_FAILED'};
+      }
+      return validated;
+    },
     provenanceValidator:fullProvenanceValidator(sourceRefs),
   };
 }
@@ -1506,7 +1617,11 @@ function createD07Intelligence({orchestrator}={}){
   if(!orchestrator||typeof orchestrator.execute!=='function')throw new TypeError('D07 intelligence requires the Teaching Orchestrator.');
 
   async function refineCurriculumAudit(args={}){
-    return orchestrator.execute(curriculumRefinementRequest(args));
+    return orchestrator.execute(
+      isMergeCompressionChangeRequest(args.changeRequest)
+        ? mergeCompressionRefinementRequest(args)
+        : curriculumRefinementRequest(args)
+    );
   }
 
   async function runCurriculumAudit(args={}){
@@ -1665,6 +1780,11 @@ module.exports={
   buildRefinementContext,
   validateRefinementOutput,
   curriculumRefinementRequest,
+  mergeCompressionRefinementRequest,
+  isMergeCompressionChangeRequest,
+  buildMergeCompressionContext,
+  validateMergeCompressionPatch,
+  applyMergeCompressionPatch,
   curriculumAuditRequest,
   sourceInventoryRequest,
   curriculumSynthesisRequest,
