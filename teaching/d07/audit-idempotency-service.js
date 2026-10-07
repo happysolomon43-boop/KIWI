@@ -17,11 +17,18 @@ function currentValidatedAudit(setup) {
   const courseId = String(course.course_id ?? '').trim();
   if (!stateVersion || !courseId) return null;
 
-  const expectedStateRef = `teaching_course:${courseId}:state:${stateVersion}`;
   const expectedDigest = sourceInventoryDigest(sources);
   const metadata = audit.validation_metadata && typeof audit.validation_metadata === 'object'
     ? audit.validation_metadata
     : {};
+  const analyzedStateVersion = String(metadata.state_version ?? '').trim();
+  const revisionOperation = String(metadata.revision_operation || '').toUpperCase();
+  const revisionCommittedStateVersion = String(metadata.revision_committed_state_version ?? '').trim();
+  const revisionStateTransition = ['REFINE','REGENERATE'].includes(revisionOperation)
+    && revisionCommittedStateVersion === stateVersion
+    && analyzedStateVersion.length > 0;
+  const expectedInputStateVersion = revisionStateTransition ? analyzedStateVersion : stateVersion;
+  const expectedStateRef = `teaching_course:${courseId}:state:${expectedInputStateVersion}`;
 
   if (String(audit.prompt_family_version || '') !== TPF02_FAMILY_VERSION) return null;
   if (String(audit.output_schema_version || '') !== TPF02_OUTPUT_SCHEMA_VERSION) return null;
@@ -29,7 +36,7 @@ function currentValidatedAudit(setup) {
   if (String(audit.status || '').toUpperCase() !== 'VALIDATED_CANDIDATE') return null;
   if (String(audit.input_state_reference || '') !== expectedStateRef) return null;
   if (String(audit.source_inventory_digest || '') !== expectedDigest) return null;
-  if (String(metadata.state_version ?? '') !== stateVersion) return null;
+  if (!revisionStateTransition && analyzedStateVersion !== stateVersion) return null;
   if (Number(metadata.source_census) !== sources.length) return null;
   if (metadata.domain_validated !== true) return null;
   return audit;
