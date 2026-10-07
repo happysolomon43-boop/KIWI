@@ -94,7 +94,7 @@ function stage4(course,data,container,reload) {
   const zone=el('input'); zone.value=sem.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
   addField(grid,'Semester name',name); addField(grid,'Start date',start); addField(grid,'End date',end); addField(grid,'Timetable timezone',zone); card.append(grid);
   if(data.inheritedAvailability){
-    card.append(el('div','teaching-message','Using your current Semester availability automatically for this Course. You do not need to save it again; when its Course Plan exists, KIWI will attach the Course to the same Semester and recalculate the timetable automatically.'));
+    card.append(el('div','teaching-message','Using your Semester availability for this Course. KIWI will add it to the shared Semester timetable when the Course Plan is ready.'));
   }
 
   const windows=data.profile?.availability||[], available=windows.filter((x)=>x.kind==='AVAILABLE'), recovery=windows.filter((x)=>x.kind==='RECOVERY_ONLY'), hard=windows.filter((x)=>x.kind==='HARD_UNAVAILABLE');
