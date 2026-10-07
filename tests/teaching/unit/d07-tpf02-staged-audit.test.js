@@ -1120,7 +1120,7 @@ test('188-source audit recovers from a rejected 12-source lineage patch by shrin
       const size = request.academicInput.source_items.length;
       if (size === 12 && rejectedLargeRepair === false) {
         rejectedLargeRepair = true;
-        return { accepted: false, reason: 'TPF02_LINEAGE_REPAIR_PATCH_MODEL_REJECTED' };
+        return { accepted: false, reason: 'TPF02_LEARNING_UNIT_INVALID:4' };
       }
 
       repairOrdinal += 1;
