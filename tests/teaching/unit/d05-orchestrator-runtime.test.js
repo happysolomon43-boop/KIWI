@@ -862,7 +862,7 @@ test('D05 durable outbox publishes a Date-backed PostgreSQL row through canonica
   const runtime = createDurableTeachingOutboxRuntime({
     store: {
       async releaseExpiredClaims() { return 0; },
-      async claimPending() { return [row]; },
+      async claimPending() { return published > 0 ? [] : [row]; },
       async markPublished(event) {
         assert.equal(event.event_id, row.event_id);
         published += 1;
@@ -902,7 +902,7 @@ test('D05 durable outbox records terminal failure when retry budget is exhausted
   const runtime = createDurableTeachingOutboxRuntime({
     store: {
       async releaseExpiredClaims() { return 0; },
-      async claimPending() { return [row]; },
+      async claimPending() { return cancelled ? [] : [row]; },
       async markPublished() { throw new Error('failed publication cannot be marked published'); },
       async retry() { throw new Error('exhausted publication cannot return to retry wait'); },
       async markCancelled(event, details) { cancelled = { event, details }; },
