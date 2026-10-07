@@ -40,6 +40,34 @@ const TPF02_TOP_LEVEL_FIELDS = Object.freeze([
   'student_facing_summary_candidate',
 ]);
 
+const TPF02_DECOMPOSITION_PATCH_SCHEMA_ID = 'tpf02.decomposition-repair-patch';
+const TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION = '1';
+const TPF02_DECOMPOSITION_PATCH_FIELDS = Object.freeze([
+  'input_state_reference',
+  'task_mode',
+  'execution_stage',
+  'target_unit_id',
+  'decision',
+  'resulting_units',
+  'split_reason',
+  'unit_justification',
+  'course_ratio_justification',
+  'review_required',
+]);
+const TPF02_DECOMPOSITION_PATCH_UNIT_FIELDS = Object.freeze([
+  'learning_unit_id',
+  'title',
+  'intended_competence',
+  'source_item_refs',
+  'prerequisite_refs',
+  'dependency_type_notes',
+  'criticality',
+  'criticality_basis',
+  'proposed_exit_evidence',
+  'uncertainties',
+]);
+const DECOMPOSITION_PATCH_DECISIONS = new Set(['split','keep']);
+
 const ARTIFACT_STATUSES = new Set(['ok','unresolved','blocked_insufficient_sources','blocked_authority_conflict']);
 const SCOPE_CLASSIFICATIONS = new Set(['required','supplementary','duplicate','non_instructional','outside_approved_scope','unresolved']);
 const CONTENT_VALIDITY = new Set(['current_supported','outdated_or_inaccurate','disputed','historical_or_contextual','not_applicable','unresolved']);
@@ -110,6 +138,40 @@ function buildTpf02AcademicInput({course,sources=[],taskMode='DEEP_AUDIT',execut
   }),
   source_items:sourceItems,
  });
+}
+
+function exactObjectFields(value, fields){
+ const actual=Object.keys(value||{}).sort(),expected=[...fields].sort();
+ return actual.length===expected.length&&!actual.some((key,index)=>key!==expected[index]);
+}
+
+function validateTpf02DecompositionPatchSchema(output){
+ if(!isObject(output))return invalid('TPF02_DECOMPOSITION_PATCH_OBJECT_REQUIRED');
+ if(!exactObjectFields(output,TPF02_DECOMPOSITION_PATCH_FIELDS))return invalid('TPF02_DECOMPOSITION_PATCH_TOP_LEVEL_CONTRACT_MISMATCH');
+ if(!isString(output.input_state_reference))return invalid('TPF02_DECOMPOSITION_PATCH_STATE_REFERENCE_REQUIRED');
+ if(output.task_mode!=='SPLIT_UNIT')return invalid('TPF02_DECOMPOSITION_PATCH_TASK_MODE_INVALID');
+ if(output.execution_stage!==EXECUTION_STAGES.SINGLE_PASS)return invalid('TPF02_DECOMPOSITION_PATCH_STAGE_INVALID');
+ if(!isString(output.target_unit_id))return invalid('TPF02_DECOMPOSITION_PATCH_TARGET_UNIT_REQUIRED');
+ if(!DECOMPOSITION_PATCH_DECISIONS.has(output.decision))return invalid('TPF02_DECOMPOSITION_PATCH_DECISION_INVALID');
+ if(!Array.isArray(output.resulting_units))return invalid('TPF02_DECOMPOSITION_PATCH_UNITS_ARRAY_REQUIRED');
+ if(!nullableString(output.split_reason)||!nullableString(output.unit_justification)||!nullableString(output.course_ratio_justification))return invalid('TPF02_DECOMPOSITION_PATCH_JUSTIFICATION_INVALID');
+ if(!bool(output.review_required))return invalid('TPF02_DECOMPOSITION_PATCH_REVIEW_REQUIRED_BOOLEAN');
+
+ for(const [index,unit] of output.resulting_units.entries()){
+  if(!isObject(unit)||!exactObjectFields(unit,TPF02_DECOMPOSITION_PATCH_UNIT_FIELDS))return invalid(`TPF02_DECOMPOSITION_PATCH_UNIT_CONTRACT_INVALID:${index}`);
+  if(!isString(unit.learning_unit_id)||!isString(unit.title)||!isString(unit.intended_competence)||!uniqueStringArray(unit.source_item_refs)||unit.source_item_refs.length===0||!uniqueStringArray(unit.prerequisite_refs)||!nullableString(unit.dependency_type_notes)||!CRITICALITY.has(unit.criticality)||!isString(unit.criticality_basis)||!isString(unit.proposed_exit_evidence)||!stringArray(unit.uncertainties))return invalid(`TPF02_DECOMPOSITION_PATCH_UNIT_INVALID:${index}`);
+ }
+
+ if(output.decision==='split'){
+  if(output.resulting_units.length<2)return invalid('TPF02_DECOMPOSITION_PATCH_SPLIT_REQUIRES_MULTIPLE_UNITS');
+  if(!isString(output.split_reason)||output.unit_justification!==null)return invalid('TPF02_DECOMPOSITION_PATCH_SPLIT_REASON_INVALID');
+  if(output.review_required!==false)return invalid('TPF02_DECOMPOSITION_PATCH_SPLIT_REVIEW_STATE_INVALID');
+ }else{
+  if(output.resulting_units.length!==0)return invalid('TPF02_DECOMPOSITION_PATCH_KEEP_MUST_NOT_RESTATE_UNIT');
+  if(output.split_reason!==null||!isString(output.unit_justification))return invalid('TPF02_DECOMPOSITION_PATCH_KEEP_JUSTIFICATION_INVALID');
+  if(output.review_required!==true)return invalid('TPF02_DECOMPOSITION_PATCH_KEEP_REQUIRES_REVIEW');
+ }
+ return valid(output);
 }
 
 function validateTpf02Schema(output){
