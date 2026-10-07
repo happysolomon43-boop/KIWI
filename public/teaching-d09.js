@@ -162,7 +162,7 @@ function stage5(course,data,container,reload) {
   const unresolvedSelf=(data.unresolvedSemesterCourses||[]).filter((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
   const missingAttachment=unresolvedSelf.some((item)=>item.reason==='COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER');
   const missingPlan=unresolvedSelf.some((item)=>item.reason==='COURSE_PLAN_NOT_READY');
-  const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',postActivation?'Timetable locked after activation':(data.timetable?'Recalculate timetable':'Propose timetable')), status=el('span','teaching-d09-status',statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button';propose.disabled=postActivation||missingInputs||missingPlan; actions.append(propose,status); card.append(actions);
+  const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',postActivation?'Timetable locked after activation':(data.timetable?'Recalculate timetable':'Propose timetable')), status=el('span','teaching-d09-status',statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button';propose.disabled=postActivation||missingInputs||missingAttachment||missingPlan; actions.append(propose,status); card.append(actions);
   if(missingInputs){card.append(el('div','teaching-message','Save your semester and availability before creating the timetable.'));}
   else {
     if(missingAttachment) card.append(el('div','teaching-message','This Course is using your shared Semester availability by default. Save the availability once to attach the Course.'));
