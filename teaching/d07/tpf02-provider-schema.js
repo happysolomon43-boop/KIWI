@@ -300,36 +300,6 @@ const DECOMPOSITION_PATCH_UNIT_SCHEMA = Object.freeze({
   ]),
 });
 
-const LINEAGE_ATTACHMENT_SCHEMA = Object.freeze({
-  type: 'object',
-  properties: Object.freeze({
-    learning_unit_id: STRING,
-    source_item_refs: STRING_ARRAY,
-  }),
-  required: Object.freeze(['learning_unit_id','source_item_refs']),
-  propertyOrdering: Object.freeze(['learning_unit_id','source_item_refs']),
-});
-
-const TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA = Object.freeze({
-  type: 'object',
-  properties: Object.freeze({
-    input_state_reference: STRING,
-    task_mode: Object.freeze({ type: 'string', enum: Object.freeze(['LEARNING_UNIT_DECOMPOSITION']) }),
-    execution_stage: Object.freeze({ type: 'string', enum: Object.freeze(['SINGLE_PASS']) }),
-    existing_unit_attachments: Object.freeze({ type: 'array', items: LINEAGE_ATTACHMENT_SCHEMA }),
-    new_topics: Object.freeze({ type: 'array', items: TOPIC_SCHEMA }),
-    new_learning_units: Object.freeze({ type: 'array', items: LEARNING_UNIT_SCHEMA }),
-  }),
-  required: Object.freeze([
-    'input_state_reference','task_mode','execution_stage',
-    'existing_unit_attachments','new_topics','new_learning_units',
-  ]),
-  propertyOrdering: Object.freeze([
-    'input_state_reference','task_mode','execution_stage',
-    'existing_unit_attachments','new_topics','new_learning_units',
-  ]),
-});
-
 const TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA = Object.freeze({
   type: 'object',
   properties: Object.freeze({
@@ -360,6 +330,5 @@ const TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA = Object.freeze({
 
 module.exports = {
   TPF02_CURRICULUM_AUDIT_RESPONSE_SCHEMA,
-  TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA,
   TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA,
 };
