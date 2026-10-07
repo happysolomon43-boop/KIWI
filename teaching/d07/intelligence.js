@@ -13,6 +13,7 @@ const {
   validateHierarchy,
   validateDecomposition,
   decompositionRepairState,
+  DECOMPOSITION_JUSTIFICATION_PREFIX,
 } = require('./tpf02-direct');
 
 const TPF02_SOURCE_INVENTORY_BATCH_SIZE = 24;
@@ -24,7 +25,8 @@ const TPF02_STRUCTURE_BATCH_SIZE = 24;
 const TPF02_STRUCTURE_CONCURRENCY = 2;
 const TPF02_LINEAGE_REPAIR_BATCH_SIZE = 12;
 const TPF02_LINEAGE_REPAIR_REVIEW_REASON = 'Required source lineage needs bounded TPF-02 completion before Course planning.';
-const TPF02_DECOMPOSITION_REPAIR_MAX_ATTEMPTS = 2;
+const TPF02_DECOMPOSITION_REPAIR_MAX_ATTEMPTS = 12;
+const TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE = 24;
 const TPF02_LINEAGE_UNRESOLVED_PREFIX = 'runtime-lineage-unmapped:';
 const TPF02_STATUS_PRIORITY = Object.freeze({
   ok: 0,
@@ -563,50 +565,216 @@ function lineageRepairRequest({
 }
 
 
-function validateDecompositionRepairPatch(output,{academicInput,baseOutput,preparedInventory=[]}={}){
+function selectDecompositionRepairScope({
+  baseOutput,
+  decompositionState,
+  sources,
+  sourceBatchSize=TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE,
+}={}){
+  const units=Array.isArray(baseOutput?.learning_units)?baseOutput.learning_units:[];
+  const unitById=new Map(units.map((unit)=>[String(unit.learning_unit_id),unit]));
+  const pendingFlags=Array.isArray(decompositionState?.pending_unit_flags)?decompositionState.pending_unit_flags:[];
+  let targetFlag=pendingFlags.find((flag)=>unitById.has(String(flag?.learning_unit_id||'')))||null;
+  let targetUnit=targetFlag?unitById.get(String(targetFlag.learning_unit_id)):null;
+
+  if(!targetUnit&&decompositionState?.course_ratio_flag===true&&decompositionState?.course_ratio_justified!==true){
+    const justified=new Set((decompositionState.justified_unit_ids||[]).map(String));
+    targetUnit=[...units]
+      .filter((unit)=>!justified.has(String(unit.learning_unit_id)))
+      .sort((left,right)=>(right.source_item_refs||[]).length-(left.source_item_refs||[]).length)[0]||null;
+  }
+  if(!targetUnit)return null;
+
+  const targetUnitId=String(targetUnit.learning_unit_id);
+  const allSourceRefs=uniqueStrings(targetUnit.source_item_refs||[]);
+  const repairSourceRefs=allSourceRefs.slice(0,Math.max(1,Number(sourceBatchSize)||TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE));
+  const repairRefSet=new Set(repairSourceRefs);
+  const sourceByRef=new Map((sources||[]).map((source)=>[`source:${String(source?.source_content_item_id||'').trim()}`,source]));
+  const scopedSources=repairSourceRefs.map((ref)=>sourceByRef.get(ref)).filter(Boolean);
+  if(scopedSources.length!==repairSourceRefs.length){
+    const error=new Error('TPF-02 decomposition repair could not resolve every scoped runtime source.');
+    error.code='TEACHING_TPF02_DECOMPOSITION_REPAIR_SOURCE_MISSING';
+    throw error;
+  }
+
+  const topicIds=uniqueStrings(targetUnit.topic_refs||[]);
+  const topicById=new Map((baseOutput.topics||[]).map((topic)=>[String(topic.topic_id),topic]));
+  const currentTopics=topicIds.map((id)=>topicById.get(id)).filter(Boolean).map((topic)=>Object.freeze({
+    topic_id:String(topic.topic_id),
+    title:String(topic.title),
+    subtopics:Object.freeze((topic.subtopics||[]).map((subtopic)=>Object.freeze({
+      subtopic_id:String(subtopic.subtopic_id),
+      title:String(subtopic.title),
+    }))),
+  }));
+  if(currentTopics.length!==topicIds.length){
+    const error=new Error('TPF-02 decomposition repair target references an unknown Topic.');
+    error.code='TEACHING_TPF02_DECOMPOSITION_REPAIR_TOPIC_MISSING';
+    throw error;
+  }
+
+  const allUnitOutline=Object.freeze(units.map((unit)=>Object.freeze({
+    learning_unit_id:String(unit.learning_unit_id),
+    title:String(unit.title),
+    intended_competence:String(unit.intended_competence),
+    source_ref_count:(unit.source_item_refs||[]).length,
+    topic_refs:Object.freeze([...(unit.topic_refs||[])]),
+    subtopic_id:unit.subtopic_id==null?null:String(unit.subtopic_id),
+    criticality:String(unit.criticality),
+  })));
+
+  return Object.freeze({
+    target_unit_id:targetUnitId,
+    target_unit_flag:targetFlag?Object.freeze({
+      learning_unit_id:String(targetFlag.learning_unit_id),
+      reasons:Object.freeze([...(targetFlag.reasons||[])]),
+    }):null,
+    target_unit:Object.freeze({
+      ...targetUnit,
+      source_item_refs:Object.freeze([...allSourceRefs]),
+      topic_refs:Object.freeze([...(targetUnit.topic_refs||[])]),
+      prerequisite_refs:Object.freeze([...(targetUnit.prerequisite_refs||[])]),
+      gap_refs:Object.freeze([...(targetUnit.gap_refs||[])]),
+      uncertainties:Object.freeze([...(targetUnit.uncertainties||[])]),
+    }),
+    repair_source_refs:Object.freeze(repairSourceRefs),
+    untouched_source_refs:Object.freeze(allSourceRefs.filter((ref)=>!repairRefSet.has(ref))),
+    scoped_sources:Object.freeze(scopedSources),
+    current_topics:Object.freeze(currentTopics),
+    all_unit_outline:allUnitOutline,
+    course_ratio_flag:decompositionState?.course_ratio_flag===true,
+    course_ratio_justified:decompositionState?.course_ratio_justified===true,
+    unit_required_ratio:Number(decompositionState?.unit_required_ratio)||0,
+    min_units_per_required_source:Number(decompositionState?.min_units_per_required_source)||0,
+  });
+}
+
+function validateDecompositionRepairPatch(output,{academicInput,baseOutput,preparedInventory=[],repairScope}={}){
   const schema=validateTpf02Schema(output);
   if(!schema.ok)return schema;
+  const scope=repairScope||academicInput?.decomposition_repair_context?.repair_scope;
+  if(!scope)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SCOPE_REQUIRED'};
+  const targetUnitId=String(scope.target_unit_id||'');
+  const baseUnit=(baseOutput.learning_units||[]).find((unit)=>String(unit.learning_unit_id)===targetUnitId);
+  if(!baseUnit)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_TARGET_UNIT_UNKNOWN'};
+
+  const repairRefs=uniqueStrings(scope.repair_source_refs||[]);
+  const repairRefSet=new Set(repairRefs);
+  const originalRefs=uniqueStrings(baseUnit.source_item_refs||[]);
+  const originalRefSet=new Set(originalRefs);
+  const untouchedRefs=originalRefs.filter((ref)=>!repairRefSet.has(ref));
+  const existingTopicById=new Map((baseOutput.topics||[]).map((topic)=>[String(topic.topic_id),topic]));
+  const existingUnitIds=new Set((baseOutput.learning_units||[]).map((unit)=>String(unit.learning_unit_id)));
+  const assumedIds=new Set((baseOutput.assumed_prerequisites||[]).map((item)=>String(item.assumed_prerequisite_id)));
+  const existingGapIds=new Set((baseOutput.coverage_gaps||[]).map((item)=>String(item.gap_id)));
+
   if(output.input_state_reference!==academicInput.input_state_reference)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_STATE_REFERENCE_MISMATCH'};
   if(output.task_mode!=='SPLIT_UNIT')return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_TASK_MODE_MISMATCH'};
   if(output.execution_stage!==EXECUTION_STAGES.SINGLE_PASS)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_STAGE_MISMATCH'};
-  if(!sameStringSet(output.audit_scope?.source_refs||[],academicInput.audit_scope.source_refs||[]))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SOURCE_CENSUS_MISMATCH'};
+  if(!sameStringSet(output.audit_scope?.source_refs||[],repairRefs))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SOURCE_CENSUS_MISMATCH'};
   if(String(output.audit_scope?.trusted_scope_version||'')!==String(academicInput.audit_scope.trusted_scope_version||''))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SCOPE_VERSION_MISMATCH'};
   if((output.source_inventory||[]).length!==0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_MUST_DEFER_SOURCE_INVENTORY'};
   if((output.audit_scope?.source_walk||[]).length!==0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_MUST_DEFER_SOURCE_WALK'};
+  if((output.topics||[]).length!==0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_TOPICS_SERVER_OWNED'};
   for(const field of ['assumed_prerequisites','source_conflicts','coverage_gaps','unresolved_items']){
     if((output[field]||[]).length!==0)return {ok:false,reason:`TPF02_DECOMPOSITION_REPAIR_SCOPE_EXCEEDED:${field}`};
   }
-  if(output.student_facing_summary_candidate!=null)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SUMMARY_FORBIDDEN'};
+  if((output.source_to_unit_reconciliation?.required_item_map||[]).length
+    ||(output.source_to_unit_reconciliation?.unmapped_required_refs||[]).length){
+    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_RECONCILIATION_SERVER_OWNED'};
+  }
+  if(output.status!=='ok'||output.student_facing_summary_candidate!=null)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_COMPLETION_STATE_INVALID'};
+  if((output.review_reasons||[]).some((reason)=>!String(reason).trim().startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX))){
+    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_REVIEW_REASON_OUT_OF_SCOPE'};
+  }
 
-  const eligibleRefs=new Set(learningUnitEligibleSourceRefs(preparedInventory));
-  const requiredRefs=new Set((preparedInventory||[]).filter((item)=>String(item.proposed_scope_classification||'')==='required').map((item)=>String(item.source_item_ref)));
-  const unitIds=new Set();
-  const mappedRequired=new Set();
-  for(const unit of output.learning_units||[]){
-    const id=String(unit?.learning_unit_id||'').trim();
-    if(!id||unitIds.has(id))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_ID_INVALID'};
-    unitIds.add(id);
-    if((unit.source_item_refs||[]).some((ref)=>!eligibleRefs.has(String(ref))))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_SOURCE_REF_INVALID'};
-    for(const ref of unit.source_item_refs||[])if(requiredRefs.has(String(ref)))mappedRequired.add(String(ref));
+  const outputUnits=output.learning_units||[];
+  if(!outputUnits.length)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_REQUIRED'};
+  const outputUnitById=new Map();
+  for(const unit of outputUnits){
+    const id=String(unit.learning_unit_id||'').trim();
+    if(!id||outputUnitById.has(id))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_ID_INVALID'};
+    if(existingUnitIds.has(id)&&id!==targetUnitId)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNAFFECTED_UNIT_REWRITE_FORBIDDEN'};
+    if((unit.source_item_refs||[]).some((ref)=>!originalRefSet.has(String(ref))))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNIT_SOURCE_REF_INVALID'};
+    if(!sameStringSet(unit.topic_refs||[],baseUnit.topic_refs||[]))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_TOPIC_PLACEMENT_CHANGED'};
+    if((unit.subtopic_id??null)!==(baseUnit.subtopic_id??null))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SUBTOPIC_PLACEMENT_CHANGED'};
+    if((unit.gap_refs||[]).some((ref)=>!existingGapIds.has(String(ref))))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_GAP_REF_INVALID'};
+    outputUnitById.set(id,unit);
   }
-  if(requiredRefs.size!==mappedRequired.size||[...requiredRefs].some((ref)=>!mappedRequired.has(ref))){
-    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_REQUIRED_LINEAGE_INCOMPLETE'};
+  const continuity=outputUnitById.get(targetUnitId);
+  if(!continuity)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_CONTINUITY_UNIT_REQUIRED'};
+  if((baseUnit.prerequisite_refs||[]).some((ref)=>!(continuity.prerequisite_refs||[]).includes(ref))){
+    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_PREREQUISITE_LINEAGE_LOST'};
   }
-  const previousUnitIds=new Set((baseOutput.learning_units||[]).map((unit)=>String(unit.learning_unit_id)));
-  for(const proposal of output.structure_change_proposals||[]){
-    if((proposal.resulting_unit_refs||[]).some((ref)=>!unitIds.has(String(ref))))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_RESULT_UNIT_REF_UNKNOWN'};
-    if((proposal.affected_unit_refs||[]).some((ref)=>!previousUnitIds.has(String(ref))&&!unitIds.has(String(ref))))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_AFFECTED_UNIT_REF_UNKNOWN'};
-    if([...(proposal.source_item_refs_before||[]),...(proposal.source_item_refs_after||[])].some((ref)=>!eligibleRefs.has(String(ref))))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_PROPOSAL_SOURCE_REF_INVALID'};
+  if((baseUnit.gap_refs||[]).some((ref)=>!(continuity.gap_refs||[]).includes(ref))){
+    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_GAP_LINEAGE_LOST'};
   }
-  if(!(output.topics||[]).length&&unitIds.size===0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_EMPTY_STRUCTURE'};
+  if((baseUnit.uncertainties||[]).some((value)=>!(continuity.uncertainties||[]).includes(value))){
+    return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNCERTAINTY_LINEAGE_LOST'};
+  }
+
+  const allowedPrereqs=new Set([...existingUnitIds,...outputUnitById.keys(),...assumedIds]);
+  for(const unit of outputUnits){
+    if((unit.prerequisite_refs||[]).some((ref)=>!allowedPrereqs.has(String(ref)))){
+      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_PREREQUISITE_REF_UNKNOWN'};
+    }
+  }
+
+  const unionRefs=uniqueStrings(outputUnits.flatMap((unit)=>unit.source_item_refs||[]));
+  if(!sameStringSet(unionRefs,originalRefs))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SOURCE_LINEAGE_CHANGED'};
+  for(const ref of untouchedRefs){
+    if(!(continuity.source_item_refs||[]).includes(ref))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNEXAMINED_SOURCE_MOVED'};
+    if(outputUnits.some((unit)=>String(unit.learning_unit_id)!==targetUnitId&&(unit.source_item_refs||[]).includes(ref))){
+      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNEXAMINED_SOURCE_DUPLICATED'};
+    }
+  }
+
+  const newUnits=outputUnits.filter((unit)=>String(unit.learning_unit_id)!==targetUnitId);
+  if(newUnits.length){
+    if(output.structure_change_proposals.length!==1)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_SPLIT_PROPOSAL_REQUIRED'};
+    const proposal=output.structure_change_proposals[0];
+    if(proposal.type!=='split')return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_ONLY_SPLIT_ALLOWED'};
+    if(!sameStringSet(proposal.affected_unit_refs||[],[targetUnitId]))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_AFFECTED_UNIT_REF_INVALID'};
+    if(!sameStringSet(proposal.resulting_unit_refs||[],[...outputUnitById.keys()]))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_RESULT_UNIT_REF_INVALID'};
+    if(!sameStringSet(proposal.source_item_refs_before||[],originalRefs)
+      ||!sameStringSet(proposal.source_item_refs_after||[],originalRefs)){
+      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_PROPOSAL_LINEAGE_CHANGED'};
+    }
+    if(newUnits.some((unit)=>(unit.source_item_refs||[]).some((ref)=>!repairRefSet.has(String(ref))))){
+      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_NEW_UNIT_USED_UNEXAMINED_SOURCE'};
+    }
+    if(repairRefs.every((ref)=>(continuity.source_item_refs||[]).includes(ref))){
+      return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_NO_PROGRESS'};
+    }
+  }else{
+    if(output.structure_change_proposals.length!==0)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_UNCHANGED_UNIT_PROPOSAL_FORBIDDEN'};
+    const unitJustified=(continuity.uncertainties||[]).some((item)=>
+      String(item||'').trim().startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX)
+      &&String(item||'').trim().length>DECOMPOSITION_JUSTIFICATION_PREFIX.length+12
+    );
+    const courseJustified=(output.review_reasons||[]).some((item)=>
+      String(item||'').trim().startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX)
+      &&String(item||'').trim().length>DECOMPOSITION_JUSTIFICATION_PREFIX.length+12
+    );
+    if(!unitJustified&&!courseJustified)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_NO_PROGRESS'};
+    if(output.review_required!==true)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_JUSTIFICATION_REQUIRES_REVIEW'};
+  }
+
   return {ok:true,value:output};
 }
 
-function applyDecompositionRepair(baseOutput,repairOutput,{preparedInventory=[],preparedSourceWalk=[]}={}){
+function applyDecompositionRepair(baseOutput,repairOutput,{preparedInventory=[],preparedSourceWalk=[],repairScope}={}){
+  const targetUnitId=String(repairScope?.target_unit_id||'');
+  const units=(baseOutput.learning_units||[])
+    .filter((unit)=>String(unit.learning_unit_id)!==targetUnitId)
+    .map((unit)=>({...unit,source_item_refs:[...(unit.source_item_refs||[])],topic_refs:[...(unit.topic_refs||[])],prerequisite_refs:[...(unit.prerequisite_refs||[])],gap_refs:[...(unit.gap_refs||[])],uncertainties:[...(unit.uncertainties||[])]}));
+  for(const unit of repairOutput.learning_units||[]){
+    units.push({...unit,source_item_refs:[...(unit.source_item_refs||[])],topic_refs:[...(unit.topic_refs||[])],prerequisite_refs:[...(unit.prerequisite_refs||[])],gap_refs:[...(unit.gap_refs||[])],uncertainties:[...(unit.uncertainties||[])]});
+  }
   const merged={
     ...baseOutput,
-    topics:(repairOutput.topics||[]).map((topic)=>({...topic,subtopics:(topic.subtopics||[]).map((subtopic)=>({...subtopic}))})),
-    learning_units:(repairOutput.learning_units||[]).map((unit)=>({...unit,source_item_refs:[...(unit.source_item_refs||[])],topic_refs:[...(unit.topic_refs||[])],prerequisite_refs:[...(unit.prerequisite_refs||[])],gap_refs:[...(unit.gap_refs||[])],uncertainties:[...(unit.uncertainties||[])]})),
+    topics:(baseOutput.topics||[]).map((topic)=>({...topic,source_item_refs:[...(topic.source_item_refs||[])],subtopics:(topic.subtopics||[]).map((subtopic)=>({...subtopic}))})),
+    learning_units:units,
     structure_change_proposals:[
       ...(baseOutput.structure_change_proposals||[]),
       ...(repairOutput.structure_change_proposals||[]),
@@ -628,31 +796,43 @@ function decompositionRepairRequest({
   preparedSourceWalk,
   decompositionState,
 }={}){
+  const repairScope=selectDecompositionRepairScope({baseOutput,decompositionState,sources});
+  if(!repairScope){
+    const error=new Error('TPF-02 decomposition repair was requested without a repairable Learning Unit.');
+    error.code='TEACHING_TPF02_DECOMPOSITION_REPAIR_SCOPE_EMPTY';
+    throw error;
+  }
   const academicBase=buildTpf02AcademicInput({
     course,
-    sources,
+    sources:repairScope.scoped_sources,
     taskMode:'SPLIT_UNIT',
     executionStage:EXECUTION_STAGES.SINGLE_PASS,
   });
+  const repairRefSet=new Set(repairScope.repair_source_refs);
+  const canonicalInventory=(preparedInventory||[]).filter((item)=>repairRefSet.has(String(item.source_item_ref)));
+  if(canonicalInventory.length!==repairScope.repair_source_refs.length){
+    const error=new Error('TPF-02 decomposition repair is missing prepared source accounting for its bounded evidence set.');
+    error.code='TEACHING_TPF02_DECOMPOSITION_REPAIR_INVENTORY_MISMATCH';
+    throw error;
+  }
   const academicInput=Object.freeze({
     ...academicBase,
     decomposition_repair_context:Object.freeze({
       mode:'DECOMPOSITION_REPAIR',
-      decomposition_flags:decompositionState,
-      canonical_source_inventory:Object.freeze((preparedInventory||[]).map((item)=>Object.freeze({...item}))),
-      current_topics:Object.freeze((baseOutput.topics||[]).map((topic)=>Object.freeze({
-        ...topic,
-        source_item_refs:Object.freeze([...(topic.source_item_refs||[])]),
-        subtopics:Object.freeze((topic.subtopics||[]).map((subtopic)=>Object.freeze({...subtopic}))),
-      }))),
-      current_learning_units:Object.freeze((baseOutput.learning_units||[]).map((unit)=>Object.freeze({
-        ...unit,
-        source_item_refs:Object.freeze([...(unit.source_item_refs||[])]),
-        topic_refs:Object.freeze([...(unit.topic_refs||[])]),
-        prerequisite_refs:Object.freeze([...(unit.prerequisite_refs||[])]),
-        gap_refs:Object.freeze([...(unit.gap_refs||[])]),
-        uncertainties:Object.freeze([...(unit.uncertainties||[])]),
-      }))),
+      repair_scope:Object.freeze({
+        target_unit_id:repairScope.target_unit_id,
+        target_unit_flag:repairScope.target_unit_flag,
+        repair_source_refs:repairScope.repair_source_refs,
+        untouched_source_refs:repairScope.untouched_source_refs,
+        course_ratio_flag:repairScope.course_ratio_flag,
+        course_ratio_justified:repairScope.course_ratio_justified,
+        unit_required_ratio:repairScope.unit_required_ratio,
+        min_units_per_required_source:repairScope.min_units_per_required_source,
+      }),
+      canonical_source_inventory:Object.freeze(canonicalInventory.map((item)=>Object.freeze({...item}))),
+      current_topics:repairScope.current_topics,
+      current_learning_unit:repairScope.target_unit,
+      all_unit_outline:repairScope.all_unit_outline,
       existing_assumed_prerequisite_refs:Object.freeze((baseOutput.assumed_prerequisites||[]).map((item)=>String(item.assumed_prerequisite_id))),
       existing_gap_refs:Object.freeze((baseOutput.coverage_gaps||[]).map((item)=>String(item.gap_id))),
     }),
@@ -664,14 +844,14 @@ function decompositionRepairRequest({
     taskMode:'DEEP_AUDIT',
     executionStage:EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
   });
-  const fullValidationContext=validationContextFor(fullAcademicInput);
+  const fullValidationContext=validationContextFor(fullAcademicInput,{allowDecompositionRepair:true});
   const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const request=base({
     capabilityId:'teaching.curriculum.learning_unit_decomposition',
     course,
     taskMode:'SPLIT_UNIT',
     outputSchema,
-    contextSpec:tpf02ContextSpec(course,sources,'curriculum_decomposition_repair'),
+    contextSpec:tpf02ContextSpec(course,repairScope.scoped_sources,'curriculum_decomposition_repair'),
     academicInput,
     provenanceRefs:sourceRefs,
   });
@@ -680,19 +860,20 @@ function decompositionRepairRequest({
     directive:{
       ...request.directive,
       bounded_actions:[
-        'repair deterministic TPF-02 decomposition or hierarchy flags by re-applying the T1-T5 Learning Unit boundary test',
-        'return one complete replacement Topic/Subtopic/Learning Unit graph without changing source scope',
+        'repair exactly one deterministic TPF-02 decomposition target with bounded source evidence',
+        'split only the flagged Learning Unit while preserving all unexamined source lineage on its continuity unit',
       ],
       allowed_operations:[
-        'split over-broad Learning Units',
-        'merge only genuinely inseparable or redundant Learning Units',
-        'repair Topic and Subtopic placement while preserving source lineage',
-        'record a concise decomposition justification only when a flagged unit genuinely passes T1-T5',
+        'split the target Learning Unit using only the supplied repair source evidence',
+        'retain the target unit id as the continuity unit and add bounded new Learning Units inside the same Topic/Subtopic placement',
+        'record a concise decomposition justification when the target genuinely passes T1-T5 despite a proxy flag',
       ],
       prohibited_operations:[
         'mutate authoritative state',
         'reclassify source scope',
-        'drop required source lineage',
+        'drop or move unexamined source lineage',
+        'rewrite unaffected Learning Units or Topics',
+        'merge Learning Units',
         'invent source identity',
         'change non-structural Curriculum Audit findings',
         'select provider or model',
@@ -703,13 +884,14 @@ function decompositionRepairRequest({
     generation:Object.freeze({maxOutputTokens:TPF02_MAX_OUTPUT_TOKENS,structuredOutput:Object.freeze({mimeType:'application/json'})}),
     schemaValidator:validateTpf02Schema,
     domainValidator:async out=>{
-      const patch=validateDecompositionRepairPatch(out,{academicInput,baseOutput,preparedInventory});
+      const patch=validateDecompositionRepairPatch(out,{academicInput,baseOutput,preparedInventory,repairScope});
       if(!patch.ok)return patch;
-      const merged=applyDecompositionRepair(baseOutput,patch.value,{preparedInventory,preparedSourceWalk});
+      const merged=applyDecompositionRepair(baseOutput,patch.value,{preparedInventory,preparedSourceWalk,repairScope});
       return validateTpf02Domain(merged,fullValidationContext);
     },
     provenanceValidator:fullProvenanceValidator(sourceRefs),
     validationContext:fullValidationContext,
+    repairScope,
   };
 }
 
@@ -1198,6 +1380,7 @@ module.exports={
   TPF02_STRUCTURE_CONCURRENCY,
   TPF02_LINEAGE_REPAIR_BATCH_SIZE,
   TPF02_DECOMPOSITION_REPAIR_MAX_ATTEMPTS,
+  TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE,
   intakeRequest,
   curriculumAuditRequest,
   sourceInventoryRequest,
@@ -1215,6 +1398,7 @@ module.exports={
   applyLineageRepair,
   validateLineageRepairPatch,
   lineageRepairRequest,
+  selectDecompositionRepairScope,
   validateDecompositionRepairPatch,
   applyDecompositionRepair,
   decompositionRepairRequest,
