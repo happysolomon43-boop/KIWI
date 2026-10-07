@@ -10,6 +10,7 @@ const {
 }=require('../../../teaching/d10/contracts');
 const {createD10Service}=require('../../../teaching/d10/service');
 const {createD10LifecycleRequestRepository}=require('../../../teaching/repositories/d10-lifecycle-requests');
+const {createD10LifecycleRequestRepository:createD10ActivationIntegrityRepository}=require('../../../teaching/repositories/d10-activation-integrity');
 const {TEACHING_EVENTS}=require('../../../teaching/events/names');
 
 function facts(state='READY'){
@@ -66,6 +67,40 @@ test('D10 default grading declaration uses the frozen Blueprint weights while D2
   assert.equal(total,1);
   assert.deepEqual(DEFAULT_GRADING_POLICY.categoryWeights,{CLASSWORK:.10,HOMEWORK:.05,GRADED_IMPROMPTU:.10,SCHEDULED_TESTS:.15,MID_SEMESTER:.20,FINAL_EXAMINATION:.40});
   assert.equal(DEFAULT_GRADING_POLICY.rules.calculationOwner,'GRADEBOOK_D20');
+});
+
+test('D10 activation integrity counts only the selected Course slots inside a shared Semester timetable',async()=>{
+  let slotQuery=null,slotParams=null;
+  const query=async(sql,params=[])=>{
+    const text=String(sql);
+    if(text.includes('from public.teaching_learning_units')){
+      return {rows:[{instructional_unit_count:2,estimated_instructional_minutes:120}]};
+    }
+    if(text.includes('from public.teaching_timetable_slots')){
+      slotQuery=text;
+      slotParams=params;
+      return {rows:[{
+        total_slot_count:2,class_slot_count:2,future_class_slot_count:2,elapsed_slot_count:0,
+        earliest_class_start_at:'2026-10-10T09:00:00Z',reserve_before_first_class_count:0,
+      }]};
+    }
+    throw new Error('Unexpected SQL in shared activation-integrity harness');
+  };
+  const repository=createD10ActivationIntegrityRepository({
+    query,
+    withTransaction:async(fn)=>fn({query}),
+    randomUUID:()=> 'activation-integrity-id',
+    clock:()=>new Date('2026-10-07T12:00:00Z'),
+  });
+  const integrity=await repository.timetableIntegrityUsing(null,{
+    studentId:'u1',courseId:'course-b',coursePlanId:'plan-b',timetableVersionId:'semester-tt-4',
+  });
+
+  assert.match(slotQuery,/timetable_version_id=\$2 and course_id=\$3/);
+  assert.match(slotQuery,/s2\.course_id=\$3/);
+  assert.deepEqual(slotParams.slice(0,3),['u1','semester-tt-4','course-b']);
+  assert.equal(integrity.classSlotCount,2);
+  assert.deepEqual(integrity.blockers,[]);
 });
 
 test('D10 Course activation publishes COURSE_ACTIVATED through the D05 transactional mutation boundary',async()=>{
