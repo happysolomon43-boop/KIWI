@@ -578,13 +578,11 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
  if(analysisRefinement){
   instructions.push(
    'This is a STUDENT_DIRECTED_ANALYSIS_REFINEMENT of an already validated Course analysis, not a new source audit.',
-   'academic_input.refinement_context.current_analysis is the authoritative validated curriculum-structure starting point. Apply student_request narrowly and preserve unaffected curriculum structure.',
-   'academic_input.refinement_context.immutable_analysis_context contains compact source truth and immutable constraints for judgment only. Never reinterpret or reclassify them.',
-   'The server preserves source_inventory, full audit_scope, source_conflicts, and coverage_gaps from the validated starting artifact. To avoid wasting large-course output on immutable restatement, return source_inventory, source_conflicts, and coverage_gaps as empty arrays; return audit_scope with the same subject_or_course and trusted_scope_version but empty source_refs and source_walk.',
-   'The server also rebuilds source_to_unit_reconciliation deterministically from required source inventory and the refined Learning Unit lineage. Return required_item_map and unmapped_required_refs as empty arrays; do not spend model output restating that derived ledger.',
-   'You may revise Topics, Subtopics, Learning Units, prerequisite structure, exit evidence, structure-change proposals, review state, and the student-facing summary only as required by the requested structural change.',
+   'academic_input.refinement_context.current_analysis is the authoritative validated starting artifact. Apply student_request narrowly and preserve unaffected curriculum structure.',
+   'Copy source_inventory, audit_scope, source_conflicts, and coverage_gaps exactly from current_analysis. Never reinterpret or reclassify source evidence in this operation.',
+   'You may revise Topics, Subtopics, Learning Units, prerequisite structure, exit evidence, structure-change proposals, reconciliation, review state, and the student-facing summary only as required by the requested structural change.',
    'If the student asks for fewer Learning Units, merge only when distinct assessable competencies are not collapsed. If the student asks for more detail, split only at real competence boundaries.',
-   'Return the complete mutable TPF-02 curriculum structure inside the normal TPF-02 top-level contract. Preserve every required source lineage or return a review-required/unresolved state rather than guessing.'
+   'Return the complete TPF-02 audit object after the refinement, not a patch. Preserve every required source lineage or return a review-required/unresolved state rather than guessing.'
   );
  }
  if(lineageRepair){
@@ -593,8 +591,7 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
    'academic_input.source_items contains exactly the required runtime-owned sources that remain without Learning Unit lineage. academic_input.lineage_repair_context.canonical_source_inventory is fixed validated source accounting; do not reclassify it.',
    'academic_input.lineage_repair_context.existing_topics, existing_learning_units, existing_assumed_prerequisite_refs, and existing_gap_refs are immutable current curriculum context. Do not rewrite or delete them.',
    'Every supplied source_items[].source_item_ref must appear in at least one learning_units[].source_item_refs, and learning_units[].source_item_refs may contain only supplied refs.',
-   'To attach a supplied source to an existing Learning Unit, reuse that exact existing learning_unit_id. Copy title, intended_competence, topic_refs, subtopic_id, prerequisite_refs, dependency_type_notes, criticality, criticality_basis, proposed_exit_evidence, gap_refs, and uncertainties exactly from lineage_repair_context.existing_learning_units; set source_item_refs only to the supplied repair refs being attached. The server consumes only the added source lineage for an existing ID and ignores attempted rewrites of its other fields.',
-   'Do not restate existing Topic objects in topics. Existing Topic IDs belong only in learning_units[].topic_refs; topics is reserved for genuinely new Topics created by this bounded repair.',
+   'To attach a supplied source to an existing Learning Unit, reuse that exact existing learning_unit_id. The server consumes only the added source lineage for an existing ID and ignores attempted rewrites of its other fields.',
    'If no existing Learning Unit is academically suitable, propose a new non-enrichment Learning Unit. New topic IDs may be returned when needed; otherwise topic_refs may point to existing topic IDs listed in lineage_repair_context.',
    'prerequisite_refs may reference existing Learning Unit IDs, existing assumed-prerequisite IDs, or new Learning Unit IDs returned in this repair pass. Keep gap_refs empty.',
    'Return source_inventory and audit_scope.source_walk as empty arrays; the server retains the validated source inventory and source walk. Return assumed_prerequisites, source_conflicts, coverage_gaps, structure_change_proposals, and unresolved_items as empty arrays.',

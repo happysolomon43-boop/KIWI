@@ -175,48 +175,12 @@ function buildRefinementContext({changeRequest=null,previousAudit=null}={}){
     error.code='TEACHING_D07_ANALYSIS_REFINEMENT_REQUIRES_CURRENT';
     throw error;
   }
-
-  // Targeted refinement operates on the validated curriculum structure, not a
-  // second copy of the full source audit. Immutable source truth is represented
-  // compactly for academic judgment and is restored deterministically after the
-  // model returns. This keeps large 100+ source Courses inside a bounded context
-  // while preserving exactly the same validation and authority boundary.
-  const currentAnalysis=Object.freeze({
-    input_state_reference:current.input_state_reference,
-    task_mode:current.task_mode,
-    execution_stage:current.execution_stage,
-    topics:Object.freeze([...(current.topics||[])]),
-    learning_units:Object.freeze([...(current.learning_units||[])]),
-    assumed_prerequisites:Object.freeze([...(current.assumed_prerequisites||[])]),
-    structure_change_proposals:Object.freeze([...(current.structure_change_proposals||[])]),
-    unresolved_items:Object.freeze([...(current.unresolved_items||[])]),
-    status:current.status,
-    review_required:current.review_required,
-    review_reasons:Object.freeze([...(current.review_reasons||[])]),
-    student_facing_summary_candidate:current.student_facing_summary_candidate,
-  });
-  const immutableAnalysisContext=Object.freeze({
-    audit_scope:Object.freeze({
-      subject_or_course:current.audit_scope?.subject_or_course||'',
-      trusted_scope_version:current.audit_scope?.trusted_scope_version||'',
-    }),
-    source_inventory_context:Object.freeze((current.source_inventory||[]).map((item)=>Object.freeze({
-      source_item_ref:item.source_item_ref,
-      academic_meaning:item.academic_meaning,
-      proposed_scope_classification:item.proposed_scope_classification,
-      content_validity_status:item.content_validity_status,
-    }))),
-    source_conflicts:Object.freeze([...(current.source_conflicts||[])]),
-    coverage_gaps:Object.freeze([...(current.coverage_gaps||[])]),
-  });
-
   return Object.freeze({
     mode:'STUDENT_DIRECTED_ANALYSIS_REFINEMENT',
     student_request:request,
     previous_audit_id:previousAudit?.curriculum_audit_id||null,
     previous_audit_version:previousAudit?.audit_version==null?null:Number(previousAudit.audit_version),
-    current_analysis:currentAnalysis,
-    immutable_analysis_context:immutableAnalysisContext,
+    current_analysis:current,
     immutable_scope:Object.freeze([
       'source_inventory',
       'audit_scope',
@@ -233,39 +197,21 @@ function buildRefinementContext({changeRequest=null,previousAudit=null}={}){
   });
 }
 
+function canonicalJsonValue(value){
+  if(Array.isArray(value))return value.map(canonicalJsonValue);
+  if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map((key)=>[key,canonicalJsonValue(value[key])]));
+  return value??null;
+}
+function stableJson(value){return JSON.stringify(canonicalJsonValue(value));}
+
 function validateRefinementOutput(output,previousOutput,validationContext){
-  const schema=validateTpf02Schema(output);
-  if(!schema.ok)return schema;
-  if((output.source_inventory||[]).length!==0)return {ok:false,reason:'TPF02_REFINEMENT_SOURCE_INVENTORY_RESTATEMENT_FORBIDDEN'};
-  if((output.source_conflicts||[]).length!==0)return {ok:false,reason:'TPF02_REFINEMENT_SOURCE_CONFLICT_RESTATEMENT_FORBIDDEN'};
-  if((output.coverage_gaps||[]).length!==0)return {ok:false,reason:'TPF02_REFINEMENT_COVERAGE_GAP_RESTATEMENT_FORBIDDEN'};
-  if((output.audit_scope?.source_refs||[]).length!==0||(output.audit_scope?.source_walk||[]).length!==0){
-    return {ok:false,reason:'TPF02_REFINEMENT_AUDIT_SCOPE_RESTATEMENT_FORBIDDEN'};
-  }
-  if(String(output.audit_scope?.subject_or_course||'')!==String(previousOutput.audit_scope?.subject_or_course||'')){
-    return {ok:false,reason:'TPF02_REFINEMENT_AUDIT_SUBJECT_MUTATION_FORBIDDEN'};
-  }
-  if(String(output.audit_scope?.trusted_scope_version||'')!==String(previousOutput.audit_scope?.trusted_scope_version||'')){
-    return {ok:false,reason:'TPF02_REFINEMENT_AUDIT_SCOPE_VERSION_MUTATION_FORBIDDEN'};
-  }
-
-  if((output.source_to_unit_reconciliation?.required_item_map||[]).length!==0
-    ||(output.source_to_unit_reconciliation?.unmapped_required_refs||[]).length!==0){
-    return {ok:false,reason:'TPF02_REFINEMENT_RECONCILIATION_RESTATEMENT_FORBIDDEN'};
-  }
-
-  const assembled=canonicalizeSynthesisSourceScope({
-    ...output,
-    source_inventory:[...(previousOutput.source_inventory||[])],
-    audit_scope:{
-      ...(previousOutput.audit_scope||{}),
-      source_refs:[...(previousOutput.audit_scope?.source_refs||[])],
-      source_walk:[...(previousOutput.audit_scope?.source_walk||[])],
-    },
-    source_conflicts:[...(previousOutput.source_conflicts||[])],
-    coverage_gaps:[...(previousOutput.coverage_gaps||[])],
-  },previousOutput.source_inventory||[]);
-  return validateTpf02Domain(assembled,validationContext);
+  const validated=validateTpf02Domain(output,validationContext);
+  if(!validated.ok)return validated;
+  if(stableJson(output.source_inventory)!==stableJson(previousOutput.source_inventory))return {ok:false,reason:'TPF02_REFINEMENT_SOURCE_INVENTORY_MUTATION_FORBIDDEN'};
+  if(stableJson(output.audit_scope)!==stableJson(previousOutput.audit_scope))return {ok:false,reason:'TPF02_REFINEMENT_AUDIT_SCOPE_MUTATION_FORBIDDEN'};
+  if(stableJson(output.source_conflicts)!==stableJson(previousOutput.source_conflicts))return {ok:false,reason:'TPF02_REFINEMENT_SOURCE_CONFLICT_MUTATION_FORBIDDEN'};
+  if(stableJson(output.coverage_gaps)!==stableJson(previousOutput.coverage_gaps))return {ok:false,reason:'TPF02_REFINEMENT_COVERAGE_GAP_MUTATION_FORBIDDEN'};
+  return validated;
 }
 
 function curriculumRefinementRequest({course,sources,previousAudit,changeRequest}={}){
