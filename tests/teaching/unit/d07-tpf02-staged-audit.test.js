@@ -183,6 +183,75 @@ function structurePassOutput(request) {
     student_facing_summary_candidate: null,
   };
 }
+function coarseSynthesisOutput(request) {
+  const refs = request.academicInput.audit_scope.source_refs;
+  return {
+    input_state_reference: request.academicInput.input_state_reference,
+    task_mode: 'DEEP_AUDIT',
+    execution_stage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+    audit_scope: { ...request.academicInput.audit_scope, source_walk: [] },
+    source_inventory: [],
+    topics: [{
+      topic_id: 'topic-coarse',
+      title: 'Mechanics',
+      source_item_refs: refs,
+      subtopics: [{ subtopic_id: 'subtopic-coarse', title: 'Mechanics foundations' }],
+    }],
+    learning_units: [{
+      learning_unit_id: 'unit-coarse',
+      title: 'Apply mechanics foundations',
+      intended_competence: 'Apply the complete mechanics foundation represented by the Course sources.',
+      source_item_refs: refs,
+      topic_refs: ['topic-coarse'],
+      subtopic_id: 'subtopic-coarse',
+      prerequisite_refs: [],
+      dependency_type_notes: null,
+      criticality: 'foundational',
+      criticality_basis: 'The broad fixture intentionally reproduces the under-decomposition regression.',
+      proposed_exit_evidence: 'Solve one broad mechanics task.',
+      gap_refs: [],
+      uncertainties: [],
+    }],
+    assumed_prerequisites: [],
+    source_conflicts: [],
+    coverage_gaps: [],
+    structure_change_proposals: [],
+    source_to_unit_reconciliation: {
+      required_item_map: refs.map((ref) => ({ source_item_ref: ref, learning_unit_refs: ['unit-coarse'] })),
+      unmapped_required_refs: [],
+    },
+    unresolved_items: [],
+    status: 'ok',
+    review_required: false,
+    review_reasons: [],
+    student_facing_summary_candidate: 'A deliberately coarse regression fixture.',
+  };
+}
+
+function decompositionRepairOutput(request) {
+  const repaired = synthesisOutput({ academicInput: {
+    ...request.academicInput,
+    audit_scope: request.academicInput.audit_scope,
+  } });
+  return {
+    ...repaired,
+    task_mode: 'SPLIT_UNIT',
+    execution_stage: EXECUTION_STAGES.SINGLE_PASS,
+    audit_scope: { ...request.academicInput.audit_scope, source_walk: [] },
+    source_inventory: [],
+    assumed_prerequisites: [],
+    source_conflicts: [],
+    coverage_gaps: [],
+    structure_change_proposals: [],
+    source_to_unit_reconciliation: { required_item_map: [], unmapped_required_refs: [] },
+    unresolved_items: [],
+    status: 'ok',
+    review_required: false,
+    review_reasons: [],
+    student_facing_summary_candidate: null,
+  };
+}
+
 function synthesisOutput(request) {
   const refs = request.academicInput.audit_scope.source_refs;
   const groups = [];
@@ -525,6 +594,57 @@ test('large staged audit completes omitted required lineage through bounded LEAR
   assert.equal(output.status, 'ok');
   assert.equal(output.review_required, false);
   assert.deepEqual(output.unresolved_items, []);
+});
+
+test('49-source under-decomposition is repaired through bounded SPLIT_UNIT before the audit can return', async () => {
+  const allSources = sources(49);
+  const calls = [];
+
+  const orchestrator = {
+    async execute(request) {
+      calls.push(request);
+      if (request.taskMode === 'SOURCE_INVENTORY') {
+        const output = inventoryStageOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        const provenance = await request.provenanceValidator(domain.value);
+        assert.equal(provenance.ok, true, provenance.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      if (request.taskMode === 'DEEP_AUDIT') {
+        const output = coarseSynthesisOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        const provenance = await request.provenanceValidator(domain.value);
+        assert.equal(provenance.ok, true, provenance.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      assert.equal(request.taskMode, 'SPLIT_UNIT');
+      assert.equal(request.academicInput.decomposition_repair_context.mode, 'DECOMPOSITION_REPAIR');
+      assert.equal(request.academicInput.decomposition_repair_context.decomposition_flags.repair_required, true);
+      const output = decompositionRepairOutput(request);
+      const domain = await request.domainValidator(output);
+      assert.equal(domain.ok, true, domain.reason);
+      const provenance = await request.provenanceValidator(domain.value);
+      assert.equal(provenance.ok, true, provenance.reason);
+      return { accepted: true, validatedResult: { output: domain.value } };
+    },
+  };
+
+  const result = await createD07Intelligence({ orchestrator }).runCurriculumAudit({
+    course: course(),
+    sources: allSources,
+  });
+
+  assert.equal(calls.filter((request) => request.taskMode === 'DEEP_AUDIT').length, 1);
+  assert.equal(calls.filter((request) => request.taskMode === 'SPLIT_UNIT').length, 1);
+  const output = result.validatedResult.output;
+  assert.ok(output.learning_units.length >= 4);
+  assert.ok(output.learning_units.every((unit) => unit.source_item_refs.length <= 16));
+  assert.deepEqual(output.source_to_unit_reconciliation.unmapped_required_refs, []);
+  assert.equal(output.source_to_unit_reconciliation.required_item_map.length, 49);
 });
 
 test('188-source TPF-02 audit uses bounded structure passes while preserving complete raw evidence for decomposition synthesis', async () => {
