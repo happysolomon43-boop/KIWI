@@ -279,4 +279,6 @@ test('Course Setup lets the student choose targeted changes or whole-analysis re
   assert.match(ui,/operation: 'REGENERATE'/);
   assert.match(ui,/If validation fails, nothing is reset/);
   assert.match(ui,/If regeneration fails, the current Course remains intact/);
+  assert.match(ui,/analysisRevisionAllowed/);
+  assert.match(ui,/Active Courses use governed academic-change workflows/);
 });
