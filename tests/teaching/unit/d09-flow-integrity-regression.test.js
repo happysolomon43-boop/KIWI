@@ -155,11 +155,11 @@ test('D09 instructional-load estimation uses frozen TPF-10 authority and canonic
   assert.equal(request.outputSchema.id, 'tpf10.instructional-load-estimation');
   assert.ok(request.generation.structuredOutput.schema.properties.validation_and_handoff);
   const providerSchema = request.generation.structuredOutput.schema;
-  assert.deepEqual(providerSchema.properties.validation_and_handoff.properties.deterministic_scheduler_validation_required, { type: 'boolean' });
-  assert.deepEqual(providerSchema.properties.capacity_analysis.properties.recovery_headroom.properties.invented_numeric_headroom, { type: 'boolean' });
-  assert.deepEqual(providerSchema.properties.inactivity_interpretation.properties.misconduct_inference_made, { type: 'boolean' });
-  assert.deepEqual(providerSchema.properties.inactivity_interpretation.properties.attendance_outcome_made, { type: 'boolean' });
-  assert.doesNotMatch(JSON.stringify(providerSchema), /"type":"boolean","enum":\[(?:true|false)\]/);
+  assert.deepEqual(providerSchema.properties.validation_and_handoff.properties.deterministic_scheduler_validation_required.enum, [true]);
+  assert.deepEqual(providerSchema.properties.capacity_analysis.properties.recovery_headroom.properties.invented_numeric_headroom.enum, [false]);
+  assert.deepEqual(providerSchema.properties.inactivity_interpretation.properties.misconduct_inference_made.enum, [false]);
+  assert.deepEqual(providerSchema.properties.inactivity_interpretation.properties.attendance_outcome_made.enum, [false]);
+  assert.doesNotMatch(JSON.stringify(providerSchema), /"enum":\[(?:true|false)\]/);
   const output = canonicalOutput(targets[0]);
   assert.deepEqual(validateLoadEstimationOutput(output, targets, ctx.courses[0].course), { ok: true, value: output });
 });
