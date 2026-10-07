@@ -12,6 +12,7 @@ const {
   validateTpf02Domain,
   validateHierarchy,
   validateDecomposition,
+  decompositionRepairState,
 } = require('./tpf02-direct');
 
 const TPF02_SOURCE_INVENTORY_BATCH_SIZE = 24;
