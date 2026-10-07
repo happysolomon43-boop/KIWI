@@ -848,7 +848,7 @@ function decompositionRepairRequest({
       existing_gap_refs:Object.freeze((baseOutput.coverage_gaps||[]).map((item)=>String(item.gap_id))),
     }),
   });
-  const outputSchema=tpf02OutputSchema();
+  const outputSchema=tpf02DecompositionPatchOutputSchema();
   const fullAcademicInput=buildTpf02AcademicInput({
     course,
     sources,
