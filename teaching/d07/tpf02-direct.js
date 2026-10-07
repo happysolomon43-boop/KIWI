@@ -556,14 +556,15 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
    'This is a bounded DECOMPOSITION_REPAIR pass for exactly one existing Learning Unit after whole-course synthesis.',
    'academic_input.decomposition_repair_context.repair_scope.target_unit_id is the only existing Learning Unit you may rewrite. current_learning_unit is its full current definition.',
    'academic_input.source_items and canonical_source_inventory contain only the bounded repair evidence. repair_scope.untouched_source_refs were not re-read in this pass and must remain attached only to the continuity unit.',
-   'Return topics as an empty array. The server owns the existing Topic/Subtopic graph. Every returned Learning Unit must keep exactly the target unit\'s topic_refs and subtopic_id.',
-   'Return learning_units containing the continuity unit with the exact target_unit_id plus only genuinely necessary new split units. Never return any unaffected existing Learning Unit.',
-   'If you split: keep the target_unit_id as one resulting continuity unit, move only supplied repair_source_refs into new units, preserve all unexamined refs on the continuity unit, and return exactly one type "split" structure_change_proposal whose affected_unit_refs is [target_unit_id], resulting_unit_refs names every returned unit, and before/after source ref sets preserve the target unit\'s full lineage.',
-   'If the target genuinely passes T1-T5 despite the deterministic proxy, do not invent a split. Return only the continuity unit, preserve its source/prerequisite/gap lineage, append a concise uncertainty beginning "DECOMPOSITION_JUSTIFICATION:", set review_required true, and leave structure_change_proposals empty.',
-   'When repair_scope.course_ratio_flag is true, review all_unit_outline as a compact whole-course boundary map. A course-level low-ratio proxy may be justified only with a concise review_reasons entry beginning "DECOMPOSITION_JUSTIFICATION:" and review_required true; otherwise improve granularity by splitting the target.',
-   'Return source_inventory and audit_scope.source_walk as empty arrays. Return assumed_prerequisites, source_conflicts, coverage_gaps, and unresolved_items as empty arrays.',
-   'Return source_to_unit_reconciliation with empty arrays; the server derives whole-course reconciliation after applying the bounded patch.',
-   'Return status "ok" and student_facing_summary_candidate null. Do not mutate source classification, Course state, or any non-structural audit finding.'
+   'Return the dedicated decomposition-repair patch contract declared in output_schema, not the full canonical Curriculum Audit artifact.',
+   'The server owns and will reattach Topic refs, subtopic_id, untouched source refs, gap refs, inherited uncertainties, source reconciliation, audit status, and all non-structural audit fields. Do not restate them.',
+   'Set target_unit_id exactly to repair_scope.target_unit_id.',
+   'If you split: decision="split"; resulting_units contains the continuity unit with the exact target_unit_id plus only genuinely necessary new split units. Each resulting unit contains ONLY the supplied repair_source_refs it owns in this pass. The server adds untouched_source_refs back to the continuity unit.',
+   'For split decisions, each resulting unit must provide only: learning_unit_id, title, intended_competence, source_item_refs, prerequisite_refs, dependency_type_notes, criticality, criticality_basis, proposed_exit_evidence, uncertainties. Do not output topic_refs, subtopic_id, gap_refs, or structure_change_proposals; the server derives them.',
+   'For a real split: split_reason is concise and specific; unit_justification=null; review_required=false. Every supplied repair_source_ref must appear in at least one resulting unit, and no other source ref may appear.',
+   'If the target genuinely passes T1-T5 despite the deterministic proxy: decision="keep"; resulting_units=[]; split_reason=null; unit_justification is one concise DECOMPOSITION_JUSTIFICATION explanation; review_required=true. Do not restate the current Learning Unit.',
+   'When repair_scope.course_ratio_flag is true, course_ratio_justification may contain one concise DECOMPOSITION_JUSTIFICATION explanation only if the Course-level ratio is academically justified; otherwise set it null and improve granularity by splitting the target.',
+   'Do not mutate source classification, Course state, Topic/Subtopic placement, gaps, source reconciliation, or any non-structural audit finding.'
   );
  }else if(structurePass){
   instructions.push(
@@ -603,13 +604,16 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
  }else{
   instructions.push('This is SINGLE_PASS. Account for every supplied source once, build the complete curriculum structure, and satisfy exact required-source reconciliation before proposing status ok.');
  }
+ const runtimeOutputSchema=decompositionRepair
+  ? {id:TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,version:TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,exact_top_level_fields:TPF02_DECOMPOSITION_PATCH_FIELDS,resulting_unit_fields:TPF02_DECOMPOSITION_PATCH_UNIT_FIELDS}
+  : {id:TPF02_OUTPUT_SCHEMA_ID,version:TPF02_OUTPUT_SCHEMA_VERSION,exact_top_level_fields:TPF02_TOP_LEVEL_FIELDS};
  const runtimeBinding={
-  contract:'KIWI_TPF02_DIRECT_CURRICULUM_AUDIT_V3',
+  contract:decompositionRepair?'KIWI_TPF02_DECOMPOSITION_REPAIR_PATCH_V1':'KIWI_TPF02_DIRECT_CURRICULUM_AUDIT_V3',
   task_mode:taskMode,
   execution_stage:stage,
   capability_id:invocation.capability.id,
   state_reference:invocation.state_reference,
-  output_schema:{id:TPF02_OUTPUT_SCHEMA_ID,version:TPF02_OUTPUT_SCHEMA_VERSION,exact_top_level_fields:TPF02_TOP_LEVEL_FIELDS},
+  output_schema:runtimeOutputSchema,
   instructions,
  };
  return [
@@ -629,6 +633,6 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
 
 module.exports={
  TPF02_FAMILY_ID,TPF02_FAMILY_VERSION,TPF02_OUTPUT_SCHEMA_ID,TPF02_OUTPUT_SCHEMA_VERSION,TPF02_MAX_OUTPUT_TOKENS,
- TPF02_TOP_LEVEL_FIELDS,EXECUTION_STAGES,DEFAULT_DECOMPOSITION_LIMITS,DECOMPOSITION_JUSTIFICATION_PREFIX,buildTpf02AcademicInput,validateTpf02Schema,validateTpf02Domain,
+ TPF02_TOP_LEVEL_FIELDS,TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,TPF02_DECOMPOSITION_PATCH_FIELDS,TPF02_DECOMPOSITION_PATCH_UNIT_FIELDS,EXECUTION_STAGES,DEFAULT_DECOMPOSITION_LIMITS,DECOMPOSITION_JUSTIFICATION_PREFIX,buildTpf02AcademicInput,validateTpf02Schema,validateTpf02DecompositionPatchSchema,validateTpf02Domain,
  validateAssembledArtifact,validateHierarchy,decompositionFlags,decompositionRepairState,validateDecomposition,composeTpf02DirectModelContent,inputStateReference,
 };
