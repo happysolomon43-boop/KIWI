@@ -2,7 +2,8 @@
 
 const PREACTIVATION_STATES = new Set(['DRAFT', 'READY', 'PLANNING', 'SETUP']);
 const NO_INITIAL_INSTRUCTION = 'VALIDATED_PRIOR_KNOWLEDGE_NO_INITIAL_INSTRUCTION';
-const DEFAULT_LOAD_BATCH_SIZE = 16;
+const DEFAULT_LOAD_BATCH_SIZE = 20;
+const DEFAULT_LOAD_CONCURRENCY = 2;
 
 function fail(message, code, status = 409, details = null) {
   const error = new Error(message);
@@ -169,9 +170,11 @@ async function ensureInstructionalLoads({
   repository,
   requireReadyContext,
   maxBatchSize = DEFAULT_LOAD_BATCH_SIZE,
+  concurrency = DEFAULT_LOAD_CONCURRENCY,
 } = {}) {
-  let context = initialContext;
-  if (!missingInstructionalLoads(context).length) return context;
+  const context = initialContext;
+  const missing = missingInstructionalLoads(context);
+  if (!missing.length) return context;
   if (!intelligence || typeof intelligence.execute !== 'function') {
     throw fail('Instructional-load estimation is required before this timetable can be created.', 'TEACHING_D09_LOAD_ESTIMATION_UNAVAILABLE', 503);
   }
@@ -182,72 +185,84 @@ async function ensureInstructionalLoads({
     throw new TypeError('D09 load preparation requires requireReadyContext().');
   }
 
-  let guard = 0;
-  while (true) {
-    const missing = missingInstructionalLoads(context);
-    if (!missing.length) return context;
-    if (++guard > 128) {
-      throw fail('Instructional-load preparation did not converge.', 'TEACHING_D09_LOAD_ESTIMATION_NO_PROGRESS', 500);
-    }
-
-    const requested = requireReadyContext(context, courseId);
-    let batchSize = Math.min(Math.max(1, Number(maxBatchSize) || DEFAULT_LOAD_BATCH_SIZE), missing.length);
-    let completed = false;
-
-    while (!completed) {
-      const batch = missing.slice(0, batchSize);
-      const refs = targetRefs(batch);
-      let result;
-      try {
-        result = await intelligence.execute({
-          course: requested.course,
-          context,
-          taskMode: 'instructional_load_estimation',
-          instructionalLoadTargetRefs: refs,
-        });
-      } catch (error) {
-        if (isTruncationFailure(error) && batchSize > 1) {
-          batchSize = Math.max(1, Math.ceil(batchSize / 2));
-          continue;
-        }
-        if (isTruncationFailure(error)) {
-          throw fail(
-            'KIWI could not finish workload preparation even for one Learning Unit. The timetable was not changed.',
-            'TEACHING_D09_LOAD_ESTIMATION_TRUNCATED',
-            422,
-            { reason: resultFailureCode(error) || 'MAX_TOKENS' }
-          );
-        }
-        throw error;
-      }
-
-      if (result?.accepted !== true && isTruncationFailure(result) && batchSize > 1) {
-        batchSize = Math.max(1, Math.ceil(batchSize / 2));
-        continue;
-      }
-
-      const estimates = extractInstructionalLoadEstimates(result, context, refs);
-      await repository.saveInstructionalLoadEstimates({
-        studentId: user.id,
-        estimates,
-        sourceExecutionRef: extractExecutionRef(result),
-      });
-
-      const previousMissingCount = missing.length;
-      context = await repository.getSchedulingContext(user.id, courseId);
-      const nextMissingCount = missingInstructionalLoads(context).length;
-      if (nextMissingCount >= previousMissingCount) {
-        throw fail('Instructional-load preparation made no persisted progress.', 'TEACHING_D09_LOAD_ESTIMATION_NO_PROGRESS', 500);
-      }
-      completed = true;
-    }
+  const requested = requireReadyContext(context, courseId);
+  const batchSize = Math.max(1, Number(maxBatchSize) || DEFAULT_LOAD_BATCH_SIZE);
+  const batches = [];
+  for (let index = 0; index < missing.length; index += batchSize) {
+    batches.push(targetRefs(missing.slice(index, index + batchSize)));
   }
+
+  async function executeRefs(refs) {
+    let result;
+    try {
+      result = await intelligence.execute({
+        course: requested.course,
+        context,
+        taskMode: 'instructional_load_estimation',
+        instructionalLoadTargetRefs: refs,
+      });
+    } catch (error) {
+      if (isTruncationFailure(error) && refs.length > 1) {
+        const midpoint = Math.ceil(refs.length / 2);
+        await executeRefs(Object.freeze(refs.slice(0, midpoint)));
+        await executeRefs(Object.freeze(refs.slice(midpoint)));
+        return;
+      }
+      if (isTruncationFailure(error)) {
+        throw fail(
+          'KIWI could not finish workload preparation even for one Learning Unit. The timetable was not changed.',
+          'TEACHING_D09_LOAD_ESTIMATION_TRUNCATED',
+          422,
+          { reason: resultFailureCode(error) || 'MAX_TOKENS' }
+        );
+      }
+      throw error;
+    }
+
+    if (result?.accepted !== true && isTruncationFailure(result) && refs.length > 1) {
+      const midpoint = Math.ceil(refs.length / 2);
+      await executeRefs(Object.freeze(refs.slice(0, midpoint)));
+      await executeRefs(Object.freeze(refs.slice(midpoint)));
+      return;
+    }
+
+    const estimates = extractInstructionalLoadEstimates(result, context, refs);
+    await repository.saveInstructionalLoadEstimates({
+      studentId: user.id,
+      estimates,
+      sourceExecutionRef: extractExecutionRef(result),
+    });
+  }
+
+  let nextBatch = 0;
+  const worker = async () => {
+    while (true) {
+      const index = nextBatch++;
+      if (index >= batches.length) return;
+      await executeRefs(batches[index]);
+    }
+  };
+  const workerCount = Math.min(
+    batches.length,
+    Math.max(1, Math.min(3, Number(concurrency) || DEFAULT_LOAD_CONCURRENCY))
+  );
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  const refreshed = await repository.getSchedulingContext(user.id, courseId);
+  const remaining = missingInstructionalLoads(refreshed);
+  if (remaining.length) {
+    throw fail('One or more Learning Units still have no safe instructional-load range.', 'TEACHING_D09_LOAD_ESTIMATION_INCOMPLETE', 422, {
+      learningUnitIds: remaining.map(({ unit }) => String(unit.learning_unit_id)),
+    });
+  }
+  return refreshed;
 }
 
 module.exports = {
   PREACTIVATION_STATES,
   NO_INITIAL_INSTRUCTION,
   DEFAULT_LOAD_BATCH_SIZE,
+  DEFAULT_LOAD_CONCURRENCY,
   fail,
   treatment,
   instructionalUnits,
