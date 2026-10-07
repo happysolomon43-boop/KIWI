@@ -501,7 +501,7 @@ function createD07Service({
     const baseKey = `d07:curriculum-audit:${courseId}:${setup.course.state_version}:tpf02:${TPF02_FAMILY_VERSION}${modeKey}`;
     const idempotencyKey = supersededCurrent
       ? `${baseKey}:state-recovery:${current.event_id}`
-      : currentStatus === 'CANCELLED' && normalizedOperation === 'GENERATE'
+      : currentStatus === 'CANCELLED'
         ? `${baseKey}:recovery:${current.event_id}`
         : baseKey;
     const effectiveCausationId = causationId || (
