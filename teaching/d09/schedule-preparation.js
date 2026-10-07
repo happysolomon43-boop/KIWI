@@ -205,6 +205,7 @@ async function ensureInstructionalLoads({
   intelligence,
   repository,
   requireReadyContext,
+  anchorCourseId = courseId,
   maxBatchSize = DEFAULT_LOAD_BATCH_SIZE,
   concurrency = DEFAULT_LOAD_CONCURRENCY,
 } = {}) {
@@ -222,7 +223,7 @@ async function ensureInstructionalLoads({
     throw new TypeError('D09 load preparation requires requireReadyContext().');
   }
 
-  const requested = requireReadyContext(context, courseId);
+  const requested = requireReadyContext(context, anchorCourseId);
   const batchSize = Math.max(1, Number(maxBatchSize) || DEFAULT_LOAD_BATCH_SIZE);
   const batches = [];
   for (let index = 0; index < missing.length; index += batchSize) {
