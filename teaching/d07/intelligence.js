@@ -467,6 +467,10 @@ function mergeCompressionRefinementRequest({course,sources,previousAudit,changeR
     domainValidator:async out=>{
       const patch=validateMergeCompressionPatch(out,{academicInput,baseOutput:previousOutput});
       if(!patch.ok)return patch;
+      if(!(patch.value.merge_groups||[]).length){
+        const unchanged=validateTpf02Domain(previousOutput,fullValidationContext);
+        return unchanged.ok?{ok:true,value:previousOutput}:unchanged;
+      }
       const applied=applyMergeCompressionPatch(previousOutput,patch.value);
       const assembled=canonicalizeSynthesisSourceScope(applied,previousOutput.source_inventory||[]);
       const validated=validateTpf02Domain(assembled,fullValidationContext);
