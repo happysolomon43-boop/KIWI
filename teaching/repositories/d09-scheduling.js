@@ -327,6 +327,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const {rows:vrows}=await q(tx,'select coalesce(max(version_no),0)+1 v from public.teaching_timetable_versions where semester_id=$1',[context.semester.semester_id]);
     const version=Number(vrows[0].v), timetableId=randomUUID();
     const expansionProposal=source==='COURSE_ADMISSION_EXPANSION_PROPOSAL';
+    const directApproval=source==='FORMAL_REQUEST_APPLIED';
     const {rows:previousRows}=await q(tx,expansionProposal
       ? `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL')
           order by version_no desc limit 1 for update`
@@ -334,7 +335,13 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
           order by version_no desc limit 1 for update`,
       [studentId,context.semester.semester_id]);
     const previous=previousRows?.[0]||null;
-    if(previous) await q(tx,"update public.teaching_timetable_versions set timetable_state='SUPERSEDED' where timetable_version_id=$1",[previous.timetable_version_id]);
+    if(directApproval){
+      await q(tx,`update public.teaching_timetable_versions set timetable_state='SUPERSEDED'
+        where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')`,
+        [studentId,context.semester.semester_id]);
+    }else if(previous){
+      await q(tx,"update public.teaching_timetable_versions set timetable_state='SUPERSEDED' where timetable_version_id=$1",[previous.timetable_version_id]);
+    }
     let lineagePrevious=previous;
     if(expansionProposal&&!lineagePrevious){
       const {rows:approvedRows=[]}=await q(tx,`select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state='APPROVED'
