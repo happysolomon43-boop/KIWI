@@ -442,3 +442,13 @@ test('analysis-boundary reset makes old diagnostic and prior-knowledge results h
   assert.doesNotMatch(intakeRepository,/delete from public\.teaching_diagnostic_plans/i);
   assert.doesNotMatch(intakeRepository,/delete from public\.teaching_validated_prior_knowledge_decisions/i);
 });
+
+
+test('Course Setup keeps an in-flight analysis revision visibly running and pauses new Course Plan setup', () => {
+  const ui=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-d08.js'),'utf8');
+  assert.match(ui,/analysisRevisionInFlight/);
+  assert.match(ui,/materialBackgroundRelevant/);
+  assert.match(ui,/current validated Course analysis remains authoritative while KIWI finishes this revision/);
+  assert.match(ui,/Course Plan setup is paused until the revision finishes/);
+  assert.match(ui,/backgroundOperation: backgroundAudit\.operation/);
+});

@@ -748,6 +748,12 @@ async function renderCourseSetup({ course, container }) {
         && String(setup.curriculumAudit?.subject_snapshot_ref || '') === String(setup.course?.subject_snapshot_ref || '');
       const sourcesReady = (setup.sources || []).length > 0 && (setup.sources || []).every((source) => Boolean(source.classification));
       const backgroundAudit = backgroundAuditState(setup.backgroundAnalysis);
+      const analysisRevisionInFlight = auditReady
+        && backgroundAudit.active
+        && (backgroundAudit.refining || backgroundAudit.regenerating);
+      const analysisRevisionFailed = auditReady
+        && backgroundAudit.failed
+        && (backgroundAudit.refining || backgroundAudit.regenerating);
       const backgroundEventId = setup.backgroundAnalysis?.event_id == null
         ? null
         : String(setup.backgroundAnalysis.event_id);
@@ -780,6 +786,7 @@ async function renderCourseSetup({ course, container }) {
         auditVersion: setup.curriculumAudit?.audit_version || null,
         backgroundStatus: setup.backgroundAnalysis?.status || null,
         backgroundEventId,
+        backgroundOperation: backgroundAudit.operation || null,
         backgroundRegeneration: setup.backgroundAnalysis?.payload?.regenerate === true,
         backgroundAttempts: setup.backgroundAnalysis?.attempt_count || 0,
         backgroundUpdatedAt: setup.backgroundAnalysis?.updated_at || null,
@@ -801,14 +808,36 @@ async function renderCourseSetup({ course, container }) {
         row.append(el('span', 'teaching-d08-setup-step__mark', mark), text, el('span', 'teaching-d08-status', state));
         return row;
       };
+      const materialAnalysisReady = auditReady && sourcesReady;
+      const materialBackgroundRelevant = !materialAnalysisReady
+        ? (backgroundAudit.active || backgroundAudit.failed)
+        : (analysisRevisionInFlight || analysisRevisionFailed);
       list.append(
         setupStep((setup.sources || []).length ? '✓' : '•', 'Course materials', `${(setup.sources || []).length} saved source item${(setup.sources || []).length === 1 ? '' : 's'} will ground the plan.`, (setup.sources || []).length ? 'Ready' : 'Missing'),
-        setupStep(auditReady && sourcesReady ? '✓' : '•', 'Material analysis', auditReady && sourcesReady ? 'The current materials have been analyzed and classified.' : backgroundAudit.message || 'KIWI needs to identify the topics, requirements, and relevant source content.', auditReady && sourcesReady ? 'Ready' : backgroundAudit.label || 'Needed', { key: 'material-analysis' }),
+        setupStep(
+          materialBackgroundRelevant ? '•' : materialAnalysisReady ? '✓' : '•',
+          'Material analysis',
+          materialBackgroundRelevant
+            ? backgroundAudit.message
+            : materialAnalysisReady
+              ? 'The current materials have been analyzed and classified.'
+              : 'KIWI needs to identify the topics, requirements, and relevant source content.',
+          materialBackgroundRelevant ? backgroundAudit.label || 'Running' : materialAnalysisReady ? 'Ready' : 'Needed',
+          { key: 'material-analysis' }
+        ),
         setupStep(readinessChecked && diagnosticResolved ? '✓' : '•', 'Learning readiness', diagnosticRequired ? 'A focused, non-graded learning check is required before planning can continue.' : readinessChecked ? 'No additional learning check blocks the Course Plan.' : 'Check whether any prerequisite knowledge needs verification.', readinessChecked && diagnosticResolved ? 'Ready' : 'Action needed')
       );
       card.append(list);
       const actions = el('div', 'teaching-d08-actions');
-      if (!auditReady || !sourcesReady) {
+      if (analysisRevisionInFlight) {
+        const pendingRevision = el(
+          'div',
+          'teaching-message',
+          'Your current validated Course analysis remains authoritative while KIWI finishes this revision. Course Plan setup is paused until the revision finishes so KIWI never builds a new plan from the analysis version you are replacing.'
+        );
+        card.append(pendingRevision);
+        schedulePoll();
+      } else if (!auditReady || !sourcesReady) {
         const analyze = el('button', 'teaching-button teaching-button--primary', backgroundAudit.active ? 'Analysis running in background' : backgroundAudit.failed ? 'Try analysis again' : 'Analyze course materials');
         analyze.type = 'button';
         analyze.disabled = backgroundAudit.active;
