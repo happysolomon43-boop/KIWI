@@ -308,7 +308,7 @@ const TPF02_MERGE_COMPRESSION_PATCH_RESPONSE_SCHEMA=Object.freeze({
     input_state_reference:STRING,
     task_mode:Object.freeze({type:'string',enum:Object.freeze(['MERGE_OR_COMPRESS_UNITS'])}),
     execution_stage:Object.freeze({type:'string',enum:Object.freeze(['SINGLE_PASS'])}),
-    // Gemini's responseSchema subset rejects maxItems on this route. The
+    // The provider responseSchema subset rejects maxItems on this route. The
     // canonical runtime validator below still enforces the 20-group ceiling.
     merge_groups:Object.freeze({type:'array',items:MERGE_GROUP_SCHEMA}),
     unresolved_reason:NULLABLE_STRING,
