@@ -697,7 +697,6 @@ function lineageRepairRequest({
     executionStage:EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
   });
   const fullValidationContext=validationContextFor(fullAcademicInput,{allowDecompositionRepair:true});
-  const fullSourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const request=base({
     capabilityId:'teaching.curriculum.learning_unit_decomposition',
     course,
@@ -1565,8 +1564,9 @@ function createD07Intelligence({orchestrator}={}){
 
     let currentOutput=currentResult.validatedResult?.output;
     let pendingRefs=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
+    let lineageBatchSize=Math.min(TPF02_LINEAGE_REPAIR_BATCH_SIZE,Math.max(1,pendingRefs.length));
     while(pendingRefs.length){
-      const batch=pendingRefs.slice(0,TPF02_LINEAGE_REPAIR_BATCH_SIZE);
+      const batch=pendingRefs.slice(0,lineageBatchSize);
       let repaired=null;
       try{
         repaired=await orchestrator.execute(lineageRepairRequest({
@@ -1578,15 +1578,32 @@ function createD07Intelligence({orchestrator}={}){
           stageFindings:prepared.findings,
           repairRefs:batch,
         }));
-      }catch{
-        break;
+      }catch(error){
+        if(batch.length>1){
+          lineageBatchSize=Math.max(1,Math.ceil(batch.length/2));
+          continue;
+        }
+        throw error;
       }
-      if(!repaired?.accepted)return repaired;
+      if(!repaired?.accepted){
+        if(batch.length>1){
+          lineageBatchSize=Math.max(1,Math.ceil(batch.length/2));
+          continue;
+        }
+        return repaired;
+      }
       currentResult=repaired;
       currentOutput=repaired.validatedResult?.output;
       const nextPending=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
-      if(nextPending.length>=pendingRefs.length&&batch.every((ref)=>nextPending.includes(ref)))break;
+      if(nextPending.length>=pendingRefs.length&&batch.every((ref)=>nextPending.includes(ref))){
+        if(batch.length>1){
+          lineageBatchSize=Math.max(1,Math.ceil(batch.length/2));
+          continue;
+        }
+        break;
+      }
       pendingRefs=nextPending;
+      lineageBatchSize=Math.min(TPF02_LINEAGE_REPAIR_BATCH_SIZE,Math.max(1,pendingRefs.length));
     }
     if(pendingRefs.length)return {accepted:false,errorCode:'TEACHING_TPF02_LINEAGE_REPAIR_EXHAUSTED',reason:'TPF02_UNMAPPED_REQUIRED_SOURCE_REMAINS'};
 
