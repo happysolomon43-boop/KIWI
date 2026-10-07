@@ -51,19 +51,28 @@ function createPlanReader({ query }) {
       error.code = 'TEACHING_COURSE_NOT_FOUND';
       throw error;
     }
+    const curriculumAudit = audits.rows?.[0] || null;
+    const auditCurrent = curriculumAudit?.status === 'VALIDATED_CANDIDATE';
+    const diagnosticPlan = auditCurrent
+      ? (diagnostics.rows || []).find((row) => String(row.curriculum_audit_id || '') === String(curriculumAudit.curriculum_audit_id || '')) || null
+      : null;
+    const auditAt = Date.parse(curriculumAudit?.created_at || '');
+    const vpkDecisions = auditCurrent
+      ? (vpk.rows || []).filter((row) => !Number.isFinite(auditAt) || Date.parse(row.decided_at || '') >= auditAt)
+      : [];
     return {
       course: course.rows[0],
       intake: intakes.rows?.[0] || null,
       sources: sources.rows || [],
-      curriculumAudit: audits.rows?.[0] || null,
-      diagnosticPlan: diagnostics.rows?.[0] || null,
-      vpkDecisions: vpk.rows || [],
+      curriculumAudit,
+      diagnosticPlan,
+      vpkDecisions,
     };
   }
 
   async function getLatestPlanBundle(studentId, courseId) {
     const { rows: plans = [] } = await query(
-      `select * from public.teaching_course_plans where student_id=$1 and course_id=$2 order by version_no desc limit 1`,
+      `select * from public.teaching_course_plans where student_id=$1 and course_id=$2 and plan_state not in ('REVIEW_REQUIRED','SUPERSEDED') order by version_no desc limit 1`,
       [studentId, courseId],
     );
     const plan = plans[0] || null;
