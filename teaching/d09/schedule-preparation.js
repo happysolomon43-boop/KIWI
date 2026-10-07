@@ -58,7 +58,6 @@ function timetableRefScheduleContext(context, timetable) {
       ref
       && String(ref.course_plan_id || '') === String(bundle.plan?.course_plan_id || '')
       && Number(ref.version_no) === Number(bundle.plan?.version_no)
-      && Number(ref.state_version) === Number(bundle.course?.state_version)
     );
   });
   return Object.freeze({
