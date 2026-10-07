@@ -959,6 +959,95 @@ test('merge/compression canonicalizes server-owned state identity before schema 
   assert.equal(canonicalizeTpf02RuntimeEnvelope(modelOutput,request.academicInput,{canonicalizeAuditScope:false}).input_state_reference,request.academicInput.input_state_reference);
 });
 
+
+test('merge/compression rebinds an academically current staged audit from an older Course state before final validation', async () => {
+  const previousAudit={
+    curriculum_audit_id:'audit-staged-1',
+    audit_version:1,
+    status:'VALIDATED_CANDIDATE',
+    audit_output:{
+      input_state_reference:'teaching_course:course-1:state:1',
+      task_mode:'DEEP_AUDIT',
+      execution_stage:'WHOLE_CURRICULUM_SYNTHESIS_STAGE',
+      audit_scope:{
+        subject_or_course:'Biology',
+        source_refs:['source:source-1'],
+        trusted_scope_version:'subject:subject-1:snapshot-4',
+        source_walk:[{source_item_ref:'source:source-1',analysis_status:'complete',note:null}],
+      },
+      source_inventory:[{
+        source_item_ref:'source:source-1',
+        provenance:'note:1',
+        academic_meaning:'Cell biology, membrane transport, enzymes, and genetics.',
+        proposed_scope_classification:'required',
+        scope_classification_basis:'Direct Course source.',
+        duplicate_of_ref:null,
+        content_validity_status:'current_supported',
+        content_validity_basis:null,
+        confidence:'high',
+      }],
+      topics:[{
+        topic_id:'topic-1',
+        title:'Cell biology',
+        source_item_refs:['source:source-1'],
+        subtopics:[{subtopic_id:'subtopic-1',title:'Cell processes'}],
+      }],
+      learning_units:[{
+        learning_unit_id:'unit-1',
+        title:'Explain core cell processes',
+        intended_competence:'Explain and apply the core cell-process concepts represented by the Course source.',
+        source_item_refs:['source:source-1'],
+        topic_refs:['topic-1'],
+        subtopic_id:'subtopic-1',
+        prerequisite_refs:[],
+        dependency_type_notes:null,
+        criticality:'major',
+        criticality_basis:'Directly required by the Course source.',
+        proposed_exit_evidence:'Explain the process accurately in a novel example.',
+        gap_refs:[],
+        uncertainties:[],
+      }],
+      assumed_prerequisites:[],
+      source_conflicts:[],
+      coverage_gaps:[],
+      structure_change_proposals:[],
+      source_to_unit_reconciliation:{
+        required_item_map:[{source_item_ref:'source:source-1',learning_unit_refs:['unit-1']}],
+        unmapped_required_refs:[],
+      },
+      unresolved_items:[],
+      status:'ok',
+      review_required:false,
+      review_reasons:[],
+      student_facing_summary_candidate:'Validated staged analysis.',
+    },
+  };
+  const request=mergeCompressionRefinementRequest({
+    course:course(4),
+    sources:[source()],
+    previousAudit,
+    changeRequest:'Reduce and merge excessive Learning Units while preserving quality.',
+  });
+  const patch={
+    input_state_reference:'model-stale-or-invented-state',
+    task_mode:'MERGE_OR_COMPRESS_UNITS',
+    execution_stage:'SINGLE_PASS',
+    merge_groups:[],
+    unresolved_reason:'No academically defensible merge exists without collapsing the only independently assessable competence.',
+    required_next_input_or_review:'Keep the validated structure.',
+    review_required:true,
+  };
+
+  const schema=await request.schemaValidator(patch);
+  assert.equal(schema.ok,true,schema.reason);
+  const domain=await request.domainValidator(schema.value);
+  assert.equal(domain.ok,true,domain.reason);
+  assert.equal(domain.value.input_state_reference,'teaching_course:course-1:state:4');
+  assert.equal(domain.value.execution_stage,'WHOLE_CURRICULUM_SYNTHESIS_STAGE');
+  assert.equal(domain.value.audit_scope.trusted_scope_version,'subject:subject-1:snapshot-4');
+  assert.deepEqual(domain.value.audit_scope.source_refs,['source:source-1']);
+});
+
 test('D07 preserves the precise validation cause and marks completed validation rejection non-retryable', async () => {
   const audit=currentAudit();
   const setup={course:course(4),sources:[source()],curriculumAudit:audit,backgroundAnalysis:null};
