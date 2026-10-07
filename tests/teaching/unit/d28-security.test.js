@@ -6,7 +6,7 @@ test('structured Board/free-text content rejects executable fields and URI schem
 test('Teaching material upload validates type extension size and signature',()=>{const pdf=Buffer.from('%PDF-1.7');assert.equal(validateMaterialUpload({filename:'lesson.pdf',mimeType:'application/pdf',sizeBytes:pdf.length,bytes:pdf}).extension,'.pdf');assert.throws(()=>validateMaterialUpload({filename:'lesson.exe',mimeType:'application/pdf',sizeBytes:10,bytes:pdf}),/extension/i);assert.throws(()=>validateMaterialUpload({filename:'lesson.pdf',mimeType:'application/pdf',sizeBytes:99_000_000,bytes:pdf}),/size/i);});
 test('Teaching DOCX extraction uses the same bounded officeparser path as PPTX',async()=>{
  const calls=[];
- const officeParser={async parseOffice(bytes,options){calls.push({bytes,options});return {async to(kind,options2){calls.push({kind,options:options2});return {value:'Alpha\\r\\nBeta\\u0000'}}};}};
+ const officeParser={async parseOffice(bytes,options){calls.push({bytes,options});return {async to(kind,options2){calls.push({kind,options:options2});return {value:'Alpha\r\nBeta\u0000'}}};}};
  const bytes=Buffer.from([0x50,0x4b,0x03,0x04,0x00,0x00]);
  const result=await extractValidatedMaterial({filename:'lesson.docx',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',bytes},{officeParser});
  assert.equal(calls[0].options.fileType,'docx');
