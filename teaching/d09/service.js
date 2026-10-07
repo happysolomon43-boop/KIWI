@@ -101,19 +101,19 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
 
     let authoritativeContext=context;
     let eligibleContext=schedulableScheduleContext(authoritativeContext);
-    requireReadyContext(eligibleContext,courseId);
-
-    authoritativeContext=await ensureInstructionalLoads({
-      user,courseId,initialContext:eligibleContext,intelligence,repository,requireReadyContext,
-    });
-    eligibleContext=schedulableScheduleContext(authoritativeContext);
-    requireReadyContext(eligibleContext,courseId);
-
-    const affectedCourseIds=schedulableCourseIds(eligibleContext);
+    let affectedCourseIds=schedulableCourseIds(eligibleContext);
     if(!affectedCourseIds.length) return Object.freeze({
       recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED',scope:'SEMESTER_SHARED',semesterId:authoritativeContext.semester.semester_id,
       affectedCourseIds,affectedCourseCount:0,
     });
+
+    const requestedReady=eligibleContext.courses.some((bundle)=>String(bundle.course?.course_id||'')===String(courseId));
+    const anchorCourseId=requestedReady?courseId:eligibleContext.courses[0].course.course_id;
+    authoritativeContext=await ensureInstructionalLoads({
+      user,courseId,anchorCourseId,initialContext:eligibleContext,intelligence,repository,requireReadyContext,
+    });
+    eligibleContext=schedulableScheduleContext(authoritativeContext);
+    affectedCourseIds=schedulableCourseIds(eligibleContext);
     for(const bundle of eligibleContext.courses||[]) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
 
     const now=clock().toISOString();
