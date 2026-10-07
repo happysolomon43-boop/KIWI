@@ -48,6 +48,70 @@ test('shared availability save automatically recalculates the Semester timetable
   assert.equal(mutationCalls,2);
   assert.equal(proposalCalls,1);
   assert.equal(review.timetable.sourceKind,'AVAILABILITY_AUTO_RECALC');
+  assert.equal(review.automaticRecalculation.recalculated,true);
+  assert.equal(review.automaticRecalculation.scope,'SEMESTER_SHARED');
+  assert.deepEqual(review.automaticRecalculation.affectedCourseIds,['c1']);
+  assert.equal(review.automaticRecalculation.affectedCourseCount,1);
+});
+
+test('availability change rebuilds one shared Semester timetable across every plan-ready Course',async()=>{
+  let proposalCalls=0;
+  const scheduledContext=context([bundle('c1'),bundle('c2'),bundle('c3')]);
+  const repository={
+    async getSchedulingContext(){return scheduledContext;},
+    async saveScheduleInputsUsing(){return {semester:scheduledContext.semester,profile:scheduledContext.profile,ppl:{isNew:false,workspaceId:'w1',workspaceVersion:2,changedRefs:['schedule-profile:sp1'],targetEffectiveAt:scheduledContext.semester.ends_at}};},
+    async saveProposalUsing(_tx,{result,source,context:proposalContext}){
+      proposalCalls+=1;
+      assert.equal(source,'AVAILABILITY_AUTO_RECALC');
+      assert.equal(proposalContext.semester.semester_id,'sem1');
+      assert.deepEqual(proposalContext.courses.map((item)=>item.course.course_id),['c1','c2','c3']);
+      assert.deepEqual(result.courseSummaries.map((item)=>item.courseId).sort(),['c1','c2','c3']);
+      return {timetable:{timetable_version_id:'tt-shared-next',version_no:8},slots:[],feasibility:{outcome:result.outcome},ppl:{isNew:false,workspaceId:'w1',workspaceVersion:3,changedRefs:['timetable:tt-shared-next'],targetEffectiveAt:scheduledContext.semester.ends_at}};
+    },
+    async getScheduleReview(){return {...scheduledContext,timetable:{timetable_version_id:'tt-shared-next',version_no:8,timetable_state:'PROPOSED',source_kind:'AVAILABILITY_AUTO_RECALC',created_at:'2026-10-01T00:00:00Z'},slots:[],feasibility:{outcome:'FEASIBLE',evaluated_at:'2026-10-01T00:00:00Z',capacity_metrics:{},course_summaries:[],reasons:[],alternatives:[],headroom_policy_version:'recovery-headroom.v1'},debtMinutes:0};},
+    async listSemesters(){return [];},
+  };
+  const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
+  const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z')});
+
+  const review=await service.saveScheduleInputs({id:'u1'},'c1',{
+    semester:{semesterId:'sem1',name:'Term 1',startsAt:'2026-10-01T00:00:00Z',endsAt:'2026-10-31T23:59:59Z',timezone:'UTC'},
+    availability:[{dayOfWeek:2,startLocal:'08:30',endLocal:'13:30',kind:'AVAILABLE'}],
+    blocks:[],deadlines:[],reserves:[],preferences:{},
+  });
+
+  assert.equal(proposalCalls,1);
+  assert.equal(review.automaticRecalculation.recalculated,true);
+  assert.equal(review.automaticRecalculation.timetableVersionId,'tt-shared-next');
+  assert.equal(review.automaticRecalculation.timetableVersion,8);
+  assert.deepEqual(review.automaticRecalculation.affectedCourseIds,['c1','c2','c3']);
+  assert.equal(review.automaticRecalculation.affectedCourseCount,3);
+});
+
+test('availability save keeps old timetable non-current and surfaces rebuild failure instead of hiding it',async()=>{
+  const scheduledContext=context([bundle('c1'),bundle('c2')]);
+  const warnings=[];
+  const repository={
+    async getSchedulingContext(){return scheduledContext;},
+    async saveScheduleInputsUsing(){return {semester:scheduledContext.semester,profile:scheduledContext.profile,ppl:{isNew:false,workspaceId:'w1',workspaceVersion:2,changedRefs:['schedule-profile:sp1'],targetEffectiveAt:scheduledContext.semester.ends_at}};},
+    async saveProposalUsing(){const error=new Error('simulated scheduler failure');error.code='SIMULATED_REBUILD_FAILURE';throw error;},
+    async getScheduleReview(){return {...scheduledContext,timetable:null,slots:[],feasibility:null,debtMinutes:0,staleSchedule:false};},
+    async listSemesters(){return [];},
+  };
+  const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
+  const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z'),logger:{warn:(...args)=>warnings.push(args)}});
+
+  const review=await service.saveScheduleInputs({id:'u1'},'c1',{
+    semester:{semesterId:'sem1',name:'Term 1',startsAt:'2026-10-01T00:00:00Z',endsAt:'2026-10-31T23:59:59Z',timezone:'UTC'},
+    availability:[{dayOfWeek:4,startLocal:'09:30',endLocal:'12:30',kind:'AVAILABLE'}],
+    blocks:[],deadlines:[],reserves:[],preferences:{},
+  });
+
+  assert.equal(review.timetable,null);
+  assert.equal(review.automaticRecalculation.recalculated,false);
+  assert.equal(review.automaticRecalculation.reason,'SIMULATED_REBUILD_FAILURE');
+  assert.equal(review.automaticRecalculation.scope,'SEMESTER_SHARED');
+  assert.equal(warnings.length,1);
 });
 
 test('active Semester shared-availability changes require the formal Request path',async()=>{
@@ -75,6 +139,8 @@ test('repository and UI expose one Semester-global availability default to unatt
   assert.match(ui,/shared across the Semester/);
   assert.match(ui,/Using your current Semester availability automatically/);
   assert.match(ui,/recalculate the timetable automatically/);
+  assert.match(ui,/Shared Semester timetable/);
+  assert.match(ui,/automaticRecalculation/);
   assert.doesNotMatch(ui,/Save the availability once to attach the Course/);
 });
 
@@ -110,6 +176,9 @@ test('a new Course automatically inherits the existing Semester availability and
   assert.equal(attachCalls,1);
   assert.equal(result.recalculated,true);
   assert.equal(result.timetableVersionId,'tt-shared');
+  assert.equal(result.scope,'SEMESTER_SHARED');
+  assert.deepEqual(result.affectedCourseIds,['c1','c2']);
+  assert.equal(result.affectedCourseCount,2);
   assert.equal(proposalSource,'COURSE_PLAN_AUTO_RECALC');
 });
 
@@ -162,6 +231,9 @@ test('a new Course expands an active Semester into an integrated future proposal
   assert.equal(attachCalls,1);
   assert.equal(result.recalculated,true);
   assert.equal(result.timetableVersionId,'tt-expansion');
+  assert.equal(result.scope,'SEMESTER_SHARED');
+  assert.deepEqual(result.affectedCourseIds,['active','c2']);
+  assert.equal(result.affectedCourseCount,2);
   assert.equal(proposalSource,'COURSE_ADMISSION_EXPANSION_PROPOSAL');
 });
 
@@ -180,6 +252,9 @@ test('Course Plan completion automatically rebuilds a pre-activation Semester ti
 
   assert.equal(result.recalculated,true);
   assert.equal(result.timetableVersionId,'tt-plan');
+  assert.equal(result.scope,'SEMESTER_SHARED');
+  assert.deepEqual(result.affectedCourseIds,['c1','c2']);
+  assert.equal(result.affectedCourseCount,2);
   assert.equal(proposalSource,'COURSE_PLAN_AUTO_RECALC');
 });
 
