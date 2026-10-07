@@ -678,6 +678,7 @@ async function renderCourseSetup({ course, container }) {
   let countdownDeadline = null;
   let countdownEventId = null;
   let lastRenderKey = null;
+  let lastBackgroundAuditActive = false;
 
   const materialAnalysisRow = () => body.querySelector('[data-setup-step="material-analysis"]');
   const ensureAnalysisCountdown = () => {
@@ -748,6 +749,7 @@ async function renderCourseSetup({ course, container }) {
         && String(setup.curriculumAudit?.subject_snapshot_ref || '') === String(setup.course?.subject_snapshot_ref || '');
       const sourcesReady = (setup.sources || []).length > 0 && (setup.sources || []).every((source) => Boolean(source.classification));
       const backgroundAudit = backgroundAuditState(setup.backgroundAnalysis);
+      lastBackgroundAuditActive = backgroundAudit.active;
       const analysisRevisionInFlight = auditReady
         && backgroundAudit.active
         && (backgroundAudit.refining || backgroundAudit.regenerating);
@@ -1021,10 +1023,26 @@ async function renderCourseSetup({ course, container }) {
         delete status.dataset.kind;
       }
     } catch (error) {
-      body.replaceChildren();
-      status.textContent = error.message || 'Course preparation could not be loaded.';
+      const failureMessage = String(error?.message || error || '');
+      const networkFailure = /failed to fetch|networkerror|network request failed|load failed/i.test(failureMessage);
+      const hasVerifiedSetup = body.childElementCount > 0;
+
+      // Background polling must never erase the last authoritative Course Setup
+      // just because one browser fetch was interrupted. Keep the verified view
+      // mounted, retry the read, and replace it only after a successful server
+      // response. This also prevents a reconnect from collapsing Setup into a
+      // raw browser "Failed to fetch" state.
+      if (!hasVerifiedSetup) body.replaceChildren();
+      status.textContent = networkFailure
+        ? hasVerifiedSetup
+          ? 'Connection interrupted. Keeping the last verified Course Setup while KIWI reconnects.'
+          : 'Connection interrupted. KIWI is retrying Course Setup from authoritative server state.'
+        : failureMessage || 'Course preparation could not be loaded.';
       status.className = 'teaching-message';
-      status.dataset.kind = 'error';
+      if (networkFailure && hasVerifiedSetup) delete status.dataset.kind;
+      else status.dataset.kind = 'error';
+
+      if (networkFailure || (silent && lastBackgroundAuditActive)) schedulePoll();
     }
   }
   await load();

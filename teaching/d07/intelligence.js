@@ -549,11 +549,36 @@ function validateLineageRepairPatch(output,{academicInput,baseOutput,repairRefs=
     return {ok:false,reason:'TPF02_LINEAGE_REPAIR_COMPLETION_STATE_INVALID'};
   }
 
-  const existingTopicIds=new Set((baseOutput.topics||[]).map((topic)=>String(topic.topic_id)));
+  const existingTopicById=new Map((baseOutput.topics||[]).map((topic)=>[String(topic.topic_id),topic]));
+  const existingTopicIds=new Set(existingTopicById.keys());
   const newTopicIds=new Set();
+  const seenRepairTopicById=new Map();
+  const sameTopicStructure=(left,right)=>
+    String(left?.title||'')===String(right?.title||'')
+    &&JSON.stringify(left?.subtopics||[])===JSON.stringify(right?.subtopics||[]);
   for(const topic of output.topics||[]){
     const id=String(topic?.topic_id||'').trim();
-    if(!id||existingTopicIds.has(id)||newTopicIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_INVALID'};
+    if(!id)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_INVALID'};
+
+    const repeated=seenRepairTopicById.get(id);
+    if(repeated){
+      // A structured-output retry can harmlessly repeat the same Topic row.
+      // Collapse only an exact structural duplicate; conflicting reuse of the
+      // same ID is still rejected and can never reach the canonical artifact.
+      if(!sameTopicStructure(topic,repeated))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_CONFLICT'};
+      continue;
+    }
+    seenRepairTopicById.set(id,topic);
+
+    const existing=existingTopicById.get(id);
+    if(existing){
+      // Existing Topics are immutable in lineage repair. Providers sometimes
+      // harmlessly restate one while attaching a source to an existing Learning
+      // Unit. Accept only an exact structural restatement; applyLineageRepair()
+      // already ignores existing Topic rows, so no rewrite can cross authority.
+      if(!sameTopicStructure(topic,existing))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_EXISTING_TOPIC_REWRITE_FORBIDDEN'};
+      continue;
+    }
     newTopicIds.add(id);
     if((topic.source_item_refs||[]).some((ref)=>!expectedSet.has(String(ref))))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_SOURCE_REF_INVALID'};
   }
@@ -633,12 +658,22 @@ function lineageRepairRequest({
         }))),
       }))),
       existing_learning_units:Object.freeze((baseOutput.learning_units||[]).map((unit)=>Object.freeze({
+        // Existing-unit attachment still has to satisfy the canonical TPF-02
+        // Learning Unit schema before the server can consume only its lineage
+        // delta. Give the model every immutable field it must echo so it never
+        // has to invent filler just to attach a source ref.
         learning_unit_id:unit.learning_unit_id,
         title:unit.title,
         intended_competence:unit.intended_competence,
         topic_refs:Object.freeze([...(unit.topic_refs||[])]),
         subtopic_id:unit.subtopic_id==null?null:unit.subtopic_id,
+        prerequisite_refs:Object.freeze([...(unit.prerequisite_refs||[])]),
+        dependency_type_notes:unit.dependency_type_notes==null?null:unit.dependency_type_notes,
         criticality:unit.criticality,
+        criticality_basis:unit.criticality_basis,
+        proposed_exit_evidence:unit.proposed_exit_evidence,
+        gap_refs:Object.freeze([...(unit.gap_refs||[])]),
+        uncertainties:Object.freeze([...(unit.uncertainties||[])]),
       }))),
       existing_assumed_prerequisite_refs:Object.freeze((baseOutput.assumed_prerequisites||[]).map((item)=>item.assumed_prerequisite_id)),
       existing_gap_refs:Object.freeze((baseOutput.coverage_gaps||[]).map((item)=>item.gap_id)),
@@ -1414,6 +1449,48 @@ async function mapConcurrent(items,limit,worker){
   return results;
 }
 
+async function executeAdaptiveLineageRepair({baseOutput,repairRefs=[],executeBatch}={}){
+  if(typeof executeBatch!=='function')throw new TypeError('Adaptive TPF-02 lineage repair requires executeBatch().');
+  const refs=uniqueStrings(repairRefs);
+  if(!refs.length)return Object.freeze({accepted:true,result:null,output:baseOutput,attemptedBatchSizes:Object.freeze([])});
+  const attemptedBatchSizes=[];
+
+  async function run(output,batch){
+    attemptedBatchSizes.push(batch.length);
+    const result=await executeBatch(output,batch);
+    if(result?.accepted){
+      const nextOutput=result.validatedResult?.output;
+      if(!nextOutput){
+        return {
+          accepted:false,
+          result:{accepted:false,errorCode:'TEACHING_TPF02_LINEAGE_REPAIR_OUTPUT_MISSING',reason:'TPF02_LINEAGE_REPAIR_OUTPUT_MISSING'},
+          output,
+        };
+      }
+      return {accepted:true,result,output:nextOutput};
+    }
+
+    // A validator can reject a multi-source patch even when the same academic
+    // work is valid in smaller bounded slices. Never bypass validation: shrink
+    // the batch until the rejected scope is isolated. Stale/cancelled work is a
+    // state-control failure, not a patch-size problem, so it must propagate.
+    if(batch.length<=1||result?.stale===true||result?.cancelled===true){
+      return {accepted:false,result,output};
+    }
+
+    const splitAt=Math.ceil(batch.length/2);
+    const first=await run(output,batch.slice(0,splitAt));
+    if(!first.accepted)return first;
+    return run(first.output,batch.slice(splitAt));
+  }
+
+  const repaired=await run(baseOutput,refs);
+  return Object.freeze({
+    ...repaired,
+    attemptedBatchSizes:Object.freeze([...attemptedBatchSizes]),
+  });
+}
+
 function diagnosticRequest({course,requirement,audit}){
   const outputSchema={id:'d07.targeted-diagnostic',version:'1',uncertainty_states:['INSUFFICIENT_EVIDENCE','REVIEW_NEEDED'],review_needed_field:'review_needed',declared_fields:['purpose','targets','opportunities','critical_criteria','non_graded'],validate:async out=>{if(!out||out.non_graded!==true||!Array.isArray(out.targets)||!Array.isArray(out.opportunities)||out.opportunities.length<2)return {ok:false,reason:'TARGETED_DIAGNOSTIC_SCHEMA_INVALID'};const allowed=new Set(requirement.targets);if(out.targets.some(x=>!allowed.has(String(x))))return {ok:false,reason:'DIAGNOSTIC_TARGET_OUT_OF_SCOPE'};return {ok:true,value:out};}};
   return {...base({capabilityId:'teaching.curriculum.targeted_placement_prior_knowledge_diagnostic_design',course,taskMode:'targeted_placement_diagnostic_design',outputSchema,contextSpec:{authoritative_refs:[{ref:`course:${course.course_id}`},{ref:`curriculum-audit:${audit.curriculum_audit_id}`}],context_kind:'diagnostic_design',access_purpose:'prior_knowledge_verification'},academicInput:{target_refs:requirement.targets,non_graded:true},provenanceRefs:[`curriculum-audit:${audit.curriculum_audit_id}`]}),schemaValidator:outputSchema.validate,domainValidator:outputSchema.validate,provenanceValidator:async out=>({ok:out.targets.every(x=>requirement.targets.includes(String(x))),reason:'DIAGNOSTIC_PROVENANCE_INVALID'})};
@@ -1515,23 +1592,22 @@ function createD07Intelligence({orchestrator}={}){
     let pendingRefs=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
     while(pendingRefs.length){
       const batch=pendingRefs.slice(0,TPF02_LINEAGE_REPAIR_BATCH_SIZE);
-      let repaired=null;
-      try{
-        repaired=await orchestrator.execute(lineageRepairRequest({
+      const repaired=await executeAdaptiveLineageRepair({
+        baseOutput:currentOutput,
+        repairRefs:batch,
+        executeBatch:(baseOutput,repairRefs)=>orchestrator.execute(lineageRepairRequest({
           course,
           sources,
-          baseOutput:currentOutput,
+          baseOutput,
           preparedInventory:prepared.sourceInventory,
           preparedSourceWalk:prepared.sourceWalk,
           stageFindings:prepared.findings,
-          repairRefs:batch,
-        }));
-      }catch{
-        break;
-      }
-      if(!repaired?.accepted)return repaired;
-      currentResult=repaired;
-      currentOutput=repaired.validatedResult?.output;
+          repairRefs,
+        })),
+      });
+      if(!repaired.accepted)return repaired.result||{accepted:false,errorCode:'TEACHING_TPF02_LINEAGE_REPAIR_REJECTED',reason:'TPF02_LINEAGE_REPAIR_REJECTED'};
+      currentResult=repaired.result||currentResult;
+      currentOutput=repaired.output;
       const nextPending=uniqueStrings(currentOutput?.source_to_unit_reconciliation?.unmapped_required_refs||[]);
       if(nextPending.length>=pendingRefs.length&&batch.every((ref)=>nextPending.includes(ref)))break;
       pendingRefs=nextPending;
@@ -1582,6 +1658,7 @@ module.exports={
   TPF02_DECOMPOSITION_REPAIR_MAX_ATTEMPTS,
   TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE,
   TPF02_PROGRESSIVE_SYNTHESIS_INPUT_BYTES_LIMIT,
+  executeAdaptiveLineageRepair,
   intakeRequest,
   buildRegenerationContext,
   withRegenerationContext,

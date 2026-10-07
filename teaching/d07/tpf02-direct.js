@@ -147,7 +147,14 @@ function buildTpf02AcademicInput({course,sources=[],taskMode='DEEP_AUDIT',execut
 function tpf02OutputTokenBudget(academicInput={}){
  const taskMode=String(academicInput?.task_mode||'').trim().toUpperCase();
  const stage=String(academicInput?.execution_stage||'').trim().toUpperCase();
- return taskMode==='DEEP_AUDIT'&&stage===EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE
+ const refinement=taskMode==='DEEP_AUDIT'
+  &&academicInput?.refinement_context?.mode==='STUDENT_DIRECTED_ANALYSIS_REFINEMENT';
+ // Provider output limits include hidden reasoning tokens. A targeted refinement
+ // can legitimately restate a large validated curriculum structure, so keeping it
+ // on the 48k bounded profile can truncate a schema-valid artifact even when the
+ // visible JSON is well below that limit. Use the same governed 64k ceiling as
+ // whole-curriculum synthesis without changing model order or academic authority.
+ return (taskMode==='DEEP_AUDIT'&&stage===EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE)||refinement
   ? TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS
   : TPF02_BOUNDED_MAX_OUTPUT_TOKENS;
 }

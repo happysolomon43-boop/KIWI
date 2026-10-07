@@ -11,6 +11,9 @@ const {
   buildRegenerationContext,
   buildRefinementContext,
   curriculumRefinementRequest,
+  executeAdaptiveLineageRepair,
+  validateLineageRepairPatch,
+  lineageRepairRequest,
 } = require('../../../teaching/d07/intelligence');
 
 function course(stateVersion=4,state='DRAFT') {
@@ -169,8 +172,208 @@ test('targeted refinement sends the validated current analysis instead of re-run
   assert.deepEqual(request.academicInput.source_items,[]);
   assert.equal(request.academicInput.refinement_context.mode,'STUDENT_DIRECTED_ANALYSIS_REFINEMENT');
   assert.equal(request.academicInput.refinement_context.current_analysis.learning_units.length,20);
+  assert.equal(request.academicInput.refinement_context.current_analysis.source_inventory.length,0);
+  assert.deepEqual(request.academicInput.refinement_context.current_analysis.source_to_unit_reconciliation,{required_item_map:[],unmapped_required_refs:[]});
   assert.match(request.contextSpec.context_kind,/student_directed_analysis_refinement/);
 });
+
+test('targeted refinement receives the whole-synthesis output ceiling so reasoning tokens cannot truncate a valid replacement', () => {
+  const request=curriculumRefinementRequest({
+    course:course(),
+    sources:[source()],
+    previousAudit:currentAudit(),
+    changeRequest:'Merge overlapping Learning Units without losing required competence boundaries.',
+  });
+
+  assert.equal(request.generation.maxOutputTokens,64_000);
+});
+
+test('large-course lineage repair shrinks a rejected batch and preserves accepted progress between slices', async () => {
+  const refs=Array.from({length:12},(_,index)=>`source:${index+1}`);
+  const attempts=[];
+  const result=await executeAdaptiveLineageRepair({
+    baseOutput:{applied:[]},
+    repairRefs:refs,
+    executeBatch:async (baseOutput,batch)=>{
+      attempts.push(batch.length);
+      if(batch.length>6)return {accepted:false};
+      return {
+        accepted:true,
+        validatedResult:{output:{applied:[...baseOutput.applied,...batch]}},
+      };
+    },
+  });
+
+  assert.equal(result.accepted,true);
+  assert.deepEqual(attempts,[12,6,6]);
+  assert.deepEqual(result.attemptedBatchSizes,[12,6,6]);
+  assert.deepEqual(result.output.applied,refs);
+});
+
+test('adaptive lineage repair never retries stale state as a smaller academic patch', async () => {
+  let attempts=0;
+  const result=await executeAdaptiveLineageRepair({
+    baseOutput:{},
+    repairRefs:['source:1','source:2','source:3','source:4'],
+    executeBatch:async ()=>{
+      attempts+=1;
+      return {accepted:false,stale:true};
+    },
+  });
+
+  assert.equal(result.accepted,false);
+  assert.equal(result.result.stale,true);
+  assert.equal(attempts,1);
+  assert.deepEqual(result.attemptedBatchSizes,[4]);
+});
+
+test('lineage repair receives every canonical field needed to attach lineage to an existing Learning Unit', () => {
+  const existingUnit={
+    learning_unit_id:'unit-1',
+    title:'Newtonian motion',
+    intended_competence:'Apply Newton laws to constrained motion problems.',
+    source_item_refs:['source:old'],
+    topic_refs:['topic-1'],
+    subtopic_id:'subtopic-1',
+    prerequisite_refs:['assumed-1'],
+    dependency_type_notes:'Requires vector resolution.',
+    criticality:'major',
+    criticality_basis:'Core assessed mechanics competence.',
+    proposed_exit_evidence:'Solve and explain a multi-force motion problem.',
+    gap_refs:[],
+    uncertainties:['Boundary cases need later confirmation.'],
+  };
+  const request=lineageRepairRequest({
+    course:course(),
+    sources:[source()],
+    baseOutput:{
+      topics:[{topic_id:'topic-1',title:'Mechanics',source_item_refs:['source:old'],subtopics:[{subtopic_id:'subtopic-1',title:'Motion'}]}],
+      learning_units:[existingUnit],
+      assumed_prerequisites:[{assumed_prerequisite_id:'assumed-1'}],
+      coverage_gaps:[],
+    },
+    preparedInventory:[{
+      source_item_ref:'source:source-1',
+      proposed_scope_classification:'required',
+    }],
+    preparedSourceWalk:[],
+    stageFindings:{},
+    repairRefs:['source:source-1'],
+  });
+
+  assert.deepEqual(
+    request.academicInput.lineage_repair_context.existing_learning_units[0],
+    {
+      learning_unit_id:'unit-1',
+      title:'Newtonian motion',
+      intended_competence:'Apply Newton laws to constrained motion problems.',
+      topic_refs:['topic-1'],
+      subtopic_id:'subtopic-1',
+      prerequisite_refs:['assumed-1'],
+      dependency_type_notes:'Requires vector resolution.',
+      criticality:'major',
+      criticality_basis:'Core assessed mechanics competence.',
+      proposed_exit_evidence:'Solve and explain a multi-force motion problem.',
+      gap_refs:[],
+      uncertainties:['Boundary cases need later confirmation.'],
+    },
+  );
+});
+
+test('lineage repair accepts an exact existing Topic restatement but still forbids Topic mutation', () => {
+  const baseOutput={
+    topics:[{
+      topic_id:'topic-1',
+      title:'Mechanics',
+      source_item_refs:['source:old'],
+      subtopics:[{subtopic_id:'subtopic-1',title:'Motion'}],
+    }],
+    learning_units:[{
+      learning_unit_id:'unit-1',
+      criticality:'major',
+    }],
+    assumed_prerequisites:[],
+  };
+  const academicInput={
+    input_state_reference:'teaching_course:course-1:state:4',
+    audit_scope:{trusted_scope_version:'subject:subject-1:snapshot-4'},
+  };
+  const patch={
+    input_state_reference:'teaching_course:course-1:state:4',
+    task_mode:'LEARNING_UNIT_DECOMPOSITION',
+    execution_stage:'SINGLE_PASS',
+    audit_scope:{
+      subject_or_course:'Biology',
+      trusted_scope_version:'subject:subject-1:snapshot-4',
+      source_refs:['source:new'],
+      source_walk:[],
+    },
+    source_inventory:[],
+    topics:[{
+      topic_id:'topic-1',
+      title:'Mechanics',
+      source_item_refs:['source:old'],
+      subtopics:[{subtopic_id:'subtopic-1',title:'Motion'}],
+    }],
+    learning_units:[{
+      learning_unit_id:'unit-1',
+      source_item_refs:['source:new'],
+      topic_refs:['topic-1'],
+      prerequisite_refs:[],
+      gap_refs:[],
+      criticality:'major',
+    }],
+    assumed_prerequisites:[],
+    source_conflicts:[],
+    coverage_gaps:[],
+    structure_change_proposals:[],
+    unresolved_items:[],
+    status:'ok',
+    review_required:false,
+    review_reasons:[],
+    student_facing_summary_candidate:null,
+  };
+
+  const harmless=validateLineageRepairPatch(patch,{
+    academicInput,
+    baseOutput,
+    repairRefs:['source:new'],
+  });
+  assert.equal(harmless.ok,true);
+
+  const mutated=validateLineageRepairPatch({
+    ...patch,
+    topics:[{...patch.topics[0],title:'Rewritten Mechanics'}],
+  },{
+    academicInput,
+    baseOutput,
+    repairRefs:['source:new'],
+  });
+  assert.equal(mutated.ok,false);
+  assert.equal(mutated.reason,'TPF02_LINEAGE_REPAIR_EXISTING_TOPIC_REWRITE_FORBIDDEN');
+
+  const exactDuplicate=validateLineageRepairPatch({
+    ...patch,
+    topics:[patch.topics[0],{...patch.topics[0]}],
+  },{
+    academicInput,
+    baseOutput,
+    repairRefs:['source:new'],
+  });
+  assert.equal(exactDuplicate.ok,true);
+
+  const conflictingDuplicate=validateLineageRepairPatch({
+    ...patch,
+    topics:[patch.topics[0],{...patch.topics[0],title:'Conflicting mechanics'}],
+  },{
+    academicInput,
+    baseOutput,
+    repairRefs:['source:new'],
+  });
+  assert.equal(conflictingDuplicate.ok,false);
+  assert.equal(conflictingDuplicate.reason,'TPF02_LINEAGE_REPAIR_TOPIC_ID_CONFLICT');
+});
+
 
 test('validated refinement commits a new audit version and only then resets downstream setup', async () => {
   const audit=currentAudit();
@@ -336,6 +539,15 @@ test('Course Setup shows one actionable Course-analysis failure surface for the 
   assert.match(ui,/could not safely complete the final Course-structure validation/);
   assert.match(ui,/large source sets are resumed through bounded validation work/);
   assert.doesNotMatch(ui,/card\.append\(failure\)/);
+});
+
+test('Course Setup preserves the last verified state and retries after a transient browser fetch interruption', () => {
+  const ui=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-d08.js'),'utf8');
+  assert.match(ui,/lastBackgroundAuditActive/);
+  assert.match(ui,/failed to fetch\|networkerror\|network request failed\|load failed/i);
+  assert.match(ui,/Keeping the last verified Course Setup while KIWI reconnects/);
+  assert.match(ui,/if \(networkFailure \|\| \(silent && lastBackgroundAuditActive\)\) schedulePoll\(\)/);
+  assert.doesNotMatch(ui,/catch \(error\) \{\s*body\.replaceChildren\(\);\s*status\.textContent = error\.message \|\| 'Course preparation could not be loaded\.'/);
 });
 
 
