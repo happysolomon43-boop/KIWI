@@ -788,7 +788,17 @@ function validateStructurePassPatch(output,{academicInput,canonicalInventory=[]}
     }))return {ok:false,reason:'TPF02_STRUCTURE_PASS_PREREQUISITE_REF_UNKNOWN'};
   }
   const hierarchy=validateHierarchy(output);if(!hierarchy.ok)return hierarchy;
-  const decomposition=validateDecomposition(output,inventoryByRef,{decompositionLimits:academicInput.constraints?.decomposition_limits});if(!decomposition.ok)return decomposition;
+  // A bounded progressive structure pass is a provisional hint, not the
+  // authoritative whole-Course decomposition. Preserve hard schema, provenance
+  // and hierarchy checks here, but carry an obvious G11 breadth signal forward
+  // to whole-curriculum synthesis instead of cancelling the entire audit before
+  // synthesis can inspect the complete source evidence. The assembled audit
+  // still runs G11 and the bounded SPLIT_UNIT repair path fail-closed.
+  const decomposition=validateDecomposition(output,inventoryByRef,{
+    decompositionLimits:academicInput.constraints?.decomposition_limits,
+    allowDecompositionRepair:true,
+  });
+  if(!decomposition.ok)return decomposition;
   return {ok:true,value:output};
 }
 
