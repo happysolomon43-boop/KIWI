@@ -7,6 +7,9 @@ const {
  TPF02_FAMILY_VERSION,
  TPF02_OUTPUT_SCHEMA_VERSION,
  TPF02_TOP_LEVEL_FIELDS,
+ TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,
+ TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,
+ TPF02_DECOMPOSITION_PATCH_FIELDS,
  TPF02_MAX_OUTPUT_TOKENS,
  EXECUTION_STAGES,
  buildTpf02AcademicInput,
@@ -154,6 +157,24 @@ test('direct TPF-02 composer uses the governed v1.2 artifact plus isolated runti
  assert.equal(getPromptBody('TPF-02','1.2').promptSha256,'c3084d859209c672d86659b54ce63cc52422b3887414c0b50a64722f4744c004');
 });
 
+test('direct TPF-02 composer binds SPLIT_UNIT to the dedicated decomposition patch contract',()=>{
+ const binding=createFrozenPromptBinding('TPF-02','1.2');
+ const academicInput={
+  ...buildTpf02AcademicInput({course,sources,taskMode:'SPLIT_UNIT',executionStage:EXECUTION_STAGES.SINGLE_PASS}),
+  decomposition_repair_context:{
+   mode:'DECOMPOSITION_REPAIR',
+   repair_scope:{target_unit_id:'unit-1',repair_source_refs:['source:s1','source:s2'],untouched_source_refs:[],course_ratio_flag:false},
+   current_learning_unit:{learning_unit_id:'unit-1'},
+  },
+ };
+ const content=composeTpf02DirectModelContent({invocation:{capability:{id:'teaching.curriculum.learning_unit_decomposition'},state_reference:{aggregate_type:'teaching_course',aggregate_id:'course-1',state_version:'7'},prompt:{family_id:'TPF-02',family_version:'1.2',task_mode:'SPLIT_UNIT',frozen_binding:binding}},academicInput});
+ assert.match(content,/KIWI_TPF02_DECOMPOSITION_REPAIR_PATCH_V1/);
+ assert.match(content,/tpf02\.decomposition-repair-patch/);
+ assert.ok(content.includes(`\"version\":\"${TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION}\"`));
+ for(const field of TPF02_DECOMPOSITION_PATCH_FIELDS)assert.ok(content.includes(`\"${field}\"`));
+ assert.doesNotMatch(content,/\"exact_top_level_fields\":\[\"input_state_reference\",\"task_mode\",\"execution_stage\",\"audit_scope\"/);
+ assert.equal(TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,'tpf02.decomposition-repair-patch');
+});
 test('Teaching AI adapter sends isolated TPF-02 v1.2 through MAIN_CBT with 48k structured output generation',async()=>{
  const calls=[];
  const binding=createFrozenPromptBinding('TPF-02','1.2');
