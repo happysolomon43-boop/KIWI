@@ -45,6 +45,40 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       active:['PENDING','CLAIMED','RETRY_WAIT'].includes(status),
     });
   }
+  function timetableBuildBasis(context,{operation='BUILD',source=null}={}){
+    const normalizedOperation=String(operation||'BUILD').toUpperCase();
+    const planBasis=(context?.courses||[]).map((bundle)=>({
+      courseId:String(bundle.course?.course_id||''),
+      courseStateVersion:Number(bundle.course?.state_version||0),
+      planId:String(bundle.plan?.course_plan_id||''),
+      planVersion:Number(bundle.plan?.version_no||0),
+    })).sort((a,b)=>a.courseId.localeCompare(b.courseId));
+    const basisDigest=digest({
+      semesterId:context?.semester?.semester_id||null,
+      semesterStateVersion:Number(context?.semester?.state_version||0),
+      profileId:context?.profile?.profile_id||null,
+      profileVersion:Number(context?.profile?.version_no||0),
+      plans:planBasis,
+      operation:normalizedOperation,
+      source:source||null,
+    });
+    return Object.freeze({normalizedOperation,planBasis,basisDigest});
+  }
+  async function validateQueuedTimetableBuild(user,courseId,payload={}){
+    const context=await repository.getSchedulingContext(user.id,courseId);
+    if(!context.semester||!context.profile)return Object.freeze({current:false,reason:'SCHEDULE_INPUTS_REQUIRED'});
+    const basis=timetableBuildBasis(context,{
+      operation:payload.operation||'BUILD',
+      source:payload.source||null,
+    });
+    const current=String(payload.basis_digest||'')===basis.basisDigest;
+    return Object.freeze({
+      current,
+      reason:current?null:'SCHEDULING_BASIS_CHANGED',
+      basisDigest:basis.basisDigest,
+      expectedBasisDigest:payload.basis_digest||null,
+    });
+  }
   function pplEvent(result,correlationId){
     const p=result.ppl;
     return buildPreparationEvent({
@@ -390,21 +424,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       error.code='TEACHING_D09_SCHEDULE_INPUTS_REQUIRED';
       throw error;
     }
-    const planBasis=(context.courses||[]).map((bundle)=>({
-      courseId:String(bundle.course?.course_id||''),
-      courseStateVersion:Number(bundle.course?.state_version||0),
-      planId:String(bundle.plan?.course_plan_id||''),
-      planVersion:Number(bundle.plan?.version_no||0),
-    })).sort((a,b)=>a.courseId.localeCompare(b.courseId));
-    const basisDigest=digest({
-      semesterId:context.semester.semester_id,
-      semesterStateVersion:Number(context.semester.state_version||0),
-      profileId:context.profile.profile_id,
-      profileVersion:Number(context.profile.version_no||0),
-      plans:planBasis,
-      operation:normalizedOperation,
-      source:source||null,
-    });
+    const {planBasis,basisDigest}=timetableBuildBasis(context,{operation:normalizedOperation,source});
     const current=typeof repository.latestBackgroundTimetableBuild==='function'
       ? await repository.latestBackgroundTimetableBuild(user.id,courseId)
       : null;
@@ -529,6 +549,6 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     });
   }
 
-  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,queueTimetableBuild,recalculateAfterCoursePlanChange,rebuildSharedSemesterTimetable,proposeTimetable,editTimetable,getCalendar});
+  return Object.freeze({listSemesters,saveScheduleInputs,getScheduleReview,queueTimetableBuild,validateQueuedTimetableBuild,recalculateAfterCoursePlanChange,rebuildSharedSemesterTimetable,proposeTimetable,editTimetable,getCalendar});
 }
 module.exports={createD09Service};
