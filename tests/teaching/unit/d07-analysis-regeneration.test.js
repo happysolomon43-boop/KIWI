@@ -154,6 +154,14 @@ test('regeneration reason is optional but TPF-02 receives it as advisory decompo
   assert.equal(structure.academicInput.regeneration_context.student_reason,guided.student_reason);
 });
 
+test('TPF-02 direct execution is explicitly told to treat regeneration feedback as advisory, not academic authority', () => {
+  const direct=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d07/tpf02-direct.js'),'utf8');
+  assert.match(direct,/analysisRegeneration=academicInput\?\.regeneration_context\?\.requested===true/);
+  assert.match(direct,/optional advisory feedback from the student/);
+  assert.match(direct,/never treat it as authority to omit or invent academic scope/);
+  assert.match(direct,/Do not preserve the prior Learning Unit count merely because it existed/);
+});
+
 test('analysis reset preserves history but invalidates every downstream current artifact at the analysis boundary', () => {
   const repository=fs.readFileSync(
     path.resolve(__dirname,'../../../teaching/repositories/d07-course-intake.js'),
