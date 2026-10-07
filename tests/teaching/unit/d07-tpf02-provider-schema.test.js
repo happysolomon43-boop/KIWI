@@ -11,13 +11,10 @@ const {
 const {
   TPF02_OUTPUT_SCHEMA_ID,
   TPF02_TOP_LEVEL_FIELDS,
-  TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_ID,
-  TPF02_LINEAGE_REPAIR_PATCH_FIELDS,
   TPF02_DECOMPOSITION_PATCH_FIELDS,
 } = require('../../../teaching/d07/tpf02-direct');
 const {
   TPF02_CURRICULUM_AUDIT_RESPONSE_SCHEMA,
-  TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA,
   TPF02_DECOMPOSITION_PATCH_RESPONSE_SCHEMA,
 } = require('../../../teaching/d07/tpf02-provider-schema');
 const { createExecutionRequest } = require('../../../services/ai/execution-contracts');
@@ -109,7 +106,7 @@ test('Google adapter receives TPF-02 responseSchema instead of JSON MIME type al
   assert.equal(Object.hasOwn(serialized.generationConfig, 'structuredOutput'), false);
 });
 
-test('lineage repair uses a bounded patch contract instead of restating the full TPF-02 audit', () => {
+test('lineage repair declares and generates the full TPF-02 artifact contract', () => {
   const request = lineageRepairRequest({
     course: course(),
     sources: [source()],
@@ -130,17 +127,9 @@ test('lineage repair uses a bounded patch contract instead of restating the full
     repairRefs: ['source:source-1'],
   });
 
-  assert.equal(request.outputSchema.id, TPF02_LINEAGE_REPAIR_PATCH_SCHEMA_ID);
-  assert.deepEqual(request.outputSchema.declared_fields, [...TPF02_LINEAGE_REPAIR_PATCH_FIELDS]);
-  assert.equal(request.generation.structuredOutput.schema, TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA);
-  assert.deepEqual(
-    [...TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA.required],
-    [...TPF02_LINEAGE_REPAIR_PATCH_FIELDS]
-  );
-  assert.ok(TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA.properties.existing_unit_attachments);
-  assert.ok(TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA.properties.new_learning_units);
-  assert.equal(Object.hasOwn(TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA.properties, 'source_inventory'), false);
-  assert.equal(Object.hasOwn(TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA.properties, 'audit_scope'), false);
+  assert.equal(request.outputSchema.id, TPF02_OUTPUT_SCHEMA_ID);
+  assert.deepEqual(request.outputSchema.declared_fields, [...TPF02_TOP_LEVEL_FIELDS]);
+  assert.equal(request.generation.structuredOutput.schema, TPF02_CURRICULUM_AUDIT_RESPONSE_SCHEMA);
 });
 
 test('TPF-02 decomposition provider schema mirrors the dedicated patch contract', () => {
