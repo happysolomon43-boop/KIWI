@@ -501,47 +501,6 @@ function decorateD09Service(base, {
     });
   }
 
-  async function recalculateAfterCoursePlanChange(user, courseId) {
-    let context = await repository.getSchedulingContext(user.id, courseId);
-    if (!context.semester || !context.profile) {
-      return Object.freeze({ recalculated:false, reason:'SCHEDULE_INPUTS_REQUIRED' });
-    }
-    try {
-      if (context.inheritedDefault) context = await attachInheritedDefaultForScheduling(user, courseId, context);
-      requireReadyContext(context, courseId);
-      for (const bundle of context.courses || []) assertCurrentCoursePlan(bundle.course, bundle.plan, bundle.scopeChanges);
-      context = await ensureInstructionalLoads(user, courseId, context);
-      const nowIso = serverNow();
-      const derived = planningContextAt(context, nowIso);
-      const result = computeSchedule(derived, { now: nowIso });
-      const requestedInstructionalCount = instructionalUnits(context)
-        .filter(({ bundle }) => String(bundle.course.course_id) === String(courseId)).length;
-      const classFacts = scheduleClassFacts(slotsForCourse(result.schedule, courseId), nowIso);
-      if (requestedInstructionalCount > 0 && classFacts.classCount === 0) {
-        return Object.freeze({ recalculated:false, reason:'TEACHING_D09_EMPTY_INSTRUCTIONAL_TIMETABLE' });
-      }
-      if (classFacts.elapsedClassCount > 0) {
-        return Object.freeze({ recalculated:false, reason:'TEACHING_D09_ELAPSED_TIMETABLE_REJECTED' });
-      }
-      const expansion = semesterHasActivatedCourses(context) && PREACTIVATION_STATES.has(String(context.course?.lifecycle_state || 'DRAFT'));
-      const saved = await commitWithPpl((tx) => repository.saveProposalUsing(tx, {
-        studentId: user.id,
-        courseId,
-        context,
-        result,
-        source: expansion ? 'COURSE_ADMISSION_EXPANSION_PROPOSAL' : 'COURSE_PLAN_AUTO_RECALC',
-      }));
-      return Object.freeze({
-        recalculated:true,
-        timetableVersionId:saved.timetable?.timetable_version_id || null,
-        timetableVersion:saved.timetable?.version_no == null ? null : Number(saved.timetable.version_no),
-        outcome:saved.feasibility?.outcome || result.outcome || null,
-      });
-    } catch (error) {
-      return Object.freeze({ recalculated:false, reason:error?.code || 'COURSE_PLAN_AUTO_RECALC_FAILED' });
-    }
-  }
-
   async function proposeTimetable(user, courseId, { sourceKind = 'DETERMINISTIC_INITIAL' } = {}) {
     let context = await repository.getSchedulingContext(user.id, courseId);
     if (context.inheritedDefault) context = await attachInheritedDefaultForScheduling(user, courseId, context);
