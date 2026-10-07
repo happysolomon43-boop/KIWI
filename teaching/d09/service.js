@@ -7,10 +7,11 @@ const { TEACHING_EVENTS } = require('../events/names');
 const {
   PREACTIVATION_STATES,
   instructionalUnits,
-  planningContextAt,
   scheduleClassFacts,
   slotsForCourse,
   ensureInstructionalLoads,
+  schedulableScheduleContext,
+  computeSharedSemesterSchedule,
 } = require('./schedule-preparation');
 
 function createD09Service({repository,transactionalMutation,randomUUID,clock=()=>new Date(),intelligence=null,logger=console}={}) {
@@ -96,43 +97,54 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       recalculated:false,reason:'SCHEDULE_INPUTS_REQUIRED',scope:'SEMESTER_SHARED',semesterId:context?.semester?.semester_id||null,
       affectedCourseIds:Object.freeze([]),affectedCourseCount:0,
     });
-    requireReadyContext(context,courseId);
-    context=await ensureInstructionalLoads({
-      user,courseId,initialContext:context,intelligence,repository,requireReadyContext,
+
+    let authoritativeContext=context;
+    let eligibleContext=schedulableScheduleContext(authoritativeContext);
+    requireReadyContext(eligibleContext,courseId);
+
+    authoritativeContext=await ensureInstructionalLoads({
+      user,courseId,initialContext:eligibleContext,intelligence,repository,requireReadyContext,
     });
-    const affectedCourseIds=schedulableCourseIds(context);
+    eligibleContext=schedulableScheduleContext(authoritativeContext);
+    requireReadyContext(eligibleContext,courseId);
+
+    const affectedCourseIds=schedulableCourseIds(eligibleContext);
     if(!affectedCourseIds.length) return Object.freeze({
-      recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED',scope:'SEMESTER_SHARED',semesterId:context.semester.semester_id,
+      recalculated:false,reason:'CURRENT_COURSE_PLAN_REQUIRED',scope:'SEMESTER_SHARED',semesterId:authoritativeContext.semester.semester_id,
       affectedCourseIds,affectedCourseCount:0,
     });
-    for(const bundle of context.courses||[]) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
+    for(const bundle of eligibleContext.courses||[]) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
 
     const now=clock().toISOString();
-    const planningContext=planningContextAt(context,now);
-    const result=computeSchedule(planningContext,{now});
-    const instructionalCourseIds=new Set(instructionalUnits(context).map(({bundle})=>String(bundle.course.course_id)));
+    const {planningContext,result}=computeSharedSemesterSchedule(authoritativeContext,{now});
+    const instructionalCourseIds=new Set(instructionalUnits(planningContext).map(({bundle})=>String(bundle.course.course_id)));
     for(const affectedCourseId of instructionalCourseIds){
       const facts=scheduleClassFacts(slotsForCourse(result.schedule,affectedCourseId),now);
       if(facts.classCount<=0){
-        const e=new Error('The Scheduler produced no instructional Classes for a Course that requires instruction.');
-        e.status=422;e.code='TEACHING_D09_EMPTY_INSTRUCTIONAL_TIMETABLE';
-        e.details={courseId:affectedCourseId,reasons:result.reasons||[]};
-        throw e;
+        const error=new Error('The Scheduler produced no instructional Classes for a Course that requires instruction.');
+        error.status=422;error.code='TEACHING_D09_EMPTY_INSTRUCTIONAL_TIMETABLE';
+        error.details={courseId:affectedCourseId,reasons:result.reasons||[]};
+        throw error;
       }
     }
     const globalFacts=scheduleClassFacts(result.schedule,now);
     if(globalFacts.elapsedClassCount>0){
-      const e=new Error('The proposed Semester timetable contains elapsed Classes and must be recalculated from server time.');
-      e.status=422;e.code='TEACHING_D09_ELAPSED_TIMETABLE_REJECTED';throw e;
+      const error=new Error('The proposed Semester timetable contains elapsed Classes and must be recalculated from server time.');
+      error.status=422;error.code='TEACHING_D09_ELAPSED_TIMETABLE_REJECTED';throw error;
     }
 
     const saved=await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{
-      studentId:user.id,courseId,context,result,source,
+      studentId:user.id,
+      courseId,
+      context:authoritativeContext,
+      planningContext,
+      result,
+      source,
     }));
     return Object.freeze({
       recalculated:true,
       scope:'SEMESTER_SHARED',
-      semesterId:context.semester.semester_id,
+      semesterId:authoritativeContext.semester.semester_id,
       affectedCourseIds,
       affectedCourseCount:affectedCourseIds.length,
       timetableVersionId:saved.timetable?.timetable_version_id||null,
