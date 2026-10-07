@@ -243,35 +243,77 @@ function createD07Service({
     return repository.updateInteractionPreferences({ studentId: user.id, courseId, preferences: input });
   }
 
-  async function runAudit(user, courseId, { regenerate = false, regenerationReason = null, previousAudit = null } = {}) {
+  async function runAudit(user, courseId, {
+    operation = 'GENERATE',
+    changeRequest = null,
+    regenerationReason = null,
+    previousAudit = null,
+  } = {}) {
     if (!intelligence) held();
     const setup = await repository.getSetup(user.id, courseId);
     const inputStateVersion = String(setup.course.state_version);
     const inputInventoryDigest = sourceInventoryDigest(setup.sources);
-    const normalizedReason = String(regenerationReason || '').trim().slice(0, 1500);
-    const regenerationBasis = previousAudit || (regenerate ? setup.curriculumAudit : null);
-
-    const result = await intelligence.runCurriculumAudit({
-      course: setup.course,
-      sources: setup.sources,
-      regenerationReason: regenerate ? normalizedReason : null,
-      previousAudit: regenerate ? regenerationBasis : null,
-    });
-    if (!result.accepted) {
-      const error = new Error('Curriculum Audit was rejected by validation.');
-      error.status = 422;
-      error.code = 'TEACHING_D07_CURRICULUM_AUDIT_REJECTED';
+    const normalizedOperation = String(operation || 'GENERATE').trim().toUpperCase();
+    if (!['GENERATE','REFINE','REGENERATE'].includes(normalizedOperation)) {
+      const error = new Error('Unsupported Course analysis operation.');
+      error.status = 400;
+      error.code = 'TEACHING_D07_ANALYSIS_OPERATION_INVALID';
       throw error;
     }
 
-    // A deep audit can legitimately run for minutes. Re-read authoritative
-    // state before persistence so a result generated from an older Course/source
-    // snapshot can never be committed after a concurrent Course mutation.
+    const normalizedChangeRequest = String(changeRequest || '').trim().slice(0, 1500);
+    const normalizedReason = String(regenerationReason || '').trim().slice(0, 1500);
+    const revision = normalizedOperation !== 'GENERATE';
+    const revisionBasis = previousAudit || (revision ? setup.curriculumAudit : null);
+    if (revision && (!revisionBasis || revisionBasis.status !== 'VALIDATED_CANDIDATE')) {
+      const error = new Error('A validated Course analysis is required before it can be changed.');
+      error.status = 409;
+      error.code = 'TEACHING_D07_ANALYSIS_REVISION_REQUIRES_CURRENT';
+      throw error;
+    }
+    if (normalizedOperation === 'REFINE' && !normalizedChangeRequest) {
+      const error = new Error('Describe what you want KIWI to change in the Course analysis.');
+      error.status = 400;
+      error.code = 'TEACHING_D07_ANALYSIS_REFINEMENT_REQUEST_REQUIRED';
+      throw error;
+    }
+
+    const result = normalizedOperation === 'REFINE'
+      ? await intelligence.refineCurriculumAudit({
+          course: setup.course,
+          sources: setup.sources,
+          previousAudit: revisionBasis,
+          changeRequest: normalizedChangeRequest,
+        })
+      : await intelligence.runCurriculumAudit({
+          course: setup.course,
+          sources: setup.sources,
+          regenerationReason: normalizedOperation === 'REGENERATE' ? normalizedReason : null,
+          previousAudit: normalizedOperation === 'REGENERATE' ? revisionBasis : null,
+        });
+    if (!result?.accepted) {
+      const error = new Error(normalizedOperation === 'REFINE'
+        ? 'The requested Course analysis change could not be validated safely.'
+        : 'Curriculum Audit was rejected by validation.');
+      error.status = 422;
+      error.code = normalizedOperation === 'REFINE'
+        ? 'TEACHING_D07_ANALYSIS_REFINEMENT_REJECTED'
+        : 'TEACHING_D07_CURRICULUM_AUDIT_REJECTED';
+      throw error;
+    }
+
+    // Long-running analysis must never commit against a changed Course/source snapshot.
     const current = await repository.getSetup(user.id, courseId);
     const currentStateVersion = String(current.course.state_version);
     const currentInventoryDigest = sourceInventoryDigest(current.sources);
-    if (currentStateVersion !== inputStateVersion || currentInventoryDigest !== inputInventoryDigest) {
-      const error = new Error('Course state changed while Curriculum Audit was running; analysis must restart from the current snapshot.');
+    const revisionBasisStillCurrent = !revision
+      || String(current.curriculumAudit?.curriculum_audit_id || '') === String(revisionBasis.curriculum_audit_id || '');
+    if (
+      currentStateVersion !== inputStateVersion
+      || currentInventoryDigest !== inputInventoryDigest
+      || !revisionBasisStillCurrent
+    ) {
+      const error = new Error('Course state changed while Course analysis was running; the operation must restart from the current analysis.');
       error.status = 409;
       error.code = 'TEACHING_D07_AUDIT_STATE_CHANGED';
       error.retryable = true;
@@ -297,18 +339,30 @@ function createD07Service({
         domain_validated: true,
         source_census: setup.sources.length,
         state_version: inputStateVersion,
-        regeneration_requested: regenerate === true,
-        regeneration_reason: regenerate && normalizedReason ? normalizedReason : null,
-        supersedes_audit_id: regenerate ? regenerationBasis?.curriculum_audit_id || null : null,
-        supersedes_audit_version: regenerate && regenerationBasis?.audit_version != null ? Number(regenerationBasis.audit_version) : null,
+        revision_operation: normalizedOperation,
+        refinement_requested: normalizedOperation === 'REFINE',
+        refinement_request: normalizedOperation === 'REFINE' ? normalizedChangeRequest : null,
+        regeneration_requested: normalizedOperation === 'REGENERATE',
+        regeneration_reason: normalizedOperation === 'REGENERATE' && normalizedReason ? normalizedReason : null,
+        supersedes_audit_id: revision ? revisionBasis.curriculum_audit_id : null,
+        supersedes_audit_version: revision ? Number(revisionBasis.audit_version) : null,
       },
+      revision: revision ? {
+        mode: normalizedOperation,
+        previousAuditId: revisionBasis.curriculum_audit_id,
+        previousAuditVersion: Number(revisionBasis.audit_version),
+        studentInstruction: normalizedOperation === 'REFINE' ? normalizedChangeRequest : normalizedReason || null,
+      } : null,
     });
   }
 
   async function queueAudit(user, courseId, {
     supersedeEventId = null,
     causationId = null,
+    operation = null,
     regenerate = false,
+    refine = false,
+    changeRequest = null,
     regenerationReason = null,
   } = {}) {
     if (!intelligence) held();
@@ -316,7 +370,25 @@ function createD07Service({
       queueUnavailable();
     }
 
-    let setup = await repository.getSetup(user.id, courseId);
+    const normalizedOperation = String(
+      operation || (refine ? 'REFINE' : regenerate ? 'REGENERATE' : 'GENERATE')
+    ).trim().toUpperCase();
+    if (!['GENERATE','REFINE','REGENERATE'].includes(normalizedOperation)) {
+      const error = new Error('Unsupported Course analysis operation.');
+      error.status = 400;
+      error.code = 'TEACHING_D07_ANALYSIS_OPERATION_INVALID';
+      throw error;
+    }
+    const normalizedChangeRequest = String(changeRequest || '').trim().slice(0, 1500);
+    const normalizedReason = String(regenerationReason || '').trim().slice(0, 1500);
+    if (normalizedOperation === 'REFINE' && !normalizedChangeRequest) {
+      const error = new Error('Describe what you want KIWI to change in the Course analysis.');
+      error.status = 400;
+      error.code = 'TEACHING_D07_ANALYSIS_REFINEMENT_REQUEST_REQUIRED';
+      throw error;
+    }
+
+    const setup = await repository.getSetup(user.id, courseId);
     const current = setup.backgroundAnalysis;
     const currentStatus = String(current?.status || '').toUpperCase();
     const supersededCurrent = Boolean(
@@ -330,32 +402,30 @@ function createD07Service({
         jobId: current.event_id,
         status: current.status,
         joinedExisting: true,
-        operation: current?.payload?.regenerate === true ? 'REGENERATION' : 'GENERATION',
+        operation: String(current?.payload?.operation || (current?.payload?.regenerate === true ? 'REGENERATE' : 'GENERATE')).toUpperCase(),
       };
     }
 
-    let regeneration = null;
-    const normalizedReason = String(regenerationReason || '').trim().slice(0, 1500);
-    if (regenerate) {
-      if (typeof repository.prepareAuditRegeneration !== 'function') {
-        const error = new Error('Course analysis regeneration reset is unavailable.');
-        error.status = 503;
-        error.code = 'TEACHING_D07_AUDIT_REGENERATION_RESET_UNAVAILABLE';
-        throw error;
-      }
-      regeneration = await repository.prepareAuditRegeneration({
-        studentId: user.id,
-        courseId,
-        reason: normalizedReason,
-      });
-      setup = await repository.getSetup(user.id, courseId);
-    } else if ((currentStatus === 'PUBLISHED' && currentValidatedAudit(setup)) && !supersededCurrent) {
+    const revision = normalizedOperation !== 'GENERATE';
+    const revisionBasis = revision ? setup.curriculumAudit : null;
+    if (revision && (!revisionBasis || revisionBasis.status !== 'VALIDATED_CANDIDATE')) {
+      const error = new Error('A validated Course analysis is required before it can be changed.');
+      error.status = 409;
+      error.code = 'TEACHING_D07_ANALYSIS_REVISION_REQUIRES_CURRENT';
+      throw error;
+    }
+    if (revision && !['DRAFT','READY','PLANNING','SETUP'].includes(String(setup.course.lifecycle_state || 'DRAFT').toUpperCase())) {
+      const error = new Error('Course analysis changes are available before Course activation. Active Courses require governed academic-change workflows.');
+      error.status = 409;
+      error.code = 'TEACHING_D07_ANALYSIS_REVISION_PREACTIVATION_ONLY';
+      throw error;
+    }
+
+    if (normalizedOperation === 'GENERATE' && currentStatus === 'PUBLISHED' && currentValidatedAudit(setup) && !supersededCurrent) {
       return {
         accepted: true,
-        background: true,
-        jobId: current.event_id,
-        status: current.status,
-        joinedExisting: true,
+        background: false,
+        status: 'COMPLETED',
         auditReady: true,
         auditVersion: Number(setup.curriculumAudit.audit_version),
         operation: 'GENERATION',
@@ -364,12 +434,16 @@ function createD07Service({
 
     const now = clock().toISOString();
     const eventId = randomUUID();
-    const priorAuditVersion = regenerate ? Number(regeneration?.previousAudit?.audit_version || 0) : 0;
-    const modeKey = regenerate ? `:regenerate:from-audit-${priorAuditVersion}` : '';
+    const priorAuditVersion = revision ? Number(revisionBasis.audit_version || 0) : 0;
+    const instruction = normalizedOperation === 'REFINE' ? normalizedChangeRequest : normalizedReason;
+    const instructionDigest = revision ? digest(instruction || normalizedOperation).slice(0, 16) : 'initial';
+    const modeKey = revision
+      ? `:${normalizedOperation.toLowerCase()}:from-audit-${priorAuditVersion}:instruction-${instructionDigest}`
+      : '';
     const baseKey = `d07:curriculum-audit:${courseId}:${setup.course.state_version}:tpf02:${TPF02_FAMILY_VERSION}${modeKey}`;
     const idempotencyKey = supersededCurrent
       ? `${baseKey}:state-recovery:${current.event_id}`
-      : currentStatus === 'CANCELLED' && !regenerate
+      : currentStatus === 'CANCELLED' && normalizedOperation === 'GENERATE'
         ? `${baseKey}:recovery:${current.event_id}`
         : baseKey;
     const effectiveCausationId = causationId || (
@@ -383,11 +457,13 @@ function createD07Service({
       eventCategory: 'operational_recovery_event',
       triggerType: 'background_analysis',
       source: 'teaching.d07',
-      origin: regenerate
-        ? 'teaching.curriculum.audit_regeneration'
-        : supersededCurrent
-          ? 'teaching.curriculum.audit_state_recovery'
-          : 'teaching.course_setup',
+      origin: normalizedOperation === 'REFINE'
+        ? 'teaching.curriculum.audit_refinement'
+        : normalizedOperation === 'REGENERATE'
+          ? 'teaching.curriculum.audit_regeneration'
+          : supersededCurrent
+            ? 'teaching.curriculum.audit_state_recovery'
+            : 'teaching.course_setup',
       actorId: String(user.id),
       aggregateType: 'teaching_course',
       aggregateId: String(courseId),
@@ -399,14 +475,15 @@ function createD07Service({
       payload: {
         course_id: String(courseId),
         expected_state_version: String(setup.course.state_version),
-        regenerate: regenerate === true,
-        regeneration_reason: regenerate && normalizedReason ? normalizedReason : null,
-        previous_audit_id: regenerate ? regeneration?.previousAudit?.curriculum_audit_id || null : null,
-        previous_audit_version: regenerate ? priorAuditVersion || null : null,
+        operation: normalizedOperation,
+        refine: normalizedOperation === 'REFINE',
+        regenerate: normalizedOperation === 'REGENERATE',
+        change_request: normalizedOperation === 'REFINE' ? normalizedChangeRequest : null,
+        regeneration_reason: normalizedOperation === 'REGENERATE' && normalizedReason ? normalizedReason : null,
+        previous_audit_id: revision ? revisionBasis.curriculum_audit_id : null,
+        previous_audit_version: revision ? priorAuditVersion : null,
       },
-      auditRefs: regenerate && regeneration?.previousAudit?.curriculum_audit_id
-        ? [`curriculum-audit:${regeneration.previousAudit.curriculum_audit_id}`]
-        : [],
+      auditRefs: revision ? [`curriculum-audit:${revisionBasis.curriculum_audit_id}`] : [],
       provenanceRefs: (setup.sources || []).map((source) => `source:${source.source_content_item_id}`),
     });
     return {
@@ -415,9 +492,10 @@ function createD07Service({
       jobId: queued.event.event_id,
       status: queued.event.status,
       joinedExisting: queued.inserted === false,
-      operation: regenerate ? 'REGENERATION' : 'GENERATION',
-      previousAuditVersion: regenerate ? priorAuditVersion || null : null,
-      resetApplied: regenerate === true,
+      operation: normalizedOperation === 'REFINE' ? 'REFINEMENT' : normalizedOperation === 'REGENERATE' ? 'REGENERATION' : 'GENERATION',
+      previousAuditVersion: revision ? priorAuditVersion : null,
+      resetApplied: false,
+      resetOnValidatedCommit: revision,
     };
   }
 
