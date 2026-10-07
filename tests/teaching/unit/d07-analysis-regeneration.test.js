@@ -11,6 +11,11 @@ const {
   buildRegenerationContext,
   buildRefinementContext,
   curriculumRefinementRequest,
+  mergeCompressionRefinementRequest,
+  isMergeCompressionChangeRequest,
+  validateMergeCompressionPatch,
+  applyMergeCompressionPatch,
+  createD07Intelligence,
   executeAdaptiveLineageRepair,
   validateLineageRepairPatch,
   lineageRepairRequest,
@@ -186,6 +191,137 @@ test('targeted refinement receives the whole-synthesis output ceiling so reasoni
   });
 
   assert.equal(request.generation.maxOutputTokens,64_000);
+});
+
+
+test('merge/reduce Course-analysis edits route through the bounded MERGE_OR_COMPRESS_UNITS capability instead of full-audit restatement', async () => {
+  assert.equal(isMergeCompressionChangeRequest('Learning units are too much; reduce and merge some but maintain quality.'),true);
+  assert.equal(isMergeCompressionChangeRequest('Fix the wording of one exit-evidence sentence.'),false);
+
+  const requests=[];
+  const intelligence=createD07Intelligence({
+    orchestrator:{
+      async execute(request){
+        requests.push(request);
+        return {accepted:false,reason:'test-stop'};
+      },
+    },
+  });
+
+  await intelligence.refineCurriculumAudit({
+    course:course(),
+    sources:[source()],
+    previousAudit:currentAudit(),
+    changeRequest:'Learning units are too much; reduce and merge some but maintain quality.',
+  });
+
+  assert.equal(requests.length,1);
+  assert.equal(requests[0].capabilityId,'teaching.curriculum.dynamic_learning_unit_merging_compression');
+  assert.equal(requests[0].taskMode,'MERGE_OR_COMPRESS_UNITS');
+  assert.equal(requests[0].academicInput.task_mode,'MERGE_OR_COMPRESS_UNITS');
+  assert.equal(requests[0].academicInput.merge_compression_context.mode,'STUDENT_DIRECTED_MERGE_COMPRESSION');
+  assert.deepEqual(requests[0].academicInput.source_items,[]);
+  assert.equal(requests[0].outputSchema.id,'tpf02.merge-compression-patch');
+  assert.equal(requests[0].generation.maxOutputTokens,48_000);
+});
+
+test('bounded merge/compression patch preserves lineage and rewires downstream prerequisites deterministically', () => {
+  const baseOutput={
+    input_state_reference:'teaching_course:course-1:state:4',
+    task_mode:'DEEP_AUDIT',
+    execution_stage:'SINGLE_PASS',
+    audit_scope:{subject_or_course:'Biology',source_refs:['source:s1','source:s2','source:s3'],trusted_scope_version:'subject:subject-1:snapshot-4',source_walk:[]},
+    source_inventory:[
+      {source_item_ref:'source:s1',provenance:'s1',academic_meaning:'Cell membrane structure',proposed_scope_classification:'required',scope_classification_basis:'Course source',duplicate_of_ref:null,content_validity_status:'current_supported',content_validity_basis:null,confidence:'high'},
+      {source_item_ref:'source:s2',provenance:'s2',academic_meaning:'Membrane transport',proposed_scope_classification:'required',scope_classification_basis:'Course source',duplicate_of_ref:null,content_validity_status:'current_supported',content_validity_basis:null,confidence:'high'},
+      {source_item_ref:'source:s3',provenance:'s3',academic_meaning:'Enzyme activity',proposed_scope_classification:'required',scope_classification_basis:'Course source',duplicate_of_ref:null,content_validity_status:'current_supported',content_validity_basis:null,confidence:'high'},
+    ],
+    topics:[{topic_id:'t1',title:'Cell biology',source_item_refs:['source:s1','source:s2','source:s3'],subtopics:[{subtopic_id:'st1',title:'Cell processes'}]}],
+    learning_units:[
+      {learning_unit_id:'u1',title:'Membrane structure',intended_competence:'Explain membrane structure.',source_item_refs:['source:s1'],topic_refs:['t1'],subtopic_id:'st1',prerequisite_refs:[],dependency_type_notes:null,criticality:'major',criticality_basis:'Core cell concept',proposed_exit_evidence:'Explain membrane components.',gap_refs:[],uncertainties:[]},
+      {learning_unit_id:'u2',title:'Membrane transport',intended_competence:'Explain membrane transport.',source_item_refs:['source:s2'],topic_refs:['t1'],subtopic_id:'st1',prerequisite_refs:['u1'],dependency_type_notes:'Builds on membrane structure.',criticality:'major',criticality_basis:'Core cell process',proposed_exit_evidence:'Compare transport mechanisms.',gap_refs:[],uncertainties:[]},
+      {learning_unit_id:'u3',title:'Enzyme activity',intended_competence:'Analyze enzyme activity.',source_item_refs:['source:s3'],topic_refs:['t1'],subtopic_id:'st1',prerequisite_refs:['u2'],dependency_type_notes:'Follows cell transport.',criticality:'major',criticality_basis:'Core biochemical process',proposed_exit_evidence:'Analyze an enzyme-rate scenario.',gap_refs:[],uncertainties:[]},
+    ],
+    assumed_prerequisites:[],
+    source_conflicts:[],
+    coverage_gaps:[],
+    structure_change_proposals:[],
+    source_to_unit_reconciliation:{required_item_map:[],unmapped_required_refs:[]},
+    unresolved_items:[],
+    status:'ok',
+    review_required:false,
+    review_reasons:[],
+    student_facing_summary_candidate:'Old summary',
+  };
+  const academicInput={input_state_reference:'teaching_course:course-1:state:4'};
+  const patch={
+    input_state_reference:'teaching_course:course-1:state:4',
+    task_mode:'MERGE_OR_COMPRESS_UNITS',
+    execution_stage:'SINGLE_PASS',
+    merge_groups:[{
+      type:'merge',
+      affected_unit_refs:['u1','u2'],
+      continuity_unit_ref:'u1',
+      title:'Membrane structure and transport',
+      intended_competence:'Relate membrane structure to transport mechanisms.',
+      dependency_type_notes:null,
+      criticality:'major',
+      criticality_basis:'The competencies form one coherent membrane-function unit.',
+      proposed_exit_evidence:'Explain how membrane structure determines transport in a novel scenario.',
+      uncertainties:[],
+      reason:'Structure and transport are tightly coupled and can be assessed coherently without losing either competence.',
+    }],
+    unresolved_reason:null,
+    required_next_input_or_review:null,
+    review_required:false,
+  };
+
+  const validated=validateMergeCompressionPatch(patch,{academicInput,baseOutput});
+  assert.equal(validated.ok,true);
+
+  const merged=applyMergeCompressionPatch(baseOutput,patch);
+  assert.deepEqual(merged.learning_units.map((unit)=>unit.learning_unit_id),['u1','u3']);
+  assert.deepEqual(merged.learning_units[0].source_item_refs,['source:s1','source:s2']);
+  assert.deepEqual(merged.learning_units[1].prerequisite_refs,['u1']);
+  assert.equal(merged.structure_change_proposals.at(-1).type,'merge');
+  assert.deepEqual(merged.structure_change_proposals.at(-1).source_item_refs_before,['source:s1','source:s2']);
+  assert.equal(merged.student_facing_summary_candidate,null);
+});
+
+test('merge/compression patch refuses cross-placement merges even when the student asks for fewer units', () => {
+  const baseOutput={
+    learning_units:[
+      {learning_unit_id:'u1',source_item_refs:['source:s1'],topic_refs:['t1'],subtopic_id:'st1'},
+      {learning_unit_id:'u2',source_item_refs:['source:s2'],topic_refs:['t1'],subtopic_id:'st2'},
+    ],
+  };
+  const output={
+    input_state_reference:'teaching_course:course-1:state:4',
+    task_mode:'MERGE_OR_COMPRESS_UNITS',
+    execution_stage:'SINGLE_PASS',
+    merge_groups:[{
+      type:'merge',
+      affected_unit_refs:['u1','u2'],
+      continuity_unit_ref:'u1',
+      title:'Unsafe cross-subtopic merge',
+      intended_competence:'Do both things.',
+      dependency_type_notes:null,
+      criticality:'major',
+      criticality_basis:'Requested by student.',
+      proposed_exit_evidence:'Demonstrate both.',
+      uncertainties:[],
+      reason:'This intentionally crosses placement to verify the validator blocks it.',
+    }],
+    unresolved_reason:null,
+    required_next_input_or_review:null,
+    review_required:false,
+  };
+  const result=validateMergeCompressionPatch(output,{
+    academicInput:{input_state_reference:'teaching_course:course-1:state:4'},
+    baseOutput,
+  });
+  assert.equal(result.ok,false);
+  assert.equal(result.reason,'TPF02_MERGE_COMPRESSION_PLACEMENT_MISMATCH');
 });
 
 test('large-course lineage repair shrinks a rejected batch and preserves accepted progress between slices', async () => {
@@ -483,6 +619,16 @@ test('TPF-02 direct execution treats student refinement as bounded structural gu
   assert.match(direct,/preserve unaffected curriculum structure/i);
   assert.match(direct,/Copy source_inventory, audit_scope, source_conflicts, and coverage_gaps exactly/);
   assert.match(direct,/merge only when distinct assessable competencies are not collapsed/);
+});
+
+test('TPF-02 direct execution has a bounded merge/compression patch path instead of full-audit output', () => {
+  const direct=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d07/tpf02-direct.js'),'utf8');
+  assert.match(direct,/MERGE_OR_COMPRESS_UNITS/);
+  assert.match(direct,/STUDENT_DIRECTED_MERGE_COMPRESSION/);
+  assert.match(direct,/dedicated merge\/compression patch contract/i);
+  assert.match(direct,/not the full Curriculum Audit artifact/i);
+  assert.match(direct,/server reuses that identity, preserves the exact union of source lineage/i);
+  assert.match(direct,/student request is guidance, not authority/i);
 });
 
 test('validated analysis revision preserves history and resets downstream current state at the analysis boundary', () => {
