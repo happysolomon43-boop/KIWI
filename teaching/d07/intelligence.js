@@ -572,25 +572,15 @@ function applyLineageRepair(baseOutput,repairOutput,{
 }
 
 function validateLineageRepairPatch(output,{academicInput,baseOutput,repairRefs=[]}={}){
+  const schema=validateTpf02LineageRepairPatchSchema(output);
+  if(!schema.ok)return schema;
   const expectedRefs=uniqueStrings(repairRefs);
   const expectedSet=new Set(expectedRefs);
   if(output.input_state_reference!==academicInput.input_state_reference)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_STATE_REFERENCE_MISMATCH'};
-  if(output.task_mode!=='LEARNING_UNIT_DECOMPOSITION')return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TASK_MODE_MISMATCH'};
-  if(output.execution_stage!==EXECUTION_STAGES.SINGLE_PASS)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_STAGE_MISMATCH'};
-  if(!sameStringSet(output.audit_scope?.source_refs||[],expectedRefs))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_SOURCE_CENSUS_MISMATCH'};
-  if(String(output.audit_scope?.trusted_scope_version||'')!==String(academicInput.audit_scope.trusted_scope_version||''))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_SCOPE_VERSION_MISMATCH'};
-  if((output.source_inventory||[]).length!==0)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_MUST_DEFER_SOURCE_INVENTORY'};
-  if((output.audit_scope?.source_walk||[]).length!==0)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_MUST_DEFER_SOURCE_WALK'};
-  for(const field of ['assumed_prerequisites','source_conflicts','coverage_gaps','structure_change_proposals','unresolved_items']){
-    if((output[field]||[]).length!==0)return {ok:false,reason:`TPF02_LINEAGE_REPAIR_SCOPE_EXCEEDED:${field}`};
-  }
-  if(output.status!=='ok'||output.review_required!==false||(output.review_reasons||[]).length!==0||output.student_facing_summary_candidate!=null){
-    return {ok:false,reason:'TPF02_LINEAGE_REPAIR_COMPLETION_STATE_INVALID'};
-  }
 
   const existingTopicIds=new Set((baseOutput.topics||[]).map((topic)=>String(topic.topic_id)));
   const newTopicIds=new Set();
-  for(const topic of output.topics||[]){
+  for(const topic of output.new_topics||[]){
     const id=String(topic?.topic_id||'').trim();
     if(!id||existingTopicIds.has(id)||newTopicIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_INVALID'};
     newTopicIds.add(id);
@@ -598,27 +588,33 @@ function validateLineageRepairPatch(output,{academicInput,baseOutput,repairRefs=
   }
 
   const existingUnitById=new Map((baseOutput.learning_units||[]).map((unit)=>[String(unit.learning_unit_id),unit]));
-  const repairUnitIds=new Set();
-  for(const unit of output.learning_units||[]){
-    const id=String(unit?.learning_unit_id||'').trim();
-    if(!id||repairUnitIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_UNIT_ID_INVALID'};
-    repairUnitIds.add(id);
+  const attachmentIds=new Set();
+  const newUnitIds=new Set();
+  const covered=new Set();
+  for(const attachment of output.existing_unit_attachments||[]){
+    const id=String(attachment.learning_unit_id||'').trim();
+    if(!existingUnitById.has(id)||attachmentIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_ATTACHMENT_UNIT_INVALID'};
+    attachmentIds.add(id);
+    if(existingUnitById.get(id)?.criticality==='enrichment')return {ok:false,reason:'TPF02_LINEAGE_REPAIR_REQUIRED_SOURCE_ENRICHMENT_FORBIDDEN'};
+    for(const ref of uniqueStrings(attachment.source_item_refs||[])){
+      if(!expectedSet.has(ref))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_ATTACHMENT_SOURCE_REF_INVALID'};
+      covered.add(ref);
+    }
   }
+  for(const unit of output.new_learning_units||[]){
+    const id=String(unit.learning_unit_id||'').trim();
+    if(!id||existingUnitById.has(id)||newUnitIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_NEW_UNIT_ID_INVALID'};
+    newUnitIds.add(id);
+  }
+
   const existingAssumedIds=new Set((baseOutput.assumed_prerequisites||[]).map((item)=>String(item.assumed_prerequisite_id)));
   const allowedTopicIds=new Set([...existingTopicIds,...newTopicIds]);
-  const allowedPrerequisiteIds=new Set([...existingUnitById.keys(),...repairUnitIds,...existingAssumedIds]);
-  const covered=new Set();
-
-  for(const unit of output.learning_units||[]){
+  const allowedPrerequisiteIds=new Set([...existingUnitById.keys(),...newUnitIds,...existingAssumedIds]);
+  for(const unit of output.new_learning_units||[]){
     const id=String(unit.learning_unit_id);
     const refs=uniqueStrings(unit.source_item_refs||[]);
     if(!refs.length||refs.some((ref)=>!expectedSet.has(ref)))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_UNIT_SOURCE_REF_INVALID'};
     for(const ref of refs)covered.add(ref);
-    const existing=existingUnitById.get(id);
-    if(existing){
-      if(existing.criticality==='enrichment')return {ok:false,reason:'TPF02_LINEAGE_REPAIR_REQUIRED_SOURCE_ENRICHMENT_FORBIDDEN'};
-      continue;
-    }
     if(unit.criticality==='enrichment')return {ok:false,reason:'TPF02_LINEAGE_REPAIR_REQUIRED_SOURCE_ENRICHMENT_FORBIDDEN'};
     if((unit.topic_refs||[]).some((ref)=>!allowedTopicIds.has(String(ref))))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_REF_UNKNOWN'};
     if((unit.prerequisite_refs||[]).some((ref)=>String(ref)===id||!allowedPrerequisiteIds.has(String(ref))))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_PREREQUISITE_REF_UNKNOWN'};
@@ -626,7 +622,17 @@ function validateLineageRepairPatch(output,{academicInput,baseOutput,repairRefs=
   }
 
   if(!sameStringSet([...covered],expectedRefs))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_SOURCE_CENSUS_INCOMPLETE'};
-  return {ok:true,value:output};
+  const normalized=Object.freeze({
+    topics:Object.freeze([...(output.new_topics||[])]),
+    learning_units:Object.freeze([
+      ...(output.existing_unit_attachments||[]).map((item)=>Object.freeze({
+        learning_unit_id:item.learning_unit_id,
+        source_item_refs:Object.freeze([...(item.source_item_refs||[])]),
+      })),
+      ...(output.new_learning_units||[]),
+    ]),
+  });
+  return {ok:true,value:normalized};
 }
 
 function lineageRepairRequest({
@@ -683,7 +689,7 @@ function lineageRepairRequest({
       existing_gap_refs:Object.freeze((baseOutput.coverage_gaps||[]).map((item)=>item.gap_id)),
     }),
   });
-  const outputSchema=tpf02OutputSchema();
+  const outputSchema=tpf02LineageRepairPatchOutputSchema();
   const fullAcademicInput=buildTpf02AcademicInput({
     course,
     sources,
@@ -723,8 +729,8 @@ function lineageRepairRequest({
       evidence_purpose:'required_source_lineage_completion',
     },
     modelContentMode:'TPF02_DIRECT',
-    generation:tpf02Generation(academicInput),
-    schemaValidator:validateTpf02Schema,
+    generation:tpf02Generation(academicInput,TPF02_LINEAGE_REPAIR_PATCH_RESPONSE_SCHEMA),
+    schemaValidator:validateTpf02LineageRepairPatchSchema,
     domainValidator:async out=>{
       const patch=validateLineageRepairPatch(out,{academicInput,baseOutput,repairRefs:requestedRefs});
       if(!patch.ok)return patch;
@@ -736,7 +742,14 @@ function lineageRepairRequest({
       });
       return validateTpf02Domain(merged,fullValidationContext);
     },
-    provenanceValidator:fullProvenanceValidator(fullSourceRefs),
+    provenanceValidator:async out=>{
+      const used=uniqueStrings([
+        ...(out?.existing_unit_attachments||[]).flatMap((item)=>item.source_item_refs||[]),
+        ...(out?.new_topics||[]).flatMap((topic)=>topic.source_item_refs||[]),
+        ...(out?.new_learning_units||[]).flatMap((unit)=>unit.source_item_refs||[]),
+      ]);
+      return {ok:used.every((ref)=>requestedSet.has(ref)),reason:'TPF02_LINEAGE_REPAIR_PROVENANCE_INVALID'};
+    },
     validationContext:fullValidationContext,
   };
 }
