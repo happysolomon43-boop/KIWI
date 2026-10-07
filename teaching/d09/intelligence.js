@@ -57,6 +57,22 @@ function expectedStateRef(course) {
   return `course:${course.course_id}:state:${course.state_version}`;
 }
 
+function withSchedulerValidationInvariant(output) {
+  if (!output?.validation_and_handoff || typeof output.validation_and_handoff !== 'object' || Array.isArray(output.validation_and_handoff)) return output;
+  if (typeof output.validation_and_handoff.deterministic_scheduler_validation_required !== 'boolean') return output;
+  if (output.validation_and_handoff.deterministic_scheduler_validation_required === true) return output;
+  return {
+    ...output,
+    validation_and_handoff: {
+      ...output.validation_and_handoff,
+      // This is a runtime-owned authority invariant, not a model judgment.
+      // TPF-10 may estimate demand, but D09 always performs deterministic
+      // Scheduler validation before any timetable can be persisted.
+      deterministic_scheduler_validation_required: true,
+    },
+  };
+}
+
 function validateLoadEstimationOutput(output, targets, course = null) {
   if (!output || typeof output !== 'object' || Array.isArray(output)) return { ok: false, reason: 'TEACHING_D09_LOAD_OUTPUT_INVALID' };
   if (!LOAD_OUTPUT_STATUSES.has(String(output.status || ''))) return { ok: false, reason: 'TEACHING_D09_LOAD_STATUS_INVALID' };
@@ -68,8 +84,9 @@ function validateLoadEstimationOutput(output, targets, course = null) {
   if (!output.planning_scope || !output.constraints || !output.proposal || !output.inactivity_interpretation || !output.validation_and_handoff) return { ok: false, reason: 'TEACHING_D09_LOAD_CANONICAL_FIELDS_REQUIRED' };
   if (output.capacity_analysis?.recovery_headroom?.invented_numeric_headroom !== false) return { ok: false, reason: 'TEACHING_D09_LOAD_HEADROOM_AUTHORITY_VIOLATION' };
   if (output.inactivity_interpretation.misconduct_inference_made !== false || output.inactivity_interpretation.attendance_outcome_made !== false) return { ok: false, reason: 'TEACHING_D09_LOAD_INACTIVITY_AUTHORITY_VIOLATION' };
-  if (output.validation_and_handoff.deterministic_scheduler_validation_required !== true) return { ok: false, reason: 'TEACHING_D09_LOAD_SCHEDULER_VALIDATION_REQUIRED' };
-  const estimates = output.capacity_analysis?.instructional_load_estimates;
+  if (typeof output.validation_and_handoff.deterministic_scheduler_validation_required !== 'boolean') return { ok: false, reason: 'TEACHING_D09_LOAD_SCHEDULER_VALIDATION_FIELD_INVALID' };
+  const candidate = withSchedulerValidationInvariant(output);
+  const estimates = candidate.capacity_analysis?.instructional_load_estimates;
   if (!Array.isArray(estimates)) return { ok: false, reason: 'TEACHING_D09_LOAD_ESTIMATES_REQUIRED' };
   const expected = new Set(targets.map((target) => target.scope_ref));
   const seen = new Set();
@@ -83,7 +100,7 @@ function validateLoadEstimationOutput(output, targets, course = null) {
     if (!Array.isArray(estimate.estimate_basis) || !['low','medium','high'].includes(String(estimate.uncertainty || ''))) return { ok: false, reason: 'TEACHING_D09_LOAD_PROVENANCE_INVALID' };
   }
   if ([...expected].some((ref) => !seen.has(ref))) return { ok: false, reason: 'TEACHING_D09_LOAD_ESTIMATE_OMITTED' };
-  return { ok: true, value: output };
+  return { ok: true, value: candidate };
 }
 
 function structuralOutputSchema({ id, validate, taskMode }) {
@@ -177,6 +194,9 @@ function schedulingRequest({course,context,taskMode='initial_timetable_proposal'
           estimate_true_learning_demand_not_calendar_fit:true,
           minimum_safe_instructional_load_is_academic_not_calendar_derived:true,
           deterministic_feasibility_remains_authoritative:true,
+          runtime_owned_output_invariants:{
+            deterministic_scheduler_validation_required:true,
+          },
           do_not_commit_or_place_classes:true,
         }
       : {semester_ref:context.semester?.semester_id||null,profile_ref:context.profile?.profile_id||null,deterministic_feasibility_remains_authoritative:true},
@@ -201,4 +221,4 @@ function createD09Intelligence({orchestrator}={}) {
   if(!orchestrator||typeof orchestrator.execute!=='function') throw new TypeError('D09 intelligence requires Teaching Orchestrator.');
   return Object.freeze({execute:(args)=>orchestrator.execute(schedulingRequest(args))});
 }
-module.exports={loadTargets,validateLoadEstimationOutput,schedulingRequest,createD09Intelligence};
+module.exports={loadTargets,withSchedulerValidationInvariant,validateLoadEstimationOutput,schedulingRequest,createD09Intelligence};

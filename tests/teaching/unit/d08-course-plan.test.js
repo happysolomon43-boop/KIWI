@@ -343,6 +343,34 @@ test('TPF-03 accepts the canonical TPF-02 schema, stays below the input limit, a
   assert.ok(result.value.source_mappings.every((mapping) => mapping.learning_unit_keys[0] === 'unit-1'));
 });
 
+test('TPF-03 regeneration keeps large previous-plan lineage outside the 64 KiB model input', () => {
+  const fixture = canonicalTpf02Audit(141);
+  const course = { course_id: 'c1', student_id: 'u1', state_version: 2, lifecycle_state: 'DRAFT', subject_snapshot_ref: 'snapshot:canonical' };
+  const previousPlanContext = {
+    version: 1,
+    units: [{ key: 'unit-1', title: 'Canonical unit' }],
+    sourceMappings: fixture.sources.map((source) => ({
+      learning_unit_key: 'unit-1',
+      source_ref: source.source_ref,
+    })),
+  };
+
+  const request = coursePlanRequest({
+    course,
+    audit: fixture.audit,
+    sources: fixture.sources,
+    previousPlanContext,
+  });
+  const serialized = serializeAcademicInput(request.academicInput);
+
+  assert.ok(Buffer.byteLength(serialized, 'utf8') < 65_536);
+  assert.equal(request.academicInput.previous_plan_context.version, 1);
+  assert.equal(request.academicInput.previous_plan_context.source_mapping_count, 141);
+  assert.equal(request.academicInput.previous_plan_context.source_mapping_lineage_handled_deterministically, true);
+  assert.equal(Object.hasOwn(request.academicInput.previous_plan_context, 'sourceMappings'), false);
+  assert.deepEqual(previousPlanContext.sourceMappings.length, 141);
+});
+
 test('D08 intelligence delegates model work only through the Teaching Orchestrator', async () => {
   const calls = [];
   const intelligence = createD08Intelligence({ orchestrator: { async execute(request) { calls.push(request); return { accepted: true }; } } });

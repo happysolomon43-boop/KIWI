@@ -154,8 +154,31 @@ test('D09 instructional-load estimation uses frozen TPF-10 authority and canonic
   assert.equal(request.academicInput.effort_unit_required, 'minutes');
   assert.equal(request.outputSchema.id, 'tpf10.instructional-load-estimation');
   assert.ok(request.generation.structuredOutput.schema.properties.validation_and_handoff);
+  const providerSchema = request.generation.structuredOutput.schema;
+  assert.deepEqual(providerSchema.properties.validation_and_handoff.properties.deterministic_scheduler_validation_required.enum, [true]);
+  assert.deepEqual(providerSchema.properties.capacity_analysis.properties.recovery_headroom.properties.invented_numeric_headroom.enum, [false]);
+  assert.deepEqual(providerSchema.properties.inactivity_interpretation.properties.misconduct_inference_made.enum, [false]);
+  assert.deepEqual(providerSchema.properties.inactivity_interpretation.properties.attendance_outcome_made.enum, [false]);
   const output = canonicalOutput(targets[0]);
   assert.deepEqual(validateLoadEstimationOutput(output, targets, ctx.courses[0].course), { ok: true, value: output });
+});
+
+test('D09 owns the deterministic Scheduler-validation handoff instead of trusting the model flag', () => {
+  const ctx = context();
+  const targets = loadTargets(ctx);
+  const output = canonicalOutput(targets[0]);
+  output.validation_and_handoff.deterministic_scheduler_validation_required = false;
+
+  const result = validateLoadEstimationOutput(output, targets, ctx.courses[0].course);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.validation_and_handoff.deterministic_scheduler_validation_required, true);
+  assert.equal(output.validation_and_handoff.deterministic_scheduler_validation_required, false);
+
+  const request = schedulingRequest({ course: ctx.courses[0].course, context: ctx, taskMode: 'instructional_load_estimation' });
+  assert.deepEqual(request.academicInput.runtime_owned_output_invariants, {
+    deterministic_scheduler_validation_required: true,
+  });
 });
 
 test('D09 instructional-load estimation passes the frozen D03 structural invocation boundary', () => {
@@ -200,6 +223,21 @@ test('D09 rejects missing, zero or authority-breaking workload estimates', () =>
   assert.equal(validateLoadEstimationOutput(omitted, targets, ctx.courses[0].course).reason, 'TEACHING_D09_LOAD_ESTIMATE_OMITTED');
   const headroom = structuredClone(good); headroom.capacity_analysis.recovery_headroom.invented_numeric_headroom = true;
   assert.equal(validateLoadEstimationOutput(headroom, targets, ctx.courses[0].course).reason, 'TEACHING_D09_LOAD_HEADROOM_AUTHORITY_VIOLATION');
+});
+
+test('D09 cannot let model output disable deterministic Scheduler validation', () => {
+  const ctx = context(), targets = loadTargets(ctx), output = canonicalOutput(targets[0]);
+  output.validation_and_handoff.deterministic_scheduler_validation_required = false;
+
+  const validated = validateLoadEstimationOutput(output, targets, ctx.courses[0].course);
+
+  assert.equal(validated.ok, true);
+  assert.equal(validated.value.validation_and_handoff.deterministic_scheduler_validation_required, true);
+  assert.deepEqual(
+    validated.value.capacity_analysis.instructional_load_estimates,
+    output.capacity_analysis.instructional_load_estimates
+  );
+  assert.equal(output.validation_and_handoff.deterministic_scheduler_validation_required, false);
 });
 
 test('D09 converts accepted validated TPF-10 output into bounded Scheduler estimates', () => {

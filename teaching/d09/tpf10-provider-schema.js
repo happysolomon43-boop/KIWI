@@ -4,6 +4,8 @@ const STRING_ARRAY = Object.freeze({ type: 'array', items: Object.freeze({ type:
 const STRING = Object.freeze({ type: 'string' });
 const NULLABLE_STRING = Object.freeze({ type: 'string', nullable: true });
 const BOOLEAN = Object.freeze({ type: 'boolean' });
+const TRUE = Object.freeze({ type: 'boolean', enum: Object.freeze([true]) });
+const FALSE = Object.freeze({ type: 'boolean', enum: Object.freeze([false]) });
 
 const LOAD_ESTIMATE_SCHEMA = Object.freeze({
   type: 'object',
@@ -56,7 +58,7 @@ const TPF10_INSTRUCTIONAL_LOAD_RESPONSE_SCHEMA = Object.freeze({
       type: 'object',
       properties: Object.freeze({
         instructional_load_estimates:Object.freeze({type:'array',items:LOAD_ESTIMATE_SCHEMA}),
-        recovery_headroom:Object.freeze({type:'object',properties:Object.freeze({authoritative_status:Object.freeze({type:'string',enum:Object.freeze(['healthy','limited','critical','unavailable','not_supplied'])}),model_interpretation:STRING,invented_numeric_headroom:BOOLEAN}),required:Object.freeze(['authoritative_status','model_interpretation','invented_numeric_headroom'])}),
+        recovery_headroom:Object.freeze({type:'object',properties:Object.freeze({authoritative_status:Object.freeze({type:'string',enum:Object.freeze(['healthy','limited','critical','unavailable','not_supplied'])}),model_interpretation:STRING,invented_numeric_headroom:FALSE}),required:Object.freeze(['authoritative_status','model_interpretation','invented_numeric_headroom'])}),
         schedule_debt:Object.freeze({type:'object',properties:Object.freeze({authoritative_debt_ref:NULLABLE_STRING,supported_causes:STRING_ARRAY,uncertain_causes:STRING_ARRAY,academic_effect:STRING}),required:Object.freeze(['authoritative_debt_ref','supported_causes','uncertain_causes','academic_effect'])}),
         global_workload_risks:STRING_ARRAY,
       }),
@@ -73,8 +75,8 @@ const TPF10_INSTRUCTIONAL_LOAD_RESPONSE_SCHEMA = Object.freeze({
       }),
       required:Object.freeze(['proposal_type','options','preferred_for_validation_option_id','preference_basis','selection_rule']),
     }),
-    inactivity_interpretation:Object.freeze({type:'object',properties:Object.freeze({check_in_warranted:BOOLEAN,supported_reason:NULLABLE_STRING,misconduct_inference_made:BOOLEAN,attendance_outcome_made:BOOLEAN}),required:Object.freeze(['check_in_warranted','supported_reason','misconduct_inference_made','attendance_outcome_made'])}),
-    validation_and_handoff:Object.freeze({type:'object',properties:Object.freeze({deterministic_scheduler_validation_required:BOOLEAN,request_system_required:BOOLEAN,course_planner_review_required:BOOLEAN,lesson_planner_review_required:BOOLEAN,diagnostic_reentry_recommended:BOOLEAN,unresolved_dependencies:STRING_ARRAY}),required:Object.freeze(['deterministic_scheduler_validation_required','request_system_required','course_planner_review_required','lesson_planner_review_required','diagnostic_reentry_recommended','unresolved_dependencies'])}),
+    inactivity_interpretation:Object.freeze({type:'object',properties:Object.freeze({check_in_warranted:BOOLEAN,supported_reason:NULLABLE_STRING,misconduct_inference_made:FALSE,attendance_outcome_made:FALSE}),required:Object.freeze(['check_in_warranted','supported_reason','misconduct_inference_made','attendance_outcome_made'])}),
+    validation_and_handoff:Object.freeze({type:'object',properties:Object.freeze({deterministic_scheduler_validation_required:TRUE,request_system_required:BOOLEAN,course_planner_review_required:BOOLEAN,lesson_planner_review_required:BOOLEAN,diagnostic_reentry_recommended:BOOLEAN,unresolved_dependencies:STRING_ARRAY}),required:Object.freeze(['deterministic_scheduler_validation_required','request_system_required','course_planner_review_required','lesson_planner_review_required','diagnostic_reentry_recommended','unresolved_dependencies'])}),
     confidence:Object.freeze({type:'string',enum:Object.freeze(['low','medium','high'])}),
   }),
   required:Object.freeze(['status','input_state_reference','capability_id','task_mode','review_required','review_reasons','planning_scope','constraints','capacity_analysis','proposal','inactivity_interpretation','validation_and_handoff','confidence']),
