@@ -1000,3 +1000,92 @@ test('D07 preserves the precise validation cause and marks completed validation 
     },
   );
 });
+
+
+test('merge refinement rebinds a validated stored audit to the current Course state before final validation', async () => {
+  const previousAudit={
+    curriculum_audit_id:'audit-old-state',
+    audit_version:1,
+    status:'VALIDATED_CANDIDATE',
+    audit_output:{
+      input_state_reference:'teaching_course:course-1:state:1',
+      task_mode:'DEEP_AUDIT',
+      execution_stage:'WHOLE_CURRICULUM_SYNTHESIS_STAGE',
+      audit_scope:{
+        subject_or_course:'Biology',
+        source_refs:['source:source-1'],
+        trusted_scope_version:'subject:subject-1:snapshot-4',
+        source_walk:[{source_item_ref:'source:source-1',analysis_status:'complete',note:null}],
+      },
+      source_inventory:[{
+        source_item_ref:'source:source-1',
+        provenance:'fixture',
+        academic_meaning:'Cell membrane transport evidence.',
+        proposed_scope_classification:'required',
+        scope_classification_basis:'Direct Course evidence.',
+        duplicate_of_ref:null,
+        content_validity_status:'current_supported',
+        content_validity_basis:'No contradiction identified.',
+        confidence:'high',
+      }],
+      topics:[{
+        topic_id:'topic-1',
+        title:'Cell biology',
+        source_item_refs:['source:source-1'],
+        subtopics:[{subtopic_id:'subtopic-1',title:'Membrane function'}],
+      }],
+      learning_units:[{
+        learning_unit_id:'unit-1',
+        title:'Membrane transport',
+        intended_competence:'Explain and apply membrane transport mechanisms.',
+        source_item_refs:['source:source-1'],
+        topic_refs:['topic-1'],
+        subtopic_id:'subtopic-1',
+        prerequisite_refs:[],
+        dependency_type_notes:null,
+        criticality:'major',
+        criticality_basis:'Core Course competence.',
+        proposed_exit_evidence:'Explain membrane transport in a novel cell scenario.',
+        gap_refs:[],
+        uncertainties:[],
+      }],
+      assumed_prerequisites:[],
+      source_conflicts:[],
+      coverage_gaps:[],
+      structure_change_proposals:[],
+      source_to_unit_reconciliation:{
+        required_item_map:[{source_item_ref:'source:source-1',learning_unit_refs:['unit-1']}],
+        unmapped_required_refs:[],
+      },
+      unresolved_items:[],
+      status:'ok',
+      review_required:false,
+      review_reasons:[],
+      student_facing_summary_candidate:'Validated Course analysis.',
+    },
+  };
+  const request=mergeCompressionRefinementRequest({
+    course:course(4),
+    sources:[source()],
+    previousAudit,
+    changeRequest:'Reduce excessive units only when academically safe.',
+  });
+  const noChange={
+    input_state_reference:'model-stale-or-invented-state',
+    task_mode:'MERGE_OR_COMPRESS_UNITS',
+    execution_stage:'SINGLE_PASS',
+    merge_groups:[],
+    unresolved_reason:'No academically defensible merge is available without collapsing distinct competence.',
+    required_next_input_or_review:'Keep the current validated structure.',
+    review_required:true,
+  };
+
+  const schema=await request.schemaValidator(noChange);
+  assert.equal(schema.ok,true,schema.reason);
+  const domain=await request.domainValidator(schema.value);
+  assert.equal(domain.ok,true,domain.reason);
+  assert.equal(domain.value.input_state_reference,'teaching_course:course-1:state:4');
+  assert.equal(domain.value.task_mode,'DEEP_AUDIT');
+  assert.equal(domain.value.execution_stage,'SINGLE_PASS');
+  assert.equal(domain.value.audit_scope.trusted_scope_version,'subject:subject-1:snapshot-4');
+});

@@ -465,14 +465,23 @@ function mergeCompressionRefinementRequest({course,sources,previousAudit,changeR
     validationContext:fullValidationContext,
     schemaValidator:out=>validateTpf02MergeCompressionPatchSchema(canonicalizeTpf02RuntimeEnvelope(out,academicInput,{canonicalizeAuditScope:false})),
     domainValidator:async out=>{
-      const patch=validateMergeCompressionPatch(out,{academicInput,baseOutput:previousOutput});
+      const currentBase=canonicalizeSynthesisSourceScope(
+        canonicalizeTpf02RuntimeEnvelope(previousOutput,fullAcademicInput),
+        previousOutput.source_inventory||[],
+        fullAcademicInput.audit_scope,
+      );
+      const patch=validateMergeCompressionPatch(out,{academicInput,baseOutput:currentBase});
       if(!patch.ok)return patch;
       if(!(patch.value.merge_groups||[]).length){
-        const unchanged=validateTpf02Domain(previousOutput,fullValidationContext);
-        return unchanged.ok?{ok:true,value:previousOutput}:unchanged;
+        const unchanged=validateTpf02Domain(currentBase,fullValidationContext);
+        return unchanged.ok?{ok:true,value:currentBase}:unchanged;
       }
-      const applied=applyMergeCompressionPatch(previousOutput,patch.value);
-      const assembled=canonicalizeSynthesisSourceScope(applied,previousOutput.source_inventory||[]);
+      const applied=applyMergeCompressionPatch(currentBase,patch.value);
+      const assembled=canonicalizeSynthesisSourceScope(
+        canonicalizeTpf02RuntimeEnvelope(applied,fullAcademicInput),
+        previousOutput.source_inventory||[],
+        fullAcademicInput.audit_scope,
+      );
       const validated=validateTpf02Domain(assembled,fullValidationContext);
       if(!validated.ok)return validated;
 
