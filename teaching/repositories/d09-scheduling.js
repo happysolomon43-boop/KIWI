@@ -2,6 +2,7 @@
 
 const crypto = require('node:crypto');
 const { digest, assertSchedulingContextCurrent } = require('../d09/contracts');
+const { isSchedulableLifecycle } = require('../d09/schedule-preparation');
 
 function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=()=>new Date()}={}) {
   if(typeof query!=='function'||typeof withTransaction!=='function'||typeof randomUUID!=='function') throw new TypeError('D09 repository requires query, withTransaction and randomUUID.');
@@ -342,7 +343,8 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       beforeRef:{profile_id:previous?.profile_id||null},afterRef:{profile_id:profileId,profile_version:version},safeMetadata:{course_id:courseId,staled_timetable_count:Number(staledTimetableCount)||0,preserved_approved_authority:preserveApprovedAuthority}});
     return {semester,profile,ppl};
   }
-  async function saveProposalUsing(tx,{studentId,courseId,context,result,source='DETERMINISTIC_INITIAL'}){
+  async function saveProposalUsing(tx,{studentId,courseId,context,planningContext=null,result,source='DETERMINISTIC_INITIAL'}){
+    const scheduleContext=planningContext||context;
     await assertContextCurrentUsing(tx,{studentId,context});
     await ensureCourse(studentId,courseId,tx,true);
     const {rows:vrows}=await q(tx,'select coalesce(max(version_no),0)+1 v from public.teaching_timetable_versions where semester_id=$1',[context.semester.semester_id]);
@@ -370,7 +372,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       lineagePrevious=approvedRows[0]||null;
     }
     const state=source==='FORMAL_REQUEST_APPLIED'?'APPROVED':source==='PREACTIVATION_EDIT'?'EDITED_PROPOSAL':'PROPOSED';
-    const coursePlanRefs=context.courses.map((b)=>({course_id:b.course.course_id,course_plan_id:b.plan.course_plan_id,version_no:b.plan.version_no,state_version:b.course.state_version}));
+    const coursePlanRefs=(scheduleContext.courses||[]).map((b)=>({course_id:b.course.course_id,course_plan_id:b.plan.course_plan_id,version_no:b.plan.version_no,state_version:b.course.state_version}));
     const {rows:tt}=await q(tx,`insert into public.teaching_timetable_versions(
       timetable_version_id,student_id,semester_id,profile_id,version_no,timetable_state,state_digest,source_kind,course_plan_refs,
       supersedes_timetable_version_id,created_by
@@ -451,13 +453,17 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const currentByCourse=new Map((context.courses||[]).map((bundle)=>[String(bundle.course.course_id),bundle]));
     const refByCourse=new Map(refs.map((ref)=>[String(ref.course_id),ref]));
     const requiredCourseIds=authoritativeView
-      ? (context.courses||[]).filter((bundle)=>['ACTIVE','PAUSED'].includes(String(bundle.course?.lifecycle_state||''))).map((bundle)=>String(bundle.course.course_id))
-      : (context.courses||[]).map((bundle)=>String(bundle.course.course_id));
+      ? (context.courses||[]).filter((bundle)=>String(bundle.course?.lifecycle_state||'')==='ACTIVE').map((bundle)=>String(bundle.course.course_id))
+      : (context.courses||[]).filter((bundle)=>isSchedulableLifecycle(bundle.course?.lifecycle_state)).map((bundle)=>String(bundle.course.course_id));
+    const requiredCourseIdSet=new Set(requiredCourseIds);
     const staleSchedule=Boolean(latest.timetable) && (
       (!authoritativeView && String(latest.timetable.profile_id)!==String(context.profile?.profile_id||''))
       || requiredCourseIds.some((id)=>!refByCourse.has(id))
       || refs.some((ref)=>{
-        const bundle=currentByCourse.get(String(ref.course_id));
+        const courseId=String(ref.course_id);
+        if(authoritativeView&&!requiredCourseIdSet.has(courseId)) return false;
+        if(!authoritativeView&&!requiredCourseIdSet.has(courseId)) return true;
+        const bundle=currentByCourse.get(courseId);
         return !bundle
           || String(ref.course_plan_id)!==String(bundle.plan.course_plan_id)
           || Number(ref.version_no)!==Number(bundle.plan.version_no)
