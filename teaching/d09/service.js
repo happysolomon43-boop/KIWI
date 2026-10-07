@@ -65,7 +65,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
   function schedulableCourseIds(context){
     return Object.freeze([...(context?.courses||[])].map((bundle)=>String(bundle.course?.course_id||'')).filter(Boolean));
   }
-  async function rebuildSharedSemesterTimetable(user,courseId,context,{source}={}){
+  async function rebuildSharedSemesterTimetable(user,courseId,context,{source='DETERMINISTIC_INITIAL'}={}){
     if(!context?.semester||!context?.profile) return Object.freeze({
       recalculated:false,reason:'SCHEDULE_INPUTS_REQUIRED',scope:'SEMESTER_SHARED',semesterId:context?.semester?.semester_id||null,affectedCourseIds:Object.freeze([]),
     });
@@ -110,17 +110,19 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     // invalidates every older timetable version for that Semester. Build one
     // replacement timetable from every current Course Plan so no Course can
     // retain a contradictory private timetable.
-    let automaticRecalculation=null;
+    let automaticRecalculation=null,recalculationContext=null;
     try{
-      const context=await repository.getSchedulingContext(user.id,courseId);
-      automaticRecalculation=await rebuildSharedSemesterTimetable(user,courseId,context,{source:'AVAILABILITY_AUTO_RECALC'});
+      recalculationContext=await repository.getSchedulingContext(user.id,courseId);
+      automaticRecalculation=await rebuildSharedSemesterTimetable(user,courseId,recalculationContext,{source:'AVAILABILITY_AUTO_RECALC'});
     }catch(error){
+      const affectedCourseIds=schedulableCourseIds(recalculationContext);
       automaticRecalculation=Object.freeze({
         recalculated:false,
         reason:error?.code||'SEMESTER_TIMETABLE_REBUILD_FAILED',
         scope:'SEMESTER_SHARED',
-        semesterId:null,
-        affectedCourseIds:Object.freeze([]),
+        semesterId:recalculationContext?.semester?.semester_id||null,
+        affectedCourseIds,
+        affectedCourseCount:affectedCourseIds.length,
       });
       logger?.warn?.('[KIWI Teaching D09] Availability saved but automatic Semester timetable rebuild could not complete.',{
         courseId:String(courseId),
