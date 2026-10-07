@@ -166,7 +166,7 @@ async function renderPlan({course,container}){
       const counts=planCounts(review),hasPlan=Boolean(review.plan),hasTimetable=Boolean(schedule?.timetable),isReady=['READY','ACTIVE','PAUSED'].includes(String(activation?.course?.lifecycleState||course.lifecycle_state)),isActive=['ACTIVE','PAUSED'].includes(String(activation?.course?.lifecycleState||course.lifecycle_state));
       const background=review.generation?.background||null,backgroundStatus=String(background?.status||'').toUpperCase(),planJobActive=ACTIVE_PLAN_JOB_STATUSES.has(backgroundStatus);
       const status=hasPlan?chip(`v${review.plan.version} · ${human(review.plan.state)}`):chip(review.generation?.ready?'Ready to create':'Setup needed',review.generation?.ready?'':'warn');
-      const body=$('div','tf-page');body.append(hero('Course Plan','Review what KIWI will teach','This is the academic plan generated from your saved sources and validated curriculum analysis. Review it before you accept the final course commitments.',status),journey(0,{plan:hasPlan,timetable:hasTimetable,review:isReady,activeCourse:isActive}));
+      const body=$('div','tf-page');body.append(hero('Course Plan','Review what KIWI will teach','This is the academic plan generated from your saved sources and validated curriculum analysis. Review it before you accept the final course commitments.',status),journey(0,{plan:hasPlan,timetable:hasTimetable,review:isReady,activeCourse:isActive}),live);
       if(!hasPlan){
         const card=$('section','tf-card tf-card--accent');card.append($('div','tf-eyebrow','Next step'),$('h3','','Create the academic plan'),$('p','',review.generation?.ready?'KIWI can now organize the validated curriculum into a versioned Course Plan.':'Course preparation still has unresolved steps before planning can begin.'));
         const actions=$('div','tf-actions');
@@ -190,7 +190,7 @@ async function renderPlan({course,container}){
             actions.append(create);
           }
         }else actions.append(button('Open Setup',{primary:true,onClick:()=>open('setup')}));
-        card.append(actions);body.append(card);page.replaceChildren(body,live);
+        card.append(actions);body.append(card);page.replaceChildren(body);
         setActionStatus(live,notice||coursePlanGenerationNotice(review));
         if(planJobActive&&background?.eventId)watchPlanJob(background.eventId);
         return;
@@ -226,7 +226,7 @@ async function renderPlan({course,container}){
       const coverage=$('section','tf-card');coverage.append($('div','tf-eyebrow','Coverage'),$('h3','','Nothing important should disappear'),$('p','',review.coverageReport?.summary?.unmappedRequiredItems>0?`${review.coverageReport.summary.unmappedRequiredItems} required item(s) still need coverage review.`:'Required source content is mapped into the Course Plan. Coverage is not the same as mastery.'));side.append(coverage);
       if(review.assumptions?.length){const assumptions=$('section','tf-card');assumptions.append($('div','tf-eyebrow','Assumptions'),$('h3','','What KIWI is carrying forward'));(review.assumptions||[]).slice(0,6).forEach((item)=>assumptions.append($('p','',item.disclosure||item.description||item.label)));side.append(assumptions);}
       const next=$('section','tf-card');next.append($('div','tf-eyebrow','Continue'),$('h3','','When this plan looks right'),$('p','','Set availability in Schedule, then review the proposed timetable. Final acceptance happens only on the Final Review screen.'));const actions=$('div','tf-actions');actions.append(button('Availability',{onClick:()=>open('schedule')}),button('Review timetable',{primary:true,onClick:()=>open('timetable-review')}));next.append(actions);side.append(next);
-      grid.append(main,side);body.append(grid);page.replaceChildren(body,live);
+      grid.append(main,side);body.append(grid);page.replaceChildren(body);
       setActionStatus(live,notice||coursePlanGenerationNotice(review));
       if(planJobActive&&background?.eventId)watchPlanJob(background.eventId);
     }catch(error){page.replaceChildren(message(error.message||'Course Plan review could not be loaded.','error'),live);clearActionStatus(live);}
