@@ -326,6 +326,24 @@ function createTeachingRouter({
     publishedEventRegistry.register('teaching.timetable.build_requested', {
       subscriberId: 'd09-timetable-background-worker',
       handle: async (event) => {
+        if (typeof schedulingService.validateQueuedTimetableBuild === 'function') {
+          const basis = await schedulingService.validateQueuedTimetableBuild(
+            { id: event.actorId },
+            event.aggregateId,
+            event.payload || {},
+          );
+          if (basis.current !== true) {
+            return Object.freeze({
+              accepted: true,
+              stale: true,
+              safeMetadata: {
+                reason: basis.reason || 'SCHEDULING_BASIS_CHANGED',
+                expected_basis_digest: basis.expectedBasisDigest || null,
+                current_basis_digest: basis.basisDigest || null,
+              },
+            });
+          }
+        }
         const review = await schedulingService.getScheduleReview({ id: event.actorId }, event.aggregateId);
         const currentStateVersion = String(review?.requestedCourse?.stateVersion ?? '');
         const expectedStateVersion = String(event.payload?.expected_state_version ?? event.aggregateVersion ?? '');
