@@ -684,11 +684,12 @@ function validateDecompositionRepairPatch(output,{academicInput,baseOutput,repai
   const unitJustification=String(output.unit_justification||'').trim();
   const courseJustification=String(output.course_ratio_justification||'').trim();
   if(output.decision==='keep'){
-    if(!unitJustification.startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_KEEP_JUSTIFICATION_PREFIX_REQUIRED'};
+    if(!unitJustification.startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX)||unitJustification.length<=DECOMPOSITION_JUSTIFICATION_PREFIX.length+12)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_KEEP_JUSTIFICATION_PREFIX_REQUIRED'};
     if(courseJustification){
       if(scope.course_ratio_flag!==true)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_COURSE_JUSTIFICATION_OUT_OF_SCOPE'};
-      if(!courseJustification.startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX))return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_COURSE_JUSTIFICATION_PREFIX_REQUIRED'};
+      if(!courseJustification.startsWith(DECOMPOSITION_JUSTIFICATION_PREFIX)||courseJustification.length<=DECOMPOSITION_JUSTIFICATION_PREFIX.length+12)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_COURSE_JUSTIFICATION_PREFIX_REQUIRED'};
     }
+    if(scope.course_ratio_flag===true&&!scope.target_unit_flag&&!courseJustification)return {ok:false,reason:'TPF02_DECOMPOSITION_REPAIR_NO_PROGRESS'};
     return {ok:true,value:output};
   }
 
