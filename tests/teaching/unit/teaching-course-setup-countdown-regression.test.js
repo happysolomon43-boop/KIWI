@@ -15,13 +15,14 @@ test('Teaching D08 Course Setup countdown asset remains valid browser JavaScript
   assert.doesNotThrow(() => new vm.Script(source, { filename: 'teaching-d08.js' }));
 });
 
-test('Course Setup material analysis uses an immediate five-minute countdown in the second setup row', () => {
-  assert.match(source, /const ANALYSIS_COUNTDOWN_MS = 5 \* 60 \* 1000;/);
+test('Course Setup material analysis countdown matches the canonical ten-minute server deadline', () => {
+  assert.match(source, /LONG_RUNNING_ANALYSIS_OPERATION_TIMEOUT_MS/);
+  assert.match(source, /10 \* 60 \* 1000/);
   assert.match(source, /row\.dataset\.setupStep = key/);
   assert.match(source, /\{ key: 'material-analysis' \}/);
   assert.match(source, /\[data-setup-step="material-analysis"\]/);
   assert.match(source, /role', 'timer'/);
-  assert.match(source, /5 min/);
+  assert.match(source, /ANALYSIS_COUNTDOWN_MS \/ 60000/);
   assert.match(source, /formatAnalysisCountdown\(remainingMs\)/);
 
   const clickCountdown = source.indexOf(
