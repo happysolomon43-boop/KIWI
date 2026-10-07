@@ -125,6 +125,45 @@ test('D09 cadence naturalizer is deterministic, preserves workload and spreads a
   }
 });
 
+test('D09 active-Semester expansion interleaves the new Course and treats prior future Classes as soft stability, not immovable blocks', () => {
+  const existing = bundle('c1', 5, 60);
+  existing.course = { ...existing.course, lifecycle_state:'ACTIVE' };
+  const baselineContext = scheduleContext({ courses:[existing] });
+  const baselineRaw = computeSchedule(baselineContext, { now:'2026-09-29T04:00:00Z' });
+  const baseline = naturalizeScheduleResult(baselineContext, baselineRaw, { source:'BASELINE' });
+  const priorSlots = baseline.schedule.map((slot, index) => ({
+    timetable_slot_id:`prior-${index+1}`,
+    course_id:slot.courseId,
+    slot_kind:slot.kind,
+    starts_at:slot.startsAt,
+    ends_at:slot.endsAt,
+    timezone:slot.timezone,
+    learning_unit_refs:slot.learningUnitIds,
+    planned_minutes:slot.plannedMinutes,
+  }));
+
+  const newcomer = bundle('c2', 5, 60);
+  const expandedContext = {
+    ...scheduleContext({ courses:[existing,newcomer] }),
+    priorSlots,
+  };
+  const expandedRaw = computeSchedule(expandedContext, { now:'2026-09-29T04:00:00Z' });
+  const expanded = naturalizeScheduleResult(expandedContext, expandedRaw, { source:'COURSE_ADMISSION_EXPANSION_PROPOSAL' });
+  const classes = expanded.schedule.filter((slot)=>slot.kind==='CLASS');
+  const c1 = classes.filter((slot)=>slot.courseId==='c1');
+  const c2 = classes.filter((slot)=>slot.courseId==='c2');
+
+  assert.ok(c1.length>0);
+  assert.ok(c2.length>0);
+  assert.ok(Math.min(...c2.map((slot)=>Date.parse(slot.startsAt))) < Math.max(...c1.map((slot)=>Date.parse(slot.startsAt))),
+    'the new Course should be woven into the Semester rhythm rather than appended after all existing Course Classes');
+  assert.ok(expanded.metrics.existingClassesConsidered>0);
+  assert.equal(expanded.metrics.softStabilityRebalance,true);
+  assert.equal(expanded.policy.existingFutureClassesMayShiftForIntegratedSemesterCadence,true);
+  assert.equal(expanded.policy.elapsedClassesRemainFixed,true);
+  assert.ok(classes.every((slot)=>Date.parse(slot.startsAt)>=Date.parse('2026-10-01T00:00:00Z')));
+});
+
 test('D09 cadence naturalizer refuses course-specific protected and break blocks', () => {
   const block = {
     course_id: 'c1',
