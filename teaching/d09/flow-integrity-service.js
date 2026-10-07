@@ -79,7 +79,7 @@ function decorateD09Service(base, {
     const scopedSlots = Array.isArray(review.courseSlots) ? review.courseSlots : slotsForCourse(review.slots, courseId);
     const classFacts = scheduleClassFacts(scopedSlots, review.serverNow || serverNow());
     const elapsedSlotCount = scopedSlots.filter((slot) => Date.parse(slot.endsAt) <= Date.parse(review.serverNow || serverNow())).length;
-    const selectedCourseActive=['ACTIVE','PAUSED'].includes(String(review.requestedCourse?.lifecycleState||'DRAFT'));
+    const selectedCourseActive=String(review.requestedCourse?.lifecycleState||'DRAFT')==='ACTIVE';
     const recoveryRequired = Boolean(
       selectedCourseActive &&
       review.timetable &&
