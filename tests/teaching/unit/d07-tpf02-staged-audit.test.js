@@ -183,6 +183,51 @@ function structurePassOutput(request) {
     student_facing_summary_candidate: null,
   };
 }
+function coarseStructurePassOutput(request) {
+  const refs = request.academicInput.source_items.map((item) => item.source_item_ref);
+  const batchIndex = Number(request.academicInput.structure_pass_context?.batch_index || 0);
+  const topicId = `coarse-batch-topic-${batchIndex}`;
+  const subtopicId = `coarse-batch-subtopic-${batchIndex}`;
+  return {
+    input_state_reference: request.academicInput.input_state_reference,
+    task_mode: 'LEARNING_UNIT_DECOMPOSITION',
+    execution_stage: EXECUTION_STAGES.SINGLE_PASS,
+    audit_scope: { ...request.academicInput.audit_scope, source_walk: [] },
+    source_inventory: [],
+    topics: [{
+      topic_id: topicId,
+      title: `Coarse bounded batch ${batchIndex + 1}`,
+      source_item_refs: refs,
+      subtopics: [{ subtopic_id: subtopicId, title: `Coarse bounded area ${batchIndex + 1}` }],
+    }],
+    learning_units: [{
+      learning_unit_id: `coarse-batch-unit-${batchIndex}`,
+      title: `Apply coarse bounded capability ${batchIndex + 1}`,
+      intended_competence: 'Apply the combined capability represented by this provisional source batch.',
+      source_item_refs: refs,
+      topic_refs: [topicId],
+      subtopic_id: subtopicId,
+      prerequisite_refs: [],
+      dependency_type_notes: null,
+      criticality: 'major',
+      criticality_basis: 'This is deliberately coarse provisional structure for the regression.',
+      proposed_exit_evidence: 'Demonstrate the provisional combined capability.',
+      gap_refs: [],
+      uncertainties: [],
+    }],
+    assumed_prerequisites: [],
+    source_conflicts: [],
+    coverage_gaps: [],
+    structure_change_proposals: [],
+    source_to_unit_reconciliation: { required_item_map: [], unmapped_required_refs: [] },
+    unresolved_items: [],
+    status: 'ok',
+    review_required: false,
+    review_reasons: [],
+    student_facing_summary_candidate: null,
+  };
+}
+
 function coarseSynthesisOutput(request) {
   const refs = request.academicInput.audit_scope.source_refs;
   return {
@@ -645,6 +690,31 @@ test('49-source under-decomposition is repaired through bounded SPLIT_UNIT befor
   assert.ok(output.learning_units.every((unit) => unit.source_item_refs.length <= 16));
   assert.deepEqual(output.source_to_unit_reconciliation.unmapped_required_refs, []);
   assert.equal(output.source_to_unit_reconciliation.required_item_map.length, 49);
+});
+
+test('progressive structure pass does not abort a large audit merely because its provisional batch triggers G11', async () => {
+  const allSources = sources(130);
+  const request = structurePassRequest({
+    course: course(),
+    sources: allSources.slice(0, TPF02_STRUCTURE_BATCH_SIZE),
+    preparedInventory: allSources.slice(0, TPF02_STRUCTURE_BATCH_SIZE).map((source) => ({
+      source_item_ref: `source:${source.source_content_item_id}`,
+      provenance: 'fixture',
+      academic_meaning: source.content_summary,
+      proposed_scope_classification: 'required',
+      scope_classification_basis: 'fixture',
+      duplicate_of_ref: null,
+      content_validity_status: 'current_supported',
+      content_validity_basis: null,
+      confidence: 'high',
+    })),
+    batchIndex: 0,
+  });
+  const output = coarseStructurePassOutput(request);
+  const domain = await request.domainValidator(output);
+  assert.equal(domain.ok, true, domain.reason);
+  assert.equal(domain.value.learning_units.length, 1);
+  assert.equal(domain.value.learning_units[0].source_item_refs.length, TPF02_STRUCTURE_BATCH_SIZE);
 });
 
 test('188-source TPF-02 audit uses bounded structure passes while preserving complete raw evidence for decomposition synthesis', async () => {
