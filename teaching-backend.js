@@ -74,6 +74,8 @@ function createTeachingRouter({
     d17Intelligence,
   });
   const router = express.Router();
+  const schedulingService = d09Service || foundation.d09?.service || null;
+  const coursePlanService = d08Service || foundation.d08?.service || null;
   const backgroundAuditService = d07Service || foundation.d07?.service || null;
   if (backgroundAuditService && publishedEventRegistry && typeof publishedEventRegistry.register === 'function') {
     publishedEventRegistry.register('teaching.curriculum.audit_requested', {
@@ -83,8 +85,38 @@ function createTeachingRouter({
         if (String(setup.course.state_version) !== String(event.payload?.expected_state_version || event.aggregate_version)) {
           return Object.freeze({ accepted: true, stale: true, safeMetadata: { reason: 'COURSE_STATE_CHANGED' } });
         }
-        const audit = await backgroundAuditService.runAudit({ id: event.actorId }, event.aggregateId);
-        return Object.freeze({ accepted: true, auditId: audit.curriculum_audit_id, safeMetadata: { audit_id: audit.curriculum_audit_id } });
+        const regenerate = event.payload?.regenerate === true;
+        const audit = await backgroundAuditService.runAudit(
+          { id: event.actorId },
+          event.aggregateId,
+          {
+            regenerate,
+            regenerationReason: event.payload?.regeneration_reason || null,
+            previousAudit: regenerate ? setup.curriculumAudit || null : null,
+          },
+        );
+        let timetableReset = null;
+        if (regenerate && schedulingService && typeof schedulingService.queueTimetableBuild === 'function') {
+          try {
+            timetableReset = await schedulingService.queueTimetableBuild(
+              { id: event.actorId },
+              event.aggregateId,
+              { operation: 'REFLOW', source: 'CURRICULUM_AUDIT_RESET' },
+            );
+          } catch (error) {
+            timetableReset = { accepted: false, reason: error?.code || 'TIMETABLE_RESET_QUEUE_FAILED' };
+          }
+        }
+        return Object.freeze({
+          accepted: true,
+          auditId: audit.curriculum_audit_id,
+          safeMetadata: {
+            audit_id: audit.curriculum_audit_id,
+            regeneration_requested: regenerate,
+            timetable_reset_queued: timetableReset?.accepted === true,
+            timetable_reset_reason: timetableReset?.accepted === true ? null : timetableReset?.reason || null,
+          },
+        });
       },
     });
   }
@@ -238,7 +270,12 @@ function createTeachingRouter({
       catch (error) { sendError(res, error, 'Failed to update interaction preferences.'); }
     });
     router.post('/courses/:id/curriculum-audit', async (req, res) => {
-      try { res.status(202).json(await courseIntakeService.queueAudit(req.user, req.params.id)); }
+      try {
+        res.status(202).json(await courseIntakeService.queueAudit(req.user, req.params.id, {
+          regenerate: req.body?.regenerate === true,
+          regenerationReason: req.body?.reason ?? req.body?.regenerationReason ?? null,
+        }));
+      }
       catch (error) { sendError(res, error, 'Failed to queue Curriculum Audit.'); }
     });
     router.post('/courses/:id/diagnostic-plan', async (req, res) => {
@@ -250,9 +287,6 @@ function createTeachingRouter({
       catch (error) { sendError(res, error, 'Failed to record prior-knowledge decision.'); }
     });
   }
-
-  const schedulingService = d09Service || foundation.d09?.service || null;
-  const coursePlanService = d08Service || foundation.d08?.service || null;
 
   async function refreshScheduleAfterCoursePlan(user, courseId) {
     if (!schedulingService || typeof schedulingService.recalculateAfterCoursePlanChange !== 'function') {
@@ -268,6 +302,44 @@ function createTeachingRouter({
       });
       return Object.freeze({ recalculated: false, reason: error?.code || 'SCHEDULER_REFRESH_FAILED' });
     }
+  }
+
+  if (schedulingService && publishedEventRegistry && typeof publishedEventRegistry.register === 'function') {
+    publishedEventRegistry.register('teaching.timetable.build_requested', {
+      subscriberId: 'd09-timetable-background-worker',
+      handle: async (event) => {
+        const review = await schedulingService.getScheduleReview({ id: event.actorId }, event.aggregateId);
+        const currentStateVersion = String(review?.requestedCourse?.stateVersion ?? '');
+        const expectedStateVersion = String(event.payload?.expected_state_version ?? event.aggregateVersion ?? '');
+        if (currentStateVersion !== expectedStateVersion) {
+          return Object.freeze({
+            accepted: true,
+            stale: true,
+            safeMetadata: { reason: 'COURSE_STATE_CHANGED' },
+          });
+        }
+        const operation = String(event.payload?.operation || 'BUILD').toUpperCase();
+        let result;
+        if (operation === 'REFLOW') {
+          result = await schedulingService.recalculateAfterCoursePlanChange(
+            { id: event.actorId },
+            event.aggregateId,
+            { source: event.payload?.source || 'BACKGROUND_REFLOW' },
+          );
+        } else {
+          result = await schedulingService.proposeTimetable({ id: event.actorId }, event.aggregateId);
+        }
+        return Object.freeze({
+          accepted: true,
+          safeMetadata: {
+            operation,
+            recalculated: result?.recalculated !== false,
+            reason: result?.reason || null,
+            timetable_version: result?.timetable?.version || result?.timetableVersion || null,
+          },
+        });
+      },
+    });
   }
 
   if (coursePlanService && publishedEventRegistry && typeof publishedEventRegistry.register === 'function') {
@@ -397,8 +469,16 @@ function createTeachingRouter({
       catch (error) { sendError(res, error, 'Failed to save Semester and availability.'); }
     });
     router.post('/courses/:id/timetable/propose', requireD09Ready, async (req, res) => {
-      try { res.status(201).json(await schedulingService.proposeTimetable(req.user, req.params.id)); }
-      catch (error) { sendError(res, error, 'Failed to calculate a feasible timetable.'); }
+      try {
+        if (typeof schedulingService.queueTimetableBuild === 'function') {
+          return res.status(202).json(await schedulingService.queueTimetableBuild(req.user, req.params.id, {
+            operation: 'BUILD',
+            source: 'MANUAL_BACKGROUND_BUILD',
+          }));
+        }
+        return res.status(201).json(await schedulingService.proposeTimetable(req.user, req.params.id));
+      }
+      catch (error) { return sendError(res, error, 'Failed to calculate a feasible timetable.'); }
     });
     router.put('/courses/:id/timetable', requireD09Ready, async (req, res) => {
       try { res.json(await schedulingService.editTimetable(req.user, req.params.id, req.body)); }
