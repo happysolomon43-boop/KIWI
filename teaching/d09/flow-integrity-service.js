@@ -124,6 +124,7 @@ function decorateD09Service(base, {
   randomUUID,
   clock = () => new Date(),
   intelligence = null,
+  outboxStore = null,
 } = {}) {
   if (!base || !repository || !transactionalMutation || typeof transactionalMutation.mutateAndPublish !== 'function') {
     throw new TypeError('D09 flow-integrity decorator requires the accepted D09 service, repository and transactional mutation boundary.');
@@ -132,6 +133,46 @@ function decorateD09Service(base, {
     const value = clock();
     return (value instanceof Date ? value : new Date(value)).toISOString();
   };
+
+
+  function requestedBundleForContext(context, courseId) {
+    return (context?.courses || []).find((bundle) => String(bundle.course?.course_id) === String(courseId))
+      || (String(context?.inheritedCourseBundle?.course?.course_id || '') === String(courseId)
+        ? context.inheritedCourseBundle
+        : null);
+  }
+
+  function timetableJobProjection(job, review) {
+    if (!job) return null;
+    const status = String(job.status || '').toUpperCase();
+    const payload = job.payload && typeof job.payload === 'object' && !Array.isArray(job.payload) ? job.payload : {};
+    const expectedProfileVersion = payload.expected_profile_version == null ? null : Number(payload.expected_profile_version);
+    const currentProfileVersion = review?.profile?.version == null ? null : Number(review.profile.version);
+    const currentTimetableVersion = review?.timetable?.version == null ? null : Number(review.timetable.version);
+    const profileCurrent = expectedProfileVersion == null || currentProfileVersion === expectedProfileVersion;
+    const completionConfirmed = status === 'PUBLISHED'
+      && Boolean(review?.timetable)
+      && String(review.timetable.state || '').toUpperCase() !== 'STALE'
+      && profileCurrent;
+    return Object.freeze({
+      eventId: job.event_id,
+      status,
+      operation: String(payload.operation || 'TIMETABLE_GENERATION'),
+      trigger: String(payload.trigger || 'MANUAL'),
+      sourceKind: String(payload.source_kind || 'USER_REQUESTED'),
+      completionConfirmed,
+      resultTimetableVersion: completionConfirmed ? currentTimetableVersion : null,
+      expectedProfileVersion: Number.isFinite(expectedProfileVersion) ? expectedProfileVersion : null,
+      attemptCount: Number(job.attempt_count || 0),
+      lastErrorCode: job.last_error_code || null,
+      nextAttemptAt: job.next_attempt_at || null,
+      createdAt: job.created_at || null,
+      updatedAt: job.updated_at || null,
+      publishedAt: job.published_at || null,
+      aggregateVersion: job.aggregate_version == null ? null : Number(job.aggregate_version),
+      causationId: job.causation_id || null,
+    });
+  }
 
   function pplEvent(result, correlationId) {
     const p = result.ppl;
