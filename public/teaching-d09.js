@@ -159,14 +159,15 @@ function stage5(course,data,container,reload) {
   card.append(el('div','teaching-kicker','Timetable'),el('h3','','Proposed timetable and feasibility'),el('p','','KIWI uses the Course Plan, your availability, and protected time to build a realistic timetable. Required learning is never removed just to make the calendar fit.'));
   const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
   const missingInputs=!data.semester||!data.profile;
-  const unresolvedSelf=(data.unresolvedSemesterCourses||[]).find((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
-  const missingPlan=Boolean(unresolvedSelf);
+  const unresolvedSelf=(data.unresolvedSemesterCourses||[]).filter((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
+  const missingAttachment=unresolvedSelf.some((item)=>item.reason==='COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER');
+  const missingPlan=unresolvedSelf.some((item)=>item.reason==='COURSE_PLAN_NOT_READY');
   const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',postActivation?'Timetable locked after activation':(data.timetable?'Recalculate timetable':'Propose timetable')), status=el('span','teaching-d09-status',statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button';propose.disabled=postActivation||missingInputs||missingPlan; actions.append(propose,status); card.append(actions);
   if(missingInputs){card.append(el('div','teaching-message','Save your semester and availability before creating the timetable.'));}
-  else if(unresolvedSelf?.reason==='COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER'){
-    card.append(el('div','teaching-message','This Course is using your shared Semester availability by default. Save the availability once to attach the Course; KIWI will then recalculate the timetable automatically.'));
+  else {
+    if(missingAttachment) card.append(el('div','teaching-message','This Course is using your shared Semester availability by default. Save the availability once to attach the Course.'));
+    if(missingPlan){const guidance=el('div','teaching-message'),openPlan=el('button','teaching-d08-link-button','Open Course Plan');openPlan.type='button';openPlan.addEventListener('click',()=>courseSurface.openCourse(course.course_id,'course-plan'));guidance.append(document.createTextNode('Create the Course Plan before proposing a timetable. '),openPlan);card.append(guidance);}
   }
-  else if(missingPlan){const guidance=el('div','teaching-message'),openPlan=el('button','teaching-d08-link-button','Open Course Plan');openPlan.type='button';openPlan.addEventListener('click',()=>courseSurface.openCourse(course.course_id,'course-plan'));guidance.append(document.createTextNode('Create the Course Plan before proposing a timetable. '),openPlan);card.append(guidance);}
   const metrics=el('div','teaching-d09-metrics'); metrics.append(metric(data.feasibility?.metrics?.scheduledMinutes??0,'scheduled minutes'),metric(data.feasibility?.metrics?.requiredMinutes??0,'required minutes'),metric(data.feasibility?.metrics?.headroomRatio==null?'—':Math.round(data.feasibility.metrics.headroomRatio*100)+'%','Recovery headroom')); card.append(metrics);
   if(data.feasibility?.reasons?.length){const list=el('ul','teaching-d08-list');data.feasibility.reasons.forEach((reason)=>list.append(el('li','',statusName(reason))));card.append(list);}
   if(data.feasibility?.alternatives?.length){card.append(el('p','teaching-d09-note','Feasible alternatives'));const list=el('ul','teaching-d08-list');data.feasibility.alternatives.forEach((item)=>list.append(el('li','',item.message)));card.append(list);}
