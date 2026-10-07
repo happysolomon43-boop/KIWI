@@ -320,6 +320,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       requestedCourse:Object.freeze({
         courseId:requestedCourseId,
         lifecycleState:String(review.course?.lifecycle_state||'DRAFT'),
+        stateVersion:Number(review.course?.state_version||0),
         planReady:requestedPlanReady,
         attachedToSemester:review.inheritedDefault!==true,
       }),
