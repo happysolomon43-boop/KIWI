@@ -877,7 +877,8 @@ async function renderCourseSetup({ course, container }) {
       }
 
       let analysisChangeBox = null;
-      if (auditReady && sourcesReady && !backgroundAudit.active) {
+      const analysisRevisionAllowed = ['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state || 'DRAFT').toUpperCase());
+      if (auditReady && sourcesReady && !backgroundAudit.active && analysisRevisionAllowed) {
         const refine = el('button', 'teaching-button', 'Request changes');
         const regenerate = el('button', 'teaching-button', 'Regenerate analysis');
         refine.type = 'button';
@@ -982,6 +983,9 @@ async function renderCourseSetup({ course, container }) {
 
       card.append(actions);
       if (analysisChangeBox) card.append(analysisChangeBox);
+      if (auditReady && sourcesReady && !analysisRevisionAllowed) {
+        card.append(el('p', 'teaching-d08-note', 'Course analysis changes are available before activation. Active Courses use governed academic-change workflows so teaching history is never silently rewritten.'));
+      }
       body.replaceChildren(card);
       if (backgroundAudit.active) {
         startAnalysisCountdown({ deadline: countdownDeadline, eventId: backgroundEventId });
