@@ -4,7 +4,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {createD09Service}=require('../../../teaching/d09/service');
+const {createD09Service}=require('../../../teaching/d09');
 
 function semester(){return {semester_id:'sem1',name:'Term 1',state_version:1,starts_at:'2026-10-01T00:00:00Z',ends_at:'2026-10-31T23:59:59Z',timezone:'UTC'};}
 function availability(day=1,start='09:00',end='12:00'){return [{day_of_week:day,local_start:start,local_end:end,kind:'AVAILABLE',preference_weight:0}];}
@@ -41,7 +41,7 @@ test('shared availability save automatically recalculates the Semester timetable
   const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z')});
   const review=await service.saveScheduleInputs({id:'u1'},'c1',{
     semester:{semesterId:'sem1',name:'Term 1',startsAt:'2026-10-01T00:00:00Z',endsAt:'2026-10-31T23:59:59Z',timezone:'UTC'},
-    availability:[{dayOfWeek:1,startLocal:'09:00',endLocal:'12:00',kind:'AVAILABLE'}],
+    availability:[{dayOfWeek:2,startLocal:'09:00',endLocal:'12:00',kind:'AVAILABLE'}],
     blocks:[],deadlines:[],reserves:[],preferences:{},
   });
   assert.equal(contextReads,2);
