@@ -272,7 +272,9 @@ test('a new Course expands an active Semester into an integrated future proposal
   const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
   const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z')});
 
-  const result=await service.recalculateAfterCoursePlanChange({id:'u1'},'c2');
+  const result=await service.recalculateAfterCoursePlanChange(
+    {id:'u1'},'c2',{source:'COURSE_PLAN_AUTO_RECALC'},
+  );
 
   assert.equal(attachCalls,1);
   assert.equal(result.recalculated,true);
@@ -280,7 +282,7 @@ test('a new Course expands an active Semester into an integrated future proposal
   assert.equal(result.scope,'SEMESTER_SHARED');
   assert.deepEqual(result.affectedCourseIds,['active','c2']);
   assert.equal(result.affectedCourseCount,2);
-  assert.equal(proposalSource,'COURSE_ADMISSION_EXPANSION_PROPOSAL');
+  assert.equal(proposalSource,'COURSE_ADMISSION_EXPANSION_PROPOSAL','background source metadata must not override active-Semester expansion authority');
 });
 
 test('Course Plan completion automatically rebuilds a pre-activation Semester timetable',async()=>{
