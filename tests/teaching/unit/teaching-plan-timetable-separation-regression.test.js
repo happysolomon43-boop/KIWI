@@ -59,7 +59,7 @@ test('Semester owns one shared timetable version while Course pages remain filte
   assert.match(service, /noIndependentCourseTimetableAuthority:true/);
   assert.match(service, /availabilityChangeReflowsAllSchedulableCourses:true/);
   assert.match(service, /courseSlots:Object\.freeze\(courseSlots\)/);
-  assert.match(repository, /const coursePlanRefs=context\.courses\.map/);
+  assert.match(repository, /const coursePlanRefs=\(scheduleContext\.courses\|\|\[\]\)\.map/);
   assert.match(repository, /for\(const slot of result\.schedule\)/);
   assert.match(migration, /UNIQUE\(semester_id,version_no\)/);
   assert.match(scheduleUi, /one deterministic Semester timetable version/);
@@ -84,7 +84,7 @@ test('active Semester availability changes keep the governed Request boundary an
   assert.match(d09, /TEACHING_D09_ACTIVE_SEMESTER_AVAILABILITY_REQUIRES_REQUEST/);
   assert.match(d10, /PERMANENT_AVAILABILITY_CHANGE/);
   assert.match(d10, /saveScheduleInputsUsing\(tx,/);
-  assert.match(d10, /computeSchedule\(derived/);
+  assert.match(d10, /computeSharedSemesterSchedule/);
   assert.match(d10, /source:'FORMAL_REQUEST_APPLIED'/);
   assert.match(d10, /materializeApprovedTimetableUsing/);
 });
