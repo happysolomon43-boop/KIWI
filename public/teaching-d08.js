@@ -1,4 +1,4 @@
-const { kiwiApiRequest } = window.KIWI_API_CLIENT || {};
+const { kiwiApiRequest, LONG_RUNNING_ANALYSIS_OPERATION_TIMEOUT_MS } = window.KIWI_API_CLIENT || {};
 
 if (typeof kiwiApiRequest !== 'function') {
   throw new Error('KIWI shared API client must load before Teaching D08.');
@@ -11,7 +11,7 @@ if (!courseSurface || typeof courseSurface.registerSection !== 'function') {
 
 const D08_STYLE_ID = 'teachingD08Styles';
 const D08_PREVIEW_ID = 'teachingD08Preview';
-const ANALYSIS_COUNTDOWN_MS = 5 * 60 * 1000;
+const ANALYSIS_COUNTDOWN_MS = Number(LONG_RUNNING_ANALYSIS_OPERATION_TIMEOUT_MS) || (10 * 60 * 1000);
 
 function installStyles() {
   if (document.getElementById(D08_STYLE_ID)) return;
@@ -667,8 +667,8 @@ async function renderCourseSetup({ course, container }) {
     timer.dataset.expired = 'false';
     timer.setAttribute('role', 'timer');
     timer.setAttribute('aria-label', 'Material analysis countdown');
-    const label = el('span', 'teaching-d08-analysis-countdown__label', '5 min');
-    const value = el('span', 'teaching-d08-analysis-countdown__value', '05:00');
+    const label = el('span', 'teaching-d08-analysis-countdown__label', `${Math.round(ANALYSIS_COUNTDOWN_MS / 60000)} min`);
+    const value = el('span', 'teaching-d08-analysis-countdown__value', formatAnalysisCountdown(ANALYSIS_COUNTDOWN_MS));
     value.dataset.analysisCountdownValue = 'true';
     timer.append(label, value);
     copyNode.append(timer);
