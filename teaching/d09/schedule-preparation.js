@@ -9,6 +9,7 @@ const DEFAULT_LOAD_CONCURRENCY = 2;
 const SCHEDULER_EXCLUDED_LIFECYCLES = new Set([
   'PAUSED','TEACHING_ENDED','FINALIZING','INCOMPLETE','COMPLETED','ARCHIVED',
 ]);
+const GOVERNED_SCHEDULE_LIFECYCLES = new Set(['ACTIVE','PAUSED']);
 
 function fail(message, code, status = 409, details = null) {
   const error = new Error(message);
@@ -16,6 +17,10 @@ function fail(message, code, status = 409, details = null) {
   error.status = status;
   if (details) error.details = details;
   return error;
+}
+
+function isGovernedSchedulingLifecycle(state) {
+  return GOVERNED_SCHEDULE_LIFECYCLES.has(String(state || 'DRAFT'));
 }
 
 function isSchedulableLifecycle(state) {
@@ -298,6 +303,8 @@ module.exports = {
   DEFAULT_LOAD_BATCH_SIZE,
   DEFAULT_LOAD_CONCURRENCY,
   SCHEDULER_EXCLUDED_LIFECYCLES,
+  GOVERNED_SCHEDULE_LIFECYCLES,
+  isGovernedSchedulingLifecycle,
   isSchedulableLifecycle,
   schedulableScheduleContext,
   computeSharedSemesterSchedule,
