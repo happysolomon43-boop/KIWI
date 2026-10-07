@@ -1077,6 +1077,79 @@ test('188-source TPF-02 audit preserves complete academic evidence while removin
   assert.equal(output.review_required, false);
 });
 
+test('188-source audit recovers from a rejected 12-source lineage patch by shrinking the repair batch', async () => {
+  const allSources = sources(188);
+  const calls = [];
+  let rejectedLargeRepair = false;
+  let repairOrdinal = 0;
+
+  const orchestrator = {
+    async execute(request) {
+      calls.push(request);
+      if (request.taskMode === 'SOURCE_INVENTORY') {
+        const output = inventoryStageOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      if (request.taskMode === 'LEARNING_UNIT_DECOMPOSITION'
+        && request.academicInput.structure_pass_context?.mode === 'BOUNDED_CURRICULUM_STRUCTURE') {
+        const output = structurePassOutput(request);
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      if (request.taskMode === 'DEEP_AUDIT') {
+        const output = synthesisOutput(request);
+        const missing = request.academicInput.audit_scope.source_refs.slice(0, 12);
+        for (const ref of missing) {
+          for (const unit of output.learning_units) {
+            unit.source_item_refs = unit.source_item_refs.filter((candidate) => candidate !== ref);
+          }
+        }
+        const domain = await request.domainValidator(output);
+        assert.equal(domain.ok, true, domain.reason);
+        assert.equal(domain.value.source_to_unit_reconciliation.unmapped_required_refs.length, 12);
+        return { accepted: true, validatedResult: { output: domain.value } };
+      }
+
+      assert.equal(request.taskMode, 'LEARNING_UNIT_DECOMPOSITION');
+      assert.equal(request.academicInput.lineage_repair_context?.mode, 'REQUIRED_SOURCE_LINEAGE_COMPLETION');
+      const size = request.academicInput.source_items.length;
+      if (size === 12 && rejectedLargeRepair === false) {
+        rejectedLargeRepair = true;
+        return { accepted: false, reason: 'TPF02_LINEAGE_REPAIR_PATCH_MODEL_REJECTED' };
+      }
+
+      repairOrdinal += 1;
+      const output = lineageRepairOutput(request, `unit-lineage-repair-${repairOrdinal}`);
+      assert.equal(request.schemaValidator(output).ok, true);
+      const domain = await request.domainValidator(output);
+      assert.equal(domain.ok, true, domain.reason);
+      const provenance = await request.provenanceValidator(output);
+      assert.equal(provenance.ok, true, provenance.reason);
+      return { accepted: true, validatedResult: { output: domain.value } };
+    },
+  };
+
+  const result = await createD07Intelligence({ orchestrator }).runCurriculumAudit({
+    course: course(),
+    sources: allSources,
+  });
+
+  const repairCalls = calls.filter((request) =>
+    request.taskMode === 'LEARNING_UNIT_DECOMPOSITION'
+    && request.academicInput.lineage_repair_context?.mode === 'REQUIRED_SOURCE_LINEAGE_COMPLETION'
+  );
+  assert.ok(rejectedLargeRepair);
+  assert.equal(repairCalls[0].academicInput.source_items.length, 12);
+  assert.ok(repairCalls.slice(1).some((request) => request.academicInput.source_items.length === 6));
+  assert.deepEqual(result.validatedResult.output.source_to_unit_reconciliation.unmapped_required_refs, []);
+  assert.equal(result.validatedResult.output.status, 'ok');
+});
+
 test('staged synthesis rejects any attempt by the model to replace prepared source accounting', async () => {
   const allSources = sources(49);
   const fullInput = buildTpf02AcademicInput({
