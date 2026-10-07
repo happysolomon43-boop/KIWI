@@ -174,7 +174,12 @@ test('D07 background refresh versions the outbox key and joins a completed curre
  assert.equal(refreshed.jobId,'new-event');
  assert.equal(refreshed.status,'PENDING');
  assert.ok(existingKeys.has('d07:curriculum-audit:course-1:2:tpf02:1.2'));
- setup.backgroundAnalysis={event_id:'new-event',status:'PENDING'};
+ setup.backgroundAnalysis={
+   event_id:'new-event',
+   status:'PENDING',
+   aggregate_version:2,
+   payload:{operation:'GENERATE',expected_state_version:'2',previous_audit_id:null,previous_audit_version:null,change_request:null,regeneration_reason:null},
+ };
  assert.equal((await service.queueAudit({id:'student-1'},'course-1')).joinedExisting,true);
  setup.backgroundAnalysis.status='PUBLISHED';
  setup.curriculumAudit=setupFixture().curriculumAudit;
