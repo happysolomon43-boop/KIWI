@@ -145,7 +145,7 @@ test('production D09 composition has one ordinary Semester rebuild owner', () =>
 
   assert.match(base,/async function rebuildSharedSemesterTimetable/);
   assert.match(base,/ensureInstructionalLoads\(\{/);
-  assert.match(base,/planningContextAt\(context,now\)/);
+  assert.match(base,/computeSharedSemesterSchedule\(authoritativeContext,\{now\}\)/);
   assert.match(base,/recalculateAfterCoursePlanChange[\s\S]*rebuildSharedSemesterTimetable/);
   assert.doesNotMatch(integrity,/async function recalculateAfterCoursePlanChange/);
   assert.match(integrity,/return base\.proposeTimetable\(user, courseId\)/);
@@ -162,4 +162,30 @@ test('active Semester draft planning preserves approved authority while future p
   assert.match(repository,/\(!authoritativeView && String\(latest\.timetable\.profile_id\)!==String\(context\.profile\?\.profile_id\|\|''\)\)/);
   assert.match(service,/source=expansion[\s\S]*'COURSE_ADMISSION_EXPANSION_PROPOSAL'/);
   assert.match(service,/changesSharedAuthority\|\|touchesActivatedSibling/);
+});
+
+
+test('D10 lifecycle schedule mutations rebuild shared Semester authority instead of orphaning sibling Courses', () => {
+  const root=path.resolve(__dirname,'../../..');
+  const d10=fs.readFileSync(path.join(root,'teaching/d10/service.js'),'utf8');
+
+  assert.match(d10,/async function rebuildGovernedSemesterUsing/);
+  assert.match(d10,/computeSharedSemesterSchedule/);
+  assert.match(d10,/COURSE_PAUSE[\s\S]*rebuildGovernedSemesterUsing/);
+  assert.match(d10,/COURSE_RESUME[\s\S]*rebuildGovernedSemesterUsing/);
+  assert.match(d10,/COURSE_CANCELLATION[\s\S]*rebuildGovernedSemesterUsing/);
+  assert.doesNotMatch(d10,/markCurrentTimetableStaleUsing/);
+  assert.doesNotMatch(d10,/suspendCourseClassesUsing/);
+});
+
+test('timetable version scope comes from the actual planning set, not every historical Course in the Semester', () => {
+  const root=path.resolve(__dirname,'../../..');
+  const repository=fs.readFileSync(path.join(root,'teaching/repositories/d09-scheduling.js'),'utf8');
+  const service=fs.readFileSync(path.join(root,'teaching/d09/service.js'),'utf8');
+
+  assert.match(repository,/const scheduleContext=planningContext\|\|context/);
+  assert.match(repository,/const coursePlanRefs=\(scheduleContext\.courses\|\|\[\]\)\.map/);
+  assert.match(repository,/String\(bundle\.course\?\.lifecycle_state\|\|''\)==='ACTIVE'/);
+  assert.match(service,/timetableCourseIds=Object\.freeze\(\[\.\.\.\(review\.timetable\?\.course_plan_refs\|\|\[\]\)\]/);
+  assert.match(service,/rebuildScope:Object\.freeze/);
 });
