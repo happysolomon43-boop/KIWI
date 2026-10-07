@@ -337,6 +337,31 @@ test('D09 flow-integrity decorator delegates preactivation proposals to the base
   assert.deepEqual(result,{delegated:true});
 });
 
+test('D09 does not offer Active-Course timetable recovery while the selected Course is Paused', async () => {
+  const base={
+    async getScheduleReview(){
+      return {
+        serverNow:'2026-10-05T08:00:00.000Z',
+        requestedCourse:{courseId:'paused-course',lifecycleState:'PAUSED',planReady:true,attachedToSemester:true},
+        timetable:{state:'APPROVED'},
+        slots:[],
+        courseSlots:[],
+        scheduleHealth:{},
+      };
+    },
+  };
+  const service=decorateD09Service(base,{
+    repository:{},
+    transactionalMutation:{mutateAndPublish:async()=>{throw new Error('not used');}},
+    randomUUID:()=> '00000000-0000-4000-8000-000000000098',
+    clock:()=>new Date('2026-10-05T08:00:00.000Z'),
+  });
+
+  const review=await service.getScheduleReview({id:'student-1'},'paused-course');
+  assert.equal(review.scheduleIntegrity.recoveryRequired,false);
+  assert.equal(review.scheduleHealth.recoveryRequired,false);
+});
+
 test('D09 does not flag a draft Course for active timetable recovery just because another Course owns an approved Semester timetable', async () => {
   const base = {
     async getScheduleReview() {
