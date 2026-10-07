@@ -712,7 +712,7 @@ test('49-source under-decomposition is repaired through bounded SPLIT_UNIT befor
 
       assert.equal(request.taskMode, 'SPLIT_UNIT');
       assert.equal(request.academicInput.decomposition_repair_context.mode, 'DECOMPOSITION_REPAIR');
-      assert.equal(request.academicInput.decomposition_repair_context.decomposition_flags.repair_required, true);
+      assert.equal(request.academicInput.decomposition_repair_context.repair_scope.target_unit_id, 'unit-coarse');
       const output = decompositionRepairOutput(request);
       const domain = await request.domainValidator(output);
       assert.equal(domain.ok, true, domain.reason);
