@@ -243,13 +243,20 @@ function createD07Service({
     return repository.updateInteractionPreferences({ studentId: user.id, courseId, preferences: input });
   }
 
-  async function runAudit(user, courseId) {
+  async function runAudit(user, courseId, { regenerate = false, regenerationReason = null, previousAudit = null } = {}) {
     if (!intelligence) held();
     const setup = await repository.getSetup(user.id, courseId);
     const inputStateVersion = String(setup.course.state_version);
     const inputInventoryDigest = sourceInventoryDigest(setup.sources);
+    const normalizedReason = String(regenerationReason || '').trim().slice(0, 1500);
+    const regenerationBasis = previousAudit || (regenerate ? setup.curriculumAudit : null);
 
-    const result = await intelligence.runCurriculumAudit({ course: setup.course, sources: setup.sources });
+    const result = await intelligence.runCurriculumAudit({
+      course: setup.course,
+      sources: setup.sources,
+      regenerationReason: regenerate ? normalizedReason : null,
+      previousAudit: regenerate ? regenerationBasis : null,
+    });
     if (!result.accepted) {
       const error = new Error('Curriculum Audit was rejected by validation.');
       error.status = 422;
@@ -290,6 +297,10 @@ function createD07Service({
         domain_validated: true,
         source_census: setup.sources.length,
         state_version: inputStateVersion,
+        regeneration_requested: regenerate === true,
+        regeneration_reason: regenerate && normalizedReason ? normalizedReason : null,
+        supersedes_audit_id: regenerate ? regenerationBasis?.curriculum_audit_id || null : null,
+        supersedes_audit_version: regenerate && regenerationBasis?.audit_version != null ? Number(regenerationBasis.audit_version) : null,
       },
     });
   }
@@ -297,40 +308,65 @@ function createD07Service({
   async function queueAudit(user, courseId, {
     supersedeEventId = null,
     causationId = null,
+    regenerate = false,
+    regenerationReason = null,
   } = {}) {
     if (!intelligence) held();
     if (!outboxStore || typeof outboxStore.append !== 'function' || typeof randomUUID !== 'function') {
       queueUnavailable();
     }
 
-    const setup = await repository.getSetup(user.id, courseId);
+    let setup = await repository.getSetup(user.id, courseId);
     const current = setup.backgroundAnalysis;
     const currentStatus = String(current?.status || '').toUpperCase();
     const supersededCurrent = Boolean(
       supersedeEventId && current?.event_id && String(current.event_id) === String(supersedeEventId)
     );
 
-    // Normal callers join existing work. A worker/read-repair path that
-    // discovers the latest event is stale is the one exception: it must leave a
-    // replacement for the current state version before stale work is considered
-    // complete.
-    if ((['PENDING', 'CLAIMED', 'RETRY_WAIT'].includes(currentStatus)
-      || (currentStatus === 'PUBLISHED' && currentValidatedAudit(setup))) && !supersededCurrent) {
+    if (['PENDING', 'CLAIMED', 'RETRY_WAIT'].includes(currentStatus) && !supersededCurrent) {
       return {
         accepted: true,
         background: true,
         jobId: current.event_id,
         status: current.status,
         joinedExisting: true,
+        operation: current?.payload?.regenerate === true ? 'REGENERATION' : 'GENERATION',
+      };
+    }
+
+    let regeneration = null;
+    const normalizedReason = String(regenerationReason || '').trim().slice(0, 1500);
+    if (regenerate) {
+      if (typeof repository.prepareAuditRegeneration !== 'function') {
+        const error = new Error('Course analysis regeneration reset is unavailable.');
+        error.status = 503;
+        error.code = 'TEACHING_D07_AUDIT_REGENERATION_RESET_UNAVAILABLE';
+        throw error;
+      }
+      regeneration = await repository.prepareAuditRegeneration({
+        studentId: user.id,
+        courseId,
+        reason: normalizedReason,
+      });
+      setup = await repository.getSetup(user.id, courseId);
+    } else if ((currentStatus === 'PUBLISHED' && currentValidatedAudit(setup)) && !supersededCurrent) {
+      return {
+        accepted: true,
+        background: false,
+        status: 'COMPLETED',
+        auditReady: true,
+        auditVersion: Number(setup.curriculumAudit.audit_version),
       };
     }
 
     const now = clock().toISOString();
     const eventId = randomUUID();
-    const baseKey = `d07:curriculum-audit:${courseId}:${setup.course.state_version}:tpf02:${TPF02_FAMILY_VERSION}`;
+    const priorAuditVersion = regenerate ? Number(regeneration?.previousAudit?.audit_version || 0) : 0;
+    const modeKey = regenerate ? `:regenerate:from-audit-${priorAuditVersion}` : '';
+    const baseKey = `d07:curriculum-audit:${courseId}:${setup.course.state_version}:tpf02:${TPF02_FAMILY_VERSION}${modeKey}`;
     const idempotencyKey = supersededCurrent
       ? `${baseKey}:state-recovery:${current.event_id}`
-      : currentStatus === 'CANCELLED'
+      : currentStatus === 'CANCELLED' && !regenerate
         ? `${baseKey}:recovery:${current.event_id}`
         : baseKey;
     const effectiveCausationId = causationId || (
@@ -344,7 +380,11 @@ function createD07Service({
       eventCategory: 'operational_recovery_event',
       triggerType: 'background_analysis',
       source: 'teaching.d07',
-      origin: supersededCurrent ? 'teaching.curriculum.audit_state_recovery' : 'teaching.course_setup',
+      origin: regenerate
+        ? 'teaching.curriculum.audit_regeneration'
+        : supersededCurrent
+          ? 'teaching.curriculum.audit_state_recovery'
+          : 'teaching.course_setup',
       actorId: String(user.id),
       aggregateType: 'teaching_course',
       aggregateId: String(courseId),
@@ -356,8 +396,14 @@ function createD07Service({
       payload: {
         course_id: String(courseId),
         expected_state_version: String(setup.course.state_version),
+        regenerate: regenerate === true,
+        regeneration_reason: regenerate && normalizedReason ? normalizedReason : null,
+        previous_audit_id: regenerate ? regeneration?.previousAudit?.curriculum_audit_id || null : null,
+        previous_audit_version: regenerate ? priorAuditVersion || null : null,
       },
-      auditRefs: [],
+      auditRefs: regenerate && regeneration?.previousAudit?.curriculum_audit_id
+        ? [`curriculum-audit:${regeneration.previousAudit.curriculum_audit_id}`]
+        : [],
       provenanceRefs: (setup.sources || []).map((source) => `source:${source.source_content_item_id}`),
     });
     return {
@@ -365,7 +411,10 @@ function createD07Service({
       background: true,
       jobId: queued.event.event_id,
       status: queued.event.status,
-      replacedStaleEvent: supersededCurrent,
+      joinedExisting: queued.inserted === false,
+      operation: regenerate ? 'REGENERATION' : 'GENERATION',
+      previousAuditVersion: regenerate ? priorAuditVersion || null : null,
+      resetApplied: regenerate === true,
     };
   }
 
