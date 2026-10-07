@@ -6,9 +6,13 @@ const {
   TPF02_OUTPUT_SCHEMA_VERSION,
   TPF02_MAX_OUTPUT_TOKENS,
   TPF02_TOP_LEVEL_FIELDS,
+  TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,
+  TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,
+  TPF02_DECOMPOSITION_PATCH_FIELDS,
   EXECUTION_STAGES,
   buildTpf02AcademicInput,
   validateTpf02Schema,
+  validateTpf02DecompositionPatchSchema,
   validateTpf02Domain,
   validateHierarchy,
   validateDecomposition,
@@ -71,6 +75,17 @@ function tpf02OutputSchema(){
     review_needed_field:'review_required',
     declared_fields:[...TPF02_TOP_LEVEL_FIELDS],
     validate:validateTpf02Schema,
+  };
+}
+
+function tpf02DecompositionPatchOutputSchema(){
+  return {
+    id:TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,
+    version:TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,
+    uncertainty_states:['REVIEW_NEEDED'],
+    review_needed_field:'review_required',
+    declared_fields:[...TPF02_DECOMPOSITION_PATCH_FIELDS],
+    validate:validateTpf02DecompositionPatchSchema,
   };
 }
 
