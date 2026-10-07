@@ -603,11 +603,25 @@ function validateLineageRepairPatch(output,{academicInput,baseOutput,repairRefs=
     return {ok:false,reason:'TPF02_LINEAGE_REPAIR_COMPLETION_STATE_INVALID'};
   }
 
-  const existingTopicIds=new Set((baseOutput.topics||[]).map((topic)=>String(topic.topic_id)));
+  const existingTopicById=new Map((baseOutput.topics||[]).map((topic)=>[String(topic.topic_id),topic]));
+  const existingTopicIds=new Set(existingTopicById.keys());
   const newTopicIds=new Set();
+  const seenRepairTopicIds=new Set();
   for(const topic of output.topics||[]){
     const id=String(topic?.topic_id||'').trim();
-    if(!id||existingTopicIds.has(id)||newTopicIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_INVALID'};
+    if(!id||seenRepairTopicIds.has(id))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_ID_INVALID'};
+    seenRepairTopicIds.add(id);
+    const existing=existingTopicById.get(id);
+    if(existing){
+      // Existing Topics are immutable in lineage repair. Providers sometimes
+      // harmlessly restate one while attaching a source to an existing Learning
+      // Unit. Accept only an exact structural restatement; applyLineageRepair()
+      // already ignores existing Topic rows, so no rewrite can cross authority.
+      const sameTitle=String(topic.title||'')===String(existing.title||'');
+      const sameSubtopics=JSON.stringify(topic.subtopics||[])===JSON.stringify(existing.subtopics||[]);
+      if(!sameTitle||!sameSubtopics)return {ok:false,reason:'TPF02_LINEAGE_REPAIR_EXISTING_TOPIC_REWRITE_FORBIDDEN'};
+      continue;
+    }
     newTopicIds.add(id);
     if((topic.source_item_refs||[]).some((ref)=>!expectedSet.has(String(ref))))return {ok:false,reason:'TPF02_LINEAGE_REPAIR_TOPIC_SOURCE_REF_INVALID'};
   }
