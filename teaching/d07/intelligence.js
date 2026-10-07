@@ -86,6 +86,7 @@ function validationContextFor(academicInput){
     sourceItems:academicInput.source_items,
     taskMode:academicInput.task_mode,
     executionStage:academicInput.execution_stage,
+    decompositionLimits:academicInput.constraints?.decomposition_limits || null,
   };
 }
 
@@ -465,12 +466,17 @@ function lineageRepairRequest({
       existing_topics:Object.freeze((baseOutput.topics||[]).map((topic)=>Object.freeze({
         topic_id:topic.topic_id,
         title:topic.title,
+        subtopics:Object.freeze((topic.subtopics||[]).map((subtopic)=>Object.freeze({
+          subtopic_id:subtopic.subtopic_id,
+          title:subtopic.title,
+        }))),
       }))),
       existing_learning_units:Object.freeze((baseOutput.learning_units||[]).map((unit)=>Object.freeze({
         learning_unit_id:unit.learning_unit_id,
         title:unit.title,
         intended_competence:unit.intended_competence,
         topic_refs:Object.freeze([...(unit.topic_refs||[])]),
+        subtopic_id:unit.subtopic_id==null?null:unit.subtopic_id,
         criticality:unit.criticality,
       }))),
       existing_assumed_prerequisite_refs:Object.freeze((baseOutput.assumed_prerequisites||[]).map((item)=>item.assumed_prerequisite_id)),
@@ -649,7 +655,7 @@ function structurePassRequest({course,sources,preparedInventory,batchIndex=0}={}
     directive:{
       ...request.directive,
       bounded_actions:[
-        'build a compact candidate curriculum structure for this bounded prepared source batch',
+        'build a competence-level candidate curriculum structure for this bounded prepared source batch without collapsing distinct assessable capabilities',
         'preserve runtime source identity and prepared source classification',
       ],
       allowed_operations:[
@@ -691,6 +697,10 @@ function compactStructureCandidates(stageResults=[]){
         candidate_topic_ref:`batch-${batchIndex}:topic:${String(topic.topic_id)}`,
         title:String(topic.title),
         source_item_refs:Object.freeze(uniqueStrings(topic.source_item_refs||[])),
+        subtopics:Object.freeze((topic.subtopics||[]).map((subtopic)=>Object.freeze({
+          subtopic_id:String(subtopic.subtopic_id),
+          title:String(subtopic.title),
+        }))),
       }))),
       learning_units:Object.freeze((output.learning_units||[]).map((unit)=>Object.freeze({
         candidate_unit_ref:`batch-${batchIndex}:unit:${String(unit.learning_unit_id)}`,
@@ -698,6 +708,7 @@ function compactStructureCandidates(stageResults=[]){
         intended_competence:String(unit.intended_competence),
         source_item_refs:Object.freeze(uniqueStrings(unit.source_item_refs||[])),
         topic_titles:Object.freeze(uniqueStrings((unit.topic_refs||[]).map((ref)=>topicTitleById.get(String(ref))||String(ref)))),
+        subtopic_id:unit.subtopic_id==null?null:String(unit.subtopic_id),
         criticality:String(unit.criticality),
         prerequisite_candidate_refs:Object.freeze(uniqueStrings(unit.prerequisite_refs||[])),
       }))),
@@ -784,7 +795,7 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSo
   const academicInput=Object.freeze({
     ...fullAcademicInput,
     source_items:Object.freeze([]),
-    source_evidence_items:Object.freeze(progressiveCandidates.length?[]:[...fullAcademicInput.source_items]),
+    source_evidence_items:Object.freeze([...fullAcademicInput.source_items]),
     prepared_source_inventory:Object.freeze([...preparedInventory]),
     eligible_learning_unit_source_refs:eligibleLearningUnitSourceRefs,
     source_inventory_stage_findings:stageFindings,

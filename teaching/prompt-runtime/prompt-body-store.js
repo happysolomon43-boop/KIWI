@@ -16,7 +16,7 @@ const HISTORICAL_PACK_SHA256 = '173b091587e16604c112d9f500c3915bb0057aab8946aacb
 const EXPECTED_MANIFEST_SHA256 = '7757b50cbf4cfb501158beeaccfbfd5776bc8ca8f7257b4855f5ed5fcdf67e3d';
 const EXPECTED_PACK_SHA256 = '6632f5c566fb81906c5ecf27e7d5412a330b93f63c429d46f3bee65aac91ab5d';
 const EXPECTED_CATALOG_SHA256 = '87499e2dc8c00e4cf0d789b654171c84d929c9352189fe509ec173f3f5a2346b';
-const EXPECTED_AMENDMENT_REGISTRY_SHA256 = '04e1d9bf020cf5fd0ad20bb4c9cf6af7c972247d87f0700463be2819d01d8a9c';
+const EXPECTED_AMENDMENT_REGISTRY_SHA256 = '76157d36547788ae05907b034afe69a0b60a293a758dea8b8b16b2839af25054';
 const TPF20_SHA256 = 'd8d13f679e6817c1c02935e6581f5fc6ad512812004b59eebcf9a7d85c962e67';
 
 function sha256(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
@@ -71,7 +71,7 @@ function loadAmendmentRegistry(asset = AMENDMENT_REGISTRY_ASSET) {
     if (!/^TPF-\d{2}$/.test(String(amendment.family_id || '')) || ids.has(amendment.family_id) ||
         !/^\d+\.\d+$/.test(String(amendment.version || '')) ||
         !/^TPF-\d{2}_[\w.-]+\.md$/.test(String(amendment.prompt_file || '')) ||
-        !/^[\w.-]+\.md\.gz\.b64$/.test(String(amendment.prompt_asset || '')) ||
+        !/^[\w.-]+\.md(?:\.gz\.b64)?$/.test(String(amendment.prompt_asset || '')) ||
         !/^[a-f0-9]{64}$/.test(String(amendment.prompt_sha256 || ''))) {
       fail('Teaching prompt amendment registry contains invalid or duplicate metadata.');
     }
@@ -142,8 +142,14 @@ function loadPromptBodyStore({
     let bytes;
     let storage;
     if (family.amended) {
-      bytes = readGzipBase64(path.join(amendedAssetDirectory, family.prompt_asset));
-      storage = 'gzip_base64_amendment_asset';
+      const amendmentAsset = path.join(amendedAssetDirectory, family.prompt_asset);
+      if (String(family.prompt_asset).endsWith('.gz.b64')) {
+        bytes = readGzipBase64(amendmentAsset);
+        storage = 'gzip_base64_amendment_asset';
+      } else {
+        bytes = fs.readFileSync(amendmentAsset);
+        storage = 'individual_utf8_amendment_asset';
+      }
     } else if (familyId === 'TPF-20') {
       bytes = readGzipBase64(tpf20Asset);
       storage = 'gzip_base64_repository_asset';

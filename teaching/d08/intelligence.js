@@ -91,6 +91,7 @@ function boundedPlanningSignals({ audit, diagnosticPlan = null, vpkDecisions = [
         return {
           id: unitId,
           topic_refs: (unit.topic_refs || (unit.topic_id ? [unit.topic_id] : [])).map(String),
+          subtopic_id: unit.subtopic_id == null ? null : String(unit.subtopic_id),
           title: String(unit.title || unit.learning_unit_id || unit.id),
           intended_competence: String(unit.intended_competence || ''),
           criticality: String(unit.criticality || 'MEDIUM'),

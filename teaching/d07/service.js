@@ -7,7 +7,7 @@ const {
   evaluateValidatedPriorKnowledge,
   digest,
 } = require('./contracts');
-const { TPF02_FAMILY_VERSION } = require('./tpf02-direct');
+const { TPF02_FAMILY_VERSION, TPF02_OUTPUT_SCHEMA_VERSION } = require('./tpf02-direct');
 const { currentValidatedAudit } = require('./audit-idempotency-service');
 const { validateSupplementaryMaterialInput } = require('../d28/security');
 
@@ -282,10 +282,10 @@ function createD07Service({
       output,
       provenanceRefs: setup.sources.map((source) => `source:${source.source_content_item_id}`),
       validationMetadata: {
-        schema: 'd07.curriculum-audit.v2',
+        schema: 'd07.curriculum-audit.v3',
         prompt_family: 'TPF-02',
-        prompt_version: '1.1',
-        output_schema_version: '2',
+        prompt_version: TPF02_FAMILY_VERSION,
+        output_schema_version: TPF02_OUTPUT_SCHEMA_VERSION,
         lineage_reconciled: true,
         domain_validated: true,
         source_census: setup.sources.length,
