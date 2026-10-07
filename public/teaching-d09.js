@@ -84,7 +84,7 @@ function blockRow(block,zoneInput,courseId) {
 }
 function stage4(course,data,container,reload) {
   const card=el('section','teaching-d09-card');
-  card.append(el('div','teaching-kicker','Scheduling preferences'),el('h3','','Semester and availability'),el('p','','Your weekly availability belongs to the Semester, not to one Course. Saving it anywhere creates a new shared scheduling profile and KIWI rebuilds one Semester timetable across every Course whose current Course Plan is ready.'));
+  card.append(el('div','teaching-kicker','Scheduling preferences'),el('h3','','Semester and availability'),el('p','','Your weekly availability is shared across the Semester; it belongs to the Semester, not to one Course. Saving it anywhere creates a new shared scheduling profile and KIWI rebuilds one Semester timetable across every Course whose current Course Plan is ready.'));
   const sem=data.semester||{}, grid=el('div','teaching-d09-fields');
   const name=el('input'); name.value=sem.name||'Semester';
   const today=new Date(),defaultEnd=new Date(today);defaultEnd.setMonth(defaultEnd.getMonth()+4);
@@ -168,7 +168,7 @@ function stage4(course,data,container,reload) {
 }
 function stage5(course,data,container,reload) {
   const card=el('section','teaching-d09-card');
-  card.append(el('div','teaching-kicker','Timetable'),el('h3','','Shared Semester timetable'),el('p','','KIWI schedules all current Course Plans together against the same availability, protected time and recovery capacity. This Course view shows only its slots, but every rebuild creates one coordinated Semester timetable version.'));
+  card.append(el('div','teaching-kicker','Timetable'),el('h3','','Shared Semester timetable'),el('p','','Proposed timetable and feasibility are Semester-wide: KIWI schedules all current Course Plans together against the same availability, protected time and recovery capacity. This Course view shows only its slots, but every rebuild creates one coordinated Semester timetable version.'));
   const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
   const missingInputs=!data.semester||!data.profile;
   const unresolvedSelf=(data.unresolvedSemesterCourses||[]).filter((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
