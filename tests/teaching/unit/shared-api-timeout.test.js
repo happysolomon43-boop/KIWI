@@ -61,6 +61,28 @@ test('Course Plan request timeout covers the MAIN_CBT operation envelope without
   assert.equal(delays.at(-1), 30_000);
 });
 
+test('Semester timetable build and schedule-input save share the long-running analysis timeout envelope', async () => {
+  const delays = [];
+  const client = loadClient({
+    setTimeoutImpl: (_callback, delay) => {
+      delays.push(delay);
+      return delays.length;
+    },
+  });
+
+  await client.kiwiApiRequest('/teaching/courses/course-1/timetable/propose', {
+    method: 'POST',
+    body: {},
+  });
+  assert.equal(delays.at(-1), 630_000);
+
+  await client.kiwiApiRequest('/teaching/courses/course-1/schedule-inputs', {
+    method: 'PUT',
+    body: {},
+  });
+  assert.equal(delays.at(-1), 630_000);
+});
+
 test('explicit timeout overrides the Course Plan long-running endpoint policy', async () => {
   const delays = [];
   const client = loadClient({
