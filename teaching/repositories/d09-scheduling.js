@@ -2,6 +2,7 @@
 
 const crypto = require('node:crypto');
 const { digest, assertSchedulingContextCurrent } = require('../d09/contracts');
+const { isSchedulableLifecycle } = require('../d09/schedule-preparation');
 
 function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=()=>new Date()}={}) {
   if(typeof query!=='function'||typeof withTransaction!=='function'||typeof randomUUID!=='function') throw new TypeError('D09 repository requires query, withTransaction and randomUUID.');
@@ -245,23 +246,36 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     if(!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT')) && !governedRequestRef){
       const e=new Error('Direct Semester/availability edits are pre-activation only; active-course changes require the D10 formal Request workflow.'); e.status=409; e.code='TEACHING_D09_PREACTIVATION_EDIT_ONLY'; throw e;
     }
+    const sameInstant=(left,right)=>{
+      const a=Date.parse(left||''),b=Date.parse(right||'');
+      return Number.isFinite(a)&&Number.isFinite(b)?a===b:String(left||'')===String(right||'');
+    };
+    const semesterMatches=(row,next)=>Boolean(row)
+      && String(row.name||'')===String(next.name||'')
+      && sameInstant(row.starts_at,next.startsAt)
+      && sameInstant(row.ends_at,next.endsAt)
+      && String(row.timezone||'')===String(next.timezone||'');
     let semester=null;
     if(input.semester.semesterId){
       const {rows}=await q(tx,'select * from public.teaching_semesters where semester_id=$1 and student_id=$2 for update',[input.semester.semesterId,studentId]);
       semester=rows?.[0]||null;
       if(!semester){ const e=new Error('Semester not found.'); e.status=404; e.code='TEACHING_D09_SEMESTER_NOT_FOUND'; throw e; }
-      const {rows:updated}=await q(tx,`update public.teaching_semesters set name=$3,starts_at=$4,ends_at=$5,timezone=$6,
-        state_version=state_version+1,updated_at=now() where semester_id=$1 and student_id=$2 returning *`,
-        [semester.semester_id,studentId,input.semester.name,input.semester.startsAt,input.semester.endsAt,input.semester.timezone]);
-      semester=updated[0];
+      if(!semesterMatches(semester,input.semester)){
+        const {rows:updated}=await q(tx,`update public.teaching_semesters set name=$3,starts_at=$4,ends_at=$5,timezone=$6,
+          state_version=state_version+1,updated_at=now() where semester_id=$1 and student_id=$2 returning *`,
+          [semester.semester_id,studentId,input.semester.name,input.semester.startsAt,input.semester.endsAt,input.semester.timezone]);
+        semester=updated[0];
+      }
     } else if(course.semester_id){
       const {rows}=await q(tx,'select * from public.teaching_semesters where semester_id=$1 and student_id=$2 for update',[course.semester_id,studentId]);
       semester=rows?.[0]||null;
       if(!semester){ const e=new Error('Course Semester no longer exists.'); e.status=409; e.code='TEACHING_D09_SEMESTER_MISSING'; throw e; }
-      const {rows:updated}=await q(tx,`update public.teaching_semesters set name=$3,starts_at=$4,ends_at=$5,timezone=$6,
-        state_version=state_version+1,updated_at=now() where semester_id=$1 and student_id=$2 returning *`,
-        [semester.semester_id,studentId,input.semester.name,input.semester.startsAt,input.semester.endsAt,input.semester.timezone]);
-      semester=updated[0];
+      if(!semesterMatches(semester,input.semester)){
+        const {rows:updated}=await q(tx,`update public.teaching_semesters set name=$3,starts_at=$4,ends_at=$5,timezone=$6,
+          state_version=state_version+1,updated_at=now() where semester_id=$1 and student_id=$2 returning *`,
+          [semester.semester_id,studentId,input.semester.name,input.semester.startsAt,input.semester.endsAt,input.semester.timezone]);
+        semester=updated[0];
+      }
     } else {
       const id=randomUUID();
       const {rows}=await q(tx,`insert into public.teaching_semesters(semester_id,student_id,name,starts_at,ends_at,timezone,metadata,state_version)
@@ -308,9 +322,17 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       schedule_reserve_id,student_id,profile_id,course_id,reserve_kind,minutes,protected_start_at,protected_end_at
     ) values($1,$2,$3,$4,$5,$6,$7,$8)`,
       [randomUUID(),studentId,profileId,r.courseId||r.course_id,r.kind||r.reserve_kind,Number(r.minutes),r.protectedStartAt||r.protected_start_at||null,r.protectedEndAt||r.protected_end_at||null]);
-    const {rowCount:staledTimetableCount=0}=await q(tx,`update public.teaching_timetable_versions
-      set timetable_state='STALE'
-      where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')`,
+    const {rows:activatedRows=[]}=await q(tx,`select course_id from public.teaching_courses
+      where student_id=$1 and semester_id=$2 and lifecycle_state in ('ACTIVE','PAUSED','INCOMPLETE')
+      limit 1`,[studentId,semester.semester_id]);
+    const preserveApprovedAuthority=activatedRows.length>0;
+    const {rowCount:staledTimetableCount=0}=await q(tx,preserveApprovedAuthority
+      ? `update public.teaching_timetable_versions
+          set timetable_state='STALE'
+          where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL')`
+      : `update public.teaching_timetable_versions
+          set timetable_state='STALE'
+          where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')`,
       [studentId,semester.semester_id]);
     const deps=[
       {dependency_kind:'SEMESTER',authoritative_owner_ref:'scheduler',aggregate_ref:'semester:'+semester.semester_id,version_ref:String(semester.state_version)},
@@ -318,10 +340,11 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     ];
     const ppl=await ensurePplBundleUsing(tx,{studentId,semester,profile,dependencies:deps,changedRefs:deps.map((d)=>d.aggregate_ref)});
     await auditUsing(tx,{studentId,action:'scheduler.inputs.commit',entityType:'SEMESTER',entityId:semester.semester_id,stateVersionRef:semester.state_version,
-      beforeRef:{profile_id:previous?.profile_id||null},afterRef:{profile_id:profileId,profile_version:version},safeMetadata:{course_id:courseId,staled_timetable_count:Number(staledTimetableCount)||0}});
+      beforeRef:{profile_id:previous?.profile_id||null},afterRef:{profile_id:profileId,profile_version:version},safeMetadata:{course_id:courseId,staled_timetable_count:Number(staledTimetableCount)||0,preserved_approved_authority:preserveApprovedAuthority}});
     return {semester,profile,ppl};
   }
-  async function saveProposalUsing(tx,{studentId,courseId,context,result,source='DETERMINISTIC_INITIAL'}){
+  async function saveProposalUsing(tx,{studentId,courseId,context,planningContext=null,result,source='DETERMINISTIC_INITIAL'}){
+    const scheduleContext=planningContext||context;
     await assertContextCurrentUsing(tx,{studentId,context});
     await ensureCourse(studentId,courseId,tx,true);
     const {rows:vrows}=await q(tx,'select coalesce(max(version_no),0)+1 v from public.teaching_timetable_versions where semester_id=$1',[context.semester.semester_id]);
@@ -331,8 +354,11 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const {rows:previousRows}=await q(tx,expansionProposal
       ? `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL')
           order by version_no desc limit 1 for update`
-      : `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state not in ('SUPERSEDED','STALE')
-          order by version_no desc limit 1 for update`,
+      : directApproval
+        ? `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state='APPROVED'
+            order by version_no desc limit 1 for update`
+        : `select * from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state not in ('SUPERSEDED','STALE')
+            order by version_no desc limit 1 for update`,
       [studentId,context.semester.semester_id]);
     const previous=previousRows?.[0]||null;
     if(directApproval){
@@ -349,7 +375,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       lineagePrevious=approvedRows[0]||null;
     }
     const state=source==='FORMAL_REQUEST_APPLIED'?'APPROVED':source==='PREACTIVATION_EDIT'?'EDITED_PROPOSAL':'PROPOSED';
-    const coursePlanRefs=context.courses.map((b)=>({course_id:b.course.course_id,course_plan_id:b.plan.course_plan_id,version_no:b.plan.version_no,state_version:b.course.state_version}));
+    const coursePlanRefs=(scheduleContext.courses||[]).map((b)=>({course_id:b.course.course_id,course_plan_id:b.plan.course_plan_id,version_no:b.plan.version_no,state_version:b.course.state_version}));
     const {rows:tt}=await q(tx,`insert into public.teaching_timetable_versions(
       timetable_version_id,student_id,semester_id,profile_id,version_no,timetable_state,state_digest,source_kind,course_plan_refs,
       supersedes_timetable_version_id,created_by
@@ -430,17 +456,21 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const currentByCourse=new Map((context.courses||[]).map((bundle)=>[String(bundle.course.course_id),bundle]));
     const refByCourse=new Map(refs.map((ref)=>[String(ref.course_id),ref]));
     const requiredCourseIds=authoritativeView
-      ? (context.courses||[]).filter((bundle)=>['ACTIVE','PAUSED'].includes(String(bundle.course?.lifecycle_state||''))).map((bundle)=>String(bundle.course.course_id))
-      : (context.courses||[]).map((bundle)=>String(bundle.course.course_id));
+      ? (context.courses||[]).filter((bundle)=>String(bundle.course?.lifecycle_state||'')==='ACTIVE').map((bundle)=>String(bundle.course.course_id))
+      : (context.courses||[]).filter((bundle)=>isSchedulableLifecycle(bundle.course?.lifecycle_state)).map((bundle)=>String(bundle.course.course_id));
+    const requiredCourseIdSet=new Set(requiredCourseIds);
     const staleSchedule=Boolean(latest.timetable) && (
-      String(latest.timetable.profile_id)!==String(context.profile?.profile_id||'')
+      (!authoritativeView && String(latest.timetable.profile_id)!==String(context.profile?.profile_id||''))
       || requiredCourseIds.some((id)=>!refByCourse.has(id))
       || refs.some((ref)=>{
-        const bundle=currentByCourse.get(String(ref.course_id));
+        const courseId=String(ref.course_id);
+        if(authoritativeView&&!requiredCourseIdSet.has(courseId)) return false;
+        if(!authoritativeView&&!requiredCourseIdSet.has(courseId)) return true;
+        const bundle=currentByCourse.get(courseId);
         return !bundle
           || String(ref.course_plan_id)!==String(bundle.plan.course_plan_id)
           || Number(ref.version_no)!==Number(bundle.plan.version_no)
-          || Number(ref.state_version)!==Number(bundle.course.state_version);
+          || (!authoritativeView && Number(ref.state_version)!==Number(bundle.course.state_version));
       })
     );
     return {...context,...latest,staleSchedule,debtMinutes:Math.max(0,Number(debt?.[0]?.debt_minutes)||0)};

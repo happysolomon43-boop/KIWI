@@ -9,7 +9,7 @@ function createD09SchedulingRepository(options = {}) {
   if (!base || typeof base.saveProposalUsing !== 'function') return base;
 
   async function saveProposalUsing(tx, args = {}) {
-    const context = args.context || {};
+    const context = args.planningContext || args.context || {};
     const naturalized = naturalizeScheduleResult(context, args.result, { source: args.source || 'AUTOMATIC' });
     const result = normalizeReservePlacement(context, naturalized, { source: args.source || 'AUTOMATIC' });
     return base.saveProposalUsing(tx, { ...args, result });

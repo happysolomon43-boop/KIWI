@@ -7,6 +7,7 @@ if (!courseSurface || typeof courseSurface.registerSection !== 'function') throw
 const STYLE_ID = 'teachingD09Styles';
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function el(tag, cls = '', text = null) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+function scheduleActionError(error,fallback){const code=String(error?.code||'').toUpperCase(),message=String(error?.message||'');if(code.includes('LOAD_ESTIMATION_TRUNCATED')||code.includes('AI_OUTPUT_TRUNCATED')||/MAX_TOKENS|incomplete Teaching artifact/i.test(message))return 'KIWI could not finish workload preparation for this timetable. Nothing was changed; try the timetable action again.';return message||fallback;}
 function installStyles() {
   if (document.getElementById(STYLE_ID)) return;
   const style = el('style'); style.id = STYLE_ID;
@@ -65,6 +66,11 @@ function dayPicker(selected) {
 }
 function selectedDays(box) { return [...box.querySelectorAll('input:checked')].map((input)=>Number(input.value)); }
 function metric(value,label) { const box=el('div','teaching-d09-metric'); box.append(el('strong','',String(value == null ? '—' : value)),el('span','',label)); return box; }
+function showScheduleLoading(page,label='Loading Semester timetable') {
+  const skeleton=el('div','teaching-shell-skeleton');skeleton.setAttribute('role','status');skeleton.setAttribute('aria-label',label);
+  const card=el('div','teaching-skeleton-card'),title=el('div','teaching-skeleton-line');title.dataset.size='title';
+  card.append(title,el('div','teaching-skeleton-line'),el('div','teaching-skeleton-block'));skeleton.append(card);page.replaceChildren(skeleton);
+}
 function addField(grid,label,input) { const field=el('div','teaching-d09-field'); field.append(el('label','',label),input); grid.append(field); }
 function blockRow(block,zoneInput,courseId) {
   const row=el('div','teaching-d09-row'); row.dataset.block='true';
@@ -79,7 +85,7 @@ function blockRow(block,zoneInput,courseId) {
 }
 function stage4(course,data,container,reload) {
   const card=el('section','teaching-d09-card');
-  card.append(el('div','teaching-kicker','Scheduling preferences'),el('h3','','Semester and availability'),el('p','','Your weekly availability is shared across the Semester. Once set in any Course, KIWI uses it as the default for the others and recalculates the shared timetable when it changes.'));
+  card.append(el('div','teaching-kicker','Scheduling preferences'),el('h3','','Semester and availability'),el('p','','Your weekly availability is shared across the Semester; it belongs to the Semester, not to one Course. Saving it anywhere creates a new shared scheduling profile and KIWI rebuilds one Semester timetable across every Course whose current Course Plan is ready.'));
   const sem=data.semester||{}, grid=el('div','teaching-d09-fields');
   const name=el('input'); name.value=sem.name||'Semester';
   const today=new Date(),defaultEnd=new Date(today);defaultEnd.setMonth(defaultEnd.getMonth()+4);
@@ -88,7 +94,7 @@ function stage4(course,data,container,reload) {
   const zone=el('input'); zone.value=sem.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
   addField(grid,'Semester name',name); addField(grid,'Start date',start); addField(grid,'End date',end); addField(grid,'Timetable timezone',zone); card.append(grid);
   if(data.inheritedAvailability){
-    card.append(el('div','teaching-message','Using your current Semester availability automatically for this Course. You do not need to save it again; when its Course Plan exists, KIWI will attach the Course to the same Semester and recalculate the timetable automatically.'));
+    card.append(el('div','teaching-message','Using your Semester availability for this Course. KIWI will add it to the shared Semester timetable when the Course Plan is ready.'));
   }
 
   const windows=data.profile?.availability||[], available=windows.filter((x)=>x.kind==='AVAILABLE'), recovery=windows.filter((x)=>x.kind==='RECOVERY_ONLY'), hard=windows.filter((x)=>x.kind==='HARD_UNAVAILABLE');
@@ -120,6 +126,7 @@ function stage4(course,data,container,reload) {
   const message=el('div'), actions=el('div','teaching-d09-actions'), save=el('button','teaching-button teaching-button--primary',postActivation?'Request this availability change':'Save availability'); save.type='button'; actions.append(save); card.append(actions,message);
   save.addEventListener('click',async()=>{
     save.disabled=true;
+    message.textContent=postActivation?'Preparing the governed availability-change Request…':'Saving shared availability and rebuilding the Semester timetable…';message.className='teaching-message';delete message.dataset.kind;
     try {
       const tz=zone.value.trim(); if(!name.value.trim()) throw new Error('Enter a semester name.'); if(!start.value||!end.value) throw new Error('Semester start and end dates are required.');
       const availability=[];
@@ -137,7 +144,13 @@ function stage4(course,data,container,reload) {
       }else{
         try{
           const saved=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/schedule-inputs',{method:'PUT',body});
-          await reload(saved,'Shared availability saved. KIWI recalculated the Semester timetable automatically where a current Course Plan was available.');
+          const sync=saved?.automaticRecalculation||null;
+          const notice=sync?.recalculated
+            ? {text:`Shared availability saved. Semester timetable v${sync.timetableVersion??'new'} was rebuilt across ${sync.affectedCourseCount||sync.affectedCourseIds?.length||1} Course${(sync.affectedCourseCount||sync.affectedCourseIds?.length||1)===1?'':'s'}.`,kind:'success'}
+            : sync?.reason==='CURRENT_COURSE_PLAN_REQUIRED'
+              ? {text:'Shared availability saved. KIWI will build the Semester timetable automatically as soon as a current Course Plan is ready.',kind:'info'}
+              : {text:'Shared availability was saved, but the Semester timetable rebuild needs attention. Older timetable versions are stale and are not treated as current.',kind:'warning'};
+          await reload(saved,notice);
         }catch(error){
           if(error?.code==='TEACHING_D09_ACTIVE_SEMESTER_AVAILABILITY_REQUIRES_REQUEST'&&window.KIWITeachingD10?.createScheduleRequest){
             await window.KIWITeachingD10.createScheduleRequest(course.course_id,body);
@@ -149,20 +162,20 @@ function stage4(course,data,container,reload) {
         }
       }
       message.className='teaching-message';
-    } catch(error) { message.textContent=error.message||'Availability could not be saved.'; message.className='teaching-message'; message.dataset.kind='error'; }
+    } catch(error) { message.textContent=scheduleActionError(error,'Availability could not be saved.'); message.className='teaching-message'; message.dataset.kind='error'; }
     finally { save.disabled=false; }
   });
   container.append(card);
 }
 function stage5(course,data,container,reload) {
   const card=el('section','teaching-d09-card');
-  card.append(el('div','teaching-kicker','Timetable'),el('h3','','Proposed timetable and feasibility'),el('p','','KIWI uses the Course Plan, your availability, and protected time to build a realistic timetable. Required learning is never removed just to make the calendar fit.'));
+  card.append(el('div','teaching-kicker','Timetable'),el('h3','','Shared Semester timetable'),el('p','','Proposed timetable and feasibility are Semester-wide: KIWI schedules all current Course Plans together against the same availability, protected time and recovery capacity. This Course view shows only its slots, but every rebuild creates one coordinated Semester timetable version.'));
   const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
   const missingInputs=!data.semester||!data.profile;
   const unresolvedSelf=(data.unresolvedSemesterCourses||[]).filter((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
   const missingAttachment=unresolvedSelf.some((item)=>item.reason==='COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER');
   const missingPlan=unresolvedSelf.some((item)=>item.reason==='COURSE_PLAN_NOT_READY');
-  const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',postActivation?'Timetable locked after activation':(data.timetable?'Recalculate timetable':'Propose timetable')), status=el('span','teaching-d09-status',statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button';propose.disabled=postActivation||missingInputs||missingPlan; actions.append(propose,status); card.append(actions);
+  const actions=el('div','teaching-d09-actions'), propose=el('button','teaching-button teaching-button--primary',postActivation?'Timetable locked after activation':(data.timetable?'Rebuild Semester timetable':'Build Semester timetable')), status=el('span','teaching-d09-status',statusName(data.feasibility?.outcome||'Not calculated')); propose.type='button';propose.disabled=postActivation||missingInputs||missingPlan; actions.append(propose,status); card.append(actions);
   if(missingInputs){card.append(el('div','teaching-message','Save your semester and availability before creating the timetable.'));}
   else {
     if(missingAttachment) card.append(el('div','teaching-message','This Course is already using your shared Semester availability. When the timetable is proposed, KIWI rebuilds the future Semester schedule as one combined workload: elapsed Classes stay fixed, while existing future Classes may shift so the new Course is integrated naturally instead of being bolted on.'));
@@ -181,16 +194,17 @@ function stage5(course,data,container,reload) {
   });
   card.append(slotList);
   const proposalMessage=el('div');proposalMessage.setAttribute('role','status');proposalMessage.setAttribute('aria-live','polite');card.append(proposalMessage);
-  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Building a timetable from your plan and availability…';proposalMessage.className='teaching-message';try{const updated=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});await reload(updated,'Proposed timetable created.');}catch(error){proposalMessage.textContent=error.message||'Timetable feasibility could not be calculated.';proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
+  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Rebuilding one Semester timetable across every schedulable Course…';proposalMessage.className='teaching-message';try{const updated=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});await reload(updated,{text:'Shared Semester timetable rebuilt. Every current Course Plan is coordinated in the same timetable version.',kind:'success'});}catch(error){proposalMessage.textContent=scheduleActionError(error,'Semester timetable feasibility could not be calculated.');proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
   container.append(card);
 }
 async function renderSchedule({course,container}) {
   installStyles(); const page=el('div','teaching-d09-page'),live=el('div');live.setAttribute('role','status');live.setAttribute('aria-live','polite'); container.replaceChildren(page);
-  function renderData(data,notice=''){
-    const grid=el('div','teaching-d09-grid'),left=el('div'),right=el('div');grid.append(left,right);page.replaceChildren(live,grid);stage4(course,data,left,renderData);stage5(course,data,right,renderData);live.textContent=notice;live.className=notice?'teaching-message':'';delete live.dataset.kind;
+  function renderData(data,notice=null){
+    const grid=el('div','teaching-d09-grid'),left=el('div'),right=el('div');grid.append(left,right);page.replaceChildren(live,grid);stage4(course,data,left,renderData);stage5(course,data,right,renderData);
+    const text=typeof notice==='string'?notice:notice?.text||'';live.textContent=text;live.className=text?'teaching-message':'';delete live.dataset.kind;if(text&&notice?.kind)live.dataset.kind=notice.kind;
   }
   async function load() {
-    page.replaceChildren(el('div','teaching-message','Loading semester and timetable…'));
+    showScheduleLoading(page,'Loading Semester availability and timetable');
     try { renderData(await fetchReview(course.course_id)); }
     catch(error){page.replaceChildren(el('div','teaching-message',error.message||'Scheduling could not be loaded.'));page.firstElementChild.dataset.kind='error';}
   }

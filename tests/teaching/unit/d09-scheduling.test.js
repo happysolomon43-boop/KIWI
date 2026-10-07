@@ -96,7 +96,7 @@ test('D09 protected periods admit intended reserve work and reject unrelated edi
   }],[{slotId:'s1',startsAt:'2026-10-05T09:30:00Z',endsAt:'2026-10-05T10:30:00Z'}]),{code:'TEACHING_D09_HARD_CONSTRAINT_VIOLATION'});
 });
 
-test('D09 stable timetable recalculation retains prior feasible placements before soft preference churn',()=>{
+test('D09 stable timetable preference preserves placements when no competing Course needs the capacity',()=>{
   const base=context([bundle('c1',4,60)],{availability:availability([1,2,3,4,5],'09:00','12:00')});
   const initial=computeSchedule(base,{now:'2026-09-29T04:00:00Z'});
   const recalculation=context([bundle('c1',4,60)],{availability:availability([1,2,3,4,5],'09:00','12:00')});
@@ -104,14 +104,67 @@ test('D09 stable timetable recalculation retains prior feasible placements befor
   recalculation.priorSlots=initial.schedule.map((slot,index)=>({
     timetable_slot_id:'prior-'+index,course_id:slot.courseId,slot_kind:slot.kind,
     starts_at:slot.startsAt,ends_at:slot.endsAt,timezone:slot.timezone,
+    learning_unit_refs:slot.learningUnitIds,
   }));
   const next=computeSchedule(recalculation,{now:'2026-09-29T04:00:00Z'});
   assert.equal(next.outcome,'FEASIBLE');
+  assert.equal(next.policy.stabilityPolicy,'SOFT_PORTFOLIO_PREFERENCE');
   assert.equal(next.metrics.stableSlotsRetained,initial.schedule.length);
   assert.deepEqual(
     next.schedule.map((slot)=>[slot.courseId,slot.startsAt,slot.endsAt]),
     initial.schedule.map((slot)=>[slot.courseId,slot.startsAt,slot.endsAt]),
   );
+});
+
+test('D09 adding a Course rebalances first-week capacity instead of bolting the new Course onto the following week',()=>{
+  const sharedAvailability=availability([1,2,3,4,5],'09:00','10:00');
+  const original=context([bundle('c1',5,60)],{availability:sharedAvailability});
+  const initial=computeSchedule(original,{now:'2026-09-29T04:00:00Z'});
+  assert.equal(initial.schedule.filter((slot)=>slot.courseId==='c1').length,5);
+
+  const recalculation=context([bundle('c1',5,60),bundle('c2',5,60)],{availability:sharedAvailability});
+  recalculation.priorSlots=initial.schedule.map((slot,index)=>({
+    timetable_slot_id:'prior-'+index,course_id:slot.courseId,slot_kind:slot.kind,
+    starts_at:slot.startsAt,ends_at:slot.endsAt,timezone:slot.timezone,
+    learning_unit_refs:slot.learningUnitIds,
+  }));
+
+  const next=computeSchedule(recalculation,{now:'2026-09-29T04:00:00Z'});
+  const firstWeekEnd=Date.parse('2026-10-08T00:00:00Z');
+  const firstWeek=next.schedule.filter((slot)=>Date.parse(slot.startsAt)<firstWeekEnd);
+  const firstWeekCourses=new Set(firstWeek.map((slot)=>slot.courseId));
+
+  assert.equal(next.outcome,'FEASIBLE');
+  assert.ok(firstWeekCourses.has('c1'));
+  assert.ok(firstWeekCourses.has('c2'),'new Course must share feasible first-week capacity');
+  assert.ok(next.metrics.stableSlotsRetained>0,'existing future placements remain a stability preference');
+  assert.ok(next.metrics.stableSlotsRetained<initial.schedule.length,'stability must not reserve the entire first week for the original Course');
+});
+
+test('D09 hard deadline can displace soft prior placements instead of producing false infeasibility',()=>{
+  const sharedAvailability=availability([1,2,3,4,5],'09:00','10:00');
+  const original=context([bundle('c1',5,60)],{availability:sharedAvailability});
+  const initial=computeSchedule(original,{now:'2026-09-29T04:00:00Z'});
+
+  const deadlineAt='2026-10-08T00:00:00Z';
+  const recalculation=context([bundle('c1',5,60),bundle('c2',3,60)],{
+    availability:sharedAvailability,
+    deadlines:[{course_id:'c2',deadline_kind:'HARD',deadline_at:deadlineAt}],
+  });
+  recalculation.priorSlots=initial.schedule.map((slot,index)=>({
+    timetable_slot_id:'prior-'+index,course_id:slot.courseId,slot_kind:slot.kind,
+    starts_at:slot.startsAt,ends_at:slot.endsAt,timezone:slot.timezone,
+    learning_unit_refs:slot.learningUnitIds,
+  }));
+
+  const next=computeSchedule(recalculation,{now:'2026-09-29T04:00:00Z'});
+  const bSlots=next.schedule.filter((slot)=>slot.courseId==='c2');
+  const aSlots=next.schedule.filter((slot)=>slot.courseId==='c1');
+
+  assert.equal(next.outcome,'FEASIBLE');
+  assert.equal(bSlots.length,3);
+  assert.ok(bSlots.every((slot)=>Date.parse(slot.endsAt)<=Date.parse(deadlineAt)));
+  assert.ok(aSlots.some((slot)=>Date.parse(slot.startsAt)>=Date.parse(deadlineAt)),'original Course should move later when that is required for global feasibility');
 });
 
 test('D09 sparse availability and recovery-headroom exhaustion fail closed',()=>{

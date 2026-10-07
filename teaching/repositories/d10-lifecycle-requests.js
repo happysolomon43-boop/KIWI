@@ -187,6 +187,23 @@ function createD10LifecycleRequestRepository({query,withTransaction,randomUUID,c
     if(!coverage.allowed) blockers.push(...(coverage.blockers||[]));
     if(!timetable) blockers.push('CURRENT_TIMETABLE_REQUIRED');
     if(timetable && !['PROPOSED','EDITED_PROPOSAL','APPROVED'].includes(timetable.timetable_state)) blockers.push('CURRENT_TIMETABLE_INVALID');
+    if(timetable&&plan){
+      const planRef=(Array.isArray(timetable.course_plan_refs)?timetable.course_plan_refs:[])
+        .find((ref)=>String(ref.course_id||'')===String(courseId));
+      if(!planRef) blockers.push('TIMETABLE_COURSE_PLAN_REF_REQUIRED');
+      else{
+        if(String(planRef.course_plan_id||'')!==String(plan.course_plan_id)||Number(planRef.version_no)!==Number(plan.version_no)){
+          blockers.push('TIMETABLE_COURSE_PLAN_REF_STALE');
+        }
+        const timetableCourseStateVersion=Number(planRef.state_version);
+        const courseStateVersion=Number(course.state_version);
+        const expectedReadyPredecessor=String(course.lifecycle_state||'')==='READY'
+          && timetableCourseStateVersion===courseStateVersion-1;
+        if(timetableCourseStateVersion!==courseStateVersion&&!expectedReadyPredecessor){
+          blockers.push('TIMETABLE_COURSE_STATE_STALE');
+        }
+      }
+    }
     if(!feasibility) blockers.push('CURRENT_FEASIBILITY_REQUIRED');
     if(feasibility?.outcome==='INFEASIBLE') blockers.push('SCHEDULE_INFEASIBLE');
     if(!rules.gradingPolicy) blockers.push('GRADING_POLICY_REQUIRED');

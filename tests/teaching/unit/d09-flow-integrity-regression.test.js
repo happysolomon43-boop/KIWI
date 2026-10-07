@@ -310,126 +310,57 @@ test('D09 flow-integrity wrapper scopes timetable health to the requested Course
   ] : [], 'course-1'), [{ courseId:'course-1' }]);
 });
 
-test('D09 flow-integrity proposal automatically attaches a plan-ready Course to inherited Semester availability', async () => {
-  const plan = {
-    course_plan_id:'plan-1',
-    version_no:1,
-    plan_state:'REVIEW_READY',
-    source_snapshot_ref:'subject:s1:v2',
+test('D09 flow-integrity decorator delegates preactivation proposals to the base shared-Semester owner', async () => {
+  let proposalCalls=0;
+  const base={
+    async proposeTimetable(user,courseId){
+      proposalCalls+=1;
+      assert.equal(user.id,'student-1');
+      assert.equal(courseId,'course-1');
+      return {delegated:true};
+    },
+    async getScheduleReview(){return {serverNow:'2026-09-29T04:00:00.000Z',requestedCourse:{courseId:'course-1',lifecycleState:'DRAFT'},timetable:null,slots:[],courseSlots:[],scheduleHealth:{}};},
   };
-  const unit = {
-    learning_unit_id:'unit-1',
-    instructional_load_min_minutes:60,
-    instructional_load_max_minutes:60,
-    metadata:{ instructional_treatment:'FULL_INSTRUCTION' },
+  const repository={
+    async getSchedulingContext(){return {course:{course_id:'course-1',lifecycle_state:'DRAFT'}};},
   };
-  const requestedCourse = {
-    course_id:'course-1',
-    lifecycle_state:'DRAFT',
-    state_version:1,
-    semester_id:null,
-    subject_snapshot_ref:'subject:s1:v2',
-  };
-  const semester = {
-    semester_id:'sem-1',
-    state_version:1,
-    starts_at:'2026-10-01T00:00:00.000Z',
-    ends_at:'2026-10-31T23:59:59.000Z',
-    timezone:'UTC',
-  };
-  const profile = {
-    profile_id:'profile-1',
-    version_no:1,
-    semester_state_version:1,
-    preferences:{ avoidConsecutiveSameCourseDays:true, preferredStartTimes:['09:00'] },
-    settings:{ horizon:{ imminentDays:7, concreteDays:28 } },
-  };
-  const inheritedBundle = {
-    course:requestedCourse,
-    plan,
-    units:[unit],
-    dependencies:[],
-    coverage:[],
-    scopeChanges:[],
-    semesterTimezone:'UTC',
-  };
-  const before = {
-    course:requestedCourse,
-    semester,
-    profile,
-    availability:[{ day_of_week:1, local_start:'09:00', local_end:'12:00', kind:'AVAILABLE' }],
-    blocks:[],
-    deadlines:[],
-    reserves:[],
-    courses:[],
-    unresolvedCourses:[{ courseId:'course-1', reason:'COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER' }],
-    priorSlots:[],
-    inheritedDefault:true,
-    inheritedCourseBundle:inheritedBundle,
-  };
-  const attachedCourse = { ...requestedCourse, semester_id:'sem-1', state_version:2 };
-  const after = {
-    ...before,
-    course:attachedCourse,
-    courses:[{ ...inheritedBundle, course:attachedCourse }],
-    unresolvedCourses:[],
-    inheritedDefault:false,
-    inheritedCourseBundle:null,
-  };
+  const service=decorateD09Service(base,{
+    repository,
+    transactionalMutation:{async mutateAndPublish(){throw new Error('not used');}},
+    randomUUID:()=> '00000000-0000-4000-8000-000000000001',
+    clock:()=>new Date('2026-09-29T04:00:00.000Z'),
+  });
 
-  let reads=0, attachCalls=0, proposalSource=null;
-  const repository = {
-    async getSchedulingContext() { reads += 1; return reads === 1 ? before : after; },
-    async attachCourseToSemester({ studentId, courseId, semesterId }) {
-      attachCalls += 1;
-      assert.equal(studentId, 'student-1');
-      assert.equal(courseId, 'course-1');
-      assert.equal(semesterId, 'sem-1');
-      return { attached:true };
-    },
-    async saveProposalUsing(_tx, { result, source }) {
-      proposalSource = source;
-      assert.equal(result.courseSummaries.length, 1);
+  const result=await service.proposeTimetable({id:'student-1'},'course-1');
+
+  assert.equal(proposalCalls,1);
+  assert.deepEqual(result,{delegated:true});
+});
+
+test('D09 does not offer Active-Course timetable recovery while the selected Course is Paused', async () => {
+  const base={
+    async getScheduleReview(){
       return {
-        timetable:{ timetable_version_id:'tt-1', version_no:1 },
+        serverNow:'2026-10-05T08:00:00.000Z',
+        requestedCourse:{courseId:'paused-course',lifecycleState:'PAUSED',planReady:true,attachedToSemester:true},
+        timetable:{state:'APPROVED'},
         slots:[],
-        feasibility:{ outcome:result.outcome },
-        ppl:{ isNew:false, workspaceId:'w1', workspaceVersion:2, changedRefs:['timetable:tt-1'], targetEffectiveAt:semester.ends_at },
-      };
-    },
-  };
-  const base = {
-    async getScheduleReview() {
-      return {
-        serverNow:'2026-09-29T04:00:00.000Z',
-        timetable:{ state:'PROPOSED' },
-        slots:[{ courseId:'course-1', kind:'CLASS', startsAt:'2026-10-05T09:00:00.000Z', endsAt:'2026-10-05T10:00:00.000Z' }],
-        courseSlots:[{ courseId:'course-1', kind:'CLASS', startsAt:'2026-10-05T09:00:00.000Z', endsAt:'2026-10-05T10:00:00.000Z' }],
+        courseSlots:[],
         scheduleHealth:{},
       };
     },
   };
-  let id=0;
-  const transactionalMutation = {
-    async mutateAndPublish({ mutate, buildEvent }) {
-      const result = await mutate({});
-      buildEvent(result);
-      return { mutationResult:result };
-    },
-  };
-  const service = decorateD09Service(base, {
-    repository,
-    transactionalMutation,
-    randomUUID:() => `00000000-0000-4000-8000-${String(++id).padStart(12,'0')}`,
-    clock:() => new Date('2026-09-29T04:00:00.000Z'),
+  const service=decorateD09Service(base,{
+    repository:{},
+    transactionalMutation:{mutateAndPublish:async()=>{throw new Error('not used');}},
+    randomUUID:()=> '00000000-0000-4000-8000-000000000098',
+    clock:()=>new Date('2026-10-05T08:00:00.000Z'),
   });
 
-  await service.proposeTimetable({ id:'student-1' }, 'course-1');
-
-  assert.equal(attachCalls, 1);
-  assert.equal(proposalSource, 'DETERMINISTIC_INITIAL');
+  const review=await service.getScheduleReview({id:'student-1'},'paused-course');
+  assert.equal(review.scheduleIntegrity.recoveryRequired,false);
+  assert.equal(review.scheduleHealth.recoveryRequired,false);
 });
-
 
 test('D09 does not flag a draft Course for active timetable recovery just because another Course owns an approved Semester timetable', async () => {
   const base = {

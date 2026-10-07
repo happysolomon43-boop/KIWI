@@ -246,64 +246,68 @@ function alternativesFor(reasons, context, courseWork) {
   add('KEEP_REQUIRED_SCOPE_AND_SURFACE_INFEASIBILITY','Keep all required Learning Units and record the schedule as infeasible rather than deleting curriculum.');
   return out;
 }
-function subtractOccupiedPeriods(periods, occupied=[]) {
-  if(!occupied.length) return periods.map((period)=>({...period}));
-  const out=[];
-  for(const period of periods){
-    const cuts=occupied
-      .filter((slot)=>overlap(period.start,period.end,slot.start,slot.end))
-      .map((slot)=>({startsAt:slot.start,endsAt:slot.end}));
-    for(const piece of subtractIntervals(period.start,period.end,cuts)){
-      out.push({...period,start:piece.start,end:piece.end,minutes:minutesBetween(piece.start,piece.end)});
-    }
+function priorPlacementIndex(context, now) {
+  const byStart=new Map();
+  for(const slot of context.priorSlots||[]){
+    const start=rowValue(slot,'starts_at','startsAt');
+    const end=rowValue(slot,'ends_at','endsAt');
+    if(!start||!end||Date.parse(end)<=Date.parse(now)) continue;
+    const courseId=String(rowValue(slot,'course_id','courseId')||'');
+    const kind=String(rowValue(slot,'slot_kind','kind')||'CLASS');
+    const key=courseId+'|'+kind+'|'+start;
+    const learningUnitRefs=rowValue(slot,'learning_unit_refs','learningUnitRefs')||[];
+    byStart.set(key,Object.freeze({
+      courseId,kind,start,end,
+      learningUnitRefs:Object.freeze(Array.isArray(learningUnitRefs)?learningUnitRefs.map(String):[]),
+    }));
   }
-  return out;
+  return byStart;
 }
-function retainStablePlacements(context, periods, work, scheduleLimit, now) {
-  const prior=[...(context.priorSlots||[])].sort((a,b)=>Date.parse(rowValue(a,'starts_at','startsAt'))-Date.parse(rowValue(b,'starts_at','startsAt')));
-  const slots=[], occupied=[], dayCounts=new Map();
-  let scheduledTotal=0;
-  for(const priorSlot of prior){
-    if(scheduledTotal>=scheduleLimit) break;
-    const courseId=String(rowValue(priorSlot,'course_id','courseId')||'');
-    const kind=String(rowValue(priorSlot,'slot_kind','kind')||'CLASS');
-    const workItem=work.find((item)=>item.courseId===courseId);
-    if(!workItem) continue;
-    const task=workItem.tasks.find((item)=>item.kind===kind && item.remaining>0);
-    if(!task) continue;
-    const start=rowValue(priorSlot,'starts_at','startsAt'), priorEnd=rowValue(priorSlot,'ends_at','endsAt');
-    if(!start||!priorEnd) continue;
-    const priorMinutes=minutesBetween(start,priorEnd);
-    if(priorMinutes<=0) continue;
-    const minutes=Math.min(priorMinutes,task.remaining,scheduleLimit-scheduledTotal);
-    if(minutes<=0) continue;
-    const end=new Date(Date.parse(start)+minutes*MINUTE_MS).toISOString();
-    const containing=periods.find((period)=>Date.parse(period.start)<=Date.parse(start) && Date.parse(end)<=Date.parse(period.end));
-    if(!containing) continue;
-    if(occupied.some((slot)=>overlap(start,end,slot.start,slot.end))) continue;
-    if(workItem.deadline.hard && Date.parse(end)>Date.parse(workItem.deadline.hard)) continue;
-    if(conflictsForWork(context,workItem,task,start,end)) continue;
-    const localDate=dateKey(new Date(start),context.semester.timezone);
-    const dayCount=dayCounts.get(localDate)||0;
-    if(kind==='CLASS' && dayCount>=2) continue;
-    slots.push({
-      courseId,kind,startsAt:start,endsAt:end,timezone:context.semester.timezone,
-      localDate,learningUnitIds:[...task.learningUnitIds],plannedMinutes:minutes,
-      horizonStage:horizonStage(start,now,context.profile?.settings||{}),
-      exceptionCodes:Object.freeze([]),
-      rationale:'Stable timetable placement retained from the previous timetable where still feasible.',
-    });
-    occupied.push({start,end});
-    task.remaining-=minutes;
-    workItem.scheduledMinutes+=minutes;
-    if(kind==='CLASS'){
-      workItem.lastDate=localDate;
-      dayCounts.set(localDate,dayCount+1);
-    }
-    scheduledTotal+=minutes;
+
+function stablePlacementScore(index,work,task,start,end,now,settings={}) {
+  const prior=index.get(String(work.courseId)+'|'+String(task.kind)+'|'+String(start));
+  if(!prior) return 0;
+  if(task.kind==='CLASS'&&prior.learningUnitRefs.length){
+    const taskRefs=new Set((task.learningUnitIds||[]).map(String));
+    if(!prior.learningUnitRefs.some((ref)=>taskRefs.has(ref))) return 0;
   }
-  return {slots,occupied,dayCounts,scheduledTotal};
+  const priorMinutes=minutesBetween(prior.start,prior.end);
+  const candidateMinutes=minutesBetween(start,end);
+  if(priorMinutes<=0||candidateMinutes<=0) return 0;
+  const overlapRatio=Math.min(priorMinutes,candidateMinutes)/Math.max(priorMinutes,candidateMinutes);
+  const stage=horizonStage(start,now,settings);
+  const base=stage==='IMMINENT'?16:stage==='NEAR_TERM'?8:3;
+  return base*overlapRatio;
 }
+
+function portfolioBalanceScore(work) {
+  if(!Number.isFinite(work.requiredMinutes)||work.requiredMinutes<=0) return 0;
+  return -60*(work.scheduledMinutes/work.requiredMinutes);
+}
+
+function deadlinePriorityScore(work,end) {
+  if(!work.deadline?.target) return 0;
+  const remainingDays=Math.max(0,(Date.parse(work.deadline.target)-Date.parse(end))/DAY_MS);
+  if(work.deadline.kind==='HARD') return 24+Math.max(0,18-Math.min(18,remainingDays));
+  if(work.deadline.kind==='FLEXIBLE') return 6+Math.max(0,8-Math.min(8,remainingDays/2));
+  return 0;
+}
+
+function countStablePlacements(schedule,priorSlots=[]) {
+  const prior=new Set((priorSlots||[]).map((slot)=>[
+    String(rowValue(slot,'course_id','courseId')||''),
+    String(rowValue(slot,'slot_kind','kind')||'CLASS'),
+    String(rowValue(slot,'starts_at','startsAt')||''),
+    String(rowValue(slot,'ends_at','endsAt')||''),
+  ].join('|')));
+  return (schedule||[]).filter((slot)=>prior.has([
+    String(slot.courseId||''),
+    String(slot.kind||'CLASS'),
+    String(slot.startsAt||''),
+    String(slot.endsAt||''),
+  ].join('|'))).length;
+}
+
 function computeSchedule(context,{now=new Date().toISOString()}={}) {
   assertAcademicTimestamp(now,'now');
   const periods=buildPeriods(context);
@@ -314,15 +318,16 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
   const maxCore=Math.floor(totalCapacity*(1-policy.minimumRatio));
   const required=work.reduce((sum,w)=>sum+w.requiredMinutes,0);
   const initialReasons=[];
-  if(!periods.length) initialReasons.push('NO_USABLE_AVAILABILITY');
+  if(!periods.length && required>0) initialReasons.push('NO_USABLE_AVAILABILITY');
   if(required>maxCore) initialReasons.push('RECOVERY_HEADROOM_BELOW_MINIMUM');
   const scheduleLimit=Math.min(required,maxCore);
-  const stable=retainStablePlacements(context,periods,work,scheduleLimit,now);
-  const slots=[...stable.slots];
-  const dayCounts=stable.dayCounts;
+  const slots=[];
+  const dayCounts=new Map();
   const preferences=context.profile?.preferences || context.preferences || {};
-  let scheduledTotal=stable.scheduledTotal;
-  const usable=subtractOccupiedPeriods(periods,stable.occupied).map((p)=>({...p,cursor:p.start}));
+  const settings=context.profile?.settings||context.settings||{};
+  const priorIndex=priorPlacementIndex(context,now);
+  let scheduledTotal=0;
+  const usable=periods.map((p)=>({...p,cursor:p.start}));
   let safety=0;
   while(scheduledTotal<scheduleLimit && work.some((w)=>w.tasks.some((t)=>t.remaining>0)) && safety<100000){
     safety+=1;
@@ -344,10 +349,11 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
         if(conflictsForWork(context,w,task,period.cursor,candidateEnd)) continue;
         const score=preferenceScore(period,w,preferences)
           + protectedPreference(context,w,task,period.cursor,candidateEnd)
+          + stablePlacementScore(priorIndex,w,task,period.cursor,candidateEnd,now,settings)
+          + portfolioBalanceScore(w)
+          + deadlinePriorityScore(w,candidateEnd)
           - (task.kind==='CLASS' && w.lastDate===period.key?40:0)
-          - (period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY'?10000:0)
-          + (w.deadline.kind==='HARD'?12:0)
-          - (w.scheduledMinutes/Math.max(1,w.requiredMinutes))*20;
+          - (period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY'?10000:0);
         if(period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY') continue;
         if(!best || score>best.score || (score===best.score && Date.parse(period.cursor)<Date.parse(best.period.cursor))){
           best={period,w,task,minutes,score};
@@ -377,6 +383,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
     best.period.cursor=end;
     scheduledTotal+=best.minutes;
   }
+  const stableSlotsRetained=countStablePlacements(slots,context.priorSlots||[]);
   const unscheduled=work.reduce((sum,w)=>sum+w.tasks.reduce((s,t)=>s+t.remaining,0),0);
   const reasons=[...initialReasons];
   if(unscheduled>0) reasons.push('REQUIRED_INSTRUCTIONAL_LOAD_UNSCHEDULED');
@@ -386,7 +393,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
     if(w.deadline.hard && (remaining>0 || !last || Date.parse(last.endsAt)>Date.parse(w.deadline.hard))) reasons.push('HARD_DEADLINE_CANNOT_BE_MET:'+w.courseId);
     if(w.deadline.flexible && last && Date.parse(last.endsAt)>Date.parse(w.deadline.flexible)) reasons.push('FLEXIBLE_TARGET_PRESSURE:'+w.courseId);
   }
-  const headroomRatio=totalCapacity===0?0:Math.max(0,(totalCapacity-scheduledTotal)/totalCapacity);
+  const headroomRatio=required===0&&scheduledTotal===0?1:totalCapacity===0?0:Math.max(0,(totalCapacity-scheduledTotal)/totalCapacity);
   let outcome='FEASIBLE';
   if(reasons.some((r)=>r.startsWith('HARD_DEADLINE')||r==='REQUIRED_INSTRUCTIONAL_LOAD_UNSCHEDULED'||r==='NO_USABLE_AVAILABILITY'||r==='RECOVERY_HEADROOM_BELOW_MINIMUM')) outcome='INFEASIBLE';
   else if(headroomRatio<policy.targetRatio || reasons.some((r)=>r.startsWith('FLEXIBLE_TARGET_PRESSURE'))) outcome='AT_RISK';
@@ -400,7 +407,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
       totalCapacityMinutes:totalCapacity,targetCoreCapacityMinutes:targetCore,minimumSafeCoreCapacityMinutes:maxCore,
       requiredMinutes:required,scheduledMinutes:scheduledTotal,unscheduledMinutes:unscheduled,
       headroomRatio:Number(headroomRatio.toFixed(4)),debtMinutes,
-      courseCount:work.length,normalDailyFullClassMaximum:2,stableSlotsRetained:stable.slots.length,
+      courseCount:work.length,normalDailyFullClassMaximum:2,stableSlotsRetained,
     }),
     courseSummaries:Object.freeze(work.map((w)=>Object.freeze({
       courseId:w.courseId,requiredMinutes:w.requiredMinutes,scheduledMinutes:w.scheduledMinutes,
@@ -410,7 +417,7 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
     policy:Object.freeze({
       headroomPolicyVersion:policy.policyVersion,targetHeadroomRatio:policy.targetRatio,minimumHeadroomRatio:policy.minimumRatio,
       hardConstraintsMayBeViolated:false,requiredContentMayBeDeleted:false,
-      stableTimetablePreference:true,sameCourseSpacingPreference:true,
+      stableTimetablePreference:true,stabilityPolicy:'SOFT_PORTFOLIO_PREFERENCE',sameCourseSpacingPreference:true,
     }),
     stateDigest:digest({
       semester:[context.semester.semester_id,context.semester.state_version,context.semester.starts_at,context.semester.ends_at,context.semester.timezone],
@@ -472,7 +479,7 @@ function validateEditedSchedule(context, existingSlots, edits,{now=new Date().to
   const periods=buildPeriods(context);
   const totalCapacity=periods.reduce((s,p)=>s+p.minutes,0);
   const policy=headroomPolicy();
-  const headroomRatio=totalCapacity===0?0:Math.max(0,(totalCapacity-scheduled)/totalCapacity);
+  const headroomRatio=required===0&&scheduled===0?1:totalCapacity===0?0:Math.max(0,(totalCapacity-scheduled)/totalCapacity);
   const debt=Math.max(0,required-scheduled);
   const reasons=[];
   if(headroomRatio<policy.minimumRatio) reasons.push('RECOVERY_HEADROOM_BELOW_MINIMUM');
@@ -502,5 +509,5 @@ function projectCalendarSlot(slot,currentTimeZone) {
 
 module.exports = {
   DEFAULT_HORIZON,dateParts,dateKey,addDateKey,weekdayOfKey,zonedLocalToInstant,overlap,minutesBetween,
-  subtractIntervals,buildPeriods,topologicalUnits,buildCourseWork,subtractOccupiedPeriods,retainStablePlacements,computeSchedule,validateEditedSchedule,projectCalendarSlot,
+  subtractIntervals,buildPeriods,topologicalUnits,buildCourseWork,priorPlacementIndex,stablePlacementScore,portfolioBalanceScore,deadlinePriorityScore,countStablePlacements,computeSchedule,validateEditedSchedule,projectCalendarSlot,
 };

@@ -22,7 +22,7 @@ test('Teaching guided review flow keeps Course Plan, Timetable and Final Review 
   assert.match(source, /id:'activation',label:'Final Review'/);
   assert.match(source, /Accept final review/);
   assert.match(source, /Start Course/);
-  assert.match(source, /Repair timetable/);
+  assert.match(source, /Repair Semester timetable/);
 });
 
 test('Course Plan background actions expose authoritative running, success and failure states', () => {
@@ -34,6 +34,35 @@ test('Course Plan background actions expose authoritative running, success and f
   assert.match(source, /has not been changed/);
   assert.match(source, /ACTIVE_PLAN_JOB_STATUSES/);
   assert.doesNotMatch(source, /Regeneration running in background';window\.setTimeout/);
+});
+
+test('Final Review uses the same structured status card as Course Plan for loading and completion', () => {
+  const source = read('public/teaching-flow-integrity.js');
+  assert.match(source, /title:'Preparing academic rules'/);
+  assert.match(source, /title:'Academic rules prepared'/);
+  assert.match(source, /setActionStatus\(live,notice\)/);
+  assert.doesNotMatch(source, /live\.textContent='Academic rules prepared\.'/);
+  assert.doesNotMatch(source, /live\.textContent='Preparing the Teacher and grading policy/);
+});
+
+test('Timetable actions explicitly rebuild the shared Semester timetable', () => {
+  const source = read('public/teaching-flow-integrity.js');
+  assert.match(source, /Shared Semester timetable/);
+  assert.match(source, /Build Semester timetable/);
+  assert.match(source, /Rebuild Semester timetable/);
+  assert.match(source, /every schedulable Course/);
+});
+
+test('Schedule surfaces use the Course Plan skeleton instead of a plain loading message', () => {
+  const legacy = read('public/teaching-d09.js');
+  const experience = read('public/teaching-schedule-experience.js');
+  for (const source of [legacy, experience]) {
+    assert.match(source, /teaching-shell-skeleton/);
+    assert.match(source, /teaching-skeleton-card/);
+    assert.match(source, /teaching-skeleton-line/);
+    assert.match(source, /teaching-skeleton-block/);
+  }
+  assert.doesNotMatch(legacy, /page\.replaceChildren\(el\('div','teaching-message','Loading semester and timetable…'\)\)/);
 });
 
 test('Teaching flow bootstrap waits for D08 D09 and D10 before replacing registered sections', () => {

@@ -43,10 +43,51 @@ test('the active Teaching schedule surface never renders another Course timetabl
 
   assert.match(experience, /data\.requestedCourse\?data\.requestedCourse\.planReady===false/);
   assert.match(experience, /Array\.isArray\(data\.courseSlots\)/);
-  assert.match(experience, /Semester timetable items from other Courses are not shown here/);
+  assert.match(experience, /This Course has no current Course Plan/);
+  assert.match(experience, /add this Course to the shared Semester timetable/);
   assert.match(experience, /missingPlan\?'Open Course Plan'/);
   assert.match(service, /courseSlots:Object\.freeze\(courseSlots\)/);
   assert.match(service, /courseSummary/);
+});
+
+test('Semester owns one shared timetable version while Course pages remain filtered views', () => {
+  const service = fs.readFileSync(path.join(root, 'teaching/d09/service.js'), 'utf8');
+  const repository = fs.readFileSync(path.join(root, 'teaching/repositories/d09-scheduling.js'), 'utf8');
+  const migration = fs.readFileSync(path.join(root, 'migrations/20260929_teaching_d09_scheduling.sql'), 'utf8');
+  const scheduleUi = fs.readFileSync(path.join(root, 'public/teaching-schedule-experience.js'), 'utf8');
+
+  assert.match(service, /scope:'SEMESTER_SHARED'/);
+  assert.match(service, /noIndependentCourseTimetableAuthority:true/);
+  assert.match(service, /availabilityChangeReflowsAllSchedulableCourses:true/);
+  assert.match(service, /courseSlots:Object\.freeze\(courseSlots\)/);
+  assert.match(repository, /const coursePlanRefs=\(scheduleContext\.courses\|\|\[\]\)\.map/);
+  assert.match(repository, /for\(const slot of result\.schedule\)/);
+  assert.match(migration, /UNIQUE\(semester_id,version_no\)/);
+  assert.match(scheduleUi, /one deterministic Semester timetable version/);
+  assert.match(scheduleUi, /filtered to this Course/);
+});
+
+test('availability changes and Course Plan changes converge through the same shared timetable rebuild owner', () => {
+  const service = fs.readFileSync(path.join(root, 'teaching/d09/service.js'), 'utf8');
+  const backend = fs.readFileSync(path.join(root, 'teaching-backend.js'), 'utf8');
+
+  assert.match(service, /function rebuildSharedSemesterTimetable/);
+  assert.match(service, /'AVAILABILITY_AUTO_RECALC'/);
+  assert.match(service, /return rebuildSharedSemesterTimetable\(user,courseId,context/);
+  assert.match(backend, /recalculateAfterCoursePlanChange/);
+  assert.match(backend, /timetable_recalculated/);
+});
+
+test('active Semester availability changes keep the governed Request boundary and rebuild the shared authoritative timetable on application', () => {
+  const d09 = fs.readFileSync(path.join(root, 'teaching/d09/service.js'), 'utf8');
+  const d10 = fs.readFileSync(path.join(root, 'teaching/d10/service.js'), 'utf8');
+
+  assert.match(d09, /TEACHING_D09_ACTIVE_SEMESTER_AVAILABILITY_REQUIRES_REQUEST/);
+  assert.match(d10, /PERMANENT_AVAILABILITY_CHANGE/);
+  assert.match(d10, /saveScheduleInputsUsing\(tx,/);
+  assert.match(d10, /computeSharedSemesterSchedule/);
+  assert.match(d10, /source:'FORMAL_REQUEST_APPLIED'/);
+  assert.match(d10, /materializeApprovedTimetableUsing/);
 });
 
 test('Course Plan regeneration is versioned and triggers safe timetable recalculation', () => {
