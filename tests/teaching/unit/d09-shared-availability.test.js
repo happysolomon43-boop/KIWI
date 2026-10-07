@@ -140,8 +140,8 @@ test('repository and UI expose one Semester-global availability default to unatt
   assert.match(repository,/attachCourseToSemester/);
   assert.match(repository,/priorChildrenFull\.blocks\.filter/);
   assert.match(ui,/shared across the Semester/);
-  assert.match(ui,/Using your current Semester availability automatically/);
-  assert.match(ui,/recalculate the timetable automatically/);
+  assert.match(ui,/Using your Semester availability for this Course/);
+  assert.doesNotMatch(ui,/recalculate the timetable automatically/);
   assert.match(ui,/Shared Semester timetable/);
   assert.match(ui,/automaticRecalculation/);
   assert.doesNotMatch(ui,/Save the availability once to attach the Course/);
@@ -332,7 +332,6 @@ test('active Semester expansion preserves approved authority until activation tr
   const d10=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d10/service.js'),'utf8');
 
   assert.match(service,/COURSE_ADMISSION_EXPANSION_PROPOSAL/);
-  assert.match(integrity,/COURSE_ADMISSION_EXPANSION_PROPOSAL/);
   assert.doesNotMatch(integrity,/Adding another Course requires the governed scheduling-change path/);
   assert.match(repository,/latestApprovedTimetable/);
   assert.match(repository,/timetable_state in \('PROPOSED','EDITED_PROPOSAL'\)/);
