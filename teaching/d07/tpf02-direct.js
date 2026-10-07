@@ -52,6 +52,8 @@ const TPF02_DECOMPOSITION_PATCH_FIELDS = Object.freeze([
   'split_reason',
   'unit_justification',
   'course_ratio_justification',
+  'unresolved_reason',
+  'required_next_input_or_review',
   'review_required',
 ]);
 const TPF02_DECOMPOSITION_PATCH_UNIT_FIELDS = Object.freeze([
@@ -66,7 +68,7 @@ const TPF02_DECOMPOSITION_PATCH_UNIT_FIELDS = Object.freeze([
   'proposed_exit_evidence',
   'uncertainties',
 ]);
-const DECOMPOSITION_PATCH_DECISIONS = new Set(['split','keep']);
+const DECOMPOSITION_PATCH_DECISIONS = new Set(['split','keep','unresolved']);
 
 const ARTIFACT_STATUSES = new Set(['ok','unresolved','blocked_insufficient_sources','blocked_authority_conflict']);
 const SCOPE_CLASSIFICATIONS = new Set(['required','supplementary','duplicate','non_instructional','outside_approved_scope','unresolved']);
@@ -154,7 +156,7 @@ function validateTpf02DecompositionPatchSchema(output){
  if(!isString(output.target_unit_id))return invalid('TPF02_DECOMPOSITION_PATCH_TARGET_UNIT_REQUIRED');
  if(!DECOMPOSITION_PATCH_DECISIONS.has(output.decision))return invalid('TPF02_DECOMPOSITION_PATCH_DECISION_INVALID');
  if(!Array.isArray(output.resulting_units))return invalid('TPF02_DECOMPOSITION_PATCH_UNITS_ARRAY_REQUIRED');
- if(!nullableString(output.split_reason)||!nullableString(output.unit_justification)||!nullableString(output.course_ratio_justification))return invalid('TPF02_DECOMPOSITION_PATCH_JUSTIFICATION_INVALID');
+ if(!nullableString(output.split_reason)||!nullableString(output.unit_justification)||!nullableString(output.course_ratio_justification)||!nullableString(output.unresolved_reason)||!nullableString(output.required_next_input_or_review))return invalid('TPF02_DECOMPOSITION_PATCH_JUSTIFICATION_INVALID');
  if(!bool(output.review_required))return invalid('TPF02_DECOMPOSITION_PATCH_REVIEW_REQUIRED_BOOLEAN');
 
  for(const [index,unit] of output.resulting_units.entries()){
@@ -164,12 +166,16 @@ function validateTpf02DecompositionPatchSchema(output){
 
  if(output.decision==='split'){
   if(output.resulting_units.length<2)return invalid('TPF02_DECOMPOSITION_PATCH_SPLIT_REQUIRES_MULTIPLE_UNITS');
-  if(!isString(output.split_reason)||output.unit_justification!==null)return invalid('TPF02_DECOMPOSITION_PATCH_SPLIT_REASON_INVALID');
+  if(!isString(output.split_reason)||output.unit_justification!==null||output.unresolved_reason!==null||output.required_next_input_or_review!==null)return invalid('TPF02_DECOMPOSITION_PATCH_SPLIT_REASON_INVALID');
   if(output.review_required!==false)return invalid('TPF02_DECOMPOSITION_PATCH_SPLIT_REVIEW_STATE_INVALID');
- }else{
+ }else if(output.decision==='keep'){
   if(output.resulting_units.length!==0)return invalid('TPF02_DECOMPOSITION_PATCH_KEEP_MUST_NOT_RESTATE_UNIT');
-  if(output.split_reason!==null||!isString(output.unit_justification))return invalid('TPF02_DECOMPOSITION_PATCH_KEEP_JUSTIFICATION_INVALID');
+  if(output.split_reason!==null||!isString(output.unit_justification)||output.unresolved_reason!==null||output.required_next_input_or_review!==null)return invalid('TPF02_DECOMPOSITION_PATCH_KEEP_JUSTIFICATION_INVALID');
   if(output.review_required!==true)return invalid('TPF02_DECOMPOSITION_PATCH_KEEP_REQUIRES_REVIEW');
+ }else{
+  if(output.resulting_units.length!==0)return invalid('TPF02_DECOMPOSITION_PATCH_UNRESOLVED_MUST_NOT_RESTATE_UNIT');
+  if(output.split_reason!==null||output.unit_justification!==null||output.course_ratio_justification!==null||!isString(output.unresolved_reason)||!isString(output.required_next_input_or_review))return invalid('TPF02_DECOMPOSITION_PATCH_UNRESOLVED_DETAIL_REQUIRED');
+  if(output.review_required!==true)return invalid('TPF02_DECOMPOSITION_PATCH_UNRESOLVED_REQUIRES_REVIEW');
  }
  return valid(output);
 }
@@ -563,8 +569,9 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
    'Set target_unit_id exactly to repair_scope.target_unit_id.',
    'If you split: decision="split"; resulting_units contains the continuity unit with the exact target_unit_id plus only genuinely necessary new split units. Each resulting unit contains ONLY the supplied repair_source_refs it owns in this pass. The server adds untouched_source_refs back to the continuity unit.',
    'For split decisions, each resulting unit must provide only: learning_unit_id, title, intended_competence, source_item_refs, prerequisite_refs, dependency_type_notes, criticality, criticality_basis, proposed_exit_evidence, uncertainties. Do not output topic_refs, subtopic_id, gap_refs, or structure_change_proposals; the server derives them.',
-   'For a real split: split_reason is concise and specific; unit_justification=null; review_required=false. Every supplied repair_source_ref must appear in at least one resulting unit, and no other source ref may appear.',
-   'If the target genuinely passes T1-T5 despite the deterministic proxy: decision="keep"; resulting_units=[]; split_reason=null; unit_justification is one concise DECOMPOSITION_JUSTIFICATION explanation; review_required=true. Do not restate the current Learning Unit.',
+   'For a real split: split_reason is concise and specific; unit_justification=null; unresolved_reason=null; required_next_input_or_review=null; review_required=false. Every supplied repair_source_ref must appear in at least one resulting unit, and no other source ref may appear.',
+   'If the target genuinely passes T1-T5 despite the deterministic proxy: decision="keep"; resulting_units=[]; split_reason=null; unit_justification is one concise DECOMPOSITION_JUSTIFICATION explanation; unresolved_reason=null; required_next_input_or_review=null; review_required=true. Do not restate the current Learning Unit.',
+   'If the supplied bounded evidence is insufficient to responsibly split or justify keeping the target, use decision="unresolved"; resulting_units=[]; split_reason=null; unit_justification=null; course_ratio_justification=null; state the exact unresolved_reason and required_next_input_or_review; review_required=true. Never guess a competence boundary.',
    'When repair_scope.course_ratio_flag is true, course_ratio_justification may contain one concise DECOMPOSITION_JUSTIFICATION explanation only if the Course-level ratio is academically justified; otherwise set it null and improve granularity by splitting the target.',
    'Do not mutate source classification, Course state, Topic/Subtopic placement, gaps, source reconciliation, or any non-structural audit finding.'
   );
