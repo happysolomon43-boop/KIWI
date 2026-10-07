@@ -141,6 +141,42 @@ test('queued timetable basis validation rejects work after shared Semester input
   assert.equal(after.reason,'SCHEDULING_BASIS_CHANGED');
 });
 
+test('background timetable lineage includes a plan-ready Course that is inheriting the shared Semester before attachment',async()=>{
+  const existing=bundle('c1');
+  const inherited=bundle('c2');
+  inherited.course={...inherited.course,semester_id:null,state_version:1};
+  const current={
+    ...context(),
+    course:{...inherited.course},
+    courses:[existing],
+    inheritedDefault:true,
+    inheritedCourseBundle:inherited,
+  };
+  const events=[];
+  const service=createD09Service({
+    repository:{
+      async getSchedulingContext(){return current;},
+      async latestBackgroundTimetableBuild(){return null;},
+    },
+    transactionalMutation:{async mutateAndPublish(){throw new Error('not used');}},
+    randomUUID:()=> 'tt-inherited-job',
+    outboxStore:{async append(event){events.push(event);return {inserted:true,event:{...event,event_id:event.eventId,status:'PENDING'}};}},
+    clock:()=>new Date('2026-10-07T13:00:00Z'),
+  });
+
+  await service.queueTimetableBuild({id:'student-1'},'c2',{
+    operation:'BUILD',source:'MANUAL_BACKGROUND_BUILD',
+  });
+
+  assert.deepEqual(events[0].provenanceRefs.sort(),[
+    'course-plan:c1-plan:v2','course-plan:c2-plan:v2',
+  ]);
+  const validation=await service.validateQueuedTimetableBuild(
+    {id:'student-1'},'c2',events[0].payload,
+  );
+  assert.equal(validation.current,true);
+});
+
 test('schedule review projects durable timetable job state for leave-and-return UI',async()=>{
   const current=context();
   const repository={
