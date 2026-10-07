@@ -390,18 +390,6 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       error.code='TEACHING_D09_SCHEDULE_INPUTS_REQUIRED';
       throw error;
     }
-    const current=typeof repository.latestBackgroundTimetableBuild==='function'
-      ? await repository.latestBackgroundTimetableBuild(user.id,courseId)
-      : null;
-    const currentStatus=String(current?.status||'').toUpperCase();
-    if(['PENDING','CLAIMED','RETRY_WAIT'].includes(currentStatus)){
-      return Object.freeze({
-        accepted:true,background:true,jobId:current.event_id,status:currentStatus,joinedExisting:true,
-        operation:current?.payload?.operation||normalizedOperation,
-      });
-    }
-    const eventId=randomUUID();
-    const now=clock().toISOString();
     const planBasis=(context.courses||[]).map((bundle)=>({
       courseId:String(bundle.course?.course_id||''),
       courseStateVersion:Number(bundle.course?.state_version||0),
@@ -417,6 +405,19 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       operation:normalizedOperation,
       source:source||null,
     });
+    const current=typeof repository.latestBackgroundTimetableBuild==='function'
+      ? await repository.latestBackgroundTimetableBuild(user.id,courseId)
+      : null;
+    const currentStatus=String(current?.status||'').toUpperCase();
+    const currentBasis=String(current?.payload?.basis_digest||'');
+    if(['PENDING','CLAIMED','RETRY_WAIT'].includes(currentStatus)&&currentBasis===basisDigest){
+      return Object.freeze({
+        accepted:true,background:true,jobId:current.event_id,status:currentStatus,joinedExisting:true,
+        operation:current?.payload?.operation||normalizedOperation,
+      });
+    }
+    const eventId=randomUUID();
+    const now=clock().toISOString();
     const queued=await outboxStore.append({
       eventId,
       schemaVersion:1,
@@ -431,14 +432,18 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       aggregateVersion:Number(context.course.state_version),
       occurredAt:now,
       correlationId:eventId,
-      causationId:currentStatus==='CANCELLED'?String(current.event_id):null,
+      causationId:current&&['PENDING','CLAIMED','RETRY_WAIT','CANCELLED'].includes(currentStatus)
+        ? String(current.event_id)
+        : null,
       idempotencyKey:`d09:timetable:${courseId}:${basisDigest}`,
       payload:{
         course_id:String(courseId),
         expected_state_version:String(context.course.state_version),
         semester_id:String(context.semester.semester_id),
+        semester_state_version:Number(context.semester.state_version||0),
         profile_id:String(context.profile.profile_id),
         profile_version:Number(context.profile.version_no),
+        basis_digest:basisDigest,
         operation:normalizedOperation,
         source:source||null,
       },
@@ -452,6 +457,9 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       status:queued.event.status,
       joinedExisting:queued.inserted===false,
       operation:normalizedOperation,
+      supersedesJobId:current&&currentBasis!==basisDigest&&['PENDING','CLAIMED','RETRY_WAIT'].includes(currentStatus)
+        ? String(current.event_id)
+        : null,
     });
   }
   async function attachInheritedDefaultForScheduling(user,courseId,context){
