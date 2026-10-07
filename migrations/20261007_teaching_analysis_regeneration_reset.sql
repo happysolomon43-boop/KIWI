@@ -1,12 +1,12 @@
--- KIWI Teaching — guarded preactivation reset for Course Analysis regeneration
--- Allows only the explicit Course Analysis regeneration transaction to move a READY
+-- KIWI Teaching — guarded preactivation reset for Course Analysis revision
+-- Allows only the explicit Course Analysis revision transaction to move a READY
 -- Course back to DRAFT. Normal lifecycle transitions remain unchanged.
 BEGIN;
 
 CREATE OR REPLACE FUNCTION public.teaching_guard_d10_course_lifecycle()
 RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
 DECLARE
-  analysis_reset boolean := coalesce(current_setting('kiwi.teaching_analysis_reset', true),'') = 'COURSE_ANALYSIS_REGENERATION';
+  analysis_reset boolean := coalesce(current_setting('kiwi.teaching_analysis_reset', true),'') = 'COURSE_ANALYSIS_REVISION';
 BEGIN
   IF NEW.lifecycle_state IS DISTINCT FROM OLD.lifecycle_state THEN
     IF NOT (
@@ -31,6 +31,6 @@ BEGIN
 END $$;
 
 COMMENT ON FUNCTION public.teaching_guard_d10_course_lifecycle() IS
-  'D10 lifecycle guard. READY->DRAFT is allowed only inside a transaction explicitly marked for preactivation Course Analysis regeneration; activated academic history can never be reset by this path.';
+  'D10 lifecycle guard. READY->DRAFT is allowed only inside a transaction explicitly marked for preactivation Course Analysis revision; activated academic history can never be reset by this path.';
 
 COMMIT;
