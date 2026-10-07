@@ -484,9 +484,10 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
   }
   async function materializeApprovedTimetableUsing(tx,{studentId,semesterId,timetable,slots,activationId=null,requestId=null,includeCourseIds=[]}){
     const at=clock();
-    const {rows:courseRows=[]}=await q(tx,`select course_id,lifecycle_state from public.teaching_courses
+    const {rows:courseRows=[]}=await q(tx,`select course_id,lifecycle_state,activation_id from public.teaching_courses
       where student_id=$1 and semester_id=$2 for update`,[studentId,semesterId]);
     const explicit=new Set((includeCourseIds||[]).map(String));
+    const courseById=new Map(courseRows.map((row)=>[String(row.course_id),row]));
     const eligible=new Set(courseRows
       .filter((row)=>String(row.lifecycle_state)==='ACTIVE'||explicit.has(String(row.course_id)))
       .map((row)=>String(row.course_id)));
@@ -500,13 +501,15 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       const {rows:existing}=await q(tx,`select * from public.teaching_classes where student_id=$1 and source_timetable_slot_id=$2 for update`,
         [studentId,slot.timetable_slot_id]);
       if(existing?.[0]){ classes.push(existing[0]); continue; }
-      const id=randomUUID();
+      const id=randomUUID(),slotCourseId=String(slot.course_id||slot.courseId||'');
+      const courseRow=courseById.get(slotCourseId)||null;
+      const slotActivationId=explicit.has(slotCourseId)&&activationId?activationId:(courseRow?.activation_id||activationId||null);
       const {rows}=await q(tx,`insert into public.teaching_classes(
         class_id,student_id,course_id,scheduled_start_at,scheduled_end_at,timezone,lifecycle_state,schedule_version,
         source_timetable_version_id,source_timetable_slot_id,activation_id,source_request_id
       ) values($1,$2,$3,$4,$5,$6,'SCHEDULED',$7,$8,$9,$10,$11) returning *`,
       [id,studentId,slot.course_id,slot.starts_at,slot.ends_at,slot.timezone,Number(timetable.version_no),
-       timetable.timetable_version_id,slot.timetable_slot_id,activationId,requestId]);
+       timetable.timetable_version_id,slot.timetable_slot_id,slotActivationId,requestId]);
       classes.push(rows[0]);
     }
     return classes;
