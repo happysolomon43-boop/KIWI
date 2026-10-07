@@ -2,7 +2,6 @@
 
 const crypto = require('node:crypto');
 const pdfParse = require('pdf-parse');
-const mammoth = require('mammoth');
 const officeparser = require('officeparser');
 const { validateMaterialUpload } = require('./security');
 
@@ -44,22 +43,37 @@ function splitUtf8(text, maxBytes = EXTRACTED_CHUNK_MAX_BYTES) {
   return Object.freeze(chunks.filter(Boolean));
 }
 
-async function extractText(bytes, upload, { pdfParser = pdfParse, docxExtractor = mammoth.extractRawText, presentationParser = officeparser } = {}) {
+const OFFICE_DECOMPRESSION_LIMITS = Object.freeze({
+  maxUncompressedBytes:64 * 1024 * 1024,
+  maxZipEntries:5000,
+  maxTableCells:250000,
+});
+
+async function extractOfficeText(bytes, fileType, parser = officeparser) {
+  const ast = await parser.parseOffice(bytes, {
+    fileType,
+    decompressionLimits:OFFICE_DECOMPRESSION_LIMITS,
+  });
+  const parsed = await ast.to('text', {
+    includeImages:false,
+    textConfig:{ preserveLayout:false, renderNotes:true },
+  });
+  return normalizeExtractedText(parsed?.value);
+}
+
+async function extractText(bytes, upload, { pdfParser = pdfParse, officeParser = officeparser } = {}) {
   if (upload.extension === '.pdf') {
     const parsed = await pdfParser(bytes);
     return normalizeExtractedText(parsed?.text);
   }
   if (upload.extension === '.docx') {
-    const parsed = await docxExtractor({ buffer:bytes });
-    return normalizeExtractedText(parsed?.value);
+    return extractOfficeText(bytes, 'docx', officeParser);
   }
   if (upload.extension === '.txt' || upload.extension === '.md') {
     return normalizeExtractedText(bytes.toString('utf8'));
   }
   if (upload.extension === '.pptx') {
-    const ast = await presentationParser.parseOffice(bytes, { fileType:'pptx', decompressionLimits:{ maxUncompressedBytes:64 * 1024 * 1024, maxZipEntries:5000, maxTableCells:250000 } });
-    const parsed = await ast.to('text', { includeImages:false, textConfig:{ preserveLayout:false, renderNotes:true } });
-    return normalizeExtractedText(parsed?.value);
+    return extractOfficeText(bytes, 'pptx', officeParser);
   }
   throw uploadError('Unsupported Teaching material type.', 'TEACHING_D28_UPLOAD_TYPE_FORBIDDEN', 415);
 }
@@ -139,6 +153,8 @@ async function extractValidatedMaterial({ filename, mimeType, bytes }, dependenc
 module.exports = {
   EXTRACTED_CHUNK_MAX_BYTES,
   EXTRACTED_FILE_MAX_BYTES,
+  OFFICE_DECOMPRESSION_LIMITS,
   splitUtf8,
+  extractOfficeText,
   extractValidatedMaterial,
 };
