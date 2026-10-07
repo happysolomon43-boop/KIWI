@@ -7,7 +7,9 @@ const TPF02_FAMILY_ID = 'TPF-02';
 const TPF02_FAMILY_VERSION = '1.2';
 const TPF02_OUTPUT_SCHEMA_ID = 'tpf02.curriculum-audit';
 const TPF02_OUTPUT_SCHEMA_VERSION = '3';
-const TPF02_MAX_OUTPUT_TOKENS = 48_000;
+const TPF02_BOUNDED_MAX_OUTPUT_TOKENS = 48_000;
+const TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS = 64_000;
+const TPF02_MAX_OUTPUT_TOKENS = TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS;
 const DEFAULT_DECOMPOSITION_LIMITS = Object.freeze({
  max_source_refs_per_unit: 16,
  min_units_per_required_source: 0.06,
@@ -140,6 +142,14 @@ function buildTpf02AcademicInput({course,sources=[],taskMode='DEEP_AUDIT',execut
   }),
   source_items:sourceItems,
  });
+}
+
+function tpf02OutputTokenBudget(academicInput={}){
+ const taskMode=String(academicInput?.task_mode||'').trim().toUpperCase();
+ const stage=String(academicInput?.execution_stage||'').trim().toUpperCase();
+ return taskMode==='DEEP_AUDIT'&&stage===EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE
+  ? TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS
+  : TPF02_BOUNDED_MAX_OUTPUT_TOKENS;
 }
 
 function exactObjectFields(value, fields){
@@ -641,7 +651,7 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
 }
 
 module.exports={
- TPF02_FAMILY_ID,TPF02_FAMILY_VERSION,TPF02_OUTPUT_SCHEMA_ID,TPF02_OUTPUT_SCHEMA_VERSION,TPF02_MAX_OUTPUT_TOKENS,
+ TPF02_FAMILY_ID,TPF02_FAMILY_VERSION,TPF02_OUTPUT_SCHEMA_ID,TPF02_OUTPUT_SCHEMA_VERSION,TPF02_MAX_OUTPUT_TOKENS,TPF02_BOUNDED_MAX_OUTPUT_TOKENS,TPF02_WHOLE_SYNTHESIS_MAX_OUTPUT_TOKENS,tpf02OutputTokenBudget,
  TPF02_TOP_LEVEL_FIELDS,TPF02_DECOMPOSITION_PATCH_SCHEMA_ID,TPF02_DECOMPOSITION_PATCH_SCHEMA_VERSION,TPF02_DECOMPOSITION_PATCH_FIELDS,TPF02_DECOMPOSITION_PATCH_UNIT_FIELDS,EXECUTION_STAGES,DEFAULT_DECOMPOSITION_LIMITS,DECOMPOSITION_JUSTIFICATION_PREFIX,buildTpf02AcademicInput,validateTpf02Schema,validateTpf02DecompositionPatchSchema,validateTpf02Domain,
  validateAssembledArtifact,validateHierarchy,decompositionFlags,decompositionRepairState,validateDecomposition,composeTpf02DirectModelContent,inputStateReference,
 };
