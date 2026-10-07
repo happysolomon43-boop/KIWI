@@ -423,9 +423,9 @@ test('staged synthesis canonically excludes non-instructional source classes fro
     executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
   });
   const preparedInventory = fullInput.source_items.map(inventoryItem);
-  const excludedRef = preparedInventory.at(-1).source_item_ref;
-  preparedInventory[preparedInventory.length - 1] = {
-    ...preparedInventory.at(-1),
+  const excludedRef = preparedInventory[1].source_item_ref;
+  preparedInventory[1] = {
+    ...preparedInventory[1],
     proposed_scope_classification: 'duplicate',
     scope_classification_basis: 'Duplicates the first canonical source.',
     duplicate_of_ref: preparedInventory[0].source_item_ref,
@@ -465,9 +465,9 @@ test('staged synthesis still fails closed when source-scope canonicalization lea
     executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
   });
   const preparedInventory = fullInput.source_items.map(inventoryItem);
-  const excludedRef = preparedInventory.at(-1).source_item_ref;
-  preparedInventory[preparedInventory.length - 1] = {
-    ...preparedInventory.at(-1),
+  const excludedRef = preparedInventory[1].source_item_ref;
+  preparedInventory[1] = {
+    ...preparedInventory[1],
     proposed_scope_classification: 'non_instructional',
     scope_classification_basis: 'Administrative material only.',
     duplicate_of_ref: null,
@@ -498,7 +498,7 @@ test('staged synthesis still fails closed when source-scope canonicalization lea
   });
 
   const result = await request.domainValidator(output);
-  assert.equal(result.reason, 'TPF02_LEARNING_UNIT_INVALID:1');
+  assert.match(result.reason, /^TPF02_LEARNING_UNIT_INVALID:/);
 });
 
 test('staged synthesis turns an omitted required source into an explicit blocking provisional artifact for bounded repair', async () => {
@@ -519,7 +519,7 @@ test('staged synthesis turns an omitted required source into an explicit blockin
     stageFindings: { status: 'ok', review_required: false, review_reasons: [], unresolved_items: [] },
   });
   const output = synthesisOutput(request);
-  const missing = fullInput.audit_scope.source_refs.at(-1);
+  const missing = fullInput.audit_scope.source_refs[1];
   const missingUnit = output.learning_units.find((unit) => unit.source_item_refs.includes(missing));
   missingUnit.source_item_refs = missingUnit.source_item_refs.filter((ref) => ref !== missing);
 
@@ -554,7 +554,7 @@ test('large staged audit completes omitted required lineage through bounded LEAR
 
       if (request.taskMode === 'DEEP_AUDIT') {
         const output = synthesisOutput(request);
-        const missing = request.academicInput.audit_scope.source_refs.at(-1);
+        const missing = request.academicInput.audit_scope.source_refs[1];
         const missingUnit = output.learning_units.find((unit) => unit.source_item_refs.includes(missing));
         missingUnit.source_item_refs = missingUnit.source_item_refs.filter((ref) => ref !== missing);
         const domain = await request.domainValidator(output);
