@@ -68,6 +68,40 @@ html[data-app="kiwi-teaching"] body :is(.tf-card h3, .tf-summary-card h3) {
   font-stretch: normal;
 }
 
+/* Schedule is an operational surface, so reserve Syne for the page-level hero
+ * and use the calmer DM Sans rhythm inside cards, metrics and controls. This
+ * removes the wide/heavy feel on narrow screens without changing the original
+ * KIWI font families or globally rescaling Teaching. */
+html[data-app="kiwi-teaching"] body :is(
+  .teaching-schedule-x__card h3,
+  .teaching-schedule-x__section-head h4,
+  .teaching-schedule-x__day-title,
+  .teaching-schedule-x__slot-copy strong,
+  .teaching-schedule-x__window-tab,
+  .teaching-schedule-x__primary,
+  .teaching-schedule-x__metric strong
+) {
+  font-family: var(--font-body);
+  font-stretch: normal;
+  font-synthesis: none;
+  letter-spacing: -0.012em;
+}
+html[data-app="kiwi-teaching"] body :is(
+  .teaching-schedule-x__card h3,
+  .teaching-schedule-x__section-head h4,
+  .teaching-schedule-x__day-title,
+  .teaching-schedule-x__slot-copy strong,
+  .teaching-schedule-x__metric strong
+) {
+  font-weight: 600;
+}
+html[data-app="kiwi-teaching"] body :is(
+  .teaching-schedule-x__window-tab,
+  .teaching-schedule-x__primary
+) {
+  font-weight: 700;
+}
+
 /* Technical/provenance text remains intentionally monospace. */
 html[data-app="kiwi-teaching"] :is(code, pre, kbd, samp) {
   font-family: var(--font-mono);
