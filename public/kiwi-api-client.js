@@ -299,6 +299,7 @@ global.KIWI_API_CLIENT = Object.freeze({
   kiwiApiRequest,
   kiwiApiRawRequest,
   hasKiwiSession,
+  LONG_RUNNING_ANALYSIS_OPERATION_TIMEOUT_MS,
 });
 
 if (global.document?.readyState === 'loading') {
