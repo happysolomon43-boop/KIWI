@@ -1307,6 +1307,7 @@ function createD07Intelligence({orchestrator}={}){
         if(!repaired?.accepted)return repaired;
         currentResult=repaired;
         currentOutput=repaired.validatedResult?.output;
+        if(currentOutput?.status&&currentOutput.status!=='ok')return currentResult;
       }
       const finalInventoryByRef=new Map(preparedInventory.map((item)=>[String(item.source_item_ref),item]));
       const finalState=decompositionRepairState(currentOutput,finalInventoryByRef,{decompositionLimits:buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS}).constraints.decomposition_limits});
@@ -1400,6 +1401,7 @@ function createD07Intelligence({orchestrator}={}){
       if(!repaired?.accepted)return repaired;
       currentResult=repaired;
       currentOutput=repaired.validatedResult?.output;
+      if(currentOutput?.status&&currentOutput.status!=='ok')return currentResult;
     }
     const finalInventoryByRef=new Map(prepared.sourceInventory.map((item)=>[String(item.source_item_ref),item]));
     const finalState=decompositionRepairState(currentOutput,finalInventoryByRef,{decompositionLimits:fullAcademicInput.constraints.decomposition_limits});
