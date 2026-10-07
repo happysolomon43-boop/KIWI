@@ -746,6 +746,9 @@ function createAIOrchestrator({
                 credentialSlotId: slot.id,
                 code: aiError.code,
                 status: aiError.status,
+                // Provider messages explain request-shape failures without
+                // including prompts, credentials, or response bodies.
+                message: String(aiError.message || '').slice(0, 500),
                 attempt: attemptNumber,
                 executionProfile: resolvedExecutionProfile.name,
               });
