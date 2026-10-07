@@ -93,6 +93,54 @@ test('D07 performs a new audit when current Course sources no longer match the p
   assert.equal(modelBackedRuns, 1);
 });
 
+test('D07 explicit refinement and regeneration bypass initial-audit idempotency without losing options', async () => {
+  const setup = setupFixture();
+  const calls = [];
+  const decorated = decorateAuditIdempotency({
+    async getSetup() { return setup; },
+    async runAudit(user, courseId, options) {
+      calls.push({ user, courseId, options });
+      return { curriculum_audit_id: 'audit-revision' };
+    },
+  });
+
+  await decorated.runAudit({ id: 'student-1' }, 'course-1', {
+    operation: 'REFINE',
+    changeRequest: 'Split broad Learning Units.',
+  });
+  await decorated.runAudit({ id: 'student-1' }, 'course-1', {
+    operation: 'REGENERATE',
+    regenerationReason: 'Reconsider overall granularity.',
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].options.operation, 'REFINE');
+  assert.match(calls[0].options.changeRequest, /Split broad/);
+  assert.equal(calls[1].options.operation, 'REGENERATE');
+  assert.match(calls[1].options.regenerationReason, /granularity/);
+});
+
+test('D07 keeps a validated revised analysis current after guarded READY-to-DRAFT reset', () => {
+  const setup = setupFixture();
+  setup.course = { ...setup.course, state_version: 3 };
+  setup.curriculumAudit = {
+    ...setup.curriculumAudit,
+    input_state_reference: 'teaching_course:course-1:state:2',
+    validation_metadata: {
+      ...setup.curriculumAudit.validation_metadata,
+      state_version: '2',
+      revision_operation: 'REFINE',
+      revision_committed_state_version: 3,
+    },
+  };
+
+  assert.equal(currentValidatedAudit(setup)?.curriculum_audit_id, 'audit-1');
+
+  const unsafe = structuredClone(setup);
+  unsafe.curriculumAudit.validation_metadata.revision_committed_state_version = 4;
+  assert.equal(currentValidatedAudit(unsafe), null);
+});
+
 test('D07 service composition applies audit idempotency before truncation recovery', () => {
   const source = fs.readFileSync(require.resolve('../../../teaching/d07'), 'utf8');
   assert.match(source, /decorateAuditIdempotency\(unique\)/);
@@ -126,10 +174,18 @@ test('D07 background refresh versions the outbox key and joins a completed curre
  assert.equal(refreshed.jobId,'new-event');
  assert.equal(refreshed.status,'PENDING');
  assert.ok(existingKeys.has('d07:curriculum-audit:course-1:2:tpf02:1.2'));
- setup.backgroundAnalysis={event_id:'new-event',status:'PENDING'};
+ setup.backgroundAnalysis={
+   event_id:'new-event',
+   status:'PENDING',
+   aggregate_version:2,
+   payload:{operation:'GENERATE',expected_state_version:'2',previous_audit_id:null,previous_audit_version:null,change_request:null,regeneration_reason:null},
+ };
  assert.equal((await service.queueAudit({id:'student-1'},'course-1')).joinedExisting,true);
  setup.backgroundAnalysis.status='PUBLISHED';
  setup.curriculumAudit=setupFixture().curriculumAudit;
- assert.equal((await service.queueAudit({id:'student-1'},'course-1')).status,'PUBLISHED');
+ const completed=await service.queueAudit({id:'student-1'},'course-1');
+ assert.equal(completed.status,'COMPLETED');
+ assert.equal(completed.background,false);
+ assert.equal(completed.auditReady,true);
  assert.equal(writes,1);
 });

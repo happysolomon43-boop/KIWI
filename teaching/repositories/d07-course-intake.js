@@ -21,15 +21,34 @@ function createD07CourseIntakeRepository({query,withTransaction,randomUUID,clock
  async function createDraft({studentId,subject,title,inventory}){return withTransaction(async tx=>{const courseId=randomUUID(),now=clock();const {rows}=await q(tx,`insert into public.teaching_courses(course_id,student_id,subject_id,semester_id,title,lifecycle_state,subject_snapshot_ref,source_version_ref,state_version) values($1,$2,$3,null,$4,'DRAFT',$5,$6,1) returning *`,[courseId,studentId,subject.id,title,`subject:${subject.id}:${inventory.snapshotDigest}`,inventory.snapshotDigest]);for(const item of inventory.items)await q(tx,`insert into public.teaching_source_content_items(source_content_item_id,student_id,course_id,source_kind,source_ref,source_version_ref,locator,content_hash,content_summary,academically_meaningful,classification,classification_reason,classifier_rule_version,discovered_at) values($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,null,null,null,null,$10)`,[randomUUID(),studentId,courseId,item.sourceKind,item.sourceRef,item.sourceVersionRef,JSON.stringify(item.locator),item.contentHash,item.content,now]);return rows[0];});}
  async function listCourses(studentId){const {rows=[]}=await query(`select c.*,count(s.source_content_item_id)::int source_item_count from public.teaching_courses c left join public.teaching_source_content_items s on s.course_id=c.course_id and s.superseded_at is null where c.student_id=$1 group by c.course_id order by c.created_at desc`,[studentId]);return rows;}
  async function findMatchingDraft({studentId,subjectId,title}){const {rows=[]}=await query(`select c.* from public.teaching_courses c where c.student_id=$1 and c.subject_id=$2 and c.lifecycle_state='DRAFT' and lower(btrim(c.title))=lower(btrim($3)) order by (c.semester_id is not null) desc,c.state_version desc,c.created_at asc limit 1`,[studentId,subjectId,title]);return rows[0]||null;}
- async function latestBackgroundAudit(studentId,courseId){try{const {rows=[]}=await query("select event_id,status,attempt_count,last_error_code,next_attempt_at,created_at,updated_at,published_at from teaching_runtime.event_outbox where actor_id=$1 and aggregate_type='teaching_course' and aggregate_id=$2 and event_type='teaching.curriculum.audit_requested' order by created_at desc limit 1",[studentId,courseId]);const row=rows[0]||null;if(row&&String(row.status).toUpperCase()==='RETRY_WAIT'&&Number(row.attempt_count)>=8)return {...row,status:'CANCELLED',last_error_code:row.last_error_code||'TEACHING_EVENT_RETRY_EXHAUSTED'};return row;}catch(error){return null;}}
- async function getSetup(studentId,courseId){const [course,intakes,sources,audits,diagnostics,vpk,backgroundAudit]=await Promise.all([query('select * from public.teaching_courses where student_id=$1 and course_id=$2',[studentId,courseId]),query('select * from public.teaching_student_course_intakes where student_id=$1 and course_id=$2 order by submitted_at desc',[studentId,courseId]),query('select source_content_item_id,source_kind,source_ref,source_version_ref,locator,content_hash,content_summary,academically_meaningful,classification,classification_reason,classifier_rule_version,scope_version_no,supersedes_source_content_item_id,discovered_scope_change_id from public.teaching_source_content_items where student_id=$1 and course_id=$2 and superseded_at is null order by discovered_at,source_content_item_id',[studentId,courseId]),query('select * from public.teaching_curriculum_audits where student_id=$1 and course_id=$2 order by audit_version desc',[studentId,courseId]),query('select * from public.teaching_diagnostic_plans where student_id=$1 and course_id=$2 order by plan_version desc',[studentId,courseId]),query('select * from public.teaching_validated_prior_knowledge_decisions where student_id=$1 and course_id=$2 order by decided_at desc',[studentId,courseId]),latestBackgroundAudit(studentId,courseId)]);if(!course.rows?.[0]){const e=new Error('Teaching Course not found.');e.status=404;e.code='TEACHING_COURSE_NOT_FOUND';throw e;}return {course:course.rows[0],intake:intakes.rows?.[0]||null,sources:sources.rows||[],curriculumAudit:audits.rows?.[0]||null,diagnosticPlan:diagnostics.rows?.[0]||null,vpkDecisions:vpk.rows||[],backgroundAnalysis:backgroundAudit};}
+ async function latestBackgroundAudit(studentId,courseId){try{const {rows=[]}=await query("select event_id,status,attempt_count,last_error_code,next_attempt_at,created_at,updated_at,published_at,aggregate_version,causation_id,payload from teaching_runtime.event_outbox where actor_id=$1 and aggregate_type='teaching_course' and aggregate_id=$2 and event_type='teaching.curriculum.audit_requested' order by created_at desc limit 1",[studentId,courseId]);const row=rows[0]||null;if(row&&String(row.status).toUpperCase()==='RETRY_WAIT'&&Number(row.attempt_count)>=8)return {...row,status:'CANCELLED',last_error_code:row.last_error_code||'TEACHING_EVENT_RETRY_EXHAUSTED'};return row;}catch(error){return null;}}
+ async function getSetup(studentId,courseId){const [course,intakes,sources,audits,diagnostics,vpk,backgroundAudit]=await Promise.all([query('select * from public.teaching_courses where student_id=$1 and course_id=$2',[studentId,courseId]),query('select * from public.teaching_student_course_intakes where student_id=$1 and course_id=$2 order by submitted_at desc',[studentId,courseId]),query('select source_content_item_id,source_kind,source_ref,source_version_ref,locator,content_hash,content_summary,academically_meaningful,classification,classification_reason,classifier_rule_version,scope_version_no,supersedes_source_content_item_id,discovered_scope_change_id from public.teaching_source_content_items where student_id=$1 and course_id=$2 and superseded_at is null order by discovered_at,source_content_item_id',[studentId,courseId]),query('select * from public.teaching_curriculum_audits where student_id=$1 and course_id=$2 order by audit_version desc',[studentId,courseId]),query('select * from public.teaching_diagnostic_plans where student_id=$1 and course_id=$2 order by plan_version desc',[studentId,courseId]),query('select * from public.teaching_validated_prior_knowledge_decisions where student_id=$1 and course_id=$2 order by decided_at desc',[studentId,courseId]),latestBackgroundAudit(studentId,courseId)]);if(!course.rows?.[0]){const e=new Error('Teaching Course not found.');e.status=404;e.code='TEACHING_COURSE_NOT_FOUND';throw e;}const curriculumAudit=audits.rows?.[0]||null;const auditCurrent=curriculumAudit?.status==='VALIDATED_CANDIDATE';const diagnosticPlan=auditCurrent?(diagnostics.rows||[]).find((row)=>String(row.curriculum_audit_id||'')===String(curriculumAudit.curriculum_audit_id||''))||null:null;const auditAt=Date.parse(curriculumAudit?.created_at||'');const vpkDecisions=auditCurrent?(vpk.rows||[]).filter((row)=>!Number.isFinite(auditAt)||Date.parse(row.decided_at||'')>=auditAt):[];return {course:course.rows[0],intake:intakes.rows?.[0]||null,sources:sources.rows||[],curriculumAudit,diagnosticPlan,vpkDecisions,backgroundAnalysis:backgroundAudit};}
+
  async function saveIntake({studentId,courseId,intake}){const id=randomUUID();const {rows}=await query(`insert into public.teaching_student_course_intakes(intake_id,student_id,course_id,original_free_form_text,learning_preferences,reported_strengths,reported_weaknesses,goals,important_deadlines,other_course_context) select $1,$2,c.course_id,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb from public.teaching_courses c where c.course_id=$3 and c.student_id=$2 returning *`,[id,studentId,courseId,intake.originalFreeFormText,JSON.stringify(intake.learningPreferences),JSON.stringify(intake.knownStrengths),JSON.stringify(intake.difficultAreas),JSON.stringify(intake.goals),JSON.stringify(intake.importantDeadlines),JSON.stringify({prior_experience:intake.priorExperience,evidence_status:'NON_EVIDENCE_PLANNING_HYPOTHESIS'})]);if(!rows?.[0]){const e=new Error('Teaching Course not found.');e.status=404;throw e;}return rows[0];}
  async function saveExtraction({studentId,intakeId,capabilityId,contractVersion,signals,uncertainty,provenance}){const {rows}=await query(`insert into public.teaching_student_course_intake_extractions(extraction_id,student_id,intake_id,extractor_capability_id,extractor_contract_version,structured_signals,uncertainty,provenance) values($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb) returning *`,[randomUUID(),studentId,intakeId,capabilityId,contractVersion,JSON.stringify(signals),JSON.stringify(uncertainty),JSON.stringify(provenance)]);return rows[0];}
  async function updateInteractionPreferences({studentId,courseId,preferences}){const {rows}=await query(`insert into public.teaching_interaction_preferences(interaction_preference_id,student_id,course_id,preferences,source) select $1,$2,c.course_id,$4::jsonb,'STUDENT_COURSE_INTAKE_EDIT' from public.teaching_courses c where c.course_id=$3 and c.student_id=$2 returning *`,[randomUUID(),studentId,courseId,JSON.stringify(preferences)]);if(!rows?.[0]){const e=new Error('Teaching Course not found.');e.status=404;throw e;}return rows[0];}
- async function saveAudit({studentId,courseId,subjectSnapshotRef,inventoryDigest,output,provenanceRefs,validationMetadata}){
+ async function saveAudit({studentId,courseId,subjectSnapshotRef,inventoryDigest,output,provenanceRefs,validationMetadata,revision=null}){
   const schema=validateTpf02Schema(output);
   if(!schema.ok){const error=new Error('Cannot persist an invalid TPF-02 v1.2 artifact.');error.code=schema.reason;throw error;}
   return withTransaction(async tx=>{
+  let revisionCourse=null,revisionBasis=null;
+  if(revision){
+   const {rows:courseRows=[]}=await q(tx,'select * from public.teaching_courses where student_id=$1 and course_id=$2 for update',[studentId,courseId]);
+   revisionCourse=courseRows[0]||null;
+   if(!revisionCourse){const e=new Error('Teaching Course not found.');e.status=404;e.code='TEACHING_COURSE_NOT_FOUND';throw e;}
+   if(!['DRAFT','READY','PLANNING','SETUP'].includes(String(revisionCourse.lifecycle_state||'DRAFT').toUpperCase())){const e=new Error('Course analysis changes are available before Course activation.');e.status=409;e.code='TEACHING_D07_ANALYSIS_REVISION_PREACTIVATION_ONLY';throw e;}
+   const {rows:basisRows=[]}=await q(tx,`select * from public.teaching_curriculum_audits
+     where student_id=$1 and course_id=$2 and status='VALIDATED_CANDIDATE'
+     order by audit_version desc limit 1 for update`,[studentId,courseId]);
+   revisionBasis=basisRows[0]||null;
+   if(!revisionBasis||String(revisionBasis.curriculum_audit_id)!==String(revision.previousAuditId||'')){
+    const e=new Error('Course analysis changed before this revision could be committed.');e.status=409;e.code='TEACHING_D07_ANALYSIS_REVISION_STALE';throw e;
+   }
+   if(revision.previousAuditVersion!=null&&Number(revisionBasis.audit_version)!==Number(revision.previousAuditVersion)){
+    const e=new Error('Course analysis version changed before this revision could be committed.');e.status=409;e.code='TEACHING_D07_ANALYSIS_REVISION_STALE';throw e;
+   }
+  }
+
   const v=Number((await q(tx,'select coalesce(max(audit_version),0)+1 v from public.teaching_curriculum_audits where course_id=$1',[courseId])).rows[0].v);
   const auditId=randomUUID();
   const canonicalMetadata={...(validationMetadata||{}),schema:'tpf02.curriculum-audit.v3',prompt_family:'TPF-02',prompt_version:TPF02_FAMILY_VERSION,output_schema_version:TPF02_OUTPUT_SCHEMA_VERSION,tpf02_direct:true};
@@ -47,7 +66,70 @@ function createD07CourseIntakeRepository({query,withTransaction,randomUUID,clock
   for(const [ordinal,item] of output.coverage_gaps.entries())await q(tx,`insert into public.teaching_curriculum_audit_coverage_gaps(curriculum_audit_id,student_id,course_id,ordinal,required_area,why_gap_matters,available_support,supplementation_needed,blocking) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[auditId,studentId,courseId,ordinal,item.required_area,item.why_gap_matters,item.available_support,item.supplementation_needed,item.blocking]);
   for(const [ordinal,item] of output.structure_change_proposals.entries())await q(tx,`insert into public.teaching_curriculum_audit_structure_change_proposals(curriculum_audit_id,student_id,course_id,ordinal,change_type,affected_unit_refs,proposal,lineage_preserved,reason) values($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)`,[auditId,studentId,courseId,ordinal,item.type,JSON.stringify(item.affected_unit_refs),item.proposal,true,item.reason]);
   for(const [ordinal,item] of output.unresolved_items.entries())await q(tx,`insert into public.teaching_curriculum_audit_unresolved_items(curriculum_audit_id,student_id,course_id,ordinal,issue,why_unresolved,required_next_input_or_review,blocks_responsible_planning) values($1,$2,$3,$4,$5,$6,$7,$8)`,[auditId,studentId,courseId,ordinal,item.issue,item.why_unresolved,item.required_next_input_or_review,item.blocks_responsible_planning]);
-  return rows[0];
+
+  let resetApplied=false,nextCourseStateVersion=null;
+  if(revision){
+   await q(tx,`update public.teaching_curriculum_audits set status='SUPERSEDED'
+     where student_id=$1 and course_id=$2 and curriculum_audit_id<>$3 and status='VALIDATED_CANDIDATE'`,[studentId,courseId,auditId]);
+   await q(tx,`update public.teaching_course_plans set plan_state='REVIEW_REQUIRED'
+     where student_id=$1 and course_id=$2 and plan_state not in ('SUPERSEDED','REVIEW_REQUIRED')`,[studentId,courseId]);
+   if(revisionCourse.semester_id){
+    await q(tx,`update public.teaching_timetable_versions set timetable_state='STALE'
+      where student_id=$1 and semester_id=$2 and timetable_state in ('PROPOSED','EDITED_PROPOSAL')
+        and exists(select 1 from jsonb_array_elements(course_plan_refs) ref where ref->>'course_id'=$3)`,[studentId,revisionCourse.semester_id,courseId]);
+   }
+   await q(tx,`update teaching_runtime.event_outbox set status='CANCELLED',last_error_code='TEACHING_ANALYSIS_REVISION_RESET',updated_at=now()
+     where actor_id=$1 and aggregate_type='teaching_course' and aggregate_id=$2
+       and event_type in ('teaching.course_plan.generation_requested','teaching.timetable.build_requested')
+       and status in ('PENDING','RETRY_WAIT')`,[studentId,courseId]);
+   let updatedCourse=null;
+   if(String(revisionCourse.lifecycle_state||'DRAFT').toUpperCase()==='READY'){
+    await q(tx,`select set_config('kiwi.teaching_analysis_reset','COURSE_ANALYSIS_REVISION',true)`,[]);
+    const {rows:updatedRows=[]}=await q(tx,`update public.teaching_courses
+      set lifecycle_state='DRAFT',state_version=state_version+1,status_overlays='{}'::text[],updated_at=now()
+      where student_id=$1 and course_id=$2 returning *`,[studentId,courseId]);
+    updatedCourse=updatedRows[0]||revisionCourse;
+    const occurredAt=clock();
+    await q(tx,`insert into public.teaching_course_lifecycle_history(
+      lifecycle_event_id,student_id,course_id,from_state,to_state,state_version,actor_authority,reason,source_request_id,policy_version,occurred_at
+    ) values($1,$2,$3,'READY','DRAFT',$4,'course_lifecycle',$5,null,null,$6)`,
+      [randomUUID(),studentId,courseId,Number(updatedCourse.state_version),'Course Analysis revision reset',occurredAt]);
+    await q(tx,`insert into public.teaching_academic_audit_log(
+      audit_id,student_id,occurred_at,actor_type,actor_id,action,entity_type,entity_id,authoritative_owner,
+      state_version_ref,reason,before_ref,after_ref,provenance_refs,safe_metadata
+    ) values($1,$2,$3,'SYSTEM',null,'course.analysis_revision.reset','COURSE',$4,'course_lifecycle_request',$5,$6,$7::jsonb,$8::jsonb,'[]'::jsonb,$9::jsonb)`,
+      [randomUUID(),studentId,occurredAt,courseId,String(updatedCourse.state_version),revision.studentInstruction||'Student changed the validated Course Analysis',
+       JSON.stringify({lifecycle_state:'READY',curriculum_audit_id:revisionBasis.curriculum_audit_id}),
+       JSON.stringify({lifecycle_state:'DRAFT',curriculum_audit_id:auditId,analysis_boundary_reset:true}),
+       JSON.stringify({historical_versions_preserved:true,reset_boundary:'COURSE_ANALYSIS',revision_mode:revision.mode||null})]);
+   }else{
+    // Every validated analysis revision advances Course state, even while the
+    // lifecycle remains preactivation. This is the concurrency boundary that
+    // prevents an already-CLAIMED Course Plan or timetable worker, prepared
+    // from the old analysis, from committing after the new analysis wins.
+    const {rows:updatedRows=[]}=await q(tx,`update public.teaching_courses
+      set state_version=state_version+1,updated_at=now()
+      where student_id=$1 and course_id=$2 returning *`,[studentId,courseId]);
+    updatedCourse=updatedRows[0]||revisionCourse;
+   }
+   nextCourseStateVersion=Number(updatedCourse.state_version||revisionCourse.state_version||0);
+   if(nextCourseStateVersion!==Number(validationMetadata?.state_version||nextCourseStateVersion)){
+    await q(tx,`update public.teaching_curriculum_audits
+      set validation_metadata=validation_metadata||$3::jsonb
+      where student_id=$1 and curriculum_audit_id=$2`,
+      [studentId,auditId,JSON.stringify({revision_committed_state_version:nextCourseStateVersion})]);
+   }
+   resetApplied=true;
+  }
+  const committedValidationMetadata=revision&&nextCourseStateVersion!==Number(validationMetadata?.state_version||nextCourseStateVersion)
+    ? {...canonicalMetadata,revision_committed_state_version:nextCourseStateVersion}
+    : canonicalMetadata;
+  return {
+    ...rows[0],
+    validation_metadata:committedValidationMetadata,
+    downstream_reset_applied:resetApplied,
+    course_state_version_after:nextCourseStateVersion,
+  };
  });}
  async function saveDiagnosticPlan({studentId,courseId,auditId,requirement,design=null,provenanceRefs=[]}){const v=Number((await query('select coalesce(max(plan_version),0)+1 v from public.teaching_diagnostic_plans where course_id=$1',[courseId])).rows[0].v);const required=requirement.required;const {rows}=await query(`insert into public.teaching_diagnostic_plans(diagnostic_plan_id,student_id,course_id,curriculum_audit_id,plan_version,requirement_state,requirement_reason,target_refs,non_graded,capability_id,prompt_family_id,prompt_family_version,output_schema_version,diagnostic_design,provenance_refs) values($1,$2,$3,$4,$5,$6,$7,$8::jsonb,true,$9,$10,$11,$12,$13::jsonb,$14::jsonb) returning *`,[randomUUID(),studentId,courseId,auditId||null,v,required?'REQUIRED':'NOT_REQUIRED',requirement.reason,JSON.stringify(requirement.targets),required?'teaching.curriculum.targeted_placement_prior_knowledge_diagnostic_design':null,required?'TPF-04':null,required?'1.2':null,required?'d07.targeted-diagnostic.v1':null,required?JSON.stringify(design):null,JSON.stringify(provenanceRefs)]);return rows[0];}
  async function loadDiagnosticEvidence({studentId,courseId,targetKind,targetRef,evidenceRefs}){if(!Array.isArray(evidenceRefs)||!evidenceRefs.length)return [];const {rows=[]}=await query(`select e.* from public.teaching_evidence_events e where e.student_id=$1 and e.course_id=$2 and e.evidence_event_id=any($3::text[]) and e.evidence_kind='DIAGNOSTIC' and e.evidence_purpose='PRIOR_KNOWLEDGE_VERIFICATION' and e.formal_assessment=false and (($4='LEARNING_UNIT' and exists(select 1 from public.teaching_evidence_event_learning_units l where l.evidence_event_id=e.evidence_event_id and l.student_id=$1 and l.learning_unit_id=$5)) or ($4<>'LEARNING_UNIT' and e.response_quality->>'target_ref'=$5))`,[studentId,courseId,evidenceRefs,targetKind,targetRef]);return rows;}

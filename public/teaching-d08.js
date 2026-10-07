@@ -71,6 +71,11 @@ function installStyles() {
     .teaching-d08-list{display:grid;gap:9px;margin:14px 0 0;padding:0;list-style:none}
     .teaching-d08-list li{padding:11px 12px;border:1px solid var(--teaching-border);border-radius:12px;color:#b9d4c8;font-size:12px;line-height:1.5}
     .teaching-d08-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:16px}
+    .teaching-d08-regenerate-box{display:grid;gap:10px;margin-top:14px;padding:14px;border:1px solid var(--teaching-border);border-radius:14px;background:rgba(255,255,255,.018)}
+    .teaching-d08-regenerate-box label{font-size:12px;font-weight:700;color:var(--teaching-text)}
+    .teaching-d08-regenerate-box p{margin:0;color:var(--teaching-muted);font-size:11px;line-height:1.55}
+    .teaching-d08-regenerate-box textarea{box-sizing:border-box;width:100%;min-height:108px;resize:vertical;padding:11px 12px;border:1px solid var(--teaching-border);border-radius:11px;background:rgba(1,12,9,.42);color:var(--teaching-text);font:inherit;line-height:1.5;outline:none}
+    .teaching-d08-regenerate-box textarea:focus{border-color:var(--teaching-border-strong)}
     .teaching-d08-note{margin-top:12px;color:var(--teaching-muted);font-size:12px;line-height:1.55}
     .teaching-d08-preview{width:min(520px,calc(100vw - 28px));max-height:min(720px,86dvh);overflow:auto;padding:0;border:1px solid var(--teaching-border-strong);border-radius:24px;background:rgba(6,26,20,.99);color:var(--teaching-text);box-shadow:var(--teaching-shadow)}
     .teaching-d08-preview::backdrop{background:rgba(0,0,0,.62);backdrop-filter:blur(4px)}
@@ -190,16 +195,28 @@ function backgroundAuditState(job) {
   const status = String(job?.status || '').toUpperCase();
   const attempts = Number(job?.attempt_count || 0);
   const exhausted = attempts >= 8;
+  const operation = String(
+    job?.payload?.operation
+    || (job?.payload?.refine === true ? 'REFINE' : job?.payload?.regenerate === true ? 'REGENERATE' : 'GENERATE')
+  ).toUpperCase();
+  const refining = operation === 'REFINE';
+  const regenerating = operation === 'REGENERATE';
+  const actionName = refining ? 'refinement' : regenerating ? 'regeneration' : 'analysis';
   if (status === 'CANCELLED' || exhausted) {
     return {
       active: false,
       failed: true,
+      operation,
+      refining,
+      regenerating,
       label: 'Needs attention',
       message: job?.last_error_code === 'TEACHING_ACADEMIC_INPUT_INVALID'
-        ? 'KIWI could not prepare the material input for analysis. Your materials are safe. Retry after the input-processing fix is available.'
+        ? 'KIWI could not prepare the material input for analysis. Your materials are safe. Try again when you are ready.'
         : job?.last_error_code === 'TEACHING_AI_OUTPUT_TRUNCATED'
-          ? 'The AI response ended before the analysis was complete. No incomplete analysis was saved. Your materials are safe; you can retry.'
-          : `The background analysis did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. Your materials are safe. Try again when you are ready.`,
+          ? 'The AI response ended before the Course analysis operation was complete. No incomplete analysis was saved and the current Course remains intact.'
+          : job?.last_error_code === 'TEACHING_D07_CURRICULUM_AUDIT_REJECTED'
+            ? 'KIWI could not safely complete the final Course-structure validation. No incomplete analysis was saved. Try the analysis again; large source sets are resumed through bounded validation work.'
+            : `The background ${actionName} did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. ${operation === 'GENERATE' ? 'Your materials are safe and no incomplete Course analysis was saved.' : 'The current validated Course analysis and downstream setup remain intact.'}`,
       errorCode: job?.last_error_code || null,
     };
   }
@@ -211,13 +228,20 @@ function backgroundAuditState(job) {
     return {
       active: true,
       failed: false,
+      operation,
+      refining,
+      regenerating,
       label: status === 'RETRY_WAIT' ? 'Retry scheduled' : status === 'PENDING' ? 'Queued' : 'Running',
       message: status === 'RETRY_WAIT'
-        ? `The last attempt did not complete. KIWI will retry safely in the background${attempts ? ` (attempt ${attempts})` : ''}.${retryTime}`
-        : 'KIWI is analyzing the materials in the background. You can safely leave this page.',
+        ? `The last ${actionName} attempt did not complete. KIWI will retry safely in the background${attempts ? ` (attempt ${attempts})` : ''}.${retryTime}`
+        : refining
+          ? 'KIWI is applying your requested Course analysis changes in the background. You can safely leave this page.'
+          : regenerating
+            ? 'KIWI is regenerating the Course analysis in the background. You can safely leave this page.'
+            : 'KIWI is analyzing the materials in the background. You can safely leave this page.',
     };
   }
-  return { active: false, failed: false, label: null, message: null };
+  return { active: false, failed: false, operation, refining, regenerating, label: null, message: null };
 }
 
 function backgroundPlanState(job) {
@@ -724,6 +748,12 @@ async function renderCourseSetup({ course, container }) {
         && String(setup.curriculumAudit?.subject_snapshot_ref || '') === String(setup.course?.subject_snapshot_ref || '');
       const sourcesReady = (setup.sources || []).length > 0 && (setup.sources || []).every((source) => Boolean(source.classification));
       const backgroundAudit = backgroundAuditState(setup.backgroundAnalysis);
+      const analysisRevisionInFlight = auditReady
+        && backgroundAudit.active
+        && (backgroundAudit.refining || backgroundAudit.regenerating);
+      const analysisRevisionFailed = auditReady
+        && backgroundAudit.failed
+        && (backgroundAudit.refining || backgroundAudit.regenerating);
       const backgroundEventId = setup.backgroundAnalysis?.event_id == null
         ? null
         : String(setup.backgroundAnalysis.event_id);
@@ -752,8 +782,12 @@ async function renderCourseSetup({ course, container }) {
         diagnosticRequired,
         diagnosticResolved,
         readinessChecked,
+        auditId: setup.curriculumAudit?.curriculum_audit_id || null,
+        auditVersion: setup.curriculumAudit?.audit_version || null,
         backgroundStatus: setup.backgroundAnalysis?.status || null,
         backgroundEventId,
+        backgroundOperation: backgroundAudit.operation || null,
+        backgroundRegeneration: setup.backgroundAnalysis?.payload?.regenerate === true,
         backgroundAttempts: setup.backgroundAnalysis?.attempt_count || 0,
         backgroundUpdatedAt: setup.backgroundAnalysis?.updated_at || null,
       });
@@ -774,20 +808,36 @@ async function renderCourseSetup({ course, container }) {
         row.append(el('span', 'teaching-d08-setup-step__mark', mark), text, el('span', 'teaching-d08-status', state));
         return row;
       };
+      const materialAnalysisReady = auditReady && sourcesReady;
+      const materialBackgroundRelevant = !materialAnalysisReady
+        ? (backgroundAudit.active || backgroundAudit.failed)
+        : (analysisRevisionInFlight || analysisRevisionFailed);
       list.append(
         setupStep((setup.sources || []).length ? '✓' : '•', 'Course materials', `${(setup.sources || []).length} saved source item${(setup.sources || []).length === 1 ? '' : 's'} will ground the plan.`, (setup.sources || []).length ? 'Ready' : 'Missing'),
-        setupStep(auditReady && sourcesReady ? '✓' : '•', 'Material analysis', auditReady && sourcesReady ? 'The current materials have been analyzed and classified.' : backgroundAudit.message || 'KIWI needs to identify the topics, requirements, and relevant source content.', auditReady && sourcesReady ? 'Ready' : backgroundAudit.label || 'Needed', { key: 'material-analysis' }),
+        setupStep(
+          materialBackgroundRelevant ? '•' : materialAnalysisReady ? '✓' : '•',
+          'Material analysis',
+          materialBackgroundRelevant
+            ? backgroundAudit.message
+            : materialAnalysisReady
+              ? 'The current materials have been analyzed and classified.'
+              : 'KIWI needs to identify the topics, requirements, and relevant source content.',
+          materialBackgroundRelevant ? backgroundAudit.label || 'Running' : materialAnalysisReady ? 'Ready' : 'Needed',
+          { key: 'material-analysis' }
+        ),
         setupStep(readinessChecked && diagnosticResolved ? '✓' : '•', 'Learning readiness', diagnosticRequired ? 'A focused, non-graded learning check is required before planning can continue.' : readinessChecked ? 'No additional learning check blocks the Course Plan.' : 'Check whether any prerequisite knowledge needs verification.', readinessChecked && diagnosticResolved ? 'Ready' : 'Action needed')
       );
       card.append(list);
-      if (backgroundAudit.failed) {
-        const failure = el('div', 'teaching-message', backgroundAudit.message);
-        failure.dataset.kind = 'error';
-        failure.setAttribute('role', 'alert');
-        card.append(failure);
-      }
       const actions = el('div', 'teaching-d08-actions');
-      if (!auditReady || !sourcesReady) {
+      if (analysisRevisionInFlight) {
+        const pendingRevision = el(
+          'div',
+          'teaching-message',
+          'Your current validated Course analysis remains authoritative while KIWI finishes this revision. Course Plan setup is paused until the revision finishes so KIWI never builds a new plan from the analysis version you are replacing.'
+        );
+        card.append(pendingRevision);
+        schedulePoll();
+      } else if (!auditReady || !sourcesReady) {
         const analyze = el('button', 'teaching-button teaching-button--primary', backgroundAudit.active ? 'Analysis running in background' : backgroundAudit.failed ? 'Try analysis again' : 'Analyze course materials');
         analyze.type = 'button';
         analyze.disabled = backgroundAudit.active;
@@ -850,7 +900,117 @@ async function renderCourseSetup({ course, container }) {
         continueButton.addEventListener('click', () => courseSurface.openCourse(course.course_id, 'course-plan'));
         actions.append(continueButton);
       }
+
+      let analysisChangeBox = null;
+      const analysisRevisionAllowed = ['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state || 'DRAFT').toUpperCase());
+      if (auditReady && sourcesReady && !backgroundAudit.active && analysisRevisionAllowed) {
+        const refine = el('button', 'teaching-button', 'Request changes');
+        const regenerate = el('button', 'teaching-button', 'Regenerate analysis');
+        refine.type = 'button';
+        regenerate.type = 'button';
+
+        analysisChangeBox = el('div', 'teaching-d08-regenerate-box');
+        analysisChangeBox.hidden = true;
+        const heading = el('strong', '', 'Change Course analysis');
+        const modeText = el('p', '', '');
+        const instructionLabel = el('label', '', 'What should KIWI change?');
+        const instruction = el('textarea');
+        instruction.maxLength = 1500;
+        const warning = el('p', '', '');
+        const boxActions = el('div', 'teaching-d08-actions');
+        const confirm = el('button', 'teaching-button teaching-button--primary', 'Apply changes');
+        const cancel = el('button', 'teaching-button', 'Cancel');
+        confirm.type = 'button';
+        cancel.type = 'button';
+        boxActions.append(confirm, cancel);
+        analysisChangeBox.append(heading, modeText, instructionLabel, instruction, warning, boxActions);
+
+        let mode = 'REFINE';
+        const configure = (nextMode) => {
+          mode = nextMode;
+          analysisChangeBox.hidden = false;
+          refine.disabled = nextMode === 'REFINE';
+          regenerate.disabled = nextMode === 'REGENERATE';
+          if (nextMode === 'REFINE') {
+            modeText.textContent = 'KIWI will revise the current validated analysis instead of rebuilding it from scratch.';
+            instructionLabel.textContent = 'What should KIWI change?';
+            instruction.placeholder = 'For example: “Learning Units are too broad — split them into smaller assessable units”, “these two units overlap — merge them”, or “this topic needs more detail”.';
+            warning.textContent = 'Your request is treated as guidance, not permission to remove required Course scope. If the revised analysis validates, Course Plan, learning-readiness, and timetable state derived from the old analysis reset to the new analysis boundary. If validation fails, nothing is reset.';
+            confirm.textContent = 'Apply requested changes';
+          } else {
+            modeText.textContent = 'KIWI will re-analyze the complete Course materials and build a new Course analysis.';
+            instructionLabel.textContent = 'Why regenerate?';
+            instruction.placeholder = 'Optional — for example: “the overall Learning Unit structure is too coarse” or “reconsider the Course decomposition from the source materials”.';
+            warning.textContent = 'If the regenerated analysis validates, Course Plan, learning-readiness, and timetable state derived from the old analysis reset to the new analysis boundary. If regeneration fails, the current Course remains intact.';
+            confirm.textContent = 'Regenerate whole analysis';
+          }
+          instruction.focus();
+        };
+
+        refine.addEventListener('click', () => configure('REFINE'));
+        regenerate.addEventListener('click', () => configure('REGENERATE'));
+        cancel.addEventListener('click', () => {
+          analysisChangeBox.hidden = true;
+          refine.disabled = false;
+          regenerate.disabled = false;
+          instruction.value = '';
+        });
+        confirm.addEventListener('click', async () => {
+          const requested = instruction.value.trim();
+          if (mode === 'REFINE' && !requested) {
+            status.textContent = 'Describe the change you want KIWI to make.';
+            status.className = 'teaching-message';
+            status.dataset.kind = 'error';
+            instruction.focus();
+            return;
+          }
+          const materialRow = materialAnalysisRow();
+          const materialState = materialRow?.querySelector('.teaching-d08-status');
+          const materialDescription = materialRow?.querySelector('small');
+          confirm.disabled = true;
+          cancel.disabled = true;
+          refine.disabled = true;
+          regenerate.disabled = true;
+          if (materialState) materialState.textContent = 'Running';
+          if (materialDescription) materialDescription.textContent = mode === 'REFINE'
+            ? 'KIWI is applying your requested analysis changes in the background. You can safely leave this page.'
+            : 'KIWI is regenerating the Course analysis in the background. You can safely leave this page.';
+          status.textContent = mode === 'REFINE'
+            ? 'Course analysis refinement started. The current Course remains authoritative until the revised analysis validates.'
+            : 'Course analysis regeneration started. The current Course remains authoritative until the new analysis validates.';
+          status.className = 'teaching-message';
+          delete status.dataset.kind;
+          startAnalysisCountdown({ deadline: Date.now() + ANALYSIS_COUNTDOWN_MS });
+          schedulePoll();
+          try {
+            await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/curriculum-audit`, {
+              method: 'POST',
+              body: mode === 'REFINE'
+                ? { operation: 'REFINE', changeRequest: requested }
+                : { operation: 'REGENERATE', reason: requested || null },
+            });
+            await load();
+          } catch (error) {
+            stopAnalysisCountdown();
+            status.textContent = error.message || (mode === 'REFINE'
+              ? 'Course analysis changes could not be started.'
+              : 'Course analysis regeneration could not be started.');
+            status.className = 'teaching-message';
+            status.dataset.kind = 'error';
+            confirm.disabled = false;
+            cancel.disabled = false;
+            refine.disabled = false;
+            regenerate.disabled = false;
+          }
+        });
+        actions.append(refine, regenerate);
+      }
+
       card.append(actions);
+      if (analysisChangeBox) card.append(analysisChangeBox);
+      if (auditReady && sourcesReady && !analysisRevisionAllowed) {
+        card.append(el('p', 'teaching-d08-note', 'Course analysis changes are available before activation. Active Courses use governed academic-change workflows so teaching history is never silently rewritten.'));
+      }
       body.replaceChildren(card);
       if (backgroundAudit.active) {
         startAnalysisCountdown({ deadline: countdownDeadline, eventId: backgroundEventId });

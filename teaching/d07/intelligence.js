@@ -134,8 +134,116 @@ function fullProvenanceValidator(sourceRefs){
   };
 }
 
-function curriculumAuditRequest({course,sources}){
-  const academicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS});
+function buildRegenerationContext({regenerationReason=null,previousAudit=null}={}){
+  const reason=String(regenerationReason||'').trim().slice(0,1500);
+  if(!previousAudit&&!reason)return null;
+  const previousOutput=previousAudit?.audit_output&&typeof previousAudit.audit_output==='object'
+    ? previousAudit.audit_output
+    : {};
+  return Object.freeze({
+    requested:true,
+    student_reason:reason||null,
+    previous_audit_version:previousAudit?.audit_version==null?null:Number(previousAudit.audit_version),
+    previous_learning_unit_count:Array.isArray(previousOutput.learning_units)?previousOutput.learning_units.length:null,
+    instruction:Object.freeze([
+      'Treat the student reason as advisory decomposition feedback, not as authority to omit required Course scope.',
+      'Re-evaluate the full source evidence and change Learning Unit granularity only when academically defensible.',
+      'Preserve distinct assessable competencies, required source lineage, prerequisites, and exit evidence even when the student asks for fewer units.',
+      'Do not create filler units merely to satisfy a request for more units.',
+    ]),
+  });
+}
+
+function withRegenerationContext(academicInput,regenerationContext){
+  return regenerationContext
+    ? Object.freeze({...academicInput,regeneration_context:regenerationContext})
+    : academicInput;
+}
+
+function buildRefinementContext({changeRequest=null,previousAudit=null}={}){
+  const request=String(changeRequest||'').trim().slice(0,1500);
+  if(!request){
+    const error=new Error('A Course analysis change request is required.');
+    error.code='TEACHING_D07_ANALYSIS_REFINEMENT_REQUEST_REQUIRED';
+    throw error;
+  }
+  const current=previousAudit?.audit_output&&typeof previousAudit.audit_output==='object'
+    ? previousAudit.audit_output
+    : null;
+  if(!current){
+    const error=new Error('A validated Course analysis is required before targeted refinement.');
+    error.code='TEACHING_D07_ANALYSIS_REFINEMENT_REQUIRES_CURRENT';
+    throw error;
+  }
+  return Object.freeze({
+    mode:'STUDENT_DIRECTED_ANALYSIS_REFINEMENT',
+    student_request:request,
+    previous_audit_id:previousAudit?.curriculum_audit_id||null,
+    previous_audit_version:previousAudit?.audit_version==null?null:Number(previousAudit.audit_version),
+    current_analysis:current,
+    immutable_scope:Object.freeze([
+      'source_inventory',
+      'audit_scope',
+      'source_conflicts',
+      'coverage_gaps',
+    ]),
+    instruction:Object.freeze([
+      'Apply only academically defensible changes requested by the student.',
+      'Preserve unaffected curriculum structure instead of regenerating the Course analysis from scratch.',
+      'Do not reclassify sources, invent source evidence, remove required scope, or change validated source conflicts or coverage gaps.',
+      'A request for fewer Learning Units may merge only genuinely inseparable competencies; a request for more Learning Units may split only where distinct assessable competencies exist.',
+      'Keep required source lineage, prerequisite validity, hierarchy integrity, and exit evidence valid after every structural change.',
+    ]),
+  });
+}
+
+function canonicalJsonValue(value){
+  if(Array.isArray(value))return value.map(canonicalJsonValue);
+  if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map((key)=>[key,canonicalJsonValue(value[key])]));
+  return value??null;
+}
+function stableJson(value){return JSON.stringify(canonicalJsonValue(value));}
+
+function validateRefinementOutput(output,previousOutput,validationContext){
+  const validated=validateTpf02Domain(output,validationContext);
+  if(!validated.ok)return validated;
+  if(stableJson(output.source_inventory)!==stableJson(previousOutput.source_inventory))return {ok:false,reason:'TPF02_REFINEMENT_SOURCE_INVENTORY_MUTATION_FORBIDDEN'};
+  if(stableJson(output.audit_scope)!==stableJson(previousOutput.audit_scope))return {ok:false,reason:'TPF02_REFINEMENT_AUDIT_SCOPE_MUTATION_FORBIDDEN'};
+  if(stableJson(output.source_conflicts)!==stableJson(previousOutput.source_conflicts))return {ok:false,reason:'TPF02_REFINEMENT_SOURCE_CONFLICT_MUTATION_FORBIDDEN'};
+  if(stableJson(output.coverage_gaps)!==stableJson(previousOutput.coverage_gaps))return {ok:false,reason:'TPF02_REFINEMENT_COVERAGE_GAP_MUTATION_FORBIDDEN'};
+  return validated;
+}
+
+function curriculumRefinementRequest({course,sources,previousAudit,changeRequest}={}){
+  const previousOutput=previousAudit?.audit_output;
+  const refinementContext=buildRefinementContext({changeRequest,previousAudit});
+  const fullAcademicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS});
+  const academicInput=Object.freeze({...fullAcademicInput,source_items:Object.freeze([]),refinement_context:refinementContext});
+  const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
+  const outputSchema=tpf02OutputSchema();
+  const request=base({
+    capabilityId:'teaching.curriculum.deep_curriculum_audit',
+    course,
+    taskMode:'DEEP_AUDIT',
+    outputSchema,
+    contextSpec:{...tpf02ContextSpec(course,sources,'student_directed_analysis_refinement'),context_kind:'student_directed_analysis_refinement'},
+    academicInput,
+    provenanceRefs:sourceRefs,
+  });
+  const validationContext=validationContextFor(fullAcademicInput,{allowDecompositionRepair:true});
+  return {
+    ...request,
+    modelContentMode:'TPF02_DIRECT',
+    generation:tpf02Generation(academicInput),
+    validationContext,
+    schemaValidator:validateTpf02Schema,
+    domainValidator:async out=>validateRefinementOutput(out,previousOutput,validationContext),
+    provenanceValidator:fullProvenanceValidator(sourceRefs),
+  };
+}
+
+function curriculumAuditRequest({course,sources,regenerationContext=null}){
+  const academicInput=withRegenerationContext(buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS}),regenerationContext);
   const sourceRefs=academicInput.source_items.map((item)=>item.source_item_ref);
   const outputSchema=tpf02OutputSchema();
   const request=base({
@@ -1044,7 +1152,7 @@ function validateStructurePassPatch(output,{academicInput,canonicalInventory=[]}
   return {ok:true,value:output};
 }
 
-function structurePassRequest({course,sources,preparedInventory,batchIndex=0}={}){
+function structurePassRequest({course,sources,preparedInventory,batchIndex=0,regenerationContext=null}={}){
   const academicBase=buildTpf02AcademicInput({
     course,
     sources,
@@ -1060,6 +1168,7 @@ function structurePassRequest({course,sources,preparedInventory,batchIndex=0}={}
   }
   const academicInput=Object.freeze({
     ...academicBase,
+    ...(regenerationContext?{regeneration_context:regenerationContext}:{}),
     structure_pass_context:Object.freeze({
       mode:'BOUNDED_CURRICULUM_STRUCTURE',
       batch_index:Number(batchIndex),
@@ -1226,7 +1335,7 @@ function assembleStagedAudit(output,preparedInventory,preparedSourceWalk,stageFi
   };
 }
 
-function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSourceWalk,stageFindings,preparedStructureCandidates=[]}){
+function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSourceWalk,stageFindings,preparedStructureCandidates=[],regenerationContext=null}){
   const fullAcademicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE});
   const sourceRefs=fullAcademicInput.source_items.map((item)=>item.source_item_ref);
   const eligibleLearningUnitSourceRefs=Object.freeze(learningUnitEligibleSourceRefs(preparedInventory));
@@ -1234,6 +1343,7 @@ function curriculumSynthesisRequest({course,sources,preparedInventory,preparedSo
   const progressive=progressiveCandidates.length>0;
   const academicInput=Object.freeze({
     ...fullAcademicInput,
+    ...(regenerationContext?{regeneration_context:regenerationContext}:{}),
     source_items:Object.freeze([]),
     source_evidence_items:progressive
       ? compactProgressiveSourceEvidence(fullAcademicInput.source_items)
@@ -1318,11 +1428,19 @@ function vpkInterpretationRequest({course,target,evidenceRefs=[]}){
 function createD07Intelligence({orchestrator}={}){
   if(!orchestrator||typeof orchestrator.execute!=='function')throw new TypeError('D07 intelligence requires the Teaching Orchestrator.');
 
+  async function refineCurriculumAudit(args={}){
+    return orchestrator.execute(curriculumRefinementRequest(args));
+  }
+
   async function runCurriculumAudit(args={}){
     const course=args.course;
     const sources=Array.isArray(args.sources)?args.sources:[];
+    const regenerationContext=buildRegenerationContext({
+      regenerationReason:args.regenerationReason,
+      previousAudit:args.previousAudit,
+    });
     if(!shouldStageCurriculumAudit({course,sources})){
-      let currentResult=await orchestrator.execute(curriculumAuditRequest({course,sources}));
+      let currentResult=await orchestrator.execute(curriculumAuditRequest({course,sources,regenerationContext}));
       if(!currentResult?.accepted)return currentResult;
       let currentOutput=currentResult.validatedResult?.output;
       const preparedInventory=currentOutput?.source_inventory||[];
@@ -1375,6 +1493,7 @@ function createD07Intelligence({orchestrator}={}){
           sources:batch,
           preparedInventory:prepared.sourceInventory,
           batchIndex:index,
+          regenerationContext,
         }))
       );
       const structureRejected=structureResults.find((result)=>!result?.accepted);
@@ -1388,6 +1507,7 @@ function createD07Intelligence({orchestrator}={}){
       preparedSourceWalk:prepared.sourceWalk,
       stageFindings:prepared.findings,
       preparedStructureCandidates,
+      regenerationContext,
     }));
     if(!currentResult?.accepted)return currentResult;
 
@@ -1444,6 +1564,7 @@ function createD07Intelligence({orchestrator}={}){
   return Object.freeze({
     extractIntake:args=>orchestrator.execute(intakeRequest(args)),
     runCurriculumAudit,
+    refineCurriculumAudit,
     designDiagnostic:args=>orchestrator.execute(diagnosticRequest(args)),
     interpretPriorKnowledge:args=>orchestrator.execute(vpkInterpretationRequest(args)),
   });
@@ -1462,6 +1583,11 @@ module.exports={
   TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE,
   TPF02_PROGRESSIVE_SYNTHESIS_INPUT_BYTES_LIMIT,
   intakeRequest,
+  buildRegenerationContext,
+  withRegenerationContext,
+  buildRefinementContext,
+  validateRefinementOutput,
+  curriculumRefinementRequest,
   curriculumAuditRequest,
   sourceInventoryRequest,
   curriculumSynthesisRequest,

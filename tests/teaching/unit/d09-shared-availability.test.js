@@ -27,52 +27,55 @@ function context(courses=[bundle('c1')]){
 let seq=0;
 function nextId(){seq+=1;return '00000000-0000-4000-8000-'+String(seq).padStart(12,'0');}
 
-test('shared availability save automatically recalculates the Semester timetable',async()=>{
+test('shared availability save queues the Semester timetable rebuild instead of blocking the request',async()=>{
   let mutationCalls=0,proposalCalls=0,contextReads=0;
+  const events=[];
   const scheduledContext=context();
   const repository={
     async getSchedulingContext(){contextReads+=1;return scheduledContext;},
+    async latestBackgroundTimetableBuild(){return null;},
     async saveScheduleInputsUsing(){return {semester:scheduledContext.semester,profile:scheduledContext.profile,ppl:{isNew:false,workspaceId:'w1',workspaceVersion:2,changedRefs:['schedule-profile:sp1'],targetEffectiveAt:scheduledContext.semester.ends_at}};},
-    async saveProposalUsing(_tx,{result,source}){proposalCalls+=1;assert.equal(source,'AVAILABILITY_AUTO_RECALC');return {timetable:{timetable_version_id:'tt2'},slots:[],feasibility:{outcome:result.outcome},ppl:{isNew:false,workspaceId:'w1',workspaceVersion:3,changedRefs:['timetable:tt2'],targetEffectiveAt:scheduledContext.semester.ends_at}};},
-    async getScheduleReview(){return {...scheduledContext,timetable:{timetable_version_id:'tt2',version_no:2,timetable_state:'PROPOSED',source_kind:'AVAILABILITY_AUTO_RECALC',created_at:'2026-10-01T00:00:00Z'},slots:[],feasibility:{outcome:'FEASIBLE',evaluated_at:'2026-10-01T00:00:00Z',capacity_metrics:{},reasons:[],alternatives:[],headroom_policy_version:'recovery-headroom.v1'},debtMinutes:0};},
+    async saveProposalUsing(){proposalCalls+=1;throw new Error('must run only in the background worker');},
+    async getScheduleReview(){return {...scheduledContext,timetable:null,slots:[],feasibility:null,debtMinutes:0,backgroundTimetableBuild:{event_id:'job-1',status:'PENDING',payload:{operation:'REFLOW',source:'AVAILABILITY_AUTO_RECALC'}}};},
     async listSemesters(){return [];},
   };
   const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){mutationCalls+=1;const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
-  const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z')});
+  const outboxStore={async append(event){events.push(event);return {inserted:true,event:{...event,event_id:event.eventId,status:'PENDING'}};}};
+  const service=createD09Service({repository,transactionalMutation,randomUUID:()=> 'job-1',outboxStore,clock:()=>new Date('2026-09-29T04:00:00Z')});
+
   const review=await service.saveScheduleInputs({id:'u1'},'c1',{
     semester:{semesterId:'sem1',name:'Term 1',startsAt:'2026-10-01T00:00:00Z',endsAt:'2026-10-31T23:59:59Z',timezone:'UTC'},
     availability:[{dayOfWeek:2,startLocal:'09:00',endLocal:'12:00',kind:'AVAILABLE'}],
     blocks:[],deadlines:[],reserves:[],preferences:{},
   });
-  assert.equal(contextReads,2);
-  assert.equal(mutationCalls,2);
-  assert.equal(proposalCalls,1);
-  assert.equal(review.timetable.sourceKind,'AVAILABILITY_AUTO_RECALC');
-  assert.equal(review.automaticRecalculation.recalculated,true);
+
+  assert.equal(mutationCalls,1);
+  assert.equal(proposalCalls,0);
+  assert.equal(contextReads,3);
+  assert.equal(events.length,1);
+  assert.equal(events[0].eventType,'teaching.timetable.build_requested');
+  assert.equal(events[0].payload.operation,'REFLOW');
+  assert.equal(events[0].payload.source,'AVAILABILITY_AUTO_RECALC');
+  assert.equal(review.automaticRecalculation.queued,true);
+  assert.equal(review.automaticRecalculation.recalculated,false);
   assert.equal(review.automaticRecalculation.scope,'SEMESTER_SHARED');
   assert.deepEqual(review.automaticRecalculation.affectedCourseIds,['c1']);
-  assert.equal(review.automaticRecalculation.affectedCourseCount,1);
+  assert.equal(review.backgroundBuild.active,true);
 });
 
-test('availability change rebuilds one shared Semester timetable across every plan-ready Course',async()=>{
-  let proposalCalls=0;
+test('availability change queues one shared Semester rebuild across every plan-ready Course',async()=>{
+  const events=[];
   const scheduledContext=context([bundle('c1'),bundle('c2'),bundle('c3')]);
   const repository={
     async getSchedulingContext(){return scheduledContext;},
+    async latestBackgroundTimetableBuild(){return null;},
     async saveScheduleInputsUsing(){return {semester:scheduledContext.semester,profile:scheduledContext.profile,ppl:{isNew:false,workspaceId:'w1',workspaceVersion:2,changedRefs:['schedule-profile:sp1'],targetEffectiveAt:scheduledContext.semester.ends_at}};},
-    async saveProposalUsing(_tx,{result,source,context:proposalContext}){
-      proposalCalls+=1;
-      assert.equal(source,'AVAILABILITY_AUTO_RECALC');
-      assert.equal(proposalContext.semester.semester_id,'sem1');
-      assert.deepEqual(proposalContext.courses.map((item)=>item.course.course_id),['c1','c2','c3']);
-      assert.deepEqual(result.courseSummaries.map((item)=>item.courseId).sort(),['c1','c2','c3']);
-      return {timetable:{timetable_version_id:'tt-shared-next',version_no:8},slots:[],feasibility:{outcome:result.outcome},ppl:{isNew:false,workspaceId:'w1',workspaceVersion:3,changedRefs:['timetable:tt-shared-next'],targetEffectiveAt:scheduledContext.semester.ends_at}};
-    },
-    async getScheduleReview(){return {...scheduledContext,timetable:{timetable_version_id:'tt-shared-next',version_no:8,timetable_state:'PROPOSED',source_kind:'AVAILABILITY_AUTO_RECALC',created_at:'2026-10-01T00:00:00Z'},slots:[],feasibility:{outcome:'FEASIBLE',evaluated_at:'2026-10-01T00:00:00Z',capacity_metrics:{},course_summaries:[],reasons:[],alternatives:[],headroom_policy_version:'recovery-headroom.v1'},debtMinutes:0};},
+    async getScheduleReview(){return {...scheduledContext,timetable:null,slots:[],feasibility:null,debtMinutes:0};},
     async listSemesters(){return [];},
   };
   const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
-  const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z')});
+  const outboxStore={async append(event){events.push(event);return {inserted:true,event:{...event,event_id:event.eventId,status:'PENDING'}};}};
+  const service=createD09Service({repository,transactionalMutation,randomUUID:()=> 'job-shared',outboxStore,clock:()=>new Date('2026-09-29T04:00:00Z')});
 
   const review=await service.saveScheduleInputs({id:'u1'},'c1',{
     semester:{semesterId:'sem1',name:'Term 1',startsAt:'2026-10-01T00:00:00Z',endsAt:'2026-10-31T23:59:59Z',timezone:'UTC'},
@@ -80,16 +83,18 @@ test('availability change rebuilds one shared Semester timetable across every pl
     blocks:[],deadlines:[],reserves:[],preferences:{},
   });
 
-  assert.equal(proposalCalls,1);
-  assert.equal(review.automaticRecalculation.recalculated,true);
-  assert.equal(review.automaticRecalculation.timetableVersionId,'tt-shared-next');
-  assert.equal(review.automaticRecalculation.timetableVersion,8);
+  assert.equal(events.length,1);
+  assert.deepEqual(events[0].provenanceRefs.sort(),[
+    'course-plan:c1-p:v1','course-plan:c2-p:v1','course-plan:c3-p:v1',
+  ]);
+  assert.equal(review.automaticRecalculation.queued,true);
   assert.deepEqual(review.automaticRecalculation.affectedCourseIds,['c1','c2','c3']);
   assert.equal(review.automaticRecalculation.affectedCourseCount,3);
 });
 
-test('saving shared availability from an unplanned Course still reflows existing plan-ready sibling Courses',async()=>{
-  let reads=0,proposalCalls=0;
+test('saving shared availability from an unplanned Course still queues sibling Semester reflow',async()=>{
+  let reads=0;
+  const events=[];
   const existing=bundle('planned');
   const before={
     ...context([existing]),
@@ -105,19 +110,14 @@ test('saving shared availability from an unplanned Course still reflows existing
   };
   const repository={
     async getSchedulingContext(){reads+=1;return reads===1?before:after;},
+    async latestBackgroundTimetableBuild(){return null;},
     async saveScheduleInputsUsing(){return {semester:after.semester,profile:after.profile,ppl:{isNew:false,workspaceId:'w1',workspaceVersion:2,changedRefs:['schedule-profile:sp1'],targetEffectiveAt:after.semester.ends_at}};},
-    async saveProposalUsing(_tx,{result,source,planningContext}) {
-      proposalCalls+=1;
-      assert.equal(source,'AVAILABILITY_AUTO_RECALC');
-      assert.deepEqual(planningContext.courses.map((item)=>item.course.course_id),['planned']);
-      assert.deepEqual(result.courseSummaries.map((item)=>item.courseId),['planned']);
-      return {timetable:{timetable_version_id:'tt-planned',version_no:2},slots:[],feasibility:{outcome:result.outcome},ppl:{isNew:false,workspaceId:'w1',workspaceVersion:3,changedRefs:['timetable:tt-planned'],targetEffectiveAt:after.semester.ends_at}};
-    },
-    async getScheduleReview(){return {...after,timetable:{timetable_version_id:'tt-planned',version_no:2,timetable_state:'PROPOSED',course_plan_refs:[{course_id:'planned',course_plan_id:'planned-p',version_no:1,state_version:1}],source_kind:'AVAILABILITY_AUTO_RECALC',created_at:'2026-10-01T00:00:00Z'},slots:[],feasibility:{outcome:'FEASIBLE',evaluated_at:'2026-10-01T00:00:00Z',capacity_metrics:{},course_summaries:[],reasons:[],alternatives:[],headroom_policy_version:'recovery-headroom.v1'},debtMinutes:0};},
+    async getScheduleReview(){return {...after,timetable:null,slots:[],feasibility:null,debtMinutes:0};},
     async listSemesters(){return [];},
   };
   const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
-  const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z')});
+  const outboxStore={async append(event){events.push(event);return {inserted:true,event:{...event,event_id:event.eventId,status:'PENDING'}};}};
+  const service=createD09Service({repository,transactionalMutation,randomUUID:()=> 'job-sibling',outboxStore,clock:()=>new Date('2026-09-29T04:00:00Z')});
 
   const review=await service.saveScheduleInputs({id:'u1'},'new-course',{
     semester:{semesterId:'sem1',name:'Term 1',startsAt:'2026-10-01T00:00:00Z',endsAt:'2026-10-31T23:59:59Z',timezone:'UTC'},
@@ -125,23 +125,25 @@ test('saving shared availability from an unplanned Course still reflows existing
     blocks:[],deadlines:[],reserves:[],preferences:{},
   });
 
-  assert.equal(proposalCalls,1);
-  assert.equal(review.automaticRecalculation.recalculated,true);
+  assert.equal(events.length,1);
+  assert.deepEqual(events[0].provenanceRefs,['course-plan:planned-p:v1']);
+  assert.equal(review.automaticRecalculation.queued,true);
   assert.deepEqual(review.automaticRecalculation.affectedCourseIds,['planned']);
 });
 
-test('availability save keeps old timetable non-current and surfaces rebuild failure instead of hiding it',async()=>{
+test('availability save surfaces a background rebuild queue failure without hiding the saved inputs',async()=>{
   const scheduledContext=context([bundle('c1'),bundle('c2')]);
   const warnings=[];
   const repository={
     async getSchedulingContext(){return scheduledContext;},
+    async latestBackgroundTimetableBuild(){return null;},
     async saveScheduleInputsUsing(){return {semester:scheduledContext.semester,profile:scheduledContext.profile,ppl:{isNew:false,workspaceId:'w1',workspaceVersion:2,changedRefs:['schedule-profile:sp1'],targetEffectiveAt:scheduledContext.semester.ends_at}};},
-    async saveProposalUsing(){const error=new Error('simulated scheduler failure');error.code='SIMULATED_REBUILD_FAILURE';throw error;},
     async getScheduleReview(){return {...scheduledContext,timetable:null,slots:[],feasibility:null,debtMinutes:0,staleSchedule:false};},
     async listSemesters(){return [];},
   };
   const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
-  const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z'),logger:{warn:(...args)=>warnings.push(args)}});
+  const outboxStore={async append(){const error=new Error('simulated queue failure');error.code='SIMULATED_QUEUE_FAILURE';throw error;}};
+  const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,outboxStore,clock:()=>new Date('2026-09-29T04:00:00Z'),logger:{warn:(...args)=>warnings.push(args)}});
 
   const review=await service.saveScheduleInputs({id:'u1'},'c1',{
     semester:{semesterId:'sem1',name:'Term 1',startsAt:'2026-10-01T00:00:00Z',endsAt:'2026-10-31T23:59:59Z',timezone:'UTC'},
@@ -151,11 +153,10 @@ test('availability save keeps old timetable non-current and surfaces rebuild fai
 
   assert.equal(review.timetable,null);
   assert.equal(review.automaticRecalculation.recalculated,false);
-  assert.equal(review.automaticRecalculation.reason,'SIMULATED_REBUILD_FAILURE');
+  assert.equal(review.automaticRecalculation.queued,false);
+  assert.equal(review.automaticRecalculation.reason,'SIMULATED_QUEUE_FAILURE');
   assert.equal(review.automaticRecalculation.scope,'SEMESTER_SHARED');
-  assert.equal(review.automaticRecalculation.semesterId,'sem1');
   assert.deepEqual(review.automaticRecalculation.affectedCourseIds,['c1','c2']);
-  assert.equal(review.automaticRecalculation.affectedCourseCount,2);
   assert.equal(warnings.length,1);
 });
 
@@ -271,7 +272,9 @@ test('a new Course expands an active Semester into an integrated future proposal
   const transactionalMutation={async mutateAndPublish({mutate,buildEvent}){const result=await mutate({});buildEvent(result);return {mutationResult:result};}};
   const service=createD09Service({repository,transactionalMutation,randomUUID:nextId,clock:()=>new Date('2026-09-29T04:00:00Z')});
 
-  const result=await service.recalculateAfterCoursePlanChange({id:'u1'},'c2');
+  const result=await service.recalculateAfterCoursePlanChange(
+    {id:'u1'},'c2',{source:'COURSE_PLAN_AUTO_RECALC'},
+  );
 
   assert.equal(attachCalls,1);
   assert.equal(result.recalculated,true);
@@ -279,7 +282,7 @@ test('a new Course expands an active Semester into an integrated future proposal
   assert.equal(result.scope,'SEMESTER_SHARED');
   assert.deepEqual(result.affectedCourseIds,['active','c2']);
   assert.equal(result.affectedCourseCount,2);
-  assert.equal(proposalSource,'COURSE_ADMISSION_EXPANSION_PROPOSAL');
+  assert.equal(proposalSource,'COURSE_ADMISSION_EXPANSION_PROPOSAL','background source metadata must not override active-Semester expansion authority');
 });
 
 test('Course Plan completion automatically rebuilds a pre-activation Semester timetable',async()=>{

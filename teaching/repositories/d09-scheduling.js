@@ -66,7 +66,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     return {availability:results[0].rows||[],blocks:results[1].rows||[],deadlines:results[2].rows||[],reserves:results[3].rows||[]};
   }
   async function latestPlanBundle(studentId,courseId,runner=null){
-    const {rows:plans=[]}=await q(runner,'select * from public.teaching_course_plans where student_id=$1 and course_id=$2 order by version_no desc limit 1',[studentId,courseId]);
+    const {rows:plans=[]}=await q(runner,"select * from public.teaching_course_plans where student_id=$1 and course_id=$2 and plan_state not in ('REVIEW_REQUIRED','SUPERSEDED') order by version_no desc limit 1",[studentId,courseId]);
     const plan=plans[0]||null;
     if(!plan) return {plan:null,units:[],dependencies:[],coverage:[],scopeChanges:[]};
     const [units,deps,coverage,scope]=await Promise.all([
@@ -441,8 +441,33 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     ]);
     return {timetable,slots:slots.rows||[],feasibility:fs.rows?.[0]||null};
   }
+  async function latestBackgroundTimetableBuild(studentId,courseId,semesterId=null){
+    try{
+      const params=semesterId?[studentId,String(semesterId)]:[studentId,String(courseId)];
+      const predicate=semesterId
+        ? `actor_id=$1 and event_type='teaching.timetable.build_requested' and payload->>'semester_id'=$2`
+        : `actor_id=$1 and aggregate_type='teaching_course' and aggregate_id=$2 and event_type='teaching.timetable.build_requested'`;
+      const {rows=[]}=await query(`select event_id,status,attempt_count,last_error_code,next_attempt_at,created_at,updated_at,published_at,aggregate_version,causation_id,payload
+        from teaching_runtime.event_outbox
+        where ${predicate}
+        order by created_at desc limit 1`,params);
+      const row=rows[0]||null;
+      if(row&&String(row.status).toUpperCase()==='RETRY_WAIT'&&Number(row.attempt_count)>=8){
+        return {...row,status:'CANCELLED',last_error_code:row.last_error_code||'TEACHING_EVENT_RETRY_EXHAUSTED'};
+      }
+      return row;
+    }catch{
+      return null;
+    }
+  }
+
   async function getScheduleReview(studentId,courseId){
     const context=await getSchedulingContext(studentId,courseId);
+    const backgroundTimetableBuild=await latestBackgroundTimetableBuild(
+      studentId,
+      courseId,
+      context.semester?.semester_id||null,
+    );
     const requestedLifecycle=String(context.course?.lifecycle_state||'DRAFT');
     const authoritativeView=['ACTIVE','PAUSED'].includes(requestedLifecycle);
     const latest=context.semester
@@ -473,7 +498,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
           || (!authoritativeView && Number(ref.state_version)!==Number(bundle.course.state_version));
       })
     );
-    return {...context,...latest,staleSchedule,debtMinutes:Math.max(0,Number(debt?.[0]?.debt_minutes)||0)};
+    return {...context,...latest,staleSchedule,debtMinutes:Math.max(0,Number(debt?.[0]?.debt_minutes)||0),backgroundTimetableBuild};
   }
   async function listCalendar(studentId,{from,to}={}){
     const params=[studentId], filters=[];
@@ -553,7 +578,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
   }
   return Object.freeze({
     assertReady,listSemesters,latestDefaultSemester,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,attachCourseToSemester,saveScheduleInputsUsing,saveProposalUsing,
-    latestTimetable,latestApprovedTimetable,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
+    latestTimetable,latestApprovedTimetable,latestBackgroundTimetableBuild,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
   });
 }
 module.exports={createD09SchedulingRepository};
