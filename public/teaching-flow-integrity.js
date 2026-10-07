@@ -191,7 +191,7 @@ async function renderPlan({course,container}){
           }
         }else actions.append(button('Open Setup',{primary:true,onClick:()=>open('setup')}));
         card.append(actions);body.append(card);page.replaceChildren(body);
-        setActionStatus(live,notice||coursePlanGenerationNotice(review));
+        setActionStatus(live,coursePlanGenerationNotice(review)||notice);
         if(planJobActive&&background?.eventId)watchPlanJob(background.eventId);
         return;
       }
@@ -227,7 +227,7 @@ async function renderPlan({course,container}){
       if(review.assumptions?.length){const assumptions=$('section','tf-card');assumptions.append($('div','tf-eyebrow','Assumptions'),$('h3','','What KIWI is carrying forward'));(review.assumptions||[]).slice(0,6).forEach((item)=>assumptions.append($('p','',item.disclosure||item.description||item.label)));side.append(assumptions);}
       const next=$('section','tf-card');next.append($('div','tf-eyebrow','Continue'),$('h3','','When this plan looks right'),$('p','','Set availability in Schedule, then review the proposed timetable. Final acceptance happens only on the Final Review screen.'));const actions=$('div','tf-actions');actions.append(button('Availability',{onClick:()=>open('schedule')}),button('Review timetable',{primary:true,onClick:()=>open('timetable-review')}));next.append(actions);side.append(next);
       grid.append(main,side);body.append(grid);page.replaceChildren(body);
-      setActionStatus(live,notice||coursePlanGenerationNotice(review));
+      setActionStatus(live,coursePlanGenerationNotice(review)||notice);
       if(planJobActive&&background?.eventId)watchPlanJob(background.eventId);
     }catch(error){page.replaceChildren(message(error.message||'Course Plan review could not be loaded.','error'),live);clearActionStatus(live);}
   }
