@@ -111,6 +111,9 @@ test('availability save keeps old timetable non-current and surfaces rebuild fai
   assert.equal(review.automaticRecalculation.recalculated,false);
   assert.equal(review.automaticRecalculation.reason,'SIMULATED_REBUILD_FAILURE');
   assert.equal(review.automaticRecalculation.scope,'SEMESTER_SHARED');
+  assert.equal(review.automaticRecalculation.semesterId,'sem1');
+  assert.deepEqual(review.automaticRecalculation.affectedCourseIds,['c1','c2']);
+  assert.equal(review.automaticRecalculation.affectedCourseCount,2);
   assert.equal(warnings.length,1);
 });
 
