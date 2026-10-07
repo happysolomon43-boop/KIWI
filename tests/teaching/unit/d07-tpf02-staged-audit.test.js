@@ -326,6 +326,8 @@ function decompositionRepairOutput(request) {
     split_reason: 'T1-T5 decomposition requires independently teachable and verifiable capability boundaries.',
     unit_justification: null,
     course_ratio_justification: null,
+    unresolved_reason: null,
+    required_next_input_or_review: null,
     review_required: false,
   };
 }
@@ -848,6 +850,8 @@ test('decomposition keep patch records justification without restating the canon
     split_reason: null,
     unit_justification: 'DECOMPOSITION_JUSTIFICATION: the supplied evidence forms one inseparable competence under T1-T5.',
     course_ratio_justification: 'DECOMPOSITION_JUSTIFICATION: the Course has few broad but independently assessable competence boundaries.',
+    unresolved_reason: null,
+    required_next_input_or_review: null,
     review_required: true,
   };
   const domain = await request.domainValidator(patch);
@@ -857,6 +861,56 @@ test('decomposition keep patch records justification without restating the canon
   assert.ok(rebuilt.learning_units[0].uncertainties.includes(patch.unit_justification));
   assert.ok(rebuilt.review_reasons.includes(patch.course_ratio_justification));
   assert.equal(rebuilt.review_required, true);
+});
+
+test('decomposition repair may fail closed as an unresolved audit without rewriting the canonical unit', async () => {
+  const allSources = sources(17);
+  const fullInput = buildTpf02AcademicInput({
+    course: course(),
+    sources: allSources,
+    taskMode: 'DEEP_AUDIT',
+    executionStage: EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE,
+  });
+  const preparedInventory = fullInput.source_items.map(inventoryItem);
+  const baseOutput = coarseSynthesisOutput({ academicInput: fullInput });
+  baseOutput.source_inventory = preparedInventory;
+  baseOutput.audit_scope.source_walk = fullInput.source_items.map(sourceWalk);
+  const state = decompositionRepairState(
+    baseOutput,
+    new Map(preparedInventory.map((item) => [item.source_item_ref, item])),
+    { decompositionLimits: fullInput.constraints.decomposition_limits }
+  );
+  const request = decompositionRepairRequest({
+    course: course(),
+    sources: allSources,
+    baseOutput,
+    preparedInventory,
+    preparedSourceWalk: baseOutput.audit_scope.source_walk,
+    decompositionState: state,
+  });
+  const patch = {
+    input_state_reference: request.academicInput.input_state_reference,
+    task_mode: 'SPLIT_UNIT',
+    execution_stage: EXECUTION_STAGES.SINGLE_PASS,
+    target_unit_id: request.repairScope.target_unit_id,
+    decision: 'unresolved',
+    resulting_units: [],
+    split_reason: null,
+    unit_justification: null,
+    course_ratio_justification: null,
+    unresolved_reason: 'The bounded evidence does not distinguish the competence boundary responsibly.',
+    required_next_input_or_review: 'Review the source material with fuller academic context before splitting.',
+    review_required: true,
+  };
+  const domain = await request.domainValidator(patch);
+  assert.equal(domain.ok, true, domain.reason);
+  const rebuilt = domain.value;
+  assert.equal(rebuilt.status, 'unresolved');
+  assert.equal(rebuilt.review_required, true);
+  assert.equal(rebuilt.student_facing_summary_candidate, null);
+  assert.equal(rebuilt.learning_units.length, 1);
+  assert.equal(rebuilt.unresolved_items.at(-1).blocks_responsible_planning, true);
+  assert.deepEqual(rebuilt.unresolved_items.at(-1).source_item_refs, request.repairScope.repair_source_refs);
 });
 
 test('progressive structure pass does not abort a large audit merely because its provisional batch triggers G11', async () => {
