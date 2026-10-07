@@ -259,6 +259,8 @@ test('active Semester expansion preserves approved authority until activation tr
   assert.match(repository,/latestApprovedTimetable/);
   assert.match(repository,/timetable_state in \('PROPOSED','EDITED_PROPOSAL'\)/);
   assert.match(repository,/includeCourseIds=\[\]/);
+  assert.match(repository,/select course_id,lifecycle_state,activation_id/);
+  assert.match(repository,/slotActivationId/);
   assert.match(d10,/includeCourseIds:\[courseId\]/);
   assert.match(d10,/latestApprovedTimetable/);
 });
