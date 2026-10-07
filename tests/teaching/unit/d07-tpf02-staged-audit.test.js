@@ -92,8 +92,10 @@ function inventoryStageOutput(request, { unresolved = false } = {}) {
   };
 }
 
-function lineageRepairOutput(request, unitId = 'unit-1') {
+function lineageRepairOutput(request, unitId = 'unit-lineage-repair') {
   const refs = request.academicInput.audit_scope.source_refs;
+  const topic = request.academicInput.lineage_repair_context.existing_topics[0];
+  const subtopic = topic?.subtopics?.[0] || null;
   return {
     input_state_reference: request.academicInput.input_state_reference,
     task_mode: 'LEARNING_UNIT_DECOMPOSITION',
@@ -103,15 +105,16 @@ function lineageRepairOutput(request, unitId = 'unit-1') {
     topics: [],
     learning_units: [{
       learning_unit_id: unitId,
-      title: 'Existing unit lineage attachment',
-      intended_competence: 'Preserve the existing competence while attaching required source lineage.',
+      title: 'Resolve the previously unmapped required capability',
+      intended_competence: 'Explain and apply the academic requirement carried by the previously unmapped source.',
       source_item_refs: refs,
-      topic_refs: [],
+      topic_refs: topic ? [topic.topic_id] : [],
+      subtopic_id: subtopic ? subtopic.subtopic_id : null,
       prerequisite_refs: [],
       dependency_type_notes: null,
-      criticality: 'foundational',
-      criticality_basis: 'Required source lineage belongs with the existing foundational unit.',
-      proposed_exit_evidence: 'Use the existing unit evidence contract.',
+      criticality: 'major',
+      criticality_basis: 'The required source needs its own competence boundary rather than a catch-all attachment.',
+      proposed_exit_evidence: 'Independently explain and apply the requirement represented by the repaired source.',
       gap_refs: [],
       uncertainties: [],
     }],
@@ -135,7 +138,12 @@ function structurePassOutput(request) {
   const refs = request.academicInput.source_items.map((item) => item.source_item_ref);
   const batchIndex = Number(request.academicInput.structure_pass_context?.batch_index || 0);
   const topicId = `batch-topic-${batchIndex}`;
-  const unitId = `batch-unit-${batchIndex}`;
+  const groups = [];
+  for (let index = 0; index < refs.length; index += 12) groups.push(refs.slice(index, index + 12));
+  const subtopics = groups.map((_, index) => ({
+    subtopic_id: `batch-subtopic-${batchIndex}-${index + 1}`,
+    title: `Bounded capability area ${index + 1}`,
+  }));
   return {
     input_state_reference: request.academicInput.input_state_reference,
     task_mode: 'LEARNING_UNIT_DECOMPOSITION',
@@ -146,22 +154,23 @@ function structurePassOutput(request) {
       topic_id: topicId,
       title: `Bounded structure batch ${batchIndex + 1}`,
       source_item_refs: refs,
-      subtopics: [],
+      subtopics,
     }],
-    learning_units: [{
-      learning_unit_id: unitId,
-      title: `Batch ${batchIndex + 1} foundations`,
-      intended_competence: 'Integrate the supplied bounded source batch into a coherent candidate learning structure.',
-      source_item_refs: refs,
+    learning_units: groups.map((sourceRefs, index) => ({
+      learning_unit_id: `batch-unit-${batchIndex}-${index + 1}`,
+      title: `Apply bounded capability ${index + 1}`,
+      intended_competence: `Explain and apply the coherent capability represented by bounded evidence group ${index + 1}.`,
+      source_item_refs: sourceRefs,
       topic_refs: [topicId],
+      subtopic_id: subtopics[index].subtopic_id,
       prerequisite_refs: [],
       dependency_type_notes: null,
       criticality: 'major',
-      criticality_basis: 'This bounded source batch contributes required Course content.',
-      proposed_exit_evidence: 'Explain and apply the concepts represented by the supplied sources.',
+      criticality_basis: 'This bounded evidence group contributes required Course content.',
+      proposed_exit_evidence: 'Independently explain and apply this bounded capability.',
       gap_refs: [],
       uncertainties: [],
-    }],
+    })),
     assumed_prerequisites: [],
     source_conflicts: [],
     coverage_gaps: [],
@@ -174,9 +183,31 @@ function structurePassOutput(request) {
     student_facing_summary_candidate: null,
   };
 }
-
 function synthesisOutput(request) {
   const refs = request.academicInput.audit_scope.source_refs;
+  const groups = [];
+  for (let index = 0; index < refs.length; index += 12) groups.push(refs.slice(index, index + 12));
+  const subtopics = groups.map((_, index) => ({
+    subtopic_id: `subtopic-${index + 1}`,
+    title: `Mechanics capability area ${index + 1}`,
+  }));
+  const learningUnits = groups.map((sourceRefs, index) => ({
+    learning_unit_id: `unit-${index + 1}`,
+    title: `Apply mechanics capability ${index + 1}`,
+    intended_competence: `Explain and apply the coherent mechanics capability represented by evidence group ${index + 1}.`,
+    source_item_refs: sourceRefs,
+    topic_refs: ['topic-1'],
+    subtopic_id: subtopics[index].subtopic_id,
+    prerequisite_refs: [],
+    dependency_type_notes: index === 0 ? 'No in-course prerequisite is required for this first unit.' : null,
+    criticality: index === 0 ? 'foundational' : 'major',
+    criticality_basis: 'The capability contributes required mechanics content.',
+    proposed_exit_evidence: 'Independently explain and apply the capability to a representative problem.',
+    gap_refs: [],
+    uncertainties: [],
+  }));
+  const unitBySource = new Map();
+  for (const unit of learningUnits) for (const ref of unit.source_item_refs) unitBySource.set(ref, unit.learning_unit_id);
   return {
     input_state_reference: request.academicInput.input_state_reference,
     task_mode: 'DEEP_AUDIT',
@@ -186,29 +217,16 @@ function synthesisOutput(request) {
     topics: [{
       topic_id: 'topic-1',
       title: 'Mechanics',
-      source_item_refs: refs.slice(0, 3),
-      subtopics: [],
-    }],
-    learning_units: [{
-      learning_unit_id: 'unit-1',
-      title: 'Foundations of mechanics',
-      intended_competence: 'Explain and apply the central mechanics relationships.',
       source_item_refs: refs,
-      topic_refs: ['topic-1'],
-      prerequisite_refs: [],
-      dependency_type_notes: 'No in-course prerequisite is required for this first unit.',
-      criticality: 'foundational',
-      criticality_basis: 'Later mechanics work depends on this unit.',
-      proposed_exit_evidence: 'Accurate explanation and independent application.',
-      gap_refs: [],
-      uncertainties: [],
+      subtopics,
     }],
+    learning_units: learningUnits,
     assumed_prerequisites: [],
     source_conflicts: [],
     coverage_gaps: [],
     structure_change_proposals: [],
     source_to_unit_reconciliation: {
-      required_item_map: refs.map((ref) => ({ source_item_ref: ref, learning_unit_refs: ['unit-1'] })),
+      required_item_map: refs.map((ref) => ({ source_item_ref: ref, learning_unit_refs: [unitBySource.get(ref)] })),
       unmapped_required_refs: [],
     },
     unresolved_items: [],
@@ -218,7 +236,6 @@ function synthesisOutput(request) {
     student_facing_summary_candidate: 'The course structure is ready for review.',
   };
 }
-
 test('TPF-02 academic input carries an explicit execution stage as well as task mode', () => {
   const input = buildTpf02AcademicInput({
     course: course(),
@@ -357,11 +374,11 @@ test('staged synthesis canonically excludes non-instructional source classes fro
   assert.equal(request.academicInput.eligible_learning_unit_source_refs.includes(excludedRef), false);
 
   const output = synthesisOutput(request);
-  assert.equal(output.learning_units[0].source_item_refs.includes(excludedRef), true);
+  assert.equal(output.learning_units.some((unit) => unit.source_item_refs.includes(excludedRef)), true);
 
   const result = await request.domainValidator(output);
   assert.equal(result.ok, true, result.reason);
-  assert.equal(result.value.learning_units[0].source_item_refs.includes(excludedRef), false);
+  assert.equal(result.value.learning_units.some((unit) => unit.source_item_refs.includes(excludedRef)), false);
   assert.equal(result.value.source_to_unit_reconciliation.required_item_map.length, 48);
   assert.equal(
     result.value.source_to_unit_reconciliation.required_item_map.some((row) => row.source_item_ref === excludedRef),
@@ -401,6 +418,7 @@ test('staged synthesis still fails closed when source-scope canonicalization lea
     intended_competence: 'This should never become an accepted Learning Unit.',
     source_item_refs: [excludedRef],
     topic_refs: ['topic-1'],
+    subtopic_id: output.topics[0].subtopics[0].subtopic_id,
     prerequisite_refs: [],
     dependency_type_notes: null,
     criticality: 'supporting',
@@ -433,7 +451,8 @@ test('staged synthesis turns an omitted required source into an explicit blockin
   });
   const output = synthesisOutput(request);
   const missing = fullInput.audit_scope.source_refs.at(-1);
-  output.learning_units[0] = { ...output.learning_units[0], source_item_refs: output.learning_units[0].source_item_refs.slice(0, -1) };
+  const missingUnit = output.learning_units.find((unit) => unit.source_item_refs.includes(missing));
+  missingUnit.source_item_refs = missingUnit.source_item_refs.filter((ref) => ref !== missing);
 
   const result = await request.domainValidator(output);
   assert.equal(result.ok, true, result.reason);
@@ -467,10 +486,8 @@ test('large staged audit completes omitted required lineage through bounded LEAR
       if (request.taskMode === 'DEEP_AUDIT') {
         const output = synthesisOutput(request);
         const missing = request.academicInput.audit_scope.source_refs.at(-1);
-        output.learning_units[0] = {
-          ...output.learning_units[0],
-          source_item_refs: output.learning_units[0].source_item_refs.filter((ref) => ref !== missing),
-        };
+        const missingUnit = output.learning_units.find((unit) => unit.source_item_refs.includes(missing));
+        missingUnit.source_item_refs = missingUnit.source_item_refs.filter((ref) => ref !== missing);
         const domain = await request.domainValidator(output);
         assert.equal(domain.ok, true, domain.reason);
         assert.deepEqual(domain.value.source_to_unit_reconciliation.unmapped_required_refs, [missing]);
@@ -503,13 +520,14 @@ test('large staged audit completes omitted required lineage through bounded LEAR
   const output = result.validatedResult.output;
   assert.deepEqual(output.source_to_unit_reconciliation.unmapped_required_refs, []);
   assert.equal(output.source_to_unit_reconciliation.required_item_map.length, 49);
-  assert.equal(output.learning_units[0].source_item_refs.length, 49);
+  assert.ok(output.learning_units.length > 1);
+  assert.ok(output.learning_units.every((unit) => unit.source_item_refs.length <= 16));
   assert.equal(output.status, 'ok');
   assert.equal(output.review_required, false);
   assert.deepEqual(output.unresolved_items, []);
 });
 
-test('188-source TPF-02 audit uses bounded structure passes and omits raw source evidence from final synthesis', async () => {
+test('188-source TPF-02 audit uses bounded structure passes while preserving complete raw evidence for decomposition synthesis', async () => {
   const allSources = sources(188).map((source, index) => ({
     ...source,
     content_summary: `Source ${index + 1}: ${'dense academic evidence '.repeat(40)}`,
@@ -546,13 +564,13 @@ test('188-source TPF-02 audit uses bounded structure passes and omits raw source
       assert.equal(request.taskMode, 'DEEP_AUDIT');
       assert.equal(request.academicInput.execution_stage, EXECUTION_STAGES.WHOLE_CURRICULUM_SYNTHESIS_STAGE);
       assert.equal(request.academicInput.source_items.length, 0);
-      assert.equal(request.academicInput.source_evidence_items.length, 0);
+      assert.equal(request.academicInput.source_evidence_items.length, 188);
       assert.equal(request.academicInput.prepared_source_inventory.length, 188);
       assert.ok(request.academicInput.progressive_structure_candidates.length > 0);
       const serialized = JSON.stringify(request.academicInput);
       assert.ok(
-        Buffer.byteLength(serialized, 'utf8') < 220 * 1024,
-        `progressive final academic input remained too large: ${Buffer.byteLength(serialized, 'utf8')} bytes`
+        Buffer.byteLength(serialized, 'utf8') < 1024 * 1024,
+        `progressive final academic input exceeded the governed 1 MiB source-census limit: ${Buffer.byteLength(serialized, 'utf8')} bytes`
       );
 
       const output = synthesisOutput(request);

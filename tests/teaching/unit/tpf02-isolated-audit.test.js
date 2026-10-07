@@ -43,10 +43,10 @@ function canonicalAudit(){return {
   {source_item_ref:'source:s1',provenance:'subject:physics:card:1',academic_meaning:'Force definition and relationship to momentum.',proposed_scope_classification:'required',scope_classification_basis:'Approved Course source.',duplicate_of_ref:null,content_validity_status:'current_supported',content_validity_basis:'Consistent with supplied Course material.',confidence:'high'},
   {source_item_ref:'source:s2',provenance:'subject:physics:card:2',academic_meaning:'Acceleration definition.',proposed_scope_classification:'required',scope_classification_basis:'Approved Course source.',duplicate_of_ref:null,content_validity_status:'current_supported',content_validity_basis:'Consistent with supplied Course material.',confidence:'high'},
  ],
- topics:[{topic_id:'topic-1',title:'Motion and Forces',source_item_refs:['source:s1','source:s2'],subtopics:['Force','Acceleration']}],
+ topics:[{topic_id:'topic-1',title:'Motion and Forces',source_item_refs:['source:s1','source:s2'],subtopics:[{subtopic_id:'sub-force',title:'Force'},{subtopic_id:'sub-acceleration',title:'Acceleration'}]}],
  learning_units:[
-  {learning_unit_id:'lu-1',title:'Explain force',intended_competence:'Explain force as rate of change of momentum.',source_item_refs:['source:s1'],topic_refs:['topic-1'],prerequisite_refs:[],dependency_type_notes:'No in-Course prerequisite.',criticality:'foundational',criticality_basis:'Supports later mechanics.',proposed_exit_evidence:'Independent explanation and application.',gap_refs:[],uncertainties:[]},
-  {learning_unit_id:'lu-2',title:'Explain acceleration',intended_competence:'Explain acceleration and use it in motion reasoning.',source_item_refs:['source:s2'],topic_refs:['topic-1'],prerequisite_refs:['lu-1'],dependency_type_notes:'Preferred conceptual sequence.',criticality:'major',criticality_basis:'Central to motion analysis.',proposed_exit_evidence:'Independent explanation and calculation.',gap_refs:[],uncertainties:[]},
+  {learning_unit_id:'lu-1',title:'Explain force',intended_competence:'Explain force as rate of change of momentum.',source_item_refs:['source:s1'],topic_refs:['topic-1'],subtopic_id:'sub-force',prerequisite_refs:[],dependency_type_notes:'No in-Course prerequisite.',criticality:'foundational',criticality_basis:'Supports later mechanics.',proposed_exit_evidence:'Independent explanation and application.',gap_refs:[],uncertainties:[]},
+  {learning_unit_id:'lu-2',title:'Explain acceleration',intended_competence:'Explain acceleration and use it in motion reasoning.',source_item_refs:['source:s2'],topic_refs:['topic-1'],subtopic_id:'sub-acceleration',prerequisite_refs:['lu-1'],dependency_type_notes:'Preferred conceptual sequence.',criticality:'major',criticality_basis:'Central to motion analysis.',proposed_exit_evidence:'Independent explanation and calculation.',gap_refs:[],uncertainties:[]},
  ],
  assumed_prerequisites:[],
  source_conflicts:[],
@@ -74,12 +74,13 @@ function validationContext(){
   sourceItems:input.source_items,
   taskMode:input.task_mode,
   executionStage:input.execution_stage,
+  decompositionLimits:input.constraints.decomposition_limits,
  };
 }
 
-test('TPF-02 v1.1 canonical output exposes the exact governed v2 contract',()=>{
- assert.equal(TPF02_FAMILY_VERSION,'1.1');
- assert.equal(TPF02_OUTPUT_SCHEMA_VERSION,'2');
+test('TPF-02 v1.2 canonical output exposes the exact governed v3 contract',()=>{
+ assert.equal(TPF02_FAMILY_VERSION,'1.2');
+ assert.equal(TPF02_OUTPUT_SCHEMA_VERSION,'3');
  const output=canonicalAudit();
  assert.deepEqual(Object.keys(output).sort(),[...TPF02_TOP_LEVEL_FIELDS].sort());
  assert.equal(validateTpf02Schema(output).ok,true);
@@ -88,7 +89,7 @@ test('TPF-02 v1.1 canonical output exposes the exact governed v2 contract',()=>{
  for(const key of TPF02_TOP_LEVEL_FIELDS){const missing={...output};delete missing[key];assert.equal(validateTpf02Schema(missing).ok,false,`missing ${key} must fail`);}
 });
 
-test('TPF-02 v1.1 domain validation requires exact source census, state echo and runtime-owned source ids',()=>{
+test('TPF-02 v1.2 domain validation requires exact source census, state echo and runtime-owned source ids',()=>{
  const context=validationContext();
  assert.equal(validateTpf02Domain(canonicalAudit(),context).ok,true);
  const omitted=canonicalAudit();omitted.source_inventory=omitted.source_inventory.slice(0,1);
@@ -99,7 +100,14 @@ test('TPF-02 v1.1 domain validation requires exact source census, state echo and
  assert.equal(validateTpf02Domain(invented,context).ok,false);
 });
 
-test('TPF-02 v1.1 rejects status ok when a required source is inventoried but absent from every Learning Unit',()=>{
+test('TPF-02 v1.2 rejects a missing or wrong-Topic Subtopic link',()=>{
+ const missing=canonicalAudit();delete missing.learning_units[0].subtopic_id;
+ assert.equal(validateTpf02Schema(missing).reason,'TPF02_LEARNING_UNIT_INVALID:0');
+ const wrong=canonicalAudit();wrong.learning_units[0].subtopic_id='sub-acceleration';
+ assert.equal(validateTpf02Domain(wrong,validationContext()).reason,'TPF02_HIERARCHY_SUBTOPIC_REF_INVALID');
+});
+
+test('TPF-02 v1.2 rejects status ok when a required source is inventoried but absent from every Learning Unit',()=>{
  const broken=canonicalAudit();
  broken.learning_units[1]={...broken.learning_units[1],source_item_refs:['source:s1']};
  broken.source_to_unit_reconciliation={
@@ -112,17 +120,17 @@ test('TPF-02 v1.1 rejects status ok when a required source is inventoried but ab
  assert.equal(validateTpf02Domain(broken,validationContext()).reason,'TPF02_OK_STATUS_HAS_UNMAPPED_REQUIRED_SOURCE');
 });
 
-test('TPF-02 v1.1 reconciliation must exactly match every Learning Unit carrying a required source',()=>{
+test('TPF-02 v1.2 reconciliation must exactly match every Learning Unit carrying a required source',()=>{
  const broken=canonicalAudit();
  broken.learning_units[1]={...broken.learning_units[1],source_item_refs:['source:s1','source:s2']};
  assert.equal(validateTpf02Domain(broken,validationContext()).reason,'TPF02_RECONCILIATION_UNIT_SET_MISMATCH');
 });
 
-test('D07 curriculum audit request uses TPF-02 v1.1, v2 output schema, bounded sources and a 48k output budget',async()=>{
+test('D07 curriculum audit request uses TPF-02 v1.2, v3 output schema, bounded sources and a 48k output budget',async()=>{
  const request=curriculumAuditRequest({course,sources});
  assert.equal(request.taskMode,'DEEP_AUDIT');
  assert.equal(request.outputSchema.id,'tpf02.curriculum-audit');
- assert.equal(request.outputSchema.version,'2');
+ assert.equal(request.outputSchema.version,'3');
  assert.deepEqual(request.outputSchema.declared_fields,TPF02_TOP_LEVEL_FIELDS);
  assert.equal(request.generation.maxOutputTokens,TPF02_MAX_OUTPUT_TOKENS);
  assert.equal(request.academicInput.execution_stage,EXECUTION_STAGES.SINGLE_PASS);
@@ -133,19 +141,19 @@ test('D07 curriculum audit request uses TPF-02 v1.1, v2 output schema, bounded s
 });
 
 test('direct TPF-02 composer uses the governed v1.1 artifact plus isolated runtime/input binding',()=>{
- const binding=createFrozenPromptBinding('TPF-02','1.1');
+ const binding=createFrozenPromptBinding('TPF-02','1.2');
  const academicInput=buildTpf02AcademicInput({course,sources,taskMode:'DEEP_AUDIT',executionStage:EXECUTION_STAGES.SINGLE_PASS});
- const content=composeTpf02DirectModelContent({invocation:{capability:{id:'teaching.curriculum.deep_curriculum_audit'},state_reference:{aggregate_type:'teaching_course',aggregate_id:'course-1',state_version:'7'},prompt:{family_id:'TPF-02',family_version:'1.1',frozen_binding:binding}},academicInput});
+ const content=composeTpf02DirectModelContent({invocation:{capability:{id:'teaching.curriculum.deep_curriculum_audit'},state_reference:{aggregate_type:'teaching_course',aggregate_id:'course-1',state_version:'7'},prompt:{family_id:'TPF-02',family_version:'1.2',frozen_binding:binding}},academicInput});
  assert.match(content,/<KIWI_TPF02_FROZEN_PROMPT>/);
  assert.match(content,/<KIWI_TPF02_DIRECT_RUNTIME_BINDING>/);
- assert.match(content,/KIWI_TPF02_DIRECT_CURRICULUM_AUDIT_V2/);
- assert.match(content,/"version":"2"/);
+ assert.match(content,/KIWI_TPF02_DIRECT_CURRICULUM_AUDIT_V3/);
+ assert.match(content,/"version":"3"/);
  assert.match(content,/Force is rate of change of momentum/);
  assert.doesNotMatch(content,/<KIWI_TEACHING_RUNTIME_CONTRACT_JSON>/);
- assert.equal(getPromptBody('TPF-02','1.1').promptSha256,'4272ed7051786b2c3ccc545d827ab21e85e622df628310e48e837759a33ec666');
+ assert.equal(getPromptBody('TPF-02','1.2').promptSha256,'c3084d859209c672d86659b54ce63cc52422b3887414c0b50a64722f4744c004');
 });
 
-test('Teaching AI adapter sends isolated TPF-02 v1.1 through MAIN_CBT with 48k structured output generation',async()=>{
+test('Teaching AI adapter sends isolated TPF-02 v1.2 through MAIN_CBT with 48k structured output generation',async()=>{
  const calls=[];
  const binding=createFrozenPromptBinding('TPF-02','1.1');
  const adapter=createTeachingAIAdapter({
@@ -156,8 +164,8 @@ test('Teaching AI adapter sends isolated TPF-02 v1.1 through MAIN_CBT with 48k s
  });
  const invocation={
   capability:{id:'teaching.curriculum.deep_curriculum_audit',authority_ceiling:'T3',execution_class:'DIRECT-AI',authoritative_owner_boundary:'Curriculum Audit owner'},
-  prompt:{family_id:'TPF-02',family_version:'1.1',frozen_binding:binding},
-  output_schema:{id:'tpf02.curriculum-audit',version:'2'},
+  prompt:{family_id:'TPF-02',family_version:'1.2',frozen_binding:binding},
+  output_schema:{id:'tpf02.curriculum-audit',version:'3'},
   route_control:{},
   state_reference:{aggregate_type:'teaching_course',aggregate_id:'course-1',state_version:'7'},
   audit:{correlation_id:'corr',causation_id:null},
@@ -188,7 +196,7 @@ test('Teaching outbox treats deterministic TPF-02/truncation failures as termina
  assert.deepEqual(actions,[['cancelled','TEACHING_AI_OUTPUT_TRUNCATED']]);
 });
 
-test('canonical TPF-02 persistence baseline keeps normalized audit sections and JSON artifact storage available for v2 output',()=>{
+test('canonical TPF-02 persistence baseline keeps normalized audit sections and JSON artifact storage available for v3 output',()=>{
  const sql=fs.readFileSync(path.resolve(__dirname,'../../../migrations/20261005_teaching_tpf02_canonical_audit.sql'),'utf8');
  for(const column of ['artifact_status','input_state_reference','review_required','review_reasons','audit_scope','student_facing_summary_candidate'])assert.match(sql,new RegExp(`ADD COLUMN ${column}`));
  for(const table of ['teaching_curriculum_audit_source_inventory','teaching_curriculum_audit_topics','teaching_curriculum_audit_learning_units','teaching_curriculum_audit_assumed_prerequisites','teaching_curriculum_audit_source_conflicts','teaching_curriculum_audit_coverage_gaps','teaching_curriculum_audit_structure_change_proposals','teaching_curriculum_audit_unresolved_items'])assert.match(sql,new RegExp(`CREATE TABLE public\\.${table}`));
@@ -209,11 +217,14 @@ test('D07 persists governed v1.1 identity and v2 conflict/structure projections 
  output.source_conflicts=[{conflict_id:'conflict-1',conflict:'Terminology differs.',conflict_type:'terminology',source_item_refs:['source:s1','source:s2'],authority_context:'Course sources',resolution_status:'resolved_by_authoritative_rule',resolution_or_required_review:'Use Course terminology.',blocking:false}];
  output.structure_change_proposals=[{type:'merge',affected_unit_refs:['lu-1','lu-2'],resulting_unit_refs:['lu-1'],source_item_refs_before:['source:s1','source:s2'],source_item_refs_after:['source:s1','source:s2'],proposal:'Consider one connected unit.',reason:'Closely related foundations.'}];
  const saved=await repository.saveAudit({studentId:'u1',courseId:'course-1',subjectSnapshotRef:course.subject_snapshot_ref,inventoryDigest:'digest',output,provenanceRefs:[],validationMetadata:{domain_validated:true,lineage_reconciled:true}});
- assert.equal(saved.prompt_family_version,'1.1');
- assert.equal(saved.output_schema_version,'2');
+ assert.equal(saved.prompt_family_version,'1.2');
+ assert.equal(saved.output_schema_version,'3');
  assert.deepEqual(saved.audit_output,output);
  const audit=statements.find(x=>x.sql.includes('insert into public.teaching_curriculum_audits('));
- assert.equal(JSON.parse(audit.params[8]).schema,'tpf02.curriculum-audit.v2');
+ assert.equal(JSON.parse(audit.params[8]).schema,'tpf02.curriculum-audit.v3');
+ const learningUnit=statements.find(x=>x.sql.includes('insert into public.teaching_curriculum_audit_learning_units('));
+ assert.ok(learningUnit.sql.includes('subtopic_id'));
+ assert.equal(learningUnit.params[9],'sub-force');
  const conflict=statements.find(x=>x.sql.includes('insert into public.teaching_curriculum_audit_source_conflicts('));
  assert.deepEqual(JSON.parse(conflict.params[6]),['source:s1','source:s2']);
  const structure=statements.find(x=>x.sql.includes('insert into public.teaching_curriculum_audit_structure_change_proposals('));

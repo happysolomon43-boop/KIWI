@@ -10,6 +10,8 @@ const {
   buildTpf02AcademicInput,
   validateTpf02Schema,
   validateTpf02Domain,
+  validateHierarchy,
+  validateDecomposition,
 } = require('./tpf02-direct');
 
 const TPF02_SOURCE_INVENTORY_BATCH_SIZE = 24;
@@ -615,6 +617,8 @@ function validateStructurePassPatch(output,{academicInput,canonicalInventory=[]}
       return normalized===String(unit.learning_unit_id)||(!unitIds.has(normalized)&&!assumedIds.has(normalized));
     }))return {ok:false,reason:'TPF02_STRUCTURE_PASS_PREREQUISITE_REF_UNKNOWN'};
   }
+  const hierarchy=validateHierarchy(output);if(!hierarchy.ok)return hierarchy;
+  const decomposition=validateDecomposition(output,inventoryByRef,{decompositionLimits:academicInput.constraints?.decomposition_limits});if(!decomposition.ok)return decomposition;
   return {ok:true,value:output};
 }
 

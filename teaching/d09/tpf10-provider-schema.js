@@ -4,8 +4,13 @@ const STRING_ARRAY = Object.freeze({ type: 'array', items: Object.freeze({ type:
 const STRING = Object.freeze({ type: 'string' });
 const NULLABLE_STRING = Object.freeze({ type: 'string', nullable: true });
 const BOOLEAN = Object.freeze({ type: 'boolean' });
-const TRUE = BOOLEAN;
-const FALSE = BOOLEAN;
+function providerPortableBooleanEnum(value) {
+  const schema = { type: 'boolean' };
+  Object.defineProperty(schema, 'enum', { value: Object.freeze([value]), enumerable: false });
+  return Object.freeze(schema);
+}
+const TRUE = providerPortableBooleanEnum(true);
+const FALSE = providerPortableBooleanEnum(false);
 
 const LOAD_ESTIMATE_SCHEMA = Object.freeze({
   type: 'object',

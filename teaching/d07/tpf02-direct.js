@@ -490,7 +490,7 @@ function composeTpf02DirectModelContent({invocation,academicInput}={}){
   instructions.push('This is SINGLE_PASS. Account for every supplied source once, build the complete curriculum structure, and satisfy exact required-source reconciliation before proposing status ok.');
  }
  const runtimeBinding={
-  contract:'KIWI_TPF02_DIRECT_CURRICULUM_AUDIT_V2',
+  contract:'KIWI_TPF02_DIRECT_CURRICULUM_AUDIT_V3',
   task_mode:taskMode,
   execution_stage:stage,
   capability_id:invocation.capability.id,

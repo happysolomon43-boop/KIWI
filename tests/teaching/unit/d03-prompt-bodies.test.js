@@ -23,10 +23,10 @@ const { buildAcademicFixture, buildQualificationInvocation } = require('../../..
 const historicalDir = path.resolve(__dirname, '../../../teaching/prompt-runtime/frozen/v1.3');
 const frozenDir = path.resolve(__dirname, '../../../teaching/prompt-runtime/frozen');
 const amendmentRegistry = path.join(frozenDir, 'prompt-amendments.v1.json');
-const tpf02AmendedAsset = path.join(frozenDir, 'TPF-02_Curriculum_Analysis_Structuring_v1.1_REVISED_CANDIDATE.md.gz.b64');
+const tpf02AmendedAsset = path.join(frozenDir, 'TPF-02_Curriculum_Analysis_Structuring_v1.2_REVISED_CANDIDATE.md');
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
-test('the immutable historical 19-file corpus remains exact while TPF-02 resolves through its hash-locked v1.1 amendment', () => {
+test('the immutable historical 19-file corpus remains exact while TPF-02 resolves through its hash-locked v1.2 amendment', () => {
   const records = loadPromptBodyStore();
   const families = listPromptFamilies();
   const tpf02 = families.find(f => f.id === 'TPF-02');
@@ -34,9 +34,9 @@ test('the immutable historical 19-file corpus remains exact while TPF-02 resolve
   assert.equal(records.size, 20);
   assert.equal(families.length, 20);
   assert.equal(fs.readdirSync(historicalDir).length, 19);
-  assert.equal(tpf02.version, '1.1');
-  assert.equal(tpf02.promptFile, 'TPF-02_Curriculum_Analysis_Structuring_v1.1_REVISED_CANDIDATE.md');
-  assert.equal(tpf02.promptSha256, '4272ed7051786b2c3ccc545d827ab21e85e622df628310e48e837759a33ec666');
+  assert.equal(tpf02.version, '1.2');
+  assert.equal(tpf02.promptFile, 'TPF-02_Curriculum_Analysis_Structuring_v1.2_REVISED_CANDIDATE.md');
+  assert.equal(tpf02.promptSha256, 'c3084d859209c672d86659b54ce63cc52422b3887414c0b50a64722f4744c004');
   assert.equal(hash(fs.readFileSync(amendmentRegistry)), EXPECTED_AMENDMENT_REGISTRY_SHA256);
 
   for (const family of families) {
@@ -47,8 +47,8 @@ test('the immutable historical 19-file corpus remains exact while TPF-02 resolve
     assert.equal(hash(Buffer.from(record.promptText, 'utf8')), family.promptSha256);
     assert.equal(Buffer.byteLength(record.promptText), record.byteLength);
     if (family.id === 'TPF-02') {
-      assert.equal(record.storage, 'gzip_base64_amendment_asset');
-      const raw = zlib.gunzipSync(Buffer.from(fs.readFileSync(tpf02AmendedAsset, 'utf8').trim(), 'base64'));
+      assert.equal(record.storage, 'individual_utf8_amendment_asset');
+      const raw = fs.readFileSync(tpf02AmendedAsset);
       assert.equal(hash(raw), family.promptSha256);
     } else if (family.id === 'TPF-20') {
       assert.equal(record.storage, 'gzip_base64_repository_asset');
@@ -85,10 +85,10 @@ test('TPF-02 amendment registry and compressed prompt asset both fail closed on 
     fs.writeFileSync(alteredRegistry, fs.readFileSync(amendmentRegistry, 'utf8').replace('qualification_pending', 'qualified'));
     assert.throws(() => loadPromptBodyStore({ amendmentRegistryAsset: alteredRegistry }), { code: 'TEACHING_UNMANIFESTED_PROMPT_TEXT_REJECTED' });
 
-    const raw = zlib.gunzipSync(Buffer.from(fs.readFileSync(tpf02AmendedAsset, 'utf8').trim(), 'base64'));
+    const raw = fs.readFileSync(tpf02AmendedAsset);
     const altered = Buffer.from(raw);
     altered[altered.length - 1] ^= 1;
-    fs.writeFileSync(path.join(tmp, path.basename(tpf02AmendedAsset)), zlib.gzipSync(altered).toString('base64'));
+    fs.writeFileSync(path.join(tmp, path.basename(tpf02AmendedAsset)), altered);
     assert.throws(() => loadPromptBodyStore({ amendedAssetDirectory: tmp }), { code: 'TEACHING_UNMANIFESTED_PROMPT_TEXT_REJECTED' });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
