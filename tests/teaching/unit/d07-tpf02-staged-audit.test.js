@@ -9,6 +9,7 @@ const {
   TPF02_PROGRESSIVE_STRUCTURE_SOURCE_COUNT_THRESHOLD,
   TPF02_STRUCTURE_BATCH_SIZE,
   TPF02_DECOMPOSITION_REPAIR_SOURCE_BATCH_SIZE,
+  TPF02_PROGRESSIVE_SYNTHESIS_INPUT_BYTES_LIMIT,
   sourceInventoryRequest,
   curriculumSynthesisRequest,
   shouldStageCurriculumAudit,
@@ -989,7 +990,7 @@ test('progressive structure pass does not abort a large audit merely because its
   assert.equal(domain.value.learning_units[0].source_item_refs.length, TPF02_STRUCTURE_BATCH_SIZE);
 });
 
-test('188-source TPF-02 audit uses bounded structure passes while preserving complete raw evidence for decomposition synthesis', async () => {
+test('188-source TPF-02 audit preserves complete academic evidence while removing redundant transport metadata from final synthesis', async () => {
   const allSources = sources(188).map((source, index) => ({
     ...source,
     content_summary: `Source ${index + 1}: ${'dense academic evidence '.repeat(40)}`,
@@ -1029,10 +1030,26 @@ test('188-source TPF-02 audit uses bounded structure passes while preserving com
       assert.equal(request.academicInput.source_evidence_items.length, 188);
       assert.equal(request.academicInput.prepared_source_inventory.length, 188);
       assert.ok(request.academicInput.progressive_structure_candidates.length > 0);
+      for (const [index, item] of request.academicInput.source_evidence_items.entries()) {
+        assert.deepEqual(Object.keys(item).sort(), ['content','source_item_ref','source_kind']);
+        assert.equal(item.source_item_ref, `source:source-${index + 1}`);
+        assert.equal(item.content, allSources[index].content_summary);
+        assert.equal(Object.hasOwn(item, 'locator'), false);
+        assert.equal(Object.hasOwn(item, 'content_hash'), false);
+        assert.equal(Object.hasOwn(item, 'source_version_ref'), false);
+      }
+      for (const batch of request.academicInput.progressive_structure_candidates) {
+        assert.equal(Object.hasOwn(batch, 'topics'), false);
+        for (const unit of batch.learning_units) {
+          assert.ok(Object.hasOwn(unit, 'subtopic_title'));
+          assert.ok(Object.hasOwn(unit, 'proposed_exit_evidence'));
+          assert.equal(Object.hasOwn(unit, 'subtopic_id'), false);
+        }
+      }
       const serialized = JSON.stringify(request.academicInput);
       assert.ok(
-        Buffer.byteLength(serialized, 'utf8') < 1024 * 1024,
-        `progressive final academic input exceeded the governed 1 MiB source-census limit: ${Buffer.byteLength(serialized, 'utf8')} bytes`
+        Buffer.byteLength(serialized, 'utf8') <= TPF02_PROGRESSIVE_SYNTHESIS_INPUT_BYTES_LIMIT,
+        `progressive final academic input exceeded the governed synthesis context budget: ${Buffer.byteLength(serialized, 'utf8')} bytes`
       );
 
       const output = synthesisOutput(request);
