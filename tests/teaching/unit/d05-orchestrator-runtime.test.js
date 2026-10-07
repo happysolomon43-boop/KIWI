@@ -1282,3 +1282,19 @@ test('TCH-0919 TPF-20 exact body reaches central neutral AI boundary and is abse
   assert.equal(envelope.prompt_contract.family_id, 'TPF-20');
   assert.equal(envelope.capability.authority_ceiling, 'T3');
 });
+
+
+test('D05 propagates safe validation failure details instead of collapsing rejection to a boolean', async () => {
+  const { orchestrator, getOwnerCalls } = harness({ capabilityId: T3 });
+  const result = await orchestrator.execute(baseRequest(T3, {
+    domainValidator: async () => ({ ok: false, reason: 'TEST_T3_DOMAIN_REJECTION' }),
+  }));
+
+  assert.equal(result.accepted, false);
+  assert.equal(result.rejectionReason, 'TEST_T3_DOMAIN_REJECTION');
+  assert.equal(result.validationStage, 'domain');
+  assert.equal(result.validationFailure.kind, 'VALIDATION_REJECTION');
+  assert.equal(result.validationFailure.retryable, false);
+  assert.equal(result.validationFailure.repairable, 'TARGETED_REPAIR');
+  assert.equal(getOwnerCalls(), 0);
+});
