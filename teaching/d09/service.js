@@ -47,7 +47,12 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
   }
   function timetableBuildBasis(context,{operation='BUILD',source=null}={}){
     const normalizedOperation=String(operation||'BUILD').toUpperCase();
-    const planBasis=(context?.courses||[]).map((bundle)=>({
+    const bundles=[...(context?.courses||[])];
+    const inherited=context?.inheritedCourseBundle||null;
+    if(inherited?.course?.course_id&&!bundles.some((bundle)=>String(bundle.course?.course_id||'')===String(inherited.course.course_id))){
+      bundles.push(inherited);
+    }
+    const planBasis=bundles.map((bundle)=>({
       courseId:String(bundle.course?.course_id||''),
       courseStateVersion:Number(bundle.course?.state_version||0),
       planId:String(bundle.plan?.course_plan_id||''),
