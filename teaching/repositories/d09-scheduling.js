@@ -323,7 +323,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     ) values($1,$2,$3,$4,$5,$6,$7,$8)`,
       [randomUUID(),studentId,profileId,r.courseId||r.course_id,r.kind||r.reserve_kind,Number(r.minutes),r.protectedStartAt||r.protected_start_at||null,r.protectedEndAt||r.protected_end_at||null]);
     const {rows:activatedRows=[]}=await q(tx,`select course_id from public.teaching_courses
-      where student_id=$1 and semester_id=$2 and lifecycle_state not in ('DRAFT','READY','PLANNING','SETUP')
+      where student_id=$1 and semester_id=$2 and lifecycle_state in ('ACTIVE','PAUSED')
       limit 1`,[studentId,semester.semester_id]);
     const preserveApprovedAuthority=activatedRows.length>0;
     const {rowCount:staledTimetableCount=0}=await q(tx,preserveApprovedAuthority
