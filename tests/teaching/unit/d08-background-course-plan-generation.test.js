@@ -99,6 +99,7 @@ test('queueCoursePlan returns immediately after appending one bounded durable ge
   assert.equal(appended.aggregateId, 'course-1');
   assert.equal(appended.aggregateVersion, 7);
   assert.equal(appended.payload.expected_state_version, '7');
+  assert.equal(appended.payload.previous_plan_version, null);
   assert.deepEqual(appended.auditRefs, ['curriculum-audit:audit-1']);
   assert.deepEqual(appended.provenanceRefs, ['source:source-1']);
 });
@@ -182,8 +183,46 @@ test('explicit regeneration queues a distinct durable event for an existing curr
 
   assert.equal(result.background, true);
   assert.equal(result.status, 'PENDING');
+  assert.equal(result.operation, 'REGENERATION');
+  assert.equal(result.previousPlanVersion, 1);
   assert.equal(appended.payload.regenerate, true);
+  assert.equal(appended.payload.previous_plan_version, 1);
   assert.match(appended.idempotencyKey, /:regenerate:from-plan-1$/);
+});
+
+test('plan review confirms regeneration only after a newer current plan version is published', async () => {
+  const setup = currentPlanSetup('DRAFT', {
+    event_id: 'regen-job',
+    status: 'PUBLISHED',
+    attempt_count: 1,
+    published_at: '2026-10-06T22:01:00.000Z',
+    payload: { regenerate: true, previous_plan_version: 1 },
+  });
+  setup.plan = { ...setup.plan, course_plan_id: 'plan-2', version_no: 2 };
+
+  const review = await service({ setup, append: async () => { throw new Error('not used'); } })
+    .getPlanReview({ id: 'student-1' }, 'course-1');
+
+  assert.equal(review.generation.background.operation, 'REGENERATION');
+  assert.equal(review.generation.background.previousPlanVersion, 1);
+  assert.equal(review.generation.background.completionConfirmed, true);
+  assert.equal(review.generation.background.resultPlanVersion, 2);
+});
+
+test('plan review does not report regeneration complete when publication has not advanced the plan version', async () => {
+  const setup = currentPlanSetup('DRAFT', {
+    event_id: 'regen-job',
+    status: 'PUBLISHED',
+    attempt_count: 1,
+    published_at: '2026-10-06T22:01:00.000Z',
+    payload: { regenerate: true, previous_plan_version: 1 },
+  });
+
+  const review = await service({ setup, append: async () => { throw new Error('not used'); } })
+    .getPlanReview({ id: 'student-1' }, 'course-1');
+
+  assert.equal(review.generation.background.completionConfirmed, false);
+  assert.equal(review.generation.background.resultPlanVersion, null);
 });
 
 test('each completed Course Plan version enables a new explicit regeneration generation', async () => {

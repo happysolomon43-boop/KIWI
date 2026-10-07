@@ -77,11 +77,27 @@ function createD08Service({
     return Object.freeze({ blockers: Object.freeze(blockers), diagnostic });
   }
 
-  function backgroundGenerationProjection(job) {
+  function backgroundGenerationProjection(job, { plan = null, scopeState = null } = {}) {
     if (!job) return null;
+    const status = String(job.status || '').toUpperCase();
+    const payload = job.payload && typeof job.payload === 'object' && !Array.isArray(job.payload) ? job.payload : {};
+    const operation = payload.regenerate === true ? 'REGENERATION' : 'GENERATION';
+    const previousPlanVersion = payload.previous_plan_version == null ? null : Number(payload.previous_plan_version);
+    const currentPlanVersion = plan?.version_no == null ? null : Number(plan.version_no);
+    const replacementAdvanced = operation !== 'REGENERATION'
+      || previousPlanVersion == null
+      || (currentPlanVersion != null && currentPlanVersion > previousPlanVersion);
+    const completionConfirmed = status === 'PUBLISHED'
+      && Boolean(plan)
+      && scopeState?.current === true
+      && replacementAdvanced;
     return Object.freeze({
       eventId: job.event_id,
-      status: String(job.status || '').toUpperCase(),
+      status,
+      operation,
+      previousPlanVersion: Number.isFinite(previousPlanVersion) ? previousPlanVersion : null,
+      completionConfirmed,
+      resultPlanVersion: completionConfirmed ? currentPlanVersion : null,
       attemptCount: Number(job.attempt_count || 0),
       lastErrorCode: job.last_error_code || null,
       nextAttemptAt: job.next_attempt_at || null,
@@ -177,7 +193,7 @@ function createD08Service({
         ready: Boolean(intelligence) && generationBlockers.length === 0,
         blockers: Object.freeze([...generationBlockers]),
         regenerationAllowed: Boolean(intelligence) && Boolean(setup.plan) && PREACTIVATION_STATES.has(String(setup.course?.lifecycle_state || 'DRAFT').toUpperCase()),
-        ...(setup.backgroundPlanGeneration ? { background: backgroundGenerationProjection(setup.backgroundPlanGeneration) } : {}),
+        ...(setup.backgroundPlanGeneration ? { background: backgroundGenerationProjection(setup.backgroundPlanGeneration, { plan: setup.plan, scopeState }) } : {}),
       }),
       sourceAnalysis,
       plan: setup.plan ? Object.freeze({
@@ -396,6 +412,7 @@ function createD08Service({
         course_id: String(courseId),
         expected_state_version: String(setup.course.state_version),
         regenerate,
+        previous_plan_version: regenerate ? Number(setup.plan?.version_no || 0) : null,
       },
       auditRefs: setup.curriculumAudit?.curriculum_audit_id
         ? [`curriculum-audit:${setup.curriculumAudit.curriculum_audit_id}`]
@@ -408,6 +425,8 @@ function createD08Service({
       jobId: queued.event.event_id,
       status: queued.event.status,
       joinedExisting: queued.inserted === false,
+      operation: regenerate ? 'REGENERATION' : 'GENERATION',
+      previousPlanVersion: regenerate ? Number(setup.plan?.version_no || 0) : null,
     });
   }
 

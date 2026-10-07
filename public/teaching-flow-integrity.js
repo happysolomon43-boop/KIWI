@@ -68,8 +68,45 @@ function hero(eyebrow,title,copy,status){
   const root=$('section','tf-hero');const top=$('div','tf-hero__top');const text=$('div');text.append($('div','tf-eyebrow',eyebrow),$('h2','',title));top.append(text,status||null);root.append(top,$('p','',copy));return root;
 }
 function actionStatus(){const node=$('div','tf-action-status');node.setAttribute('role','status');node.setAttribute('aria-live','polite');return node;}
+const ACTIVE_PLAN_JOB_STATUSES=new Set(['PENDING','CLAIMED','RETRY_WAIT']);
+function clearActionStatus(live){live.replaceChildren();delete live.dataset.kind;}
+function setActionStatus(live,notice){
+  clearActionStatus(live);
+  if(!notice?.title)return;
+  live.dataset.kind=notice.kind||'info';
+  const mark=$('span','tf-action-status__mark',notice.kind==='success'?'✓':notice.kind==='error'?'!':'…');
+  const copy=$('div','tf-action-status__copy');copy.append($('strong','',notice.title));
+  if(notice.detail)copy.append($('span','',notice.detail));
+  live.append(mark,copy);
+}
+function coursePlanGenerationNotice(review){
+  const job=review?.generation?.background;if(!job)return null;
+  const status=String(job.status||'').toUpperCase(),operation=job.operation==='REGENERATION'?'REGENERATION':'GENERATION';
+  const currentVersion=Number(job.resultPlanVersion||review?.plan?.version||0)||null;
+  const previousVersion=Number(job.previousPlanVersion||0)||null;
+  if(job.completionConfirmed){
+    return operation==='REGENERATION'
+      ? {kind:'success',title:'Action completed',detail:`Course Plan regenerated successfully. Version ${currentVersion} is now the current Course Plan.`}
+      : {kind:'success',title:'Action completed',detail:`Course Plan created successfully. Version ${currentVersion} is now the current Course Plan.`};
+  }
+  if(status==='CANCELLED'){
+    return operation==='REGENERATION'
+      ? {kind:'error',title:'Course Plan regeneration failed',detail:`Your existing Course Plan${previousVersion?` v${previousVersion}`:''} has not been changed. You can try regeneration again.`}
+      : {kind:'error',title:'Course Plan creation failed',detail:'No Course Plan was committed. You can try again.'};
+  }
+  if(ACTIVE_PLAN_JOB_STATUSES.has(status)){
+    const retry=status==='RETRY_WAIT';
+    return operation==='REGENERATION'
+      ? {kind:'working',title:retry?'Regeneration is retrying safely':'Regenerating Course Plan',detail:`KIWI is generating and validating a new version in the background. Course Plan${previousVersion?` v${previousVersion}`:''} remains current until the replacement passes validation.`}
+      : {kind:'working',title:retry?'Course Plan creation is retrying safely':'Creating Course Plan',detail:'KIWI is generating and validating the Course Plan in the background. It becomes current only after validation and persistence succeed.'};
+  }
+  if(status==='PUBLISHED'){
+    return {kind:'warning',title:'Course Plan result needs confirmation',detail:'The background job finished, but KIWI has not confirmed a current validated Course Plan version for this Course scope.'};
+  }
+  return null;
+}
 function showLoading(page,live,label){
-  live.textContent='';
+  clearActionStatus(live);
   const skeleton=$('div','teaching-shell-skeleton');
   skeleton.setAttribute('role','status');skeleton.setAttribute('aria-label',label);
   const card=$('div','teaching-skeleton-card');
@@ -90,7 +127,35 @@ function renderTopic(topic){
 
 async function renderPlan({course,container}){
   const page=$('div','tf-page');container.replaceChildren(page);const live=actionStatus();page.append(live);
-  async function load({showSkeleton=true}={}){
+  let watchedJobId=null,watchToken=0;
+  const wait=(ms)=>new Promise((resolve)=>window.setTimeout(resolve,ms));
+  async function watchPlanJob(jobId){
+    if(!jobId||watchedJobId===jobId)return;
+    watchedJobId=jobId;
+    const token=++watchToken,deadline=Date.now()+(4*60*1000);
+    while(page.isConnected&&token===watchToken&&Date.now()<deadline){
+      await wait(2500);
+      if(!page.isConnected||token!==watchToken)return;
+      let review;
+      try{review=await request(coursePath(course.course_id,'/plan-review'));}catch{continue;}
+      const job=review?.generation?.background;
+      if(job?.eventId&&String(job.eventId)!==String(jobId))continue;
+      const notice=coursePlanGenerationNotice(review);
+      setActionStatus(live,notice);
+      const terminal=Boolean(job?.completionConfirmed)||String(job?.status||'').toUpperCase()==='CANCELLED';
+      if(terminal){
+        watchedJobId=null;
+        await refreshShell().catch(()=>{});
+        await load({showSkeleton:false,notice});
+        return;
+      }
+    }
+    if(page.isConnected&&token===watchToken){
+      watchedJobId=null;
+      await load({showSkeleton:false,notice:{kind:'working',title:'Still running in the background',detail:'KIWI has not reported a final Course Plan result yet. The current plan remains unchanged until a validated replacement is committed.'}});
+    }
+  }
+  async function load({showSkeleton=true,notice=null}={}){
     if(showSkeleton)showLoading(page,live,'Loading Course Plan');
     try{
       const [review,activation,schedule]=await Promise.all([
@@ -99,13 +164,36 @@ async function renderPlan({course,container}){
         request(coursePath(course.course_id,'/schedule-review')).catch(()=>null),
       ]);
       const counts=planCounts(review),hasPlan=Boolean(review.plan),hasTimetable=Boolean(schedule?.timetable),isReady=['READY','ACTIVE','PAUSED'].includes(String(activation?.course?.lifecycleState||course.lifecycle_state)),isActive=['ACTIVE','PAUSED'].includes(String(activation?.course?.lifecycleState||course.lifecycle_state));
+      const background=review.generation?.background||null,backgroundStatus=String(background?.status||'').toUpperCase(),planJobActive=ACTIVE_PLAN_JOB_STATUSES.has(backgroundStatus);
       const status=hasPlan?chip(`v${review.plan.version} · ${human(review.plan.state)}`):chip(review.generation?.ready?'Ready to create':'Setup needed',review.generation?.ready?'':'warn');
-      const body=$('div','tf-page');body.append(hero('Course Plan','Review what KIWI will teach','This is the academic plan generated from your saved sources and validated curriculum analysis. Review it before you accept the final course commitments.',status),journey(0,{plan:hasPlan,timetable:hasTimetable,review:isReady,activeCourse:isActive}));
+      const body=$('div','tf-page');body.append(hero('Course Plan','Review what KIWI will teach','This is the academic plan generated from your saved sources and validated curriculum analysis. Review it before you accept the final course commitments.',status),journey(0,{plan:hasPlan,timetable:hasTimetable,review:isReady,activeCourse:isActive}),live);
       if(!hasPlan){
         const card=$('section','tf-card tf-card--accent');card.append($('div','tf-eyebrow','Next step'),$('h3','','Create the academic plan'),$('p','',review.generation?.ready?'KIWI can now organize the validated curriculum into a versioned Course Plan.':'Course preparation still has unresolved steps before planning can begin.'));
         const actions=$('div','tf-actions');
-        if(review.generation?.ready){const create=button('Create Course Plan',{primary:true,onClick:async()=>{create.disabled=true;live.textContent='KIWI is preparing and validating the Course Plan in the background. You can stay here or continue elsewhere.';try{await request(coursePath(course.course_id,'/course-plan'),{method:'POST',body:{}});create.textContent='Course Plan running in background';window.setTimeout(()=>{if(page.isConnected)load({showSkeleton:false});},5000);}catch(error){live.textContent=error.message||'Course Plan could not be created.';create.disabled=false;}}});actions.append(create);}else actions.append(button('Open Setup',{primary:true,onClick:()=>open('setup')}));
-        card.append(actions);body.append(card);page.replaceChildren(body,live);live.textContent='';return;
+        if(review.generation?.ready){
+          if(planJobActive){
+            actions.append(button(background?.operation==='REGENERATION'?'Regeneration running in background':'Course Plan running in background',{primary:true,disabled:true}));
+          }else{
+            const create=button('Create Course Plan',{primary:true,onClick:async()=>{
+              create.disabled=true;
+              setActionStatus(live,{kind:'working',title:'Creating Course Plan',detail:'KIWI is preparing, generating and validating the Course Plan in the background.'});
+              try{
+                const queued=await request(coursePath(course.course_id,'/course-plan'),{method:'POST',body:{}});
+                if(queued?.background===false&&queued?.status==='COMPLETED'){await refreshShell().catch(()=>{});await load({showSkeleton:false});return;}
+                create.textContent='Course Plan running in background';
+                watchPlanJob(queued?.jobId);
+              }catch(error){
+                setActionStatus(live,{kind:'error',title:'Course Plan creation failed',detail:error.message||'No Course Plan was committed. You can try again.'});
+                create.disabled=false;
+              }
+            }});
+            actions.append(create);
+          }
+        }else actions.append(button('Open Setup',{primary:true,onClick:()=>open('setup')}));
+        card.append(actions);body.append(card);page.replaceChildren(body);
+        setActionStatus(live,coursePlanGenerationNotice(review)||notice);
+        if(planJobActive&&background?.eventId)watchPlanJob(background.eventId);
+        return;
       }
       const grid=$('div','tf-grid'),main=$('div','tf-stack'),side=$('aside','tf-stack');
       const overview=$('section','tf-card tf-card--accent');overview.append($('div','tf-card__head'));overview.firstChild.append(add($('div',''),$('div','tf-eyebrow','Plan at a glance'),$('h3','','The learning journey')),chip(review.plan.currentForCourseScope?'Current':'Needs review',review.plan.currentForCourseScope?'':'warn'));
@@ -114,15 +202,34 @@ async function renderPlan({course,container}){
       if(review.generation?.regenerationAllowed){
         const regenerateNote=$('p','','Want a different organization of the same validated curriculum? Regeneration creates a new plan version; this current version remains preserved until the replacement passes validation.');
         const regenerateActions=$('div','tf-actions');
-        const regenerate=button('Regenerate Course Plan',{primary:true,onClick:async()=>{regenerate.disabled=true;live.textContent='KIWI is regenerating and validating a new Course Plan version in the background…';try{await request(coursePath(course.course_id,'/course-plan/regenerate'),{method:'POST',body:{}});regenerate.textContent='Regeneration running in background';window.setTimeout(()=>{if(page.isConnected)load({showSkeleton:false});},5000);}catch(error){live.textContent=error.message||'Course Plan could not be regenerated.';regenerate.disabled=false;}}});
-        regenerateActions.append(regenerate);overview.append(regenerateNote,regenerateActions);
+        if(planJobActive){
+          regenerateActions.append(button(background?.operation==='REGENERATION'?'Regeneration running in background':'Course Plan work running in background',{primary:true,disabled:true}));
+        }else{
+          const regenerate=button('Regenerate Course Plan',{primary:true,onClick:async()=>{
+            const previousVersion=Number(review.plan.version);
+            regenerate.disabled=true;
+            setActionStatus(live,{kind:'working',title:'Regenerating Course Plan',detail:`KIWI is generating and validating a new version in the background. Course Plan v${previousVersion} remains current until the replacement passes validation.`});
+            try{
+              const queued=await request(coursePath(course.course_id,'/course-plan/regenerate'),{method:'POST',body:{}});
+              regenerate.textContent='Regeneration running in background';
+              watchPlanJob(queued?.jobId);
+            }catch(error){
+              setActionStatus(live,{kind:'error',title:'Course Plan regeneration failed',detail:error.message||`Your existing Course Plan v${previousVersion} has not been changed.`});
+              regenerate.disabled=false;
+            }
+          }});
+          regenerateActions.append(regenerate);
+        }
+        overview.append(regenerateNote,regenerateActions);
       }
       const topics=$('section','tf-card');topics.append($('div','tf-eyebrow','Curriculum'),$('h3','','Topics and Learning Units'));const topicList=$('div','tf-topics');(review.plan.topics||[]).forEach((topic)=>topicList.append(renderTopic(topic)));topics.append(topicList);main.append(overview,topics);
       const coverage=$('section','tf-card');coverage.append($('div','tf-eyebrow','Coverage'),$('h3','','Nothing important should disappear'),$('p','',review.coverageReport?.summary?.unmappedRequiredItems>0?`${review.coverageReport.summary.unmappedRequiredItems} required item(s) still need coverage review.`:'Required source content is mapped into the Course Plan. Coverage is not the same as mastery.'));side.append(coverage);
       if(review.assumptions?.length){const assumptions=$('section','tf-card');assumptions.append($('div','tf-eyebrow','Assumptions'),$('h3','','What KIWI is carrying forward'));(review.assumptions||[]).slice(0,6).forEach((item)=>assumptions.append($('p','',item.disclosure||item.description||item.label)));side.append(assumptions);}
       const next=$('section','tf-card');next.append($('div','tf-eyebrow','Continue'),$('h3','','When this plan looks right'),$('p','','Set availability in Schedule, then review the proposed timetable. Final acceptance happens only on the Final Review screen.'));const actions=$('div','tf-actions');actions.append(button('Availability',{onClick:()=>open('schedule')}),button('Review timetable',{primary:true,onClick:()=>open('timetable-review')}));next.append(actions);side.append(next);
-      grid.append(main,side);body.append(grid);page.replaceChildren(body,live);live.textContent='';
-    }catch(error){page.replaceChildren(message(error.message||'Course Plan review could not be loaded.','error'),live);live.textContent='';}
+      grid.append(main,side);body.append(grid);page.replaceChildren(body);
+      setActionStatus(live,coursePlanGenerationNotice(review)||notice);
+      if(planJobActive&&background?.eventId)watchPlanJob(background.eventId);
+    }catch(error){page.replaceChildren(message(error.message||'Course Plan review could not be loaded.','error'),live);clearActionStatus(live);}
   }
   await load();
 }
