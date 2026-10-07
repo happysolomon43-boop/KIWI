@@ -234,13 +234,6 @@ function buildRefinementContext({changeRequest=null,previousAudit=null}={}){
   });
 }
 
-function canonicalJsonValue(value){
-  if(Array.isArray(value))return value.map(canonicalJsonValue);
-  if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map((key)=>[key,canonicalJsonValue(value[key])]));
-  return value??null;
-}
-function stableJson(value){return JSON.stringify(canonicalJsonValue(value));}
-
 function validateRefinementOutput(output,previousOutput,validationContext){
   const schema=validateTpf02Schema(output);
   if(!schema.ok)return schema;
