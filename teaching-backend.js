@@ -289,18 +289,34 @@ function createTeachingRouter({
   }
 
   async function refreshScheduleAfterCoursePlan(user, courseId) {
-    if (!schedulingService || typeof schedulingService.recalculateAfterCoursePlanChange !== 'function') {
-      return Object.freeze({ recalculated: false, reason: 'SCHEDULER_REFRESH_UNAVAILABLE' });
+    if (!schedulingService) {
+      return Object.freeze({ recalculated: false, queued: false, reason: 'SCHEDULER_REFRESH_UNAVAILABLE' });
     }
     try {
-      return await schedulingService.recalculateAfterCoursePlanChange(user, courseId);
+      if (typeof schedulingService.queueTimetableBuild === 'function') {
+        const queued = await schedulingService.queueTimetableBuild(user, courseId, {
+          operation: 'REFLOW',
+          source: 'COURSE_PLAN_AUTO_RECALC',
+        });
+        return Object.freeze({
+          recalculated: false,
+          queued: true,
+          background: true,
+          jobId: queued.jobId,
+          status: queued.status,
+        });
+      }
+      if (typeof schedulingService.recalculateAfterCoursePlanChange === 'function') {
+        return await schedulingService.recalculateAfterCoursePlanChange(user, courseId);
+      }
+      return Object.freeze({ recalculated: false, queued: false, reason: 'SCHEDULER_REFRESH_UNAVAILABLE' });
     } catch (error) {
-      console.warn('[KIWI Teaching] Course Plan committed but automatic timetable recalculation could not complete.', {
+      console.warn('[KIWI Teaching] Course Plan committed but automatic timetable recalculation could not be queued.', {
         courseId: String(courseId),
         code: error?.code || null,
         message: String(error?.message || error).slice(0, 300),
       });
-      return Object.freeze({ recalculated: false, reason: error?.code || 'SCHEDULER_REFRESH_FAILED' });
+      return Object.freeze({ recalculated: false, queued: false, reason: error?.code || 'SCHEDULER_REFRESH_FAILED' });
     }
   }
 
@@ -366,6 +382,8 @@ function createTeachingRouter({
             plan_version: result?.plan?.version || null,
             regeneration_requested: regenerate,
             timetable_recalculated: scheduleRefresh.recalculated === true,
+            timetable_rebuild_queued: scheduleRefresh.queued === true,
+            timetable_job_id: scheduleRefresh.jobId || null,
             timetable_refresh_reason: scheduleRefresh.reason || null,
           },
         });
