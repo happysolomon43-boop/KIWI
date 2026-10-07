@@ -78,29 +78,9 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
 
     await commitWithPpl((tx)=>repository.saveScheduleInputsUsing(tx,{studentId:user.id,courseId,input:normalized}));
 
-    // Availability is semester-global. Once a new profile version is committed,
-    // immediately rebuild the timetable proposal for every currently schedulable
-    // Course instead of leaving a stale timetable that requires another click.
-    try{
-      const context=await repository.getSchedulingContext(user.id,courseId);
-      if(context.semester&&context.profile&&(context.courses||[]).length){
-        for(const bundle of context.courses) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
-        const result=computeSchedule(context,{now:clock().toISOString()});
-        await commitWithPpl((tx)=>repository.saveProposalUsing(tx,{
-          studentId:user.id,
-          courseId,
-          context,
-          result,
-          source:'AVAILABILITY_AUTO_RECALC',
-        }));
-      }
-    }catch(error){
-      logger?.warn?.('[KIWI Teaching D09] Availability saved but automatic timetable recalculation could not complete.',{
-        courseId:String(courseId),
-        code:error?.code||null,
-        message:String(error?.message||error).slice(0,300),
-      });
-    }
+    // Persist availability promptly. Any potentially expensive timetable rebuild
+    // is queued by the flow-integrity service after this mutation commits so the
+    // browser never has to keep the request open while Scheduler/TPF-10 works.
     return getScheduleReview(user,courseId);
   }
   function sanitizeReview(review,serverNow){
