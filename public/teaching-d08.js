@@ -71,6 +71,11 @@ function installStyles() {
     .teaching-d08-list{display:grid;gap:9px;margin:14px 0 0;padding:0;list-style:none}
     .teaching-d08-list li{padding:11px 12px;border:1px solid var(--teaching-border);border-radius:12px;color:#b9d4c8;font-size:12px;line-height:1.5}
     .teaching-d08-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:16px}
+    .teaching-d08-regenerate-box{display:grid;gap:10px;margin-top:14px;padding:14px;border:1px solid var(--teaching-border);border-radius:14px;background:rgba(255,255,255,.018)}
+    .teaching-d08-regenerate-box label{font-size:12px;font-weight:700;color:var(--teaching-text)}
+    .teaching-d08-regenerate-box p{margin:0;color:var(--teaching-muted);font-size:11px;line-height:1.55}
+    .teaching-d08-regenerate-box textarea{box-sizing:border-box;width:100%;min-height:108px;resize:vertical;padding:11px 12px;border:1px solid var(--teaching-border);border-radius:11px;background:rgba(1,12,9,.42);color:var(--teaching-text);font:inherit;line-height:1.5;outline:none}
+    .teaching-d08-regenerate-box textarea:focus{border-color:var(--teaching-border-strong)}
     .teaching-d08-note{margin-top:12px;color:var(--teaching-muted);font-size:12px;line-height:1.55}
     .teaching-d08-preview{width:min(520px,calc(100vw - 28px));max-height:min(720px,86dvh);overflow:auto;padding:0;border:1px solid var(--teaching-border-strong);border-radius:24px;background:rgba(6,26,20,.99);color:var(--teaching-text);box-shadow:var(--teaching-shadow)}
     .teaching-d08-preview::backdrop{background:rgba(0,0,0,.62);backdrop-filter:blur(4px)}
@@ -190,16 +195,18 @@ function backgroundAuditState(job) {
   const status = String(job?.status || '').toUpperCase();
   const attempts = Number(job?.attempt_count || 0);
   const exhausted = attempts >= 8;
+  const regenerating = job?.payload?.regenerate === true;
   if (status === 'CANCELLED' || exhausted) {
     return {
       active: false,
       failed: true,
+      regenerating,
       label: 'Needs attention',
       message: job?.last_error_code === 'TEACHING_ACADEMIC_INPUT_INVALID'
-        ? 'KIWI could not prepare the material input for analysis. Your materials are safe. Retry after the input-processing fix is available.'
+        ? 'KIWI could not prepare the material input for analysis. Your materials are safe. Try again when you are ready.'
         : job?.last_error_code === 'TEACHING_AI_OUTPUT_TRUNCATED'
           ? 'The AI response ended before the analysis was complete. No incomplete analysis was saved. Your materials are safe; you can retry.'
-          : `The background analysis did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. Your materials are safe. Try again when you are ready.`,
+          : `The background ${regenerating ? 'regeneration' : 'analysis'} did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. Your materials are safe. Try again when you are ready.`,
       errorCode: job?.last_error_code || null,
     };
   }
@@ -211,13 +218,16 @@ function backgroundAuditState(job) {
     return {
       active: true,
       failed: false,
+      regenerating,
       label: status === 'RETRY_WAIT' ? 'Retry scheduled' : status === 'PENDING' ? 'Queued' : 'Running',
       message: status === 'RETRY_WAIT'
-        ? `The last attempt did not complete. KIWI will retry safely in the background${attempts ? ` (attempt ${attempts})` : ''}.${retryTime}`
-        : 'KIWI is analyzing the materials in the background. You can safely leave this page.',
+        ? `The last attempt did not complete. KIWI will retry the Course analysis safely in the background${attempts ? ` (attempt ${attempts}` : ''}${attempts ? ')' : ''}.${retryTime}`
+        : regenerating
+          ? 'KIWI is regenerating the Course analysis in the background. You can safely leave this page.'
+          : 'KIWI is analyzing the materials in the background. You can safely leave this page.',
     };
   }
-  return { active: false, failed: false, label: null, message: null };
+  return { active: false, failed: false, regenerating, label: null, message: null };
 }
 
 function backgroundPlanState(job) {
@@ -752,8 +762,11 @@ async function renderCourseSetup({ course, container }) {
         diagnosticRequired,
         diagnosticResolved,
         readinessChecked,
+        auditId: setup.curriculumAudit?.curriculum_audit_id || null,
+        auditVersion: setup.curriculumAudit?.audit_version || null,
         backgroundStatus: setup.backgroundAnalysis?.status || null,
         backgroundEventId,
+        backgroundRegeneration: setup.backgroundAnalysis?.payload?.regenerate === true,
         backgroundAttempts: setup.backgroundAnalysis?.attempt_count || 0,
         backgroundUpdatedAt: setup.backgroundAnalysis?.updated_at || null,
       });
@@ -850,6 +863,69 @@ async function renderCourseSetup({ course, container }) {
         continueButton.addEventListener('click', () => courseSurface.openCourse(course.course_id, 'course-plan'));
         actions.append(continueButton);
       }
+
+      if (auditReady && sourcesReady && !backgroundAudit.active) {
+        const regenerate = el('button', 'teaching-button', 'Regenerate analysis');
+        regenerate.type = 'button';
+        const regenerationBox = el('div', 'teaching-d08-regenerate-box');
+        regenerationBox.hidden = true;
+        const reasonLabel = el('label', '', 'Why should KIWI reconsider the analysis?');
+        const reason = el('textarea');
+        reason.maxLength = 1500;
+        reason.placeholder = 'Optional — for example: “there are too many Learning Units”, “there are too few”, or “some units should be grouped differently”.';
+        const warning = el('p', '', 'Regenerating resets this Course back to Material analysis. The current Course Plan, learning-readiness result, and timetable derived from the old analysis will no longer be current. Your source materials and historical versions are preserved.');
+        const regenActions = el('div', 'teaching-d08-actions');
+        const confirm = el('button', 'teaching-button teaching-button--primary', 'Regenerate analysis');
+        const cancel = el('button', 'teaching-button', 'Cancel');
+        confirm.type = 'button';
+        cancel.type = 'button';
+        regenActions.append(confirm, cancel);
+        regenerationBox.append(reasonLabel, reason, warning, regenActions);
+
+        regenerate.addEventListener('click', () => {
+          regenerationBox.hidden = false;
+          regenerate.disabled = true;
+          reason.focus();
+        });
+        cancel.addEventListener('click', () => {
+          regenerationBox.hidden = true;
+          regenerate.disabled = false;
+          reason.value = '';
+        });
+        confirm.addEventListener('click', async () => {
+          const materialRow = materialAnalysisRow();
+          const materialState = materialRow?.querySelector('.teaching-d08-status');
+          const materialDescription = materialRow?.querySelector('small');
+          confirm.disabled = true;
+          cancel.disabled = true;
+          regenerate.disabled = true;
+          if (materialState) materialState.textContent = 'Running';
+          if (materialDescription) materialDescription.textContent = 'KIWI is regenerating the Course analysis in the background. You can safely leave this page.';
+          status.textContent = 'Course analysis regeneration started. Downstream setup is being reset to the new analysis boundary.';
+          status.className = 'teaching-message';
+          delete status.dataset.kind;
+          startAnalysisCountdown({ deadline: Date.now() + ANALYSIS_COUNTDOWN_MS });
+          schedulePoll();
+          try {
+            await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/curriculum-audit`, {
+              method: 'POST',
+              body: { regenerate: true, reason: reason.value.trim() || null },
+            });
+            await load();
+          } catch (error) {
+            stopAnalysisCountdown();
+            status.textContent = error.message || 'Course analysis regeneration could not be started.';
+            status.className = 'teaching-message';
+            status.dataset.kind = 'error';
+            confirm.disabled = false;
+            cancel.disabled = false;
+            regenerate.disabled = false;
+          }
+        });
+        actions.append(regenerate);
+        card.append(regenerationBox);
+      }
+
       card.append(actions);
       body.replaceChildren(card);
       if (backgroundAudit.active) {
