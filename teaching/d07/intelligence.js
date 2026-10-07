@@ -233,7 +233,10 @@ function curriculumRefinementRequest({course,sources,previousAudit,changeRequest
     course,
     taskMode:'DEEP_AUDIT',
     outputSchema,
-    contextSpec:tpf02ContextSpec(course,sources,'student_directed_analysis_refinement'),
+    contextSpec:Object.freeze({
+      ...tpf02ContextSpec(course,sources,'student_directed_analysis_refinement'),
+      context_kind:'student_directed_analysis_refinement',
+    }),
     academicInput,
     provenanceRefs:sourceRefs,
   });
