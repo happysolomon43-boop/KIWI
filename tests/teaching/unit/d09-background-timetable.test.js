@@ -66,6 +66,81 @@ test('production D09 composition queues a durable timetable build and joins acti
   assert.equal(second.jobId,'tt-job-1');
 });
 
+test('changed Semester scheduling basis queues a successor instead of joining obsolete background work',async()=>{
+  const events=[];
+  const current=context();
+  let active=null;
+  let id=0;
+  const repository={
+    async getSchedulingContext(){return current;},
+    async latestBackgroundTimetableBuild(){return active;},
+  };
+  const outboxStore={
+    async append(event){
+      events.push(event);
+      active={event_id:event.eventId,status:'PENDING',payload:event.payload};
+      return {inserted:true,event:{...event,event_id:event.eventId,status:'PENDING'}};
+    },
+  };
+  const service=createD09Service({
+    repository,
+    transactionalMutation:{async mutateAndPublish(){throw new Error('not used');}},
+    randomUUID:()=> `tt-job-${++id}`,
+    outboxStore,
+    clock:()=>new Date('2026-10-07T13:00:00Z'),
+  });
+
+  const first=await service.queueTimetableBuild({id:'student-1'},'c1',{
+    operation:'BUILD',source:'MANUAL_BACKGROUND_BUILD',
+  });
+  current.profile={...current.profile,version_no:5};
+  const second=await service.queueTimetableBuild({id:'student-1'},'c1',{
+    operation:'BUILD',source:'MANUAL_BACKGROUND_BUILD',
+  });
+  const third=await service.queueTimetableBuild({id:'student-1'},'c1',{
+    operation:'BUILD',source:'MANUAL_BACKGROUND_BUILD',
+  });
+
+  assert.equal(events.length,2);
+  assert.notEqual(events[0].payload.basis_digest,events[1].payload.basis_digest);
+  assert.equal(first.joinedExisting,false);
+  assert.equal(second.joinedExisting,false);
+  assert.equal(second.supersedesJobId,'tt-job-1');
+  assert.equal(events[1].causationId,'tt-job-1');
+  assert.equal(third.joinedExisting,true);
+  assert.equal(third.jobId,'tt-job-2');
+});
+
+test('queued timetable basis validation rejects work after shared Semester inputs change',async()=>{
+  const current=context();
+  const repository={
+    async getSchedulingContext(){return current;},
+    async latestBackgroundTimetableBuild(){return null;},
+  };
+  const events=[];
+  const service=createD09Service({
+    repository,
+    transactionalMutation:{async mutateAndPublish(){throw new Error('not used');}},
+    randomUUID:()=> 'tt-basis-job',
+    outboxStore:{async append(event){events.push(event);return {inserted:true,event:{...event,event_id:event.eventId,status:'PENDING'}};}},
+    clock:()=>new Date('2026-10-07T13:00:00Z'),
+  });
+  await service.queueTimetableBuild({id:'student-1'},'c1',{
+    operation:'REFLOW',source:'SCHEDULE_INPUT_AUTO_RECALC',
+  });
+  const before=await service.validateQueuedTimetableBuild(
+    {id:'student-1'},'c1',events[0].payload,
+  );
+  assert.equal(before.current,true);
+
+  current.profile={...current.profile,version_no:5};
+  const after=await service.validateQueuedTimetableBuild(
+    {id:'student-1'},'c1',events[0].payload,
+  );
+  assert.equal(after.current,false);
+  assert.equal(after.reason,'SCHEDULING_BASIS_CHANGED');
+});
+
 test('schedule review projects durable timetable job state for leave-and-return UI',async()=>{
   const current=context();
   const repository={
@@ -103,6 +178,8 @@ test('Teaching backend returns 202 for manual timetable builds and executes them
   assert.match(backend,/operation: 'BUILD'/);
   assert.match(backend,/operation === 'REFLOW'/);
   assert.match(backend,/expected_state_version/);
+  assert.match(backend,/validateQueuedTimetableBuild/);
+  assert.match(backend,/SCHEDULING_BASIS_CHANGED/);
 });
 
 test('both Schedule surfaces show and poll durable background timetable state',()=>{
