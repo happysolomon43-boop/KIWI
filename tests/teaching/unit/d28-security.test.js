@@ -12,7 +12,7 @@ test('Teaching DOCX extraction uses the same bounded officeparser path as PPTX',
  assert.equal(calls[0].options.fileType,'docx');
  assert.deepEqual(calls[0].options.decompressionLimits,OFFICE_DECOMPRESSION_LIMITS);
  assert.equal(calls[1].kind,'text');
- assert.equal(result.materials[0].content,'Alpha\\nBeta');
+ assert.equal(result.materials[0].content,'Alpha\nBeta');
 });
 
 test('all privileged academic mutations require trusted backend execution',()=>{for(const action of ['GRADE_FINALIZE','ASSESSMENT_PACKAGE_LOCK','COURSE_ACTIVATE','REQUEST_APPROVE','REQUEST_APPLY','PROGRESSION_FINALIZE','ATTENDANCE_CORRECT','GRADING_POLICY_LOCK','ASSESSMENT_TIMER_START','ASSESSMENT_TIMER_EXPIRE'])assert.throws(()=>assertTrustedBackendAction(action,{role:'authenticated'}),/trusted backend/i);assert.equal(assertTrustedBackendAction('GRADE_FINALIZE',{trustedBackend:true}),true);});
