@@ -195,18 +195,26 @@ function backgroundAuditState(job) {
   const status = String(job?.status || '').toUpperCase();
   const attempts = Number(job?.attempt_count || 0);
   const exhausted = attempts >= 8;
-  const regenerating = job?.payload?.regenerate === true;
+  const operation = String(
+    job?.payload?.operation
+    || (job?.payload?.refine === true ? 'REFINE' : job?.payload?.regenerate === true ? 'REGENERATE' : 'GENERATE')
+  ).toUpperCase();
+  const refining = operation === 'REFINE';
+  const regenerating = operation === 'REGENERATE';
+  const actionName = refining ? 'refinement' : regenerating ? 'regeneration' : 'analysis';
   if (status === 'CANCELLED' || exhausted) {
     return {
       active: false,
       failed: true,
+      operation,
+      refining,
       regenerating,
       label: 'Needs attention',
       message: job?.last_error_code === 'TEACHING_ACADEMIC_INPUT_INVALID'
         ? 'KIWI could not prepare the material input for analysis. Your materials are safe. Try again when you are ready.'
         : job?.last_error_code === 'TEACHING_AI_OUTPUT_TRUNCATED'
-          ? 'The AI response ended before the analysis was complete. No incomplete analysis was saved. Your materials are safe; you can retry.'
-          : `The background ${regenerating ? 'regeneration' : 'analysis'} did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. Your materials are safe. Try again when you are ready.`,
+          ? 'The AI response ended before the Course analysis operation was complete. No incomplete analysis was saved and the current Course remains intact.'
+          : `The background ${actionName} did not complete${attempts > 1 ? ` after ${attempts} attempts` : ''}. The current validated Course analysis and downstream setup remain intact.`,
       errorCode: job?.last_error_code || null,
     };
   }
@@ -218,16 +226,20 @@ function backgroundAuditState(job) {
     return {
       active: true,
       failed: false,
+      operation,
+      refining,
       regenerating,
       label: status === 'RETRY_WAIT' ? 'Retry scheduled' : status === 'PENDING' ? 'Queued' : 'Running',
       message: status === 'RETRY_WAIT'
-        ? `The last attempt did not complete. KIWI will retry the Course analysis safely in the background${attempts ? ` (attempt ${attempts}` : ''}${attempts ? ')' : ''}.${retryTime}`
-        : regenerating
-          ? 'KIWI is regenerating the Course analysis in the background. You can safely leave this page.'
-          : 'KIWI is analyzing the materials in the background. You can safely leave this page.',
+        ? `The last ${actionName} attempt did not complete. KIWI will retry safely in the background${attempts ? ` (attempt ${attempts})` : ''}.${retryTime}`
+        : refining
+          ? 'KIWI is applying your requested Course analysis changes in the background. You can safely leave this page.'
+          : regenerating
+            ? 'KIWI is regenerating the Course analysis in the background. You can safely leave this page.'
+            : 'KIWI is analyzing the materials in the background. You can safely leave this page.',
     };
   }
-  return { active: false, failed: false, regenerating, label: null, message: null };
+  return { active: false, failed: false, operation, refining, regenerating, label: null, message: null };
 }
 
 function backgroundPlanState(job) {
@@ -864,45 +876,82 @@ async function renderCourseSetup({ course, container }) {
         actions.append(continueButton);
       }
 
-      let regenerationBox = null;
+      let analysisChangeBox = null;
       if (auditReady && sourcesReady && !backgroundAudit.active) {
+        const refine = el('button', 'teaching-button', 'Request changes');
         const regenerate = el('button', 'teaching-button', 'Regenerate analysis');
+        refine.type = 'button';
         regenerate.type = 'button';
-        regenerationBox = el('div', 'teaching-d08-regenerate-box');
-        regenerationBox.hidden = true;
-        const reasonLabel = el('label', '', 'Why should KIWI reconsider the analysis?');
-        const reason = el('textarea');
-        reason.maxLength = 1500;
-        reason.placeholder = 'Optional — for example: “there are too many Learning Units”, “there are too few”, or “some units should be grouped differently”.';
-        const warning = el('p', '', 'Regenerating resets this Course back to Material analysis. The current Course Plan, learning-readiness result, and timetable derived from the old analysis will no longer be current. Your source materials and historical versions are preserved.');
-        const regenActions = el('div', 'teaching-d08-actions');
-        const confirm = el('button', 'teaching-button teaching-button--primary', 'Regenerate analysis');
+
+        analysisChangeBox = el('div', 'teaching-d08-regenerate-box');
+        analysisChangeBox.hidden = true;
+        const heading = el('strong', '', 'Change Course analysis');
+        const modeText = el('p', '', '');
+        const instructionLabel = el('label', '', 'What should KIWI change?');
+        const instruction = el('textarea');
+        instruction.maxLength = 1500;
+        const warning = el('p', '', '');
+        const boxActions = el('div', 'teaching-d08-actions');
+        const confirm = el('button', 'teaching-button teaching-button--primary', 'Apply changes');
         const cancel = el('button', 'teaching-button', 'Cancel');
         confirm.type = 'button';
         cancel.type = 'button';
-        regenActions.append(confirm, cancel);
-        regenerationBox.append(reasonLabel, reason, warning, regenActions);
+        boxActions.append(confirm, cancel);
+        analysisChangeBox.append(heading, modeText, instructionLabel, instruction, warning, boxActions);
 
-        regenerate.addEventListener('click', () => {
-          regenerationBox.hidden = false;
-          regenerate.disabled = true;
-          reason.focus();
-        });
+        let mode = 'REFINE';
+        const configure = (nextMode) => {
+          mode = nextMode;
+          analysisChangeBox.hidden = false;
+          refine.disabled = nextMode === 'REFINE';
+          regenerate.disabled = nextMode === 'REGENERATE';
+          if (nextMode === 'REFINE') {
+            modeText.textContent = 'KIWI will revise the current validated analysis instead of rebuilding it from scratch.';
+            instructionLabel.textContent = 'What should KIWI change?';
+            instruction.placeholder = 'For example: “Learning Units are too broad — split them into smaller assessable units”, “these two units overlap — merge them”, or “this topic needs more detail”.';
+            warning.textContent = 'Your request is treated as guidance, not permission to remove required Course scope. If the revised analysis validates, Course Plan, learning-readiness, and timetable state derived from the old analysis reset to the new analysis boundary. If validation fails, nothing is reset.';
+            confirm.textContent = 'Apply requested changes';
+          } else {
+            modeText.textContent = 'KIWI will re-analyze the complete Course materials and build a new Course analysis.';
+            instructionLabel.textContent = 'Why regenerate?';
+            instruction.placeholder = 'Optional — for example: “the overall Learning Unit structure is too coarse” or “reconsider the Course decomposition from the source materials”.';
+            warning.textContent = 'If the regenerated analysis validates, Course Plan, learning-readiness, and timetable state derived from the old analysis reset to the new analysis boundary. If regeneration fails, the current Course remains intact.';
+            confirm.textContent = 'Regenerate whole analysis';
+          }
+          instruction.focus();
+        };
+
+        refine.addEventListener('click', () => configure('REFINE'));
+        regenerate.addEventListener('click', () => configure('REGENERATE'));
         cancel.addEventListener('click', () => {
-          regenerationBox.hidden = true;
+          analysisChangeBox.hidden = true;
+          refine.disabled = false;
           regenerate.disabled = false;
-          reason.value = '';
+          instruction.value = '';
         });
         confirm.addEventListener('click', async () => {
+          const requested = instruction.value.trim();
+          if (mode === 'REFINE' && !requested) {
+            status.textContent = 'Describe the change you want KIWI to make.';
+            status.className = 'teaching-message';
+            status.dataset.kind = 'error';
+            instruction.focus();
+            return;
+          }
           const materialRow = materialAnalysisRow();
           const materialState = materialRow?.querySelector('.teaching-d08-status');
           const materialDescription = materialRow?.querySelector('small');
           confirm.disabled = true;
           cancel.disabled = true;
+          refine.disabled = true;
           regenerate.disabled = true;
           if (materialState) materialState.textContent = 'Running';
-          if (materialDescription) materialDescription.textContent = 'KIWI is regenerating the Course analysis in the background. You can safely leave this page.';
-          status.textContent = 'Course analysis regeneration started. Downstream setup is being reset to the new analysis boundary.';
+          if (materialDescription) materialDescription.textContent = mode === 'REFINE'
+            ? 'KIWI is applying your requested analysis changes in the background. You can safely leave this page.'
+            : 'KIWI is regenerating the Course analysis in the background. You can safely leave this page.';
+          status.textContent = mode === 'REFINE'
+            ? 'Course analysis refinement started. The current Course remains authoritative until the revised analysis validates.'
+            : 'Course analysis regeneration started. The current Course remains authoritative until the new analysis validates.';
           status.className = 'teaching-message';
           delete status.dataset.kind;
           startAnalysisCountdown({ deadline: Date.now() + ANALYSIS_COUNTDOWN_MS });
@@ -910,24 +959,29 @@ async function renderCourseSetup({ course, container }) {
           try {
             await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/curriculum-audit`, {
               method: 'POST',
-              body: { regenerate: true, reason: reason.value.trim() || null },
+              body: mode === 'REFINE'
+                ? { operation: 'REFINE', changeRequest: requested }
+                : { operation: 'REGENERATE', reason: requested || null },
             });
             await load();
           } catch (error) {
             stopAnalysisCountdown();
-            status.textContent = error.message || 'Course analysis regeneration could not be started.';
+            status.textContent = error.message || (mode === 'REFINE'
+              ? 'Course analysis changes could not be started.'
+              : 'Course analysis regeneration could not be started.');
             status.className = 'teaching-message';
             status.dataset.kind = 'error';
             confirm.disabled = false;
             cancel.disabled = false;
+            refine.disabled = false;
             regenerate.disabled = false;
           }
         });
-        actions.append(regenerate);
+        actions.append(refine, regenerate);
       }
 
       card.append(actions);
-      if (regenerationBox) card.append(regenerationBox);
+      if (analysisChangeBox) card.append(analysisChangeBox);
       body.replaceChildren(card);
       if (backgroundAudit.active) {
         startAnalysisCountdown({ deadline: countdownDeadline, eventId: backgroundEventId });
