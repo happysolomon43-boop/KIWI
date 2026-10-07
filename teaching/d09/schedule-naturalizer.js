@@ -98,8 +98,8 @@ function preferredStartsForPeriod(period, preferences, timeZone) {
   return starts;
 }
 
-function candidateStarts(piece, period, placed, preferences, timeZone) {
-  const candidates = new Set([piece.start, ...preferredStartsForPeriod(period, preferences, timeZone)]);
+function candidateStarts(piece, period, placed, preferences, timeZone, extraStarts = []) {
+  const candidates = new Set([piece.start, ...preferredStartsForPeriod(period, preferences, timeZone), ...extraStarts.filter(Boolean)]);
   const key = period.key;
   for (const slot of placed) {
     if (slot.kind !== 'CLASS') continue;
@@ -124,6 +124,7 @@ function scoreCandidate({
   preferences,
   timeZone,
   flexibleTarget,
+  priorSlot = null,
   seed,
 }) {
   let score = stableJitter(seed);
@@ -164,7 +165,35 @@ function scoreCandidate({
   if (flexibleTarget && Date.parse(end) > Date.parse(flexibleTarget)) score -= 120;
   if (sameDay.some((slot) => String(slot.courseId) === String(courseId))) score -= 100;
 
+  if (priorSlot) {
+    const priorStart = value(priorSlot, 'starts_at', 'startsAt');
+    if (priorStart) {
+      const deltaMinutes = Math.abs(Date.parse(start) - Date.parse(priorStart)) / MINUTE_MS;
+      const priorDate = scheduler.dateKey(new Date(priorStart), timeZone);
+      const dayShift = Math.abs(dayDistance(priorDate, localDate) || 0);
+      if (deltaMinutes <= 15) score += 82;
+      else if (deltaMinutes <= 60) score += 62;
+      else if (deltaMinutes <= 180) score += 38;
+      else if (dayShift === 0) score += 18;
+      else score -= Math.min(48, dayShift * 8);
+    }
+  }
+
   return score;
+}
+
+function priorClassQueues(context, lowerBoundMs) {
+  const byCourse = new Map();
+  for (const slot of [...(context.priorSlots || [])].sort((a, b) => Date.parse(value(a, 'starts_at', 'startsAt')) - Date.parse(value(b, 'starts_at', 'startsAt')))) {
+    if (String(value(slot, 'slot_kind', 'kind') || 'CLASS') !== 'CLASS') continue;
+    const start = value(slot, 'starts_at', 'startsAt');
+    const end = value(slot, 'ends_at', 'endsAt');
+    const courseId = String(value(slot, 'course_id', 'courseId') || '');
+    if (!courseId || !start || !end || Date.parse(end) <= lowerBoundMs) continue;
+    if (!byCourse.has(courseId)) byCourse.set(courseId, []);
+    byCourse.get(courseId).push(slot);
+  }
+  return byCourse;
 }
 
 function cadenceSettings(context, schedule) {
@@ -204,6 +233,10 @@ function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}
   const preferences = context.profile?.preferences || context.preferences || {};
   const lastByCourse = new Map();
   const originalFirstStart = Math.min(...automaticClasses.map((slot) => Date.parse(slot.startsAt)));
+  const priorByCourse = priorClassQueues(context, originalFirstStart);
+  const priorCursorByCourse = new Map();
+  let existingClassesConsidered = 0;
+  let rebalancedExistingClasses = 0;
 
   for (const [index, slot] of automaticClasses.entries()) {
     const courseId = String(slot.courseId);
@@ -212,6 +245,9 @@ function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}
     const hardDeadline = hardDeadlineFor(context, courseId);
     const flexibleTarget = flexibleTargetFor(context, courseId);
     const lastCourseSlot = lastByCourse.get(courseId) || null;
+    const priorCursor = priorCursorByCourse.get(courseId) || 0;
+    const priorSlot = priorByCourse.get(courseId)?.[priorCursor] || null;
+    if (priorSlot) existingClassesConsidered += 1;
     let best = null;
 
     for (const period of periods) {
@@ -222,7 +258,8 @@ function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}
         placed.map((item) => ({ startsAt: item.startsAt, endsAt: item.endsAt }))
       );
       for (const piece of freePieces) {
-        for (const startCandidate of candidateStarts(piece, period, placed, preferences, timeZone)) {
+        const priorStart = priorSlot ? value(priorSlot, 'starts_at', 'startsAt') : null;
+        for (const startCandidate of candidateStarts(piece, period, placed, preferences, timeZone, [priorStart])) {
           const startMs = Math.max(Date.parse(startCandidate), originalFirstStart);
           if (lastCourseSlot && startMs < Date.parse(lastCourseSlot.endsAt)) continue;
           const start = new Date(startMs).toISOString();
@@ -244,6 +281,7 @@ function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}
             preferences,
             timeZone,
             flexibleTarget,
+            priorSlot,
             seed: `${courseId}:${slot.learningUnitIds?.join(',') || index}:${localDate}:${start}`,
           });
           if (!Number.isFinite(score)) continue;
@@ -278,6 +316,11 @@ function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}
     };
     placed.push(naturalized);
     lastByCourse.set(courseId, naturalized);
+    if (priorSlot) {
+      const priorStart = value(priorSlot, 'starts_at', 'startsAt');
+      if (priorStart && Math.abs(Date.parse(best.start) - Date.parse(priorStart)) > 5 * MINUTE_MS) rebalancedExistingClasses += 1;
+      priorCursorByCourse.set(courseId, priorCursor + 1);
+    }
   }
 
   const schedule = placed.sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt));
@@ -306,6 +349,9 @@ function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}
       naturalizedCadence: true,
       preferredInterClassGapMinutes: PREFERRED_INTERCLASS_GAP_MINUTES,
       deterministicCadence: true,
+      existingClassesConsidered,
+      rebalancedExistingClasses,
+      softStabilityRebalance: true,
     }),
     policy: Object.freeze({
       ...result.policy,
@@ -313,6 +359,8 @@ function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}
       preferredInterClassGapMinutes: PREFERRED_INTERCLASS_GAP_MINUTES,
       preferredInterClassGapMaximumMinutes: PREFERRED_INTERCLASS_GAP_MAX_MINUTES,
       trueRandomnessUsed: false,
+      existingFutureClassesMayShiftForIntegratedSemesterCadence: true,
+      elapsedClassesRemainFixed: true,
     }),
     stateDigest,
   });
