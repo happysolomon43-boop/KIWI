@@ -41,6 +41,37 @@ function createD07Service({
     sources.map((source) => [source.source_ref, source.content_hash])
   );
 
+  const analysisRevisionBasisCurrent = (setup) => {
+    const audit = setup?.curriculumAudit || null;
+    if (!audit || String(audit.status || '').toUpperCase() !== 'VALIDATED_CANDIDATE') return false;
+    if (String(audit.subject_snapshot_ref || '') !== String(setup.course?.subject_snapshot_ref || '')) return false;
+    return String(audit.source_inventory_digest || '') === String(sourceInventoryDigest(setup.sources || []));
+  };
+
+  const activeAuditOperation = (job) => String(
+    job?.payload?.operation
+    || (job?.payload?.refine === true ? 'REFINE' : job?.payload?.regenerate === true ? 'REGENERATE' : 'GENERATE')
+  ).toUpperCase();
+
+  const activeAuditMatchesRequest = (job, {
+    operation,
+    expectedStateVersion,
+    previousAuditId = null,
+    previousAuditVersion = null,
+    changeRequest = null,
+    regenerationReason = null,
+  } = {}) => {
+    if (!job) return false;
+    const payload = job.payload && typeof job.payload === 'object' && !Array.isArray(job.payload) ? job.payload : {};
+    if (activeAuditOperation(job) !== String(operation || 'GENERATE').toUpperCase()) return false;
+    if (String(payload.expected_state_version ?? job.aggregate_version ?? '') !== String(expectedStateVersion ?? '')) return false;
+    if (String(payload.previous_audit_id || '') !== String(previousAuditId || '')) return false;
+    if (Number(payload.previous_audit_version || 0) !== Number(previousAuditVersion || 0)) return false;
+    if (String(payload.change_request || '') !== String(changeRequest || '')) return false;
+    if (String(payload.regeneration_reason || '') !== String(regenerationReason || '')) return false;
+    return true;
+  };
+
   async function autoQueueAuditAfterDraft(user, courseId) {
     if (!intelligence || !outboxStore || typeof outboxStore.append !== 'function' || typeof randomUUID !== 'function') {
       return null;
@@ -401,27 +432,37 @@ function createD07Service({
       supersedeEventId && current?.event_id && String(current.event_id) === String(supersedeEventId)
     );
 
-    if (['PENDING', 'CLAIMED', 'RETRY_WAIT'].includes(currentStatus) && !supersededCurrent) {
-      const activeOperation = String(
-        current?.payload?.operation
-        || (current?.payload?.refine === true ? 'REFINE' : current?.payload?.regenerate === true ? 'REGENERATE' : 'GENERATE')
-      ).toUpperCase();
-      return {
-        accepted: true,
-        background: true,
-        jobId: current.event_id,
-        status: current.status,
-        joinedExisting: true,
-        operation: activeOperation === 'REFINE' ? 'REFINEMENT' : activeOperation === 'REGENERATE' ? 'REGENERATION' : 'GENERATION',
-      };
-    }
-
     const revision = normalizedOperation !== 'GENERATE';
     const revisionBasis = revision ? setup.curriculumAudit : null;
-    if (revision && (!revisionBasis || revisionBasis.status !== 'VALIDATED_CANDIDATE')) {
-      const error = new Error('A validated Course analysis is required before it can be changed.');
+    if (revision && (!revisionBasis || !analysisRevisionBasisCurrent(setup))) {
+      const error = new Error('The current Course analysis must match the present Course materials before it can be changed.');
       error.status = 409;
       error.code = 'TEACHING_D07_ANALYSIS_REVISION_REQUIRES_CURRENT';
+      throw error;
+    }
+
+    if (['PENDING', 'CLAIMED', 'RETRY_WAIT'].includes(currentStatus) && !supersededCurrent) {
+      const exactActiveRequest = activeAuditMatchesRequest(current, {
+        operation: normalizedOperation,
+        expectedStateVersion: setup.course.state_version,
+        previousAuditId: revision ? revisionBasis.curriculum_audit_id : null,
+        previousAuditVersion: revision ? Number(revisionBasis.audit_version || 0) : null,
+        changeRequest: normalizedOperation === 'REFINE' ? normalizedChangeRequest : null,
+        regenerationReason: normalizedOperation === 'REGENERATE' ? normalizedReason : null,
+      });
+      if (exactActiveRequest) {
+        return {
+          accepted: true,
+          background: true,
+          jobId: current.event_id,
+          status: current.status,
+          joinedExisting: true,
+          operation: normalizedOperation === 'REFINE' ? 'REFINEMENT' : normalizedOperation === 'REGENERATE' ? 'REGENERATION' : 'GENERATION',
+        };
+      }
+      const error = new Error('Another Course analysis operation is already running. Let it finish before starting a different change.');
+      error.status = 409;
+      error.code = 'TEACHING_D07_ANALYSIS_OPERATION_IN_PROGRESS';
       throw error;
     }
     if (revision && !['DRAFT','READY','PLANNING','SETUP'].includes(String(setup.course.lifecycle_state || 'DRAFT').toUpperCase())) {
