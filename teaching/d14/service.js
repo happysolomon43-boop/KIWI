@@ -83,6 +83,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
   async function signal(user,classId,input={}){
     const ctx=await context(user.id,classId);const kind=String(input.kind||'').toUpperCase();
     if(!SIGNALS.has(kind))fail('TEACHING_D14_SIGNAL_INVALID',400);
+    if(!ctx.session)fail('TEACHING_D14_CONTROLLER_NOT_STARTED',409);
     if(ctx.session?.lifecycle_state==='CLOSED'&&kind!=='LEAVE')fail('TEACHING_D14_CLASS_CLOSED');
     if(ctx.session?.instructional_substate==='ASSESSMENT'&&!['TECHNICAL_ISSUE','LEAVE'].includes(kind))fail('TEACHING_D14_ASSESSMENT_CONTROL_RESTRICTED',403);
     if(['ASK_TEACHER','NEED_HELP'].includes(kind)&&(!ctx.session||ctx.session.lifecycle_state!=='ACTIVE'||RESTRICTED.has(ctx.session.instructional_substate)||['BREAK','INTERRUPTED'].includes(ctx.session.instructional_substate)))fail('TEACHING_D14_TEACHER_MESSAGES_PAUSED',403);
