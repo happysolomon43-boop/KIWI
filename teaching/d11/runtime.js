@@ -137,18 +137,34 @@ function registerD11Runtime({
       const studentId=event.actorId;
       const courseId=event.payload?.course_id;
       if(!studentId||!courseId) return Object.freeze({accepted:true,noop:true,reason:'REQUEST_APPLIED_CONTEXT_MISSING'});
-      const refreshed=await service.refreshCoursePreparation(studentId,courseId,{
-        correlationId:event.correlationId || event.eventId,
-        interruptActive:true,
-      });
-      const classes=await repository.listClassesForCourse(studentId,courseId);
+      // Scheduler requests rebuild the WHOLE semester. The initiating Course
+      // is not necessarily one of the Courses whose future Class IDs changed.
+      // D10 supplies the actual materialized Course IDs from its transaction.
+      // Preserve backwards-compatible single-Course delivery for older events,
+      // and do not trust arbitrary client events to mutate Course ownership:
+      // repository reads and preparation writes remain student-scoped.
+      const affected=Array.isArray(event.payload?.affected_course_ids)
+        ? event.payload.affected_course_ids : [];
+      const courseIds=[...new Set([courseId,...affected].map(String).filter(Boolean))];
+      let refreshedCount=0;
       const seeded=[];
-      for(const classRow of classes) {
-        seeded.push(await seedClassRuntime({
-          repository,dueEventStore,studentId,classRow,causationId:event.eventId,
-        }));
+      const classIds=new Set();
+      for(const changedCourseId of courseIds){
+        const refreshed=await service.refreshCoursePreparation(studentId,changedCourseId,{
+          correlationId:event.correlationId || event.eventId,
+          interruptActive:true,
+        });
+        refreshedCount+=refreshed.length;
+        const classes=await repository.listClassesForCourse(studentId,changedCourseId);
+        for(const classRow of classes){
+          if(classIds.has(classRow.class_id))continue;
+          classIds.add(classRow.class_id);
+          seeded.push(await seedClassRuntime({
+            repository,dueEventStore,studentId,classRow,causationId:event.eventId,
+          }));
+        }
       }
-      return Object.freeze({accepted:true,refreshed:refreshed.length,seeded:seeded.length});
+      return Object.freeze({accepted:true,refreshed:refreshedCount,seeded:seeded.length,affectedCourses:courseIds.length});
     },
   }));
 
