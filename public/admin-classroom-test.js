@@ -24,6 +24,7 @@ window.KIWITeachingCourses=Object.freeze({
   registerSection(section){if(section.id==='classroom')classroomSection=section;},
   openSection(){},
 });
+window.KIWI_CLASSROOM_TEST_MODE=true;
 await import('/teaching-classroom.js');
 
 function showStatus(title,description){statusElement.textContent=title;detail.textContent=description||'';}
