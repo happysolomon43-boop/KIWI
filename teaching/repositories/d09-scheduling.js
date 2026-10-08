@@ -283,6 +283,13 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
         [id,studentId,input.semester.name,input.semester.startsAt,input.semester.endsAt,input.semester.timezone]);
       semester=rows[0];
     }
+    const {rows:activatedRows=[]}=await q(tx,`select course_id from public.teaching_courses
+      where student_id=$1 and semester_id=$2 and lifecycle_state in ('ACTIVE','PAUSED','INCOMPLETE') limit 1`,
+      [studentId,semester.semester_id]);
+    if(activatedRows.length&&!governedRequestRef){
+      const e=new Error('This Semester contains an active academic commitment. Submit an availability-change Request so the approved timetable remains authoritative until its replacement is applied.');
+      e.status=409;e.code='TEACHING_D09_ACTIVE_SEMESTER_REQUEST_REQUIRED';throw e;
+    }
     if(course.semester_id!==semester.semester_id){
       await q(tx,'update public.teaching_courses set semester_id=$3,state_version=state_version+1,updated_at=now() where course_id=$1 and student_id=$2',[courseId,studentId,semester.semester_id]);
     }
@@ -322,9 +329,6 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
       schedule_reserve_id,student_id,profile_id,course_id,reserve_kind,minutes,protected_start_at,protected_end_at
     ) values($1,$2,$3,$4,$5,$6,$7,$8)`,
       [randomUUID(),studentId,profileId,r.courseId||r.course_id,r.kind||r.reserve_kind,Number(r.minutes),r.protectedStartAt||r.protected_start_at||null,r.protectedEndAt||r.protected_end_at||null]);
-    const {rows:activatedRows=[]}=await q(tx,`select course_id from public.teaching_courses
-      where student_id=$1 and semester_id=$2 and lifecycle_state in ('ACTIVE','PAUSED','INCOMPLETE')
-      limit 1`,[studentId,semester.semester_id]);
     const preserveApprovedAuthority=activatedRows.length>0;
     const {rowCount:staledTimetableCount=0}=await q(tx,preserveApprovedAuthority
       ? `update public.teaching_timetable_versions
@@ -505,7 +509,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     if(from){params.push(from);filters.push('scheduled_end_at >= $'+params.length);}
     if(to){params.push(to);filters.push('scheduled_start_at <= $'+params.length);}
     const classRows=await query(`select c.*,co.title course_title from public.teaching_classes c join public.teaching_courses co on co.course_id=c.course_id
-      where c.student_id=$1 ${filters.length?'and '+filters.join(' and '):''} order by c.scheduled_start_at`,params);
+      where c.student_id=$1 and c.lifecycle_state<>'CANCELLED' ${filters.length?'and '+filters.join(' and '):''} order by c.scheduled_start_at`,params);
     const proposalParams=[studentId], proposalFilters=[];
     if(from){proposalParams.push(from);proposalFilters.push('s.ends_at >= $'+proposalParams.length);}
     if(to){proposalParams.push(to);proposalFilters.push('s.starts_at <= $'+proposalParams.length);}
@@ -556,7 +560,6 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     return Number(rowCount)||0;
   }
   async function materializeApprovedTimetableUsing(tx,{studentId,semesterId,timetable,slots,activationId=null,requestId=null,includeCourseIds=[]}){
-    const at=clock();
     const {rows:courseRows=[]}=await q(tx,`select course_id,lifecycle_state,activation_id from public.teaching_courses
       where student_id=$1 and semester_id=$2 for update`,[studentId,semesterId]);
     const explicit=new Set((includeCourseIds||[]).map(String));
@@ -564,11 +567,14 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const eligible=new Set(courseRows
       .filter((row)=>String(row.lifecycle_state)==='ACTIVE'||explicit.has(String(row.course_id)))
       .map((row)=>String(row.course_id)));
-    await q(tx,`update public.teaching_classes set lifecycle_state='CANCELLED',updated_at=now()
-      where student_id=$1 and lifecycle_state='SCHEDULED' and scheduled_start_at>=$2
-        and course_id in (select course_id from public.teaching_courses where student_id=$1 and semester_id=$3)
-        and (source_timetable_version_id is null or source_timetable_version_id<>$4)`,
-      [studentId,at,semesterId,timetable.timetable_version_id]);
+    // SCHEDULED means the obligation never started, even if its clock time has
+    // just elapsed. Cancel every superseded unstarted projection so a rebuild
+    // or reschedule cannot leave the old Class beside its replacement.
+    await q(tx,`update public.teaching_classes set lifecycle_state='CANCELLED',source_request_id=coalesce($4,source_request_id),updated_at=now()
+      where student_id=$1 and lifecycle_state='SCHEDULED'
+        and course_id in (select course_id from public.teaching_courses where student_id=$1 and semester_id=$2)
+        and (source_timetable_version_id is null or source_timetable_version_id<>$3)`,
+      [studentId,semesterId,timetable.timetable_version_id,requestId]);
     const classes=[];
     for(const slot of (slots||[]).filter((s)=>String(s.slot_kind||s.kind)==='CLASS'&&eligible.has(String(s.course_id||s.courseId||'')))){
       const {rows:existing}=await q(tx,`select * from public.teaching_classes where student_id=$1 and source_timetable_slot_id=$2 for update`,
