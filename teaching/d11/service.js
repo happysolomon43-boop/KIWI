@@ -456,6 +456,9 @@ function createD11Service({
     if(now.getTime()<new Date(context.classRow.scheduled_start_at).getTime()) {
       fail('Class cannot start before its authoritative scheduled time.','TEACHING_D11_CLASS_START_EARLY',409);
     }
+    if(!context.session && now.getTime()>=new Date(context.classRow.scheduled_end_at).getTime()) {
+      fail('An elapsed Class cannot start a new live Controller. Review its record instead.','TEACHING_D11_CLASS_WINDOW_EXPIRED',409);
+    }
     const prep=await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:sourceEventRef || null});
     context=await repository.getClassContext(user.id,classId);
     const workspaceReady=!context.workspace || ['FINALIZED','HANDED_OFF'].includes(String(context.workspace.lifecycle_state));
