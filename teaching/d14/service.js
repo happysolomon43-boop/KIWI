@@ -74,10 +74,9 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
       boardHistoryAllowed:!restricted,notebook:notes,notebookAllowed:!restricted,summary,closureFacts,
       teacherConversation:conversation,helpRequests,teacherMessagingAllowed:HELP_INSTRUCTIONAL_MODES.has(mode)&&!closed&&source.session?.lifecycle_state==='ACTIVE'
-        &&source.classRow.lifecycle_state!=='CANCELLED'
-        &&source.classRow.course_lifecycle_state!=='INCOMPLETE'
-        &&source.classRow.course_lifecycle_state!=='PAUSED'
-        &&source.classRow.source_timetable_state!=='SUPERSEDED'
+        &&source.classRow.lifecycle_state==='SCHEDULED'
+        &&source.classRow.course_lifecycle_state==='ACTIVE'
+        &&source.classRow.source_timetable_state==='APPROVED'
         &&!RESTRICTED.has(mode)&&!['BREAK','INTERRUPTED'].includes(mode),
       studyNote:studyNote?.state==='VALIDATED_PRIVATE'?{state:'PRIVATE_VALIDATED_AWAITING_D27',published:false}:studyNote?{state:studyNote.state,published:false}:null,
       assessmentTakeover:mode==='ASSESSMENT',assessmentOwner:'D17',classworkOwner:'D16',
@@ -99,7 +98,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     if(ctx.session?.instructional_substate==='ASSESSMENT'&&!['TECHNICAL_ISSUE','LEAVE'].includes(kind))fail('TEACHING_D14_ASSESSMENT_CONTROL_RESTRICTED',403);
     if(['ASK_TEACHER','NEED_HELP'].includes(kind)&&(
       !ctx.session||ctx.session.lifecycle_state!=='ACTIVE'
-      ||ctx.classRow?.lifecycle_state==='CANCELLED'
+      ||ctx.classRow?.lifecycle_state!=='SCHEDULED'
       ||(ctx.classRow?.course_lifecycle_state&&ctx.classRow.course_lifecycle_state!=='ACTIVE')
       ||(ctx.classRow?.source_timetable_state&&ctx.classRow.source_timetable_state!=='APPROVED')
       ||!HELP_INSTRUCTIONAL_MODES.has(ctx.session.instructional_substate)

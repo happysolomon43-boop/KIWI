@@ -55,8 +55,13 @@ function createD23Service({d07,d08,d09,d10,d14,d16,d19,d20,d21,d22,clock=()=>new
   async function calendar(user,{from=null,to=null,currentTimeZone='UTC'}={}){
     // Calendar must not block serially on the Course list before starting the
     // authoritative timetable read. They are independent owner boundaries.
-    const [courses,base]=await Promise.all([courseRows(user),d09.getCalendar(user,{from,to,currentTimeZone})]);
-    const assessmentData=await assessmentsByCourse(user,courses);
+    // Query independent owners concurrently. Assessment reads begin as soon
+    // as the Course identities are ready, without waiting for D09's Calendar.
+    const coursesPromise=courseRows(user);
+    const assessmentsPromise=coursesPromise.then((courses)=>assessmentsByCourse(user,courses));
+    const [courses,base,assessmentData]=await Promise.all([
+      coursesPromise,d09.getCalendar(user,{from,to,currentTimeZone}),assessmentsPromise,
+    ]);
     const courseTitleById=new Map(courses.map((course)=>[idOf(course),courseTitle(course)]));
     const eventById=new Map(),conflictedIds=new Set();
     const addEvent=(candidate)=>{

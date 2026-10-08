@@ -241,8 +241,16 @@ async function renderSchedule({course,container}) {
           live.textContent='The request outcome could not be confirmed. The previous timetable is preserved; use Refresh before trying another build.';
           live.dataset.kind='warning';return;
         }
-        if(jobId&&build?.eventId!==jobId&&build?.active){
-          live.textContent='A newer Semester build is running. Waiting for its authoritative result.';
+        if(jobId&&build?.eventId!==jobId){
+          // Do not mistake a previously published job for this submission.
+          // The shared Semester worker may be advancing a different Course.
+          if(++attempt>=45){
+            live.textContent='This rebuild could not be matched to a current job. Your saved proposal and approved Classes have not been erased. Refresh to verify before trying again.';
+            live.dataset.kind='warning';return;
+          }
+          live.textContent=build?.active?'A different Semester build is running; waiting for confirmation.':'Waiting for the newly queued job to become visible. Previous timetable remains unchanged.';
+          live.className='teaching-message';
+          buildPollTimer=window.setTimeout(poll,8000);return;
         }else if(build?.active){
           live.textContent='Timetable build running in the background. Existing course and availability details remain editable.';
         }else if(build&&['FAILED','CANCELLED'].includes(String(build.status||'').toUpperCase())){
@@ -250,7 +258,13 @@ async function renderSchedule({course,container}) {
           live.dataset.kind='error';
           return;
         }else if(build&&build.status==='PUBLISHED'){
-          await refresh(review,{text:'Timetable rebuild finished. Check its proposal/approval status below.',kind:'success'});
+          const before=lastRendered?.timetable?.timetableVersionId||null;
+          const after=review.timetable?.timetableVersionId||null;
+          const updated=Boolean(after&&after!==before);
+          await refresh(review,{text:updated
+            ? 'A new timetable version is available. Review its proposed or approved status before relying on it.'
+            : 'The background job completed without replacing the visible timetable. Existing approved Classes and proposals remain authoritative as before.',
+            kind:updated?'success':'warning'});
           return;
         }else{
           live.textContent='No current build was found; your previous timetable remains unchanged.';

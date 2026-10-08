@@ -52,7 +52,7 @@ test('TPF-20 post-Class rejects untaught sections, stale bindings and missing re
 });
 test('Classroom response delegates to D12 and help stays a separate non-academic interaction',async()=>{
   const calls=[];
-  const repo={getClassContext:async()=>({classRow:{course_id:'co'},session:{class_session_id:'s',state_version:5,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION'}})};
+  const repo={getClassContext:async()=>({classRow:{course_id:'co',lifecycle_state:'SCHEDULED',course_lifecycle_state:'ACTIVE',source_timetable_state:'APPROVED'},session:{class_session_id:'s',state_version:5,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION'}})};
   const service=createD14Service({repository:{recordInteraction:async(input)=>{calls.push(input);return {interaction_id:'i1',interaction_kind:input.kind,created_at:'now'};}},d11Repository:repo,d11Service:{},d12Service:{captureResponse:async(_user,_class,input)=>{calls.push(input);return {responseId:'r1'};}},randomUUID:()=> 'uuid'});
   const help=await service.signal({id:'u'},'c',{kind:'NEED_HELP',body:'Please explain',idempotencyKey:'h1'});
   assert.equal(help.academicResponse,false);assert.equal(calls[0].kind,'NEED_HELP');
