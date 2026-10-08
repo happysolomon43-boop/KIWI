@@ -165,7 +165,7 @@ function createAdminClassroomTestRouter({query,env=process.env,fetchImpl=globalT
       const mime=(response.headers.get('content-type')||'').split(';')[0].trim();
       if(mime!=='application/json')return res.status(502).json({code:'CLASSROOM_TEST_NON_JSON_RESPONSE'});
       res.type('application/json');
-      return res.status(response.status>=400&&response.status<=599?response.status:200).send(buffer);
+      return res.status(response.status>=200&&response.status<=599?response.status:502).send(buffer);
     }catch(_) {return res.status(503).json({code:'CLASSROOM_TEST_SANDBOX_UNAVAILABLE'});}
   });
   return router;
