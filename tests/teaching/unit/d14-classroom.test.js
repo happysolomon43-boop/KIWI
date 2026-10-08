@@ -1,5 +1,6 @@
 'use strict';
 const test=require('node:test');const assert=require('node:assert/strict');
+const fs=require('node:fs');const path=require('node:path');
 const {assembleStudentFactPack,classClosureTranslation}=require('../../../teaching/d14/fact-pack');
 const {validateBlock}=require('../../../teaching/d14/board');
 const {validateStageOutput,bindingFrom}=require('../../../teaching/d14/study-note');
@@ -71,4 +72,29 @@ test('Classroom projects 30, 60 and 120 minute lessons from server time and keep
     ctx.session.instructional_substate='ASSESSMENT';
     const protectedView=await service.snapshot({id:'u'},'c');assert.equal(protectedView.assessmentTakeover,true);assert.equal(protectedView.notebookAllowed,false);assert.equal(protectedView.boardHistoryAllowed,false);
   }
+});
+
+test('Classroom separates upcoming Classes from attendance-backed Class history',async()=>{
+  const start='2026-10-08T09:00:00.000Z';
+  const repository={
+    identity:async()=>({course_title:'Physics'}),
+    listClasses:async()=>[
+      {class_id:'past',scheduled_start_at:'2026-10-07T09:00:00.000Z',scheduled_end_at:'2026-10-07T10:00:00.000Z',attendance_outcome:'PARTIAL',missed_minutes:20},
+      {class_id:'future',scheduled_start_at:'2026-10-09T09:00:00.000Z',scheduled_end_at:'2026-10-09T10:00:00.000Z'},
+    ],
+  };
+  const service=createD14Service({repository,d11Repository:{getClassContext:async()=>null},d11Service:{},d12Service:{},clock:()=>new Date(start),randomUUID:()=> 'uuid'});
+  const value=await service.listClasses({id:'u1'},'co1');
+  assert.deepEqual(value.upcoming.map((row)=>row.class_id),['future']);
+  assert.deepEqual(value.history.map((row)=>row.class_id),['past']);
+  assert.equal(value.history[0].attendance_outcome,'PARTIAL');
+});
+
+test('Classroom UI exposes Start, Resume, reliable Leave attendance, and an always-available Notebook shortcut',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
+  assert.match(source,/Start Class/);
+  assert.match(source,/Resume Class/);
+  assert.match(source,/attendance will be recorded up to this moment/);
+  assert.match(source,/tc-notebook-shortcut/);
+  assert.match(source,/Class history/);
 });
