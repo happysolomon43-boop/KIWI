@@ -50,6 +50,8 @@ function buildWeb(options = {}) {
         frontend: 'KIWI',
         pixi: PIXI_VERSION,
         generatedBy: 'scripts/build-web.js',
+        release: options.release || process.env.VERCEL_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || process.env.KIWI_RELEASE_ID || null,
+        builtAt: new Date().toISOString(),
       },
       null,
       2
