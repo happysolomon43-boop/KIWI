@@ -45,7 +45,7 @@ function createD11ClassDueCancellation({query,withTransaction,clock=()=>new Date
           or co.course_id is null or co.lifecycle_state<>'ACTIVE'
           or tv.timetable_version_id is null or tv.timetable_state<>'APPROVED'
           or e.payload->>'schedule_version' is distinct from c.schedule_version::text
-          or (e.payload ? 'timetable_version_id'
+          or (e.payload->>'timetable_version_id' is not null
              and e.payload->>'timetable_version_id' is distinct from c.source_timetable_version_id)
           or c.scheduled_end_at<=now())
       order by e.due_at,e.event_id limit $1
