@@ -384,7 +384,7 @@ async function renderCourse({course,container}){
     pastRows.forEach(item=>{
       const code=String(item.attendance_outcome||'PENDING').toUpperCase();
       const name=labels[code]||code.toLowerCase().replaceAll('_',' ');
-      const details=name+(Number(item.missed_minutes)>0?' · '+item.missed_minutes+' min missed':'');
+      const details=(item.historical_unstarted?'No lesson or attendance record':name)+(Number(item.missed_minutes)>0?' · '+item.missed_minutes+' min missed':'');
       const review=button('Review Class',()=>{
         historyDialog.close();
         open(item.class_id,{reviewOnly:true});
