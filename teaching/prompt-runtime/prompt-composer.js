@@ -1,6 +1,7 @@
 'use strict';
 
 const { serializeAcademicInput } = require('./academic-input');
+const {blueprintOutputContractForInvocation}=require('../d11/blueprint-output-contract');
 
 const {
   getPromptBody,
@@ -42,7 +43,12 @@ function serializablePromptContract(invocation) {
     }),
     context_lanes: invocation.context_lanes,
     state_reference: invocation.state_reference,
-    output_schema: serializableOutputSchema(invocation.output_schema),
+    output_schema: Object.freeze({
+      ...serializableOutputSchema(invocation.output_schema),
+      ...(blueprintOutputContractForInvocation(invocation)?{
+        mode_specific_format:blueprintOutputContractForInvocation(invocation),
+      }:{}),
+    }),
     validation_requirements: invocation.validation_requirements,
     failure_behavior: invocation.failure_behavior,
     preparation: invocation.preparation,
