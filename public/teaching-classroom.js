@@ -321,45 +321,80 @@ function render(){
 }
 async function renderCourse({course,container}){
   const page=$('section','tc-course');
-  add(page,$('div','tc-eyebrow','COURSE / CLASSROOM'),$('h2','','Enter the classroom'),$('p','','A focused place for the lesson, your work and the record you take away.'));
+  add(page,$('div','tc-eyebrow','COURSE / CLASSROOM'),$('h2','','Enter the classroom'),$('p','','Upcoming lessons are here. Past attendance stays in a separate history panel.'));
   const status=$('div','tc-classroom-sync');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   const content=$('div','tc-classroom-classes');
   const refreshButton=button('Refresh classes',()=>refresh(),'tc-button tc-button--quiet');
   page.append(refreshButton,status,content);container.append(page);
-  let fetching=false,loaded=false;
+  const historyButton=button('↺',()=>showHistory(),'tc-history-corner');
+  historyButton.setAttribute('aria-label','Open past Classes');historyButton.title='Past Classes';
+  const historyCount=$('span','tc-history-count','0');historyButton.append(historyCount);page.append(historyButton);
+  const historyDialog=$('dialog','tc-history-dialog');
+  const historyHead=add($('div','tc-history-heading'),add($('div',''),$('div','tc-eyebrow','CLASSROOM ARCHIVE'),$('h2','','Past Classes')),button('×',()=>historyDialog.close(),'tc-sheet-close'));
+  const historyContent=$('div','tc-history-content');
+  historyDialog.append(historyHead,historyContent);page.append(historyDialog);
+  historyDialog.addEventListener('close',()=>historyButton.isConnected&&historyButton.focus({preventScroll:true}));
+  historyDialog.addEventListener('click',event=>{if(event.target===historyDialog)historyDialog.close();});
+  let fetching=false,loaded=false,pastRows=[],identity={};
+  const labels={ON_TIME:'Attended',LATE:'Late',PARTIAL:'Partially attended',UNEXCUSED_ABSENCE:'Missed',EXCUSED_ABSENCE:'Excused',APPROVED_LEAVE:'Approved leave',SYSTEM_PROTECTED:'System protected',INTERRUPTED:'Interrupted',PENDING:'Attendance pending',RESCHEDULED:'Rescheduled',NO_OBLIGATION:'No obligation'};
+  function drawHistory(){
+    const body=$('div','tc-history-list');
+    if(!pastRows.length)body.append(notice('No past Classes','Completed lessons and attendance records will appear here.'));
+    pastRows.forEach(item=>{
+      const code=String(item.attendance_outcome||'PENDING').toUpperCase();
+      const name=labels[code]||code.toLowerCase().replaceAll('_',' ');
+      const details=name+(Number(item.missed_minutes)>0?' · '+item.missed_minutes+' min missed':'');
+      const review=button('Review Class',()=>{
+        historyDialog.close();
+        open(item.class_id,{reviewOnly:true});
+      },'tc-button tc-button--quiet');
+      body.append(add($('article','tc-history-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('strong','',identity.course_title||course.title||'Course'),$('p','',details)),review));
+    });
+    historyContent.replaceChildren(body);
+  }
+  function showHistory(){
+    drawHistory();if(!historyDialog.open)historyDialog.showModal();
+    historyDialog.querySelector('.tc-sheet-close')?.focus({preventScroll:true});
+  }
   async function refresh(){
     if(!page.isConnected||fetching)return;
-    fetching=true;
+    fetching=true;refreshButton.disabled=true;
     try{
-      const data=await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/classes`);
+      const data=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/classes');
       if(!page.isConnected)return;
-      const upcoming=data.upcoming||data.classes||[],history=data.history||[];
-      const body=$('div','tc-classroom-groups');
-      if(!upcoming.length&&!history.length)body.append(notice('No scheduled Classes','The Course schedule will place future sessions here.'));
+      identity=data.course||{};
+      const upcoming=Array.isArray(data.upcoming)?data.upcoming:(data.classes||[]);
+      pastRows=Array.isArray(data.history)?data.history:[];
+      historyCount.textContent=String(pastRows.length);
+      historyButton.setAttribute('aria-label','Open past Classes ('+pastRows.length+')');
+      const list=$('div','tc-classroom-groups');
       if(upcoming.length){
-        body.append($('h3','tc-list-heading','Upcoming Classes'));
-        const list=$('div','tc-class-list');
-        upcoming.forEach((item)=>list.append(add($('article','tc-class-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('h3','',data.course.course_title),$('p','',`${data.course.teacher_name||'KIWI Teacher'} · ${Math.round((new Date(item.scheduled_end_at)-new Date(item.scheduled_start_at))/60000)} minutes`)),button('Enter Classroom ↗',()=>open(item.class_id),'tc-button tc-button--solid'))));
-        body.append(list);
-      }
-      if(history.length){
-        body.append($('h3','tc-list-heading','Class history'));
-        const past=$('div','tc-class-history');
-        const labels={ON_TIME:'Attended',LATE:'Late',PARTIAL:'Partial attendance',UNEXCUSED_ABSENCE:'Missed',EXCUSED_ABSENCE:'Excused',APPROVED_LEAVE:'Approved leave',SYSTEM_PROTECTED:'System protected',INTERRUPTED:'Interrupted',PENDING:'Pending',RESCHEDULED:'Rescheduled',NO_OBLIGATION:'No obligation'};
-        history.forEach((item)=>{
-          const key=String(item.attendance_outcome||'PENDING').toUpperCase(),outcome=labels[key]||key.replaceAll('_',' ').toLowerCase();
-          const detail=`${outcome}${Number(item.missed_minutes)>0?` · ${item.missed_minutes} min missed`:''}`;
-          past.append(add($('article','tc-history-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('strong','',data.course.course_title),$('p','',detail)),button('Review Class',()=>open(item.class_id,{reviewOnly:true}),'tc-button tc-button--quiet')));
-        });body.append(past);
-      }
-      content.replaceChildren(body);loaded=true;status.textContent='Classes updated · '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
-    }catch(error){if(!page.isConnected)return;status.textContent='Class refresh failed — retry when connected.';if(!loaded)content.replaceChildren(notice('Classes unavailable',error.message||'Please try again.','tc-error'));}
-    finally{fetching=false;}
+        list.append($('h3','tc-list-heading','Upcoming Classes'));
+        const cards=$('div','tc-class-list');
+        upcoming.forEach(item=>{
+          const minutes=Math.round((Date.parse(item.scheduled_end_at)-Date.parse(item.scheduled_start_at))/60000);
+          cards.append(add($('article','tc-class-card'),
+            add($('div',''),$('small','',date(item.scheduled_start_at)),$('h3','',identity.course_title||course.title||'Course'),$('p','',(identity.teacher_name||'KIWI Teacher')+' · '+minutes+' min')),
+            button('Enter Classroom ↗',()=>open(item.class_id),'tc-button tc-button--solid')));
+        });
+        list.append(cards);
+      }else list.append(notice('No upcoming Classes','Your future lessons will appear here when scheduled.'));
+      content.replaceChildren(list);loaded=true;
+      if(historyDialog.open)drawHistory();
+      status.textContent='Classes updated · '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+    }catch(error){
+      if(!page.isConnected)return;
+      status.textContent='Could not refresh Classes. Try again when connected.';
+      if(!loaded)content.replaceChildren(notice('Classes unavailable',error.message||'Try again.','tc-error'));
+    }finally{fetching=false;refreshButton.disabled=false;}
   }
   await refresh();
   const onVisible=()=>{if(page.isConnected&&document.visibilityState==='visible')refresh();};
   document.addEventListener('visibilitychange',onVisible);window.addEventListener('focus',onVisible);
-  const timer=window.setInterval(()=>{if(!page.isConnected){window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('focus',onVisible);return;}if(document.visibilityState==='visible')refresh();},30000);
+  const timer=window.setInterval(()=>{
+    if(!page.isConnected){window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('focus',onVisible);if(historyDialog.open)historyDialog.close();return;}
+    if(document.visibilityState==='visible'&&!historyDialog.open)refresh();
+  },30000);
 }
 courses.registerSection({id:'classroom',label:'Classroom',order:45,render:renderCourse,renderSummary:async({course,container})=>{
   const card=add($('div','tc-course-summary'),$('div','tc-eyebrow','CLASSROOM'),$('h3','','The lesson has a place'),$('p','','Enter a scheduled Class to see the Board, your work and your Notebook.'));
