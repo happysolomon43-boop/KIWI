@@ -112,3 +112,13 @@ test('D05 outbox heartbeat keeps a long publication claim alive until publish co
   assert.equal(published, 1);
   assert.equal(claimCalls, 2);
 });
+
+test('D05 prioritizes Class lifecycle events without starving aged Teaching publications',async()=>{
+  let sql='';
+  const store=createPostgresTeachingOutboxStore({query:async(query)=>{sql=query;return {rows:[]};},randomUUID:()=> 'id'});
+  await store.claimPending({workerId:'worker',now:new Date('2026-10-08T10:00:00.000Z'),limit:1});
+  assert.match(sql,/created_at <= \$1 - interval '5 minutes'/);
+  assert.match(sql,/teaching\.class\.ended/);
+  assert.match(sql,/teaching\.course\.activated/);
+  assert.match(sql,/for update skip locked limit \$2/);
+});

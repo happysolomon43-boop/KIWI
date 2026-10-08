@@ -13535,7 +13535,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 // Serve frontend static files for single-domain deployment
 
-// Serve frontend with aggressive caching for assets, no-cache for HTML
+// Dynamic release identity allows long-lived Teaching tabs to detect new deployments.
+app.get('/api/teaching/client-version', (_req,res) => {
+  res.setHeader('Cache-Control','no-store, max-age=0');
+  res.json({version:process.env.VERCEL_GIT_COMMIT_SHA||process.env.RENDER_GIT_COMMIT||process.env.KIWI_RELEASE_ID||null});
+});
+// Unfingerprinted JavaScript and CSS MUST revalidate. One-year immutable caching
+// left active KIWI clients running old code after production deployments.
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: true,
   lastModified: true,
@@ -13543,7 +13549,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     } else {
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
     }
   }
 }));

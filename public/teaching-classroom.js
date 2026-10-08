@@ -3,7 +3,7 @@ const courses=window.KIWITeachingCourses;
 if(typeof kiwiApiRequest!=='function'||!courses?.registerSection)throw new Error('Teaching Classroom requires the shared KIWI client and Course shell.');
 
 const $=(tag,className='',text=null)=>{const n=document.createElement(tag);if(className)n.className=className;if(text!==null)n.textContent=String(text);return n;};
-const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false,returnFocus:null};
+const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false,returnFocus:null,leaveRequestId:null,reviewOnly:false};
 const MODE={PRE_CLASS:'Before Class',OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'};
 function when(value){return value?new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'—';}
 function date(value){return value?new Date(value).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'—';}
@@ -13,7 +13,7 @@ function button(label,handler,cls=''){const b=$('button',cls,label);b.type='butt
 function notice(title,body,kind=''){return add($('div',`tc-notice ${kind}`),$('strong','',title),$('p','',body));}
 function serverNow(){const s=state.snapshot;return Date.now()+(s?new Date(s.serverNow).getTime()-s._receivedAt:0);}
 function clearRuntime(){if(state.interval)clearInterval(state.interval);if(state.refresh)clearInterval(state.refresh);state.interval=state.refresh=null;}
-function close({restore=true}={}){clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
+function close({restore=true}={}){clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;state.leaveRequestId=null;state.reviewOnly=false;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
 async function fetchSnapshot(){
   if(!state.classId||state.busy)return;
   const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);
@@ -32,11 +32,11 @@ async function controllerAction(path,body={}){
   finally{state.busy=false;}
 }
 async function fetchAfterAction(){const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);data._receivedAt=Date.now();state.snapshot=data;render();}
-async function open(classId){
-  const opener=document.activeElement;close({restore:false});state.returnFocus=opener;state.classId=classId;state.host=$('div','tc-overlay');state.host.setAttribute('role','dialog');state.host.setAttribute('aria-modal','true');state.host.setAttribute('aria-label','KIWI Classroom');
+async function open(classId,{reviewOnly=false}={}){
+  const opener=document.activeElement;close({restore:false});state.returnFocus=opener;state.classId=classId;state.reviewOnly=reviewOnly;state.host=$('div','tc-overlay');state.host.setAttribute('role','dialog');state.host.setAttribute('aria-modal','true');state.host.setAttribute('aria-label','KIWI Classroom');
   document.body.append(state.host);document.body.classList.add('tc-active');state.host.append(notice('Opening Classroom','Connecting to the current Class record…'));
   state.host.addEventListener('keydown',trapClassroomFocus);state.host.tabIndex=-1;state.host.focus();
-  try{await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/enter`,{method:'POST',body:{}});await fetchSnapshot();state.host.querySelector('h1')?.focus?.({preventScroll:true});state.interval=setInterval(updateClocks,1000);state.refresh=setInterval(()=>fetchSnapshot().catch(()=>{state.host?.querySelector('.tc-connection')?.replaceChildren($('span','','Reconnecting to Class…'));}),12000);}
+  try{if(!reviewOnly)await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/enter`,{method:'POST',body:{}});await fetchSnapshot();state.host.querySelector('h1')?.focus?.({preventScroll:true});state.interval=setInterval(updateClocks,1000);state.refresh=setInterval(()=>fetchSnapshot().catch(()=>{state.host?.querySelector('.tc-connection')?.replaceChildren($('span','','Reconnecting to Class…'));}),12000);}
   catch(error){state.host.replaceChildren(notice('Classroom unavailable',error.message||'Please try again.','tc-error'),button('Return to Course',close,'tc-button tc-button--solid'));}
 }
 function trapClassroomFocus(event){if(event.key==='Escape'){const controls=state.host?.querySelector('.tc-controls[open]');if(controls){controls.open=false;controls.querySelector('summary')?.focus();}return;}if(event.key!=='Tab')return;const nodes=Array.from(state.host?.querySelectorAll('button:not([disabled]),a[href],textarea:not([disabled]),input:not([disabled]),summary,[tabindex]:not([tabindex="-1"])')||[]).filter((node)=>node.getClientRects().length);if(!nodes.length)return;const first=nodes[0],last=nodes[nodes.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}
@@ -54,7 +54,20 @@ function renderHeader(s){
   clocks.querySelector('span').dataset.clock='class';
   if(s.modeKey==='BREAK'||s.modeKey==='INDEPENDENT_PRACTICE'){const activity=add($('div','tc-clock tc-clock--activity'),$('small','',s.modeKey==='BREAK'?'BREAK':'ACTIVITY'),$('strong','',s.modeKey==='BREAK'?'Teaching paused':'Work independently'),$('span','',''));activity.querySelector('span').dataset.clock='activity';clocks.append(activity);}
   if(s.modeKey==='ASSESSMENT')clocks.prepend(add($('div','tc-clock tc-clock--assessment'),$('small','','ASSESSMENT TIME'),$('strong','','Controlled assessment'),$('span','','The assessment owner controls this timer')));
-  const leave=button('Leave Class',async()=>{if(!window.confirm('Leave the Classroom? The Class continues according to its scheduled time. Your attendance will be recorded up to this moment.'))return;leave.disabled=true;try{const result=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/interactions`,{method:'POST',body:{kind:'LEAVE',idempotencyKey:crypto.randomUUID()}});const outcome=result?.attendance?.outcome||result?.attendance?.record?.outcome;if(outcome)sessionStorage.setItem('kiwi_last_class_attendance',outcome);close();}catch(error){leave.disabled=false;state.host?.querySelector('.tc-message')?.replaceChildren($('span','',error.message||'KIWI could not record your departure. Please try again.'));}},'tc-button tc-button--quiet');
+  if(state.reviewOnly){const closeReview=button('Close Review',()=>close(),'tc-button tc-button--quiet');add(header,brand,identity,mode,clocks,closeReview);return header;}
+  const leave=button('Leave Class',async()=>{
+    if(!state.leaveRequestId&&!window.confirm('Leave the Classroom? The Class continues according to its scheduled time. Your attendance will be recorded up to this moment.'))return;
+    state.leaveRequestId ||= crypto.randomUUID();leave.disabled=true;
+    try{
+      const result=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/interactions`,{method:'POST',body:{kind:'LEAVE',idempotencyKey:state.leaveRequestId}});
+      const outcome=result?.attendance?.outcome||result?.attendance?.record?.outcome;
+      try{if(outcome)sessionStorage.setItem('kiwi_last_class_attendance',outcome);}catch{}
+      close();
+    }catch(error){
+      leave.disabled=false;
+      state.host?.querySelector('.tc-message')?.replaceChildren($('span','',`${error.message||'KIWI could not confirm your departure.'} Retry Leave Class to safely confirm the same attendance record.`));
+    }
+  },'tc-button tc-button--quiet');
   add(header,brand,identity,mode,clocks,leave);return header;
 }
 function renderTeacher(s){
@@ -92,7 +105,7 @@ function renderBlock(item){
     case 'annotation':card.append($('p','tc-annotation',c.label||''));break;
   }
   const save=button('Save to Notebook',()=>act('notebook',{content:(c.text||c.label||c.alt||(c.steps||[]).join('\n')).slice(0,10000),boardItemId:item.boardItemId}),'tc-mini-action');
-  if(state.snapshot?.notebookAllowed&&item.boardItemId)card.append(save);
+  if(!state.reviewOnly&&state.snapshot?.notebookAllowed&&item.boardItemId)card.append(save);
   return card;
 }
 function renderBoard(s){
@@ -110,6 +123,7 @@ function renderBoard(s){
 function renderNotebook(s){
   const panel=$('section','tc-notebook');add(panel,add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','YOUR OWN RECORD'),$('h2','','Notebook'))));
   if(!s.notebookAllowed){panel.append(notice('Notebook unavailable','This controlled activity does not permit your notes.'));return panel;}
+  if(state.reviewOnly){panel.append(notice('Read-only history','Notebook entries remain available, but reviewing this Class cannot change its record.'));s.notebook.forEach((entry)=>panel.append(add($('article','tc-note'),$('small','',entry.source_kind==='BOARD_REFERENCE'?'SAVED FROM BOARD':'PERSONAL NOTE'),$('p','',entry.content))));return panel;}
   const form=$('form','tc-note-form');const input=$('textarea','');input.placeholder='Write a thought, question or connection…';input.maxLength=10000;input.setAttribute('aria-label','Notebook entry');
   const submit=button('Save note',()=>{},'tc-button tc-button--solid');submit.type='submit';
   form.addEventListener('submit',(event)=>{event.preventDefault();if(input.value.trim())act('notebook',{content:input.value.trim()});});add(form,input,submit);panel.append(form);
@@ -118,6 +132,7 @@ function renderNotebook(s){
 }
 function renderWorkspace(s){
   const panel=$('section','tc-workspace');add(panel,add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','YOUR SPACE'),$('h2','',s.modeKey==='INDEPENDENT_PRACTICE'?'Work independently':'Student Workspace'))));
+  if(state.reviewOnly){panel.append(notice('Past Class record','Review the Board, summary and Notebook without creating a new attendance interaction.'));return panel;}
   if(!s.controller){panel.append(notice('Ready when you are',`Scheduled ${date(s.class.scheduledStartAt)} · ${Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)} minutes. ${s.requiredMaterials?.length?'Bring: '+s.requiredMaterials.join(', '):'No materials have been specified.'}`));const start=button('Start Class',()=>controllerAction('start'),'tc-button tc-button--solid');panel.append(start);return panel;}
   if(s.modeKey==='BREAK'){panel.append(notice('A proper pause','Teaching is paused. You can step away and return when the break ends.','tc-break'));return panel;}
   if(s.modeKey==='ASSESSMENT'){panel.append(notice('Assessment in progress','Assessment rules and responses are controlled by the formal assessment interface. Classroom resources are restricted.','tc-assessment'));return panel;}
@@ -141,7 +156,7 @@ function renderWorkspace(s){
   panel.append(actions);return panel;
 }
 function promptInteraction(kind,label){const body=window.prompt(label);if(body?.trim())act('interactions',{kind,body:body.trim()});}
-function renderControls(s){const details=$('details','tc-controls');details.append($('summary','','Class controls'));
+function renderControls(s){const details=$('details','tc-controls');if(state.reviewOnly)return details;details.append($('summary','','Class controls'));
   const items=$('div','tc-controls__items');[['Request short break','BREAK_REQUEST'],['Request early dismissal','EARLY_DISMISSAL_REQUEST'],['Report technical issue','TECHNICAL_ISSUE']].forEach(([label,kind])=>items.append(button(label,()=>act('interactions',{kind}),'tc-button tc-button--quiet')));
   details.append(items);if(!s.controlsEnabled)details.hidden=true;return details;}
 function renderSummary(s){const section=$('section','tc-after');add(section,$('div','tc-eyebrow','AFTER CLASS'),$('h2','','What stays with you'));
@@ -168,12 +183,46 @@ function render(){
   const message=$('div','tc-message');message.setAttribute('role','alert');const connection=$('div','tc-connection');connection.setAttribute('role','status');connection.setAttribute('aria-live','polite');root.append(message,connection);state.host.replaceChildren(root);updateClocks();
 }
 async function renderCourse({course,container}){
-  const page=$('section','tc-course');add(page,$('div','tc-eyebrow','COURSE / CLASSROOM'),$('h2','','Enter the classroom'),$('p','','A focused place for the lesson, your work and the record you take away.'));
-  container.append(page);
-  try{const data=await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/classes`);const upcoming=data.upcoming||data.classes||[],history=data.history||[];if(!upcoming.length&&!history.length){page.append(notice('No scheduled Classes','The Course schedule will place future sessions here.'));return;}
-    if(upcoming.length){page.append($('h3','tc-list-heading','Upcoming Classes'));const list=$('div','tc-class-list');upcoming.forEach((item)=>{const card=add($('article','tc-class-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('h3','',data.course.course_title),$('p','',`${data.course.teacher_name||'KIWI Teacher'} · ${Math.round((new Date(item.scheduled_end_at)-new Date(item.scheduled_start_at))/60000)} minutes`)),button('Enter Classroom ↗',()=>open(item.class_id),'tc-button tc-button--solid'));list.append(card);});page.append(list);}
-    if(history.length){page.append($('h3','tc-list-heading','Class history'));const past=$('div','tc-class-history');history.forEach((item)=>{const outcome=String(item.attendance_outcome||'PENDING').replaceAll('_',' ').toLowerCase().replace(/(^|\s)\S/g,(m)=>m.toUpperCase());const detail=item.attendance_outcome?`${outcome}${Number(item.missed_minutes)>0?` · ${item.missed_minutes} min missed`:''}`:'Attendance pending';past.append(add($('article','tc-history-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('strong','',data.course.course_title),$('p','',detail)),button('Review Class',()=>open(item.class_id),'tc-button tc-button--quiet')));});page.append(past);}
-  }catch(error){page.append(notice('Classes unavailable',error.message||'Please try again.','tc-error'));}
+  const page=$('section','tc-course');
+  add(page,$('div','tc-eyebrow','COURSE / CLASSROOM'),$('h2','','Enter the classroom'),$('p','','A focused place for the lesson, your work and the record you take away.'));
+  const status=$('div','tc-classroom-sync');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+  const content=$('div','tc-classroom-classes');
+  const refreshButton=button('Refresh classes',()=>refresh(),'tc-button tc-button--quiet');
+  page.append(refreshButton,status,content);container.append(page);
+  let fetching=false,loaded=false;
+  async function refresh(){
+    if(!page.isConnected||fetching)return;
+    fetching=true;
+    try{
+      const data=await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/classes`);
+      if(!page.isConnected)return;
+      const upcoming=data.upcoming||data.classes||[],history=data.history||[];
+      const body=$('div','tc-classroom-groups');
+      if(!upcoming.length&&!history.length)body.append(notice('No scheduled Classes','The Course schedule will place future sessions here.'));
+      if(upcoming.length){
+        body.append($('h3','tc-list-heading','Upcoming Classes'));
+        const list=$('div','tc-class-list');
+        upcoming.forEach((item)=>list.append(add($('article','tc-class-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('h3','',data.course.course_title),$('p','',`${data.course.teacher_name||'KIWI Teacher'} · ${Math.round((new Date(item.scheduled_end_at)-new Date(item.scheduled_start_at))/60000)} minutes`)),button('Enter Classroom ↗',()=>open(item.class_id),'tc-button tc-button--solid'))));
+        body.append(list);
+      }
+      if(history.length){
+        body.append($('h3','tc-list-heading','Class history'));
+        const past=$('div','tc-class-history');
+        const labels={ON_TIME:'Attended',LATE:'Late',PARTIAL:'Partial attendance',UNEXCUSED_ABSENCE:'Missed',EXCUSED_ABSENCE:'Excused',APPROVED_LEAVE:'Approved leave',SYSTEM_PROTECTED:'System protected',INTERRUPTED:'Interrupted',PENDING:'Pending',RESCHEDULED:'Rescheduled',NO_OBLIGATION:'No obligation'};
+        history.forEach((item)=>{
+          const key=String(item.attendance_outcome||'PENDING').toUpperCase(),outcome=labels[key]||key.replaceAll('_',' ').toLowerCase();
+          const detail=`${outcome}${Number(item.missed_minutes)>0?` · ${item.missed_minutes} min missed`:''}`;
+          past.append(add($('article','tc-history-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('strong','',data.course.course_title),$('p','',detail)),button('Review Class',()=>open(item.class_id,{reviewOnly:true}),'tc-button tc-button--quiet')));
+        });body.append(past);
+      }
+      content.replaceChildren(body);loaded=true;status.textContent='Classes updated · '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+    }catch(error){if(!page.isConnected)return;status.textContent='Class refresh failed — retry when connected.';if(!loaded)content.replaceChildren(notice('Classes unavailable',error.message||'Please try again.','tc-error'));}
+    finally{fetching=false;}
+  }
+  await refresh();
+  const onVisible=()=>{if(page.isConnected&&document.visibilityState==='visible')refresh();};
+  document.addEventListener('visibilitychange',onVisible);window.addEventListener('focus',onVisible);
+  const timer=window.setInterval(()=>{if(!page.isConnected){window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('focus',onVisible);return;}if(document.visibilityState==='visible')refresh();},30000);
 }
 courses.registerSection({id:'classroom',label:'Classroom',order:45,render:renderCourse,renderSummary:async({course,container})=>{
   const card=add($('div','tc-course-summary'),$('div','tc-eyebrow','CLASSROOM'),$('h3','','The lesson has a place'),$('p','','Enter a scheduled Class to see the Board, your work and your Notebook.'));

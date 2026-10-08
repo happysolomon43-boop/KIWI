@@ -1106,8 +1106,44 @@ async function verifyTeachingSession() {
   }
 }
 
+function installTeachingReleaseWatcher(){
+  let currentVersion=null,busy=false,notifiedVersion=null;
+  async function check(){
+    if(busy||document.visibilityState==='hidden')return;
+    busy=true;
+    try{
+      let version=null;
+      // Vercel serves the build manifest directly; Render exposes an API fallback.
+      for(const url of ['/kiwi-build.json','/api/teaching/client-version']){
+        const response=await fetch(url,{cache:'no-store',credentials:'same-origin'});
+        if(!response.ok||!String(response.headers.get('content-type')||'').includes('application/json'))continue;
+        const data=await response.json();
+        version=data.release||data.builtAt||data.version||null;
+        if(version)break;
+      }
+      if(!version)return;
+      if(currentVersion===null){currentVersion=version;return;}
+      if(version===currentVersion||version===notifiedVersion)return;
+      notifiedVersion=version;
+      const editing=Boolean(document.querySelector('.tc-active'))||Boolean(document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]'));
+      if(!editing){window.location.reload();return;}
+      if(document.getElementById('kiwi-teaching-update-available'))return;
+      const notice=document.createElement('aside');
+      notice.id='kiwi-teaching-update-available';notice.setAttribute('role','status');
+      notice.style.cssText='position:fixed;z-index:9999;left:14px;right:14px;bottom:88px;padding:15px;border:1px solid #7ee2b8;border-radius:14px;background:#10261c;color:#d9f5e5;box-shadow:0 14px 40px #0008';
+      notice.append('A newer version of KIWI is ready. Finish your current work, then refresh to get the changes. ');
+      const action=document.createElement('button');action.type='button';action.textContent='Update KIWI';action.style.cssText='margin-left:10px;padding:8px 12px;background:#b6f1d0;color:#10261c;border-radius:8px';
+      action.addEventListener('click',()=>window.location.reload());notice.append(action);document.body.append(notice);
+    }catch{ /* Connectivity is best effort; never block Teaching. */ }
+    finally{busy=false;}
+  }
+  check();window.setInterval(check,90000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')check();});
+  window.addEventListener('focus',check);
+}
 function initTeachingDocument() {
   suppressVercelToolbar();
+  installTeachingReleaseWatcher();
   renderTeachingNavigation();
   installTeachingHistoryGuard();
 

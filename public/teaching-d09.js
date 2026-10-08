@@ -33,6 +33,7 @@ function installStyles() {
     '.teaching-d09-calendar-row__time{display:grid;align-content:start;gap:3px;padding-top:2px;color:#92a89e;font:500 11px/1.28 var(--font-mono);font-variant-numeric:tabular-nums}.teaching-d09-calendar-row__time span:last-child{color:#60766c}.teaching-d09-calendar-row__body{min-width:0}.teaching-d09-calendar-row__top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.teaching-d09-calendar-row__title{min-width:0}.teaching-d09-calendar-row__title strong{display:block;color:#e9f5ef;font:700 15px/1.35 var(--font-body);letter-spacing:-.01em;overflow-wrap:anywhere}.teaching-d09-calendar-row__meta{margin-top:4px;color:#71877d;font:400 10.5px/1.45 var(--font-body)}' +
     '.teaching-d09-calendar-kind{flex:none;display:inline-flex;align-items:center;min-height:26px;padding:5px 9px;border:1px solid rgba(126,226,184,.12);border-radius:999px;background:rgba(126,226,184,.065);color:#89dfb8;font:700 10px/1.3 var(--font-body);white-space:nowrap}.teaching-d09-calendar-kind[data-kind="ASSESSMENT"]{border-color:rgba(245,180,82,.17);background:rgba(245,180,82,.055);color:#dfc184}.teaching-d09-calendar-kind[data-kind="PROPOSAL"]{border-color:rgba(142,165,218,.16);background:rgba(142,165,218,.05);color:#b3c5ea}' +
     '.teaching-d09-calendar-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:13px}.teaching-d09-calendar-actions button{min-width:0;min-height:38px;padding:0 11px;border-radius:10px;font:600 11px/1.35 var(--font-body);white-space:normal}.teaching-d09-calendar-actions button[data-tone="urgent"]{border-color:rgba(236,102,102,.13);color:#d8b2b2}.teaching-d09-calendar-actions button[data-tone="urgent"]:hover,.teaching-d09-calendar-actions button[data-tone="urgent"]:focus-visible{border-color:rgba(236,102,102,.28);background:rgba(236,102,102,.055);color:#efc2c2}' +
+    ' .teaching-d09-calendar-refresh{margin:9px 0 16px;color:#8eb6a6;font-size:11px}.teaching-d09-calendar-history{margin-top:18px}.teaching-d09-calendar-history__summary{padding:16px 18px;cursor:pointer;border:1px solid rgba(126,226,184,.17);border-radius:14px;color:#b6f1d0;font-weight:700;background:rgba(10,39,28,.8)}.teaching-d09-calendar-history[open]>.teaching-d09-calendar-history__summary{margin-bottom:12px}.teaching-d09-calendar-hero-meta button{min-height:38px}' +
     '@media(max-width:760px){.teaching-d09-grid,.teaching-d09-fields{grid-template-columns:1fr}.teaching-d09-row{grid-template-columns:1fr}.teaching-d09-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.teaching-d09-calendar-hero{grid-template-columns:1fr}.teaching-d09-calendar-hero__meta{justify-content:flex-start}}' +
     '@media(max-width:520px){.teaching-d09-calendar-day{border-radius:16px}.teaching-d09-calendar-day__head{padding:13px 14px}.teaching-d09-calendar-row{grid-template-columns:78px minmax(0,1fr);gap:12px;padding:15px 14px}.teaching-d09-calendar-row__time{font-size:10px}.teaching-d09-calendar-row__top{gap:8px}.teaching-d09-calendar-row__title strong{font-size:14px}.teaching-d09-calendar-kind{padding:4px 7px;font-size:9px}.teaching-d09-calendar-actions{gap:7px}.teaching-d09-calendar-actions button{min-height:40px;padding:0 8px;font-size:10.5px}}';
   document.head.append(style);
@@ -122,7 +123,7 @@ function stage4(course,data,container,reload) {
   const assessment=el('input'); assessment.type='number'; assessment.min='0'; assessment.value=String(data.profile?.reserves?.find((r)=>r.kind==='ASSESSMENT'&&String(r.courseId)===String(course.course_id))?.minutes||0);
   addField(academic,'Target/deadline',deadline); addField(academic,'Deadline type',deadlineKind); addField(academic,'Revision reserve minutes',revision); addField(academic,'Assessment reserve minutes',assessment); card.append(academic);
 
-  const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
+  const postActivation=data.semesterHasActivatedCourses===true||!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
   const backgroundBuild=data.backgroundBuild||null,buildActive=backgroundBuild?.active===true;
   const message=el('div'), actions=el('div','teaching-d09-actions'), save=el('button','teaching-button teaching-button--primary',postActivation?'Request this availability change':'Save availability'); save.type='button'; actions.append(save); card.append(actions,message);
   save.addEventListener('click',async()=>{
@@ -153,7 +154,7 @@ function stage4(course,data,container,reload) {
               : {text:'Shared availability was saved, but the Semester timetable rebuild needs attention. Older timetable versions are stale and are not treated as current.',kind:'warning'};
           await reload(saved,notice);
         }catch(error){
-          if(error?.code==='TEACHING_D09_ACTIVE_SEMESTER_AVAILABILITY_REQUIRES_REQUEST'&&window.KIWITeachingD10?.createScheduleRequest){
+          if(['TEACHING_D09_ACTIVE_SEMESTER_AVAILABILITY_REQUIRES_REQUEST','TEACHING_D09_ACTIVE_SEMESTER_REQUEST_REQUIRED'].includes(error?.code)&&window.KIWITeachingD10?.createScheduleRequest){
             await window.KIWITeachingD10.createScheduleRequest(course.course_id,body);
             message.textContent='This Semester already has an active Course, so KIWI created a formal availability-change Request. The shared timetable will recalculate when that change is applied.';
             message.className='teaching-message';
@@ -171,7 +172,7 @@ function stage4(course,data,container,reload) {
 function stage5(course,data,container,reload) {
   const card=el('section','teaching-d09-card');
   card.append(el('div','teaching-kicker','Timetable'),el('h3','','Shared Semester timetable'),el('p','','Proposed timetable and feasibility are Semester-wide: KIWI schedules all current Course Plans together against the same availability, protected time and recovery capacity. This Course view shows only its slots, but every rebuild creates one coordinated Semester timetable version.'));
-  const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
+  const postActivation=data.semesterHasActivatedCourses===true||!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
   const missingInputs=!data.semester||!data.profile;
   const unresolvedSelf=(data.unresolvedSemesterCourses||[]).filter((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
   const missingAttachment=unresolvedSelf.some((item)=>item.reason==='COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER');
@@ -260,7 +261,14 @@ function calendarEventCard(item,data){
   const kindLabel=kind==='ASSESSMENT'?statusName(item.assessmentType||'Assessment'):'Class',duration=calendarDuration(item),courseName=item.course_title||item.courseTitle||'Course',itemTitle=item.title&&item.title!==courseName?item.title:null;
   title.append(el('strong','',courseName),el('div','teaching-d09-calendar-row__meta',(itemTitle?`${itemTitle} · `:'')+(kind==='ASSESSMENT'?'Announced assessment':'Approved schedule')+(duration?` · ${duration} min`:'')));
   const badge=el('span','teaching-d09-calendar-kind',kindLabel);badge.dataset.kind=kind;top.append(title,badge);body.append(top);
-  if(kind==='CLASS'&&window.KIWITeachingD10){
+  const isPast=Number.isFinite(Date.parse(end||start||''))&&Date.parse(end||start)<=Date.parse(data.serverNow||new Date().toISOString());
+  if(isPast&&kind==='CLASS'){
+    const names={ON_TIME:'Attended',LATE:'Late',PARTIAL:'Partially attended',UNEXCUSED_ABSENCE:'Missed',EXCUSED_ABSENCE:'Excused',APPROVED_LEAVE:'Approved leave',PENDING:'Attendance pending',SYSTEM_PROTECTED:'System protected',INTERRUPTED:'Interrupted'};
+    const code=String(item.attendanceOutcome||'PENDING').toUpperCase();
+    const status=names[code]||code.toLowerCase().replaceAll('_',' ');
+    body.append(el('div','teaching-d09-calendar-row__meta',status+(Number(item.missedMinutes)>0?' · '+item.missedMinutes+' min missed':'')));
+  }
+  if(kind==='CLASS'&&!isPast&&window.KIWITeachingD10){
     const actions=el('div','teaching-d09-calendar-actions'),move=el('button','teaching-d08-link-button','Request new time'),absence=el('button','teaching-d08-link-button','Emergency absence');
     move.type=absence.type='button';absence.dataset.tone='urgent';
     move.setAttribute('aria-label',`Request a new time for ${displayCalendarDay(start,zone)} at ${displayCalendarTime(start,zone)}`);
@@ -286,18 +294,46 @@ function calendarGroupedList(items,data,renderer){
   return list;
 }
 async function renderCalendar() {
-  installStyles(); const main=document.getElementById('teachingApp'); if(!main)return; const page=el('section','teaching-view teaching-d09-page'),zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
+  installStyles();
+  const main=document.getElementById('teachingApp');if(!main)return;
+  const page=el('section','teaching-view teaching-d09-page'),zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
   const head=el('div','teaching-d09-card teaching-d09-calendar-hero'),copy=el('div','teaching-d09-calendar-hero__copy'),meta=el('div','teaching-d09-calendar-hero__meta');
-  copy.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Classes and announced assessments share one timetable, grouped by day so the next obligation is easy to scan. Proposed Course times remain separate until approval.'));
-  const back=el('button','teaching-d08-link-button','Back to courses');back.type='button';back.addEventListener('click',()=>courseSurface.openOverview?courseSurface.openOverview():window.location.reload());meta.append(el('span','teaching-d09-calendar-zone',`Times shown in ${zone}`),back);head.append(copy,meta);page.append(head);main.replaceChildren(page);
-  try{
-    const data=await kiwiApiRequest('/teaching/information/calendar?currentTimeZone='+encodeURIComponent(zone));
-    const events=Array.isArray(data.events)?data.events:[],proposals=Array.isArray(data.preactivationProposals)?data.preactivationProposals:[];
-    if(events.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head');sectionHead.append(el('h3','','Scheduled'),el('span','',events.length+' item'+(events.length===1?'':'s')));section.append(sectionHead,calendarGroupedList(events,data,calendarEventCard));page.append(section);}
-    if(proposals.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head');sectionHead.append(el('h3','','Proposed course times'),el('span','',proposals.length+' item'+(proposals.length===1?'':'s')));section.append(sectionHead,calendarGroupedList(proposals,data,proposalCard));page.append(section);}
-    if(!events.length&&!proposals.length)page.append(el('div','teaching-empty','No Teaching timetable items yet.'));
-    if(data.issues?.length)page.append(el('div','teaching-message','Some calendar information is temporarily unavailable. The items shown above remain the authoritative visible timetable.'));
-  }catch(error){const message=el('div','teaching-message',error.message||'Calendar could not be loaded.');message.dataset.kind='error';page.append(message);}
+  copy.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Classes and announced assessments share one timetable. Upcoming obligations stay separate from Class history; earlier Class attendance is preserved below.'));
+  const back=el('button','teaching-d08-link-button','Back to courses');back.type='button';back.addEventListener('click',()=>courseSurface.openOverview?courseSurface.openOverview():window.location.reload());
+  const refreshButton=el('button','teaching-d08-link-button','Refresh Calendar');refreshButton.type='button';
+  meta.append(el('span','teaching-d09-calendar-zone',`Times shown in ${zone}`),refreshButton,back);head.append(copy,meta);
+  const updated=el('div','teaching-d09-calendar-refresh');updated.setAttribute('role','status');updated.setAttribute('aria-live','polite');
+  const content=el('div','teaching-d09-calendar-content');page.append(head,updated,content);main.replaceChildren(page);
+  let loading=false,hasData=false,historyOpen=false;
+  async function refresh(){
+    if(!page.isConnected||loading)return;
+    loading=true;refreshButton.disabled=true;
+    try{
+      const data=await kiwiApiRequest('/teaching/information/calendar?currentTimeZone='+encodeURIComponent(zone));
+      if(!page.isConnected)return;
+      const events=Array.isArray(data.events)?data.events:[],proposals=Array.isArray(data.preactivationProposals)?data.preactivationProposals:[];
+      const now=Date.parse(data.serverNow)||Date.now();
+      const past=events.filter((item)=>item.kind==='CLASS'&&Number.isFinite(Date.parse(calendarEnd(item)||calendarStart(item)||''))&&Date.parse(calendarEnd(item)||calendarStart(item))<=now);
+      const upcoming=events.filter((item)=>!past.includes(item));
+      const body=el('div','teaching-d09-calendar-sections');
+      if(upcoming.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head');sectionHead.append(el('h3','','Upcoming & active'),el('span','',upcoming.length+' item'+(upcoming.length===1?'':'s')));section.append(sectionHead,calendarGroupedList(upcoming,data,calendarEventCard));body.append(section);}
+      if(proposals.length){const section=el('section','teaching-d09-calendar-section'),sectionHead=el('div','teaching-d09-calendar-section__head');sectionHead.append(el('h3','','Proposed course times'),el('span','',proposals.length+' item'+(proposals.length===1?'':'s')));section.append(sectionHead,calendarGroupedList(proposals,data,proposalCard));body.append(section);}
+      if(past.length){
+        const detail=el('details','teaching-d09-calendar-section teaching-d09-calendar-history');detail.open=historyOpen;
+        detail.addEventListener('toggle',()=>{historyOpen=detail.open;});
+        detail.append(el('summary','teaching-d09-calendar-history__summary',`Past Class history (${past.length}) · attendance and missed time`),calendarGroupedList(past,data,calendarEventCard));body.append(detail);
+      }
+      if(!events.length&&!proposals.length)body.append(el('div','teaching-empty','No Teaching timetable items yet.'));
+      if(data.issues?.length)body.append(el('div','teaching-message','Some calendar information is temporarily unavailable. The displayed items are still sourced from authoritative records.'));
+      content.replaceChildren(body);hasData=true;updated.textContent='Calendar updated · '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+    }catch(error){if(!page.isConnected)return;updated.textContent='Calendar refresh failed. You can retry without leaving this page.';if(!hasData)content.replaceChildren(el('div','teaching-message',error.message||'Calendar could not be loaded.'));}
+    finally{loading=false;refreshButton.disabled=false;}
+  }
+  refreshButton.addEventListener('click',refresh);
+  await refresh();
+  const onVisible=()=>{if(page.isConnected&&document.visibilityState==='visible')refresh();};
+  document.addEventListener('visibilitychange',onVisible);window.addEventListener('focus',onVisible);
+  const timer=window.setInterval(()=>{if(!page.isConnected){window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('focus',onVisible);return;}if(document.visibilityState==='visible')refresh();},30000);
 }
 courseSurface.registerSection({id:'schedule',label:'Schedule',order:30,render:renderSchedule,renderSummary});
 if(nav&&typeof nav.register==='function')nav.register({id:'calendar',label:'Calendar',description:'Classes and assessments in one timetable',icon:'◷',menuIcon:'calendar',onSelect:renderCalendar});
