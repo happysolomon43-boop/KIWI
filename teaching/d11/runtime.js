@@ -177,6 +177,9 @@ function registerD11Runtime({
         return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'CLASS_OR_COURSE_NOT_ACTIVE'};
       }
       if(context.session) return {disposition:RECONCILIATION_DISPOSITIONS.ALREADY_SATISFIED,reason:'CONTROLLER_ALREADY_STARTED'};
+      if(Date.now()>=Date.parse(context.classRow.scheduled_end_at)) {
+        return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'CLASS_START_WINDOW_EXPIRED'};
+      }
       return {
         disposition:RECONCILIATION_DISPOSITIONS.ACTIONABLE,
         metadata:{
