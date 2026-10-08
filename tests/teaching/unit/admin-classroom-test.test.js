@@ -171,3 +171,61 @@ test('Sandbox server exposes only keyed real Classroom paths and never the wider
   assert.equal(invoke('POST','/api/teaching/courses').status,404);
   assert.equal(invoke('POST','/api/teaching/classes/abc/responses').status,404);
 });
+
+
+test('An admin can link only their own ACTIVE production course as read-only Classroom source',async()=>{
+  const queries=[];
+  const router=createAdminClassroomTestRouter({
+    env:{...ENV,KIWI_CLASSROOM_TEST_SOURCE_COURSE_ID:'phy101-live-id'},
+    query:async(sql,args)=>{
+      queries.push({sql,args});
+      if(sql.includes('select role from public.users'))return {rows:[{role:'admin'}]};
+      if(sql.includes('from public.teaching_courses c'))return {rows:[{
+        course_id:'phy101-live-id',title:'PHY101',subject_name:'PHY101',lifecycle_state:'ACTIVE',
+        state_version:5,scheduled_class_count:20,plan_count:1
+      }]};
+      throw new Error('Unexpected query');
+    },
+    fetchImpl:async()=>{throw Error('Source lookup must never forward to sandbox');},
+  });
+  const site=await serve(router);
+  try{
+    const result=await fetch(site.base+'/source-course');
+    assert.equal(result.status,200);
+    const body=await result.json();
+    assert.equal(body.linked,true);
+    assert.equal(body.course.title,'PHY101');
+    assert.equal(body.course.planCount,1);
+    assert.equal(body.execution,'ISOLATED_SANDBOX_ONLY');
+    const source=queries.find(x=>x.sql.includes('from public.teaching_courses c'));
+    assert.deepEqual(source.args,['phy101-live-id','admin']);
+    assert.match(source.sql,/c\.student_id=\$2/);
+    assert.match(source.sql,/c\.lifecycle_state='ACTIVE'/);
+    assert.equal(queries.every(x=>/^\s*select/i.test(x.sql)),true);
+  }finally{await site.close();}
+});
+
+test('Unconfigured or non-owner course selection cannot activate a rehearsal',async()=>{
+  const missing=createAdminClassroomTestRouter({
+    env:{...ENV,KIWI_CLASSROOM_TEST_SOURCE_COURSE_ID:''},
+    query:async()=>({rows:[{role:'admin'}]}),
+    fetchImpl:async()=>{throw Error('No proxy permitted');},
+  });
+  const s1=await serve(missing);
+  try{
+    const response=await fetch(s1.base+'/source-course');
+    assert.equal(response.status,503);
+    assert.equal((await response.json()).code,'CLASSROOM_TEST_SOURCE_NOT_CONFIGURED');
+  }finally{await s1.close();}
+  const foreign=createAdminClassroomTestRouter({
+    env:{...ENV,KIWI_CLASSROOM_TEST_SOURCE_COURSE_ID:'foreign-course'},
+    query:async(sql)=>sql.includes('from public.teaching_courses c')?{rows:[]}:{rows:[{role:'admin'}]},
+    fetchImpl:async()=>{throw Error('No proxy permitted');},
+  });
+  const s2=await serve(foreign);
+  try{
+    const response=await fetch(s2.base+'/source-course');
+    assert.equal(response.status,404);
+    assert.equal((await response.json()).code,'CLASSROOM_TEST_SOURCE_NOT_FOUND');
+  }finally{await s2.close();}
+});
