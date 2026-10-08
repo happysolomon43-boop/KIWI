@@ -1112,9 +1112,15 @@ function installTeachingReleaseWatcher(){
     if(busy||document.visibilityState==='hidden')return;
     busy=true;
     try{
-      const response=await fetch('/api/teaching/client-version',{cache:'no-store',credentials:'same-origin'});
-      if(!response.ok)return;
-      const data=await response.json(),version=typeof data.version==='string'?data.version:null;
+      let version=null;
+      // Vercel serves the build manifest directly; Render exposes an API fallback.
+      for(const url of ['/kiwi-build.json','/api/teaching/client-version']){
+        const response=await fetch(url,{cache:'no-store',credentials:'same-origin'});
+        if(!response.ok||!String(response.headers.get('content-type')||'').includes('application/json'))continue;
+        const data=await response.json();
+        version=data.release||data.builtAt||data.version||null;
+        if(version)break;
+      }
       if(!version)return;
       if(currentVersion===null){currentVersion=version;return;}
       if(version===currentVersion||version===notifiedVersion)return;
