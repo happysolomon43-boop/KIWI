@@ -11,11 +11,18 @@ const DAY_MS = 86400000;
 const MINUTE_MS = 60000;
 const DEFAULT_HORIZON = Object.freeze({ imminentDays:7, concreteDays:28 });
 
+// Cadence search visits the same zones many thousands of times. Reusing
+// immutable formatters avoids blocking the durable worker's lease heartbeat.
+const dateFormatters = new Map();
 function dateParts(date, timeZone) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit',
-    second:'2-digit', hourCycle:'h23', weekday:'short',
-  }).formatToParts(date);
+  if (!dateFormatters.has(timeZone)) {
+    if (dateFormatters.size >= 32) dateFormatters.delete(dateFormatters.keys().next().value);
+    dateFormatters.set(timeZone, new Intl.DateTimeFormat('en-CA', {
+      timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit',
+      second:'2-digit', hourCycle:'h23', weekday:'short',
+    }));
+  }
+  const parts = dateFormatters.get(timeZone).formatToParts(date);
   return Object.fromEntries(parts.filter((p)=>p.type!=='literal').map((p)=>[p.type,p.value]));
 }
 function dateKey(date, timeZone) {
