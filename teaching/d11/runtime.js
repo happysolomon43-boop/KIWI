@@ -187,8 +187,8 @@ function registerD11Runtime({
           await outboxStore.append({
             eventId:id,schemaVersion:1,
             eventType:TEACHING_EVENTS.CLASS_PREPARATION_RECONCILE,
-            eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
-            triggerType:'committed_domain_event',
+            eventCategory:EVENT_CATEGORIES.OPERATIONAL_RECOVERY_EVENT,
+            triggerType:'workflow_continuation',
             source:'teaching.d11',origin:'d11',
             actorId:studentId,aggregateType:'CLASS',
             aggregateId:classRow.class_id,aggregateVersion:Number(classRow.schedule_version),
