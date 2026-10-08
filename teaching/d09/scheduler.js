@@ -538,6 +538,6 @@ function projectCalendarSlot(slot,currentTimeZone) {
 }
 
 module.exports = {
-  DEFAULT_HORIZON,dateParts,dateKey,addDateKey,weekdayOfKey,zonedLocalToInstant,overlap,minutesBetween,
+  DEFAULT_HORIZON,horizonStage,dateParts,dateKey,addDateKey,weekdayOfKey,zonedLocalToInstant,overlap,minutesBetween,
   subtractIntervals,buildPeriods,topologicalUnits,buildCourseWork,priorPlacementIndex,stablePlacementScore,portfolioBalanceScore,deadlinePriorityScore,countStablePlacements,computeSchedule,validateEditedSchedule,projectCalendarSlot,
 };

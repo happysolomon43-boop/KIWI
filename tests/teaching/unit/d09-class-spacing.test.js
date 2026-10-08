@@ -42,3 +42,11 @@ test('legacy spacing repair preserves exact Classes and history rather than rege
   assert.equal(repair.schedule.reduce((sum,s)=>sum+Date.parse(s.endsAt)-Date.parse(s.startsAt),0),latest.slots.reduce((sum,s)=>sum+Date.parse(s.endsAt)-Date.parse(s.startsAt),0));
   assert.doesNotThrow(()=>assertClassSpacing(repair.schedule,'Africa/Lagos',{now:'2026-10-11T00:00:00Z'}));
 });
+test('repair converts stored database slots into complete persistence inputs and refreshes horizons',()=>{
+ const stored=(id,start,end,stage)=>({timetable_slot_id:id,course_id:id,slot_kind:'CLASS',starts_at:start,ends_at:end,timezone:'Africa/Lagos',horizon_stage:stage,learning_unit_refs:['lu-'+id],planned_minutes:(Date.parse(end)-Date.parse(start))/60000,exception_codes:['LEGACY'],rationale:'Approved lesson'});
+ const latest={timetable:{state_digest:'db-rows'},slots:[stored('history','2026-10-10T08:00:00Z','2026-10-10T09:00:00Z','IMMINENT'),stored('existing','2026-10-12T08:00:00Z','2026-10-12T10:00:00Z','IMMINENT'),stored('new','2026-10-12T10:00:00Z','2026-10-12T11:00:00Z','FLEXIBLE')],feasibility:{outcome:'FEASIBLE',headroom_policy_version:'h1',target_headroom_ratio:.2,minimum_headroom_ratio:.15,capacity_metrics:{scheduledMinutes:240,debtMinutes:0},reasons:[],alternatives:[]}};
+ const repaired=repairSpacing(context,latest,'2026-10-11T00:00:00Z');
+ for(const row of repaired.schedule){for(const field of ['courseId','kind','startsAt','endsAt','timezone','horizonStage','learningUnitIds','plannedMinutes','exceptionCodes'])assert.notEqual(row[field],undefined,field+' must reach the persistence boundary');assert.equal(row.horizonStage,'IMMINENT');}
+ assert.deepEqual(repaired.schedule[0].exceptionCodes,['LEGACY']);
+ assert.equal(repaired.schedule.every(s=>s.learningUnitIds.length===1),true);
+});
