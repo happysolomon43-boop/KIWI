@@ -115,7 +115,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     return withTransaction(async(tx)=>{
       const existing=await tx.query('select * from public.teaching_classroom_interactions where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].interaction_kind!==kind||existing.rows[0].body!==body)throw Object.assign(new Error('Conflicting interaction retry.'),{status:409,code:'TEACHING_D14_IDEMPOTENCY_CONFLICT'});return existing.rows[0];}
-      if(['ASK_TEACHER','NEED_HELP'].includes(kind))await assertCurrentTeachingAuthority(tx,studentId,classId);
+      if(['JOIN','ASK_TEACHER','NEED_HELP'].includes(kind))await assertCurrentTeachingAuthority(tx,studentId,classId);
       const current=await tx.query('select class_session_id,state_version,lifecycle_state from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);
       if(session && (current.rows[0]?.class_session_id!==session.class_session_id||Number(current.rows[0]?.state_version)!==Number(session.state_version)))throw Object.assign(new Error('Class changed. Reload before acting.'),{status:409,code:'TEACHING_D14_STALE_CONTROLLER'});
       const {rows}=await tx.query('insert into public.teaching_classroom_interactions(interaction_id,student_id,class_id,class_session_id,controller_version,interaction_kind,body,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[randomUUID(),studentId,classId,session?.class_session_id||null,session?.state_version||null,kind,body,idempotencyKey]);return rows[0];
