@@ -22464,7 +22464,15 @@ async function runSchemaMigrations() {
     // so converge the live schema before AI runtime initialization.
     `ALTER TABLE IF EXISTS ai_model_catalog ALTER COLUMN family DROP NOT NULL`,
   ];
-  for (const sql of migrations) {
+  // Already-applied ADD COLUMN IF NOT EXISTS statements still need an ACCESS
+  // EXCLUSIVE PostgreSQL lock. On the busy users table they were repeatedly
+  // timing out and preventing Render from opening its HTTP port. Query the
+  // system catalog once and run only DDL that can actually change the schema.
+  const bootstrapPlan = await require('./startup-schema-preflight')
+    .planStartupSchemaMigrations(query, migrations);
+  console.log('[KIWI] Boot schema preflight:', bootstrapPlan.skipped, 'existing column alterations skipped',
+    bootstrapPlan.pending.length, 'migrations remaining', 'catalog:', bootstrapPlan.usedCatalog);
+  for (const sql of bootstrapPlan.pending) {
     try {
       await query(sql);
     } catch (e) {
