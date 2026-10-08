@@ -85,6 +85,8 @@ test('Calendar and rebuild status distinguish published old jobs from new build,
   assert.match(ui,/jobId&&build\?\.eventId!==jobId/);
   assert.match(ui,/if\(error\?\.code==='KIWI_API_TIMEOUT'\)/);
   assert.match(ui,/without replacing the visible timetable/);
+  assert.match(ui,/Draft timetable proposal — not an approved Class obligation/);
+  assert.match(ui,/Approved Class schedule/);
   assert.match(ui,/signature!==lastCalendarSignature/);
   assert.match(d23,/const assessmentsPromise=coursesPromise\.then/);
   assert.match(repository,/authoritativeView[\s\S]*latestApprovedTimetable/);

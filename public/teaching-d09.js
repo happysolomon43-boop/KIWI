@@ -173,6 +173,17 @@ function stage5(course,data,container,reload,onQueued) {
   const card=el('section','teaching-d09-card');
   card.append(el('div','teaching-kicker','Timetable'),el('h3','','Shared Semester timetable'),el('p','','Proposed timetable and feasibility are Semester-wide. Existing activated Courses keep their approved Class times; a draft Course can request a new expansion proposal without editing those live Classes.'));
   const buildActive=data.backgroundBuild?.active===true;
+  const timetableState=String(data.timetable?.state||'').toUpperCase();
+  if(['PROPOSED','EDITED_PROPOSAL'].includes(timetableState)){
+    card.append(el('div','teaching-message',
+      'Draft timetable proposal — not an approved Class obligation. Review its proposed times separately in Calendar. Existing active-Course Classes retain their approved schedule until an authorized change.'));
+  }else if(timetableState==='APPROVED'){
+    card.append(el('div','teaching-message',
+      'Approved Class schedule. Changing its times requires the authorized Scheduling Request process.'));
+  }else if(timetableState==='STALE'){
+    card.append(el('div','teaching-message',
+      'This timetable is outdated. Previous Class records are preserved; review rebuild status before relying on its proposed times.'));
+  }
   // Global availability changes are governed once *any* Course activates,
   // but draft-Course timetable proposals are still allowed. D09 enforces
   // COURSE_ADMISSION_EXPANSION_PROPOSAL and freezes approved active Classes.
