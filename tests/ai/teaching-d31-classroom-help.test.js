@@ -22,6 +22,7 @@ test('a real TPF-08 registered in-Class raised hand traverses D31, D05, D03 and 
     }
   };
   const query=async(sql,params)=>{
+    if(sql.includes('teaching_runtime.academic_authority_revocations'))return {rows:[]};
     if(sql.includes('from public.teaching_classes c'))return {rows:[klass]};
     if(sql.includes('from public.teaching_courses'))return {rows:[course]};
     if(sql.includes('from public.teaching_course_plans'))return {rows:[plan]};

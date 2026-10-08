@@ -78,7 +78,8 @@ test('Teaching adapter applies long-running profile only to allowlisted invocati
 
   assert.match(source, /LONG_RUNNING_ANALYSIS_PROFILE='LONG_RUNNING_ANALYSIS'/);
   assert.match(source, /teaching\.scheduling\.instructional_load_estimation/);
-  assert.match(source, /centralRouteOptions:Object\.freeze\(\{preparationRoutePosture:preparationRoutePosture\|\|null,executionProfile\}\)/);
+  assert.ok(source.includes('centralRouteOptions:Object.freeze({preparationRoutePosture:preparationRoutePosture||null,executionProfile'), 'keep the central task profile and route intact');
+  assert.match(source, /typeof beforeAttempt==='function'/);
   assert.match(routePolicy, /TEACHING_AI_TASK\s*=\s*'MAIN_CBT'/);
   assert.match(routePolicy, /WEBSITE_DEFAULT_AI_TASK\s*=\s*TEACHING_AI_TASK/);
   assert.match(routePolicy, /COURSE_PLAN_AI_TASK\s*=\s*TEACHING_AI_TASK/);
