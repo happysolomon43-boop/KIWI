@@ -171,8 +171,12 @@ function stage4(course,data,container,reload) {
 }
 function stage5(course,data,container,reload,onQueued) {
   const card=el('section','teaching-d09-card');
-  card.append(el('div','teaching-kicker','Timetable'),el('h3','','Shared Semester timetable'),el('p','','Proposed timetable and feasibility are Semester-wide: KIWI schedules all current Course Plans together against the same availability, protected time and recovery capacity. This Course view shows only its slots, but every rebuild creates one coordinated Semester timetable version.'));
-  const postActivation=data.semesterHasActivatedCourses===true||!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
+  card.append(el('div','teaching-kicker','Timetable'),el('h3','','Shared Semester timetable'),el('p','','Proposed timetable and feasibility are Semester-wide. Existing activated Courses keep their approved Class times; a draft Course can request a new expansion proposal without editing those live Classes.'));
+  const buildActive=data.backgroundBuild?.active===true;
+  // Global availability changes are governed once *any* Course activates,
+  // but draft-Course timetable proposals are still allowed. D09 enforces
+  // COURSE_ADMISSION_EXPANSION_PROPOSAL and freezes approved active Classes.
+  const postActivation=!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
   const missingInputs=!data.semester||!data.profile;
   const unresolvedSelf=(data.unresolvedSemesterCourses||[]).filter((item)=>String(item.courseId||item.course_id||'')===String(course.course_id));
   const missingAttachment=unresolvedSelf.some((item)=>item.reason==='COURSE_NOT_ATTACHED_TO_DEFAULT_SEMESTER');

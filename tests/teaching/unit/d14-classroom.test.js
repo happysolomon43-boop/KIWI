@@ -117,7 +117,7 @@ test('Classroom history review is read-only and LEAVE retries retain the same re
 
 
 test('D14 Classroom messages are persisted with no fabricated AI response and restricted modes refuse sends',async()=>{
-  const ctx={classRow:{class_id:'c',course_id:'co',scheduled_start_at:'2026-10-08T09:00:00Z',scheduled_end_at:'2026-10-08T10:00:00Z'},session:{class_session_id:'s',state_version:1,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION',progress_state:{}}};
+  const ctx={classRow:{class_id:'c',course_id:'co',lifecycle_state:'SCHEDULED',course_lifecycle_state:'ACTIVE',source_timetable_state:'APPROVED',scheduled_start_at:'2026-10-08T09:00:00Z',scheduled_end_at:'2026-10-08T10:00:00Z'},session:{class_session_id:'s',state_version:1,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION',progress_state:{}}};
   const delivered=[];
   const repository={
     recordInteraction:async input=>{delivered.push(input);return {interaction_id:'int-1',interaction_kind:input.kind,created_at:'2026-10-08T09:20:00Z'};},

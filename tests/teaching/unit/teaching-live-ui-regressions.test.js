@@ -46,7 +46,7 @@ test('NEED HELP exists only in live approved instructional modes, with server en
   for(const mode of blocked){
     const app=classroomFixture({mode});
     assert.equal((await app.snapshot({id:'student'},'c1')).teacherMessagingAllowed,false,mode);
-    await assert.rejects(app.signal({id:'student'},'c1',{kind:'NEED_HELP',body:'Can you explain?',idempotencyKey:'key'}),{code:'TEACHING_D14_TEACHER_MESSAGES_PAUSED'});
+    await assert.rejects(app.signal({id:'student'},'c1',{kind:'NEED_HELP',body:'Can you explain?',idempotencyKey:'key'}),{code:mode==='ASSESSMENT'?'TEACHING_D14_ASSESSMENT_CONTROL_RESTRICTED':'TEACHING_D14_TEACHER_MESSAGES_PAUSED'});
   }
   for(const flags of [{sessionState:'CLOSED'},{sessionState:null},{classState:'COMPLETED'},{classState:'CANCELLED'},{courseState:'DRAFT'},{timetableState:'PROPOSED'},{timetableState:'SUPERSEDED'}]){
     const app=classroomFixture(flags);
@@ -66,7 +66,7 @@ test('live Classroom Details retains its expanded state and remains inline on sm
 test('Course UI refreshes without auto-reload or editor reconstruction on clock-only updates',()=>{
   const shell=read('public/teaching.js'),classroom=read('public/teaching-classroom.js');
   assert.doesNotMatch(shell,/if\(!editing\)\{window\.location\.reload\(\);return;\}/);
-  assert.match(shell,/A new frontend release is never permission to destroy/);
+  assert.match(shell,/Never automatically reload an active Teaching session/);
   assert.match(shell,/if\(activeTeachingView==='overview'\) renderActiveTeachingView\(\)/);
   assert.match(classroom,/comparable\(previous\)===comparable\(data\)/);
 });
@@ -90,4 +90,28 @@ test('Calendar and rebuild status distinguish published old jobs from new build,
   assert.match(repository,/authoritativeView[\s\S]*latestApprovedTimetable/);
   assert.match(repository,/t\.timetable_state in \('PROPOSED','EDITED_PROPOSAL'\)/);
   assert.match(repository,/and not exists \(/);
+});
+
+test('D09 timetable editor is executable; an active Semester cannot block a new draft Course proposal',()=>{
+  const vm=require('node:vm'),source=read('public/teaching-d09.js');
+  const start=source.indexOf('function stage5('),end=source.indexOf('\nasync function renderSchedule(',start);
+  assert.ok(start>=0&&end>start);
+  function render(courseState,buildActive=false){
+    const nodes=[];
+    const el=(tag,cls='',text='')=>{
+      const node={tag,cls,text,children:[],append(...xs){this.children.push(...xs);},addEventListener(){},setAttribute(){},dataset:{}};
+      nodes.push(node);return node;
+    };
+    const context={el,statusName:x=>String(x),metric:()=>el('div','metric'),
+      course:{course_id:'gst',lifecycle_state:courseState},
+      data:{semesterHasActivatedCourses:true,semester:{},profile:{},backgroundBuild:{active:buildActive},unresolvedSemesterCourses:[],courseSlots:[],feasibility:null,scheduleHealth:{},timetable:null},
+      container:el('main'),reload:()=>{},onQueued:()=>{}};
+    vm.runInNewContext(source.slice(start,end)+';stage5(course,data,container,reload,onQueued);',context);
+    const action=nodes.find(n=>n.tag==='button'&&n.cls.includes('teaching-button--primary'));
+    assert.ok(action,'Build action was created without a ReferenceError');
+    return action;
+  }
+  assert.equal(render('DRAFT').disabled,false,'Draft GST remains schedulable alongside active Courses');
+  assert.equal(render('DRAFT',true).disabled,true,'Active job prevents duplicate');
+  assert.equal(render('ACTIVE').disabled,true,'Approved live Course schedule is not directly mutable');
 });
