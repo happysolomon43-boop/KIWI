@@ -98,6 +98,10 @@ function createAdminClassroomTestRouter({query,env=process.env,fetchImpl=globalT
     } catch (_) {return res.status(503).json({code:'CLASSROOM_TEST_AUTH_UNAVAILABLE'});}
     next();
   });
+  router.get('/access',(_req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    res.json({admin:true,feature:'classroom-test',isolationRequired:true});
+  });
   async function attest() {
     const origin=sandboxConfiguration(env);
     if(!origin) return {error:'CLASSROOM_TEST_NOT_CONFIGURED',status:503};
