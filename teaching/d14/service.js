@@ -14,12 +14,22 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const course=await repository.identity(user.id,courseId);if(!course)fail('TEACHING_D14_COURSE_NOT_FOUND',404);
     const classes=await repository.listClasses(user.id,courseId),instant=clock(),at=(instant instanceof Date?instant:new Date(instant)).getTime();
     const isPast=(row)=>Date.parse(row.scheduled_end_at)<=at||['COMPLETED','CLOSED'].includes(String(row.lifecycle_state||row.session_state||'').toUpperCase());
-    return Object.freeze({course,classes:Object.freeze(classes),upcoming:Object.freeze(classes.filter((row)=>!isPast(row))),history:Object.freeze(classes.filter(isPast).sort((a,b)=>Date.parse(b.scheduled_start_at)-Date.parse(a.scheduled_start_at)))});
+    const enriched=classes.map(row=>{
+      const starts=Date.parse(row.scheduled_start_at),ends=Date.parse(row.scheduled_end_at);
+      const sessionState=String(row.session_state||'').toUpperCase();
+      const canEnter=String(course.lifecycle_state||'').toUpperCase()==='ACTIVE'
+        && row.lifecycle_state!=='CANCELLED'&&Number.isFinite(starts)&&Number.isFinite(ends)
+        && at>=starts&&(at<ends||sessionState==='ACTIVE')&&sessionState!=='CLOSED';
+      return Object.freeze({...row,can_enter:canEnter,entry_opens_at:row.scheduled_start_at,
+        has_authoritative_session:Boolean(sessionState),historical_unstarted:isPast(row)&&!sessionState&&!row.attendance_outcome});
+    });
+    return Object.freeze({course,serverNow:instant.toISOString(),classes:Object.freeze(enriched),upcoming:Object.freeze(enriched.filter(row=>!isPast(row))),history:Object.freeze(enriched.filter(isPast).sort((a,b)=>Date.parse(b.scheduled_start_at)-Date.parse(a.scheduled_start_at)))});
   }
   async function snapshot(user,classId){
     const d11=await d11Service.getClass(user,classId);
     const source=await context(user.id,classId);
-    const mode=source.session?.instructional_substate||'PRE_CLASS';
+    const currentTime=clock().getTime(),starts=Date.parse(source.classRow.scheduled_start_at),ends=Date.parse(source.classRow.scheduled_end_at);
+    const mode=source.session?.instructional_substate||(currentTime>=ends?'UNSTARTED_PAST':currentTime>=starts?'START_DELAYED':'PRE_CLASS');
     const restricted=RESTRICTED.has(mode);
     const [identity,scenes,notes,studyNote,teacherMessage,firstEntry,conversation]=await Promise.all([
       repository.identity(user.id,source.classRow.course_id),
@@ -51,7 +61,8 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       resumeState:source.session.resume_instructional_substate||'INSTRUCTION',canResume:Boolean(source.session.resume_instructional_substate),
     }:null;
     return Object.freeze({class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
-      mode:MODES[mode]||'Before Class',modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,
+      mode:MODES[mode]||(mode==='UNSTARTED_PAST'?'Class did not start':mode==='START_DELAYED'?'Start pending':'Before Class'),modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,
+      canStartClass:!source.session&&currentTime>=starts&&currentTime<ends&&source.classRow.lifecycle_state!=='CANCELLED'&&source.classRow.course_lifecycle_state==='ACTIVE',
       requiredMaterials:Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],
       learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
@@ -86,6 +97,13 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
   }
   async function enter(user,classId){
     const ctx=await context(user.id,classId);
+    if(ctx.classRow.lifecycle_state==='CANCELLED')fail('TEACHING_D14_CLASS_CANCELLED',409);
+    if(ctx.classRow.course_lifecycle_state!=='ACTIVE')fail('TEACHING_D14_COURSE_NOT_ACTIVE',409);
+    if(ctx.session?.lifecycle_state==='CLOSED')fail('TEACHING_D14_CLASS_ALREADY_ENDED',409);
+    const now=clock().getTime(),start=Date.parse(ctx.classRow.scheduled_start_at),end=Date.parse(ctx.classRow.scheduled_end_at);
+    if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start)fail('TEACHING_D14_INVALID_CLASS_SCHEDULE',409);
+    if(now<start)fail('TEACHING_D14_CLASS_NOT_STARTED',409);
+    if(now>=end&&ctx.session?.lifecycle_state!=='ACTIVE')fail('TEACHING_D14_CLASS_ALREADY_ENDED',409);
     const row=await repository.recordInteraction({studentId:user.id,classId,session:ctx.session,kind:'JOIN',body:null,idempotencyKey:`d14-join:${classId}`});
     const attendance=attendanceService&&typeof attendanceService.observeJoin==='function'
       ? await attendanceService.observeJoin(user,classId,{interactionId:row.interaction_id,occurredAt:row.created_at})
