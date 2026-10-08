@@ -6,7 +6,7 @@ const express = require('express');
 const {
   fingerprint, matchesKey, sandboxConfiguration, testInstanceGate,
   createAttestationHandler, createAdminClassroomTestRouter,
-} = require('../../teaching/admin-classroom-test');
+} = require('../../../teaching/admin-classroom-test');
 
 const PROD_DB='postgresql://postgres.prod-project:p@prod.db.example:5432/postgres';
 const SANDBOX_DB='postgresql://postgres.sandbox-project:p@sandbox.db.example:5432/postgres';
