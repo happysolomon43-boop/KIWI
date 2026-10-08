@@ -45,6 +45,7 @@ const { createStudyImportRouter } = require('./study-import');
 const { createTeachingD05RuntimePlatform } = require('./teaching/runtime');
 const { createD11RuntimeRecoveryRepository } = require('./teaching/repositories/d11-runtime-recovery');
 const { createD11RuntimeRecovery } = require('./teaching/d11/runtime-recovery');
+const { createD11PreparationCancellation } = require('./teaching/d11/preparation-cancellation');
 const { createD31ReleaseIntelligence } = require('./teaching/d31');
 const { createTeachingEventSubscriberRegistry } = require('./teaching/events/dispatcher');
 const { TEACHING_EVENTS } = require('./teaching/events/names');
@@ -110,6 +111,9 @@ const teachingRuntimePlatform = createTeachingD05RuntimePlatform({
   eventPublisher: (event) => teachingPublishedEvents.publish(event),
   env: process.env,
   logger: console,
+});
+const teachingClassPreparationCancellation = createD11PreparationCancellation({
+  query,withTransaction,randomUUID,logger:console,
 });
 const teachingClassRuntimeRecovery = createD11RuntimeRecovery({
   repository:createD11RuntimeRecoveryRepository({query}),
@@ -22666,6 +22670,7 @@ try {
   teachingRuntimePlatform.start();
   // Recover missing D11 Class runtime through the same guarded, durable outbox
   // subscriber used by timetable reflow; no direct workspace/model mutation.
+  teachingClassPreparationCancellation.start();
   teachingClassRuntimeRecovery.start();
   console.log('[KIWI Teaching] D05 runtime initialized; due-event and durable outbox workers started.');
 } catch (e) {
