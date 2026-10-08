@@ -24,7 +24,7 @@ function buildRuntime({classes=[],originCourse='gst',onGetClass=null,outboxAvail
   ensurePreparationWorkspace:async args=>{seed.push(args);return {workspace:{workspace_id:'ws-'+args.classId}};},
  };
  const service={startController:async()=>{},refreshCoursePreparation:async(studentId,courseId)=>{refresh.push({studentId,courseId});return [];}};
- const registry={register(type,{handle,subscriberId})=>{
+ const registry={register:(type,{handle,subscriberId})=>{
   subscriptions.set(type+':'+subscriberId,handle);return {eventType:type,subscriberId};}};
  registerD11Runtime({
   publishedEvents:registry,eventRuntime:{register:()=>({})},
