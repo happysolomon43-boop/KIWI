@@ -142,7 +142,7 @@ function createAdminClassroomTestRouter({query,env=process.env,fetchImpl=globalT
         stateVersion:Number(course.state_version),
         scheduledClassCount:Number(course.scheduled_class_count),
         planCount:Number(course.plan_count)
-      },execution:'ISOLATED_SANDBOX_ONLY'});
+      },execution:'NORMAL_KIWI_CLASSROOM'});
     }catch(_){return res.status(503).json({code:'CLASSROOM_TEST_SOURCE_UNAVAILABLE'});}
   });
   router.get('/access',(_req,res)=>{
