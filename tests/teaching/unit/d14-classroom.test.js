@@ -164,3 +164,10 @@ test('Closed Classroom stops overtime counter and replaces empty Board illustrat
   assert.match(source,/No Board scenes saved/);
   assert.match(source,/Class Summary remain available/);
 });
+
+
+test('Assessment/Classwork transitions dismiss an already-open Notebook or Teacher sheet',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
+  assert.match(source,/if\(\['ASSESSMENT','CLASSWORK'\]\.includes\(s\.modeKey\)&&state\.sheet\)closeSheet\(\{restore:false,force:true\}\)/);
+  assert.match(source,/if\(!state\.sheet\|\|state\.sheetBusy&&!force\)return/);
+});
