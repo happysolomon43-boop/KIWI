@@ -1034,8 +1034,12 @@ function createD11LessonControllerRepository({
       error.status = 409;
       throw error;
     }
-    if (classRow.course_lifecycle_state !== 'ACTIVE' || classRow.lifecycle_state === 'CANCELLED') {
-      const error = new Error('Class/Course is not eligible for live Controller start.');
+    if (classRow.course_lifecycle_state !== 'ACTIVE'
+      || classRow.lifecycle_state !== 'SCHEDULED'
+      || classRow.source_timetable_state !== 'APPROVED'
+      || clock().getTime()<Date.parse(classRow.scheduled_start_at)
+      || clock().getTime()>=Date.parse(classRow.scheduled_end_at)) {
+      const error = new Error('Class/Course/approved timetable is not eligible for new live Controller start.');
       error.code = 'TEACHING_D11_CLASS_NOT_ACTIVE';
       error.status = 409;
       throw error;
