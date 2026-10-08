@@ -303,7 +303,11 @@ function renderSummary(s){const section=$('section','tc-after');add(section,$('d
   if(s.summary?.payload?.transcript_url){const link=document.createElement('a');link.className='tc-artifact-link';link.href=s.summary.payload.transcript_url;link.textContent='Full transcript · secondary record';link.setAttribute('aria-label','Open full transcript as a secondary class artifact');artifacts.append(link);}
   section.append(artifacts);return section;}
 function render(){
-  const s=state.snapshot;if(!s||!state.host)return;const root=$('div','tc-shell');root.dataset.mode=s.modeKey;
+  const s=state.snapshot;if(!s||!state.host)return;
+  // A protected activity cannot inherit an already-open Notebook or Teacher sheet.
+  // Close it before the refreshed Class DOM is made visible.
+  if(['ASSESSMENT','CLASSWORK'].includes(s.modeKey)&&state.sheet)closeSheet({restore:false,force:true});
+  const root=$('div','tc-shell');root.dataset.mode=s.modeKey;
   root.append(renderHeader(s));const body=$('main','tc-layout');
   const left=$('div','tc-layout__main');left.append(renderTeacher(s));
   if(s.modeKey==='PRE_CLASS'){left.append(notice('Class begins soon',`Scheduled for ${date(s.class.scheduledStartAt)}. Expected duration: ${Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)} minutes.`,'tc-preclass'));}
