@@ -163,7 +163,7 @@ test('Classroom messaging timeline reads student questions and student-visible T
 test('Closed Classroom stops overtime counter and replaces empty Board illustration with explicit record guidance',()=>{
   const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
   assert.match(source,/overall\.textContent=s\.modeKey==='CLOSURE'/);
-  assert.match(source,/No Board scenes saved/);
+  assert.match(source,/No Board scenes published/);
   assert.match(source,/Class Summary remain available/);
 });
 
