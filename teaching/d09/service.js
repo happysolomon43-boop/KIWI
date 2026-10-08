@@ -181,7 +181,55 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
     for(const bundle of eligibleContext.courses||[]) assertCurrentCoursePlan(bundle.course,bundle.plan,bundle.scopeChanges);
 
     const now=clock().toISOString();
-    const {planningContext,result}=computeSharedSemesterSchedule(authoritativeContext,{now});
+    let {planningContext,result}=computeSharedSemesterSchedule(authoritativeContext,{now});
+    if(source==='COURSE_ADMISSION_EXPANSION_PROPOSAL'&&typeof repository.latestApprovedTimetable==='function'){
+      const approved=await repository.latestApprovedTimetable(user.id,authoritativeContext.semester.semester_id);
+      const activeCourseIds=new Set((authoritativeContext.courses||[])
+        .filter((bundle)=>String(bundle.course?.lifecycle_state||'')==='ACTIVE')
+        .map((bundle)=>String(bundle.course.course_id)));
+      const fixedAuthoritySlots=(approved.slots||[])
+        .filter((slot)=>activeCourseIds.has(String(slot.course_id||slot.courseId||'')))
+        .filter((slot)=>Date.parse(slot.ends_at||slot.endsAt)>Date.parse(now))
+        .map((slot)=>Object.freeze({
+          courseId:String(slot.course_id||slot.courseId),
+          kind:String(slot.slot_kind||slot.kind),
+          startsAt:slot.starts_at||slot.startsAt,
+          endsAt:slot.ends_at||slot.endsAt,
+          timezone:slot.timezone||authoritativeContext.semester.timezone,
+          localDate:slot.local_date||slot.localDate||null,
+          learningUnitIds:Object.freeze([...(slot.learning_unit_refs||slot.learningUnitIds||[])]),
+          plannedMinutes:Number(slot.planned_minutes||slot.plannedMinutes||0),
+          horizonStage:slot.horizon_stage||slot.horizonStage||null,
+          exceptionCodes:Object.freeze([...(slot.exception_codes||slot.exceptionCodes||[])]),
+          rationale:slot.rationale||'Existing active Course authority retained during admission planning.',
+        }));
+      if(fixedAuthoritySlots.length){
+        const admissionCourseIds=new Set((authoritativeContext.courses||[])
+          .filter((bundle)=>!activeCourseIds.has(String(bundle.course?.course_id||'')))
+          .map((bundle)=>String(bundle.course.course_id)));
+        const authorityBlocks=fixedAuthoritySlots.map((slot)=>Object.freeze({
+          block_kind:'HARD_UNAVAILABLE',
+          starts_at:slot.startsAt,
+          ends_at:slot.endsAt,
+          label:'Existing active Course class',
+          reason:'Active Semester authority is fixed during pre-activation Course admission.',
+          derived_by:'D09_ACTIVE_AUTHORITY_FLOOR',
+        }));
+        const admissionContext=Object.freeze({
+          ...authoritativeContext,
+          courses:Object.freeze((authoritativeContext.courses||[]).filter((bundle)=>admissionCourseIds.has(String(bundle.course?.course_id||'')))),
+          blocks:Object.freeze([...(authoritativeContext.blocks||[]),...authorityBlocks]),
+        });
+        const admission=computeSharedSemesterSchedule(admissionContext,{now});
+        planningContext=Object.freeze({...admission.planningContext,courses:Object.freeze([...(eligibleContext.courses||[])])});
+        result=Object.freeze({
+          ...admission.result,
+          schedule:Object.freeze([...fixedAuthoritySlots,...admission.result.schedule].sort((a,b)=>Date.parse(a.startsAt)-Date.parse(b.startsAt))),
+          metrics:Object.freeze({...admission.result.metrics,fixedAuthoritySlotCount:fixedAuthoritySlots.length}),
+          policy:Object.freeze({...admission.result.policy,activeAuthorityPreserved:true}),
+        });
+      }
+    }
     const instructionalCourseIds=new Set(instructionalUnits(planningContext).map(({bundle})=>String(bundle.course.course_id)));
     for(const affectedCourseId of instructionalCourseIds){
       const facts=scheduleClassFacts(slotsForCourse(result.schedule,affectedCourseId),now);
