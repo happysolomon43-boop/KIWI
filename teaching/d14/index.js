@@ -4,5 +4,6 @@ module.exports={
   ...require('./board'),
   ...require('./study-note'),
   ...require('./service'),
+  ...require('./help-intelligence'),
   ...require('./runtime'),
 };

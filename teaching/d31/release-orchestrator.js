@@ -75,6 +75,18 @@ function createD31ReleaseReaders({query}={}) {
       const value=String(ref?.ref||''),separator=value.indexOf(':');
       const kind=value.slice(0,separator),id=value.slice(separator+1);
       if(!id)fail('A Course context reference is missing its identity.');
+      if(kind==='student-question') {
+        if(!boundClass)fail('Student questions are only permitted in an authenticated Class.');
+        const {rows=[]}=await query("select interaction_id,interaction_kind,body,created_at from public.teaching_classroom_interactions where student_id=$1 and class_id=$2 and interaction_id=$3 and interaction_kind in ('ASK_TEACHER','NEED_HELP')",[actorId,boundClass.class_id,id]);
+        if(!rows[0])fail('Raised-hand question not found in this Class.');
+        return {kind,value:rows[0]};
+      }
+      if(kind==='lesson-blueprint'){
+        if(!boundClass)fail('Lesson blueprint requires an authenticated Class.');
+        const {rows=[]}=await query("select lesson_blueprint_id,version_no,blueprint_state,objective_summary,blueprint_payload,planned_learning_unit_refs from public.teaching_lesson_blueprints where student_id=$1 and class_id=$2 and lesson_blueprint_id=$3 and blueprint_state='VALIDATED'",[actorId,boundClass.class_id,id]);
+        if(!rows[0])fail('Qualified Class lesson blueprint not found.');
+        return {kind,value:rows[0]};
+      }
       if(kind==='course'&&id===String(course.course_id))return {kind,value:course};
       if(kind==='class'){
         if(!boundClass||id!==String(boundClass.class_id))fail('Class context is outside the authenticated active Class.');
@@ -112,7 +124,7 @@ function createD31ReleaseReaders({query}={}) {
     }
     for(const ref of contextSpec.untrusted_refs||[]){
       const item=await read(ref);
-      untrusted.push(asUntrustedData({kind:item.kind==='intake'?'student_response':'uploaded_material',data:item.value,provenance:{ref:ref.ref}}));
+      untrusted.push(asUntrustedData({kind:['intake','student-question'].includes(item.kind)?'student_response':'uploaded_material',data:item.value,provenance:{ref:ref.ref}}));
     }
     if((contextSpec.permission_refs||[]).length)fail('Permission context requires a dedicated authorized reader.');
     return buildSeparatedContextLanes({trustedAuthoritativeState:trusted,permissionConstraints:{},provenanceLinkedAcademicContent:provenance,untrustedContent:untrusted});
