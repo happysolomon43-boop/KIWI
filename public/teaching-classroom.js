@@ -79,7 +79,10 @@ async function recoverPreparedLesson(classId) {
   const base='/teaching/classes/'+encodeURIComponent(classId);
   let current=await kiwiApiRequest(base+'/controller');
   const ready=()=>current?.blueprint?.currentForAuthoritativeContext===true
-    && ['FINALIZED','HANDED_OFF'].includes(current?.preparation?.lifecycleState);
+    // Handed-off PPL workspaces are intentionally absent from D11's active
+    // workspace projection. Absence alongside a current validated Blueprint
+    // is the normal post-handoff state, not a missing preparation.
+    && (!current?.preparation || ['FINALIZED','HANDED_OFF'].includes(current.preparation.lifecycleState));
   if(ready())return;
   if(current?.controller)throw new Error('The Class has already started. Refresh its saved Controller.');
   for(let step=1;step<=3;step++){
