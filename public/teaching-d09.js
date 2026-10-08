@@ -298,7 +298,7 @@ async function renderCalendar() {
   const main=document.getElementById('teachingApp');if(!main)return;
   const page=el('section','teaching-view teaching-d09-page'),zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
   const head=el('div','teaching-d09-card teaching-d09-calendar-hero'),copy=el('div','teaching-d09-calendar-hero__copy'),meta=el('div','teaching-d09-calendar-hero__meta');
-  copy.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Upcoming obligations stay separate from Class history. Your approved timetable remains authoritative; earlier Class attendance is preserved below.'));
+  copy.append(el('div','teaching-kicker','Calendar'),el('h2','','Teaching Calendar'),el('p','','Classes and announced assessments share one timetable. Upcoming obligations stay separate from Class history; earlier Class attendance is preserved below.'));
   const back=el('button','teaching-d08-link-button','Back to courses');back.type='button';back.addEventListener('click',()=>courseSurface.openOverview?courseSurface.openOverview():window.location.reload());
   const refreshButton=el('button','teaching-d08-link-button','Refresh Calendar');refreshButton.type='button';
   meta.append(el('span','teaching-d09-calendar-zone',`Times shown in ${zone}`),refreshButton,back);head.append(copy,meta);
