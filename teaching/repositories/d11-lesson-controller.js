@@ -6,6 +6,8 @@ const { buildClosureFactPack } = require('../d11/contracts');
 const { TEACHING_EVENTS } = require('../events/names');
 const { EVENT_CATEGORIES } = require('../runtime/constants');
 
+const {lateStartRecoveryEligibility}=require('../d11/late-start-recovery');
+
 function createD11LessonControllerRepository({
   query,
   withTransaction,
@@ -668,6 +670,7 @@ function createD11LessonControllerRepository({
     blueprint,
     capabilityId='teaching.lesson.pre_class_lesson_planning',
     promptFamilyRef='TPF-05',
+    allowLateStartRecovery=false,
   } = {}) {
     return withTransaction(async (tx) => {
       // Fence the final result of an already-running AI call against current
@@ -687,7 +690,8 @@ function createD11LessonControllerRepository({
         &&klass.lifecycle_state==='SCHEDULED'
         &&klass.course_lifecycle_state==='ACTIVE'
         &&klass.source_timetable_state==='APPROVED'
-        &&Date.parse(klass.scheduled_start_at)>clock().getTime()
+        &&(Date.parse(klass.scheduled_start_at)>clock().getTime()
+          || (allowLateStartRecovery===true && lateStartRecoveryEligibility({classRow:klass,session,now:clock()}).allowed))
         &&!session
         &&workspace.lifecycle_state==='ACTIVE'
         &&String(pre.course_state_version)===String(klass.course_state_version)
