@@ -98,3 +98,37 @@ test('timetable rematerialization retires every superseded unstarted Class and C
   assert.doesNotMatch(materializer,/scheduled_start_at>=/);
   assert.match(repository,/c\.lifecycle_state<>'CANCELLED'/);
 });
+
+test('Classroom attendance and Calendar select the current versioned obligation without nonexistent is_current column', () => {
+  const classroom=read('teaching/repositories/d14-classroom.js');
+  const calendar=read('teaching/repositories/d09-scheduling.js');
+  for(const sql of [classroom,calendar]){
+    assert.doesNotMatch(sql,/is_current\s*=\s*true/);
+    assert.match(sql,/schedule_version=c\.schedule_version/);
+    assert.match(sql,/order by version_no desc,recorded_at desc limit 1/);
+  }
+  const projection=read('teaching/d23/service.js');
+  assert.match(projection,/attendanceOutcome:row\.attendanceOutcome\|\|row\.attendance_outcome/);
+});
+
+test('Calendar separates upcoming Classes and attendance-backed past history with automatic refresh',()=>{
+  const source=read('public/teaching-d09.js');
+  assert.match(source,/Upcoming & active/);
+  assert.match(source,/Past Class history/);
+  assert.match(source,/attendanc(eOutcome|e pending)/i);
+  assert.match(source,/window\.setInterval/);
+  assert.match(source,/document\.visibilityState==='visible'/);
+  assert.match(source,/TEACHING_D09_ACTIVE_SEMESTER_REQUEST_REQUIRED/);
+});
+
+test('Unfingerprinted assets revalidate and Teaching detects deployments without interrupting active editing',()=>{
+  const html=read('public/teaching.html');
+  const server=read('index.js');
+  const teaching=read('public/teaching.js');
+  assert.match(server,/client-version/);
+  assert.match(server,/max-age=0, must-revalidate/);
+  assert.doesNotMatch(server,/max-age=31536000, immutable/);
+  assert.match(teaching,/\.tc-active/);
+  assert.match(teaching,/visibilitychange/);
+  assert.match(html,/teaching-classroom\.js\?v=20261008-live-reliability-1/);
+});
