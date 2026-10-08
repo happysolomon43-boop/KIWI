@@ -16,6 +16,7 @@ const {
 } = require('./contracts');
 const { TEACHING_EVENTS } = require('../events/names');
 const { buildPreparationEvent } = require('../preparation/events');
+const {preparationReviewDueAt,shouldDeferPreparation}=require('./preparation-window');
 const {
   evaluateWorkspaceTransition,
   evaluateFinalizationReadiness,
@@ -473,6 +474,34 @@ function createD11Service({
     if(!current?.classRow||current.classRow.lifecycle_state==='CANCELLED'
       ||clock().getTime()>=Date.parse(current.classRow.scheduled_end_at))
       return Object.freeze({accepted:true,noop:true,reason:'CLASS_NO_LONGER_PREPARABLE'});
+    if(!Number.isFinite(Date.parse(current.classRow.scheduled_start_at))
+      ||current.classRow.course_lifecycle_state&&current.classRow.course_lifecycle_state!=='ACTIVE'
+      ||current.classRow.source_timetable_state&&current.classRow.source_timetable_state!=='APPROVED'
+      ||current.session)
+      return Object.freeze({accepted:true,noop:true,reason:'CLASS_NOT_ELIGIBLE_FOR_PREPARATION'});
+    if(shouldDeferPreparation(current.classRow.scheduled_start_at,clock())){
+      if(typeof dueEventStore.enqueue!=='function') {
+        fail('Durable PPL review scheduling is unavailable.','TEACHING_D11_PREPARATION_REVIEW_SCHEDULER_UNAVAILABLE',503);
+      }
+      const eventId='d11-ppl-review:'+workspace.workspace_id+':state-v'+Number(workspace.state_version)
+        +':schedule-v'+Number(current.classRow.schedule_version);
+      const dueAt=preparationReviewDueAt(current.classRow.scheduled_start_at);
+      await dueEventStore.enqueue(scheduledEvent({
+        eventType:TEACHING_EVENTS.PREPARATION_REVIEW_DUE,
+        eventId,studentId:workspace.student_id,classId:workspace.target_ref,
+        aggregateVersion:Number(current.classRow.schedule_version),dueAt,
+        correlationId:canonicalEventField(event,'correlationId','correlation_id')||eventId,
+        causationId:canonicalEventField(event,'eventId','event_id')||null,
+        payload:{class_id:workspace.target_ref,preparation_workspace_id:workspace.workspace_id,
+          workspace_state_version:Number(workspace.state_version),
+          schedule_version:Number(current.classRow.schedule_version),
+          timetable_version_id:current.classRow.source_timetable_version_id||null,
+          kind:'STAGED_PREPARATION_WINDOW'},
+        provenanceRefs:['class:'+workspace.target_ref,'preparation-workspace:'+workspace.workspace_id],
+      }));
+      return Object.freeze({accepted:true,modelWorkStarted:false,deferred:true,
+        reviewDueEventId:eventId,reviewDueAt:dueAt});
+    }
     // Model work is provisional and never mutates the authoritative Controller.
     // A failed model call must not be acknowledged as a successful publication.
     // Let the durable outbox retry it with its bounded backoff and audit trail.
