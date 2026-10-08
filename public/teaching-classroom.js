@@ -4,7 +4,7 @@ if(typeof kiwiApiRequest!=='function'||!courses?.registerSection)throw new Error
 
 const $=(tag,className='',text=null)=>{const n=document.createElement(tag);if(className)n.className=className;if(text!==null)n.textContent=String(text);return n;};
 const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false,returnFocus:null,leaveRequestId:null,reviewOnly:false,sheet:null,sheetKind:null,sheetFocus:null,sheetKey:null,sheetBusy:false};
-const MODE={PRE_CLASS:'Before Class',OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'};
+const MODE={PRE_CLASS:'Before Class',START_DELAYED:'Start pending',UNSTARTED_PAST:'Did not start',OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'};
 function when(value){return value?new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'—';}
 function date(value){return value?new Date(value).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'—';}
 function duration(ms){let n=Math.max(0,Math.floor(ms/1000));return `${Math.floor(n/60).toString().padStart(2,'0')}:${(n%60).toString().padStart(2,'0')}`;}
@@ -57,7 +57,7 @@ function trapClassroomFocus(event){
 function updateClocks(){
   const s=state.snapshot;if(!s||!state.host)return;
   const now=serverNow(), end=new Date(s.class.scheduledEndAt).getTime();
-  const overall=state.host.querySelector('[data-clock="class"]');if(overall)overall.textContent=s.modeKey==='CLOSURE'||s.controller?.lifecycleState==='CLOSED'?'Class ended':now>end?`+${duration(now-end)} overtime`:`${duration(end-now)} to scheduled end`;
+  const overall=state.host.querySelector('[data-clock="class"]');if(overall)overall.textContent=['CLOSURE','UNSTARTED_PAST'].includes(s.modeKey)||s.controller?.lifecycleState==='CLOSED'?'Class ended':now>end?`+${duration(now-end)} overtime`:`${duration(end-now)} to scheduled end`;
   const breakClock=state.host.querySelector('[data-clock="activity"]');if(breakClock){const target=s.controller?.breakEndsAt||s.controller?.progressState?.activity_ends_at;if(target)breakClock.textContent=`${duration(new Date(target).getTime()-now)} remaining`;}
 }
 function renderHeader(s){
@@ -88,7 +88,11 @@ function renderTeacher(s){
   const panel=$('section','tc-teacher');panel.setAttribute('aria-label','Teacher Presence');panel.setAttribute('aria-live','polite');
   const avatar=$('div','tc-teacher__avatar','K');avatar.setAttribute('aria-hidden','true');
   let message='Follow the Board. Your workspace will appear when there is something to do.';
-  if(!s.controller)message='Class will open at the scheduled time. Your teacher will lead the session.';
+  if(!s.controller)message=s.modeKey==='UNSTARTED_PAST'
+    ?'This scheduled lesson has passed without a started Class session. Its attendance record is preserved for review.'
+    :s.modeKey==='START_DELAYED'
+      ?'Your Class start is pending. You can start it here if the scheduled start event was delayed.'
+      :'Your AI Teacher will lead the lesson when its scheduled time arrives.';
   if(s.modeKey==='INDEPENDENT_PRACTICE')message='Take this time to work independently. I will return when the activity ends.';
   if(s.modeKey==='BREAK')message='We are on a break. Teaching will resume when the timer ends.';
   if(s.modeKey==='INTERRUPTED')message='The Class is interrupted. Your current work remains available when it resumes.';
@@ -127,7 +131,7 @@ function renderBoard(s){
   const title=add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','TEACHING SURFACE'),$('h2','','The Board')));
   panel.append(title);
   if(!s.boardHistoryAllowed){panel.append(notice('Board history is unavailable','This activity restricts earlier teaching materials.'));return panel;}
-  if(!s.board.length){if(s.modeKey==='CLOSURE'||s.controller?.lifecycleState==='CLOSED')panel.append(notice('No Board scenes saved','This Class ended without a published Board scene. Your saved notes and Class Summary remain available.'));else panel.append(add($('div','tc-board-empty'),$('div','tc-board-empty__glyph','✧'),$('h3','','A clear space to think'),$('p','','The Board will hold the explanation, examples and comparisons for this Class.')));return panel;}
+  if(!s.board.length){if(['CLOSURE','UNSTARTED_PAST'].includes(s.modeKey)||s.controller?.lifecycleState==='CLOSED')panel.append(notice('No Board scenes published','There is no recorded lesson Board for this Class. Review attendance and any saved notes in Past Classes.'));else panel.append(add($('div','tc-board-empty'),$('div','tc-board-empty__glyph','✧'),$('h3','','A clear space to think'),$('p','','The Board will hold the explanation, examples and comparisons for this Class.')));return panel;}
   state.scene=Math.min(state.scene,s.board.length-1);const scene=s.board[state.scene];
   const previous=button('←',()=>{state.scene=Math.max(0,state.scene-1);render();},'tc-icon');previous.setAttribute('aria-label','Previous Board scene');const next=button('→',()=>{state.scene=Math.min(s.board.length-1,state.scene+1);render();},'tc-icon');next.setAttribute('aria-label','Next Board scene');title.append(add($('div','tc-scene-nav'),previous,$('span','',`${state.scene+1} / ${s.board.length}`),next));
   title.querySelectorAll('button')[0].disabled=state.scene===0;title.querySelectorAll('button')[1].disabled=state.scene===s.board.length-1;
@@ -137,7 +141,18 @@ function renderBoard(s){
 function renderWorkspace(s){
   const panel=$('section','tc-workspace');add(panel,add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','YOUR SPACE'),$('h2','',s.modeKey==='INDEPENDENT_PRACTICE'?'Work independently':'Student Workspace'))));
   if(state.reviewOnly){panel.append(notice('Past Class record','Review the Board, summary and Notebook without creating a new attendance interaction.'));return panel;}
-  if(!s.controller){panel.append(notice('Ready when you are',`Scheduled ${date(s.class.scheduledStartAt)} · ${Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)} minutes. ${s.requiredMaterials?.length?'Bring: '+s.requiredMaterials.join(', '):'No materials have been specified.'}`));const start=button('Start Class',()=>controllerAction('start'),'tc-button tc-button--solid');panel.append(start);return panel;}
+  if(!s.controller){
+    const schedule='Scheduled '+date(s.class.scheduledStartAt)+' · '+Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)+' minutes.';
+    if(s.modeKey==='UNSTARTED_PAST'){
+      panel.append(notice('Historical Class','This Class has passed without an active lesson Controller. It cannot be restarted or joined as a live Class.'));
+    }else if(s.canStartClass){
+      panel.append(notice('Start available',schedule+' KIWI can recover the lesson if its scheduled start event was delayed.'));
+      panel.append(button('Start Class',()=>controllerAction('start'),'tc-button tc-button--solid'));
+    }else{
+      panel.append(notice('Scheduled Class',schedule+' Start Class will become available at the authoritative start time.'));
+    }
+    return panel;
+  }
   if(s.modeKey==='BREAK'){panel.append(notice('A proper pause','Teaching is paused. You can step away and return when the break ends.','tc-break'));return panel;}
   if(s.modeKey==='ASSESSMENT'){panel.append(notice('Assessment in progress','Assessment rules and responses are controlled by the formal assessment interface. Classroom resources are restricted.','tc-assessment'));return panel;}
   if(s.modeKey==='CLOSURE'){panel.append(notice('Class is complete','Review the Summary, your Notebook and permitted Board scenes below.'));return panel;}
@@ -254,7 +269,7 @@ function openSheet(kind){
       });
       form.append(input,status,add($('div','tc-sheet-footer'),cancel,save));dialog.append(form);
       window.queueMicrotask(()=>{if(state.sheet===shade)input.focus({preventScroll:true});});
-    }else dialog.append($('p','tc-sheet-help','Notebook editing is disabled in this activity. Saved entries are read-only.'));
+    }else dialog.append($('p','tc-sheet-help',state.reviewOnly?'This is a past Class record. You can review notes here, but you cannot change the historical record.':'Notes are read-only during this protected activity.'));
   }else{
     const log=$('div','tc-conversation');log.setAttribute('role','log');log.setAttribute('aria-label','Teacher message history');
     const limits=$('p','tc-sheet-help tc-teacher-limits');
@@ -312,7 +327,8 @@ function render(){
   const root=$('div','tc-shell');root.dataset.mode=s.modeKey;
   root.append(renderHeader(s));const body=$('main','tc-layout');
   const left=$('div','tc-layout__main');left.append(renderTeacher(s));
-  if(s.modeKey==='PRE_CLASS'){left.append(notice('Class begins soon',`Scheduled for ${date(s.class.scheduledStartAt)}. Expected duration: ${Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)} minutes.`,'tc-preclass'));}
+  if(s.modeKey==='PRE_CLASS'){left.append(notice('Upcoming Class',`Scheduled for ${date(s.class.scheduledStartAt)}. Expected duration: ${Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)} minutes.`,'tc-preclass'));}
+  if(s.modeKey==='UNSTARTED_PAST')left.append(notice('Past Class — no live lesson','This timetable slot ended without a started Class. Review it in Past Classes rather than treating it as an upcoming lesson.'));
   if(s.modeKey==='INTERRUPTED')left.append(notice('Your place is saved',s.interruption?.cause==='SYSTEM'?'KIWI interrupted the Class. This will not count as negative academic evidence.':'Return to this Class when the session resumes. The Controller will reassess the remaining time.','tc-error'));
   const selectTab=(tab)=>{state.tab=tab;render();state.host?.querySelector(`[data-classroom-tab="${tab}"]`)?.focus();};const tabs=['board','workspace'].map((tab)=>{const b=button(tab[0].toUpperCase()+tab.slice(1),()=>selectTab(tab),state.tab===tab?'is-active':'');b.dataset.classroomTab=tab;b.setAttribute('role','tab');b.setAttribute('aria-selected',state.tab===tab?'true':'false');b.setAttribute('aria-controls',`tc-panel-${tab}`);b.tabIndex=state.tab===tab?0:-1;return b;});
   const mobileNav=add($('div','tc-mobile-tabs'),...tabs);mobileNav.setAttribute('role','tablist');mobileNav.setAttribute('aria-label','Classroom areas');left.append(mobileNav);
@@ -342,11 +358,12 @@ async function renderCourse({course,container}){
   add(page,$('div','tc-eyebrow','COURSE / CLASSROOM'),$('h2','','Enter the classroom'),$('p','','Upcoming lessons are here. Past attendance stays in a separate history panel.'));
   const status=$('div','tc-classroom-sync');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   const content=$('div','tc-classroom-classes');
-  const refreshButton=button('Refresh classes',()=>refresh(),'tc-button tc-button--quiet');
-  page.append(refreshButton,status,content);container.append(page);
-  const historyButton=button('↺',()=>showHistory(),'tc-history-corner');
-  historyButton.setAttribute('aria-label','Open past Classes');historyButton.title='Past Classes';
-  const historyCount=$('span','tc-history-count','0');historyButton.append(historyCount);page.append(historyButton);
+  const refreshButton=button('↻ Refresh',()=>refresh(),'tc-button tc-button--quiet');
+  const historyButton=button('Past Classes',()=>showHistory(),'tc-button tc-button--quiet tc-history-tab');
+  const actions=add($('div','tc-course-actions'),refreshButton,historyButton);
+  page.append(actions,status,content);container.append(page);
+  historyButton.setAttribute('aria-label','Open past Classes');historyButton.title='Review past classes';
+  const historyCount=$('span','tc-history-tab-count','0');historyButton.append(historyCount);
   const historyDialog=$('dialog','tc-history-dialog');
   const historyHead=add($('div','tc-history-heading'),add($('div',''),$('div','tc-eyebrow','CLASSROOM ARCHIVE'),$('h2','','Past Classes')),button('×',()=>historyDialog.close(),'tc-sheet-close'));
   const historyContent=$('div','tc-history-content');
@@ -391,9 +408,16 @@ async function renderCourse({course,container}){
         const cards=$('div','tc-class-list');
         upcoming.forEach(item=>{
           const minutes=Math.round((Date.parse(item.scheduled_end_at)-Date.parse(item.scheduled_start_at))/60000);
+          const enter=button(item.can_enter?'Enter Classroom ↗':'Not started yet',()=>open(item.class_id),'tc-button tc-button--solid');
+          enter.disabled=!item.can_enter;
+          if(!item.can_enter){
+            enter.title='Classroom opens at the scheduled start time';
+            enter.setAttribute('aria-label','Classroom available from '+date(item.entry_opens_at||item.scheduled_start_at));
+          }
+          const statusLine=item.can_enter?'You can enter now':'Opens '+date(item.entry_opens_at||item.scheduled_start_at);
           cards.append(add($('article','tc-class-card'),
-            add($('div',''),$('small','',date(item.scheduled_start_at)),$('h3','',identity.course_title||course.title||'Course'),$('p','',(identity.teacher_name||'KIWI Teacher')+' · '+minutes+' min')),
-            button('Enter Classroom ↗',()=>open(item.class_id),'tc-button tc-button--solid')));
+            add($('div',''),$('small','',date(item.scheduled_start_at)),$('h3','',identity.course_title||course.title||'Course'),$('p','',(identity.teacher_name||'KIWI Teacher')+' · '+minutes+' min'),$('span','tc-class-availability',statusLine)),
+            enter));
         });
         list.append(cards);
       }else list.append(notice('No upcoming Classes','Your future lessons will appear here when scheduled.'));
