@@ -5,6 +5,7 @@ const { createTeachingFoundation } = require('./teaching');
 const { mountD15Routes } = require('./teaching/d15/routes');
 const { mountD16Routes } = require('./teaching/d16/routes');
 const { mountD17Routes } = require('./teaching/d17/routes');
+const { createAdminClassroomTestRouter, createAttestationHandler, testInstanceGate } = require('./teaching/admin-classroom-test');
 
 function sendError(res, error, fallbackMessage) {
   const status = Number(error?.status) || 500;
@@ -208,10 +209,24 @@ function createTeachingRouter({
     return true;
   };
 
-  // Teaching is a normal authenticated KIWI application surface.
-  // D01's former per-account/feature availability gate was removed by the
-  // 2026-09-25 Class-E feature-availability amendment.
-  router.use(authenticate);
+  // A test instance uses the same D11/D14 routers, services, AI adapters and
+  // database-backed controller. It is reachable only with a server-held key.
+  // Do not accept a browser identity or a JWT role as the sandbox test owner.
+  router.get('/internal/classroom-test/attest', createAttestationHandler({env,query}));
+  router.use(testInstanceGate(env));
+  // Teaching is a normal authenticated KIWI application surface except when
+  // a separately deployed, explicitly configured test runtime is operating.
+  router.use((req,res,next)=>{
+    if(env.KIWI_CLASSROOM_TEST_INSTANCE!=='true')return authenticate(req,res,next);
+    if(!env.KIWI_CLASSROOM_TEST_USER_ID)return res.status(503).json({code:'CLASSROOM_TEST_USER_NOT_CONFIGURED'});
+    req.user={id:env.KIWI_CLASSROOM_TEST_USER_ID,role:'user',classroomTest:true};
+    next();
+  });
+  // The primary instance proxies ONLY the real Classroom routes to a verified,
+  // different-database test instance; no academic write is made here.
+  if(env.KIWI_CLASSROOM_TEST_INSTANCE!=='true'&&typeof query==='function'){
+    router.use('/admin/classroom-test',createAdminClassroomTestRouter({query,env}));
+  }
 
   router.get('/status', (req, res) => {
     res.json(foundation.service.statusForUser(req.user));
