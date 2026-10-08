@@ -131,11 +131,6 @@ const teachingD31Release = createD31ReleaseIntelligence({
   randomUUID,
   env: process.env,
 });
-const classroomVisualCapabilities = ai.capabilityStatus();
-console.info('[KIWI Classroom visuals] configured capabilities:', JSON.stringify({
-  imageGeneration: Boolean(classroomVisualCapabilities.imageGeneration?.configured),
-  diagramRender: Boolean(classroomVisualCapabilities.diagramRender?.configured),
-}));
 console.info(
   '[KIWI Teaching D31] AI release authorization:',
   teachingD31Release.authorization.releaseAuthorization,
@@ -22671,6 +22666,12 @@ try {
 await runSchemaMigrations();
 try {
   await _aiRuntime.initialize();
+const classroomVisualCapabilities = ai.capabilityStatus();
+console.info('[KIWI Classroom visuals] configured capabilities:', JSON.stringify({
+  imageGeneration: Boolean(classroomVisualCapabilities.imageGeneration?.configured),
+  diagramRender: Boolean(classroomVisualCapabilities.diagramRender?.configured),
+}));
+
 } catch (e) {
   console.error('[KIWI AI] Orchestrator initialization failed; AI requests paused and automatic recovery scheduled:', e.message);
 }
