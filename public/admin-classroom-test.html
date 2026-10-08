@@ -37,6 +37,12 @@ button:disabled{opacity:.55;cursor:not-allowed}
 <a class="admin-sandbox__back" href="/teaching.html">← Back to Teaching</a>
 </header>
 <p class="admin-sandbox__intro">Enter an isolated rehearsal powered by the <strong>same KIWI Classroom, lesson controller and AI routes</strong> as ordinary classes. Test mode never moves a real class or changes production teaching records.</p>
+<section class="admin-sandbox__panel" aria-label="Linked source course">
+  <div class="admin-sandbox__eyebrow">LINKED KIWI COURSE · READ ONLY</div>
+  <h2 id="source-title">Loading course…</h2>
+  <p class="admin-sandbox__muted" id="source-detail">Verifying the course belongs to your admin account.</p>
+  <p class="admin-sandbox__muted">The real Course Plan supplies the source. The rehearsal must execute against a separate test Class; it cannot start or grade this production Course.</p>
+</section>
 <section class="admin-sandbox__panel" aria-label="Sandbox connection">
 <div class="admin-sandbox__status" role="status" aria-live="polite"><strong id="sandbox-status">Checking isolated runtime…</strong><span class="admin-sandbox__muted" id="sandbox-detail"></span></div>
 <p class="admin-sandbox__muted">The simulator requires a separately deployed KIWI instance and a different database. It will never silently fall back to your real Courses.</p>
@@ -45,7 +51,7 @@ button:disabled{opacity:.55;cursor:not-allowed}
 <section class="admin-sandbox__panel" aria-labelledby="course-title">
 <h2 id="course-title">Rehearsal courses</h2>
 <div class="admin-sandbox__controls">
-<label for="course-picker">Select a Course in the isolated KIWI runtime
+<label for="course-picker">Matching rehearsal Course in the isolated KIWI runtime
 <select id="course-picker" disabled><option>Checking sandbox…</option></select></label>
 <button id="open-course" type="button" disabled>View Classroom</button>
 </div>
