@@ -39,7 +39,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     return rows;
   }
   async function identity(studentId,courseId) {
-    const {rows}=await query('select co.title course_title,t.display_name teacher_name from public.teaching_courses co left join lateral (select i.display_name from public.teaching_course_teacher_assignments a join public.teaching_teacher_identities i on i.teacher_identity_id=a.teacher_identity_id and i.student_id=a.student_id where a.student_id=co.student_id and a.course_id=co.course_id and a.effective_to is null order by a.version_no desc limit 1) t on true where co.student_id=$1 and co.course_id=$2',[studentId,courseId]);
+    const {rows}=await query('select co.title course_title,co.lifecycle_state,t.display_name teacher_name from public.teaching_courses co left join lateral (select i.display_name from public.teaching_course_teacher_assignments a join public.teaching_teacher_identities i on i.teacher_identity_id=a.teacher_identity_id and i.student_id=a.student_id where a.student_id=co.student_id and a.course_id=co.course_id and a.effective_to is null order by a.version_no desc limit 1) t on true where co.student_id=$1 and co.course_id=$2',[studentId,courseId]);
     return rows?.[0]||null;
   }
   async function board(studentId,classSessionId) {
