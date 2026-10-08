@@ -84,6 +84,7 @@ function baseRequest({
   validators,
   requestKey,
   preparation = null,
+  repairFeedback = null,
 }) {
   return {
     trigger: {
@@ -136,7 +137,15 @@ function baseRequest({
     },
     contextSpec,
     outputSchema,
-    academicInput: normalizeD11AcademicInput(academicInput),
+    academicInput:normalizeD11AcademicInput(repairFeedback?{
+      ...academicInput,
+      validation_repair:Object.freeze({
+        attempt:1,
+        previous_validation_code:repairFeedback.reason,
+        missing_field_path:repairFeedback.fieldPath||null,
+        directive:'Regenerate the ENTIRE required D11 mode-specific JSON object. Repair the identified field, all other mandatory fields, objective refs and time arithmetic. Do not fabricate academic evidence; validation remains authoritative.',
+      }),
+    }:academicInput),
     schemaValidator: validators.schema,
     domainValidator: validators.domain,
     provenanceValidator: validators.provenance,
@@ -216,7 +225,7 @@ function plannerInput(context, signals) {
   });
 }
 
-function lessonPlanRequest({ context, signals, requestKey = null, preparation = null, reservePolicy = undefined }) {
+function lessonPlanRequest({ context, signals, requestKey = null, preparation = null, reservePolicy = undefined, repairFeedback = null }) {
   const validate = async (out) => validateLessonBlueprintProposal(out, {
     learningUnits: context.learningUnits,
     scheduledStartAt: context.classRow.scheduled_start_at,
@@ -254,6 +263,7 @@ function lessonPlanRequest({ context, signals, requestKey = null, preparation = 
     declaredAuthorityLevel: 'T3',
     requestKey,
     preparation,
+    repairFeedback,
     validators: {
       schema: validate,
       domain: validate,
