@@ -34,8 +34,15 @@ function createTeachingOrchestrator({promptControl,aiAdapter,executionStore,stat
     if(REPLAY_SAFE_TRIGGER_TYPES.has(triggerType)&&!String(request.idempotencyKey||'').trim()){const error=new Error(`${triggerType} orchestration requires an idempotency key.`);error.code='TEACHING_D05_IDEMPOTENCY_KEY_REQUIRED';throw error;}
     const correlationId=String(request.correlationId||trigger?.event_id||request.idempotencyKey||executionId).trim();
     const envelope=createExecutionEnvelope({executionId,trigger,capabilityId:request.capabilityId,declaredAuthorityLevel:request.declaredAuthorityLevel,stateReference:request.stateReference,preconditions:request.preconditions||{},provenanceRefs:request.provenanceRefs||[],resultContract:request.resultContract,correlationId,causationId:request.causationId,idempotencyKey:request.idempotencyKey,deadlineAt:request.deadlineAt,auditMetadata:request.auditMetadata||{},serverNow:clock()});
+    const controller = new AbortController();
+    const upstream = request.signal || null;
+    const upstreamAbort = () => controller.abort(upstream?.reason);
+    if (upstream?.aborted) upstreamAbort();
+    else upstream?.addEventListener?.('abort', upstreamAbort, {once:true});
+    let authorityMonitor = null;
+    let authorityPollBusy = false;
     const started=await executionStore.begin(envelope);
-    if(!started.inserted)return Object.freeze({executionId:started.execution.execution_id,replay:true,status:started.execution.status,authoritativeMutationPerformed:false});
+    if(!started.inserted){upstream?.removeEventListener?.('abort',upstreamAbort);return Object.freeze({executionId:started.execution.execution_id,replay:true,status:started.execution.status,authoritativeMutationPerformed:false});}
     const capability=getCapability(envelope.capability.id);
     try {
       const initialSnapshot=await stateReader(envelope,{phase:'preflight'});
@@ -49,11 +56,32 @@ function createTeachingOrchestrator({promptControl,aiAdapter,executionStore,stat
         return Object.freeze({executionId,replay:false,deterministic:true,result:deterministicResult,authoritativeMutationPerformed:Boolean(deterministicResult?.authoritativeMutationPerformed)});
       }
       const beforeModelCancellation=await cancelled(envelope,'before_model');
-      if(beforeModelCancellation.cancelled){const policy=authorityFailurePolicy(capability.authority_ceiling);await safeMark(executionId,'CANCELLED',{failureCode:beforeModelCancellation.reason});return Object.freeze({executionId,replay:false,cancelled:true,failureDisposition:policy.disposition,authoritativeMutationPerformed:false});}
+      if(controller.signal.aborted || beforeModelCancellation.cancelled){const policy=authorityFailurePolicy(capability.authority_ceiling);await safeMark(executionId,'CANCELLED',{failureCode:beforeModelCancellation.reason});return Object.freeze({executionId,replay:false,cancelled:true,failureDisposition:policy.disposition,authoritativeMutationPerformed:false});}
       const contextLanes=await contextAssembler.assemble({capability,contextSpec:request.contextSpec||{},accessContext:request.accessContext||{}});
       const invocation=aiAdapter.prepare({envelope,taskMode:request.taskMode,directive:request.directive,contextLanes,contextAllowlist:request.contextAllowlist||null,outputSchema:request.outputSchema,capabilityCriticalityOverride:request.capabilityCriticalityOverride||null,preparation:request.preparation||null});
       await safeMark(executionId,'MODEL_PENDING',{safeMetadata:{prompt_family_id:invocation.prompt.family_id,prompt_family_version:invocation.prompt.family_version}});
-      const modelResult=await aiAdapter.execute({invocation,academicInput:request.academicInput||{},generation:request.generation||{},schemaValidator:request.schemaValidator,domainValidator:request.domainValidator,provenanceValidator:request.provenanceValidator,deterministicChecks:request.deterministicChecks||[],validationContext:request.validationContext||{},safeCommunicationFallback:request.safeCommunicationFallback||null});
+      // Read durable state on every worker. A remote Course/Class/Plan revision
+      // can interrupt provider inference without relying on process-local maps.
+      const inspectAuthority = async () => {
+        if(controller.signal.aborted)return;
+        const revoked=await cancelled(envelope,'in_flight');
+        if(revoked.cancelled){controller.abort(new Error('CANCELLED_PARENT_SUPERSEDED'));return;}
+        const current=await stateReader(envelope,{phase:'in_flight'});
+        if(current?.stateReference){
+          const delta=revalidateAuthoritativeState({expectedState:envelope.state_reference,currentState:current.stateReference,expectedPreconditions:envelope.preconditions,currentPreconditions:current.preconditions||{}});
+          if(delta.stale)controller.abort(new Error('CANCELLED_PARENT_SUPERSEDED'));
+        }
+      };
+      authorityMonitor=setInterval(()=>{
+        if(authorityPollBusy||controller.signal.aborted)return;
+        authorityPollBusy=true;
+        // A transient read failure is not proof of revocation. The original
+        // authoritative publication fence still rejects obsolete artifacts.
+        inspectAuthority().catch(()=>{}).finally(()=>{authorityPollBusy=false;});
+      },2000);
+      authorityMonitor.unref?.();
+      const modelResult=await aiAdapter.execute({invocation,academicInput:request.academicInput||{},generation:request.generation||{},schemaValidator:request.schemaValidator,domainValidator:request.domainValidator,provenanceValidator:request.provenanceValidator,deterministicChecks:request.deterministicChecks||[],validationContext:request.validationContext||{},safeCommunicationFallback:request.safeCommunicationFallback||null,signal:controller.signal});
+      if(controller.signal.aborted){await safeMark(executionId,'CANCELLED',{failureCode:'CANCELLED_PARENT_SUPERSEDED'});return Object.freeze({executionId,replay:false,cancelled:true,authoritativeMutationPerformed:false});}
       if(!modelResult.accepted){const policy=authorityFailurePolicy(capability.authority_ceiling);const validationFailure=modelResult.validationFailure||null;await safeMark(executionId,'NOOP',{validationOutcome:modelResult.fallbackUsed?'SAFE_FALLBACK':'REJECTED',failureCode:modelResult.rejectionReason||policy.disposition,safeMetadata:{validation_stage:modelResult.validationStage||null,validation_reason:modelResult.rejectionReason||null,validation_retryable:validationFailure?.retryable===true,validation_repairable:validationFailure?.repairable||null,validator_id:validationFailure?.validatorId||null,validation_field_path:validationFailure?.fieldPath||null}});return Object.freeze({executionId,replay:false,accepted:false,fallbackUsed:modelResult.fallbackUsed===true,fallback:modelResult.fallback,rejectionReason:modelResult.rejectionReason||null,validationStage:modelResult.validationStage||null,validationFailure,failureDisposition:policy.disposition,authoritativeMutationPerformed:false});}
       const postModelCancellation=await cancelled(envelope,'post_model');
       if(postModelCancellation.cancelled){const policy=authorityFailurePolicy(capability.authority_ceiling);await safeMark(executionId,'CANCELLED',{validationOutcome:'VALIDATED_BUT_CANCELLED',failureCode:postModelCancellation.reason});return Object.freeze({executionId,replay:false,accepted:false,cancelled:true,failureDisposition:policy.disposition,authoritativeMutationPerformed:false});}
@@ -66,8 +94,15 @@ function createTeachingOrchestrator({promptControl,aiAdapter,executionStore,stat
       await safeMark(executionId,'COMPLETED',{validationOutcome:'VALIDATED_AND_HANDED_OFF',mutationRef:receipt?.mutationRef||receipt?.id||null});
       return Object.freeze({executionId,replay:false,accepted:true,authoritativeMutationPerformed:true,ownerReceipt:receipt});
     } catch(error) {
+      if(controller.signal.aborted){
+        await safeMark(executionId,'CANCELLED',{failureCode:'CANCELLED_PARENT_SUPERSEDED'}).catch(()=>{});
+        return Object.freeze({executionId,replay:false,cancelled:true,failureDisposition:'NOOP',authoritativeMutationPerformed:false});
+      }
       await safeMark(executionId,'FAILED',{failureCode:error?.code||'TEACHING_D05_ORCHESTRATION_FAILED',safeMetadata:{message:String(error?.message||'Teaching orchestration failed safely.').slice(0,500)}}).catch(()=>{});
       throw error;
+    } finally {
+      if(authorityMonitor)clearInterval(authorityMonitor);
+      upstream?.removeEventListener?.('abort',upstreamAbort);
     }
   }
   return Object.freeze({execute});

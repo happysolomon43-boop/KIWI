@@ -79,7 +79,7 @@ function createGoogleProviderAdapter({
 } = {}) {
   const transport = httpTransport || createGoogleHttpTransport({ fetchImpl, endpointBase });
 
-  async function generate({ credential, request, timeoutMs = 30000 }) {
+  async function generate({ credential, request, timeoutMs = 30000, signal = null }) {
     if (!request) throw new Error('Google adapter requires request');
     const apiKey = typeof credential === 'string' ? credential : credential?.apiKey;
     if (!apiKey) throw new Error('Google adapter requires credential apiKey');
@@ -89,6 +89,7 @@ function createGoogleProviderAdapter({
       modelId: request.model.modelId,
       body: serializeGoogleExecutionRequest(request),
       timeoutMs,
+      signal,
     });
 
     return Object.freeze({

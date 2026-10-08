@@ -68,6 +68,7 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
     safeCommunicationFallback = null,
     cachePolicy = null,
     centralRouteOptions = {},
+    signal = null,
   } = {}) {
     const klass = assertIntelligenceClass(intelligenceClass);
     const authority = assertAuthorityLevel(authorityLevel);
@@ -87,7 +88,7 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
       output: candidateFromCentralResult(output), authorityLevel: authority, schemaValidator,
       domainValidator, deterministicChecks, context: validationContext,
     });
-    const runCentral = async (id, payload) => assertCentralResultComplete(await aiRun(id, payload, centralRouteOptions));
+    const runCentral = async (id, payload) => assertCentralResultComplete(await aiRun(id, payload, signal ? {...centralRouteOptions, signal} : centralRouteOptions));
 
     try {
       let centralResult;
@@ -136,7 +137,7 @@ function createCentralAIExecutionBoundary({ aiRun, telemetry = null, executionCo
       });
     } catch (error) {
       const policy = authorityFailurePolicy(authority);
-      if (authority === 'T1' && typeof safeCommunicationFallback === 'function') {
+      if (!signal?.aborted && authority === 'T1' && typeof safeCommunicationFallback === 'function') {
         const fallback = await safeCommunicationFallback(error);
         if (telemetry && executionId) await telemetry.finishExecution(executionId, {
           validationOutcome: 'SAFE_FALLBACK', safeFailureCode: error?.code || 'TEACHING_AI_EXECUTION_FAILED', outcome: policy.disposition,

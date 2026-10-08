@@ -3,6 +3,7 @@
 const { AI_PROVIDERS } = require('./providers');
 const {
   AIError,
+  AI_ERROR_CODES,
   classifyGoogleHttpError,
   networkError,
   timeoutError,
@@ -55,11 +56,16 @@ function createGoogleHttpTransport({
     modelId,
     body,
     timeoutMs = 30000,
+    signal = null,
   }) {
     if (!apiKey) throw new Error('Google AI HTTP transport requires apiKey');
     if (!modelId) throw new Error('Google AI HTTP transport requires modelId');
 
     const controller = new AbortController();
+    let externalAbort = Boolean(signal?.aborted);
+    const onAbort = () => { externalAbort = true; controller.abort(signal?.reason); };
+    if (externalAbort) controller.abort(signal.reason);
+    else signal?.addEventListener?.('abort', onAbort, {once:true});
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const url = `${endpointBase}/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(apiKey)}`;
     const startedAt = Date.now();
@@ -74,6 +80,7 @@ function createGoogleHttpTransport({
 
       const responseBody = await readResponseBody(response);
       const latencyMs = Date.now() - startedAt;
+      if (externalAbort || signal?.aborted) throw new AIError('Google request cancelled by parent authority', {code:AI_ERROR_CODES.CANCELLED,status:499,retryable:false,scope:'ATTEMPT',provider:AI_PROVIDERS.GOOGLE});
 
       if (!response.ok) {
         throw classifyGoogleHttpError({
@@ -89,6 +96,7 @@ function createGoogleHttpTransport({
         httpStatus: response.status,
       };
     } catch (error) {
+      if (externalAbort || signal?.aborted) throw new AIError('Google request cancelled by parent authority', {code:AI_ERROR_CODES.CANCELLED,status:499,retryable:false,scope:'ATTEMPT',provider:AI_PROVIDERS.GOOGLE,cause:error});
       if (error instanceof AIError) throw error;
 
       if (
@@ -102,6 +110,7 @@ function createGoogleHttpTransport({
       throw networkError(error, GOOGLE_ERROR_CONTEXT);
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener?.('abort', onAbort);
     }
   }
 
