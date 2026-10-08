@@ -104,7 +104,8 @@ test('D14 help request migration remains service-only and does not grant academi
   assert.match(migration,/response_communication_id.*REFERENCES/i);
   const ui=fs.readFileSync(path.join(root,'public/teaching-classroom.js'),'utf8');
   assert.match(ui,/✋ NEED HELP\?/);
-  assert.match(ui,/if\(s.teacherMessagingAllowed&&!state.reviewOnly\)/);
+  assert.match(ui,/if\(s.teacherMessagingAllowed&&\['OPENING'/);
+  assert.match(ui,/!state.reviewOnly\)/);
   assert.doesNotMatch(ui,/button\('Message AI Teacher'/);
 });
 

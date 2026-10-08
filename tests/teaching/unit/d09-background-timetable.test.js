@@ -225,8 +225,10 @@ test('both Schedule surfaces show and poll durable background timetable state',(
     assert.match(source,/backgroundBuild/);
     assert.match(source,/Timetable building in background/);
     assert.match(source,/build will continue/);
-    assert.match(source,/5000/);
   }
+  assert.match(active,/5000/);
+  assert.match(legacy,/queueStatusPoll/);
+  assert.match(legacy,/Math.min\(12000,4000/);
 });
 
 

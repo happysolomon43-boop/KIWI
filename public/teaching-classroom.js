@@ -17,7 +17,12 @@ function close({restore=true}={}){closeSheet({restore:false,force:true});clearRu
 async function fetchSnapshot(){
   if(!state.classId||state.busy)return;
   const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);
-  data._receivedAt=Date.now();state.snapshot=data;render();
+  data._receivedAt=Date.now();const previous=state.snapshot;state.snapshot=data;
+  // The twelve-second live refresh must not tear down the Board, native
+  // Details control or focused inputs when only server clock values changed.
+  const comparable=(v)=>JSON.stringify({...v,serverNow:null,_receivedAt:null,entry:v?.entry?{...v.entry,minutesRemaining:null}:null});
+  if(previous&&comparable(previous)===comparable(data)){updateClocks();return;}
+  render();
 }
 async function act(path,body){
   if(state.busy)return;state.busy=true;
@@ -335,6 +340,7 @@ function render(){
   // A protected activity cannot inherit an already-open Notebook or Teacher sheet.
   // Close it before the refreshed Class DOM is made visible.
   if(['ASSESSMENT','CLASSWORK'].includes(s.modeKey)&&state.sheet)closeSheet({restore:false,force:true});
+  const controlsWasOpen=Boolean(state.host.querySelector('.tc-controls[open]'));
   const root=$('div','tc-shell');root.dataset.mode=s.modeKey;
   root.append(renderHeader(s));const body=$('main','tc-layout');
   const left=$('div','tc-layout__main');left.append(renderTeacher(s));
@@ -346,9 +352,10 @@ function render(){
   const board=renderBoard(s);board.id='tc-panel-board';board.setAttribute('role','tabpanel');board.classList.toggle('tc-mobile-hidden',state.tab!=='board');left.append(board);
   const work=renderWorkspace(s);work.id='tc-panel-workspace';work.setAttribute('role','tabpanel');work.classList.toggle('tc-mobile-hidden',state.tab!=='workspace');
   const right=add($('aside','tc-layout__side'),work,renderControls(s));
+  const nextControls=right.querySelector('.tc-controls');if(nextControls&&controlsWasOpen)nextControls.open=true;
   add(body,left,right);root.append(body);if(s.controller?.lifecycleState==='CLOSED')root.append(renderSummary(s));
   const corner=$('div','tc-corner-actions');
-  if(s.teacherMessagingAllowed&&!state.reviewOnly){
+  if(s.teacherMessagingAllowed&&['OPENING','DIAGNOSTIC','INSTRUCTION','GUIDED_PRACTICE','INDEPENDENT_PRACTICE','REMEDIATION'].includes(s.modeKey)&&!state.reviewOnly){
     const raised=(s.helpRequests||[])[0];
     const hand=button('✋ NEED HELP?',()=>openSheet('teacher'),'tc-raise-hand');
     if(raised){hand.dataset.helpStatus=raised.status;hand.title='Latest raised hand: '+raised.status.toLowerCase();}

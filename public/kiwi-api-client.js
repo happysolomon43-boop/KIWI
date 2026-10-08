@@ -12,6 +12,7 @@ const MAIN_CBT_OPERATION_TIMEOUT_MS = 180_000;
 const LONG_RUNNING_ANALYSIS_OPERATION_TIMEOUT_MS = 10 * 60 * 1000;
 const NETWORK_COMPLETION_GRACE_MS = 30_000;
 const REQUEST_TIMEOUT_POLICIES = Object.freeze([
+   {pattern:/^\/teaching\/information\/calendar(?:\?.*)?$/,timeoutMs:90_000},
   Object.freeze({
     pattern: /^\/teaching\/courses\/[^/]+\/course-plan$/,
     timeoutMs: MAIN_CBT_OPERATION_TIMEOUT_MS + NETWORK_COMPLETION_GRACE_MS,

@@ -5,6 +5,10 @@ const { validateStageOutput, noteRequest } = require('./study-note');
 const { validateBlock } = require('./board');
 const MODES=Object.freeze({OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'});
 const RESTRICTED=new Set(['ASSESSMENT','CLASSWORK']);
+// A raised hand is for a running instructional activity, not a generic active
+// controller, closed Class, break or assessment. Keep server projection and
+// the signal mutation on the same allowlist.
+const HELP_INSTRUCTIONAL_MODES=new Set(['OPENING','DIAGNOSTIC','INSTRUCTION','GUIDED_PRACTICE','INDEPENDENT_PRACTICE','REMEDIATION']);
 const SIGNALS=new Set(['ASK_TEACHER','NEED_HELP','READY','FINISHED','BREAK_REQUEST','EARLY_DISMISSAL_REQUEST','TECHNICAL_ISSUE','LEAVE']);
 function fail(code,status=409){throw Object.assign(new Error(code),{code,status});}
 function createD14Service({repository,d11Repository,d11Service,d12Service,attendanceService=null,studyIntelligence=null,helpIntelligence=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
@@ -69,11 +73,10 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
       boardHistoryAllowed:!restricted,notebook:notes,notebookAllowed:!restricted,summary,closureFacts,
-      teacherConversation:conversation,helpRequests,teacherMessagingAllowed:!closed&&source.session?.lifecycle_state==='ACTIVE'
-        &&source.classRow.lifecycle_state!=='CANCELLED'
-        &&source.classRow.course_lifecycle_state!=='INCOMPLETE'
-        &&source.classRow.course_lifecycle_state!=='PAUSED'
-        &&source.classRow.source_timetable_state!=='SUPERSEDED'
+      teacherConversation:conversation,helpRequests,teacherMessagingAllowed:HELP_INSTRUCTIONAL_MODES.has(mode)&&!closed&&source.session?.lifecycle_state==='ACTIVE'
+        &&source.classRow.lifecycle_state==='SCHEDULED'
+        &&source.classRow.course_lifecycle_state==='ACTIVE'
+        &&source.classRow.source_timetable_state==='APPROVED'
         &&!RESTRICTED.has(mode)&&!['BREAK','INTERRUPTED'].includes(mode),
       studyNote:studyNote?.state==='VALIDATED_PRIVATE'?{state:'PRIVATE_VALIDATED_AWAITING_D27',published:false}:studyNote?{state:studyNote.state,published:false}:null,
       assessmentTakeover:mode==='ASSESSMENT',assessmentOwner:'D17',classworkOwner:'D16',
@@ -95,11 +98,10 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     if(ctx.session?.instructional_substate==='ASSESSMENT'&&!['TECHNICAL_ISSUE','LEAVE'].includes(kind))fail('TEACHING_D14_ASSESSMENT_CONTROL_RESTRICTED',403);
     if(['ASK_TEACHER','NEED_HELP'].includes(kind)&&(
       !ctx.session||ctx.session.lifecycle_state!=='ACTIVE'
-      ||ctx.classRow?.lifecycle_state==='CANCELLED'
+      ||ctx.classRow?.lifecycle_state!=='SCHEDULED'
       ||(ctx.classRow?.course_lifecycle_state&&ctx.classRow.course_lifecycle_state!=='ACTIVE')
       ||(ctx.classRow?.source_timetable_state&&ctx.classRow.source_timetable_state!=='APPROVED')
-      ||RESTRICTED.has(ctx.session.instructional_substate)
-      ||['BREAK','INTERRUPTED'].includes(ctx.session.instructional_substate)
+      ||!HELP_INSTRUCTIONAL_MODES.has(ctx.session.instructional_substate)
     ))fail('TEACHING_D14_TEACHER_MESSAGES_PAUSED',403);
     const body=input.body==null?null:String(input.body).trim();if(body?.length>2000)fail('TEACHING_D14_SIGNAL_TOO_LONG',400);
     if(['ASK_TEACHER','NEED_HELP'].includes(kind)&&!body)fail('TEACHING_D14_TEACHER_MESSAGE_REQUIRED',400);
@@ -132,7 +134,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       ||Number(ctx.session?.state_version)!==Number(request.controller_version)){
       return finish('CANCELLED','The Class moved on before this question could be answered. You can raise your hand again.',0,ctx.classRow?.schedule_version);
     }
-    if(RESTRICTED.has(mode)||['BREAK','INTERRUPTED'].includes(mode)){
+    if(!HELP_INSTRUCTIONAL_MODES.has(mode)){
       if(mode==='BREAK'&&Number(request.attempts)<3)
         return finish('DEFERRED','The Teacher will return after the pause.',2,ctx.classRow.schedule_version);
       return finish('CANCELLED','This Class activity cannot accept Teacher answers. You can ask again when teaching resumes.',0,ctx.classRow.schedule_version);

@@ -200,6 +200,16 @@ function suppressVercelToolbar() {
   });
 }
 
+function syncTeachingDockSelection() {
+  const dock=document.getElementById('teachingDock');
+  if(!dock)return;
+  const current=activeTeachingNavigationId||(['overview','course'].includes(activeTeachingView)?'courses':null);
+  dock.querySelectorAll('[data-nav-id]').forEach((button)=>{
+    const selected=button.dataset.navId===current;
+    button.dataset.active=selected?'true':'false';
+    if(selected)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
+  });
+}
 function renderTeachingNavigation() {
   const shell = document.getElementById('teachingDockShell');
   const dock = document.getElementById('teachingDock');
@@ -211,7 +221,7 @@ function renderTeachingNavigation() {
   const calendarDestination = registeredDestinations.find((item) => item.id === 'calendar') || null;
   const remainingDestinations = registeredDestinations.filter((item) => item.id !== 'calendar');
   const destinations = [
-    { id: 'courses', label: 'Courses', icon: '⌂', onSelect: () => navigateTeaching('overview') },
+    { id: 'courses', label: 'Courses', icon: 'overview', onSelect: () => navigateTeaching('overview') },
     ...(calendarDestination ? [calendarDestination] : []),
     ...remainingDestinations,
   ].slice(0, TEACHING_DOCK_DESTINATION_SLOTS);
@@ -236,7 +246,7 @@ function renderTeachingNavigation() {
     control.dataset.navId = id;
     control.dataset.menu = isMenu ? 'true' : 'false';
     control.setAttribute('aria-label', label);
-    iconNode.textContent = icon || '';
+    iconNode.innerHTML = menuIcon(icon || 'overview');
     labelNode.textContent = label;
     control.addEventListener('click', onSelect);
     dock.appendChild(fragment);
@@ -246,7 +256,7 @@ function renderTeachingNavigation() {
     appendDockItem({
       id: item.id,
       label: item.label,
-      icon: item.icon,
+      icon: item.menuIcon || item.icon,
       onSelect: () => selectTeachingNavigationItem(item),
     });
   }
@@ -254,10 +264,11 @@ function renderTeachingNavigation() {
   appendDockItem({
     id: 'menu',
     label: 'Menu',
-    icon: '≡',
+    icon: 'menu',
     isMenu: true,
     onSelect: () => setMenuOpen(true, { restoreFocus: false }),
   });
+  syncTeachingDockSelection();
 }
 
 function registerTeachingNavigationItem(item) {
@@ -389,20 +400,29 @@ function showSetupMessage(container, message, kind = 'status') {
 }
 
 function menuIcon(kind) {
-  const paths = kind === 'create'
-    ? '<path d="M12 5v14M5 12h14"/><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/>'
-    : kind === 'calendar'
-      ? '<path d="M6 3v3M18 3v3M4 8h16"/><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 12h3M13 12h3M8 16h3M13 16h3"/>'
-      : '<path d="M4 11 12 4l8 7v9H4zM9 20v-6h6v6"/>';
-  return `<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" aria-hidden="true">${paths}</svg>`;
+  // Navigation destinations share the same semantic icon in dock and drawer.
+  // These paths are app-owned, not untrusted student input.
+  const paths={
+    overview:'<path d="M3 10.5 12 3l9 7.5V21H3zM9 21v-8h6v8"/>',
+    create:'<path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="3"/>',
+    calendar:'<path d="M6 3v3M18 3v3M4 8h16"/><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 12h3M13 12h3M8 16h3M13 16h3"/>',
+    request:'<path d="M4 20h16M6 16V5h12v11M9 9h6M9 12h6"/><path d="m15 18 2 2 4-4"/>',
+    work:'<rect x="4" y="3" width="16" height="18" rx="2"/><path d="m8 12 2.4 2.4L16 9M8 6h8"/>',
+    record:'<path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/>',
+    archive:'<rect x="3" y="5" width="18" height="15" rx="2"/><path d="M3 9h18M10 13h4"/>',
+    study:'<path d="m12 3 8 5v11l-8-4-8 4V8zM12 3v12"/>',
+    menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
+  };
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" aria-hidden="true">'+(paths[kind]||paths.overview)+'</svg>';
 }
 
 function renderSectionMenu() {
+  syncTeachingDockSelection();
   const nav = document.getElementById('teachingMenuFuture');
   if (!nav) return;
 
   const items = [
-    { id: 'overview', title: 'Overview', description: 'Your courses and next steps', icon: 'overview' },
+    { id: 'overview', title: 'Courses', description: 'Your courses and next steps', icon: 'overview' },
     { id: 'intake', title: 'Create Course', description: 'Start from a KIWI Subject', icon: 'create' },
     ...[...teachingNavigationItems.values()].map((item) => ({
       id: 'navigation:' + item.id,
@@ -1055,9 +1075,15 @@ async function loadTeachingWorkspace() {
         teacher: detail.teacher || null,
       } : course;
     }));
-    renderTeachingNavigation();
+    // Course details hydrate silently. Replacing the entire active Course DOM
+    // after this optional response blurs inputs and causes visible flicker.
     renderSectionMenu();
-    renderActiveTeachingView();
+    if(activeTeachingView==='overview') renderActiveTeachingView();
+    else if(activeTeachingView==='course'){
+      const title=document.querySelector('.teaching-course-context__identity h1');
+      const course=getTeachingCourse(selectedTeachingCourseId);
+      if(title&&course)title.textContent=displayCourseName(course.title);
+    }
   });
 
   const restoredCourse = pendingTeachingLocation?.view === 'course'
@@ -1129,13 +1155,13 @@ function installTeachingReleaseWatcher(){
       if(currentVersion===null){currentVersion=version;return;}
       if(version===currentVersion||version===notifiedVersion)return;
       notifiedVersion=version;
-      const editing=Boolean(document.querySelector('.tc-active'))||Boolean(document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]'));
-      if(!editing){window.location.reload();return;}
+      // Never automatically reload an active Teaching session on deployment.
+      // Let students finish their work and explicitly accept the update.
       if(document.getElementById('kiwi-teaching-update-available'))return;
       const notice=document.createElement('aside');
       notice.id='kiwi-teaching-update-available';notice.setAttribute('role','status');
       notice.style.cssText='position:fixed;z-index:9999;left:14px;right:14px;bottom:88px;padding:15px;border:1px solid #7ee2b8;border-radius:14px;background:#10261c;color:#d9f5e5;box-shadow:0 14px 40px #0008';
-      notice.append('A newer version of KIWI is ready. Finish your current work, then refresh to get the changes. ');
+      notice.append('A newer version of KIWI is ready. Your work stays here; update whenever you are ready. ');
       const action=document.createElement('button');action.type='button';action.textContent='Update KIWI';action.style.cssText='margin-left:10px;padding:8px 12px;background:#b6f1d0;color:#10261c;border-radius:8px';
       action.addEventListener('click',()=>window.location.reload());notice.append(action);document.body.append(notice);
     }catch{ /* Connectivity is best effort; never block Teaching. */ }

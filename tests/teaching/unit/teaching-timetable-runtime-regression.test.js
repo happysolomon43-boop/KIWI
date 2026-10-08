@@ -66,9 +66,9 @@ test('Timetable build actions preserve the current view while background work st
   const legacy = read('public/teaching-d09.js');
 
   assert.match(modern, /const monitor=async\(\)=>/);
-  assert.match(legacy, /const monitor=async\(\)=>/);
+  assert.match(legacy, /function queueStatusPoll/);
   assert.match(modern, /if\(build\?\.active\)\{window\.setTimeout\(monitor,3000\)/);
-  assert.match(legacy, /if\(build\?\.active\)\{window\.setTimeout\(monitor,3000\)/);
+  assert.match(legacy, /else if\(build\?\.active\)/);
   assert.match(modern, /SEMESTER_CAPACITY_INFEASIBLE/);
   assert.match(legacy, /SEMESTER_CAPACITY_INFEASIBLE/);
   assert.doesNotMatch(modern, /window\.setTimeout\(\(\)=>\{void reload/);
@@ -131,7 +131,8 @@ test('Unfingerprinted assets revalidate and Teaching detects deployments without
   assert.match(server,/client-version/);
   assert.match(server,/max-age=0, must-revalidate/);
   assert.doesNotMatch(server,/max-age=31536000, immutable/);
-  assert.match(teaching,/\.tc-active/);
+  assert.match(teaching,/Never automatically reload an active Teaching session/);
+  assert.doesNotMatch(teaching,/if\(!editing\)\{window\.location\.reload\(\);return;\}/);
   assert.match(teaching,/visibilitychange/);
   assert.match(html,/teaching-classroom\.js\?v=20261008-classroom-timing-2/);
 });
