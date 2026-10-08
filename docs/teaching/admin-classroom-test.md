@@ -25,7 +25,7 @@ Real lesson timing, preparation, Class/Plan lineage, and official timetable stat
 
 A second Render KIWI service must be deployed **from the same reviewed commit** with the same real AI orchestration capabilities, plus a dedicated database.
 
-The already available **KIWI Teaching Integration Supabase project** (project reference kmymmwujhotqxtoamyur) has the Teaching schema but was empty of user/Course/Class records at inspection. Provision a dedicated test user, subject and active Course through KIWI's actual workflows, with an approved timetable and prepared lesson. Do not point this service at the production database.
+The already available **KIWI Teaching Integration Supabase project** (project reference kmymmwujhotqxtoamyur) has the Teaching schema but was empty of user/Course/Class records at inspection. Provision a dedicated test user, subject and active Course through KIWI's actual workflows against the isolated database, with an approved timetable and prepared lesson. This initial gateway **does not expose Course creation or timetable editing** on the isolated HTTP surface; provisioning must precede enabling the restricted runtime (or use an explicitly reviewed internal setup process). Do not point this service at the production database.
 
 Isolated service server-side environment:
 - DATABASE_URL — dedicated integration/staging Postgres database
@@ -37,11 +37,10 @@ Isolated service server-side environment:
 Primary service server-side environment:
 - KIWI_CLASSROOM_TEST_ORIGIN — HTTPS origin of isolated KIWI backend
 - KIWI_CLASSROOM_TEST_SHARED_KEY — same shared key
-- KIWI_CLASSROOM_TEST_USER_ID — the test user ID as configuration signal
 - KIWI_PUBLIC_ORIGIN — current production origin for same-origin rejection
 - DATABASE_URL — unchanged current production URL
 
-The sandbox's Teaching router checks the server-held key and uses only the configured sandbox student ID. The private attestation returns a one-way hash of the database host, name and username, never a credential. Lock down the sandbox service itself at the network edge: its unrelated endpoints are not protected by this module.
+The sandbox's Teaching router checks the server-held key and uses only the configured sandbox student ID. The private attestation returns a one-way hash of the database host, name and username, never a credential. The separate KIWI process also mounts an early HTTP isolation gate that blocks every route outside the narrowly allowlisted Classroom endpoints, even static content. Where available, additionally lock down the service at the network edge.
 
 ## Required activation verification
 
