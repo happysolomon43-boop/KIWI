@@ -55,7 +55,7 @@ async function check(){
     const valid=courses.filter(x=>x?.course_id&&matchesLinkedSource(x)&&x.lifecycle_state==='ACTIVE');
     if(!valid.length){
       picker.append(new Option('No matching rehearsal Course',''));
-      help.textContent='PHY101 is linked as a source. A matching active PHY101 Course must be prepared in the separate KIWI sandbox before the rehearsal can start.';
+      help.textContent=linkedSource.title+' is linked as a source. A matching active test Course must be prepared in the separate KIWI sandbox before the rehearsal can start.';
       return;
     }
     valid.forEach(course=>picker.append(new Option((course.title||course.course_code||'Course')+' · '+(course.lifecycle_state||'Unknown state'),course.course_id)));
