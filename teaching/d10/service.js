@@ -270,6 +270,7 @@ function createD10Service({
       });
       return {
         targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,
+        affectedCourseIds:[...new Set(classes.map(row=>String(row.course_id)).filter(Boolean))],
         safeMetadata:{
           timetable_version:Number(saved.timetable.version_no),
           materialized_classes:classes.length,
@@ -302,6 +303,7 @@ function createD10Service({
     });
     return {
       targetVersionAfter:`timetable:${rebuilt.saved.timetable.timetable_version_id}:version:${rebuilt.saved.timetable.version_no}`,
+      affectedCourseIds:[...new Set(rebuilt.classes.map(row=>String(row.course_id)).filter(Boolean))],
       safeMetadata:{
         timetable_version:Number(rebuilt.saved.timetable.version_no),
         materialized_classes:rebuilt.classes.length,
@@ -320,7 +322,7 @@ function createD10Service({
         if(workRequestOwner&&typeof workRequestOwner.observeAppliedRequestUsing==='function'&&['ACADEMIC_BREAK','COURSE_PAUSE','COURSE_RESUME'].includes(request.request_type)) await workRequestOwner.observeAppliedRequestUsing(tx,request,requestChange(request));
         if(outboxStore&&typeof outboxStore.appendUsing==='function'){
           const occurredAt=serverNow().toISOString(),eventId=`d10-request-applied:${request.request_id}:${application.request_version}`,queryFn=typeof tx==='function'?tx:tx.query.bind(tx);
-          await outboxStore.appendUsing(queryFn,{eventId,schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_APPLIED,eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,triggerType:'committed_domain_event',source:'request',origin:'d10',actorId:request.student_id,aggregateType:'REQUEST',aggregateId:request.request_id,aggregateVersion:Number(request.state_version),occurredAt,effectiveAt:request.applied_at?new Date(request.applied_at).toISOString():occurredAt,dueAt:null,correlationId:eventId,causationId:null,idempotencyKey:eventId,payload:{request_id:request.request_id,course_id:request.course_id,request_type:request.request_type,target_owner:request.target_owner,target_ref:request.target_ref,application_ref:application.application_ref,target_version_after:targetResult?.targetVersionAfter||null},auditRefs:[],provenanceRefs:[`request:${request.request_id}`,`request-application:${application.request_application_id}`]});
+          await outboxStore.appendUsing(queryFn,{eventId,schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_APPLIED,eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,triggerType:'committed_domain_event',source:'request',origin:'d10',actorId:request.student_id,aggregateType:'REQUEST',aggregateId:request.request_id,aggregateVersion:Number(request.state_version),occurredAt,effectiveAt:request.applied_at?new Date(request.applied_at).toISOString():occurredAt,dueAt:null,correlationId:eventId,causationId:null,idempotencyKey:eventId,payload:{request_id:request.request_id,course_id:request.course_id,request_type:request.request_type,target_owner:request.target_owner,target_ref:request.target_ref,application_ref:application.application_ref,target_version_after:targetResult?.targetVersionAfter||null,affected_course_ids:targetResult?.affectedCourseIds||[]},auditRefs:[],provenanceRefs:[`request:${request.request_id}`,`request-application:${application.request_application_id}`]});
         }
       },
       applyTargetUsing:async(tx,request)=>{
@@ -341,6 +343,7 @@ function createD10Service({
           });
           return {
             targetVersionAfter:`course-state:${updated.state_version}`,
+            affectedCourseIds:[...new Set(rebuilt.classes.map(row=>String(row.course_id)).filter(Boolean))],
             safeMetadata:{
               lifecycle_state:'PAUSED',
               timetable_version:Number(rebuilt.saved.timetable.version_no),
@@ -370,6 +373,7 @@ function createD10Service({
           });
           return {
             targetVersionAfter:`course-state:${updated.state_version}`,
+            affectedCourseIds:[...new Set(rebuilt.classes.map(row=>String(row.course_id)).filter(Boolean))],
             safeMetadata:{
               lifecycle_state:'ACTIVE',
               timetable_version:Number(rebuilt.saved.timetable.version_no),
