@@ -45,6 +45,15 @@ test('cancelled Course or superseded timetable denies student Teacher messages e
     assert.ok(!statements.some(x=>x.sql.includes('insert into public.teaching_classroom_interactions')));
   }
 });
+test('new Classroom JOIN cannot create attendance evidence for a cancelled timetable',async()=>{
+  const {repo,statements}=classroomFake({
+    class_state:'SCHEDULED',course_state:'ACTIVE',timetable_state:'SUPERSEDED'
+  });
+  await assert.rejects(repo.recordInteraction({
+    studentId:'u',classId:'c',session:null,kind:'JOIN',body:null,idempotencyKey:'join-cancelled',
+  }),{code:'TEACHING_D14_PARENT_AUTHORITY_REVOKED'});
+  assert.ok(!statements.some(x=>x.sql.includes('insert into public.teaching_classroom_interactions')));
+});
 test('legitimate active current Teacher messaging holds parent authority through commit',async()=>{
   const {repo,statements}=classroomFake({
     class_state:'SCHEDULED',course_state:'ACTIVE',timetable_state:'APPROVED'
