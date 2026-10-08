@@ -98,7 +98,7 @@ test('timetable rematerialization retires every superseded unstarted Class and C
   assert.match(materializer,/not exists \(select 1 from public\.teaching_class_sessions/);
   assert.match(materializer,/not exists \(select 1 from public\.teaching_attendance_records/);
   assert.match(materializer,/not exists \(select 1 from public\.teaching_classroom_interactions/);
-  assert.match(materializer,/Date\.parse\(s\.starts_at\|\|s\.startsAt>=materializedAt/);
+  assert.match(materializer,/Date\.parse\(s\.starts_at\|\|s\.startsAt\)>=materializedAt/);
   assert.match(repository,/c\.lifecycle_state<>'CANCELLED'/);
 });
 
