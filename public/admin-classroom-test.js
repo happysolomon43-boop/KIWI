@@ -49,7 +49,15 @@ async function check(){
     valid.forEach(course=>picker.append(new Option((course.title||course.course_code||'Course')+' · '+(course.lifecycle_state||'Unknown state'),course.course_id)));
     picker.disabled=false;openButton.disabled=false;
   }catch(error){
-    showStatus('Test Classroom unavailable',String(error?.message||'Sandbox unavailable').slice(0,200));
+    const messages={
+      CLASSROOM_TEST_NOT_CONFIGURED:'The isolated KIWI service is not connected in the primary server configuration.',
+      CLASSROOM_TEST_SANDBOX_UNAVAILABLE:'The isolated KIWI engine is offline or cannot be reached.',
+      CLASSROOM_TEST_ISOLATION_UNVERIFIED:'Safety block: KIWI could not prove that this runtime uses a different database.',
+      CLASSROOM_TEST_USER_NOT_PROVISIONED:'A dedicated test user has not been provisioned in the isolated database.',
+      CLASSROOM_TEST_ADMIN_REQUIRED:'Only the authenticated KIWI admin account can use this feature.',
+      CLASSROOM_TEST_AUTH_UNAVAILABLE:'KIWI could not verify the admin role against the account database.',
+    };
+    showStatus('Test Classroom unavailable',(messages[error?.code]||String(error?.message||'Sandbox unavailable')).slice(0,240));
     picker.replaceChildren(new Option('No verified sandbox connection',''));
   }
 }
