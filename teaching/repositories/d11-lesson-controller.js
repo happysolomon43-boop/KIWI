@@ -660,7 +660,38 @@ function createD11LessonControllerRepository({
     promptFamilyRef='TPF-05',
   } = {}) {
     return withTransaction(async (tx) => {
+      // Fence the final result of an already-running AI call against current
+      // Course/Class/Timetable/Plan authority under the same locks used by
+      // rescheduling. Provider requests may have been sent before cancellation;
+      // their outputs must NEVER create artifacts after an obsolete parent.
+      const klass=await loadClassBase(studentId,classId,tx,true);
+      const plan=klass?await loadCurrentPlan(studentId,klass.course_id,tx,true):null;
+      const session=klass?await getSession(studentId,classId,tx,false):null;
       const workspace = await getPreparationWorkspace(studentId,classId,tx,true);
+      const pre=workspace?.current_authoritative_input_bundle_ref
+        ?(await tx.query(
+          'select preconditions from teaching_preparation.authoritative_input_bundles where input_bundle_id=$1 and workspace_id=$2',
+          [workspace.current_authoritative_input_bundle_ref,workspace.workspace_id]
+        )).rows?.[0]?.preconditions:null;
+      const stillCurrent=Boolean(klass&&plan&&workspace&&pre
+        &&klass.lifecycle_state==='SCHEDULED'
+        &&klass.course_lifecycle_state==='ACTIVE'
+        &&klass.source_timetable_state==='APPROVED'
+        &&Date.parse(klass.scheduled_start_at)>clock().getTime()
+        &&!session
+        &&workspace.lifecycle_state==='ACTIVE'
+        &&String(pre.course_state_version)===String(klass.course_state_version)
+        &&String(pre.class_schedule_version)===String(klass.schedule_version)
+        &&String(pre.timetable_version_id||'')===String(klass.source_timetable_version_id||'')
+        &&String(pre.course_plan_id)===String(plan.course_plan_id)
+        &&String(pre.course_plan_version)===String(plan.version_no));
+      if(!stillCurrent){
+        const error=new Error('Lesson preparation parent authority changed before AI output capture.');
+        error.code='TEACHING_D11_PREPARATION_PARENT_SUPERSEDED';
+        error.retryable=false;
+        error.status=409;
+        throw error;
+      }
       if (!workspace || !workspace.current_authoritative_input_bundle_ref) {
         const error = new Error('D11 preparation workspace/input bundle is required before prepared artifact capture.');
         error.code = 'TEACHING_D11_PPL_WORKSPACE_REQUIRED';
