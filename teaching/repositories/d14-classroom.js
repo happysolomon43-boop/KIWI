@@ -32,7 +32,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
           or c.source_timetable_version_id=approved.timetable_version_id
           or co.semester_id is null
           or s.lifecycle_state is not null
-          or a.outcome is not null
+          or a.attendance_record_id is not null
           or c.lifecycle_state<>'SCHEDULED'
         )
       order by c.scheduled_start_at`,[studentId,courseId]);
