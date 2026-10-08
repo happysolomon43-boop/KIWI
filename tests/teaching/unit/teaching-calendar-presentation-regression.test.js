@@ -13,7 +13,8 @@ test('Teaching Calendar uses day-grouped schedule rows instead of repeated full 
   assert.match(source, /teaching-d09-calendar-day/);
   assert.match(source, /teaching-d09-calendar-row__time/);
   assert.match(source, /teaching-d09-calendar-row__body/);
-  assert.match(source, /calendarGroupedList\(events,data,calendarEventCard\)/);
+  assert.match(source, /calendarGroupedList\(upcoming,data,calendarEventCard\)/);
+  assert.match(source, /calendarGroupedList\\(past,data,calendarEventCard\\)/);
   assert.doesNotMatch(source, /teaching-d09-calendar-item/);
 });
 
