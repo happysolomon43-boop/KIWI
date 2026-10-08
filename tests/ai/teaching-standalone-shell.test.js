@@ -77,7 +77,8 @@ test('Teaching uses the main KIWI type system and exposes Create Course navigati
   assert.match(typography, /--teaching-font-display: "Syne"/);
   assert.match(typography, /--teaching-font-body: "DM Sans"/);
   assert.match(typography, /--teaching-font-mono: "JetBrains Mono"/);
-  assert.match(js, /title: 'Overview'/);
+  // Drawer and bottom dock use the same destination title.
+  assert.match(js, /title: 'Courses'/);
   assert.match(js, /title: 'Create Course'/);
   assert.match(js, /Create course/);
   assert.doesNotMatch(js, /Stage 1 · Course Intake/);
