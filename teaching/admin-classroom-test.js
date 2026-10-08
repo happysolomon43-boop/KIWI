@@ -5,7 +5,8 @@ const crypto = require('node:crypto');
 
 const ATTEST_PATH = '/api/teaching/internal/classroom-test/attest';
 const KEY_HEADER = 'x-kiwi-classroom-test-key';
-const MAX_JSON_BYTES = 64 * 1024;
+const MAX_INPUT_BYTES = 128 * 1024;
+const MAX_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_ASSET_BYTES = 8 * 1024 * 1024;
 const ID = '[A-Za-z0-9_-]{1,100}';
 
@@ -149,7 +150,7 @@ function createAdminClassroomTestRouter({query,env=process.env,fetchImpl=globalT
     if(!ALLOWED.some(([method,pattern])=>method===req.method&&pattern.test(path)))
       return res.status(404).json({code:'CLASSROOM_TEST_ROUTE_UNAVAILABLE'});
     const asset=/^\/classes\/[^/]+\/classroom\/assets\/[^/]+$/.test(path);
-    if(req.method!=='GET' && Buffer.byteLength(JSON.stringify(req.body||{}))>MAX_JSON_BYTES)
+    if(req.method!=='GET' && Buffer.byteLength(JSON.stringify(req.body||{}))>MAX_INPUT_BYTES)
       return res.status(413).json({code:'CLASSROOM_TEST_INPUT_TOO_LARGE'});
     try {
       const a=await attest();
@@ -157,7 +158,7 @@ function createAdminClassroomTestRouter({query,env=process.env,fetchImpl=globalT
       if(a.remote.ownerReady!==true) return res.status(503).json({code:'CLASSROOM_TEST_USER_NOT_PROVISIONED'});
       const target=a.origin+'/api/teaching'+path;
       const response=await fetchImpl(target,{
-        method:req.method,redirect:'error',signal:AbortSignal.timeout(90000),
+        method:req.method,redirect:'error',signal:AbortSignal.timeout(/\/lesson-blueprint\/prepare$|\/controller\/replan$/.test(path)?12*60*1000:3*60*1000),
         headers:{[KEY_HEADER]:env.KIWI_CLASSROOM_TEST_SHARED_KEY,
           Accept:asset?'image/png,image/jpeg,image/svg+xml':'application/json',
           ...(req.method==='GET'?{}:{'Content-Type':'application/json'})},
