@@ -14,14 +14,14 @@ test('Teaching production document keeps the established shell and does not load
   assert.doesNotMatch(html, /teaching-d23-live\.(?:js|css)/);
   assert.doesNotMatch(html, /class="d23-shell"/);
   assert.match(html, /id="teachingApp"/);
-  assert.match(html, /src="\/teaching\.js\?v=20261006-deep-recovery"/);
+  assert.match(html, /src="\/teaching\.js\?v=20261008-calendar-authority-2"/);
 });
 
 test('Teaching browser assets revalidate and exhausted analysis cannot remain active', () => {
   const html = read('public/teaching.html');
   const d08 = read('public/teaching-d08.js');
   const vercel = JSON.parse(read('vercel.json'));
-  assert.match(html, /teaching-d08\.js\?v=20261006-deep-recovery/);
+  assert.match(html, /teaching-d08\.js\?v=20261008-calendar-authority-2/);
   assert.match(d08, /const exhausted = attempts >= 8/);
   assert.match(d08, /status === 'CANCELLED' \|\| exhausted/);
   assert.ok(vercel.headers.some((entry) => String(entry.source).includes('js|css')));
