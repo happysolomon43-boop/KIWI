@@ -179,6 +179,21 @@ function createD11LessonControllerRepository({
     return rows;
   }
 
+  async function listClassesForAppliedScheduleRequest(studentId,requestId) {
+    const {rows=[]}=await query(
+      "select c.* from public.teaching_classes c" +
+      " join public.teaching_timetable_versions t on t.timetable_version_id=c.source_timetable_version_id" +
+      " join public.teaching_courses co on co.course_id=c.course_id and co.student_id=c.student_id" +
+      " where c.student_id=$1 and c.source_request_id=$2" +
+      " and t.timetable_state='APPROVED' and co.lifecycle_state='ACTIVE'" +
+      " and c.lifecycle_state='SCHEDULED' and c.scheduled_start_at>now()" +
+      " and not exists (select 1 from public.teaching_class_sessions sess where sess.class_id=c.class_id and sess.student_id=c.student_id)" +
+      " order by c.scheduled_start_at,c.class_id",
+      [studentId,requestId]
+    );
+    return rows;
+  }
+
   async function getPlanningSignals(studentId, classRow) {
     const prior = await query(
       "select f.closure_fact_id,f.class_id,f.class_session_id,f.fact_pack,f.closed_at" +
@@ -436,9 +451,25 @@ function createD11LessonControllerRepository({
     return deps;
   }
 
-  async function ensurePreparationWorkspaceUsing(tx, { studentId, classId, correlationId = null } = {}) {
+  async function ensurePreparationWorkspaceUsing(tx, {
+    studentId,classId,correlationId=null,
+    expectedTimetableVersionId=null,expectedScheduleVersion=null,
+  } = {}) {
     const classRow = await loadClassBase(studentId, classId, tx, true);
     if (!classRow) return null;
+    // Final locked eligibility check: a timetable may have been superseded
+    // after the fanout event was published. Never create new preparation or due
+    // events for a cancelled, old, already-started, or elapsed Class.
+    if (expectedTimetableVersionId != null) {
+      if (classRow.lifecycle_state!=='SCHEDULED'
+        || classRow.course_lifecycle_state!=='ACTIVE'
+        || classRow.source_timetable_state!=='APPROVED'
+        || classRow.source_timetable_version_id!==expectedTimetableVersionId
+        || Number(classRow.schedule_version)!==Number(expectedScheduleVersion)
+        || !Number.isFinite(new Date(classRow.scheduled_start_at).getTime())
+        || new Date(classRow.scheduled_start_at).getTime()<=clock().getTime()
+        || await getSession(studentId,classId,tx,false))return null;
+    }
     const plan = await loadCurrentPlan(studentId, classRow.course_id, tx, true);
     if (!plan) {
       const error = new Error('D11 preparation requires the current Course Plan.');
@@ -1327,6 +1358,7 @@ function createD11LessonControllerRepository({
     listClassesForCourse,
     getPlanningSignals,
     listClassesForApprovedTimetable,
+    listClassesForAppliedScheduleRequest,
     ensurePreparationWorkspace,
     ensurePreparationWorkspaceUsing,
     recordPreparationArtifact,
