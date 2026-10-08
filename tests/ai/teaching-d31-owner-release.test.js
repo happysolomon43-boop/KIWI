@@ -26,6 +26,7 @@ const METHOD_BY_ADAPTER = Object.freeze({
   d14LessonIntelligence: 'decide',
   d16Intelligence: 'generateHomework',
   d17Intelligence: 'planBlueprint',
+  d20Intelligence: 'markConstructed',
 });
 
 test('D31 owner release override fails closed unless the exact server mode is present', () => {
@@ -60,10 +61,21 @@ test('D31 exact owner release mode enables every existing production-mounted Tea
   assert.equal(release.authorization.qualificationDisposition, 'PRESERVE_D30_EVIDENCE_STATE');
   assert.equal(release.authorization.productionQualifiedByOverride, false);
   assert.deepEqual(release.enabledAdapterKeys, ADAPTER_KEYS);
+  assert.deepEqual(
+    Object.keys(METHOD_BY_ADAPTER).sort(),
+    [...ADAPTER_KEYS].sort(),
+    'Every production-mounted adapter must have a canonical API assertion'
+  );
 
   for (const key of ADAPTER_KEYS) {
     assert.ok(release.intelligence[key], `${key} should be instantiated`);
     assert.equal(typeof release.intelligence[key][METHOD_BY_ADAPTER[key]], 'function', `${key} should expose its canonical adapter API`);
+  }
+  for (const method of [
+    'markConstructed', 'allocatePartialCredit', 'reviewAlternative', 'detectModeration',
+    'moderatePassA', 'moderatePassB', 'appealPassA', 'appealPassB',
+  ]) {
+    assert.equal(typeof release.intelligence.d20Intelligence[method], 'function', `D20 ${method} must remain available through D31`);
   }
 });
 
