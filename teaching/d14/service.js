@@ -67,7 +67,12 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
       boardHistoryAllowed:!restricted,notebook:notes,notebookAllowed:!restricted,summary,closureFacts,
-      teacherConversation:conversation,teacherMessagingAllowed:!closed&&source.session?.lifecycle_state==='ACTIVE'&&!RESTRICTED.has(mode)&&!['BREAK','INTERRUPTED'].includes(mode),
+      teacherConversation:conversation,teacherMessagingAllowed:!closed&&source.session?.lifecycle_state==='ACTIVE'
+        &&source.classRow.lifecycle_state!=='CANCELLED'
+        &&source.classRow.course_lifecycle_state!=='INCOMPLETE'
+        &&source.classRow.course_lifecycle_state!=='PAUSED'
+        &&source.classRow.source_timetable_state!=='SUPERSEDED'
+        &&!RESTRICTED.has(mode)&&!['BREAK','INTERRUPTED'].includes(mode),
       studyNote:studyNote?.state==='VALIDATED_PRIVATE'?{state:'PRIVATE_VALIDATED_AWAITING_D27',published:false}:studyNote?{state:studyNote.state,published:false}:null,
       assessmentTakeover:mode==='ASSESSMENT',assessmentOwner:'D17',classworkOwner:'D16',
       transcriptSecondary:true,controlsEnabled:source.session?.lifecycle_state==='ACTIVE',academicStateFromBrowser:false});
@@ -86,7 +91,14 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     if(!ctx.session)fail('TEACHING_D14_CONTROLLER_NOT_STARTED',409);
     if(ctx.session?.lifecycle_state==='CLOSED'&&kind!=='LEAVE')fail('TEACHING_D14_CLASS_CLOSED');
     if(ctx.session?.instructional_substate==='ASSESSMENT'&&!['TECHNICAL_ISSUE','LEAVE'].includes(kind))fail('TEACHING_D14_ASSESSMENT_CONTROL_RESTRICTED',403);
-    if(['ASK_TEACHER','NEED_HELP'].includes(kind)&&(!ctx.session||ctx.session.lifecycle_state!=='ACTIVE'||RESTRICTED.has(ctx.session.instructional_substate)||['BREAK','INTERRUPTED'].includes(ctx.session.instructional_substate)))fail('TEACHING_D14_TEACHER_MESSAGES_PAUSED',403);
+    if(['ASK_TEACHER','NEED_HELP'].includes(kind)&&(
+      !ctx.session||ctx.session.lifecycle_state!=='ACTIVE'
+      ||ctx.classRow?.lifecycle_state==='CANCELLED'
+      ||(ctx.classRow?.course_lifecycle_state&&ctx.classRow.course_lifecycle_state!=='ACTIVE')
+      ||(ctx.classRow?.source_timetable_state&&ctx.classRow.source_timetable_state!=='APPROVED')
+      ||RESTRICTED.has(ctx.session.instructional_substate)
+      ||['BREAK','INTERRUPTED'].includes(ctx.session.instructional_substate)
+    ))fail('TEACHING_D14_TEACHER_MESSAGES_PAUSED',403);
     const body=input.body==null?null:String(input.body).trim();if(body?.length>2000)fail('TEACHING_D14_SIGNAL_TOO_LONG',400);
     if(['ASK_TEACHER','NEED_HELP'].includes(kind)&&!body)fail('TEACHING_D14_TEACHER_MESSAGE_REQUIRED',400);
     const key=String(input.idempotencyKey||'');if(!key||key.length>160)fail('TEACHING_D14_IDEMPOTENCY_REQUIRED',400);
@@ -100,6 +112,8 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const ctx=await context(user.id,classId);
     if(ctx.classRow.lifecycle_state==='CANCELLED')fail('TEACHING_D14_CLASS_CANCELLED',409);
     if(ctx.classRow.course_lifecycle_state!=='ACTIVE')fail('TEACHING_D14_COURSE_NOT_ACTIVE',409);
+    if(ctx.classRow.source_timetable_state&&ctx.classRow.source_timetable_state!=='APPROVED'&&!ctx.session)
+      fail('TEACHING_D14_CLASS_TIMETABLE_SUPERSEDED',409);
     if(ctx.session?.lifecycle_state==='CLOSED')fail('TEACHING_D14_CLASS_ALREADY_ENDED',409);
     const now=clock().getTime(),start=Date.parse(ctx.classRow.scheduled_start_at),end=Date.parse(ctx.classRow.scheduled_end_at);
     if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start)fail('TEACHING_D14_INVALID_CLASS_SCHEDULE',409);
