@@ -241,6 +241,13 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
       }
     }
     const globalFacts=scheduleClassFacts(result.schedule,now);
+    if(result.outcome==='INFEASIBLE'){
+      const error=new Error('The Semester does not have enough conflict-free time in its current date range and availability for this timetable.');
+      error.status=422;
+      error.code='TEACHING_D09_SEMESTER_CAPACITY_INFEASIBLE';
+      error.details={reasons:result.reasons||[],alternatives:result.alternatives||[]};
+      throw error;
+    }
     if(globalFacts.elapsedClassCount>0){
       const error=new Error('The proposed Semester timetable contains elapsed Classes and must be recalculated from server time.');
       error.status=422;error.code='TEACHING_D09_ELAPSED_TIMETABLE_REJECTED';throw error;

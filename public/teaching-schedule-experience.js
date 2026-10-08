@@ -16,6 +16,9 @@ const postActivationState = (course) => !['DRAFT','READY','PLANNING','SETUP'].in
 const scheduleActionError = (error, fallback) => {
   const code=String(error?.code||'').toUpperCase();
   const message=String(error?.message||'');
+  if(code.includes('SEMESTER_CAPACITY_INFEASIBLE')||code.includes('REQUIRED_INSTRUCTIONAL_LOAD_UNSCHEDULED')||code.includes('RECOVERY_HEADROOM_BELOW_MINIMUM')){
+    return 'There is not enough conflict-free time in the current Semester date range and availability. Extend the Semester, add study windows, or reduce protected time, then rebuild.';
+  }
   if(code.includes('LOAD_ESTIMATION_TRUNCATED')||code.includes('AI_OUTPUT_TRUNCATED')||/MAX_TOKENS|incomplete Teaching artifact/i.test(message)){
     return 'KIWI could not finish workload preparation for this timetable. Nothing was changed; try the timetable action again.';
   }
@@ -181,7 +184,25 @@ function renderTimetable(data,course,card,reload){
       await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/timetable/propose`,{method:'POST',body:{}});
       message.textContent='Timetable build started in the background. You can keep using KIWI while it finishes.';
       message.dataset.kind='success';
-      window.setTimeout(()=>{void reload(null,'Timetable build is running in the background.');},1200);
+      const monitor=async()=>{
+        try{
+          const review=await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/schedule-review`);
+          const build=review.backgroundBuild;
+          if(build?.active){window.setTimeout(monitor,3000);return;}
+          if(build&&['CANCELLED','FAILED'].includes(String(build.status||'').toUpperCase())){
+            message.textContent=scheduleActionError({code:build.lastErrorCode},'The timetable could not be rebuilt.');
+            message.dataset.kind='error';
+            action.disabled=missingInputs||(post&&!integrity.recoveryRequired);
+            return;
+          }
+          await reload(review,'Semester timetable rebuilt successfully.');
+        }catch(error){
+          message.textContent=scheduleActionError(error,'KIWI could not check the timetable build.');
+          message.dataset.kind='error';
+          action.disabled=missingInputs||(post&&!integrity.recoveryRequired);
+        }
+      };
+      window.setTimeout(monitor,2500);
     }catch(error){
       message.textContent=scheduleActionError(error,'Semester timetable could not be started.');
       message.dataset.kind='error';

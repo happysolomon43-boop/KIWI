@@ -14,7 +14,7 @@ test('Teaching production document keeps the established shell and does not load
   assert.doesNotMatch(html, /teaching-d23-live\.(?:js|css)/);
   assert.doesNotMatch(html, /class="d23-shell"/);
   assert.match(html, /id="teachingApp"/);
-  assert.match(html, /src="\/teaching\.js\?v=20261006-deep-recovery"/);
+  assert.match(html, /src="\/teaching\.js\?v=20261008-calendar-authority-2"/);
 });
 
 test('Teaching browser assets revalidate and exhausted analysis cannot remain active', () => {

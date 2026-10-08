@@ -26,7 +26,7 @@ function createD23Service({d07,d08,d09,d10,d14,d16,d19,d20,d21,d22,clock=()=>new
       id:`class:${classId}`,kind:'CLASS',classId:String(classId||''),courseId:String(row.courseId||row.course_id||''),
       title:row.title||row.label||'Teaching Class',startsAt:row.startsAt||row.starts_at||row.scheduledStartAt||row.scheduled_start_at,
       endsAt:row.endsAt||row.ends_at||row.scheduledEndAt||row.scheduled_end_at,
-      timezone:row.timezone||null,sourceOwner:'D09_SCHEDULER',truthStatus:'AUTHORITATIVE_FINAL',
+      courseTitle:row.courseTitle||row.course_title||null,timezone:row.timezone||null,sourceOwner:'D09_SCHEDULER',truthStatus:'AUTHORITATIVE_FINAL',
       href:classHref(classId),hiddenUntilActive:false,slotKind:row.kind||row.slotKind||row.slot_kind||'CLASS',
     });
   }
@@ -52,9 +52,12 @@ function createD23Service({d07,d08,d09,d10,d14,d16,d19,d20,d21,d22,clock=()=>new
 
   async function calendar(user,{from=null,to=null,currentTimeZone='UTC'}={}){
     const courses=await courseRows(user),base=await d09.getCalendar(user,{from,to,currentTimeZone}),assessmentData=await assessmentsByCourse(user,courses);
+    const courseTitleById=new Map(courses.map((course)=>[idOf(course),courseTitle(course)]));
     const eventById=new Map(),conflictedIds=new Set();
-    const addEvent=(event)=>{
-      if(!event||conflictedIds.has(event.id))return;
+    const addEvent=(candidate)=>{
+      if(!candidate)return;
+      const event=Object.freeze({...candidate,courseTitle:candidate.courseTitle||courseTitleById.get(String(candidate.courseId||''))||'Course'});
+      if(conflictedIds.has(event.id))return;
       const existing=eventById.get(event.id);
       if(!existing){eventById.set(event.id,event);return;}
       if(eventIdentitySignature(existing)===eventIdentitySignature(event))return;
