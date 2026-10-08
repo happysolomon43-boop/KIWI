@@ -50,6 +50,8 @@ test('D11 late recovery still requires real model planning, deterministic valida
   assert.match(d11,/validateLessonBlueprintProposal\(/);
   assert.match(d11,/allowLateStartRecovery,/);
   assert.match(d11,/ensureControllerStartedUsing/);
+  assert.match(d11,/alreadyHandedOff=blueprintCurrentForContext\(context\)&&!context\.workspace/);
+  assert.match(d11,/alreadyHandedOff\?null/);
   assert.match(d11,/context\.classRow\.source_timetable_state!=='APPROVED'/);
 });
 
@@ -58,6 +60,7 @@ test('Classroom first reads the real session before JOIN, and prepares validated
   assert.match(ui,/async function recoverPreparedLesson\(/);
   assert.match(ui,/allowLateStartRecovery:true,maxSteps:1/);
   assert.match(ui,/current\?\.blueprint\?\.currentForAuthoritativeContext===true/);
+  assert.match(ui,/!current\?\.preparation/);
   assert.match(ui,/if\(path==='start'\)await recoverPreparedLesson\(classId\)/);
   assert.match(ui,/try\{await fetchSnapshot\(\);if\(!reviewOnly&&state\.snapshot\?\.controller/);
   assert.doesNotMatch(ui,/try\{if\(!reviewOnly\)await kiwiApiRequest\(`\/teaching\/classes/);
