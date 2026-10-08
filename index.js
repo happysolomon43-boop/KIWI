@@ -47,6 +47,7 @@ const { createD11RuntimeRecoveryRepository } = require('./teaching/repositories/
 const { createD11RuntimeRecovery } = require('./teaching/d11/runtime-recovery');
 const { createD11PreparationCancellation } = require('./teaching/d11/preparation-cancellation');
 const { createD11ClassDueCancellation } = require('./teaching/d11/class-due-cancellation');
+const { createD11BlueprintInvalidation } = require('./teaching/d11/blueprint-invalidation');
 const { createD31ReleaseIntelligence } = require('./teaching/d31');
 const { createTeachingEventSubscriberRegistry } = require('./teaching/events/dispatcher');
 const { TEACHING_EVENTS } = require('./teaching/events/names');
@@ -114,13 +115,14 @@ const teachingRuntimePlatform = createTeachingD05RuntimePlatform({
   logger: console,
 });
 const teachingClassDueCancellation = createD11ClassDueCancellation({query,withTransaction,logger:console});
+const teachingBlueprintInvalidation = createD11BlueprintInvalidation({query,withTransaction,randomUUID,logger:console});
 const teachingClassPreparationCancellation = createD11PreparationCancellation({
   query,withTransaction,randomUUID,logger:console,
 });
 const teachingClassRuntimeRecovery = createD11RuntimeRecovery({
   repository:createD11RuntimeRecoveryRepository({query}),
   outboxStore:teachingRuntimePlatform.outboxStore,
-  logger:console,
+  intervalMs:120000,logger:console,
 });
 const teachingD31Release = createD31ReleaseIntelligence({
   runtimePlatform: teachingRuntimePlatform,
@@ -22674,6 +22676,7 @@ try {
   // subscriber used by timetable reflow; no direct workspace/model mutation.
   teachingClassPreparationCancellation.start();
   teachingClassDueCancellation.start();
+  teachingBlueprintInvalidation.start();
   teachingClassRuntimeRecovery.start();
   console.log('[KIWI Teaching] D05 runtime initialized; due-event and durable outbox workers started.');
 } catch (e) {
