@@ -120,7 +120,7 @@ function renderHeader(s){
     try{
       const result=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/interactions`,{method:'POST',body:{kind:'LEAVE',idempotencyKey:state.leaveRequestId}});
       const outcome=result?.attendance?.outcome||result?.attendance?.record?.outcome;
-      try{if(outcome&&!classroomTestMode)sessionStorage.setItem('kiwi_last_class_attendance',outcome);}catch{}
+      try{if(outcome)sessionStorage.setItem('kiwi_last_class_attendance',outcome);}catch{}
       close();
     }catch(error){
       leave.disabled=false;
@@ -224,7 +224,7 @@ function renderBoard(s){
 function renderWorkspace(s){
   const panel=$('section','tc-workspace');add(panel,add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','YOUR SPACE'),$('h2','',s.modeKey==='INDEPENDENT_PRACTICE'?'Work independently':'Student Workspace'))));
   panel.querySelector('.tc-panel-head').append(expandControl('workspace'));
-  if(state.reviewOnly){panel.append(notice('Past Class record','Review the Board, summary and Notebook without creating a new attendance interaction.'));return panel;}
+  if(state.reviewOnly){panel.append(notice(classroomTestMode?'Read-only preview':'Past Class record','Review the Board, summary and Notebook without joining the Class or changing attendance.'));return panel;}
   if(!s.controller){
     const schedule='Scheduled '+date(s.class.scheduledStartAt)+' · '+Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)+' minutes.';
     if(s.modeKey==='UNSTARTED_PAST'){
@@ -463,7 +463,7 @@ function render(){
 }
 async function renderCourse({course,container,adminPreview=false}){
   const page=$('section','tc-course');
-  add(page,$('div','tc-eyebrow',adminPreview?'ADMIN / EXISTING CLASSROOM':'COURSE / CLASSROOM'),$('h2','',adminPreview?'PHY101 classroom':'Enter the classroom'),$('p','',adminPreview?'Preview scheduled Classes without joining. Enter a live Class only when it opens; entering records real attendance.':'Upcoming lessons are here. Past attendance stays in a separate history panel.'));
+  add(page,$('div','tc-eyebrow',adminPreview?'ADMIN / EXISTING CLASSROOM':'COURSE / CLASSROOM'),$('h2','',adminPreview?((course.title||'KIWI')+' classroom'):'Enter the classroom'),$('p','',adminPreview?'Preview scheduled Classes without joining. Enter a live Class only when it opens; entering records real attendance.':'Upcoming lessons are here. Past attendance stays in a separate history panel.'));
   const status=$('div','tc-classroom-sync');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   const content=$('div','tc-classroom-classes');
   const refreshButton=button('↻ Refresh',()=>refresh(),'tc-button tc-button--quiet');
