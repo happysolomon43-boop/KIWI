@@ -13,7 +13,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
   async function listClasses(user,courseId){
     const course=await repository.identity(user.id,courseId);if(!course)fail('TEACHING_D14_COURSE_NOT_FOUND',404);
     const classes=await repository.listClasses(user.id,courseId),instant=clock(),at=(instant instanceof Date?instant:new Date(instant)).getTime();
-    const isPast=(row)=>String(row.session_state||'').toUpperCase()==='ACTIVE'?false:Date.parse(row.scheduled_end_at)<=at||['COMPLETED','CLOSED'].includes(String(row.lifecycle_state||row.session_state||'').toUpperCase());
+    const isPast=(row)=>String(row.session_state||'').toUpperCase()==='ACTIVE'?false:Date.parse(row.scheduled_end_at)<=at||['COMPLETED','CLOSED'].includes(String(row.lifecycle_state||'').toUpperCase())||String(row.session_state||'').toUpperCase()==='CLOSED';
     const enriched=classes.map(row=>{
       const starts=Date.parse(row.scheduled_start_at),ends=Date.parse(row.scheduled_end_at);
       const sessionState=String(row.session_state||'').toUpperCase();
