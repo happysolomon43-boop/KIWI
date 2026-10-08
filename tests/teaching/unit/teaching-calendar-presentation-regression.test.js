@@ -40,3 +40,10 @@ test('Calendar cards identify their Course and never relabel active Courses as p
   assert.match(source, /courseName=item\.course_title\|\|item\.courseTitle/);
   assert.match(source, /title\.append\(el\('strong','',courseName\)/);
 });
+
+test('Calendar API projection preserves real Course names', () => {
+  const service = fs.readFileSync(path.join(root, 'teaching/d23/service.js'), 'utf8');
+  assert.match(service, /courseTitle:row\.courseTitle\|\|row\.course_title/);
+  assert.match(service, /courseTitleById/);
+  assert.match(service, /candidate\.courseTitle\|\|courseTitleById/);
+});
