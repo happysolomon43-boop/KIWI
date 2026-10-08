@@ -539,6 +539,11 @@ function createD11Service({
     if(String(context.classRow.course_lifecycle_state)!=='ACTIVE') {
       fail('Only an Active Course may start a live Class Controller.','TEACHING_D11_COURSE_NOT_ACTIVE',409);
     }
+    if(context.classRow.lifecycle_state!=='SCHEDULED'
+      ||context.classRow.source_timetable_state!=='APPROVED'){
+      fail('A cancelled or superseded timetable Class cannot start.',
+        'TEACHING_D11_CLASS_PARENT_SUPERSEDED',409);
+    }
     const now=clock();
     if(now.getTime()<new Date(context.classRow.scheduled_start_at).getTime()) {
       fail('Class cannot start before its authoritative scheduled time.','TEACHING_D11_CLASS_START_EARLY',409);
