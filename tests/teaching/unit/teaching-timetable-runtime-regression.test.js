@@ -65,8 +65,20 @@ test('Timetable build actions preserve the current view while background work st
   const modern = read('public/teaching-schedule-experience.js');
   const legacy = read('public/teaching-d09.js');
 
-  assert.match(modern, /window\.setTimeout\(\(\)=>\{void reload/);
-  assert.match(legacy, /window\.setTimeout\(\(\)=>\{void reload/);
-  assert.doesNotMatch(modern, /await reload\(null,'Timetable build started/);
-  assert.doesNotMatch(legacy, /await reload\(null,\{text:'Timetable build started/);
+  assert.match(modern, /const monitor=async\(\)=>/);
+  assert.match(legacy, /const monitor=async\(\)=>/);
+  assert.match(modern, /if\(build\?\.active\)\{window\.setTimeout\(monitor,3000\)/);
+  assert.match(legacy, /if\(build\?\.active\)\{window\.setTimeout\(monitor,3000\)/);
+  assert.match(modern, /SEMESTER_CAPACITY_INFEASIBLE/);
+  assert.match(legacy, /SEMESTER_CAPACITY_INFEASIBLE/);
+  assert.doesNotMatch(modern, /window\.setTimeout\(\(\)=>\{void reload/);
+  assert.doesNotMatch(legacy, /window\.setTimeout\(\(\)=>\{void reload/);
+});
+
+
+test('Infeasible Semester capacity is rejected before a proposal is saved', () => {
+  const service = read('teaching/d09/service.js');
+  assert.match(service, /result\.outcome==='INFEASIBLE'/);
+  assert.match(service, /TEACHING_D09_SEMESTER_CAPACITY_INFEASIBLE/);
+  assert.match(service, /does not have enough conflict-free time/);
 });
