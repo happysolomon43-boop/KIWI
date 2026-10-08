@@ -5,7 +5,7 @@ if(typeof kiwiApiRequest!=='function'||!courses?.registerSection)throw new Error
 const $=(tag,className='',text=null)=>{const n=document.createElement(tag);if(className)n.className=className;if(text!==null)n.textContent=String(text);return n;};
 const visualLoads=new Map();
 function clearVisualLoads(){for(const {controller,url} of visualLoads.values()){controller.abort();if(url)URL.revokeObjectURL(url);}visualLoads.clear();}
-const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false,returnFocus:null,leaveRequestId:null,reviewOnly:false,sheet:null,sheetKind:null,sheetFocus:null,sheetKey:null,sheetBusy:false};
+const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false,returnFocus:null,leaveRequestId:null,reviewOnly:false,sheet:null,sheetKind:null,sheetFocus:null,sheetKey:null,sheetBusy:false,expanded:null};
 const MODE={PRE_CLASS:'Before Class',START_DELAYED:'Start pending',UNSTARTED_PAST:'Did not start',OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'};
 function when(value){return value?new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'—';}
 function date(value){return value?new Date(value).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'—';}
@@ -15,7 +15,7 @@ function button(label,handler,cls=''){const b=$('button',cls,label);b.type='butt
 function notice(title,body,kind=''){return add($('div',`tc-notice ${kind}`),$('strong','',title),$('p','',body));}
 function serverNow(){const s=state.snapshot;return Date.now()+(s?new Date(s.serverNow).getTime()-s._receivedAt:0);}
 function clearRuntime(){if(state.interval)clearInterval(state.interval);if(state.refresh)clearInterval(state.refresh);state.interval=state.refresh=null;}
-function close({restore=true}={}){clearVisualLoads();state.scene=0;closeSheet({restore:false,force:true});clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;state.leaveRequestId=null;state.reviewOnly=false;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
+function close({restore=true}={}){collapsePanel({restore:false});clearVisualLoads();state.scene=0;closeSheet({restore:false,force:true});clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;state.leaveRequestId=null;state.reviewOnly=false;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
 async function fetchSnapshot(){
   if(!state.classId||state.busy)return;
   const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);
@@ -23,7 +23,7 @@ async function fetchSnapshot(){
   if(!state.reviewOnly&&(!previous||state.scene>=Math.max(0,(previous.board?.length||0)-1)))state.scene=Math.max(0,(data.board?.length||0)-1);
   state.snapshot=data;
   // The twelve-second live refresh must not tear down the Board, native
-  // Details control or focused inputs when only server clock values changed.
+  // expanded panels or focused inputs when only server clock values changed.
   const comparable=(v)=>JSON.stringify({...v,serverNow:null,_receivedAt:null,entry:v?.entry?{...v.entry,minutesRemaining:null}:null});
   if(previous&&comparable(previous)===comparable(data)){updateClocks();return;}
   render();
@@ -51,12 +51,11 @@ async function open(classId,{reviewOnly=false}={}){
 function trapClassroomFocus(event){
   if(event.key==='Escape'){
     if(state.sheet){event.preventDefault();event.stopPropagation();closeSheet();return;}
-    const controls=state.host?.querySelector('.tc-controls[open]');
-    if(controls){controls.open=false;controls.querySelector('summary')?.focus();}
+    if(state.expanded){event.preventDefault();collapsePanel();}
     return;
   }
   if(event.key!=='Tab')return;
-  const scope=state.sheet||state.host;
+  const scope=state.sheet||state.expanded?.dialog||state.host;
   const nodes=Array.from(scope?.querySelectorAll('button:not([disabled]),a[href],textarea:not([disabled]),input:not([disabled]),select:not([disabled]),summary,[tabindex]:not([tabindex="-1"])')||[]).filter(node=>node.getClientRects().length);
   if(!nodes.length)return;
   const first=nodes[0],last=nodes[nodes.length-1];
@@ -109,6 +108,39 @@ function renderTeacher(s){
   add(panel,avatar,add($('div','tc-teacher__copy'),$('div','tc-eyebrow',s.identity.teacher_name||'YOUR TEACHER'),$('p','',s.teacherMessage||message)));return panel;
 }
 function blockText(parent,value){parent.append($('p','',String(value||'')));}
+function syncExpandButton(panel,kind,expanded){
+  const control=panel.querySelector('[data-expand-panel]');if(!control)return;
+  const name=kind==='board'?'Board':'Workspace';
+  control.textContent=expanded?'↙':'⛶';control.title=(expanded?'Restore ':'Expand ')+name;
+  control.setAttribute('aria-label',control.title);control.setAttribute('aria-expanded',String(expanded));
+}
+function expandControl(kind){
+  const control=button('⛶',()=>state.expanded?.kind===kind?collapsePanel():expandPanel(kind),'tc-expand-button');
+  control.dataset.expandPanel=kind;control.setAttribute('aria-controls','tc-panel-'+kind);
+  control.title='Expand '+(kind==='board'?'Board':'Workspace');control.setAttribute('aria-label',control.title);control.setAttribute('aria-expanded','false');return control;
+}
+function collapsePanel({restore=true}={}){
+  const expanded=state.expanded;if(!expanded)return;state.expanded=null;
+  const {panel,placeholder,dialog,kind}=expanded;
+  placeholder.replaceWith(panel);panel.scrollTop=expanded.originalScroll;
+  state.host?.classList.remove('tc-panel-expanded');
+  syncExpandButton(panel,kind,false);if(dialog.open)dialog.close();dialog.remove();
+  if(restore)panel.querySelector('[data-expand-panel]')?.focus({preventScroll:true});
+}
+function expandPanel(kind){
+  if(!['board','workspace'].includes(kind)||!state.host)return;
+  collapsePanel({restore:false});
+  const panel=state.host.querySelector('#tc-panel-'+kind);if(!panel)return;
+  const dialog=$('dialog','tc-expanded-panel');dialog.setAttribute('aria-label',(kind==='board'?'Board':'Workspace')+' expanded view');
+  const placeholder=$('div','tc-panel-placeholder');placeholder.style.height=panel.getBoundingClientRect().height+'px';
+  const originalScroll=panel.scrollTop;panel.replaceWith(placeholder);dialog.append(panel);state.host.append(dialog);
+  state.expanded={kind,panel,placeholder,dialog,originalScroll};syncExpandButton(panel,kind,true);
+  state.host.classList.add('tc-panel-expanded');
+  dialog.addEventListener('cancel',event=>{event.preventDefault();collapsePanel();});
+  dialog.addEventListener('close',()=>{if(state.expanded?.dialog===dialog)collapsePanel();});
+  dialog.addEventListener('click',event=>{if(event.target!==dialog)return;const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)collapsePanel();});
+  dialog.showModal();panel.querySelector('[data-expand-panel]')?.focus({preventScroll:true});
+}
 function graphBlock(c){
   const wrap=$('div','tc-graph');const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 400 220');svg.setAttribute('role','img');const description=c.description||c.alt||'Data graph';svg.setAttribute('aria-label',description);const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=description;svg.append(title);
   const pts=c.points||[];if(!pts.length){wrap.append($('p','','No data points'));return wrap;}
@@ -143,17 +175,18 @@ function renderBlock(item){
 function renderBoard(s){
   const panel=$('section','tc-board');panel.setAttribute('aria-label','Class Board');
   const title=add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','TEACHING SURFACE'),$('h2','','The Board')));
-  panel.append(title);
+  panel.append(title);const tools=add($('div','tc-panel-tools'),expandControl('board'));title.append(tools);
   if(!s.boardHistoryAllowed){panel.append(notice('Board history is unavailable','This activity restricts earlier teaching materials.'));return panel;}
   if(!s.board.length){if(['CLOSURE','UNSTARTED_PAST'].includes(s.modeKey)||s.controller?.lifecycleState==='CLOSED')panel.append(notice('No Board scenes published','There is no recorded lesson Board for this Class. Review attendance and any saved notes in Past Classes.'));else panel.append(add($('div','tc-board-empty'),$('div','tc-board-empty__glyph','✧'),$('h3','','A clear space to think'),$('p','','The Board will hold the explanation, examples and comparisons for this Class.')));return panel;}
   state.scene=Math.min(state.scene,s.board.length-1);const scene=s.board[state.scene];
-  const previous=button('←',()=>{state.scene=Math.max(0,state.scene-1);render();},'tc-icon');previous.setAttribute('aria-label','Previous Board scene');const next=button('→',()=>{state.scene=Math.min(s.board.length-1,state.scene+1);render();},'tc-icon');next.setAttribute('aria-label','Next Board scene');title.append(add($('div','tc-scene-nav'),previous,$('span','',`${state.scene+1} / ${s.board.length}`),next));
-  title.querySelectorAll('button')[0].disabled=state.scene===0;title.querySelectorAll('button')[1].disabled=state.scene===s.board.length-1;
+  const previous=button('←',()=>{state.scene=Math.max(0,state.scene-1);render();},'tc-icon');previous.setAttribute('aria-label','Previous Board scene');const next=button('→',()=>{state.scene=Math.min(s.board.length-1,state.scene+1);render();},'tc-icon');next.setAttribute('aria-label','Next Board scene');tools.prepend(add($('div','tc-scene-nav'),previous,$('span','',`${state.scene+1} / ${s.board.length}`),next));
+  previous.disabled=state.scene===0;next.disabled=state.scene===s.board.length-1;
   if(scene.title)panel.append($('h3','tc-scene-title',scene.title));
   const blocks=$('div','tc-board-blocks');scene.items.forEach((item)=>blocks.append(renderBlock(item)));panel.append(blocks);return panel;
 }
 function renderWorkspace(s){
   const panel=$('section','tc-workspace');add(panel,add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','YOUR SPACE'),$('h2','',s.modeKey==='INDEPENDENT_PRACTICE'?'Work independently':'Student Workspace'))));
+  panel.querySelector('.tc-panel-head').append(expandControl('workspace'));
   if(state.reviewOnly){panel.append(notice('Past Class record','Review the Board, summary and Notebook without creating a new attendance interaction.'));return panel;}
   if(!s.controller){
     const schedule='Scheduled '+date(s.class.scheduledStartAt)+' · '+Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)+' minutes.';
@@ -248,6 +281,7 @@ function syncSheet(){
     :allowed?'The Teacher will decide whether to answer now, briefly defer, or explain why a question cannot be answered.':'You can review earlier questions, but cannot raise your hand during this protected or inactive activity.';
 }
 function openSheet(kind){
+  collapsePanel({restore:false});
   if(!state.snapshot||!state.host||!['notebook','teacher'].includes(kind))return;
   if(state.sheet){if(state.sheetKind===kind)return;closeSheet({restore:false});}
   const trigger=document.activeElement;
@@ -333,9 +367,6 @@ function openSheet(kind){
   state.host.append(shade);
   syncSheet();
 }
-function renderControls(s){const details=$('details','tc-controls');if(state.reviewOnly)return details;details.append($('summary','','Class controls'));
-  const items=$('div','tc-controls__items');[['Request short break','BREAK_REQUEST'],['Request early dismissal','EARLY_DISMISSAL_REQUEST'],['Report technical issue','TECHNICAL_ISSUE']].forEach(([label,kind])=>items.append(button(label,()=>act('interactions',{kind}),'tc-button tc-button--quiet')));
-  details.append(items);if(!s.controlsEnabled)details.hidden=true;return details;}
 function renderSummary(s){const section=$('section','tc-after');add(section,$('div','tc-eyebrow','AFTER CLASS'),$('h2','','What stays with you'));
   if(s.summary?.state==='TRANSLATED'&&s.summary.payload?.student_summary)section.append($('p','tc-summary-text',s.summary.payload.student_summary));
   else if(s.closureFacts){section.append(notice('Class record saved','The academic record is secure. A student-facing narrative is pending its qualified translation route.'));const list=$('ul','tc-fact-list');s.closureFacts.facts.forEach((f)=>{if(f.semantic_key==='completed_objective_refs'||f.semantic_key==='unfinished_core_objective_refs'){list.append(add($('li',''),$('strong','',f.semantic_key==='completed_objective_refs'?'Completed objectives':'Carried forward'),$('span','',Array.isArray(f.effective_state)?f.effective_state.join(', ')||'None':'—')));}});section.append(list);}
@@ -344,12 +375,15 @@ function renderSummary(s){const section=$('section','tc-after');add(section,$('d
   if(Array.isArray(s.teacherConversation)&&s.teacherConversation.length)section.append(button('Review raised-hand questions',()=>openSheet('teacher'),'tc-button tc-button--soft'));
   if(s.summary?.payload?.transcript_url){const link=document.createElement('a');link.className='tc-artifact-link';link.href=s.summary.payload.transcript_url;link.textContent='Full transcript · secondary record';link.setAttribute('aria-label','Open full transcript as a secondary class artifact');artifacts.append(link);}
   section.append(artifacts);return section;}
-function render(){clearVisualLoads();
+function render(){
+  const expandedKind=state.expanded?.kind,expandedScroll=state.expanded?.panel.scrollTop;
+  const previousWorkspace=state.host?.querySelector('#tc-panel-workspace textarea');
+  const draft=previousWorkspace?{value:previousWorkspace.value,authority:previousWorkspace.dataset.authority,focused:document.activeElement===previousWorkspace,start:previousWorkspace.selectionStart,end:previousWorkspace.selectionEnd}:null;
+  collapsePanel({restore:false});clearVisualLoads();
   const s=state.snapshot;if(!s||!state.host)return;
   // A protected activity cannot inherit an already-open Notebook or Teacher sheet.
   // Close it before the refreshed Class DOM is made visible.
   if(['ASSESSMENT','CLASSWORK'].includes(s.modeKey)&&state.sheet)closeSheet({restore:false,force:true});
-  const controlsWasOpen=Boolean(state.host.querySelector('.tc-controls[open]'));
   const root=$('div','tc-shell');root.dataset.mode=s.modeKey;
   root.append(renderHeader(s));const body=$('main','tc-layout');
   const left=$('div','tc-layout__main');left.append(renderTeacher(s));
@@ -360,8 +394,9 @@ function render(){clearVisualLoads();
   const mobileNav=add($('div','tc-mobile-tabs'),...tabs);mobileNav.setAttribute('role','tablist');mobileNav.setAttribute('aria-label','Classroom areas');left.append(mobileNav);
   const board=renderBoard(s);board.id='tc-panel-board';board.setAttribute('role','tabpanel');board.classList.toggle('tc-mobile-hidden',state.tab!=='board');left.append(board);
   const work=renderWorkspace(s);work.id='tc-panel-workspace';work.setAttribute('role','tabpanel');work.classList.toggle('tc-mobile-hidden',state.tab!=='workspace');
-  const right=add($('aside','tc-layout__side'),work,renderControls(s));
-  const nextControls=right.querySelector('.tc-controls');if(nextControls&&controlsWasOpen)nextControls.open=true;
+  if(!state.reviewOnly&&s.controlsEnabled){const actions=work.querySelector('.tc-workspace__actions')||$('div','tc-workspace__actions');[['Request short break','BREAK_REQUEST'],['Request early dismissal','EARLY_DISMISSAL_REQUEST'],['Report technical issue','TECHNICAL_ISSUE']].forEach(([label,kind])=>actions.append(button(label,()=>act('interactions',{kind}),'tc-button tc-button--quiet')));if(!actions.parentNode)work.append(actions);}
+  const answer=work.querySelector('textarea');if(answer){answer.dataset.authority=JSON.stringify([state.classId,s.modeKey,s.learningUnitId,s.controller?.stateVersion]);if(draft?.authority===answer.dataset.authority)answer.value=draft.value;}
+  const right=add($('aside','tc-layout__side'),work);
   add(body,left,right);root.append(body);if(s.controller?.lifecycleState==='CLOSED')root.append(renderSummary(s));
   const corner=$('div','tc-corner-actions');
   if(s.teacherMessagingAllowed&&['OPENING','DIAGNOSTIC','INSTRUCTION','GUIDED_PRACTICE','INDEPENDENT_PRACTICE','REMEDIATION'].includes(s.modeKey)&&!state.reviewOnly){
@@ -385,6 +420,8 @@ function render(){clearVisualLoads();
     if(previous)previous.replaceWith(root);else state.host.prepend(root);
     root.inert=true;syncSheet();
   }else state.host.replaceChildren(root);
+  if(expandedKind&&!state.sheet){expandPanel(expandedKind);if(state.expanded)state.expanded.panel.scrollTop=expandedScroll;}
+  if(answer&&draft?.focused&&draft.authority===answer.dataset.authority){answer.focus({preventScroll:true});answer.setSelectionRange(draft.start,draft.end);}
   updateClocks();
 }
 async function renderCourse({course,container}){

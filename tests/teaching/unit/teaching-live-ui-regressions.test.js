@@ -54,14 +54,15 @@ test('NEED HELP exists only in live approved instructional modes, with server en
     await assert.rejects(app.signal({id:'student'},'c1',{kind:'NEED_HELP',body:'Can you explain?',idempotencyKey:'key'}),{code:flags.sessionState===null?'TEACHING_D14_CONTROLLER_NOT_STARTED':flags.sessionState==='CLOSED'?'TEACHING_D14_CLASS_CLOSED':'TEACHING_D14_TEACHER_MESSAGES_PAUSED'});
   }
 });
-test('live Classroom Details retains its expanded state and remains inline on small screens',()=>{
+test('Classroom removes Details and supplies independent, viewport-sized Board and Workspace views',()=>{
   const ui=read('public/teaching-classroom.js'),styles=read('public/teaching-classroom.css');
-  assert.match(ui,/controlsWasOpen=Boolean/);
-  assert.match(ui,/nextControls\.open=true/);
+  assert.doesNotMatch(ui,/renderControls|\$\('details','tc-controls'\)/);
+  assert.match(ui,/expandControl\('board'\)/);
+  assert.match(ui,/expandControl\('workspace'\)/);
+  assert.match(ui,/dialog\.showModal\(\)/);
   assert.match(ui,/HELP|NEED HELP\?/);
-  const fixed=styles.indexOf('.tc-controls[open]{position:fixed');
-  const inline=styles.lastIndexOf('.tc-controls,.tc-controls[open]{position:static');
-  assert.ok(fixed>=0&&inline>fixed,'mobile inline Details must override old fixed popup');
+  assert.match(styles,/width:94vw/);
+  assert.match(styles,/height:90dvh/);
 });
 test('Course UI refreshes without auto-reload or editor reconstruction on clock-only updates',()=>{
   const shell=read('public/teaching.js'),classroom=read('public/teaching-classroom.js');

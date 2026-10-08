@@ -142,14 +142,16 @@
 .tc-raise-hand[data-help-status="RAISED"],.tc-raise-hand[data-help-status="PROCESSING"],.tc-raise-hand[data-help-status="DEFERRED"]{border-color:#c1efce}
 .tc-raise-hand[data-help-status="ANSWERED"]{box-shadow:0 0 0 2px rgba(174,244,200,.2),0 12px 42px #0008}
 
-/* Class tools remain in the content flow. The former fixed <details> sheet
-   covered the Board/footer on narrow screens and collided with Notebook. */
-@media(max-width:699px){
- .tc-controls,.tc-controls[open]{position:static;inset:auto;z-index:auto;width:auto;max-height:none;overflow:visible;margin:14px 0 22px;padding:0 14px;background:rgba(20,48,33,.72);box-shadow:none}
- .tc-controls summary{display:flex;align-items:center;justify-content:space-between;padding:12px 0;font-size:14px;list-style:none;cursor:pointer}
- .tc-controls summary::-webkit-details-marker{display:none}
- .tc-controls summary:after{content:'⌄';font-size:19px;line-height:1;transition:transform 180ms ease}
- .tc-controls[open] summary:after{transform:rotate(180deg)}
- .tc-controls__items{padding:0 0 14px;margin:0;grid-template-columns:1fr}
- .tc-controls__items .tc-button{width:100%;text-align:left}
-}
+/* Independent focus views preserve the original Board/Workspace content. */
+.tc-overlay.tc-panel-expanded{overflow:hidden}
+.tc-panel-tools{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap;flex:none}
+.tc-expand-button{display:grid;place-items:center;flex:none;width:44px;height:44px;border:1px solid rgba(190,245,210,.24);border-radius:12px;background:#183c2b;color:#d9ffe9;font:600 24px/1 system-ui;cursor:pointer}
+.tc-expand-button:hover{background:#285a40}.tc-expand-button:focus-visible{outline:2px solid #c5f8df;outline-offset:3px}
+.tc-expanded-panel{box-sizing:border-box;width:94vw;max-width:none;height:90vh;height:90dvh;max-height:none;padding:0;margin:auto;overflow:hidden;border:1px solid rgba(190,245,210,.3);border-radius:22px;background:#10241a;color:#edf8f1;font-family:var(--font-body,Inter,system-ui,sans-serif);box-shadow:0 24px 100px #000b}
+.tc-expanded-panel::backdrop{background:rgba(0,7,4,.8);backdrop-filter:blur(5px)}
+.tc-expanded-panel>.tc-board,.tc-expanded-panel>.tc-workspace{box-sizing:border-box;display:block;height:100%;min-height:0;margin:0;border:0;border-radius:inherit;overflow:auto;overscroll-behavior:contain;padding:clamp(16px,3vw,36px)}
+.tc-expanded-panel .tc-panel-head{position:sticky;top:0;z-index:2;padding:12px 0;background:#142e21;border-bottom:1px solid rgba(190,245,210,.16)}
+.tc-expanded-panel .tc-visual{max-height:65dvh}.tc-expanded-panel .tc-graph svg{max-height:65dvh}
+.tc-expanded-panel .tc-response textarea{min-height:35dvh}
+@media(max-width:699px){.tc-panel-head{gap:10px;flex-wrap:wrap}.tc-panel-tools{margin-left:auto;gap:8px}.tc-expanded-panel{width:96vw;height:92vh;height:92dvh;border-radius:16px}.tc-expanded-panel>.tc-board,.tc-expanded-panel>.tc-workspace{padding:14px}}
+@media(forced-colors:active){.tc-expanded-panel,.tc-expand-button{border:1px solid CanvasText}}
