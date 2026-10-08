@@ -17,7 +17,8 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       ) s on true
       left join lateral (
         select outcome,presence_state,missed_minutes,arrived_at,exited_at from public.teaching_attendance_records
-        where student_id=c.student_id and class_id=c.class_id and is_current=true order by version_no desc limit 1
+        where student_id=c.student_id and class_id=c.class_id and schedule_version=c.schedule_version
+        order by version_no desc,recorded_at desc limit 1
       ) a on true
       where c.student_id=$1 and c.course_id=$2 and c.lifecycle_state<>'CANCELLED'
       order by c.scheduled_start_at`,[studentId,courseId]);

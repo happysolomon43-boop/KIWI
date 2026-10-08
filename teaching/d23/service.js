@@ -28,6 +28,8 @@ function createD23Service({d07,d08,d09,d10,d14,d16,d19,d20,d21,d22,clock=()=>new
       endsAt:row.endsAt||row.ends_at||row.scheduledEndAt||row.scheduled_end_at,
       courseTitle:row.courseTitle||row.course_title||null,timezone:row.timezone||null,sourceOwner:'D09_SCHEDULER',truthStatus:'AUTHORITATIVE_FINAL',
       href:classHref(classId),hiddenUntilActive:false,slotKind:row.kind||row.slotKind||row.slot_kind||'CLASS',
+      attendanceOutcome:row.attendanceOutcome||row.attendance_outcome||null,missedMinutes:Number(row.missedMinutes??row.missed_minutes)||0,
+      lifecycleState:row.lifecycleState||row.lifecycle_state||null,
     });
   }
   function assessmentEvent(row){

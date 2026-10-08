@@ -508,7 +508,14 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const params=[studentId], filters=[];
     if(from){params.push(from);filters.push('scheduled_end_at >= $'+params.length);}
     if(to){params.push(to);filters.push('scheduled_start_at <= $'+params.length);}
-    const classRows=await query(`select c.*,co.title course_title from public.teaching_classes c join public.teaching_courses co on co.course_id=c.course_id
+    const classRows=await query(`select c.*,co.title course_title,
+      a.outcome attendance_outcome,a.missed_minutes
+      from public.teaching_classes c join public.teaching_courses co on co.course_id=c.course_id
+      left join lateral (
+        select outcome,missed_minutes from public.teaching_attendance_records
+        where student_id=c.student_id and class_id=c.class_id and schedule_version=c.schedule_version
+        order by version_no desc,recorded_at desc limit 1
+      ) a on true
       where c.student_id=$1 and c.lifecycle_state<>'CANCELLED' ${filters.length?'and '+filters.join(' and '):''} order by c.scheduled_start_at`,params);
     const proposalParams=[studentId], proposalFilters=[];
     if(from){proposalParams.push(from);proposalFilters.push('s.ends_at >= $'+proposalParams.length);}
