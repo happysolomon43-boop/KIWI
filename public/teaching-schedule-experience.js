@@ -179,7 +179,9 @@ function renderTimetable(data,course,card,reload){
     delete message.dataset.kind;
     try{
       await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/timetable/propose`,{method:'POST',body:{}});
-      await reload(null,'Timetable build started in the background. You can keep using KIWI while it finishes.');
+      message.textContent='Timetable build started in the background. You can keep using KIWI while it finishes.';
+      message.dataset.kind='success';
+      window.setTimeout(()=>{void reload(null,'Timetable build is running in the background.');},1200);
     }catch(error){
       message.textContent=scheduleActionError(error,'Semester timetable could not be started.');
       message.dataset.kind='error';
