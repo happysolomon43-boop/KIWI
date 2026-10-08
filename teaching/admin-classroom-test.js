@@ -90,7 +90,7 @@ function createAttestationHandler({env=process.env,query}={}) {
 }
 function sandboxConfiguration(env) {
   const origin=env.KIWI_CLASSROOM_TEST_ORIGIN, key=env.KIWI_CLASSROOM_TEST_SHARED_KEY;
-  if (!origin || !key || !env.KIWI_CLASSROOM_TEST_USER_ID || !fingerprint(env.DATABASE_URL)) return null;
+  if (!origin || !key || !fingerprint(env.DATABASE_URL)) return null;
   try {
     const target = new URL(origin);
     if (target.protocol !== 'https:' || target.username || target.password || target.pathname !== '/'
