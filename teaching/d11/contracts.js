@@ -84,7 +84,15 @@ function fail(message, code = 'TEACHING_D11_CONTRACT_INVALID', status = 422) {
 
 function nonEmpty(value, field) {
   const normalized = String(value == null ? '' : value).trim();
-  if (!normalized) fail(field + ' is required.', 'TEACHING_D11_FIELD_REQUIRED', 400);
+  if (!normalized) {
+    const error = new Error(field + ' is required.');
+    error.code = 'TEACHING_D11_FIELD_REQUIRED';
+    error.status = 400;
+    // Only static validator field identifiers, not model values, are eligible
+    // for the eventual operational audit.
+    error.fieldPath = field;
+    throw error;
+  }
   return normalized;
 }
 
@@ -299,13 +307,20 @@ function normalizeLessonBlueprintProposal(output, {
   });
 }
 
+const D11_SAFE_BLUEPRINT_FIELDS=new Set([
+  'objective.id','objective.learning_unit_ref','objective.label',
+  'segment.id','segment.kind',
+]);
 function validateLessonBlueprintProposal(output, context) {
   try {
     const value = normalizeLessonBlueprintProposal(output, context);
     if (value.review_required) return { ok: false, reason: 'TEACHING_D11_BLUEPRINT_REVIEW_REQUIRED', value };
     return { ok: true, value };
   } catch (error) {
-    return { ok: false, reason: error.code || 'TEACHING_D11_BLUEPRINT_INVALID', message: error.message };
+    return {
+      ok: false,reason:error.code||'TEACHING_D11_BLUEPRINT_INVALID',
+      fieldPath:D11_SAFE_BLUEPRINT_FIELDS.has(error.fieldPath)?error.fieldPath:null,
+    };
   }
 }
 
