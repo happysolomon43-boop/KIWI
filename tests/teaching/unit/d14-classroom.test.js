@@ -112,7 +112,7 @@ test('Classroom history review is read-only and LEAVE retries retain the same re
   assert.match(source,/state\.leaveRequestId \|\|= crypto\.randomUUID\(\)/);
   assert.match(source,/idempotencyKey:state\.leaveRequestId/);
   assert.match(source,/Close Review/);
-  assert.match(source,/Refresh classes/);
+  assert.match(source,/↻ Refresh/);
 });
 
 
@@ -162,7 +162,7 @@ test('Classroom messaging timeline reads student questions and student-visible T
 
 test('Closed Classroom stops overtime counter and replaces empty Board illustration with explicit record guidance',()=>{
   const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
-  assert.match(source,/overall\.textContent=s\.modeKey==='CLOSURE'/);
+  assert.match(source,/overall\.textContent=\['CLOSURE','UNSTARTED_PAST'\]\.includes\(s\.modeKey\)/);
   assert.match(source,/No Board scenes published/);
   assert.match(source,/Review attendance and any saved notes in Past Classes/);
 });
