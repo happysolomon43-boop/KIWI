@@ -3,7 +3,7 @@
 // A genuinely late but still recoverable scheduled Class may generate a fresh
 // validated Blueprint. This NEVER authorizes starting outside its D11 window,
 // changing the timetable, inventing a Blueprint or bypassing AI validation.
-const MAX_LATE_START_MS=20*60*1000;
+const MAX_LATE_START_MS=45*60*1000;
 const MIN_TEACHING_REMAINING_MS=20*60*1000;
 
 function lateStartRecoveryEligibility({classRow,session=null,now=new Date()}={}) {
