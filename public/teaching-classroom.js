@@ -3,7 +3,7 @@ const courses=window.KIWITeachingCourses;
 if(typeof kiwiApiRequest!=='function'||!courses?.registerSection)throw new Error('Teaching Classroom requires the shared KIWI client and Course shell.');
 
 const $=(tag,className='',text=null)=>{const n=document.createElement(tag);if(className)n.className=className;if(text!==null)n.textContent=String(text);return n;};
-const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false,returnFocus:null,leaveRequestId:null,reviewOnly:false,sheet:null,sheetKind:null,sheetFocus:null,sheetKey:null};
+const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false,returnFocus:null,leaveRequestId:null,reviewOnly:false,sheet:null,sheetKind:null,sheetFocus:null,sheetKey:null,sheetBusy:false};
 const MODE={PRE_CLASS:'Before Class',OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'};
 function when(value){return value?new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'—';}
 function date(value){return value?new Date(value).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'—';}
@@ -13,7 +13,7 @@ function button(label,handler,cls=''){const b=$('button',cls,label);b.type='butt
 function notice(title,body,kind=''){return add($('div',`tc-notice ${kind}`),$('strong','',title),$('p','',body));}
 function serverNow(){const s=state.snapshot;return Date.now()+(s?new Date(s.serverNow).getTime()-s._receivedAt:0);}
 function clearRuntime(){if(state.interval)clearInterval(state.interval);if(state.refresh)clearInterval(state.refresh);state.interval=state.refresh=null;}
-function close({restore=true}={}){closeSheet({restore:false});clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;state.leaveRequestId=null;state.reviewOnly=false;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
+function close({restore=true}={}){closeSheet({restore:false,force:true});clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;state.leaveRequestId=null;state.reviewOnly=false;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
 async function fetchSnapshot(){
   if(!state.classId||state.busy)return;
   const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);
@@ -160,17 +160,34 @@ function renderWorkspace(s){
   panel.append(actions);return panel;
 }
 
-function closeSheet({restore=true}={}){
-  if(!state.sheet)return;
+function closeSheet({restore=true,force=false}={}){
+  if(!state.sheet||state.sheetBusy&&!force)return;
   const focus=state.sheetFocus;
   state.sheet.remove();
-  state.sheet=null;state.sheetKind=null;state.sheetFocus=null;state.sheetKey=null;
+  state.sheet=null;state.sheetKind=null;state.sheetFocus=null;state.sheetKey=null;state.sheetBusy=false;
   const root=state.host?.querySelector('.tc-shell');
   if(root)root.inert=false;
   if(restore&&focus?.isConnected)focus.focus({preventScroll:true});
 }
 function syncSheet(){
-  if(state.sheetKind!=='teacher'||!state.sheet||!state.snapshot)return;
+  if(!state.sheet||!state.snapshot)return;
+  if(state.sheetKind==='notebook'){
+    const editable=Boolean(state.snapshot.notebookAllowed)&&!state.reviewOnly;
+    const input=state.sheet.querySelector('.tc-sheet-form textarea');
+    const save=state.sheet.querySelector('.tc-sheet-form button[type="submit"]');
+    const status=state.sheet.querySelector('.tc-sheet-status');
+    if(!editable){
+      if(input){input.readOnly=true;input.dataset.restricted='true';}
+      if(save)save.disabled=true;
+      if(status)status.textContent='Notebook editing is paused while the current activity is protected.';
+    }else if(input?.dataset.restricted==='true'){
+      input.readOnly=false;delete input.dataset.restricted;
+      if(save)save.disabled=false;
+      if(status)status.textContent='';
+    }
+    return;
+  }
+  if(state.sheetKind!=='teacher')return;
   const log=state.sheet.querySelector('.tc-conversation');
   if(!log)return;
   const stick=log.scrollHeight-log.scrollTop-log.clientHeight<65;
@@ -226,12 +243,12 @@ function openSheet(kind){
         if(save.disabled)return;
         const classId=state.classId;state.sheetKey ||= crypto.randomUUID();
         const key=state.sheetKey;
-        save.disabled=cancel.disabled=true;input.readOnly=true;status.textContent='Saving note…';
+        state.sheetBusy=true;save.disabled=cancel.disabled=true;input.readOnly=true;status.textContent='Saving note…';
         try{
           await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/notebook',{method:'POST',body:{content,idempotencyKey:key}});
-          if(classId===state.classId){closeSheet();await fetchSnapshot().catch(()=>{});}
+          if(classId===state.classId){state.sheetBusy=false;closeSheet();await fetchSnapshot().catch(()=>{});}
         }catch(error){status.textContent=error.message||'Could not confirm saving. Retry safely with the same note.';}
-        finally{save.disabled=cancel.disabled=false;input.readOnly=false;}
+        finally{state.sheetBusy=false;save.disabled=cancel.disabled=false;input.readOnly=false;syncSheet();}
       });
       form.append(input,status,add($('div','tc-sheet-footer'),cancel,save));dialog.append(form);
       window.queueMicrotask(()=>{if(state.sheet===shade)input.focus({preventScroll:true});});
@@ -254,7 +271,7 @@ function openSheet(kind){
       if(send.disabled)return;
       const classId=state.classId;state.sheetKey ||= crypto.randomUUID();
       const key=state.sheetKey;
-      send.disabled=cancel.disabled=type.disabled=true;input.readOnly=true;status.textContent='Recording message…';
+      state.sheetBusy=true;send.disabled=cancel.disabled=type.disabled=true;input.readOnly=true;status.textContent='Recording message…';
       try{
         const result=await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/interactions',{method:'POST',body:{kind,body,idempotencyKey:key}});
         if(classId===state.classId){
@@ -263,7 +280,7 @@ function openSheet(kind){
           await fetchSnapshot();
         }
       }catch(error){status.textContent=error.message||'Delivery unconfirmed. Retry to send the same message safely.';}
-      finally{send.disabled=cancel.disabled=type.disabled=false;input.readOnly=false;}
+      finally{state.sheetBusy=false;send.disabled=cancel.disabled=type.disabled=false;input.readOnly=false;syncSheet();}
     });
     form.append(type,input,status,add($('div','tc-sheet-footer'),cancel,send));
     dialog.append(log,limits,form);
@@ -299,7 +316,7 @@ function render(){
   add(body,left,right);root.append(body);if(s.controller?.lifecycleState==='CLOSED')root.append(renderSummary(s));
   const corner=$('div','tc-corner-actions');
   if(s.modeKey!=='ASSESSMENT'&&s.modeKey!=='CLASSWORK'){
-    const ask=button('◌',()=>openSheet('teacher'),'tc-corner-button');ask.title='Message AI Teacher';ask.setAttribute('aria-label','Message AI Teacher');
+    const ask=button('✉',()=>openSheet('teacher'),'tc-corner-button');ask.title='Message AI Teacher';ask.setAttribute('aria-label','Message AI Teacher');
     const note=button('✎',()=>openSheet('notebook'),'tc-corner-button');note.title='Notebook';note.setAttribute('aria-label','Open Notebook');
     corner.append(ask,note);
   }
