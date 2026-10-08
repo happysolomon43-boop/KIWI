@@ -20,6 +20,7 @@ test('D31 curriculum audit reaches the central boundary through D05 with registe
     },
   };
   const query = async (sql, params) => {
+    if(sql.includes('teaching_runtime.academic_authority_revocations'))return {rows:[]};
     if (sql.includes('public.teaching_courses')) return { rows: params[0] === 'student-1' && params[1] === 'course-1' ? [course] : [] };
     if (sql.includes('public.teaching_source_content_items')) return { rows: params[0] === 'student-1' && params[1] === 'course-1' && params[2] === 'source-1' ? [source] : [] };
     throw new Error(`Unexpected query: ${sql}`);
