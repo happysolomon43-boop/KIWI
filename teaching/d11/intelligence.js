@@ -39,7 +39,7 @@ function normalizeD11AcademicInput(input) {
           if(!Object.hasOwn(value,i)) invalid('SPARSE_ARRAY');
           output.push(convert(value[i],depth+1));
         }
-        if(Reflect.ownKeys(value).some(k=>k!=='length'&&(!/^(0|[1-9]\\d*)$/.test(String(k))||Number(k)>=value.length)))
+        if(Reflect.ownKeys(value).some(k=>k!=='length'&&(!Number.isInteger(Number(k))||Number(k)<0||Number(k)>=value.length||String(Number(k))!==String(k))))
           invalid('ARRAY_EXTRA_PROPERTY');
         return output;
       }
