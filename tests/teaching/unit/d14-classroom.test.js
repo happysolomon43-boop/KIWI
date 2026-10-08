@@ -96,7 +96,9 @@ test('Classroom UI keeps Start, Resume and LEAVE while Notebook opens as a compa
   assert.match(source,/Resume Class/);
   assert.match(source,/attendance will be recorded up to this moment/);
   assert.match(source,/tc-corner-button/);
-  assert.match(source,/tc-history-corner/);
+  assert.match(source,/tc-course-actions/);
+  assert.match(source,/tc-history-tab/);
+  assert.doesNotMatch(source,/tc-history-corner/);
   assert.match(source,/Save note/);
   assert.match(source,/Cancel/);
   assert.doesNotMatch(source,/tc-notebook-shortcut/);
@@ -178,4 +180,85 @@ test('Classroom live refresh preserves the focused sheet DOM, not just the note 
   assert.match(source,/const previous=state\.host\.querySelector\('\.tc-shell'\)/);
   assert.match(source,/if\(previous\)previous\.replaceWith\(root\);else state\.host\.prepend\(root\)/);
   assert.match(source,/focus\?\.isConnected\?focus:fallback/);
+});
+
+
+test('D14 respects the authoritative server clock for future, current, overtime, and past Class entry buttons',async()=>{
+  const present=new Date('2026-10-08T09:00:00Z');
+  const entries=[
+    {class_id:'future',scheduled_start_at:'2026-10-08T11:00:00Z',scheduled_end_at:'2026-10-08T12:00:00Z'},
+    {class_id:'now',scheduled_start_at:'2026-10-08T09:00:00Z',scheduled_end_at:'2026-10-08T10:00:00Z'},
+    {class_id:'overtime',scheduled_start_at:'2026-10-08T07:00:00Z',scheduled_end_at:'2026-10-08T08:00:00Z',session_state:'ACTIVE'},
+    {class_id:'past',scheduled_start_at:'2026-10-07T07:00:00Z',scheduled_end_at:'2026-10-07T08:00:00Z'},
+    {class_id:'closed',scheduled_start_at:'2026-10-08T08:00:00Z',scheduled_end_at:'2026-10-08T10:00:00Z',session_state:'CLOSED',attendance_outcome:'PARTIAL'},
+  ];
+  const repository={identity:async()=>({course_title:'PHY 103',lifecycle_state:'ACTIVE'}),listClasses:async()=>entries};
+  const service=createD14Service({repository,d11Repository:{},d11Service:{},d12Service:{},clock:()=>present,randomUUID:()=> 'id'});
+  const data=await service.listClasses({id:'student'},'physics');
+  assert.equal(data.serverNow,present.toISOString());
+  const rows=new Map(data.classes.map(row=>[row.class_id,row]));
+  assert.equal(rows.get('future').can_enter,false);
+  assert.equal(rows.get('now').can_enter,true);
+  assert.equal(rows.get('overtime').can_enter,true);
+  assert.equal(rows.get('past').can_enter,false);
+  assert.equal(rows.get('past').historical_unstarted,true);
+  assert.equal(rows.get('closed').can_enter,false);
+  assert.deepEqual(data.upcoming.map(row=>row.class_id),['future','now','overtime']);
+  assert.deepEqual(data.history.map(row=>row.class_id),['closed','past']);
+});
+
+test('D14 enter blocks a pre-start JOIN, expired unstarted Class, closed session, and cancelled Class without attendance writes',async()=>{
+  let now=new Date('2026-10-08T09:00:00Z');
+  const context={classRow:{scheduled_start_at:'2026-10-08T10:00:00Z',scheduled_end_at:'2026-10-08T11:00:00Z',lifecycle_state:'SCHEDULED',course_lifecycle_state:'ACTIVE'},session:null};
+  let joins=0,attendance=0;
+  const service=createD14Service({repository:{recordInteraction:async()=>{joins++;return {interaction_id:'j1',created_at:now.toISOString()};}},d11Repository:{getClassContext:async()=>context},d11Service:{},d12Service:{},attendanceService:{observeJoin:async()=>{attendance++;return {};}} ,clock:()=>now,randomUUID:()=> 'uuid'});
+  await assert.rejects(service.enter({id:'u'},'c'),{code:'TEACHING_D14_CLASS_NOT_STARTED'});
+  assert.equal(joins,0);
+  now=new Date('2026-10-08T10:30:00Z');
+  const entry=await service.enter({id:'u'},'c');assert.equal(entry.enteredAt,now.toISOString());
+  assert.equal(joins,1);assert.equal(attendance,1);
+  now=new Date('2026-10-08T12:00:00Z');
+  await assert.rejects(service.enter({id:'u'},'c'),{code:'TEACHING_D14_CLASS_ALREADY_ENDED'});
+  context.session={lifecycle_state:'ACTIVE'};
+  await service.enter({id:'u'},'c');assert.equal(joins,2);
+  context.session={lifecycle_state:'CLOSED'};
+  await assert.rejects(service.enter({id:'u'},'c'),{code:'TEACHING_D14_CLASS_ALREADY_ENDED'});
+  context.session=null;context.classRow.lifecycle_state='CANCELLED';
+  await assert.rejects(service.enter({id:'u'},'c'),{code:'TEACHING_D14_CLASS_CANCELLED'});
+  context.classRow.lifecycle_state='SCHEDULED';context.classRow.course_lifecycle_state='DRAFT';
+  await assert.rejects(service.enter({id:'u'},'c'),{code:'TEACHING_D14_COURSE_NOT_ACTIVE'});
+  assert.equal(joins,2);assert.equal(attendance,2);
+});
+
+test('D14 snapshot labels an elapsed, unstarted Class as historical without exposing a start control',async()=>{
+  const ctx={classRow:{class_id:'c',course_id:'co',lifecycle_state:'SCHEDULED',course_lifecycle_state:'ACTIVE',scheduled_start_at:'2026-10-07T09:00:00Z',scheduled_end_at:'2026-10-07T10:00:00Z'},session:null};
+  const repository={identity:async()=>({course_title:'Physics'}),board:async()=>[],notebook:async()=>[],latestNote:async()=>null,latestTeacherMessage:async()=>null,firstEntry:async()=>null,conversation:async()=>[]};
+  const service=createD14Service({repository,d11Repository:{getClassContext:async()=>ctx},d11Service:{getClass:async()=>({class:{scheduledStartAt:ctx.classRow.scheduled_start_at,scheduledEndAt:ctx.classRow.scheduled_end_at},controller:null,time:{}})},d12Service:{},clock:()=>new Date('2026-10-08T11:00:00Z'),randomUUID:()=> 'id'});
+  const snapshot=await service.snapshot({id:'u'},'c');
+  assert.equal(snapshot.modeKey,'UNSTARTED_PAST');
+  assert.equal(snapshot.canStartClass,false);
+  assert.equal(snapshot.controlsEnabled,false);
+  assert.equal(snapshot.teacherMessagingAllowed,false);
+  const ui=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
+  assert.match(ui,/if\(s\.modeKey==='UNSTARTED_PAST'\)/);
+  assert.match(ui,/enter\.disabled=!item\.can_enter/);
+  assert.match(ui,/tc-history-tab-count/);
+});
+
+test('Superseded Classes are hidden only when never started and no attendance record exists',()=>{
+  const sql=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d14-classroom.js'),'utf8');
+  assert.match(sql,/approved\.timetable_version_id/);
+  assert.match(sql,/c\.source_timetable_version_id=approved\.timetable_version_id/);
+  assert.match(sql,/or s\.lifecycle_state is not null/);
+  assert.match(sql,/or a\.attendance_record_id is not null/);
+  assert.match(sql,/c\.lifecycle_state<>'CANCELLED'/);
+});
+
+test('Expired scheduled start events and manual Starts are terminal, not retried forever',()=>{
+  const runtime=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d11/runtime.js'),'utf8');
+  const controller=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d11/service.js'),'utf8');
+  assert.match(runtime,/CLASS_START_WINDOW_EXPIRED/);
+  assert.match(runtime,/RECONCILIATION_DISPOSITIONS\.SUPERSEDED/);
+  assert.match(controller,/TEACHING_D11_CLASS_WINDOW_EXPIRED/);
+  assert.match(controller,/!context\.session && now\.getTime\(\)>=new Date\(context\.classRow\.scheduled_end_at\)/);
 });
