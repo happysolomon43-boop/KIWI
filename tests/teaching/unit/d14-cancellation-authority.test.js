@@ -13,6 +13,7 @@ function classroomFake(parent={class_state:'CANCELLED',course_state:'ACTIVE',tim
     if(sql.includes('from public.teaching_classes c')&&sql.includes('for share of c,co'))return {rows:[parent]};
     if(sql.includes('from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update'))
       return {rows:[{class_session_id:'session',state_version:2,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION'}]};
+    if(sql.includes('insert into public.teaching_classroom_help_requests'))return {rows:[]};
     if(sql.includes('insert into public.teaching_teacher_communications')||sql.includes('insert into public.teaching_classroom_interactions'))
       return {rows:[{interaction_id:'interaction'}]};
     throw Error('Unexpected SQL '+sql);
@@ -20,6 +21,7 @@ function classroomFake(parent={class_state:'CANCELLED',course_state:'ACTIVE',tim
   const repo=createD14ClassroomRepository({
     query:run,withTransaction:fn=>fn({query:run}),randomUUID:()=> 'uuid',
     d11Repository:{getClassContext:async()=>({})},
+    outboxStore:{appendUsing:async(_query,event)=>{statements.push({sql:'teaching_runtime.event_outbox append',values:[event]});return {inserted:true};}},
   });
   return {repo,statements};
 }
@@ -64,6 +66,8 @@ test('legitimate active current Teacher messaging holds parent authority through
   });
   assert.equal(result.interaction_id,'interaction');
   assert.ok(statements.find(x=>x.sql.includes('insert into public.teaching_classroom_interactions')));
+  assert.ok(statements.find(x=>x.sql.includes('insert into public.teaching_classroom_help_requests')));
+  assert.ok(statements.find(x=>x.sql.includes('teaching_runtime.event_outbox append')));
 });
 test('historical LEAVE intent remains outside AI conversation cancellation',async()=>{
   const {repo,statements}=classroomFake();
