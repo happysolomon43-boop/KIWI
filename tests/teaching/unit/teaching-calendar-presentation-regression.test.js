@@ -34,3 +34,9 @@ test('Calendar presentation preserves event authority semantics', () => {
   assert.match(source, /window\.KIWITeachingD10\.requestClassReschedule\(item\)/);
   assert.match(source, /window\.KIWITeachingD10\.emergencyAbsence\(item\)/);
 });
+
+
+test('Calendar cards identify their Course and never relabel active Courses as proposals', () => {
+  assert.match(source, /courseName=item\.course_title\|\|item\.courseTitle/);
+  assert.match(source, /title\.append\(el\('strong','',courseName\)/);
+});
