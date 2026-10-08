@@ -196,7 +196,7 @@ test('An admin can link only their own ACTIVE production course as read-only Cla
     assert.equal(body.linked,true);
     assert.equal(body.course.title,'PHY101');
     assert.equal(body.course.planCount,1);
-    assert.equal(body.execution,'ISOLATED_SANDBOX_ONLY');
+    assert.equal(body.execution,'NORMAL_KIWI_CLASSROOM');
     const source=queries.find(x=>x.sql.includes('from public.teaching_courses c'));
     assert.deepEqual(source.args,['phy101-live-id','admin']);
     assert.match(source.sql,/c\.student_id=\$2/);
