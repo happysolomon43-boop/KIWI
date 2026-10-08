@@ -112,6 +112,39 @@ function createAdminClassroomTestRouter({query,env=process.env,fetchImpl=globalT
     } catch (_) {return res.status(503).json({code:'CLASSROOM_TEST_AUTH_UNAVAILABLE'});}
     next();
   });
+  // Read-only binding to the administrator's existing, ACTIVE KIWI course.
+  // Selecting a source is NOT permission to create a session on the production
+  // course. Classroom execution remains behind independent database attestation.
+  router.get('/source-course',async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    const sourceCourseId=String(env.KIWI_CLASSROOM_TEST_SOURCE_COURSE_ID||'').trim();
+    if(!sourceCourseId)return res.status(503).json({code:'CLASSROOM_TEST_SOURCE_NOT_CONFIGURED'});
+    try{
+      const {rows=[]}=await query(`
+        select c.course_id,c.title,c.lifecycle_state,c.state_version,
+          coalesce(s.name,c.title) as subject_name,
+          (select count(*)::int from public.teaching_classes cls
+            where cls.student_id=c.student_id and cls.course_id=c.course_id and cls.lifecycle_state='SCHEDULED') as scheduled_class_count,
+          (select count(*)::int from public.teaching_course_plans p
+            where p.student_id=c.student_id and p.course_id=c.course_id) as plan_count
+        from public.teaching_courses c
+        left join public.subjects s on s.id=c.subject_id and s.user_id=c.student_id
+        where c.course_id=$1 and c.student_id=$2 and c.lifecycle_state='ACTIVE'
+        limit 1
+      `,[sourceCourseId,req.user.id]);
+      if(!rows[0])return res.status(404).json({code:'CLASSROOM_TEST_SOURCE_NOT_FOUND'});
+      const course=rows[0];
+      return res.json({linked:true,course:{
+        courseId:course.course_id,
+        title:course.title,
+        subjectName:course.subject_name,
+        lifecycleState:course.lifecycle_state,
+        stateVersion:Number(course.state_version),
+        scheduledClassCount:Number(course.scheduled_class_count),
+        planCount:Number(course.plan_count)
+      },execution:'ISOLATED_SANDBOX_ONLY'});
+    }catch(_){return res.status(503).json({code:'CLASSROOM_TEST_SOURCE_UNAVAILABLE'});}
+  });
   router.get('/access',(_req,res)=>{
     res.setHeader('Cache-Control','no-store');
     res.json({admin:true,feature:'classroom-test',isolationRequired:true});
