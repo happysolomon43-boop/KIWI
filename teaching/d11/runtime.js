@@ -83,6 +83,7 @@ function registerD11Runtime({
   dueEventStore,
   repository,
   service,
+  outboxStore = null,
   attendanceService = null,
 }={}) {
   if(!publishedEvents||typeof publishedEvents.register!=='function') throw new TypeError('D11 runtime requires published-event registry.');
@@ -131,24 +132,96 @@ function registerD11Runtime({
     },
   }));
 
+  // Legacy request events contain target_version_after; new events also bind
+  // timetable_version_id explicitly. Both are only routing hints, not authority.
+  function appliedTimetableRef(event){
+    const direct=event.payload?.timetable_version_id;
+    if(typeof direct==='string'&&direct.trim())return direct.trim();
+    const legacy=/^timetable:([^:]+):version:[0-9]+$/.exec(String(event.payload?.target_version_after||''));
+    return legacy?.[1]||null;
+  }
+
   registrations.push(publishedEvents.register(TEACHING_EVENTS.REQUEST_APPLIED,{
     subscriberId:'d11-request-applied-materiality',
     handle:async(event)=>{
       const studentId=event.actorId;
       const courseId=event.payload?.course_id;
       if(!studentId||!courseId) return Object.freeze({accepted:true,noop:true,reason:'REQUEST_APPLIED_CONTEXT_MISSING'});
+      const timetableVersionId=appliedTimetableRef(event);
+      // Preserve the original Course's live-session invalidation/materiality.
+      // Its absence of Classes must NOT suppress newly materialized Classes
+      // belonging to other Courses on the same approved timetable.
       const refreshed=await service.refreshCoursePreparation(studentId,courseId,{
         correlationId:event.correlationId || event.eventId,
         interruptActive:true,
       });
+      if(timetableVersionId){
+        if(!outboxStore||typeof outboxStore.append!=='function'
+          ||typeof repository.listClassesForApprovedTimetable!=='function'){
+          const error=new Error('D11 durable timetable-wide preparation reconciliation is unavailable.');
+          error.code='TEACHING_D11_TIMETABLE_RECONCILIATION_UNAVAILABLE';
+          throw error;
+        }
+        const classes=await repository.listClassesForApprovedTimetable(studentId,timetableVersionId);
+        for(const classRow of classes){
+          const id='d11-class-preparation-reconcile:'+event.eventId+':'+classRow.class_id;
+          const timestamp=new Date().toISOString();
+          await outboxStore.append({
+            eventId:id,schemaVersion:1,
+            eventType:TEACHING_EVENTS.CLASS_PREPARATION_RECONCILE,
+            eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,
+            triggerType:'committed_domain_event',
+            source:'teaching.d11',origin:'d11',
+            actorId:studentId,aggregateType:'CLASS',
+            aggregateId:classRow.class_id,aggregateVersion:Number(classRow.schedule_version),
+            occurredAt:timestamp,effectiveAt:timestamp,
+            correlationId:event.correlationId||event.eventId,causationId:event.eventId,
+            idempotencyKey:id,
+            payload:{class_id:classRow.class_id,course_id:classRow.course_id,
+              timetable_version_id:timetableVersionId,schedule_version:Number(classRow.schedule_version),
+              reason:'APPROVED_TIMETABLE_RECONCILIATION'},
+            auditRefs:[],provenanceRefs:['timetable:'+timetableVersionId,'class:'+classRow.class_id],
+          });
+        }
+        return Object.freeze({accepted:true,refreshed:refreshed.length,
+          queuedClassReconciliations:classes.length,timetableVersionId});
+      }
       const classes=await repository.listClassesForCourse(studentId,courseId);
       const seeded=[];
-      for(const classRow of classes) {
-        seeded.push(await seedClassRuntime({
-          repository,dueEventStore,studentId,classRow,causationId:event.eventId,
-        }));
+      for(const classRow of classes){
+        seeded.push(await seedClassRuntime({repository,dueEventStore,studentId,classRow,causationId:event.eventId}));
       }
       return Object.freeze({accepted:true,refreshed:refreshed.length,seeded:seeded.length});
+    },
+  }));
+
+  // Each Class owns an independent, replay-safe and bounded reconciliation.
+  // Validate the CURRENT Class, Course and approved timetable before any
+  // workspace creation or Class start/end events. A replaced Class is a NOOP.
+  registrations.push(publishedEvents.register(TEACHING_EVENTS.CLASS_PREPARATION_RECONCILE,{
+    subscriberId:'d11-approved-class-preparation-reconcile',
+    handle:async(event)=>{
+      const studentId=event.actorId,classId=event.payload?.class_id||event.aggregateId;
+      const timetableVersionId=String(event.payload?.timetable_version_id||'');
+      if(!studentId||!classId||!timetableVersionId){
+        return Object.freeze({accepted:true,noop:true,reason:'CLASS_RECONCILIATION_CONTEXT_MISSING'});
+      }
+      const context=await repository.getClassContext(studentId,classId);
+      const klass=context?.classRow;
+      if(!klass||klass.student_id!==studentId||klass.class_id!==classId
+        ||klass.source_timetable_version_id!==timetableVersionId
+        ||Number(klass.schedule_version)!==Number(event.payload?.schedule_version)
+        ||klass.source_timetable_state!=='APPROVED'
+        ||klass.course_lifecycle_state!=='ACTIVE'
+        ||klass.lifecycle_state!=='SCHEDULED'
+        ||!Number.isFinite(Date.parse(klass.scheduled_start_at))
+        ||Date.parse(klass.scheduled_start_at)<=Date.now()){
+        return Object.freeze({accepted:true,noop:true,reason:'CLASS_NOT_CURRENTLY_PREPARABLE'});
+      }
+      const result=await seedClassRuntime({
+        repository,dueEventStore,studentId,classRow:klass,causationId:event.eventId,
+      });
+      return Object.freeze({accepted:true,seeded:true,classId,workspaceId:result.preparationWorkspaceId});
     },
   }));
 

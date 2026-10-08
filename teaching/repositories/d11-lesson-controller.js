@@ -160,6 +160,25 @@ function createD11LessonControllerRepository({
     return rows || [];
   }
 
+  // A governed timetable rebuild is semester-wide even when its originating
+  // Request belonged to a Course with no Classes (e.g. GST). Resolve solely
+  // actual, still-approved Class obligations; never project cancelled rows from
+  // older timetable versions into PPL.
+  async function listClassesForApprovedTimetable(studentId,timetableVersionId) {
+    const {rows=[]}=await query(
+      "select c.* from public.teaching_classes c" +
+      " join public.teaching_timetable_versions t on t.timetable_version_id=c.source_timetable_version_id" +
+      " join public.teaching_courses co on co.course_id=c.course_id and co.student_id=c.student_id" +
+      " where c.student_id=$1 and c.source_timetable_version_id=$2" +
+      " and t.timetable_state='APPROVED' and co.lifecycle_state='ACTIVE'" +
+      " and c.lifecycle_state='SCHEDULED' and c.scheduled_start_at>now()" +
+      " and not exists (select 1 from public.teaching_class_sessions sess where sess.class_id=c.class_id and sess.student_id=c.student_id)" +
+      " order by c.scheduled_start_at,c.class_id",
+      [studentId,timetableVersionId]
+    );
+    return rows;
+  }
+
   async function getPlanningSignals(studentId, classRow) {
     const prior = await query(
       "select f.closure_fact_id,f.class_id,f.class_session_id,f.fact_pack,f.closed_at" +
@@ -1307,6 +1326,7 @@ function createD11LessonControllerRepository({
     getClassContext,
     listClassesForCourse,
     getPlanningSignals,
+    listClassesForApprovedTimetable,
     ensurePreparationWorkspace,
     ensurePreparationWorkspaceUsing,
     recordPreparationArtifact,

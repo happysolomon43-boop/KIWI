@@ -255,6 +255,7 @@ function createTeachingFoundation({
       dueEventStore: d10RuntimePlatform.eventStore,
       repository: d11Repository,
       service: d11Service,
+      outboxStore:d10RuntimePlatform.outboxStore,
       attendanceService:d15Service,
     });
   }
