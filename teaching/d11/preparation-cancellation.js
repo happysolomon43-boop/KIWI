@@ -130,7 +130,7 @@ function createD11PreparationCancellation({query,withTransaction,randomUUID,cloc
       `,[workspaceId]);
       const review=await tx.query(`
         update teaching_runtime.due_events set status='SUPERSEDED',
-          resolution='WORKSPACE_PARENT_SUPERSEDED',recovery_reason=$2,
+          resolution='SUPERSEDED',recovery_reason=$2,
           claim_token=null,claimed_by=null,claimed_at=null,claim_expires_at=null,updated_at=now()
         where event_type='teaching.preparation.review_due'
           and payload->>'preparation_workspace_id'=$1
@@ -142,7 +142,7 @@ function createD11PreparationCancellation({query,withTransaction,randomUUID,cloc
       ].includes(reason)){
         const due=await tx.query(`
           update teaching_runtime.due_events set status='SUPERSEDED',
-            resolution='CLASS_PARENT_SUPERSEDED',recovery_reason=$3,
+            resolution='SUPERSEDED',recovery_reason=$3,
             claim_token=null,claimed_by=null,claimed_at=null,claim_expires_at=null,updated_at=now()
           where payload->>'class_id'=$1
             and event_type in ('teaching.class.start_due','teaching.class.end_due')
