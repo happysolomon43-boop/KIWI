@@ -67,6 +67,7 @@ function createTeachingFoundation({
   d12Intelligence = null,
   d12PublishedEventRegistry = null,
   d13Intelligence = null,
+  d14HelpIntelligence = null,
   d13PublishedEventRegistry = null,
   d16Intelligence = null,
   d17Intelligence = null,
@@ -330,7 +331,7 @@ function createTeachingFoundation({
     : null;
 
   const d14Repository = d11Repository && persistentDepsReady
-    ? createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository})
+    ? createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository,outboxStore:d10RuntimePlatform?.outboxStore||null,dueEventStore:d10RuntimePlatform?.eventStore||null})
     : null;
   const d14Service = d14Repository && d11Service && d12Service
     ? createD14Service({
@@ -339,11 +340,12 @@ function createTeachingFoundation({
         d11Service,
         d12Service,
         attendanceService:d15Service,
+        helpIntelligence:d14HelpIntelligence,
         randomUUID,
       })
     : null;
   const d14Runtime = d14Service && d11PublishedEventRegistry
-    ? registerD14Runtime({publishedEvents:d11PublishedEventRegistry,service:d14Service})
+    ? registerD14Runtime({publishedEvents:d11PublishedEventRegistry,service:d14Service,eventRuntime:d10RuntimePlatform?.eventRuntime||null,repository:d14Repository})
     : null;
 
   const service = createTeachingService({ config, repositories, examInterface });

@@ -54,14 +54,14 @@ function raiseHandRequest({studentId,classId,helpRequest,context}) {
       validate:async(value)=>{const p=normalizeProposal(value);return p?{ok:true,value:p}:{ok:false,reason:'D14_HELP_SCHEMA_INVALID'};},
     },
     contextSpec:{
-      authoritative_refs:[{ref:'class:'+classId}],
+      authoritative_refs:[{ref:'class:'+classId},...(context.blueprint?.blueprint_state==='VALIDATED'?[{ref:'lesson-blueprint:'+context.blueprint.lesson_blueprint_id}]:[]),...(plan?.course_plan_id?[{ref:'course-plan:'+plan.course_plan_id}]:[])],
       untrusted_refs:[{ref:'student-question:'+helpRequest.interaction_id}],
     },
     academicInput:{
       instruction:'Classify whether the untrusted student question is a relevant request for help with the current lesson. Return JSON with exactly decision (ANSWER_NOW, DEFER or DECLINE), teacherMessage, reason, delayMinutes. ANSWER_NOW: short clear explanation grounded in supplied current Class, with an optional gentle check question; never give direct answers to assessed or graded work. DEFER: when the timing interrupts an independent activity, return 1-3 minutes and explain what to continue doing. DECLINE: for unrelated, abusive or unsafe requests, provide a respectful reason and redirect to the lesson. Do not invent current lesson facts. If lesson evidence is insufficient, DEFER rather than invent.',
       class_id:classId,
       class_mode:String(session.instructional_substate),
-      active_learning_unit_id:session.active_learning_unit_id||null,
+      active_learning_unit_id:session.progress_state?.current_learning_unit_ref||null,
       course_plan_id:plan?.course_plan_id||null,
       question_ref:'student-question:'+helpRequest.interaction_id,
     },

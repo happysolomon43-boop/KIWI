@@ -7,7 +7,7 @@ const MODES=Object.freeze({OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:
 const RESTRICTED=new Set(['ASSESSMENT','CLASSWORK']);
 const SIGNALS=new Set(['ASK_TEACHER','NEED_HELP','READY','FINISHED','BREAK_REQUEST','EARLY_DISMISSAL_REQUEST','TECHNICAL_ISSUE','LEAVE']);
 function fail(code,status=409){throw Object.assign(new Error(code),{code,status});}
-function createD14Service({repository,d11Repository,d11Service,d12Service,attendanceService=null,studyIntelligence=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
+function createD14Service({repository,d11Repository,d11Service,d12Service,attendanceService=null,studyIntelligence=null,helpIntelligence=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
   if(!repository||!d11Repository||!d11Service||!d12Service||!randomUUID)throw new TypeError('D14 requires the existing D11/D12 owners and its artifact repository.');
   async function context(studentId,classId){const value=await d11Repository.getClassContext(studentId,classId);if(!value)fail('TEACHING_D14_CLASS_NOT_FOUND',404);return value;}
   async function listClasses(user,courseId){
@@ -31,7 +31,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const currentTime=clock().getTime(),starts=Date.parse(source.classRow.scheduled_start_at),ends=Date.parse(source.classRow.scheduled_end_at);
     const mode=source.session?.lifecycle_state==='CLOSED'?'CLOSURE':source.session?.instructional_substate||(currentTime>=ends?'UNSTARTED_PAST':currentTime>=starts?'START_DELAYED':'PRE_CLASS');
     const restricted=RESTRICTED.has(mode);
-    const [identity,scenes,notes,studyNote,teacherMessage,firstEntry,conversation]=await Promise.all([
+    const [identity,scenes,notes,studyNote,teacherMessage,firstEntry,conversation,helpRequests]=await Promise.all([
       repository.identity(user.id,source.classRow.course_id),
       restricted?[]:repository.board(user.id,source.session?.class_session_id),
       restricted?[]:repository.notebook(user.id,classId),
@@ -39,6 +39,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       repository.latestTeacherMessage(user.id,classId),
       repository.firstEntry(user.id,classId),
       restricted?[]:typeof repository.conversation==='function'?repository.conversation(user.id,classId):[],
+      typeof repository.helpRequests==='function'?repository.helpRequests(user.id,classId):[],
     ]);
     const closed=source.session?.lifecycle_state==='CLOSED';
     let summary=null,closureFacts=null;
@@ -68,7 +69,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
       boardHistoryAllowed:!restricted,notebook:notes,notebookAllowed:!restricted,summary,closureFacts,
-      teacherConversation:conversation,teacherMessagingAllowed:!closed&&source.session?.lifecycle_state==='ACTIVE'
+      teacherConversation:conversation,helpRequests,teacherMessagingAllowed:!closed&&source.session?.lifecycle_state==='ACTIVE'
         &&source.classRow.lifecycle_state!=='CANCELLED'
         &&source.classRow.course_lifecycle_state!=='INCOMPLETE'
         &&source.classRow.course_lifecycle_state!=='PAUSED'
@@ -107,7 +108,60 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const attendance=attendanceService&&typeof attendanceService.observeInteraction==='function'
       ? await attendanceService.observeInteraction(user,classId,{interactionId:row.interaction_id,kind:row.interaction_kind,occurredAt:row.created_at})
       : null;
-    return {interactionId:row.interaction_id,kind:row.interaction_kind,acceptedAt:row.created_at,academicResponse:false,controllerMutation:false,status:'RECORDED_FOR_TEACHER',attendance};
+    return {interactionId:row.interaction_id,helpRequestId:row.help_request_id||null,kind:row.interaction_kind,acceptedAt:row.created_at,academicResponse:false,controllerMutation:false,status:row.help_request_id?'HELP_RAISED':'RECORDED_FOR_TEACHER',attendance};
+  }
+  async function processHelp({studentId,classId,helpRequestId}={}) {
+    if(!studentId||!classId||!helpRequestId)fail('TEACHING_D14_HELP_CONTEXT_REQUIRED',400);
+    const request=await repository.claimHelp(studentId,helpRequestId);
+    if(!request)return {accepted:true,noop:true,reason:'HELP_NOT_DUE_OR_ALREADY_DECIDED'};
+    const finish=async(status,reason,minutes=0,scheduleVersion=1)=>{
+      const nextReviewAt=status==='DEFERRED'?new Date(clock().getTime()+minutes*60000).toISOString():null;
+      const row=await repository.finalizeHelp({studentId,helpRequestId,status,reason,nextReviewAt,scheduleVersion});
+      return {accepted:true,status:row?.status||status,helpRequestId};
+    };
+    let ctx;
+    try{ctx=await context(studentId,classId);}catch(error){return finish('CANCELLED','This Class is no longer available.');}
+    const mode=ctx.session?.instructional_substate;
+    const active=ctx.session?.lifecycle_state==='ACTIVE'&&ctx.classRow?.lifecycle_state==='SCHEDULED'
+      &&ctx.classRow?.course_lifecycle_state==='ACTIVE'&&ctx.classRow?.source_timetable_state==='APPROVED';
+    if(!active||ctx.session?.class_session_id!==request.class_session_id
+      ||Number(ctx.session?.state_version)!==Number(request.controller_version)){
+      return finish('CANCELLED','The Class moved on before this question could be answered. You can raise your hand again.',0,ctx.classRow?.schedule_version);
+    }
+    if(RESTRICTED.has(mode)||['BREAK','INTERRUPTED'].includes(mode)){
+      if(mode==='BREAK'&&Number(request.attempts)<3)
+        return finish('DEFERRED','The Teacher will return after the pause.',2,ctx.classRow.schedule_version);
+      return finish('CANCELLED','This Class activity cannot accept Teacher answers. You can ask again when teaching resumes.',0,ctx.classRow.schedule_version);
+    }
+    if(Number(request.attempts)>3)return finish('UNAVAILABLE','Your question could not be answered automatically. Please ask again during a suitable part of the lesson.',0,ctx.classRow.schedule_version);
+    if(!helpIntelligence?.decide)
+      return finish('UNAVAILABLE','AI Teacher replies are not available in this Class right now.',0,ctx.classRow.schedule_version);
+    let result;
+    try{result=await helpIntelligence.decide({studentId,classId,helpRequest:request,context:ctx});}
+    catch(error){
+      if(Number(request.attempts)<3)
+        return finish('DEFERRED','The Teacher is temporarily unavailable. Your question will be retried.',1,ctx.classRow.schedule_version);
+      return finish('UNAVAILABLE','The Teacher could not prepare a validated response. Please raise your hand again later.',0,ctx.classRow.schedule_version);
+    }
+    if(result.decision==='DEFER'){
+      if(Number(request.attempts)>=3)return finish('UNAVAILABLE','The lesson has moved on. Please raise your hand again if you still need help.',0,ctx.classRow.schedule_version);
+      return finish('DEFERRED',result.reason||'The Teacher will return to your question shortly.',result.delayMinutes||1,ctx.classRow.schedule_version);
+    }
+    if(result.decision==='DECLINE')return finish('DECLINED',result.reason||'This question cannot be answered in the current Class.',0,ctx.classRow.schedule_version);
+    if(result.decision!=='ANSWER_NOW'||!result.teacherMessage)return finish('UNAVAILABLE','Teacher response was not validated.',0,ctx.classRow.schedule_version);
+    try{
+      const published=await repository.publishTeacherTurn({
+        studentId,classId,expectedControllerVersion:request.controller_version,
+        message:result.teacherMessage,idempotencyKey:'d14-help-answer:'+helpRequestId,helpRequestId,
+      });
+      return {accepted:true,status:'ANSWERED',helpRequestId,communicationId:published.communication_id};
+    }catch(error){
+      if(['TEACHING_D14_HELP_STALE','TEACHING_D14_TEACHER_TURN_STALE','TEACHING_D14_PARENT_AUTHORITY_REVOKED'].includes(error?.code))
+        return finish('CANCELLED','The current Class activity changed before the answer could be published.',0,ctx.classRow.schedule_version);
+      if(Number(request.attempts)<3)
+        return finish('DEFERRED','Your answer could not be safely published yet. KIWI will retry.',1,ctx.classRow.schedule_version);
+      return finish('UNAVAILABLE','Your answer could not be safely published. Please ask again.',0,ctx.classRow.schedule_version);
+    }
   }
   async function enter(user,classId){
     const ctx=await context(user.id,classId);
@@ -166,6 +220,6 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'PREPARED_NOT_PUBLISHABLE':'VALIDATED_PRIVATE',stage,binding:request.binding,payload:output,validation,closureFactId:closure?.closure_fact_id||null,idempotencyKey:key});
     return {state:row.state,published:false,noteVersionId:row.note_version_id};
   }
-  return Object.freeze({listClasses,snapshot,notebook,signal,enter,respond,runStudyStage,publishTeacherTurn:repository.publishTeacherTurn});
+  return Object.freeze({listClasses,snapshot,notebook,signal,processHelp,enter,respond,runStudyStage,publishTeacherTurn:repository.publishTeacherTurn});
 }
 module.exports={createD14Service,MODES};

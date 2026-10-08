@@ -151,11 +151,19 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
   async function recordInteraction({studentId,classId,session,kind,body,idempotencyKey}){
     return withTransaction(async(tx)=>{
       const existing=await tx.query('select * from public.teaching_classroom_interactions where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
-      if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].interaction_kind!==kind||existing.rows[0].body!==body)throw Object.assign(new Error('Conflicting interaction retry.'),{status:409,code:'TEACHING_D14_IDEMPOTENCY_CONFLICT'});return existing.rows[0];}
+      if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].interaction_kind!==kind||existing.rows[0].body!==body)throw Object.assign(new Error('Conflicting interaction retry.'),{status:409,code:'TEACHING_D14_IDEMPOTENCY_CONFLICT'});if(['ASK_TEACHER','NEED_HELP'].includes(kind)){const {rows:h=[]}=await tx.query('select help_request_id from public.teaching_classroom_help_requests where interaction_id=$1',[existing.rows[0].interaction_id]);return {...existing.rows[0],help_request_id:h[0]?.help_request_id||null};}return existing.rows[0];}
       if(['JOIN','ASK_TEACHER','NEED_HELP'].includes(kind))await assertCurrentTeachingAuthority(tx,studentId,classId);
       const current=await tx.query('select class_session_id,state_version,lifecycle_state from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);
       if(session && (current.rows[0]?.class_session_id!==session.class_session_id||Number(current.rows[0]?.state_version)!==Number(session.state_version)))throw Object.assign(new Error('Class changed. Reload before acting.'),{status:409,code:'TEACHING_D14_STALE_CONTROLLER'});
-      const {rows}=await tx.query('insert into public.teaching_classroom_interactions(interaction_id,student_id,class_id,class_session_id,controller_version,interaction_kind,body,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[randomUUID(),studentId,classId,session?.class_session_id||null,session?.state_version||null,kind,body,idempotencyKey]);return rows[0];
+      const {rows}=await tx.query('insert into public.teaching_classroom_interactions(interaction_id,student_id,class_id,class_session_id,controller_version,interaction_kind,body,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[randomUUID(),studentId,classId,session?.class_session_id||null,session?.state_version||null,kind,body,idempotencyKey]);
+      if(!['ASK_TEACHER','NEED_HELP'].includes(kind))return rows[0];
+      if(!outboxStore?.appendUsing)throw Object.assign(new Error('Durable raised-hand worker unavailable.'),{code:'TEACHING_D14_HELP_WORKER_UNAVAILABLE',status:503});
+      const helpId=randomUUID();
+      await tx.query("insert into public.teaching_classroom_help_requests(help_request_id,student_id,class_id,class_session_id,interaction_id,controller_version,status) values($1,$2,$3,$4,$5,$6,'RAISED')",[helpId,studentId,classId,session.class_session_id,rows[0].interaction_id,session.state_version]);
+      const eventId='d14-help:'+helpId;
+      await outboxStore.appendUsing(tx.query.bind(tx),{
+        eventId,schemaVersion:1,eventType:require('../events/names').TEACHING_EVENTS.CLASS_HELP_REQUESTED,eventCategory:'committed_domain_event',triggerType:'committed_domain_event',source:'teaching.d14',origin:'d14',actorId:studentId,aggregateType:'CLASS',aggregateId:classId,aggregateVersion:Number(session.state_version),occurredAt:new Date().toISOString(),correlationId:helpId,idempotencyKey:eventId,payload:{student_id:studentId,class_id:classId,help_request_id:helpId}});
+      return {...rows[0],help_request_id:helpId};
     });
   }
   async function latestNote(studentId,classId){const {rows}=await query('select * from public.teaching_class_study_note_versions where student_id=$1 and class_id=$2 order by version_no desc limit 1',[studentId,classId]);return rows[0]||null;}

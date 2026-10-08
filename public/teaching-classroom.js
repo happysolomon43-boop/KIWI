@@ -208,11 +208,17 @@ function syncSheet(){
   if(!log)return;
   const stick=log.scrollHeight-log.scrollTop-log.clientHeight<65;
   const entries=Array.isArray(state.snapshot.teacherConversation)?state.snapshot.teacherConversation:[];
+  const requestByInteraction=new Map((state.snapshot.helpRequests||[]).map(item=>[item.interactionId,item]));
   const messages=entries.map(item=>{
     const row=$('article','tc-turn');row.dataset.role=item.role||'STUDENT';
     const who=item.role==='TEACHER'?(state.snapshot.identity?.teacher_name||'AI Teacher'):'You';
     const stamp=item.sentAt?new Date(item.sentAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';
     row.append($('span','tc-turn-meta',who+(stamp?' · '+stamp:'')),$('p','',item.message||''));
+    const raised=requestByInteraction.get(item.id);
+    if(raised){const states={RAISED:'Hand raised · waiting for Teacher',PROCESSING:'Teacher is reviewing',DEFERRED:'Teacher will return to this question',ANSWERED:'Answered',DECLINED:'Not answered in this activity',CANCELLED:'Class activity changed',UNAVAILABLE:'Teacher reply unavailable'};
+      row.append($('small','tc-help-status',states[raised.status]||'Question recorded'));
+      if(raised.reason)row.append($('p','tc-help-reason',raised.reason));
+    }
     return row;
   });
   if(!messages.length)log.replaceChildren($('p','tc-sheet-help','Your raised-hand questions and confirmed Teacher replies will appear here.'));
@@ -296,7 +302,7 @@ function openSheet(kind){
         const result=await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/interactions',{method:'POST',body:{kind,body,idempotencyKey:key}});
         if(classId===state.classId){
           input.value='';state.sheetKey=null;
-          status.textContent=result.status==='RECORDED_FOR_TEACHER'?'Your hand is raised. Question saved, but an AI reply has not yet been generated.':'Your question has been recorded.';
+          status.textContent=result.status==='HELP_RAISED'?'Your hand is raised. KIWI will decide whether to answer, defer, or redirect without interrupting the lesson.':'Question recorded. Replies are only published after Teacher validation.';
           await fetchSnapshot();
         }
       }catch(error){status.textContent=error.message||'Delivery unconfirmed. Retry to send the same message safely.';}
@@ -342,7 +348,9 @@ function render(){
   add(body,left,right);root.append(body);if(s.controller?.lifecycleState==='CLOSED')root.append(renderSummary(s));
   const corner=$('div','tc-corner-actions');
   if(s.teacherMessagingAllowed&&!state.reviewOnly){
+    const raised=(s.helpRequests||[])[0];
     const hand=button('✋ NEED HELP?',()=>openSheet('teacher'),'tc-raise-hand');
+    if(raised){hand.dataset.helpStatus=raised.status;hand.title='Latest raised hand: '+raised.status.toLowerCase();}
     hand.title='Raise your hand to ask the Teacher a question';
     hand.setAttribute('aria-label','Raise your hand to request help');
     root.append(hand);
