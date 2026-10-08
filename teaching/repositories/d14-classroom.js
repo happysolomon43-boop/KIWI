@@ -11,6 +11,12 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       s.lifecycle_state session_state,s.instructional_substate,
       a.outcome attendance_outcome,a.presence_state,a.missed_minutes,a.arrived_at,a.exited_at
       from public.teaching_classes c
+      join public.teaching_courses co on co.student_id=c.student_id and co.course_id=c.course_id
+      left join lateral (
+        select timetable_version_id from public.teaching_timetable_versions t
+        where t.student_id=c.student_id and t.semester_id=co.semester_id and t.timetable_state='APPROVED'
+        order by t.version_no desc limit 1
+      ) approved on true
       left join lateral (
         select lifecycle_state,instructional_substate from public.teaching_class_sessions
         where student_id=c.student_id and class_id=c.class_id order by created_at desc limit 1
@@ -21,6 +27,14 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
         order by version_no desc,recorded_at desc limit 1
       ) a on true
       where c.student_id=$1 and c.course_id=$2 and c.lifecycle_state<>'CANCELLED'
+        and (
+          approved.timetable_version_id is null
+          or c.source_timetable_version_id=approved.timetable_version_id
+          or co.semester_id is null
+          or s.lifecycle_state is not null
+          or a.outcome is not null
+          or c.lifecycle_state<>'SCHEDULED'
+        )
       order by c.scheduled_start_at`,[studentId,courseId]);
     return rows;
   }
