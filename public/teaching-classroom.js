@@ -135,7 +135,9 @@ function renderHeader(s){
         }
       },'tc-button tc-button--solid');
       finish.setAttribute('aria-label','Complete this non-academic Classroom review and move to next');
-      header.append(finish);
+      const reviewActions=$('div','tc-review-actions');
+      closeReview.replaceWith(reviewActions);
+      reviewActions.append(closeReview,finish);
     }
     return header;
   }
