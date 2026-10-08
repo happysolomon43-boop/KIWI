@@ -130,3 +130,58 @@ test('Non-repairable, stale or replayed model results never trigger new academic
     assert.equal(h.transitions.length,0);
   }
 });
+
+
+test('D11 runtime Blueprint format specifies the exact shared descriptor enum rather than open-ended invented labels',()=>{
+  const {LEARNING_EVIDENCE_DESCRIPTORS}=require('../../../teaching/d11/contracts');
+  assert.deepEqual(D11_BLUEPRINT_OUTPUT_FORMAT.evidence_descriptor_enum,LEARNING_EVIDENCE_DESCRIPTORS);
+  assert.deepEqual(LEARNING_EVIDENCE_DESCRIPTORS,[
+    'DEMONSTRATION','GUIDED','INDEPENDENT_FAMILIAR','INDEPENDENT_VARIED',
+    'METHOD_SELECTION','DELAYED_RETRIEVAL','INTEGRATION_TRANSFER',
+  ]);
+  assert.match(D11_BLUEPRINT_OUTPUT_FORMAT.objective_required.evidence_descriptor_targets,/ONLY evidence_descriptor_enum/);
+  assert.match(D11_BLUEPRINT_OUTPUT_FORMAT.segment_required.learning_evidence_descriptor,/evidence_descriptor_enum/);
+  assert.match(D11_BLUEPRINT_OUTPUT_FORMAT.enum_rules,/Inventing labels/);
+});
+
+test('D11 invalid objective and segment evidence descriptor returns safe field path, not any model-provided value',()=>{
+  const base={status:'OK',objectives:[{id:'o1',learning_unit_ref:'u1',criticality:'CORE'}],segments:[]};
+  const ctx={learningUnits:[{learning_unit_id:'u1'}],scheduledStartAt:'2026-10-10T10:00:00Z',scheduledEndAt:'2026-10-10T11:00:00Z'};
+  const invalidObjective=validateLessonBlueprintProposal({
+    ...base,objectives:[{...base.objectives[0],evidence_descriptor_targets:['EXAMPLE_OF_PRIVATE_CONTENT']}],
+  },ctx);
+  assert.equal(invalidObjective.reason,'TEACHING_D11_DESCRIPTOR_INVALID');
+  assert.equal(invalidObjective.fieldPath,'objective.evidence_descriptor_targets');
+  assert.equal(JSON.stringify(invalidObjective).includes('EXAMPLE_OF_PRIVATE_CONTENT'),false);
+  const invalidSegment=validateLessonBlueprintProposal({
+    ...base,segments:[{
+      id:'s1',kind:'INSTRUCTION',objective_refs:['o1'],planned_minutes:30,
+      learning_evidence_descriptor:'EXAMPLE_OF_PRIVATE_CONTENT',
+    }],
+  },ctx);
+  assert.equal(invalidSegment.reason,'TEACHING_D11_DESCRIPTOR_INVALID');
+  assert.equal(invalidSegment.fieldPath,'segment.learning_evidence_descriptor');
+  assert.equal(JSON.stringify(invalidSegment).includes('EXAMPLE_OF_PRIVATE_CONTENT'),false);
+});
+
+test('D11 exhausts one fresh repair as terminal validation decision, keeping transient failures retryable',async()=>{
+  const invalid={accepted:false,validationFailure:{kind:'VALIDATION_REJECTION',stage:'schema',
+    reason:'TEACHING_D11_DESCRIPTOR_INVALID',fieldPath:'segment.learning_evidence_descriptor',
+    retryable:true,repairable:'MODEL_RETRY'}};
+  const h=harness([invalid,invalid]);
+  await assert.rejects(h.run({id:'u'},'class-1',{requestKey:'evt-terminal'}),err=>{
+    assert.equal(err.code,'TEACHING_D11_BLUEPRINT_NOT_ACCEPTED');
+    assert.equal(err.retryable,false);
+    assert.equal(err.validationFailure.kind,'VALIDATION_REJECTION');
+    assert.equal(err.validationFailure.fieldPath,'segment.learning_evidence_descriptor');
+    return true;
+  });
+  assert.equal(h.calls.length,2);
+  assert.equal(h.transitions.length,0);
+  const transient=harness([{accepted:false,status:'ROUTE_HELD'}]);
+  await assert.rejects(transient.run({id:'u'},'class-1',{requestKey:'evt-transient'}),err=>{
+    assert.equal(err.code,'TEACHING_D11_BLUEPRINT_NOT_ACCEPTED');
+    assert.equal(err.retryable,undefined);
+    return true;
+  });
+});

@@ -183,7 +183,11 @@ function normalizeObjective(item, index, allowedUnits) {
   const descriptors = normalizeStringArray(item.evidence_descriptor_targets || [], 'objective.evidence_descriptor_targets')
     .map((descriptor) => {
       const normalized = descriptor.toUpperCase();
-      if (!LEARNING_EVIDENCE_DESCRIPTORS.includes(normalized)) fail('Unknown learning/evidence descriptor: ' + descriptor, 'TEACHING_D11_DESCRIPTOR_INVALID');
+      if (!LEARNING_EVIDENCE_DESCRIPTORS.includes(normalized)) {
+        const error=new Error('Objective evidence descriptor must match the supported D11 vocabulary.');
+        error.code='TEACHING_D11_DESCRIPTOR_INVALID';error.status=422;
+        error.fieldPath='objective.evidence_descriptor_targets';throw error;
+      }
       return normalized;
     });
   return freezeDeep({
@@ -205,7 +209,11 @@ function normalizeSegment(item, index, objectiveIds) {
   const criticality = String(item.criticality || 'SECONDARY').toUpperCase();
   if (!OBJECTIVE_CRITICALITY.includes(criticality)) fail('Invalid segment criticality.', 'TEACHING_D11_BLUEPRINT_SCHEMA_INVALID');
   const descriptor = item.learning_evidence_descriptor == null ? null : String(item.learning_evidence_descriptor).toUpperCase();
-  if (descriptor && !LEARNING_EVIDENCE_DESCRIPTORS.includes(descriptor)) fail('Invalid segment learning/evidence descriptor.', 'TEACHING_D11_DESCRIPTOR_INVALID');
+  if (descriptor && !LEARNING_EVIDENCE_DESCRIPTORS.includes(descriptor)) {
+    const error=new Error('Segment evidence descriptor must match the supported D11 vocabulary.');
+    error.code='TEACHING_D11_DESCRIPTOR_INVALID';error.status=422;
+    error.fieldPath='segment.learning_evidence_descriptor';throw error;
+  }
   const assistance = String(item.assistance_level || 'NONE').toUpperCase();
   if (!ASSISTANCE_LEVELS.includes(assistance)) fail('Invalid assistance level.', 'TEACHING_D11_ASSISTANCE_INVALID');
   const objectiveRefs = normalizeStringArray(item.objective_refs || [], 'segment.objective_refs');
@@ -310,6 +318,7 @@ function normalizeLessonBlueprintProposal(output, {
 const D11_SAFE_BLUEPRINT_FIELDS=new Set([
   'objective.id','objective.learning_unit_ref','objective.label',
   'segment.id','segment.kind',
+  'objective.evidence_descriptor_targets','segment.learning_evidence_descriptor',
 ]);
 function validateLessonBlueprintProposal(output, context) {
   try {
