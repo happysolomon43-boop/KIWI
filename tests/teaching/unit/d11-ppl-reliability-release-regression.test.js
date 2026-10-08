@@ -15,7 +15,7 @@ function loadHandler({result={done:false},fail=null,end='2026-10-09T12:00:00Z',s
   const runtime={
     intelligence:{},
     preparationRepository:{getWorkspace:async()=>({workspace_id:'workspace-1',student_id:'student-1',target_kind:'next_class',target_ref:'class-1',lifecycle_state:'ACTIVE',state_version:2})},
-    repository:{getClassContext:async()=>({classRow:{class_id:'class-1',course_id:'course-1',lifecycle_state:'SCHEDULED',scheduled_start_at:startAt,scheduled_end_at:end,schedule_version:1,source_timetable_version_id:'approved-1',course_lifecycle_state:'ACTIVE',source_timetable_state:'APPROVED'}})},
+    repository:{getClassContext:async()=>({classRow:{class_id:'class-1',course_id:'course-1',lifecycle_state:'SCHEDULED',scheduled_start_at:startAt,scheduled_end_at:end,schedule_version:1,source_timetable_version_id:'approved-1',course_lifecycle_state:'ACTIVE',source_timetable_state:'APPROVED'},plan:{course_plan_id:'plan-1',version_no:1}})},
     dueEventStore:{enqueue:async event=>{reviews.push(event);return {inserted:true,event};}},
     scheduledEvent,preparationReviewDueAt,shouldDeferPreparation,
     fail:(message,code,status)=>{const error=new Error(message);error.code=code;error.status=status;throw error;},
@@ -52,7 +52,7 @@ test('D11 PPL failures propagate for durable retry, rather than being falsely ac
   assert.equal(events.length,0);
 });
 test('D11 skips elapsed and cancelled PPL workspaces rather than running costly stale planning',async()=>{
-  const {handler,events}=loadHandler({end:'2026-10-08T09:00:00Z'});
+  const {handler,events}=loadHandler({startAt:'2026-10-08T08:00:00Z',end:'2026-10-08T09:00:00Z'});
   const result=await handler(seed);
   assert.equal(result.reason,'CLASS_NO_LONGER_PREPARABLE');
   assert.equal(result.modelWorkStarted,undefined);
