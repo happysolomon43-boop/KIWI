@@ -132,3 +132,13 @@ test('Unfingerprinted assets revalidate and Teaching detects deployments without
   assert.match(teaching,/visibilitychange/);
   assert.match(html,/teaching-classroom\.js\?v=20261008-live-reliability-1/);
 });
+
+test('Vercel static frontend emits a deployment marker with no-store caching',()=>{
+  const build=read('scripts/build-web.js');
+  const vercel=JSON.parse(read('vercel.json'));
+  const teaching=read('public/teaching.js');
+  assert.match(build,/VERCEL_GIT_COMMIT_SHA/);
+  assert.match(build,/builtAt/);
+  assert.match(teaching,/kiwi-build\.json/);
+  assert.ok(vercel.headers.some(entry=>entry.source==='/kiwi-build.json'&&entry.headers.some(h=>/no-store/.test(h.value))));
+});
