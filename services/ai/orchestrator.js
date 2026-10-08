@@ -401,6 +401,7 @@ function createAIOrchestrator({
     preparationRoutePosture = null,
     executionProfile = null,
     signal = null,
+    beforeAttempt = null,
   } = {}) {
     assertNotCancelled(signal);
     assertReady?.();
@@ -538,6 +539,8 @@ function createAIOrchestrator({
 
         try {
           for (const slot of slots) {
+            assertNotCancelled(signal);
+            if (typeof beforeAttempt === 'function') await beforeAttempt();
             assertNotCancelled(signal);
             if (attempts.length >= retryPolicy.maxAttempts) break routeLoop;
 

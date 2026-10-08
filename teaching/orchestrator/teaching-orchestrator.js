@@ -66,7 +66,14 @@ function createTeachingOrchestrator({promptControl,aiAdapter,executionStore,stat
         if(controller.signal.aborted)return;
         const revoked=await cancelled(envelope,'in_flight');
         if(revoked.cancelled){controller.abort(new Error('CANCELLED_PARENT_SUPERSEDED'));return;}
-        const current=await stateReader(envelope,{phase:'in_flight'});
+        let current;
+        try { current=await stateReader(envelope,{phase:'in_flight'}); }
+        catch(error){
+          if(['TEACHING_COURSE_NOT_FOUND','TEACHING_CLASS_NOT_FOUND'].includes(error?.code)){
+            controller.abort(new Error('CANCELLED_PARENT_SUPERSEDED'));return;
+          }
+          throw error;
+        }
         if(current?.stateReference){
           const delta=revalidateAuthoritativeState({expectedState:envelope.state_reference,currentState:current.stateReference,expectedPreconditions:envelope.preconditions,currentPreconditions:current.preconditions||{}});
           if(delta.stale)controller.abort(new Error('CANCELLED_PARENT_SUPERSEDED'));
@@ -80,7 +87,7 @@ function createTeachingOrchestrator({promptControl,aiAdapter,executionStore,stat
         inspectAuthority().catch(()=>{}).finally(()=>{authorityPollBusy=false;});
       },2000);
       authorityMonitor.unref?.();
-      const modelResult=await aiAdapter.execute({invocation,academicInput:request.academicInput||{},generation:request.generation||{},schemaValidator:request.schemaValidator,domainValidator:request.domainValidator,provenanceValidator:request.provenanceValidator,deterministicChecks:request.deterministicChecks||[],validationContext:request.validationContext||{},safeCommunicationFallback:request.safeCommunicationFallback||null,signal:controller.signal});
+      const modelResult=await aiAdapter.execute({invocation,academicInput:request.academicInput||{},generation:request.generation||{},schemaValidator:request.schemaValidator,domainValidator:request.domainValidator,provenanceValidator:request.provenanceValidator,deterministicChecks:request.deterministicChecks||[],validationContext:request.validationContext||{},safeCommunicationFallback:request.safeCommunicationFallback||null,signal:controller.signal,beforeAttempt:inspectAuthority});
       if(controller.signal.aborted){await safeMark(executionId,'CANCELLED',{failureCode:'CANCELLED_PARENT_SUPERSEDED'});return Object.freeze({executionId,replay:false,cancelled:true,authoritativeMutationPerformed:false});}
       if(!modelResult.accepted){const policy=authorityFailurePolicy(capability.authority_ceiling);const validationFailure=modelResult.validationFailure||null;await safeMark(executionId,'NOOP',{validationOutcome:modelResult.fallbackUsed?'SAFE_FALLBACK':'REJECTED',failureCode:modelResult.rejectionReason||policy.disposition,safeMetadata:{validation_stage:modelResult.validationStage||null,validation_reason:modelResult.rejectionReason||null,validation_retryable:validationFailure?.retryable===true,validation_repairable:validationFailure?.repairable||null,validator_id:validationFailure?.validatorId||null,validation_field_path:validationFailure?.fieldPath||null}});return Object.freeze({executionId,replay:false,accepted:false,fallbackUsed:modelResult.fallbackUsed===true,fallback:modelResult.fallback,rejectionReason:modelResult.rejectionReason||null,validationStage:modelResult.validationStage||null,validationFailure,failureDisposition:policy.disposition,authoritativeMutationPerformed:false});}
       const postModelCancellation=await cancelled(envelope,'post_model');

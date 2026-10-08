@@ -3,6 +3,7 @@
 const { createTeachingAIAdapter, createTeachingOrchestrator, createOrchestratorPreflight, createAuthoritativeOwnerRouter } = require('../orchestrator');
 const { buildSeparatedContextLanes, asUntrustedData } = require('../security/context-lanes');
 const { centralTaskFor } = require('../d30/route-policy');
+const { createAcademicAuthorityCancellationReader } = require('../authority/revocation-reader');
 
 function fail(message, code = 'TEACHING_D31_RELEASE_CONTEXT_UNAVAILABLE') {
   const error = new Error(message);
@@ -144,6 +145,7 @@ function createD31ReleaseOrchestrator({ runtimePlatform, query, randomUUID } = {
   }
 
   const {stateReader,contextAssembler}=createD31ReleaseReaders({query});
+  const cancellationReader=createAcademicAuthorityCancellationReader({query}).read;
 
   const aiAdapter = createTeachingAIAdapter({
     promptControl: runtimePlatform.promptControl,
@@ -163,6 +165,7 @@ function createD31ReleaseOrchestrator({ runtimePlatform, query, randomUUID } = {
     aiAdapter,
     executionStore: runtimePlatform.orchestrationStore,
     stateReader,
+    cancellationReader,
     contextAssembler: { assemble: contextAssembler },
     preflight: createOrchestratorPreflight(),
     ownerRouter: createAuthoritativeOwnerRouter(),
