@@ -82,3 +82,19 @@ test('Infeasible Semester capacity is rejected before a proposal is saved', () =
   assert.match(service, /TEACHING_D09_SEMESTER_CAPACITY_INFEASIBLE/);
   assert.match(service, /does not have enough conflict-free time/);
 });
+
+test('active shared Semesters route availability edits through a formal Request', () => {
+  const experience=read('public/teaching-schedule-experience.js');
+  const repository=read('teaching/repositories/d09-scheduling.js');
+  assert.match(experience,/semesterHasActivatedCourses===true\|\|postActivationState/);
+  assert.match(experience,/governedAvailability\?'Request availability change':'Save availability'/);
+  assert.match(repository,/TEACHING_D09_ACTIVE_SEMESTER_REQUEST_REQUIRED/);
+});
+
+test('timetable rematerialization retires every superseded unstarted Class and Calendar hides cancellations', () => {
+  const repository=read('teaching/repositories/d09-scheduling.js');
+  const materializer=repository.slice(repository.indexOf('async function materializeApprovedTimetableUsing'),repository.indexOf('return Object.freeze({',repository.indexOf('async function materializeApprovedTimetableUsing')));
+  assert.match(materializer,/lifecycle_state='SCHEDULED'[\s\S]*source_timetable_version_id<>\$3/);
+  assert.doesNotMatch(materializer,/scheduled_start_at>=/);
+  assert.match(repository,/c\.lifecycle_state<>'CANCELLED'/);
+});
