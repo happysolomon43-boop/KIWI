@@ -231,7 +231,11 @@ function validatePreparationMetadata(metadata) {
     fail('PPL material_delta must be a structured object.');
   }
 
+  const repairAttempt=metadata.repair_attempt==null?0:Number(metadata.repair_attempt);
+  if(!Number.isInteger(repairAttempt)||repairAttempt<0||repairAttempt>1)
+    fail('PPL model repair attempt must be 0 or 1 and originate from the server.');
   return Object.freeze({
+    repair_attempt:repairAttempt,
     workspace_ref: nonEmpty(metadata.workspace_ref, 'workspace_ref'),
     workspace_version: nonEmpty(metadata.workspace_version, 'workspace_version'),
     stage,

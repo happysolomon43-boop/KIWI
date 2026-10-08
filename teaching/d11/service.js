@@ -329,9 +329,23 @@ function createD11Service({
     const routePosture=ROUTE_FOR_TARGET[target];
     const preparation=await buildPreparationMetadata(context,prep,target,routePosture,requestKey);
     const signals=await repository.getPlanningSignals(user.id,context.classRow);
-    const result=await intelligence.planLesson({
+    let result=await intelligence.planLesson({
       context,signals,requestKey,preparation,reservePolicy,
     });
+    // A rejected model result cannot be repaired by replaying the same D05
+    // idempotency key. Exactly one distinct, bounded correction execution may
+    // occur, with only safe schema rejection metadata and unchanged authority.
+    const failure=result?.validationFailure;
+    if(!result?.accepted && !result?.replay
+      && failure?.stage==='schema' && failure?.retryable===true
+      && failure?.repairable==='MODEL_RETRY'){
+      const repairKey=requestKey+':blueprint-schema-repair-1';
+      result=await intelligence.planLesson({
+        context,signals,requestKey:repairKey,reservePolicy,
+        repairFeedback:Object.freeze({reason:failure.reason,fieldPath:failure.fieldPath||null}),
+        preparation:Object.freeze({...preparation,repair_attempt:1,idempotency_key:repairKey,correlation_id:requestKey}),
+      });
+    }
     const output=result?.validatedResult?.output;
     if(!result?.accepted || !output) {
       fail('Lesson Planner did not produce an accepted provisional Blueprint.','TEACHING_D11_BLUEPRINT_NOT_ACCEPTED',422);

@@ -5,6 +5,8 @@ const { assertAuthorityLevel, authorityAtLeast } = require('./contracts');
 const VALIDATED_MODEL_RESULT = Symbol('KIWI_TEACHING_VALIDATED_MODEL_RESULT');
 const VALIDATION_REPAIRABILITY = Object.freeze(new Set(['NONE','MODEL_RETRY','TARGETED_REPAIR','STATE_REFRESH','UNSPECIFIED']));
 
+function safeValidationFieldPath(value){return typeof value==='string'&&/^[A-Za-z][A-Za-z0-9_.]{0,63}$/.test(value)?value:null;}
+
 function normalizeRepairability(value, fallback = 'UNSPECIFIED') {
   const normalized = String(value || fallback).trim().toUpperCase();
   return VALIDATION_REPAIRABILITY.has(normalized) ? normalized : fallback;
@@ -22,7 +24,7 @@ function normalizedValidatorResult(result, fallbackReason, {
       reason: fallbackReason,
       retryable: retryable === true,
       repairable: normalizeRepairability(repairable),
-      validatorId,
+      validatorId,fieldPath:null,
     };
   }
   if (typeof result !== 'object' || Array.isArray(result)) {
@@ -35,6 +37,7 @@ function normalizedValidatorResult(result, fallbackReason, {
     retryable: result.retryable == null ? retryable === true : result.retryable === true,
     repairable: normalizeRepairability(result.repairable, repairable),
     validatorId: result.validatorId == null ? validatorId : String(result.validatorId),
+    fieldPath:safeValidationFieldPath(result.fieldPath),
   };
 }
 
@@ -42,6 +45,7 @@ function rejected(reason, stage, {
   retryable = false,
   repairable = 'UNSPECIFIED',
   validatorId = null,
+  fieldPath = null,
 } = {}) {
   const validationFailure = Object.freeze({
     kind: 'VALIDATION_REJECTION',
@@ -50,6 +54,7 @@ function rejected(reason, stage, {
     retryable: retryable === true,
     repairable: normalizeRepairability(repairable),
     validatorId: validatorId == null ? null : String(validatorId),
+    fieldPath:safeValidationFieldPath(fieldPath),
   });
   return Object.freeze({
     accepted: false,
