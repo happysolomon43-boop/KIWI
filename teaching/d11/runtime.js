@@ -45,11 +45,20 @@ function scheduledEvent({eventType,eventId,studentId,classRow,dueAt,payload={}})
   });
 }
 
-async function seedClassRuntime({repository,dueEventStore,studentId,classRow,causationId=null}) {
+async function seedClassRuntime({
+  repository,dueEventStore,studentId,classRow,causationId=null,
+  expectedTimetableVersionId=null,expectedScheduleVersion=null,
+}) {
   const prep=await repository.ensurePreparationWorkspace({
     studentId,
     classId:classRow.class_id,
     correlationId:causationId,
+    ...(expectedTimetableVersionId!=null?{
+      expectedTimetableVersionId,expectedScheduleVersion,
+    }:{}),
+  });
+  if(!prep)return Object.freeze({
+    classId:classRow.class_id,skipped:true,reason:'AUTHORITATIVE_CLASS_SUPERSEDED',
   });
   const startId='d11-class-start:'+classRow.class_id+':schedule-v'+Number(classRow.schedule_version);
   const endId='d11-class-end:'+classRow.class_id+':schedule-v'+Number(classRow.schedule_version);
@@ -155,15 +164,24 @@ function registerD11Runtime({
         correlationId:event.correlationId || event.eventId,
         interruptActive:true,
       });
-      if(timetableVersionId){
+      const scheduleRequest=new Set([
+        'SINGLE_CLASS_RESCHEDULE','PERMANENT_AVAILABILITY_CHANGE','ACADEMIC_BREAK',
+        'COURSE_PAUSE','COURSE_RESUME','COURSE_CANCELLATION',
+      ]).has(String(event.payload?.request_type||''));
+      const legacyRequestId=event.payload?.request_id;
+      if(timetableVersionId || scheduleRequest && legacyRequestId){
         if(!outboxStore||typeof outboxStore.append!=='function'
-          ||typeof repository.listClassesForApprovedTimetable!=='function'){
+          ||typeof repository.listClassesForApprovedTimetable!=='function'
+          ||typeof repository.listClassesForAppliedScheduleRequest!=='function'){
           const error=new Error('D11 durable timetable-wide preparation reconciliation is unavailable.');
           error.code='TEACHING_D11_TIMETABLE_RECONCILIATION_UNAVAILABLE';
           throw error;
         }
-        const classes=await repository.listClassesForApprovedTimetable(studentId,timetableVersionId);
+        const classes=timetableVersionId
+          ?await repository.listClassesForApprovedTimetable(studentId,timetableVersionId)
+          :await repository.listClassesForAppliedScheduleRequest(studentId,legacyRequestId);
         for(const classRow of classes){
+          const classTimetableVersionId=classRow.source_timetable_version_id;
           const id='d11-class-preparation-reconcile:'+event.eventId+':'+classRow.class_id;
           const timestamp=new Date().toISOString();
           await outboxStore.append({
@@ -178,13 +196,13 @@ function registerD11Runtime({
             correlationId:event.correlationId||event.eventId,causationId:event.eventId,
             idempotencyKey:id,
             payload:{class_id:classRow.class_id,course_id:classRow.course_id,
-              timetable_version_id:timetableVersionId,schedule_version:Number(classRow.schedule_version),
+              timetable_version_id:classTimetableVersionId,schedule_version:Number(classRow.schedule_version),
               reason:'APPROVED_TIMETABLE_RECONCILIATION'},
-            auditRefs:[],provenanceRefs:['timetable:'+timetableVersionId,'class:'+classRow.class_id],
+            auditRefs:[],provenanceRefs:['timetable:'+classTimetableVersionId,'class:'+classRow.class_id],
           });
         }
         return Object.freeze({accepted:true,refreshed:refreshed.length,
-          queuedClassReconciliations:classes.length,timetableVersionId});
+          queuedClassReconciliations:classes.length,timetableVersionId:timetableVersionId||null});
       }
       const classes=await repository.listClassesForCourse(studentId,courseId);
       const seeded=[];
@@ -220,8 +238,11 @@ function registerD11Runtime({
       }
       const result=await seedClassRuntime({
         repository,dueEventStore,studentId,classRow:klass,causationId:event.eventId,
+        expectedTimetableVersionId:timetableVersionId,
+        expectedScheduleVersion:Number(event.payload?.schedule_version),
       });
-      return Object.freeze({accepted:true,seeded:true,classId,workspaceId:result.preparationWorkspaceId});
+      return result.skipped?Object.freeze({accepted:true,noop:true,reason:result.reason})
+        :Object.freeze({accepted:true,seeded:true,classId,workspaceId:result.preparationWorkspaceId});
     },
   }));
 
