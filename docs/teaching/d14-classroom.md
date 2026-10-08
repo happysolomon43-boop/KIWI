@@ -14,4 +14,6 @@ Exact task ledger: `TCH-0238` `TCH-0239` `TCH-0240` `TCH-0241` `TCH-0242` `TCH-0
 - **TCH-0858:** shared TPF-19 Translation Directive and normalized Student-Facing Fact Pack with provenance and protected-field filtering.
 - **TCH-0906:** two-stage TPF-20 bindings, private pre-Class preparation, post-Class actual-teaching reconciliation, stale-result rejection and lineage validation; unavailable D27 sources and D30 routes remain explicitly held.
 
-The four new tables contain only D14-owned notebook, interaction, teacher communication and private note-version artifacts. They use RLS, service-only grants, idempotency keys and owner-scoped queries. No Attendance, Gradebook, Assessment, SKM or publication authority is created.
+The original four D14 tables contain notebook, interaction, Teacher communication and private note-version artifacts. The follow-on raised-hand workflow adds a fifth table for durable help-request state. They use RLS, service-only grants, idempotency keys and owner-scoped queries. No Attendance, Gradebook, Assessment, SKM or publication authority is created.
+
+Raised-hand questions are student-initiated, not a passive chat feed. The Teacher can answer immediately, defer with a bounded due event, or decline with a reason; only a controller-authorized, version-fenced Teacher publication becomes student-visible. See [D14 Raise Hand workflow](d14-raised-hand-teacher-response.md).
