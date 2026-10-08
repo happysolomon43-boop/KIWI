@@ -15,6 +15,7 @@ const TEACHING_EVENTS = Object.freeze({
   BREAK_STARTED: 'teaching.break.started',
   BREAK_END_DUE: 'teaching.break.end_due',
   BREAK_ENDED: 'teaching.break.ended',
+  ASSESSMENT_PREPARATION_DUE: 'teaching.assessment.preparation_due',
   ASSESSMENT_EXPIRY_DUE: 'teaching.assessment.expiry_due',
   ASSESSMENT_STARTED: 'teaching.assessment.started',
   ASSESSMENT_SUBMITTED: 'teaching.assessment.submitted',

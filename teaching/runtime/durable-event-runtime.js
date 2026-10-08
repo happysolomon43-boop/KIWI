@@ -77,7 +77,15 @@ function createDurableTeachingEventRuntime({
     }
   }
 
-  async function processClaimed(event) {
+  function heartbeat(event){
+    if(!store.renewClaim||!timers.setInterval)return {async stop(){}};
+    let pending=null,failure=null,stopped=false;
+    const timer=timers.setInterval(()=>{if(stopped||pending)return;pending=Promise.resolve(store.renewClaim(event,{now:clock(),leaseMs:effectiveLeaseMs})).catch(error=>{failure=error;}).finally(()=>{pending=null;});},Math.max(1000,Math.floor(effectiveLeaseMs/3)));
+    timer?.unref?.();
+    return {async stop(){stopped=true;timers.clearInterval(timer);if(pending)await pending;if(failure)throw failure;}};
+  }
+
+  async function processClaimed(event,lease) {
     const attemptId = await store.beginAttempt(event).catch(() => null);
     const registration = handlers.get(event.event_type);
 
@@ -109,6 +117,7 @@ function createDurableTeachingEventRuntime({
       const reconciliation = normalizeReconciliation(await registration.reconcile(event));
 
       if (reconciliation.disposition !== RECONCILIATION_DISPOSITIONS.ACTIONABLE) {
+        await lease.stop();
         await store.completeClaim(event, {
           disposition: reconciliation.disposition,
           recoveryReason: reconciliation.reason,
@@ -123,6 +132,7 @@ function createDurableTeachingEventRuntime({
       }
 
       const result = await registration.handle(event, reconciliation);
+      await lease.stop();
       await store.completeClaim(event, {
         disposition: RECONCILIATION_DISPOSITIONS.ACTIONABLE,
         safeMetadata: result?.safeMetadata || {},
@@ -181,9 +191,13 @@ function createDurableTeachingEventRuntime({
       });
 
       const outcomes = [];
-      for (const event of events) {
-        outcomes.push(await processClaimed(event));
-      }
+      const leases=events.map(event=>heartbeat(event));
+      try{
+        for(let index=0;index<events.length;index++){
+          try{outcomes.push(await processClaimed(events[index],leases[index]));}
+          finally{await leases[index].stop().catch(()=>{});}
+        }
+      }finally{await Promise.all(leases.map(lease=>lease.stop().catch(()=>{})));}
       lastError = null;
       return Object.freeze({
         skipped: false,

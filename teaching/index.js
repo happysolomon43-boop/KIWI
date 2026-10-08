@@ -401,7 +401,7 @@ function createTeachingFoundation({
     d14: d14Service ? Object.freeze({ repository:d14Repository, service:d14Service, runtime:d14Runtime }) : null,
     d15: d15Service ? Object.freeze({ repository:d15Repository, service:d15Service, runtime:d15Runtime }) : null,
     d16: d16Service ? Object.freeze({ repository:d16Repository, service:d16Service, runtime:d16Runtime }) : null,
-    d17: d17Service ? Object.freeze({ repository:d17Repository, service:d17Service, runtime:d17Runtime }) : null,
+    d17: d17Service ? Object.freeze({ repository:d17Repository, service:d17Service, runtime:d17Runtime, publishedEvents:d11PublishedEventRegistry, eventRuntime:d10RuntimePlatform?.eventRuntime }) : null,
     d20: d20Repository ? Object.freeze({ repository:d20Repository, intelligence:d20Intelligence, randomUUID, downstreamBridge:d20DownstreamBridge }) : null,
     d21: d21Repository ? Object.freeze({ repository:d21Repository, intelligence:d21Intelligence, randomUUID }) : null,
     d22: d22Service ? Object.freeze({ repository:d22Repository, service:d22Service, intelligence:d22Intelligence, randomUUID }) : null,

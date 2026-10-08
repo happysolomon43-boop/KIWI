@@ -1,4 +1,5 @@
 'use strict';
+const {createAssessmentWorkflow}=require('./workflow');
 const {mountD18Routes}=require('../d18/routes');
 const {createD19AssessmentTypeService}=require('../d19/service');
 const {mountD20Routes}=require('../d20/routes');
@@ -14,7 +15,7 @@ const {getD28RuntimeService}=require('../d28/runtime-bridge');
 function mountD17Routes(router,{foundation,sendError}={}){
  const d17=foundation?.d17?.service;if(!d17)return null;let ready=false;
  const service=createD19AssessmentTypeService({d17Service:d17,d17Repository:foundation.d17.repository,d08Repository:foundation.d08?.repository||null,d11Repository:foundation.d11?.repository||null,d14Service:foundation.d14?.service||null,policy:foundation.policy});
- const reliability=foundation.d11?.service&&foundation.d14?.service&&foundation.d16?.service?createD25ReliabilityService({foundation}):null;
+ const reliability=foundation.d11?.service&&foundation.d14?.service&&foundation.d16?.service?createD25ReliabilityService({foundation:{...foundation,d17:{...foundation.d17,service}}}):null;
  const d28=()=>getD28RuntimeService();
  const corr=(req)=>String(req.headers?.['x-correlation-id']||req.headers?.['x-request-id']||`http:${req.method}:${req.originalUrl||req.url||'teaching'}`).slice(0,160);
  async function safeD28Alert(kind,req,error){const observer=d28();if(!observer)return;try{if(kind==='AUTOSAVE'){const attempt=await foundation.d17.repository.requireAttempt(String(req.user.id),String(req.params.attemptId));await observer.reportAssessmentSyncFailure({correlationId:corr(req),attemptId:String(req.params.attemptId),assessmentId:attempt.assessment_id,attemptVersion:attempt.state_version,reasonCode:error?.code||'SYNC_FAILURE'});}else if(kind==='PACKAGE_VALIDATION'){const assessment=await foundation.d17.repository.requireAssessment(String(req.user.id),String(req.params.id));await observer.reportAssessmentValidationFailure({correlationId:corr(req),assessmentPackageId:req.body?.packageId||null,assessmentId:String(req.params.id),packageVersion:req.body?.packageVersion||req.body?.expectedVersion||assessment.state_version,reasonCode:error?.code||'PACKAGE_VALIDATION_FAILED'});}}catch{/* D28 alerting must never replace or mask the authoritative owner failure. */}}
@@ -37,6 +38,18 @@ function mountD17Routes(router,{foundation,sendError}={}){
  router.post('/assessments/attempts/:attemptId/clarification',async(req,res)=>{try{res.json(await service.clarify(req.user,req.params.attemptId,req.body||{}));}catch(e){sendError(res,e,'Failed to classify Assessment clarification.');}});
  const d18=mountD18Routes(router,{foundation,sendError,requireD17Ready:requireReady});
  const d20=mountD20Routes(router,{foundation,sendError,d19Service:service,requireD17Ready:requireReady,reliability});
+ const workflow=d20?.service?createAssessmentWorkflow({repository:foundation.d17.repository,service,markingService:d20.service,markingRepository:foundation.d20.repository,onGradeChange:(studentId,courseId)=>foundation.d20.downstreamBridge?.reconcileGradeChange?.(studentId,courseId)}):null;
+ if(workflow&&foundation.d17.eventRuntime)workflow.register(foundation.d17.eventRuntime,foundation.d17.publishedEvents);
+ router.post('/assessments/:id/prepare',async(req,res)=>{try{res.status(202).json(await foundation.d17.repository.requestPreparation(String(req.user.id),req.params.id,`d17-prepare-retry:${req.params.id}:${req.body?.idempotencyKey||require('node:crypto').randomUUID()}`));}catch(e){sendError(res,e,'Could not queue Assessment preparation.');}});
+ router.get('/assessments/:id/launch',async(req,res)=>{try{
+   const studentId=String(req.user.id),assessment=await foundation.d17.repository.requireAssessment(studentId,req.params.id);
+   await foundation.d17.repository.assertExposure(studentId,assessment.assessment_id);
+   const pack=await foundation.d17.repository.latestPackage(studentId,assessment.assessment_id),attempt=await foundation.d17.repository.activeAttempt(studentId,assessment.assessment_id);
+   if(!pack||pack.package_state!=='LOCKED')return res.status(409).json({error:'This assessment is still being prepared. Refresh shortly.',code:'TEACHING_ASSESSMENT_NOT_READY'});
+   // Launch only projects public package IDs; actual start rechecks every owner gate.
+   const handoff=foundation.integrations.exams.buildAssessmentShellHandoff({assessmentId:assessment.assessment_id,packageId:pack.assessment_package_id,attemptId:attempt?.assessment_attempt_id||null});
+   res.json(handoff);
+ }catch(e){sendError(res,e,'Assessment is unavailable.');}});
  const d21=mountD21Routes(router,{foundation,sendError,d17Service:service,d19Service:service,d20Service:d20?.service||null,requireD17Ready:requireReady});
  const d22=mountD22Routes(router,{foundation,sendError});
  const d23=mountD23Routes(router,{foundation,sendError,d19Service:service,d20Service:d20?.service||null,d21Service:d21?.service||null,d22Service:d22?.service||null});

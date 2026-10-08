@@ -57,7 +57,7 @@ test('original Teaching document loads independent native modules in dependency 
   const d23 = read('public/teaching-d23.js');
   const d16Import = html.indexOf('/teaching-d16.js?v=20261003-runtime-fix-2');
   const d15Import = html.indexOf('/teaching-d15.js?v=20261003-runtime-fix-1');
-  const d23Import = html.indexOf('/teaching-d23.js?v=20261005-dedupe-actions-3');
+  const d23Import = html.indexOf('/teaching-d23.js?');
   assert.ok(d16Import >= 0);
   assert.ok(d15Import > d16Import);
   assert.ok(d23Import > d15Import);

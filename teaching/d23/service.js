@@ -35,8 +35,9 @@ function createD23Service({d07,d08,d09,d10,d14,d16,d19,d20,d21,d22,clock=()=>new
   function assessmentEvent(row){
     const assessmentId=row.assessment_id||row.assessmentId;
     const measurement=row?.source_lineage?.d19_measurement||row?.sourceLineage?.d19_measurement||{};
-    const startsAt=row.scheduled_start_at||row.starts_at||row.scheduled_at||row.available_from||measurement.intended_class_scheduled_start_at||null;
-    const endsAt=row.scheduled_end_at||row.ends_at||row.expires_at||measurement.intended_class_scheduled_end_at||null;
+    const schedule=row.source_lineage?.assessment_schedule||{};
+    const startsAt=schedule.starts_at||row.scheduled_start_at||row.starts_at||row.scheduled_at||row.available_from||measurement.intended_class_scheduled_start_at||null;
+    const endsAt=schedule.ends_at||row.scheduled_end_at||row.ends_at||row.expires_at||measurement.intended_class_scheduled_end_at||null;
     if(!startsAt)return null;
     const type=String(row.assessment_type||row.assessmentType||'ASSESSMENT').toUpperCase();
     return Object.freeze({id:`assessment:${assessmentId}`,kind:'ASSESSMENT',assessmentId:String(assessmentId),courseId:String(row.course_id||row.courseId||''),title:row.title||type.replaceAll('_',' '),startsAt,endsAt,sourceOwner:'D17_ASSESSMENT',truthStatus:'AUTHORITATIVE_FINAL',assessmentType:type,href:notificationDeepLink('ASSESSMENT',assessmentId,{courseId:row.course_id||row.courseId}),hiddenUntilActive:false});
@@ -112,7 +113,7 @@ function createD23Service({d07,d08,d09,d10,d14,d16,d19,d20,d21,d22,clock=()=>new
       safe('Course Plan',()=>d08.getPlanReview(user,courseId)),safe('Teacher',()=>d22.teacherSurface(user,courseId)),safe('Work',()=>d16.listWork(user,{courseId})),safe('Results',()=>d20.courseResults(user,courseId)),safe('Progression',()=>d21.courseProgression(user,courseId)),safe('Assessments',()=>d19.list(user,{courseId,limit:500})),safe('Calendar',()=>calendar(user,{currentTimeZone:'UTC'})),
     ]);
     const events=(cal.value?.events||[]).filter(e=>e.courseId===String(courseId));const nextClass=events.filter(e=>e.kind==='CLASS'&&new Date(e.startsAt)>now()).sort(sortTime)[0]||null;
-    const visibleAssessments=filterStudentVisibleAssessments(assessments.value||[],now()),nextAssessment=visibleAssessments.map(assessmentEvent).filter(Boolean).filter(e=>new Date(e.startsAt)>now()).sort(sortTime)[0]||null;
+    const visibleAssessments=filterStudentVisibleAssessments(assessments.value||[],now()),nextAssessment=visibleAssessments.map(assessmentEvent).filter(Boolean).filter(e=>!e.endsAt||new Date(e.endsAt)>now()).sort(sortTime)[0]||null;
     const assignments=work.value?.assignments||[],importantWork=assignments.filter(a=>!['CLOSED','VERIFIED'].includes(String(a.lifecycleState||'').toUpperCase())).slice(0,5);
     const warnings=[];if(plan.value?.plan&&!plan.value.plan.currentForCourseScope)warnings.push({kind:'COURSE_PLAN_UPDATE',message:'Course Plan review is required for the current Course scope.',href:courseHref(courseId,'plan')});
     if(progression.value?.outcome&&String(progression.value.outcome).toUpperCase().includes('REQUIRED'))warnings.push({kind:'PROGRESSION',message:'A progression pathway requires attention.',href:`${courseHref(courseId,'results')}?progression=1`});
