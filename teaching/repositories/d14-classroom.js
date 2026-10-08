@@ -35,6 +35,17 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     return scenes;
   }
   async function notebook(studentId,classId){const {rows}=await query('select notebook_item_id,board_item_id,content,source_kind,version_no,created_at,updated_at from public.teaching_student_notebook_items where student_id=$1 and class_id=$2 order by created_at,notebook_item_id',[studentId,classId]);return rows;}
+  // A bounded, student-only projection of already committed classroom communication.
+  // This is not a transcript of model reasoning and cannot publish a Teacher turn.
+  async function conversation(studentId,classId){
+    const [student,teacher]=await Promise.all([
+      query("select interaction_id id,interaction_kind kind,body message,created_at sent_at from public.teaching_classroom_interactions where student_id=$1 and class_id=$2 and interaction_kind in ('ASK_TEACHER','NEED_HELP') and body is not null order by created_at desc limit 40",[studentId,classId]),
+      query("select communication_id id,message,created_at sent_at from public.teaching_teacher_communications where student_id=$1 and class_id=$2 and visibility='STUDENT' order by created_at desc limit 40",[studentId,classId])
+    ]);
+    return [...(student.rows||[]).map(row=>({id:row.id,role:'STUDENT',kind:row.kind,message:row.message,sentAt:row.sent_at})),
+      ...(teacher.rows||[]).map(row=>({id:row.id,role:'TEACHER',kind:'TEACHER_TURN',message:row.message,sentAt:row.sent_at}))]
+      .sort((a,b)=>Date.parse(a.sentAt)-Date.parse(b.sentAt)||String(a.id).localeCompare(String(b.id)));
+  }
   async function latestTeacherMessage(studentId,classId){const {rows}=await query("select communication_id,message,created_at from public.teaching_teacher_communications where student_id=$1 and class_id=$2 and visibility='STUDENT' order by created_at desc limit 1",[studentId,classId]);return rows[0]||null;}
   async function firstEntry(studentId,classId){const {rows}=await query("select created_at from public.teaching_classroom_interactions where student_id=$1 and class_id=$2 and interaction_kind='JOIN' order by created_at limit 1",[studentId,classId]);return rows[0]||null;}
   async function publishTeacherTurn({studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey}){
@@ -79,6 +90,6 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       const {rows}=await tx.query('insert into public.teaching_class_study_note_versions(note_version_id,student_id,class_id,version_no,state,stage,binding,note_payload,validation,closure_fact_id,idempotency_key) values($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11) returning *',[randomUUID(),studentId,classId,Number(old?.version_no||0)+1,state,stage,JSON.stringify(binding),JSON.stringify(payload),JSON.stringify(validation),closureFactId,idempotencyKey]);return rows[0];
     });
   }
-  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn});
+  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,conversation,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn});
 }
 module.exports={createD14ClassroomRepository};

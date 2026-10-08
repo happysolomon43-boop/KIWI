@@ -21,13 +21,14 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const source=await context(user.id,classId);
     const mode=source.session?.instructional_substate||'PRE_CLASS';
     const restricted=RESTRICTED.has(mode);
-    const [identity,scenes,notes,studyNote,teacherMessage,firstEntry]=await Promise.all([
+    const [identity,scenes,notes,studyNote,teacherMessage,firstEntry,conversation]=await Promise.all([
       repository.identity(user.id,source.classRow.course_id),
       restricted?[]:repository.board(user.id,source.session?.class_session_id),
       restricted?[]:repository.notebook(user.id,classId),
       repository.latestNote(user.id,classId),
       repository.latestTeacherMessage(user.id,classId),
       repository.firstEntry(user.id,classId),
+      restricted?[]:typeof repository.conversation==='function'?repository.conversation(user.id,classId):[],
     ]);
     const closed=source.session?.lifecycle_state==='CLOSED';
     let summary=null,closureFacts=null;
@@ -55,6 +56,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
       boardHistoryAllowed:!restricted,notebook:notes,notebookAllowed:!restricted,summary,closureFacts,
+      teacherConversation:conversation,teacherMessagingAllowed:!closed&&source.session?.lifecycle_state==='ACTIVE'&&!RESTRICTED.has(mode)&&!['BREAK','INTERRUPTED'].includes(mode),
       studyNote:studyNote?.state==='VALIDATED_PRIVATE'?{state:'PRIVATE_VALIDATED_AWAITING_D27',published:false}:studyNote?{state:studyNote.state,published:false}:null,
       assessmentTakeover:mode==='ASSESSMENT',assessmentOwner:'D17',classworkOwner:'D16',
       transcriptSecondary:true,controlsEnabled:!closed,academicStateFromBrowser:false});
@@ -72,7 +74,9 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     if(!SIGNALS.has(kind))fail('TEACHING_D14_SIGNAL_INVALID',400);
     if(ctx.session?.lifecycle_state==='CLOSED'&&kind!=='LEAVE')fail('TEACHING_D14_CLASS_CLOSED');
     if(ctx.session?.instructional_substate==='ASSESSMENT'&&!['TECHNICAL_ISSUE','LEAVE'].includes(kind))fail('TEACHING_D14_ASSESSMENT_CONTROL_RESTRICTED',403);
+    if(['ASK_TEACHER','NEED_HELP'].includes(kind)&&(!ctx.session||ctx.session.lifecycle_state!=='ACTIVE'||RESTRICTED.has(ctx.session.instructional_substate)||['BREAK','INTERRUPTED'].includes(ctx.session.instructional_substate)))fail('TEACHING_D14_TEACHER_MESSAGES_PAUSED',403);
     const body=input.body==null?null:String(input.body).trim();if(body?.length>2000)fail('TEACHING_D14_SIGNAL_TOO_LONG',400);
+    if(['ASK_TEACHER','NEED_HELP'].includes(kind)&&!body)fail('TEACHING_D14_TEACHER_MESSAGE_REQUIRED',400);
     const key=String(input.idempotencyKey||'');if(!key||key.length>160)fail('TEACHING_D14_IDEMPOTENCY_REQUIRED',400);
     const row=await repository.recordInteraction({studentId:user.id,classId,session:ctx.session,kind,body,idempotencyKey:key});
     const attendance=attendanceService&&typeof attendanceService.observeInteraction==='function'

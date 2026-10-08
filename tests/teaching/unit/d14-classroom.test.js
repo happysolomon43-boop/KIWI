@@ -90,13 +90,17 @@ test('Classroom separates upcoming Classes from attendance-backed Class history'
   assert.equal(value.history[0].attendance_outcome,'PARTIAL');
 });
 
-test('Classroom UI exposes Start, Resume, reliable Leave attendance, and an always-available Notebook shortcut',()=>{
+test('Classroom UI keeps Start, Resume and LEAVE while Notebook opens as a compact sheet',()=>{
   const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
   assert.match(source,/Start Class/);
   assert.match(source,/Resume Class/);
   assert.match(source,/attendance will be recorded up to this moment/);
-  assert.match(source,/tc-notebook-shortcut/);
-  assert.match(source,/Class history/);
+  assert.match(source,/tc-corner-button/);
+  assert.match(source,/tc-history-corner/);
+  assert.match(source,/Save note/);
+  assert.match(source,/Cancel/);
+  assert.doesNotMatch(source,/tc-notebook-shortcut/);
+  assert.match(source,/Past Classes/);
 });
 
 test('Classroom history review is read-only and LEAVE retries retain the same request key',()=>{
@@ -107,4 +111,71 @@ test('Classroom history review is read-only and LEAVE retries retain the same re
   assert.match(source,/idempotencyKey:state\.leaveRequestId/);
   assert.match(source,/Close Review/);
   assert.match(source,/Refresh classes/);
+});
+
+
+test('D14 Classroom messages are persisted with no fabricated AI response and restricted modes refuse sends',async()=>{
+  const ctx={classRow:{class_id:'c',course_id:'co',scheduled_start_at:'2026-10-08T09:00:00Z',scheduled_end_at:'2026-10-08T10:00:00Z'},session:{class_session_id:'s',state_version:1,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION',progress_state:{}}};
+  const delivered=[];
+  const repository={
+    recordInteraction:async input=>{delivered.push(input);return {interaction_id:'int-1',interaction_kind:input.kind,created_at:'2026-10-08T09:20:00Z'};},
+    identity:async()=>({course_title:'Course',teacher_name:'AI Teacher'}),
+    board:async()=>[],notebook:async()=>[],latestNote:async()=>null,latestTeacherMessage:async()=>null,
+    firstEntry:async()=>null,conversation:async()=>[{id:'student-q',role:'STUDENT',kind:'ASK_TEACHER',message:'Why?',sentAt:'2026-10-08T09:18:00Z'},{id:'teacher-a',role:'TEACHER',kind:'TEACHER_TURN',message:'The key idea is…',sentAt:'2026-10-08T09:19:00Z'}]
+  };
+  const service=createD14Service({repository,d11Repository:{getClassContext:async()=>ctx},d11Service:{getClass:async()=>({class:{scheduledEndAt:'2026-10-08T10:00:00Z'},controller:{lifecycleState:'ACTIVE'},time:{}})},d12Service:{},clock:()=>new Date('2026-10-08T09:20:00Z'),randomUUID:()=> 'uuid'});
+  const view=await service.snapshot({id:'student'},'c');
+  assert.equal(view.teacherMessagingAllowed,true);
+  assert.deepEqual(view.teacherConversation.map(row=>row.role),['STUDENT','TEACHER']);
+  const accepted=await service.signal({id:'student'},'c',{kind:'ASK_TEACHER',body:'Please explain gravity',idempotencyKey:'q-id'});
+  assert.equal(accepted.status,'RECORDED_FOR_TEACHER');
+  assert.equal(accepted.academicResponse,false);
+  assert.equal(delivered[0].body,'Please explain gravity');
+  await assert.rejects(service.signal({id:'student'},'c',{kind:'ASK_TEACHER',body:' ',idempotencyKey:'empty'}),{code:'TEACHING_D14_TEACHER_MESSAGE_REQUIRED'});
+  ctx.session.instructional_substate='BREAK';
+  assert.equal((await service.snapshot({id:'student'},'c')).teacherMessagingAllowed,false);
+  await assert.rejects(service.signal({id:'student'},'c',{kind:'ASK_TEACHER',body:'Question',idempotencyKey:'break'}),{code:'TEACHING_D14_TEACHER_MESSAGES_PAUSED'});
+  ctx.session.instructional_substate='ASSESSMENT';
+  const protectedView=await service.snapshot({id:'student'},'c');
+  assert.deepEqual(protectedView.teacherConversation,[]);
+  assert.equal(protectedView.teacherMessagingAllowed,false);
+  await assert.rejects(service.signal({id:'student'},'c',{kind:'NEED_HELP',body:'Please',idempotencyKey:'exam'}),{code:'TEACHING_D14_ASSESSMENT_CONTROL_RESTRICTED'});
+  assert.equal(delivered.length,1);
+});
+
+test('Classroom messaging timeline reads student questions and student-visible Teacher publications only',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d14-classroom.js'),'utf8');
+  assert.match(source,/async function conversation\(studentId,classId\)/);
+  assert.match(source,/interaction_kind in \('ASK_TEACHER','NEED_HELP'\)/);
+  assert.match(source,/visibility='STUDENT'/);
+  assert.match(source,/order by created_at desc limit 40/);
+  const client=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
+  assert.match(client,/idempotencyKey:key/);
+  assert.match(client,/state\.sheetKey \|\|= crypto\.randomUUID\(\)/);
+  assert.match(client,/if\(previous\)previous\.replaceWith\(root\)/);
+  assert.match(client,/classroom-sheets|openSheet\('notebook'\)/);
+  assert.doesNotMatch(client,/window\.prompt\(/);
+});
+
+
+test('Closed Classroom stops overtime counter and replaces empty Board illustration with explicit record guidance',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
+  assert.match(source,/overall\.textContent=s\.modeKey==='CLOSURE'/);
+  assert.match(source,/No Board scenes saved/);
+  assert.match(source,/Class Summary remain available/);
+});
+
+
+test('Assessment/Classwork transitions dismiss an already-open Notebook or Teacher sheet',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
+  assert.match(source,/if\(\['ASSESSMENT','CLASSWORK'\]\.includes\(s\.modeKey\)&&state\.sheet\)closeSheet\(\{restore:false,force:true\}\)/);
+  assert.match(source,/if\(!state\.sheet\|\|state\.sheetBusy&&!force\)return/);
+});
+
+
+test('Classroom live refresh preserves the focused sheet DOM, not just the note text',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
+  assert.match(source,/const previous=state\.host\.querySelector\('\.tc-shell'\)/);
+  assert.match(source,/if\(previous\)previous\.replaceWith\(root\);else state\.host\.prepend\(root\)/);
+  assert.match(source,/focus\?\.isConnected\?focus:fallback/);
 });
