@@ -98,3 +98,13 @@ test('Classroom UI exposes Start, Resume, reliable Leave attendance, and an alwa
   assert.match(source,/tc-notebook-shortcut/);
   assert.match(source,/Class history/);
 });
+
+test('Classroom history review is read-only and LEAVE retries retain the same request key',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
+  assert.match(source,/open\(item\.class_id,\{reviewOnly:true\}\)/);
+  assert.match(source,/if\(!reviewOnly\)await kiwiApiRequest/);
+  assert.match(source,/state\.leaveRequestId \|\|= crypto\.randomUUID\(\)/);
+  assert.match(source,/idempotencyKey:state\.leaveRequestId/);
+  assert.match(source,/Close Review/);
+  assert.match(source,/Refresh classes/);
+});
