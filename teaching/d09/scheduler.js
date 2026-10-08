@@ -323,6 +323,8 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
   const scheduleLimit=Math.min(required,maxCore);
   const slots=[];
   const dayCounts=new Map();
+  const courseDayCounts=new Map();
+  const lastCourseByDay=new Map();
   const preferences=context.profile?.preferences || context.preferences || {};
   const settings=context.profile?.settings||context.settings||{};
   const priorIndex=priorPlacementIndex(context,now);
@@ -340,6 +342,9 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
         if(!task) continue;
         const count=dayCounts.get(period.key)||0;
         if(task.kind==='CLASS' && count>=2) continue;
+        const courseDayKey=`${period.key}|${w.courseId}`;
+        const sameCourseToday=courseDayCounts.get(courseDayKey)||0;
+        const otherCourseReady=task.kind==='CLASS'&&work.some((other)=>other!==w&&other.tasks.some((candidate)=>candidate.kind==='CLASS'&&candidate.remaining>0));
         const available=minutesBetween(period.cursor,period.end);
         if(available<=0) continue;
         const minutes=Math.min(task.remaining,available,scheduleLimit-scheduledTotal);
@@ -352,7 +357,9 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
           + stablePlacementScore(priorIndex,w,task,period.cursor,candidateEnd,now,settings)
           + portfolioBalanceScore(w)
           + deadlinePriorityScore(w,candidateEnd)
-          - (task.kind==='CLASS' && w.lastDate===period.key?40:0)
+          - (task.kind==='CLASS' && w.lastDate===period.key?(otherCourseReady?240:70):0)
+          - (task.kind==='CLASS' && sameCourseToday>0?(otherCourseReady?320:90):0)
+          - (task.kind==='CLASS' && lastCourseByDay.get(period.key)===w.courseId?(otherCourseReady?180:45):0)
           - (period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY'?10000:0);
         if(period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY') continue;
         if(!best || score>best.score || (score===best.score && Date.parse(period.cursor)<Date.parse(best.period.cursor))){
@@ -378,6 +385,9 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
     best.w.scheduledMinutes+=best.minutes;
     if(best.task.kind==='CLASS'){
       best.w.lastDate=best.period.key;
+      const courseDayKey=`${best.period.key}|${best.w.courseId}`;
+      courseDayCounts.set(courseDayKey,(courseDayCounts.get(courseDayKey)||0)+1);
+      lastCourseByDay.set(best.period.key,best.w.courseId);
       dayCounts.set(best.period.key,count+1);
     }
     best.period.cursor=end;

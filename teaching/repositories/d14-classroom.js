@@ -7,7 +7,20 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     if(Object.values(rows?.[0]||{}).some((v)=>v==null)) throw Object.assign(new Error('D14 persistence missing.'),{code:'TEACHING_D14_SCHEMA_MISSING'});
   }
   async function listClasses(studentId,courseId) {
-    const {rows}=await query('select c.class_id,c.course_id,c.scheduled_start_at,c.scheduled_end_at,c.timezone,c.lifecycle_state,c.schedule_version from public.teaching_classes c where c.student_id=$1 and c.course_id=$2 order by c.scheduled_start_at',[studentId,courseId]);
+    const {rows}=await query(`select c.class_id,c.course_id,c.scheduled_start_at,c.scheduled_end_at,c.timezone,c.lifecycle_state,c.schedule_version,
+      s.lifecycle_state session_state,s.instructional_substate,
+      a.outcome attendance_outcome,a.presence_state,a.missed_minutes,a.arrived_at,a.exited_at
+      from public.teaching_classes c
+      left join lateral (
+        select lifecycle_state,instructional_substate from public.teaching_class_sessions
+        where student_id=c.student_id and class_id=c.class_id order by created_at desc limit 1
+      ) s on true
+      left join lateral (
+        select outcome,presence_state,missed_minutes,arrived_at,exited_at from public.teaching_attendance_records
+        where student_id=c.student_id and class_id=c.class_id and is_current=true order by version_no desc limit 1
+      ) a on true
+      where c.student_id=$1 and c.course_id=$2 and c.lifecycle_state<>'CANCELLED'
+      order by c.scheduled_start_at`,[studentId,courseId]);
     return rows;
   }
   async function identity(studentId,courseId) {

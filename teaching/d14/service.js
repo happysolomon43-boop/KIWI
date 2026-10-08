@@ -10,7 +10,12 @@ function fail(code,status=409){throw Object.assign(new Error(code),{code,status}
 function createD14Service({repository,d11Repository,d11Service,d12Service,attendanceService=null,studyIntelligence=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
   if(!repository||!d11Repository||!d11Service||!d12Service||!randomUUID)throw new TypeError('D14 requires the existing D11/D12 owners and its artifact repository.');
   async function context(studentId,classId){const value=await d11Repository.getClassContext(studentId,classId);if(!value)fail('TEACHING_D14_CLASS_NOT_FOUND',404);return value;}
-  async function listClasses(user,courseId){const course=await repository.identity(user.id,courseId);if(!course)fail('TEACHING_D14_COURSE_NOT_FOUND',404);return {course,classes:await repository.listClasses(user.id,courseId)};}
+  async function listClasses(user,courseId){
+    const course=await repository.identity(user.id,courseId);if(!course)fail('TEACHING_D14_COURSE_NOT_FOUND',404);
+    const classes=await repository.listClasses(user.id,courseId),instant=clock(),at=(instant instanceof Date?instant:new Date(instant)).getTime();
+    const isPast=(row)=>Date.parse(row.scheduled_end_at)<=at||['COMPLETED','CLOSED'].includes(String(row.lifecycle_state||row.session_state||'').toUpperCase());
+    return Object.freeze({course,classes:Object.freeze(classes),upcoming:Object.freeze(classes.filter((row)=>!isPast(row))),history:Object.freeze(classes.filter(isPast).sort((a,b)=>Date.parse(b.scheduled_start_at)-Date.parse(a.scheduled_start_at)))});
+  }
   async function snapshot(user,classId){
     const d11=await d11Service.getClass(user,classId);
     const source=await context(user.id,classId);
@@ -40,7 +45,10 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const lateMinutes=arrived==null?0:Math.max(0,Math.floor((arrived-start)/60000));
     const coreMinimum=(source.blueprint?.blueprint_payload?.objectives||[]).filter((o)=>o.criticality==='CORE').reduce((n,o)=>n+Number(o.minimum_safe_minutes||0),0);
     const entry=source.session?.lifecycle_state==='CLOSED'?null:{lateMinutes,minutesRemaining:Math.max(0,Math.ceil((end-now)/60000)),veryLate:lateMinutes>0&&coreMinimum>0&&(end-arrived)/60000<coreMinimum,formalAttendanceDetermined:false};
-    const interruption=source.session?.instructional_substate==='INTERRUPTED'?{cause:source.session.interruption_metadata?.cause==='SYSTEM'?'SYSTEM':'UNDETERMINED',academicPenalty:false}:null;
+    const interruption=source.session?.instructional_substate==='INTERRUPTED'?{
+      cause:source.session.interruption_metadata?.cause==='SYSTEM'?'SYSTEM':'UNDETERMINED',academicPenalty:false,
+      resumeState:source.session.resume_instructional_substate||'INSTRUCTION',canResume:Boolean(source.session.resume_instructional_substate),
+    }:null;
     return Object.freeze({class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
       mode:MODES[mode]||'Before Class',modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,
       requiredMaterials:Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],

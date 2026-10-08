@@ -74,6 +74,21 @@ test('D09 global Scheduler arbitrates four Courses while respecting the normal d
   assert.ok([...byDay.values()].every((count)=>count<=2));
 });
 
+test('D09 alternates same-day Classes across available Courses before repeating one Course',()=>{
+  const result=computeSchedule(context([bundle('c1',6,60),bundle('c2',6,60)],{
+    availability:availability([1,2,3,4,5],'09:00','12:00'),
+  }),{now:'2026-09-29T04:00:00Z'});
+  assert.equal(result.outcome,'FEASIBLE');
+  const byDay=new Map();
+  for(const slot of result.schedule.filter((item)=>item.kind==='CLASS')){
+    if(!byDay.has(slot.localDate))byDay.set(slot.localDate,[]);
+    byDay.get(slot.localDate).push(slot.courseId);
+  }
+  const multiClassDays=[...byDay.values()].filter((ids)=>ids.length>1);
+  assert.ok(multiClassDays.length>0);
+  assert.ok(multiClassDays.every((ids)=>new Set(ids).size===ids.length),'a Course only repeats on a day when portfolio alternatives are exhausted');
+});
+
 test('D09 eight-Course stress simulation surfaces infeasibility instead of deleting curriculum',()=>{
   const courses=Array.from({length:8},(_,i)=>bundle('c'+(i+1),8,120));
   const result=computeSchedule(context(courses,{availability:availability([1],'09:00','11:00')}),{now:'2026-09-29T04:00:00Z'});
