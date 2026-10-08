@@ -171,8 +171,9 @@ function registerD11Runtime({
       const legacyRequestId=event.payload?.request_id;
       if(timetableVersionId || scheduleRequest && legacyRequestId){
         if(!outboxStore||typeof outboxStore.append!=='function'
-          ||typeof repository.listClassesForApprovedTimetable!=='function'
-          ||typeof repository.listClassesForAppliedScheduleRequest!=='function'){
+          ||(timetableVersionId
+            ?typeof repository.listClassesForApprovedTimetable!=='function'
+            :typeof repository.listClassesForAppliedScheduleRequest!=='function')){
           const error=new Error('D11 durable timetable-wide preparation reconciliation is unavailable.');
           error.code='TEACHING_D11_TIMETABLE_RECONCILIATION_UNAVAILABLE';
           throw error;
