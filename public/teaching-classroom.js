@@ -236,11 +236,17 @@ function openSheet(kind){
   const dialog=$('section','tc-sheet-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');
   dialog.setAttribute('aria-labelledby','tc-sheet-title');
   const top=$('div','tc-sheet-heading');
-  const title=kind==='notebook'?'Notebook':'Message AI Teacher';
+  const title=kind==='notebook'?'Notebook':'Teacher messages';
   const label=kind==='notebook'?'YOUR PRIVATE NOTES':'CLASS CONVERSATION';
   const headline=$('h2','',title);headline.id='tc-sheet-title';
-  top.append(add($('div',''),$('div','tc-eyebrow',label),headline),button('×',()=>closeSheet(),'tc-sheet-close'));
+  const headingText=add($('div','tc-sheet-heading-copy'),$('div','tc-eyebrow',label),headline);
+  const mark=$('span','tc-sheet-emblem',kind==='notebook'?'✎':'✉');mark.setAttribute('aria-hidden','true');
+  top.append(mark,headingText,button('×',()=>closeSheet(),'tc-sheet-close'));
+  dialog.append($('div','tc-sheet-handle'));
   dialog.append(top);
+  dialog.append($('p','tc-sheet-description',kind==='notebook'
+    ?state.reviewOnly?'These notes belong to a previous lesson.':'Jot down the ideas worth remembering. Notes are saved privately to this Class.'
+    :state.reviewOnly?'Browse questions and published Teacher replies from this Class.':'Ask questions or request help during an active lesson.'));
   if(kind==='notebook'){
     const list=$('div','tc-sheet-notes');
     const items=state.snapshot.notebook||[];
@@ -267,7 +273,7 @@ function openSheet(kind){
         }catch(error){status.textContent=error.message||'Could not confirm saving. Retry safely with the same note.';}
         finally{state.sheetBusy=false;save.disabled=cancel.disabled=false;input.readOnly=false;syncSheet();}
       });
-      form.append(input,status,add($('div','tc-sheet-footer'),cancel,save));dialog.append(form);
+      form.append(input,status,add($('div','tc-sheet-footer'),cancel,save));dialog.insertBefore(form,list);
       window.queueMicrotask(()=>{if(state.sheet===shade)input.focus({preventScroll:true});});
     }else dialog.append($('p','tc-sheet-help',state.reviewOnly?'This is a past Class record. You can review notes here, but you cannot change the historical record.':'Notes are read-only during this protected activity.'));
   }else{
@@ -365,7 +371,7 @@ async function renderCourse({course,container}){
   historyButton.setAttribute('aria-label','Open past Classes');historyButton.title='Review past classes';
   const historyCount=$('span','tc-history-tab-count','0');historyButton.append(historyCount);
   const historyDialog=$('dialog','tc-history-dialog');
-  const historyHead=add($('div','tc-history-heading'),add($('div',''),$('div','tc-eyebrow','CLASSROOM ARCHIVE'),$('h2','','Past Classes')),button('×',()=>historyDialog.close(),'tc-sheet-close'));
+  const historyHead=add($('div','tc-history-heading'),add($('div',''),$('div','tc-eyebrow','CLASS HISTORY'),$('h2','','Past Classes')),button('×',()=>historyDialog.close(),'tc-sheet-close'));
   const historyContent=$('div','tc-history-content');
   historyDialog.append(historyHead,historyContent);page.append(historyDialog);
   historyDialog.addEventListener('close',()=>{if(historyButton.isConnected&&!document.body.classList.contains('tc-active'))historyButton.focus({preventScroll:true});});
