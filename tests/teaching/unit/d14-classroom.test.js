@@ -152,7 +152,7 @@ test('Classroom messaging timeline reads student questions and student-visible T
   const client=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
   assert.match(client,/idempotencyKey:key/);
   assert.match(client,/state\.sheetKey \|\|= crypto\.randomUUID\(\)/);
-  assert.match(client,/state\.host\.replaceChildren\(root\);[\s\S]*?state\.host\.append\(state\.sheet\)/);
+  assert.match(client,/if\(previous\)previous\.replaceWith\(root\)/);
   assert.match(client,/classroom-sheets|openSheet\('notebook'\)/);
   assert.doesNotMatch(client,/window\.prompt\(/);
 });
@@ -170,4 +170,12 @@ test('Assessment/Classwork transitions dismiss an already-open Notebook or Teach
   const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
   assert.match(source,/if\(\['ASSESSMENT','CLASSWORK'\]\.includes\(s\.modeKey\)&&state\.sheet\)closeSheet\(\{restore:false,force:true\}\)/);
   assert.match(source,/if\(!state\.sheet\|\|state\.sheetBusy&&!force\)return/);
+});
+
+
+test('Classroom live refresh preserves the focused sheet DOM, not just the note text',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
+  assert.match(source,/const previous=state\.host\.querySelector\('\.tc-shell'\)/);
+  assert.match(source,/if\(previous\)previous\.replaceWith\(root\);else state\.host\.prepend\(root\)/);
+  assert.match(source,/focus\?\.isConnected\?focus:fallback/);
 });
