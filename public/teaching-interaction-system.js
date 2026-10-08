@@ -11,8 +11,8 @@
   function ensureStyles(){
     if(document.getElementById('teachingInteractionStyles'))return;
     const style=document.createElement('style');style.id='teachingInteractionStyles';style.textContent=`
-      html[data-app="kiwi-teaching"] button{position:relative;isolation:isolate;overflow:hidden;transform:translateZ(0)}
-      html[data-app="kiwi-teaching"] button:not(:disabled):active{transform:translateY(1px) scale(.985)!important;filter:brightness(1.08)}
+      html[data-app="kiwi-teaching"] button{isolation:isolate;overflow:hidden}
+      html[data-app="kiwi-teaching"] button:not(.teaching-overlay):not(.tc-sheet-backdrop):not(:disabled):active{transform:translateY(1px) scale(.985)!important;filter:brightness(1.08)}
       html[data-app="kiwi-teaching"] button[data-kiwi-pressed="true"]{box-shadow:0 0 0 3px rgba(115,229,178,.12),0 12px 34px rgba(0,0,0,.2)!important}
       html[data-app="kiwi-teaching"] button[data-kiwi-busy="true"]{padding-inline-end:48px!important;cursor:progress!important}
       html[data-app="kiwi-teaching"] button[data-kiwi-busy="true"]::after{

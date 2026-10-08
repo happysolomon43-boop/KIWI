@@ -76,7 +76,7 @@ test('D09 global Scheduler arbitrates four Courses while respecting the normal d
 
 test('D09 alternates same-day Classes across available Courses before repeating one Course',()=>{
   const result=computeSchedule(context([bundle('c1',6,60),bundle('c2',6,60)],{
-    availability:availability([1,2,3,4,5],'09:00','12:00'),
+    availability:availability([1,2,3,4,5],'09:00','18:00'),
   }),{now:'2026-09-29T04:00:00Z'});
   assert.equal(result.outcome,'FEASIBLE');
   const byDay=new Map();
