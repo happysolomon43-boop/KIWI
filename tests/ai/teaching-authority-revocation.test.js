@@ -81,7 +81,7 @@ test('immutable trigger migration covers all six academic owner families with no
 });
 test('D31 cancels a Course model run before model inference when a committed version was revoked',async()=>{
   const course={course_id:'course1',student_id:'student1',state_version:7,lifecycle_state:'ACTIVE'};
-  const rows=new Map();
+  const rows=new Map(),audit=[];
   const db=memoryRevocations([['student1','COURSE','course1','7']]);
   const query=async(sql,args)=>{
     if(sql.includes('teaching_runtime.academic_authority_revocations'))return db.query(sql,args);
@@ -94,7 +94,7 @@ test('D31 cancels a Course model run before model inference when a committed ver
     aiBoundary:{async execute(){aiCalls++;return {accepted:true,validatedResult:{output:{reviewNeeded:false}}};}},
     orchestrationStore:{
       async begin(e){rows.set(e.execution_id,'PENDING');return {inserted:true};},
-      async mark(id,status){rows.set(id,status);}
+      async mark(id,status,metadata){rows.set(id,status);audit.push({status,metadata});}
     }
   };
   const coordinator=createD31ReleaseOrchestrator({runtimePlatform:platform,query,randomUUID:()=> 'cancellation-operation'});
@@ -103,4 +103,59 @@ test('D31 cancels a Course model run before model inference when a committed ver
   assert.equal(result.cancelled,true);
   assert.equal(aiCalls,0);
   assert.equal(rows.get('cancellation-operation'),'CANCELLED');
+  assert.ok(audit.some(x=>x.status==='CANCELLED'&&x.metadata?.validationOutcome==='CANCELLED_BEFORE_MODEL_DISPATCH'&&x.metadata?.safeMetadata?.model_dispatch_avoided===true));
+});
+
+function liveCancellationFixture({lateResult=false}={}){
+  const course={course_id:'course1',student_id:'student1',state_version:7,lifecycle_state:'ACTIVE',subject_snapshot_ref:'subject:1:scope'};
+  const source={source_content_item_id:'source1',student_id:'student1',course_id:'course1',source_kind:'PRIMARY_KIWI_SUBJECT',source_ref:'subject:1:card:1',content_summary:'A force is needed to accelerate an object'};
+  const db=memoryRevocations();const marks=[],attempts=[];
+  const query=async(sql,args)=>{
+    if(sql.includes('teaching_runtime.academic_authority_revocations'))return db.query(sql,args);
+    if(sql.includes('from public.teaching_courses'))return {rows:[course]};
+    if(sql.includes('from public.teaching_source_content_items'))return {rows:[source]};
+    throw Error('Unexpected cancellation fixture query: '+sql);
+  };
+  const platform={
+    promptControl:createTeachingPromptControlPlane(),
+    aiBoundary:{async execute(input){
+      assert.equal(typeof input.centralRouteOptions.beforeAttempt,'function');
+      await input.centralRouteOptions.beforeAttempt();
+      assert.equal(input.signal.aborted,false);
+      attempts.push('first-provider-dispatch');
+      // A remote KIWI instance commits parent revocation after provider
+      // dispatch. The central retry hook catches it before any fallback call.
+      db.committed.add('student1|COURSE|course1|7');
+      await input.centralRouteOptions.beforeAttempt();
+      assert.equal(input.signal.aborted,true);
+      if(lateResult)return {accepted:true,validatedResult:{output:{status:'ok'}}};
+      throw Object.assign(new Error('Local network request interrupted'),{code:'CANCELLED'});
+    }},
+    orchestrationStore:{
+      async begin(){return {inserted:true};},
+      async mark(_id,status,metadata){marks.push({status,metadata});return {status};},
+    },
+  };
+  const orchestrator=createD31ReleaseOrchestrator({runtimePlatform:platform,query,randomUUID:()=> 'cancellation-inflight'});
+  return {orchestrator,course,source,marks,attempts};
+}
+test('a remote revocation stops provider fallback and records local interruption without inventing provider acknowledgement',async()=>{
+  const f=liveCancellationFixture();
+  const result=await f.orchestrator.execute(curriculumAuditRequest({course:f.course,sources:[f.source]}));
+  assert.equal(result.cancelled,true);
+  assert.deepEqual(f.attempts,['first-provider-dispatch']);
+  const done=f.marks.find(x=>x.status==='CANCELLED');
+  assert.equal(done.metadata?.validationOutcome,'MODEL_EXECUTION_INTERRUPTED');
+  assert.ok(done.metadata?.safeMetadata?.abort_requested_at);
+  assert.ok(done.metadata?.safeMetadata?.model_dispatch_started_at);
+  assert.equal(done.metadata?.safeMetadata?.remote_abort_confirmation,'NOT_OBSERVABLE');
+});
+test('a non-cooperating provider cannot publish its late answer after the authority revocation',async()=>{
+  const f=liveCancellationFixture({lateResult:true});
+  const result=await f.orchestrator.execute(curriculumAuditRequest({course:f.course,sources:[f.source]}));
+  assert.equal(result.cancelled,true);
+  const done=f.marks.find(x=>x.status==='CANCELLED');
+  assert.equal(done.metadata?.validationOutcome,'LATE_RESULT_DISCARDED');
+  assert.ok(done.metadata?.safeMetadata?.late_result_discarded_at);
+  assert.equal(done.metadata?.safeMetadata?.remote_abort_confirmation,'NOT_OBSERVABLE');
 });
