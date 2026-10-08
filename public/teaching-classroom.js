@@ -323,7 +323,7 @@ async function renderCourse({course,container}){
   const historyHead=add($('div','tc-history-heading'),add($('div',''),$('div','tc-eyebrow','CLASSROOM ARCHIVE'),$('h2','','Past Classes')),button('×',()=>historyDialog.close(),'tc-sheet-close'));
   const historyContent=$('div','tc-history-content');
   historyDialog.append(historyHead,historyContent);page.append(historyDialog);
-  historyDialog.addEventListener('close',()=>historyButton.isConnected&&historyButton.focus({preventScroll:true}));
+  historyDialog.addEventListener('close',()=>{if(historyButton.isConnected&&!document.body.classList.contains('tc-active'))historyButton.focus({preventScroll:true});});
   historyDialog.addEventListener('click',event=>{if(event.target===historyDialog)historyDialog.close();});
   let fetching=false,loaded=false,pastRows=[],identity={};
   const labels={ON_TIME:'Attended',LATE:'Late',PARTIAL:'Partially attended',UNEXCUSED_ABSENCE:'Missed',EXCUSED_ABSENCE:'Excused',APPROVED_LEAVE:'Approved leave',SYSTEM_PROTECTED:'System protected',INTERRUPTED:'Interrupted',PENDING:'Attendance pending',RESCHEDULED:'Rescheduled',NO_OBLIGATION:'No obligation'};
